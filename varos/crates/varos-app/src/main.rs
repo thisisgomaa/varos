@@ -276,6 +276,7 @@ fn main() {
                             else if ed.mods.ctrl && code == KeyCode::KeyY { ed.redo(); }
                             else if ed.mods.ctrl && code == KeyCode::BracketRight { ed.arrange(if ed.mods.shift { ZOrder::Front } else { ZOrder::Forward }); }
                             else if ed.mods.ctrl && code == KeyCode::BracketLeft { ed.arrange(if ed.mods.shift { ZOrder::Back } else { ZOrder::Backward }); }
+                            else if ed.mods.ctrl && code == KeyCode::KeyG { if ed.mods.shift { ed.ungroup_selection(); } else { ed.group_selection(); } }
                             else if !ed.mods.ctrl { handle_key(&mut ed, code); }
                             window.set_title(&full_title(ed.tool));
                             window.request_redraw();
