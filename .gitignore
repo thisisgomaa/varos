@@ -1,0 +1,24 @@
+# ---- Rust build output (huge, regenerated) ----
+target/
+
+# ---- Node / web (Tauri front-end, if any) ----
+node_modules/
+dist/
+build/
+
+# ---- Scratch / redirected build logs ----
+err.txt
+out.txt
+*.log
+
+# ---- OS junk ----
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- Editor / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

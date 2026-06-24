@@ -1,0 +1,17 @@
+[package]
+name = "varos-spike"
+version = "0.1.0"
+edition = "2021"
+
+# Phase 0 port spike: pen + rectangle on a wgpu canvas in a real desktop window.
+# Kept lean on purpose (winit + wgpu only, no Tauri yet) to keep the build loop light.
+
+[dependencies]
+winit = "0.29"
+wgpu = "0.19"
+pollster = "0.3"
+bytemuck = { version = "1", features = ["derive"] }
+
+# lighten the build/run loop: no debuginfo (we judge feel, not step-debug)
+[profile.dev]
+debug = 0
