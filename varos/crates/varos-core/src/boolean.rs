@@ -60,11 +60,15 @@ fn flo_op(op: BoolOp, shapes: &[Vec<SimpleBezierPath>], acc: f64) -> Vec<SimpleB
         BoolOp::Unite => fold(|a, b, e| path_add::<SimpleBezierPath>(a, b, e)),
         BoolOp::Intersect => fold(|a, b, e| path_intersect::<SimpleBezierPath>(a, b, e)),
         BoolOp::Exclude => {
-            // XOR = (A∪B) − (A∩B)
-            let uni = fold(|a, b, e| path_add::<SimpleBezierPath>(a, b, e));
-            let mut inter = shapes[0].clone();
-            for s in &shapes[1..] { inter = path_intersect::<SimpleBezierPath>(&inter, s, acc); }
-            path_sub::<SimpleBezierPath>(&uni, &inter, acc)
+            // XOR via symmetric difference (A−B)∪(B−A), folded pairwise. This is robust to
+            // the pinch/touch cases where (A∪B)−(A∩B) degenerates into a self-cancelling result.
+            let mut a = shapes[0].clone();
+            for b in &shapes[1..] {
+                let a_minus_b = path_sub::<SimpleBezierPath>(&a, b, acc);
+                let b_minus_a = path_sub::<SimpleBezierPath>(b, &a, acc);
+                a = path_add::<SimpleBezierPath>(&a_minus_b, &b_minus_a, acc);
+            }
+            a
         }
         BoolOp::MinusFront => {
             let mut clip = shapes[1].clone();
