@@ -1,0 +1,12 @@
+[package]
+name = "varos-core"
+version = "0.1.0"
+edition = "2021"
+
+# PURE Rust core: data model + modeless interaction + a render-agnostic scene.
+# NO wgpu, NO winit, NO tauri here — that is the hard seam.
+# i_overlay = robust polygon boolean (fallback). flo_curves = curve-preserving bezier boolean (primary).
+# Both pure-Rust (no FFI), Apache/MIT → GPL-compatible, honor the hard seam.
+[dependencies]
+i_overlay = "7"
+flo_curves = "0.8"

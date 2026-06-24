@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "default capability (core API incl. invoke)",
+  "windows": ["*"],
+  "permissions": ["core:default"]
+}

@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varos — تجربة القلم (Pen Spike)</title>
+<style>
+  :root { --accent:#0c8ce9; --bg:#1e1f24; --panel:#26272e; --ink:#e9eaee; --muted:#9a9ca5; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; font-family:"Segoe UI",Tahoma,sans-serif; background:var(--bg); color:var(--ink); overflow:hidden; }
+  #app { display:flex; flex-direction:column; height:100%; }
+
+  /* top toolbar */
+  #bar { display:flex; align-items:center; gap:8px; padding:8px 12px; background:var(--panel); border-bottom:1px solid #000; }
+  #bar .logo { font-weight:700; letter-spacing:.5px; margin-inline-end:10px; }
+  #bar .logo b { color:var(--accent); }
+  .tool { display:flex; align-items:center; gap:7px; padding:7px 12px; border-radius:8px; cursor:pointer;
+          background:#30323b; border:1px solid transparent; color:var(--ink); font-size:13px; user-select:none; }
+  .tool:hover { background:#383a45; }
+  .tool.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .tool .k { font-size:11px; opacity:.7; background:rgba(0,0,0,.25); border-radius:4px; padding:1px 5px; }
+  .spacer { flex:1; }
+  .ghost { background:transparent; border:1px solid #43454f; color:var(--muted); padding:7px 12px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .ghost:hover { color:var(--ink); border-color:#5a5c66; }
+
+  /* canvas */
+  #stage { flex:1; position:relative; overflow:hidden; }
+  svg#canvas { position:absolute; inset:0; width:100%; height:100%; display:block; background:transparent; }
+  /* the artboard */
+  .artboard { fill:#ffffff; }
+
+  /* hint */
+  #hint { position:absolute; inset-block-end:14px; inset-inline-start:50%; transform:translateX(50%);
+          background:rgba(20,21,26,.92); border:1px solid #3a3c46; border-radius:10px; padding:9px 16px;
+          font-size:13px; color:var(--muted); pointer-events:none; white-space:nowrap; }
+  #hint b { color:var(--ink); }
+  #status { position:absolute; inset-block-start:12px; inset-inline-start:14px; font-size:12px; color:var(--muted); pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <span class="logo"><b>Varos</b> · تجربة القلم</span>
+    <div class="tool active" id="t-pen"    data-tool="pen">القلم <span class="k">P</span></div>
+    <div class="tool"        id="t-direct" data-tool="direct">السهم الأبيض <span class="k">A</span></div>
+    <span class="spacer"></span>
+    <button class="ghost" id="btn-clear">مسح الكل</button>
+  </div>
+  <div id="stage">
+    <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="status"></div>
+    <div id="hint"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Varos pen-feel spike — plain SVG, no build step.
+   Goal: prove the MODELESS Illustrator feel by hand:
+     - white arrow grabs any anchor of any path directly (no edit mode)
+     - dragging ONE handle moves only that handle (free, no Alt)
+   Data model = cubic bezier (Part A.10): anchor has on-curve P,
+   incoming handle (ix,iy) and outgoing handle (ox,oy), absolute coords.
+   ============================================================ */
+
+var ACCENT = "#0c8ce9";
+var HIT = 9;            // hit radius (px)
+var DRAG_THRESH = 4;    // px before a pen click becomes a smooth drag
+
+var svg    = document.getElementById("canvas");
+var hintEl = document.getElementById("hint");
+var statEl = document.getElementById("status");
+var SVGNS  = "http://www.w3.org/2000/svg";
+
+var state = {
+  tool: "pen",          // 'pen' | 'direct'
+  paths: [],            // [{ anchors:[anchor], closed:bool }]
+  active: null,         // index of path being drawn with the pen (live)
+  sel: null,            // { p, a } selected anchor (direct-select)
+  drag: null,           // { mode, p, a, ... } current drag op
+  mouse: { x: 0, y: 0, on: false }
+};
+
+/* anchor: corner = handles coincident with P; smooth = handles pulled out */
+function anchor(x, y, type) { return { x:x, y:y, ix:x, iy:y, ox:x, oy:y, type: type || "corner" }; }
+function dist(ax, ay, bx, by) { var dx = ax-bx, dy = ay-by; return Math.sqrt(dx*dx + dy*dy); }
+function toLocal(e) { var r = svg.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+
+/* ---------- geometry → SVG path string ---------- */
+function pathD(path) {
+  var a = path.anchors; if (!a.length) return "";
+  var d = "M " + a[0].x + " " + a[0].y + " ";
+  for (var i = 0; i < a.length - 1; i++) {
+    var s = a[i], e = a[i+1];
+    d += "C " + s.ox + " " + s.oy + " " + e.ix + " " + e.iy + " " + e.x + " " + e.y + " ";
+  }
+  if (path.closed && a.length > 1) {
+    var last = a[a.length-1], first = a[0];
+    d += "C " + last.ox + " " + last.oy + " " + first.ix + " " + first.iy + " " + first.x + " " + first.y + " Z";
+  }
+  return d;
+}
+
+/* ---------- rendering ---------- */
+function el(name, attrs) {
+  var n = document.createElementNS(SVGNS, name);
+  for (var k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+}
+
+function render() {
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  var r = svg.getBoundingClientRect();
+
+  // artboard (centered white sheet)
+  var aw = Math.min(900, r.width - 80), ah = Math.min(560, r.height - 60);
+  var ax = (r.width - aw) / 2, ay = (r.height - ah) / 2;
+  svg.appendChild(el("rect", { x:ax, y:ay, width:aw, height:ah, rx:4, class:"artboard",
+                               stroke:"#d9dbe0", "stroke-width":1 }));
+
+  // committed curves
+  state.paths.forEach(function (p) {
+    var d = pathD(p); if (!d) return;
+    svg.appendChild(el("path", { d:d, fill:"none", stroke:"#222", "stroke-width":1.6 }));
+  });
+
+  // pen rubber-band preview (from last live anchor to cursor)
+  if (state.tool === "pen" && state.active != null && state.mouse.on && !state.drag) {
+    var ap = state.paths[state.active], la = ap.anchors[ap.anchors.length-1];
+    if (la) svg.appendChild(el("line", { x1:la.x, y1:la.y, x2:state.mouse.x, y2:state.mouse.y,
+                                          stroke:ACCENT, "stroke-width":1, "stroke-dasharray":"4 3", opacity:.6 }));
+  }
+
+  // overlay: handles for the selected anchor (drawn first, under the points)
+  var selAnchor = currentSelAnchor();
+  if (selAnchor && selAnchor.type === "smooth") drawHandles(selAnchor);
+
+  // overlay: every anchor of every path (this is what makes it MODELESS —
+  // grabbable points are always visible, no mode to enter)
+  state.paths.forEach(function (p, pi) {
+    p.anchors.forEach(function (an, ai) {
+      var selected = state.sel && state.sel.p === pi && state.sel.a === ai;
+      drawAnchor(an, selected);
+    });
+  });
+
+  paintStatus();
+}
+
+function drawHandles(an) {
+  // in handle
+  if (an.ix !== an.x || an.iy !== an.y) {
+    svg.appendChild(el("line", { x1:an.x, y1:an.y, x2:an.ix, y2:an.iy, stroke:ACCENT, "stroke-width":1 }));
+    svg.appendChild(el("circle", { cx:an.ix, cy:an.iy, r:4, fill:ACCENT, stroke:"#fff", "stroke-width":1 }));
+  }
+  // out handle
+  if (an.ox !== an.x || an.oy !== an.y) {
+    svg.appendChild(el("line", { x1:an.x, y1:an.y, x2:an.ox, y2:an.oy, stroke:ACCENT, "stroke-width":1 }));
+    svg.appendChild(el("circle", { cx:an.ox, cy:an.oy, r:4, fill:ACCENT, stroke:"#fff", "stroke-width":1 }));
+  }
+}
+
+function drawAnchor(an, selected) {
+  var fill = selected ? ACCENT : "#ffffff";
+  if (an.type === "smooth") {
+    // circle = smooth
+    svg.appendChild(el("circle", { cx:an.x, cy:an.y, r:5, fill:fill, stroke:ACCENT, "stroke-width":1.6 }));
+  } else {
+    // square = corner
+    svg.appendChild(el("rect", { x:an.x-4.5, y:an.y-4.5, width:9, height:9, fill:fill, stroke:ACCENT, "stroke-width":1.6 }));
+  }
+}
+
+function currentSelAnchor() {
+  if (!state.sel) return null;
+  var p = state.paths[state.sel.p]; if (!p) return null;
+  return p.anchors[state.sel.a] || null;
+}
+
+/* ---------- hit testing ---------- */
+function hitHandle(x, y) {           // only the selected anchor exposes handles
+  var an = currentSelAnchor();
+  if (!an || an.type !== "smooth") return null;
+  if (dist(x, y, an.ox, an.oy) <= HIT) return { mode:"handle-out" };
+  if (dist(x, y, an.ix, an.iy) <= HIT) return { mode:"handle-in"  };
+  return null;
+}
+function hitAnchor(x, y) {           // any anchor of any path (modeless)
+  for (var pi = 0; pi < state.paths.length; pi++) {
+    var as = state.paths[pi].anchors;
+    for (var ai = 0; ai < as.length; ai++)
+      if (dist(x, y, as[ai].x, as[ai].y) <= HIT) return { p:pi, a:ai };
+  }
+  return null;
+}
+
+/* ============================================================
+   PEN TOOL
+   ============================================================ */
+function penDown(x, y) {
+  if (state.active == null) {
+    // start a new path
+    state.paths.push({ anchors: [anchor(x, y, "corner")], closed: false });
+    state.active = state.paths.length - 1;
+    state.sel = { p: state.active, a: 0 };
+    state.drag = { mode: "pen-new", p: state.active, a: 0, ox: x, oy: y };
+    return;
+  }
+  var p = state.paths[state.active];
+  // click near the start anchor → close the path
+  if (p.anchors.length >= 2 && dist(x, y, p.anchors[0].x, p.anchors[0].y) <= HIT) {
+    p.closed = true; state.active = null; state.sel = null; state.drag = null; return;
+  }
+  // otherwise add a new corner anchor (drag will pull it into a smooth one)
+  p.anchors.push(anchor(x, y, "corner"));
+  var idx = p.anchors.length - 1;
+  state.sel = { p: state.active, a: idx };
+  state.drag = { mode: "pen-new", p: state.active, a: idx, ox: x, oy: y };
+}
+
+function penMoveDrag(x, y) {
+  // dragging right after placing an anchor → pull symmetric handles (smooth)
+  var p = state.paths[state.drag.p], an = p.anchors[state.drag.a];
+  if (dist(x, y, state.drag.ox, state.drag.oy) < DRAG_THRESH) return;
+  an.type = "smooth";
+  an.ox = x;  an.oy = y;                       // outgoing handle follows cursor
+  an.ix = 2 * an.x - x;  an.iy = 2 * an.y - y; // incoming handle mirrors (symmetric)
+}
+
+/* ============================================================
+   DIRECT SELECT (white arrow) — the modeless tool
+   ============================================================ */
+function directDown(x, y) {
+  // 1) a visible handle of the selected anchor? → drag ONLY that handle
+  var h = hitHandle(x, y);
+  if (h) { state.drag = { mode: h.mode, p: state.sel.p, a: state.sel.a }; return; }
+  // 2) any anchor of any path? → select it and drag it (no mode to enter)
+  var a = hitAnchor(x, y);
+  if (a) { state.sel = a; state.drag = { mode: "anchor", p: a.p, a: a.a }; return; }
+  // 3) empty → deselect
+  state.sel = null; state.drag = null;
+}
+
+function directMoveDrag(x, y) {
+  var d = state.drag, p = state.paths[d.p], an = p.anchors[d.a];
+  if (d.mode === "anchor") {
+    var dx = x - an.x, dy = y - an.y;          // move P + ride the handles along
+    an.x += dx; an.y += dy; an.ix += dx; an.iy += dy; an.ox += dx; an.oy += dy;
+  } else if (d.mode === "handle-out") {
+    an.ox = x; an.oy = y;                       // ★ only this handle — no coupling
+  } else if (d.mode === "handle-in") {
+    an.ix = x; an.iy = y;                       // ★ only this handle — no coupling
+  }
+}
+
+/* ============================================================
+   POINTER PLUMBING
+   ============================================================ */
+svg.addEventListener("pointerdown", function (e) {
+  var l = toLocal(e); svg.setPointerCapture && svg.setPointerCapture(e.pointerId);
+  if (state.tool === "pen") penDown(l.x, l.y); else directDown(l.x, l.y);
+  render();
+});
+window.addEventListener("pointermove", function (e) {
+  var l = toLocal(e); state.mouse.x = l.x; state.mouse.y = l.y;
+  if (state.drag) {
+    if (state.drag.mode === "pen-new") penMoveDrag(l.x, l.y);
+    else directMoveDrag(l.x, l.y);
+    render();
+  } else if (state.tool === "pen" && state.active != null) {
+    render(); // live rubber-band
+  }
+});
+window.addEventListener("pointerup", function () { state.drag = null; render(); });
+
+svg.addEventListener("pointerenter", function () { state.mouse.on = true; });
+svg.addEventListener("pointerleave", function () { state.mouse.on = false; render(); });
+
+/* ---------- tools / keyboard ---------- */
+function setTool(t) {
+  state.tool = t;
+  if (t !== "pen") state.active = null;        // finish any live pen path (selection persists)
+  document.getElementById("t-pen").classList.toggle("active", t === "pen");
+  document.getElementById("t-direct").classList.toggle("active", t === "direct");
+  render();
+}
+document.getElementById("t-pen").onclick    = function () { setTool("pen"); };
+document.getElementById("t-direct").onclick = function () { setTool("direct"); };
+document.getElementById("btn-clear").onclick = function () {
+  state.paths = []; state.active = null; state.sel = null; state.drag = null; render();
+};
+window.addEventListener("keydown", function (e) {
+  if (e.key === "p" || e.key === "P") setTool("pen");
+  else if (e.key === "a" || e.key === "A") setTool("direct");
+  else if (e.key === "Enter" || e.key === "Escape") { state.active = null; render(); }
+});
+
+/* ---------- status + hint text (Arabic) ---------- */
+function paintStatus() {
+  statEl.textContent = state.tool === "pen" ? "الأداة: القلم" : "الأداة: السهم الأبيض";
+  if (state.tool === "pen")
+    hintEl.innerHTML = "<b>القلم:</b> دوس = نقطة زاوية · دوس واسحب = نقطة ناعمة بإيدين · دوس على أول نقطة = اقفل · Enter = خلّص";
+  else
+    hintEl.innerHTML = "<b>السهم الأبيض:</b> امسك أي نقطة على طول (من غير دخول) · النقطة المختارة بتظهر إيديها · اسحب إيد واحدة — التانية متتحركش";
+}
+
+/* expose for inspection / demo */
+window.VAROS = { state: state, render: render, anchor: anchor };
+
+window.addEventListener("resize", render);
+render();
+</script>
+</body>
+</html>

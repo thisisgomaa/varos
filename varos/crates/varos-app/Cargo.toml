@@ -1,0 +1,16 @@
+[package]
+name = "varos-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "varos"
+path = "src/main.rs"
+
+# The desktop shell (winit) + glue. Later: Tauri drops in here behind the same seam.
+[dependencies]
+varos-core = { path = "../varos-core" }
+varos-render-wgpu = { path = "../varos-render-wgpu" }
+winit = "0.29"
+pollster = "0.3"
+image = { version = "0.25", default-features = false, features = ["png"] }

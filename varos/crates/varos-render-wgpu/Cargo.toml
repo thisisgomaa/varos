@@ -1,0 +1,11 @@
+[package]
+name = "varos-render-wgpu"
+version = "0.1.0"
+edition = "2021"
+
+# Consumes varos-core's render-agnostic Scene and draws it on the GPU.
+# Depends on the core, NEVER the reverse. No winit dep (takes a raw window handle target).
+[dependencies]
+varos-core = { path = "../varos-core" }
+wgpu = "0.19"
+bytemuck = { version = "1", features = ["derive"] }

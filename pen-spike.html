@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varos — تجربة القلم</title>
+<style>
+  :root{ --accent:#0c8ce9; --bg:#1e1e1e; --grid:#2a2a2a; --ink:#e8e8e8; --green:#34c759; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; overflow:hidden; background:var(--bg);
+             font-family:"Segoe UI","Cairo",system-ui,sans-serif; color:var(--ink); user-select:none; }
+  #toolbar{ position:fixed; top:0; left:0; right:0; height:52px; display:flex; align-items:center;
+            gap:6px; padding:0 14px; background:#252525; border-bottom:1px solid #333; z-index:10; }
+  #toolbar .tool{ min-width:38px; height:36px; padding:0 8px; border:1px solid #3a3a3a; background:#2e2e2e;
+                  color:var(--ink); border-radius:7px; font-size:14px; cursor:pointer; }
+  #toolbar .tool.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  #toolbar .tool:disabled{ opacity:.4; cursor:default; }
+  #toolbar .sep{ width:1px; height:28px; background:#3a3a3a; margin:0 4px; }
+  #toolbar .hint{ margin-inline-start:10px; font-size:12px; color:#9a9a9a; white-space:nowrap;
+                  overflow:hidden; text-overflow:ellipsis; }
+  #toolbar .hint b{ color:var(--accent); }
+  #stage{ position:fixed; top:52px; left:0; right:0; bottom:0; }
+  svg{ width:100%; height:100%; display:block; touch-action:none;
+       background-image:radial-gradient(var(--grid) 1px, transparent 1px); background-size:24px 24px; }
+  .pathline{ fill:none; stroke:var(--accent); stroke-width:2; vector-effect:non-scaling-stroke; }
+  .pathline.closed{ fill:rgba(12,140,233,.12); }
+  .pathhit{ fill:none; stroke:transparent; stroke-width:14; }
+  .bbox{ fill:none; stroke:#7fbcf0; stroke-width:1; stroke-dasharray:4 3; opacity:.8; }
+  .preview{ fill:none; stroke:var(--accent); stroke-width:1.5; stroke-dasharray:4 4; opacity:.7; }
+  .marquee{ fill:rgba(12,140,233,.12); stroke:var(--accent); stroke-width:1; stroke-dasharray:3 2; }
+  .hline{ stroke:#7fbcf0; stroke-width:1; pointer-events:none; }
+  .hdot{ fill:#7fbcf0; stroke:#fff; stroke-width:1; }
+  .anchor{ stroke:var(--accent); stroke-width:1.5; fill:#fff; }
+  .anchor.sel{ fill:var(--accent); }
+  .anchor.close{ stroke:var(--green); stroke-width:2.5; }
+  .glyph{ fill:#fff; font-size:13px; font-family:monospace; pointer-events:none; }
+  .hit{ fill:transparent; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <button class="tool" id="btnV"  title="سهم أسود — تحريك الشكل (V)">▲</button>
+  <button class="tool" id="btnDir" title="السهم الأبيض — النقط (A)">⇲</button>
+  <button class="tool active" id="btnPen" title="القلم (P)">✎</button>
+  <span class="sep"></span>
+  <button class="tool" id="btnRect" title="مستطيل (M)">▭</button>
+  <button class="tool" id="btnEll"  title="دائرة (L)">◯</button>
+  <button class="tool" id="btnTri"  title="مثلث">△</button>
+  <button class="tool" id="btnPoly" title="مضلّع">⬠</button>
+  <span class="sep"></span>
+  <button class="tool" id="btnDel"  title="مسح المحدد (Delete)">🗑</button>
+  <button class="tool" id="btnUndo" title="تراجع (Ctrl+Z)">↶</button>
+  <button class="tool" id="btnRedo" title="إعادة (Ctrl+Shift+Z)">↷</button>
+  <span class="hint" id="hint"></span>
+</div>
+<div id="stage"><svg id="svg"></svg></div>
+
+<script>
+"use strict";
+/* ===================== math ===================== */
+const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y});
+const add=(a,b)=>({x:a.x+b.x,y:a.y+b.y});
+const sca=(a,k)=>({x:a.x*k,y:a.y*k});
+const mirror=(p,q)=>({x:2*p.x-q.x,y:2*p.y-q.y});
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const len=(v)=>Math.hypot(v.x,v.y);
+const norm=(v)=>{const m=len(v)||1;return{x:v.x/m,y:v.y/m};};
+const cp=(p)=>p?{x:p.x,y:p.y}:null;
+function snap45(v){ const a=Math.atan2(v.y,v.x), s=Math.round(a/(Math.PI/4))*(Math.PI/4), m=len(v);
+  return {x:Math.cos(s)*m, y:Math.sin(s)*m}; }
+function cubicAt(P0,P1,P2,P3,t){ const u=1-t;
+  return { x:u*u*u*P0.x+3*u*u*t*P1.x+3*u*t*t*P2.x+t*t*t*P3.x,
+           y:u*u*u*P0.y+3*u*u*t*P1.y+3*u*t*t*P2.y+t*t*t*P3.y }; }
+function splitCubic(P0,P1,P2,P3,t){ const L=(a,b)=>({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
+  const a=L(P0,P1),b=L(P1,P2),c=L(P2,P3),d=L(a,b),e=L(b,c),f=L(d,e);
+  return { aOut:a, newIn:d, mid:f, newOut:e, bIn:c }; }
+const SVGNS="http://www.w3.org/2000/svg";
+
+/* ===================== model / state ===================== */
+const doc = { paths: [] };
+let tool='pen', activePath=null, drag=null, gestureTool=null;
+let cursor=null, hoverPath=null, penGlyph='';
+const selection=new Set(), objectSel=new Set();
+let marquee=null, idc=1; const nid=()=>idc++;
+const undoStack=[], redoStack=[]; let pending=null;
+
+const svg=document.getElementById('svg');
+const DRAG_THRESH=4, CLOSE_R=10, EDGE_R=8, HIT_ANCHOR=11, HIT_HANDLE=10, HANDLE_LEN=45;
+const isShape=(t)=>t==='rect'||t==='ellipse'||t==='triangle'||t==='polygon';
+/* professional cursors (from a Windows set, recoloured white+outline for the dark canvas) */
+const CUR={
+  pen:'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABiSURBVFhH7dBBCsAgDERRr5H7H1SZRUCCpqV0ks08KLiw/MExREREPjKzefriPQqPRSUDbnGgD8jiQB3wFAfagLdxygDFM4rHf3/RGodsQEn8NoAeh9Y47C/g57K4a4lKpwWx47EwJRZLUQAAAABJRU5ErkJggg==") 6 25, crosshair',
+  cross:'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABjSURBVFhH7ZBBCsAwCATzDf//0AYvPQzGpMUcEnZgT4o72Jo4ETN7onBvG15GJCABCUigRMCPrIZwnoW9L9HhakoFRt/IuEvgD1OB1RDOs7D3MyMB7m1DAhKQgAS8LAr3xBF0PRkzjqNSH64AAAAASUVORK5CYII=") 15 16, crosshair',
+  arrow:'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAB1SURBVFhH7dJBCoAwDETRXiP3P6gyYCAU2lrJRMF54MbNfNq2djGzwz//VyIOQ3mID/fKIkYBUBIxCwD6lawCHC3ibgBQInYCIP1KdgNcWsTTAFDAvwNeeYQ+mjYOqwDKaDQLoI1Go4CSceiPmHrcIiIiX3QCs3LOt1+QpKsAAAAASUVORK5CYII=") 3 3, default',
+  move:'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAC1SURBVFhH7ZJBCsQwDAP7jfz/oV1yEHSFLDu7SaElAzkptia0x7F5Iq21Ux2+twSUMbdIROVgqURWDpZJVMrBFpgigG95PVV4blgoKnQylYx7JNGSDpao3GWdkoQr71ReqTKQSrjhWUwVyF6seJfAL6QCTgK5uuMygJx7v3BLMKxyl3VK5SCScK+sZNxjuS6MFkfw3HC5YlSA5/9mC1T/g2nfXJFJLC0HkcQt5QBlfPje5hF8AH1dOwzzZswxAAAAAElFTkSuQmCC") 15 16, move'
+};
+
+function toSvg(e){ const r=svg.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
+const pathOf=(a)=>doc.paths.find(p=>p.anchors.includes(a));
+function clonePath(p){ return { id:nid(), closed:p.closed,
+  anchors:p.anchors.map(a=>({id:nid(),p:cp(a.p),in:cp(a.in),out:cp(a.out),type:a.type})) }; }
+
+/* ===================== history ===================== */
+const snap=()=>JSON.stringify(doc.paths);
+function applySnap(s){ doc.paths=JSON.parse(s); selection.clear(); objectSel.clear(); activePath=null; drag=null; marquee=null; }
+function beginChange(){ pending=snap(); }
+function commitChange(){ if(pending!==null && pending!==snap()){ undoStack.push(pending); if(undoStack.length>120)undoStack.shift(); redoStack.length=0; } pending=null; updateButtons(); }
+function undo(){ if(!undoStack.length)return; redoStack.push(snap()); applySnap(undoStack.pop()); render(); updateButtons(); }
+function redo(){ if(!redoStack.length)return; undoStack.push(snap()); applySnap(redoStack.pop()); render(); updateButtons(); }
+function updateButtons(){ document.getElementById('btnUndo').disabled=!undoStack.length;
+  document.getElementById('btnRedo').disabled=!redoStack.length;
+  document.getElementById('btnDel').disabled=!(selection.size||objectSel.size); }
+
+/* ===================== geometry ===================== */
+function segPoints(path,i){ const a=path.anchors,n=a.length,A=a[i],B=a[(i+1)%n];
+  return {A,B,P0:A.p,P1:A.out||A.p,P2:B.in||B.p,P3:B.p}; }
+function nearestSeg(path,pt){ const a=path.anchors,n=a.length; if(n<2) return {dist:Infinity};
+  const segs=path.closed?n:n-1; let best={dist:Infinity};
+  for(let i=0;i<segs;i++){ const s=segPoints(path,i);
+    for(let k=0;k<=24;k++){ const t=k/24, q=cubicAt(s.P0,s.P1,s.P2,s.P3,t), d=dist(q,pt);
+      if(d<best.dist) best={dist:d,i,t,...s,point:q}; } }
+  return best; }
+function bbox(path){ let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  for(const a of path.anchors) for(const q of [a.p,a.in,a.out]){ if(!q)continue;
+    x0=Math.min(x0,q.x);y0=Math.min(y0,q.y);x1=Math.max(x1,q.x);y1=Math.max(y1,q.y); }
+  return {x0,y0,x1,y1}; }
+
+/* ===================== rendering ===================== */
+function segD(A,B){ const c1=A.out||A.p,c2=B.in||B.p; return ` C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${B.p.x} ${B.p.y}`; }
+function buildD(path){ const a=path.anchors; if(!a.length) return '';
+  let d=`M ${a[0].p.x} ${a[0].p.y}`;
+  for(let i=0;i<a.length-1;i++) d+=segD(a[i],a[i+1]);
+  if(path.closed&&a.length>1) d+=segD(a[a.length-1],a[0])+' Z';
+  return d; }
+function el(tag,at){ const n=document.createElementNS(SVGNS,tag); for(const k in at) n.setAttribute(k,at[k]); return n; }
+function pathShown(p){ return p===activePath || p===hoverPath || objectSel.has(p) || p.anchors.some(a=>selection.has(a)); }
+// which handle sides to reveal: selected anchors + the neighbour handles bordering them; plus all of the active pen path
+function handleSides(){ const set=new Set();
+  if(tool==='pen' && activePath) for(const a of activePath.anchors){ if(a.in)set.add(a.id+':in'); if(a.out)set.add(a.id+':out'); }
+  for(const p of doc.paths){ const A=p.anchors,n=A.length; A.forEach((a,i)=>{ if(!selection.has(a))return;
+    if(a.in)set.add(a.id+':in'); if(a.out)set.add(a.id+':out');
+    const prev=i>0?A[i-1]:(p.closed?A[n-1]:null), next=i<n-1?A[i+1]:(p.closed?A[0]:null);
+    if(prev&&prev.out)set.add(prev.id+':out'); if(next&&next.in)set.add(next.id+':in'); }); }
+  return set; }
+
+function render(){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  for(const path of doc.paths){ const d=buildD(path); if(!d) continue;
+    svg.appendChild(el('path',{d,class:'pathline'+(path.closed?' closed':'')}));
+    const hit=el('path',{d,class:'pathhit'}); hit.dataset.kind='path'; hit.__path=path; svg.appendChild(hit); }
+  if(tool==='object') for(const p of objectSel){ if(!p.anchors.length) continue; const b=bbox(p);
+    svg.appendChild(el('rect',{x:b.x0-3,y:b.y0-3,width:b.x1-b.x0+6,height:b.y1-b.y0+6,class:'bbox'})); }
+  if(tool==='pen' && activePath && cursor && !drag){ const last=activePath.anchors[activePath.anchors.length-1];
+    if(last){ const c1=last.out||last.p;
+      svg.appendChild(el('path',{class:'preview',d:`M ${last.p.x} ${last.p.y} C ${c1.x} ${c1.y} ${cursor.x} ${cursor.y} ${cursor.x} ${cursor.y}`})); } }
+  if(marquee){ const x=Math.min(marquee.start.x,marquee.cur.x),y=Math.min(marquee.start.y,marquee.cur.y);
+    svg.appendChild(el('rect',{x,y,width:Math.abs(marquee.cur.x-marquee.start.x),height:Math.abs(marquee.cur.y-marquee.start.y),class:'marquee'})); }
+
+  if(tool!=='object'){
+    const sides=handleSides(), dots=[];
+    for(const path of doc.paths){ if(!pathShown(path)) continue;
+      path.anchors.forEach((a,i)=>{
+        const sel=selection.has(a);
+        if(sides.has(a.id+':in')&&a.in){ svg.appendChild(el('line',{x1:a.p.x,y1:a.p.y,x2:a.in.x,y2:a.in.y,class:'hline'})); dots.push({a,side:'in',pt:a.in}); }
+        if(sides.has(a.id+':out')&&a.out){ svg.appendChild(el('line',{x1:a.p.x,y1:a.p.y,x2:a.out.x,y2:a.out.y,class:'hline'})); dots.push({a,side:'out',pt:a.out}); }
+        const isClose=(tool==='pen'&&path===activePath&&i===0&&activePath.anchors.length>1&&cursor&&dist(cursor,a.p)<=CLOSE_R);
+        const cls='anchor'+(sel?' sel':'')+(isClose?' close':'');
+        svg.appendChild(a.type==='smooth'?el('circle',{cx:a.p.x,cy:a.p.y,r:5,class:cls})
+                                         :el('rect',{x:a.p.x-4.5,y:a.p.y-4.5,width:9,height:9,class:cls}));
+      });
+    }
+    for(const path of doc.paths){ if(!pathShown(path)) continue; path.anchors.forEach(a=>{
+      const h=el('circle',{cx:a.p.x,cy:a.p.y,r:HIT_ANCHOR,class:'hit'}); h.dataset.kind='anchor'; h.__anchor=a; h.__path=path; svg.appendChild(h); }); }
+    for(const h of dots) svg.appendChild(el('circle',{cx:h.pt.x,cy:h.pt.y,r:4,class:'hdot'}));
+    for(const h of dots){ const c=el('circle',{cx:h.pt.x,cy:h.pt.y,r:HIT_HANDLE,class:'hit'});
+      c.dataset.kind='handle'; c.dataset.side=h.side; c.__anchor=h.a; svg.appendChild(c); }
+  }
+  if(tool==='pen' && cursor && penGlyph && !drag){ const g=el('text',{x:cursor.x+12,y:cursor.y-9,class:'glyph'}); g.textContent=penGlyph; svg.appendChild(g); }
+}
+
+/* ===================== shared edit ops ===================== */
+function tangentDir(path,a){ const A=path.anchors,n=A.length,i=A.indexOf(a);
+  const prev=i>0?A[i-1]:(path.closed?A[n-1]:null), next=i<n-1?A[i+1]:(path.closed?A[0]:null);
+  if(prev&&next) return norm(sub(next.p,prev.p)); if(next) return norm(sub(next.p,a.p));
+  if(prev) return norm(sub(a.p,prev.p)); return {x:1,y:0}; }
+function toggleType(path,a){ if(a.type==='smooth'){ a.type='corner'; a.in=null; a.out=null; }
+  else{ const d=tangentDir(path,a); a.type='smooth';
+        a.out={x:a.p.x+d.x*HANDLE_LEN,y:a.p.y+d.y*HANDLE_LEN}; a.in={x:a.p.x-d.x*HANDLE_LEN,y:a.p.y-d.y*HANDLE_LEN}; } }
+function addAnchorAt(path,ns){ const a=path.anchors;
+  if(!ns.A.out && !ns.B.in){ a.splice(ns.i+1,0,{id:nid(),p:cp(ns.point),in:null,out:null,type:'corner'}); return; }
+  const s=splitCubic(ns.P0,ns.P1,ns.P2,ns.P3,ns.t);
+  ns.A.out=s.aOut; ns.B.in=s.bIn;
+  a.splice(ns.i+1,0,{id:nid(),p:s.mid,in:s.newIn,out:s.newOut,type:'smooth'}); }
+function deleteAnchor(path,a){ const i=path.anchors.indexOf(a); if(i<0) return;
+  path.anchors.splice(i,1); selection.delete(a);
+  if(path.anchors.length<2) path.closed=false;
+  if(path.anchors.length===0){ doc.paths=doc.paths.filter(p=>p!==path); if(activePath===path) activePath=null; } }
+function startSegDrag(path,ns,pt,e){ drag={kind:'segment',seg:ns,path,down:pt,
+    a_out0:cp(ns.A.out),b_in0:cp(ns.B.in),ap0:cp(ns.A.p),bp0:cp(ns.B.p),straight:(!ns.A.out&&!ns.B.in)};
+  svg.setPointerCapture(e.pointerId); }
+
+/* ===================== PEN ===================== */
+function epStatus(a){ const p=pathOf(a); if(!p) return null; if(p.closed) return {path:p,isEnd:false};
+  const i=p.anchors.indexOf(a),n=p.anchors.length; return {path:p,i,n,isEnd:(i===0||i===n-1)}; }
+function isEditable(path){ return path===activePath || objectSel.has(path) || path.anchors.some(a=>selection.has(a)); }
+function reversePath(p){ p.anchors.reverse(); for(const a of p.anchors){ const t=a.in; a.in=a.out; a.out=t; } }
+function selectWhole(p){ selection.clear(); p.anchors.forEach(a=>selection.add(a)); }
+function resumePath(p,end){ if(p.anchors[p.anchors.length-1]!==end) reversePath(p); activePath=p; selectWhole(p); }
+function joinPaths(active,other,end,pt,e){ if(other.anchors[0]!==end) reversePath(other);
+  other.anchors.forEach(a=>active.anchors.push(a)); doc.paths=doc.paths.filter(p=>p!==other); selectWhole(active);
+  drag={kind:'pen',anchor:end,down:pt}; svg.setPointerCapture(e.pointerId); }
+
+function penDown(e){
+  const pt=toSvg(e), t=e.target, kind=t.dataset&&t.dataset.kind;
+  if(kind==='anchor'){
+    const a=t.__anchor, st=epStatus(a), path=st?st.path:pathOf(a);
+    const tip=activePath?activePath.anchors[activePath.anchors.length-1]:null;
+    if(st && st.isEnd){
+      if(activePath && path===activePath){
+        if(a!==tip){ activePath.closed=true; drag={kind:'penClose',anchor:a,down:pt}; svg.setPointerCapture(e.pointerId); render(); return; }
+        render(); return;
+      }
+      if(activePath){ joinPaths(activePath,path,a,pt,e); render(); return; }
+      resumePath(path,a); render(); return;
+    }
+    if(isEditable(path)) deleteAnchor(path,a);
+    render(); return;
+  }
+  if(kind==='path' && isEditable(t.__path)){
+    const ns=nearestSeg(t.__path,pt); if(ns.dist<=EDGE_R){ addAnchorAt(t.__path,ns);
+      const na=t.__path.anchors[ns.i+1]; if(na) selection.add(na); render(); return; } }
+  if(!activePath){ activePath={id:nid(),anchors:[],closed:false}; doc.paths.push(activePath); selection.clear(); }
+  const a={id:nid(),p:pt,in:null,out:null,type:'corner'}; activePath.anchors.push(a); selection.add(a);
+  drag={kind:'pen',anchor:a,down:pt}; svg.setPointerCapture(e.pointerId); render();
+}
+function penMove(e){ cursor=toSvg(e);
+  if(drag&&(drag.kind==='pen'||drag.kind==='penClose')&&dist(cursor,drag.down)>=DRAG_THRESH){
+    let q=cursor; if(e.shiftKey) q=add(drag.anchor.p,snap45(sub(cursor,drag.anchor.p)));
+    if(e.altKey) drag.broken=true;
+    drag.anchor.out=q;
+    if(drag.broken){ drag.anchor.type='corner'; }
+    else { drag.anchor.type='smooth'; drag.anchor.in=mirror(drag.anchor.p,q); } }
+  render();
+}
+function penUp(){ if(!drag) return; if(drag.kind==='penClose') activePath=null; drag=null; render(); }
+
+/* ===================== CONVERT (Pen + Alt) ===================== */
+function convDown(e){ const t=e.target,kind=t.dataset&&t.dataset.kind,pt=toSvg(e);
+  if(kind==='handle'){ const a=t.__anchor, side=t.dataset.side; if(a.type==='smooth') a.type='corner';
+    selection.add(a); drag={kind:'handle',anchor:a,side,couple:false,grab:sub(a[side],pt)}; svg.setPointerCapture(e.pointerId); render(); return; }
+  if(kind==='anchor'){ const a=t.__anchor, path=pathOf(a); selection.clear(); selection.add(a);
+    if(a.type==='smooth'){ toggleType(path,a); render(); return; }
+    drag={kind:'convPull',anchor:a,down:pt}; svg.setPointerCapture(e.pointerId); render(); return; }
+  if(kind==='path'){ const ns=nearestSeg(t.__path,pt); if(ns.dist<=EDGE_R) startSegDrag(t.__path,ns,pt,e); render(); return; }
+  render();
+}
+function convMove(e){ if(drag&&drag.kind==='convPull'){ const pt=toSvg(e);
+    if(dist(pt,drag.down)>=DRAG_THRESH){ let q=pt; if(e.shiftKey) q=add(drag.anchor.p,snap45(sub(pt,drag.anchor.p)));
+      drag.anchor.type='smooth'; drag.anchor.out=q; drag.anchor.in=mirror(drag.anchor.p,q); render(); } return; }
+  dirMove(e); }
+
+/* ===================== DIRECT SELECTION ===================== */
+function beginAnchorDrag(pt){ drag={kind:'anchors',start:pt,items:[...selection].map(a=>({a,p0:cp(a.p),in0:cp(a.in),out0:cp(a.out)}))}; }
+function dirDown(e){ const t=e.target,kind=t.dataset&&t.dataset.kind,pt=toSvg(e);
+  if(e.altKey && (kind==='anchor'||kind==='path')){          // Alt → duplicate, but only once a real drag starts
+    const src=kind==='path'?t.__path:pathOf(t.__anchor);
+    if(kind==='anchor'){ if(!selection.has(t.__anchor)){ if(!e.shiftKey) selection.clear(); selection.add(t.__anchor); } }
+    else { if(!e.shiftKey) selection.clear(); src.anchors.forEach(a=>selection.add(a)); }
+    drag={kind:'dupPending',src,down:pt}; svg.setPointerCapture(e.pointerId); render(); return; }
+  if(kind==='handle'){ const a=t.__anchor, side=t.dataset.side, opp=side==='out'?'in':'out';
+    let couple=false;                                   // couple only if the handles are CURRENTLY a smooth (opposite) pair
+    if(!e.altKey && a.in && a.out){ const vi=sub(a.in,a.p), vo=sub(a.out,a.p);
+      let d=Math.abs(Math.atan2(vi.y,vi.x)-Math.atan2(vo.y,vo.x)); if(d>Math.PI)d=2*Math.PI-d;
+      couple = d>Math.PI-0.15; }                        // ~within 8.6° of opposite = real smooth point
+    if(e.altKey && a.type==='smooth') a.type='corner';  // Alt = break
+    selection.add(a); drag={kind:'handle',anchor:a,side,couple,oppLen:a[opp]?dist(a.p,a[opp]):0,grab:sub(a[side],pt)};
+    svg.setPointerCapture(e.pointerId); render(); return; }
+  if(kind==='anchor'){ const a=t.__anchor;
+    if(e.shiftKey){ selection.has(a)?selection.delete(a):selection.add(a); }
+    else if(!selection.has(a)){ selection.clear(); selection.add(a); }
+    beginAnchorDrag(pt); svg.setPointerCapture(e.pointerId); render(); return; }
+  if(kind==='path'){ const ns=nearestSeg(t.__path,pt);
+    if(ns.dist<=EDGE_R){ startSegDrag(t.__path,ns,pt,e); render(); return; }
+    if(!e.shiftKey) selection.clear(); t.__path.anchors.forEach(a=>selection.add(a));
+    beginAnchorDrag(pt); svg.setPointerCapture(e.pointerId); render(); return; }
+  if(!e.shiftKey) selection.clear();
+  marquee={start:pt,cur:pt,base:new Set(selection)}; svg.setPointerCapture(e.pointerId); render();
+}
+function dirMove(e){ if(!drag&&!marquee) return; const pt=toSvg(e);
+  if(marquee){ marquee.cur=pt; const x0=Math.min(marquee.start.x,pt.x),y0=Math.min(marquee.start.y,pt.y),
+      x1=Math.max(marquee.start.x,pt.x),y1=Math.max(marquee.start.y,pt.y);
+    selection.clear(); marquee.base.forEach(a=>selection.add(a));
+    for(const p of doc.paths) for(const a of p.anchors) if(a.p.x>=x0&&a.p.x<=x1&&a.p.y>=y0&&a.p.y<=y1) selection.add(a);
+    render(); return; }
+  if(drag.kind==='dupPending'){ if(dist(pt,drag.down)<DRAG_THRESH) return;     // duplicate only after a real drag
+    const clone=clonePath(drag.src); doc.paths.push(clone);
+    selection.clear(); clone.anchors.forEach(a=>selection.add(a)); beginAnchorDrag(drag.down); }
+  if(drag.kind==='handle'){ let q=add(pt,drag.grab||{x:0,y:0});
+    if(e.shiftKey) q=add(drag.anchor.p,snap45(sub(q,drag.anchor.p)));
+    const a=drag.anchor,side=drag.side; if(side==='out') a.out=q; else a.in=q;
+    if(drag.couple){ const opp=side==='out'?'in':'out';
+      if(a[opp]) a[opp]=add(a.p,sca(norm(sub(a.p,q)),drag.oppLen)); }   // keep the opposite collinear
+    render(); return; }
+  if(drag.kind==='anchors'){ let dx=pt.x-drag.start.x,dy=pt.y-drag.start.y;
+    if(e.shiftKey){ const s=snap45({x:dx,y:dy}); dx=s.x;dy=s.y; }
+    for(const it of drag.items){ it.a.p={x:it.p0.x+dx,y:it.p0.y+dy};
+      if(it.in0) it.a.in={x:it.in0.x+dx,y:it.in0.y+dy}; if(it.out0) it.a.out={x:it.out0.x+dx,y:it.out0.y+dy}; }
+    render(); return; }
+  if(drag.kind==='segment'){ const d={x:pt.x-drag.down.x,y:pt.y-drag.down.y},s=drag.seg;
+    if(drag.straight){ s.A.p=add(drag.ap0,d); s.B.p=add(drag.bp0,d); }
+    else{ s.A.out=add(drag.a_out0||drag.ap0,d); s.B.in=add(drag.b_in0||drag.bp0,d); }
+    render(); return; }
+}
+function dirUp(){ if(marquee) marquee=null; if(drag) drag=null; render(); }
+
+/* ===================== BLACK ARROW (V) ===================== */
+function objDown(e){ const t=e.target,kind=t.dataset&&t.dataset.kind,pt=toSvg(e);
+  if(kind==='path'||kind==='anchor'){ const p=kind==='path'?t.__path:pathOf(t.__anchor);
+    if(e.altKey){ if(!e.shiftKey) objectSel.clear(); objectSel.add(p);
+      drag={kind:'objDupPending',src:p,down:pt}; svg.setPointerCapture(e.pointerId); render(); return; }
+    if(!e.shiftKey && !objectSel.has(p)) objectSel.clear(); objectSel.add(p);
+    const base=[]; for(const pp of objectSel) pp.anchors.forEach(a=>base.push({a,p0:cp(a.p),in0:cp(a.in),out0:cp(a.out)}));
+    drag={kind:'object',down:pt,base}; svg.setPointerCapture(e.pointerId); render(); return; }
+  objectSel.clear(); render();
+}
+function objMove(e){ if(!drag) return; const pt=toSvg(e);
+  if(drag.kind==='objDupPending'){ if(dist(pt,drag.down)<DRAG_THRESH) return;
+    const cl=clonePath(drag.src); doc.paths.push(cl); objectSel.clear(); objectSel.add(cl);
+    drag={kind:'object',down:drag.down,base:cl.anchors.map(a=>({a,p0:cp(a.p),in0:cp(a.in),out0:cp(a.out)}))}; }
+  if(drag.kind!=='object') return; let dx=pt.x-drag.down.x,dy=pt.y-drag.down.y;
+  if(e.shiftKey){ const s=snap45({x:dx,y:dy}); dx=s.x;dy=s.y; }
+  for(const it of drag.base){ it.a.p={x:it.p0.x+dx,y:it.p0.y+dy};
+    if(it.in0) it.a.in={x:it.in0.x+dx,y:it.in0.y+dy}; if(it.out0) it.a.out={x:it.out0.x+dx,y:it.out0.y+dy}; }
+  render();
+}
+
+/* ===================== cursors ===================== */
+function setCursor(kind,a,path,e){ penGlyph='';
+  const T=(tool==='pen'&&e.altKey)?'convert':((e.ctrlKey||e.metaKey)?'direct':tool);
+  if(isShape(T)){ svg.style.cursor=CUR.cross; return; }
+  let c=CUR.arrow;
+  if(T==='pen'){ c=CUR.pen;
+    if(kind==='anchor'){ const st=epStatus(a);
+      if(st&&st.isEnd){ const tip=activePath?activePath.anchors[activePath.anchors.length-1]:null;
+        penGlyph=(activePath&&path===activePath&&a!==tip)?'○':'/'; }
+      else if(isEditable(path)){ penGlyph='–'; } }
+    else if(kind==='path'&&isEditable(path)){ penGlyph='+'; }
+    else if(!activePath) penGlyph='×'; }
+  else if(T==='convert'){ c=CUR.pen; penGlyph='∧'; }
+  else if(T==='direct') c=(kind==='handle'||kind==='anchor'||kind==='path')?CUR.move:CUR.arrow;
+  else if(T==='object') c=(kind==='path'||kind==='anchor')?CUR.move:CUR.arrow;
+  svg.style.cursor=c;
+}
+function updateHover(e){ const t=e.target,kind=t.dataset&&t.dataset.kind;
+  const path=(kind==='path')?t.__path:(kind==='anchor')?t.__path:(kind==='handle')?pathOf(t.__anchor):null;
+  const a=(kind==='anchor')?t.__anchor:null;
+  hoverPath=path; setCursor(kind,a,path,e); render();
+}
+
+/* ===================== SHAPES (ready-made paths) ===================== */
+const K=0.5522847498;
+function buildShape(kind,x0,y0,x1,y1){
+  const cx=(x0+x1)/2,cy=(y0+y1)/2,rx=(x1-x0)/2,ry=(y1-y0)/2;
+  const mk=(x,y,i,o,t)=>({id:nid(),p:{x,y},in:i||null,out:o||null,type:t||'corner'});
+  if(kind==='rect') return [mk(x0,y0),mk(x1,y0),mk(x1,y1),mk(x0,y1)];
+  if(kind==='triangle') return [mk(cx,y0),mk(x1,y1),mk(x0,y1)];
+  if(kind==='polygon'){ const n=6,a=[]; for(let i=0;i<n;i++){ const ang=-Math.PI/2+i*2*Math.PI/n;
+    a.push(mk(cx+rx*Math.cos(ang),cy+ry*Math.sin(ang))); } return a; }
+  const kx=K*rx,ky=K*ry;   // ellipse: 4 smooth anchors with bezier handles
+  return [ mk(cx,y0,{x:cx-kx,y:y0},{x:cx+kx,y:y0},'smooth'),
+           mk(x1,cy,{x:x1,y:cy-ky},{x:x1,y:cy+ky},'smooth'),
+           mk(cx,y1,{x:cx+kx,y:y1},{x:cx-kx,y:y1},'smooth'),
+           mk(x0,cy,{x:x0,y:cy+ky},{x:x0,y:cy-ky},'smooth') ];
+}
+function shapeDown(e){ const pt=toSvg(e); selection.clear(); objectSel.clear();
+  const path={id:nid(),anchors:buildShape(tool,pt.x,pt.y,pt.x,pt.y),closed:true}; doc.paths.push(path);
+  drag={kind:'shape',start:pt,path}; svg.setPointerCapture(e.pointerId); render(); }
+function shapeMove(e){ if(!drag||drag.kind!=='shape') return; const pt=toSvg(e);
+  let dx=pt.x-drag.start.x, dy=pt.y-drag.start.y;
+  if(e.shiftKey){ const s=Math.max(Math.abs(dx),Math.abs(dy)); dx=(dx<0?-1:1)*s; dy=(dy<0?-1:1)*s; }
+  let x0,y0,x1,y1;
+  if(e.altKey){ x0=drag.start.x-dx; y0=drag.start.y-dy; x1=drag.start.x+dx; y1=drag.start.y+dy; }
+  else { x0=drag.start.x; y0=drag.start.y; x1=drag.start.x+dx; y1=drag.start.y+dy; }
+  drag.path.anchors=buildShape(tool,Math.min(x0,x1),Math.min(y0,y1),Math.max(x0,x1),Math.max(y0,y1)); render(); }
+function shapeUp(){ if(drag&&drag.kind==='shape'){ const p=drag.path,b=bbox(p);
+  if((b.x1-b.x0)<2&&(b.y1-b.y0)<2) doc.paths=doc.paths.filter(x=>x!==p); drag=null; } render(); }
+
+/* ===================== dispatch ===================== */
+function routeDown(t,e){ if(isShape(t)) return shapeDown(e); t==='pen'?penDown(e):t==='direct'?dirDown(e):t==='convert'?convDown(e):objDown(e); }
+function routeMove(t,e){ if(isShape(t)) return shapeMove(e); t==='pen'?penMove(e):t==='direct'?dirMove(e):t==='convert'?convMove(e):objMove(e); }
+function routeUp(t,e){ if(isShape(t)) return shapeUp(e); t==='pen'?penUp(e):t==='object'?(drag=null,render()):dirUp(e); }
+function effTool(e){ if(e.ctrlKey||e.metaKey) return 'direct'; if(tool==='pen'&&e.altKey) return 'convert'; return tool; }
+
+svg.addEventListener('pointerdown', e=>{ beginChange(); gestureTool=effTool(e); routeDown(gestureTool,e); updateButtons(); });
+svg.addEventListener('pointermove', e=>{ if(tool==='pen'||gestureTool==='pen') cursor=toSvg(e);
+  if(drag||marquee) routeMove(gestureTool||tool,e); else updateHover(e); });
+window.addEventListener('pointerup',  e=>{ routeUp(gestureTool||tool,e); gestureTool=null; commitChange(); });
+svg.addEventListener('pointerleave', ()=>{ if(tool==='pen'){ cursor=null; } hoverPath=null; render(); });
+svg.addEventListener('dblclick', e=>{ const t=e.target,kind=t.dataset&&t.dataset.kind;
+  if(kind==='path'||kind==='anchor'){ const p=kind==='path'?t.__path:pathOf(t.__anchor);
+    setTool('direct'); selectWhole(p); render(); } });
+
+/* ===================== tools / keys ===================== */
+const HINTS={
+  object:'السهم الأسود (V): امسك الشكل وحرّكه · <b>Alt+سحب</b> = نسخة · <b>دبل-كليك</b> = تعديل النقط',
+  direct:'السهم الأبيض (A): امسك <b>نقطة/إيد/خط</b> · سحب إيد = التانية على استقامة · <b>Alt</b> = اكسرها · سحب على الفاضي = تحديد · أسهم/Delete',
+  pen:'القلم (P): على <b>طرف</b> = إكمال/ربط/قفل · على نقطة (والشكل محدّد) = مسح · على خط = +نقطة · <b>Alt</b> = تحويل/كسر · <b>Ctrl</b> = سهم أبيض',
+  rect:'مستطيل: اسحب لترسم · <b>Shift</b> = مربع · <b>Alt</b> = من المركز',
+  ellipse:'دائرة: اسحب لترسم · <b>Shift</b> = دائرة كاملة · <b>Alt</b> = من المركز',
+  triangle:'مثلث: اسحب لترسم · <b>Shift</b> = متساوي · <b>Alt</b> = من المركز',
+  polygon:'مضلّع (6 أضلاع): اسحب لترسم · <b>Shift</b> = منتظم · <b>Alt</b> = من المركز'
+};
+const btns={object:'btnV',direct:'btnDir',pen:'btnPen',rect:'btnRect',ellipse:'btnEll',triangle:'btnTri',polygon:'btnPoly'};
+function setTool(t){ tool=t; if(t!=='pen') activePath=null; drag=null; marquee=null;
+  for(const k in btns) document.getElementById(btns[k]).classList.toggle('active',k===t);
+  svg.style.cursor=(t==='pen')?CUR.pen:isShape(t)?CUR.cross:CUR.arrow;
+  document.getElementById('hint').innerHTML=HINTS[t]; render(); }
+function deselectOrFinish(){ if(tool==='pen'){ activePath=null; drag=null; } else { selection.clear(); objectSel.clear(); } updateButtons(); render(); }
+function nudge(dx,dy){ if(tool!=='direct'||!selection.size) return;
+  for(const a of selection){ a.p.x+=dx;a.p.y+=dy; if(a.in){a.in.x+=dx;a.in.y+=dy;} if(a.out){a.out.x+=dx;a.out.y+=dy;} } render(); }
+function deleteSelected(){ beginChange();
+  if(selection.size){ for(const a of [...selection]){ const p=pathOf(a); if(p) deleteAnchor(p,a); } }
+  else if(objectSel.size){ for(const p of [...objectSel]) doc.paths=doc.paths.filter(x=>x!==p); objectSel.clear(); }
+  commitChange(); render(); }
+
+window.addEventListener('keydown', e=>{
+  const k=e.key, ctrl=e.ctrlKey||e.metaKey;
+  if(ctrl && (k==='z'||k==='Z'||k==='ز')){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
+  if(ctrl && (k==='y'||k==='Y')){ e.preventDefault(); redo(); return; }
+  if(ctrl) return;
+  if(k==='v'||k==='V'||k==='ر') setTool('object');
+  else if(k==='a'||k==='A'||k==='ش') setTool('direct');
+  else if(k==='p'||k==='P'||k==='ح'||k==='ث') setTool('pen');
+  else if(k==='m'||k==='M'||k==='ة') setTool('rect');
+  else if(k==='l'||k==='L'||k==='م') setTool('ellipse');
+  else if(k==='Escape'||k==='Enter') deselectOrFinish();
+  else if(k.startsWith('Arrow')&&tool==='direct'&&selection.size){ e.preventDefault(); const s=e.shiftKey?10:1;
+    beginChange();
+    if(k==='ArrowLeft')nudge(-s,0); else if(k==='ArrowRight')nudge(s,0); else if(k==='ArrowUp')nudge(0,-s); else if(k==='ArrowDown')nudge(0,s);
+    commitChange(); }
+  else if(k==='Delete'||k==='Backspace'){ e.preventDefault(); deleteSelected(); }
+});
+for(const k in btns) document.getElementById(btns[k]).addEventListener('click',()=>setTool(k));
+document.getElementById('btnDel').addEventListener('click',deleteSelected);
+document.getElementById('btnUndo').addEventListener('click',undo);
+document.getElementById('btnRedo').addEventListener('click',redo);
+
+setTool('pen'); updateButtons();
+</script>
+</body>
+</html>
