@@ -219,25 +219,36 @@ impl Document {
         }
     }
     /// Group these paths into a new group (returns its id). Members become contiguous in z order.
+    /// Grouping items that are themselves groups NESTS them (the existing groups become children of
+    /// the new one) — so a later single ungroup peels exactly one level, like Illustrator.
     pub fn group(&mut self, pids: &[u32]) -> Option<u32> {
         use std::collections::HashSet;
-        let members: HashSet<u32> = pids.iter().copied().filter(|&p| self.pidx(p).is_some()).collect();
-        if members.len() < 2 { return None; }
+        let set: HashSet<u32> = pids.iter().copied().filter(|&p| self.pidx(p).is_some()).collect();
+        // need ≥2 distinct top-level UNITS (a group counts once, a lone path counts once): so
+        // re-grouping a single existing group is a no-op, and grouping 2 groups nests cleanly.
+        let units: HashSet<u32> = set.iter().map(|&p| self.top_group_of_path(p).unwrap_or(p)).collect();
+        if units.len() < 2 { return None; }
         let gid = self.nid();
         self.groups.push(Group { id: gid, name: format!("Group {gid}"), parent: None });
-        for &p in &members { self.group_of.insert(p, gid); } // flat for now (no nesting yet)
-        self.contiguous(&members);
+        // existing top-level groups in the selection become CHILDREN of the new group (nesting)…
+        let tops: Vec<u32> = set.iter().filter_map(|&p| self.top_group_of_path(p)).collect();
+        for t in tops { if let Some(g) = self.groups.iter_mut().find(|g| g.id == t) { g.parent = Some(gid); } }
+        // …and lone (ungrouped) paths take the new group as their innermost.
+        for &p in &set { if !self.group_of.contains_key(&p) { self.group_of.insert(p, gid); } }
+        self.contiguous(&set);
         Some(gid)
     }
-    /// Dissolve the top-level group(s) that any of these paths belong to.
+    /// Ungroup: peel exactly ONE level off the top-level group(s) the selection belongs to. The
+    /// dissolved group's direct children move up to its parent (None ⇒ top-level); inner groups survive.
     pub fn ungroup(&mut self, pids: &[u32]) {
         use std::collections::HashSet;
         let tops: HashSet<u32> = pids.iter().filter_map(|&p| self.top_group_of_path(p)).collect();
         for top in tops {
-            let members: Vec<u32> = self.paths.iter().map(|p| p.id)
-                .filter(|&q| self.top_group_of_path(q) == Some(top)).collect();
-            for m in members { self.group_of.remove(&m); }
-            self.groups.retain(|g| g.id != top && g.parent != Some(top));
+            let parent = self.groups.iter().find(|g| g.id == top).and_then(|g| g.parent);
+            for g in self.groups.iter_mut() { if g.parent == Some(top) { g.parent = parent; } } // child groups rise
+            let direct: Vec<u32> = self.group_of.iter().filter(|(_, &g)| g == top).map(|(&p, _)| p).collect();
+            for p in direct { match parent { Some(pg) => { self.group_of.insert(p, pg); } None => { self.group_of.remove(&p); } } }
+            self.groups.retain(|g| g.id != top);
         }
     }
     /// Reorder `paths` so the given ids form one contiguous run ending at the topmost member's z
@@ -255,13 +266,19 @@ impl Document {
         self.paths = rest;
     }
     /// Reconcile group bookkeeping after path create/delete: drop membership for dead paths and
-    /// remove groups that hold nothing. Called from the editor's `commit`. (Flat v1: a group is
-    /// alive iff it is some live path's innermost group.)
+    /// remove groups that hold nothing. A group stays alive if it is some live path's innermost
+    /// group OR an ancestor of such a group (so nesting levels aren't pruned away).
     pub fn sync_groups(&mut self) {
         use std::collections::HashSet;
         let live: HashSet<u32> = self.paths.iter().map(|p| p.id).collect();
         self.group_of.retain(|pid, _| live.contains(pid));
-        let used: HashSet<u32> = self.group_of.values().copied().collect();
-        self.groups.retain(|g| used.contains(&g.id));
+        let mut alive: HashSet<u32> = self.group_of.values().copied().collect();
+        let mut frontier: Vec<u32> = alive.iter().copied().collect();
+        while let Some(g) = frontier.pop() {
+            if let Some(p) = self.groups.iter().find(|x| x.id == g).and_then(|x| x.parent) {
+                if alive.insert(p) { frontier.push(p); }
+            }
+        }
+        self.groups.retain(|g| alive.contains(&g.id));
     }
 }
