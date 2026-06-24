@@ -85,6 +85,51 @@ fn ungroup_clears_membership() {
 }
 
 #[test]
+fn nested_group_ungroup_peels_one_level() {
+    // group A = {a1,a2}, group B = {b1,b2}, then group the two groups → outer.
+    // A single ungroup must peel ONLY the outer group, leaving A and B intact (Illustrator).
+    let mut doc = Document::default();
+    let a1 = add_rect(&mut doc, 0.0, 0.0, 1.0, 1.0);
+    let a2 = add_rect(&mut doc, 2.0, 0.0, 3.0, 1.0);
+    let b1 = add_rect(&mut doc, 4.0, 0.0, 5.0, 1.0);
+    let b2 = add_rect(&mut doc, 6.0, 0.0, 7.0, 1.0);
+    let ga = doc.group(&[a1, a2]).unwrap();
+    let gb = doc.group(&[b1, b2]).unwrap();
+    let outer = doc.group(&[a1, a2, b1, b2]).unwrap(); // group the two groups
+
+    // everything now resolves to the outer group
+    for p in [a1, a2, b1, b2] { assert_eq!(doc.top_group_of_path(p), Some(outer)); }
+    assert_eq!(sorted(doc.group_members(a1)), sorted(vec![a1, a2, b1, b2]));
+
+    // peel one level
+    doc.ungroup(&[a1, a2, b1, b2]);
+    assert_eq!(doc.top_group_of_path(a1), Some(ga), "inner group A must survive");
+    assert_eq!(doc.top_group_of_path(a2), Some(ga));
+    assert_eq!(doc.top_group_of_path(b1), Some(gb), "inner group B must survive");
+    assert_eq!(doc.top_group_of_path(b2), Some(gb));
+    assert_eq!(sorted(doc.group_members(a1)), sorted(vec![a1, a2]), "A is its own unit again");
+    assert_eq!(sorted(doc.group_members(b1)), sorted(vec![b1, b2]));
+    assert!(doc.groups.iter().all(|g| g.id != outer), "the outer group is gone");
+
+    // peel the next level → fully ungrouped
+    doc.ungroup(&[a1]);
+    assert_eq!(doc.top_group_of_path(a1), None);
+    assert_eq!(doc.top_group_of_path(a2), None);
+    assert_eq!(doc.top_group_of_path(b1), Some(gb), "ungrouping A must not touch B");
+}
+
+#[test]
+fn re_grouping_single_group_is_noop() {
+    let mut doc = Document::default();
+    let a = add_rect(&mut doc, 0.0, 0.0, 1.0, 1.0);
+    let b = add_rect(&mut doc, 2.0, 0.0, 3.0, 1.0);
+    let g = doc.group(&[a, b]).unwrap();
+    // selecting the whole group and pressing Ctrl+G again should NOT wrap it in a redundant layer
+    assert!(doc.group(&[a, b]).is_none(), "re-grouping one existing group is a no-op");
+    assert_eq!(doc.top_group_of_path(a), Some(g));
+}
+
+#[test]
 fn sync_groups_drops_deleted_paths() {
     let mut doc = Document::default();
     let a = add_rect(&mut doc, 0.0, 0.0, 10.0, 10.0);
