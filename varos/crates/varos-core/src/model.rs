@@ -2,6 +2,7 @@
 //! Stable u32 IDs (never Vec indices) so selection/active survive deletes & joins.
 
 use crate::geom::*;
+use std::collections::HashMap;
 
 pub const K: f32 = 0.5522847; // bezier circle constant (ellipse handles)
 
@@ -24,8 +25,20 @@ pub struct Path {
 #[derive(Clone, Copy, PartialEq)]
 pub enum ShapeKind { Rect, Ellipse, Triangle, Polygon }
 
+/// A group: a named container for paths. `parent` lets groups nest (unused in the flat v1).
+#[derive(Clone)]
+pub struct Group { pub id: u32, pub name: String, pub parent: Option<u32> }
+
 #[derive(Default, Clone)]
-pub struct Document { pub paths: Vec<Path>, pub ids: u32 }
+pub struct Document {
+    pub paths: Vec<Path>,
+    /// Group registry. Membership lives in `group_of` so `Path` (and every Path-construction site)
+    /// stays untouched. The flat path list is still the z-order / render source of truth.
+    pub groups: Vec<Group>,
+    /// path id → its innermost group id. Absent = ungrouped. Reconciled by `sync_groups`.
+    pub group_of: HashMap<u32, u32>,
+    pub ids: u32,
+}
 
 impl Document {
     pub fn nid(&mut self) -> u32 { self.ids += 1; self.ids }
@@ -179,5 +192,76 @@ impl Document {
         let anchors = src.anchors.iter().map(|a| { self.ids += 1; Anchor { id: self.ids, p: a.p, hin: a.hin, hout: a.hout, smooth: a.smooth } }).collect();
         let holes = src.holes.iter().map(|h| h.iter().map(|a| { self.ids += 1; Anchor { id: self.ids, p: a.p, hin: a.hin, hout: a.hout, smooth: a.smooth } }).collect()).collect();
         Path { id, anchors, closed: src.closed, fill: src.fill, stroke: src.stroke, stroke_width: src.stroke_width, holes }
+    }
+
+    // ---------- groups (hierarchy on top of the flat path list) ----------
+    /// The outermost group ancestor of a group id (walks `parent`, with a cycle guard).
+    pub fn group_root(&self, gid: u32) -> u32 {
+        let mut g = gid;
+        for _ in 0..4096 {
+            match self.groups.iter().find(|x| x.id == g).and_then(|grp| grp.parent) {
+                Some(p) => g = p,
+                None => break,
+            }
+        }
+        g
+    }
+    /// The top-level group a path belongs to, or None if ungrouped.
+    pub fn top_group_of_path(&self, pid: u32) -> Option<u32> {
+        self.group_of.get(&pid).map(|&g| self.group_root(g))
+    }
+    /// Every path id in the same top-level group as `pid` (in z order). Just `[pid]` if ungrouped.
+    pub fn group_members(&self, pid: u32) -> Vec<u32> {
+        match self.top_group_of_path(pid) {
+            None => vec![pid],
+            Some(top) => self.paths.iter().map(|p| p.id)
+                .filter(|&q| self.top_group_of_path(q) == Some(top)).collect(),
+        }
+    }
+    /// Group these paths into a new group (returns its id). Members become contiguous in z order.
+    pub fn group(&mut self, pids: &[u32]) -> Option<u32> {
+        use std::collections::HashSet;
+        let members: HashSet<u32> = pids.iter().copied().filter(|&p| self.pidx(p).is_some()).collect();
+        if members.len() < 2 { return None; }
+        let gid = self.nid();
+        self.groups.push(Group { id: gid, name: format!("Group {gid}"), parent: None });
+        for &p in &members { self.group_of.insert(p, gid); } // flat for now (no nesting yet)
+        self.contiguous(&members);
+        Some(gid)
+    }
+    /// Dissolve the top-level group(s) that any of these paths belong to.
+    pub fn ungroup(&mut self, pids: &[u32]) {
+        use std::collections::HashSet;
+        let tops: HashSet<u32> = pids.iter().filter_map(|&p| self.top_group_of_path(p)).collect();
+        for top in tops {
+            let members: Vec<u32> = self.paths.iter().map(|p| p.id)
+                .filter(|&q| self.top_group_of_path(q) == Some(top)).collect();
+            for m in members { self.group_of.remove(&m); }
+            self.groups.retain(|g| g.id != top && g.parent != Some(top));
+        }
+    }
+    /// Reorder `paths` so the given ids form one contiguous run ending at the topmost member's z
+    /// position (Illustrator brings a group up to its front-most member). Inner order preserved.
+    fn contiguous(&mut self, set: &std::collections::HashSet<u32>) {
+        let n = self.paths.len();
+        let top_idx = match (0..n).filter(|&i| set.contains(&self.paths[i].id)).max() { Some(i) => i, None => return };
+        let above = (top_idx + 1..n).filter(|&i| !set.contains(&self.paths[i].id)).count();
+        let taken = std::mem::take(&mut self.paths);
+        let (block, mut rest): (Vec<Path>, Vec<Path>) = taken.into_iter().partition(|p| set.contains(&p.id));
+        let split = rest.len() - above;
+        let tail = rest.split_off(split);
+        rest.extend(block);
+        rest.extend(tail);
+        self.paths = rest;
+    }
+    /// Reconcile group bookkeeping after path create/delete: drop membership for dead paths and
+    /// remove groups that hold nothing. Called from the editor's `commit`. (Flat v1: a group is
+    /// alive iff it is some live path's innermost group.)
+    pub fn sync_groups(&mut self) {
+        use std::collections::HashSet;
+        let live: HashSet<u32> = self.paths.iter().map(|p| p.id).collect();
+        self.group_of.retain(|pid, _| live.contains(pid));
+        let used: HashSet<u32> = self.group_of.values().copied().collect();
+        self.groups.retain(|g| used.contains(&g.id));
     }
 }

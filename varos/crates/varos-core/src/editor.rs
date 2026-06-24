@@ -96,7 +96,7 @@ pub struct Editor {
     pub mods: Mods,
     pub cur_fill: Option<Rgba>, pub cur_stroke: Option<Rgba>, pub cur_sw: f32, pub paint: PaintTarget,
     pub dirty: bool,
-    undo: Vec<Vec<Path>>, redo: Vec<Vec<Path>>, pending: Option<Vec<Path>>,
+    undo: Vec<Document>, redo: Vec<Document>, pending: Option<Document>,
 }
 
 impl Editor {
@@ -372,14 +372,32 @@ impl Editor {
         self.dirty = true; self.commit();
     }
 
+    // ---------- grouping (Ctrl+G / Ctrl+Shift+G) ----------
+    pub fn group_selection(&mut self) {
+        if self.objsel.len() < 2 { return; }
+        self.begin();
+        let pids: Vec<u32> = self.objsel.iter().copied().collect();
+        if self.doc.group(&pids).is_some() { self.obj_angle = 0.0; self.dirty = true; }
+        self.commit();
+    }
+    pub fn ungroup_selection(&mut self) {
+        if self.objsel.is_empty() { return; }
+        self.begin();
+        let pids: Vec<u32> = self.objsel.iter().copied().collect();
+        self.doc.ungroup(&pids);
+        self.obj_angle = 0.0; self.dirty = true;
+        self.commit();
+    }
+
     // ---------- history ----------
-    pub fn begin(&mut self) { self.pending = Some(self.doc.paths.clone()); self.dirty = false; }
+    pub fn begin(&mut self) { self.pending = Some(self.doc.clone()); self.dirty = false; }
     pub fn commit(&mut self) {
+        self.doc.sync_groups();   // drop membership for deleted paths / empty groups
         if self.dirty { if let Some(p) = self.pending.take() { self.undo.push(p); if self.undo.len() > 200 { self.undo.remove(0); } self.redo.clear(); } }
         self.pending = None; self.dirty = false;
     }
-    pub fn undo(&mut self) { if let Some(s) = self.undo.pop() { self.redo.push(self.doc.paths.clone()); self.doc.paths = s; self.clear_transient(); } }
-    pub fn redo(&mut self) { if let Some(s) = self.redo.pop() { self.undo.push(self.doc.paths.clone()); self.doc.paths = s; self.clear_transient(); } }
+    pub fn undo(&mut self) { if let Some(s) = self.undo.pop() { self.redo.push(self.doc.clone()); self.doc = s; self.clear_transient(); } }
+    pub fn redo(&mut self) { if let Some(s) = self.redo.pop() { self.undo.push(self.doc.clone()); self.doc = s; self.clear_transient(); } }
     fn clear_transient(&mut self) { self.selected.clear(); self.objsel.clear(); self.dsel_path = None; self.active = None; self.drag = Drag::None; }
 
     // ---------- shared mutating ops (used by tools) ----------
@@ -564,6 +582,9 @@ impl Editor {
                 for pi in 0..self.doc.paths.len() {
                     if self.path_in_rect(pi, x0, y0, x1, y1) { self.objsel.insert(self.doc.paths[pi].id); }
                 }
+                // a marquee that catches any group member selects the whole group
+                let expanded: Vec<u32> = self.objsel.iter().flat_map(|&p| self.doc.group_members(p)).collect();
+                self.objsel.extend(expanded);
                 self.drag = Drag::ObjMarquee { start, base };
             }
             Drag::DupPending { srcs, down, object } => {
@@ -652,7 +673,7 @@ impl Editor {
         if t == ToolKind::Object {
             // promote anchor-selection to object-selection (Illustrator A→V), then drop anchor sel
             let pids: Vec<u32> = self.selected.iter().filter_map(|&aid| self.doc.aidx(aid).map(|(pi, _)| self.doc.paths[pi].id)).collect();
-            for pid in pids { self.objsel.insert(pid); }
+            for pid in pids { for m in self.doc.group_members(pid) { self.objsel.insert(m); } } // promote whole groups
             self.selected.clear();
             self.obj_angle = 0.0;
         }
