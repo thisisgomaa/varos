@@ -27,50 +27,88 @@ const PANEL_W: f64 = 280.0; // logical px
 #[derive(Debug, Clone)]
 enum UserEvent { Ipc(String) }
 
-const PANEL_HTML: &str = r#"<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+const PANEL_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
 <style>
-  html,body{margin:0;height:100%;background:#1e1e22;color:#e6e6e8;font:13px "Segoe UI",system-ui,sans-serif;user-select:none}
-  .hd{padding:11px 14px;border-bottom:1px solid #2c2c32;font-size:13px;color:#cfd2d8;font-weight:600}
-  #list{padding:6px;overflow:auto}
-  .row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer}
-  .row:hover{background:#26262c}
-  .row.sel{background:#0c8ce9;color:#fff}
+  :root{
+    --bg-panel:#202024;--bg-hover:#2c2c33;--bg-active:#34343a;--border:#2a2a30;
+    --text:#f0f0f2;--muted:#a0a0a8;--faint:#6b6b72;--accent:#0c8ce9;
+    --ui:'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif;
+    --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg-panel);color:var(--text);font:13px/1.5 var(--ui);overflow:hidden;user-select:none;-webkit-font-smoothing:antialiased}
+  .tabs{display:flex;gap:2px;padding:10px 12px 0}
+  .tab{padding:7px 12px 9px;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;position:relative}
+  .tab.on{color:var(--text)}
+  .tab.on::after{content:'';position:absolute;left:8px;right:8px;bottom:0;height:2px;border-radius:2px;background:var(--accent)}
+  .tab:hover:not(.on){color:var(--text)}
+  .scroll{height:calc(100% - 39px);overflow:auto;border-top:1px solid var(--border)}
+  .sec{padding:14px 16px;border-bottom:1px solid var(--border)}
+  .sec-h{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+  .count{font-family:var(--mono);color:var(--faint);font-size:11px;font-weight:400}
+  .empty{padding:22px 8px;color:var(--faint);font-size:12px;line-height:1.7;text-align:center}
+  .list{display:flex;flex-direction:column;gap:1px}
+  .layer{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;cursor:pointer;color:var(--muted);font-size:12.5px}
+  .layer:hover{background:var(--bg-hover);color:var(--text)}
+  .layer.sel{background:var(--accent);color:#fff}
   .dot{width:11px;height:11px;border-radius:3px;background:#4a4a54;flex:0 0 auto}
-  .row.grp .dot{border-radius:50%;background:#c9a23a}
-  .row.sel .dot{background:#fff}
+  .layer.grp .dot{border-radius:50%;background:#c9a23a}
+  .layer.sel .dot{background:#fff}
   .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .empty{padding:16px;color:#7a7a82;font-size:12px}
 </style></head><body>
-  <div class="hd">الطبقات — Layers</div>
-  <div id="list"><div class="empty">— لا عناصر بعد —</div></div>
+  <div class="tabs">
+    <div class="tab on" data-t="layers">Layers</div>
+    <div class="tab" data-t="design">Design</div>
+  </div>
+  <div class="scroll">
+    <div id="layers">
+      <div class="sec"><div class="sec-h"><span>Layers</span><span class="count" id="lc">0</span></div>
+        <div class="list" id="list"><div class="empty">No objects yet</div></div></div>
+    </div>
+    <div id="design" style="display:none">
+      <div class="sec"><div class="sec-h">Properties</div>
+        <div class="empty">Select an object to edit<br>its size, fill &amp; stroke.</div></div>
+    </div>
+  </div>
 <script>
-  window.varosLayers = (rows) => {
-    const list = document.getElementById('list');
-    if (!rows.length) { list.innerHTML = '<div class="empty">— لا عناصر بعد —</div>'; return; }
-    list.innerHTML = '';
-    for (const r of rows) {
-      const d = document.createElement('div');
-      d.className = 'row' + (r.sel ? ' sel' : '') + (r.group ? ' grp' : '');
-      d.style.paddingRight = (8 + r.depth * 16) + 'px';
-      d.innerHTML = '<span class="dot"></span><span class="nm"></span>';
-      d.querySelector('.nm').textContent = r.name;
-      d.addEventListener('click', () => window.ipc.postMessage(String(r.pid)));
+  const tabs=document.querySelectorAll('.tab');
+  function show(t){ for(const el of tabs) el.classList.toggle('on', el.dataset.t===t);
+    document.getElementById('layers').style.display = t==='layers'?'':'none';
+    document.getElementById('design').style.display = t==='design'?'':'none'; }
+  for(const el of tabs) el.addEventListener('click',()=>show(el.dataset.t));
+  window.varosLayers=(rows)=>{
+    document.getElementById('lc').textContent=rows.length;
+    const list=document.getElementById('list');
+    if(!rows.length){ list.innerHTML='<div class="empty">No objects yet</div>'; return; }
+    list.innerHTML='';
+    for(const r of rows){
+      const d=document.createElement('div');
+      d.className='layer'+(r.sel?' sel':'')+(r.group?' grp':'');
+      d.style.paddingLeft=(9+r.depth*16)+'px';
+      d.innerHTML='<span class="dot"></span><span class="nm"></span>';
+      d.querySelector('.nm').textContent=r.name;
+      d.addEventListener('click',()=>window.ipc.postMessage(String(r.pid)));
       list.appendChild(d);
     }
   };
-  window.addEventListener('DOMContentLoaded', () => window.ipc.postMessage('ready'));
+  window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
 </script></body></html>"#;
 
 // Left vertical tools rail (web). Replaces the in-canvas tool buttons.
 const LEFT_W: f64 = 52.0; // logical px
-const TOOLS_HTML: &str = r#"<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>
-  html,body{margin:0;height:100%;background:#222227;overflow:hidden;user-select:none}
-  .col{display:flex;flex-direction:column;gap:3px;padding:6px 0;align-items:center}
-  .tb{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#9fb4c8}
-  .tb:hover{background:#2e2e36}
-  .tb.on{background:#0c8ce9;color:#fff}
-  .tb svg{width:22px;height:22px}
-</style></head><body><div class="col" id="col"></div>
+const TOOLS_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><style>
+  :root{--bg-app:#1c1c1e;--bg-hover:#2c2c33;--border:#2a2a30;--muted:#a0a0a8;--text:#f0f0f2;--accent:#0c8ce9;
+    --ui:'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg-app);overflow:hidden;user-select:none;font-family:var(--ui)}
+  .rail{display:flex;flex-direction:column;align-items:center;height:100%;padding:8px 0;gap:2px}
+  .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;margin-bottom:8px}
+  .tb{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted);transition:background .12s,color .12s}
+  .tb:hover{background:var(--bg-hover);color:var(--text)}
+  .tb.on{background:var(--accent);color:#fff}
+  .tb svg{width:20px;height:20px}
+  .sep{width:22px;height:1px;background:var(--border);margin:5px 0}
+</style></head><body><div class="rail" id="rail"></div>
 <script>
   const A='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
   const Ao='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
@@ -79,9 +117,19 @@ const TOOLS_HTML: &str = r#"<!doctype html><html dir="rtl"><head><meta charset="
   const ELL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>';
   const TRI='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 5 L19 19 L5 19 Z"/></svg>';
   const EYE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 20 L11 13"/><path d="M13 11 L17 7 a2.1 2.1 0 1 0 -3 -3 L10 8 Z"/></svg>';
-  const TOOLS=[['object','السهم الأسود (V)',A],['direct','السهم الأبيض (A)',Ao],['pen','القلم (P)',PEN],['rect','مستطيل (M)',RECT],['ellipse','بيضاوي (L)',ELL],['triangle','مثلث',TRI],['eyedropper','القطّارة (I)',EYE]];
-  const col=document.getElementById('col'); let active='pen';
-  function render(){ col.innerHTML=''; for(const [id,tip,svg] of TOOLS){ const d=document.createElement('div'); d.className='tb'+(id===active?' on':''); d.title=tip; d.innerHTML=svg; d.onclick=()=>window.ipc.postMessage('tool:'+id); col.appendChild(d);} }
+  // [id, svg] or null = separator
+  const TOOLS=[['object',A],['direct',Ao],null,['pen',PEN],null,['rect',RECT],['ellipse',ELL],['triangle',TRI],null,['eyedropper',EYE]];
+  const rail=document.getElementById('rail'); let active='pen';
+  const logo=document.createElement('div'); logo.className='logo'; logo.textContent='V'; rail.appendChild(logo);
+  function render(){
+    [...rail.querySelectorAll('.tb,.sep')].forEach(e=>e.remove());
+    for(const t of TOOLS){
+      if(!t){ const s=document.createElement('div'); s.className='sep'; rail.appendChild(s); continue; }
+      const [id,svg]=t; const d=document.createElement('div');
+      d.className='tb'+(id===active?' on':''); d.innerHTML=svg;
+      d.onclick=()=>window.ipc.postMessage('tool:'+id); rail.appendChild(d);
+    }
+  }
   window.varosUI=(s)=>{ if(s&&s.tool){ active=s.tool; render(); } };
   render();
   window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
@@ -238,14 +286,14 @@ fn layers_json(ed: &Editor) -> String {
         match d.top_group_of_path(p.id) {
             None => {
                 cur_group = None;
-                rows.push(format!("{{\"pid\":{},\"name\":\"عنصر\",\"depth\":0,\"group\":false,\"sel\":{}}}", p.id, sel));
+                rows.push(format!("{{\"pid\":{},\"name\":\"Object\",\"depth\":0,\"group\":false,\"sel\":{}}}", p.id, sel));
             }
             Some(g) => {
                 if cur_group != Some(g) {
                     cur_group = Some(g);
-                    rows.push(format!("{{\"pid\":{},\"name\":\"مجموعة\",\"depth\":0,\"group\":true,\"sel\":{}}}", p.id, sel));
+                    rows.push(format!("{{\"pid\":{},\"name\":\"Group\",\"depth\":0,\"group\":true,\"sel\":{}}}", p.id, sel));
                 }
-                rows.push(format!("{{\"pid\":{},\"name\":\"عنصر\",\"depth\":1,\"group\":false,\"sel\":{}}}", p.id, sel));
+                rows.push(format!("{{\"pid\":{},\"name\":\"Object\",\"depth\":1,\"group\":false,\"sel\":{}}}", p.id, sel));
             }
         }
     }
