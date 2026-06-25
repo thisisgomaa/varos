@@ -15,11 +15,10 @@ use wry::{dpi::{LogicalPosition as WPos, LogicalSize as WSize}, Rect as WryRect,
 use varos_core::editor::{AlignMode, DistAxis, Editor, Mods, PaintTarget, ToolKind, ZOrder};
 use varos_core::BoolOp;
 use varos_core::geom::{Pt, Rgba, View};
-use varos_core::scene::{build_scene, Prim, ACCENT, WHITE};
+use varos_core::scene::{build_scene, Prim, WHITE};
 use varos_render_wgpu::Renderer;
 
 const BTN_BG: [f32; 4] = [0.18, 0.18, 0.18, 1.0];
-const TOOLBAR: [ToolKind; 6] = [ToolKind::Object, ToolKind::Direct, ToolKind::Pen, ToolKind::Rect, ToolKind::Ellipse, ToolKind::Triangle];
 
 // Right-side web (wry) panel — the real UI shell. Canvas renders full-window; the panel's child
 // HWND composites on top of the right strip. See memory varos-ui-shell-decision.
@@ -62,7 +61,31 @@ const PANEL_HTML: &str = r#"<!doctype html><html lang="ar" dir="rtl"><head><meta
   window.addEventListener('DOMContentLoaded', () => window.ipc.postMessage('ready'));
 </script></body></html>"#;
 
-fn btn_x(i: usize) -> f32 { 10.0 + i as f32 * 42.0 }
+// Left vertical tools rail (web). Replaces the in-canvas tool buttons.
+const LEFT_W: f64 = 52.0; // logical px
+const TOOLS_HTML: &str = r#"<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>
+  html,body{margin:0;height:100%;background:#222227;overflow:hidden;user-select:none}
+  .col{display:flex;flex-direction:column;gap:3px;padding:6px 0;align-items:center}
+  .tb{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#9fb4c8}
+  .tb:hover{background:#2e2e36}
+  .tb.on{background:#0c8ce9;color:#fff}
+  .tb svg{width:22px;height:22px}
+</style></head><body><div class="col" id="col"></div>
+<script>
+  const A='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
+  const Ao='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
+  const PEN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 20 L6 14 L15 5 L19 9 L10 18 Z"/><path d="M6 14 L10 18"/></svg>';
+  const RECT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="6" width="14" height="12" rx="1"/></svg>';
+  const ELL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>';
+  const TRI='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 5 L19 19 L5 19 Z"/></svg>';
+  const EYE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 20 L11 13"/><path d="M13 11 L17 7 a2.1 2.1 0 1 0 -3 -3 L10 8 Z"/></svg>';
+  const TOOLS=[['object','السهم الأسود (V)',A],['direct','السهم الأبيض (A)',Ao],['pen','القلم (P)',PEN],['rect','مستطيل (M)',RECT],['ellipse','بيضاوي (L)',ELL],['triangle','مثلث',TRI],['eyedropper','القطّارة (I)',EYE]];
+  const col=document.getElementById('col'); let active='pen';
+  function render(){ col.innerHTML=''; for(const [id,tip,svg] of TOOLS){ const d=document.createElement('div'); d.className='tb'+(id===active?' on':''); d.title=tip; d.innerHTML=svg; d.onclick=()=>window.ipc.postMessage('tool:'+id); col.appendChild(d);} }
+  window.varosUI=(s)=>{ if(s&&s.tool){ active=s.tool; render(); } };
+  render();
+  window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
+</script></body></html>"#;
 
 // temporary paint palette (real Color/Stroke panels arrive with Tauri)
 const PALETTE: [Option<Rgba>; 8] = [
@@ -70,23 +93,21 @@ const PALETTE: [Option<Rgba>; 8] = [
     Some([0.20,0.55,0.95,1.0]), Some([0.97,0.80,0.25,1.0]), Some([0.60,0.42,0.85,1.0]), None,
 ];
 fn in_rect(p: Pt, r: (f32,f32,f32,f32)) -> bool { p[0] >= r.0 && p[0] <= r.0 + r.2 && p[1] >= r.1 && p[1] <= r.1 + r.3 }
-fn fill_sw() -> (f32,f32,f32,f32) { (272.0, 12.0, 28.0, 28.0) }
-fn stroke_sw() -> (f32,f32,f32,f32) { (302.0, 12.0, 28.0, 28.0) }
-fn pal_sw(j: usize) -> (f32,f32,f32,f32) { (346.0 + j as f32 * 30.0, 14.0, 24.0, 24.0) }
+// top temp bar starts right of the 52px left tools rail (tools moved to the web rail)
+fn fill_sw() -> (f32,f32,f32,f32) { (62.0, 12.0, 28.0, 28.0) }
+fn stroke_sw() -> (f32,f32,f32,f32) { (92.0, 12.0, 28.0, 28.0) }
+fn pal_sw(j: usize) -> (f32,f32,f32,f32) { (136.0 + j as f32 * 30.0, 14.0, 24.0, 24.0) }
 // align / distribute buttons: 0-2 align H (L/Ch/R), 3-5 align V (T/M/B), 6-7 distribute (H/V)
 fn align_sw(k: usize) -> (f32,f32,f32,f32) {
     let gap = if k >= 6 { 16.0 } else if k >= 3 { 8.0 } else { 0.0 };
-    (606.0 + k as f32 * 30.0 + gap, 12.0, 26.0, 26.0)
+    (396.0 + k as f32 * 30.0 + gap, 12.0, 26.0, 26.0)
 }
 // Pathfinder buttons: Unite / Minus Front / Intersect / Exclude
-fn pf_sw(k: usize) -> (f32,f32,f32,f32) { (892.0 + k as f32 * 30.0, 12.0, 26.0, 26.0) }
+fn pf_sw(k: usize) -> (f32,f32,f32,f32) { (682.0 + k as f32 * 30.0, 12.0, 26.0, 26.0) }
 
 /// Handle a click on the toolbar UI (tools / fill+stroke target / palette). Returns true if consumed.
 fn ui_click(ed: &mut Editor, pos: Pt) -> bool {
-    for (i, t) in TOOLBAR.iter().enumerate() {
-        let bx = btn_x(i);
-        if pos[0] >= bx && pos[0] <= bx + 34.0 && pos[1] >= 10.0 && pos[1] <= 44.0 { ed.set_tool(*t); return true; }
-    }
+    // tools now live in the left web rail; this temp top bar keeps colors / align / pathfinder
     if in_rect(pos, fill_sw()) { ed.paint = PaintTarget::Fill; return true; }
     if in_rect(pos, stroke_sw()) { ed.paint = PaintTarget::Stroke; return true; }
     for (j, c) in PALETTE.iter().enumerate() { if in_rect(pos, pal_sw(j)) { ed.apply_paint(*c); return true; } }
@@ -146,22 +167,6 @@ fn align_icon(s: &mut Vec<Prim>, k: usize, r: (f32,f32,f32,f32), col: Rgba) {
 }
 
 fn toolbar(ed: &Editor, s: &mut Vec<Prim>) {
-    for (i, t) in TOOLBAR.iter().enumerate() {
-        let bx = btn_x(i); let by = 10.0; let c = [bx + 17.0, by + 17.0];
-        let active = ed.tool == *t;
-        let bg = if active { ACCENT } else { BTN_BG };
-        let ic = if active { WHITE } else { ACCENT };
-        s.push(Prim::Square { c, half: 17.0, color: bg });
-        match t {
-            ToolKind::Object => s.push(Prim::Tri { a: [bx+11.0,by+9.0], b: [bx+11.0,by+25.0], c: [bx+24.0,by+19.0], color: ic }),
-            ToolKind::Direct => s.push(Prim::Stroke { pts: vec![[bx+11.0,by+9.0],[bx+11.0,by+25.0],[bx+24.0,by+19.0],[bx+11.0,by+9.0]], width: 1.4, color: ic }),
-            ToolKind::Pen => { s.push(Prim::Stroke { pts: vec![[bx+10.0,by+25.0],[bx+24.0,by+11.0]], width: 2.5, color: ic }); s.push(Prim::Square { c: [bx+11.0,by+24.0], half: 2.0, color: ic }); }
-            ToolKind::Rect => { s.push(Prim::Square { c, half: 8.0, color: ic }); s.push(Prim::Square { c, half: 5.5, color: bg }); }
-            ToolKind::Ellipse => { s.push(Prim::Disc { c, r: 8.0, color: ic }); s.push(Prim::Disc { c, r: 5.5, color: bg }); }
-            ToolKind::Triangle => s.push(Prim::Stroke { pts: vec![[bx+17.0,by+9.0],[bx+25.0,by+25.0],[bx+9.0,by+25.0],[bx+17.0,by+9.0]], width: 1.4, color: ic }),
-            _ => {}
-        }
-    }
     // fill / stroke target swatches + palette
     swatch(s, fill_sw(), ed.cur_fill, ed.paint == PaintTarget::Fill);
     swatch(s, stroke_sw(), ed.cur_stroke, ed.paint == PaintTarget::Stroke);
@@ -249,6 +254,16 @@ fn layers_json(ed: &Editor) -> String {
 fn push_layers(panel: &WebView, ed: &Editor) {
     let _ = panel.evaluate_script(&format!("window.varosLayers && window.varosLayers({});", layers_json(ed)));
 }
+fn tool_id(t: ToolKind) -> &'static str {
+    match t {
+        ToolKind::Object => "object", ToolKind::Direct => "direct", ToolKind::Pen => "pen",
+        ToolKind::Rect => "rect", ToolKind::Ellipse => "ellipse", ToolKind::Triangle => "triangle",
+        ToolKind::Eyedropper => "eyedropper", ToolKind::Polygon => "polygon", ToolKind::Convert => "convert",
+    }
+}
+fn push_ui(tools: &WebView, ed: &Editor) {
+    let _ = tools.evaluate_script(&format!("window.varosUI && window.varosUI({{\"tool\":\"{}\"}});", tool_id(ed.tool)));
+}
 
 fn load_icon() -> Option<winit::window::Icon> {
     let img = image::load_from_memory(include_bytes!("../icon.png")).ok()?.into_rgba8();
@@ -275,6 +290,17 @@ fn main() {
         })
         .with_background_color((30, 30, 34, 255))
         .with_html(PANEL_HTML)
+        .with_ipc_handler({ let proxy = proxy.clone(); move |req| { let _ = proxy.send_event(UserEvent::Ipc(req.body().clone())); } })
+        .build_as_child(&*window)
+        .unwrap();
+    // left vertical tools rail
+    let tools_panel = WebViewBuilder::new()
+        .with_bounds(WryRect {
+            position: WPos::new(0.0, 0.0).into(),
+            size: WSize::new(LEFT_W, lsz.height).into(),
+        })
+        .with_background_color((34, 34, 39, 255))
+        .with_html(TOOLS_HTML)
         .with_ipc_handler(move |req| { let _ = proxy.send_event(UserEvent::Ipc(req.body().clone())); })
         .build_as_child(&*window)
         .unwrap();
@@ -292,7 +318,18 @@ fn main() {
         match event {
         Event::UserEvent(UserEvent::Ipc(msg)) => {
             if msg == "ready" {
-                push_layers(&panel, &ed); // panel finished loading → send the initial tree
+                push_layers(&panel, &ed); push_ui(&tools_panel, &ed); // a panel loaded → send state
+            } else if let Some(t) = msg.strip_prefix("tool:") {
+                let tk = match t {
+                    "object" => Some(ToolKind::Object), "direct" => Some(ToolKind::Direct), "pen" => Some(ToolKind::Pen),
+                    "rect" => Some(ToolKind::Rect), "ellipse" => Some(ToolKind::Ellipse), "triangle" => Some(ToolKind::Triangle),
+                    "eyedropper" => Some(ToolKind::Eyedropper), _ => None,
+                };
+                if let Some(tk) = tk {
+                    ed.set_tool(tk);
+                    push_ui(&tools_panel, &ed); push_layers(&panel, &ed);
+                    window.set_title(&full_title(ed.tool)); window.request_redraw();
+                }
             } else if let Ok(id) = msg.parse::<u32>() {
                 // clicked a Layers row → select that object's whole (top) group on the canvas
                 if ed.doc.pidx(id).is_some() {
@@ -300,7 +337,7 @@ fn main() {
                     ed.objsel = ed.doc.group_members(id).into_iter().collect();
                     ed.selected.clear();
                     ed.obj_angle = 0.0;
-                    push_layers(&panel, &ed);
+                    push_layers(&panel, &ed); push_ui(&tools_panel, &ed);
                     window.set_title(&full_title(ed.tool));
                     window.request_redraw();
                 }
@@ -314,6 +351,7 @@ fn main() {
                     renderer.resize(size.width, size.height);
                     let (lw, lh) = (size.width as f64 / scale, size.height as f64 / scale);
                     let _ = panel.set_bounds(WryRect { position: WPos::new((lw - PANEL_W).max(0.0), 0.0).into(), size: WSize::new(PANEL_W, lh).into() });
+                    let _ = tools_panel.set_bounds(WryRect { position: WPos::new(0.0, 0.0).into(), size: WSize::new(LEFT_W, lh).into() });
                     window.request_redraw();
                 }
                 WindowEvent::CursorMoved { position, .. } => {
@@ -358,7 +396,7 @@ fn main() {
                         _ => {}
                     }
                     window.set_title(&full_title(ed.tool));
-                    push_layers(&panel, &ed);
+                    push_layers(&panel, &ed); push_ui(&tools_panel, &ed);
                     window.request_redraw();
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
@@ -388,7 +426,7 @@ fn main() {
                             else if ed.mods.ctrl && code == KeyCode::KeyG { if ed.mods.shift { ed.ungroup_selection(); } else { ed.group_selection(); } }
                             else if !ed.mods.ctrl { handle_key(&mut ed, code); }
                             window.set_title(&full_title(ed.tool));
-                            push_layers(&panel, &ed);
+                            push_layers(&panel, &ed); push_ui(&tools_panel, &ed);
                             window.request_redraw();
                         }
                     }
