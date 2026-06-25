@@ -6,10 +6,12 @@ node_modules/
 dist/
 build/
 
-# ---- Scratch / redirected build logs ----
+# ---- Scratch / redirected build logs / temp ----
 err.txt
 out.txt
 *.log
+*.tmp
+~ai-*
 
 # ---- OS junk ----
 Thumbs.db
