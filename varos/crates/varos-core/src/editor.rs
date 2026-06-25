@@ -591,7 +591,7 @@ impl Editor {
             Drag::DupPending { srcs, down, object } => {
                 if dist(pos, down) < DRAG_THRESH { self.drag = Drag::DupPending { srcs, down, object }; }
                 else {
-                    let cids: Vec<u32> = srcs.iter().map(|&s| { let c = self.doc.clone_path(s); let id = c.id; self.doc.paths.push(c); id }).collect();
+                    let cids: Vec<u32> = self.doc.dup_paths(&srcs); // clones + mirrors group structure
                     if object {
                         self.objsel.clear();
                         let mut base = vec![];
