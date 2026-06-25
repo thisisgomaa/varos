@@ -1,0 +1,19 @@
+[package]
+name = "wry-spike"
+version = "0.1.0"
+edition = "2021"
+
+# Phase-5 shell spike: prove a wry (WebView2) HTML panel can live in a SIBLING HWND beside our
+# winit+wgpu canvas WITHOUT hurting native input latency, and that IPC (panel <-> Rust) works.
+# Decision basis: memory varos-ui-shell-decision (wry child, NOT Tauri).
+
+[dependencies]
+winit = "0.29"
+wgpu = "0.19"
+pollster = "0.3"
+bytemuck = { version = "1", features = ["derive"] }
+wry = "0.52"
+
+# lighten the loop so feel is judged correctly (no step-debug info)
+[profile.dev]
+debug = 0
