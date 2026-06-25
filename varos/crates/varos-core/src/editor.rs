@@ -22,6 +22,11 @@ pub enum PaintTarget { Fill, Stroke }
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ToolKind { Object, Direct, Pen, Rect, Ellipse, Triangle, Polygon, Convert, Eyedropper }
+
+/// What the Pen tool would do at the cursor right now — drives the contextual pen cursor (Illustrator
+/// shows pen+×/+/−/○/continue). Computed by `Editor::pen_hint`, mirrors `tools::pen` down logic.
+#[derive(Clone, Copy, PartialEq)]
+pub enum PenHint { New, Draw, Add, Delete, Close, Connect }
 impl ToolKind {
     pub fn is_shape(self) -> bool { matches!(self, ToolKind::Rect | ToolKind::Ellipse | ToolKind::Triangle | ToolKind::Polygon) }
     pub fn shape(self) -> ShapeKind {
@@ -484,6 +489,34 @@ impl Editor {
     // ---------- input dispatch ----------
     pub fn eff_tool(&self) -> ToolKind {
         if self.mods.ctrl { ToolKind::Direct } else if self.tool == ToolKind::Pen && self.mods.alt { ToolKind::Convert } else { self.tool }
+    }
+
+    /// What the Pen tool would do at `pos` (world) — for the contextual pen cursor. Mirrors `tools::pen`.
+    pub fn pen_hint(&self, pos: Pt) -> PenHint {
+        if let Some(aid) = self.nearest_anchor(pos, ANCHOR_R, true) {
+            if let Some((pi, ai)) = self.doc.aidx(aid) {
+                let p = &self.doc.paths[pi];
+                let (pid, n) = (p.id, p.anchors.len());
+                let is_end = !p.closed && (ai == 0 || ai == n - 1);
+                let tip = self.active.and_then(|ap| self.doc.pidx(ap)).and_then(|i| self.doc.paths[i].anchors.last().map(|a| a.id));
+                if is_end {
+                    return match self.active {
+                        Some(act) if act == pid => if Some(aid) != tip { PenHint::Close } else { PenHint::Draw },
+                        _ => PenHint::Connect, // join another path, or resume a selected one
+                    };
+                }
+                if self.is_editable(pid) { return PenHint::Delete; }
+            }
+            return PenHint::Draw;
+        }
+        if let Some(pid) = self.path_under(pos) {
+            if self.is_editable(pid) {
+                if let Some(pi) = self.doc.pidx(pid) {
+                    if let Some((_, _, d)) = self.doc.nearest_seg(pi, pos) { if d <= EDGE_R { return PenHint::Add; } }
+                }
+            }
+        }
+        if self.active.is_some() { PenHint::Draw } else { PenHint::New }
     }
     pub fn pointer_down(&mut self, pos: Pt) {
         self.cursor = pos;
