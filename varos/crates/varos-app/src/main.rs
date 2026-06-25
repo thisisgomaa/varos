@@ -13,7 +13,7 @@ use winit::{
     window::WindowBuilder,
 };
 use wry::{dpi::{LogicalPosition as WPos, LogicalSize as WSize}, Rect as WryRect, WebView, WebViewBuilder};
-use varos_core::editor::{AlignMode, DistAxis, Editor, Mods, PaintTarget, ToolKind, ZOrder};
+use varos_core::editor::{AlignMode, DistAxis, Editor, Mods, PaintTarget, PenHint, ToolKind, ZOrder};
 use varos_core::BoolOp;
 use varos_core::geom::{Pt, Rgba, View};
 use varos_core::scene::{build_scene, Prim};
@@ -384,38 +384,71 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
     }
 }
 
-/// Varos's own tool cursor, drawn on the canvas (the OS cursor is hidden) so it is fully themed
-/// and consistent — a custom set, not the Windows arrows. `p` = screen position (the hotspot).
-fn cursor_prims(t: ToolKind, p: Pt) -> Vec<Prim> {
-    let dark: Rgba = [0.10, 0.10, 0.12, 1.0];
-    let white: Rgba = [0.96, 0.96, 0.97, 1.0];
+const CUR_DARK: Rgba = [0.10, 0.10, 0.12, 1.0];
+const CUR_WHITE: Rgba = [0.96, 0.96, 0.97, 1.0];
+
+fn cross(v: &mut Vec<Prim>, p: Pt) {
     let o = |dx: f32, dy: f32| [p[0] + dx, p[1] + dy];
-    match t {
+    let h = 9.0;
+    v.push(Prim::Stroke { pts: vec![o(-h, 0.0), o(h, 0.0)], width: 3.6, color: CUR_DARK });
+    v.push(Prim::Stroke { pts: vec![o(0.0, -h), o(0.0, h)], width: 3.6, color: CUR_DARK });
+    v.push(Prim::Stroke { pts: vec![o(-h, 0.0), o(h, 0.0)], width: 1.4, color: CUR_WHITE });
+    v.push(Prim::Stroke { pts: vec![o(0.0, -h), o(0.0, h)], width: 1.4, color: CUR_WHITE });
+}
+/// a small badge (halo + glyph) drawn from line segments, at the pen's lower-right
+fn badge(v: &mut Vec<Prim>, segs: &[[Pt; 2]]) {
+    for s in segs { v.push(Prim::Stroke { pts: vec![s[0], s[1]], width: 3.2, color: CUR_WHITE }); }
+    for s in segs { v.push(Prim::Stroke { pts: vec![s[0], s[1]], width: 1.6, color: CUR_DARK }); }
+}
+
+/// Varos's own tool cursor set, drawn on the canvas (OS cursor hidden) — fully themed, Illustrator-
+/// style. The Pen shows its contextual state (×=new · +=add · −=delete · ○=close · /=connect).
+fn cursor_prims(tool: ToolKind, hint: PenHint, p: Pt) -> Vec<Prim> {
+    let o = |dx: f32, dy: f32| [p[0] + dx, p[1] + dy];
+    let mut v = vec![];
+    match tool {
         ToolKind::Object | ToolKind::Direct => {
-            // arrow: black (Select) vs white (Direct), tip at the hotspot
             let (a, b, c) = (p, o(0.5, 17.0), o(12.5, 12.0));
-            let (fill, edge) = if matches!(t, ToolKind::Object) { (dark, white) } else { (white, dark) };
-            vec![
-                Prim::Tri { a, b, c, color: fill },
-                Prim::Stroke { pts: vec![a, b, c, a], width: 1.6, color: edge },
-            ]
+            let (fill, edge) = if matches!(tool, ToolKind::Object) { (CUR_DARK, CUR_WHITE) } else { (CUR_WHITE, CUR_DARK) };
+            v.push(Prim::Tri { a, b, c, color: fill });
+            v.push(Prim::Stroke { pts: vec![a, b, c, a], width: 1.6, color: edge });
         }
-        _ => {
-            // crosshair for pen / shapes / eyedropper (dark halo + white core = visible on anything)
-            let h = 9.0;
-            let mut v = vec![
-                Prim::Stroke { pts: vec![o(-h, 0.0), o(h, 0.0)], width: 3.6, color: dark },
-                Prim::Stroke { pts: vec![o(0.0, -h), o(0.0, h)], width: 3.6, color: dark },
-                Prim::Stroke { pts: vec![o(-h, 0.0), o(h, 0.0)], width: 1.4, color: white },
-                Prim::Stroke { pts: vec![o(0.0, -h), o(0.0, h)], width: 1.4, color: white },
-            ];
-            if matches!(t, ToolKind::Eyedropper) {
-                v.push(Prim::Disc { c: o(6.0, -6.0), r: 2.6, color: white });
-                v.push(Prim::Disc { c: o(6.0, -6.0), r: 1.3, color: dark });
+        ToolKind::Convert => {
+            // convert-anchor caret (^), tip at the hotspot
+            let car = vec![o(-6.0, 6.0), o(0.0, -1.0), o(6.0, 6.0)];
+            v.push(Prim::Stroke { pts: car.clone(), width: 3.4, color: CUR_DARK });
+            v.push(Prim::Stroke { pts: car, width: 1.5, color: CUR_WHITE });
+        }
+        ToolKind::Eyedropper => {
+            cross(&mut v, p);
+            v.push(Prim::Disc { c: o(6.0, -6.0), r: 2.6, color: CUR_WHITE });
+            v.push(Prim::Disc { c: o(6.0, -6.0), r: 1.3, color: CUR_DARK });
+        }
+        ToolKind::Pen => {
+            // pen nib (white fill + dark outline), tip at the hotspot, body up-right
+            let q = [p, o(2.5, -7.5), o(14.0, -19.0), o(19.0, -14.0), o(7.5, -2.5)];
+            v.push(Prim::Tri { a: q[0], b: q[1], c: q[2], color: CUR_WHITE });
+            v.push(Prim::Tri { a: q[0], b: q[2], c: q[3], color: CUR_WHITE });
+            v.push(Prim::Tri { a: q[0], b: q[3], c: q[4], color: CUR_WHITE });
+            v.push(Prim::Stroke { pts: vec![q[0], q[1], q[2], q[3], q[4], q[0]], width: 1.6, color: CUR_DARK });
+            v.push(Prim::Stroke { pts: vec![o(4.0, -4.0), o(11.0, -11.0)], width: 1.0, color: CUR_DARK }); // slit
+            v.push(Prim::Disc { c: o(1.4, -1.4), r: 1.4, color: CUR_DARK }); // tip
+            // contextual badge at lower-right
+            let b = o(13.0, 3.0); let bo = |dx: f32, dy: f32| [b[0] + dx, b[1] + dy];
+            match hint {
+                PenHint::New     => badge(&mut v, &[[bo(-3.0,-3.0),bo(3.0,3.0)], [bo(3.0,-3.0),bo(-3.0,3.0)]]), // ×
+                PenHint::Add     => badge(&mut v, &[[bo(-3.5,0.0),bo(3.5,0.0)], [bo(0.0,-3.5),bo(0.0,3.5)]]),   // +
+                PenHint::Delete  => badge(&mut v, &[[bo(-3.5,0.0),bo(3.5,0.0)]]),                                // −
+                PenHint::Connect => badge(&mut v, &[[bo(3.0,-3.0),bo(-3.0,3.0)]]),                               // /
+                PenHint::Close   => { v.push(Prim::Disc { c: b, r: 4.2, color: CUR_WHITE });
+                                      v.push(Prim::Disc { c: b, r: 2.9, color: CUR_DARK });
+                                      v.push(Prim::Disc { c: b, r: 1.6, color: CUR_WHITE }); }                   // ○
+                PenHint::Draw    => {}
             }
-            v
         }
+        _ => cross(&mut v, p), // rect / ellipse / triangle / polygon
     }
+    v
 }
 
 fn load_icon() -> Option<winit::window::Icon> {
@@ -607,8 +640,11 @@ fn main() {
                     }
                 }
                 WindowEvent::RedrawRequested => {
+                    ed.ppu = view.zoom;
+                    let eff = ed.eff_tool();
+                    let hint = if eff == ToolKind::Pen { ed.pen_hint(view.s2w(screen_cursor)) } else { PenHint::Draw };
                     let world = build_scene(&ed, view.zoom);
-                    let cur = cursor_prims(ed.tool, screen_cursor);
+                    let cur = cursor_prims(eff, hint, screen_cursor);
                     renderer.render(&world, &cur, view);
                 }
                 _ => {}
