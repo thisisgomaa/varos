@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"] // no console window alongside the app
-//! Varos desktop shell: winit window + glue. Translates input → varos-core Editor,
-//! builds the scene (+ a toolbar), and hands it to the wgpu renderer.
+//! Varos desktop shell: winit window + wgpu canvas, with the UI chrome as wry web panels
+//! (top bar, left tool rail, right inspector/layers, zoom pill). The canvas event loop and
+//! renderer are untouched — panels are sibling child HWNDs over the dark canvas.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,26 +16,122 @@ use wry::{dpi::{LogicalPosition as WPos, LogicalSize as WSize}, Rect as WryRect,
 use varos_core::editor::{AlignMode, DistAxis, Editor, Mods, PaintTarget, ToolKind, ZOrder};
 use varos_core::BoolOp;
 use varos_core::geom::{Pt, Rgba, View};
-use varos_core::scene::{build_scene, Prim, WHITE};
+use varos_core::scene::build_scene;
 use varos_render_wgpu::Renderer;
-
-const BTN_BG: [f32; 4] = [0.18, 0.18, 0.18, 1.0];
-
-// Right-side web (wry) panel — the real UI shell. Canvas renders full-window; the panel's child
-// HWND composites on top of the right strip. See memory varos-ui-shell-decision.
-const PANEL_W: f64 = 280.0; // logical px
 
 #[derive(Debug, Clone)]
 enum UserEvent { Ipc(String) }
 
-const PANEL_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
-<style>
-  :root{
-    --bg-panel:#202024;--bg-hover:#2c2c33;--bg-active:#34343a;--border:#2a2a30;
+// ---- docked chrome geometry (logical px) ----
+const TOP_H: f64 = 84.0;   // menu row + context bar
+const LEFT_W: f64 = 52.0;  // tool rail
+const PANEL_W: f64 = 280.0; // inspector / layers
+const ZOOM_W: f64 = 156.0;
+const ZOOM_H: f64 = 38.0;
+
+// ============================ web panels (HTML/CSS/JS) ============================
+// shared dark+azure tokens are duplicated per panel (separate webviews).
+
+const TOPBAR_HTML: &str = r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><style>
+  :root{--bg-app:#1c1c1e;--bg-surface:#26262b;--bg-hover:#2c2c33;--border:#2a2a30;
     --text:#f0f0f2;--muted:#a0a0a8;--faint:#6b6b72;--accent:#0c8ce9;
-    --ui:'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif;
-    --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+    --ui:'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif;--mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg-app);color:var(--text);font:13px var(--ui);overflow:hidden;user-select:none;-webkit-font-smoothing:antialiased}
+  .menu{height:37px;display:flex;align-items:center;padding:0 10px;border-bottom:1px solid var(--border)}
+  .logo{width:25px;height:25px;border-radius:7px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;margin-right:8px}
+  .brand{font-weight:600;font-size:13px;margin-right:7px}
+  .ver{font-family:var(--mono);font-size:10px;color:var(--faint);background:var(--bg-surface);padding:2px 6px;border-radius:5px;margin-right:14px}
+  .mi{padding:5px 9px;color:var(--muted);border-radius:6px;cursor:default;font-size:13px}
+  .mi:hover{background:var(--bg-hover);color:var(--text)}
+  .ctx{height:46px;display:flex;align-items:center;gap:5px;padding:0 12px}
+  .grp{display:flex;gap:2px;align-items:center}
+  .btn{width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;transition:background .1s,color .1s}
+  .btn:hover{background:var(--bg-hover);color:var(--text)}
+  .btn.dis{opacity:.3;pointer-events:none}
+  .btn svg{width:18px;height:18px}
+  .sep{width:1px;height:20px;background:var(--border);margin:0 6px}
+  .info{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)}
+</style></head><body>
+  <div class="menu">
+    <div class="logo">V</div><div class="brand">Varos</div><div class="ver">pre-alpha</div>
+    <div class="mi">File</div><div class="mi">Edit</div><div class="mi">Object</div><div class="mi">Select</div><div class="mi">View</div>
+  </div>
+  <div class="ctx">
+    <div class="grp" id="align"></div><div class="sep"></div>
+    <div class="grp" id="dist"></div><div class="sep"></div>
+    <div class="grp" id="pf"></div>
+    <div class="info" id="info">No selection</div>
+  </div>
+<script>
+  const S='fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+  const svg=p=>'<svg viewBox="0 0 24 24" '+S+'>'+p+'</svg>';
+  const AL=[
+    ['align:left',svg('<path d="M4 4V20M4 9H17M4 15H11"/>')],
+    ['align:centerh',svg('<path d="M12 4V20M5 9H19M8 15H16"/>')],
+    ['align:right',svg('<path d="M20 4V20M7 9H20M13 15H20"/>')],
+    ['align:top',svg('<path d="M4 4H20M9 4V17M15 4V11"/>')],
+    ['align:middle',svg('<path d="M4 12H20M9 5V19M15 8V16"/>')],
+    ['align:bottom',svg('<path d="M4 20H20M9 7V20M15 13V20"/>')],
+  ];
+  const DI=[['dist:h',svg('<path d="M4 5V19M12 5V19M20 5V19"/>')],['dist:v',svg('<path d="M5 4H19M5 12H19M5 20H19"/>')]];
+  const sq=(x,y,f)=>'<rect x="'+x+'" y="'+y+'" width="11" height="11" rx="1.5" '+f+'/>';
+  const PF=[
+    ['pf:unite','<svg viewBox="0 0 24 24" fill="currentColor">'+sq(4,4,'')+sq(9,9,'')+'</svg>'],
+    ['pf:minus','<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.3">'+sq(4,4,'')+sq(9,9,'fill="#1c1c1e"')+'</svg>'],
+    ['pf:intersect','<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">'+sq(4,4,'')+sq(9,9,'')+'<rect x="9" y="9" width="6" height="6" fill="currentColor" stroke="none"/></svg>'],
+    ['pf:exclude','<svg viewBox="0 0 24 24" fill="currentColor">'+sq(4,4,'')+sq(9,9,'')+'<rect x="9" y="9" width="6" height="6" fill="#1c1c1e"/></svg>'],
+  ];
+  function fill(id,items){ const g=document.getElementById(id); for(const [cmd,ic] of items){ const b=document.createElement('div'); b.className='btn'; b.innerHTML=ic; b.onclick=()=>{ if(!b.classList.contains('dis')) window.ipc.postMessage(cmd); }; g.appendChild(b);} }
+  fill('align',AL); fill('dist',DI); fill('pf',PF);
+  window.varosTop=(s)=>{
+    const n=(s&&s.n)||0;
+    document.querySelectorAll('#align .btn,#pf .btn').forEach(b=>b.classList.toggle('dis',n<2));
+    document.querySelectorAll('#dist .btn').forEach(b=>b.classList.toggle('dis',n<3));
+    document.getElementById('info').textContent=(s&&s.info)||'';
+  };
+  window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
+</script></body></html>"##;
+
+const TOOLS_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><style>
+  :root{--bg-app:#1c1c1e;--bg-hover:#2c2c33;--border:#2a2a30;--muted:#a0a0a8;--text:#f0f0f2;--accent:#0c8ce9;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg-app);overflow:hidden;user-select:none}
+  .rail{display:flex;flex-direction:column;align-items:center;height:100%;padding:8px 0;gap:2px}
+  .tb{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted);transition:background .12s,color .12s}
+  .tb:hover{background:var(--bg-hover);color:var(--text)}
+  .tb.on{background:var(--accent);color:#fff}
+  .tb svg{width:20px;height:20px}
+  .sep{width:22px;height:1px;background:var(--border);margin:5px 0}
+</style></head><body><div class="rail" id="rail"></div>
+<script>
+  const A='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
+  const Ao='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
+  const PEN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 20 L6 14 L15 5 L19 9 L10 18 Z"/><path d="M6 14 L10 18"/></svg>';
+  const RECT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="6" width="14" height="12" rx="1"/></svg>';
+  const ELL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>';
+  const TRI='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 5 L19 19 L5 19 Z"/></svg>';
+  const EYE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 20 L11 13"/><path d="M13 11 L17 7 a2.1 2.1 0 1 0 -3 -3 L10 8 Z"/></svg>';
+  const TOOLS=[['object',A],['direct',Ao],null,['pen',PEN],null,['rect',RECT],['ellipse',ELL],['triangle',TRI],null,['eyedropper',EYE]];
+  const rail=document.getElementById('rail'); let active='pen';
+  function render(){
+    rail.innerHTML='';
+    for(const t of TOOLS){
+      if(!t){ const s=document.createElement('div'); s.className='sep'; rail.appendChild(s); continue; }
+      const [id,svg]=t; const d=document.createElement('div');
+      d.className='tb'+(id===active?' on':''); d.innerHTML=svg;
+      d.onclick=()=>window.ipc.postMessage('tool:'+id); rail.appendChild(d);
+    }
   }
+  window.varosUI=(s)=>{ if(s&&s.tool){ active=s.tool; render(); } };
+  render();
+  window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
+</script></body></html>"#;
+
+const PANEL_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><style>
+  :root{--bg-panel:#202024;--bg-surface:#26262b;--bg-hover:#2c2c33;--border:#2a2a30;
+    --text:#f0f0f2;--muted:#a0a0a8;--faint:#6b6b72;--accent:#0c8ce9;
+    --ui:'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif;--mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;background:var(--bg-panel);color:var(--text);font:13px/1.5 var(--ui);overflow:hidden;user-select:none;-webkit-font-smoothing:antialiased}
   .tabs{display:flex;gap:2px;padding:10px 12px 0}
@@ -43,11 +140,24 @@ const PANEL_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="
   .tab.on::after{content:'';position:absolute;left:8px;right:8px;bottom:0;height:2px;border-radius:2px;background:var(--accent)}
   .tab:hover:not(.on){color:var(--text)}
   .scroll{height:calc(100% - 39px);overflow:auto;border-top:1px solid var(--border)}
-  .sec{padding:14px 16px;border-bottom:1px solid var(--border)}
+  .sec{padding:13px 16px;border-bottom:1px solid var(--border)}
   .sec-h{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
   .count{font-family:var(--mono);color:var(--faint);font-size:11px;font-weight:400}
   .empty{padding:22px 8px;color:var(--faint);font-size:12px;line-height:1.7;text-align:center}
-  .list{display:flex;flex-direction:column;gap:1px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .fld{background:var(--bg-surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;display:flex;align-items:center;gap:8px}
+  .fld label{color:var(--faint);font-size:11px;font-family:var(--mono);min-width:9px}
+  .fld span{color:var(--text);font-family:var(--mono);font-size:12px}
+  .row{display:flex;align-items:center;gap:9px}
+  .cpick{width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:none;padding:0;cursor:pointer}
+  .cpick::-webkit-color-swatch-wrapper{padding:3px}
+  .cpick::-webkit-color-swatch{border:none;border-radius:5px}
+  .hex{flex:1;font-family:var(--mono);font-size:12px;color:var(--text)}
+  .clr{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:var(--faint);cursor:pointer;font-size:12px}
+  .clr:hover{background:var(--bg-hover);color:var(--text)}
+  .num{flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:7px;padding:6px 9px;color:var(--text);font-family:var(--mono);font-size:12px}
+  .num:focus{outline:1px solid var(--accent)}
+  .wl{color:var(--faint);font-size:11px;min-width:42px}
   .layer{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;cursor:pointer;color:var(--muted);font-size:12.5px}
   .layer:hover{background:var(--bg-hover);color:var(--text)}
   .layer.sel{background:var(--accent);color:#fff}
@@ -57,28 +167,55 @@ const PANEL_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="
   .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style></head><body>
   <div class="tabs">
-    <div class="tab on" data-t="layers">Layers</div>
-    <div class="tab" data-t="design">Design</div>
+    <div class="tab on" data-t="design">Design</div>
+    <div class="tab" data-t="layers">Layers</div>
   </div>
   <div class="scroll">
-    <div id="layers">
-      <div class="sec"><div class="sec-h"><span>Layers</span><span class="count" id="lc">0</span></div>
-        <div class="list" id="list"><div class="empty">No objects yet</div></div></div>
+    <div id="design">
+      <div class="empty" id="d-empty">Select an object to edit<br>its size, fill &amp; stroke.</div>
+      <div id="d-props" style="display:none">
+        <div class="sec"><div class="sec-h">Layout</div>
+          <div class="grid2">
+            <div class="fld"><label>X</label><span id="fx">0</span></div>
+            <div class="fld"><label>Y</label><span id="fy">0</span></div>
+            <div class="fld"><label>W</label><span id="fw">0</span></div>
+            <div class="fld"><label>H</label><span id="fh">0</span></div>
+          </div>
+        </div>
+        <div class="sec"><div class="sec-h">Fill</div>
+          <div class="row"><input type="color" class="cpick" id="fillc"><span class="hex" id="fillh">None</span><div class="clr" id="fillx" title="No fill">&#10005;</div></div>
+        </div>
+        <div class="sec"><div class="sec-h">Stroke</div>
+          <div class="row"><input type="color" class="cpick" id="strokec"><span class="hex" id="strokeh">None</span><div class="clr" id="strokex" title="No stroke">&#10005;</div></div>
+          <div class="row" style="margin-top:9px"><span class="wl">Width</span><input type="number" class="num" id="sw" min="0" step="0.5"></div>
+        </div>
+      </div>
     </div>
-    <div id="design" style="display:none">
-      <div class="sec"><div class="sec-h">Properties</div>
-        <div class="empty">Select an object to edit<br>its size, fill &amp; stroke.</div></div>
+    <div id="layers" style="display:none">
+      <div class="sec"><div class="sec-h"><span>Layers</span><span class="count" id="lc">0</span></div>
+        <div id="list"><div class="empty">No objects yet</div></div></div>
     </div>
   </div>
 <script>
+  const $=id=>document.getElementById(id);
   const tabs=document.querySelectorAll('.tab');
-  function show(t){ for(const el of tabs) el.classList.toggle('on', el.dataset.t===t);
-    document.getElementById('layers').style.display = t==='layers'?'':'none';
-    document.getElementById('design').style.display = t==='design'?'':'none'; }
+  function show(t){ for(const el of tabs) el.classList.toggle('on',el.dataset.t===t);
+    $('design').style.display=t==='design'?'':'none'; $('layers').style.display=t==='layers'?'':'none'; }
   for(const el of tabs) el.addEventListener('click',()=>show(el.dataset.t));
+  function setSw(which,hex){ const c=$(which+'c'),h=$(which+'h'); if(hex){ c.value=hex; h.textContent=hex.toUpperCase(); } else { h.textContent='None'; } }
+  window.varosDesign=(p)=>{
+    if(!p||!p.sel){ $('d-props').style.display='none'; $('d-empty').style.display=''; return; }
+    $('d-empty').style.display='none'; $('d-props').style.display='';
+    $('fx').textContent=p.x; $('fy').textContent=p.y; $('fw').textContent=p.w; $('fh').textContent=p.h;
+    setSw('fill',p.fill); setSw('stroke',p.stroke); $('sw').value=p.sw;
+  };
+  $('fillc').addEventListener('input',e=>window.ipc.postMessage('fill:'+e.target.value));
+  $('fillx').addEventListener('click',()=>window.ipc.postMessage('fill:none'));
+  $('strokec').addEventListener('input',e=>window.ipc.postMessage('stroke:'+e.target.value));
+  $('strokex').addEventListener('click',()=>window.ipc.postMessage('stroke:none'));
+  $('sw').addEventListener('change',e=>window.ipc.postMessage('sw:'+e.target.value));
   window.varosLayers=(rows)=>{
-    document.getElementById('lc').textContent=rows.length;
-    const list=document.getElementById('list');
+    $('lc').textContent=rows.length; const list=$('list');
     if(!rows.length){ list.innerHTML='<div class="empty">No objects yet</div>'; return; }
     list.innerHTML='';
     for(const r of rows){
@@ -94,165 +231,113 @@ const PANEL_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="
   window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
 </script></body></html>"#;
 
-// Left vertical tools rail (web). Replaces the in-canvas tool buttons.
-const LEFT_W: f64 = 52.0; // logical px
-const TOOLS_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><style>
-  :root{--bg-app:#1c1c1e;--bg-hover:#2c2c33;--border:#2a2a30;--muted:#a0a0a8;--text:#f0f0f2;--accent:#0c8ce9;
-    --ui:'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif;}
+const ZOOM_HTML: &str = r#"<!doctype html><html><head><meta charset="utf-8"><style>
+  :root{--bg-app:#1c1c1e;--bg-float:#232327;--bg-hover:#2c2c33;--border:#2a2a30;--text:#f0f0f2;--muted:#a0a0a8;
+    --ui:'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif;--mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;}
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%;background:var(--bg-app);overflow:hidden;user-select:none;font-family:var(--ui)}
-  .rail{display:flex;flex-direction:column;align-items:center;height:100%;padding:8px 0;gap:2px}
-  .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;margin-bottom:8px}
-  .tb{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted);transition:background .12s,color .12s}
-  .tb:hover{background:var(--bg-hover);color:var(--text)}
-  .tb.on{background:var(--accent);color:#fff}
-  .tb svg{width:20px;height:20px}
-  .sep{width:22px;height:1px;background:var(--border);margin:5px 0}
-</style></head><body><div class="rail" id="rail"></div>
+  html,body{height:100%;background:var(--bg-app);overflow:hidden;user-select:none;display:flex;align-items:center;justify-content:center;font-family:var(--ui)}
+  .pill{display:flex;align-items:center;gap:1px;background:var(--bg-float);border:1px solid var(--border);border-radius:11px;padding:3px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  .b{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;font-size:16px}
+  .b:hover{background:var(--bg-hover);color:var(--text)}
+  .z{min-width:48px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--text)}
+</style></head><body>
+  <div class="pill"><div class="b" id="out">&#8722;</div><div class="z" id="z">100%</div><div class="b" id="in">+</div><div class="b" id="fit">&#9974;</div></div>
 <script>
-  const A='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
-  const Ao='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
-  const PEN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 20 L6 14 L15 5 L19 9 L10 18 Z"/><path d="M6 14 L10 18"/></svg>';
-  const RECT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="6" width="14" height="12" rx="1"/></svg>';
-  const ELL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>';
-  const TRI='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 5 L19 19 L5 19 Z"/></svg>';
-  const EYE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 20 L11 13"/><path d="M13 11 L17 7 a2.1 2.1 0 1 0 -3 -3 L10 8 Z"/></svg>';
-  // [id, svg] or null = separator
-  const TOOLS=[['object',A],['direct',Ao],null,['pen',PEN],null,['rect',RECT],['ellipse',ELL],['triangle',TRI],null,['eyedropper',EYE]];
-  const rail=document.getElementById('rail'); let active='pen';
-  const logo=document.createElement('div'); logo.className='logo'; logo.textContent='V'; rail.appendChild(logo);
-  function render(){
-    [...rail.querySelectorAll('.tb,.sep')].forEach(e=>e.remove());
-    for(const t of TOOLS){
-      if(!t){ const s=document.createElement('div'); s.className='sep'; rail.appendChild(s); continue; }
-      const [id,svg]=t; const d=document.createElement('div');
-      d.className='tb'+(id===active?' on':''); d.innerHTML=svg;
-      d.onclick=()=>window.ipc.postMessage('tool:'+id); rail.appendChild(d);
-    }
-  }
-  window.varosUI=(s)=>{ if(s&&s.tool){ active=s.tool; render(); } };
-  render();
+  const send=c=>window.ipc.postMessage('zoom:'+c);
+  document.getElementById('out').onclick=()=>send('out');
+  document.getElementById('in').onclick=()=>send('in');
+  document.getElementById('fit').onclick=()=>send('fit');
+  window.varosZoom=(p)=>{ document.getElementById('z').textContent=p+'%'; };
   window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
 </script></body></html>"#;
 
-// temporary paint palette (real Color/Stroke panels arrive with Tauri)
-const PALETTE: [Option<Rgba>; 8] = [
-    Some([0.95,0.95,0.97,1.0]), Some([0.10,0.10,0.12,1.0]), Some([0.90,0.26,0.24,1.0]), Some([0.30,0.75,0.40,1.0]),
-    Some([0.20,0.55,0.95,1.0]), Some([0.97,0.80,0.25,1.0]), Some([0.60,0.42,0.85,1.0]), None,
-];
-fn in_rect(p: Pt, r: (f32,f32,f32,f32)) -> bool { p[0] >= r.0 && p[0] <= r.0 + r.2 && p[1] >= r.1 && p[1] <= r.1 + r.3 }
-// top temp bar starts right of the 52px left tools rail (tools moved to the web rail)
-fn fill_sw() -> (f32,f32,f32,f32) { (62.0, 12.0, 28.0, 28.0) }
-fn stroke_sw() -> (f32,f32,f32,f32) { (92.0, 12.0, 28.0, 28.0) }
-fn pal_sw(j: usize) -> (f32,f32,f32,f32) { (136.0 + j as f32 * 30.0, 14.0, 24.0, 24.0) }
-// align / distribute buttons: 0-2 align H (L/Ch/R), 3-5 align V (T/M/B), 6-7 distribute (H/V)
-fn align_sw(k: usize) -> (f32,f32,f32,f32) {
-    let gap = if k >= 6 { 16.0 } else if k >= 3 { 8.0 } else { 0.0 };
-    (396.0 + k as f32 * 30.0 + gap, 12.0, 26.0, 26.0)
-}
-// Pathfinder buttons: Unite / Minus Front / Intersect / Exclude
-fn pf_sw(k: usize) -> (f32,f32,f32,f32) { (682.0 + k as f32 * 30.0, 12.0, 26.0, 26.0) }
+// ============================ helpers ============================
 
-/// Handle a click on the toolbar UI (tools / fill+stroke target / palette). Returns true if consumed.
-fn ui_click(ed: &mut Editor, pos: Pt) -> bool {
-    // tools now live in the left web rail; this temp top bar keeps colors / align / pathfinder
-    if in_rect(pos, fill_sw()) { ed.paint = PaintTarget::Fill; return true; }
-    if in_rect(pos, stroke_sw()) { ed.paint = PaintTarget::Stroke; return true; }
-    for (j, c) in PALETTE.iter().enumerate() { if in_rect(pos, pal_sw(j)) { ed.apply_paint(*c); return true; } }
-    for k in 0..8 { if in_rect(pos, align_sw(k)) {
-        match k {
-            0 => ed.align(AlignMode::Left), 1 => ed.align(AlignMode::CenterH), 2 => ed.align(AlignMode::Right),
-            3 => ed.align(AlignMode::Top),  4 => ed.align(AlignMode::Middle),  5 => ed.align(AlignMode::Bottom),
-            6 => ed.distribute(DistAxis::Horizontal), _ => ed.distribute(DistAxis::Vertical),
+fn hex(c: Rgba) -> String {
+    format!("#{:02x}{:02x}{:02x}", (c[0]*255.0).round() as u8, (c[1]*255.0).round() as u8, (c[2]*255.0).round() as u8)
+}
+fn parse_hex(s: &str) -> Option<Rgba> {
+    let s = s.trim().trim_start_matches('#');
+    if s.len() != 6 { return None; }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()? as f32 / 255.0;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()? as f32 / 255.0;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()? as f32 / 255.0;
+    Some([r, g, b, 1.0])
+}
+fn tool_from(s: &str) -> Option<ToolKind> {
+    Some(match s {
+        "object" => ToolKind::Object, "direct" => ToolKind::Direct, "pen" => ToolKind::Pen,
+        "rect" => ToolKind::Rect, "ellipse" => ToolKind::Ellipse, "triangle" => ToolKind::Triangle,
+        "eyedropper" => ToolKind::Eyedropper, _ => return None,
+    })
+}
+fn tool_id(t: ToolKind) -> &'static str {
+    match t {
+        ToolKind::Object => "object", ToolKind::Direct => "direct", ToolKind::Pen => "pen",
+        ToolKind::Rect => "rect", ToolKind::Ellipse => "ellipse", ToolKind::Triangle => "triangle",
+        ToolKind::Eyedropper => "eyedropper", ToolKind::Polygon => "polygon", ToolKind::Convert => "convert",
+    }
+}
+/// Set absolute stroke width on the object selection.
+fn set_stroke_width(ed: &mut Editor, w: f32) {
+    let pids: Vec<u32> = ed.objsel.iter().copied().collect();
+    if pids.is_empty() { return; }
+    ed.begin();
+    for pid in pids { if let Some(pi) = ed.doc.pidx(pid) { ed.doc.paths[pi].stroke_width = w.max(0.0); } }
+    ed.dirty = true; ed.commit();
+}
+
+/// Layers rows (top of z-order first); groups = header (depth 0) + members (depth 1).
+fn layers_json(ed: &Editor) -> String {
+    let d = &ed.doc;
+    let mut rows: Vec<String> = Vec::new();
+    let mut cur_group: Option<u32> = None;
+    for p in d.paths.iter().rev() {
+        let sel = ed.objsel.contains(&p.id);
+        match d.top_group_of_path(p.id) {
+            None => { cur_group = None;
+                rows.push(format!("{{\"pid\":{},\"name\":\"Object\",\"depth\":0,\"group\":false,\"sel\":{}}}", p.id, sel)); }
+            Some(g) => {
+                if cur_group != Some(g) { cur_group = Some(g);
+                    rows.push(format!("{{\"pid\":{},\"name\":\"Group\",\"depth\":0,\"group\":true,\"sel\":{}}}", p.id, sel)); }
+                rows.push(format!("{{\"pid\":{},\"name\":\"Object\",\"depth\":1,\"group\":false,\"sel\":{}}}", p.id, sel));
+            }
         }
-        return true;
-    }}
-    for k in 0..4 { if in_rect(pos, pf_sw(k)) {
-        match k { 0 => ed.pathfinder(BoolOp::Unite), 1 => ed.pathfinder(BoolOp::MinusFront), 2 => ed.pathfinder(BoolOp::Intersect), _ => ed.pathfinder(BoolOp::Exclude) }
-        return true;
-    }}
-    false
-}
-
-fn swatch(s: &mut Vec<Prim>, r: (f32,f32,f32,f32), color: Option<Rgba>, active: bool) {
-    let c = [r.0 + r.2/2.0, r.1 + r.3/2.0]; let half = r.2/2.0;
-    if active { s.push(Prim::Square { c, half: half + 2.0, color: WHITE }); }
-    s.push(Prim::Square { c, half, color: [0.10, 0.10, 0.12, 1.0] });
-    if let Some(col) = color { s.push(Prim::Square { c, half: half - 1.5, color: col }); }
-    else { s.push(Prim::Stroke { pts: vec![[r.0+4.0, r.1+r.3-4.0], [r.0+r.2-4.0, r.1+4.0]], width: 2.0, color: [0.9,0.2,0.2,1.0] }); }
-}
-
-fn ln(s: &mut Vec<Prim>, a: Pt, b: Pt, w: f32, col: Rgba) { s.push(Prim::Stroke { pts: vec![a, b], width: w, color: col }); }
-fn sq_ring(s: &mut Vec<Prim>, c: Pt, half: f32, w: f32, col: Rgba) {
-    s.push(Prim::Stroke { pts: vec![[c[0]-half,c[1]-half],[c[0]+half,c[1]-half],[c[0]+half,c[1]+half],[c[0]-half,c[1]+half],[c[0]-half,c[1]-half]], width: w, color: col });
-}
-
-/// Pathfinder icon (k: 0 Unite, 1 Minus Front, 2 Intersect, 3 Exclude) — two overlapping squares.
-fn pf_icon(s: &mut Vec<Prim>, k: usize, r: (f32,f32,f32,f32), ic: Rgba) {
-    let (bx, by) = (r.0, r.1);
-    let ca = [bx+10.0, by+11.0]; let cb = [bx+16.0, by+17.0]; let h = 6.0; let ov = [bx+13.0, by+14.0];
-    match k {
-        0 => { s.push(Prim::Square { c: ca, half: h, color: ic }); s.push(Prim::Square { c: cb, half: h, color: ic }); }
-        1 => { s.push(Prim::Square { c: ca, half: h, color: ic }); s.push(Prim::Square { c: cb, half: h, color: BTN_BG }); sq_ring(s, cb, h, 1.2, ic); }
-        2 => { sq_ring(s, ca, h, 1.2, ic); sq_ring(s, cb, h, 1.2, ic); s.push(Prim::Square { c: ov, half: 3.0, color: ic }); }
-        _ => { s.push(Prim::Square { c: ca, half: h, color: ic }); s.push(Prim::Square { c: cb, half: h, color: ic }); s.push(Prim::Square { c: ov, half: 3.0, color: BTN_BG }); }
     }
+    format!("[{}]", rows.join(","))
+}
+/// Inspector (Design tab) props of the object selection.
+fn inspector_json(ed: &Editor) -> String {
+    if ed.objsel.is_empty() { return "{\"sel\":false}".into(); }
+    let (x, y, w, h) = match ed.obj_bbox() { Some((x0,y0,x1,y1)) => (x0, y0, x1-x0, y1-y0), None => (0.0,0.0,0.0,0.0) };
+    let first = ed.objsel.iter().copied().filter_map(|pid| ed.doc.pidx(pid)).next();
+    let (fill, stroke, sw) = match first { Some(pi) => { let p = &ed.doc.paths[pi]; (p.fill, p.stroke, p.stroke_width) }, None => (None, None, 1.0) };
+    let fj = fill.map(|c| format!("\"{}\"", hex(c))).unwrap_or_else(|| "null".into());
+    let sj = stroke.map(|c| format!("\"{}\"", hex(c))).unwrap_or_else(|| "null".into());
+    format!("{{\"sel\":true,\"x\":{:.0},\"y\":{:.0},\"w\":{:.0},\"h\":{:.0},\"fill\":{},\"stroke\":{},\"sw\":{:.1}}}", x, y, w, h, fj, sj, sw)
 }
 
-/// Draw an align/distribute icon (k = button index) inside button rect r, in colour `col`.
-fn align_icon(s: &mut Vec<Prim>, k: usize, r: (f32,f32,f32,f32), col: Rgba) {
-    let (bx, by) = (r.0, r.1);
-    match k {
-        0 => { ln(s,[bx+5.0,by+5.0],[bx+5.0,by+21.0],2.0,col); ln(s,[bx+5.0,by+10.0],[bx+20.0,by+10.0],3.5,col); ln(s,[bx+5.0,by+16.0],[bx+14.0,by+16.0],3.5,col); }
-        1 => { ln(s,[bx+13.0,by+4.0],[bx+13.0,by+22.0],1.6,col); ln(s,[bx+5.0,by+10.0],[bx+21.0,by+10.0],3.5,col); ln(s,[bx+9.0,by+16.0],[bx+17.0,by+16.0],3.5,col); }
-        2 => { ln(s,[bx+21.0,by+5.0],[bx+21.0,by+21.0],2.0,col); ln(s,[bx+6.0,by+10.0],[bx+21.0,by+10.0],3.5,col); ln(s,[bx+12.0,by+16.0],[bx+21.0,by+16.0],3.5,col); }
-        3 => { ln(s,[bx+5.0,by+5.0],[bx+21.0,by+5.0],2.0,col); ln(s,[bx+10.0,by+5.0],[bx+10.0,by+20.0],3.5,col); ln(s,[bx+16.0,by+5.0],[bx+16.0,by+13.0],3.5,col); }
-        4 => { ln(s,[bx+4.0,by+13.0],[bx+22.0,by+13.0],1.6,col); ln(s,[bx+10.0,by+5.0],[bx+10.0,by+21.0],3.5,col); ln(s,[bx+16.0,by+9.0],[bx+16.0,by+17.0],3.5,col); }
-        5 => { ln(s,[bx+5.0,by+21.0],[bx+21.0,by+21.0],2.0,col); ln(s,[bx+10.0,by+6.0],[bx+10.0,by+21.0],3.5,col); ln(s,[bx+16.0,by+13.0],[bx+16.0,by+21.0],3.5,col); }
-        6 => { ln(s,[bx+6.0,by+6.0],[bx+6.0,by+20.0],3.0,col); ln(s,[bx+13.0,by+6.0],[bx+13.0,by+20.0],3.0,col); ln(s,[bx+20.0,by+6.0],[bx+20.0,by+20.0],3.0,col); }
-        _ => { ln(s,[bx+6.0,by+6.0],[bx+20.0,by+6.0],3.0,col); ln(s,[bx+6.0,by+13.0],[bx+20.0,by+13.0],3.0,col); ln(s,[bx+6.0,by+20.0],[bx+20.0,by+20.0],3.0,col); }
-    }
-}
-
-fn toolbar(ed: &Editor, s: &mut Vec<Prim>) {
-    // fill / stroke target swatches + palette
-    swatch(s, fill_sw(), ed.cur_fill, ed.paint == PaintTarget::Fill);
-    swatch(s, stroke_sw(), ed.cur_stroke, ed.paint == PaintTarget::Stroke);
-    for (j, c) in PALETTE.iter().enumerate() { swatch(s, pal_sw(j), *c, false); }
-    // align / distribute buttons (greyed unless enough objects are selected)
+fn push_layers(p: &WebView, ed: &Editor) { let _ = p.evaluate_script(&format!("window.varosLayers&&window.varosLayers({});", layers_json(ed))); }
+fn push_inspector(p: &WebView, ed: &Editor) { let _ = p.evaluate_script(&format!("window.varosDesign&&window.varosDesign({});", inspector_json(ed))); }
+fn push_ui(t: &WebView, ed: &Editor) { let _ = t.evaluate_script(&format!("window.varosUI&&window.varosUI({{\"tool\":\"{}\"}});", tool_id(ed.tool))); }
+fn push_top(t: &WebView, ed: &Editor) {
     let n = ed.objsel.len();
-    for k in 0..8 {
-        let r = align_sw(k);
-        s.push(Prim::Square { c: [r.0 + 13.0, r.1 + 13.0], half: 13.0, color: BTN_BG });
-        let enabled = if k >= 6 { n >= 3 } else { n >= 2 };
-        align_icon(s, k, r, if enabled { [0.82,0.86,0.92,1.0] } else { [0.34,0.34,0.38,1.0] });
-    }
-    // Pathfinder buttons (need >=2 objects)
-    for k in 0..4 {
-        let r = pf_sw(k);
-        s.push(Prim::Square { c: [r.0 + 13.0, r.1 + 13.0], half: 13.0, color: BTN_BG });
-        pf_icon(s, k, r, if n >= 2 { [0.82,0.86,0.92,1.0] } else { [0.34,0.34,0.38,1.0] });
-    }
+    let info = match n { 0 => "No selection".to_string(), 1 => "1 object".to_string(), _ => format!("{n} objects") };
+    let _ = t.evaluate_script(&format!("window.varosTop&&window.varosTop({{\"n\":{},\"info\":{:?}}});", n, info));
+}
+fn push_zoom(z: &WebView, zoom: f32) { let _ = z.evaluate_script(&format!("window.varosZoom&&window.varosZoom({});", (zoom*100.0).round() as i32)); }
+fn refresh_all(panel: &WebView, tools: &WebView, topbar: &WebView, zoom: &WebView, ed: &Editor, zoomf: f32) {
+    push_layers(panel, ed); push_inspector(panel, ed); push_ui(tools, ed); push_top(topbar, ed); push_zoom(zoom, zoomf);
 }
 
 fn tool_name(t: ToolKind) -> &'static str {
     match t {
-        ToolKind::Pen => "Pen (P)", ToolKind::Direct => "White arrow (A)", ToolKind::Object => "Black arrow (V)",
+        ToolKind::Pen => "Pen (P)", ToolKind::Direct => "Direct Select (A)", ToolKind::Object => "Select (V)",
         ToolKind::Rect => "Rectangle (M)", ToolKind::Ellipse => "Ellipse (L)", ToolKind::Triangle => "Triangle",
         ToolKind::Polygon => "Polygon", ToolKind::Convert => "Convert", ToolKind::Eyedropper => "Eyedropper (I)",
     }
 }
-fn full_title(t: ToolKind) -> String { format!("Varos \u{3b1} \u{b7} pre-alpha (\u{644}\u{633}\u{647} \u{628}\u{64a}\u{633}\u{62d}\u{641} \u{1f41b}) \u{2014} {}", tool_name(t)) }
-
-// a tiny caterpillar in the bottom-left corner: "still crawling" :)
-fn easter_egg(s: &mut Vec<Prim>, h: f32) {
-    let y = h - 20.0;
-    let col = [0.32, 0.52, 0.72, 0.65];
-    for (x, r) in [(20.0, 5.0), (30.0, 4.6), (39.0, 4.2), (47.0, 3.8), (54.0, 3.4)] {
-        s.push(Prim::Disc { c: [x, y], r, color: col });
-    }
-    s.push(Prim::Disc { c: [18.0, y - 2.5], r: 1.1, color: [0.92, 0.92, 0.92, 0.85] }); // eye
-}
+fn full_title(t: ToolKind) -> String { format!("Varos \u{3b1} \u{b7} pre-alpha \u{2014} {}", tool_name(t)) }
 
 fn handle_key(ed: &mut Editor, code: KeyCode) {
     let s = if ed.mods.shift { 10.0 } else { 1.0 };
@@ -275,44 +360,6 @@ fn handle_key(ed: &mut Editor, code: KeyCode) {
     }
 }
 
-/// Serialize the document into Layers-panel rows (top of z-order first). Groups appear as a header
-/// row (depth 0) followed by their members (depth 1). Hand-built JSON (data is simple + safe).
-fn layers_json(ed: &Editor) -> String {
-    let d = &ed.doc;
-    let mut rows: Vec<String> = Vec::new();
-    let mut cur_group: Option<u32> = None;
-    for p in d.paths.iter().rev() {
-        let sel = ed.objsel.contains(&p.id);
-        match d.top_group_of_path(p.id) {
-            None => {
-                cur_group = None;
-                rows.push(format!("{{\"pid\":{},\"name\":\"Object\",\"depth\":0,\"group\":false,\"sel\":{}}}", p.id, sel));
-            }
-            Some(g) => {
-                if cur_group != Some(g) {
-                    cur_group = Some(g);
-                    rows.push(format!("{{\"pid\":{},\"name\":\"Group\",\"depth\":0,\"group\":true,\"sel\":{}}}", p.id, sel));
-                }
-                rows.push(format!("{{\"pid\":{},\"name\":\"Object\",\"depth\":1,\"group\":false,\"sel\":{}}}", p.id, sel));
-            }
-        }
-    }
-    format!("[{}]", rows.join(","))
-}
-fn push_layers(panel: &WebView, ed: &Editor) {
-    let _ = panel.evaluate_script(&format!("window.varosLayers && window.varosLayers({});", layers_json(ed)));
-}
-fn tool_id(t: ToolKind) -> &'static str {
-    match t {
-        ToolKind::Object => "object", ToolKind::Direct => "direct", ToolKind::Pen => "pen",
-        ToolKind::Rect => "rect", ToolKind::Ellipse => "ellipse", ToolKind::Triangle => "triangle",
-        ToolKind::Eyedropper => "eyedropper", ToolKind::Polygon => "polygon", ToolKind::Convert => "convert",
-    }
-}
-fn push_ui(tools: &WebView, ed: &Editor) {
-    let _ = tools.evaluate_script(&format!("window.varosUI && window.varosUI({{\"tool\":\"{}\"}});", tool_id(ed.tool)));
-}
-
 fn load_icon() -> Option<winit::window::Icon> {
     let img = image::load_from_memory(include_bytes!("../icon.png")).ok()?.into_rgba8();
     let (w, h) = img.dimensions();
@@ -324,34 +371,32 @@ fn main() {
     let proxy = event_loop.create_proxy();
     let window = Arc::new(WindowBuilder::new().with_title(full_title(ToolKind::Pen))
         .with_window_icon(load_icon())
-        .with_inner_size(winit::dpi::LogicalSize::new(1460.0, 800.0)).build(&event_loop).unwrap());
+        .with_inner_size(winit::dpi::LogicalSize::new(1460.0, 860.0)).build(&event_loop).unwrap());
     let size = window.inner_size();
     let mut renderer = pollster::block_on(Renderer::new(window.clone(), size.width, size.height));
 
-    // right-side web panel (wry) — sibling child HWND; the canvas event loop stays untouched
     let scale = window.scale_factor();
     let lsz = window.inner_size().to_logical::<f64>(scale);
-    let panel = WebViewBuilder::new()
-        .with_bounds(WryRect {
-            position: WPos::new((lsz.width - PANEL_W).max(0.0), 0.0).into(),
-            size: WSize::new(PANEL_W, lsz.height).into(),
-        })
-        .with_background_color((30, 30, 34, 255))
-        .with_html(PANEL_HTML)
+    let topbar = WebViewBuilder::new()
+        .with_bounds(WryRect { position: WPos::new(0.0, 0.0).into(), size: WSize::new(lsz.width, TOP_H).into() })
+        .with_background_color((28,28,30,255)).with_html(TOPBAR_HTML)
         .with_ipc_handler({ let proxy = proxy.clone(); move |req| { let _ = proxy.send_event(UserEvent::Ipc(req.body().clone())); } })
-        .build_as_child(&*window)
-        .unwrap();
-    // left vertical tools rail
+        .build_as_child(&*window).unwrap();
     let tools_panel = WebViewBuilder::new()
-        .with_bounds(WryRect {
-            position: WPos::new(0.0, 0.0).into(),
-            size: WSize::new(LEFT_W, lsz.height).into(),
-        })
-        .with_background_color((34, 34, 39, 255))
-        .with_html(TOOLS_HTML)
+        .with_bounds(WryRect { position: WPos::new(0.0, TOP_H).into(), size: WSize::new(LEFT_W, (lsz.height-TOP_H).max(1.0)).into() })
+        .with_background_color((28,28,30,255)).with_html(TOOLS_HTML)
+        .with_ipc_handler({ let proxy = proxy.clone(); move |req| { let _ = proxy.send_event(UserEvent::Ipc(req.body().clone())); } })
+        .build_as_child(&*window).unwrap();
+    let panel = WebViewBuilder::new()
+        .with_bounds(WryRect { position: WPos::new((lsz.width-PANEL_W).max(0.0), TOP_H).into(), size: WSize::new(PANEL_W, (lsz.height-TOP_H).max(1.0)).into() })
+        .with_background_color((32,32,36,255)).with_html(PANEL_HTML)
+        .with_ipc_handler({ let proxy = proxy.clone(); move |req| { let _ = proxy.send_event(UserEvent::Ipc(req.body().clone())); } })
+        .build_as_child(&*window).unwrap();
+    let zoom_panel = WebViewBuilder::new()
+        .with_bounds(WryRect { position: WPos::new((lsz.width-PANEL_W-ZOOM_W-14.0).max(0.0), (lsz.height-ZOOM_H-14.0).max(0.0)).into(), size: WSize::new(ZOOM_W, ZOOM_H).into() })
+        .with_background_color((28,28,30,255)).with_html(ZOOM_HTML)
         .with_ipc_handler(move |req| { let _ = proxy.send_event(UserEvent::Ipc(req.body().clone())); })
-        .build_as_child(&*window)
-        .unwrap();
+        .build_as_child(&*window).unwrap();
 
     let mut ed = Editor::new();
     let mut last_click: Option<(Instant, Pt)> = None;
@@ -361,35 +406,54 @@ fn main() {
     let mut pan_last: Pt = [0.0, 0.0];
     let mut space_down = false;
 
+    // zoom around the centre of the visible canvas region (physical px)
+    let zoom_about_canvas = |view: &mut View, ww: f64, wh: f64, scale: f64, f: f32| {
+        let cx = (LEFT_W * scale + (ww - PANEL_W * scale)) * 0.5;
+        let cy = (TOP_H * scale + wh) * 0.5;
+        let c = [cx as f32, cy as f32];
+        let wc = view.s2w(c);
+        view.zoom = (view.zoom * f).clamp(0.05, 40.0);
+        view.pan = [c[0] - wc[0]*view.zoom, c[1] - wc[1]*view.zoom];
+    };
+
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run(move |event, elwt| {
         match event {
         Event::UserEvent(UserEvent::Ipc(msg)) => {
             if msg == "ready" {
-                push_layers(&panel, &ed); push_ui(&tools_panel, &ed); // a panel loaded → send state
+                // a panel finished loading → send full state
             } else if let Some(t) = msg.strip_prefix("tool:") {
-                let tk = match t {
-                    "object" => Some(ToolKind::Object), "direct" => Some(ToolKind::Direct), "pen" => Some(ToolKind::Pen),
-                    "rect" => Some(ToolKind::Rect), "ellipse" => Some(ToolKind::Ellipse), "triangle" => Some(ToolKind::Triangle),
-                    "eyedropper" => Some(ToolKind::Eyedropper), _ => None,
-                };
-                if let Some(tk) = tk {
-                    ed.set_tool(tk);
-                    push_ui(&tools_panel, &ed); push_layers(&panel, &ed);
-                    window.set_title(&full_title(ed.tool)); window.request_redraw();
-                }
+                if let Some(tk) = tool_from(t) { ed.set_tool(tk); }
+            } else if let Some(a) = msg.strip_prefix("align:") {
+                match a { "left"=>ed.align(AlignMode::Left), "centerh"=>ed.align(AlignMode::CenterH), "right"=>ed.align(AlignMode::Right),
+                          "top"=>ed.align(AlignMode::Top), "middle"=>ed.align(AlignMode::Middle), "bottom"=>ed.align(AlignMode::Bottom), _=>{} }
+            } else if let Some(d) = msg.strip_prefix("dist:") {
+                match d { "h"=>ed.distribute(DistAxis::Horizontal), "v"=>ed.distribute(DistAxis::Vertical), _=>{} }
+            } else if let Some(p) = msg.strip_prefix("pf:") {
+                match p { "unite"=>ed.pathfinder(BoolOp::Unite), "minus"=>ed.pathfinder(BoolOp::MinusFront),
+                          "intersect"=>ed.pathfinder(BoolOp::Intersect), "exclude"=>ed.pathfinder(BoolOp::Exclude), _=>{} }
+            } else if let Some(c) = msg.strip_prefix("fill:") {
+                let col = if c == "none" { None } else { parse_hex(c) }; ed.paint = PaintTarget::Fill; ed.apply_paint(col);
+            } else if let Some(c) = msg.strip_prefix("stroke:") {
+                let col = if c == "none" { None } else { parse_hex(c) }; ed.paint = PaintTarget::Stroke; ed.apply_paint(col);
+            } else if let Some(v) = msg.strip_prefix("sw:") {
+                if let Ok(w) = v.parse::<f32>() { set_stroke_width(&mut ed, w); }
+            } else if let Some(z) = msg.strip_prefix("zoom:") {
+                let psz = window.inner_size();
+                let (ww, wh) = (psz.width as f64, psz.height as f64);
+                match z { "in"=>zoom_about_canvas(&mut view, ww, wh, scale, 1.25),
+                          "out"=>zoom_about_canvas(&mut view, ww, wh, scale, 0.8),
+                          _=>{ view = View::identity(); } }
             } else if let Ok(id) = msg.parse::<u32>() {
-                // clicked a Layers row → select that object's whole (top) group on the canvas
                 if ed.doc.pidx(id).is_some() {
                     ed.set_tool(ToolKind::Object);
                     ed.objsel = ed.doc.group_members(id).into_iter().collect();
-                    ed.selected.clear();
-                    ed.obj_angle = 0.0;
-                    push_layers(&panel, &ed); push_ui(&tools_panel, &ed);
-                    window.set_title(&full_title(ed.tool));
-                    window.request_redraw();
+                    ed.selected.clear(); ed.obj_angle = 0.0;
                 }
             }
+            window.set_title(&full_title(ed.tool));
+            refresh_all(&panel, &tools_panel, &topbar, &zoom_panel, &ed, view.zoom);
+            window.request_redraw();
         }
         Event::WindowEvent { event, window_id } => {
             if window_id != window.id() { return; }
@@ -398,8 +462,10 @@ fn main() {
                 WindowEvent::Resized(size) => {
                     renderer.resize(size.width, size.height);
                     let (lw, lh) = (size.width as f64 / scale, size.height as f64 / scale);
-                    let _ = panel.set_bounds(WryRect { position: WPos::new((lw - PANEL_W).max(0.0), 0.0).into(), size: WSize::new(PANEL_W, lh).into() });
-                    let _ = tools_panel.set_bounds(WryRect { position: WPos::new(0.0, 0.0).into(), size: WSize::new(LEFT_W, lh).into() });
+                    let _ = topbar.set_bounds(WryRect { position: WPos::new(0.0, 0.0).into(), size: WSize::new(lw, TOP_H).into() });
+                    let _ = tools_panel.set_bounds(WryRect { position: WPos::new(0.0, TOP_H).into(), size: WSize::new(LEFT_W, (lh-TOP_H).max(1.0)).into() });
+                    let _ = panel.set_bounds(WryRect { position: WPos::new((lw-PANEL_W).max(0.0), TOP_H).into(), size: WSize::new(PANEL_W, (lh-TOP_H).max(1.0)).into() });
+                    let _ = zoom_panel.set_bounds(WryRect { position: WPos::new((lw-PANEL_W-ZOOM_W-14.0).max(0.0), (lh-ZOOM_H-14.0).max(0.0)).into(), size: WSize::new(ZOOM_W, ZOOM_H).into() });
                     window.request_redraw();
                 }
                 WindowEvent::CursorMoved { position, .. } => {
@@ -427,13 +493,10 @@ fn main() {
                                 let now = Instant::now();
                                 let dbl = last_click.map_or(false, |(t, p)| now.duration_since(t).as_millis() < 350 && ((p[0]-screen_cursor[0]).powi(2)+(p[1]-screen_cursor[1]).powi(2)).sqrt() < 6.0);
                                 last_click = Some((now, screen_cursor));
-                                if ui_click(&mut ed, screen_cursor) { }
-                                else {
-                                    ed.ppu = view.zoom;
-                                    let wp = view.s2w(screen_cursor);
-                                    if dbl && matches!(ed.tool, ToolKind::Object | ToolKind::Direct) { ed.double_click(wp); }
-                                    else { ed.pointer_down(wp); }
-                                }
+                                ed.ppu = view.zoom;
+                                let wp = view.s2w(screen_cursor);
+                                if dbl && matches!(ed.tool, ToolKind::Object | ToolKind::Direct) { ed.double_click(wp); }
+                                else { ed.pointer_down(wp); }
                             }
                             ElementState::Released => { if panning { panning = false; } else { ed.pointer_up(); } }
                         },
@@ -444,21 +507,19 @@ fn main() {
                         _ => {}
                     }
                     window.set_title(&full_title(ed.tool));
-                    push_layers(&panel, &ed); push_ui(&tools_panel, &ed);
+                    refresh_all(&panel, &tools_panel, &topbar, &zoom_panel, &ed, view.zoom);
                     window.request_redraw();
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
                     let (dx, dy) = match delta { MouseScrollDelta::LineDelta(x, y) => (x, y), MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 40.0, p.y as f32 / 40.0) };
-                    if ed.mods.alt {                                   // Alt + wheel = zoom (around cursor) — like Illustrator
+                    if ed.mods.alt {
                         let f = (1.0 + dy * 0.12).clamp(0.2, 5.0);
                         let wc = view.s2w(screen_cursor);
                         view.zoom = (view.zoom * f).clamp(0.05, 40.0);
                         view.pan = [screen_cursor[0]-wc[0]*view.zoom, screen_cursor[1]-wc[1]*view.zoom];
-                    } else if ed.mods.shift {                          // Shift + wheel = horizontal scroll
-                        view.pan[0] += (dy + dx) * 30.0;
-                    } else {                                           // plain wheel = vertical scroll
-                        view.pan[1] += dy * 30.0; view.pan[0] += dx * 30.0;
-                    }
+                        push_zoom(&zoom_panel, view.zoom);
+                    } else if ed.mods.shift { view.pan[0] += (dy + dx) * 30.0; }
+                    else { view.pan[1] += dy * 30.0; view.pan[0] += dx * 30.0; }
                     window.request_redraw();
                 }
                 WindowEvent::KeyboardInput { event, .. } => {
@@ -474,17 +535,14 @@ fn main() {
                             else if ed.mods.ctrl && code == KeyCode::KeyG { if ed.mods.shift { ed.ungroup_selection(); } else { ed.group_selection(); } }
                             else if !ed.mods.ctrl { handle_key(&mut ed, code); }
                             window.set_title(&full_title(ed.tool));
-                            push_layers(&panel, &ed); push_ui(&tools_panel, &ed);
+                            refresh_all(&panel, &tools_panel, &topbar, &zoom_panel, &ed, view.zoom);
                             window.request_redraw();
                         }
                     }
                 }
                 WindowEvent::RedrawRequested => {
                     let world = build_scene(&ed, view.zoom);
-                    let mut ui: Vec<Prim> = Vec::new();
-                    toolbar(&ed, &mut ui);
-                    easter_egg(&mut ui, window.inner_size().height as f32);
-                    renderer.render(&world, &ui, view);
+                    renderer.render(&world, &[], view);
                 }
                 _ => {}
             }
