@@ -10,7 +10,7 @@ use winit::{
     event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
     keyboard::{KeyCode, PhysicalKey},
-    window::WindowBuilder,
+    window::{CursorIcon, WindowBuilder},
 };
 use wry::{dpi::{LogicalPosition as WPos, LogicalSize as WSize}, Rect as WryRect, WebView, WebViewBuilder};
 use varos_core::editor::{AlignMode, DistAxis, Editor, Mods, PaintTarget, ToolKind, ZOrder};
@@ -90,6 +90,8 @@ const TOPBAR_HTML: &str = r##"<!doctype html><html lang="en"><head><meta charset
     document.querySelectorAll('#dist .btn').forEach(b=>b.classList.toggle('dis',n<3));
     document.getElementById('info').textContent=(s&&s.info)||'';
   };
+  function fwdkey(e){var t=(e.target&&e.target.tagName)||'';if(t==='INPUT'||t==='TEXTAREA'||(e.target&&e.target.isContentEditable))return;var m=(e.ctrlKey?1:0)|(e.shiftKey?2:0)|(e.altKey?4:0);window.ipc.postMessage((e.type==='keyup'?'keyup:':'keydown:')+m+':'+e.code);if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].indexOf(e.code)>=0)e.preventDefault();}
+  addEventListener('keydown',fwdkey);addEventListener('keyup',fwdkey);
   window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
 </script></body></html>"##;
 
@@ -125,6 +127,8 @@ const TOOLS_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="
   }
   window.varosUI=(s)=>{ if(s&&s.tool){ active=s.tool; render(); } };
   render();
+  function fwdkey(e){var t=(e.target&&e.target.tagName)||'';if(t==='INPUT'||t==='TEXTAREA'||(e.target&&e.target.isContentEditable))return;var m=(e.ctrlKey?1:0)|(e.shiftKey?2:0)|(e.altKey?4:0);window.ipc.postMessage((e.type==='keyup'?'keyup:':'keydown:')+m+':'+e.code);if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].indexOf(e.code)>=0)e.preventDefault();}
+  addEventListener('keydown',fwdkey);addEventListener('keyup',fwdkey);
   window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
 </script></body></html>"#;
 
@@ -228,6 +232,8 @@ const PANEL_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="
       list.appendChild(d);
     }
   };
+  function fwdkey(e){var t=(e.target&&e.target.tagName)||'';if(t==='INPUT'||t==='TEXTAREA'||(e.target&&e.target.isContentEditable))return;var m=(e.ctrlKey?1:0)|(e.shiftKey?2:0)|(e.altKey?4:0);window.ipc.postMessage((e.type==='keyup'?'keyup:':'keydown:')+m+':'+e.code);if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].indexOf(e.code)>=0)e.preventDefault();}
+  addEventListener('keydown',fwdkey);addEventListener('keyup',fwdkey);
   window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
 </script></body></html>"#;
 
@@ -248,6 +254,8 @@ const ZOOM_HTML: &str = r#"<!doctype html><html><head><meta charset="utf-8"><sty
   document.getElementById('in').onclick=()=>send('in');
   document.getElementById('fit').onclick=()=>send('fit');
   window.varosZoom=(p)=>{ document.getElementById('z').textContent=p+'%'; };
+  function fwdkey(e){var t=(e.target&&e.target.tagName)||'';if(t==='INPUT'||t==='TEXTAREA'||(e.target&&e.target.isContentEditable))return;var m=(e.ctrlKey?1:0)|(e.shiftKey?2:0)|(e.altKey?4:0);window.ipc.postMessage((e.type==='keyup'?'keyup:':'keydown:')+m+':'+e.code);if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].indexOf(e.code)>=0)e.preventDefault();}
+  addEventListener('keydown',fwdkey);addEventListener('keyup',fwdkey);
   window.addEventListener('DOMContentLoaded',()=>window.ipc.postMessage('ready'));
 </script></body></html>"#;
 
@@ -339,23 +347,49 @@ fn tool_name(t: ToolKind) -> &'static str {
 }
 fn full_title(t: ToolKind) -> String { format!("Varos \u{3b1} \u{b7} pre-alpha \u{2014} {}", tool_name(t)) }
 
-fn handle_key(ed: &mut Editor, code: KeyCode) {
-    let s = if ed.mods.shift { 10.0 } else { 1.0 };
+/// Professional per-tool cursor (native OS cursors — crisp at any DPI).
+fn cursor_for(t: ToolKind) -> CursorIcon {
+    match t {
+        ToolKind::Object | ToolKind::Direct => CursorIcon::Default,
+        ToolKind::Pen | ToolKind::Convert => CursorIcon::Crosshair,
+        ToolKind::Rect | ToolKind::Ellipse | ToolKind::Triangle | ToolKind::Polygon => CursorIcon::Crosshair,
+        ToolKind::Eyedropper => CursorIcon::Crosshair,
+    }
+}
+
+/// Apply a keyboard shortcut. `code` is a W3C key code ("KeyV", "ArrowLeft", "BracketRight", …) —
+/// the same strings winit's `KeyCode` Debug and the webviews' `event.code` produce, so canvas
+/// focus and forwarded-from-panel keys share ONE path. (Space-pan is handled by the callers.)
+fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bool, _alt: bool) {
+    if ctrl {
+        match code {
+            "Digit0" => *view = View::identity(),
+            "Digit1" => view.zoom = 1.0,
+            "KeyZ" => if shift { ed.redo() } else { ed.undo() },
+            "KeyY" => ed.redo(),
+            "BracketRight" => ed.arrange(if shift { ZOrder::Front } else { ZOrder::Forward }),
+            "BracketLeft" => ed.arrange(if shift { ZOrder::Back } else { ZOrder::Backward }),
+            "KeyG" => if shift { ed.ungroup_selection() } else { ed.group_selection() },
+            _ => {}
+        }
+        return;
+    }
+    let s = if shift { 10.0 } else { 1.0 };
     match code {
-        KeyCode::KeyV => ed.set_tool(ToolKind::Object),
-        KeyCode::KeyA => ed.set_tool(ToolKind::Direct),
-        KeyCode::KeyP => ed.set_tool(ToolKind::Pen),
-        KeyCode::KeyM => ed.set_tool(ToolKind::Rect),
-        KeyCode::KeyL => ed.set_tool(ToolKind::Ellipse),
-        KeyCode::KeyI => ed.set_tool(ToolKind::Eyedropper),
-        KeyCode::KeyX => { if ed.mods.shift { ed.swap_colors(); } else { ed.swap_paint(); } }
-        KeyCode::KeyD => ed.default_paint(),
-        KeyCode::Escape | KeyCode::Enter => ed.escape(),
-        KeyCode::Delete | KeyCode::Backspace => ed.delete_selected(),
-        KeyCode::ArrowLeft => ed.nudge(-s, 0.0),
-        KeyCode::ArrowRight => ed.nudge(s, 0.0),
-        KeyCode::ArrowUp => ed.nudge(0.0, -s),
-        KeyCode::ArrowDown => ed.nudge(0.0, s),
+        "KeyV" => ed.set_tool(ToolKind::Object),
+        "KeyA" => ed.set_tool(ToolKind::Direct),
+        "KeyP" => ed.set_tool(ToolKind::Pen),
+        "KeyM" => ed.set_tool(ToolKind::Rect),
+        "KeyL" => ed.set_tool(ToolKind::Ellipse),
+        "KeyI" => ed.set_tool(ToolKind::Eyedropper),
+        "KeyX" => if shift { ed.swap_colors() } else { ed.swap_paint() },
+        "KeyD" => ed.default_paint(),
+        "Escape" | "Enter" => ed.escape(),
+        "Delete" | "Backspace" => ed.delete_selected(),
+        "ArrowLeft" => ed.nudge(-s, 0.0),
+        "ArrowRight" => ed.nudge(s, 0.0),
+        "ArrowUp" => ed.nudge(0.0, -s),
+        "ArrowDown" => ed.nudge(0.0, s),
         _ => {}
     }
 }
@@ -399,6 +433,7 @@ fn main() {
         .build_as_child(&*window).unwrap();
 
     let mut ed = Editor::new();
+    window.set_cursor_icon(cursor_for(ed.tool));
     let mut last_click: Option<(Instant, Pt)> = None;
     let mut view = View::identity();
     let mut screen_cursor: Pt = [0.0, 0.0];
@@ -422,6 +457,16 @@ fn main() {
         Event::UserEvent(UserEvent::Ipc(msg)) => {
             if msg == "ready" {
                 // a panel finished loading → send full state
+            } else if let Some(rest) = msg.strip_prefix("keydown:") {
+                // a panel had keyboard focus and forwarded the key (so shortcuts work everywhere)
+                if let Some((m, code)) = rest.split_once(':') {
+                    let m: u8 = m.parse().unwrap_or(0);
+                    let (kc, ks, ka) = (m & 1 != 0, m & 2 != 0, m & 4 != 0);
+                    if code == "Space" { space_down = true; window.set_cursor_icon(CursorIcon::Grab); }
+                    else { ed.mods = Mods { shift: ks, alt: ka, ctrl: kc }; apply_key(&mut ed, &mut view, code, kc, ks, ka); }
+                }
+            } else if let Some(rest) = msg.strip_prefix("keyup:") {
+                if rest.split_once(':').map_or(false, |(_, c)| c == "Space") { space_down = false; panning = false; }
             } else if let Some(t) = msg.strip_prefix("tool:") {
                 if let Some(tk) = tool_from(t) { ed.set_tool(tk); }
             } else if let Some(a) = msg.strip_prefix("align:") {
@@ -452,6 +497,7 @@ fn main() {
                 }
             }
             window.set_title(&full_title(ed.tool));
+            if !space_down { window.set_cursor_icon(cursor_for(ed.tool)); }
             refresh_all(&panel, &tools_panel, &topbar, &zoom_panel, &ed, view.zoom);
             window.request_redraw();
         }
@@ -507,6 +553,7 @@ fn main() {
                         _ => {}
                     }
                     window.set_title(&full_title(ed.tool));
+                    window.set_cursor_icon(if panning { CursorIcon::Grabbing } else if space_down { CursorIcon::Grab } else { cursor_for(ed.tool) });
                     refresh_all(&panel, &tools_panel, &topbar, &zoom_panel, &ed, view.zoom);
                     window.request_redraw();
                 }
@@ -524,17 +571,16 @@ fn main() {
                 }
                 WindowEvent::KeyboardInput { event, .. } => {
                     if let PhysicalKey::Code(code) = event.physical_key {
-                        if code == KeyCode::Space { space_down = event.state == ElementState::Pressed; if !space_down { panning = false; } window.request_redraw(); }
-                        else if event.state == ElementState::Pressed {
-                            if ed.mods.ctrl && code == KeyCode::Digit0 { view = View::identity(); }
-                            else if ed.mods.ctrl && code == KeyCode::Digit1 { let wc = view.s2w(screen_cursor); view.zoom = 1.0; view.pan = [screen_cursor[0]-wc[0], screen_cursor[1]-wc[1]]; }
-                            else if ed.mods.ctrl && code == KeyCode::KeyZ { if ed.mods.shift { ed.redo(); } else { ed.undo(); } }
-                            else if ed.mods.ctrl && code == KeyCode::KeyY { ed.redo(); }
-                            else if ed.mods.ctrl && code == KeyCode::BracketRight { ed.arrange(if ed.mods.shift { ZOrder::Front } else { ZOrder::Forward }); }
-                            else if ed.mods.ctrl && code == KeyCode::BracketLeft { ed.arrange(if ed.mods.shift { ZOrder::Back } else { ZOrder::Backward }); }
-                            else if ed.mods.ctrl && code == KeyCode::KeyG { if ed.mods.shift { ed.ungroup_selection(); } else { ed.group_selection(); } }
-                            else if !ed.mods.ctrl { handle_key(&mut ed, code); }
+                        if code == KeyCode::Space {
+                            space_down = event.state == ElementState::Pressed;
+                            if !space_down { panning = false; }
+                            window.set_cursor_icon(if space_down { CursorIcon::Grab } else { cursor_for(ed.tool) });
+                            window.request_redraw();
+                        } else if event.state == ElementState::Pressed {
+                            let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
+                            apply_key(&mut ed, &mut view, &format!("{:?}", code), mc, ms, ma);
                             window.set_title(&full_title(ed.tool));
+                            window.set_cursor_icon(cursor_for(ed.tool));
                             refresh_all(&panel, &tools_panel, &topbar, &zoom_panel, &ed, view.zoom);
                             window.request_redraw();
                         }
