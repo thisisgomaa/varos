@@ -7,10 +7,11 @@ use std::time::Instant;
 use winit::{
     dpi::PhysicalPosition,
     event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoopBuilder},
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
+use wry::{dpi::{LogicalPosition as WPos, LogicalSize as WSize}, Rect as WryRect, WebView, WebViewBuilder};
 use varos_core::editor::{AlignMode, DistAxis, Editor, Mods, PaintTarget, ToolKind, ZOrder};
 use varos_core::BoolOp;
 use varos_core::geom::{Pt, Rgba, View};
@@ -19,6 +20,47 @@ use varos_render_wgpu::Renderer;
 
 const BTN_BG: [f32; 4] = [0.18, 0.18, 0.18, 1.0];
 const TOOLBAR: [ToolKind; 6] = [ToolKind::Object, ToolKind::Direct, ToolKind::Pen, ToolKind::Rect, ToolKind::Ellipse, ToolKind::Triangle];
+
+// Right-side web (wry) panel — the real UI shell. Canvas renders full-window; the panel's child
+// HWND composites on top of the right strip. See memory varos-ui-shell-decision.
+const PANEL_W: f64 = 280.0; // logical px
+
+#[derive(Debug, Clone)]
+enum UserEvent { Ipc(String) }
+
+const PANEL_HTML: &str = r#"<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;height:100%;background:#1e1e22;color:#e6e6e8;font:13px "Segoe UI",system-ui,sans-serif;user-select:none}
+  .hd{padding:11px 14px;border-bottom:1px solid #2c2c32;font-size:13px;color:#cfd2d8;font-weight:600}
+  #list{padding:6px;overflow:auto}
+  .row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer}
+  .row:hover{background:#26262c}
+  .row.sel{background:#0c8ce9;color:#fff}
+  .dot{width:11px;height:11px;border-radius:3px;background:#4a4a54;flex:0 0 auto}
+  .row.grp .dot{border-radius:50%;background:#c9a23a}
+  .row.sel .dot{background:#fff}
+  .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .empty{padding:16px;color:#7a7a82;font-size:12px}
+</style></head><body>
+  <div class="hd">الطبقات — Layers</div>
+  <div id="list"><div class="empty">— لا عناصر بعد —</div></div>
+<script>
+  window.varosLayers = (rows) => {
+    const list = document.getElementById('list');
+    if (!rows.length) { list.innerHTML = '<div class="empty">— لا عناصر بعد —</div>'; return; }
+    list.innerHTML = '';
+    for (const r of rows) {
+      const d = document.createElement('div');
+      d.className = 'row' + (r.sel ? ' sel' : '') + (r.group ? ' grp' : '');
+      d.style.paddingRight = (8 + r.depth * 16) + 'px';
+      d.innerHTML = '<span class="dot"></span><span class="nm"></span>';
+      d.querySelector('.nm').textContent = r.name;
+      d.addEventListener('click', () => window.ipc.postMessage(String(r.pid)));
+      list.appendChild(d);
+    }
+  };
+  window.addEventListener('DOMContentLoaded', () => window.ipc.postMessage('ready'));
+</script></body></html>"#;
 
 fn btn_x(i: usize) -> f32 { 10.0 + i as f32 * 42.0 }
 
@@ -180,6 +222,34 @@ fn handle_key(ed: &mut Editor, code: KeyCode) {
     }
 }
 
+/// Serialize the document into Layers-panel rows (top of z-order first). Groups appear as a header
+/// row (depth 0) followed by their members (depth 1). Hand-built JSON (data is simple + safe).
+fn layers_json(ed: &Editor) -> String {
+    let d = &ed.doc;
+    let mut rows: Vec<String> = Vec::new();
+    let mut cur_group: Option<u32> = None;
+    for p in d.paths.iter().rev() {
+        let sel = ed.objsel.contains(&p.id);
+        match d.top_group_of_path(p.id) {
+            None => {
+                cur_group = None;
+                rows.push(format!("{{\"pid\":{},\"name\":\"عنصر\",\"depth\":0,\"group\":false,\"sel\":{}}}", p.id, sel));
+            }
+            Some(g) => {
+                if cur_group != Some(g) {
+                    cur_group = Some(g);
+                    rows.push(format!("{{\"pid\":{},\"name\":\"مجموعة\",\"depth\":0,\"group\":true,\"sel\":{}}}", p.id, sel));
+                }
+                rows.push(format!("{{\"pid\":{},\"name\":\"عنصر\",\"depth\":1,\"group\":false,\"sel\":{}}}", p.id, sel));
+            }
+        }
+    }
+    format!("[{}]", rows.join(","))
+}
+fn push_layers(panel: &WebView, ed: &Editor) {
+    let _ = panel.evaluate_script(&format!("window.varosLayers && window.varosLayers({});", layers_json(ed)));
+}
+
 fn load_icon() -> Option<winit::window::Icon> {
     let img = image::load_from_memory(include_bytes!("../icon.png")).ok()?.into_rgba8();
     let (w, h) = img.dimensions();
@@ -187,12 +257,28 @@ fn load_icon() -> Option<winit::window::Icon> {
 }
 
 fn main() {
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build().unwrap();
+    let proxy = event_loop.create_proxy();
     let window = Arc::new(WindowBuilder::new().with_title(full_title(ToolKind::Pen))
         .with_window_icon(load_icon())
-        .with_inner_size(winit::dpi::LogicalSize::new(1180.0, 800.0)).build(&event_loop).unwrap());
+        .with_inner_size(winit::dpi::LogicalSize::new(1460.0, 800.0)).build(&event_loop).unwrap());
     let size = window.inner_size();
     let mut renderer = pollster::block_on(Renderer::new(window.clone(), size.width, size.height));
+
+    // right-side web panel (wry) — sibling child HWND; the canvas event loop stays untouched
+    let scale = window.scale_factor();
+    let lsz = window.inner_size().to_logical::<f64>(scale);
+    let panel = WebViewBuilder::new()
+        .with_bounds(WryRect {
+            position: WPos::new((lsz.width - PANEL_W).max(0.0), 0.0).into(),
+            size: WSize::new(PANEL_W, lsz.height).into(),
+        })
+        .with_background_color((30, 30, 34, 255))
+        .with_html(PANEL_HTML)
+        .with_ipc_handler(move |req| { let _ = proxy.send_event(UserEvent::Ipc(req.body().clone())); })
+        .build_as_child(&*window)
+        .unwrap();
+
     let mut ed = Editor::new();
     let mut last_click: Option<(Instant, Pt)> = None;
     let mut view = View::identity();
@@ -203,11 +289,33 @@ fn main() {
 
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run(move |event, elwt| {
-        if let Event::WindowEvent { event, window_id } = event {
+        match event {
+        Event::UserEvent(UserEvent::Ipc(msg)) => {
+            if msg == "ready" {
+                push_layers(&panel, &ed); // panel finished loading → send the initial tree
+            } else if let Ok(id) = msg.parse::<u32>() {
+                // clicked a Layers row → select that object's whole (top) group on the canvas
+                if ed.doc.pidx(id).is_some() {
+                    ed.set_tool(ToolKind::Object);
+                    ed.objsel = ed.doc.group_members(id).into_iter().collect();
+                    ed.selected.clear();
+                    ed.obj_angle = 0.0;
+                    push_layers(&panel, &ed);
+                    window.set_title(&full_title(ed.tool));
+                    window.request_redraw();
+                }
+            }
+        }
+        Event::WindowEvent { event, window_id } => {
             if window_id != window.id() { return; }
             match event {
                 WindowEvent::CloseRequested => elwt.exit(),
-                WindowEvent::Resized(size) => { renderer.resize(size.width, size.height); window.request_redraw(); }
+                WindowEvent::Resized(size) => {
+                    renderer.resize(size.width, size.height);
+                    let (lw, lh) = (size.width as f64 / scale, size.height as f64 / scale);
+                    let _ = panel.set_bounds(WryRect { position: WPos::new((lw - PANEL_W).max(0.0), 0.0).into(), size: WSize::new(PANEL_W, lh).into() });
+                    window.request_redraw();
+                }
                 WindowEvent::CursorMoved { position, .. } => {
                     let PhysicalPosition { x, y } = position; screen_cursor = [x as f32, y as f32];
                     if panning {
@@ -250,6 +358,7 @@ fn main() {
                         _ => {}
                     }
                     window.set_title(&full_title(ed.tool));
+                    push_layers(&panel, &ed);
                     window.request_redraw();
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
@@ -279,6 +388,7 @@ fn main() {
                             else if ed.mods.ctrl && code == KeyCode::KeyG { if ed.mods.shift { ed.ungroup_selection(); } else { ed.group_selection(); } }
                             else if !ed.mods.ctrl { handle_key(&mut ed, code); }
                             window.set_title(&full_title(ed.tool));
+                            push_layers(&panel, &ed);
                             window.request_redraw();
                         }
                     }
@@ -292,6 +402,8 @@ fn main() {
                 }
                 _ => {}
             }
+        }
+        _ => {}
         }
     }).unwrap();
 }
