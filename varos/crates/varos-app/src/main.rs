@@ -107,14 +107,16 @@ const TOOLS_HTML: &str = r#"<!doctype html><html lang="en"><head><meta charset="
   .sep{width:22px;height:1px;background:var(--border);margin:5px 0}
 </style></head><body><div class="rail" id="rail"></div>
 <script>
-  const A='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
-  const Ao='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M6 3 L6 19 L10 15 L13 21 L15 20 L12 14 L18 14 Z"/></svg>';
-  const PEN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 20 L6 14 L15 5 L19 9 L10 18 Z"/><path d="M6 14 L10 18"/></svg>';
-  const RECT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="6" width="14" height="12" rx="1"/></svg>';
-  const ELL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>';
-  const TRI='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 5 L19 19 L5 19 Z"/></svg>';
-  const EYE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 20 L11 13"/><path d="M13 11 L17 7 a2.1 2.1 0 1 0 -3 -3 L10 8 Z"/></svg>';
-  const TOOLS=[['object',A],['direct',Ao],null,['pen',PEN],null,['rect',RECT],['ellipse',ELL],['triangle',TRI],null,['eyedropper',EYE]];
+  // real Lucide icons (MIT) — https://lucide.dev
+  const I=p=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+p+'</svg>';
+  const SEL=I('<path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>');
+  const DIR=I('<path d="M12.586 12.586 19 19"/><path d="M3.688 3.037a.497.497 0 0 0-.651.651l6.5 15.999a.501.501 0 0 0 .947-.062l1.569-6.083a2 2 0 0 1 1.448-1.479l6.124-1.579a.5.5 0 0 0 .063-.947z"/>');
+  const PEN=I('<path d="M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z"/><path d="m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18"/><path d="m2.3 2.3 7.286 7.286"/><circle cx="11" cy="11" r="2"/>');
+  const SQ=I('<rect width="18" height="18" x="3" y="3" rx="2"/>');
+  const CI=I('<circle cx="12" cy="12" r="10"/>');
+  const TRI=I('<path d="M13.73 4a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>');
+  const PIP=I('<path d="m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12"/><path d="m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z"/><path d="m2 22 .414-.414"/>');
+  const TOOLS=[['object',SEL],['direct',DIR],null,['pen',PEN],null,['rect',SQ],['ellipse',CI],['triangle',TRI],null,['eyedropper',PIP]];
   const rail=document.getElementById('rail'); let active='pen';
   function render(){
     rail.innerHTML='';
