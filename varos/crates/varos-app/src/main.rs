@@ -10,13 +10,13 @@ use winit::{
     event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
     keyboard::{KeyCode, PhysicalKey},
-    window::{CursorIcon, WindowBuilder},
+    window::WindowBuilder,
 };
 use wry::{dpi::{LogicalPosition as WPos, LogicalSize as WSize}, Rect as WryRect, WebView, WebViewBuilder};
 use varos_core::editor::{AlignMode, DistAxis, Editor, Mods, PaintTarget, ToolKind, ZOrder};
 use varos_core::BoolOp;
 use varos_core::geom::{Pt, Rgba, View};
-use varos_core::scene::build_scene;
+use varos_core::scene::{build_scene, Prim};
 use varos_render_wgpu::Renderer;
 
 #[derive(Debug, Clone)]
@@ -347,16 +347,6 @@ fn tool_name(t: ToolKind) -> &'static str {
 }
 fn full_title(t: ToolKind) -> String { format!("Varos \u{3b1} \u{b7} pre-alpha \u{2014} {}", tool_name(t)) }
 
-/// Professional per-tool cursor (native OS cursors — crisp at any DPI).
-fn cursor_for(t: ToolKind) -> CursorIcon {
-    match t {
-        ToolKind::Object | ToolKind::Direct => CursorIcon::Default,
-        ToolKind::Pen | ToolKind::Convert => CursorIcon::Crosshair,
-        ToolKind::Rect | ToolKind::Ellipse | ToolKind::Triangle | ToolKind::Polygon => CursorIcon::Crosshair,
-        ToolKind::Eyedropper => CursorIcon::Crosshair,
-    }
-}
-
 /// Apply a keyboard shortcut. `code` is a W3C key code ("KeyV", "ArrowLeft", "BracketRight", …) —
 /// the same strings winit's `KeyCode` Debug and the webviews' `event.code` produce, so canvas
 /// focus and forwarded-from-panel keys share ONE path. (Space-pan is handled by the callers.)
@@ -391,6 +381,40 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
         "ArrowUp" => ed.nudge(0.0, -s),
         "ArrowDown" => ed.nudge(0.0, s),
         _ => {}
+    }
+}
+
+/// Varos's own tool cursor, drawn on the canvas (the OS cursor is hidden) so it is fully themed
+/// and consistent — a custom set, not the Windows arrows. `p` = screen position (the hotspot).
+fn cursor_prims(t: ToolKind, p: Pt) -> Vec<Prim> {
+    let dark: Rgba = [0.10, 0.10, 0.12, 1.0];
+    let white: Rgba = [0.96, 0.96, 0.97, 1.0];
+    let o = |dx: f32, dy: f32| [p[0] + dx, p[1] + dy];
+    match t {
+        ToolKind::Object | ToolKind::Direct => {
+            // arrow: black (Select) vs white (Direct), tip at the hotspot
+            let (a, b, c) = (p, o(0.5, 17.0), o(12.5, 12.0));
+            let (fill, edge) = if matches!(t, ToolKind::Object) { (dark, white) } else { (white, dark) };
+            vec![
+                Prim::Tri { a, b, c, color: fill },
+                Prim::Stroke { pts: vec![a, b, c, a], width: 1.6, color: edge },
+            ]
+        }
+        _ => {
+            // crosshair for pen / shapes / eyedropper (dark halo + white core = visible on anything)
+            let h = 9.0;
+            let mut v = vec![
+                Prim::Stroke { pts: vec![o(-h, 0.0), o(h, 0.0)], width: 3.6, color: dark },
+                Prim::Stroke { pts: vec![o(0.0, -h), o(0.0, h)], width: 3.6, color: dark },
+                Prim::Stroke { pts: vec![o(-h, 0.0), o(h, 0.0)], width: 1.4, color: white },
+                Prim::Stroke { pts: vec![o(0.0, -h), o(0.0, h)], width: 1.4, color: white },
+            ];
+            if matches!(t, ToolKind::Eyedropper) {
+                v.push(Prim::Disc { c: o(6.0, -6.0), r: 2.6, color: white });
+                v.push(Prim::Disc { c: o(6.0, -6.0), r: 1.3, color: dark });
+            }
+            v
+        }
     }
 }
 
@@ -433,7 +457,7 @@ fn main() {
         .build_as_child(&*window).unwrap();
 
     let mut ed = Editor::new();
-    window.set_cursor_icon(cursor_for(ed.tool));
+    window.set_cursor_visible(false); // we draw Varos's own tool cursors on the canvas
     let mut last_click: Option<(Instant, Pt)> = None;
     let mut view = View::identity();
     let mut screen_cursor: Pt = [0.0, 0.0];
@@ -462,7 +486,7 @@ fn main() {
                 if let Some((m, code)) = rest.split_once(':') {
                     let m: u8 = m.parse().unwrap_or(0);
                     let (kc, ks, ka) = (m & 1 != 0, m & 2 != 0, m & 4 != 0);
-                    if code == "Space" { space_down = true; window.set_cursor_icon(CursorIcon::Grab); }
+                    if code == "Space" { space_down = true; }
                     else { ed.mods = Mods { shift: ks, alt: ka, ctrl: kc }; apply_key(&mut ed, &mut view, code, kc, ks, ka); }
                 }
             } else if let Some(rest) = msg.strip_prefix("keyup:") {
@@ -497,7 +521,6 @@ fn main() {
                 }
             }
             window.set_title(&full_title(ed.tool));
-            if !space_down { window.set_cursor_icon(cursor_for(ed.tool)); }
             refresh_all(&panel, &tools_panel, &topbar, &zoom_panel, &ed, view.zoom);
             window.request_redraw();
         }
@@ -553,7 +576,6 @@ fn main() {
                         _ => {}
                     }
                     window.set_title(&full_title(ed.tool));
-                    window.set_cursor_icon(if panning { CursorIcon::Grabbing } else if space_down { CursorIcon::Grab } else { cursor_for(ed.tool) });
                     refresh_all(&panel, &tools_panel, &topbar, &zoom_panel, &ed, view.zoom);
                     window.request_redraw();
                 }
@@ -574,13 +596,11 @@ fn main() {
                         if code == KeyCode::Space {
                             space_down = event.state == ElementState::Pressed;
                             if !space_down { panning = false; }
-                            window.set_cursor_icon(if space_down { CursorIcon::Grab } else { cursor_for(ed.tool) });
                             window.request_redraw();
                         } else if event.state == ElementState::Pressed {
                             let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
                             apply_key(&mut ed, &mut view, &format!("{:?}", code), mc, ms, ma);
                             window.set_title(&full_title(ed.tool));
-                            window.set_cursor_icon(cursor_for(ed.tool));
                             refresh_all(&panel, &tools_panel, &topbar, &zoom_panel, &ed, view.zoom);
                             window.request_redraw();
                         }
@@ -588,7 +608,8 @@ fn main() {
                 }
                 WindowEvent::RedrawRequested => {
                     let world = build_scene(&ed, view.zoom);
-                    renderer.render(&world, &[], view);
+                    let cur = cursor_prims(ed.tool, screen_cursor);
+                    renderer.render(&world, &cur, view);
                 }
                 _ => {}
             }
