@@ -11,7 +11,7 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
-use wry::{dpi::{LogicalPosition as WPos, LogicalSize as WSize}, Rect as WryRect, WebViewBuilder};
+use wry::{dpi::{LogicalPosition as WPos, LogicalSize as WSize}, Rect as WryRect, WebView, WebViewBuilder};
 use varos_core::editor::{AlignMode, DistAxis, Editor, Mods, PaintTarget, ToolKind, ZOrder};
 use varos_core::BoolOp;
 use varos_core::geom::{Pt, Rgba, View};
@@ -31,22 +31,35 @@ enum UserEvent { Ipc(String) }
 const PANEL_HTML: &str = r#"<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <style>
   html,body{margin:0;height:100%;background:#1e1e22;color:#e6e6e8;font:13px "Segoe UI",system-ui,sans-serif;user-select:none}
-  .hd{padding:12px 14px;border-bottom:1px solid #2c2c32;font-size:14px;color:#cfd2d8;font-weight:600}
-  .body{padding:12px 14px;display:flex;flex-direction:column;gap:10px}
-  .muted{color:#8a8a92;line-height:1.6;font-size:12px}
-  button{background:#0c8ce9;color:#fff;border:0;border-radius:7px;padding:9px 12px;font-size:13px;cursor:pointer}
-  button:hover{background:#0a78c8}
-  #status{color:#34c759;min-height:18px;font-size:12px}
+  .hd{padding:11px 14px;border-bottom:1px solid #2c2c32;font-size:13px;color:#cfd2d8;font-weight:600}
+  #list{padding:6px;overflow:auto}
+  .row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer}
+  .row:hover{background:#26262c}
+  .row.sel{background:#0c8ce9;color:#fff}
+  .dot{width:11px;height:11px;border-radius:3px;background:#4a4a54;flex:0 0 auto}
+  .row.grp .dot{border-radius:50%;background:#c9a23a}
+  .row.sel .dot{background:#fff}
+  .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .empty{padding:16px;color:#7a7a82;font-size:12px}
 </style></head><body>
   <div class="hd">الطبقات — Layers</div>
-  <div class="body">
-    <div class="muted">لوحة web حقيقية (wry) جوّه نافذة Varos، على يمين الكانفس. قريّب هتعرض شجرة العناصر والمجموعات.</div>
-    <button id="ping">اختبار الوصل بالقلب (Rust)</button>
-    <div id="status">—</div>
-  </div>
+  <div id="list"><div class="empty">— لا عناصر بعد —</div></div>
 <script>
-  window.varosReply = (t) => { document.getElementById('status').innerText = t; };
-  document.getElementById('ping').addEventListener('click', () => window.ipc.postMessage('ping'));
+  window.varosLayers = (rows) => {
+    const list = document.getElementById('list');
+    if (!rows.length) { list.innerHTML = '<div class="empty">— لا عناصر بعد —</div>'; return; }
+    list.innerHTML = '';
+    for (const r of rows) {
+      const d = document.createElement('div');
+      d.className = 'row' + (r.sel ? ' sel' : '') + (r.group ? ' grp' : '');
+      d.style.paddingRight = (8 + r.depth * 16) + 'px';
+      d.innerHTML = '<span class="dot"></span><span class="nm"></span>';
+      d.querySelector('.nm').textContent = r.name;
+      d.addEventListener('click', () => window.ipc.postMessage(String(r.pid)));
+      list.appendChild(d);
+    }
+  };
+  window.addEventListener('DOMContentLoaded', () => window.ipc.postMessage('ready'));
 </script></body></html>"#;
 
 fn btn_x(i: usize) -> f32 { 10.0 + i as f32 * 42.0 }
@@ -209,6 +222,34 @@ fn handle_key(ed: &mut Editor, code: KeyCode) {
     }
 }
 
+/// Serialize the document into Layers-panel rows (top of z-order first). Groups appear as a header
+/// row (depth 0) followed by their members (depth 1). Hand-built JSON (data is simple + safe).
+fn layers_json(ed: &Editor) -> String {
+    let d = &ed.doc;
+    let mut rows: Vec<String> = Vec::new();
+    let mut cur_group: Option<u32> = None;
+    for p in d.paths.iter().rev() {
+        let sel = ed.objsel.contains(&p.id);
+        match d.top_group_of_path(p.id) {
+            None => {
+                cur_group = None;
+                rows.push(format!("{{\"pid\":{},\"name\":\"عنصر\",\"depth\":0,\"group\":false,\"sel\":{}}}", p.id, sel));
+            }
+            Some(g) => {
+                if cur_group != Some(g) {
+                    cur_group = Some(g);
+                    rows.push(format!("{{\"pid\":{},\"name\":\"مجموعة\",\"depth\":0,\"group\":true,\"sel\":{}}}", p.id, sel));
+                }
+                rows.push(format!("{{\"pid\":{},\"name\":\"عنصر\",\"depth\":1,\"group\":false,\"sel\":{}}}", p.id, sel));
+            }
+        }
+    }
+    format!("[{}]", rows.join(","))
+}
+fn push_layers(panel: &WebView, ed: &Editor) {
+    let _ = panel.evaluate_script(&format!("window.varosLayers && window.varosLayers({});", layers_json(ed)));
+}
+
 fn load_icon() -> Option<winit::window::Icon> {
     let img = image::load_from_memory(include_bytes!("../icon.png")).ok()?.into_rgba8();
     let (w, h) = img.dimensions();
@@ -250,9 +291,20 @@ fn main() {
     event_loop.run(move |event, elwt| {
         match event {
         Event::UserEvent(UserEvent::Ipc(msg)) => {
-            // panel -> Rust round-trip (1a placeholder; real Layers actions land here next)
-            let reply = format!("pong from Rust \u{2713} ({msg})");
-            let _ = panel.evaluate_script(&format!("window.varosReply && window.varosReply({reply:?});"));
+            if msg == "ready" {
+                push_layers(&panel, &ed); // panel finished loading → send the initial tree
+            } else if let Ok(id) = msg.parse::<u32>() {
+                // clicked a Layers row → select that object's whole (top) group on the canvas
+                if ed.doc.pidx(id).is_some() {
+                    ed.set_tool(ToolKind::Object);
+                    ed.objsel = ed.doc.group_members(id).into_iter().collect();
+                    ed.selected.clear();
+                    ed.obj_angle = 0.0;
+                    push_layers(&panel, &ed);
+                    window.set_title(&full_title(ed.tool));
+                    window.request_redraw();
+                }
+            }
         }
         Event::WindowEvent { event, window_id } => {
             if window_id != window.id() { return; }
@@ -306,6 +358,7 @@ fn main() {
                         _ => {}
                     }
                     window.set_title(&full_title(ed.tool));
+                    push_layers(&panel, &ed);
                     window.request_redraw();
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
@@ -335,6 +388,7 @@ fn main() {
                             else if ed.mods.ctrl && code == KeyCode::KeyG { if ed.mods.shift { ed.ungroup_selection(); } else { ed.group_selection(); } }
                             else if !ed.mods.ctrl { handle_key(&mut ed, code); }
                             window.set_title(&full_title(ed.tool));
+                            push_layers(&panel, &ed);
                             window.request_redraw();
                         }
                     }
