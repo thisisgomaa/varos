@@ -14,3 +14,4 @@ varos-render-wgpu = { path = "../varos-render-wgpu" }
 winit = "0.29"
 pollster = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
+wry = "0.52"  # WebView2 panels in a sibling child HWND (right side) — see memory varos-ui-shell-decision
