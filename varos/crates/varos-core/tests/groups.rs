@@ -120,6 +120,45 @@ fn nested_group_ungroup_peels_one_level() {
 }
 
 #[test]
+fn duplicating_a_group_stays_grouped() {
+    // Alt-drag copying a group must yield a NEW group, not loose paths.
+    let mut doc = Document::default();
+    let a = add_rect(&mut doc, 0.0, 0.0, 1.0, 1.0);
+    let b = add_rect(&mut doc, 2.0, 0.0, 3.0, 1.0);
+    let g = doc.group(&[a, b]).unwrap();
+    let copies = doc.dup_paths(&[a, b]);
+    assert_eq!(copies.len(), 2, "two paths copied");
+    let cg = doc.top_group_of_path(copies[0]).expect("the copy must be grouped");
+    assert_eq!(doc.top_group_of_path(copies[1]), Some(cg), "both copies in the same group");
+    assert_ne!(cg, g, "the copy is a distinct group from the original");
+    assert_eq!(doc.top_group_of_path(a), Some(g), "original group untouched");
+    assert_eq!(sorted(doc.group_members(copies[0])), sorted(copies.clone()));
+}
+
+#[test]
+fn duplicating_nested_group_preserves_nesting() {
+    let mut doc = Document::default();
+    let a1 = add_rect(&mut doc, 0.0, 0.0, 1.0, 1.0);
+    let a2 = add_rect(&mut doc, 2.0, 0.0, 3.0, 1.0);
+    let b1 = add_rect(&mut doc, 4.0, 0.0, 5.0, 1.0);
+    let b2 = add_rect(&mut doc, 6.0, 0.0, 7.0, 1.0);
+    doc.group(&[a1, a2]).unwrap();
+    doc.group(&[b1, b2]).unwrap();
+    let x = doc.group(&[a1, a2, b1, b2]).unwrap();
+    let copies = doc.dup_paths(&[a1, a2, b1, b2]);
+    assert_eq!(copies.len(), 4);
+    // all copies under one new top group (≠ x)
+    let ctop = doc.top_group_of_path(copies[0]).unwrap();
+    for c in &copies { assert_eq!(doc.top_group_of_path(*c), Some(ctop)); }
+    assert_ne!(ctop, x);
+    // peeling one level off the copy must reveal TWO inner sub-groups (mirroring A and B)
+    doc.ungroup(&copies);
+    let tops: std::collections::HashSet<u32> =
+        copies.iter().map(|c| doc.top_group_of_path(*c).unwrap()).collect();
+    assert_eq!(tops.len(), 2, "the copy preserved its two inner sub-groups");
+}
+
+#[test]
 fn re_grouping_single_group_is_noop() {
     let mut doc = Document::default();
     let a = add_rect(&mut doc, 0.0, 0.0, 1.0, 1.0);

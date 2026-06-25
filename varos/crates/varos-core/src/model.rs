@@ -251,6 +251,53 @@ impl Document {
             self.groups.retain(|g| g.id != top);
         }
     }
+    /// Duplicate a set of paths, PRESERVING their group structure: the copies form parallel groups
+    /// that mirror the originals' nesting. Returns the new path ids (in `srcs` order). Used by the
+    /// Alt-drag duplicate so copying a group yields a group, not loose paths.
+    pub fn dup_paths(&mut self, srcs: &[u32]) -> Vec<u32> {
+        use std::collections::HashMap;
+        // 1) clone the paths (clone_path gives fresh anchor + path ids)
+        let mut pmap: HashMap<u32, u32> = HashMap::new();
+        let mut new_pids = vec![];
+        for &s in srcs {
+            if self.pidx(s).is_none() { continue; }
+            let c = self.clone_path(s);
+            pmap.insert(s, c.id);
+            new_pids.push(c.id);
+            self.paths.push(c);
+        }
+        // 2) every old group in the chains of the sources (innermost → root)
+        let mut old_groups: Vec<u32> = vec![];
+        for &s in srcs {
+            let mut g = self.group_of.get(&s).copied();
+            while let Some(gid) = g {
+                if !old_groups.contains(&gid) { old_groups.push(gid); }
+                g = self.groups.iter().find(|x| x.id == gid).and_then(|x| x.parent);
+            }
+        }
+        // 3) a parallel new group for each old one
+        let mut gmap: HashMap<u32, u32> = HashMap::new();
+        for &og in &old_groups {
+            let ng = self.nid();
+            let name = self.groups.iter().find(|x| x.id == og).map(|x| x.name.clone()).unwrap_or_else(|| format!("Group {ng}"));
+            self.groups.push(Group { id: ng, name, parent: None });
+            gmap.insert(og, ng);
+        }
+        // 4) mirror parent links inside the duplicated subtree
+        for &og in &old_groups {
+            let old_parent = self.groups.iter().find(|x| x.id == og).and_then(|x| x.parent);
+            let new_parent = old_parent.and_then(|p| gmap.get(&p).copied());
+            let ng = gmap[&og];
+            if let Some(g) = self.groups.iter_mut().find(|x| x.id == ng) { g.parent = new_parent; }
+        }
+        // 5) attach each clone to its mirrored innermost group
+        for (&old_p, &new_p) in &pmap {
+            if let Some(&old_g) = self.group_of.get(&old_p) {
+                if let Some(&new_g) = gmap.get(&old_g) { self.group_of.insert(new_p, new_g); }
+            }
+        }
+        new_pids
+    }
     /// Reorder `paths` so the given ids form one contiguous run ending at the topmost member's z
     /// position (Illustrator brings a group up to its front-most member). Inner order preserved.
     fn contiguous(&mut self, set: &std::collections::HashSet<u32>) {
