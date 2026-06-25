@@ -7,10 +7,11 @@ use std::time::Instant;
 use winit::{
     dpi::PhysicalPosition,
     event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoopBuilder},
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
+use wry::{dpi::{LogicalPosition as WPos, LogicalSize as WSize}, Rect as WryRect, WebViewBuilder};
 use varos_core::editor::{AlignMode, DistAxis, Editor, Mods, PaintTarget, ToolKind, ZOrder};
 use varos_core::BoolOp;
 use varos_core::geom::{Pt, Rgba, View};
@@ -19,6 +20,34 @@ use varos_render_wgpu::Renderer;
 
 const BTN_BG: [f32; 4] = [0.18, 0.18, 0.18, 1.0];
 const TOOLBAR: [ToolKind; 6] = [ToolKind::Object, ToolKind::Direct, ToolKind::Pen, ToolKind::Rect, ToolKind::Ellipse, ToolKind::Triangle];
+
+// Right-side web (wry) panel — the real UI shell. Canvas renders full-window; the panel's child
+// HWND composites on top of the right strip. See memory varos-ui-shell-decision.
+const PANEL_W: f64 = 280.0; // logical px
+
+#[derive(Debug, Clone)]
+enum UserEvent { Ipc(String) }
+
+const PANEL_HTML: &str = r#"<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;height:100%;background:#1e1e22;color:#e6e6e8;font:13px "Segoe UI",system-ui,sans-serif;user-select:none}
+  .hd{padding:12px 14px;border-bottom:1px solid #2c2c32;font-size:14px;color:#cfd2d8;font-weight:600}
+  .body{padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+  .muted{color:#8a8a92;line-height:1.6;font-size:12px}
+  button{background:#0c8ce9;color:#fff;border:0;border-radius:7px;padding:9px 12px;font-size:13px;cursor:pointer}
+  button:hover{background:#0a78c8}
+  #status{color:#34c759;min-height:18px;font-size:12px}
+</style></head><body>
+  <div class="hd">الطبقات — Layers</div>
+  <div class="body">
+    <div class="muted">لوحة web حقيقية (wry) جوّه نافذة Varos، على يمين الكانفس. قريّب هتعرض شجرة العناصر والمجموعات.</div>
+    <button id="ping">اختبار الوصل بالقلب (Rust)</button>
+    <div id="status">—</div>
+  </div>
+<script>
+  window.varosReply = (t) => { document.getElementById('status').innerText = t; };
+  document.getElementById('ping').addEventListener('click', () => window.ipc.postMessage('ping'));
+</script></body></html>"#;
 
 fn btn_x(i: usize) -> f32 { 10.0 + i as f32 * 42.0 }
 
@@ -187,12 +216,28 @@ fn load_icon() -> Option<winit::window::Icon> {
 }
 
 fn main() {
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build().unwrap();
+    let proxy = event_loop.create_proxy();
     let window = Arc::new(WindowBuilder::new().with_title(full_title(ToolKind::Pen))
         .with_window_icon(load_icon())
-        .with_inner_size(winit::dpi::LogicalSize::new(1180.0, 800.0)).build(&event_loop).unwrap());
+        .with_inner_size(winit::dpi::LogicalSize::new(1460.0, 800.0)).build(&event_loop).unwrap());
     let size = window.inner_size();
     let mut renderer = pollster::block_on(Renderer::new(window.clone(), size.width, size.height));
+
+    // right-side web panel (wry) — sibling child HWND; the canvas event loop stays untouched
+    let scale = window.scale_factor();
+    let lsz = window.inner_size().to_logical::<f64>(scale);
+    let panel = WebViewBuilder::new()
+        .with_bounds(WryRect {
+            position: WPos::new((lsz.width - PANEL_W).max(0.0), 0.0).into(),
+            size: WSize::new(PANEL_W, lsz.height).into(),
+        })
+        .with_background_color((30, 30, 34, 255))
+        .with_html(PANEL_HTML)
+        .with_ipc_handler(move |req| { let _ = proxy.send_event(UserEvent::Ipc(req.body().clone())); })
+        .build_as_child(&*window)
+        .unwrap();
+
     let mut ed = Editor::new();
     let mut last_click: Option<(Instant, Pt)> = None;
     let mut view = View::identity();
@@ -203,11 +248,22 @@ fn main() {
 
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run(move |event, elwt| {
-        if let Event::WindowEvent { event, window_id } = event {
+        match event {
+        Event::UserEvent(UserEvent::Ipc(msg)) => {
+            // panel -> Rust round-trip (1a placeholder; real Layers actions land here next)
+            let reply = format!("pong from Rust \u{2713} ({msg})");
+            let _ = panel.evaluate_script(&format!("window.varosReply && window.varosReply({reply:?});"));
+        }
+        Event::WindowEvent { event, window_id } => {
             if window_id != window.id() { return; }
             match event {
                 WindowEvent::CloseRequested => elwt.exit(),
-                WindowEvent::Resized(size) => { renderer.resize(size.width, size.height); window.request_redraw(); }
+                WindowEvent::Resized(size) => {
+                    renderer.resize(size.width, size.height);
+                    let (lw, lh) = (size.width as f64 / scale, size.height as f64 / scale);
+                    let _ = panel.set_bounds(WryRect { position: WPos::new((lw - PANEL_W).max(0.0), 0.0).into(), size: WSize::new(PANEL_W, lh).into() });
+                    window.request_redraw();
+                }
                 WindowEvent::CursorMoved { position, .. } => {
                     let PhysicalPosition { x, y } = position; screen_cursor = [x as f32, y as f32];
                     if panning {
@@ -292,6 +348,8 @@ fn main() {
                 }
                 _ => {}
             }
+        }
+        _ => {}
         }
     }).unwrap();
 }
