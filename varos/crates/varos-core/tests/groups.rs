@@ -4,6 +4,7 @@
 //!
 //! Run with:  cargo test -p varos-core --test groups
 
+use varos_core::editor::{Editor, Mods, ToolKind};
 use varos_core::model::{Document, Path, ShapeKind};
 
 /// Add a rectangle path to the doc; return its id.
@@ -127,6 +128,80 @@ fn re_grouping_single_group_is_noop() {
     // selecting the whole group and pressing Ctrl+G again should NOT wrap it in a redundant layer
     assert!(doc.group(&[a, b]).is_none(), "re-grouping one existing group is a no-op");
     assert_eq!(doc.top_group_of_path(a), Some(g));
+}
+
+#[test]
+fn shift_click_near_selection_corner_still_selects() {
+    // Root cause of the grouping bug: with one shape selected, shift-clicking a CLOSE second
+    // shape used to be stolen by the rotate-ring (22px outside the frame corner) → it rotated
+    // the first shape instead of adding the second. Shift-click on an object must always select.
+    let mut ed = Editor::new();
+    let s1 = ed_rect(&mut ed, 0.0, 0.0, 40.0, 40.0);
+    let s2 = ed_rect(&mut ed, 50.0, 0.0, 90.0, 40.0); // only a 10px gap → s2 sits inside s1's rotate ring
+    ed.set_tool(ToolKind::Object);
+    click(&mut ed, 20.0, 20.0, false); // select s1
+    assert_eq!(ed.objsel.len(), 1);
+    click(&mut ed, 52.0, 8.0, true);   // shift-click s2 near s1's (40,0) corner
+    assert!(ed.objsel.contains(&s1) && ed.objsel.contains(&s2), "both shapes must be selected");
+    assert_eq!(ed.objsel.len(), 2, "shift-click on a nearby object must select it, not rotate");
+}
+
+/// Add a path straight to an Editor's document (mirrors what the tools do).
+fn ed_rect(ed: &mut Editor, x0: f32, y0: f32, x1: f32, y1: f32) -> u32 {
+    let anchors = ed.doc.build_shape(ShapeKind::Rect, [x0, y0], [x1, y1]);
+    let id = ed.doc.nid();
+    ed.doc.paths.push(Path { id, anchors, closed: true, fill: Some([0.0, 0.0, 0.0, 1.0]), stroke: None, stroke_width: 1.0, holes: vec![] });
+    id
+}
+
+/// Simulate a real Object-tool click (down+up) at a point, optionally with Shift held.
+fn click(ed: &mut Editor, x: f32, y: f32, shift: bool) {
+    ed.mods = Mods { shift, alt: false, ctrl: false };
+    ed.pointer_down([x, y]);
+    ed.pointer_up();
+    ed.mods = Mods::default();
+}
+
+#[test]
+fn app_flow_group_two_groups_then_ungroup() {
+    // FAITHFUL reproduction of Ahmed's steps through the actual Object tool + selection,
+    // not just the model methods: group A, group B, group both into X, then ungroup X once.
+    // X must peel to leave BOTH A and B intact.
+    // realistic scale: shapes ~40 units, spaced ~100 apart, so the 22px rotate-ring around a
+    // selected shape never overlaps the next shape's click point (that's a test-scale artifact).
+    let mut ed = Editor::new();
+    let a1 = ed_rect(&mut ed, 0.0, 0.0, 40.0, 40.0);
+    let _a2 = ed_rect(&mut ed, 100.0, 0.0, 140.0, 40.0);
+    let b1 = ed_rect(&mut ed, 200.0, 0.0, 240.0, 40.0);
+    let _b2 = ed_rect(&mut ed, 300.0, 0.0, 340.0, 40.0);
+    ed.set_tool(ToolKind::Object);
+
+    // group A (click a1, shift-click a2, Ctrl+G)
+    click(&mut ed, 20.0, 20.0, false);
+    click(&mut ed, 120.0, 20.0, true);
+    ed.group_selection();
+    let ga = ed.doc.top_group_of_path(a1).expect("A should be a group");
+
+    // group B (click b1, shift-click b2, Ctrl+G)
+    click(&mut ed, 220.0, 20.0, false);
+    click(&mut ed, 320.0, 20.0, true);
+    ed.group_selection();
+    let gb = ed.doc.top_group_of_path(b1).expect("B should be a group");
+    assert_ne!(ga, gb, "A and B are distinct groups");
+
+    // select A and B, group into X (click A, shift-click B, Ctrl+G)
+    click(&mut ed, 20.0, 20.0, false);
+    click(&mut ed, 220.0, 20.0, true);
+    ed.group_selection();
+    let x = ed.doc.top_group_of_path(a1).expect("X should exist");
+    assert_eq!(ed.doc.top_group_of_path(b1), Some(x), "both A and B now resolve to X");
+
+    // select X (click any member) and ungroup once
+    click(&mut ed, 20.0, 20.0, false);
+    ed.ungroup_selection();
+
+    assert_eq!(ed.doc.top_group_of_path(a1), Some(ga), "A must survive as a group");
+    assert_eq!(ed.doc.top_group_of_path(b1), Some(gb), "B must survive as a group");
 }
 
 #[test]
