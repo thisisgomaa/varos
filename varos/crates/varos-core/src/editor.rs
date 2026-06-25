@@ -233,10 +233,11 @@ impl Editor {
         let mut best: Option<(u8, f32)> = None;
         for (i, h) in hs.iter().enumerate() { let d = dist(pos, *h); if d <= r && best.map_or(true, |(_, bd)| d < bd) { best = Some((i as u8, d)); } }
         if let Some((i, _)) = best { return Some(TfHit::Scale(i)); }
-        // rotate: near a corner, but OUTSIDE the (rotated) frame
+        // rotate: near a corner, OUTSIDE the (rotated) frame, AND over empty space — so clicking
+        // (or shift-clicking) another nearby object selects it instead of rotating this one.
         let bb = self.obj_local_bbox()?;
         let lp = rotate_about(pos, [0.0, 0.0], -self.obj_angle);
-        if lp[0] < bb.0 || lp[0] > bb.2 || lp[1] < bb.1 || lp[1] > bb.3 {
+        if (lp[0] < bb.0 || lp[0] > bb.2 || lp[1] < bb.1 || lp[1] > bb.3) && self.path_under(pos).is_none() {
             let ring = 22.0 / self.ppu;
             for i in 0..4u8 { if dist(pos, hs[i as usize]) <= ring { return Some(TfHit::Rotate(i)); } }
         }
