@@ -1,0 +1,109 @@
+/* =====================================================================
+   Focus — three distinct VISUAL SKINS on the same floating-panel layout.
+   Same idea (neutral, sky-blue accent, floating panels) — three characters:
+     · skin-modern  — soft, rounded, airy, light
+     · skin-solid   — near-black, squared, bold, high-contrast
+     · skin-pro     — refined, dense, hairline, precise
+   ===================================================================== */
+
+/* ───────────────── MODERN — soft · rounded · airy ───────────────── */
+.bs-focus.skin-modern {
+  --fbg:#202022; --fpanel:#2d2e30; --felev:#37383b; --fhover:#3d3e41; --finput:#3a3b3e;
+  --fbd:rgba(255,255,255,.07); --fbd-soft:rgba(255,255,255,.05);
+  --ftx:#f0f0f2; --ftx-mut:#c2c2c6; --ftx-dim:#90909a; --ftx-faint:#70707a;
+  --acc:#3aacff; --acc-hover:#5cbcff; --acc-soft:rgba(58,172,255,.16);
+}
+.skin-modern .bs-glass { border-radius:18px; box-shadow:0 8px 30px rgba(0,0,0,.28); }
+.skin-modern .d2-dock { padding:8px; gap:4px; border-radius:20px; }
+.skin-modern .d2-tool { width:42px; height:42px; border-radius:13px; }
+.skin-modern .d2-file { padding:9px 14px 9px 9px; border-radius:16px; }
+.skin-modern .d2-mark { border-radius:11px; background:#3a3b3e; }
+.skin-modern .d2-ctx { padding:7px; border-radius:16px; }
+.skin-modern .d2-ctx-btn { border-radius:11px; }
+.skin-modern .d2-pill { border-radius:13px; padding:9px 14px; }
+.skin-modern .d2-share { border-radius:13px; padding:9px 16px; font-weight:500; }
+.skin-modern .d2-inspect { width:280px; border-radius:18px; }
+.skin-modern .d2-ins-head { padding:15px 17px 12px; border-bottom:none; }
+.skin-modern .d2-ins-head .t { font-size:14px; font-weight:600; }
+.skin-modern .d2-ins-body { padding:4px 17px 17px; }
+.skin-modern .d2-grp { margin-bottom:18px; }
+.skin-modern .d2-grp-h { font-size:11.5px; font-weight:500; color:var(--ftx-dim); margin-bottom:10px; }
+.skin-modern .d2-fld { height:34px; border-radius:11px; }
+.skin-modern .d2-swrow { height:36px; border-radius:11px; }
+.skin-modern .d2-moat { border-radius:13px; padding:13px 14px; background:var(--felev); border:none; }
+.skin-modern .d2-zoom { border-radius:999px; padding:9px 16px; }
+.skin-modern .d2-layers-pop { border-radius:16px; padding:6px; }
+.skin-modern .d2-lp-row { border-radius:11px; padding:8px 10px; }
+
+/* ───────────────── SOLID — near-black · squared · bold ───────────────── */
+.bs-focus.skin-solid {
+  --fbg:#0e0e0f; --fpanel:#161618; --felev:#202023; --fhover:#28282c; --finput:#1c1c1f;
+  --fbd:#2c2c30; --fbd-soft:#242427;
+  --ftx:#ffffff; --ftx-mut:#c6c6cc; --ftx-dim:#8a8a92; --ftx-faint:#62626a;
+  --acc:#0d99ff; --acc-hover:#2ea7ff; --acc-soft:rgba(13,153,255,.20);
+}
+.skin-solid .bs-glass { border-radius:7px; border:1px solid var(--fbd); box-shadow:0 6px 18px rgba(0,0,0,.55); }
+.skin-solid .bs-workspace { background:#0a0a0b; }
+.skin-solid .d2-dock { padding:5px; gap:3px; border-radius:9px; }
+.skin-solid .d2-tool { width:42px; height:42px; border-radius:6px; }
+.skin-solid .d2-tool.on { box-shadow:inset 0 0 0 1px rgba(255,255,255,.12); }
+.skin-solid .d2-file { border-radius:7px; }
+.skin-solid .d2-mark { border-radius:5px; background:var(--acc); color:#fff; }
+.skin-solid .d2-file .name { font-weight:600; }
+.skin-solid .d2-ctx { padding:4px; border-radius:8px; }
+.skin-solid .d2-ctx .tag { font-weight:600; }
+.skin-solid .d2-ctx-btn { border-radius:5px; }
+.skin-solid .d2-pill { border-radius:7px; font-weight:500; }
+.skin-solid .d2-share { border-radius:7px; font-weight:700; padding:9px 18px; letter-spacing:.01em; }
+.skin-solid .d2-inspect { width:268px; border-radius:8px; }
+.skin-solid .d2-ins-head { padding:13px 15px; border-bottom:1px solid var(--fbd); }
+.skin-solid .d2-ins-head .t { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+.skin-solid .d2-grp-h { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--ftx-dim); }
+.skin-solid .d2-fld { height:32px; border-radius:5px; background:var(--finput); border:1px solid var(--fbd-soft); }
+.skin-solid .d2-swrow { height:34px; border-radius:5px; border:1px solid var(--fbd-soft); }
+.skin-solid .d2-moat { border-radius:6px; border:1px solid var(--fbd); background:var(--felev); }
+.skin-solid .d2-moat .h { font-weight:700; text-transform:uppercase; letter-spacing:.04em; font-size:10.5px; }
+.skin-solid .d2-moat .slider .fill { background:var(--acc); box-shadow:0 0 0 1px rgba(13,153,255,.4); }
+.skin-solid .d2-zoom { border-radius:7px; }
+.skin-solid .d2-tool .tip, .skin-solid .d2-key kbd { border-radius:4px; }
+.skin-solid .d2-layers-pop { border-radius:8px; }
+.skin-solid .d2-lp-row { border-radius:5px; }
+/* bolder selection on canvas */
+.skin-solid .bs-selection { outline-width:2px; }
+.skin-solid .bs-handle { width:10px; height:10px; border-width:2px; }
+
+/* ───────────────── PRO — refined · dense · hairline ───────────────── */
+.bs-focus.skin-pro {
+  --fbg:#1c1d1f; --fpanel:#252628; --felev:#2c2d30; --fhover:#313236; --finput:#2a2b2e;
+  --fbd:rgba(255,255,255,.08); --fbd-soft:rgba(255,255,255,.05);
+  --ftx:#dcdde0; --ftx-mut:#a6a7ac; --ftx-dim:#7c7d83; --ftx-faint:#5e5f65;
+  --acc:#2f8fe0; --acc-hover:#4aa3ee; --acc-soft:rgba(47,143,224,.14);
+}
+.skin-pro .bs-glass { border-radius:9px; box-shadow:0 3px 12px rgba(0,0,0,.34); }
+.skin-pro .d2-dock { padding:5px; gap:2px; border-radius:11px; }
+.skin-pro .d2-tool { width:38px; height:38px; border-radius:7px; }
+.skin-pro .d2-tool.on { background:var(--acc-soft); color:var(--acc); box-shadow:inset 0 0 0 1px var(--acc); }
+.skin-pro .d2-file { padding:6px 11px 6px 6px; border-radius:8px; }
+.skin-pro .d2-mark { width:26px; height:26px; border-radius:6px; }
+.skin-pro .d2-file .crumb { font-family:var(--font-mono); font-size:10px; }
+.skin-pro .d2-ctx { padding:4px; border-radius:9px; }
+.skin-pro .d2-ctx .tag { font-size:11.5px; }
+.skin-pro .d2-ctx-btn { width:28px; height:28px; border-radius:6px; }
+.skin-pro .d2-pill { padding:7px 11px; border-radius:7px; font-size:12px; }
+.skin-pro .d2-share { border-radius:7px; padding:7px 13px; font-weight:600; font-size:12px; }
+.skin-pro .d2-inspect { width:256px; border-radius:9px; }
+.skin-pro .d2-ins-head { padding:10px 13px; }
+.skin-pro .d2-ins-head .t { font-size:12.5px; }
+.skin-pro .d2-ins-body { padding:12px 13px; }
+.skin-pro .d2-grp { margin-bottom:13px; }
+.skin-pro .d2-grp-h { font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:var(--ftx-dim); margin-bottom:7px; }
+.skin-pro .d2-row { gap:6px; }
+.skin-pro .d2-fld { height:29px; border-radius:5px; }
+.skin-pro .d2-fld .k { font-size:10px; }
+.skin-pro .d2-fld input { font-size:11.5px; }
+.skin-pro .d2-swrow { height:30px; border-radius:5px; }
+.skin-pro .d2-moat { border-radius:6px; padding:10px 11px; }
+.skin-pro .d2-moat .h { font-size:11px; font-weight:600; }
+.skin-pro .d2-zoom { border-radius:7px; font-size:11px; padding:6px 12px; }
+.skin-pro .d2-layers-pop { border-radius:8px; }
+.skin-pro .d2-lp-row { border-radius:5px; font-size:12px; }

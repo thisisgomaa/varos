@@ -1,0 +1,136 @@
+/* ====================================================================
+   BStudio — Editor Redesign · shared base
+   Tokens lifted from the project's v0/web/css/tokens.css (Radix slate-dark
+   neutrals + custom "BStudio Gold" accent #c9a961). English LTR chrome,
+   Arabic-first canvas content. Each direction is scoped under a wrapper
+   class (.bs-studio / .bs-focus / .bs-ai) so their chromes never collide.
+   ==================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Amiri:wght@400;700&family=Tajawal:wght@400;500;700&family=Cairo:wght@400;600;700&display=swap');
+
+:root {
+  /* slate-dark neutrals */
+  --s1:#111113; --s2:#18191b; --s3:#212225; --s4:#272a2d; --s5:#2e3135;
+  --s6:#363a3f; --s7:#43484e; --s8:#5a6169; --s9:#696e77; --s10:#777b84;
+  --s11:#b0b4ba; --s12:#edeef0;
+  /* alpha (glass) */
+  --sa2:#d8f4f609; --sa3:#ddeaf814; --sa4:#d3edf81d; --sa6:#d6e9ff30; --sa8:#d9e6ff5d;
+  /* BStudio Gold */
+  --g6:#534418; --g7:#6c5821; --g8:#8a7234; --g9:#c9a961; --g10:#d8b772; --g11:#f1d28a; --g12:#fff1cf;
+  --ga4:#ffbd0026; --ga6:#ffc20a43;
+  /* semantic */
+  --bg-app:var(--s1); --bg-panel:var(--s2); --bg-elev:var(--s3); --bg-hover:var(--s4); --bg-active:var(--s5);
+  --bd-subtle:var(--s6); --bd:var(--s7); --bd-strong:var(--s8);
+  --tx:var(--s12); --tx-mut:var(--s11); --tx-dim:var(--s9); --tx-faint:#6b6f78;
+  --accent:var(--g9); --accent-hi:var(--g11); --accent-bg:var(--ga4); --accent-bd:var(--g8);
+  --blue:#5b8def;
+  --font-ui:'Inter',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  --font-ar-serif:'Amiri',serif;
+  --font-ar:'Tajawal','Cairo',sans-serif;
+}
+
+/* ---- scoped reset (only inside our editors) ---- */
+.bs-editor, .bs-editor * { box-sizing:border-box; margin:0; padding:0; }
+.bs-editor {
+  width:1440px; height:900px; position:relative; overflow:hidden;
+  background:var(--bg-app); color:var(--tx);
+  font-family:var(--font-ui); font-size:13px; line-height:1.5;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  letter-spacing:-0.005em;
+}
+.bs-editor button { font:inherit; color:inherit; background:none; border:none; cursor:pointer; }
+.bs-editor ::selection { background:var(--accent); color:#1a1407; }
+.bs-mono { font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+
+/* =====================================================================
+   SHARED CANVAS ARTWORK — the same poster on every direction's workspace
+   ===================================================================== */
+.bs-workspace {
+  position:absolute; inset:0;
+  background:
+    radial-gradient(120% 120% at 50% 0%, #16161a 0%, var(--bg-app) 60%);
+}
+.bs-workspace::before {
+  content:''; position:absolute; inset:0;
+  background-image:radial-gradient(rgba(255,255,255,0.045) 1px, transparent 1px);
+  background-size:28px 28px;
+  mask-image:radial-gradient(100% 100% at 50% 45%, #000 50%, transparent 100%);
+}
+.bs-stage { position:absolute; inset:0; display:grid; place-items:center; }
+
+/* artboard label tab above the poster */
+.bs-art-wrap { position:relative; }
+.bs-art-label {
+  position:absolute; bottom:calc(100% + 9px); left:0;
+  font-family:var(--font-mono); font-size:11px; letter-spacing:0.02em; color:var(--tx-dim);
+  display:flex; align-items:center; gap:7px;
+}
+.bs-art-label b { color:var(--tx-mut); font-weight:500; }
+
+.bs-poster {
+  width:430px; height:538px; background:#f7f3ea; position:relative;
+  box-shadow:0 30px 80px -20px rgba(0,0,0,0.7), 0 8px 24px rgba(0,0,0,0.4);
+  overflow:hidden;
+}
+.bs-poster-pad { position:absolute; inset:0; padding:54px 46px; display:flex; flex-direction:column; }
+.bs-poster .kicker {
+  font-family:var(--font-mono); font-size:11px; letter-spacing:0.34em; text-transform:uppercase;
+  color:#b08833; margin-bottom:auto;
+}
+.bs-poster .ar-head {
+  font-family:var(--font-ar-serif); font-weight:700; color:#1c1714;
+  font-size:74px; line-height:1.16; text-align:right; direction:rtl;
+  margin-bottom:18px; letter-spacing:0;
+}
+.bs-poster .ar-sub {
+  font-family:var(--font-ar); font-weight:500; color:#6a5b3f;
+  font-size:19px; text-align:right; direction:rtl; line-height:1.7;
+}
+.bs-poster .rule { height:3px; width:74px; background:#c9a961; margin:22px 0 22px auto; }
+.bs-poster .latin {
+  font-family:var(--font-ui); font-size:12px; letter-spacing:0.16em; text-transform:uppercase;
+  color:#9a8a6a; text-align:right; margin-top:18px;
+}
+/* the selected element — a gold block sitting low on the poster */
+.bs-sel-block {
+  position:absolute; left:46px; bottom:54px; width:150px; height:64px;
+  background:#c9a961; border-radius:3px;
+}
+
+/* selection chrome (gold bbox + handles) drawn over the poster */
+.bs-selection { position:absolute; outline:1.5px solid var(--accent); pointer-events:none; }
+.bs-handle {
+  position:absolute; width:9px; height:9px; background:#fff;
+  border:1.5px solid var(--accent); border-radius:1px; transform:translate(-50%,-50%);
+}
+.bs-handle.tl{left:0;top:0}.bs-handle.tr{left:100%;top:0}
+.bs-handle.bl{left:0;top:100%}.bs-handle.br{left:100%;top:100%}
+.bs-dim-badge {
+  position:absolute; top:100%; left:50%; transform:translate(-50%,8px);
+  background:var(--accent); color:#1a1407; font-family:var(--font-mono); font-size:10px; font-weight:600;
+  padding:2px 7px; border-radius:3px; white-space:nowrap;
+}
+
+/* generic floating glass surface */
+.bs-glass {
+  background:color-mix(in srgb, var(--s2) 72%, transparent);
+  backdrop-filter:blur(22px) saturate(1.3); -webkit-backdrop-filter:blur(22px) saturate(1.3);
+  border:1px solid var(--sa6);
+  box-shadow:0 18px 50px -12px rgba(0,0,0,0.66), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+.bs-art-dot { width:7px; height:7px; border-radius:2px; background:var(--accent); display:inline-block; }
+
+/* optional rulers (Direction 1) */
+.bs-rulers::before, .bs-rulers::after {
+  content:''; position:absolute; background:var(--bg-panel);
+  background-image:repeating-linear-gradient(90deg, var(--sa6) 0 1px, transparent 1px 56px);
+}
+.bs-rulers::before { top:0; left:24px; right:0; height:22px; border-bottom:1px solid var(--bd-subtle); }
+.bs-rulers::after  { top:0; left:0; width:24px; bottom:0;
+  background-image:repeating-linear-gradient(0deg, var(--sa6) 0 1px, transparent 1px 56px);
+  border-right:1px solid var(--bd-subtle); }
+
+/* shared tiny scrollbars off */
+.bs-editor ::-webkit-scrollbar{ width:0; height:0; }

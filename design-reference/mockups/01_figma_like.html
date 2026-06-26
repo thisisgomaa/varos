@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pivot — Figma-like Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700&family=Amiri:wght@400;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0a;
+  --bg-elev: #131313;
+  --bg-card: #161616;
+  --bg-canvas: #1a1a1a;
+  --border: #232323;
+  --border-strong: #2e2e2e;
+  --text: #e8e6e3;
+  --text-muted: #8a8682;
+  --text-dim: #5a5854;
+  --accent: #c9a961;
+  --accent-dim: #8a7440;
+  --accent-bg: rgba(201, 169, 97, 0.10);
+  --selection: rgba(201, 169, 97, 0.20);
+  --link: #c9a961;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100vh; overflow: hidden; }
+body {
+  font-family: 'Tajawal', 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  display: grid;
+  grid-template-rows: 44px 1fr 24px;
+  grid-template-columns: 56px 1fr 280px;
+  grid-template-areas:
+    "topbar topbar topbar"
+    "tools  canvas inspector"
+    "status status status";
+}
+
+/* TOP BAR */
+.topbar {
+  grid-area: topbar;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+}
+.topbar .left { display: flex; align-items: center; gap: 14px; }
+.topbar .logo {
+  width: 26px; height: 26px; border-radius: 6px;
+  background: var(--accent-bg); border: 1px solid var(--accent-dim);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent); font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 14px;
+}
+.topbar .filename { font-size: 13px; color: var(--text); font-weight: 500; }
+.topbar .dot { color: var(--text-dim); padding: 0 4px; }
+.topbar .saved { color: var(--text-muted); font-size: 11px; }
+.topbar .right { display: flex; align-items: center; gap: 12px; }
+.avatars { display: flex; }
+.avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700;
+  margin-right: -6px;
+  border: 2px solid var(--bg-elev);
+}
+.avatar.b { background: #d97757; }
+.avatar.c { background: #7fa86c; }
+.btn-share {
+  background: var(--accent); color: var(--bg); border: none;
+  padding: 6px 14px; border-radius: 6px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  font-family: inherit;
+}
+.btn-share:hover { background: #d4b56b; }
+
+/* TOOLS (right side in RTL) */
+.tools {
+  grid-area: tools;
+  background: var(--bg-elev);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 12px 0; gap: 4px;
+}
+.tool {
+  width: 38px; height: 38px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); cursor: pointer;
+  position: relative;
+  font-size: 16px;
+}
+.tool:hover { background: var(--bg-card); color: var(--text); }
+.tool.active { background: var(--accent-bg); color: var(--accent); }
+.tool .tip {
+  position: absolute; right: calc(100% + 8px); top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-card); color: var(--text);
+  border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 4px;
+  font-size: 11px; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity .15s;
+}
+.tool:hover .tip { opacity: 1; }
+.tool-sep { width: 24px; height: 1px; background: var(--border); margin: 6px 0; }
+
+/* CANVAS */
+.canvas {
+  grid-area: canvas;
+  background:
+    radial-gradient(circle, rgba(40,40,40,0.3) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--bg-canvas);
+  position: relative; overflow: hidden;
+}
+.artboard {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 720px; height: 460px;
+  background: #f5f1ea;
+  border-radius: 4px;
+  box-shadow: 0 30px 60px rgba(0,0,0,0.5), 0 0 0 1px var(--accent-dim);
+  padding: 60px 50px;
+  font-family: 'Amiri', serif;
+  display: flex; flex-direction: column; gap: 30px;
+}
+.artboard .heading {
+  font-size: 48px; color: #2a2520; text-align: center;
+  font-weight: 700; line-height: 1.4;
+}
+.artboard .sub {
+  font-size: 22px; color: #5a4a36; text-align: center;
+  font-family: 'Tajawal', sans-serif;
+}
+.artboard .rect-shape {
+  align-self: center; width: 280px; height: 80px;
+  background: var(--accent); border-radius: 6px;
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+}
+.canvas .selection-handle {
+  position: absolute; width: 8px; height: 8px;
+  background: var(--accent); border: 1px solid var(--bg);
+}
+.artboard-label {
+  position: absolute; top: -22px; left: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--accent);
+}
+
+/* INSPECTOR */
+.inspector {
+  grid-area: inspector;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.tabs {
+  display: flex; border-bottom: 1px solid var(--border);
+}
+.tab {
+  flex: 1; padding: 11px 10px; text-align: center;
+  font-size: 12px; color: var(--text-muted); cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:hover:not(.active) { color: var(--text); }
+.panel { padding: 14px; overflow-y: auto; flex: 1; }
+.panel h4 {
+  font-size: 10px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: .8px; margin-bottom: 8px; font-weight: 600;
+}
+.field-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px;
+}
+.field {
+  background: var(--bg-card); border: 1px solid var(--border);
+  padding: 7px 9px; border-radius: 5px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  color: var(--text);
+}
+.field .label { color: var(--text-dim); font-size: 10px; }
+.field .value { margin-top: 2px; }
+.color-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px; background: var(--bg-card); border-radius: 5px;
+  border: 1px solid var(--border); margin-bottom: 8px;
+}
+.swatch {
+  width: 24px; height: 24px; border-radius: 4px;
+  background: var(--accent); border: 1px solid var(--border-strong);
+}
+.color-row .hex {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+}
+.slider {
+  width: 100%; -webkit-appearance: none; appearance: none;
+  height: 4px; background: var(--border); border-radius: 2px;
+  outline: none; margin: 4px 0;
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); cursor: pointer;
+}
+.panel-section { padding: 14px; border-top: 1px solid var(--border); }
+.layer {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px; border-radius: 4px; cursor: pointer;
+  font-size: 12px;
+}
+.layer:hover { background: var(--bg-card); }
+.layer.selected { background: var(--accent-bg); color: var(--accent); }
+.layer .icon { width: 14px; text-align: center; color: var(--text-dim); }
+.layer.selected .icon { color: var(--accent); }
+.layer .eye { margin-right: auto; color: var(--text-dim); opacity: .5; font-size: 11px; }
+
+/* STATUS */
+.status {
+  grid-area: status;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 14px; gap: 16px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text-muted);
+}
+.status .sep { color: var(--text-dim); }
+.status .right { margin-right: auto; display: flex; gap: 14px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="left">
+    <div class="logo">ف</div>
+    <div class="filename">تصميم بدون عنوان</div>
+    <span class="dot">·</span>
+    <span class="saved">محفوظ</span>
+  </div>
+  <div class="right">
+    <div class="avatars">
+      <div class="avatar">أ</div>
+      <div class="avatar b">ز</div>
+      <div class="avatar c">م</div>
+    </div>
+    <button class="btn-share">مشاركة</button>
+  </div>
+</div>
+
+<div class="tools">
+  <div class="tool active">↖<span class="tip">تحديد (V)</span></div>
+  <div class="tool">✎<span class="tip">قلم (P)</span></div>
+  <div class="tool-sep"></div>
+  <div class="tool">▢<span class="tip">مستطيل (R)</span></div>
+  <div class="tool">◯<span class="tip">دائرة (O)</span></div>
+  <div class="tool">⊕<span class="tip">خط (L)</span></div>
+  <div class="tool-sep"></div>
+  <div class="tool">ت<span class="tip">نص (T)</span></div>
+  <div class="tool-sep"></div>
+  <div class="tool">✋<span class="tip">يد (H)</span></div>
+  <div class="tool">⌕<span class="tip">تكبير (Z)</span></div>
+</div>
+
+<div class="canvas">
+  <div class="artboard">
+    <div class="artboard-label">Artboard 1 — 1080 × 720</div>
+    <div class="heading">بسم الله الرحمن الرحيم</div>
+    <div class="sub">الحمد لله رب العالمين</div>
+    <div class="rect-shape"></div>
+  </div>
+</div>
+
+<div class="inspector">
+  <div class="tabs">
+    <div class="tab active">الخصائص</div>
+    <div class="tab">الطبقات</div>
+    <div class="tab">المكتبة</div>
+  </div>
+  <div class="panel">
+    <h4>الموقع والحجم</h4>
+    <div class="field-row">
+      <div class="field"><div class="label">X</div><div class="value">280</div></div>
+      <div class="field"><div class="label">Y</div><div class="value">340</div></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><div class="label">العرض</div><div class="value">280</div></div>
+      <div class="field"><div class="label">الارتفاع</div><div class="value">80</div></div>
+    </div>
+
+    <h4 style="margin-top: 18px;">التعبئة</h4>
+    <div class="color-row">
+      <div class="swatch"></div>
+      <span class="hex">#C9A961</span>
+      <span style="margin-right: auto; color: var(--text-dim); font-size: 11px;">100%</span>
+    </div>
+
+    <h4 style="margin-top: 18px;">الشفافية</h4>
+    <input type="range" class="slider" value="100" min="0" max="100">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); text-align: center;">100%</div>
+
+    <h4 style="margin-top: 18px;">التأثيرات</h4>
+    <div class="field" style="text-align: center; cursor: pointer;">+ إضافة تأثير</div>
+  </div>
+
+  <div class="panel-section">
+    <h4>الطبقات</h4>
+    <div class="layer">
+      <span class="icon">ت</span>
+      <span>عنوان رئيسي</span>
+      <span class="eye">👁</span>
+    </div>
+    <div class="layer">
+      <span class="icon">ت</span>
+      <span>عنوان فرعي</span>
+      <span class="eye">👁</span>
+    </div>
+    <div class="layer selected">
+      <span class="icon">▢</span>
+      <span>مستطيل</span>
+      <span class="eye">👁</span>
+    </div>
+    <div class="layer">
+      <span class="icon">◰</span>
+      <span>مجموعة 1</span>
+      <span class="eye">👁</span>
+    </div>
+  </div>
+</div>
+
+<div class="status">
+  <span>الأداة: تحديد</span>
+  <span class="sep">·</span>
+  <span>X: 528, Y: 340</span>
+  <span class="sep">·</span>
+  <span>التكبير: 100%</span>
+  <div class="right">
+    <span>Pivot v0.0.8</span>
+    <span class="sep">·</span>
+    <span>متصل</span>
+  </div>
+</div>
+
+</body>
+</html>

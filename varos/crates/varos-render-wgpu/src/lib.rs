@@ -10,7 +10,7 @@ use varos_core::scene::{Prim, Scene};
 /// log to stderr but NEVER panic if there's no console (e.g. windows-subsystem build with no redirect)
 macro_rules! log { ($($a:tt)*) => { let _ = writeln!(std::io::stderr(), $($a)*); } }
 
-const BG: [f32; 4] = [0.117, 0.117, 0.117, 1.0];
+const BG: [f32; 4] = [0.078, 0.075, 0.075, 1.0]; // #141313 — matches UI_FIGMA --bg-app (floating panels blend in)
 const DS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 const VATTRS: [wgpu::VertexAttribute; 2] = [
     wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 },

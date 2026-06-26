@@ -138,12 +138,16 @@ impl Editor {
         let edge_r = EDGE_R / self.ppu;
         let mut best: Option<(u32, f32)> = None;
         for pi in 0..self.doc.paths.len() {
+            if self.doc.paths[pi].hidden || self.doc.paths[pi].locked { continue; } // not clickable
             if let Some((_, _, d)) = self.doc.nearest_seg(pi, pos) {
                 if d <= edge_r && best.map_or(true, |(_, bd)| d < bd) { best = Some((self.doc.paths[pi].id, d)); }
             }
         }
         if let Some((id, _)) = best { return Some(id); }
-        for pi in 0..self.doc.paths.len() { if self.doc.point_in_path(pi, pos) { return Some(self.doc.paths[pi].id); } }
+        for pi in 0..self.doc.paths.len() {
+            if self.doc.paths[pi].hidden || self.doc.paths[pi].locked { continue; }
+            if self.doc.point_in_path(pi, pos) { return Some(self.doc.paths[pi].id); }
+        }
         None
     }
     pub fn handle_hit(&self, pos: Pt) -> Option<u32> {
@@ -313,7 +317,7 @@ impl Editor {
             let mut holes: Vec<Vec<Anchor>> = vec![];   // holes are editable anchor contours now
             for h in &rs.holes { let hc = self.segs_to_anchors(h); if hc.len() >= 3 { holes.push(hc); } }
             let id = self.doc.nid();
-            self.doc.paths.push(Path { id, anchors, closed: true, fill, stroke, stroke_width: sw, holes });
+            self.doc.paths.push(Path { holes, ..Path::new(id, anchors, true, fill, stroke, sw) });
             new_ids.push(id);
         }
         self.objsel = new_ids.into_iter().collect();
@@ -375,6 +379,84 @@ impl Editor {
             }
         }
         self.obj_angle = 0.0;
+        self.dirty = true; self.commit();
+    }
+    /// Distribute the object selection so the GAP between successive bbox edges equals `gap` (px),
+    /// ordered along the axis and anchored at the first (lowest) object. Illustrator "distribute spacing".
+    pub fn distribute_spacing(&mut self, axis: DistAxis, gap: f32) {
+        if self.objsel.len() < 2 { return; }
+        let mut items: Vec<(u32, f32, f32)> = self.objsel.iter().filter_map(|&pid| self.doc.pidx(pid).map(|pi| {
+            let b = self.doc.outline_bbox(pi);
+            match axis { DistAxis::Horizontal => (pid, b.0, b.2 - b.0), DistAxis::Vertical => (pid, b.1, b.3 - b.1) }
+        })).collect();
+        items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        self.begin();
+        let mut cur = items[0].1 + items[0].2 + gap;            // edge just after the first object
+        for k in 1..items.len() {
+            let (pid, lo, len) = items[k];
+            let d = cur - lo;
+            if let Some(pi) = self.doc.pidx(pid) {
+                self.translate_path(pi, match axis { DistAxis::Horizontal => [d, 0.0], DistAxis::Vertical => [0.0, d] });
+            }
+            cur += len + gap;
+        }
+        self.obj_angle = 0.0;
+        self.dirty = true; self.commit();
+    }
+    /// Mirror the object selection across its bbox centre (horizontal = flip left↔right).
+    pub fn flip(&mut self, horizontal: bool) {
+        let (x0, y0, x1, y1) = match self.obj_bbox() { Some(b) => b, None => return };
+        let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+        let base = self.objsel_base();
+        self.begin();
+        let tf = |p: Pt| if horizontal { [2.0 * cx - p[0], p[1]] } else { [p[0], 2.0 * cy - p[1]] };
+        for (aid, p0, hin0, hout0) in &base {
+            if let Some(a) = self.doc.anchor_mut(*aid) { a.p = tf(*p0); a.hin = hin0.map(tf); a.hout = hout0.map(tf); }
+        }
+        self.obj_angle = 0.0;
+        self.dirty = true; self.commit();
+    }
+    /// Set the object selection's AXIS-ALIGNED bbox (any of x/y/w/h). `ax,ay` (0..1) is the reference
+    /// point that stays fixed while w/h scale (the Transform 9-point selector). x/y set the bbox
+    /// top-left absolutely. Drives the editable Transform X·Y·W·H fields. Resets frame angle.
+    pub fn set_obj_bbox(&mut self, nx: Option<f32>, ny: Option<f32>, nw: Option<f32>, nh: Option<f32>, ax: f32, ay: f32) {
+        let (x0, y0, x1, y1) = match self.obj_bbox() { Some(b) => b, None => return };
+        let (w, h) = (x1 - x0, y1 - y0);
+        let sx = if w.abs() > 1e-3 { nw.map(|v| (v / w).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
+        let sy = if h.abs() > 1e-3 { nh.map(|v| (v / h).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
+        let (fx, fy) = (x0 + w * ax, y0 + h * ay);              // reference point kept fixed under scale
+        let nx0 = fx + (x0 - fx) * sx;                          // where the left edge lands after scaling
+        let ny0 = fy + (y0 - fy) * sy;
+        let tx = nx.map(|v| v - nx0).unwrap_or(0.0);            // then shift so the top-left equals x/y
+        let ty = ny.map(|v| v - ny0).unwrap_or(0.0);
+        if (sx - 1.0).abs() < 1e-5 && (sy - 1.0).abs() < 1e-5 && tx.abs() < 1e-4 && ty.abs() < 1e-4 { return; }
+        let base = self.objsel_base();
+        self.begin();
+        let tf = |p: Pt| [fx + (p[0] - fx) * sx + tx, fy + (p[1] - fy) * sy + ty];
+        for (aid, p0, hin0, hout0) in &base {
+            if let Some(a) = self.doc.anchor_mut(*aid) { a.p = tf(*p0); a.hin = hin0.map(tf); a.hout = hout0.map(tf); }
+        }
+        self.obj_angle = 0.0;
+        self.dirty = true; self.commit();
+    }
+    /// Rotate the object selection so its transform frame sits at `deg` degrees (about the frame centre).
+    pub fn set_obj_rotation(&mut self, deg: f32) {
+        let bb = match self.obj_local_bbox() { Some(b) => b, None => return };
+        let cen_l = [(bb.0 + bb.2) * 0.5, (bb.1 + bb.3) * 0.5];
+        let center = rotate_about(cen_l, [0.0, 0.0], self.obj_angle);
+        let target = deg.to_radians();
+        let d = target - self.obj_angle;
+        if d.abs() < 1e-4 { return; }
+        let base = self.objsel_base();
+        self.begin();
+        for (aid, p0, hin0, hout0) in &base {
+            if let Some(a) = self.doc.anchor_mut(*aid) {
+                a.p = rotate_about(*p0, center, d);
+                a.hin = hin0.map(|h| rotate_about(h, center, d));
+                a.hout = hout0.map(|h| rotate_about(h, center, d));
+            }
+        }
+        self.obj_angle = target;
         self.dirty = true; self.commit();
     }
 
@@ -772,6 +854,35 @@ impl Editor {
         let w = self.cur_sw; let pids = self.selected_pids(); if pids.is_empty() { return; }
         self.begin();
         for q in pids { if let Some(pi) = self.doc.pidx(q) { self.doc.paths[pi].stroke_width = w; } }
+        self.dirty = true; self.commit();
+    }
+    /// Object-level opacity (0..1) on the current selection (object sel ∪ paths of selected anchors).
+    pub fn set_opacity(&mut self, o: f32) {
+        let pids = self.selected_pids(); if pids.is_empty() { return; }
+        let o = o.clamp(0.0, 1.0);
+        self.begin();
+        for q in pids { if let Some(pi) = self.doc.pidx(q) { self.doc.paths[pi].opacity = o; } }
+        self.dirty = true; self.commit();
+    }
+    /// Layers: toggle a path's visibility. Hiding it drops it from the object selection.
+    pub fn set_hidden(&mut self, pid: u32, hidden: bool) {
+        self.begin();
+        if let Some(pi) = self.doc.pidx(pid) { self.doc.paths[pi].hidden = hidden; }
+        if hidden { self.objsel.remove(&pid); }
+        self.dirty = true; self.commit();
+    }
+    /// Layers: toggle a path's lock. Locking it drops it from the object selection.
+    pub fn set_locked(&mut self, pid: u32, locked: bool) {
+        self.begin();
+        if let Some(pi) = self.doc.pidx(pid) { self.doc.paths[pi].locked = locked; }
+        if locked { self.objsel.remove(&pid); }
+        self.dirty = true; self.commit();
+    }
+    /// Layers: inline rename. Empty/blank name clears back to the default label.
+    pub fn rename_path(&mut self, pid: u32, name: String) {
+        self.begin();
+        let n = name.trim();
+        if let Some(pi) = self.doc.pidx(pid) { self.doc.paths[pi].name = if n.is_empty() { None } else { Some(n.to_string()) }; }
         self.dirty = true; self.commit();
     }
     pub fn eyedrop(&mut self, pid: u32) {

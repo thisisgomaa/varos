@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pivot — Illustrator-like Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700&family=Amiri:wght@400;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0a;
+  --bg-elev: #121212;
+  --bg-card: #161616;
+  --bg-canvas: #1c1c1c;
+  --border: #202020;
+  --border-strong: #2a2a2a;
+  --text: #e8e6e3;
+  --text-muted: #8a8682;
+  --text-dim: #5a5854;
+  --accent: #c9a961;
+  --accent-dim: #8a7440;
+  --accent-bg: rgba(201, 169, 97, 0.10);
+  --selection: rgba(201, 169, 97, 0.20);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100vh; overflow: hidden; }
+body {
+  font-family: 'Tajawal', 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  display: grid;
+  grid-template-rows: 28px 36px 1fr 26px;
+  grid-template-columns: 44px 1fr 240px;
+  grid-template-areas:
+    "menu menu menu"
+    "control control control"
+    "tools canvas panels"
+    "status status status";
+}
+
+/* MENU BAR */
+.menubar {
+  grid-area: menu;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 12px; gap: 4px;
+  font-size: 12px;
+}
+.menubar .logo {
+  width: 20px; height: 20px; border-radius: 4px;
+  background: var(--accent); color: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; margin-left: 10px;
+}
+.menubar .item {
+  padding: 4px 10px; color: var(--text-muted); cursor: pointer;
+  border-radius: 3px;
+}
+.menubar .item:hover { background: var(--bg-card); color: var(--text); }
+.menubar .right {
+  margin-right: auto;
+  display: flex; gap: 12px; align-items: center;
+  color: var(--text-dim); font-family: 'JetBrains Mono', monospace; font-size: 11px;
+}
+
+/* CONTROL BAR (tool-specific) */
+.controlbar {
+  grid-area: control;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 14px; gap: 10px;
+  font-size: 12px;
+}
+.controlbar .label {
+  color: var(--text-dim); font-family: 'JetBrains Mono', monospace; font-size: 11px;
+}
+.controlbar .field {
+  background: var(--bg-card); border: 1px solid var(--border);
+  padding: 4px 8px; border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  min-width: 60px;
+  color: var(--text);
+}
+.controlbar .swatch {
+  width: 20px; height: 20px; border-radius: 3px;
+  background: var(--accent); border: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+.controlbar .sep {
+  width: 1px; height: 18px; background: var(--border);
+  margin: 0 6px;
+}
+.controlbar .pill {
+  background: var(--bg-card); border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 3px;
+  color: var(--text-muted); cursor: pointer;
+}
+.controlbar .pill.active {
+  background: var(--accent-bg); border-color: var(--accent-dim); color: var(--accent);
+}
+.controlbar .pill:hover:not(.active) { color: var(--text); }
+.controlbar .toggle {
+  display: flex; gap: 2px;
+}
+.controlbar .toggle .pill {
+  border-radius: 0;
+  padding: 4px 8px;
+}
+.controlbar .toggle .pill:first-child { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+.controlbar .toggle .pill:last-child { border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
+
+/* TOOLS PANEL (right in RTL = start side) */
+.tools {
+  grid-area: tools;
+  background: var(--bg-elev);
+  border-left: 1px solid var(--border);
+  display: grid; grid-template-columns: 1fr 1fr;
+  align-content: start; padding: 6px 4px;
+  gap: 1px;
+}
+.tool {
+  width: 100%; aspect-ratio: 1; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); cursor: pointer;
+  font-size: 13px;
+  position: relative;
+}
+.tool:hover { background: var(--bg-card); color: var(--text); }
+.tool.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+}
+.tool .tip {
+  position: absolute; right: calc(100% + 6px); top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-card); color: var(--text);
+  border: 1px solid var(--border-strong);
+  padding: 3px 8px; border-radius: 3px;
+  font-size: 11px; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity .15s;
+  z-index: 10;
+}
+.tool:hover .tip { opacity: 1; }
+.tool-sep {
+  grid-column: 1 / -1; height: 1px; background: var(--border); margin: 4px 0;
+}
+
+/* CANVAS */
+.canvas {
+  grid-area: canvas;
+  background:
+    radial-gradient(circle, rgba(35,35,35,0.4) 1px, transparent 1px) 0 0 / 22px 22px,
+    var(--bg-canvas);
+  position: relative; overflow: hidden;
+}
+.artboard {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 680px; height: 440px;
+  background: #f7f3eb;
+  border-radius: 2px;
+  box-shadow: 0 30px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(201,169,97,0.4);
+  padding: 50px;
+  font-family: 'Amiri', serif;
+  display: flex; flex-direction: column; gap: 24px;
+}
+.artboard .heading {
+  font-size: 44px; color: #2a2520; text-align: center;
+  font-weight: 700; line-height: 1.4;
+}
+.artboard .sub {
+  font-size: 20px; color: #5a4a36; text-align: center;
+  font-family: 'Tajawal', sans-serif;
+}
+.artboard .rect-shape {
+  align-self: center; width: 260px; height: 72px;
+  background: var(--accent); border-radius: 4px;
+  outline: 1px dashed var(--accent);
+  outline-offset: 4px;
+}
+.artboard-label {
+  position: absolute; top: -20px; right: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--accent);
+}
+.ruler-h, .ruler-v {
+  position: absolute; background: var(--bg-elev);
+  border-color: var(--border);
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--text-dim);
+}
+.ruler-h {
+  top: 0; left: 0; right: 0; height: 14px;
+  border-bottom: 1px solid var(--border);
+  background-image: repeating-linear-gradient(to left, var(--border-strong) 0 1px, transparent 1px 50px);
+}
+.ruler-v {
+  top: 0; bottom: 0; right: 0; width: 14px;
+  border-left: 1px solid var(--border);
+  background-image: repeating-linear-gradient(to top, var(--border-strong) 0 1px, transparent 1px 50px);
+}
+
+/* PANELS (left side in RTL = end) */
+.panels {
+  grid-area: panels;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+}
+.panel {
+  border-bottom: 1px solid var(--border);
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 11px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .6px; font-weight: 600;
+  cursor: pointer;
+  background: var(--bg);
+}
+.panel-head:hover { color: var(--text); }
+.panel-head .caret { font-size: 9px; }
+.panel-body { padding: 10px 12px; }
+
+/* color panel */
+.color-grid {
+  display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px;
+}
+.color-cell {
+  aspect-ratio: 1; border-radius: 2px; cursor: pointer;
+  border: 1px solid var(--border);
+}
+
+/* layers */
+.layer {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 3px; cursor: pointer;
+  font-size: 12px; color: var(--text-muted);
+}
+.layer:hover { background: var(--bg-card); color: var(--text); }
+.layer.selected { background: var(--accent-bg); color: var(--accent); }
+.layer .icon { width: 14px; text-align: center; }
+.layer .visi { margin-right: auto; opacity: .5; font-size: 11px; }
+.layer .lock { opacity: .3; font-size: 11px; }
+
+/* props */
+.field-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 6px;
+}
+.field {
+  background: var(--bg-card); border: 1px solid var(--border);
+  padding: 5px 7px; border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text);
+}
+.field .label { color: var(--text-dim); font-size: 9px; }
+
+/* STATUS */
+.status {
+  grid-area: status;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 14px; gap: 14px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text-muted);
+}
+.status .sep { color: var(--text-dim); }
+.workspace-switch {
+  background: var(--bg-card); border: 1px solid var(--border);
+  padding: 3px 10px; border-radius: 3px;
+  cursor: pointer; color: var(--text);
+}
+.workspace-switch:hover { border-color: var(--accent-dim); }
+.status .right { margin-right: auto; display: flex; gap: 14px; }
+</style>
+</head>
+<body>
+
+<div class="menubar">
+  <div class="logo">ف</div>
+  <div class="item">ملف</div>
+  <div class="item">تحرير</div>
+  <div class="item">عنصر</div>
+  <div class="item">نص</div>
+  <div class="item">تأثير</div>
+  <div class="item">عرض</div>
+  <div class="item">نافذة</div>
+  <div class="item">مساعدة</div>
+  <div class="right">
+    <span>تصميم بدون عنوان.pivot</span>
+    <span class="sep">·</span>
+    <span>محفوظ</span>
+  </div>
+</div>
+
+<div class="controlbar">
+  <span class="label">المستطيل:</span>
+  <div class="field" style="min-width: 50px;">280</div>
+  <span class="label">×</span>
+  <div class="field" style="min-width: 50px;">80</div>
+  <div class="sep"></div>
+  <span class="label">التعبئة:</span>
+  <div class="swatch"></div>
+  <div class="field">#C9A961</div>
+  <div class="sep"></div>
+  <span class="label">الحد:</span>
+  <div class="swatch" style="background: transparent; border: 2px solid var(--accent);"></div>
+  <div class="field">1pt</div>
+  <div class="sep"></div>
+  <div class="toggle">
+    <div class="pill active">مستوي</div>
+    <div class="pill">تدرّج</div>
+    <div class="pill">نمط</div>
+  </div>
+  <div class="sep"></div>
+  <span class="label">الزاوية:</span>
+  <div class="field" style="min-width: 50px;">6px</div>
+</div>
+
+<div class="tools">
+  <div class="tool active">↖<span class="tip">تحديد</span></div>
+  <div class="tool">⤢<span class="tip">تحديد مباشر</span></div>
+  <div class="tool">▢<span class="tip">مستطيل</span></div>
+  <div class="tool">◯<span class="tip">دائرة</span></div>
+  <div class="tool">◇<span class="tip">مضلع</span></div>
+  <div class="tool">★<span class="tip">نجمة</span></div>
+  <div class="tool">✎<span class="tip">قلم</span></div>
+  <div class="tool">/<span class="tip">خط</span></div>
+  <div class="tool">↻<span class="tip">قوس</span></div>
+  <div class="tool">~<span class="tip">منحنى</span></div>
+  <div class="tool-sep"></div>
+  <div class="tool">ت<span class="tip">نص</span></div>
+  <div class="tool">⌶<span class="tip">نص في مسار</span></div>
+  <div class="tool">⚒<span class="tip">تحرير حرف</span></div>
+  <div class="tool">▦<span class="tip">شبكة</span></div>
+  <div class="tool-sep"></div>
+  <div class="tool">⟲<span class="tip">تدوير</span></div>
+  <div class="tool">⇆<span class="tip">قلب</span></div>
+  <div class="tool">⇲<span class="tip">تحجيم</span></div>
+  <div class="tool">⤢<span class="tip">شبه منحرف</span></div>
+  <div class="tool-sep"></div>
+  <div class="tool">⊞<span class="tip">شفافية</span></div>
+  <div class="tool">⊟<span class="tip">قطّارة</span></div>
+  <div class="tool">✂<span class="tip">قص</span></div>
+  <div class="tool">⌫<span class="tip">ممحاة</span></div>
+  <div class="tool-sep"></div>
+  <div class="tool">✋<span class="tip">يد</span></div>
+  <div class="tool">⌕<span class="tip">تكبير</span></div>
+</div>
+
+<div class="canvas">
+  <div class="ruler-h"></div>
+  <div class="ruler-v"></div>
+  <div class="artboard">
+    <div class="artboard-label">لوحة العمل 1 — 1080 × 720</div>
+    <div class="heading">بسم الله الرحمن الرحيم</div>
+    <div class="sub">الحمد لله رب العالمين</div>
+    <div class="rect-shape"></div>
+  </div>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <div class="panel-head"><span>الخصائص</span><span class="caret">▾</span></div>
+    <div class="panel-body">
+      <div class="field-row">
+        <div class="field"><div class="label">X</div>280</div>
+        <div class="field"><div class="label">Y</div>340</div>
+      </div>
+      <div class="field-row">
+        <div class="field"><div class="label">العرض</div>280</div>
+        <div class="field"><div class="label">الارتفاع</div>80</div>
+      </div>
+      <div class="field-row">
+        <div class="field"><div class="label">التدوير</div>0°</div>
+        <div class="field"><div class="label">الشفافية</div>100%</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><span>الألوان</span><span class="caret">▾</span></div>
+    <div class="panel-body">
+      <div class="color-grid">
+        <div class="color-cell" style="background: #c9a961"></div>
+        <div class="color-cell" style="background: #d97757"></div>
+        <div class="color-cell" style="background: #7fa86c"></div>
+        <div class="color-cell" style="background: #e8e6e3"></div>
+        <div class="color-cell" style="background: #2a2520"></div>
+        <div class="color-cell" style="background: #5a4a36"></div>
+        <div class="color-cell" style="background: #f5f1ea"></div>
+        <div class="color-cell" style="background: transparent; border-style: dashed;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><span>المسارات</span><span class="caret">▾</span></div>
+    <div class="panel-body" style="font-size: 11px; color: var(--text-dim); text-align: center; padding: 14px;">
+      اضغط P لرسم مسار
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><span>الطبقات</span><span class="caret">▾</span></div>
+    <div class="panel-body">
+      <div class="layer">
+        <span class="icon">ت</span>
+        <span>عنوان رئيسي</span>
+        <span class="visi">👁</span>
+        <span class="lock">🔒</span>
+      </div>
+      <div class="layer">
+        <span class="icon">ت</span>
+        <span>عنوان فرعي</span>
+        <span class="visi">👁</span>
+        <span class="lock">🔒</span>
+      </div>
+      <div class="layer selected">
+        <span class="icon">▢</span>
+        <span>مستطيل</span>
+        <span class="visi">👁</span>
+        <span class="lock">🔒</span>
+      </div>
+      <div class="layer">
+        <span class="icon">◰</span>
+        <span>مجموعة 1</span>
+        <span class="visi">👁</span>
+        <span class="lock">🔒</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><span>المحاذاة</span><span class="caret">▸</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><span>المظهر</span><span class="caret">▸</span></div>
+  </div>
+</div>
+
+<div class="status">
+  <div class="workspace-switch">⚙ مساحة العمل: التصميم</div>
+  <span class="sep">·</span>
+  <span>X: 528, Y: 340</span>
+  <span class="sep">·</span>
+  <span>100%</span>
+  <div class="right">
+    <span>RGB</span>
+    <span class="sep">·</span>
+    <span>Pivot v0.0.8</span>
+  </div>
+</div>
+
+</body>
+</html>

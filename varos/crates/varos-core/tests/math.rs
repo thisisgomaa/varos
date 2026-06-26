@@ -230,15 +230,7 @@ fn point_in_path_respects_holes() {
     let outer = vec![mk(1, 0.0, 0.0), mk(2, 20.0, 0.0), mk(3, 20.0, 20.0), mk(4, 0.0, 20.0)];
     let hole = vec![mk(5, 5.0, 5.0), mk(6, 15.0, 5.0), mk(7, 15.0, 15.0), mk(8, 5.0, 15.0)];
     let mut doc = Document::default();
-    doc.paths.push(Path {
-        id: 1,
-        anchors: outer,
-        closed: true,
-        fill: Some([0.0, 0.0, 0.0, 1.0]),
-        stroke: None,
-        stroke_width: 1.0,
-        holes: vec![hole],
-    });
+    doc.paths.push(Path { holes: vec![hole], ..Path::new(1, outer, true, Some([0.0, 0.0, 0.0, 1.0]), None, 1.0) });
 
     assert!(doc.point_in_path(0, [2.0, 2.0]), "ring band should be filled");
     assert!(!doc.point_in_path(0, [10.0, 10.0]), "inside the hole must NOT be filled (even-odd)");
