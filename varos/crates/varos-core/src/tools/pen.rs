@@ -42,7 +42,7 @@ impl Tool for Pen {
         // else: extend the active path, or start a new one
         let pid = match ed.active {
             Some(i) => i,
-            None => { let id = ed.doc.nid(); let (f, st, sw) = (ed.cur_fill, ed.cur_stroke, ed.cur_sw); ed.doc.paths.push(Path { id, anchors: vec![], closed: false, fill: f, stroke: st, stroke_width: sw, holes: vec![] }); ed.active = Some(id); ed.selected.clear(); id }
+            None => { let id = ed.doc.nid(); let (f, st, sw) = (ed.cur_fill, ed.cur_stroke, ed.cur_sw); ed.doc.paths.push(Path::new(id, vec![], false, f, st, sw)); ed.active = Some(id); ed.selected.clear(); id }
         };
         let aid = ed.doc.nid();
         let pi = ed.doc.pidx(pid).unwrap();

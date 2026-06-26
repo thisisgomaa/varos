@@ -11,15 +11,7 @@ use varos_core::model::{Document, Path, ShapeKind};
 fn add_rect(doc: &mut Document, x0: f32, y0: f32, x1: f32, y1: f32) -> u32 {
     let anchors = doc.build_shape(ShapeKind::Rect, [x0, y0], [x1, y1]);
     let id = doc.nid();
-    doc.paths.push(Path {
-        id,
-        anchors,
-        closed: true,
-        fill: Some([0.0, 0.0, 0.0, 1.0]),
-        stroke: None,
-        stroke_width: 1.0,
-        holes: vec![],
-    });
+    doc.paths.push(Path::new(id, anchors, true, Some([0.0, 0.0, 0.0, 1.0]), None, 1.0));
     id
 }
 
@@ -189,7 +181,7 @@ fn shift_click_near_selection_corner_still_selects() {
 fn ed_rect(ed: &mut Editor, x0: f32, y0: f32, x1: f32, y1: f32) -> u32 {
     let anchors = ed.doc.build_shape(ShapeKind::Rect, [x0, y0], [x1, y1]);
     let id = ed.doc.nid();
-    ed.doc.paths.push(Path { id, anchors, closed: true, fill: Some([0.0, 0.0, 0.0, 1.0]), stroke: None, stroke_width: 1.0, holes: vec![] });
+    ed.doc.paths.push(Path::new(id, anchors, true, Some([0.0, 0.0, 0.0, 1.0]), None, 1.0));
     id
 }
 

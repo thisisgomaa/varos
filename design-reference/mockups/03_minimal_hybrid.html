@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pivot — Minimal Hybrid Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700&family=Amiri:wght@400;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0a;
+  --bg-elev: rgba(19, 19, 19, 0.85);
+  --bg-card: rgba(22, 22, 22, 0.95);
+  --bg-canvas: #161616;
+  --border: rgba(60, 60, 60, 0.5);
+  --border-strong: rgba(90, 90, 90, 0.6);
+  --text: #e8e6e3;
+  --text-muted: #8a8682;
+  --text-dim: #5a5854;
+  --accent: #c9a961;
+  --accent-dim: #8a7440;
+  --accent-bg: rgba(201, 169, 97, 0.12);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100vh; overflow: hidden; }
+body {
+  font-family: 'Tajawal', 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  position: relative;
+}
+
+/* CANVAS — fills everything */
+.canvas {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle, rgba(45,45,45,0.4) 1px, transparent 1px) 0 0 / 28px 28px,
+    var(--bg-canvas);
+  overflow: hidden;
+}
+.artboard {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 820px; height: 540px;
+  background: #f5f1ea;
+  border-radius: 6px;
+  box-shadow: 0 40px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(201,169,97,0.4);
+  padding: 70px 60px;
+  font-family: 'Amiri', serif;
+  display: flex; flex-direction: column; gap: 36px;
+}
+.artboard .heading {
+  font-size: 56px; color: #2a2520; text-align: center;
+  font-weight: 700; line-height: 1.4;
+}
+.artboard .sub {
+  font-size: 26px; color: #5a4a36; text-align: center;
+  font-family: 'Tajawal', sans-serif;
+}
+.artboard .rect-shape {
+  align-self: center; width: 300px; height: 90px;
+  background: var(--accent); border-radius: 6px;
+  outline: 2px dashed var(--accent);
+  outline-offset: 5px;
+}
+
+/* TOP BAR — ultra minimal */
+.topbar {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 22px;
+  z-index: 50;
+}
+.topbar .brand {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg-elev);
+  backdrop-filter: blur(20px);
+  padding: 7px 14px; border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.topbar .logo {
+  width: 22px; height: 22px; border-radius: 5px;
+  background: var(--accent); color: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 12px;
+}
+.topbar .breadcrumb { font-size: 12px; color: var(--text-muted); }
+.topbar .breadcrumb strong { color: var(--text); font-weight: 500; }
+.topbar .right {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-elev);
+  backdrop-filter: blur(20px);
+  padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.topbar .right .key {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-dim); padding: 2px 6px;
+  background: var(--bg-card); border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.topbar .right .label { font-size: 11px; color: var(--text-muted); }
+
+/* FLOATING TOOL PALETTE — bottom-left in RTL */
+.palette {
+  position: absolute; bottom: 28px; left: 28px;
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 8px;
+  display: flex; gap: 4px;
+  z-index: 40;
+}
+.palette .tool {
+  width: 40px; height: 40px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); cursor: pointer;
+  font-size: 16px;
+  position: relative;
+  transition: all .15s;
+}
+.palette .tool:hover { background: var(--bg-elev); color: var(--text); }
+.palette .tool.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+}
+.palette .tool .tip {
+  position: absolute; bottom: calc(100% + 10px); left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card); color: var(--text);
+  border: 1px solid var(--border-strong);
+  padding: 5px 10px; border-radius: 4px;
+  font-size: 11px; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity .15s;
+}
+.palette .tool .tip .key {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-dim); margin-right: 4px;
+}
+.palette .tool:hover .tip { opacity: 1; }
+.palette .sep { width: 1px; background: var(--border); margin: 6px 4px; }
+
+/* INSPECTOR — slides in from end (left in RTL) */
+.inspector {
+  position: absolute; top: 80px; left: 28px; bottom: 100px;
+  width: 280px;
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 18px;
+  z-index: 30;
+  overflow-y: auto;
+}
+.inspector h4 {
+  font-size: 10px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: .8px; margin-bottom: 8px; font-weight: 600;
+}
+.inspector .selection-hint {
+  font-size: 11px; color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-dim);
+  padding: 6px 10px; border-radius: 6px;
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: 8px;
+}
+.inspector .selection-hint .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+}
+.field-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px;
+}
+.field {
+  background: rgba(10, 10, 10, 0.5); border: 1px solid var(--border);
+  padding: 7px 9px; border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  color: var(--text);
+}
+.field .label { color: var(--text-dim); font-size: 10px; margin-bottom: 1px; }
+.color-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px; background: rgba(10,10,10,0.5); border-radius: 6px;
+  border: 1px solid var(--border); margin-bottom: 8px;
+}
+.swatch {
+  width: 26px; height: 26px; border-radius: 5px;
+  background: var(--accent); border: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+.color-row .hex { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.slider {
+  width: 100%; -webkit-appearance: none; appearance: none;
+  height: 4px; background: var(--border); border-radius: 2px;
+  outline: none; margin: 6px 0;
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); cursor: pointer;
+}
+
+/* LAYERS — collapsible panel on right side (start in RTL) */
+.layers-pull {
+  position: absolute; top: 80px; right: 28px;
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  padding: 10px 14px;
+  display: flex; align-items: center; gap: 10px;
+  cursor: pointer;
+  font-size: 12px; color: var(--text-muted);
+  z-index: 30;
+}
+.layers-pull:hover { color: var(--text); }
+.layers-pull .count {
+  background: var(--accent-bg); color: var(--accent);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--accent-dim);
+}
+.layers-pull .key {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-dim); padding: 2px 6px;
+  background: rgba(10,10,10,0.5); border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+/* BOTTOM HINT BAR */
+.hints {
+  position: absolute; bottom: 28px; right: 28px;
+  background: var(--bg-elev);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 12px;
+  display: flex; gap: 12px; align-items: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text-muted);
+  z-index: 30;
+}
+.hints .item { display: flex; gap: 5px; align-items: center; }
+.hints .key {
+  background: var(--bg-card); padding: 2px 6px;
+  border-radius: 3px; color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+/* CENTER STATUS PILL */
+.zoom-pill {
+  position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+  background: var(--bg-elev);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 18px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text-muted);
+  z-index: 30;
+  display: flex; gap: 12px;
+}
+.zoom-pill .sep { color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<div class="canvas">
+  <div class="artboard">
+    <div class="heading">بسم الله الرحمن الرحيم</div>
+    <div class="sub">الحمد لله رب العالمين</div>
+    <div class="rect-shape"></div>
+  </div>
+</div>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="logo">ف</div>
+    <div class="breadcrumb">المشاريع · <strong>تصميم بدون عنوان</strong></div>
+  </div>
+  <div class="right">
+    <span class="label">تركيز</span>
+    <span class="key">F</span>
+  </div>
+</div>
+
+<div class="inspector">
+  <div class="selection-hint">
+    <span class="dot"></span>
+    <span>محدد: مستطيل</span>
+  </div>
+  <h4>الموقع والحجم</h4>
+  <div class="field-row">
+    <div class="field"><div class="label">X</div>280</div>
+    <div class="field"><div class="label">Y</div>340</div>
+  </div>
+  <div class="field-row">
+    <div class="field"><div class="label">العرض</div>300</div>
+    <div class="field"><div class="label">الارتفاع</div>90</div>
+  </div>
+
+  <h4 style="margin-top: 18px;">التعبئة</h4>
+  <div class="color-row">
+    <div class="swatch"></div>
+    <span class="hex">#C9A961</span>
+    <span style="margin-right: auto; color: var(--text-dim); font-size: 11px;">100%</span>
+  </div>
+
+  <h4 style="margin-top: 18px;">الشفافية</h4>
+  <input type="range" class="slider" value="100" min="0" max="100">
+
+  <h4 style="margin-top: 18px;">الزاوية</h4>
+  <input type="range" class="slider" value="6" min="0" max="50">
+</div>
+
+<div class="layers-pull">
+  <span>الطبقات</span>
+  <span class="count">4</span>
+  <span class="key">L</span>
+</div>
+
+<div class="palette">
+  <div class="tool active">↖<span class="tip"><span class="key">V</span>تحديد</span></div>
+  <div class="tool">✎<span class="tip"><span class="key">P</span>قلم</span></div>
+  <div class="sep"></div>
+  <div class="tool">▢<span class="tip"><span class="key">R</span>مستطيل</span></div>
+  <div class="tool">◯<span class="tip"><span class="key">O</span>دائرة</span></div>
+  <div class="sep"></div>
+  <div class="tool">ت<span class="tip"><span class="key">T</span>نص</span></div>
+  <div class="sep"></div>
+  <div class="tool">✋<span class="tip"><span class="key">H</span>يد</span></div>
+  <div class="tool">⌕<span class="tip"><span class="key">Z</span>تكبير</span></div>
+</div>
+
+<div class="zoom-pill">
+  <span>X: 528</span><span class="sep">·</span>
+  <span>Y: 340</span><span class="sep">·</span>
+  <span>100%</span>
+</div>
+
+<div class="hints">
+  <div class="item"><span class="key">⌘ Z</span><span>تراجع</span></div>
+  <div class="item"><span class="key">Space</span><span>تحريك</span></div>
+  <div class="item"><span class="key">⌘ K</span><span>أوامر</span></div>
+</div>
+
+</body>
+</html>

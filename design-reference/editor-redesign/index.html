@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BStudio · Editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="styles/editor-base.css" />
+  <link rel="stylesheet" href="styles/dir-focus.css" />
+  <link rel="stylesheet" href="styles/dir-focus-skins.css" />
+  <link rel="stylesheet" href="styles/editor-pro.css" />
+  <style>
+    html, body { margin: 0; height: 100%; background: #0c0c0e; overflow: hidden; }
+    /* scale the fixed 1440×900 editor to fit any viewport, letterboxed */
+    #stage { position: fixed; inset: 0; display: grid; place-items: center; }
+    #scaler { width: 1440px; height: 900px; transform-origin: center; }
+  </style>
+</head>
+<body>
+  <div id="stage"><div id="scaler"><div id="root"></div></div></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+  <script type="text/babel" src="shared.jsx"></script>
+  <script type="text/babel" src="editor-model.jsx"></script>
+  <script type="text/babel" src="Inspector.jsx"></script>
+  <script type="text/babel" src="EditorPro.jsx"></script>
+
+  <script type="text/babel" data-presets="react">
+    const TPanel = window.TweaksPanel, TSection = window.TweakSection,
+          TColor = window.TweakColor, TToggle = window.TweakToggle;
+
+    const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+      "accent": "#2f8fe0",
+      "grid": true,
+      "hints": true
+    }/*EDITMODE-END*/;
+
+    function App() {
+      const [t, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
+      return (
+        <React.Fragment>
+          <EditorPro tweaks={t} />
+          <TPanel>
+            <TSection label="Accent" />
+            <TColor label="Accent color" value={t.accent}
+              options={['#2f8fe0', '#0d99ff', '#4f9d69', '#6b5bd6', '#c9a961']}
+              onChange={(v) => setTweak('accent', v)} />
+            <TSection label="Canvas" />
+            <TToggle label="Dot grid" value={t.grid} onChange={(v) => setTweak('grid', v)} />
+            <TToggle label="Keyboard hints" value={t.hints} onChange={(v) => setTweak('hints', v)} />
+          </TPanel>
+        </React.Fragment>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+    // fit-to-viewport scaler
+    function fit() {
+      const s = document.getElementById('scaler');
+      const k = Math.min(window.innerWidth / 1440, window.innerHeight / 900);
+      s.style.transform = `scale(${k})`;
+    }
+    window.addEventListener('resize', fit); fit();
+  </script>
+</body>
+</html>

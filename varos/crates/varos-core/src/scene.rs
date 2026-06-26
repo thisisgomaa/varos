@@ -33,17 +33,21 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     let mut s = Scene::default();
 
     // ---- CONTENT (scales with zoom) ----  `ppu` = zoom → curves stay smooth at any zoom
+    let with_op = |c: Rgba, o: f32| [c[0], c[1], c[2], c[3] * o];   // object opacity → alpha
     for pi in 0..ed.doc.paths.len() {
         let p = &ed.doc.paths[pi];
+        if p.hidden { continue; }
         if p.closed && p.anchors.len() >= 3 { if let Some(c) = p.fill {
             let mut rings = vec![ed.doc.outline_px(pi, ppu)];
             for hole in &p.holes { rings.push(Document::ring_px(hole, true, ppu)); }
-            s.content.push(Prim::Fill { rings, color: c });
+            s.content.push(Prim::Fill { rings, color: with_op(c, p.opacity) });
         } }
     }
     for pi in 0..ed.doc.paths.len() {
         let p = &ed.doc.paths[pi];
+        if p.hidden { continue; }
         if p.anchors.len() >= 2 { if let Some(c) = p.stroke {
+            let c = with_op(c, p.opacity);
             s.content.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: p.stroke_width, color: c });
             for hole in &p.holes { let mut r = Document::ring_px(hole, true, ppu); if let Some(&f) = r.first() { r.push(f); } s.content.push(Prim::Stroke { pts: r, width: p.stroke_width, color: c }); }
         } }
@@ -52,6 +56,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     // ---- OVERLAY (constant screen size) ----
     // editing skeleton: a thin accent outline for any path being hovered/selected/drawn
     for pi in 0..ed.doc.paths.len() {
+        if ed.doc.paths[pi].hidden { continue; }
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
             s.overlay.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: 1.2, color: ACCENT });
             for hole in &ed.doc.paths[pi].holes { let mut r = Document::ring_px(hole, true, ppu); if let Some(&f) = r.first() { r.push(f); } s.overlay.push(Prim::Stroke { pts: r, width: 1.2, color: ACCENT }); }
@@ -123,7 +128,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     }}}
     // anchor markers (only on shown paths; not in object mode) — outer + hole anchors
     for p in &ed.doc.paths {
-        if !ed.path_shown(p.id) || ed.tool == ToolKind::Object { continue; }
+        if p.hidden || !ed.path_shown(p.id) || ed.tool == ToolKind::Object { continue; }
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             let sel = ed.selected.contains(&a.id);
             if a.smooth {

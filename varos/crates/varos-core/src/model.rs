@@ -20,6 +20,20 @@ pub struct Path {
     /// extra hole contours (editable bezier anchors) — e.g. from boolean ops. A compound path: the
     /// outer `anchors` plus these inner rings, filled even-odd so holes cut through. Normally empty.
     pub holes: Vec<Vec<Anchor>>,
+    /// object-level opacity 0..1 (multiplies fill+stroke alpha at render). 1.0 = opaque.
+    pub opacity: f32,
+    /// Layers panel flags: hidden = not drawn / not hit-tested; locked = not selectable by click.
+    pub hidden: bool,
+    pub locked: bool,
+    /// optional custom name (Layers inline rename). None ⇒ a default label ("Path", "Rectangle"…).
+    pub name: Option<String>,
+}
+
+impl Path {
+    /// Sensible defaults for the panel-era fields, so construction sites stay terse.
+    pub fn new(id: u32, anchors: Vec<Anchor>, closed: bool, fill: Option<Rgba>, stroke: Option<Rgba>, stroke_width: f32) -> Path {
+        Path { id, anchors, closed, fill, stroke, stroke_width, holes: vec![], opacity: 1.0, hidden: false, locked: false, name: None }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -191,7 +205,8 @@ impl Document {
         let id = self.nid();
         let anchors = src.anchors.iter().map(|a| { self.ids += 1; Anchor { id: self.ids, p: a.p, hin: a.hin, hout: a.hout, smooth: a.smooth } }).collect();
         let holes = src.holes.iter().map(|h| h.iter().map(|a| { self.ids += 1; Anchor { id: self.ids, p: a.p, hin: a.hin, hout: a.hout, smooth: a.smooth } }).collect()).collect();
-        Path { id, anchors, closed: src.closed, fill: src.fill, stroke: src.stroke, stroke_width: src.stroke_width, holes }
+        Path { holes, opacity: src.opacity, hidden: src.hidden, locked: src.locked, name: src.name.clone(),
+               ..Path::new(id, anchors, src.closed, src.fill, src.stroke, src.stroke_width) }
     }
 
     // ---------- groups (hierarchy on top of the flat path list) ----------

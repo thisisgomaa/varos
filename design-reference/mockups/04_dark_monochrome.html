@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BStudio · Mockup 04 · dark monochrome (static)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Tajawal:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-app:        #0a0a0b;
+  --bg-panel:      #141416;
+  --bg-surface:    #1c1c1f;
+  --bg-hover:      #242427;
+  --bg-active:     #2c2c30;
+  --border-subtle: #26262a;
+  --border:        #34343a;
+  --border-strong: #48484f;
+  --text-faint:    #6b6b72;
+  --text-muted:    #a0a0a8;
+  --text:          #f0f0f2;
+  --text-strong:   #ffffff;
+  --glass:         rgba(255,255,255,0.035);
+  --glass-strong:  rgba(255,255,255,0.06);
+  color-scheme: dark;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg-app); color: var(--text); overflow: hidden; }
+button { background: transparent; border: none; cursor: pointer; color: inherit; font: inherit; }
+
+/* ─── shell ─── */
+.shell {
+  display: grid;
+  grid-template-rows: 44px 32px 1fr 26px;
+  grid-template-columns: 56px 1fr 280px;
+  grid-template-areas:
+    "title   title    title"
+    "control control  control"
+    "tools   canvas   props"
+    "status  status   status";
+  height: 100vh;
+  background: var(--bg-app);
+}
+
+/* ─── titlebar ─── */
+.titlebar {
+  grid-area: title;
+  display: flex; align-items: center;
+  padding: 0 14px; gap: 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.brand { display: flex; align-items: center; gap: 8px; }
+.brand-mark {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: var(--text-strong); color: var(--bg-app);
+  font-weight: 700; font-size: 12px; border-radius: 5px;
+  letter-spacing: -0.02em;
+}
+.brand-name { font-weight: 600; font-size: 13px; letter-spacing: -0.01em; }
+.brand-tag {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-muted); background: var(--bg-surface);
+  padding: 2px 7px; border-radius: 4px; border: 1px solid var(--border);
+}
+.file-name {
+  font-size: 12px; color: var(--text-muted);
+  padding: 4px 10px; border-radius: 4px;
+}
+.file-name strong { color: var(--text); font-weight: 500; }
+.titlebar-spacer { flex: 1; }
+.titlebar-link {
+  font-size: 12px; color: var(--text-muted); text-decoration: none;
+  padding: 4px 10px; border-radius: 4px;
+}
+.titlebar-link:hover { background: var(--bg-hover); color: var(--text); }
+
+/* ─── control bar (context-sensitive, per tool) ─── */
+.controlbar {
+  grid-area: control;
+  display: flex; align-items: center;
+  padding: 0 16px; gap: 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+.control-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.control-group { display: flex; align-items: center; gap: 4px; }
+.control-divider { width: 1px; height: 16px; background: var(--border-subtle); margin: 0 6px; }
+.control-input {
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
+  border-radius: 4px; padding: 3px 7px; font-size: 11px;
+  font-family: 'JetBrains Mono', monospace; color: var(--text);
+  width: 60px;
+}
+.control-input:focus { outline: none; border-color: var(--border-strong); }
+.icon-btn {
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  border-radius: 4px;
+  color: var(--text-muted);
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+.icon-btn.active { background: var(--bg-active); color: var(--text-strong); }
+
+/* ─── tools palette (left) ─── */
+.tools {
+  grid-area: tools;
+  display: flex; flex-direction: column;
+  align-items: center; padding: 8px 0; gap: 2px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-subtle);
+}
+.tool {
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  border-radius: 6px; color: var(--text-muted);
+  position: relative;
+  transition: background 0.1s, color 0.1s;
+}
+.tool:hover { background: var(--bg-hover); color: var(--text); }
+.tool.active { background: var(--bg-active); color: var(--text-strong); }
+.tool.active::before {
+  content: ''; position: absolute; left: -1px; top: 8px; bottom: 8px;
+  width: 2px; background: var(--text-strong); border-radius: 1px;
+}
+.tool-key {
+  position: absolute; bottom: 2px; right: 4px;
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  color: var(--text-faint); pointer-events: none;
+}
+.tool-divider {
+  width: 24px; height: 1px;
+  background: var(--border-subtle); margin: 6px 0;
+}
+
+/* ─── canvas (center) ─── */
+.canvas {
+  grid-area: canvas;
+  position: relative;
+  background: var(--bg-app);
+  overflow: hidden;
+}
+.canvas-bg {
+  position: absolute; inset: 0;
+  background-image: radial-gradient(circle, #4a4a52 1.2px, transparent 1.2px);
+  background-size: 32px 32px;
+  background-position: center;
+  opacity: 0.6;
+}
+.canvas-sample {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+}
+.sample-rects { display: flex; gap: 12px; }
+.sample-rect {
+  width: 110px; height: 110px; border-radius: 4px;
+}
+.sel-handles {
+  position: absolute; pointer-events: none;
+  border: 1px solid var(--text-strong);
+}
+.sel-handle {
+  position: absolute; width: 8px; height: 8px;
+  background: var(--bg-app); border: 1px solid var(--text-strong);
+  border-radius: 1px;
+}
+.sel-handle.tl { left: -4px; top: -4px; }
+.sel-handle.tr { right: -4px; top: -4px; }
+.sel-handle.bl { left: -4px; bottom: -4px; }
+.sel-handle.br { right: -4px; bottom: -4px; }
+.sel-handle.tm { left: 50%; top: -4px; transform: translateX(-50%); }
+.sel-handle.bm { left: 50%; bottom: -4px; transform: translateX(-50%); }
+.sel-handle.ml { left: -4px; top: 50%; transform: translateY(-50%); }
+.sel-handle.mr { right: -4px; top: 50%; transform: translateY(-50%); }
+.sel-label {
+  position: absolute; top: -22px; left: 0;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-strong); background: var(--bg-panel);
+  padding: 2px 6px; border-radius: 3px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.hud {
+  position: absolute; bottom: 16px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text-muted);
+}
+.hud code { color: var(--text); }
+.hud .sep { opacity: 0.4; }
+
+/* ─── properties + layers (right) ─── */
+.props {
+  grid-area: props;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+.panel {
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.panel + .panel { border-top: 1px solid var(--border-subtle); }
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; height: 32px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.panel-title {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.panel-body { padding: 8px 14px; overflow-y: auto; flex: 1; }
+
+.field-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  margin-bottom: 6px;
+}
+.field {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
+  border-radius: 4px; padding: 3px 8px; height: 26px;
+}
+.field-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-faint); min-width: 8px;
+}
+.field-input {
+  background: transparent; border: none; outline: none;
+  color: var(--text); font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  width: 100%;
+}
+.field-suffix {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-faint);
+}
+
+.field-group { margin-bottom: 14px; }
+.field-heading {
+  font-size: 11px; color: var(--text-muted);
+  margin-bottom: 6px; font-weight: 500;
+}
+
+.swatch-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.swatch {
+  width: 24px; height: 24px; border-radius: 4px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.swatch-hex {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text); background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px; padding: 3px 8px; flex: 1;
+}
+.swatch-alpha {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text); background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px; padding: 3px 8px; width: 56px;
+}
+
+/* layers */
+.layers {
+  display: flex; flex-direction: column;
+}
+.layer-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 14px; height: 28px;
+  font-size: 12px; color: var(--text-muted);
+  cursor: pointer;
+}
+.layer-row:hover { background: var(--bg-hover); color: var(--text); }
+.layer-row.selected { background: var(--bg-active); color: var(--text-strong); }
+.layer-row.selected::before {
+  content: ''; width: 2px; align-self: stretch; background: var(--text-strong); margin-left: -14px; margin-right: 12px;
+}
+.layer-vis, .layer-lock {
+  width: 14px; height: 14px;
+  display: grid; place-items: center;
+  color: var(--text-faint);
+}
+.layer-vis:hover, .layer-lock:hover { color: var(--text); }
+.layer-name { flex: 1; }
+.layer-type {
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+  color: var(--text-faint);
+}
+
+/* ─── statusbar ─── */
+.statusbar {
+  grid-area: status;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 14px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-subtle);
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-muted);
+}
+.statusbar code { color: var(--text); }
+.statusbar-group { display: flex; align-items: center; gap: 10px; }
+.statusbar .sep { opacity: 0.4; }
+
+/* svg icons */
+svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; fill: none; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- titlebar -->
+  <header class="titlebar">
+    <div class="brand">
+      <span class="brand-mark">B</span>
+      <span class="brand-name">Studio</span>
+    </div>
+    <span class="brand-tag">mockup 04 · static</span>
+    <div class="file-name">untitled <strong>·</strong> <span style="color: var(--text-faint)">unsaved</span></div>
+    <div class="titlebar-spacer"></div>
+    <a class="titlebar-link" href="#">kashida demo →</a>
+  </header>
+
+  <!-- control bar (Rectangle tool active) -->
+  <div class="controlbar">
+    <span class="control-label">rectangle</span>
+    <div class="control-divider"></div>
+    <div class="control-group">
+      <span class="control-label">corner</span>
+      <input class="control-input" value="0" />
+    </div>
+    <div class="control-divider"></div>
+    <div class="control-group">
+      <button class="icon-btn" title="Align left">
+        <svg viewBox="0 0 16 16"><line x1="2" y1="2" x2="2" y2="14"/><rect x="4" y="4" width="6" height="3"/><rect x="4" y="9" width="9" height="3"/></svg>
+      </button>
+      <button class="icon-btn active" title="Align center">
+        <svg viewBox="0 0 16 16"><line x1="8" y1="2" x2="8" y2="14"/><rect x="4" y="4" width="8" height="3"/><rect x="3" y="9" width="10" height="3"/></svg>
+      </button>
+      <button class="icon-btn" title="Align right">
+        <svg viewBox="0 0 16 16"><line x1="14" y1="2" x2="14" y2="14"/><rect x="6" y="4" width="6" height="3"/><rect x="3" y="9" width="9" height="3"/></svg>
+      </button>
+      <div class="control-divider"></div>
+      <button class="icon-btn" title="Align top">
+        <svg viewBox="0 0 16 16"><line x1="2" y1="2" x2="14" y2="2"/><rect x="4" y="4" width="3" height="6"/><rect x="9" y="4" width="3" height="9"/></svg>
+      </button>
+      <button class="icon-btn" title="Align middle">
+        <svg viewBox="0 0 16 16"><line x1="2" y1="8" x2="14" y2="8"/><rect x="4" y="4" width="3" height="8"/><rect x="9" y="3" width="3" height="10"/></svg>
+      </button>
+      <button class="icon-btn" title="Align bottom">
+        <svg viewBox="0 0 16 16"><line x1="2" y1="14" x2="14" y2="14"/><rect x="4" y="6" width="3" height="6"/><rect x="9" y="3" width="3" height="9"/></svg>
+      </button>
+    </div>
+    <div class="control-divider"></div>
+    <div class="control-group">
+      <button class="icon-btn" title="Distribute horizontal">
+        <svg viewBox="0 0 16 16"><rect x="2" y="4" width="2" height="8"/><rect x="7" y="4" width="2" height="8"/><rect x="12" y="4" width="2" height="8"/></svg>
+      </button>
+      <button class="icon-btn" title="Distribute vertical">
+        <svg viewBox="0 0 16 16"><rect x="4" y="2" width="8" height="2"/><rect x="4" y="7" width="8" height="2"/><rect x="4" y="12" width="8" height="2"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- tools palette -->
+  <aside class="tools">
+    <button class="tool active" title="Select (V)">
+      <svg viewBox="0 0 16 16"><path d="M3 3L8 13L9.5 9.5L13 8L3 3Z"/></svg>
+      <span class="tool-key">V</span>
+    </button>
+    <button class="tool" title="Hand (H)">
+      <svg viewBox="0 0 16 16"><path d="M5 7V4a1 1 0 011-1v0a1 1 0 011 1v3M7 7V3a1 1 0 011-1v0a1 1 0 011 1v4M9 7V4a1 1 0 011-1v0a1 1 0 011 1v3M3 8c0-1 1-1 1 0v3a3 3 0 003 3h3a3 3 0 003-3V6a1 1 0 011-1v0a1 1 0 011 1v6"/></svg>
+      <span class="tool-key">H</span>
+    </button>
+    <div class="tool-divider"></div>
+    <button class="tool" title="Rectangle (R)">
+      <svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="0.5"/></svg>
+      <span class="tool-key">R</span>
+    </button>
+    <button class="tool" title="Ellipse (O)">
+      <svg viewBox="0 0 16 16"><ellipse cx="8" cy="8" rx="6" ry="5"/></svg>
+      <span class="tool-key">O</span>
+    </button>
+    <button class="tool" title="Line (L)">
+      <svg viewBox="0 0 16 16"><line x1="3" y1="13" x2="13" y2="3"/></svg>
+      <span class="tool-key">L</span>
+    </button>
+    <div class="tool-divider"></div>
+    <button class="tool" title="Pen (P)">
+      <svg viewBox="0 0 16 16"><path d="M3 13L7 9L9 11L13 3L11 9L9 7L3 13Z"/></svg>
+      <span class="tool-key">P</span>
+    </button>
+    <button class="tool" title="Text (T)">
+      <svg viewBox="0 0 16 16"><line x1="3" y1="4" x2="13" y2="4"/><line x1="8" y1="4" x2="8" y2="13"/></svg>
+      <span class="tool-key">T</span>
+    </button>
+    <div class="tool-divider"></div>
+    <button class="tool" title="Zoom (Z)">
+      <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><line x1="10" y1="10" x2="13" y2="13"/></svg>
+      <span class="tool-key">Z</span>
+    </button>
+  </aside>
+
+  <!-- canvas -->
+  <main class="canvas">
+    <div class="canvas-bg"></div>
+    <div class="canvas-sample">
+      <div class="sample-rects">
+        <div class="sample-rect" style="background: #222"></div>
+        <div class="sample-rect" style="background: #444"></div>
+        <div class="sample-rect" style="background: #666; position: relative;">
+          <div class="sel-label">110 × 110</div>
+          <div class="sel-handles" style="position: absolute; inset: -1px;">
+            <div class="sel-handle tl"></div>
+            <div class="sel-handle tm"></div>
+            <div class="sel-handle tr"></div>
+            <div class="sel-handle ml"></div>
+            <div class="sel-handle mr"></div>
+            <div class="sel-handle bl"></div>
+            <div class="sel-handle bm"></div>
+            <div class="sel-handle br"></div>
+          </div>
+        </div>
+        <div class="sample-rect" style="background: #888"></div>
+        <div class="sample-rect" style="background: #fff"></div>
+      </div>
+    </div>
+    <div class="hud">
+      <code>100%</code><span class="sep">·</span><code>0.4 ms</code><span class="sep">·</span><span>scroll = pan · ⌘scroll = zoom</span>
+    </div>
+  </main>
+
+  <!-- properties + layers -->
+  <aside class="props">
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-title">design</span>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-faint);">rectangle</span>
+      </div>
+      <div class="panel-body">
+
+        <div class="field-group">
+          <div class="field-heading">position</div>
+          <div class="field-row">
+            <div class="field"><span class="field-label">X</span><input class="field-input" value="420"/></div>
+            <div class="field"><span class="field-label">Y</span><input class="field-input" value="220"/></div>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <div class="field-heading">size</div>
+          <div class="field-row">
+            <div class="field"><span class="field-label">W</span><input class="field-input" value="110"/></div>
+            <div class="field"><span class="field-label">H</span><input class="field-input" value="110"/></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><span class="field-label">⟳</span><input class="field-input" value="0"/><span class="field-suffix">°</span></div>
+            <div class="field"><span class="field-label">⤢</span><input class="field-input" value="0"/><span class="field-suffix">r</span></div>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <div class="field-heading">fill</div>
+          <div class="swatch-row">
+            <div class="swatch" style="background: #666666"></div>
+            <input class="swatch-hex" value="666666"/>
+            <input class="swatch-alpha" value="100%"/>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <div class="field-heading">stroke</div>
+          <div class="swatch-row">
+            <div class="swatch" style="background: transparent; background-image: linear-gradient(45deg, #fff 25%, transparent 25%, transparent 75%, #fff 75%), linear-gradient(45deg, #fff 25%, transparent 25%, transparent 75%, #fff 75%); background-size: 8px 8px; background-position: 0 0, 4px 4px;"></div>
+            <input class="swatch-hex" value="—"/>
+            <div class="field" style="width: 56px"><span class="field-label">W</span><input class="field-input" value="0"/></div>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <div class="field-heading">opacity</div>
+          <div class="field-row">
+            <div class="field" style="grid-column: span 2"><span class="field-label">α</span><input class="field-input" value="100"/><span class="field-suffix">%</span></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-title">layers</span>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-faint);">5</span>
+      </div>
+      <div class="panel-body" style="padding: 0;">
+        <div class="layers">
+          <div class="layer-row"><span class="layer-vis">●</span><span class="layer-lock">▢</span><span class="layer-name">Rectangle 5</span><span class="layer-type">rect</span></div>
+          <div class="layer-row"><span class="layer-vis">●</span><span class="layer-lock">▢</span><span class="layer-name">Rectangle 4</span><span class="layer-type">rect</span></div>
+          <div class="layer-row selected"><span class="layer-vis">●</span><span class="layer-lock">▢</span><span class="layer-name">Rectangle 3</span><span class="layer-type">rect</span></div>
+          <div class="layer-row"><span class="layer-vis">●</span><span class="layer-lock">▢</span><span class="layer-name">Rectangle 2</span><span class="layer-type">rect</span></div>
+          <div class="layer-row"><span class="layer-vis">●</span><span class="layer-lock">▢</span><span class="layer-name">Rectangle 1</span><span class="layer-type">rect</span></div>
+        </div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- statusbar -->
+  <footer class="statusbar">
+    <div class="statusbar-group">
+      <span>BStudio · Arabic-first design tool</span>
+      <span class="sep">·</span>
+      <span>pivot-render = skia · webgl2</span>
+    </div>
+    <div class="statusbar-group">
+      <span>selection: <code>1 of 5</code></span>
+      <span class="sep">·</span>
+      <span>X <code>420</code> Y <code>220</code></span>
+      <span class="sep">·</span>
+      <span>W <code>110</code> H <code>110</code></span>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>
