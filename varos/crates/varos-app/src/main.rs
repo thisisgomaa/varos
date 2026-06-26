@@ -26,6 +26,7 @@ use varos_core::scene::build_scene;
 use varos_render_wgpu::Renderer;
 
 mod cursors;
+mod ui;
 use cursors::CK;
 
 #[derive(Debug, Clone)]
@@ -682,6 +683,23 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
     }
 }
 
+/// Snapshot of the current selection for the native egui Properties panel (spike, read-only).
+fn panel_data(ed: &Editor) -> ui::PanelData {
+    let n = ed.objsel.len();
+    let (sel, x, y, w, h) = match ed.obj_bbox() {
+        Some((x0, y0, x1, y1)) if n > 0 => (true, x0, y0, x1 - x0, y1 - y0),
+        _ => (false, 0.0, 0.0, 0.0, 0.0),
+    };
+    let first = ed.objsel.iter().copied().filter_map(|p| ed.doc.pidx(p)).next();
+    let (fill, opacity) = match first {
+        Some(pi) => { let p = &ed.doc.paths[pi];
+            (p.fill.map(|c| [(c[0]*255.0) as u8, (c[1]*255.0) as u8, (c[2]*255.0) as u8]), (p.opacity*100.0).round() as i32) },
+        None => (None, 100),
+    };
+    let kind = if n > 1 { "Multiple".to_string() } else { "Rectangle".to_string() };
+    ui::PanelData { sel, kind, x, y, w, h, fill, opacity }
+}
+
 fn load_icon() -> Option<winit::window::Icon> {
     let img = image::load_from_memory(include_bytes!("../icon.png")).ok()?.into_rgba8();
     let (w, h) = img.dimensions();
@@ -817,6 +835,7 @@ fn main() {
         .build_as_child(&*window).unwrap();
     let mut picker_open = false;
 
+    let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
     let mut ed = Editor::new();
     // a small default palette so Swatches isn't empty on first run (app-prefs tier; not persisted yet)
     let mut swatches: Vec<String> = ["#0c8ce9","#e6e6e6","#141313","#ff5c5c","#3ecf8e","#f5a623","#9b6cf0","#ffffff"]
@@ -1015,6 +1034,11 @@ fn main() {
         }
         Event::WindowEvent { event, window_id } => {
             if window_id != window.id() { return; }
+            // Feed egui first. `over_panel` = pointer is over a native panel → the canvas must NOT
+            // get the event (gate #3: panels don't swallow canvas strokes; canvas input stays native).
+            let egui_consumed = gui.on_event(&window, &event);
+            let over_panel = gui.wants_pointer();
+            if egui_consumed { window.request_redraw(); }
             match event {
                 WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::Resized(size) => {
@@ -1034,7 +1058,7 @@ fn main() {
                     if panning {
                         view.pan = [view.pan[0] + screen_cursor[0]-pan_last[0], view.pan[1] + screen_cursor[1]-pan_last[1]];
                         pan_last = screen_cursor;
-                    } else { ed.ppu = view.zoom; ed.pointer_move(view.s2w(screen_cursor)); }
+                    } else if !over_panel { ed.ppu = view.zoom; ed.pointer_move(view.s2w(screen_cursor)); }
                     window.request_redraw();
                 }
                 WindowEvent::ModifiersChanged(m) => { ed.mods = Mods { shift: m.state().shift_key(), alt: m.state().alt_key(), ctrl: m.state().control_key() || m.state().super_key() }; }
@@ -1051,6 +1075,7 @@ fn main() {
                                     } else { panning = true; pan_last = screen_cursor; }
                                     window.request_redraw(); return;
                                 }
+                                if over_panel { window.request_redraw(); return; } // egui handles the click
                                 let now = Instant::now();
                                 let dbl = last_click.map_or(false, |(t, p)| now.duration_since(t).as_millis() < 350 && ((p[0]-screen_cursor[0]).powi(2)+(p[1]-screen_cursor[1]).powi(2)).sqrt() < 6.0);
                                 last_click = Some((now, screen_cursor));
@@ -1084,7 +1109,8 @@ fn main() {
                     window.request_redraw();
                 }
                 WindowEvent::KeyboardInput { event, .. } => {
-                    if let PhysicalKey::Code(code) = event.physical_key {
+                    if egui_consumed { /* typing into an egui field — don't trigger canvas shortcuts */ }
+                    else if let PhysicalKey::Code(code) = event.physical_key {
                         if code == KeyCode::Space {
                             space_down = event.state == ElementState::Pressed;
                             if !space_down { panning = false; }
@@ -1110,7 +1136,11 @@ fn main() {
                             format!("hwnd={hw}\ninstalled={ins}\nsetcursor_hits={hits}\ncurrent_hcursor={cur}\n"));
                     }
                     let world = build_scene(&ed, view.zoom);
-                    renderer.render(&world, &[], view);
+                    let data = panel_data(&ed);
+                    let (jobs, tdelta, screen) = gui.run(&window, &data, scale as f32);
+                    let panels: Vec<[f32; 4]> = gui.rects.iter().map(|r| [r.min.x, r.min.y, r.width(), r.height()]).collect();
+                    renderer.render_ui(&world, view, &jobs, &tdelta, &screen, &panels, gui.frosted);
+                    if gui.repaint { window.request_redraw(); }
                 }
                 _ => {}
             }

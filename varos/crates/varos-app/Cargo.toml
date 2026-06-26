@@ -18,3 +18,6 @@ wry = "0.52"  # WebView2 panels in a sibling child HWND (right side) — see mem
 resvg = "0.45"  # render Lucide SVG cursors to bitmaps
 raw-window-handle = "0.6"  # get the HWND for native cursor
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
+egui = "0.27"
+egui-wgpu = "0.27"
+egui-winit = "0.27"
