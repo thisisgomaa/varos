@@ -14,7 +14,7 @@
 > cursor set. See `PANELS_PRO_SPEC.md §0.1`.
 
 > ⚠️ **This file is the source of truth for the UI look. It SUPERSEDES the colors and the
-> top-bar/layout described in `DESIGN_BRIEF.md` and `design-reference/design-system.md`.**
+> top-bar/layout described in `DESIGN_BRIEF.md` and `../design-reference/design-system.md`.**
 > Those two were close but **wrong** vs Ahmed's real Figma (different hex values, and they
 > described an Illustrator menu-bar layout — Ahmed's actual design is a clean Figma-style chrome).
 > When this file and the old brief disagree, **THIS file wins.** Match Ahmed's Figma, not the old brief.
