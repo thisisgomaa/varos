@@ -1,1 +1,0 @@
-{"default":{"identifier":"default","description":"default capability (core API incl. invoke)","local":true,"windows":["*"],"permissions":["core:default"]}}
