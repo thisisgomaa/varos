@@ -99,7 +99,7 @@ struct VO { @builtin(position) pos: vec4<f32>, @location(0) px: vec2<f32>,
     let pi = ii / 2u; let mode = ii % 2u;
     let p = u.panels[pi];
     var rect = p.rect;
-    if (mode == 0u) { let m = p.prm.z; rect = vec4<f32>(rect.x - m, rect.y - m + 8.0, rect.z + 2.0*m, rect.w + 2.0*m); }
+    if (mode == 0u) { let m = p.prm.z; rect = vec4<f32>(rect.x - m, rect.y - m + 4.0, rect.z + 2.0*m, rect.w + 2.0*m); }
     var cx = array<f32,6>(0.0,1.0,0.0, 0.0,1.0,1.0);
     var cy = array<f32,6>(0.0,0.0,1.0, 1.0,0.0,1.0);
     let c = vec2<f32>(cx[vi], cy[vi]);
@@ -119,7 +119,7 @@ fn sdRound(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
     let r = p.prm.x;
     if (in.mode == 0u) {
         let d = sdRound(in.px - center, half, r);
-        let a = (1.0 - smoothstep(0.0, p.prm.z, max(d, 0.0))) * 0.42;
+        let a = (1.0 - smoothstep(0.0, p.prm.z, max(d, 0.0))) * 0.13;
         return vec4<f32>(0.0, 0.0, 0.0, clamp(a, 0.0, 1.0));
     }
     let d = sdRound(in.px - center, half, r);
@@ -195,7 +195,11 @@ impl Renderer {
             present_mode: if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) { wgpu::PresentMode::Mailbox }
                           else if caps.present_modes.contains(&wgpu::PresentMode::Immediate) { wgpu::PresentMode::Immediate }
                           else { wgpu::PresentMode::Fifo },
-            alpha_mode: caps.alpha_modes[0], view_formats: vec![], desired_maximum_frame_latency: 1,
+            // prefer a transparent-capable composite mode so the startup splash can float over the desktop
+            alpha_mode: caps.alpha_modes.iter().copied()
+                .find(|m| matches!(m, wgpu::CompositeAlphaMode::PreMultiplied | wgpu::CompositeAlphaMode::PostMultiplied))
+                .unwrap_or(caps.alpha_modes[0]),
+            view_formats: vec![], desired_maximum_frame_latency: 1,
         };
         surface.configure(&device, &config);
         log!("[varos] present: {:?} | format: {:?} | msaa: {}", config.present_mode, config.format, samples);
@@ -330,6 +334,30 @@ impl Renderer {
     /// Render the canvas Scene AND the native egui UI into one frame (the spike path):
     /// scene → offscreen → blit to surface → egui onto a pass WE own → present. egui shares our
     /// Device/Queue. `paint_jobs`/`tdelta` come from the app's egui Context; no second surface/window.
+    /// Startup splash: clear the surface fully transparent and render ONLY egui (the floating card),
+    /// so it composites over the desktop — no board, no panels, no dark scrim.
+    pub fn render_splash(&mut self, paint_jobs: &[egui::ClippedPrimitive], tdelta: &egui::TexturesDelta, screen: &egui_wgpu::ScreenDescriptor) {
+        let frame = match self.surface.get_current_texture() {
+            Ok(f) => f,
+            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => { self.surface.configure(&self.device, &self.config); return; }
+            Err(_) => return,
+        };
+        let tview = frame.texture.create_view(&Default::default());
+        for (id, delta) in &tdelta.set { self.egui_rend.update_texture(&self.device, &self.queue, *id, delta); }
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
+        {
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("splash"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &tview, resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }), store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None });
+            self.egui_rend.render(&mut rp, paint_jobs, screen);
+        }
+        self.queue.submit(user_cmds.into_iter().chain(std::iter::once(enc.finish())));
+        frame.present();
+        for id in &tdelta.free { self.egui_rend.free_texture(id); }
+    }
+
     pub fn render_ui(&mut self, world: &Scene, view: View,
         paint_jobs: &[egui::ClippedPrimitive], tdelta: &egui::TexturesDelta, screen: &egui_wgpu::ScreenDescriptor,
         panels: &[[f32; 4]], frosted: bool) {
@@ -348,12 +376,16 @@ impl Renderer {
         let _ = Self::upload(&self.device, &self.queue, &mut self.fill_buf, &mut self.fill_cap, &fillv);
         let nfg = Self::upload(&self.device, &self.queue, &mut self.fg_buf, &mut self.fg_cap, &fg);
         for (id, delta) in &tdelta.set { self.egui_rend.update_texture(&self.device, &self.queue, *id, delta); }
-        // frosted-glass uniform: one entry per panel (tint #141313, mixed 0.62 over the blurred scene)
+        // frosted-glass uniform: one entry per panel. Tint = panel body #1f1f22 mixed 0.62 over the
+        // blurred scene (dark enough for text, glassy enough to read shapes behind it). Radius/blur/
+        // shadow are in physical px (scale logical sizes by ppp so corners line up with egui at any DPI).
         let np = panels.len().min(MAX_PANELS);
+        let s = screen.pixels_per_point;
+        const TINT: [f32; 3] = [0.1216, 0.1216, 0.1333]; // #1f1f22
         let mut fu = FrostU { fb: [fw, fh], _pad: [0.0, 0.0], panels: [FrostP { rect: [0.0;4], col: [0.0;4], prm: [0.0;4] }; MAX_PANELS] };
         for i in 0..np {
-            fu.panels[i] = FrostP { rect: panels[i], col: [BG[0], BG[1], BG[2], 0.62],
-                prm: [12.0, 14.0, 26.0, if frosted { 0.0 } else { 1.0 }] };
+            fu.panels[i] = FrostP { rect: panels[i], col: [TINT[0], TINT[1], TINT[2], 0.62],
+                prm: [14.0 * s, 16.0 * s, 16.0 * s, if frosted { 0.0 } else { 1.0 }] }; // [rounding(14), blur, shadow-spread(16)] — light shadow
         }
         self.queue.write_buffer(&self.frost_uni, 0, bytemuck::bytes_of(&fu));
         let mut enc = self.device.create_command_encoder(&Default::default());
