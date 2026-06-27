@@ -30,24 +30,6 @@ pub const ALL_CURSORS: [CK; 28] = [
     CK::RotateE, CK::RotateSE, CK::RotateS, CK::RotateSW, CK::RotateW, CK::RotateNW, CK::RotateN, CK::RotateNE,
 ];
 
-/// For PNG-backed cursors: the Illustrator `CURSORID-<n>` and its hotspot (in the 32px bitmap).
-/// `None` => the cursor is one of our own SVG ones. PNGs live in the gitignored assets/cursors-ai/.
-pub fn ai_id(ck: CK) -> Option<(u32, u16, u16)> {
-    Some(match ck {
-        CK::Cross => (29, 16, 16),     // precise crosshair (also used for shape tools)
-        CK::ResizeH => (15, 16, 16),   // ↔
-        CK::ResizeV => (16, 16, 16),   // ↕
-        CK::ResizeNE => (24, 16, 16),  // ↗↙
-        CK::ResizeNW => (25, 16, 16),  // ↖↘
-        CK::Move => (12, 16, 16),      // 4-way move
-        CK::Hand => (13, 16, 16),      // open hand (pan ready)
-        CK::Grab => (14, 16, 16),      // closed hand (panning)
-        CK::Copy => (5, 6, 5),         // arrow + plus (Alt-drag duplicate)
-        CK::NoDrop => (4, 6, 5),       // arrow + no-symbol
-        _ => return None,
-    })
-}
-
 /// The real Adobe Illustrator vector cursor for a CK: (SVG filename stem, hotspot_x, hotspot_y).
 /// Hotspots are in the cursor's 1× (32px-logical) space (the SVGs are @2x / viewBox 64). TEMP local
 /// set in assets/cursors-ai/svg/ — proprietary, never shipped; we fall back to our own SVG if absent.
@@ -196,16 +178,6 @@ pub fn hcursor(ck: CK) -> isize {
     build_hcursor(&rgba, w as u32, h as u32, hx, hy)
 }
 
-/// Build a Windows HCURSOR from a PNG file in assets/cursors-ai/ (the Illustrator set). Straight
-/// alpha. Returns None if the file is missing (so callers can fall back to the SVG cursor).
-#[cfg(windows)]
-pub fn hcursor_png(id: u32, hx: u16, hy: u16) -> Option<isize> {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cursors-ai/");
-    let img = image::open(format!("{dir}CURSORID-{id}.png")).ok()?.into_rgba8();
-    let (w, h) = img.dimensions();
-    Some(build_hcursor(&img.into_raw(), w, h, hx, hy))
-}
-
 /// Build a Windows HCURSOR from an Illustrator vector cursor SVG, rendered at CURSOR_PX. The hotspot
 /// is given in 1× (32px-logical) space and scaled to the rendered bitmap. None if the file is missing.
 #[cfg(windows)]
@@ -275,23 +247,151 @@ fn build_hcursor(rgba: &[u8], w: u32, h: u32, hx: u16, hy: u16) -> isize {
 #[cfg(windows)]
 mod win {
     use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use std::sync::Mutex;
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+    use windows::Win32::Graphics::Gdi::ScreenToClient;
+    use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
     use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-    use windows::Win32::UI::WindowsAndMessaging::{SetCursor, SetClassLongPtrW, GCLP_HCURSOR, HCURSOR, WM_SETCURSOR};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowPlacement, GetWindowRect, SetClassLongPtrW, SetCursor, SetWindowPos,
+        GCLP_HCURSOR, HCURSOR, NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYSIZEFRAME,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWMAXIMIZED,
+        WINDOWPLACEMENT, WM_ACTIVATE, WM_DPICHANGED, WM_NCCALCSIZE, WM_NCHITTEST, WM_SETCURSOR, WM_SYSCOMMAND,
+        HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
+    };
 
     static CUR: AtomicIsize = AtomicIsize::new(0);
     static HWND_: AtomicIsize = AtomicIsize::new(0);
     static HITS: AtomicUsize = AtomicUsize::new(0); // WM_SETCURSOR HTCLIENT intercepts (debug)
     static INSTALLED: AtomicIsize = AtomicIsize::new(-1); // -1 unknown, 0 fail, 1 ok
 
-    unsafe extern "system" fn subclass(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
-        if msg == WM_SETCURSOR && (lp.0 as u32 & 0xFFFF) == 1 {
-            HITS.fetch_add(1, Ordering::Relaxed);
-            let c = CUR.load(Ordering::Relaxed);
-            if c != 0 { SetCursor(Some(HCURSOR(c as *mut _))); return LRESULT(1); }
+    // The custom title-bar geometry, published each frame from the egui layout (physical px). The
+    // wndproc reads it to decide where the window drags (HTCAPTION) vs where our controls live (HTCLIENT).
+    #[derive(Clone, Copy, Default)]
+    struct PxRect { l: i32, t: i32, r: i32, b: i32 }
+    impl PxRect { fn has(&self, x: i32, y: i32) -> bool { x >= self.l && x < self.r && y >= self.t && y < self.b } }
+    struct Caption { h: i32, excl: Vec<PxRect> }
+    static CAPTION: Mutex<Caption> = Mutex::new(Caption { h: 0, excl: Vec::new() });
+
+    /// Publish the caption height + the interactive (non-drag) rects, in PHYSICAL px, for hit-testing.
+    pub fn set_caption(h: i32, excl: &[[i32; 4]]) {
+        if let Ok(mut g) = CAPTION.lock() {
+            g.h = h;
+            g.excl.clear();
+            g.excl.extend(excl.iter().map(|r| PxRect { l: r[0], t: r[1], r: r[2], b: r[3] }));
         }
-        DefSubclassProc(h, msg, wp, lp)
     }
+
+    unsafe fn maximized(h: HWND) -> bool {
+        let mut wp = WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+        GetWindowPlacement(h, &mut wp).is_ok() && wp.showCmd == SW_SHOWMAXIMIZED.0 as u32
+    }
+
+    // Strip the top caption (so the client area reaches y=0) while keeping the side/bottom resize frame,
+    // shadow and rounded corners. Re-inset all sides when maximized so content doesn't overshoot the monitor.
+    unsafe fn nccalcsize(h: HWND, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        if wp.0 == 0 { return DefSubclassProc(h, WM_NCCALCSIZE, wp, lp); }
+        let params = &mut *(lp.0 as *mut NCCALCSIZE_PARAMS);
+        let requested = params.rgrc[0];
+        let _ = DefSubclassProc(h, WM_NCCALCSIZE, wp, lp); // normal side/bottom frame
+        params.rgrc[0].top = requested.top;                // remove the top caption inset
+        if maximized(h) {
+            let dpi = GetDpiForWindow(h);
+            let pad = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+            let fx = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + pad;
+            let fy = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + pad;
+            params.rgrc[0].top = requested.top + fy;
+            params.rgrc[0].left = requested.left + fx;
+            params.rgrc[0].right = requested.right - fx;
+            params.rgrc[0].bottom = requested.bottom - fy;
+        }
+        LRESULT(0)
+    }
+
+    // Resize borders + caption drag band (minus our interactive rects). Buttons/tabs are HTCLIENT so egui
+    // handles them; the empty caption band is HTCAPTION so Windows drags/snaps the window natively.
+    unsafe fn nchittest(h: HWND, lp: LPARAM) -> LRESULT {
+        let dpi = GetDpiForWindow(h);
+        let border = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+        let sx = (lp.0 & 0xFFFF) as i16 as i32;
+        let sy = ((lp.0 >> 16) & 0xFFFF) as i16 as i32;
+        let mut rc = RECT::default();
+        let _ = GetWindowRect(h, &mut rc);
+        if !maximized(h) {
+            let (l, r) = (sx < rc.left + border, sx >= rc.right - border);
+            let (t, b) = (sy < rc.top + border, sy >= rc.bottom - border);
+            let code: u32 = if t && l { HTTOPLEFT } else if t && r { HTTOPRIGHT }
+                else if b && l { HTBOTTOMLEFT } else if b && r { HTBOTTOMRIGHT }
+                else if t { HTTOP } else if b { HTBOTTOM } else if l { HTLEFT } else if r { HTRIGHT } else { 0 };
+            if code != 0 { return LRESULT(code as isize); }
+        }
+        let mut p = POINT { x: sx, y: sy };
+        let _ = ScreenToClient(h, &mut p);
+        if let Ok(g) = CAPTION.lock() {
+            if p.y >= 0 && p.y < g.h && !g.excl.iter().any(|e| e.has(p.x, p.y)) {
+                return LRESULT(HTCAPTION as isize);
+            }
+        }
+        LRESULT(HTCLIENT as isize)
+    }
+
+    /// Keep the DWM drop shadow + rounded corners (extend the frame 1px) and force the recalc.
+    pub fn custom_frame(hwnd: isize) {
+        use core::ffi::c_void;
+        use windows::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
+            DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
+        use windows::Win32::UI::Controls::MARGINS;
+        let h = HWND(hwnd as *mut _);
+        unsafe {
+            let m = MARGINS { cxLeftWidth: 0, cxRightWidth: 0, cyTopHeight: 1, cyBottomHeight: 0 };
+            let _ = DwmExtendFrameIntoClientArea(h, &m);
+            let pref = DWMWCP_ROUND;
+            let _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &pref as *const _ as *const c_void, std::mem::size_of::<i32>() as u32);
+            // force a frame recalc now so the caption is stripped immediately
+            let _ = SetWindowPos(h, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+
+    /// Hide/show the window via the DWM compositor (keeps focus/taskbar; lets us render frame 0 before
+    /// the window is ever composited → no white/caption flash at startup).
+    pub fn set_cloaked(hwnd: isize, on: bool) {
+        use core::ffi::c_void;
+        use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
+        let h = HWND(hwnd as *mut _);
+        let v: i32 = on as i32; // BOOL = 4-byte int
+        unsafe { let _ = DwmSetWindowAttribute(h, DWMWA_CLOAK, &v as *const _ as *const c_void, 4); }
+    }
+
+    /// Paint any OS-driven background fill (startup, resize gutter) in #141313 instead of white.
+    pub fn set_dark_class_brush(hwnd: isize) {
+        use windows::Win32::Foundation::COLORREF;
+        use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, HGDIOBJ};
+        use windows::Win32::UI::WindowsAndMessaging::GCLP_HBRBACKGROUND;
+        let h = HWND(hwnd as *mut _);
+        unsafe {
+            let brush = CreateSolidBrush(COLORREF(0x0013_1314)); // 0x00BBGGRR for #141313
+            let old = SetClassLongPtrW(h, GCLP_HBRBACKGROUND, brush.0 as isize);
+            if old != 0 { let _ = DeleteObject(HGDIOBJ(old as *mut _)); }
+        }
+    }
+
+    unsafe extern "system" fn subclass(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+        match msg {
+            WM_SETCURSOR if (lp.0 as u32 & 0xFFFF) == 1 => {
+                HITS.fetch_add(1, Ordering::Relaxed);
+                let c = CUR.load(Ordering::Relaxed);
+                if c != 0 { SetCursor(Some(HCURSOR(c as *mut _))); return LRESULT(1); }
+                DefSubclassProc(h, msg, wp, lp)
+            }
+            // swallow the Alt/F10 window system menu (SC_KEYMENU) — Alt is an editor modifier here
+            WM_SYSCOMMAND if (wp.0 & 0xFFF0) == 0xF100 => LRESULT(0),
+            WM_NCCALCSIZE => nccalcsize(h, wp, lp),
+            WM_NCHITTEST => nchittest(h, lp),
+            WM_ACTIVATE | WM_DPICHANGED => { custom_frame(h.0 as isize); DefSubclassProc(h, msg, wp, lp) }
+            _ => DefSubclassProc(h, msg, wp, lp),
+        }
+    }
+
     pub fn install(hwnd: isize) -> bool {
         HWND_.store(hwnd, Ordering::Relaxed);
         let ok = unsafe { SetWindowSubclass(HWND(hwnd as *mut _), Some(subclass), 1, 0).as_bool() };
@@ -313,12 +413,4 @@ mod win {
     }
 }
 #[cfg(windows)]
-pub use win::{install, set, dbg};
-
-/// The select-arrow as a URL-encoded SVG data URI, for the web panels' CSS `cursor`.
-pub fn panel_arrow_css() -> String {
-    let svg = arrow("#161619", "#f4f4f7")
-        .replace("viewBox=\"0 0 24 24\"", "width=\"24\" height=\"24\" viewBox=\"0 0 24 24\"");
-    let enc = svg.replace('#', "%23").replace('<', "%3C").replace('>', "%3E").replace('"', "%22").replace('\n', "");
-    format!("url('data:image/svg+xml,{enc}') 3 3, auto")
-}
+pub use win::{install, set, dbg, custom_frame, set_caption, set_cloaked, set_dark_class_brush};
