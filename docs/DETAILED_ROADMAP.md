@@ -43,7 +43,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 > Grounded against the real repo: native egui+wgpu UI shell live (`varos-app/src/ui.rs`), `varos-core` (model/editor/tools/geom/scene/boolean), wgpu renderer with stencil-cover fills + frosted plumbing. Snapshot-clone undo, stable u32 IDs, deferred-`Op` panel pattern all exist. Gaps flagged inline (no serde/`.varos`, no unit system, no property-definition abstraction, RGBA-f32-only color, no text glyph / gradient rendering).
 
-> **Stage-0 spine (do FIRST, before any system) [D1/D3]:** (a) serde derives on `Anchor/Path/Group/Document/Rgba/Pt` + one round-trip test; (b) the Units + world↔screen coordinate contract (px/pt/mm + px-per-unit + origin). These two close the gaps every early system silently assumes.
+> **Stage-0 spine [D1/D3] — ✅ DONE (2026-06-29):** (a) serde derives on `Anchor/Path/Group/Document/ShapeKind` + a round-trip test; (b) the Units + world↔screen coordinate contract (`units.rs`: pt-internal, px/pt/mm derived, parse/format). The two gaps every early system silently assumed are now closed. Next: Artboard slot-1 (embeds `DocUnits` into `Document`).
 
 ---
 ## LAYER A — DESIGN-SYSTEM UI PIECES (the panel "puzzle pieces")
@@ -294,14 +294,14 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - C6.5 HiDPI / device-pixel-ratio scaling + per-monitor DPI _(Stage 1 correctness)_ 🟡
 - C6.6 Multiple artboards / infinite canvas coordinate strategy _(Stage 3)_
 
-**C7. Units system** _(Stage 2 — standard)_ 🔴 (NONE — everything is bare f32 "world units")
+**C7. Units system** _(Stage 1 — Decision 3)_ ✅ (built — `varos-core/src/units.rs`: `Unit`/`DocUnits` + pt-based conversions + parse/format + the world↔screen contract; not yet embedded in `Document` — that's Artboard's job)
 - C7.1 Unit registry — px, pt, pc, mm, cm, in, % with document DPI for px↔physical conversion
 - C7.2 Document-unit setting + per-field unit display/parse (feeds A5.6)
 - C7.3 Ruler/origin + measurement readouts _(Stage 2)_
 - C7.4 Precision/rounding policy per unit
 - C7.5 Scale-aware (e.g. 1:50 architectural) _(Stage 3)_
 
-**C8. .varos serialization skeleton** _(Stage 1 — core/MVP)_ 🔴 (NOT started — `Document` has no Serialize; no file I/O found)
+**C8. .varos serialization skeleton** _(Stage 1 — Decision 1)_ ✅ (spine built — `Serialize/Deserialize` on `Anchor/Path/Group/Document/ShapeKind` + a round-trip test in `tests/serde_roundtrip.rs`; the container/zip + dialogs are the Save system §4)
 - C8.1 Schema-versioned container — version tag + migration path from day one
 - C8.2 Serialize the whole model — paths/anchors/handles/holes/groups/group_of/ids + doc props + fills/strokes; use serde + a stable format (JSON for readability or a compact binary)
 - C8.3 Save/load/new/recent + autosave + crash-recovery _(Stage 2)_

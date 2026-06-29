@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varos — Plan</title>
+<style>
+  :root{
+    --bg:#141313; --panel:#1f1f22; --surface:#262627; --hover:#2c2c2c;
+    --border:#2a2a2d; --border2:#3a3b3d; --text:#e6e6e6; --muted:#8a8a8a; --faint:#7c7c7c;
+    --accent:#0c8ce9; --green:#3ecf8e; --amber:#f5a623; --red:#e06c6c; --purple:#9b6cf0;
+    --ui:'Inter','Segoe UI',system-ui,sans-serif; --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.55 var(--ui);padding:28px 22px 80px;max-width:1080px;margin:0 auto;-webkit-font-smoothing:antialiased}
+  h1{font-size:22px;font-weight:700;letter-spacing:.2px}
+  h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:var(--faint);margin:34px 0 12px}
+  a{color:var(--accent);text-decoration:none}
+  .sub{color:var(--muted);font-size:13px;margin-top:4px}
+  .pill{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--muted)}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .legend{gap:8px;margin-top:14px}
+  .badge{font-size:11px;font-family:var(--mono);padding:1px 7px;border-radius:5px;border:1px solid var(--border2);white-space:nowrap}
+  .b-done{color:var(--green);border-color:#1f5d44;background:rgba(62,207,142,.08)}
+  .b-partial{color:var(--amber);border-color:#6b5320;background:rgba(245,166,35,.08)}
+  .b-none{color:var(--red);border-color:#6b2f2f;background:rgba(224,108,108,.08)}
+  .b-plan{color:var(--faint)}
+  .st{font-size:10.5px;font-family:var(--mono);padding:1px 6px;border-radius:5px;font-weight:600}
+  .s1{color:#bfe2ff;background:rgba(12,140,233,.16);border:1px solid #1d4f78}
+  .s2{color:#d8c6ff;background:rgba(155,108,240,.14);border:1px solid #4a3a6b}
+  .s3{color:var(--faint);background:rgba(124,124,124,.12);border:1px solid #3a3a3d}
+  .sx{color:var(--muted);background:rgba(138,138,138,.10);border:1px solid #34343a}
+
+  /* build-order rail */
+  .rail{display:flex;align-items:stretch;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .step{flex:1 1 110px;min-width:110px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 11px;position:relative}
+  .step .k{font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .step .nm{font-size:13px;font-weight:600;margin-top:2px}
+  .step .sec{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:3px}
+  .step.active{border-color:var(--accent);box-shadow:0 0 0 1px rgba(12,140,233,.35)}
+  .step.next{border-color:var(--border2)}
+  .step.done{opacity:.92}
+  .step .tag{position:absolute;top:-9px;right:9px;font-size:10px;font-family:var(--mono);padding:1px 7px;border-radius:999px}
+  .tag-active{background:var(--accent);color:#fff}
+  .tag-next{background:var(--surface);color:var(--text);border:1px solid var(--border2)}
+  .tag-done{background:#1f5d44;color:#bdf3d8}
+  .milestone{flex:1 1 100%;text-align:center;background:repeating-linear-gradient(135deg,rgba(12,140,233,.06) 0 10px,transparent 10px 20px);border:1px dashed #2f5d80;border-radius:10px;padding:9px;color:#bfe2ff;font-size:13px;font-weight:600;font-family:var(--mono)}
+
+  /* cards */
+  details{background:var(--panel);border:1px solid var(--border);border-radius:12px;margin:9px 0;overflow:hidden}
+  summary{list-style:none;cursor:pointer;padding:13px 15px;display:flex;align-items:center;gap:11px}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:'▸';color:var(--faint);font-size:11px;transition:transform .12s}
+  details[open] summary::before{transform:rotate(90deg)}
+  summary:hover{background:var(--hover)}
+  .sysnum{font-family:var(--mono);font-size:12px;color:var(--faint);min-width:26px}
+  .sysname{font-weight:600;font-size:15px}
+  .syspurpose{color:var(--muted);font-size:12.5px;padding:0 15px 11px 52px;margin-top:-4px}
+  .note{margin:0 15px 12px 52px;padding:8px 11px;background:var(--surface);border:1px solid var(--border2);border-left:3px solid var(--accent);border-radius:7px;font-size:12.5px;color:var(--text)}
+  .note.warn{border-left-color:var(--amber)}
+  .pts{padding:0 15px 14px}
+  .pt{display:flex;align-items:flex-start;gap:9px;padding:6px 8px;border-radius:7px}
+  .pt:hover{background:var(--hover)}
+  .pt .id{font-family:var(--mono);font-size:11px;color:var(--faint);min-width:26px;padding-top:2px}
+  .pt .t{flex:1;font-size:13px}
+  .pt .meta{display:flex;gap:6px;align-items:center;flex-shrink:0}
+  .grp{font-size:10.5px;font-family:var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.8px;margin:12px 4px 4px}
+  .layer{margin:14px 0 4px;font-weight:600;color:var(--text)}
+  .layer .lid{font-family:var(--mono);color:var(--accent);margin-right:8px}
+  .dec{display:flex;gap:11px;padding:9px 8px;border-bottom:1px solid var(--border)}
+  .dec:last-child{border-bottom:none}
+  .dec .n{font-family:var(--mono);color:var(--accent);font-weight:700;min-width:22px}
+  .dec .t{font-size:13px}
+  .dec .t b{color:var(--text)}
+  .foot{margin-top:30px;color:var(--faint);font-size:12px;border-top:1px solid var(--border);padding-top:14px}
+  code{font-family:var(--mono);font-size:12px;background:var(--surface);padding:1px 5px;border-radius:4px;color:#cdd6e0}
+</style>
+</head>
+<body>
+  <div class="row" style="justify-content:space-between;align-items:flex-end">
+    <div>
+      <h1>Varos — Plan</h1>
+      <div class="sub">The whole roadmap, every phase &amp; point. Source of truth: <code>docs/DETAILED_ROADMAP.md</code>.</div>
+    </div>
+    <span class="pill">updated <b id="upd" style="color:var(--text)">&nbsp;2026-06-29</b></span>
+  </div>
+
+  <div class="row legend">
+    <span class="badge b-done">✅ done</span>
+    <span class="badge b-partial">🟡 partial</span>
+    <span class="badge b-none">🔴 not started</span>
+    <span class="badge b-plan">○ planned</span>
+    <span style="color:var(--border2)">|</span>
+    <span class="st s1">Stage 1 core</span>
+    <span class="st s2">Stage 2 standard</span>
+    <span class="st s3">Stage 3 advanced</span>
+  </div>
+
+  <div id="status" class="note" style="margin:18px 0 0 0">
+    <b>Where we are:</b> Foundations underway — the <b>Stage-0 spine is complete</b>
+    (serde&nbsp;✅ + units&nbsp;✅). Next system: <b>Artboard (slot-1)</b>. North star:
+    the <b>“make a logo &amp; keep it” slice</b> right after Colour.
+  </div>
+
+  <h2>Build order</h2>
+  <div id="rail" class="rail"></div>
+
+  <h2>Build decisions — 2026-06-29 (override anything that conflicts)</h2>
+  <details open><summary><span class="sysname">The 8 review-driven decisions</span></summary>
+    <div id="decisions" style="padding:4px 15px 14px"></div>
+  </details>
+
+  <h2>0 · Foundations <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— shared base, before any system</span></h2>
+  <div id="foundation"></div>
+
+  <h2>The 12 systems</h2>
+  <div id="systems"></div>
+
+  <div class="foot">
+    Living document — kept in sync with <code>docs/DETAILED_ROADMAP.md</code> as work progresses.
+    Status flags mirror the roadmap; ▶ = current, depth-first (each system reaches Stage 1 before the next).
+  </div>
+
+<script>
+// ---- data (edit here to keep in sync with DETAILED_ROADMAP.md) ----
+const ORDER = [
+  {k:'0', nm:'Foundations', sec:'§0', state:'active'},
+  {k:'1', nm:'Artboard', sec:'§7', state:'next'},
+  {k:'2', nm:'Transform + Snap', sec:'§3 + §6'},
+  {k:'3', nm:'Layers', sec:'§5'},
+  {k:'4', nm:'Colour', sec:'§1'},
+  {milestone:'🔖 Slice: draw → colour → save → reopen  ("make a logo & keep it")'},
+  {k:'5', nm:'Stroke', sec:'§2'},
+  {k:'6', nm:'Save system', sec:'§4'},
+  {k:'7', nm:'Geometric tools', sec:'§9'},
+  {k:'8', nm:'Text', sec:'§10'},
+  {k:'9', nm:'Export', sec:'§8'},
+  {k:'10', nm:'Effects', sec:'§11'},
+  {k:'11', nm:'Comments', sec:'§12'},
+];
+
+const DECISIONS = [
+  ['1','<b>Serde spine is Foundations, not Save §4.</b> Derive Serialize/Deserialize on the model + a round-trip test, before any system. ✅ done.'],
+  ['2','<b>Layers (§5) is a MODEL system, not a panel.</b> Build the real scene-graph (Layer type, z-order, sublayers) — today it is a flat Vec + group_of side-table.'],
+  ['3','<b>One owner for Units + coordinate-space, before Artboard.</b> px/pt/mm + world↔screen contract, built once. ✅ done.'],
+  ['4','<b>Depth-first + one early confirmation slice.</b> After Colour: draw → colour → save → reopen. Proves the foundation before 9 systems stack on it. One slice, not breadth.'],
+  ['5','<b>B6 master-component is NOT built in the foundation.</b> Build Color+Stroke+Transform by hand, then extract B6 from their real shapes. The foundation is explicitly not 100% complete before system 1.'],
+  ['6','<b>Codex (after the foundation):</b> freeze Document/Op/Snap shape (one owner); no Color‖Stroke parallelism; clean seams by crate or non-adjacent systems.'],
+  ['7','<b>Order tweaks:</b> Snapping with/before Transform; Artboard slot-1 = Stage-1 single board; wgpu 0.19→0.29 = its own spike w/ fallback (not a Phase-1 gate); §9.3 handle-coupling reconciled to the verified geometry-couple (Alt breaks).'],
+  ['8','<b>v1 = Illustrator-class, not Figma-class.</b> Components/Symbols + Frames/Auto-Layout are post-v1 systems; extensibility/plugins/single-schema gets its true (deferred) weight.'],
+];
+
+// status: d=done(✅) p=partial(🟡) n=none(🔴) x=not built(❌) ''=planned
+// stage: 1,2,3 or a label string
+const FOUNDATION = [
+  ['A','Design-system UI pieces (panel "puzzle-pieces")',[
+    ['A1','Design tokens — single source of style',1,'d'],
+    ['A2','Floating panel container',1,'d'],
+    ['A3','Buttons',1,'d'],
+    ['A4','Toggles & segmented controls',1,'p'],
+    ['A5','Number fields (pro scrub input)',1,'d'],
+    ['A6','Text inputs',2,'p'],
+    ['A7','Dropdowns / selects / menus',2,'p'],
+    ['A8','Sliders',2,'p'],
+    ['A9','Color swatch chips + picker entry',1,'p'],
+    ['A10','Tabs, collapsibles, tooltips, misc',1,'p'],
+    ['A11','Window (show/hide) menu system',2,'p'],
+    ['A12','Icon set (Lucide → textures)',1,'d'],
+    ['A13','Interaction states (hover/active/focus)',1,'d'],
+    ['A14','Cursor system',1,'p'],
+  ]],
+  ['B','Programming / architecture base',[
+    ['B1','Document & property data model',1,'d'],
+    ['B2','Command / Op pattern for all mutations',1,'d'],
+    ['B3','Undo / redo integration',1,'d'],
+    ['B4','Per-frame state-snapshot read pattern',1,'d'],
+    ['B5','"Add-a-system" template',1,'p'],
+    ['B6','Property→inspector+save binding (master component) — deferred per D5',2,'n'],
+    ['B7','Tool / gesture dispatch + input routing',1,'d'],
+    ['B8','The hard seam (core is UI-free)',2,'d'],
+  ]],
+  ['C','Technical base',[
+    ['C1','GPU rendering primitives',1,'d'],
+    ['C2','Shared math — bezier',1,'d'],
+    ['C3','Shared math — boolean (i_overlay)',1,'d'],
+    ['C4','Shared math — color conversions',2,'n'],
+    ['C5','Shared math — transform & geometry',1,'p'],
+    ['C6','Coordinate + zoom + camera system',1,'d'],
+    ['C7','Units system — built (Decision 3)',1,'d'],
+    ['C8','.varos serialization spine — built (Decision 1)',1,'d'],
+    ['C9','Panel ↔ engine binding (deferred-Op bus)',1,'d'],
+  ]],
+];
+
+const SYSTEMS = [
+  {n:1, sec:'§1', nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', pts:[
+    ['1','Color targets & active-color control (Fill/Stroke/None)',1,'d'],
+    ['2','Color models / color-space representations',1,'p'],
+    ['3','Color Picker dialog (full)',1,'p'],
+    ['4','Color panel (docked inspector)',1,'p'],
+    ['5','Swatches panel',2,''],
+    ['6','Gradients',2,''],
+    ['7','Opacity / alpha (color-level)',1,'p'],
+    ['8','Eyedropper / color sampling',1,'d'],
+    ['9','Color Guide / harmony rules',3,''],
+    ['10','Recolor Artwork',3,''],
+    ['11','Persistence, interop & document integration',2,''],
+    ['12','Accessibility, theming & ergonomics',3,''],
+  ]},
+  {n:2, sec:'§2', nm:'Stroke system', purpose:'Weight, caps, joins, alignment, dashes, arrowheads, variable width, stroke-to-fill order; Stroke panel + Width tool.', pts:[
+    ['1','Stroke data model & foundations',1,''],
+    ['2','Weight (thickness)',1,'d'],
+    ['3','Caps (line ends)',1,''],
+    ['4','Joins (corners)',1,''],
+    ['5','Alignment / position of stroke',1,''],
+    ['6','Dashed lines (dash pattern)',2,''],
+    ['7','Arrowheads',2,''],
+    ['8','Variable width / width profiles + Width tool',3,''],
+    ['9','Pressure / pen input',3,''],
+    ['10','Stroke order vs fill (paint stacking — needs Appearance)',3,''],
+    ['11','Scale stroke & effects with object',2,''],
+    ['12','Outline Stroke (expand to filled shape)',2,''],
+    ['13','Stroke paint type (solid → gradient/pattern)',1,''],
+    ['14','The Stroke panel (contents & layout)',1,''],
+    ['15','Selection, multi-edit & state behavior',1,''],
+    ['16','Edge cases & interactions','2–3',''],
+  ]},
+  {n:3, sec:'§3', nm:'Transform system', purpose:'Exact numeric + tool transforms — X/Y/W/H, rotate, shear, flip, 9-point pivot, Move/Rotate/Scale/Reflect/Shear, Free Transform, Offset Path.', note:'Build WITH Snapping (§6) — precise transform needs snap to feel right. §9.3 handle-coupling is reconciled to the verified model (geometry-couple, Alt breaks).', pts:[
+    ['0','Foundations & shared model',1,''],
+    ['1','Transform panel',1,''],
+    ['2','Top control-bar numeric fields',1,''],
+    ['3','Reference point / pivot system',1,''],
+    ['4','Dedicated transform tools (pivot + Alt-copy)','tools',''],
+    ['5','Transform Each',2,''],
+    ['6','Transform Again',2,''],
+    ['7','Scale Strokes & Effects',2,''],
+    ['8','Flip Horizontal / Vertical',1,''],
+    ['9','Constrain proportions (link)',1,'p'],
+    ['10','Free Transform tool (E)',2,''],
+    ['11','Offset Path',2,''],
+    ['12','Menu integration & shortcuts',1,''],
+    ['13','Canvas feedback & affordances',1,''],
+    ['14','Edge cases & correctness',2,''],
+  ]},
+  {n:4, sec:'§4', nm:'Save / File system', purpose:'The native .varos file system — open/save the document, New/templates, autosave + recovery, version history, recent files, Place/Import.', note:'The serde spine moved to Foundations (✅). This system = the container (zip/OPC) + native dialogs + dirty/recovery guards on top of a schema that already round-trips. Split Stage 1 → 1a round-trip, 1b dialogs/guards.', pts:[
+    ['1','The .varos document format — on-disk container',1,''],
+    ['2','New document & New-from-template',1,''],
+    ['3','Save / Save As / Save a Copy / Template',1,''],
+    ['4','Autosave & crash recovery',2,''],
+    ['5','Version history / snapshots',3,''],
+    ['6','Open / Recent files',1,''],
+    ['7','Place / Import (external art)',2,''],
+    ['8','Linked vs Embedded assets + Links panel',3,''],
+    ['9','Document metadata & properties',2,''],
+    ['10','OS & shell integration',2,''],
+    ['11','Panels & UI surfaces this system needs','ui',''],
+  ]},
+  {n:5, sec:'§5', nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, targeting, z-order, grouping, masks, compound paths.', note:'MODEL system, not panel assembly. Today the model is a flat Vec<Path> + group_of side-table. Stage 1 = build the real scene-graph (Layer/node tree) and migrate selection + render-order + every tool onto it.', warn:true, pts:[
+    ['1','Layers panel — shell & structure',1,'d'],
+    ['2','Layer & object naming',1,'p'],
+    ['3','Visibility (show/hide)',1,''],
+    ['4','Lock / unlock',1,''],
+    ['5','Targeting & appearance dot',2,''],
+    ['6','Selection-color indicator',2,''],
+    ['7','Thumbnails',2,''],
+    ['8','Reordering & restructuring (drag-drop)',1,''],
+    ['9','Z-order commands (arrange)',1,'d'],
+    ['10','Groups & ungroup (nested)',1,'d'],
+    ['11','Compound paths',2,''],
+    ['12','Clipping masks',2,''],
+    ['13','Isolation mode',2,''],
+    ['14','Opacity masks',3,''],
+    ['15','Locate / find object',2,''],
+    ['16','Paste-remembers-layers',3,''],
+    ['17','Flatten / merge / collect',3,''],
+    ['18','Select same / similar',2,''],
+    ['19','Context menu (panel & canvas)',1,''],
+    ['20','Panel options & global commands menu',2,''],
+    ['21','Schema, performance & edge cases','x-cut',''],
+  ]},
+  {n:6, sec:'§6', nm:'Snapping / Guides / Grid / Rulers', purpose:'The precision substrate — rulers, guides, smart alignment guides, grids, snap-to-geometry, tolerance, live dimension readouts.', note:'Built WITH/before Transform (Decision 7) — drawing + precise transform need snap to feel right.', pts:[
+    ['0','System foundations & shared snap engine',1,''],
+    ['1','Rulers',1,''],
+    ['2','Guides (manual ruler guides)',1,''],
+    ['3','Smart Guides (dynamic alignment)',2,''],
+    ['4','Grid (document grid)',2,''],
+    ['5','Pixel grid & snap-to-pixel',2,''],
+    ['6','Snap to point / anchor / geometry while dragging','1–2',''],
+    ['7','Snap tolerance & options panel',2,''],
+    ['8','Live dimension & position readouts',2,''],
+    ['9','Preferences / settings surface',2,''],
+    ['10','Menus, shortcuts & discoverability',1,''],
+    ['11','Edge cases & correctness','per-stage',''],
+  ]},
+  {n:7, sec:'§7', nm:'Artboard / Document system', purpose:'Multiple resizable/named artboards + the document model (units, DPI, color format, bleed, presets).', note:'Slot-1 build = Stage 1 only (a single fixed board + document props), NOT full multi-artboard. Owns the Units + world↔screen coordinate contract (Decision 3) — embeds the DocUnits already built.', pts:[
+    ['1','Document model & data foundation',1,''],
+    ['2','New Document creation flow',1,''],
+    ['3','Artboard tool (canvas-direct manipulation)',1,''],
+    ['4','Artboards panel',1,''],
+    ['5','Artboard management operations',1,''],
+    ['6','Document Setup (units/size/color-mode)',1,''],
+    ['7','Artboard presets & standard size library',1,''],
+    ['8','Per-artboard properties / Options dialog',2,''],
+    ['9','Rulers, guides & grid (artboard-aware)',2,''],
+    ['10','Navigation: fit-to-artboard',1,''],
+    ['11','Per-artboard export targeting',2,''],
+    ['12','Interaction edge cases & polish','2/3',''],
+  ]},
+  {n:8, sec:'§8', nm:'Export system', purpose:'Getting artwork out — Export As, batch Export for Screens, Asset Export panel, per-artboard/slice, format options, clipboard copy.', pts:[
+    ['1','Export architecture & shared pipeline',1,''],
+    ['2','Export As (single-shot dialog)',1,''],
+    ['3','Export for Screens (batch multi-asset)',2,''],
+    ['4','Asset Export panel (persistent dock)',2,''],
+    ['5','Per-artboard & slices','2/3',''],
+    ['6','Format-specific option panels','per-fmt',''],
+    ['7','Resolution / scale presets & reuse',2,''],
+    ['8','Save for Web (legacy optimized)',3,''],
+    ['9','Clipboard copy / quick export',2,''],
+    ['10','Menus, shortcuts & integration',1,''],
+    ['11','Edge cases & correctness','2–3',''],
+  ]},
+  {n:9, sec:'§9', nm:'Geometric-logic tools', purpose:'Geometry-computing tools — Line Segment, Shape Builder, cut tools (Scissors/Knife/Eraser), Clipping Mask / Compound Path.', pts:[
+    ['1','Shared foundations for all geometric tools',1,''],
+    ['2','Line Segment tool',1,''],
+    ['3','Shape Builder tool (engine exists)',2,'p'],
+    ['4','Cut tools — Scissors',1,''],
+    ['5','Cut tools — Knife',2,''],
+    ['6','Cut tools — Eraser',2,''],
+    ['7','Compound Path',1,''],
+    ['8','Clipping Mask',1,''],
+    ['9','Cross-cutting concerns','spans',''],
+  ]},
+  {n:10, sec:'§10', nm:'Text / Type system', purpose:'Point/area/path text, a GPU text engine (shaping + layout + glyphs), Character/Paragraph/OpenType/Glyphs/Styles. Latin-first; Arabic = the moat.', pts:[
+    ['1','Text objects & creation tools',1,''],
+    ['2','Text engine — shaping, layout & rendering','1 / 3',''],
+    ['3','Area / container text features',2,''],
+    ['4','Type on a path',2,''],
+    ['5','Character panel','1/2',''],
+    ['6','Paragraph panel','1/2',''],
+    ['7','OpenType features panel/controls',2,''],
+    ['8','Glyphs panel',2,''],
+    ['9','Character & Paragraph styles','2/3',''],
+    ['10','Find / Replace font & text',2,''],
+    ['11','Text to outlines (Create Outlines)',1,''],
+    ['12','Editing interactions & selection',1,''],
+    ['13','Touch Type tool (per-glyph)',3,''],
+    ['14','Defaults, preferences & integration','1/2',''],
+    ['15','Arabic / complex-script moat',3,''],
+  ]},
+  {n:11, sec:'§11', nm:'Effects / Appearance system', purpose:'Non-destructive appearance stack — multiple fills/strokes, live Effects (shadow/glow/blur/distort/warp/3D), Graphic Styles, Expand Appearance.', pts:[
+    ['1','Core concept — non-destructive appearance stack',1,''],
+    ['2','Appearance panel — structure & rows','1/2',''],
+    ['3','Multiple fills & strokes per object',2,''],
+    ['4','Effects menu — the catalog','per-fx',''],
+    ['5','Stylize effects group','mixed',''],
+    ['6','Distort & Transform effects group','2/3',''],
+    ['7','Warp effects group',3,''],
+    ['8','3D & Materials effects group',3,''],
+    ['9','Photoshop / raster effects group',3,''],
+    ['10','Convert-to-Shape & Path effects',2,''],
+    ['11','Per-attribute vs object-level targeting',2,''],
+    ['12','Graphic Styles (save / apply appearance)',2,''],
+    ['13','Expand Appearance (commit to geometry)',2,''],
+    ['14','Clear / reduce / utility operations','1/2',''],
+    ['15','Interaction with other systems','x-cut',''],
+    ['16','Performance, caching & edge cases','2+',''],
+  ]},
+  {n:12, sec:'§12', nm:'Comments / Collaboration system', purpose:'Canvas-anchored comment pins + threads, reactions, @mentions, resolve/reopen, presence/cursors, share/version. Local-first; optional backend. (Post-v1.)', pts:[
+    ['0','Architecture & offline-vs-backend split',1,'x'],
+    ['1','Comment tool & placing pins',1,'x'],
+    ['2','Anchoring & spatial behavior',1,'x'],
+    ['3','Threads, replies & editing',1,'x'],
+    ['4','Reactions & emoji',2,'x'],
+    ['5','Resolve / reopen',1,'x'],
+    ['6','@Mentions',2,'x'],
+    ['7','Comments panel / list',1,'x'],
+    ['8','Presence & live cursors',3,'x'],
+    ['9','Sharing & roles',3,'x'],
+    ['10','Notifications',3,'x'],
+    ['11','Versions & review context',3,'x'],
+    ['12','Cross-cutting: shortcuts, a11y, settings',1,'x'],
+  ]},
+];
+
+// ---- render ----
+const stClass = s => ({d:'b-done',p:'b-partial',n:'b-none',x:'b-none'}[s] || 'b-plan');
+const stMark  = s => ({d:'✅',p:'🟡',n:'🔴',x:'❌'}[s] || '○');
+const stgClass = g => g===1?'s1':g===2?'s2':g===3?'s3':'sx';
+const stgLabel = g => g===1?'S1':g===2?'S2':g===3?'S3':String(g);
+
+function ptRow([id,t,stage,st]){
+  return `<div class="pt"><span class="id">${id}</span><span class="t">${t}</span>
+    <span class="meta"><span class="st ${stgClass(stage)}">${stgLabel(stage)}</span>
+    <span class="badge ${stClass(st)}">${stMark(st)}</span></span></div>`;
+}
+// group points by stage bucket for readability
+function ptsByStage(pts){
+  const buckets = {1:[],2:[],3:[],other:[]};
+  pts.forEach(p=>{ const g=p[2]; (g===1||g===2||g===3?buckets[g]:buckets.other).push(p); });
+  let html='';
+  [['1','Stage 1 · core'],['2','Stage 2 · standard'],['3','Stage 3 · advanced'],['other','Meta / cross-cutting']].forEach(([k,label])=>{
+    if(buckets[k].length){ html+=`<div class="grp">${label}</div>`+buckets[k].map(ptRow).join(''); }
+  });
+  return html;
+}
+
+// build-order rail
+document.getElementById('rail').innerHTML = ORDER.map(s=>{
+  if(s.milestone) return `<div class="milestone">${s.milestone}</div>`;
+  const cls = s.state==='active'?'active':s.state==='next'?'next':(parseInt(s.k)<0?'':'');
+  const tag = s.state==='active'?'<span class="tag tag-active">▶ now</span>':s.state==='next'?'<span class="tag tag-next">next</span>':'';
+  return `<div class="step ${cls}">${tag}<div class="k">${s.k}</div><div class="nm">${s.nm}</div><div class="sec">${s.sec}</div></div>`;
+}).join('');
+
+// decisions
+document.getElementById('decisions').innerHTML = DECISIONS.map(([n,t])=>
+  `<div class="dec"><span class="n">${n}</span><span class="t">${t}</span></div>`).join('');
+
+// foundation
+document.getElementById('foundation').innerHTML =
+  `<details open><summary><span class="sysname">Layers A · B · C</span>
+     <span style="color:var(--muted);font-size:12.5px">— most already built; Stage-0 spine (serde + units) ✅</span></summary>
+   <div class="pts">` +
+  FOUNDATION.map(([lid,title,items])=>
+    `<div class="layer"><span class="lid">${lid}</span>${title}</div>` + items.map(ptRow).join('')
+  ).join('') + `</div></details>`;
+
+// systems
+document.getElementById('systems').innerHTML = SYSTEMS.map(s=>{
+  const open = s.n===1 ? 'open' : '';
+  const note = s.note ? `<div class="note ${s.warn?'warn':''}">${s.warn?'⚠️ ':'ⓘ '}${s.note}</div>` : '';
+  // mini status summary in the header
+  const counts = s.pts.reduce((a,[,,,st])=>{a[st]=(a[st]||0)+1;return a;},{});
+  const done = counts.d||0, tot=s.pts.length;
+  const hint = done?`<span style="color:var(--green);font-size:11px;font-family:var(--mono)">${done}/${tot} ✅</span>`:'';
+  return `<details ${open}><summary><span class="sysnum">${s.sec}</span>
+      <span class="sysname">${s.nm}</span>${hint}</summary>
+    <div class="syspurpose">${s.purpose}</div>${note}
+    <div class="pts">${ptsByStage(s.pts)}</div></details>`;
+}).join('');
+</script>
+</body>
+</html>
