@@ -7,38 +7,36 @@
 ## ⓘ Build decisions — 2026-06-29 (review-driven; these OVERRIDE anything below that conflicts)
 A grounded code-vs-plan review (5-agent pass over the real repo) produced these amendments. Each is load-bearing:
 
-1. **Serde spine is FOUNDATIONS, not Save §4.** `model.rs` has zero serde today; Color/Stroke/Transform/Layers/Artboard all assume "saved to the `.varos` schema." So `#[derive(Serialize, Deserialize)]` on `Anchor/Path/Group/Document/Rgba/Pt` + one round-trip test ships in Foundations (Stage-0) BEFORE any system. Save §4 then = container (zip/OPC) + dialogs + guards over a schema that already round-trips.
-2. **Layers (§5) is a MODEL system, not a panel.** The real model is a flat `Vec<Path>` + a `group_of` side-table; there is no `Layer` type, no z-order on `Group`, no sublayers, and `scene.rs` uses the flat Vec order AS z-order. Layers = build the real scene-graph (a `Layer`/node tree with children + attributes), touching selection + render-order + every tool. Not panel assembly.
+1. **Serde spine is FOUNDATIONS, not the Save system.** `model.rs` has zero serde today; Color/Stroke/Transform/Layers/Artboard all assume "saved to the `.varos` schema." So `#[derive(Serialize, Deserialize)]` on `Anchor/Path/Group/Document/Rgba/Pt` + one round-trip test ships in Foundations (Stage-0) BEFORE any system. The Save system then = container (zip/OPC) + dialogs + guards over a schema that already round-trips.
+2. **Layers is a MODEL system, not a panel.** The real model is a flat `Vec<Path>` + a `group_of` side-table; there is no `Layer` type, no z-order on `Group`, no sublayers, and `scene.rs` uses the flat Vec order AS z-order. Layers = build the real scene-graph (a `Layer`/node tree with children + attributes), touching selection + render-order + every tool. Not panel assembly.
 3. **One owner for Units + coordinate-space, BEFORE Artboard.** px/pt/mm/cm/in parsing + the world↔screen (px-per-unit + origin) contract is built once (home: Foundations/Artboard) before Artboard hardcodes unitless coords. Transform/Snapping/Rulers/Grid all consume it.
 4. **Depth-first stays — with ONE early confirmation slice.** After Colour, build a single end-to-end vertical slice: **draw → colour → save → reopen** ("make a logo and keep it"). It proves the foundation holds before 9 systems stack on it. Then resume depth-first. This is ONE slice, not breadth.
 5. **B6 (the property→inspector+save "master component") is NOT built in the foundation.** Build Color + Stroke + Transform by hand (accept wiring each property ~3× for these 3 systems), THEN extract B6 from their real shapes. Designing it blind = abstracting the wrong thing. ⚠️ Explicit contradiction accepted: **the foundation is NOT 100% complete before system 1** — B6 is derived after 3 real systems exist.
 6. **Codex parallelism (after the foundation):** FREEZE the shape of `Document` / `Op` / `Snap`; one agent owns those three files, the other sends change-requests. Do NOT parallelize adjacent or renderer-deep systems — **Color‖Stroke is forbidden** (both extend `Path`, both need new renderer pipelines + C2/C4 math). Clean seams = by crate (one in `varos-core`, one in `varos-app`) or non-adjacent systems.
-7. **Order tweaks:** Snapping moves up to sit WITH/before Transform (precise transform + drawing need snap to feel right — feel is the thesis). Artboard slot-1 = Stage-1 only (single board), not full multi-artboard. The wgpu 0.19→0.29 bump is its OWN de-risking spike with a fallback (stay on 0.19, defer frosted glass) — it must NOT gate Phase 1. Transform §9.3 (Shift=proportional) is RECONCILED against the locked, Ahmed-verified handle-coupling model (geometry-based couple, **Alt breaks**) before coding — feel wins over the Illustrator default.
+7. **Order tweaks:** Snapping moves up to sit WITH/before Transform (precise transform + drawing need snap to feel right — feel is the thesis). Artboard slot-1 = Stage-1 only (single board), not full multi-artboard. The wgpu 0.19→0.29 bump is its OWN de-risking spike with a fallback (stay on 0.19, defer frosted glass) — it must NOT gate Phase 1. Transform's handle-coupling (Shift=proportional) is RECONCILED against the locked, Ahmed-verified model (geometry-based couple, **Alt breaks**) before coding — feel wins over the Illustrator default.
 8. **v1 scope = Illustrator-class, NOT Figma-class.** Components/Symbols and the Figma layer (Frames/Auto-Layout/Dev-Mode) are post-v1 SYSTEMS (not panel stubs). Extensibility/Plugins/single-schema (the stated moat) is a real system, deferred — given its true weight, not a one-line bullet. (See `ELEMENTS_CATALOG.md` header.)
 
-## Build order — CURRENT (updated 2026-06-29 · review-amended)
-Build in THIS sequence. The detailed sections below keep their ORIGINAL §number — find by name.
+## Build order — the real timeline
+Depth-first: each step reaches at least Stage 1 before the next, then we circle back to deepen (D4).
+Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering — build steps. The detailed sections below are titled BY NAME (no numbers); find them by the system name.**
 
-**0** Foundations *(§0 — now incl. serde spine [D1] + units/coords owner [D3])* → **1** Artboard *(§7 — Stage-1 single board [D7])* → **2** Transform **+ Snapping** *(§3 + §6 [D7])* → **3** Layers *(§5 — model/scene-graph [D2])* → **4** Colour *(§1)* → **▶ CONFIRMATION SLICE: draw → colour → save → reopen [D4]** → **5** Stroke *(§2)* → **6** Save system *(§4 — container + dialogs + recovery [D1])* → **7** Geometric tools *(§9)* → **8** Text *(§10)* → **9** Export *(§8)* → **10** Effects/Appearance *(§11)* → **11** Comments *(§12)*
-
-## Original generation order (reference only)
-0. **Foundations (shared base — BEFORE any system)** — The shared three-layer base — design-system UI widgets, the data-model/Op/undo/property-binding architecture, and the GPU/math/units/serialization technical core — that every later Varos system plugs into.
-1. **Color system** — The complete color pipeline — picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, and opacity — that lets users define, store, reuse, and apply every color and gradient in Varos.
-2. **Stroke system** — Everything that controls how a path's outline is drawn — weight, caps, joins, alignment, dashes, arrowheads, variable width, and stroke-to-fill order — plus the Stroke panel and Width tool.
-3. **Transform system** — Exact numeric and tool-driven transforms — X/Y/W/H, rotate, shear, flip, the 9-point reference, dedicated Move/Rotate/Scale/Reflect/Shear tools with pivots and Alt-copy, Transform Each / Again / Free Transform, plus Offset Path — all wired to one Transform panel and the control-bar fields.
-4. **Save / File system** — The native .varos file system — serialize/open/save the document model, with New/templates, autosave + crash recovery, version history, recent files, and Place/Import with linked vs embedded assets.
-5. **Layers / Structure System** — The hierarchical document tree — Layers panel with nested layers/sublayers/objects, visibility & lock, targeting, z-order, grouping, masks, compound paths, and structural selection — that organizes every object on the canvas.
-6. **Snapping / Guides / Grid / Rulers** — The precision-alignment substrate: rulers, draggable guides, smart alignment guides, document/pixel grids, snap-to-geometry, snap tolerance options, and live dimension readouts that make every move, draw, and resize land exactly where intended.
-7. **Artboard / Document System** — Multiple resizable/named artboards on one canvas plus the document model (units, DPI, color format, bleed, presets) that defines the design surface and drives navigation and per-artboard export.
-8. **Export system** — Getting finished artwork out of Varos in every format and configuration — single Export As, batch Export for Screens, a persistent Asset Export panel, per-artboard/slice output, format-specific options, and clipboard copy.
-9. **Geometric-logic tools** — The geometry-computing tools — Line Segment, Shape Builder, cut tools (Scissors/Knife/Eraser), and Clipping Mask / Compound Path — that build, split, merge, and mask vector geometry through direct canvas interaction.
-10. **Text / Type system** — The full typography stack — point/area/path text objects, a GPU text engine (shaping + line layout + glyph rendering), and the Character/Paragraph/OpenType/Glyphs/Styles panels that drive them, Latin-first with Arabic shaping flagged as the later moat.
-11. **Effects / Appearance System** — A non-destructive appearance stack per object — multiple fills/strokes, live Effects (shadow, glow, blur, distort, warp, 3D, round corners), Graphic Styles, and Expand Appearance.
-12. **Comments / Collaboration system** — Canvas-anchored comment pins with threads, replies, reactions, @mentions, resolve/reopen, a filterable comments panel, presence/cursors, and share/version flows — local-first in the .varos file with an optional backend for real-time multi-user sync.
+- **0 · Foundations** ✅ *spine done (serde + units)* — the shared UI pieces + architecture + technical core every system plugs into.
+- **1 · Artboard / Document** ▶ **NEXT** — a single page (Stage-1) + the document model (size, units, DPI); owns the units / world↔screen coordinate contract [D3/D7].
+- **2 · Transform + Snapping** — exact numeric + tool transforms (X/Y/W/H, rotate, flip, 9-point pivot), built WITH snapping so it feels right [D7].
+- **3 · Layers / Structure** — the real scene-graph (a Layer tree, z-order, sublayers, groups, masks) — a MODEL system, not a panel [D2].
+- **4 · Colour** — the colour pipeline: fill/stroke targets, colour models, picker, swatches, gradients, eyedropper, opacity.
+- **▶ CONFIRMATION SLICE** — draw → colour → save → reopen ("make a logo & keep it"): proves the foundation holds before stacking more [D4].
+- **5 · Stroke** — weight, caps, joins, alignment, dashes, arrowheads, variable width; the Stroke panel.
+- **6 · Save system** — the .varos container (zip) + native Save/Open dialogs + autosave/recovery, on the serde spine already built [D1].
+- **7 · Geometric tools** — Line Segment, Shape Builder, cut tools (Scissors / Knife / Eraser), Clipping Mask / Compound Path.
+- **8 · Text** — point/area/path text + a GPU text engine + Character/Paragraph panels; Latin-first, Arabic = the moat.
+- **9 · Export** — Export As, batch Export for Screens, Asset Export panel, per-artboard/slice output, clipboard copy.
+- **10 · Effects / Appearance** — non-destructive appearance stack: multiple fills/strokes, live effects, Graphic Styles, Expand.
+- **11 · Comments / Collaboration** *(post-v1)* — canvas comment pins, threads, reactions, resolve, presence; local-first + optional backend.
 
 ---
 
-## 0. Foundations (shared base — BEFORE any system)
+## Foundations (shared base — BEFORE any system)
 *The shared three-layer base — design-system UI widgets, the data-model/Op/undo/property-binding architecture, and the GPU/math/units/serialization technical core — that every later Varos system plugs into.*
 
 > Grounded against the real repo: native egui+wgpu UI shell live (`varos-app/src/ui.rs`), `varos-core` (model/editor/tools/geom/scene/boolean), wgpu renderer with stencil-cover fills + frosted plumbing. Snapshot-clone undo, stable u32 IDs, deferred-`Op` panel pattern all exist. Gaps flagged inline (no serde/`.varos`, no unit system, no property-definition abstraction, RGBA-f32-only color, no text glyph / gradient rendering).
@@ -301,7 +299,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - C7.4 Precision/rounding policy per unit
 - C7.5 Scale-aware (e.g. 1:50 architectural) _(Stage 3)_
 
-**C8. .varos serialization skeleton** _(Stage 1 — Decision 1)_ ✅ (spine built — `Serialize/Deserialize` on `Anchor/Path/Group/Document/ShapeKind` + a round-trip test in `tests/serde_roundtrip.rs`; the container/zip + dialogs are the Save system §4)
+**C8. .varos serialization skeleton** _(Stage 1 — Decision 1)_ ✅ (spine built — `Serialize/Deserialize` on `Anchor/Path/Group/Document/ShapeKind` + a round-trip test in `tests/serde_roundtrip.rs`; the container/zip + dialogs are the Save system)
 - C8.1 Schema-versioned container — version tag + migration path from day one
 - C8.2 Serialize the whole model — paths/anchors/handles/holes/groups/group_of/ids + doc props + fills/strokes; use serde + a stable format (JSON for readability or a compact binary)
 - C8.3 Save/load/new/recent + autosave + crash-recovery _(Stage 2)_
@@ -330,7 +328,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 1. Color system
+## Color system
 *The complete color pipeline — picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, and opacity — that lets users define, store, reuse, and apply every color and gradient in Varos.*
 
 **1. Color targets & active-color control (Fill / Stroke / None)** _(Stage 1 — core/MVP)_ ✅ (have basic)
@@ -506,7 +504,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 2. Stroke system
+## Stroke system
 *Everything that controls how a path's outline is drawn — weight, caps, joins, alignment, dashes, arrowheads, variable width, and stroke-to-fill order — plus the Stroke panel and Width tool.*
 
 **1. Stroke data model & foundations** _(Stage 1 — core/MVP)_
@@ -609,7 +607,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 **9. Pressure / pen input** _(Stage 3 — advanced)_
 - 9.1 Pressure-sensitive width — tablet/stylus pressure maps to stroke width while drawing (pencil/brush/width contexts)
-- 9.2 Pressure stored as a width profile on the resulting path (same data structure as §8)
+- 9.2 Pressure stored as a width profile on the resulting path (same data structure as 8)
 - 9.3 Velocity/tilt mapping options _(Stage 3, optional)_ — speed→width, tilt→width
 - 9.4 Min/max width range + pressure-curve sensitivity settings
 - 9.5 Fallback for non-pressure devices — uniform width
@@ -676,10 +674,10 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 3. Transform system
+## Transform system
 *Exact numeric and tool-driven transforms — X/Y/W/H, rotate, shear, flip, the 9-point reference, dedicated Move/Rotate/Scale/Reflect/Shear tools with pivots and Alt-copy, Transform Each / Again / Free Transform, plus Offset Path — all wired to one Transform panel and the control-bar fields.*
 
-> ⓘ AMENDED [D7]: build **together with Snapping (§6)** — precise transform + drawing need snap to feel right. And §9.3 handle-coupling is RECONCILED to Varos's verified model (see below).
+> ⓘ AMENDED [D7]: build **together with Snapping** — precise transform + drawing need snap to feel right. And the handle-coupling point below is RECONCILED to Varos's verified model.
 
 **0. Foundations & shared model** _(Stage 1 — core/MVP)_
 - 0.1 One transform pipeline — every numeric field, dialog, and tool feeds ONE affine transform applied to the selection (translate · rotate · scale · shear). bbox drag handles ✅ (have basic) already write into this; numeric entry 🟡 (missing) is the gap this system closes.
@@ -836,10 +834,10 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 4. Save / File system
+## Save / File system
 *The native .varos file system — serialize/open/save the document model, with New/templates, autosave + crash recovery, version history, recent files, and Place/Import with linked vs embedded assets.*
 
-> ⓘ AMENDED [D1]: the **serde spine** (derives on the model + round-trip test) moves to **Foundations §0**, built before any system. §4 here = the **container (zip/OPC) + native dialogs + dirty/recovery guards** over a schema that already round-trips. Split Stage 1 → **1a** (round-trip one `.varos` + Save/Open + dirty flag) and **1b** (dialogs, atomic write, .bak, new-doc preset); drop advisory file-locks + per-artboard thumbnails out of MVP.
+> ⓘ AMENDED [D1]: the **serde spine** (derives on the model + round-trip test) moves to **Foundations**, built before any system. This system = the **container (zip/OPC) + native dialogs + dirty/recovery guards** over a schema that already round-trips. Split Stage 1 → **1a** (round-trip one `.varos` + Save/Open + dirty flag) and **1b** (dialogs, atomic write, .bak, new-doc preset); drop advisory file-locks + per-artboard thumbnails out of MVP.
 
 **1. The `.varos` document format — on-disk container** _(Stage 1 — core/MVP)_
 - 1.1 Container shape — a ZIP/OPC-style package (zip64-capable) renamed `.varos`, NOT a single flat blob; lets us stream-read large docs & swap parts without full rewrite
@@ -926,7 +924,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 **6. Open / Recent files** _(Stage 1 — core/MVP)_
 - 6.1 Open (Ctrl/Cmd+O) — 🟡 (partial): "Open…" row present in `ui.rs`, no handler
-  - 6.1.a Native open dialog with `.varos` filter (+ "All supported" incl. importable SVG/PDF/raster, see §7)
+  - 6.1.a Native open dialog with `.varos` filter (+ "All supported" incl. importable SVG/PDF/raster, see 7)
   - 6.1.b Open into a new TAB (tab system already ✅ have basic) or new window; focus existing tab if file already open
   - 6.1.c Multi-select open; drag-a-file-onto-window opens it; OS "Open With Varos" / file association + double-click launch
 - 6.2 Recent Files _(Stage 2 — standard)_
@@ -981,25 +979,25 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 **11. Panels & UI surfaces this system needs**
 - 11.1 File menu — New, New from Template, Open, Open Recent ▸, Close, Save, Save As, Save a Copy, Save as Template, Revert, Place, Export ▸, File Info, Document Setup _(Stage 1 — core/MVP)_ — 🟡 (partial): a stub File dropdown with New/Open/Save/Export rows already drawn in `ui.rs`, all non-functional
-- 11.2 New-document dialog (§2.1) _(Stage 1)_
-- 11.3 Native Open/Save OS dialogs (§3.2, §6.1) _(Stage 1)_
-- 11.4 Start / Home screen with Recent grid (§6.3) _(Stage 2)_
-- 11.5 Save-changes / Revert / Recovery confirm dialogs (§3.6, §4.3, §6.4) _(Stage 1–2)_
-- 11.6 Version History panel (§5) _(Stage 3)_
-- 11.7 Links panel (§8.2) _(Stage 3)_
-- 11.8 Place load-cursor + Place-options dialog (§7.1) _(Stage 2)_
-- 11.9 Document Properties / File Info dialog (§9) _(Stage 2)_
+- 11.2 New-document dialog (2.1) _(Stage 1)_
+- 11.3 Native Open/Save OS dialogs (3.2, 6.1) _(Stage 1)_
+- 11.4 Start / Home screen with Recent grid (6.3) _(Stage 2)_
+- 11.5 Save-changes / Revert / Recovery confirm dialogs (3.6, 4.3, 6.4) _(Stage 1–2)_
+- 11.6 Version History panel (5) _(Stage 3)_
+- 11.7 Links panel (8.2) _(Stage 3)_
+- 11.8 Place load-cursor + Place-options dialog (7.1) _(Stage 2)_
+- 11.9 Document Properties / File Info dialog (9) _(Stage 2)_
 - 11.10 Preferences ▸ File Handling section — autosave interval, recovery location, keep-backups, recent-count, default save format/compression _(Stage 2)_
 - 11.11 Title bar / tab bar status — dirty dot, file name, save indicator ✅ (have basic): multi-doc tab bar exists; add dirty marker + bind real file paths
 
 **12. Build-order summary (what to ship first within this system)**
-- 12.1 Stage 1 spine — add serde to the model (§1.2) → write/read the `.varos` zip (§1.1) → Save/Save As/Open with native dialogs (§3.1–3.2, §6.1) → New + new-doc dialog (§2.1) → dirty-flag + save-prompt + atomic write (§3.5–3.6). This makes the tool genuinely usable (work survives closing the app).
-- 12.2 Stage 2 standard — autosave + crash recovery (§4), Recent + Home screen (§6.2–6.3), Revert (§6.4), Place/Import SVG+raster (§7), templates (§2.3, §3.4), metadata (§9), OS association (§10).
-- 12.3 Stage 3 advanced — version history (§5), linked assets + Links panel (§8), PDF/EPS/AI import (§7.2.b), binary/compressed format option (§1.4.d), package-for-output (§8.5), thumbnail shell extension (§10.2).
+- 12.1 Stage 1 spine — add serde to the model (1.2) → write/read the `.varos` zip (1.1) → Save/Save As/Open with native dialogs (3.1–3.2, 6.1) → New + new-doc dialog (2.1) → dirty-flag + save-prompt + atomic write (3.5–3.6). This makes the tool genuinely usable (work survives closing the app).
+- 12.2 Stage 2 standard — autosave + crash recovery (4), Recent + Home screen (6.2–6.3), Revert (6.4), Place/Import SVG+raster (7), templates (2.3, 3.4), metadata (9), OS association (10).
+- 12.3 Stage 3 advanced — version history (5), linked assets + Links panel (8), PDF/EPS/AI import (7.2.b), binary/compressed format option (1.4.d), package-for-output (8.5), thumbnail shell extension (10.2).
 
 ---
 
-## 5. Layers / Structure System
+## Layers / Structure System
 *The hierarchical document tree — Layers panel with nested layers/sublayers/objects, visibility & lock, targeting, z-order, grouping, masks, compound paths, and structural selection — that organizes every object on the canvas.*
 
 > ⚠️ AMENDED [D2]: this is a **MODEL system, not panel assembly.** Today the model is a flat `Vec<Path>` + a `group_of` side-table (no `Layer` type, no z-order on `Group`, no sublayers; `scene.rs` uses flat-Vec order AS z-order). Stage 1 here = **build the real scene-graph** (a `Layer`/node tree owning children + attributes) and migrate selection + render-order + every tool onto it. The panel is the easy part on top.
@@ -1107,7 +1105,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - 10.3 Nested groups — group of groups, recursive ✅
 - 10.4 Group preserves z-order and re-parents children under the group row _(Stage 1)_
 - 10.5 Grouping objects from different layers — Illustrator pulls them onto the topmost object's layer; define Varos rule (collect to active or topmost layer) _(Stage 2)_
-- 10.6 Enter-group editing — double-click to enter group context (isolation), edit children, click out to exit (ties to isolation mode §13) _(Stage 2)_
+- 10.6 Enter-group editing — double-click to enter group context (isolation), edit children, click out to exit (ties to isolation mode 13) _(Stage 2)_
 - 10.7 "Add to Group" / "Remove from Group" via drag in panel _(Stage 2)_
 
 **11. Compound paths** _(Stage 2 — standard)_
@@ -1202,7 +1200,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 6. Snapping / Guides / Grid / Rulers
+## Snapping / Guides / Grid / Rulers
 *The precision-alignment substrate: rulers, draggable guides, smart alignment guides, document/pixel grids, snap-to-geometry, snap tolerance options, and live dimension readouts that make every move, draw, and resize land exactly where intended.*
 
 **0. System foundations & shared snap engine** _(Stage 1 — core/MVP)_
@@ -1236,7 +1234,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - 1.5 Cursor tracking indicators — thin marker line on each ruler follows the pointer showing its current X/Y; updates live. _(Stage 1)_
 - 1.6 Selection extent shading — highlight the span of the selected object's bbox on both rulers (Illustrator-style shaded region) so you see its position/size at a glance. _(Stage 2)_
 - 1.7 Video/artboard rulers variant — Illustrator's "Change to Video Rulers" (origin/pixel-aspect for video) — _(Stage 3, parked)_.
-- 1.8 Click-and-drag from ruler = create guide (see §2). _(Stage 1)_
+- 1.8 Click-and-drag from ruler = create guide (see 2). _(Stage 1)_
 
 **2. Guides (manual ruler guides)** _(Stage 1 — core/MVP)_
 - 2.1 Create by dragging from ruler — drag from horizontal ruler → horizontal guide; from vertical ruler → vertical guide; live position readout while dragging; snaps to grid/objects as it's placed.
@@ -1325,7 +1323,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 **7. Snap tolerance & options panel** _(Stage 2 — standard)_
 - 7.1 Snapping options surface — a "Snapping Manager" popover/panel (Affinity has a dedicated snapping flyout) listing every snap toggle in one place.
-  - 7.1.a Master snapping on/off. ✅-adjacent (master switch from §0.4)
+  - 7.1.a Master snapping on/off. ✅-adjacent (master switch from 0.4)
   - 7.1.b Snap to grid (on/off).
   - 7.1.c Snap to guides (on/off).
   - 7.1.d Snap to objects: bounds / geometry / key points (separate toggles).
@@ -1338,7 +1336,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - 7.5 "Move by whole pixels" / arrow-nudge increments — set keyboard nudge distance + shift-nudge multiplier; ties nudging into the snap/units system. _(Stage 2)_
 - 7.6 Snap candidate construction options — "snap to extensions" (extend edges as snap lines), "snap to nearest" toggles (Affinity granular options). _(Stage 3)_
 
-**8. Live dimension & position readouts** _(Stage 2 — standard; partly overlaps Smart Guides §3.4)_
+**8. Live dimension & position readouts** _(Stage 2 — standard; partly overlaps Smart Guides 3.4)_
 - 8.1 Live W×H readout while resizing — floating badge near cursor showing current width/height in doc units, updating each frame.
 - 8.2 Live X/Y readout while moving — current position (and/or Δ from start) near cursor.
 - 8.3 Live angle readout while rotating — degrees, with snap-to-angle indication (e.g., "45°"). 🟡 (rotate exists ✅; readout is new)
@@ -1369,7 +1367,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - 11.2 Rotated objects — snapping to rotated bbox vs geometric bounds; which bbox is authoritative (visible vs geometric vs path). _(Stage 2)_
 - 11.3 Grouped/nested selections — snap uses the group's combined bbox + each child's anchors as candidates. _(Stage 2; groups already exist ✅)_
 - 11.4 Multi-object drag — which point is the hot-point when many objects move together (Illustrator: the one grabbed). _(Stage 2)_
-- 11.5 Conflicting snaps — grid vs guide vs object at same spot → priority table (§0.1.e) resolves deterministically; no jitter/oscillation between two near-equal candidates (hysteresis). _(Stage 1)_
+- 11.5 Conflicting snaps — grid vs guide vs object at same spot → priority table (0.1.e) resolves deterministically; no jitter/oscillation between two near-equal candidates (hysteresis). _(Stage 1)_
 - 11.6 Snap suppression must be instant — releasing the suppress key re-enables without a stale frame. _(Stage 1)_
 - 11.7 Guides/grid never affect export, hit-testing of artwork, or selection of real objects (unless guide explicitly clicked). _(Stage 1)_
 - 11.8 Performance — spatial index rebuild on geometry change is incremental, not full-rebuild per frame. _(Stage 2)_
@@ -1379,13 +1377,13 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - 11.12 Smart Guides ⊕ Snap-to-Grid mutual behavior — match Illustrator (grid snap disables smart alignment) or allow both (decide & document). _(Stage 2)_
 
 **Build-order summary (within this system)**
-- Stage 1 (MVP, genuinely usable): shared snap solver w/ screen-px tolerance + priority + suppression (§0); rulers show/hide + px units + cursor tracking (§1.1–1.3a,1.5); manual H/V guides drag-create/move/lock/hide/delete/clear + snap-to-guide (§2.1,2.4–2.9,2.11); snap-to-object-bounds + pen close-path snap (§6.3,6.5,6.6 basic); core View toggles + shortcuts (§10.1–10.2 core); zoom-independent tolerance + priority/hysteresis + float precision (§11.1,11.5,11.10).
-- Stage 2 (standard): full units + ruler origin/zero (§1.3,1.4); make/release guides + guide color/style + scoping (§2.3,2.10,2.12); Smart Guides alignment + anchor/path snap + measurement labels + construction angles (§3); document grid (§4); pixel grid + snap-to-pixel (§5); anchor/geometry/artboard snapping + snap-during-transform/draw (§6.1–6.10); snapping options panel + tolerance (§7); live readouts (§8); prefs surfaces (§9); rebindable shortcuts + control-bar toggles + context menus (§10.3–10.4); rotated/grouped/multi snap correctness + undo (§11).
-- Stage 3 (advanced): angled/path guides + iso grid + half-pixel/pixel-preview + intersection/midpoint snap + equal-gap distribution hints + object highlighting + snapping presets + measure tool + guide-management panel + video rulers (scattered across §1.7,2.2b,2.13–2.14,3.4c,3.8,4.8–4.10,5.3–5.5,6.11,7.3–7.6,8.9).
+- Stage 1 (MVP, genuinely usable): shared snap solver w/ screen-px tolerance + priority + suppression (0); rulers show/hide + px units + cursor tracking (1.1–1.3a,1.5); manual H/V guides drag-create/move/lock/hide/delete/clear + snap-to-guide (2.1,2.4–2.9,2.11); snap-to-object-bounds + pen close-path snap (6.3,6.5,6.6 basic); core View toggles + shortcuts (10.1–10.2 core); zoom-independent tolerance + priority/hysteresis + float precision (11.1,11.5,11.10).
+- Stage 2 (standard): full units + ruler origin/zero (1.3,1.4); make/release guides + guide color/style + scoping (2.3,2.10,2.12); Smart Guides alignment + anchor/path snap + measurement labels + construction angles (3); document grid (4); pixel grid + snap-to-pixel (5); anchor/geometry/artboard snapping + snap-during-transform/draw (6.1–6.10); snapping options panel + tolerance (7); live readouts (8); prefs surfaces (9); rebindable shortcuts + control-bar toggles + context menus (10.3–10.4); rotated/grouped/multi snap correctness + undo (11).
+- Stage 3 (advanced): angled/path guides + iso grid + half-pixel/pixel-preview + intersection/midpoint snap + equal-gap distribution hints + object highlighting + snapping presets + measure tool + guide-management panel + video rulers (scattered across 1.7,2.2b,2.13–2.14,3.4c,3.8,4.8–4.10,5.3–5.5,6.11,7.3–7.6,8.9).
 
 ---
 
-## 7. Artboard / Document System
+## Artboard / Document System
 *Multiple resizable/named artboards on one canvas plus the document model (units, DPI, color format, bleed, presets) that defines the design surface and drives navigation and per-artboard export.*
 
 > ⓘ AMENDED [D3/D7]: slot-1 build = **Stage 1 only (a single fixed board + document props)**, NOT full multi-artboard. This system also **owns the Units + world↔screen coordinate contract** (px/pt/mm/cm/in + px-per-unit + origin), built before it hardcodes unitless coords — Transform/Snapping/Rulers/Grid all consume it.
@@ -1393,7 +1391,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 **1. Document model & data foundation** _(Stage 1 — core/MVP)_
 - 1.1 Document = top-level container — holds N artboards + global settings; everything in the schema (Blender-RNA-style single source of truth) ✅ (have basic — single canvas exists)
 - 1.2 Core document properties — title/name, canvas/scratch area (infinite board outside artboards), version, created/modified timestamps
-  - 1.2.a Global units (see Document Setup §6) stored once, all coords derive from it
+  - 1.2.a Global units (see Document Setup 6) stored once, all coords derive from it
   - 1.2.b Color format flag (RGB vs CMYK) at document level — affects all swatches/rendering
   - 1.2.c Raster effects resolution (PPI) used for rasterized effects/export
 - 1.3 Artboard object schema — each artboard is a first-class node: id, name, index/order, x/y position (in canvas/global coords), width, height, rotation (0 default; advanced), background fill, bleed values, ruler origin offset
@@ -1414,7 +1412,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
   - 2.1.e Bleed (top/right/bottom/left, link toggle)
   - 2.1.f Advanced: color mode (RGB/CMYK), raster effects PPI, preview mode
 - 2.2 Preset categories (tabs/sidebar) — Web, Print, Mobile/Devices, Film & Video, Art & Illustration, Social, Custom/Recent _(Stage 2 — standard for full preset library; Stage 1 ships a short list)_
-- 2.3 Preset detail — each preset = name, W, H, unit, orientation, color mode, PPI, bleed defaults (see §7 size library)
+- 2.3 Preset detail — each preset = name, W, H, unit, orientation, color mode, PPI, bleed defaults (see 7 size library)
 - 2.4 Recent / saved custom presets — user can save current setup as a named template _(Stage 3 — advanced)_
 - 2.5 "Create" produces document + artboard(s) and fits view to them
 
@@ -1436,7 +1434,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - 3.6 Delete artboard — Delete key / panel; option to delete frame only vs frame + content; last-artboard guard (can't delete the only one)
 - 3.7 Rotate artboard — set 0/90/180/270 (portrait↔landscape preserving content) and free rotate _(Stage 3 — advanced)_
 - 3.8 Snapping & alignment while editing — snap artboard edges/centers to other artboards, guides, grid, pixel grid; smart guides with gap/spacing hints ✅ (align/distribute exists to extend)
-- 3.9 Reorder by drag among siblings (re-indexes artboard numbers) — primarily via panel (§4) but reflectable here
+- 3.9 Reorder by drag among siblings (re-indexes artboard numbers) — primarily via panel (4) but reflectable here
 
 **4. Artboards panel** _(Stage 1 — core/MVP for list; richer options Stage 2)_
 - 4.1 Panel purpose — list of all artboards with index number + name; the management hub
@@ -1446,7 +1444,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - 4.4 Row actions / panel buttons — New (+), Duplicate, Delete (trash); move up / move down
 - 4.5 Rename — inline edit; auto-name scheme ("Artboard 1", "Artboard 2") + bulk rename pattern _(Stage 2)_
 - 4.6 Panel menu (overflow) — New Artboard, Duplicate, Delete, Delete Empty Artboards, Artboard Options…, Rearrange All Artboards…, Auto-rename/renumber, Convert selection→artboard ✅(have inspector/panel shell)
-- 4.7 Per-row export quick action — set export target / open export for this artboard _(Stage 2; ties to §11)_
+- 4.7 Per-row export quick action — set export target / open export for this artboard _(Stage 2; ties to 11)_
 - 4.8 Filter/search rows when many artboards _(Stage 3)_
 
 **5. Artboard management operations** _(Stage 1 core for the basics; auto-rearrange Stage 2)_
@@ -1470,7 +1468,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - 6.1 Entry — File ▸ Document Setup; a modal/inspector panel; some fields editable later, some at-create only
 - 6.2 Units — global ruler unit dropdown: px, pt, pica, in, mm, cm, em/percent; separate unit overrides for type (pt) and stroke if desired
   - 6.2.a Changing units re-displays all measurements; underlying storage stays canonical (e.g. always store in pt or document-unit)
-- 6.3 Dimensions & presets — edit document/artboard default size; orientation toggle; link to preset library (§7)
+- 6.3 Dimensions & presets — edit document/artboard default size; orientation toggle; link to preset library (7)
 - 6.4 DPI / PPI — resolution for the document; raster-effects resolution (72 screen / 150 medium / 300 high); used by export scaling & rasterized effects
 - 6.5 Bleed — top/right/bottom/left, link/unlink chain; shown as red guide outside artboard; included in print export _(Stage 2)_
 - 6.6 Color format — RGB vs CMYK document mode; switching converts/warns; affects color picker, swatches, export _(Stage 2; CMYK pipeline is heavy — Stage 3 for accurate conversion)_
@@ -1557,7 +1555,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 8. Export system
+## Export system
 *Getting finished artwork out of Varos in every format and configuration — single Export As, batch Export for Screens, a persistent Asset Export panel, per-artboard/slice output, format-specific options, and clipboard copy.*
 
 **1. Export architecture & shared pipeline** _(Stage 1 — core/MVP)_
@@ -1614,7 +1612,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
   - 2.5.b Absolute width/height in px (with lock-aspect) _(Stage 2)_
   - 2.5.c Resolution/DPI field (72/144/150/300/PPI custom) — drives raster pixel count for print _(Stage 2)_
   - 2.5.d Resampling/interpolation method (bilinear/bicubic/nearest for pixel art) _(Stage 3)_
-- 2.6 Format-specific options panel switches live with the format dropdown (see §6)
+- 2.6 Format-specific options panel switches live with the format dropdown (see 6)
 - 2.7 Export button + "Export and keep dialog open" / Cancel
 - 2.8 Anti-alias toggle (on/off/art-optimized vs type-optimized) _(Stage 2)_
 
@@ -1622,7 +1620,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 - 3.1 Purpose — one dialog, many artboards × many formats × many scales in a single run (Illustrator "Export for Screens")
 - 3.2 Two tabs: **Artboards** and **Assets**
   - 3.2.a Artboards tab — grid of all artboard thumbnails with checkboxes; select all/range/by name
-  - 3.2.b Assets tab — items dragged into the Asset Export panel (see §4) appear here
+  - 3.2.b Assets tab — items dragged into the Asset Export panel (see 4) appear here
 - 3.3 Selection controls — Select All / individual checkboxes / range string / filter by artboard-name prefix
 - 3.4 Output destination — single root folder picker
   - 3.4.a "Create sub-folders" toggle — group output by format (PNG/, SVG/) or by scale (1x/, 2x/)
@@ -1770,7 +1768,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 9. Geometric-logic tools
+## Geometric-logic tools
 *The geometry-computing tools — Line Segment, Shape Builder, cut tools (Scissors/Knife/Eraser), and Clipping Mask / Compound Path — that build, split, merge, and mask vector geometry through direct canvas interaction.*
 
 **1. Shared foundations for all geometric-logic tools** _(Stage 1 — core/MVP)_
@@ -1943,7 +1941,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 10. Text / Type system
+## Text / Type system
 *The full typography stack — point/area/path text objects, a GPU text engine (shaping + line layout + glyph rendering), and the Character/Paragraph/OpenType/Glyphs/Styles panels that drive them, Latin-first with Arabic shaping flagged as the later moat.*
 
 **1. Text objects & creation tools** _(Stage 1 — core/MVP)_
@@ -2146,7 +2144,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 11. Effects / Appearance System
+## Effects / Appearance System
 *A non-destructive appearance stack per object — multiple fills/strokes, live Effects (shadow, glow, blur, distort, warp, 3D, round corners), Graphic Styles, and Expand Appearance.*
 
 **1. Core concept — the non-destructive appearance stack model** _(Stage 1 — core/MVP)_
@@ -2302,7 +2300,7 @@ Build in THIS sequence. The detailed sections below keep their ORIGINAL §number
 
 ---
 
-## 12. Comments / Collaboration system
+## Comments / Collaboration system
 *Canvas-anchored comment pins with threads, replies, reactions, @mentions, resolve/reopen, a filterable comments panel, presence/cursors, and share/version flows — local-first in the .varos file with an optional backend for real-time multi-user sync.*
 
 **0. Architecture & offline-vs-backend split** _(Stage 1 — core/MVP)_

@@ -51,7 +51,7 @@ options against Varos's exact constraints. Findings, as **guidance**:
   are not starting from scratch.
 - **wgpu version note:** the renderer is pinned to `wgpu 0.19`; current egui/Iced/Vello need `wgpu ~0.29`. For
   the **full** build the bump is needed; for an early visual proof an older compatible egui can answer the look
-  question without it. **You decide the sequencing** (see §4).
+  question without it. **You decide the sequencing** (see 4).
 - egui's default look is plain by design — that's fine: use it as the **skeleton** (layout / events / widgets)
   and **hand-paint the beautiful chrome** (rounded panels, soft shadow, later frosted glass) in our own wgpu
   pass. That hand-painted layer is also what keeps the seam clean (egui can be swapped out later).
@@ -60,7 +60,7 @@ Full technical detail: **`D:/VAROS/docs/GPU_UI_SPIKE_BRIEF.md`**. Palette/look: 
 
 ## 4. Your Decision Freedom (read this carefully)
 
-**The GOAL and the GATES (§1, §7) are non-negotiable. The HOW is yours.** We trust your engineering judgment:
+**The GOAL and the GATES (1, 7) are non-negotiable. The HOW is yours.** We trust your engineering judgment:
 
 - egui is the *researched recommendation*, not a lock. If, with reasoning, you find a better fit for the goal,
   **you may choose it** — just state why.
@@ -81,7 +81,7 @@ Full technical detail: **`D:/VAROS/docs/GPU_UI_SPIKE_BRIEF.md`**. Palette/look: 
 board that **fills 100% of the screen**, with **ZERO black** anywhere around it (you see the board around the
 rounded panel). Nothing else floating, no clutter. **Do not proceed until Ahmed approves this in the real window.**
 
-**Step 2 — make it beautiful:** match the design exactly (colors, spacing, soft shadow from §6/UI_FIGMA_SPEC),
+**Step 2 — make it beautiful:** match the design exactly (colors, spacing, soft shadow from 6/UI_FIGMA_SPEC),
 then add **frosted glass as the DEFAULT** + a **settings toggle to turn it off** (→ solid). Keep frosting cheap
 (blur only the panel's region, downsample, cache while the canvas is idle) and measure its cost while drawing.
 
@@ -126,7 +126,7 @@ around it; the pen feels unchanged. PASS → continue to Step 2. FAIL → fix be
 
 ## 8. Working Rules
 - Start **clean and simple** — one panel, no clutter. **One thing at a time**, Ahmed verifies each.
-- **No silent corner-cutting / no skipped steps** (§4).
+- **No silent corner-cutting / no skipped steps** (4).
 - **Never break the current app.**
 - Talk to Ahmed in **simple, short Egyptian Arabic** (he's a designer, not a coder) — explain with design
   analogies, no engineering jargon.

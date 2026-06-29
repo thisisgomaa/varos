@@ -5,7 +5,7 @@
 > Source = 6 real Illustrator screenshots Ahmed gave (described inline below). **Most of this already
 > exists in `varos-core/src/editor.rs`** — this stage is mostly UI structure + the color system + pro number inputs.
 
-> ⚠️ **Reconciliation:** This **supersedes the right-dock "Design | Layers" tabs** in `UI_FIGMA_SPEC.md §2`.
+> ⚠️ **Reconciliation:** This **supersedes the right-dock "Design | Layers" tabs** in `UI_FIGMA_SPEC.md 2`.
 > The right dock becomes Illustrator's two-group structure (below). Everything else in UI_FIGMA_SPEC
 > (palette, 12px radius, floating shadow, Inter/JetBrains Mono, the cursor set) **still applies.**
 
@@ -28,7 +28,7 @@ its rectangle** (dropdowns/menus get clipped). These are architectural, **not CS
 - Panels are **solid (opaque)** and **docked to the window edges** (top bar · left tool rail · right dock). No transparency over the canvas.
 - The **wgpu canvas stays a NATIVE surface in the center**; pointer input goes **straight to native**. This **protects the pen feel** (our #1 validated asset). **Do NOT route canvas input through the web layer.**
 - Any popup that must overlay the canvas (Color Picker, etc.) = its **own borderless window** (the Color Picker already works this way). Keep panel dropdowns inside their docked panel bounds.
-- Everything else in this spec + `UI_FIGMA_SPEC.md` still holds: the Illustrator-style organization, the dark Varos palette/fonts, and the cheap show/hide flexibility (§0.5).
+- Everything else in this spec + `UI_FIGMA_SPEC.md` still holds: the Illustrator-style organization, the dark Varos palette/fonts, and the cheap show/hide flexibility (0.5).
 
 **Dropped for now (revisit post-v1 ONLY via a pen-feel spike):** the floating-glass / canvas-shows-through-panels
 look (= one fullscreen webview + IPC input forwarding). Not now — the pen-feel risk is unverified, and we
@@ -44,7 +44,7 @@ tab row + a 48px floating-control-pill row); (2) the right panels render as **fl
 - **Right dock → narrower + FLUSH, not floating cards.** `DOCK_W: 300 → ~248`. Panel content fills the
   dock **edge-to-edge** (like Figma / Illustrator real docks) — **no inner card margins, no rounded
   floating cards inside a black dock.** Removes the black around the cards.
-- **Consolidate to ONE right panel** (Ahmed's call — **supersedes the two-group A/B split in §1**):
+- **Consolidate to ONE right panel** (Ahmed's call — **supersedes the two-group A/B split in 1**):
   `Align` + `Pathfinder` become **collapsible sections inside the Properties panel** (or a compact tab
   strip at the panel top) — one continuous flush panel, not two stacked cards with a gap.
 - Keep the **`Panels` toggle** (already present) to hide the whole right dock → full-bleed canvas on demand.
@@ -55,7 +55,7 @@ Net: ~44px more canvas height + ~52px more width, and the layout reads as intent
 Build every panel (Transform, Align, Pathfinder, Properties, Layers, Color, Swatches) as an
 **independent, self-contained module**. Then, this stage only:
 - **Show / hide each panel individually** — a **Window menu** + a close `✕` on each panel. (`NEW-UI`, cheap.)
-- Ship the **good default layout** in §1 (the Illustrator-style arrangement from Ahmed's screenshots).
+- Ship the **good default layout** in 1 (the Illustrator-style arrangement from Ahmed's screenshots).
 - **Seam rule:** give each panel a standard interface so a real **docking system can be added LATER
   without rewriting the panels.**
 - 🚫 **DO NOT build now (post-v1):** the full drag-to-dock / tear-off / tab-stacking / resizable-splitter
@@ -69,7 +69,7 @@ Net this stage: clean modular panels + per-panel show/hide + a solid default lay
 
 ### GROUP A (top): tabs `Transform · Align · Pathfinder`  (＋ panel menu ≡)
 **Transform tab** — 9-point reference selector · `X` `Y` `W` `H` · rotation `∠` · flip-H / flip-V.
-- `EXISTS`: `obj_bbox`, `start_transform`, bbox handles. **The numeric fields must become editable** (see §4). Flip = `NEW-SMALL` (reflect selection H/V).
+- `EXISTS`: `obj_bbox`, `start_transform`, bbox handles. **The numeric fields must become editable** (see 4). Flip = `NEW-SMALL` (reflect selection H/V).
 
 **Align tab** (exact layout from screenshots 1 & 3):
 - **Align Objects:** 6 buttons — horiz: left / center / right · vert: top / middle / bottom. → `EXISTS` `align(mode)`.
@@ -102,13 +102,13 @@ Net this stage: clean modular panels + per-panel show/hide + a solid default lay
 ---
 
 ## 2. LEFT TOOLBAR — floating vertical column (screenshot 2)
-- Detach the tool rail from the edge → **floating rounded column** on the left (Varos floating style, UI_FIGMA_SPEC §3).
+- Detach the tool rail from the edge → **floating rounded column** on the left (Varos floating style, UI_FIGMA_SPEC 3).
 - Tools stay as-is (no new tools). 
 - **Bottom cluster = the Fill / Stroke control** (the thing Ahmed pointed at):
   - **Fill square** overlapping **Stroke square**; **Swap** arrow (↩, `Shift+X`) top-right; **Default** (small black/white, `D`) bottom-left.
   - Row under it: **[Color]** · **[Gradient]** · **[None ⃠]** — active paint type. Color + None = `EXISTS` (`apply_paint(None)`); Gradient = `DEFER` (show disabled).
   - (IL's three draw-mode buttons below = `SKIP`.)
-- Clicking the Fill or Stroke square → opens the **Color Picker** (§3).
+- Clicking the Fill or Stroke square → opens the **Color Picker** (3).
 - → `EXISTS`: `PaintTarget` (Fill/Stroke), `swap_paint`, `apply_paint`, `swap_colors`. Wire keys: `X` focus · `Shift+X` swap · `D` default · `/` none.
 
 ---
@@ -117,11 +117,11 @@ Net this stage: clean modular panels + per-panel show/hide + a solid default lay
 **Color Picker dialog:**
 - Big **Saturation/Value square** + vertical **Hue bar**.
 - Live, mutually-linked fields: **HSB** (H° / S% / B%) · **RGB** (0–255) · **Hex** (#) · **CMYK** (C/M/Y/K %).
-- new-vs-current preview swatch · **Color Swatches** button (→ §Swatches) · OK / Cancel.
+- new-vs-current preview swatch · **Color Swatches** button (→ Swatches) · OK / Cancel.
 - Color math: HSV↔RGB↔Hex exact. RGB↔CMYK **approximate** (no ICC profile — for parity, display only).
 **Docked Color panel** (compact): hue bar + hex + active mode, for quick edits without the dialog.
 **Swatches:** a saved-colors grid — add current, click-to-apply, remove. Store in the document (or app prefs).
-- All number fields here use the §4 pro-input behavior.
+- All number fields here use the 4 pro-input behavior.
 
 ---
 
@@ -143,12 +143,12 @@ rounded **12px** cards with the floating shadow, **Inter** UI + **JetBrains Mono
 ---
 
 ## Build order (no new tools — finish what exists; build the whole stage, then show Ahmed the result)
-1. **Pro number inputs** (§4) — reusable; unlocks every field at once.
-2. **Color system** (§3) — Color Picker (HSB/RGB/Hex/CMYK) + docked Color panel + Swatches + the toolbar Fill/Stroke swatch (§2 bottom).
-3. **Right-dock restructure** (§1) — Group A `Transform·Align·Pathfinder` + Group B `Properties·Layers·Libraries(stub)`; wire the existing Align/Distribute/Pathfinder into the new tabs. Build each panel as an independent module + a **Window menu** to show/hide each (cheap-tier flexibility, §0.5).
-4. **Properties** contextual panel (§1 Group B) — reflow existing controls; defer Quick Actions (keep Arrange).
-5. **Layers** upgrade (§1) — visibility, lock, inline rename, search/filter, thumbnails, footer.
-6. **Floating left toolbar** polish (§2) + Fill/Stroke swatch wired to the picker.
+1. **Pro number inputs** (4) — reusable; unlocks every field at once.
+2. **Color system** (3) — Color Picker (HSB/RGB/Hex/CMYK) + docked Color panel + Swatches + the toolbar Fill/Stroke swatch (2 bottom).
+3. **Right-dock restructure** (1) — Group A `Transform·Align·Pathfinder` + Group B `Properties·Layers·Libraries(stub)`; wire the existing Align/Distribute/Pathfinder into the new tabs. Build each panel as an independent module + a **Window menu** to show/hide each (cheap-tier flexibility, 0.5).
+4. **Properties** contextual panel (1 Group B) — reflow existing controls; defer Quick Actions (keep Arrange).
+5. **Layers** upgrade (1) — visibility, lock, inline rename, search/filter, thumbnails, footer.
+6. **Floating left toolbar** polish (2) + Fill/Stroke swatch wired to the picker.
 
 ## Deferred (NOT this stage)
 Gradient · Libraries · Artboard (blocks Align-to-Artboard) · Quick Actions (Offset/Expand/Recolor/Global Edit/Generative) · Key-Object align · Export.

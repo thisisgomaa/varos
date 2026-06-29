@@ -1,6 +1,6 @@
 # Varos — EXACT UI Spec (pulled from Ahmed's Figma)
 
-> 🔁 **Right-dock UPDATE (2026-06-26):** the inspector is no longer "Design | Layers" (§2 below).
+> 🔁 **Right-dock UPDATE (2026-06-26):** the inspector is no longer "Design | Layers" (2 below).
 > Ahmed evolved it toward **Illustrator's panel structure** — see **`PANELS_PRO_SPEC.md`** for the
 > right dock (`Transform·Align·Pathfinder` + `Properties·Layers·Libraries`), the floating left toolbar
 > with the Fill/Stroke swatch, the pro Color Picker, and pro number inputs. **Keep this file's
@@ -11,7 +11,7 @@
 > rect (clipped dropdowns). So panels are **solid, docked to the edges**; the canvas is native in the
 > center. The "floating pills over the dot-grid" look (control bar / AI bar / floating cards) is **dropped
 > for now** — render those as solid docked bars. Keep the colors, radii (on the solid panels), fonts, and
-> cursor set. See `PANELS_PRO_SPEC.md §0.1`.
+> cursor set. See `PANELS_PRO_SPEC.md 0.1`.
 
 > ⚠️ **This file is the source of truth for the UI look. It SUPERSEDES the colors and the
 > top-bar/layout described in `DESIGN_BRIEF.md` and `../design-reference/design-system.md`.**
@@ -136,11 +136,11 @@ in `pen-spike.html`.
 ---
 
 ## 5. How to apply (incremental — Ahmed verifies each in the real app)
-1. Swap the color tokens in all 3 inline HTML blocks in `main.rs` (TOPBAR_HTML, TOOLS_HTML, PANEL_HTML) to §1. → show Ahmed.
-2. Rebuild the **top bar** to §2 (document tabs + center control bar + green-dot + Share; remove menu bar & V/pre-alpha). → show Ahmed.
-3. Rename inspector tab `Properties → Design`; add the missing sections (Layout/Resizing, Appearance, Typography, Effects, Export) per §2. → show Ahmed.
+1. Swap the color tokens in all 3 inline HTML blocks in `main.rs` (TOPBAR_HTML, TOOLS_HTML, PANEL_HTML) to 1. → show Ahmed.
+2. Rebuild the **top bar** to 2 (document tabs + center control bar + green-dot + Share; remove menu bar & V/pre-alpha). → show Ahmed.
+3. Rename inspector tab `Properties → Design`; add the missing sections (Layout/Resizing, Appearance, Typography, Effects, Export) per 2. → show Ahmed.
 4. Add the bottom AI bar + zoom pill + bottom-left pill (stubs OK). → show Ahmed.
-5. Replace the Lucide "cursors" with the real cursor set in §4. → show Ahmed (he tests the pen feel).
+5. Replace the Lucide "cursors" with the real cursor set in 4. → show Ahmed (he tests the pen feel).
 
 Ahmed leads the look and verifies every step in the real window. Match his Figma pixel-for-pixel —
 when in doubt, open `97:273` and measure.
