@@ -10,3 +10,10 @@ edition = "2021"
 [dependencies]
 i_overlay = "7"
 flo_curves = "0.8"
+# Serde spine (Foundations Stage-0): the model derives Serialize/Deserialize so the .varos
+# document format round-trips. The container (zip) + dialogs live later in the Save system (§4).
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# JSON is the readable round-trip format for the test; the on-disk .varos format is chosen in §4.
+serde_json = "1"

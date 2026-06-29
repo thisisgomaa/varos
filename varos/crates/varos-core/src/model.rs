@@ -3,13 +3,16 @@
 
 use crate::geom::*;
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+// Pt = [f32;2] and Rgba = [f32;4] are type aliases for arrays, which serde already supports —
+// no derive needed (or possible) on them; they round-trip as JSON number arrays.
 
 pub const K: f32 = 0.5522847; // bezier circle constant (ellipse handles)
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Anchor { pub id: u32, pub p: Pt, pub hin: Option<Pt>, pub hout: Option<Pt>, pub smooth: bool }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Path {
     pub id: u32,
     pub anchors: Vec<Anchor>,
@@ -36,14 +39,14 @@ impl Path {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ShapeKind { Rect, Ellipse, Triangle, Polygon }
 
 /// A group: a named container for paths. `parent` lets groups nest (unused in the flat v1).
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Group { pub id: u32, pub name: String, pub parent: Option<u32> }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub paths: Vec<Path>,
     /// Group registry. Membership lives in `group_of` so `Path` (and every Path-construction site)
