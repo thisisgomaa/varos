@@ -61,7 +61,7 @@ pub fn build_bg(view: View, w: f32, h: f32) -> Vec<Vertex> {
     const TARGET: f32 = 30.0;          // desired screen px between dots
     const MIN_PX: f32 = 9.0;           // skip a level finer than this (perf + anti-clutter)
     const BG: [f32; 3] = [0.078, 0.075, 0.075];   // board background (#141313)
-    const DOT: [f32; 3] = [0.21, 0.21, 0.23];     // a dot at full strength
+    const DOT: [f32; 3] = [0.34, 0.34, 0.37];     // a dot at full strength (clearly visible on #141313)
 
     // base-5 level whose world step lands near TARGET px on screen
     let scale = (TARGET / zoom).max(1e-6);
