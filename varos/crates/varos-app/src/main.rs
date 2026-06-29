@@ -376,7 +376,7 @@ fn main() {
                         } else if event.state == ElementState::Pressed {
                             let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
                             let cs = format!("{:?}", code);
-                            if mc && cs == "Digit0" {           // Ctrl+0 = Fit Artboard in Window (Illustrator)
+                            if mc && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {  // Ctrl+0 = Fit Artboard in Window
                                 let a = &ed.doc.artboard;
                                 let sz = window.inner_size();
                                 view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
