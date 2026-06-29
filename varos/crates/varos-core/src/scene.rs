@@ -34,13 +34,16 @@ pub struct Scene {
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     let mut s = Scene::default();
 
-    // ---- ARTBOARD (the page) ---- white paper behind all artwork (pushed first, so it draws over the
-    // dot-grid background); the boundary goes in the overlay so it stays a 1px hairline at any zoom.
+    // ---- ARTBOARD (the page) ---- a DEFINED rectangle sitting on the (infinite, dotted) board: a
+    // white paper Fill (pushed first, so it draws over the grid but behind artwork) + a 1px boundary
+    // hairline in the overlay (constant screen width — never scales with zoom). No drop shadow for now
+    // (kept light; a proper screen-constant page shadow is part of the Artboard deep-spec).
     {
-        let a = &ed.doc.artboard;
-        let ring = vec![[a.x, a.y], [a.x + a.w, a.y], [a.x + a.w, a.y + a.h], [a.x, a.y + a.h]];
+        let ab = &ed.doc.artboard;
+        let (x0, y0, x1, y1) = (ab.x, ab.y, ab.x + ab.w, ab.y + ab.h);
+        let ring = vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
         s.content.push(Prim::Fill { rings: vec![ring.clone()], color: PAPER });
-        let mut edge = ring; edge.push([a.x, a.y]);
+        let mut edge = ring; edge.push([x0, y0]);
         s.overlay.push(Prim::Stroke { pts: edge, width: 1.0, color: AB_EDGE });
     }
 

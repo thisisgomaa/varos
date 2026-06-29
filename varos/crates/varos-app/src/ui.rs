@@ -187,6 +187,10 @@ impl Ui {
     }
     /// Is the pointer over a panel / popup? (canvas strokes must NOT be swallowed by the panels)
     pub fn wants_pointer(&self) -> bool { self.ctx.is_pointer_over_area() || self.ctx.wants_pointer_input() }
+    /// Is a text field actually focused? Only THEN should keys go to egui instead of canvas shortcuts.
+    /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
+    /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
+    pub fn wants_keyboard(&self) -> bool { self.ctx.wants_keyboard_input() }
     /// Is the pointer over a scrubbable number field? (so the host shows the ↔ resize cursor)
     pub fn scrub_hover(&self) -> bool { self.cursor == egui::CursorIcon::ResizeHorizontal }
     /// (Re)start the startup splash timer — call right before revealing the window.

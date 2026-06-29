@@ -365,7 +365,9 @@ fn main() {
                     window.request_redraw();
                 }
                 WindowEvent::KeyboardInput { event, .. } => {
-                    if egui_consumed { /* typing into an egui field — don't trigger canvas shortcuts */ }
+                    // Only skip canvas shortcuts when a text field is actually focused — NOT on egui's
+                    // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
+                    if gui.wants_keyboard() { /* typing into a field — keys go to egui */ }
                     else if let PhysicalKey::Code(code) = event.physical_key {
                         if code == KeyCode::Space {
                             space_down = event.state == ElementState::Pressed;
