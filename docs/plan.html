@@ -62,7 +62,9 @@
   .pt{display:flex;align-items:flex-start;gap:9px;padding:6px 8px;border-radius:7px}
   .pt:hover{background:var(--hover)}
   .pt .id{font-family:var(--mono);font-size:11px;color:var(--faint);min-width:26px;padding-top:2px}
-  .pt .t{flex:1;font-size:13px}
+  .pt .tc{flex:1;min-width:0}
+  .pt .t{font-size:13px}
+  .pt .ar{font-size:12.5px;color:var(--muted);direction:rtl;margin-top:2px;line-height:1.5}
   .pt .meta{display:flex;gap:6px;align-items:center;flex-shrink:0}
   .grp{font-size:10.5px;font-family:var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.8px;margin:12px 4px 4px}
   .layer{margin:14px 0 4px;font-weight:600;color:var(--text)}
@@ -82,7 +84,7 @@
       <h1>Varos — Plan</h1>
       <div class="sub">The whole roadmap, every phase &amp; point. Source of truth: <code>docs/DETAILED_ROADMAP.md</code>.</div>
     </div>
-    <span class="pill">updated <b id="upd" style="color:var(--text)">&nbsp;2026-06-29</b></span>
+    <span class="pill">updated <b id="upd" style="color:var(--text)">&nbsp;2026-06-30</b></span>
   </div>
 
   <div class="row legend">
@@ -382,24 +384,62 @@ const SYSTEMS = [
   ]},
 ];
 
+// ---- Arabic gloss next to each point (keyed by system name; FOUNDATION for the base) ----
+const GLOSS = {
+  FOUNDATION: {
+    A1:'الألوان والمسافات والخطوط الأساسية في مكان واحد — أي تغيير في الثيم من هنا.',
+    A2:'شكل اللوحة نفسها: حواف دائرية، خلفية غامقة، ظل خفيف.',
+    A3:'الأزرار بكل أنواعها (أساسي · ثانوي · أيقونة · خطر).',
+    A4:'مفاتيح تشغيل/قفل وأزرار «اختار واحد من كذا» (زي إظهار/قفل الطبقة).',
+    A5:'خانة الرقم اللي تكتب فيها أو تسحب عشان تغيّر القيمة (X/Y/W/H…).',
+    A6:'خانة كتابة نص (إعادة تسمية، hex، بحث).',
+    A7:'القوايم المنسدلة + كليك-يمين + قائمة البرنامج.',
+    A8:'شرايط السحب (الشفافية، سمك الخط، حجم الخط).',
+    A9:'مربعات اللون (Fill/Stroke) اللي تدوس عليها يفتح منتقي الألوان.',
+    A10:'التابات والأقسام اللي تتفتح وتتقفل + التلميحات.',
+    A11:'قائمة Window: تظهّر وتخفي كل لوحة.',
+    A12:'مجموعة الأيقونات (Lucide) المرسومة في البرنامج.',
+    A13:'شكل العنصر وهو hover / مضغوط / مختار / مقفول.',
+    A14:'مؤشرات الماوس لكل أداة (سهم، قلم، يد…).',
+    B1:'بنية البيانات: المسارات + المجموعات + الـIDs الثابتة.',
+    B2:'كل تعديل بيمشي كأمر واحد (عشان الـundo والترتيب).',
+    B3:'تراجع / إعادة.',
+    B4:'اللوحات بتقرا نسخة ثابتة من الحالة كل فريم (مفيش تضارب).',
+    B5:'التمبليت/الخطوات الثابتة اللي أي سيستم جديد يمشي عليها.',
+    B6:'تعرّف الخاصية مرة واحدة → تطلع لوحدها في اللوحة والحفظ (مؤجّل عمداً).',
+    B7:'توجيه الإدخال للأداة الصح + المفاتيح المعدّلة (Shift/Alt/Ctrl).',
+    B8:'الفصل الصلب: الـcore مالوش أي علاقة بالواجهة.',
+    C1:'رسم الأشكال على كارت الشاشة (تعبئة · خطوط · مسارات).',
+    C2:'رياضة منحنيات البيزييه.',
+    C3:'رياضة دمج/طرح/تقاطع الأشكال (Pathfinder).',
+    C4:'تحويلات الألوان RGB↔HSB↔CMYK↔Hex (لسه مش متعملة).',
+    C5:'رياضة التحريك/التحجيم/التدوير (مصفوفة موحّدة لسه ناقصة للـshear).',
+    C6:'نظام الإحداثيات + الزووم + الكاميرا.',
+    C7:'الوحدات px/pt/mm + عقد world↔screen.',
+    C8:'تسجيل الموديل لملف ‎.varos‎ ورجوعه زي ما هو.',
+    C9:'الجسر بين اللوحات والمحرك (ناقل الـOp).',
+  },
+};
+
 // ---- render ----
 const stClass = s => ({d:'b-done',p:'b-partial',n:'b-none',x:'b-none'}[s] || 'b-plan');
 const stMark  = s => ({d:'✅',p:'🟡',n:'🔴',x:'❌'}[s] || '○');
 const stgClass = g => g===1?'s1':g===2?'s2':g===3?'s3':'sx';
 const stgLabel = g => g===1?'S1':g===2?'S2':g===3?'S3':String(g);
 
-function ptRow([id,t,stage,st]){
-  return `<div class="pt"><span class="id">${id}</span><span class="t">${t}</span>
+function ptRow([id,t,stage,st], gloss){
+  const ar = (gloss && gloss[id]) ? `<div class="ar">${gloss[id]}</div>` : '';
+  return `<div class="pt"><span class="id">${id}</span><div class="tc"><span class="t">${t}</span>${ar}</div>
     <span class="meta"><span class="st ${stgClass(stage)}">${stgLabel(stage)}</span>
     <span class="badge ${stClass(st)}">${stMark(st)}</span></span></div>`;
 }
 // group points by stage bucket for readability
-function ptsByStage(pts){
+function ptsByStage(pts, gloss){
   const buckets = {1:[],2:[],3:[],other:[]};
   pts.forEach(p=>{ const g=p[2]; (g===1||g===2||g===3?buckets[g]:buckets.other).push(p); });
   let html='';
   [['1','Stage 1 · core'],['2','Stage 2 · standard'],['3','Stage 3 · advanced'],['other','Meta / cross-cutting']].forEach(([k,label])=>{
-    if(buckets[k].length){ html+=`<div class="grp">${label}</div>`+buckets[k].map(ptRow).join(''); }
+    if(buckets[k].length){ html+=`<div class="grp">${label}</div>`+buckets[k].map(p=>ptRow(p,gloss)).join(''); }
   });
   return html;
 }
@@ -422,7 +462,7 @@ document.getElementById('foundation').innerHTML =
      <span style="color:var(--muted);font-size:12.5px">— most already built; Stage-0 spine (serde + units) ✅</span></summary>
    <div class="pts">` +
   FOUNDATION.map(([lid,title,items])=>
-    `<div class="layer"><span class="lid">${lid}</span>${title}</div>` + items.map(ptRow).join('')
+    `<div class="layer"><span class="lid">${lid}</span>${title}</div>` + items.map(p=>ptRow(p, GLOSS.FOUNDATION)).join('')
   ).join('') + `</div></details>`;
 
 // systems
@@ -436,7 +476,7 @@ document.getElementById('systems').innerHTML = SYSTEMS.slice().sort((a,b)=>a.ste
   return `<details ${open}><summary><span class="sysnum">${s.step}</span>
       <span class="sysname">${s.nm}</span>${hint}</summary>
     <div class="syspurpose">${s.purpose}</div>${note}
-    <div class="pts">${ptsByStage(s.pts)}</div></details>`;
+    <div class="pts">${ptsByStage(s.pts, GLOSS[s.nm])}</div></details>`;
 }).join('');
 </script>
 </body>
