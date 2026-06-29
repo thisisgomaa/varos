@@ -341,4 +341,4 @@ After Step 7 we already *feel* like Illustrator for single-object editing; after
 
 ---
 
-*Document ends. This is the build spec — Part B §B.5 is the ordered, browser-verifiable work plan; §B.1 is the bridge table for every place Penpot fights Illustrator; §B.6 are the guardrails that keep us from sliding back into the mode-based fight.*
+*Document ends. This is the build spec — Part B B.5 is the ordered, browser-verifiable work plan; B.1 is the bridge table for every place Penpot fights Illustrator; B.6 are the guardrails that keep us from sliding back into the mode-based fight.*

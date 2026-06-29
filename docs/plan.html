@@ -124,29 +124,29 @@
 <script>
 // ---- data (edit here to keep in sync with DETAILED_ROADMAP.md) ----
 const ORDER = [
-  {k:'0', nm:'Foundations', sec:'§0', state:'active'},
-  {k:'1', nm:'Artboard', sec:'§7', state:'next'},
-  {k:'2', nm:'Transform + Snap', sec:'§3 + §6'},
-  {k:'3', nm:'Layers', sec:'§5'},
-  {k:'4', nm:'Colour', sec:'§1'},
+  {k:'0', nm:'Foundations', state:'active'},
+  {k:'1', nm:'Artboard', state:'next'},
+  {k:'2', nm:'Transform + Snap'},
+  {k:'3', nm:'Layers'},
+  {k:'4', nm:'Colour'},
   {milestone:'🔖 Slice: draw → colour → save → reopen  ("make a logo & keep it")'},
-  {k:'5', nm:'Stroke', sec:'§2'},
-  {k:'6', nm:'Save system', sec:'§4'},
-  {k:'7', nm:'Geometric tools', sec:'§9'},
-  {k:'8', nm:'Text', sec:'§10'},
-  {k:'9', nm:'Export', sec:'§8'},
-  {k:'10', nm:'Effects', sec:'§11'},
-  {k:'11', nm:'Comments', sec:'§12'},
+  {k:'5', nm:'Stroke'},
+  {k:'6', nm:'Save'},
+  {k:'7', nm:'Geometric tools'},
+  {k:'8', nm:'Text'},
+  {k:'9', nm:'Export'},
+  {k:'10', nm:'Effects'},
+  {k:'11', nm:'Comments'},
 ];
 
 const DECISIONS = [
-  ['1','<b>Serde spine is Foundations, not Save §4.</b> Derive Serialize/Deserialize on the model + a round-trip test, before any system. ✅ done.'],
-  ['2','<b>Layers (§5) is a MODEL system, not a panel.</b> Build the real scene-graph (Layer type, z-order, sublayers) — today it is a flat Vec + group_of side-table.'],
+  ['1','<b>Serde spine is Foundations, not the Save system.</b> Derive Serialize/Deserialize on the model + a round-trip test, before any system. ✅ done.'],
+  ['2','<b>Layers is a MODEL system, not a panel.</b> Build the real scene-graph (Layer type, z-order, sublayers) — today it is a flat Vec + group_of side-table.'],
   ['3','<b>One owner for Units + coordinate-space, before Artboard.</b> px/pt/mm + world↔screen contract, built once. ✅ done.'],
   ['4','<b>Depth-first + one early confirmation slice.</b> After Colour: draw → colour → save → reopen. Proves the foundation before 9 systems stack on it. One slice, not breadth.'],
   ['5','<b>B6 master-component is NOT built in the foundation.</b> Build Color+Stroke+Transform by hand, then extract B6 from their real shapes. The foundation is explicitly not 100% complete before system 1.'],
   ['6','<b>Codex (after the foundation):</b> freeze Document/Op/Snap shape (one owner); no Color‖Stroke parallelism; clean seams by crate or non-adjacent systems.'],
-  ['7','<b>Order tweaks:</b> Snapping with/before Transform; Artboard slot-1 = Stage-1 single board; wgpu 0.19→0.29 = its own spike w/ fallback (not a Phase-1 gate); §9.3 handle-coupling reconciled to the verified geometry-couple (Alt breaks).'],
+  ['7','<b>Order tweaks:</b> Snapping with/before Transform; Artboard slot-1 = Stage-1 single board; wgpu 0.19→0.29 = its own spike w/ fallback (not a Phase-1 gate); Transform handle-coupling reconciled to the verified geometry-couple (Alt breaks).'],
   ['8','<b>v1 = Illustrator-class, not Figma-class.</b> Components/Symbols + Frames/Auto-Layout are post-v1 systems; extensibility/plugins/single-schema gets its true (deferred) weight.'],
 ];
 
@@ -193,7 +193,7 @@ const FOUNDATION = [
 ];
 
 const SYSTEMS = [
-  {n:1, sec:'§1', nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', pts:[
+  {step:4, nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', pts:[
     ['1','Color targets & active-color control (Fill/Stroke/None)',1,'d'],
     ['2','Color models / color-space representations',1,'p'],
     ['3','Color Picker dialog (full)',1,'p'],
@@ -207,7 +207,7 @@ const SYSTEMS = [
     ['11','Persistence, interop & document integration',2,''],
     ['12','Accessibility, theming & ergonomics',3,''],
   ]},
-  {n:2, sec:'§2', nm:'Stroke system', purpose:'Weight, caps, joins, alignment, dashes, arrowheads, variable width, stroke-to-fill order; Stroke panel + Width tool.', pts:[
+  {step:5, nm:'Stroke system', purpose:'Weight, caps, joins, alignment, dashes, arrowheads, variable width, stroke-to-fill order; Stroke panel + Width tool.', pts:[
     ['1','Stroke data model & foundations',1,''],
     ['2','Weight (thickness)',1,'d'],
     ['3','Caps (line ends)',1,''],
@@ -225,7 +225,7 @@ const SYSTEMS = [
     ['15','Selection, multi-edit & state behavior',1,''],
     ['16','Edge cases & interactions','2–3',''],
   ]},
-  {n:3, sec:'§3', nm:'Transform system', purpose:'Exact numeric + tool transforms — X/Y/W/H, rotate, shear, flip, 9-point pivot, Move/Rotate/Scale/Reflect/Shear, Free Transform, Offset Path.', note:'Build WITH Snapping (§6) — precise transform needs snap to feel right. §9.3 handle-coupling is reconciled to the verified model (geometry-couple, Alt breaks).', pts:[
+  {step:2, nm:'Transform system', purpose:'Exact numeric + tool transforms — X/Y/W/H, rotate, shear, flip, 9-point pivot, Move/Rotate/Scale/Reflect/Shear, Free Transform, Offset Path.', note:'Build WITH Snapping — precise transform needs snap to feel right. Handle-coupling is reconciled to the verified model (geometry-couple, Alt breaks).', pts:[
     ['0','Foundations & shared model',1,''],
     ['1','Transform panel',1,''],
     ['2','Top control-bar numeric fields',1,''],
@@ -242,7 +242,7 @@ const SYSTEMS = [
     ['13','Canvas feedback & affordances',1,''],
     ['14','Edge cases & correctness',2,''],
   ]},
-  {n:4, sec:'§4', nm:'Save / File system', purpose:'The native .varos file system — open/save the document, New/templates, autosave + recovery, version history, recent files, Place/Import.', note:'The serde spine moved to Foundations (✅). This system = the container (zip/OPC) + native dialogs + dirty/recovery guards on top of a schema that already round-trips. Split Stage 1 → 1a round-trip, 1b dialogs/guards.', pts:[
+  {step:6, nm:'Save / File system', purpose:'The native .varos file system — open/save the document, New/templates, autosave + recovery, version history, recent files, Place/Import.', note:'The serde spine moved to Foundations (✅). This system = the container (zip/OPC) + native dialogs + dirty/recovery guards on top of a schema that already round-trips. Split Stage 1 → 1a round-trip, 1b dialogs/guards.', pts:[
     ['1','The .varos document format — on-disk container',1,''],
     ['2','New document & New-from-template',1,''],
     ['3','Save / Save As / Save a Copy / Template',1,''],
@@ -255,7 +255,7 @@ const SYSTEMS = [
     ['10','OS & shell integration',2,''],
     ['11','Panels & UI surfaces this system needs','ui',''],
   ]},
-  {n:5, sec:'§5', nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, targeting, z-order, grouping, masks, compound paths.', note:'MODEL system, not panel assembly. Today the model is a flat Vec<Path> + group_of side-table. Stage 1 = build the real scene-graph (Layer/node tree) and migrate selection + render-order + every tool onto it.', warn:true, pts:[
+  {step:3, nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, targeting, z-order, grouping, masks, compound paths.', note:'MODEL system, not panel assembly. Today the model is a flat Vec<Path> + group_of side-table. Stage 1 = build the real scene-graph (Layer/node tree) and migrate selection + render-order + every tool onto it.', warn:true, pts:[
     ['1','Layers panel — shell & structure',1,'d'],
     ['2','Layer & object naming',1,'p'],
     ['3','Visibility (show/hide)',1,''],
@@ -278,7 +278,7 @@ const SYSTEMS = [
     ['20','Panel options & global commands menu',2,''],
     ['21','Schema, performance & edge cases','x-cut',''],
   ]},
-  {n:6, sec:'§6', nm:'Snapping / Guides / Grid / Rulers', purpose:'The precision substrate — rulers, guides, smart alignment guides, grids, snap-to-geometry, tolerance, live dimension readouts.', note:'Built WITH/before Transform (Decision 7) — drawing + precise transform need snap to feel right.', pts:[
+  {step:2, nm:'Snapping / Guides / Grid / Rulers', purpose:'The precision substrate — rulers, guides, smart alignment guides, grids, snap-to-geometry, tolerance, live dimension readouts.', note:'Built WITH/before Transform (Decision 7) — drawing + precise transform need snap to feel right.', pts:[
     ['0','System foundations & shared snap engine',1,''],
     ['1','Rulers',1,''],
     ['2','Guides (manual ruler guides)',1,''],
@@ -292,7 +292,7 @@ const SYSTEMS = [
     ['10','Menus, shortcuts & discoverability',1,''],
     ['11','Edge cases & correctness','per-stage',''],
   ]},
-  {n:7, sec:'§7', nm:'Artboard / Document system', purpose:'Multiple resizable/named artboards + the document model (units, DPI, color format, bleed, presets).', note:'Slot-1 build = Stage 1 only (a single fixed board + document props), NOT full multi-artboard. Owns the Units + world↔screen coordinate contract (Decision 3) — embeds the DocUnits already built.', pts:[
+  {step:1, nm:'Artboard / Document system', purpose:'Multiple resizable/named artboards + the document model (units, DPI, color format, bleed, presets).', note:'Slot-1 build = Stage 1 only (a single fixed board + document props), NOT full multi-artboard. Owns the Units + world↔screen coordinate contract (Decision 3) — embeds the DocUnits already built.', pts:[
     ['1','Document model & data foundation',1,''],
     ['2','New Document creation flow',1,''],
     ['3','Artboard tool (canvas-direct manipulation)',1,''],
@@ -306,7 +306,7 @@ const SYSTEMS = [
     ['11','Per-artboard export targeting',2,''],
     ['12','Interaction edge cases & polish','2/3',''],
   ]},
-  {n:8, sec:'§8', nm:'Export system', purpose:'Getting artwork out — Export As, batch Export for Screens, Asset Export panel, per-artboard/slice, format options, clipboard copy.', pts:[
+  {step:9, nm:'Export system', purpose:'Getting artwork out — Export As, batch Export for Screens, Asset Export panel, per-artboard/slice, format options, clipboard copy.', pts:[
     ['1','Export architecture & shared pipeline',1,''],
     ['2','Export As (single-shot dialog)',1,''],
     ['3','Export for Screens (batch multi-asset)',2,''],
@@ -319,7 +319,7 @@ const SYSTEMS = [
     ['10','Menus, shortcuts & integration',1,''],
     ['11','Edge cases & correctness','2–3',''],
   ]},
-  {n:9, sec:'§9', nm:'Geometric-logic tools', purpose:'Geometry-computing tools — Line Segment, Shape Builder, cut tools (Scissors/Knife/Eraser), Clipping Mask / Compound Path.', pts:[
+  {step:7, nm:'Geometric-logic tools', purpose:'Geometry-computing tools — Line Segment, Shape Builder, cut tools (Scissors/Knife/Eraser), Clipping Mask / Compound Path.', pts:[
     ['1','Shared foundations for all geometric tools',1,''],
     ['2','Line Segment tool',1,''],
     ['3','Shape Builder tool (engine exists)',2,'p'],
@@ -330,7 +330,7 @@ const SYSTEMS = [
     ['8','Clipping Mask',1,''],
     ['9','Cross-cutting concerns','spans',''],
   ]},
-  {n:10, sec:'§10', nm:'Text / Type system', purpose:'Point/area/path text, a GPU text engine (shaping + layout + glyphs), Character/Paragraph/OpenType/Glyphs/Styles. Latin-first; Arabic = the moat.', pts:[
+  {step:8, nm:'Text / Type system', purpose:'Point/area/path text, a GPU text engine (shaping + layout + glyphs), Character/Paragraph/OpenType/Glyphs/Styles. Latin-first; Arabic = the moat.', pts:[
     ['1','Text objects & creation tools',1,''],
     ['2','Text engine — shaping, layout & rendering','1 / 3',''],
     ['3','Area / container text features',2,''],
@@ -347,7 +347,7 @@ const SYSTEMS = [
     ['14','Defaults, preferences & integration','1/2',''],
     ['15','Arabic / complex-script moat',3,''],
   ]},
-  {n:11, sec:'§11', nm:'Effects / Appearance system', purpose:'Non-destructive appearance stack — multiple fills/strokes, live Effects (shadow/glow/blur/distort/warp/3D), Graphic Styles, Expand Appearance.', pts:[
+  {step:10, nm:'Effects / Appearance system', purpose:'Non-destructive appearance stack — multiple fills/strokes, live Effects (shadow/glow/blur/distort/warp/3D), Graphic Styles, Expand Appearance.', pts:[
     ['1','Core concept — non-destructive appearance stack',1,''],
     ['2','Appearance panel — structure & rows','1/2',''],
     ['3','Multiple fills & strokes per object',2,''],
@@ -365,7 +365,7 @@ const SYSTEMS = [
     ['15','Interaction with other systems','x-cut',''],
     ['16','Performance, caching & edge cases','2+',''],
   ]},
-  {n:12, sec:'§12', nm:'Comments / Collaboration system', purpose:'Canvas-anchored comment pins + threads, reactions, @mentions, resolve/reopen, presence/cursors, share/version. Local-first; optional backend. (Post-v1.)', pts:[
+  {step:11, nm:'Comments / Collaboration system', purpose:'Canvas-anchored comment pins + threads, reactions, @mentions, resolve/reopen, presence/cursors, share/version. Local-first; optional backend. (Post-v1.)', pts:[
     ['0','Architecture & offline-vs-backend split',1,'x'],
     ['1','Comment tool & placing pins',1,'x'],
     ['2','Anchoring & spatial behavior',1,'x'],
@@ -409,7 +409,7 @@ document.getElementById('rail').innerHTML = ORDER.map(s=>{
   if(s.milestone) return `<div class="milestone">${s.milestone}</div>`;
   const cls = s.state==='active'?'active':s.state==='next'?'next':(parseInt(s.k)<0?'':'');
   const tag = s.state==='active'?'<span class="tag tag-active">▶ now</span>':s.state==='next'?'<span class="tag tag-next">next</span>':'';
-  return `<div class="step ${cls}">${tag}<div class="k">${s.k}</div><div class="nm">${s.nm}</div><div class="sec">${s.sec}</div></div>`;
+  return `<div class="step ${cls}">${tag}<div class="k">${s.k}</div><div class="nm">${s.nm}</div></div>`;
 }).join('');
 
 // decisions
@@ -426,14 +426,14 @@ document.getElementById('foundation').innerHTML =
   ).join('') + `</div></details>`;
 
 // systems
-document.getElementById('systems').innerHTML = SYSTEMS.map(s=>{
-  const open = s.n===1 ? 'open' : '';
+document.getElementById('systems').innerHTML = SYSTEMS.slice().sort((a,b)=>a.step-b.step).map(s=>{
+  const open = s.step===1 ? 'open' : '';
   const note = s.note ? `<div class="note ${s.warn?'warn':''}">${s.warn?'⚠️ ':'ⓘ '}${s.note}</div>` : '';
   // mini status summary in the header
   const counts = s.pts.reduce((a,[,,,st])=>{a[st]=(a[st]||0)+1;return a;},{});
   const done = counts.d||0, tot=s.pts.length;
   const hint = done?`<span style="color:var(--green);font-size:11px;font-family:var(--mono)">${done}/${tot} ✅</span>`:'';
-  return `<details ${open}><summary><span class="sysnum">${s.sec}</span>
+  return `<details ${open}><summary><span class="sysnum">${s.step}</span>
       <span class="sysname">${s.nm}</span>${hint}</summary>
     <div class="syspurpose">${s.purpose}</div>${note}
     <div class="pts">${ptsByStage(s.pts)}</div></details>`;
