@@ -3,6 +3,7 @@
 
 pub mod geom;
 pub mod model;
+pub mod units;
 pub mod editor;
 pub mod tools;
 pub mod scene;
@@ -12,3 +13,4 @@ pub use boolean::BoolOp;
 pub use editor::{AlignMode, DistAxis, Editor, Mods, ToolKind, ZOrder};
 pub use geom::{Pt, Rgba, View};
 pub use scene::{build_scene, Prim, Scene};
+pub use units::{DocUnits, Unit};
