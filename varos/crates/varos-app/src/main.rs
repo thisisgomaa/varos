@@ -192,6 +192,11 @@ fn preview_svgs(dir: &str) {
 }
 
 fn main() {
+    // crash breadcrumb: any panic is written to target/panic.txt (the app has no console window).
+    std::panic::set_hook(Box::new(|info| {
+        let _ = std::fs::create_dir_all("target");
+        let _ = std::fs::write("target/panic.txt", format!("VAROS PANIC\n{info}\n"));
+    }));
     if std::env::args().any(|a| a == "--dump-cursors") { dump_cursors(); return; }
     {
         let args: Vec<String> = std::env::args().collect();
@@ -208,7 +213,7 @@ fn main() {
         }
     }
     let event_loop = EventLoop::new().unwrap();
-    let window = Arc::new(WindowBuilder::new().with_title(full_title(ToolKind::Pen))
+    let window = Arc::new(WindowBuilder::new().with_title(full_title(ToolKind::Object))
         .with_window_icon(load_icon()).with_visible(false) // created hidden — no visible flash at all
         .with_transparent(true)                            // lets the startup splash card float over the desktop
         .with_decorations(false)                           // borderless during the splash → no window shadow; the
@@ -250,7 +255,7 @@ fn main() {
         };
         (ck, h)
     }).collect();
-    cursors::set(hcur[&CK::Pen]);
+    cursors::set(hcur[&CK::Select]);
     {
         let zeros = cursors::ALL_CURSORS.iter().filter(|c| hcur[c] == 0).count();
         let _ = std::fs::write("target/cursor-debug-startup.txt",
@@ -259,9 +264,11 @@ fn main() {
     let mut last_ck: Option<CK> = None;
     let mut last_click: Option<(Instant, Pt)> = None;
     let mut view = {
-        let a = &ed.doc.artboard;                 // open framed on the artboard (Fit Artboard in Window)
+        // open zoomed-out so the artboard reads as a DEFINED page sitting on the larger board
+        // (lots of dotted board visible around it). Ctrl+0 later does a tight Fit-in-Window.
+        let a = &ed.doc.artboard;
         let sz = window.inner_size();
-        View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9)
+        View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.45)
     };
     let mut screen_cursor: Pt = [0.0, 0.0];
     let mut panning = false;

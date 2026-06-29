@@ -106,7 +106,7 @@ pub struct Editor {
 
 impl Editor {
     pub fn new() -> Self {
-        Editor { doc: Document::default(), tool: ToolKind::Pen, gesture: ToolKind::Pen, active: None,
+        Editor { doc: Document::default(), tool: ToolKind::Object, gesture: ToolKind::Object, active: None,
                  selected: HashSet::new(), objsel: HashSet::new(), dsel_path: None, drag: Drag::None, cursor: [0.0, 0.0],
                  ppu: 1.0, obj_angle: 0.0, hover_path: None, mods: Mods::default(),
                  cur_fill: Some([0.95, 0.95, 0.96, 1.0]), cur_stroke: Some([0.12, 0.12, 0.13, 1.0]), cur_sw: 2.0, paint: PaintTarget::Fill,
