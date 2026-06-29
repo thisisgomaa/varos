@@ -50,11 +50,49 @@ fn dashed_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32;4], w: f32
     }
 }
 
-/// background grid dots
-pub fn build_bg(w: f32, h: f32) -> Vec<Vertex> {
+/// Infinite ADAPTIVE dot grid. The dots live in WORLD space (they pan & zoom with the board), and the
+/// spacing snaps to base-5 "nice" levels (…1·5·25·125…) so the on-screen density stays comfortable at
+/// any zoom. Two consecutive levels crossfade (the finer one fades out as it gets too dense) so moving
+/// between scales is smooth, never a pop — giving a sense of depth and of where you are on the board.
+/// This is also the spatial reference the future snapping system will lock onto.
+pub fn build_bg(view: View, w: f32, h: f32) -> Vec<Vertex> {
     let mut v = Vec::new();
-    let step = 24.0; let mut gx = step;
-    while gx < w { let mut gy = step; while gy < h { sq(&mut v, [gx, gy], 1.0, [0.16,0.16,0.16,1.0], w, h); gy += step; } gx += step; }
+    let zoom = view.zoom.max(1e-4);
+    const TARGET: f32 = 30.0;          // desired screen px between dots
+    const MIN_PX: f32 = 9.0;           // skip a level finer than this (perf + anti-clutter)
+    const BG: [f32; 3] = [0.078, 0.075, 0.075];   // board background (#141313)
+    const DOT: [f32; 3] = [0.21, 0.21, 0.23];     // a dot at full strength
+
+    // base-5 level whose world step lands near TARGET px on screen
+    let scale = (TARGET / zoom).max(1e-6);
+    let level = scale.ln() / 5f32.ln();
+    let k0 = level.floor();
+    let t = level - k0;                            // 0..1 within the level
+    let step_fine = 5f32.powf(k0);
+    let step_coarse = 5f32.powf(k0 + 1.0);
+
+    // visible world rect (+1 step padding so dots don't pop at the edges)
+    let tl = view.s2w([0.0, 0.0]);
+    let br = view.s2w([w, h]);
+    let (wx0, wy0) = (tl[0].min(br[0]), tl[1].min(br[1]));
+    let (wx1, wy1) = (tl[0].max(br[0]), tl[1].max(br[1]));
+
+    let mut grid = |step: f32, alpha: f32| {
+        if alpha < 0.04 || step * zoom < MIN_PX { return; }
+        // composite the faded dot over the board once (no blend-state dependency): opaque colour.
+        let col = [BG[0] + (DOT[0]-BG[0])*alpha, BG[1] + (DOT[1]-BG[1])*alpha, BG[2] + (DOT[2]-BG[2])*alpha, 1.0];
+        let mut gx = (wx0 / step).floor() * step;
+        while gx <= wx1 {
+            let mut gy = (wy0 / step).floor() * step;
+            while gy <= wy1 {
+                sq(&mut v, view.w2s([gx, gy]), 1.0, col, w, h);
+                gy += step;
+            }
+            gx += step;
+        }
+    };
+    grid(step_fine, 1.0 - t);   // finer level fades out as it gets too dense (zooming out)
+    grid(step_coarse, 1.0);     // coarser level is the steady anchor
     v
 }
 
