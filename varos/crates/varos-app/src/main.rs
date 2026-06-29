@@ -93,7 +93,6 @@ fn full_title(t: ToolKind) -> String { format!("Varos \u{3b1} \u{b7} pre-alpha \
 fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bool, _alt: bool) {
     if ctrl {
         match code {
-            "Digit0" => *view = View::identity(),
             "Digit1" => view.zoom = 1.0,
             "KeyZ" => if shift { ed.redo() } else { ed.undo() },
             "KeyY" => ed.redo(),
@@ -259,7 +258,11 @@ fn main() {
     }
     let mut last_ck: Option<CK> = None;
     let mut last_click: Option<(Instant, Pt)> = None;
-    let mut view = View::identity();
+    let mut view = {
+        let a = &ed.doc.artboard;                 // open framed on the artboard (Fit Artboard in Window)
+        let sz = window.inner_size();
+        View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9)
+    };
     let mut screen_cursor: Pt = [0.0, 0.0];
     let mut panning = false;
     let mut pan_last: Pt = [0.0, 0.0];
@@ -363,7 +366,14 @@ fn main() {
                             window.request_redraw();
                         } else if event.state == ElementState::Pressed {
                             let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
-                            apply_key(&mut ed, &mut view, &format!("{:?}", code), mc, ms, ma);
+                            let cs = format!("{:?}", code);
+                            if mc && cs == "Digit0" {           // Ctrl+0 = Fit Artboard in Window (Illustrator)
+                                let a = &ed.doc.artboard;
+                                let sz = window.inner_size();
+                                view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                            } else {
+                                apply_key(&mut ed, &mut view, &cs, mc, ms, ma);
+                            }
                             window.set_title(&full_title(ed.tool));
                                     window.request_redraw();
                         }

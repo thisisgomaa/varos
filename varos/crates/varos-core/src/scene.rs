@@ -13,6 +13,8 @@ pub const ACCENT: Rgba = [0.047, 0.549, 0.914, 1.0];
 pub const ACCENT_FILL: Rgba = [0.047, 0.549, 0.914, 0.14];
 pub const HANDLE_COL: Rgba = [0.498, 0.737, 0.941, 1.0];
 pub const WHITE: Rgba = [0.96, 0.96, 0.96, 1.0];
+pub const PAPER: Rgba = [1.0, 1.0, 1.0, 1.0];     // artboard page fill (white)
+pub const AB_EDGE: Rgba = [0.0, 0.0, 0.0, 0.18];  // faint page-boundary hairline (constant screen width)
 
 pub enum Prim {
     Fill { rings: Vec<Vec<Pt>>, color: Rgba },  // outer ring + hole rings — filled even-odd (holes cut through)
@@ -31,6 +33,16 @@ pub struct Scene {
 
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     let mut s = Scene::default();
+
+    // ---- ARTBOARD (the page) ---- white paper behind all artwork (pushed first, so it draws over the
+    // dot-grid background); the boundary goes in the overlay so it stays a 1px hairline at any zoom.
+    {
+        let a = &ed.doc.artboard;
+        let ring = vec![[a.x, a.y], [a.x + a.w, a.y], [a.x + a.w, a.y + a.h], [a.x, a.y + a.h]];
+        s.content.push(Prim::Fill { rings: vec![ring.clone()], color: PAPER });
+        let mut edge = ring; edge.push([a.x, a.y]);
+        s.overlay.push(Prim::Stroke { pts: edge, width: 1.0, color: AB_EDGE });
+    }
 
     // ---- CONTENT (scales with zoom) ----  `ppu` = zoom → curves stay smooth at any zoom
     let with_op = |c: Rgba, o: f32| [c[0], c[1], c[2], c[3] * o];   // object opacity → alpha
