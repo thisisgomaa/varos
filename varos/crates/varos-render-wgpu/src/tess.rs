@@ -91,8 +91,12 @@ pub fn build_bg(view: View, w: f32, h: f32) -> Vec<Vertex> {
             gx += step;
         }
     };
-    grid(step_fine, 1.0 - t);   // finer level fades out as it gets too dense (zooming out)
-    grid(step_coarse, 1.0);     // coarser level is the steady anchor
+    // THREE levels crossfade with NO pop: the finest fades OUT as it gets too dense (1-t), the middle
+    // is the steady full-strength anchor (1.0), and the next-coarser fades IN (t) so it's already there
+    // when it becomes the new anchor. Every level enters/leaves through 0 → no appear/disappear snap.
+    grid(step_fine, 1.0 - t);
+    grid(step_coarse, 1.0);
+    grid(5f32.powf(k0 + 2.0), t);
     v
 }
 
