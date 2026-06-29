@@ -290,7 +290,7 @@ impl Renderer {
         };
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
-        let bg = build_bg(fw, fh);
+        let bg = build_bg(view, fw, fh);
         let (fillv, franges) = build_fills(&world.content, view, fw, fh);
         let mut fg = build_fg(&world.content, view, view.zoom, fw, fh);   // artwork: strokes scale with zoom
         fg.extend(build_fg(&world.overlay, view, 1.0, fw, fh));           // editing chrome: constant screen size
@@ -368,7 +368,7 @@ impl Renderer {
         };
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
-        let bg = build_bg(fw, fh);
+        let bg = build_bg(view, fw, fh);
         let (fillv, franges) = build_fills(&world.content, view, fw, fh);
         let mut fg = build_fg(&world.content, view, view.zoom, fw, fh);
         fg.extend(build_fg(&world.overlay, view, 1.0, fw, fh));
