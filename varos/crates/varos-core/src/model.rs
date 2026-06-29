@@ -2,6 +2,7 @@
 //! Stable u32 IDs (never Vec indices) so selection/active survive deletes & joins.
 
 use crate::geom::*;
+use crate::units::DocUnits;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 // Pt = [f32;2] and Rgba = [f32;4] are type aliases for arrays, which serde already supports —
@@ -46,6 +47,15 @@ pub enum ShapeKind { Rect, Ellipse, Triangle, Polygon }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Group { pub id: u32, pub name: String, pub parent: Option<u32> }
 
+/// A single artboard (the page) on the board, in world points (the unit contract: 1pt = 1/72in).
+/// v1 ships ONE fixed board (Decision 7); multi-artboard comes with the Artboard system later.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Artboard { pub x: f32, pub y: f32, pub w: f32, pub h: f32, pub name: String }
+impl Default for Artboard {
+    /// 1920×1080 at the origin — a screen-first default (1920×1080 px at the default 72 ppi).
+    fn default() -> Self { Artboard { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0, name: "Artboard 1".into() } }
+}
+
 #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub paths: Vec<Path>,
@@ -55,6 +65,13 @@ pub struct Document {
     /// path id → its innermost group id. Absent = ungrouped. Reconciled by `sync_groups`.
     pub group_of: HashMap<u32, u32>,
     pub ids: u32,
+    /// Document measurement settings (ppi + display unit). `#[serde(default)]` so older `.varos`
+    /// files written before this field still load.
+    #[serde(default)]
+    pub units: DocUnits,
+    /// The single artboard (page). `#[serde(default)]` for back-compat with pre-artboard files.
+    #[serde(default)]
+    pub artboard: Artboard,
 }
 
 impl Document {
