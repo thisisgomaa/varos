@@ -9,7 +9,8 @@
 //! Run with:  cargo test -p varos-core --test serde_roundtrip
 
 use std::collections::HashMap;
-use varos_core::model::{Anchor, Document, Group, Path};
+use varos_core::model::{Anchor, Artboard, Document, Group, Path};
+use varos_core::units::{DocUnits, Unit};
 
 fn anc(id: u32, p: [f32; 2], hin: Option<[f32; 2]>, hout: Option<[f32; 2]>, smooth: bool) -> Anchor {
     Anchor { id, p, hin, hout, smooth }
@@ -60,6 +61,9 @@ fn sample_doc() -> Document {
         groups: vec![Group { id: 100, name: "Logo".to_string(), parent: None }],
         group_of,
         ids: 100,
+        // non-default units + artboard, so the round-trip actually exercises them
+        units: DocUnits { ppi: 96.0, display: Unit::Mm },
+        artboard: Artboard { x: 0.0, y: 0.0, w: 800.0, h: 600.0, name: "Page".to_string() },
     }
 }
 
