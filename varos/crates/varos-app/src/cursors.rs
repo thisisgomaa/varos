@@ -352,6 +352,25 @@ mod win {
         }
     }
 
+    /// True maximized state straight from Win32 (GetWindowPlacement) — winit's `is_maximized()` reports
+    /// wrong with our custom (NCCALCSIZE-stripped) frame, so the saved geometry never recorded "maximized".
+    pub fn is_maximized(hwnd: isize) -> bool {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, WINDOWPLACEMENT, SW_SHOWMAXIMIZED};
+        let h = HWND(hwnd as *mut _);
+        unsafe {
+            let mut wp = WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+            GetWindowPlacement(h, &mut wp).is_ok() && wp.showCmd == SW_SHOWMAXIMIZED.0 as u32
+        }
+    }
+    /// Maximize via Win32 directly (SW_MAXIMIZE) — reliable through the custom frame; used to re-open maximized.
+    pub fn maximize(hwnd: isize) {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MAXIMIZE};
+        let h = HWND(hwnd as *mut _);
+        unsafe { let _ = ShowWindow(h, SW_MAXIMIZE); }
+    }
+
     /// Hide/show the window via the DWM compositor (keeps focus/taskbar; lets us render frame 0 before
     /// the window is ever composited → no white/caption flash at startup).
     pub fn set_cloaked(hwnd: isize, on: bool) {
@@ -413,4 +432,4 @@ mod win {
     }
 }
 #[cfg(windows)]
-pub use win::{install, set, dbg, custom_frame, set_caption, set_cloaked, set_dark_class_brush};
+pub use win::{install, set, dbg, custom_frame, set_caption, set_cloaked, set_dark_class_brush, is_maximized, maximize};

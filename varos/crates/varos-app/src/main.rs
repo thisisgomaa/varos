@@ -110,6 +110,7 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
             "KeyG" => if shift { ed.ungroup_selection() } else { ed.group_selection() },
             "KeyU" => ed.doc.snap.smart = !ed.doc.snap.smart,   // Smart Guides toggle (Illustrator Ctrl+U)
             "KeyD" => ed.transform_again(),                     // Transform Again / step-and-repeat (Illustrator Ctrl+D)
+            "KeyR" => ed.show_rulers = !ed.show_rulers,         // Show/Hide Rulers (Illustrator Ctrl+R)
             _ => {}
         }
         return;
@@ -203,6 +204,27 @@ fn preview_svgs(dir: &str) {
     }
 }
 
+/// Where the remembered window geometry lives (`%APPDATA%\Varos\window.txt`).
+fn win_state_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("Varos").join("window.txt"))
+}
+/// Restore the last window geometry: `(maximized, outer_x, outer_y, inner_w, inner_h)` in physical px.
+fn load_win_state() -> Option<(bool, i32, i32, u32, u32)> {
+    let s = std::fs::read_to_string(win_state_path()?).ok()?;
+    let mut it = s.split_whitespace();
+    let maxed = it.next()? == "1";
+    let (x, y) = (it.next()?.parse().ok()?, it.next()?.parse().ok()?);
+    let (w, h): (u32, u32) = (it.next()?.parse().ok()?, it.next()?.parse().ok()?);
+    if w < 320 || h < 240 { return None; }   // ignore absurd/degenerate saved sizes
+    Some((maxed, x, y, w, h))
+}
+fn save_win_state(maxed: bool, x: i32, y: i32, w: u32, h: u32) {
+    if let Some(p) = win_state_path() {
+        if let Some(dir) = p.parent() { let _ = std::fs::create_dir_all(dir); }
+        let _ = std::fs::write(p, format!("{} {} {} {} {}", maxed as u8, x, y, w, h));
+    }
+}
+
 fn main() {
     // crash breadcrumb: any panic is written to target/panic.txt (the app has no console window).
     std::panic::set_hook(Box::new(|info| {
@@ -225,18 +247,27 @@ fn main() {
         }
     }
     let event_loop = EventLoop::new().unwrap();
-    let window = Arc::new(WindowBuilder::new().with_title(full_title(ToolKind::Object))
+    let saved = load_win_state();   // remembered geometry from last session (None on first run)
+    let mut builder = WindowBuilder::new().with_title(full_title(ToolKind::Object))
         .with_window_icon(load_icon()).with_visible(false) // created hidden — no visible flash at all
         .with_transparent(true)                            // lets the startup splash card float over the desktop
-        .with_decorations(false)                           // borderless during the splash → no window shadow; the
-        .with_inner_size(winit::dpi::LogicalSize::new(1460.0, 860.0)).build(&event_loop).unwrap());
+        .with_decorations(false);                          // borderless during the splash → no window shadow; the
         // editor frame (decorations + shadow + snap) is applied once the splash finishes, below.
-    // centre the window on the primary monitor (so the splash card lands in the middle of the screen)
-    if let Some(mon) = event_loop.primary_monitor() {
-        let (ms, mp, ws) = (mon.size(), mon.position(), window.outer_size());
-        window.set_outer_position(PhysicalPosition::new(
-            mp.x + (ms.width as i32 - ws.width as i32) / 2,
-            mp.y + (ms.height as i32 - ws.height as i32) / 2));
+    builder = match saved {
+        Some((_, _, _, w, h)) => builder.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
+        None => builder.with_inner_size(winit::dpi::LogicalSize::new(1460.0, 860.0)),
+    };
+    let window = Arc::new(builder.build(&event_loop).unwrap());
+    match saved {
+        // re-open exactly where it was last time …
+        Some((_, x, y, _, _)) => window.set_outer_position(PhysicalPosition::new(x, y)),
+        // … or, first run, centre on the primary monitor (the splash card lands mid-screen)
+        None => if let Some(mon) = event_loop.primary_monitor() {
+            let (ms, mp, ws) = (mon.size(), mon.position(), window.outer_size());
+            window.set_outer_position(PhysicalPosition::new(
+                mp.x + (ms.width as i32 - ws.width as i32) / 2,
+                mp.y + (ms.height as i32 - ws.height as i32) / 2));
+        },
     }
     let size = window.inner_size();
     // Cloak the window the instant it exists (before the slow GPU/webview setup) so the OS never
@@ -286,6 +317,14 @@ fn main() {
     let mut panning = false;
     let mut pan_last: Pt = [0.0, 0.0];
     let mut space_down = false;
+    // window-geometry persistence: track the NORMAL (un-maximized) bounds so we can save them on close,
+    // and refit the view ONCE if we restored a maximized window (so the page isn't tiny in the corner).
+    let mut win_norm: (i32, i32, u32, u32) = {
+        let sz = window.inner_size();
+        let p = window.outer_position().unwrap_or(PhysicalPosition::new(0, 0));
+        saved.map(|(_, x, y, w, h)| (x, y, w, h)).unwrap_or((p.x, p.y, sz.width, sz.height))
+    };
+    let mut refit_pending = saved.map_or(false, |(m, ..)| m);
 
     // Paint frame 0 imperatively while cloaked, then reveal — the first pixels on screen are our dark
     // UI + splash (never a white flash, never the native caption).
@@ -318,10 +357,23 @@ fn main() {
             let over_panel = gui.wants_pointer();
             if egui_consumed { window.request_redraw(); }
             match event {
-                WindowEvent::CloseRequested => elwt.exit(),
+                WindowEvent::CloseRequested => {
+                    save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
+                    elwt.exit();
+                }
                 WindowEvent::Resized(size) => {
                     renderer.resize(size.width, size.height);
+                    if !cursors::is_maximized(hwnd) {   // remember the normal bounds (so un-maximize/next-open restores them)
+                        if let Ok(pos) = window.outer_position() { win_norm = (pos.x, pos.y, size.width, size.height); }
+                    } else if refit_pending {     // restored a maximized window → fit the page to the (now large) view ONCE
+                        let a = ed.doc.active_artboard().cloned().unwrap_or_default();
+                        view = View::fit(a.x, a.y, a.w, a.h, size.width as f32, size.height as f32, 0.9);
+                        refit_pending = false;
+                    }
                     window.request_redraw();
+                }
+                WindowEvent::Moved(pos) => {
+                    if !cursors::is_maximized(hwnd) { let sz = window.inner_size(); win_norm = (pos.x, pos.y, sz.width, sz.height); }
                 }
                 WindowEvent::CursorMoved { position, .. } => {
                     let PhysicalPosition { x, y } = position; screen_cursor = [x as f32, y as f32];
@@ -422,8 +474,11 @@ fn main() {
                     if let Some(act) = gui.win_action.take() {
                         match act {
                             ui::WinAction::Minimize => window.set_minimized(true),
-                            ui::WinAction::ToggleMaximize => window.set_maximized(!window.is_maximized()),
-                            ui::WinAction::Close => elwt.exit(),
+                            ui::WinAction::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
+                            ui::WinAction::Close => {
+                                save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
+                                elwt.exit();
+                            }
                         }
                     }
                     // Cursor: over a panel show a UI cursor (↔ on a number field, arrow elsewhere) — NOT
@@ -451,6 +506,16 @@ fn main() {
                     if !gui.splashing() && !editor_framed {
                         window.set_decorations(true);
                         cursors::custom_frame(hwnd);
+                        if saved.map_or(false, |(m, ..)| m) {     // re-open maximized if it was last time
+                            cursors::maximize(hwnd);
+                            // sync the surface + view to the NEW (maximized) size NOW, before the next render —
+                            // otherwise a frame draws a maximized viewport into the still-small target (wgpu panic).
+                            let sz = window.inner_size();
+                            renderer.resize(sz.width, sz.height);
+                            let a = ed.doc.active_artboard().cloned().unwrap_or_default();
+                            view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                            refit_pending = false;
+                        }
                         editor_framed = true;
                         window.request_redraw();
                     }
