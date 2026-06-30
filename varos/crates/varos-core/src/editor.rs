@@ -164,6 +164,8 @@ pub struct Editor {
     pub ppu: f32,            // pixels-per-unit (view zoom) — so grab tolerances stay constant on screen
     pub obj_angle: f32,      // orientation of the object-selection transform frame (rotates with the selection)
     pub hover_path: Option<u32>,
+    pub show_rulers: bool,   // View ▸ Rulers (Ctrl+R). View pref, not serialized; default ON.
+    pub origin_preview: Option<Pt>,  // while dragging the ruler corner: the live (snapped) zero-point → dashed crosshair
     pub mods: Mods,
     pub cur_fill: Option<Rgba>, pub cur_stroke: Option<Rgba>, pub cur_sw: f32, pub paint: PaintTarget,
     pub dirty: bool,
@@ -175,7 +177,7 @@ impl Editor {
         Editor { doc: Document::default(), tool: ToolKind::Object, gesture: ToolKind::Object, active: None,
                  selected: HashSet::new(), objsel: HashSet::new(), dsel_path: None, drag: Drag::None, ab_drag: AbDrag::None,
                  snap_guides: vec![], snap_hud: None, last_tf: None, gesture_copy: false, gesture_delta: [0.0, 0.0], cursor: [0.0, 0.0],
-                 ppu: 1.0, obj_angle: 0.0, hover_path: None, mods: Mods::default(),
+                 ppu: 1.0, obj_angle: 0.0, hover_path: None, show_rulers: true, origin_preview: None, mods: Mods::default(),
                  cur_fill: Some([0.95, 0.95, 0.96, 1.0]), cur_stroke: Some([0.12, 0.12, 0.13, 1.0]), cur_sw: 2.0, paint: PaintTarget::Fill,
                  dirty: false, undo: vec![], redo: vec![], pending: None }
     }
@@ -809,7 +811,7 @@ impl Editor {
     /// World spacing of the FINEST VISIBLE dot-grid level at the current zoom, so "Snap to Grid" lands
     /// exactly on the dots the user sees (mirrors the renderer's adaptive base-5 grid, tess.rs build_bg —
     /// TARGET 30px, MIN 9px). Zoom-dependent: zoom in → finer grid → snaps to the closer dots.
-    fn adaptive_grid_step(&self) -> f32 {
+    pub fn adaptive_grid_step(&self) -> f32 {
         let zoom = self.ppu.max(1e-4);
         let k0 = ((30.0_f32 / zoom).max(1e-6).ln() / 5f32.ln()).floor();
         let step = 5f32.powf(k0);                                     // finest level
@@ -936,6 +938,38 @@ impl Editor {
             else if cfg.grid { let step = self.adaptive_grid_step(); ny = (w[1] / step).round() * step; }
         }
         ([nx, ny], guides)
+    }
+
+    /// Snap a FREE point — the ruler origin (0,0) being dragged from the corner — onto artboard
+    /// corners/edges/centre, object bbox features, every object ANCHOR point, then the grid: per axis,
+    /// within the screen-constant tolerance. Gated on the snap master only (works with Smart Guides off),
+    /// so the zero-point lands crisply on a page corner, an anchor, or a grid dot — never on a stray pixel.
+    pub fn snap_origin(&self, p: Pt) -> Pt {
+        let cfg = &self.doc.snap;
+        if !cfg.enabled { return p; }
+        let tol = cfg.radius_px / self.ppu.max(1e-4);
+        let (mut xs, mut ys): (Vec<f32>, Vec<f32>) = (vec![], vec![]);
+        if let Some(ab) = self.doc.active_artboard() {
+            let (x0, y0, x1, y1) = ab.rect();
+            xs.extend([x0, x1, (x0 + x1) * 0.5]); ys.extend([y0, y1, (y0 + y1) * 0.5]);
+        }
+        for pi in 0..self.doc.paths.len() {
+            let pp = &self.doc.paths[pi];
+            if pp.hidden { continue; }
+            let b = self.doc.outline_bbox(pi);
+            xs.extend([b.0, b.2, (b.0 + b.2) * 0.5]); ys.extend([b.1, b.3, (b.1 + b.3) * 0.5]);
+            for a in pp.anchors.iter().chain(pp.holes.iter().flatten()) { xs.push(a.p[0]); ys.push(a.p[1]); }
+        }
+        let pick = |v: f32, cands: &[f32]| -> Option<f32> {
+            cands.iter().copied().filter(|c| (c - v).abs() <= tol)
+                .min_by(|a, b| (a - v).abs().partial_cmp(&(b - v).abs()).unwrap_or(std::cmp::Ordering::Equal))
+        };
+        let mut nx = pick(p[0], &xs);
+        let mut ny = pick(p[1], &ys);
+        let step = self.adaptive_grid_step();   // grid fallback → the origin lands on the dots the ruler follows
+        if nx.is_none() { let g = (p[0] / step).round() * step; if (g - p[0]).abs() <= tol { nx = Some(g); } }
+        if ny.is_none() { let g = (p[1] / step).round() * step; if (g - p[1]).abs() <= tol { ny = Some(g); } }
+        [nx.unwrap_or(p[0]), ny.unwrap_or(p[1])]
     }
 
     /// Core GEOMETRY point-snap: find the nearest snap of any moving point (offset by `d`) onto a target
