@@ -24,5 +24,8 @@ pub fn get(kind: ToolKind) -> &'static dyn Tool {
         ToolKind::Convert => &convert::Convert,
         ToolKind::Eyedropper => &eyedropper::Eyedropper,
         ToolKind::Rect | ToolKind::Ellipse | ToolKind::Triangle | ToolKind::Polygon => &shapes::Shapes,
+        // The Artboard tool is handled by `Editor::ab_down` before `get` is ever called — this arm only
+        // keeps the match exhaustive (the value is never used).
+        ToolKind::Artboard => &object::Object,
     }
 }
