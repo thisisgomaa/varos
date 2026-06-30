@@ -21,6 +21,20 @@
 9. **Property panel (now):** standard-size preset · W/H box · portrait/landscape icons · background colour ·
    **artboard count** · Clip toggle · "Move artwork with artboard" toggle.
 
+**Post-review refinements (planning team — accepted 2026-06-30):**
+10. **`bleed` in the model NOW** (data only, default 0pt): the artboard *is* a PDF page; print needs
+    bleed / TrimBox. Add the field today, with the `Vec` change, so multi + bleed never force a second format
+    migration. Its UI is Stage 3.
+11. **Page colour = `Option<Rgba>`**: `None` = **transparent** (for PNG export with no background). Default
+    `Some(white)`. On-canvas a transparent page shows just its edge (a faint checkerboard can come later) so it
+    stays locatable on the dark board.
+12. **Default size fixed to SQUARE 1080×1080** everywhere — kills the stale 1920×1080 wording further down.
+13. **"Move artwork with artboard" default ON matches BOTH** Illustrator (its control-bar toggle ships ON) and
+    Figma, so decision #3 is on-model. The spec must say exactly *which* art moves: artwork whose **bounds
+    intersect the artboard at grab time**.
+14. Piece-C panel widgets (number box · swatch · toggle) are **built here and extracted** into the design
+    system afterwards (the deliberate first use).
+
 ---
 
 ## 0. The core model — the invariant to LOCK first
@@ -43,6 +57,9 @@
 ## 1. Where the code stands today (grounding)
 - ✅ `Artboard { x, y, w, h, name }` in pt (`model.rs`); `DocUnits { ppi, display }` (`units.rs`);
   page rendered (white Fill + 1px edge); fit math (`View::fit`).
+- ➕ Piece A adds to the model: `artboards: Vec<Artboard>` + `active: usize`, and per-artboard
+  `bleed: f32` (pt, default 0) + `page_color: Option<Rgba>` (`None` = transparent). All `#[serde(default)]`
+  so the `.varos` format stays stable.
 - 🔴 No `ToolKind::Artboard`, no artboard selection/drag, no property panel, no presets, no multi-artboard.
 
 ## 2. Three places Illustrator and Figma disagree — pick one (recommendations marked)
@@ -74,8 +91,8 @@
 - **Page colour:** the page fill — default **white**, changeable via a swatch in the panel.
 
 **Presets & navigation**
-- **Preset list** in the panel: a starter set — *1920×1080 (screen), 1080×1080 (square), A4, Letter,
-  1080×1920 (story)* + **"fit to artwork bounds"**.
+- **Preset list** in the panel: a starter set — *1080×1080 (square, **default**), 1920×1080 (screen), A4,
+  Letter, 1080×1920 (story)* + **"fit to artwork bounds"**.
 - **Fit Artboard in Window** — a button in the zoom control (since `Ctrl+0` is awkward on a 60% keyboard)
   + the shortcut where it works.
 
@@ -107,15 +124,11 @@
 
 ---
 
-## 7. OPEN DECISIONS — settle these WITH Ahmed before building
-1. The **three §2 conflicts** — confirm: no-clip · not-a-z-object · move-with-toggle(default ON)?
-2. **Default size** — 1920×1080 px? (or A4 / square / other) + the preset set in §3.
-3. **Page colour** — white default, changeable per artboard? (or a fixed white for now)
-4. **Single now, multi in Stage 2** — agreed?
-5. **Tool shortcut** = Shift+O (Illustrator) — ok on the 60% keyboard? (it's a letter, should be fine)
-6. **Default units** = px — ok?
-7. **Name label** on canvas (top-left, Illustrator/Figma style) — ok?
-8. **"Move artwork with artboard"** default — ON (Figma) or OFF (pure Illustrator)?
+## 7. OPEN DECISIONS — ✅ all settled
+Nothing left open (see the LOCKED block + planning-team refinements at the top). Defaults: **square 1080×1080** ·
+page colour `Option<Rgba>` (white default, `None` = transparent) · **multi NOW** (`Vec<Artboard>` + `active`) ·
+Shift+O · px · top-left name label · "move artwork with artboard" default **ON** · `bleed` field from day one.
+Build order: **Piece A** (model + multi render) → **Piece B** (Artboard tool) → **Piece C** (panel + ⋮ menu).
 
 ## 8. Risks / notes
 - The biggest care point: the **no-cross-grab** seam (artboard selection must never leak into object
