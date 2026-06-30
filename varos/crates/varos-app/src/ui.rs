@@ -7,7 +7,7 @@
 
 use std::time::Instant;
 use egui::{Align, Align2, Color32, FontId, Layout, Margin, RichText, Rounding, Stroke};
-use varos_core::editor::{Editor, PaintTarget, ToolKind};
+use varos_core::editor::{AlignMode, DistAxis, Editor, PaintTarget, ToolKind};
 use varos_core::geom::{Rgba, View};
 use winit::event::WindowEvent;
 use winit::window::Window;
@@ -41,6 +41,15 @@ const IC_STROKEW: &str = r#"<path d="M3 7h18" stroke-width="1.3"/><path d="M3 12
 const IC_LINK: &str = r#"<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>"#;
 const IC_FLIPH: &str = r#"<path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/>"#;
 const IC_FLIPV: &str = r#"<path d="M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/>"#;
+// object-alignment icons: align L / centre-H / R · T / middle / B, then distribute H / V
+const IC_AL_L: &str = r#"<line x1="3" y1="4" x2="3" y2="20"/><rect x="3" y="6" width="14" height="4" rx="1"/><rect x="3" y="14" width="9" height="4" rx="1"/>"#;
+const IC_AL_CH: &str = r#"<line x1="12" y1="4" x2="12" y2="20"/><rect x="5" y="6" width="14" height="4" rx="1"/><rect x="7.5" y="14" width="9" height="4" rx="1"/>"#;
+const IC_AL_R: &str = r#"<line x1="21" y1="4" x2="21" y2="20"/><rect x="7" y="6" width="14" height="4" rx="1"/><rect x="12" y="14" width="9" height="4" rx="1"/>"#;
+const IC_AL_T: &str = r#"<line x1="4" y1="3" x2="20" y2="3"/><rect x="6" y="3" width="4" height="14" rx="1"/><rect x="14" y="3" width="4" height="9" rx="1"/>"#;
+const IC_AL_M: &str = r#"<line x1="4" y1="12" x2="20" y2="12"/><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="7.5" width="4" height="9" rx="1"/>"#;
+const IC_AL_B: &str = r#"<line x1="4" y1="21" x2="20" y2="21"/><rect x="6" y="7" width="4" height="14" rx="1"/><rect x="14" y="12" width="4" height="9" rx="1"/>"#;
+const IC_DIST_H: &str = r#"<rect x="3" y="6" width="3" height="12" rx="1"/><rect x="10.5" y="6" width="3" height="12" rx="1"/><rect x="18" y="6" width="3" height="12" rx="1"/>"#;
+const IC_DIST_V: &str = r#"<rect x="6" y="3" width="12" height="3" rx="1"/><rect x="6" y="10.5" width="12" height="3" rx="1"/><rect x="6" y="18" width="12" height="3" rx="1"/>"#;
 // top-bar icons: menu (☰) · window minimize/maximize/close
 const IC_MENU: &str = r#"<path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/>"#;
 const IC_MIN: &str = r#"<path d="M5 12h14"/>"#;
@@ -53,6 +62,7 @@ const IC_PANELS: &str = r#"<rect width="18" height="18" x="3" y="3" rx="2"/><pat
 const IC_PLUS: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
 const IC_X: &str = r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#;
 const IC_CHECK: &str = r#"<path d="M20 6 9 17l-5-5"/>"#;
+const IC_MAGNET: &str = r#"<path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15"/><path d="m5 8 4 4"/><path d="m12 15 4 4"/>"#;
 // Artboard tool (Lucide "frame" — a bold # that reads clearly at 20px) · hexagon (polygon shape) ·
 // portrait/landscape page · "fit in window" frame
 const IC_ARTBOARD: &str = r#"<path d="M22 6H2"/><path d="M22 18H2"/><path d="M6 2v20"/><path d="M18 2v20"/>"#;
@@ -78,6 +88,7 @@ enum Op {
     SetRot(f32), SetOpacity(f32), SetStrokeW(f32),
     Paint(PaintTarget, Option<Rgba>),
     Flip(bool),
+    Align(AlignMode), Distribute(DistAxis),
     // ---- artboard ops (i = artboard index) ----
     AbActive(usize),
     AbRect(usize, Option<f32>, Option<f32>, Option<f32>, Option<f32>), // x,y,w,h (each optional)
@@ -96,6 +107,7 @@ struct TopIcons {
     menu: Option<egui::TextureHandle>, min: Option<egui::TextureHandle>, max: Option<egui::TextureHandle>, close: Option<egui::TextureHandle>,
     search: Option<egui::TextureHandle>, layout: Option<egui::TextureHandle>, panels: Option<egui::TextureHandle>,
     plus: Option<egui::TextureHandle>, x: Option<egui::TextureHandle>, check: Option<egui::TextureHandle>,
+    magnet: Option<egui::TextureHandle>,
 }
 
 /// Read-only snapshot of the editor for this frame's panels.
@@ -176,6 +188,7 @@ pub struct Ui {
     ic_landscape: Option<egui::TextureHandle>,
     ic_fit: Option<egui::TextureHandle>,
     ab_dots: Option<egui::TextureHandle>,
+    align_icons: [Option<egui::TextureHandle>; 8], // align L/CH/R · T/M/B · distribute H/V
     cursor: egui::CursorIcon, // this frame's egui cursor (read from FullOutput, not post-frame state)
     refpt: (f32, f32),        // transform reference point (ax, ay each in {0, .5, 1})
     lock: bool,               // constrain W/H proportions
@@ -239,6 +252,11 @@ impl Ui {
         let ab_dots = crate::cursors::render_svg(IC_DOTS_SVG, 96, false).map(|(rgba, w, h)| {
             ctx.load_texture("ab-dots", egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba), egui::TextureOptions::LINEAR)
         });
+        let align_icons = [
+            load_icon(&ctx, "al-l", IC_AL_L), load_icon(&ctx, "al-ch", IC_AL_CH), load_icon(&ctx, "al-r", IC_AL_R),
+            load_icon(&ctx, "al-t", IC_AL_T), load_icon(&ctx, "al-m", IC_AL_M), load_icon(&ctx, "al-b", IC_AL_B),
+            load_icon(&ctx, "dist-h", IC_DIST_H), load_icon(&ctx, "dist-v", IC_DIST_V),
+        ];
         let top = TopIcons {
             menu: load_icon(&ctx, "tb-menu", IC_MENU),
             min: load_icon(&ctx, "tb-min", IC_MIN),
@@ -250,6 +268,7 @@ impl Ui {
             plus: load_icon(&ctx, "tb-plus", IC_PLUS),
             x: load_icon(&ctx, "tb-x", IC_X),
             check: load_icon(&ctx, "tb-check", IC_CHECK),
+            magnet: load_icon(&ctx, "tb-magnet", IC_MAGNET),
         };
         let logo = image::load_from_memory(include_bytes!("../icon.png")).ok().map(|im| {
             let rgba = im.into_rgba8(); let (w, h) = rgba.dimensions();
@@ -257,7 +276,7 @@ impl Ui {
         });
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, None, None);
         Ui { ctx, state, frosted: false, rects: vec![], repaint: false, tools, shapes, shape_active: ToolKind::Rect, ic_rotate, ic_opacity, ic_strokew,
-             ic_link, ic_fliph, ic_flipv, ic_portrait, ic_landscape, ic_fit, ab_dots,
+             ic_link, ic_fliph, ic_flipv, ic_portrait, ic_landscape, ic_fit, ab_dots, align_icons,
              cursor: egui::CursorIcon::Default, refpt: (0.0, 0.0), lock: false,
              ab_lock: false, ab_name_edit: None, fit_request: None,
              top, win_action: None, show_rail: true, show_dock: true, tabs: vec!["Untitled-1".into()], tab_active: 0,
@@ -289,10 +308,11 @@ impl Ui {
         let snap = Snap::read(ed);
         let absnap = AbSnap::read(ed);
         let abs = ab_infos(ed);
+        let snap_hud = ed.snap_hud.clone();
         let tools = &self.tools;
         let shapes = &self.shapes;
         let icons = DockIcons { rotate: &self.ic_rotate, opacity: &self.ic_opacity, strokew: &self.ic_strokew,
-            link: &self.ic_link, fliph: &self.ic_fliph, flipv: &self.ic_flipv };
+            link: &self.ic_link, fliph: &self.ic_fliph, flipv: &self.ic_flipv, align: &self.align_icons };
         let ab_icons = AbIcons { link: &self.ic_link, portrait: &self.ic_portrait,
             landscape: &self.ic_landscape, fit: &self.ic_fit };
         let ab_dots = &self.ab_dots;
@@ -308,6 +328,7 @@ impl Ui {
         let mut win_action = None;
         let mut show_rail = self.show_rail;
         let mut show_dock = self.show_dock;
+        let mut snap_cfg = ed.doc.snap;   // the magnet menu edits this; written back after layout (mode flag)
         let mut tabs = std::mem::take(&mut self.tabs);
         let mut tab_active = self.tab_active;
         let splash = self.splash_start.map(|t| t.elapsed().as_secs_f32());
@@ -317,7 +338,7 @@ impl Ui {
             if splashing {
                 if let Some(e) = splash { build_splash(ctx, e, logo); } // only the floating card
             } else {
-                build_topbar(ctx, top, &mut win_action, &mut tabs, &mut tab_active, &mut show_rail, &mut show_dock);
+                build_topbar(ctx, top, &mut win_action, &mut tabs, &mut tab_active, &mut show_rail, &mut show_dock, &mut snap_cfg);
                 if show_rail { build_rail(ctx, tools, shapes, &mut shape_active, &snap, &mut ops, &mut rects); }
                 if show_dock {
                     if snap.tool == ToolKind::Artboard {
@@ -329,6 +350,7 @@ impl Ui {
                 // on-canvas page chrome: a name label + ⋮ menu pinned over each artboard (any tool)
                 build_ab_chrome(ctx, view, ppp, &abs, absnap.active, snap.tool == ToolKind::Artboard,
                                 absnap.count, ab_dots, &mut ops, &mut ab_name_edit, &mut fit_request);
+                build_snap_hud(ctx, view, ppp, &snap_hud);
             }
         });
         self.last_splash = splashing;
@@ -344,6 +366,7 @@ impl Ui {
         self.show_dock = show_dock;
         self.tabs = tabs;
         self.tab_active = tab_active;
+        ed.doc.snap = snap_cfg;   // commit the magnet-menu toggles (a non-undoable mode flag)
         apply_ops(ed, ops);
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
         self.state.handle_platform_output(window, out.platform_output);
@@ -732,7 +755,8 @@ fn check_row(ui: &mut egui::Ui, label: &str, checked: bool, tex_check: &Option<e
 /// window controls. Interactive rects are published as exclusions so the OS hit-test makes them HTCLIENT
 /// (egui handles them) while the empty band is HTCAPTION (the OS drags/snaps the window).
 fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<WinAction>,
-                tabs: &mut Vec<String>, tab_active: &mut usize, show_rail: &mut bool, show_dock: &mut bool) {
+                tabs: &mut Vec<String>, tab_active: &mut usize, show_rail: &mut bool, show_dock: &mut bool,
+                snap: &mut varos_core::model::SnapConfig) {
     let h = 40.0;
     let frame = egui::Frame { fill: BG, inner_margin: Margin::ZERO, ..Default::default() };
     egui::TopBottomPanel::top("topbar").exact_height(h).frame(frame).show(ctx, |ui| {
@@ -765,7 +789,13 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
         topbtn(ui, &p, layout_r, &top.layout, "tb-layout", false).on_hover_text("Layout");
         let search_r = cell(layout_r.left() - 2.0);
         topbtn(ui, &p, search_r, &top.search, "tb-search", false).on_hover_text("Search");
-        excl.extend([panels_r, layout_r, search_r]);
+        // magnet = the Snapping quick-menu (Illustrator layout)
+        let magnet_id = ui.make_persistent_id("snap_menu");
+        let magnet_r = cell(search_r.left() - 2.0);
+        let magnet_active = ui.memory(|m| m.is_popup_open(magnet_id)) || snap.smart || snap.grid;
+        let magr = topbtn(ui, &p, magnet_r, &top.magnet, "tb-magnet", magnet_active);
+        if magr.clicked() { ui.memory_mut(|m| m.toggle_popup(magnet_id)); }
+        excl.extend([panels_r, layout_r, search_r, magnet_r]);
 
         // menu button (left)
         let menu_r = egui::Rect::from_min_max(egui::pos2(bar.left() + 6.0, cy - 15.0), egui::pos2(bar.left() + 40.0, cy + 15.0));
@@ -774,7 +804,7 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
         excl.push(menu_r);
 
         // tabs + new-tab
-        let tabs_right = search_r.left() - 12.0;
+        let tabs_right = magnet_r.left() - 12.0;
         let mut tx = menu_r.right() + 8.0;
         let tw = 154.0;
         let (mut to_close, mut to_activate) = (None, None);
@@ -809,6 +839,18 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
             ui.set_min_width(186.0);
             if check_row(ui, "Tool rail", *show_rail, &top.check) { *show_rail = !*show_rail; }
             if check_row(ui, "Inspector", *show_dock, &top.check) { *show_dock = !*show_dock; }
+        });
+        // Snapping quick-menu (Illustrator "Snapping" popover)
+        egui::popup_below_widget(ui, magnet_id, &magr, |ui| {
+            ui.set_min_width(204.0);
+            if check_row(ui, "Snap to Grid", snap.grid, &top.check) { snap.grid = !snap.grid; }
+            if check_row(ui, "Snap to Point", snap.key_points, &top.check) { snap.key_points = !snap.key_points; }
+            ui.add_space(4.0);
+            let (sr, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+            ui.painter().hline(sr.left() + 4.0..=sr.right() - 4.0, sr.center().y, Stroke::new(1.0, BORDER)); ui.add_space(4.0);
+            if check_row(ui, "Smart Guides  (Ctrl+U)", snap.smart, &top.check) { snap.smart = !snap.smart; }
+            if check_row(ui, "    Alignment Guides", snap.alignment_guides, &top.check) { snap.alignment_guides = !snap.alignment_guides; }
+            if check_row(ui, "    Geometric Guides", snap.object_geometry, &top.check) { snap.object_geometry = !snap.object_geometry; }
         });
 
         // publish caption height + interactive (non-drag) rects, in physical px
@@ -878,6 +920,7 @@ fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind
 struct DockIcons<'a> {
     rotate: &'a Option<egui::TextureHandle>, opacity: &'a Option<egui::TextureHandle>, strokew: &'a Option<egui::TextureHandle>,
     link: &'a Option<egui::TextureHandle>, fliph: &'a Option<egui::TextureHandle>, flipv: &'a Option<egui::TextureHandle>,
+    align: &'a [Option<egui::TextureHandle>; 8],
 }
 
 fn build_dock(ctx: &egui::Context, s: &Snap, ic: &DockIcons, refpt: &mut (f32, f32), lock: &mut bool,
@@ -938,6 +981,22 @@ fn build_dock(ctx: &egui::Context, s: &Snap, ic: &DockIcons, refpt: &mut (f32, f
             paint_row(ui, PaintTarget::Fill, s.fill, ops);
             paint_row(ui, PaintTarget::Stroke, s.stroke, ops);
             if let Some(v) = num_field(ui, inner, Lab::Icon(ic.strokew.as_ref()), "Stroke weight", s.sw, 1, 0.5, 0.2, 0.0..=400.0) { ops.push(Op::SetStrokeW(v)); }
+
+            hsep(ui, inner);
+            ui.label(RichText::new("ALIGN").color(MUTED).size(10.0).strong());
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                if icon_btn(ui, &ic.align[0], "Align left") { ops.push(Op::Align(AlignMode::Left)); }
+                if icon_btn(ui, &ic.align[1], "Align centre") { ops.push(Op::Align(AlignMode::CenterH)); }
+                if icon_btn(ui, &ic.align[2], "Align right") { ops.push(Op::Align(AlignMode::Right)); }
+                if icon_btn(ui, &ic.align[3], "Align top") { ops.push(Op::Align(AlignMode::Top)); }
+                if icon_btn(ui, &ic.align[4], "Align middle") { ops.push(Op::Align(AlignMode::Middle)); }
+                if icon_btn(ui, &ic.align[5], "Align bottom") { ops.push(Op::Align(AlignMode::Bottom)); }
+            });
+            ui.horizontal(|ui| {
+                if icon_btn(ui, &ic.align[6], "Distribute horizontal centres") { ops.push(Op::Distribute(DistAxis::Horizontal)); }
+                if icon_btn(ui, &ic.align[7], "Distribute vertical centres") { ops.push(Op::Distribute(DistAxis::Vertical)); }
+            });
         });
     if let Some(r) = r { rects.push(r.response.rect); }
 }
@@ -1135,6 +1194,21 @@ fn build_ab_chrome(ctx: &egui::Context, view: View, ppp: f32, abs: &[AbInfo], ac
     if clear_edit { *name_edit = None; }
 }
 
+/// The live measurement HUD — a small pill near the cursor showing the drag readout (X/Y position now;
+/// W×H / angle later). Pure feedback on a foreground layer; no interaction, never blocks the canvas.
+fn build_snap_hud(ctx: &egui::Context, view: View, ppp: f32, hud: &Option<(varos_core::geom::Pt, String)>) {
+    let (wp, text) = match hud { Some(h) => h, None => return };
+    let sp = view.w2s(*wp);
+    let anchor = egui::pos2(sp[0] / ppp + 15.0, sp[1] / ppp - 26.0);
+    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("snap-hud")));
+    let font = FontId::proportional(12.0);
+    let galley = p.layout_no_wrap(text.clone(), font.clone(), TEXT);
+    let rect = egui::Rect::from_min_size(anchor, galley.size() + egui::vec2(14.0, 7.0));
+    p.rect_filled(rect, Rounding::same(6.0), SOLID_PANEL);
+    p.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0, BORDER));
+    p.text(rect.center(), Align2::CENTER_CENTER, text, font, TEXT);
+}
+
 // ───────────────────────────── apply ─────────────────────────────
 
 fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
@@ -1147,6 +1221,8 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::SetStrokeW(w) => set_stroke_width(ed, w),
             Op::Paint(tg, c) => { ed.paint = tg; ed.apply_paint(c); }
             Op::Flip(h) => ed.flip(h),
+            Op::Align(m) => ed.align(m),
+            Op::Distribute(a) => ed.distribute(a),
             Op::AbActive(i) => ed.ab_set_active(i),
             Op::AbRect(i, x, y, w, h) => ed.ab_set_rect(i, x, y, w, h),
             Op::AbName(i, s) => ed.ab_rename(i, s),
