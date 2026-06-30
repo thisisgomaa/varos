@@ -4,6 +4,23 @@
 > plus the live code. **Base standard = Illustrator; borrowed feel = Figma/Affinity.** v1 = Illustrator-class.
 > We review this line-by-line, settle the open decisions, THEN build — one Stage-1 piece at a time.
 
+## ✅ DECISIONS LOCKED — 2026-06-30 (Ahmed)
+1. **Clip:** a per-artboard **Clip toggle** (button) in the Properties panel — clip the overflow on canvas or
+   not. **Default OFF** (Illustrator). It's a control, not a fixed rule.
+2. **Not a z-object** — confirmed (own tool, own list; never in the path order / Layers).
+3. **Move artwork with artboard** — a toggle, **default ON**.
+4. **Multiple artboards = NOW** (not deferred). Since no real `.varos` files exist yet, change the model to
+   `Vec<Artboard>` + active index immediately (no migration).
+5. **Default size = SQUARE** (1080×1080). A categorised new-file size **modal** (logo / poster / web / print)
+   is FUTURE; for now a standard-size preset dropdown is enough.
+6. **Page colour** = white default, **changeable** per artboard.
+7. **Units** = px. **Tool shortcut** = **Shift+O**.
+8. **Editing is gated** (deliberate limitation): the artboard is editable ONLY when the **Artboard tool
+   (Shift+O)** is active, OR via the **⋮ menu** on its on-canvas label. Name label sits **top-left**; a **⋮**
+   button on the **right** of the label opens edit. Editing must be **easy**.
+9. **Property panel (now):** standard-size preset · W/H box · portrait/landscape icons · background colour ·
+   **artboard count** · Clip toggle · "Move artwork with artboard" toggle.
+
 ---
 
 ## 0. The core model — the invariant to LOCK first
