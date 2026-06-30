@@ -96,6 +96,8 @@ enum Op {
     AbAdd, AbDup(usize), AbDel(usize), AbCount(usize),
     AbMoveArt(bool),
     RulerOrigin(Option<varos_core::geom::Pt>), // Some = set zero-point (snapped) + show crosshair; None = end drag
+    GuidePreview(bool, varos_core::geom::Pt),  // ruler drag-out: (vertical, world) → live snapped guide preview
+    GuideCommit,                                // drop the previewed guide into the document
 }
 
 /// A window action the custom title bar asks the host (winit) to perform.
@@ -1261,6 +1263,11 @@ fn build_rulers(ctx: &egui::Context, view: View, ppp: f32, grid: f32, origin: [f
             if big { p.text(egui::pos2(sx + 2.5, r.top() + 1.0), Align2::LEFT_TOP, fmt_ruler(val, grid, dec), num_font.clone(), if zero { TEXT } else { MUTED }); }
         }
         if let Some(pt) = pointer { p.vline(pt.x, r.y_range(), Stroke::new(1.0, ACCENT)); }
+        // drag off the strip body → pull out a HORIZONTAL guide (follows the pointer onto the canvas)
+        let body = egui::Rect::from_min_max(egui::pos2(r.left() + RULER, r.top()), r.right_bottom());
+        let dr = ui.interact(body, ui.id().with("ruler-h-body"), egui::Sense::drag());
+        if dr.dragged() { if let Some(pp) = ctx.pointer_latest_pos() { ops.push(Op::GuidePreview(false, view.s2w([pp.x * ppp, pp.y * ppp]))); } }
+        if dr.drag_stopped() { ops.push(Op::GuideCommit); }
         // corner box: drag sets the origin (snapped), double-click resets it
         let corner = egui::Rect::from_min_size(r.left_top(), egui::vec2(RULER, RULER));
         let resp = ui.interact(corner, ui.id().with("ruler-corner"), egui::Sense::click_and_drag());
@@ -1300,6 +1307,10 @@ fn build_rulers(ctx: &egui::Context, view: View, ppp: f32, grid: f32, origin: [f
             }
         }
         if let Some(pt) = pointer { p.hline(r.x_range(), pt.y, Stroke::new(1.0, ACCENT)); }
+        // drag off the strip → pull out a VERTICAL guide (follows the pointer onto the canvas)
+        let dr = ui.interact(r, ui.id().with("ruler-v-body"), egui::Sense::drag());
+        if dr.dragged() { if let Some(pp) = ctx.pointer_latest_pos() { ops.push(Op::GuidePreview(true, view.s2w([pp.x * ppp, pp.y * ppp]))); } }
+        if dr.drag_stopped() { ops.push(Op::GuideCommit); }
     });
 }
 
@@ -1359,6 +1370,8 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::AbMoveArt(on) => ed.ab_set_move_art(on),
             Op::RulerOrigin(Some(p)) => { ed.doc.ruler_origin = ed.snap_origin(p); ed.origin_preview = Some(ed.doc.ruler_origin); }
             Op::RulerOrigin(None) => ed.origin_preview = None,
+            Op::GuidePreview(vertical, p) => ed.set_guide_preview(vertical, p),
+            Op::GuideCommit => ed.commit_guide(),
         }
     }
 }

@@ -146,6 +146,12 @@ impl Default for SnapConfig {
     }
 }
 
+/// A ruler guide: an infinite construction line. `vertical` ⇒ a vertical line at world x = `pos`
+/// (dragged out of the LEFT ruler); else a horizontal line at world y = `pos` (dragged out of the TOP
+/// ruler). Snapping locks onto it like any other target; persisted with the document.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Guide { pub vertical: bool, pub pos: f32 }
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub paths: Vec<Path>,
@@ -177,12 +183,18 @@ pub struct Document {
     /// to set, double-click the corner to reset. `#[serde(default)]` so older `.varos` files still load.
     #[serde(default)]
     pub ruler_origin: Pt,
+    /// User ruler guides (dragged out of the rulers). `#[serde(default)]` so older files still load.
+    #[serde(default)]
+    pub guides: Vec<Guide>,
+    /// Guides locked (can't be grabbed/moved) — Illustrator's Alt+Ctrl+; . Persisted with the doc.
+    #[serde(default)]
+    pub guides_locked: bool,
 }
 impl Default for Document {
     fn default() -> Self {
         Document { paths: vec![], groups: vec![], group_of: HashMap::new(), ids: 0,
                    units: DocUnits::default(), artboards: one_artboard(), active: 0, move_art_with_ab: true,
-                   snap: SnapConfig::default(), ruler_origin: [0.0, 0.0] }
+                   snap: SnapConfig::default(), ruler_origin: [0.0, 0.0], guides: vec![], guides_locked: false }
     }
 }
 

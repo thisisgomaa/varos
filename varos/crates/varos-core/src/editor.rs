@@ -44,6 +44,7 @@ pub enum Drag {
     Anchors { start: Pt, items: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
     Handle { aid: u32, out: bool, couple: bool, opp_len: f32, grab: Pt },
     Segment { pid: u32, i: usize, down: Pt, a_out0: Option<Pt>, b_in0: Option<Pt>, ap0: Pt, bp0: Pt, straight: bool },
+    Guide { idx: usize },   // moving an existing ruler guide (idx into doc.guides)
     Shape { start: Pt, pid: u32, kind: ShapeKind },
     Marquee { start: Pt, base: Vec<u32> },
     ObjMarquee { start: Pt, base: Vec<u32> },
@@ -165,7 +166,9 @@ pub struct Editor {
     pub obj_angle: f32,      // orientation of the object-selection transform frame (rotates with the selection)
     pub hover_path: Option<u32>,
     pub show_rulers: bool,   // View ▸ Rulers (Ctrl+R). View pref, not serialized; default ON.
+    pub guides_hidden: bool, // View ▸ Hide Guides (Ctrl+;). View pref, not serialized.
     pub origin_preview: Option<Pt>,  // while dragging the ruler corner: the live (snapped) zero-point → dashed crosshair
+    pub guide_preview: Option<Guide>, // while dragging a NEW guide out of a ruler: the live (snapped) guide
     pub mods: Mods,
     pub cur_fill: Option<Rgba>, pub cur_stroke: Option<Rgba>, pub cur_sw: f32, pub paint: PaintTarget,
     pub dirty: bool,
@@ -177,7 +180,8 @@ impl Editor {
         Editor { doc: Document::default(), tool: ToolKind::Object, gesture: ToolKind::Object, active: None,
                  selected: HashSet::new(), objsel: HashSet::new(), dsel_path: None, drag: Drag::None, ab_drag: AbDrag::None,
                  snap_guides: vec![], snap_hud: None, last_tf: None, gesture_copy: false, gesture_delta: [0.0, 0.0], cursor: [0.0, 0.0],
-                 ppu: 1.0, obj_angle: 0.0, hover_path: None, show_rulers: true, origin_preview: None, mods: Mods::default(),
+                 ppu: 1.0, obj_angle: 0.0, hover_path: None, show_rulers: true, guides_hidden: false,
+                 origin_preview: None, guide_preview: None, mods: Mods::default(),
                  cur_fill: Some([0.95, 0.95, 0.96, 1.0]), cur_stroke: Some([0.12, 0.12, 0.13, 1.0]), cur_sw: 2.0, paint: PaintTarget::Fill,
                  dirty: false, undo: vec![], redo: vec![], pending: None }
     }
@@ -805,6 +809,11 @@ impl Editor {
             txl.push((ax0, ay0, ay1)); txl.push((ax1, ay0, ay1)); tyl.push((ay0, ax0, ax1)); tyl.push((ay1, ax0, ax1));
             if cfg.artboard_mids { txl.push(((ax0 + ax1) * 0.5, ay0, ay1)); tyl.push(((ay0 + ay1) * 0.5, ax0, ax1)); }
         }}
+        if cfg.guides && !self.guides_hidden {   // ruler guides are just more snap lines (infinite extent)
+            for g in &self.doc.guides {
+                if g.vertical { txl.push((g.pos, -1.0e6, 1.0e6)); } else { tyl.push((g.pos, -1.0e6, 1.0e6)); }
+            }
+        }
         (txl, tyl)
     }
 
@@ -971,6 +980,52 @@ impl Editor {
         if ny.is_none() { let g = (p[1] / step).round() * step; if (g - p[1]).abs() <= tol { ny = Some(g); } }
         [nx.unwrap_or(p[0]), ny.unwrap_or(p[1])]
     }
+
+    // ---------- ruler guides ----------
+    /// Nearest guide line within the screen-constant grab tolerance, or None (also None when hidden/locked).
+    pub fn guide_at(&self, pos: Pt) -> Option<usize> {
+        if self.guides_hidden || self.doc.guides_locked { return None; }
+        let tol = EDGE_R / self.ppu.max(1e-4);
+        let mut best: Option<(f32, usize)> = None;
+        for (i, g) in self.doc.guides.iter().enumerate() {
+            let d = if g.vertical { (g.pos - pos[0]).abs() } else { (g.pos - pos[1]).abs() };
+            if d <= tol && best.map_or(true, |(bd, _)| d < bd) { best = Some((d, i)); }
+        }
+        best.map(|(_, i)| i)
+    }
+    /// Snap ONE guide coordinate to artboard / object features / grid on its axis (never to a guide itself).
+    fn snap_axis(&self, v: f32, vertical: bool) -> f32 {
+        let cfg = &self.doc.snap;
+        if !cfg.enabled { return v; }
+        let tol = cfg.radius_px / self.ppu.max(1e-4);
+        let mut cands: Vec<f32> = vec![];
+        if let Some(ab) = self.doc.active_artboard() {
+            let (x0, y0, x1, y1) = ab.rect();
+            if vertical { cands.extend([x0, x1, (x0 + x1) * 0.5]); } else { cands.extend([y0, y1, (y0 + y1) * 0.5]); }
+        }
+        for pi in 0..self.doc.paths.len() {
+            let p = &self.doc.paths[pi]; if p.hidden { continue; }
+            let b = self.doc.outline_bbox(pi);
+            if vertical { cands.extend([b.0, b.2, (b.0 + b.2) * 0.5]); } else { cands.extend([b.1, b.3, (b.1 + b.3) * 0.5]); }
+            for a in p.anchors.iter().chain(p.holes.iter().flatten()) { cands.push(if vertical { a.p[0] } else { a.p[1] }); }
+        }
+        let mut best: Option<(f32, f32)> = None;
+        for c in cands { let d = (c - v).abs(); if d <= tol && best.map_or(true, |(bd, _)| d < bd) { best = Some((d, c)); } }
+        if let Some((_, c)) = best { return c; }
+        let s = self.adaptive_grid_step(); let g = (v / s).round() * s; if (g - v).abs() <= tol { return g; }
+        v
+    }
+    /// Ruler drag-out: set the live (snapped) preview of a NEW guide. `vertical` ⇒ from the LEFT ruler.
+    pub fn set_guide_preview(&mut self, vertical: bool, world: Pt) {
+        let v = if vertical { world[0] } else { world[1] };
+        self.guide_preview = Some(Guide { vertical, pos: self.snap_axis(v, vertical) });
+    }
+    /// Drop the previewed guide into the document (undoable). No-op if there's no preview.
+    pub fn commit_guide(&mut self) {
+        if let Some(g) = self.guide_preview.take() { self.begin(); self.doc.guides.push(g); self.dirty = true; self.commit(); }
+    }
+    /// Cancel an in-progress ruler drag-out without placing a guide.
+    pub fn cancel_guide(&mut self) { self.guide_preview = None; }
 
     /// Core GEOMETRY point-snap: find the nearest snap of any moving point (offset by `d`) onto a target
     /// anchor (key point), segment midpoint, or the nearest point on a path edge (vector geometry), within
@@ -1252,6 +1307,10 @@ impl Editor {
         self.gesture_copy = false; self.gesture_delta = [0.0, 0.0];
         self.gesture = self.eff_tool();
         if self.gesture == ToolKind::Artboard { self.ab_down(pos); return; }
+        // grab a ruler guide first (Selection / Direct tools) — drag to reposition it
+        if matches!(self.gesture, ToolKind::Object | ToolKind::Direct) {
+            if let Some(idx) = self.guide_at(pos) { self.drag = Drag::Guide { idx }; return; }
+        }
         // Pen: snap the new anchor onto nearby points / path / grid before placing it
         let pos = if self.gesture == ToolKind::Pen { let (adj, _, _) = self.snap_anchor(&[pos], [0.0, 0.0]); add(pos, adj) } else { pos };
         self.cursor = pos;
@@ -1346,6 +1405,16 @@ impl Editor {
                     else { self.doc.paths[pi].anchors[i].hout = Some(add(a_out0.unwrap_or(ap0), d)); self.doc.paths[pi].anchors[bi].hin = Some(add(b_in0.unwrap_or(bp0), d)); }
                 }
                 self.drag = Drag::Segment { pid, i, down, a_out0, b_in0, ap0, bp0, straight };
+                self.dirty = true;
+            }
+            Drag::Guide { idx } => {
+                if let Some(g) = self.doc.guides.get(idx).copied() {
+                    let v = self.snap_axis(if g.vertical { pos[0] } else { pos[1] }, g.vertical);
+                    if let Some(gm) = self.doc.guides.get_mut(idx) { gm.pos = v; }
+                    let o = self.doc.ruler_origin;
+                    self.snap_hud = Some((pos, if g.vertical { format!("X {:.0}", v - o[0]) } else { format!("Y {:.0}", v - o[1]) }));
+                }
+                self.drag = Drag::Guide { idx };
                 self.dirty = true;
             }
             Drag::Shape { start, pid, kind } => {
@@ -1524,7 +1593,20 @@ impl Editor {
         else if !self.objsel.is_empty() { let pids: Vec<u32> = self.objsel.iter().copied().collect(); for pid in pids { if let Some(pi) = self.doc.pidx(pid) { self.doc.paths.remove(pi); } } self.objsel.clear(); }
         self.dirty = true; self.commit();
     }
+    /// If a guide is being dragged, remove it (drag-to-ruler delete) — undoable. Returns true if it did.
+    pub fn delete_dragged_guide(&mut self) -> bool {
+        if let Drag::Guide { idx } = self.drag {
+            if idx < self.doc.guides.len() { self.doc.guides.remove(idx); }
+            self.dirty = true; self.drag = Drag::None; self.snap_hud = None; self.commit();
+            return true;
+        }
+        false
+    }
     pub fn double_click(&mut self, pos: Pt) {
+        if self.guide_at(pos).is_some() {   // double-click a guide → delete it
+            if let Some(idx) = self.guide_at(pos) { self.begin(); self.doc.guides.remove(idx); self.dirty = true; self.commit(); }
+            return;
+        }
         if let Some(pid) = self.path_under(pos) {
             self.set_tool(ToolKind::Direct);   // set_tool clears dsel_path, so set it after
             self.selected.clear();
