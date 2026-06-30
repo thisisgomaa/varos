@@ -297,7 +297,7 @@ impl Ui {
 
     /// Build + lay out the panels; user changes are applied straight to the editor. Returns egui's
     /// tessellated output for `Renderer::render_ui`.
-    pub fn run(&mut self, window: &Window, ed: &mut Editor, ppp: f32, view: View)
+    pub fn run(&mut self, window: &Window, ed: &mut Editor, ppp: f32, view: View, maximized: bool)
         -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
         let input = self.state.take_egui_input(window);
         let snap = Snap::read(ed);
@@ -338,7 +338,7 @@ impl Ui {
             if splashing {
                 if let Some(e) = splash { build_splash(ctx, e, logo); } // only the floating card
             } else {
-                build_topbar(ctx, top, &mut win_action, &mut tabs, &mut tab_active, &mut show_rail, &mut show_dock, &mut snap_cfg);
+                build_topbar(ctx, top, &mut win_action, &mut tabs, &mut tab_active, &mut show_rail, &mut show_dock, &mut snap_cfg, maximized);
                 if show_rulers { build_rulers(ctx, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops); }
                 if show_rail { build_rail(ctx, tools, shapes, &mut shape_active, &snap, &mut ops, &mut rects); }
                 if show_dock {
@@ -692,7 +692,7 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
 
 /// One window-control button (min/max/close): 46×40, no rounding, hover fill + icon.
 #[derive(Clone, Copy)]
-enum Cap { Min, Max, Close }
+enum Cap { Min, Max, Restore, Close }
 
 /// A window caption button. The glyph is PAINTED directly (crisp 1px lines like Windows 11 / Chrome),
 /// not an SVG texture — the Lucide minus rendered with round caps looked like a fat pill, not a clean dash.
@@ -707,6 +707,11 @@ fn winctl(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, cap: Cap,
     match cap {
         Cap::Min => { let y = c.y.round() + 0.5; p.line_segment([egui::pos2(c.x - 5.0, y), egui::pos2(c.x + 5.0, y)], s); }
         Cap::Max => { p.rect_stroke(egui::Rect::from_center_size(c, egui::vec2(10.0, 10.0)), Rounding::ZERO, s); }
+        Cap::Restore => {   // two overlapping windows — the "restore down" glyph shown WHILE maximized
+            p.rect_stroke(egui::Rect::from_min_size(egui::pos2(c.x - 5.0, c.y - 2.0), egui::vec2(7.0, 7.0)), Rounding::ZERO, s); // front
+            p.line_segment([egui::pos2(c.x - 2.0, c.y - 5.0), egui::pos2(c.x + 5.0, c.y - 5.0)], s);  // back top edge
+            p.line_segment([egui::pos2(c.x + 5.0, c.y - 5.0), egui::pos2(c.x + 5.0, c.y + 2.0)], s);  // back right edge
+        }
         Cap::Close => {
             p.line_segment([c + egui::vec2(-5.0, -5.0), c + egui::vec2(5.0, 5.0)], s);
             p.line_segment([c + egui::vec2(-5.0, 5.0), c + egui::vec2(5.0, -5.0)], s);
@@ -771,7 +776,7 @@ fn check_row(ui: &mut egui::Ui, label: &str, checked: bool, tex_check: &Option<e
 /// (egui handles them) while the empty band is HTCAPTION (the OS drags/snaps the window).
 fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<WinAction>,
                 tabs: &mut Vec<String>, tab_active: &mut usize, show_rail: &mut bool, show_dock: &mut bool,
-                snap: &mut varos_core::model::SnapConfig) {
+                snap: &mut varos_core::model::SnapConfig, maximized: bool) {
     let h = 40.0;
     let frame = egui::Frame { fill: BG, inner_margin: Margin::ZERO, ..Default::default() };
     egui::TopBottomPanel::top("topbar").exact_height(h).frame(frame).show(ctx, |ui| {
@@ -787,7 +792,7 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
         let max_r = egui::Rect::from_min_max(egui::pos2(bar.right() - 2.0 * bw, bar.top()), egui::pos2(bar.right() - bw, bar.bottom()));
         let min_r = egui::Rect::from_min_max(egui::pos2(bar.right() - 3.0 * bw, bar.top()), egui::pos2(bar.right() - 2.0 * bw, bar.bottom()));
         if winctl(ui, &p, min_r, Cap::Min, "wc-min", BG_SURFACE, false) { *win_action = Some(WinAction::Minimize); }
-        if winctl(ui, &p, max_r, Cap::Max, "wc-max", BG_SURFACE, false) { *win_action = Some(WinAction::ToggleMaximize); }
+        if winctl(ui, &p, max_r, if maximized { Cap::Restore } else { Cap::Max }, "wc-max", BG_SURFACE, false) { *win_action = Some(WinAction::ToggleMaximize); }
         if winctl(ui, &p, close_r, Cap::Close, "wc-close", CLOSE_RED, true) { *win_action = Some(WinAction::Close); }
         excl.extend([min_r, max_r, close_r]);
 
