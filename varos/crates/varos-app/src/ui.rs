@@ -8,7 +8,7 @@
 use std::time::Instant;
 use egui::{Align, Align2, Color32, FontId, Layout, Margin, RichText, Rounding, Stroke};
 use varos_core::editor::{Editor, PaintTarget, ToolKind};
-use varos_core::geom::Rgba;
+use varos_core::geom::{Rgba, View};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
@@ -53,6 +53,23 @@ const IC_PANELS: &str = r#"<rect width="18" height="18" x="3" y="3" rx="2"/><pat
 const IC_PLUS: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
 const IC_X: &str = r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#;
 const IC_CHECK: &str = r#"<path d="M20 6 9 17l-5-5"/>"#;
+// Artboard tool (Lucide "frame" — a bold # that reads clearly at 20px) · hexagon (polygon shape) ·
+// portrait/landscape page · "fit in window" frame
+const IC_ARTBOARD: &str = r#"<path d="M22 6H2"/><path d="M22 18H2"/><path d="M6 2v20"/><path d="M18 2v20"/>"#;
+const IC_POLYGON: &str = r#"<path d="M21 16.05V7.95a2 2 0 0 0-1-1.73l-7-4.04a2 2 0 0 0-2 0l-7 4.04A2 2 0 0 0 3 7.95v8.1a2 2 0 0 0 1 1.73l7 4.04a2 2 0 0 0 2 0l7-4.04a2 2 0 0 0 1-1.73Z"/>"#;
+const IC_PORTRAIT: &str = r#"<rect x="7" y="3" width="10" height="18" rx="1"/>"#;
+const IC_LANDSCAPE: &str = r#"<rect x="3" y="7" width="18" height="10" rx="1"/>"#;
+const IC_FIT: &str = r#"<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>"#;
+// ⋮ on-canvas artboard menu — FILLED dots (own svg; lucide() forces stroke-only)
+const IC_DOTS_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#ffffff"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>"##;
+/// Page-size presets shown in the artboard panel: (label, w, h) in world points (px == pt @72ppi).
+const AB_PRESETS: [(&str, f32, f32); 5] = [
+    ("Square \u{2014} 1080", 1080.0, 1080.0),
+    ("Screen \u{2014} 1920\u{00d7}1080", 1920.0, 1080.0),
+    ("A4 \u{2014} 595\u{00d7}842", 595.0, 842.0),
+    ("Letter \u{2014} 612\u{00d7}792", 612.0, 792.0),
+    ("Story \u{2014} 1080\u{00d7}1920", 1080.0, 1920.0),
+];
 
 /// A change requested by a panel this frame; applied to the editor after layout.
 enum Op {
@@ -61,6 +78,15 @@ enum Op {
     SetRot(f32), SetOpacity(f32), SetStrokeW(f32),
     Paint(PaintTarget, Option<Rgba>),
     Flip(bool),
+    // ---- artboard ops (i = artboard index) ----
+    AbActive(usize),
+    AbRect(usize, Option<f32>, Option<f32>, Option<f32>, Option<f32>), // x,y,w,h (each optional)
+    AbName(usize, String),
+    AbColor(usize, Option<Rgba>),   // None = transparent page
+    AbClip(usize),                  // toggle
+    AbOrient(usize),                // swap w/h
+    AbAdd, AbDup(usize), AbDel(usize), AbCount(usize),
+    AbMoveArt(bool),
 }
 
 /// A window action the custom title bar asks the host (winit) to perform.
@@ -98,6 +124,37 @@ impl Snap {
     }
 }
 
+/// Read-only snapshot of the ACTIVE artboard for the artboard property panel.
+struct AbSnap {
+    count: usize, active: usize,
+    name: String, x: f32, y: f32, w: f32, h: f32,
+    color: Option<Rgba>, clip: bool, move_art: bool,
+}
+impl AbSnap {
+    fn read(ed: &Editor) -> Self {
+        let count = ed.doc.artboards.len();
+        let active = if count == 0 { 0 } else { ed.doc.active.min(count - 1) };
+        let ab = ed.doc.active_artboard();
+        AbSnap {
+            count, active,
+            name: ab.map(|a| a.name.clone()).unwrap_or_default(),
+            x: ab.map(|a| a.x).unwrap_or(0.0), y: ab.map(|a| a.y).unwrap_or(0.0),
+            w: ab.map(|a| a.w).unwrap_or(0.0), h: ab.map(|a| a.h).unwrap_or(0.0),
+            color: ab.and_then(|a| a.page_color), clip: ab.map(|a| a.clip).unwrap_or(false),
+            move_art: ed.doc.move_art_with_ab,
+        }
+    }
+}
+
+/// One artboard's on-canvas label info (for the name + ⋮ chrome painted over the board).
+struct AbInfo { i: usize, name: String, x: f32, y: f32, w: f32, h: f32, transparent: bool, clip: bool }
+fn ab_infos(ed: &Editor) -> Vec<AbInfo> {
+    ed.doc.artboards.iter().enumerate().map(|(i, a)| AbInfo {
+        i, name: a.name.clone(), x: a.x, y: a.y, w: a.w, h: a.h,
+        transparent: a.page_color.is_none(), clip: a.clip,
+    }).collect()
+}
+
 struct ToolBtn { kind: ToolKind, tip: &'static str, tex: Option<egui::TextureHandle>, group_end: bool }
 
 pub struct Ui {
@@ -106,16 +163,25 @@ pub struct Ui {
     pub frosted: bool,          // kept for the renderer signature; false (no glass)
     pub rects: Vec<egui::Rect>, // panel rects in physical px (for the GPU shadow pass)
     pub repaint: bool,
-    tools: Vec<ToolBtn>,
+    tools: Vec<ToolBtn>,        // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
+    shapes: Vec<ToolBtn>,       // the shape tools, collapsed into one rail slot (right-click → flyout)
+    shape_active: ToolKind,     // which shape the shapes slot currently represents
     ic_rotate: Option<egui::TextureHandle>,
     ic_opacity: Option<egui::TextureHandle>,
     ic_strokew: Option<egui::TextureHandle>,
     ic_link: Option<egui::TextureHandle>,
     ic_fliph: Option<egui::TextureHandle>,
     ic_flipv: Option<egui::TextureHandle>,
+    ic_portrait: Option<egui::TextureHandle>,
+    ic_landscape: Option<egui::TextureHandle>,
+    ic_fit: Option<egui::TextureHandle>,
+    ab_dots: Option<egui::TextureHandle>,
     cursor: egui::CursorIcon, // this frame's egui cursor (read from FullOutput, not post-frame state)
     refpt: (f32, f32),        // transform reference point (ax, ay each in {0, .5, 1})
     lock: bool,               // constrain W/H proportions
+    ab_lock: bool,            // constrain artboard W/H proportions
+    ab_name_edit: Option<(usize, String)>, // inline rename in progress (artboard index + buffer)
+    pub fit_request: Option<usize>,        // an artboard asked to be fit in the window (host applies it)
     top: TopIcons,
     pub win_action: Option<WinAction>, // a window control was clicked this frame (host acts on it)
     show_rail: bool,
@@ -140,17 +206,26 @@ impl Ui {
         let ctx = egui::Context::default();
         install_fonts(&ctx);
         install_style(&ctx);
-        let defs: [(ToolKind, &str, &str, bool); 7] = [
+        // rail singletons — Artboard sits with Selection + Direct Selection (Ahmed), then Pen, Eyedropper.
+        let defs: [(ToolKind, &str, &str, bool); 5] = [
             (ToolKind::Object,     IC_SELECT,   "Selection (V)",        false),
             (ToolKind::Direct,     IC_DIRECT,   "Direct Selection (A)", false),
-            (ToolKind::Pen,        IC_PEN,      "Pen (P)",              true),
-            (ToolKind::Rect,       IC_RECT,     "Rectangle (M)",        false),
-            (ToolKind::Ellipse,    IC_ELLIPSE,  "Ellipse (L)",          false),
-            (ToolKind::Triangle,   IC_TRIANGLE, "Polygon",              true),
+            (ToolKind::Artboard,   IC_ARTBOARD, "Artboard (Shift+O)",   true),  // ends the selection group
+            (ToolKind::Pen,        IC_PEN,      "Pen (P)",              true),  // ends the pen group
             (ToolKind::Eyedropper, IC_EYE,      "Eyedropper (I)",       false),
         ];
         let tools = defs.iter().enumerate().map(|(i, (kind, svg, tip, grp))| {
             ToolBtn { kind: *kind, tip, tex: load_icon(&ctx, &format!("ic-{i}"), svg), group_end: *grp }
+        }).collect();
+        // shape tools collapse into ONE rail slot: left-click uses the current shape, right-click flyouts all four.
+        let shape_defs: [(ToolKind, &str, &str); 4] = [
+            (ToolKind::Rect,     IC_RECT,     "Rectangle (M)"),
+            (ToolKind::Ellipse,  IC_ELLIPSE,  "Ellipse (L)"),
+            (ToolKind::Triangle, IC_TRIANGLE, "Triangle"),
+            (ToolKind::Polygon,  IC_POLYGON,  "Polygon"),
+        ];
+        let shapes = shape_defs.iter().enumerate().map(|(i, (kind, svg, tip))| {
+            ToolBtn { kind: *kind, tip, tex: load_icon(&ctx, &format!("ic-shape{i}"), svg), group_end: false }
         }).collect();
         let ic_rotate = load_icon(&ctx, "lbl-rot", IC_ROTATE);
         let ic_opacity = load_icon(&ctx, "lbl-op", IC_OPACITY);
@@ -158,6 +233,12 @@ impl Ui {
         let ic_link = load_icon(&ctx, "lbl-link", IC_LINK);
         let ic_fliph = load_icon(&ctx, "lbl-fh", IC_FLIPH);
         let ic_flipv = load_icon(&ctx, "lbl-fv", IC_FLIPV);
+        let ic_portrait = load_icon(&ctx, "lbl-portrait", IC_PORTRAIT);
+        let ic_landscape = load_icon(&ctx, "lbl-landscape", IC_LANDSCAPE);
+        let ic_fit = load_icon(&ctx, "lbl-fit", IC_FIT);
+        let ab_dots = crate::cursors::render_svg(IC_DOTS_SVG, 96, false).map(|(rgba, w, h)| {
+            ctx.load_texture("ab-dots", egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba), egui::TextureOptions::LINEAR)
+        });
         let top = TopIcons {
             menu: load_icon(&ctx, "tb-menu", IC_MENU),
             min: load_icon(&ctx, "tb-min", IC_MIN),
@@ -175,8 +256,10 @@ impl Ui {
             ctx.load_texture("logo", egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], rgba.as_raw()), egui::TextureOptions::LINEAR)
         });
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, None, None);
-        Ui { ctx, state, frosted: false, rects: vec![], repaint: false, tools, ic_rotate, ic_opacity, ic_strokew,
-             ic_link, ic_fliph, ic_flipv, cursor: egui::CursorIcon::Default, refpt: (0.0, 0.0), lock: false,
+        Ui { ctx, state, frosted: false, rects: vec![], repaint: false, tools, shapes, shape_active: ToolKind::Rect, ic_rotate, ic_opacity, ic_strokew,
+             ic_link, ic_fliph, ic_flipv, ic_portrait, ic_landscape, ic_fit, ab_dots,
+             cursor: egui::CursorIcon::Default, refpt: (0.0, 0.0), lock: false,
+             ab_lock: false, ab_name_edit: None, fit_request: None,
              top, win_action: None, show_rail: true, show_dock: true, tabs: vec!["Untitled-1".into()], tab_active: 0,
              logo, splash_start: Some(Instant::now()), last_splash: false }
     }
@@ -200,18 +283,28 @@ impl Ui {
 
     /// Build + lay out the panels; user changes are applied straight to the editor. Returns egui's
     /// tessellated output for `Renderer::render_ui`.
-    pub fn run(&mut self, window: &Window, ed: &mut Editor, ppp: f32)
+    pub fn run(&mut self, window: &Window, ed: &mut Editor, ppp: f32, view: View)
         -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
         let input = self.state.take_egui_input(window);
         let snap = Snap::read(ed);
+        let absnap = AbSnap::read(ed);
+        let abs = ab_infos(ed);
         let tools = &self.tools;
+        let shapes = &self.shapes;
         let icons = DockIcons { rotate: &self.ic_rotate, opacity: &self.ic_opacity, strokew: &self.ic_strokew,
             link: &self.ic_link, fliph: &self.ic_fliph, flipv: &self.ic_flipv };
+        let ab_icons = AbIcons { link: &self.ic_link, portrait: &self.ic_portrait,
+            landscape: &self.ic_landscape, fit: &self.ic_fit };
+        let ab_dots = &self.ab_dots;
         let top = &self.top;
         let mut ops: Vec<Op> = Vec::new();
         let mut rects: Vec<egui::Rect> = Vec::new();
         let mut refpt = self.refpt;
         let mut lock = self.lock;
+        let mut ab_lock = self.ab_lock;
+        let mut ab_name_edit = std::mem::take(&mut self.ab_name_edit);
+        let mut fit_request: Option<usize> = None;
+        let mut shape_active = self.shape_active;
         let mut win_action = None;
         let mut show_rail = self.show_rail;
         let mut show_dock = self.show_dock;
@@ -225,14 +318,27 @@ impl Ui {
                 if let Some(e) = splash { build_splash(ctx, e, logo); } // only the floating card
             } else {
                 build_topbar(ctx, top, &mut win_action, &mut tabs, &mut tab_active, &mut show_rail, &mut show_dock);
-                if show_rail { build_rail(ctx, tools, &snap, &mut ops, &mut rects); }
-                if show_dock { build_dock(ctx, &snap, &icons, &mut refpt, &mut lock, &mut ops, &mut rects); }
+                if show_rail { build_rail(ctx, tools, shapes, &mut shape_active, &snap, &mut ops, &mut rects); }
+                if show_dock {
+                    if snap.tool == ToolKind::Artboard {
+                        build_ab_dock(ctx, &absnap, &ab_icons, &mut ab_lock, &mut ops, &mut rects, &mut fit_request);
+                    } else {
+                        build_dock(ctx, &snap, &icons, &mut refpt, &mut lock, &mut ops, &mut rects);
+                    }
+                }
+                // on-canvas page chrome: a name label + ⋮ menu pinned over each artboard (any tool)
+                build_ab_chrome(ctx, view, ppp, &abs, absnap.active, snap.tool == ToolKind::Artboard,
+                                absnap.count, ab_dots, &mut ops, &mut ab_name_edit, &mut fit_request);
             }
         });
         self.last_splash = splashing;
         if let Some(e) = splash { if e >= SPLASH_DUR { self.splash_start = None; } }
         self.refpt = refpt;
         self.lock = lock;
+        self.ab_lock = ab_lock;
+        self.ab_name_edit = ab_name_edit;
+        self.shape_active = shape_active;
+        if fit_request.is_some() { self.fit_request = fit_request; }
         self.win_action = win_action;
         self.show_rail = show_rail;
         self.show_dock = show_dock;
@@ -713,20 +819,58 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
     });
 }
 
-fn build_rail(ctx: &egui::Context, tools: &[ToolBtn], s: &Snap, ops: &mut Vec<Op>, rects: &mut Vec<egui::Rect>) {
+fn build_rail(ctx: &egui::Context, tools: &[ToolBtn], shapes: &[ToolBtn], shape_active: &mut ToolKind,
+              s: &Snap, ops: &mut Vec<Op>, rects: &mut Vec<egui::Rect>) {
+    // the shapes slot mirrors whichever shape tool is actually active (so the M/L keys update it too)
+    if shapes.iter().any(|t| t.kind == s.tool) { *shape_active = s.tool; }
     let r = egui::Window::new("tools").title_bar(false).resizable(false)
         .anchor(Align2::LEFT_CENTER, egui::vec2(16.0, 0.0)).frame(panel_frame(7.0))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
-            let last = tools.len() - 1;
-            for (i, t) in tools.iter().enumerate() {
+            for t in tools {
                 if icon_button(ui, &t.tex, s.tool == t.kind).on_hover_text(t.tip).clicked() {
                     ops.push(Op::Tool(t.kind));
                 }
-                if t.group_end && i != last { divider(ui); }
+                if t.group_end { divider(ui); }
+                if t.kind == ToolKind::Pen {            // the SHAPES slot sits right after Pen
+                    shape_slot(ui, shapes, shape_active, s, ops);
+                    divider(ui);
+                }
             }
         });
     if let Some(r) = r { rects.push(r.response.rect); }
+}
+
+/// One rail slot standing in for all four shape tools. Left-click uses the current shape; right-click
+/// opens a flyout of all four (Illustrator tool-group behaviour). A corner mark hints at the flyout.
+fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind, s: &Snap, ops: &mut Vec<Op>) {
+    let cur = shapes.iter().find(|t| t.kind == *shape_active).unwrap_or(&shapes[0]);
+    let is_active = shapes.iter().any(|t| t.kind == s.tool);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
+    let rounding = Rounding::same(9.0);
+    if is_active { ui.painter().rect_filled(rect, rounding, ACCENT); }
+    else if resp.hovered() { ui.painter().rect_filled(rect, rounding, HOVER); }
+    if let Some(t) = &cur.tex {
+        ui.painter().image(t.id(), egui::Rect::from_center_size(rect.center(), egui::vec2(20.0, 20.0)), UV01(), Color32::WHITE);
+    }
+    // tiny flyout marker — a corner triangle bottom-right, like Illustrator's grouped tools
+    let c = rect.right_bottom() + egui::vec2(-4.0, -4.0);
+    ui.painter().add(egui::Shape::convex_polygon(vec![c, c + egui::vec2(-5.0, 0.0), c + egui::vec2(0.0, -5.0)],
+        if is_active { Color32::WHITE } else { MUTED }, Stroke::NONE));
+    if resp.clicked() { ops.push(Op::Tool(*shape_active)); }
+    resp.clone().on_hover_text("Shapes \u{2014} click to use \u{00b7} right-click for more");
+    let pop = ui.make_persistent_id("shape-flyout");
+    if resp.secondary_clicked() { ui.memory_mut(|m| m.toggle_popup(pop)); }
+    egui::popup_below_widget(ui, pop, &resp, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for t in shapes {
+                if icon_button(ui, &t.tex, s.tool == t.kind).on_hover_text(t.tip).clicked() {
+                    *shape_active = t.kind; ops.push(Op::Tool(t.kind)); ui.memory_mut(|m| m.close_popup());
+                }
+            }
+        });
+    });
 }
 
 // ───────────────────────────── inspector dock ─────────────────────────────
@@ -798,6 +942,199 @@ fn build_dock(ctx: &egui::Context, s: &Snap, ic: &DockIcons, refpt: &mut (f32, f
     if let Some(r) = r { rects.push(r.response.rect); }
 }
 
+// ───────────────────────────── artboard inspector ─────────────────────────────
+
+struct AbIcons<'a> {
+    link: &'a Option<egui::TextureHandle>,
+    portrait: &'a Option<egui::TextureHandle>,
+    landscape: &'a Option<egui::TextureHandle>,
+    fit: &'a Option<egui::TextureHandle>,
+}
+
+/// A single-line text field bound to an external value (artboard name). While unfocused it tracks the
+/// model value; once focused it edits a temp buffer; commits the buffer on focus loss (returns it).
+fn name_field(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str) -> Option<String> {
+    let id = ui.make_persistent_id(("abname", id_src));
+    let editing = ui.memory(|m| m.has_focus(id));
+    let mut buf = if editing { ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.to_string()) } else { value.to_string() };
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::hover());
+    ui.painter().rect(rect, Rounding::same(6.0), BG_SURFACE, Stroke::new(1.0, if editing { ACCENT } else { BORDER }));
+    let te = ui.put(rect.shrink2(egui::vec2(8.0, 3.0)),
+        egui::TextEdit::singleline(&mut buf).id(id).frame(false).font(FontId::proportional(13.0)).text_color(TEXT));
+    if te.has_focus() { ui.data_mut(|d| d.insert_temp(id, buf.clone())); }
+    let mut out = None;
+    if te.lost_focus() { out = Some(buf.clone()); ui.data_mut(|d| d.remove::<String>(id)); }
+    out
+}
+
+/// A label + a hand-painted pill switch (the Clip / transparent / move-with toggles). Returns true on click.
+fn toggle_row(ui: &mut egui::Ui, w: f32, label: &str, on: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
+    if resp.hovered() { ui.painter().rect_filled(rect, Rounding::same(6.0), HOVER); }
+    ui.painter().text(egui::pos2(rect.left() + 4.0, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), if on { TEXT } else { MUTED });
+    let pill = egui::Rect::from_min_size(egui::pos2(rect.right() - 36.0, rect.center().y - 9.0), egui::vec2(32.0, 18.0));
+    ui.painter().rect_filled(pill, Rounding::same(9.0), if on { ACCENT } else { BG_SURFACE });
+    let knob = egui::pos2(if on { pill.right() - 9.0 } else { pill.left() + 9.0 }, pill.center().y);
+    ui.painter().circle_filled(knob, 6.5, Color32::WHITE);
+    resp.clicked()
+}
+
+/// A small text button (Add / Duplicate / Delete). `disabled` greys it out and swallows clicks.
+fn pill_btn(ui: &mut egui::Ui, label: &str, disabled: bool) -> bool {
+    let w = ui.available_width().min(64.0).max(40.0);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
+    let hot = resp.hovered() && !disabled;
+    ui.painter().rect(rect, Rounding::same(6.0), if hot { HOVER } else { BG_SURFACE }, Stroke::new(1.0, BORDER));
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.0), if disabled { FAINT } else { TEXT });
+    resp.clicked() && !disabled
+}
+
+/// The Artboard inspector dock (shown in place of the object inspector when the Artboard tool is active).
+fn build_ab_dock(ctx: &egui::Context, s: &AbSnap, ic: &AbIcons, ab_lock: &mut bool,
+                 ops: &mut Vec<Op>, rects: &mut Vec<egui::Rect>, fit_request: &mut Option<usize>) {
+    let inner = 214.0;
+    let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
+    let i = s.active;
+    let r = egui::Window::new("ab-dock").title_bar(false).resizable(false)
+        .anchor(Align2::RIGHT_CENTER, egui::vec2(-16.0, 0.0)).frame(panel_frame(13.0))
+        .show(ctx, |ui| {
+            ui.set_width(inner);
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Artboard").color(TEXT).size(13.0).strong());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(format!("{} / {}", i + 1, s.count)).color(MUTED).size(11.5));
+                });
+            });
+            if let Some(v) = name_field(ui, inner, &s.name, "dock") { ops.push(Op::AbName(i, v)); }
+
+            ui.add_space(2.0);
+            ui.label(RichText::new("SIZE").color(MUTED).size(10.0).strong());
+            // preset dropdown
+            let preset_id = ui.make_persistent_id("ab-preset");
+            let (prect, presp) = ui.allocate_exact_size(egui::vec2(inner, 26.0), egui::Sense::click());
+            ui.painter().rect(prect, Rounding::same(6.0), BG_SURFACE, Stroke::new(1.0, if presp.hovered() { BORDER_2 } else { BORDER }));
+            ui.painter().text(egui::pos2(prect.left() + 10.0, prect.center().y), Align2::LEFT_CENTER, "Presets\u{2026}", FontId::proportional(12.5), TEXT);
+            ui.painter().text(egui::pos2(prect.right() - 10.0, prect.center().y), Align2::RIGHT_CENTER, "\u{25be}", FontId::proportional(11.0), MUTED);
+            if presp.clicked() { ui.memory_mut(|m| m.toggle_popup(preset_id)); }
+            egui::popup_below_widget(ui, preset_id, &presp, |ui| {
+                ui.set_min_width(inner);
+                for (label, w, h) in AB_PRESETS {
+                    if menu_row(ui, label, "") { ops.push(Op::AbRect(i, None, None, Some(w), Some(h))); ui.memory_mut(|m| m.close_popup()); }
+                }
+            });
+            // W / H + constrain
+            ui.horizontal(|ui| {
+                let fw = 70.0;
+                if let Some(v) = num_field(ui, fw, Lab::Letter("W"), "Width", s.w, 0, 1.0, 1.0, 1.0..=1.0e6) {
+                    if *ab_lock && s.w > 0.0 { ops.push(Op::AbRect(i, None, None, Some(v), Some(s.h * v / s.w))); }
+                    else { ops.push(Op::AbRect(i, None, None, Some(v), None)); }
+                }
+                if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 1.0, 1.0..=1.0e6) {
+                    if *ab_lock && s.h > 0.0 { ops.push(Op::AbRect(i, None, None, Some(s.w * v / s.h), Some(v))); }
+                    else { ops.push(Op::AbRect(i, None, None, None, Some(v))); }
+                }
+                if icon_toggle(ui, ic.link, *ab_lock, "Constrain W/H") { *ab_lock = !*ab_lock; }
+            });
+            // orientation + fit
+            ui.horizontal(|ui| {
+                let portrait = s.h >= s.w;
+                if icon_toggle(ui, ic.portrait, portrait, "Portrait") && !portrait { ops.push(Op::AbOrient(i)); }
+                if icon_toggle(ui, ic.landscape, !portrait, "Landscape") && portrait { ops.push(Op::AbOrient(i)); }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if icon_btn(ui, ic.fit, "Fit in window") { *fit_request = Some(i); }
+                });
+            });
+            // X / Y
+            ui.horizontal(|ui| {
+                let fw = 70.0;
+                if let Some(v) = num_field(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, 1.0, full.clone()) { ops.push(Op::AbRect(i, Some(v), None, None, None)); }
+                if let Some(v) = num_field(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, 1.0, full.clone()) { ops.push(Op::AbRect(i, None, Some(v), None, None)); }
+            });
+
+            hsep(ui, inner);
+            // page colour + transparent
+            ui.horizontal(|ui| {
+                let mut c = s.color.map(rgba_to_c32).unwrap_or(Color32::from_gray(40));
+                if egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque).changed() {
+                    ops.push(Op::AbColor(i, Some(c32_to_rgba(c))));
+                }
+                ui.add_space(8.0);
+                ui.label(RichText::new(match s.color { Some(c) => hex_of(c), None => "Transparent".into() }).color(TEXT).monospace().size(12.0));
+            });
+            if toggle_row(ui, inner, "Transparent page", s.color.is_none()) {
+                ops.push(Op::AbColor(i, if s.color.is_none() { Some([1.0, 1.0, 1.0, 1.0]) } else { None }));
+            }
+
+            hsep(ui, inner);
+            if let Some(v) = num_field(ui, inner, Lab::Letter("#"), "Artboard count", s.count as f32, 0, 1.0, 0.1, 1.0..=200.0) {
+                ops.push(Op::AbCount(v.round().max(1.0) as usize));
+            }
+            if toggle_row(ui, inner, "Clip to page", s.clip) { ops.push(Op::AbClip(i)); }
+            if toggle_row(ui, inner, "Move artwork with artboard", s.move_art) { ops.push(Op::AbMoveArt(!s.move_art)); }
+
+            hsep(ui, inner);
+            ui.horizontal(|ui| {
+                if pill_btn(ui, "+ Add", false) { ops.push(Op::AbAdd); }
+                if pill_btn(ui, "Duplicate", false) { ops.push(Op::AbDup(i)); }
+                if pill_btn(ui, "Delete", s.count <= 1) { ops.push(Op::AbDel(i)); }
+            });
+        });
+    if let Some(r) = r { rects.push(r.response.rect); }
+}
+
+/// On-canvas page chrome: a name label (top-left of each page) + a ⋮ button opening the edit menu. The
+/// menu is the ungated way to edit a page from ANY tool (Decision 8); selecting a page by clicking its
+/// name only works in the Artboard tool. Positions are pinned to each page via the view transform.
+fn build_ab_chrome(ctx: &egui::Context, view: View, ppp: f32, abs: &[AbInfo], active: usize, tool_ab: bool,
+                   count: usize, dots: &Option<egui::TextureHandle>, ops: &mut Vec<Op>,
+                   name_edit: &mut Option<(usize, String)>, fit_request: &mut Option<usize>) {
+    let scr = ctx.screen_rect();
+    let mut clear_edit = false;
+    for ab in abs {
+        // top-left of the page in screen POINTS (view maps world→physical px; egui works in points)
+        let tl = view.w2s([ab.x, ab.y]);
+        let pos = egui::pos2((tl[0] / ppp).max(2.0), (tl[1] / ppp - 24.0).max(2.0));
+        if pos.x > scr.right() - 8.0 || pos.y > scr.bottom() - 8.0 { continue; }   // page is off to the side
+        let is_active = ab.i == active;
+        egui::Area::new(egui::Id::new(("ab-chrome", ab.i))).fixed_pos(pos).order(egui::Order::Middle).interactable(true).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let renaming = matches!(&*name_edit, Some((j, _)) if *j == ab.i);
+                if renaming {
+                    if let Some((_, buf)) = name_edit.as_mut() {
+                        let te = ui.add(egui::TextEdit::singleline(buf).desired_width(120.0).font(FontId::proportional(12.5)).text_color(TEXT));
+                        if te.lost_focus() { ops.push(Op::AbName(ab.i, buf.clone())); clear_edit = true; } else { te.request_focus(); }
+                    }
+                } else {
+                    let col = if is_active { TEXT } else { MUTED };
+                    let lbl = ui.add(egui::Label::new(RichText::new(&ab.name).color(col).size(12.5)).sense(egui::Sense::click()));
+                    if lbl.clicked() && tool_ab { ops.push(Op::AbActive(ab.i)); }
+                    if lbl.double_clicked() { *name_edit = Some((ab.i, ab.name.clone())); }
+                }
+                let (dr, dresp) = ui.allocate_exact_size(egui::vec2(15.0, 18.0), egui::Sense::click());
+                if dresp.hovered() { ui.painter().rect_filled(dr, Rounding::same(4.0), HOVER); }
+                if let Some(t) = dots { ui.painter().image(t.id(), egui::Rect::from_center_size(dr.center(), egui::vec2(12.0, 12.0)), UV01(), if dresp.hovered() || is_active { TEXT } else { MUTED }); }
+                let menu_id = ui.make_persistent_id(("ab-menu", ab.i));
+                if dresp.clicked() { ui.memory_mut(|m| m.toggle_popup(menu_id)); }
+                egui::popup_below_widget(ui, menu_id, &dresp, |ui| {
+                    ui.set_min_width(170.0);
+                    if menu_row(ui, "Rename", "") { *name_edit = Some((ab.i, ab.name.clone())); ui.memory_mut(|m| m.close_popup()); }
+                    if menu_row(ui, "Duplicate", "") { ops.push(Op::AbDup(ab.i)); ui.memory_mut(|m| m.close_popup()); }
+                    if menu_row(ui, if ab.h >= ab.w { "Make landscape" } else { "Make portrait" }, "") { ops.push(Op::AbOrient(ab.i)); ui.memory_mut(|m| m.close_popup()); }
+                    if menu_row(ui, if ab.transparent { "White background" } else { "Transparent" }, "") {
+                        ops.push(Op::AbColor(ab.i, if ab.transparent { Some([1.0, 1.0, 1.0, 1.0]) } else { None })); ui.memory_mut(|m| m.close_popup());
+                    }
+                    if menu_row(ui, if ab.clip { "Unclip" } else { "Clip to page" }, "") { ops.push(Op::AbClip(ab.i)); ui.memory_mut(|m| m.close_popup()); }
+                    if menu_row(ui, "Fit in window", "") { *fit_request = Some(ab.i); ui.memory_mut(|m| m.close_popup()); }
+                    if count > 1 && menu_row(ui, "Delete", "") { ops.push(Op::AbDel(ab.i)); ui.memory_mut(|m| m.close_popup()); }
+                });
+            });
+        });
+    }
+    if clear_edit { *name_edit = None; }
+}
+
 // ───────────────────────────── apply ─────────────────────────────
 
 fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
@@ -810,6 +1147,17 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::SetStrokeW(w) => set_stroke_width(ed, w),
             Op::Paint(tg, c) => { ed.paint = tg; ed.apply_paint(c); }
             Op::Flip(h) => ed.flip(h),
+            Op::AbActive(i) => ed.ab_set_active(i),
+            Op::AbRect(i, x, y, w, h) => ed.ab_set_rect(i, x, y, w, h),
+            Op::AbName(i, s) => ed.ab_rename(i, s),
+            Op::AbColor(i, c) => ed.ab_set_color(i, c),
+            Op::AbClip(i) => ed.ab_toggle_clip(i),
+            Op::AbOrient(i) => ed.ab_orient(i),
+            Op::AbAdd => ed.ab_add(),
+            Op::AbDup(i) => ed.ab_duplicate(i),
+            Op::AbDel(i) => ed.ab_delete(i),
+            Op::AbCount(n) => ed.ab_set_count(n),
+            Op::AbMoveArt(on) => ed.ab_set_move_art(on),
         }
     }
 }

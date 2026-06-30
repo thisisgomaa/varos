@@ -15,7 +15,7 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
-use varos_core::editor::{Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
+use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{Pt, View};
 use varos_core::scene::build_scene;
 use varos_render_wgpu::Renderer;
@@ -28,6 +28,9 @@ use cursors::CK;
 /// Selection tool reports transform/copy states using the Illustrator cursor set).
 fn desired_ck(ed: &Editor, world: Pt) -> CK {
     if let Drag::Scale { handle, angle, .. } = ed.drag { return resize_ck(handle, angle); }
+    if let AbDrag::Resize { handle, .. } = ed.ab_drag { return resize_ck(handle, 0.0); }
+    if matches!(ed.ab_drag, AbDrag::Move { .. }) { return CK::Select; }
+    if matches!(ed.ab_drag, AbDrag::Create { .. }) { return CK::Cross; }
     if ed.mods.alt && matches!(ed.drag, Drag::Object { .. } | Drag::DupPending { .. }) { return CK::Copy; }
     match ed.eff_tool() {
         ToolKind::Object => {
@@ -44,6 +47,11 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         ToolKind::Pen => match ed.pen_hint(world) {
             PenHint::New => CK::PenNew, PenHint::Add => CK::PenAdd, PenHint::Delete => CK::PenDel,
             PenHint::Close => CK::PenClose, PenHint::Connect => CK::PenConnect, PenHint::Draw => CK::Pen,
+        },
+        ToolKind::Artboard => match ed.ab_hit(world) {
+            Some(AbHit::Handle(i)) => resize_ck(i, 0.0),   // ↔ on a page resize handle
+            Some(AbHit::Body(_)) => CK::Select,            // arrow over a page (click to select / move)
+            None => CK::Cross,                             // empty board (drag to create a page)
         },
         _ => CK::Cross,
     }
@@ -85,6 +93,7 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Pen => "Pen (P)", ToolKind::Direct => "Direct Select (A)", ToolKind::Object => "Select (V)",
         ToolKind::Rect => "Rectangle (M)", ToolKind::Ellipse => "Ellipse (L)", ToolKind::Triangle => "Triangle",
         ToolKind::Polygon => "Polygon", ToolKind::Convert => "Convert", ToolKind::Eyedropper => "Eyedropper (I)",
+        ToolKind::Artboard => "Artboard (Shift+O)",
     }
 }
 fn full_title(t: ToolKind) -> String { format!("Varos \u{3b1} \u{b7} pre-alpha \u{2014} {}", tool_name(t)) }
@@ -111,6 +120,7 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
         "KeyM" => ed.set_tool(ToolKind::Rect),
         "KeyL" => ed.set_tool(ToolKind::Ellipse),
         "KeyI" => ed.set_tool(ToolKind::Eyedropper),
+        "KeyO" => if shift { ed.set_tool(ToolKind::Artboard); },
         "KeyX" => if shift { ed.swap_colors() } else { ed.swap_paint() },
         "KeyD" => ed.default_paint(),
         "Slash" => ed.apply_paint(None),
@@ -266,7 +276,7 @@ fn main() {
     let mut view = {
         // open zoomed-out so the artboard reads as a DEFINED page sitting on the larger board
         // (lots of dotted board visible around it). Ctrl+0 later does a tight Fit-in-Window.
-        let a = &ed.doc.artboard;
+        let a = ed.doc.active_artboard().cloned().unwrap_or_default();
         let sz = window.inner_size();
         View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.45)
     };
@@ -283,7 +293,7 @@ fn main() {
         let sz0 = window.inner_size();
         renderer.resize(sz0.width, sz0.height);
         ed.ppu = view.zoom;
-        let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32);
+        let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32, view);
         if gui.splashing() {
             renderer.render_splash(&jobs, &tdelta, &screen);
         } else {
@@ -377,7 +387,7 @@ fn main() {
                             let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
                             let cs = format!("{:?}", code);
                             if mc && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {  // Ctrl+0 = Fit Artboard in Window
-                                let a = &ed.doc.artboard;
+                                let a = ed.doc.active_artboard().cloned().unwrap_or_default();
                                 let sz = window.inner_size();
                                 view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
                             } else {
@@ -397,8 +407,15 @@ fn main() {
                     // Native UI runs FIRST (the rail may switch the tool), THEN we build the scene from
                     // the updated editor so the change shows this same frame.
                     let prev_tool = ed.tool;
-                    let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32);
+                    let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32, view);
                     if ed.tool != prev_tool { window.set_title(&full_title(ed.tool)); }
+                    // a "Fit in window" request from the artboard panel / ⋮ menu (this frame's view update)
+                    if let Some(i) = gui.fit_request.take() {
+                        if let Some(a) = ed.doc.artboards.get(i) {
+                            let sz = window.inner_size();
+                            view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                        }
+                    }
                     // custom title-bar window controls
                     if let Some(act) = gui.win_action.take() {
                         match act {
