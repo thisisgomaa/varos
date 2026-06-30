@@ -74,6 +74,7 @@ fn sample_doc() -> Document {
         move_art_with_ab: false,
         // non-default snap config so the round-trip exercises the new fields
         snap: SnapConfig { smart: false, radius_px: 6.0, candidate_max: 5, grid: true, path_intersections: false, ..SnapConfig::default() },
+        ruler_origin: [12.0, 34.0],   // non-default ruler zero-point exercises the new field
     }
 }
 

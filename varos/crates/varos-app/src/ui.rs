@@ -50,11 +50,8 @@ const IC_AL_M: &str = r#"<line x1="4" y1="12" x2="20" y2="12"/><rect x="6" y="5"
 const IC_AL_B: &str = r#"<line x1="4" y1="21" x2="20" y2="21"/><rect x="6" y="7" width="4" height="14" rx="1"/><rect x="14" y="12" width="4" height="9" rx="1"/>"#;
 const IC_DIST_H: &str = r#"<rect x="3" y="6" width="3" height="12" rx="1"/><rect x="10.5" y="6" width="3" height="12" rx="1"/><rect x="18" y="6" width="3" height="12" rx="1"/>"#;
 const IC_DIST_V: &str = r#"<rect x="6" y="3" width="12" height="3" rx="1"/><rect x="6" y="10.5" width="12" height="3" rx="1"/><rect x="6" y="18" width="12" height="3" rx="1"/>"#;
-// top-bar icons: menu (☰) · window minimize/maximize/close
+// top-bar icons: menu (☰). Window min/max/close are painted directly in `winctl` (crisp Win11 glyphs).
 const IC_MENU: &str = r#"<path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/>"#;
-const IC_MIN: &str = r#"<path d="M5 12h14"/>"#;
-const IC_MAX: &str = r#"<rect x="4" y="4" width="16" height="16" rx="1.5"/>"#;
-const IC_WCLOSE: &str = r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#;
 // top-bar content icons: search · layout · panels checklist · new-tab · tab-close · check
 const IC_SEARCH: &str = r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>"#;
 const IC_LAYOUT: &str = r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>"#;
@@ -98,13 +95,14 @@ enum Op {
     AbOrient(usize),                // swap w/h
     AbAdd, AbDup(usize), AbDel(usize), AbCount(usize),
     AbMoveArt(bool),
+    RulerOrigin(Option<varos_core::geom::Pt>), // Some = set zero-point (snapped) + show crosshair; None = end drag
 }
 
 /// A window action the custom title bar asks the host (winit) to perform.
 pub enum WinAction { Minimize, ToggleMaximize, Close }
 
 struct TopIcons {
-    menu: Option<egui::TextureHandle>, min: Option<egui::TextureHandle>, max: Option<egui::TextureHandle>, close: Option<egui::TextureHandle>,
+    menu: Option<egui::TextureHandle>,   // min/max/close are painted glyphs now (see `winctl`), not textures
     search: Option<egui::TextureHandle>, layout: Option<egui::TextureHandle>, panels: Option<egui::TextureHandle>,
     plus: Option<egui::TextureHandle>, x: Option<egui::TextureHandle>, check: Option<egui::TextureHandle>,
     magnet: Option<egui::TextureHandle>,
@@ -259,9 +257,6 @@ impl Ui {
         ];
         let top = TopIcons {
             menu: load_icon(&ctx, "tb-menu", IC_MENU),
-            min: load_icon(&ctx, "tb-min", IC_MIN),
-            max: load_icon(&ctx, "tb-max", IC_MAX),
-            close: load_icon(&ctx, "tb-close", IC_WCLOSE),
             search: load_icon(&ctx, "tb-search", IC_SEARCH),
             layout: load_icon(&ctx, "tb-layout", IC_LAYOUT),
             panels: load_icon(&ctx, "tb-panels", IC_PANELS),
@@ -309,6 +304,11 @@ impl Ui {
         let absnap = AbSnap::read(ed);
         let abs = ab_infos(ed);
         let snap_hud = ed.snap_hud.clone();
+        let show_rulers = ed.show_rulers;
+        let ruler_origin = ed.doc.ruler_origin;
+        let ruler_reset = ed.doc.active_artboard().map(|a| [a.x, a.y]).unwrap_or([0.0, 0.0]);
+        let ruler_grid = ed.adaptive_grid_step();   // tick on the SAME base-5 lattice as the dot grid
+        let origin_preview = ed.origin_preview;      // dashed crosshair while dragging the ruler zero-point
         let tools = &self.tools;
         let shapes = &self.shapes;
         let icons = DockIcons { rotate: &self.ic_rotate, opacity: &self.ic_opacity, strokew: &self.ic_strokew,
@@ -339,6 +339,7 @@ impl Ui {
                 if let Some(e) = splash { build_splash(ctx, e, logo); } // only the floating card
             } else {
                 build_topbar(ctx, top, &mut win_action, &mut tabs, &mut tab_active, &mut show_rail, &mut show_dock, &mut snap_cfg);
+                if show_rulers { build_rulers(ctx, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops); }
                 if show_rail { build_rail(ctx, tools, shapes, &mut shape_active, &snap, &mut ops, &mut rects); }
                 if show_dock {
                     if snap.tool == ToolKind::Artboard {
@@ -351,6 +352,7 @@ impl Ui {
                 build_ab_chrome(ctx, view, ppp, &abs, absnap.active, snap.tool == ToolKind::Artboard,
                                 absnap.count, ab_dots, &mut ops, &mut ab_name_edit, &mut fit_request);
                 build_snap_hud(ctx, view, ppp, &snap_hud);
+                build_origin_crosshair(ctx, view, ppp, origin_preview);
             }
         });
         self.last_splash = splashing;
@@ -689,14 +691,27 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
 // ───────────────────────────── custom title bar ─────────────────────────────
 
 /// One window-control button (min/max/close): 46×40, no rounding, hover fill + icon.
-fn winctl(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, tex: &Option<egui::TextureHandle>,
+#[derive(Clone, Copy)]
+enum Cap { Min, Max, Close }
+
+/// A window caption button. The glyph is PAINTED directly (crisp 1px lines like Windows 11 / Chrome),
+/// not an SVG texture — the Lucide minus rendered with round caps looked like a fat pill, not a clean dash.
+fn winctl(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, cap: Cap,
           key: &str, hover_bg: Color32, white_on_hover: bool) -> bool {
     let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
     let hov = resp.hovered();
     if hov { p.rect_filled(rect, Rounding::ZERO, hover_bg); }
     let col = if white_on_hover && hov { Color32::WHITE } else { TEXT };
-    if let Some(t) = tex { p.image(t.id(),
-        egui::Rect::from_center_size(rect.center(), egui::vec2(15.0, 15.0)), UV01(), col); }
+    let s = Stroke::new(1.0, col);
+    let c = rect.center();
+    match cap {
+        Cap::Min => { let y = c.y.round() + 0.5; p.line_segment([egui::pos2(c.x - 5.0, y), egui::pos2(c.x + 5.0, y)], s); }
+        Cap::Max => { p.rect_stroke(egui::Rect::from_center_size(c, egui::vec2(10.0, 10.0)), Rounding::ZERO, s); }
+        Cap::Close => {
+            p.line_segment([c + egui::vec2(-5.0, -5.0), c + egui::vec2(5.0, 5.0)], s);
+            p.line_segment([c + egui::vec2(-5.0, 5.0), c + egui::vec2(5.0, -5.0)], s);
+        }
+    }
     resp.clicked()
 }
 
@@ -771,9 +786,9 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
         let close_r = egui::Rect::from_min_max(egui::pos2(bar.right() - bw, bar.top()), egui::pos2(bar.right(), bar.bottom()));
         let max_r = egui::Rect::from_min_max(egui::pos2(bar.right() - 2.0 * bw, bar.top()), egui::pos2(bar.right() - bw, bar.bottom()));
         let min_r = egui::Rect::from_min_max(egui::pos2(bar.right() - 3.0 * bw, bar.top()), egui::pos2(bar.right() - 2.0 * bw, bar.bottom()));
-        if winctl(ui, &p, min_r, &top.min, "wc-min", BG_SURFACE, false) { *win_action = Some(WinAction::Minimize); }
-        if winctl(ui, &p, max_r, &top.max, "wc-max", BG_SURFACE, false) { *win_action = Some(WinAction::ToggleMaximize); }
-        if winctl(ui, &p, close_r, &top.close, "wc-close", CLOSE_RED, true) { *win_action = Some(WinAction::Close); }
+        if winctl(ui, &p, min_r, Cap::Min, "wc-min", BG_SURFACE, false) { *win_action = Some(WinAction::Minimize); }
+        if winctl(ui, &p, max_r, Cap::Max, "wc-max", BG_SURFACE, false) { *win_action = Some(WinAction::ToggleMaximize); }
+        if winctl(ui, &p, close_r, Cap::Close, "wc-close", CLOSE_RED, true) { *win_action = Some(WinAction::Close); }
         excl.extend([min_r, max_r, close_r]);
 
         // right tools (search · layout · panels), to the left of the window controls
@@ -1194,6 +1209,109 @@ fn build_ab_chrome(ctx: &egui::Context, view: View, ppp: f32, abs: &[AbInfo], ac
     if clear_edit { *name_edit = None; }
 }
 
+// ───────────────────────────── rulers ─────────────────────────────
+
+const RULER: f32 = 18.0;   // ruler strip thickness in points
+
+/// Decimals needed to print multiples of `grid` cleanly (grid is a power of 5: 25→0, 0.2→1, 0.04→2).
+fn ruler_dec(grid: f32) -> usize { (-grid.log10()).ceil().max(0.0) as usize }
+
+fn fmt_ruler(v: f32, grid: f32, dec: usize) -> String {
+    let v = if v.abs() < grid * 0.001 { 0.0 } else { v };   // kill -0
+    format!("{:.*}", dec, v)
+}
+
+/// Top + left rulers (Ctrl+R). Ticks sit on the SAME base-5 lattice as the dot grid (`grid` = the finest
+/// visible dot spacing) so they line up exactly; every 5th tick is labeled. Numbers read relative to
+/// `origin` (top-left, Y-down). A live cyan tick tracks the pointer; the corner box drag-sets the origin
+/// (snapped to page corners / grid) and double-click resets it. egui panels, so canvas input is gated.
+fn build_rulers(ctx: &egui::Context, view: View, ppp: f32, grid: f32, origin: [f32; 2], reset: [f32; 2], ops: &mut Vec<Op>) {
+    let frame = egui::Frame { fill: BG, inner_margin: Margin::ZERO, ..Default::default() };
+    let num_font = FontId::proportional(9.5);
+    let dec = ruler_dec(grid);
+    // label every Nth grid-tick so numbers stay ~70 pts apart at ANY zoom (dense, never a vast gap). N is a
+    // grid multiple, so labels still land on dots; small N → rounder numbers (×2 = 250s, not ×5 = 625s).
+    let ms_pts = grid * view.zoom / ppp.max(1e-6);      // one grid-tick in screen points
+    let label_every = [1i64, 2, 5, 10, 20, 50, 100, 200].into_iter().find(|&n| n as f32 * ms_pts >= 70.0).unwrap_or(200);
+    let pointer = ctx.pointer_latest_pos();
+
+    // top (horizontal) ruler — ticks at WORLD multiples of `grid` (land on the dots), label every 5th
+    egui::TopBottomPanel::top("ruler-h").exact_height(RULER).frame(frame).show(ctx, |ui| {
+        let r = ui.max_rect();
+        let p = ui.painter_at(r);
+        p.hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, BORDER));
+        let x_lo = r.left() + RULER;                 // ticks start after the corner box
+        let v_lo = view.s2w([x_lo * ppp, 0.0])[0] - origin[0];
+        let v_hi = view.s2w([r.right() * ppp, 0.0])[0] - origin[0];
+        let m1 = (v_hi / grid).ceil() as i64;
+        let mut m = (v_lo / grid).floor() as i64;
+        while m <= m1 {
+            let val = m as f32 * grid;               // value shown — relative to the origin, so m==0 is ZERO
+            let sx = view.w2s([origin[0] + val, 0.0])[0] / ppp;
+            let (big, zero) = (m.rem_euclid(label_every) == 0, m == 0);
+            m += 1;
+            if sx < x_lo - 0.5 || sx > r.right() + 0.5 { continue; }
+            let h = if zero { 12.0 } else if big { 9.0 } else { 5.0 };
+            p.vline(sx, (r.bottom() - h)..=r.bottom(), Stroke::new(1.0, if zero { TEXT } else if big { MUTED } else { BORDER_2 }));
+            if big { p.text(egui::pos2(sx + 2.5, r.top() + 1.0), Align2::LEFT_TOP, fmt_ruler(val, grid, dec), num_font.clone(), if zero { TEXT } else { MUTED }); }
+        }
+        if let Some(pt) = pointer { p.vline(pt.x, r.y_range(), Stroke::new(1.0, ACCENT)); }
+        // corner box: drag sets the origin (snapped), double-click resets it
+        let corner = egui::Rect::from_min_size(r.left_top(), egui::vec2(RULER, RULER));
+        let resp = ui.interact(corner, ui.id().with("ruler-corner"), egui::Sense::click_and_drag());
+        p.rect_filled(corner, Rounding::ZERO, BG);
+        p.vline(corner.right() - 0.5, r.y_range(), Stroke::new(1.0, BORDER));
+        let c = corner.center();
+        p.line_segment([egui::pos2(c.x - 3.0, c.y), egui::pos2(c.x + 3.0, c.y)], Stroke::new(1.0, MUTED));
+        p.line_segment([egui::pos2(c.x, c.y - 3.0), egui::pos2(c.x, c.y + 3.0)], Stroke::new(1.0, MUTED));
+        if resp.double_clicked() { ops.push(Op::RulerOrigin(Some(reset))); ops.push(Op::RulerOrigin(None)); }
+        else if resp.dragged() { if let Some(pp) = ctx.pointer_latest_pos() { ops.push(Op::RulerOrigin(Some(view.s2w([pp.x * ppp, pp.y * ppp])))); } }
+        if resp.drag_stopped() { ops.push(Op::RulerOrigin(None)); }
+    });
+
+    // left (vertical) ruler — numbers rotated 90° (read upward), like Illustrator
+    egui::SidePanel::left("ruler-v").exact_width(RULER).resizable(false).frame(frame).show(ctx, |ui| {
+        let r = ui.max_rect();
+        let p = ui.painter_at(r);
+        p.vline(r.right() - 0.5, r.y_range(), Stroke::new(1.0, BORDER));
+        let v_lo = view.s2w([0.0, r.top() * ppp])[1] - origin[1];
+        let v_hi = view.s2w([0.0, r.bottom() * ppp])[1] - origin[1];
+        let m1 = (v_hi / grid).ceil() as i64;
+        let mut m = (v_lo / grid).floor() as i64;
+        while m <= m1 {
+            let val = m as f32 * grid;               // value shown — relative to the origin, so m==0 is ZERO
+            let sy = view.w2s([0.0, origin[1] + val])[1] / ppp;
+            let (big, zero) = (m.rem_euclid(label_every) == 0, m == 0);
+            m += 1;
+            if sy < r.top() - 0.5 || sy > r.bottom() + 0.5 { continue; }
+            let w = if zero { 12.0 } else if big { 9.0 } else { 5.0 };
+            p.hline((r.right() - w)..=r.right(), sy, Stroke::new(1.0, if zero { TEXT } else if big { MUTED } else { BORDER_2 }));
+            if big {
+                let col = if zero { TEXT } else { MUTED };
+                let galley = p.layout_no_wrap(fmt_ruler(val, grid, dec), num_font.clone(), col);
+                let mut ts = egui::epaint::TextShape::new(egui::pos2(r.left() + 2.0, sy + galley.size().x / 2.0), galley, col);
+                ts.angle = -std::f32::consts::FRAC_PI_2;
+                p.add(ts);
+            }
+        }
+        if let Some(pt) = pointer { p.hline(r.x_range(), pt.y, Stroke::new(1.0, ACCENT)); }
+    });
+}
+
+/// While the ruler zero-point is being dragged, a full-canvas DASHED crosshair (vertical = X, horizontal
+/// = Y) marks where the new origin will land — drawn at the SNAPPED position, so the snap to a corner /
+/// anchor / grid dot is visible and you can see exactly where (0,0) is going.
+fn build_origin_crosshair(ctx: &egui::Context, view: View, ppp: f32, preview: Option<varos_core::geom::Pt>) {
+    let Some(w) = preview else { return; };
+    let s = view.w2s(w);
+    let (sx, sy) = (s[0] / ppp, s[1] / ppp);
+    let scr = ctx.screen_rect();
+    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("origin-cross")));
+    let stroke = Stroke::new(1.0, ACCENT);
+    for seg in egui::Shape::dashed_line(&[egui::pos2(sx, scr.top()), egui::pos2(sx, scr.bottom())], stroke, 5.0, 4.0) { p.add(seg); }
+    for seg in egui::Shape::dashed_line(&[egui::pos2(scr.left(), sy), egui::pos2(scr.right(), sy)], stroke, 5.0, 4.0) { p.add(seg); }
+}
+
 /// The live measurement HUD — a small pill near the cursor showing the drag readout (X/Y position now;
 /// W×H / angle later). Pure feedback on a foreground layer; no interaction, never blocks the canvas.
 fn build_snap_hud(ctx: &egui::Context, view: View, ppp: f32, hud: &Option<(varos_core::geom::Pt, String)>) {
@@ -1234,6 +1352,8 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::AbDel(i) => ed.ab_delete(i),
             Op::AbCount(n) => ed.ab_set_count(n),
             Op::AbMoveArt(on) => ed.ab_set_move_art(on),
+            Op::RulerOrigin(Some(p)) => { ed.doc.ruler_origin = ed.snap_origin(p); ed.origin_preview = Some(ed.doc.ruler_origin); }
+            Op::RulerOrigin(None) => ed.origin_preview = None,
         }
     }
 }

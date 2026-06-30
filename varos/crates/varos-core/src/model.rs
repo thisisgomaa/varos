@@ -172,12 +172,17 @@ pub struct Document {
     /// Snapping config (the magnet menu / Ctrl+U). `#[serde(default)]` so older files still load.
     #[serde(default)]
     pub snap: SnapConfig,
+    /// Ruler zero-point in WORLD coords. Numbers on the rulers read `world - ruler_origin` (top-left
+    /// origin, Y-down). Defaults to [0,0] = the default artboard's top-left; drag from the ruler corner
+    /// to set, double-click the corner to reset. `#[serde(default)]` so older `.varos` files still load.
+    #[serde(default)]
+    pub ruler_origin: Pt,
 }
 impl Default for Document {
     fn default() -> Self {
         Document { paths: vec![], groups: vec![], group_of: HashMap::new(), ids: 0,
                    units: DocUnits::default(), artboards: one_artboard(), active: 0, move_art_with_ab: true,
-                   snap: SnapConfig::default() }
+                   snap: SnapConfig::default(), ruler_origin: [0.0, 0.0] }
     }
 }
 
