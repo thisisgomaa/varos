@@ -99,9 +99,10 @@
   </div>
 
   <div id="status" class="note" style="margin:18px 0 0 0">
-    <b>Where we are:</b> Foundations underway — the <b>Stage-0 spine is complete</b>
-    (serde&nbsp;✅ + units&nbsp;✅). Next system: <b>Artboard (slot-1)</b>. North star:
-    the <b>“make a logo &amp; keep it” slice</b> right after Colour.
+    <b>Where we are:</b> Foundations spine complete (serde&nbsp;✅ + units&nbsp;✅).
+    <b>Artboard system — Stage&nbsp;1 BUILT</b> (2026-06-30): multi-artboard model, the
+    Artboard tool (Shift+O), the inspector panel, and the on-canvas name + ⋮ menu.
+    Next: <b>Transform + Snap</b>. North star: the <b>“make a logo &amp; keep it” slice</b> after Colour.
   </div>
 
   <h2>Build order</h2>
@@ -127,7 +128,7 @@
 // ---- data (edit here to keep in sync with DETAILED_ROADMAP.md) ----
 const ORDER = [
   {k:'0', nm:'Foundations', state:'active'},
-  {k:'1', nm:'Artboard', state:'next'},
+  {k:'1', nm:'Artboard', state:'active'},
   {k:'2', nm:'Transform + Snap'},
   {k:'3', nm:'Layers'},
   {k:'4', nm:'Colour'},
@@ -294,17 +295,17 @@ const SYSTEMS = [
     ['10','Menus, shortcuts & discoverability',1,''],
     ['11','Edge cases & correctness','per-stage',''],
   ]},
-  {step:1, nm:'Artboard / Document system', purpose:'Multiple resizable/named artboards + the document model (units, DPI, color format, bleed, presets).', note:'Slot-1 build = Stage 1 only (a single fixed board + document props), NOT full multi-artboard. Owns the Units + world↔screen coordinate contract (Decision 3) — embeds the DocUnits already built.', pts:[
-    ['1','Document model & data foundation',1,''],
+  {step:1, nm:'Artboard / Document system', purpose:'Multiple resizable/named artboards + the document model (units, DPI, color format, bleed, presets).', note:'Stage 1 BUILT (2026-06-30): Vec&lt;Artboard&gt; + active index; bleed + page_color (Option = transparent) + clip live in the model from day one; Artboard tool (Shift+O) with select/move/resize/create + move-art-with-board; a rail icon; the inspector panel (preset · W/H · orient · X/Y · colour · count · clip · move-art · add/dup/del/fit); and an on-canvas name label + ⋮ menu that edits a page from ANY tool; clip-to-page actually clips artwork (CPU geometry clip); transparent pages render a faint translucent white. Owns the Units + world↔screen contract (Decision 3). Deferred: a thumbnail Artboards panel + the categorised new-file size modal.', pts:[
+    ['1','Document model & data foundation',1,'d'],
     ['2','New Document creation flow',1,''],
-    ['3','Artboard tool (canvas-direct manipulation)',1,''],
-    ['4','Artboards panel',1,''],
-    ['5','Artboard management operations',1,''],
-    ['6','Document Setup (units/size/color-mode)',1,''],
-    ['7','Artboard presets & standard size library',1,''],
-    ['8','Per-artboard properties / Options dialog',2,''],
+    ['3','Artboard tool (canvas-direct manipulation)',1,'d'],
+    ['4','Artboards panel (inspector ✓ · thumbnail list pending)',1,'p'],
+    ['5','Artboard management operations',1,'d'],
+    ['6','Document Setup (units/size/color-mode)',1,'p'],
+    ['7','Artboard presets & standard size library',1,'p'],
+    ['8','Per-artboard properties / Options dialog',2,'p'],
     ['9','Rulers, guides & grid (artboard-aware)',2,''],
-    ['10','Navigation: fit-to-artboard',1,''],
+    ['10','Navigation: fit-to-artboard',1,'d'],
     ['11','Per-artboard export targeting',2,''],
     ['12','Interaction edge cases & polish','2/3',''],
   ]},
