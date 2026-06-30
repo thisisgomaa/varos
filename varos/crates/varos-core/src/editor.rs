@@ -74,6 +74,14 @@ pub enum AbDrag {
 #[derive(Clone, Copy)]
 pub enum AbHit { Handle(u8), Body(usize) }
 
+/// A piece of snap feedback to draw this frame (world coords; the renderer styles/sizes it). Transient —
+/// rebuilt every move, cleared on pointer-up, never serialized. (SNAP_TRANSFORM_SPEC §0.)
+#[derive(Clone, Copy)]
+pub enum SnapGuide {
+    Line { a: Pt, b: Pt },   // an alignment extension line through the matched feature
+    Gap { a: Pt, b: Pt },    // an equal-spacing bar between two points (Stage-1+: tick-capped)
+}
+
 #[derive(Clone, Copy)]
 pub enum ZOrder { Front, Forward, Backward, Back }
 #[derive(Clone, Copy)]
@@ -127,6 +135,13 @@ fn rect_from_corners(a: Pt, b: Pt, square: bool) -> (f32, f32, f32, f32) {
     (a[0].min(a[0] + dx), a[1].min(a[1] + dy), dx.abs().max(1.0), dy.abs().max(1.0))
 }
 
+/// Axis-aligned bbox of a drag's base anchor set (the pre-drag selection extent), for snapping.
+fn base_bbox(base: &[(u32, Pt, Option<Pt>, Option<Pt>)]) -> (f32, f32, f32, f32) {
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for (_, p, _, _) in base { x0 = x0.min(p[0]); y0 = y0.min(p[1]); x1 = x1.max(p[0]); y1 = y1.max(p[1]); }
+    if x0 <= x1 { (x0, y0, x1, y1) } else { (0.0, 0.0, 0.0, 0.0) }
+}
+
 pub struct Editor {
     pub doc: Document,
     pub tool: ToolKind,
@@ -138,6 +153,11 @@ pub struct Editor {
 
     pub drag: Drag,
     pub ab_drag: AbDrag,     // Artboard-tool drag (move/resize/create) — parallel to `drag`, never crosses it
+    pub snap_guides: Vec<SnapGuide>,    // this frame's snap feedback (transient, never serialized)
+    pub snap_hud: Option<(Pt, String)>, // live measurement label: (world anchor near the cursor, text)
+    pub last_tf: Option<(Pt, bool)>,    // (net delta, was_copy) of the last Object transform — Transform Again (Ctrl+D)
+    gesture_copy: bool,                 // transient: did the current gesture duplicate (Alt-drag)?
+    gesture_delta: Pt,                  // transient: running net delta of the current Object drag
     pub cursor: Pt,
     pub ppu: f32,            // pixels-per-unit (view zoom) — so grab tolerances stay constant on screen
     pub obj_angle: f32,      // orientation of the object-selection transform frame (rotates with the selection)
@@ -151,7 +171,8 @@ pub struct Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor { doc: Document::default(), tool: ToolKind::Object, gesture: ToolKind::Object, active: None,
-                 selected: HashSet::new(), objsel: HashSet::new(), dsel_path: None, drag: Drag::None, ab_drag: AbDrag::None, cursor: [0.0, 0.0],
+                 selected: HashSet::new(), objsel: HashSet::new(), dsel_path: None, drag: Drag::None, ab_drag: AbDrag::None,
+                 snap_guides: vec![], snap_hud: None, last_tf: None, gesture_copy: false, gesture_delta: [0.0, 0.0], cursor: [0.0, 0.0],
                  ppu: 1.0, obj_angle: 0.0, hover_path: None, mods: Mods::default(),
                  cur_fill: Some([0.95, 0.95, 0.96, 1.0]), cur_stroke: Some([0.12, 0.12, 0.13, 1.0]), cur_sw: 2.0, paint: PaintTarget::Fill,
                  dirty: false, undo: vec![], redo: vec![], pending: None }
@@ -521,6 +542,26 @@ impl Editor {
         self.commit();
     }
 
+    /// Transform Again (Illustrator Ctrl+D): replay the last Object transform on the current selection. If
+    /// the last gesture left a copy (Alt-drag duplicate), duplicate first then offset — so Ctrl+D Ctrl+D…
+    /// step-and-repeats. One undo step each; updates the selection to the result so it chains.
+    pub fn transform_again(&mut self) {
+        let (delta, was_copy) = match self.last_tf { Some(t) => t, None => return };
+        if self.objsel.is_empty() { return; }
+        self.begin();
+        if was_copy {
+            let srcs: Vec<u32> = self.objsel.iter().copied().collect();
+            let cids = self.doc.dup_paths(&srcs);
+            self.objsel = cids.into_iter().collect();
+        }
+        let base = self.objsel_base();
+        for (aid, p0, hin0, hout0) in &base {
+            if let Some(a) = self.doc.anchor_mut(*aid) { a.p = add(*p0, delta); a.hin = hin0.map(|h| add(h, delta)); a.hout = hout0.map(|h| add(h, delta)); }
+        }
+        self.obj_angle = 0.0;
+        self.dirty = true; self.commit();
+    }
+
     // ---------- artboards (the Artboard tool, Shift+O) ----------
     /// The 8 resize handles of an artboard rect (corners 0-3, edge mids 4-7) in world space.
     pub fn ab_handles(ab: &Artboard) -> [Pt; 8] { Self::bbox_handles(ab.rect()) }
@@ -698,6 +739,228 @@ impl Editor {
         (x, y, w, h, self.doc.artboards.len() + 1)
     }
 
+    // ---------- snapping (the SnapEngine — SNAP_TRANSFORM_SPEC) ----------
+    /// All object + artboard X/Y target lines for snapping, each as `(coord, span_lo, span_hi)` (the span
+    /// lets a guide reach both the moving and the target object). Excludes the current selection + hidden.
+    fn snap_target_lines(&self) -> (Vec<(f32, f32, f32)>, Vec<(f32, f32, f32)>) {
+        let cfg = &self.doc.snap;
+        let (mut txl, mut tyl) = (vec![], vec![]);
+        for pi in 0..self.doc.paths.len() {
+            let p = &self.doc.paths[pi];
+            if p.hidden || self.objsel.contains(&p.id) { continue; }
+            let b = self.doc.outline_bbox(pi);
+            if cfg.object_bounds { txl.push((b.0, b.1, b.3)); txl.push((b.2, b.1, b.3)); tyl.push((b.1, b.0, b.2)); tyl.push((b.3, b.0, b.2)); }
+            if cfg.bbox_mids { txl.push(((b.0 + b.2) * 0.5, b.1, b.3)); tyl.push(((b.1 + b.3) * 0.5, b.0, b.2)); }
+        }
+        if cfg.artboard { if let Some(ab) = self.doc.active_artboard() {
+            let (ax0, ay0, ax1, ay1) = ab.rect();
+            txl.push((ax0, ay0, ay1)); txl.push((ax1, ay0, ay1)); tyl.push((ay0, ax0, ax1)); tyl.push((ay1, ax0, ax1));
+            if cfg.artboard_mids { txl.push(((ax0 + ax1) * 0.5, ay0, ay1)); tyl.push(((ay0 + ay1) * 0.5, ax0, ax1)); }
+        }}
+        (txl, tyl)
+    }
+
+    /// World spacing of the FINEST VISIBLE dot-grid level at the current zoom, so "Snap to Grid" lands
+    /// exactly on the dots the user sees (mirrors the renderer's adaptive base-5 grid, tess.rs build_bg —
+    /// TARGET 30px, MIN 9px). Zoom-dependent: zoom in → finer grid → snaps to the closer dots.
+    fn adaptive_grid_step(&self) -> f32 {
+        let zoom = self.ppu.max(1e-4);
+        let k0 = ((30.0_f32 / zoom).max(1e-6).ln() / 5f32.ln()).floor();
+        let step = 5f32.powf(k0);                                     // finest level
+        if step * zoom < 9.0 { 5f32.powf(k0 + 1.0) } else { step }   // too dense to draw → next level up
+    }
+
+    /// Equal-spacing ("snap to gaps"): along `axis` (0 = X, 1 = Y), for the moving span `[m0,m1]` in the
+    /// perpendicular band `[p0,p1]`, find the position that either CENTRES it between two neighbours OR
+    /// makes its gap to a neighbour EQUAL an existing gap in that row (so you can extend an even row).
+    /// Returns `(delta, guide-bars)` for the best in-tolerance candidate.
+    fn equal_gap(&self, axis: usize, m0: f32, m1: f32, p0: f32, p1: f32, tol: f32) -> Option<(f32, Vec<SnapGuide>)> {
+        let mut rows: Vec<(f32, f32)> = vec![];
+        for pi in 0..self.doc.paths.len() {
+            let p = &self.doc.paths[pi];
+            if p.hidden || self.objsel.contains(&p.id) { continue; }
+            let b = self.doc.outline_bbox(pi);
+            let (b0, b1, q0, q1) = if axis == 0 { (b.0, b.2, b.1, b.3) } else { (b.1, b.3, b.0, b.2) };
+            if q1 < p0 || q0 > p1 { continue; }            // not in the same row / column
+            rows.push((b0, b1));
+        }
+        if rows.is_empty() { return None; }
+        rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let below = rows.iter().filter(|r| r.1 <= m0 + tol).map(|r| r.1).fold(f32::MIN, f32::max);  // nearest low edge
+        let above = rows.iter().filter(|r| r.0 >= m1 - tol).map(|r| r.0).fold(f32::MAX, f32::min);  // nearest high edge
+        let len = m1 - m0;
+        let mut gaps: Vec<f32> = vec![];
+        for w in rows.windows(2) { let g = w[1].0 - w[0].1; if g > 0.5 { gaps.push(g); } }
+        let mut cands: Vec<(f32, Vec<(f32, f32)>)> = vec![];                 // (target_m0, bar segments)
+        if below > f32::MIN && above < f32::MAX {
+            let t = below + ((above - below) - len) * 0.5;                  // centre between two neighbours
+            cands.push((t, vec![(below, t), (t + len, above)]));
+        }
+        for &g in &gaps {                                                   // match an existing gap (extend the row)
+            if below > f32::MIN { let t = below + g; cands.push((t, vec![(below, t)])); }
+            if above < f32::MAX { let t = above - g - len; cands.push((t, vec![(t + len, above)])); }
+        }
+        let mut best: Option<(f32, Vec<(f32, f32)>)> = None;
+        for (t, segs) in cands {
+            let diff = t - m0;
+            if diff.abs() <= tol && best.as_ref().map_or(true, |(bd, _)| diff.abs() < bd.abs()) { best = Some((diff, segs)); }
+        }
+        best.map(|(diff, segs)| {
+            let pm = (p0 + p1) * 0.5;
+            let guides = segs.into_iter().map(|(a, b)| if axis == 0 { SnapGuide::Gap { a: [a, pm], b: [b, pm] } } else { SnapGuide::Gap { a: [pm, a], b: [pm, b] } }).collect();
+            (diff, guides)
+        })
+    }
+
+    /// Snap a TRANSLATION drag (Object move): given the selection's pre-drag bbox and the proposed delta,
+    /// return the adjusted delta + the alignment guides + a live HUD label. Pure (reads doc + ppu + cfg).
+    /// Tolerance is SCREEN px (÷ ppu) so it feels identical at every zoom. No-op delta when snapping is off.
+    pub fn snap_move(&self, bbox0: (f32, f32, f32, f32), d: Pt) -> (Pt, Vec<SnapGuide>, Option<(Pt, String)>) {
+        let cfg = &self.doc.snap;
+        let hud_at = self.cursor;
+        let hud = |nx: f32, ny: f32| Some((hud_at, format!("X {:.0}   Y {:.0}", nx, ny)));
+        if !cfg.enabled || !cfg.smart {
+            return (d, vec![], hud(bbox0.0 + d[0], bbox0.1 + d[1]));
+        }
+        let tol = cfg.radius_px / self.ppu.max(1e-4);
+        let (mx0, my0, mx1, my1) = (bbox0.0 + d[0], bbox0.1 + d[1], bbox0.2 + d[0], bbox0.3 + d[1]);
+        let mxs = [mx0, (mx0 + mx1) * 0.5, mx1];   // moving left / centre / right
+        let mys = [my0, (my0 + my1) * 0.5, my1];   // moving top / middle / bottom
+        let (txl, tyl) = self.snap_target_lines();
+        // best edge/centre snap per axis = smallest in-tolerance offset (axes are independent)
+        let mut bx: Option<(f32, f32, f32, f32)> = None; let mut bx_center = false;   // (diff, coord, span_lo, span_hi)
+        for (mi, &mx) in mxs.iter().enumerate() { for &(x, s0, s1) in &txl {
+            let diff = x - mx;
+            if diff.abs() <= tol && bx.map_or(true, |(bd, _, _, _)| diff.abs() < bd.abs()) {
+                bx = Some((diff, x, my0.min(s0), my1.max(s1))); bx_center = mi == 1;
+            }
+        }}
+        let mut by: Option<(f32, f32, f32, f32)> = None; let mut by_center = false;
+        for (mi, &my) in mys.iter().enumerate() { for &(y, s0, s1) in &tyl {
+            let diff = y - my;
+            if diff.abs() <= tol && by.map_or(true, |(bd, _, _, _)| diff.abs() < bd.abs()) {
+                by = Some((diff, y, mx0.min(s0), mx1.max(s1))); by_center = mi == 1;
+            }
+        }}
+        let mut nd = d;
+        let mut guides = vec![];
+        let (mut sx_done, mut sy_done) = (false, false);
+        if let Some((diff, x, s0, s1)) = bx { nd[0] += diff; sx_done = true; if cfg.alignment_guides { guides.push(SnapGuide::Line { a: [x, s0], b: [x, s1] }); } }
+        if let Some((diff, y, s0, s1)) = by { nd[1] += diff; sy_done = true; if cfg.alignment_guides { guides.push(SnapGuide::Line { a: [s0, y], b: [s1, y] }); } }
+        // centre-to-centre: both axes snapped via the moving CENTRE → mark the shared point, so you can tell
+        // two objects sit on the same spot (Illustrator's snap indicator).
+        if bx_center && by_center { if let (Some((_, x, _, _)), Some((_, y, _, _))) = (bx, by) {
+            let r = 5.0;
+            guides.push(SnapGuide::Line { a: [x - r, y], b: [x + r, y] });
+            guides.push(SnapGuide::Line { a: [x, y - r], b: [x, y + r] });
+        }}
+        // equal-spacing ("snap to gaps") — only on an axis the edge/centre snap didn't already claim
+        if cfg.gaps_and_sizes && cfg.equal_spacing {
+            if !sx_done { if let Some((diff, mut g)) = self.equal_gap(0, mx0, mx1, my0, my1, tol) { nd[0] += diff; sx_done = true; guides.append(&mut g); } }
+            if !sy_done { if let Some((diff, mut g)) = self.equal_gap(1, my0, my1, mx0, mx1, tol) { nd[1] += diff; sy_done = true; guides.append(&mut g); } }
+        }
+        // grid fallback (lowest priority) — snap the top-left edge to the VISIBLE adaptive dot grid
+        if cfg.grid && (!sx_done || !sy_done) {
+            let step = self.adaptive_grid_step();
+            if !sx_done { nd[0] += (mx0 / step).round() * step - mx0; }
+            if !sy_done { nd[1] += (my0 / step).round() * step - my0; }
+        }
+        (nd, guides, hud(bbox0.0 + nd[0], bbox0.1 + nd[1]))
+    }
+
+    /// Snap a single world point's X and/or Y to target lines (object/artboard edges & centres), with a
+    /// grid / pixel fallback. Returns the snapped point + alignment guides. Drives the resize (Scale) handle.
+    pub fn snap_xy(&self, w: Pt, want_x: bool, want_y: bool) -> (Pt, Vec<SnapGuide>) {
+        let cfg = &self.doc.snap;
+        if !cfg.enabled || !cfg.smart { return (w, vec![]); }
+        let tol = cfg.radius_px / self.ppu.max(1e-4);
+        let (txl, tyl) = self.snap_target_lines();
+        let (mut nx, mut ny) = (w[0], w[1]);
+        let mut guides = vec![];
+        if want_x {
+            let mut best: Option<(f32, f32, f32, f32)> = None;
+            for &(x, s0, s1) in &txl { let diff = x - w[0]; if diff.abs() <= tol && best.map_or(true, |(bd, _, _, _)| diff.abs() < bd.abs()) { best = Some((diff, x, s0, s1)); } }
+            if let Some((_, x, s0, s1)) = best { nx = x; if cfg.alignment_guides { guides.push(SnapGuide::Line { a: [x, s0.min(w[1])], b: [x, s1.max(w[1])] }); } }
+            else if cfg.grid { let step = self.adaptive_grid_step(); nx = (w[0] / step).round() * step; }
+        }
+        if want_y {
+            let mut best: Option<(f32, f32, f32, f32)> = None;
+            for &(y, s0, s1) in &tyl { let diff = y - w[1]; if diff.abs() <= tol && best.map_or(true, |(bd, _, _, _)| diff.abs() < bd.abs()) { best = Some((diff, y, s0, s1)); } }
+            if let Some((_, y, s0, s1)) = best { ny = y; if cfg.alignment_guides { guides.push(SnapGuide::Line { a: [s0.min(w[0]), y], b: [s1.max(w[0]), y] }); } }
+            else if cfg.grid { let step = self.adaptive_grid_step(); ny = (w[1] / step).round() * step; }
+        }
+        ([nx, ny], guides)
+    }
+
+    /// Core GEOMETRY point-snap: find the nearest snap of any moving point (offset by `d`) onto a target
+    /// anchor (key point), segment midpoint, or the nearest point on a path edge (vector geometry), within
+    /// `tol`. Skips hidden paths, the moving object selection, and the path currently being edited (the one
+    /// holding a selected anchor). Returns `(target, moved-point)` of the best snap.
+    fn snap_points(&self, base_pts: &[Pt], d: Pt, tol: f32) -> Option<(Pt, Pt)> {
+        let cfg = &self.doc.snap;
+        let mut best: Option<(f32, Pt, Pt)> = None;        // (dist, target, moved)
+        for mp in base_pts {
+            let moved = add(*mp, d);
+            for pi in 0..self.doc.paths.len() {
+                let p = &self.doc.paths[pi];
+                if p.hidden || self.objsel.contains(&p.id) { continue; }
+                if p.anchors.iter().chain(p.holes.iter().flatten()).any(|a| self.selected.contains(&a.id)) { continue; }
+                if cfg.key_points {
+                    for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
+                        let dd = dist(moved, a.p);
+                        if dd <= tol && best.map_or(true, |(bd, _, _)| dd < bd) { best = Some((dd, a.p, moved)); }
+                    }
+                }
+                if cfg.segment_mids {
+                    let n = p.anchors.len();
+                    let segs = if p.closed { n } else { n.saturating_sub(1) };
+                    for i in 0..segs {
+                        let (q, r) = (p.anchors[i].p, p.anchors[(i + 1) % n].p);
+                        let mid = [(q[0] + r[0]) * 0.5, (q[1] + r[1]) * 0.5];
+                        let dd = dist(moved, mid);
+                        if dd <= tol && best.map_or(true, |(bd, _, _)| dd < bd) { best = Some((dd, mid, moved)); }
+                    }
+                }
+                if cfg.object_geometry {
+                    if let Some((si, t, dd)) = self.doc.nearest_seg(pi, moved) {
+                        if dd <= tol && best.map_or(true, |(bd, _, _)| dd < bd) {
+                            let n = p.anchors.len();
+                            let a = &p.anchors[si]; let b = &p.anchors[(si + 1) % n];
+                            let pt = cubic(a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p, t);
+                            best = Some((dd, pt, moved));
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|(_, t, moved)| (t, moved))
+    }
+
+    /// Geometry point-snap wrapper → `(delta-adjust, cross marker, target)`. Off when snapping or all three
+    /// geometry sources are disabled.
+    fn snap_to_points(&self, base_pts: &[Pt], d: Pt) -> Option<(Pt, Vec<SnapGuide>, Pt)> {
+        let cfg = &self.doc.snap;
+        if !cfg.enabled || !cfg.smart || base_pts.is_empty() || (!cfg.key_points && !cfg.object_geometry && !cfg.segment_mids) { return None; }
+        let tol = cfg.radius_px / self.ppu.max(1e-4);
+        self.snap_points(base_pts, d, tol).map(|(t, moved)| {
+            let r = 5.0;
+            let g = vec![
+                SnapGuide::Line { a: [t[0] - r, t[1]], b: [t[0] + r, t[1]] },
+                SnapGuide::Line { a: [t[0], t[1] - r], b: [t[0], t[1] + r] },
+            ];
+            (sub(t, moved), g, t)
+        })
+    }
+
+    /// Snap an ANCHOR drag (Direct/Pen): pull the moving anchor(s) onto the nearest anchor / segment
+    /// midpoint / path edge ("Snap to Point" + geometry). Returns the adjusted delta + a cross marker + HUD.
+    pub fn snap_anchor(&self, base_pts: &[Pt], d: Pt) -> (Pt, Vec<SnapGuide>, Option<(Pt, String)>) {
+        let first = base_pts.first().copied().unwrap_or(self.cursor);
+        let hud = |p: Pt| Some((self.cursor, format!("X {:.0}   Y {:.0}", p[0], p[1])));
+        if let Some((adj, g, t)) = self.snap_to_points(base_pts, d) { (add(d, adj), g, hud(t)) }
+        else { (d, vec![], hud(add(first, d))) }
+    }
+
     // ---------- history ----------
     pub fn begin(&mut self) { self.pending = Some(self.doc.clone()); self.dirty = false; }
     pub fn commit(&mut self) {
@@ -825,16 +1088,21 @@ impl Editor {
     pub fn pointer_down(&mut self, pos: Pt) {
         self.cursor = pos;
         self.begin();
+        self.gesture_copy = false; self.gesture_delta = [0.0, 0.0];
         self.gesture = self.eff_tool();
         if self.gesture == ToolKind::Artboard { self.ab_down(pos); return; }
         tools::get(self.gesture).down(self, pos);
     }
     pub fn pointer_up(&mut self) {
+        self.snap_guides.clear(); self.snap_hud = None;   // snap feedback is per-gesture
         if self.tool == ToolKind::Artboard { self.ab_up(); self.commit(); return; }
         if let Drag::Shape { pid, .. } = self.drag {
             if let Some(pi) = self.doc.pidx(pid) { let b = self.doc.bbox(pi); if (b.2-b.0) < 2.0 && (b.3-b.1) < 2.0 { self.doc.paths.remove(pi); self.dirty = false; } }
         }
         if let Drag::PenClose { .. } = self.drag { self.active = None; }
+        if matches!(self.drag, Drag::Object { .. }) && (self.gesture_delta[0] != 0.0 || self.gesture_delta[1] != 0.0) {
+            self.last_tf = Some((self.gesture_delta, self.gesture_copy));   // remember for Transform Again
+        }
         self.drag = Drag::None;
         self.commit();
     }
@@ -875,6 +1143,9 @@ impl Editor {
             Drag::Anchors { start, items } => {
                 let mut d = sub(pos, start);
                 if self.mods.shift { d = snap45(d); }
+                let base_pts: Vec<Pt> = items.iter().map(|(_, p0, _, _)| *p0).collect();
+                let (d, guides, hud) = self.snap_anchor(&base_pts, d);   // Direct/Pen → snap to points/edges (always active)
+                self.snap_guides = guides; self.snap_hud = hud;
                 for (aid, p0, hin0, hout0) in &items {
                     if let Some(a) = self.doc.anchor_mut(*aid) {   // outer OR hole anchor
                         a.p = add(*p0, d); a.hin = hin0.map(|h| add(h, d)); a.hout = hout0.map(|h| add(h, d));
@@ -935,6 +1206,7 @@ impl Editor {
                 if dist(pos, down) < DRAG_THRESH { self.drag = Drag::DupPending { srcs, down, object }; }
                 else {
                     let cids: Vec<u32> = self.doc.dup_paths(&srcs); // clones + mirrors group structure
+                    self.gesture_copy = true;                       // remember this gesture left a copy (Transform Again)
                     if object {
                         self.objsel.clear();
                         let mut base = vec![];
@@ -951,6 +1223,12 @@ impl Editor {
             }
             Drag::Object { down, base } => {
                 let mut d = sub(pos, down); if self.mods.shift { d = snap45(d); }
+                // snap priority: the object's own anchors → vector geometry (most specific), else the bbox
+                // edges/centres/spacing/grid. Always active per the magnet toggles (Ctrl only morphs the tool).
+                let base_pts: Vec<Pt> = base.iter().map(|(_, p0, _, _)| *p0).collect();
+                let (d, guides, hud) = if let Some((adj, g, t)) = self.snap_to_points(&base_pts, d) { (add(d, adj), g, Some((self.cursor, format!("X {:.0}   Y {:.0}", t[0], t[1])))) }
+                    else { self.snap_move(base_bbox(&base), d) };
+                self.snap_guides = guides; self.snap_hud = hud; self.gesture_delta = d;
                 for (aid, p0, hin0, hout0) in &base {
                     if let Some(a) = self.doc.anchor_mut(*aid) {
                         a.p = add(*p0, d); a.hin = hin0.map(|h| add(h, d)); a.hout = hout0.map(|h| add(h, d));
@@ -963,11 +1241,18 @@ impl Editor {
                 let pivot = if self.mods.alt { cen_l } else { opp_l };       // Alt → scale from centre
                 let cx = handle <= 3 || handle == 5 || handle == 7;          // controls x (local axis)
                 let cy = handle <= 3 || handle == 4 || handle == 6;          // controls y (local axis)
-                let lp = rotate_about(pos, [0.0, 0.0], -angle);              // cursor → local (un-rotated) space
+                // snap the dragged handle to other geometry / grid (axis-aligned frames only)
+                let (sp, guides) = if angle.abs() < 1e-3 { self.snap_xy(pos, cx, cy) } else { (pos, vec![]) };
+                self.snap_guides = guides;
+                let lp = rotate_about(sp, [0.0, 0.0], -angle);              // (snapped) cursor → local space
                 let (dx0, dy0) = (h0_l[0] - pivot[0], h0_l[1] - pivot[1]);
                 let mut sx = if cx && dx0.abs() > 1e-3 { (lp[0]-pivot[0])/dx0 } else { 1.0 };
                 let mut sy = if cy && dy0.abs() > 1e-3 { (lp[1]-pivot[1])/dy0 } else { 1.0 };
                 if self.mods.shift && cx && cy { let m = sx.abs().max(sy.abs()); sx = m.copysign(sx); sy = m.copysign(sy); }
+                // live W×H readout (local bbox of the base × the scale)
+                let (mut lx0, mut ly0, mut lx1, mut ly1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                for (_, p0, _, _) in &base { let q = rotate_about(*p0, [0.0, 0.0], -angle); lx0 = lx0.min(q[0]); ly0 = ly0.min(q[1]); lx1 = lx1.max(q[0]); ly1 = ly1.max(q[1]); }
+                self.snap_hud = Some((self.cursor, format!("W {:.0}   H {:.0}", (lx1 - lx0) * sx.abs(), (ly1 - ly0) * sy.abs())));
                 let tf = |w: Pt| {                                          // un-rotate → scale on local axes → re-rotate
                     let q = rotate_about(w, [0.0, 0.0], -angle);
                     let q2 = [pivot[0]+(q[0]-pivot[0])*sx, pivot[1]+(q[1]-pivot[1])*sy];
