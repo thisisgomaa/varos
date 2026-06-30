@@ -18,7 +18,8 @@ pub const AB_GHOST: Rgba = [1.0, 1.0, 1.0, 0.06];    // a TRANSPARENT page → a
                                                      // page still reads on the dark board (not invisible)
 pub const AB_EDGE: Rgba = [0.0, 0.0, 0.0, 0.34];     // page hairline on a WHITE page (clear dark line)
 pub const AB_EDGE_T: Rgba = [1.0, 1.0, 1.0, 0.34];   // page hairline on a transparent page (light, on the dark board)
-pub const SNAP_GUIDE: Rgba = [0.18, 0.80, 0.44, 1.0]; // smart-guide green (Illustrator default family; adjustable per Ahmed)
+pub const SNAP_GUIDE: Rgba = [0.05, 0.92, 0.55, 1.0]; // smart-guide green (vivid; adjustable per Ahmed)
+pub const SEG_HI: Rgba = [0.35, 0.80, 1.0, 1.0];      // grabbed/selected path segment — bright cyan (Illustrator feel)
 
 pub enum Prim {
     Fill { rings: Vec<Vec<Pt>>, color: Rgba },  // outer ring + hole rings — filled even-odd (holes cut through)
@@ -111,8 +112,21 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     for pi in 0..ed.doc.paths.len() {
         if ed.doc.paths[pi].hidden { continue; }
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
-            s.overlay.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: 1.2, color: ACCENT });
-            for hole in &ed.doc.paths[pi].holes { let mut r = Document::ring_px(hole, true, ppu); if let Some(&f) = r.first() { r.push(f); } s.overlay.push(Prim::Stroke { pts: r, width: 1.2, color: ACCENT }); }
+            s.overlay.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: 1.7, color: ACCENT });
+            for hole in &ed.doc.paths[pi].holes { let mut r = Document::ring_px(hole, true, ppu); if let Some(&f) = r.first() { r.push(f); } s.overlay.push(Prim::Stroke { pts: r, width: 1.7, color: ACCENT }); }
+        }
+    }
+    // grabbed segment highlight: the moment you grab a path segment (Direct tool), the segment itself
+    // lights up bright cyan — so you FEEL you caught the path, even on a straight edge with no handles.
+    if let Drag::Segment { pid, i, .. } = ed.drag {
+        if let Some(pi) = ed.doc.pidx(pid) {
+            let p = &ed.doc.paths[pi]; let n = p.anchors.len();
+            if n >= 2 {
+                let a = &p.anchors[i]; let b = &p.anchors[(i + 1) % n];
+                let (p0, p1, p2, p3) = (a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p);
+                let pts: Vec<Pt> = (0..=24).map(|k| cubic(p0, p1, p2, p3, k as f32 / 24.0)).collect();
+                s.overlay.push(Prim::Stroke { pts, width: 3.0, color: SEG_HI });
+            }
         }
     }
     // object-selection transform frame (oriented — rotates with the selection) + 8 handles
@@ -154,24 +168,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         let (x1, y1) = (start[0].max(c[0]), start[1].max(c[1]));
         s.overlay.push(Prim::Stroke { pts: vec![[x0,y0],[x1,y0],[x1,y1],[x0,y1],[x0,y0]], width: 1.0, color: ACCENT });
     }
-    // handles: like Illustrator, show them only when a SINGLE anchor is selected
-    // (selecting many anchors / the whole path shows just the square markers, no handle clutter).
-    let mut show: HashSet<u32> = HashSet::new();
-    if ed.selected.len() == 1 && ed.tool != ToolKind::Object {
-        for p in &ed.doc.paths {
-            // every contour: the outer ring + each hole ring (holes are always closed)
-            for (contour, closed) in std::iter::once((&p.anchors, p.closed)).chain(p.holes.iter().map(|h| (h, true))) {
-                let n = contour.len();
-                for (ai, a) in contour.iter().enumerate() {
-                    if ed.selected.contains(&a.id) {
-                        show.insert(a.id);
-                        if ai > 0 { show.insert(contour[ai-1].id); } else if closed { show.insert(contour[n-1].id); }
-                        if ai < n-1 { show.insert(contour[ai+1].id); } else if closed { show.insert(contour[0].id); }
-                    }
-                }
-            }
-        }
-    }
+    // handles: every SELECTED anchor shows its own direction handles (Illustrator). A whole-path / hover
+    // selection shows none — grabbing a segment selects its two endpoints, so both reveal handles naturally.
+    let mut show: HashSet<u32> = if ed.tool == ToolKind::Object { HashSet::new() } else { ed.selected.clone() };
     if ed.tool == ToolKind::Pen { if let Some(ap) = ed.active { if let Some(pi) = ed.doc.pidx(ap) { for a in &ed.doc.paths[pi].anchors { show.insert(a.id); } } } }
     for p in &ed.doc.paths { for a in p.anchors.iter().chain(p.holes.iter().flatten()) { if show.contains(&a.id) {
         for h in [a.hin, a.hout].into_iter().flatten() { s.overlay.push(Prim::Stroke { pts: vec![a.p, h], width: 1.0, color: HANDLE_COL }); }
@@ -179,9 +178,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     for p in &ed.doc.paths { for a in p.anchors.iter().chain(p.holes.iter().flatten()) { if show.contains(&a.id) {
         for h in [a.hin, a.hout].into_iter().flatten() { s.overlay.push(Prim::Disc { c: h, r: 4.0, color: HANDLE_COL }); }
     }}}
-    // anchor markers (only on shown paths; not in object mode) — outer + hole anchors
+    // anchor markers — only on SELECTED paths (never on mere hover), and not in object mode — outer + hole anchors
     for p in &ed.doc.paths {
-        if p.hidden || !ed.path_shown(p.id) || ed.tool == ToolKind::Object { continue; }
+        if p.hidden || !ed.path_selected(p.id) || ed.tool == ToolKind::Object { continue; }
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             let sel = ed.selected.contains(&a.id);
             if a.smooth {
@@ -195,13 +194,24 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     // ---- SNAP GUIDES (smart-guide feedback) — world-positioned lines, drawn at constant screen width ----
     for g in &ed.snap_guides {
         match g {
-            SnapGuide::Line { a, b } => s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.0, color: SNAP_GUIDE }),
+            SnapGuide::Line { a, b } => s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.6, color: SNAP_GUIDE }),
             SnapGuide::Gap { a, b } => {
-                s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.0, color: SNAP_GUIDE });
+                s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.6, color: SNAP_GUIDE });
                 // perpendicular end-ticks so the gap reads as a distance bar
                 let d = [b[0] - a[0], b[1] - a[1]]; let l = (d[0] * d[0] + d[1] * d[1]).sqrt().max(1e-3);
                 let n = [-d[1] / l * 4.0, d[0] / l * 4.0];
-                for p in [a, b] { s.overlay.push(Prim::Stroke { pts: vec![[p[0] - n[0], p[1] - n[1]], [p[0] + n[0], p[1] + n[1]]], width: 1.0, color: SNAP_GUIDE }); }
+                for p in [a, b] { s.overlay.push(Prim::Stroke { pts: vec![[p[0] - n[0], p[1] - n[1]], [p[0] + n[0], p[1] + n[1]]], width: 1.6, color: SNAP_GUIDE }); }
+            }
+            // a snapped POINT: a constant-screen-size green marker with a white core (clear at any zoom)
+            SnapGuide::Point { p } => {
+                s.overlay.push(Prim::Square { c: *p, half: 5.0, color: SNAP_GUIDE });
+                s.overlay.push(Prim::Square { c: *p, half: 3.0, color: WHITE });
+            }
+            // a whole snapped PATH lights up (Illustrator's "path" highlight)
+            SnapGuide::PathHi { pid } => {
+                if let Some(pi) = ed.doc.pidx(*pid) {
+                    s.overlay.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: 2.0, color: SNAP_GUIDE });
+                }
             }
         }
     }

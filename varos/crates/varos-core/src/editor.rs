@@ -80,6 +80,8 @@ pub enum AbHit { Handle(u8), Body(usize) }
 pub enum SnapGuide {
     Line { a: Pt, b: Pt },   // an alignment extension line through the matched feature
     Gap { a: Pt, b: Pt },    // an equal-spacing bar between two points (Stage-1+: tick-capped)
+    Point { p: Pt },         // a snapped target POINT (anchor/edge/midpoint) — constant-size marker
+    PathHi { pid: u32 },     // highlight a whole path we snapped onto (Illustrator's "path" highlight)
 }
 
 #[derive(Clone, Copy)]
@@ -184,7 +186,13 @@ impl Editor {
             || self.doc.paths.iter().find(|p| p.id == pid).map_or(false, |p| p.anchors.iter().chain(p.holes.iter().flatten()).any(|a| self.selected.contains(&a.id)))
     }
     pub fn path_shown(&self, pid: u32) -> bool {
-        self.active == Some(pid) || self.hover_path == Some(pid) || self.objsel.contains(&pid) || self.dsel_path == Some(pid)
+        self.hover_path == Some(pid) || self.path_selected(pid)
+    }
+    /// Like `path_shown` but EXCLUDES mere hover — a path is "selected" only once you actually act on it
+    /// (object/anchor/whole-path/pen-active). Anchor markers gate on this so hovering doesn't reveal points
+    /// (Illustrator shows anchors only on real selection, never on hover).
+    pub fn path_selected(&self, pid: u32) -> bool {
+        self.active == Some(pid) || self.objsel.contains(&pid) || self.dsel_path == Some(pid)
             || self.doc.paths.iter().find(|p| p.id == pid).map_or(false, |p| p.anchors.iter().chain(p.holes.iter().flatten()).any(|a| self.selected.contains(&a.id)))
     }
     pub fn nearest_anchor(&self, pos: Pt, r: f32, shown_only: bool) -> Option<u32> {
@@ -406,7 +414,44 @@ impl Editor {
         }
         self.dirty = true; self.commit();
     }
+    /// Align selected ANCHOR POINTS (Direct Selection) to a shared edge/centre of their bbox — handles
+    /// move with their anchor so curves keep shape. Illustrator aligns points the same way.
+    fn align_anchors(&mut self, mode: AlignMode) {
+        let ids: Vec<u32> = self.selected.iter().copied().collect();
+        if ids.len() < 2 { return; }
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for &id in &ids { if let Some(a) = self.doc.anchor(id) { x0 = x0.min(a.p[0]); y0 = y0.min(a.p[1]); x1 = x1.max(a.p[0]); y1 = y1.max(a.p[1]); } }
+        if x0 > x1 { return; }
+        self.begin();
+        for &id in &ids { if let Some(a) = self.doc.anchor_mut(id) {
+            let np = match mode {
+                AlignMode::Left => [x0, a.p[1]], AlignMode::Right => [x1, a.p[1]], AlignMode::CenterH => [(x0 + x1) * 0.5, a.p[1]],
+                AlignMode::Top => [a.p[0], y0], AlignMode::Bottom => [a.p[0], y1], AlignMode::Middle => [a.p[0], (y0 + y1) * 0.5],
+            };
+            let dx = [np[0] - a.p[0], np[1] - a.p[1]];
+            a.p = np; a.hin = a.hin.map(|h| add(h, dx)); a.hout = a.hout.map(|h| add(h, dx));
+        }}
+        self.dirty = true; self.commit();
+    }
+    /// Distribute selected anchor points evenly along an axis (by position). Needs ≥3.
+    fn distribute_anchors(&mut self, axis: DistAxis) {
+        let mut items: Vec<(u32, f32)> = self.selected.iter().filter_map(|&id| self.doc.anchor(id).map(|a| (id, match axis { DistAxis::Horizontal => a.p[0], DistAxis::Vertical => a.p[1] }))).collect();
+        if items.len() < 3 { return; }
+        items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        let n = items.len();
+        let step = (items[n - 1].1 - items[0].1) / (n as f32 - 1.0);
+        self.begin();
+        for k in 1..n - 1 {
+            let target = items[0].1 + step * k as f32;
+            if let Some(a) = self.doc.anchor_mut(items[k].0) {
+                let dx = match axis { DistAxis::Horizontal => [target - a.p[0], 0.0], DistAxis::Vertical => [0.0, target - a.p[1]] };
+                a.p = add(a.p, dx); a.hin = a.hin.map(|h| add(h, dx)); a.hout = a.hout.map(|h| add(h, dx));
+            }
+        }
+        self.dirty = true; self.commit();
+    }
     pub fn align(&mut self, mode: AlignMode) {
+        if !self.selected.is_empty() { self.align_anchors(mode); return; }   // Direct Selection: align the points
         if self.objsel.len() < 2 { return; }
         let (bx0, by0, bx1, by1) = match self.obj_bbox() { Some(b) => b, None => return };
         let pids: Vec<u32> = self.objsel.iter().copied().collect();
@@ -427,6 +472,7 @@ impl Editor {
         self.dirty = true; self.commit();
     }
     pub fn distribute(&mut self, axis: DistAxis) {
+        if !self.selected.is_empty() { self.distribute_anchors(axis); return; }   // Direct Selection: distribute points
         if self.objsel.len() < 3 { return; }
         let mut items: Vec<(u32, f32)> = self.objsel.iter().filter_map(|&pid| self.doc.pidx(pid).map(|pi| {
             let b = self.doc.outline_bbox(pi);
@@ -940,25 +986,104 @@ impl Editor {
     /// geometry sources are disabled.
     fn snap_to_points(&self, base_pts: &[Pt], d: Pt) -> Option<(Pt, Vec<SnapGuide>, Pt)> {
         let cfg = &self.doc.snap;
-        if !cfg.enabled || !cfg.smart || base_pts.is_empty() || (!cfg.key_points && !cfg.object_geometry && !cfg.segment_mids) { return None; }
+        // Point/geometry snapping is INDEPENDENT of Smart Guides (Illustrator's "Snap to Point" is its own
+        // toggle, separate from alignment guides) — gate only on the master + the geometry sources.
+        if !cfg.enabled || base_pts.is_empty() || (!cfg.key_points && !cfg.object_geometry && !cfg.segment_mids) { return None; }
         let tol = cfg.radius_px / self.ppu.max(1e-4);
-        self.snap_points(base_pts, d, tol).map(|(t, moved)| {
-            let r = 5.0;
-            let g = vec![
-                SnapGuide::Line { a: [t[0] - r, t[1]], b: [t[0] + r, t[1]] },
-                SnapGuide::Line { a: [t[0], t[1] - r], b: [t[0], t[1] + r] },
-            ];
-            (sub(t, moved), g, t)
-        })
+        self.snap_points(base_pts, d, tol).map(|(t, moved)| (sub(t, moved), vec![SnapGuide::Point { p: t }], t))
     }
 
-    /// Snap an ANCHOR drag (Direct/Pen): pull the moving anchor(s) onto the nearest anchor / segment
-    /// midpoint / path edge ("Snap to Point" + geometry). Returns the adjusted delta + a cross marker + HUD.
+    /// Nearest point on path `pi`'s edges to `pos`, SKIPPING any segment that touches a currently-selected
+    /// (dragged) anchor — so a dragged point/handle can snap to OTHER parts of the SAME path (incl. curves),
+    /// not where it already sits. Returns (point, dist). Samples each cubic so curves snap, not just nodes.
+    fn nearest_edge(&self, pi: usize, pos: Pt) -> Option<(Pt, f32)> {
+        let p = &self.doc.paths[pi];
+        let n = p.anchors.len();
+        if n < 2 { return None; }
+        let segs = if p.closed { n } else { n - 1 };
+        let mut best: Option<(Pt, f32)> = None;
+        for i in 0..segs {
+            let (a, b) = (&p.anchors[i], &p.anchors[(i + 1) % n]);
+            if self.selected.contains(&a.id) || self.selected.contains(&b.id) { continue; }
+            let (p0, p1, p2, p3) = (a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p);
+            for k in 0..=24 {
+                let pt = cubic(p0, p1, p2, p3, k as f32 / 24.0);
+                let dd = dist(pt, pos);
+                if best.map_or(true, |(_, bd)| dd < bd) { best = Some((pt, dd)); }
+            }
+        }
+        best
+    }
+
+    /// Snap an ANCHOR drag (Direct/Pen) — the primary moving point. (1) An exact landing on the nearest
+    /// anchor / segment-mid / path edge within tolerance → snap onto it + a marker. Otherwise (2) per-axis
+    /// SMART GUIDES: align X (and/or Y) to the nearest other anchor — INCLUDING the same shape's other
+    /// corners — or the artboard, drawing the guide line; (3) grid is the fallback. Independent of Smart
+    /// Guides (this is "Snap to Point"); only the dragged anchors themselves are excluded as targets.
     pub fn snap_anchor(&self, base_pts: &[Pt], d: Pt) -> (Pt, Vec<SnapGuide>, Option<(Pt, String)>) {
+        let cfg = &self.doc.snap;
         let first = base_pts.first().copied().unwrap_or(self.cursor);
         let hud = |p: Pt| Some((self.cursor, format!("X {:.0}   Y {:.0}", p[0], p[1])));
-        if let Some((adj, g, t)) = self.snap_to_points(base_pts, d) { (add(d, adj), g, hud(t)) }
-        else { (d, vec![], hud(add(first, d))) }
+        if !cfg.enabled || base_pts.is_empty() { return (d, vec![], hud(add(first, d))); }
+        let tol = cfg.radius_px / self.ppu.max(1e-4);
+        let moved = add(first, d);
+
+        // candidate target POINTS: every OTHER anchor (incl. the same shape's other corners, only the
+        // dragged anchors excluded) + segment midpoints + the artboard corners/centre.
+        let mut pts: Vec<Pt> = vec![];
+        for p in &self.doc.paths {
+            if p.hidden { continue; }
+            if cfg.key_points {
+                for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
+                    if self.selected.contains(&a.id) { continue; }
+                    pts.push(a.p);
+                }
+            }
+            if cfg.segment_mids && !p.anchors.iter().any(|a| self.selected.contains(&a.id)) {
+                let n = p.anchors.len();
+                let segs = if p.closed { n } else { n.saturating_sub(1) };
+                for i in 0..segs { let (q, r) = (p.anchors[i].p, p.anchors[(i + 1) % n].p); pts.push([(q[0] + r[0]) * 0.5, (q[1] + r[1]) * 0.5]); }
+            }
+        }
+        if cfg.artboard { if let Some(ab) = self.doc.active_artboard() {
+            let (x0, y0, x1, y1) = ab.rect();
+            for c in [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [(x0 + x1) * 0.5, (y0 + y1) * 0.5]] { pts.push(c); }
+        }}
+
+        // 1) exact landing on the nearest point / edge (both axes) within tolerance
+        let mut best: Option<(f32, Pt)> = None;
+        let mut best_pid: Option<u32> = None;   // set only when the winner is a path EDGE (→ highlight it)
+        for &tp in &pts { let dd = dist(moved, tp); if dd <= tol && best.map_or(true, |(bd, _)| dd < bd) { best = Some((dd, tp)); best_pid = None; } }
+        if cfg.object_geometry {
+            for pi in 0..self.doc.paths.len() {
+                if self.doc.paths[pi].hidden { continue; }
+                if let Some((pt, dd)) = self.nearest_edge(pi, moved) {
+                    if dd <= tol && best.map_or(true, |(bd, _)| dd < bd) { best = Some((dd, pt)); best_pid = Some(self.doc.paths[pi].id); }
+                }
+            }
+        }
+        if let Some((_, t)) = best {
+            let mut g = vec![SnapGuide::Point { p: t }];
+            if let Some(pid) = best_pid { g.push(SnapGuide::PathHi { pid }); }   // light up the whole snapped path
+            return (add(d, sub(t, moved)), g, hud(t));
+        }
+
+        // 2) per-axis smart-guide alignment to the nearest target X / Y
+        let mut nd = d; let mut guides = vec![]; let (mut sx, mut sy) = (false, false);
+        let mut bx: Option<(f32, Pt)> = None;
+        for &tp in &pts { let diff = tp[0] - moved[0]; if diff.abs() <= tol && bx.map_or(true, |(bd, _)| diff.abs() < bd.abs()) { bx = Some((diff, tp)); } }
+        if let Some((diff, tp)) = bx { nd[0] += diff; sx = true; if cfg.alignment_guides { guides.push(SnapGuide::Line { a: [tp[0], tp[1].min(moved[1])], b: [tp[0], tp[1].max(moved[1])] }); } }
+        let mut by: Option<(f32, Pt)> = None;
+        for &tp in &pts { let diff = tp[1] - moved[1]; if diff.abs() <= tol && by.map_or(true, |(bd, _)| diff.abs() < bd.abs()) { by = Some((diff, tp)); } }
+        if let Some((diff, tp)) = by { nd[1] += diff; sy = true; if cfg.alignment_guides { guides.push(SnapGuide::Line { a: [tp[0].min(moved[0]), tp[1]], b: [tp[0].max(moved[0]), tp[1]] }); } }
+
+        // 3) grid fallback
+        if cfg.grid {
+            let step = self.adaptive_grid_step();
+            if !sx { nd[0] += (moved[0] / step).round() * step - moved[0]; }
+            if !sy { nd[1] += (moved[1] / step).round() * step - moved[1]; }
+        }
+        (nd, guides, hud(add(first, nd)))
     }
 
     // ---------- history ----------
@@ -1043,6 +1168,8 @@ impl Editor {
     pub fn start_segment(&mut self, pid: u32, i: usize, pos: Pt) {
         let pi = self.doc.pidx(pid).unwrap(); let n = self.doc.paths[pi].anchors.len();
         let a = self.doc.paths[pi].anchors[i].clone(); let b = self.doc.paths[pi].anchors[(i+1)%n].clone();
+        // grabbing a SEGMENT selects its two bordering anchors so their handles appear (Illustrator)
+        self.selected.clear(); self.selected.insert(a.id); self.selected.insert(b.id);
         self.drag = Drag::Segment { pid, i, down: pos, a_out0: a.hout, b_in0: b.hin, ap0: a.p, bp0: b.p, straight: a.hout.is_none() && b.hin.is_none() };
     }
     pub fn shape_anchors(&mut self, kind: ShapeKind, start: Pt, cur: Pt) -> Vec<Anchor> {
@@ -1091,6 +1218,9 @@ impl Editor {
         self.gesture_copy = false; self.gesture_delta = [0.0, 0.0];
         self.gesture = self.eff_tool();
         if self.gesture == ToolKind::Artboard { self.ab_down(pos); return; }
+        // Pen: snap the new anchor onto nearby points / path / grid before placing it
+        let pos = if self.gesture == ToolKind::Pen { let (adj, _, _) = self.snap_anchor(&[pos], [0.0, 0.0]); add(pos, adj) } else { pos };
+        self.cursor = pos;
         tools::get(self.gesture).down(self, pos);
     }
     pub fn pointer_up(&mut self) {
@@ -1120,7 +1250,9 @@ impl Editor {
                     if self.mods.alt { broken = true; }
                     if let Some((pi, ai)) = self.doc.aidx(aid) {
                         let p = self.doc.paths[pi].anchors[ai].p;
-                        let q = if self.mods.shift { add(p, snap45(sub(pos, p))) } else { pos };
+                        let mut q = if self.mods.shift { add(p, snap45(sub(pos, p))) } else { pos };
+                        let (adj, guides, hud) = self.snap_anchor(&[q], [0.0, 0.0]);   // snap the handle being pulled
+                        q = add(q, adj); self.snap_guides = guides; self.snap_hud = hud;
                         let a = &mut self.doc.paths[pi].anchors[ai];
                         a.hout = Some(q);
                         if broken { a.smooth = false; } else { a.smooth = true; a.hin = Some(mirror(p, q)); }
@@ -1133,9 +1265,11 @@ impl Editor {
                     if self.mods.alt { broken = true; }
                     if let Some((pi, ai)) = self.doc.aidx(aid) {
                         let p = self.doc.paths[pi].anchors[ai].p;
+                        let (adj, guides, hud) = self.snap_anchor(&[pos], [0.0, 0.0]);   // snap the closing handle
+                        let q = add(pos, adj); self.snap_guides = guides; self.snap_hud = hud;
                         let a = &mut self.doc.paths[pi].anchors[ai];
-                        a.hout = Some(pos);
-                        if broken { a.smooth = false; } else { a.smooth = true; a.hin = Some(mirror(p, pos)); }
+                        a.hout = Some(q);
+                        if broken { a.smooth = false; } else { a.smooth = true; a.hin = Some(mirror(p, q)); }
                     }
                 }
                 self.drag = Drag::PenClose { aid, down, broken };
@@ -1158,6 +1292,9 @@ impl Editor {
                 if let Some(p) = self.doc.anchor(aid).map(|a| a.p) {
                     let mut q = add(pos, grab);
                     if self.mods.shift { q = add(p, snap45(sub(q, p))); }
+                    // snap the bezier handle to nearby anchors / path / grid (like any other point)
+                    let (adj, guides, hud) = self.snap_anchor(&[q], [0.0, 0.0]);
+                    q = add(q, adj); self.snap_guides = guides; self.snap_hud = hud;
                     let opp = add(p, scale(norm(sub(p, q)), opp_len));
                     if let Some(a) = self.doc.anchor_mut(aid) {
                         if out { a.hout = Some(q); } else { a.hin = Some(q); }
@@ -1186,8 +1323,28 @@ impl Editor {
             Drag::Marquee { start, base } => {
                 let (x0, y0) = (start[0].min(pos[0]), start[1].min(pos[1]));
                 let (x1, y1) = (start[0].max(pos[0]), start[1].max(pos[1]));
-                self.selected = base.iter().copied().collect();
-                for p in &self.doc.paths { for a in p.anchors.iter().chain(p.holes.iter().flatten()) { if a.p[0] >= x0 && a.p[0] <= x1 && a.p[1] >= y0 && a.p[1] <= y1 { self.selected.insert(a.id); } } }
+                let inside = |p: Pt| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1;
+                let mut sel: HashSet<u32> = base.iter().copied().collect();
+                for p in &self.doc.paths {
+                    if p.hidden { continue; }
+                    // anchors whose POINT lands inside the marquee
+                    for a in p.anchors.iter().chain(p.holes.iter().flatten()) { if inside(a.p) { sel.insert(a.id); } }
+                    // …plus the two endpoints of any SEGMENT the marquee crosses, so their handles appear when
+                    // the rect catches only the curve between anchors (Illustrator feel). ANCHOR PRIORITY: skip
+                    // a segment if either endpoint is already inside — so a tight marquee on ONE anchor selects
+                    // just it, never dragging in its neighbours via the two adjacent segments.
+                    for (ring, closed) in std::iter::once((&p.anchors, p.closed)).chain(p.holes.iter().map(|h| (h, true))) {
+                        let n = ring.len(); if n < 2 { continue; }
+                        let segs = if closed { n } else { n - 1 };
+                        for i in 0..segs {
+                            let a = &ring[i]; let b = &ring[(i + 1) % n];
+                            if inside(a.p) || inside(b.p) { continue; }   // an endpoint is captured → anchor wins
+                            let (q0, q1, q2, q3) = (a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p);
+                            if (0..=16).any(|k| inside(cubic(q0, q1, q2, q3, k as f32 / 16.0))) { sel.insert(a.id); sel.insert(b.id); }
+                        }
+                    }
+                }
+                self.selected = sel;
                 self.drag = Drag::Marquee { start, base };
             }
             Drag::ObjMarquee { start, base } => {
