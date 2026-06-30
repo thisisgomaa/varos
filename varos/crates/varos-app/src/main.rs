@@ -108,6 +108,8 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
             "BracketRight" => ed.arrange(if shift { ZOrder::Front } else { ZOrder::Forward }),
             "BracketLeft" => ed.arrange(if shift { ZOrder::Back } else { ZOrder::Backward }),
             "KeyG" => if shift { ed.ungroup_selection() } else { ed.group_selection() },
+            "KeyU" => ed.doc.snap.smart = !ed.doc.snap.smart,   // Smart Guides toggle (Illustrator Ctrl+U)
+            "KeyD" => ed.transform_again(),                     // Transform Again / step-and-repeat (Illustrator Ctrl+D)
             _ => {}
         }
         return;
