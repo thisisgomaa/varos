@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 use crate::geom::{cubic, dist, Pt, Rgba};
-use crate::editor::{Drag, Editor, ToolKind};
+use crate::editor::{Drag, Editor, SnapGuide, ToolKind};
 use crate::model::Document;
 
 pub const ACCENT: Rgba = [0.047, 0.549, 0.914, 1.0];
@@ -18,6 +18,7 @@ pub const AB_GHOST: Rgba = [1.0, 1.0, 1.0, 0.06];    // a TRANSPARENT page → a
                                                      // page still reads on the dark board (not invisible)
 pub const AB_EDGE: Rgba = [0.0, 0.0, 0.0, 0.34];     // page hairline on a WHITE page (clear dark line)
 pub const AB_EDGE_T: Rgba = [1.0, 1.0, 1.0, 0.34];   // page hairline on a transparent page (light, on the dark board)
+pub const SNAP_GUIDE: Rgba = [0.18, 0.80, 0.44, 1.0]; // smart-guide green (Illustrator default family; adjustable per Ahmed)
 
 pub enum Prim {
     Fill { rings: Vec<Vec<Pt>>, color: Rgba },  // outer ring + hole rings — filled even-odd (holes cut through)
@@ -190,6 +191,27 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             else { s.overlay.push(Prim::Square { c: a.p, half: 5.0, color: ACCENT }); s.overlay.push(Prim::Square { c: a.p, half: 3.6, color: WHITE }); }
         }
     }
+
+    // ---- SNAP GUIDES (smart-guide feedback) — world-positioned lines, drawn at constant screen width ----
+    for g in &ed.snap_guides {
+        match g {
+            SnapGuide::Line { a, b } => s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.0, color: SNAP_GUIDE }),
+            SnapGuide::Gap { a, b } => {
+                s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.0, color: SNAP_GUIDE });
+                // perpendicular end-ticks so the gap reads as a distance bar
+                let d = [b[0] - a[0], b[1] - a[1]]; let l = (d[0] * d[0] + d[1] * d[1]).sqrt().max(1e-3);
+                let n = [-d[1] / l * 4.0, d[0] / l * 4.0];
+                for p in [a, b] { s.overlay.push(Prim::Stroke { pts: vec![[p[0] - n[0], p[1] - n[1]], [p[0] + n[0], p[1] + n[1]]], width: 1.0, color: SNAP_GUIDE }); }
+            }
+        }
+    }
+    // ---- CENTER POINT of the object selection (Illustrator "Show Center"), tied to the 9-pt reference ----
+    if ed.tool == ToolKind::Object && !ed.objsel.is_empty() {
+        if let Some((x0, y0, x1, y1)) = ed.obj_bbox() {
+            s.overlay.push(Prim::Disc { c: [(x0 + x1) * 0.5, (y0 + y1) * 0.5], r: 2.5, color: ACCENT });
+        }
+    }
+
     s
 }
 

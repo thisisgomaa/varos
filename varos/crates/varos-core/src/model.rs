@@ -83,6 +83,69 @@ impl Artboard {
 fn one_artboard() -> Vec<Artboard> { vec![Artboard::default()] }
 fn yes() -> bool { true }
 
+/// Snapping configuration — the unified, Affinity-grade snap model (SNAP_TRANSFORM_SPEC §2). One config in
+/// three groups, every field serde-defaulted (struct-level `#[serde(default)]` + an explicit `Default`) so
+/// adding fields never breaks old `.varos` files. `smart` is the Ctrl+U master (Smart Guides). Stage-1 acts
+/// on the ON-by-default fields; the rest are present-but-inert until their subsystem lands (grid/pixel/etc.).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SnapConfig {
+    // ── BEHAVIOUR (global) ──
+    pub enabled: bool,           // master kill switch (Affinity "Enable snapping")
+    pub smart: bool,             // Smart Guides master (Ctrl+U)
+    pub radius_px: f32,          // capture tolerance in SCREEN px (÷ ppu at use)
+    pub candidate_max: usize,    // N strongest candidates kept per frame
+    pub show_candidates: bool,   // draw the live alignment lines / pips / halo
+    pub force_pixel_align: bool, // land the snapped result on whole device px (Stage 2)
+    pub move_whole_px: bool,     // quantise the whole motion to integer px (Stage 2)
+
+    // ── PAGE / ARTBOARD snapping ──
+    pub grid: bool,              // construction grid intersections (Stage 2)
+    pub grid_lines: bool,        // snap to a single grid LINE (one axis), not only intersections
+    pub baseline_grid: bool,     // typographic baseline grid (Stage 2/3, with text)
+    pub guides: bool,            // user ruler guides
+    pub artboard: bool,          // page / "spread" edges
+    pub artboard_mids: bool,     // page centre lines + centre point (dependent child of `artboard`)
+    pub margins: bool,           // page margin box (Stage 2/3)
+    pub margin_mids: bool,       // margin-box centre lines (Stage 2/3)
+
+    // ── OBJECT snapping ──
+    pub visible_only: bool,      // candidates from on-screen objects only
+    pub object_bounds: bool,     // bbox edges + corners
+    pub bbox_mids: bool,         // bbox edge-mids + centre (dependent child of `object_bounds`)
+    pub gaps_and_sizes: bool,    // equal-spacing + equal-dimension snap (Affinity flagship)
+    pub key_points: bool,        // anchors / handle ends (Illustrator "Snap to Point")
+    pub object_geometry: bool,   // snap anywhere on a path edge (nearest-point-on-outline)
+    pub segment_mids: bool,      // midpoint between two adjacent nodes (Corel/Inkscape)
+    pub path_intersections: bool,// where two path edges cross (Inkscape/Corel diamond)
+    pub pixel_bounds: bool,      // raster-selection bounds (Stage 3 — vector-only for now)
+
+    // ── alignment-guide feedback ──
+    pub alignment_guides: bool,  // the H/V extension lines drawn from the matched feature
+    pub equal_spacing: bool,     // equal-gap pips + `=` ticks
+    pub equal_size: bool,        // match-width/height hints
+
+    // ── grid spacing (so the engine has no magic constant) ──
+    pub grid_spacing: f32,       // world pt
+}
+impl Default for SnapConfig {
+    /// Defaults follow the spec: Smart Guides + object/page snapping + feedback ON; grid/pixel/margins/
+    /// baseline OFF (inert until their subsystem ships). Tolerance 8 screen px; candidate cap 8.
+    fn default() -> Self {
+        SnapConfig {
+            enabled: true, smart: true, radius_px: 8.0, candidate_max: 8, show_candidates: true,
+            force_pixel_align: false, move_whole_px: false,
+            grid: false, grid_lines: true, baseline_grid: false, guides: true, artboard: true,
+            artboard_mids: true, margins: false, margin_mids: false,
+            visible_only: true, object_bounds: true, bbox_mids: true, gaps_and_sizes: true,
+            key_points: true, object_geometry: true, segment_mids: true, path_intersections: true,
+            pixel_bounds: false,
+            alignment_guides: true, equal_spacing: true, equal_size: true,
+            grid_spacing: 72.0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub paths: Vec<Path>,
@@ -106,11 +169,15 @@ pub struct Document {
     /// default ON (matches Illustrator's control-bar default and Figma).
     #[serde(default = "yes")]
     pub move_art_with_ab: bool,
+    /// Snapping config (the magnet menu / Ctrl+U). `#[serde(default)]` so older files still load.
+    #[serde(default)]
+    pub snap: SnapConfig,
 }
 impl Default for Document {
     fn default() -> Self {
         Document { paths: vec![], groups: vec![], group_of: HashMap::new(), ids: 0,
-                   units: DocUnits::default(), artboards: one_artboard(), active: 0, move_art_with_ab: true }
+                   units: DocUnits::default(), artboards: one_artboard(), active: 0, move_art_with_ab: true,
+                   snap: SnapConfig::default() }
     }
 }
 
