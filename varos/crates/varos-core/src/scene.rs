@@ -20,6 +20,7 @@ pub const AB_EDGE: Rgba = [0.0, 0.0, 0.0, 0.34];     // page hairline on a WHITE
 pub const AB_EDGE_T: Rgba = [1.0, 1.0, 1.0, 0.34];   // page hairline on a transparent page (light, on the dark board)
 pub const SNAP_GUIDE: Rgba = [0.05, 0.92, 0.55, 1.0]; // smart-guide green (vivid; adjustable per Ahmed)
 pub const SEG_HI: Rgba = [0.35, 0.80, 1.0, 1.0];      // grabbed/selected path segment — bright cyan (Illustrator feel)
+pub const GUIDE: Rgba = [0.0, 0.72, 0.92, 0.9];       // ruler guide line — cyan (Illustrator default)
 
 pub enum Prim {
     Fill { rings: Vec<Vec<Pt>>, color: Rgba },  // outer ring + hole rings — filled even-odd (holes cut through)
@@ -108,6 +109,14 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     }
 
     // ---- OVERLAY (constant screen size) ----
+    // ruler guides (cyan, full-extent world lines) + the live ruler drag-out preview — unless hidden
+    if !ed.guides_hidden {
+        const BIG: f32 = 1.0e5;
+        for g in ed.doc.guides.iter().chain(ed.guide_preview.iter()) {
+            let (a, b) = if g.vertical { ([g.pos, -BIG], [g.pos, BIG]) } else { ([-BIG, g.pos], [BIG, g.pos]) };
+            s.overlay.push(Prim::Stroke { pts: vec![a, b], width: 1.0, color: GUIDE });
+        }
+    }
     // editing skeleton: a thin accent outline for any path being hovered/selected/drawn
     for pi in 0..ed.doc.paths.len() {
         if ed.doc.paths[pi].hidden { continue; }

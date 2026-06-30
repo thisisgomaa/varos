@@ -9,7 +9,7 @@
 //! Run with:  cargo test -p varos-core --test serde_roundtrip
 
 use std::collections::HashMap;
-use varos_core::model::{Anchor, Artboard, Document, Group, Path, SnapConfig};
+use varos_core::model::{Anchor, Artboard, Document, Group, Guide, Path, SnapConfig};
 use varos_core::units::{DocUnits, Unit};
 
 fn anc(id: u32, p: [f32; 2], hin: Option<[f32; 2]>, hout: Option<[f32; 2]>, smooth: bool) -> Anchor {
@@ -75,6 +75,8 @@ fn sample_doc() -> Document {
         // non-default snap config so the round-trip exercises the new fields
         snap: SnapConfig { smart: false, radius_px: 6.0, candidate_max: 5, grid: true, path_intersections: false, ..SnapConfig::default() },
         ruler_origin: [12.0, 34.0],   // non-default ruler zero-point exercises the new field
+        guides: vec![Guide { vertical: true, pos: 100.0 }, Guide { vertical: false, pos: 250.0 }],
+        guides_locked: true,
     }
 }
 

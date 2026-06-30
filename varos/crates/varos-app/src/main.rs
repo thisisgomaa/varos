@@ -99,9 +99,11 @@ fn tool_name(t: ToolKind) -> &'static str {
 fn full_title(t: ToolKind) -> String { format!("Varos \u{3b1} \u{b7} pre-alpha \u{2014} {}", tool_name(t)) }
 
 /// Apply a keyboard shortcut. `code` is a W3C key code; shared by canvas focus + forwarded keys.
-fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bool, _alt: bool) {
+fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bool, alt: bool) {
     if ctrl {
         match code {
+            "Semicolon" => if alt { ed.doc.guides_locked = !ed.doc.guides_locked } // Lock Guides (Alt+Ctrl+;)
+                           else { ed.guides_hidden = !ed.guides_hidden },          // Hide/Show Guides (Ctrl+;)
             "Digit1" => view.zoom = 1.0,
             "KeyZ" => if shift { ed.redo() } else { ed.undo() },
             "KeyY" => ed.redo(),
@@ -406,7 +408,11 @@ fn main() {
                                 if dbl && matches!(ed.tool, ToolKind::Object | ToolKind::Direct) { ed.double_click(wp); }
                                 else { ed.pointer_down(wp); }
                             }
-                            ElementState::Released => { if panning { panning = false; } else { ed.pointer_up(); } }
+                            ElementState::Released => {
+                                if panning { panning = false; }
+                                else if over_panel && ed.delete_dragged_guide() { window.request_redraw(); } // dropped a guide onto a ruler → delete
+                                else { ed.pointer_up(); }
+                            }
                         },
                         MouseButton::Middle => match state {
                             ElementState::Pressed => { panning = true; pan_last = screen_cursor; }
