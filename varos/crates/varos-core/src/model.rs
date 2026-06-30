@@ -47,16 +47,43 @@ pub enum ShapeKind { Rect, Ellipse, Triangle, Polygon }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Group { pub id: u32, pub name: String, pub parent: Option<u32> }
 
-/// A single artboard (the page) on the board, in world points (the unit contract: 1pt = 1/72in).
-/// v1 ships ONE fixed board (Decision 7); multi-artboard comes with the Artboard system later.
+/// A single artboard (a defined PAGE) on the infinite board, in world points (1pt = 1/72in). The
+/// document holds a `Vec<Artboard>` + an `active` index (the Artboard system, Shift+O). An artboard is
+/// page furniture — never a z-object and never *contains* artwork (the Illustrator model); which page an
+/// object belongs to is decided by bounds overlap at export, not by containment.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Artboard { pub x: f32, pub y: f32, pub w: f32, pub h: f32, pub name: String }
+pub struct Artboard {
+    pub x: f32, pub y: f32, pub w: f32, pub h: f32,
+    pub name: String,
+    /// print bleed (pt) — the page is a PDF TrimBox; bleed extends the BleedBox outward. UI is later,
+    /// but the field exists from day one so multi + bleed never force a format migration. Default 0.
+    #[serde(default)] pub bleed: f32,
+    /// page fill. `Some(rgba)` = a solid page colour (white default); `None` = TRANSPARENT (export with
+    /// no background; on-canvas it shows just its edge). Changeable per artboard.
+    #[serde(default = "white_page")] pub page_color: Option<Rgba>,
+    /// clip artwork that overflows the page edge on-canvas (a per-artboard toggle). Default OFF
+    /// (Illustrator: art bleeds past the edge freely; clipping is an export-time choice).
+    #[serde(default)] pub clip: bool,
+}
+fn white_page() -> Option<Rgba> { Some([1.0, 1.0, 1.0, 1.0]) }
 impl Default for Artboard {
-    /// 1920×1080 at the origin — a screen-first default (1920×1080 px at the default 72 ppi).
-    fn default() -> Self { Artboard { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0, name: "Artboard 1".into() } }
+    /// A square 1080×1080 white page at the origin (the locked default; a categorised new-file size
+    /// modal comes later). px == pt at the default 72 ppi.
+    fn default() -> Self {
+        Artboard { x: 0.0, y: 0.0, w: 1080.0, h: 1080.0, name: "Artboard 1".into(),
+                   bleed: 0.0, page_color: white_page(), clip: false }
+    }
+}
+impl Artboard {
+    /// (x0, y0, x1, y1) — the page rect in world points.
+    pub fn rect(&self) -> (f32, f32, f32, f32) { (self.x, self.y, self.x + self.w, self.y + self.h) }
+    pub fn contains(&self, p: Pt) -> bool { p[0] >= self.x && p[0] <= self.x + self.w && p[1] >= self.y && p[1] <= self.y + self.h }
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+fn one_artboard() -> Vec<Artboard> { vec![Artboard::default()] }
+fn yes() -> bool { true }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub paths: Vec<Path>,
     /// Group registry. Membership lives in `group_of` so `Path` (and every Path-construction site)
@@ -69,13 +96,37 @@ pub struct Document {
     /// files written before this field still load.
     #[serde(default)]
     pub units: DocUnits,
-    /// The single artboard (page). `#[serde(default)]` for back-compat with pre-artboard files.
+    /// The artboards (pages). Always ≥1 — the model guarantees you can't delete the last one.
+    #[serde(default = "one_artboard")]
+    pub artboards: Vec<Artboard>,
+    /// Index of the active artboard within `artboards` (the one the panel edits / new objects land on).
     #[serde(default)]
-    pub artboard: Artboard,
+    pub active: usize,
+    /// When moving an artboard with the Artboard tool, also move the artwork sitting on it. A toggle,
+    /// default ON (matches Illustrator's control-bar default and Figma).
+    #[serde(default = "yes")]
+    pub move_art_with_ab: bool,
+}
+impl Default for Document {
+    fn default() -> Self {
+        Document { paths: vec![], groups: vec![], group_of: HashMap::new(), ids: 0,
+                   units: DocUnits::default(), artboards: one_artboard(), active: 0, move_art_with_ab: true }
+    }
 }
 
 impl Document {
     pub fn nid(&mut self) -> u32 { self.ids += 1; self.ids }
+
+    /// The active artboard (index clamped). None only if there are somehow zero — the model avoids that.
+    pub fn active_artboard(&self) -> Option<&Artboard> {
+        if self.artboards.is_empty() { return None; }
+        self.artboards.get(self.active.min(self.artboards.len() - 1))
+    }
+    pub fn active_artboard_mut(&mut self) -> Option<&mut Artboard> {
+        if self.artboards.is_empty() { return None; }
+        let i = self.active.min(self.artboards.len() - 1);
+        self.artboards.get_mut(i)
+    }
 
     pub fn pidx(&self, pid: u32) -> Option<usize> { self.paths.iter().position(|p| p.id == pid) }
     pub fn aidx(&self, aid: u32) -> Option<(usize, usize)> {

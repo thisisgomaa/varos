@@ -61,9 +61,17 @@ fn sample_doc() -> Document {
         groups: vec![Group { id: 100, name: "Logo".to_string(), parent: None }],
         group_of,
         ids: 100,
-        // non-default units + artboard, so the round-trip actually exercises them
+        // non-default units + a MULTI-artboard set, so the round-trip exercises every new field:
+        // a square white page with bleed + clip, and a transparent page (page_color = None).
         units: DocUnits { ppi: 96.0, display: Unit::Mm },
-        artboard: Artboard { x: 0.0, y: 0.0, w: 800.0, h: 600.0, name: "Page".to_string() },
+        artboards: vec![
+            Artboard { x: 0.0, y: 0.0, w: 800.0, h: 600.0, name: "Page".to_string(),
+                       bleed: 9.0, page_color: Some([1.0, 1.0, 1.0, 1.0]), clip: true },
+            Artboard { x: 900.0, y: 0.0, w: 1080.0, h: 1080.0, name: "Logo".to_string(),
+                       bleed: 0.0, page_color: None, clip: false },
+        ],
+        active: 1,
+        move_art_with_ab: false,
     }
 }
 

@@ -13,6 +13,8 @@ pub const ANCHOR_R: f32 = 12.0;
 pub const HANDLE_R: f32 = 11.0;
 pub const EDGE_R: f32 = 8.0;
 pub const HANDLE_LEN: f32 = 45.0;
+pub const AB_HANDLE_R: f32 = 8.0;   // grab radius (screen px) for an artboard resize handle
+pub const AB_GAP: f32 = 60.0;       // default world gap between auto-placed artboards
 
 #[derive(Clone, Copy, Default)]
 pub struct Mods { pub shift: bool, pub alt: bool, pub ctrl: bool }
@@ -21,7 +23,7 @@ pub struct Mods { pub shift: bool, pub alt: bool, pub ctrl: bool }
 pub enum PaintTarget { Fill, Stroke }
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum ToolKind { Object, Direct, Pen, Rect, Ellipse, Triangle, Polygon, Convert, Eyedropper }
+pub enum ToolKind { Object, Direct, Pen, Rect, Ellipse, Triangle, Polygon, Convert, Eyedropper, Artboard }
 
 /// What the Pen tool would do at the cursor right now — drives the contextual pen cursor (Illustrator
 /// shows pen+×/+/−/○/continue). Computed by `Editor::pen_hint`, mirrors `tools::pen` down logic.
@@ -57,6 +59,21 @@ pub enum Drag {
 #[derive(Clone, Copy)]
 pub enum TfHit { Scale(u8), Rotate(u8) } // u8 = handle index 0..7 (corners 0-3, edge mids 4-7)
 
+/// Artboard-tool drag state — kept STRICTLY separate from `Drag` (the object/anchor engine) so the two
+/// can never cross-grab (the no-cross-grab guarantee). `Move` carries the artwork base when "move artwork
+/// with artboard" is on, so the page and the art on it translate together.
+pub enum AbDrag {
+    None,
+    Move { grab: Pt, ox: f32, oy: f32, art: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
+    Resize { handle: u8, ox: f32, oy: f32, ow: f32, oh: f32 },
+    Create { start: Pt },
+}
+
+/// What a press in the Artboard tool landed on: a resize handle of the ACTIVE page, the body of some
+/// page (index), or nothing (empty board → drag to create a new page).
+#[derive(Clone, Copy)]
+pub enum AbHit { Handle(u8), Body(usize) }
+
 #[derive(Clone, Copy)]
 pub enum ZOrder { Front, Forward, Backward, Back }
 #[derive(Clone, Copy)]
@@ -84,6 +101,32 @@ fn contour_segs(anchors: &[Anchor]) -> Vec<Seg> {
     (0..n).map(|i| { let x = &anchors[i]; let y = &anchors[(i+1) % n]; (x.p, x.hout.unwrap_or(x.p), y.hin.unwrap_or(y.p), y.p) }).collect()
 }
 
+/// Resize an artboard rect by dragging handle `h` (corners 0-3, edge mids 4-7) to `pos`, keeping the
+/// opposite edge(s) fixed. `shift` constrains a CORNER drag to the original aspect ratio. Returns the
+/// normalised (x, y, w, h) with a 1pt minimum so the page never collapses.
+fn ab_resized(h: u8, ox: f32, oy: f32, ow: f32, oh: f32, pos: Pt, shift: bool) -> (f32, f32, f32, f32) {
+    let (mut x0, mut y0, mut x1, mut y1) = (ox, oy, ox + ow, oy + oh);
+    let (ml, mr) = (matches!(h, 0 | 3 | 7), matches!(h, 1 | 2 | 5));
+    let (mt, mb) = (matches!(h, 0 | 1 | 4), matches!(h, 2 | 3 | 6));
+    if ml { x0 = pos[0]; } if mr { x1 = pos[0]; }
+    if mt { y0 = pos[1]; } if mb { y1 = pos[1]; }
+    if shift && matches!(h, 0 | 1 | 2 | 3) && ow > 1e-3 && oh > 1e-3 {
+        let (fx, fy) = (if ml { x1 } else { x0 }, if mt { y1 } else { y0 }); // the fixed (opposite) corner
+        let s = ((x1 - x0).abs() / ow).max((y1 - y0).abs() / oh);
+        let (w, ht) = (ow * s, oh * s);
+        x0 = if ml { fx - w } else { fx }; x1 = if ml { fx } else { fx + w };
+        y0 = if mt { fy - ht } else { fy }; y1 = if mt { fy } else { fy + ht };
+    }
+    (x0.min(x1), y0.min(y1), (x1 - x0).abs().max(1.0), (y1 - y0).abs().max(1.0))
+}
+
+/// (x, y, w, h) of the rect spanned by two corners; `square` forces equal sides (Shift while creating).
+fn rect_from_corners(a: Pt, b: Pt, square: bool) -> (f32, f32, f32, f32) {
+    let (mut dx, mut dy) = (b[0] - a[0], b[1] - a[1]);
+    if square { let s = dx.abs().max(dy.abs()); dx = s.copysign(dx); dy = s.copysign(dy); }
+    (a[0].min(a[0] + dx), a[1].min(a[1] + dy), dx.abs().max(1.0), dy.abs().max(1.0))
+}
+
 pub struct Editor {
     pub doc: Document,
     pub tool: ToolKind,
@@ -94,6 +137,7 @@ pub struct Editor {
     pub dsel_path: Option<u32>, // direct-mode path-level selection: anchors shown hollow, whole-path moves
 
     pub drag: Drag,
+    pub ab_drag: AbDrag,     // Artboard-tool drag (move/resize/create) — parallel to `drag`, never crosses it
     pub cursor: Pt,
     pub ppu: f32,            // pixels-per-unit (view zoom) — so grab tolerances stay constant on screen
     pub obj_angle: f32,      // orientation of the object-selection transform frame (rotates with the selection)
@@ -107,7 +151,7 @@ pub struct Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor { doc: Document::default(), tool: ToolKind::Object, gesture: ToolKind::Object, active: None,
-                 selected: HashSet::new(), objsel: HashSet::new(), dsel_path: None, drag: Drag::None, cursor: [0.0, 0.0],
+                 selected: HashSet::new(), objsel: HashSet::new(), dsel_path: None, drag: Drag::None, ab_drag: AbDrag::None, cursor: [0.0, 0.0],
                  ppu: 1.0, obj_angle: 0.0, hover_path: None, mods: Mods::default(),
                  cur_fill: Some([0.95, 0.95, 0.96, 1.0]), cur_stroke: Some([0.12, 0.12, 0.13, 1.0]), cur_sw: 2.0, paint: PaintTarget::Fill,
                  dirty: false, undo: vec![], redo: vec![], pending: None }
@@ -477,6 +521,183 @@ impl Editor {
         self.commit();
     }
 
+    // ---------- artboards (the Artboard tool, Shift+O) ----------
+    /// The 8 resize handles of an artboard rect (corners 0-3, edge mids 4-7) in world space.
+    pub fn ab_handles(ab: &Artboard) -> [Pt; 8] { Self::bbox_handles(ab.rect()) }
+
+    /// What a press at `pos` hits in the Artboard tool: a resize handle of the ACTIVE page, the body of
+    /// some page (topmost first), or nothing (empty board → drag to create a page).
+    pub fn ab_hit(&self, pos: Pt) -> Option<AbHit> {
+        if let Some(ab) = self.doc.active_artboard() {
+            let r = AB_HANDLE_R / self.ppu;
+            for (i, h) in Self::ab_handles(ab).iter().enumerate() {
+                if dist(pos, *h) <= r { return Some(AbHit::Handle(i as u8)); }
+            }
+        }
+        for i in (0..self.doc.artboards.len()).rev() {
+            if self.doc.artboards[i].contains(pos) { return Some(AbHit::Body(i)); }
+        }
+        None
+    }
+
+    /// Path ids whose outline bbox overlaps artboard `i` — the artwork that travels when the page moves.
+    fn paths_on_ab(&self, i: usize) -> Vec<u32> {
+        let (x0, y0, x1, y1) = match self.doc.artboards.get(i) { Some(a) => a.rect(), None => return vec![] };
+        (0..self.doc.paths.len()).filter(|&pi| {
+            if self.doc.paths[pi].hidden || self.doc.paths[pi].locked { return false; }
+            let b = self.doc.outline_bbox(pi);
+            b.0 <= x1 && b.2 >= x0 && b.1 <= y1 && b.3 >= y0
+        }).map(|pi| self.doc.paths[pi].id).collect()
+    }
+    fn anchors_base(&self, pids: &[u32]) -> Vec<(u32, Pt, Option<Pt>, Option<Pt>)> {
+        let mut base = vec![];
+        for &pid in pids { if let Some(pi) = self.doc.pidx(pid) {
+            for a in self.doc.paths[pi].anchors.iter().chain(self.doc.paths[pi].holes.iter().flatten()) { base.push((a.id, a.p, a.hin, a.hout)); }
+        }}
+        base
+    }
+
+    pub fn ab_down(&mut self, pos: Pt) {
+        match self.ab_hit(pos) {
+            Some(AbHit::Handle(h)) => {
+                if let Some(ab) = self.doc.active_artboard() {
+                    self.ab_drag = AbDrag::Resize { handle: h, ox: ab.x, oy: ab.y, ow: ab.w, oh: ab.h };
+                }
+            }
+            Some(AbHit::Body(i)) => {
+                self.doc.active = i;
+                let (ox, oy) = (self.doc.artboards[i].x, self.doc.artboards[i].y);
+                let art = if self.doc.move_art_with_ab { let p = self.paths_on_ab(i); self.anchors_base(&p) } else { vec![] };
+                self.ab_drag = AbDrag::Move { grab: pos, ox, oy, art };
+            }
+            None => {
+                // empty board → start a NEW page by dragging (resizing its BR corner). Tiny ⇒ dropped on up.
+                let n = self.doc.artboards.len();
+                self.doc.artboards.push(Artboard { x: pos[0], y: pos[1], w: 1.0, h: 1.0,
+                    name: format!("Artboard {}", n + 1), ..Artboard::default() });
+                self.doc.active = self.doc.artboards.len() - 1;
+                self.ab_drag = AbDrag::Create { start: pos };
+            }
+        }
+    }
+
+    pub fn ab_move(&mut self, pos: Pt) {
+        match std::mem::replace(&mut self.ab_drag, AbDrag::None) {
+            AbDrag::Move { grab, ox, oy, art } => {
+                let mut d = sub(pos, grab); if self.mods.shift { d = snap45(d); }
+                if let Some(ab) = self.doc.active_artboard_mut() { ab.x = ox + d[0]; ab.y = oy + d[1]; }
+                for (aid, p0, hin0, hout0) in &art {
+                    if let Some(a) = self.doc.anchor_mut(*aid) { a.p = add(*p0, d); a.hin = hin0.map(|h| add(h, d)); a.hout = hout0.map(|h| add(h, d)); }
+                }
+                self.ab_drag = AbDrag::Move { grab, ox, oy, art };
+                self.dirty = true;
+            }
+            AbDrag::Resize { handle, ox, oy, ow, oh } => {
+                let (x, y, w, h) = ab_resized(handle, ox, oy, ow, oh, pos, self.mods.shift);
+                if let Some(ab) = self.doc.active_artboard_mut() { ab.x = x; ab.y = y; ab.w = w; ab.h = h; }
+                self.ab_drag = AbDrag::Resize { handle, ox, oy, ow, oh };
+                self.dirty = true;
+            }
+            AbDrag::Create { start } => {
+                let (x, y, w, h) = rect_from_corners(start, pos, self.mods.shift);
+                if let Some(ab) = self.doc.active_artboard_mut() { ab.x = x; ab.y = y; ab.w = w; ab.h = h; }
+                self.ab_drag = AbDrag::Create { start };
+                self.dirty = true;
+            }
+            AbDrag::None => {}
+        }
+    }
+
+    pub fn ab_up(&mut self) {
+        if let AbDrag::Create { .. } = self.ab_drag {
+            // a click or tiny drag didn't make a real page — drop it
+            if let Some(ab) = self.doc.active_artboard() { if ab.w < 4.0 || ab.h < 4.0 {
+                let i = self.doc.active; self.doc.artboards.remove(i);
+                self.doc.active = self.doc.active.min(self.doc.artboards.len().saturating_sub(1));
+                self.dirty = false;
+            }}
+        }
+        self.ab_drag = AbDrag::None;
+    }
+
+    // ---- artboard edits driven by the panel / the on-canvas ⋮ menu (each one undo step) ----
+    pub fn ab_set_active(&mut self, i: usize) { if i < self.doc.artboards.len() { self.doc.active = i; } }
+    pub fn ab_set_rect(&mut self, i: usize, nx: Option<f32>, ny: Option<f32>, nw: Option<f32>, nh: Option<f32>) {
+        self.begin();
+        if let Some(ab) = self.doc.artboards.get_mut(i) {
+            if let Some(v) = nx { ab.x = v; } if let Some(v) = ny { ab.y = v; }
+            if let Some(v) = nw { ab.w = v.max(1.0); } if let Some(v) = nh { ab.h = v.max(1.0); }
+        }
+        self.dirty = true; self.commit();
+    }
+    pub fn ab_rename(&mut self, i: usize, name: String) {
+        self.begin();
+        let n = name.trim();
+        if let Some(ab) = self.doc.artboards.get_mut(i) { if !n.is_empty() { ab.name = n.to_string(); } }
+        self.dirty = true; self.commit();
+    }
+    pub fn ab_set_color(&mut self, i: usize, c: Option<Rgba>) {
+        self.begin();
+        if let Some(ab) = self.doc.artboards.get_mut(i) { ab.page_color = c; }
+        self.dirty = true; self.commit();
+    }
+    pub fn ab_toggle_clip(&mut self, i: usize) {
+        self.begin();
+        if let Some(ab) = self.doc.artboards.get_mut(i) { ab.clip = !ab.clip; }
+        self.dirty = true; self.commit();
+    }
+    pub fn ab_orient(&mut self, i: usize) {
+        self.begin();
+        if let Some(ab) = self.doc.artboards.get_mut(i) { std::mem::swap(&mut ab.w, &mut ab.h); }
+        self.dirty = true; self.commit();
+    }
+    pub fn ab_set_move_art(&mut self, on: bool) { self.doc.move_art_with_ab = on; }   // a mode flag, not undoable
+    /// Place a fresh page to the RIGHT of the right-most one (with a gap), copying the active page's size.
+    pub fn ab_add(&mut self) {
+        self.begin();
+        let (x, y, w, h, n) = self.ab_next_slot();
+        self.doc.artboards.push(Artboard { x, y, w, h, name: format!("Artboard {}", n), ..Artboard::default() });
+        self.doc.active = self.doc.artboards.len() - 1;
+        self.dirty = true; self.commit();
+    }
+    pub fn ab_duplicate(&mut self, i: usize) {
+        self.begin();
+        if let Some(src) = self.doc.artboards.get(i).cloned() {
+            let mut c = src.clone(); c.x = src.x + src.w + AB_GAP; c.name = format!("{} copy", src.name);
+            self.doc.artboards.insert(i + 1, c);
+            self.doc.active = i + 1;
+            self.dirty = true;
+        }
+        self.commit();
+    }
+    pub fn ab_delete(&mut self, i: usize) {
+        if self.doc.artboards.len() <= 1 { return; }   // never delete the last page
+        self.begin();
+        if i < self.doc.artboards.len() { self.doc.artboards.remove(i); }
+        self.doc.active = self.doc.active.min(self.doc.artboards.len() - 1);
+        self.dirty = true; self.commit();
+    }
+    /// Set the page COUNT (≥1): append default pages to the right, or trim from the end.
+    pub fn ab_set_count(&mut self, n: usize) {
+        let n = n.max(1);
+        if n == self.doc.artboards.len() { return; }
+        self.begin();
+        while self.doc.artboards.len() < n {
+            let (x, y, w, h, k) = self.ab_next_slot();
+            self.doc.artboards.push(Artboard { x, y, w, h, name: format!("Artboard {}", k), ..Artboard::default() });
+        }
+        while self.doc.artboards.len() > n { self.doc.artboards.pop(); }
+        self.doc.active = self.doc.active.min(self.doc.artboards.len() - 1);
+        self.dirty = true; self.commit();
+    }
+    /// (x, y, w, h, ordinal) for the next page placed to the right of the right-most one.
+    fn ab_next_slot(&self) -> (f32, f32, f32, f32, usize) {
+        let right = self.doc.artboards.iter().map(|a| a.x + a.w).fold(f32::MIN, f32::max);
+        let (y, w, h) = self.doc.active_artboard().map(|a| (a.y, a.w, a.h)).unwrap_or((0.0, 1080.0, 1080.0));
+        let x = if right > f32::MIN { right + AB_GAP } else { 0.0 };
+        (x, y, w, h, self.doc.artboards.len() + 1)
+    }
+
     // ---------- history ----------
     pub fn begin(&mut self) { self.pending = Some(self.doc.clone()); self.dirty = false; }
     pub fn commit(&mut self) {
@@ -570,6 +791,7 @@ impl Editor {
 
     // ---------- input dispatch ----------
     pub fn eff_tool(&self) -> ToolKind {
+        if self.tool == ToolKind::Artboard { return ToolKind::Artboard; }   // Artboard tool never morphs
         if self.mods.ctrl { ToolKind::Direct } else if self.tool == ToolKind::Pen && self.mods.alt { ToolKind::Convert } else { self.tool }
     }
 
@@ -604,9 +826,11 @@ impl Editor {
         self.cursor = pos;
         self.begin();
         self.gesture = self.eff_tool();
+        if self.gesture == ToolKind::Artboard { self.ab_down(pos); return; }
         tools::get(self.gesture).down(self, pos);
     }
     pub fn pointer_up(&mut self) {
+        if self.tool == ToolKind::Artboard { self.ab_up(); self.commit(); return; }
         if let Drag::Shape { pid, .. } = self.drag {
             if let Some(pi) = self.doc.pidx(pid) { let b = self.doc.bbox(pi); if (b.2-b.0) < 2.0 && (b.3-b.1) < 2.0 { self.doc.paths.remove(pi); self.dirty = false; } }
         }
@@ -617,6 +841,10 @@ impl Editor {
 
     pub fn pointer_move(&mut self, pos: Pt) {
         self.cursor = pos;
+        if self.tool == ToolKind::Artboard {
+            if !matches!(self.ab_drag, AbDrag::None) { self.ab_move(pos); }
+            return;
+        }
         if matches!(self.drag, Drag::None) { self.hover_path = self.path_under(pos); }
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::PenNew { aid, down, mut broken } => {
@@ -793,10 +1021,16 @@ impl Editor {
             self.selected.clear();
             self.obj_angle = 0.0;
         }
+        if t == ToolKind::Artboard {
+            // entering the Artboard tool drops artwork selection so the page chrome stands alone
+            self.selected.clear(); self.objsel.clear(); self.dsel_path = None;
+            self.obj_angle = 0.0; self.hover_path = None;
+        }
         self.tool = t;
         if t != ToolKind::Pen { self.active = None; }
         self.dsel_path = None;
         self.drag = Drag::None;
+        self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) { self.active = None; self.selected.clear(); self.objsel.clear(); self.dsel_path = None; self.obj_angle = 0.0; self.drag = Drag::None; }
     pub fn nudge(&mut self, dx: f32, dy: f32) {

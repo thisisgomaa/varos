@@ -5,7 +5,7 @@
 //!               `overlay` = editing chrome (anchors/handles/skeleton/marquee) → CONSTANT screen size.
 
 use std::collections::HashSet;
-use crate::geom::{cubic, Pt, Rgba};
+use crate::geom::{cubic, dist, Pt, Rgba};
 use crate::editor::{Drag, Editor, ToolKind};
 use crate::model::Document;
 
@@ -13,8 +13,11 @@ pub const ACCENT: Rgba = [0.047, 0.549, 0.914, 1.0];
 pub const ACCENT_FILL: Rgba = [0.047, 0.549, 0.914, 0.14];
 pub const HANDLE_COL: Rgba = [0.498, 0.737, 0.941, 1.0];
 pub const WHITE: Rgba = [0.96, 0.96, 0.96, 1.0];
-pub const PAPER: Rgba = [1.0, 1.0, 1.0, 1.0];     // artboard page fill (white)
-pub const AB_EDGE: Rgba = [0.0, 0.0, 0.0, 0.18];  // faint page-boundary hairline (constant screen width)
+pub const PAPER: Rgba = [1.0, 1.0, 1.0, 1.0];        // artboard page fill (white) — default page colour
+pub const AB_GHOST: Rgba = [1.0, 1.0, 1.0, 0.06];    // a TRANSPARENT page → a faint translucent white, so the
+                                                     // page still reads on the dark board (not invisible)
+pub const AB_EDGE: Rgba = [0.0, 0.0, 0.0, 0.34];     // page hairline on a WHITE page (clear dark line)
+pub const AB_EDGE_T: Rgba = [1.0, 1.0, 1.0, 0.34];   // page hairline on a transparent page (light, on the dark board)
 
 pub enum Prim {
     Fill { rings: Vec<Vec<Pt>>, color: Rgba },  // outer ring + hole rings — filled even-odd (holes cut through)
@@ -34,28 +37,57 @@ pub struct Scene {
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     let mut s = Scene::default();
 
-    // ---- ARTBOARD (the page) ---- a DEFINED rectangle sitting on the (infinite, dotted) board: a
-    // white paper Fill (pushed first, so it draws over the grid but behind artwork) + a 1px boundary
-    // hairline in the overlay (constant screen width — never scales with zoom). No drop shadow for now
-    // (kept light; a proper screen-constant page shadow is part of the Artboard deep-spec).
+    // ---- ARTBOARDS (the pages) ---- DEFINED rectangles sitting on the infinite dotted board. Each is a
+    // page-colour Fill (pushed first → over the grid, behind artwork) unless TRANSPARENT, plus a boundary
+    // hairline in the overlay (constant screen width, never scales). In the Artboard tool the ACTIVE page
+    // gets an accent border + 8 resize handles. No drop shadow for now (kept light).
     {
-        let ab = &ed.doc.artboard;
-        let (x0, y0, x1, y1) = (ab.x, ab.y, ab.x + ab.w, ab.y + ab.h);
-        let ring = vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-        s.content.push(Prim::Fill { rings: vec![ring.clone()], color: PAPER });
-        let mut edge = ring; edge.push([x0, y0]);
-        s.overlay.push(Prim::Stroke { pts: edge, width: 1.0, color: AB_EDGE });
+        let ab_tool = ed.tool == ToolKind::Artboard;
+        for (i, ab) in ed.doc.artboards.iter().enumerate() {
+            let (x0, y0, x1, y1) = ab.rect();
+            let ring = vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+            // page fill: a solid colour, or — when transparent — a faint translucent white so the page
+            // still reads on the dark board instead of vanishing into it.
+            let paper = ab.page_color.unwrap_or(AB_GHOST);
+            s.content.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+            let active = ab_tool && i == ed.doc.active;
+            let edge_col = if active { ACCENT } else if ab.page_color.is_none() { AB_EDGE_T } else { AB_EDGE };
+            let mut edge = ring; edge.push([x0, y0]);
+            // the page you're standing on gets a clearly heavier frame (~2× the others) + handles.
+            s.overlay.push(Prim::Stroke { pts: edge, width: if active { 2.4 } else { 1.2 }, color: edge_col });
+            if active {
+                for h in Editor::bbox_handles((x0, y0, x1, y1)) {
+                    s.overlay.push(Prim::Square { c: h, half: 5.0, color: ACCENT });
+                    s.overlay.push(Prim::Square { c: h, half: 3.2, color: WHITE });
+                }
+            }
+        }
     }
 
     // ---- CONTENT (scales with zoom) ----  `ppu` = zoom → curves stay smooth at any zoom
     let with_op = |c: Rgba, o: f32| [c[0], c[1], c[2], c[3] * o];   // object opacity → alpha
+    // CLIP: if any page has clip on, artwork overlapping it is cut to that page's rect (Illustrator's
+    // "clip to artboard"). `None` ⇒ no clip (the common path: zero CPU when nothing clips).
+    let any_clip = ed.doc.artboards.iter().any(|a| a.clip);
+    let clip_rect = |pi: usize| -> Option<(f32, f32, f32, f32)> {
+        if !any_clip { return None; }
+        let b = ed.doc.outline_bbox(pi);
+        ed.doc.artboards.iter().filter(|a| a.clip).map(|a| a.rect())
+            .find(|r| r.0 <= b.2 && r.2 >= b.0 && r.1 <= b.3 && r.3 >= b.1)
+    };
     for pi in 0..ed.doc.paths.len() {
         let p = &ed.doc.paths[pi];
         if p.hidden { continue; }
         if p.closed && p.anchors.len() >= 3 { if let Some(c) = p.fill {
+            let col = with_op(c, p.opacity);
             let mut rings = vec![ed.doc.outline_px(pi, ppu)];
             for hole in &p.holes { rings.push(Document::ring_px(hole, true, ppu)); }
-            s.content.push(Prim::Fill { rings, color: with_op(c, p.opacity) });
+            if let Some(r) = clip_rect(pi) {
+                let clipped: Vec<Vec<Pt>> = rings.iter().map(|ring| clip_poly_rect(ring, r)).filter(|ring| ring.len() >= 3).collect();
+                if clipped.first().map_or(false, |o| o.len() >= 3) { s.content.push(Prim::Fill { rings: clipped, color: col }); }
+            } else {
+                s.content.push(Prim::Fill { rings, color: col });
+            }
         } }
     }
     for pi in 0..ed.doc.paths.len() {
@@ -63,8 +95,13 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         if p.hidden { continue; }
         if p.anchors.len() >= 2 { if let Some(c) = p.stroke {
             let c = with_op(c, p.opacity);
-            s.content.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: p.stroke_width, color: c });
-            for hole in &p.holes { let mut r = Document::ring_px(hole, true, ppu); if let Some(&f) = r.first() { r.push(f); } s.content.push(Prim::Stroke { pts: r, width: p.stroke_width, color: c }); }
+            let clip = clip_rect(pi);
+            let mut push_stroke = |pts: Vec<Pt>| match clip {
+                Some(r) => for run in clip_polyline_rect(&pts, r) { if run.len() >= 2 { s.content.push(Prim::Stroke { pts: run, width: p.stroke_width, color: c }); } },
+                None => s.content.push(Prim::Stroke { pts, width: p.stroke_width, color: c }),
+            };
+            push_stroke(ed.doc.outline_px(pi, ppu));
+            for hole in &p.holes { let mut r = Document::ring_px(hole, true, ppu); if let Some(&f) = r.first() { r.push(f); } push_stroke(r); }
         } }
     }
 
@@ -154,4 +191,70 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
     }
     s
+}
+
+// ───────────────────────── clip-to-artboard geometry (pure) ─────────────────────────
+
+/// Sutherland–Hodgman: clip a polygon to an axis-aligned rect `(x0,y0,x1,y1)`. Returns the clipped
+/// polygon (possibly empty). Used for filled artwork when its page has "clip to artboard" on.
+fn clip_poly_rect(poly: &[Pt], (x0, y0, x1, y1): (f32, f32, f32, f32)) -> Vec<Pt> {
+    let mut poly = poly.to_vec();
+    // four half-planes: x>=x0, x<=x1, y>=y0, y<=y1   (which: 0 left, 1 right, 2 top, 3 bottom)
+    for (which, v) in [(0u8, x0), (1, x1), (2, y0), (3, y1)] {
+        if poly.is_empty() { break; }
+        let inside = |p: &Pt| match which { 0 => p[0] >= v, 1 => p[0] <= v, 2 => p[1] >= v, _ => p[1] <= v };
+        let cut = |a: &Pt, b: &Pt| -> Pt {
+            if which <= 1 { let t = (v - a[0]) / (b[0] - a[0]); [v, a[1] + t * (b[1] - a[1])] }
+            else { let t = (v - a[1]) / (b[1] - a[1]); [a[0] + t * (b[0] - a[0]), v] }
+        };
+        let input = std::mem::take(&mut poly);
+        let n = input.len();
+        for i in 0..n {
+            let cur = input[i]; let prev = input[(i + n - 1) % n];
+            let (ci, pi) = (inside(&cur), inside(&prev));
+            if ci { if !pi { poly.push(cut(&prev, &cur)); } poly.push(cur); }
+            else if pi { poly.push(cut(&prev, &cur)); }
+        }
+    }
+    poly
+}
+
+/// Cohen–Sutherland region code of a point against a rect.
+fn outcode(p: Pt, (x0, y0, x1, y1): (f32, f32, f32, f32)) -> u8 {
+    let mut c = 0u8;
+    if p[0] < x0 { c |= 1; } else if p[0] > x1 { c |= 2; }
+    if p[1] < y0 { c |= 4; } else if p[1] > y1 { c |= 8; }
+    c
+}
+/// Cohen–Sutherland: the portion of segment a→b inside the rect, or None if it misses entirely.
+fn clip_seg_rect(mut a: Pt, mut b: Pt, r: (f32, f32, f32, f32)) -> Option<(Pt, Pt)> {
+    let (x0, y0, x1, y1) = r;
+    let (mut ca, mut cb) = (outcode(a, r), outcode(b, r));
+    for _ in 0..8 {
+        if ca | cb == 0 { return Some((a, b)); }
+        if ca & cb != 0 { return None; }
+        let c = if ca != 0 { ca } else { cb };
+        let p = if c & 8 != 0 { [a[0] + (b[0]-a[0]) * (y1-a[1]) / (b[1]-a[1]), y1] }
+            else if c & 4 != 0 { [a[0] + (b[0]-a[0]) * (y0-a[1]) / (b[1]-a[1]), y0] }
+            else if c & 2 != 0 { [x1, a[1] + (b[1]-a[1]) * (x1-a[0]) / (b[0]-a[0])] }
+            else                { [x0, a[1] + (b[1]-a[1]) * (x0-a[0]) / (b[0]-a[0])] };
+        if c == ca { a = p; ca = outcode(a, r); } else { b = p; cb = outcode(b, r); }
+    }
+    None
+}
+/// Clip an (open or closed) polyline to a rect → the inside runs (a stroke can split into several).
+fn clip_polyline_rect(pts: &[Pt], r: (f32, f32, f32, f32)) -> Vec<Vec<Pt>> {
+    let mut runs: Vec<Vec<Pt>> = vec![];
+    let mut cur: Vec<Pt> = vec![];
+    for i in 0..pts.len().saturating_sub(1) {
+        match clip_seg_rect(pts[i], pts[i + 1], r) {
+            Some((a, b)) => {
+                if cur.last().map_or(false, |l| dist(*l, a) < 1e-3) { cur.push(b); }
+                else { if cur.len() >= 2 { runs.push(std::mem::take(&mut cur)); } else { cur.clear(); } cur.push(a); cur.push(b); }
+            }
+            None => { if cur.len() >= 2 { runs.push(std::mem::take(&mut cur)); } else { cur.clear(); } }
+        }
+    }
+    if cur.len() >= 2 { runs.push(cur); }
+    runs
 }
