@@ -334,7 +334,7 @@ fn main() {
         let sz0 = window.inner_size();
         renderer.resize(sz0.width, sz0.height);
         ed.ppu = view.zoom;
-        let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32, view);
+        let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32, view, cursors::is_maximized(hwnd));
         if gui.splashing() {
             renderer.render_splash(&jobs, &tdelta, &screen);
         } else {
@@ -461,7 +461,7 @@ fn main() {
                     // Native UI runs FIRST (the rail may switch the tool), THEN we build the scene from
                     // the updated editor so the change shows this same frame.
                     let prev_tool = ed.tool;
-                    let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32, view);
+                    let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32, view, cursors::is_maximized(hwnd));
                     if ed.tool != prev_tool { window.set_title(&full_title(ed.tool)); }
                     // a "Fit in window" request from the artboard panel / ⋮ menu (this frame's view update)
                     if let Some(i) = gui.fit_request.take() {
