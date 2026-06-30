@@ -102,7 +102,12 @@
     <b>Where we are:</b> Foundations spine complete (serde&nbsp;✅ + units&nbsp;✅).
     <b>Artboard system — Stage&nbsp;1 BUILT</b> (2026-06-30): multi-artboard model, the
     Artboard tool (Shift+O), the inspector panel, and the on-canvas name + ⋮ menu.
-    Next: <b>Transform + Snap</b>. North star: the <b>“make a logo &amp; keep it” slice</b> after Colour.
+    <b>Snap + Rulers + Guides — BUILT</b> (2026-06-30): the shared snap engine
+    (object/anchor/path/geometry/equal-spacing/grid + Transform Again), the magnet menu &amp; measurement
+    HUD, Ctrl+R rulers (grid-aligned ticks, snapped draggable origin), and ruler guides (drag-out, snap,
+    move, delete, Ctrl+; / Alt+Ctrl+;). Plus window-state persistence &amp; Win11 caption glyphs.
+    Next: <b>Transform panel + tools</b> (the numeric/pivot side). North star: the
+    <b>“make a logo &amp; keep it” slice</b> after Colour.
   </div>
 
   <h2>Build order</h2>
@@ -282,15 +287,15 @@ const SYSTEMS = [
     ['21','Schema, performance & edge cases','x-cut',''],
   ]},
   {step:2, nm:'Snapping / Guides / Grid / Rulers', purpose:'The precision substrate — rulers, guides, smart alignment guides, grids, snap-to-geometry, tolerance, live dimension readouts.', note:'Built WITH/before Transform (Decision 7) — drawing + precise transform need snap to feel right.', pts:[
-    ['0','System foundations & shared snap engine',1,''],
-    ['1','Rulers',1,''],
-    ['2','Guides (manual ruler guides)',1,''],
-    ['3','Smart Guides (dynamic alignment)',2,''],
-    ['4','Grid (document grid)',2,''],
+    ['0','System foundations & shared snap engine',1,'d'],
+    ['1','Rulers',1,'d'],
+    ['2','Guides (manual ruler guides)',1,'d'],
+    ['3','Smart Guides (dynamic alignment)',2,'p'],
+    ['4','Grid (document grid)',2,'p'],
     ['5','Pixel grid & snap-to-pixel',2,''],
-    ['6','Snap to point / anchor / geometry while dragging','1–2',''],
-    ['7','Snap tolerance & options panel',2,''],
-    ['8','Live dimension & position readouts',2,''],
+    ['6','Snap to point / anchor / geometry while dragging','1–2','d'],
+    ['7','Snap tolerance & options panel',2,'p'],
+    ['8','Live dimension & position readouts',2,'p'],
     ['9','Preferences / settings surface',2,''],
     ['10','Menus, shortcuts & discoverability',1,''],
     ['11','Edge cases & correctness','per-stage',''],
