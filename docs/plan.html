@@ -191,7 +191,7 @@ const FOUNDATION = [
     ['C1','GPU rendering primitives',1,'d'],
     ['C2','Shared math — bezier',1,'d'],
     ['C3','Shared math — boolean (i_overlay)',1,'d'],
-    ['C4','Shared math — color conversions',2,'n'],
+    ['C4','Shared math — color conversions',2,'p'],
     ['C5','Shared math — transform & geometry',1,'p'],
     ['C6','Coordinate + zoom + camera system',1,'d'],
     ['C7','Units system — built (Decision 3)',1,'d'],
@@ -201,14 +201,14 @@ const FOUNDATION = [
 ];
 
 const SYSTEMS = [
-  {step:4, nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', pts:[
+  {step:4, nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', note:'Stage 1 BUILT (2026-07-02): hand-painted picker popover (SV square + hue/alpha rails; hex 3/6/8-digit + RGB-255 + HSB fields; HSV as live source of truth so hue survives S=0) replacing both egui default swatches — see docs/COLOR_SPEC.md for the 7 locked decisions. RENDER FIX shipped with it: isolated-layer group opacity (a translucent fill+stroke object composites opaquely offscreen, then fades as ONE unit — Illustrator/SaveLayer semantics; foundation for blend modes + effects) and per-object fill→stroke paint stacking (an object above now covers the stroke below). Pending polish: recent/document colour strips + arrow-key nudges. Next: Swatches (Paint enum migration), then Gradients.', pts:[
     ['1','Color targets & active-color control (Fill/Stroke/None)',1,'d'],
     ['2','Color models / color-space representations',1,'p'],
     ['3','Color Picker dialog (full)',1,'p'],
     ['4','Color panel (docked inspector)',1,'p'],
     ['5','Swatches panel',2,''],
     ['6','Gradients',2,''],
-    ['7','Opacity / alpha (color-level)',1,'p'],
+    ['7','Opacity / alpha (color-level)',1,'d'],
     ['8','Eyedropper / color sampling',1,'d'],
     ['9','Color Guide / harmony rules',3,''],
     ['10','Recolor Artwork',3,''],
@@ -225,7 +225,7 @@ const SYSTEMS = [
     ['7','Arrowheads',2,''],
     ['8','Variable width / width profiles + Width tool',3,''],
     ['9','Pressure / pen input',3,''],
-    ['10','Stroke order vs fill (paint stacking — needs Appearance)',3,''],
+    ['10','Stroke order vs fill (paint stacking — needs Appearance; default per-object order fixed 2026-07-02)',3,'p'],
     ['11','Scale stroke & effects with object',2,''],
     ['12','Outline Stroke (expand to filled shape)',2,''],
     ['13','Stroke paint type (solid → gradient/pattern)',1,''],
