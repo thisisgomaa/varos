@@ -566,23 +566,168 @@ fn hsep(ui: &mut egui::Ui, w: f32) {
     ui.add_space(9.0);
 }
 
-fn rgba_to_c32(c: Rgba) -> Color32 { Color32::from_rgb((c[0]*255.0) as u8, (c[1]*255.0) as u8, (c[2]*255.0) as u8) }
-fn c32_to_rgba(c: Color32) -> Rgba { [c.r() as f32/255.0, c.g() as f32/255.0, c.b() as f32/255.0, 1.0] }
 fn hex_of(c: Rgba) -> String { format!("#{:02X}{:02X}{:02X}", (c[0]*255.0).round() as u8, (c[1]*255.0).round() as u8, (c[2]*255.0).round() as u8) }
 
-/// Fill / Stroke row: swatch (opens egui's picker) + hex + clear ×.
+// ── HSV ↔ RGB (all channels 0..1) — the picker keeps live HSV as its source of truth (Decision 2) ──
+fn rgb_to_hsv(c: Rgba) -> [f32; 3] {
+    let (r, g, b) = (c[0], c[1], c[2]);
+    let mx = r.max(g).max(b); let mn = r.min(g).min(b); let d = mx - mn;
+    let s = if mx <= 0.0 { 0.0 } else { d / mx };
+    let h = if d <= 1e-6 { 0.0 } else {
+        let h = if mx == r { (g - b) / d + if g < b { 6.0 } else { 0.0 } }
+                else if mx == g { (b - r) / d + 2.0 } else { (r - g) / d + 4.0 };
+        h / 6.0
+    };
+    [h, s, mx]
+}
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let h6 = h.rem_euclid(1.0) * 6.0; let i = h6.floor(); let f = h6 - i;
+    let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+    match i as i32 % 6 { 0 => [v, t, p], 1 => [q, v, p], 2 => [p, v, t], 3 => [p, q, v], 4 => [t, p, v], _ => [v, p, q] }
+}
+fn hsv_c32(h: f32, s: f32, v: f32) -> Color32 { let c = hsv_to_rgb(h, s, v); Color32::from_rgb((c[0]*255.0) as u8, (c[1]*255.0) as u8, (c[2]*255.0) as u8) }
+fn rgba_c32a(c: Rgba) -> Color32 { Color32::from_rgba_unmultiplied((c[0]*255.0) as u8, (c[1]*255.0) as u8, (c[2]*255.0) as u8, (c[3]*255.0) as u8) }
+fn parse_hex(s: &str) -> Option<Rgba> {
+    let s = s.trim().trim_start_matches('#');
+    let n = |a: &str| u8::from_str_radix(a, 16).ok().map(|v| v as f32 / 255.0);
+    match s.len() {
+        3 => { let e: Vec<String> = s.chars().map(|c| format!("{c}{c}")).collect(); Some([n(&e[0])?, n(&e[1])?, n(&e[2])?, 1.0]) }
+        6 => Some([n(&s[0..2])?, n(&s[2..4])?, n(&s[4..6])?, 1.0]),
+        8 => Some([n(&s[0..2])?, n(&s[2..4])?, n(&s[4..6])?, n(&s[6..8])?]),
+        _ => None,
+    }
+}
+/// Grey checkerboard behind translucent colours.
+fn checker(p: &egui::Painter, r: egui::Rect, sq: f32) {
+    p.rect_filled(r, Rounding::ZERO, Color32::from_gray(90));
+    let (cols, rows) = ((r.width()/sq).ceil() as i32, (r.height()/sq).ceil() as i32);
+    for gy in 0..rows { for gx in 0..cols {
+        if (gx + gy) % 2 == 0 { continue; }
+        let (x, y) = (r.left() + gx as f32 * sq, r.top() + gy as f32 * sq);
+        let cell = egui::Rect::from_min_max(egui::pos2(x, y), egui::pos2((x+sq).min(r.right()), (y+sq).min(r.bottom())));
+        p.rect_filled(cell, Rounding::ZERO, Color32::from_gray(140));
+    }}
+}
+/// Vertical hue spectrum (red→…→red), as a colour-interpolated mesh.
+fn draw_hue(p: &egui::Painter, r: egui::Rect) {
+    let mut m = egui::Mesh::default(); let n = 6u32;
+    for i in 0..=n {
+        let h = i as f32 / n as f32; let c = hsv_c32(h, 1.0, 1.0); let y = r.top() + h * r.height();
+        m.colored_vertex(egui::pos2(r.left(), y), c); m.colored_vertex(egui::pos2(r.right(), y), c);
+    }
+    for i in 0..n { let a = i * 2; m.add_triangle(a, a+1, a+3); m.add_triangle(a, a+3, a+2); }
+    p.add(egui::Shape::mesh(m));
+}
+fn rail_thumb(p: &egui::Painter, r: egui::Rect, y: f32) {
+    let t = egui::Rect::from_min_max(egui::pos2(r.left()-2.0, y-2.5), egui::pos2(r.right()+2.0, y+2.5));
+    p.rect(t, Rounding::same(2.0), Color32::TRANSPARENT, Stroke::new(2.0, Color32::WHITE));
+    p.rect_stroke(t.expand(1.0), Rounding::same(3.0), Stroke::new(1.0, Color32::from_black_alpha(90)));
+}
+
+/// Fill / Stroke row: a hand-painted swatch that opens the custom colour picker, + hex + clear ×.
 fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &mut Vec<Op>) {
     ui.horizontal(|ui| {
-        let mut c = color.map(rgba_to_c32).unwrap_or(Color32::from_gray(40));
-        if egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque).changed() {
-            ops.push(Op::Paint(target, Some(c32_to_rgba(c))));
+        let (sw, resp) = ui.allocate_exact_size(egui::vec2(26.0, 18.0), egui::Sense::click());
+        let round = Rounding::same(4.0);
+        let p = ui.painter();
+        match color {
+            Some(c) => { if c[3] < 0.999 { checker(&ui.painter_at(sw), sw, 5.0); } p.rect_filled(sw, round, rgba_c32a(c)); }
+            None => { p.rect_filled(sw, round, Color32::from_gray(32));
+                      p.line_segment([sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)], Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a))); } // None = red slash
         }
+        p.rect_stroke(sw, round, Stroke::new(1.0, BORDER_2));
+        let pid = ui.make_persistent_id(("picker", matches!(target, PaintTarget::Fill)));
+        if resp.clicked() {
+            let base = color.unwrap_or([0.85, 0.85, 0.87, 1.0]);   // seed the live HSVA from the current colour
+            let h = rgb_to_hsv(base);
+            ui.data_mut(|d| d.insert_temp(pid, [h[0], h[1], h[2], base[3]]));
+            ui.memory_mut(|m| m.toggle_popup(pid));
+        }
+        egui::popup_below_widget(ui, pid, &resp, |ui| {
+            ui.set_min_width(236.0);
+            if let Some(nc) = picker_body(ui, pid, color.unwrap_or([0.85, 0.85, 0.87, 1.0])) {
+                ops.push(Op::Paint(target, Some(nc)));
+            }
+        });
         ui.add_space(8.0);
         ui.label(RichText::new(color.map(hex_of).unwrap_or_else(|| "None".into())).color(TEXT).monospace().size(12.0));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if mini_btn(ui, "×", "No paint") { ops.push(Op::Paint(target, None)); }
         });
     });
+}
+
+/// The hand-painted picker: SV square + hue & alpha rails + hex / RGB / HSB fields. Live HSVA lives in egui
+/// temp memory keyed by `id` (seeded from `cur`); returns Some(new rgba) whenever the colour changed.
+fn picker_body(ui: &mut egui::Ui, id: egui::Id, cur: Rgba) -> Option<Rgba> {
+    let mut hsva: [f32; 4] = ui.data_mut(|d| *d.get_temp_mut_or_insert_with(id, || { let h = rgb_to_hsv(cur); [h[0], h[1], h[2], cur[3]] }));
+    let mut changed = false;
+    ui.spacing_mut().item_spacing = egui::vec2(8.0, 7.0);
+    ui.horizontal(|ui| {
+        // SV square
+        let (sv, r) = ui.allocate_exact_size(egui::vec2(176.0, 132.0), egui::Sense::click_and_drag());
+        let mut m = egui::Mesh::default();
+        m.colored_vertex(sv.left_top(), Color32::WHITE); m.colored_vertex(sv.right_top(), hsv_c32(hsva[0], 1.0, 1.0));
+        m.colored_vertex(sv.right_bottom(), Color32::BLACK); m.colored_vertex(sv.left_bottom(), Color32::BLACK);
+        m.add_triangle(0, 1, 2); m.add_triangle(0, 2, 3);
+        ui.painter_at(sv).add(egui::Shape::mesh(m));
+        let tp = egui::pos2(sv.left() + hsva[1]*sv.width(), sv.top() + (1.0 - hsva[2])*sv.height());
+        ui.painter().circle_stroke(tp, 6.0, Stroke::new(2.0, Color32::WHITE));
+        ui.painter().circle_stroke(tp, 7.0, Stroke::new(1.0, Color32::from_black_alpha(90)));
+        if r.is_pointer_button_down_on() || r.dragged() { if let Some(pos) = r.interact_pointer_pos() {
+            hsva[1] = ((pos.x - sv.left())/sv.width()).clamp(0.0, 1.0);
+            hsva[2] = (1.0 - (pos.y - sv.top())/sv.height()).clamp(0.0, 1.0); changed = true;
+        }}
+        // hue rail
+        let (hr, hrr) = ui.allocate_exact_size(egui::vec2(15.0, 132.0), egui::Sense::click_and_drag());
+        draw_hue(&ui.painter_at(hr), hr);
+        rail_thumb(&ui.painter(), hr, hr.top() + hsva[0]*hr.height());
+        if hrr.is_pointer_button_down_on() || hrr.dragged() { if let Some(pos) = hrr.interact_pointer_pos() {
+            hsva[0] = ((pos.y - hr.top())/hr.height()).clamp(0.0, 0.9999); changed = true;
+        }}
+        // alpha rail (checker + colour→transparent gradient)
+        let (ar, arr) = ui.allocate_exact_size(egui::vec2(15.0, 132.0), egui::Sense::click_and_drag());
+        checker(&ui.painter_at(ar), ar, 6.0);
+        let solid = hsv_c32(hsva[0], hsva[1], hsva[2]);
+        let mut am = egui::Mesh::default();
+        am.colored_vertex(ar.left_top(), solid); am.colored_vertex(ar.right_top(), solid);
+        am.colored_vertex(ar.right_bottom(), Color32::TRANSPARENT); am.colored_vertex(ar.left_bottom(), Color32::TRANSPARENT);
+        am.add_triangle(0, 1, 2); am.add_triangle(0, 2, 3);
+        ui.painter_at(ar).add(egui::Shape::mesh(am));
+        rail_thumb(&ui.painter(), ar, ar.top() + (1.0 - hsva[3])*ar.height());
+        if arr.is_pointer_button_down_on() || arr.dragged() { if let Some(pos) = arr.interact_pointer_pos() {
+            hsva[3] = (1.0 - (pos.y - ar.top())/ar.height()).clamp(0.0, 1.0); changed = true;
+        }}
+    });
+    let rgb = hsv_to_rgb(hsva[0], hsva[1], hsva[2]);
+    // hex field
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Hex").color(FAINT).size(11.5));
+        let hid = id.with("hex");
+        let mut buf = ui.data_mut(|d| d.get_temp::<String>(hid)).unwrap_or_else(|| hex_of([rgb[0], rgb[1], rgb[2], 1.0]).trim_start_matches('#').to_string());
+        let te = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(66.0).font(egui::FontId::monospace(12.5)).text_color(TEXT));
+        if te.has_focus() || te.changed() { ui.data_mut(|d| d.insert_temp(hid, buf.clone())); } else { ui.data_mut(|d| d.remove::<String>(hid)); }
+        if te.changed() { if let Some(c) = parse_hex(&buf) { let h = rgb_to_hsv(c);
+            if h[1] > 0.001 { hsva[0] = h[0]; } hsva[1] = h[1]; hsva[2] = h[2]; hsva[3] = c[3]; changed = true; } }
+    });
+    // RGB fields
+    ui.horizontal(|ui| {
+        let mut nrgb = [rgb[0]*255.0, rgb[1]*255.0, rgb[2]*255.0];
+        let mut edited = false;
+        for (i, (lab, tip)) in [("R", "col-r"), ("G", "col-g"), ("B", "col-b")].iter().enumerate() {
+            if let Some(v) = num_field(ui, 52.0, Lab::Letter(lab), tip, nrgb[i], 0, 1.0, 1.0, 0.0..=255.0) { nrgb[i] = v; edited = true; }
+        }
+        if edited { let c = [nrgb[0]/255.0, nrgb[1]/255.0, nrgb[2]/255.0, hsva[3]];
+            let h = rgb_to_hsv(c); if h[1] > 0.001 { hsva[0] = h[0]; } hsva[1] = h[1]; hsva[2] = h[2]; changed = true; }
+    });
+    // HSB fields
+    ui.horizontal(|ui| {
+        if let Some(v) = num_field(ui, 52.0, Lab::Letter("H"), "col-h", hsva[0]*360.0, 0, 1.0, 1.0, 0.0..=360.0) { hsva[0] = v/360.0; changed = true; }
+        if let Some(v) = num_field(ui, 52.0, Lab::Letter("S"), "col-s", hsva[1]*100.0, 0, 1.0, 1.0, 0.0..=100.0) { hsva[1] = v/100.0; changed = true; }
+        if let Some(v) = num_field(ui, 52.0, Lab::Letter("B"), "col-v", hsva[2]*100.0, 0, 1.0, 1.0, 0.0..=100.0) { hsva[2] = v/100.0; changed = true; }
+    });
+    ui.data_mut(|d| d.insert_temp(id, hsva));
+    if changed { let c = hsv_to_rgb(hsva[0], hsva[1], hsva[2]); Some([c[0], c[1], c[2], hsva[3]]) } else { None }
 }
 
 // ───────────────────────────── tool rail ─────────────────────────────
@@ -1138,12 +1283,22 @@ fn build_ab_dock(ctx: &egui::Context, s: &AbSnap, ic: &AbIcons, ab_lock: &mut bo
             });
 
             hsep(ui, inner);
-            // page colour + transparent
+            // page colour + transparent — same hand-painted picker
             ui.horizontal(|ui| {
-                let mut c = s.color.map(rgba_to_c32).unwrap_or(Color32::from_gray(40));
-                if egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque).changed() {
-                    ops.push(Op::AbColor(i, Some(c32_to_rgba(c))));
+                let col = s.color;
+                let (sw, resp) = ui.allocate_exact_size(egui::vec2(26.0, 18.0), egui::Sense::click());
+                let round = Rounding::same(4.0);
+                match col {
+                    Some(c) => { if c[3] < 0.999 { checker(&ui.painter_at(sw), sw, 5.0); } ui.painter().rect_filled(sw, round, rgba_c32a(c)); }
+                    None => { ui.painter().rect_filled(sw, round, Color32::from_gray(32));
+                              ui.painter().line_segment([sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)], Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a))); }
                 }
+                ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2));
+                let pid = ui.make_persistent_id(("ab-picker", i));
+                if resp.clicked() { let base = col.unwrap_or([1.0, 1.0, 1.0, 1.0]); let h = rgb_to_hsv(base);
+                    ui.data_mut(|d| d.insert_temp(pid, [h[0], h[1], h[2], base[3]])); ui.memory_mut(|m| m.toggle_popup(pid)); }
+                egui::popup_below_widget(ui, pid, &resp, |ui| { ui.set_min_width(236.0);
+                    if let Some(nc) = picker_body(ui, pid, col.unwrap_or([1.0, 1.0, 1.0, 1.0])) { ops.push(Op::AbColor(i, Some(nc))); } });
                 ui.add_space(8.0);
                 ui.label(RichText::new(match s.color { Some(c) => hex_of(c), None => "Transparent".into() }).color(TEXT).monospace().size(12.0));
             });
