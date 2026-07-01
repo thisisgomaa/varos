@@ -35,6 +35,8 @@ const IC_TRIANGLE: &str = r#"<path d="M13.73 4a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 
 const IC_EYE: &str = r#"<path d="m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12"/><path d="m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z"/><path d="m2 22 .414-.414"/>"#;
 // field-label icons (Illustrator-style, gray): rotation · opacity · stroke weight
 const IC_ROTATE: &str = r#"<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>"#;
+// transform-tool rail icon: scale (move-diagonal)
+const IC_SCALE: &str = r#"<path d="M19 13v6h-6"/><path d="M5 11V5h6"/><path d="m5 5 14 14"/>"#;
 const IC_OPACITY: &str = r#"<circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20z" fill="white" stroke="none"/>"#;
 const IC_STROKEW: &str = r#"<path d="M3 7h18" stroke-width="1.3"/><path d="M3 12h18" stroke-width="2.4"/><path d="M3 17h18" stroke-width="3.8"/>"#;
 // transform-row icons: constrain (link) · flip horizontal · flip vertical
@@ -220,11 +222,13 @@ impl Ui {
         install_fonts(&ctx);
         install_style(&ctx);
         // rail singletons — Artboard sits with Selection + Direct Selection (Ahmed), then Pen, Eyedropper.
-        let defs: [(ToolKind, &str, &str, bool); 5] = [
+        let defs: [(ToolKind, &str, &str, bool); 7] = [
             (ToolKind::Object,     IC_SELECT,   "Selection (V)",        false),
             (ToolKind::Direct,     IC_DIRECT,   "Direct Selection (A)", false),
             (ToolKind::Artboard,   IC_ARTBOARD, "Artboard (Shift+O)",   true),  // ends the selection group
             (ToolKind::Pen,        IC_PEN,      "Pen (P)",              true),  // ends the pen group
+            (ToolKind::Rotate,     IC_ROTATE,   "Rotate (R)",           false), // transform group ↓
+            (ToolKind::Scale,      IC_SCALE,    "Scale (S)",            true),  // ends the transform group
             (ToolKind::Eyedropper, IC_EYE,      "Eyedropper (I)",       false),
         ];
         let tools = defs.iter().enumerate().map(|(i, (kind, svg, tip, grp))| {

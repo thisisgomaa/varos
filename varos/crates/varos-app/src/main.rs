@@ -93,7 +93,8 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Pen => "Pen (P)", ToolKind::Direct => "Direct Select (A)", ToolKind::Object => "Select (V)",
         ToolKind::Rect => "Rectangle (M)", ToolKind::Ellipse => "Ellipse (L)", ToolKind::Triangle => "Triangle",
         ToolKind::Polygon => "Polygon", ToolKind::Convert => "Convert", ToolKind::Eyedropper => "Eyedropper (I)",
-        ToolKind::Artboard => "Artboard (Shift+O)",
+        ToolKind::Artboard => "Artboard (Shift+O)", ToolKind::Rotate => "Rotate (R)",
+        ToolKind::Scale => "Scale (S)",
     }
 }
 fn full_title(t: ToolKind) -> String { format!("Varos \u{3b1} \u{b7} pre-alpha \u{2014} {}", tool_name(t)) }
@@ -124,6 +125,8 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
         "KeyP" => ed.set_tool(ToolKind::Pen),
         "KeyM" => ed.set_tool(ToolKind::Rect),
         "KeyL" => ed.set_tool(ToolKind::Ellipse),
+        "KeyR" => ed.set_tool(ToolKind::Rotate),   // Rotate tool (Illustrator R)
+        "KeyS" => ed.set_tool(ToolKind::Scale),    // Scale tool (Illustrator S)
         "KeyI" => ed.set_tool(ToolKind::Eyedropper),
         "KeyO" => if shift { ed.set_tool(ToolKind::Artboard); },
         "KeyX" => if shift { ed.swap_colors() } else { ed.swap_paint() },
