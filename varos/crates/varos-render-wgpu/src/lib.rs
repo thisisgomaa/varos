@@ -27,6 +27,9 @@ struct VsOut { @builtin(position) clip: vec4<f32>, @location(0) color: vec4<f32>
 pub struct Renderer {
     surface: wgpu::Surface<'static>, device: wgpu::Device, queue: wgpu::Queue, config: wgpu::SurfaceConfiguration,
     pipe_main: wgpu::RenderPipeline, pipe_stencil: wgpu::RenderPipeline, pipe_cover: wgpu::RenderPipeline,
+    pipe_smark: wgpu::RenderPipeline,       // stencil-MARK the band bit 0x80 (Replace, colour off)
+    pipe_cover_knock: wgpu::RenderPipeline, // fill cover for knockout: inside AND not under the band
+    pipe_cover_band: wgpu::RenderPipeline,  // band cover: paint the stroke once where marked, clear the bit
     msaa: wgpu::TextureView, ds: wgpu::TextureView, samples: u32,
     bg_buf: wgpu::Buffer, bg_cap: u64, fill_buf: wgpu::Buffer, fill_cap: u64, fg_buf: wgpu::Buffer, fg_cap: u64,
     // offscreen scene target (the canvas is rendered here, then blitted to the surface). It is the
@@ -232,13 +235,30 @@ impl Renderer {
         log!("[varos] present: {:?} | format: {:?} | msaa: {}", config.present_mode, config.format, samples);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[], push_constant_ranges: &[] });
+        // TWO stencil bits share the buffer: bit 0x01 = fill even-odd parity, bit 0x80 = translucent-stroke
+        // band mask. Fans/covers confine themselves to 0x01, band mark/cover to 0x80, so a knockout object
+        // can hold both at once (fill paints where parity=1 AND band=0 → the stroke cuts the fill beneath it).
         let inv = wgpu::StencilFaceState { compare: wgpu::CompareFunction::Always, fail_op: wgpu::StencilOperation::Keep, depth_fail_op: wgpu::StencilOperation::Keep, pass_op: wgpu::StencilOperation::Invert };
         let cov = wgpu::StencilFaceState { compare: wgpu::CompareFunction::NotEqual, fail_op: wgpu::StencilOperation::Keep, depth_fail_op: wgpu::StencilOperation::Keep, pass_op: wgpu::StencilOperation::Zero };
-        let st_fan = wgpu::StencilState { front: inv, back: inv, read_mask: 0xff, write_mask: 0xff };
-        let st_cov = wgpu::StencilState { front: cov, back: cov, read_mask: 0xff, write_mask: 0xff };
+        let st_fan = wgpu::StencilState { front: inv, back: inv, read_mask: 0x01, write_mask: 0x01 };
+        let st_cov = wgpu::StencilState { front: cov, back: cov, read_mask: 0x01, write_mask: 0x01 };
+        // band MARK: unconditionally write the band bit wherever any stroke triangle covers —
+        // overlap-count-proof (unlike Invert's even-odd), so the band later paints exactly once.
+        let mark = wgpu::StencilFaceState { compare: wgpu::CompareFunction::Always, fail_op: wgpu::StencilOperation::Keep, depth_fail_op: wgpu::StencilOperation::Keep, pass_op: wgpu::StencilOperation::Replace };
+        let st_mark = wgpu::StencilState { front: mark, back: mark, read_mask: 0x80, write_mask: 0x80 };
+        // knockout fill cover: paint where (stencil & 0x81) == 0x01 — inside the shape AND not under the band
+        let knock = wgpu::StencilFaceState { compare: wgpu::CompareFunction::Equal, fail_op: wgpu::StencilOperation::Keep, depth_fail_op: wgpu::StencilOperation::Keep, pass_op: wgpu::StencilOperation::Zero };
+        let st_knock = wgpu::StencilState { front: knock, back: knock, read_mask: 0x81, write_mask: 0x01 };
+        // band cover: paint where the band bit is set, then clear BOTH bits (write 0x81) — the knockout
+        // fill-cover can't zero parity under the band (its Equal test fails there), so the band cover
+        // sweeps that leftover parity too; otherwise it would leak into the next fill's even-odd.
+        let st_band = wgpu::StencilState { front: cov, back: cov, read_mask: 0x80, write_mask: 0x81 };
         let pipe_main = make_pipe(&device, &layout, &shader, config.format, samples, true, wgpu::StencilState::default());
         let pipe_stencil = make_pipe(&device, &layout, &shader, config.format, samples, false, st_fan);
         let pipe_cover = make_pipe(&device, &layout, &shader, config.format, samples, true, st_cov);
+        let pipe_smark = make_pipe(&device, &layout, &shader, config.format, samples, false, st_mark);
+        let pipe_cover_knock = make_pipe(&device, &layout, &shader, config.format, samples, true, st_knock);
+        let pipe_cover_band = make_pipe(&device, &layout, &shader, config.format, samples, true, st_band);
         let msaa = make_attach(&device, &config, samples, config.format, "msaa");
         let ds = make_attach(&device, &config, samples, DS_FORMAT, "ds");
         let mk = |cap: u64| device.create_buffer(&wgpu::BufferDescriptor { label: Some("v"), size: cap, usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
@@ -297,7 +317,7 @@ impl Renderer {
         let frost_bg = make_frost_bg(&device, &frost_bgl, &scene_view, &sampler, &frost_uni);
         // egui paints onto the (single-sample) surface in its own pass we own
         let egui_rend = egui_wgpu::Renderer::new(&device, config.format, None, 1);
-        Renderer { surface, device, queue, config, pipe_main, pipe_stencil, pipe_cover, msaa, ds, samples, bg_buf, bg_cap, fill_buf, fill_cap, fg_buf, fg_cap,
+        Renderer { surface, device, queue, config, pipe_main, pipe_stencil, pipe_cover, pipe_smark, pipe_cover_knock, pipe_cover_band, msaa, ds, samples, bg_buf, bg_cap, fill_buf, fill_cap, fg_buf, fg_cap,
                    scene_tex, scene_view, sampler, layer_msaa, layer_view, pipe_composite, comp_bg, op_buf, op_cap,
                    blit_pipe, blit_bgl, blit_bg, frost_pipe, frost_bgl, frost_bg, frost_uni, egui_rend }
     }
@@ -356,6 +376,37 @@ impl Renderer {
                     rp.set_vertex_buffer(0, self.fg_buf.slice(..));
                     rp.set_pipeline(&self.pipe_main);
                     rp.draw(range.0..range.0 + range.1, 0..1);
+                }
+                // translucent stroke (no fill): mark the band bit on every covered pixel, then cover ONCE
+                // at the stroke colour (paints where marked, clears the bit after)
+                Draw::StrokeCov { tris, cover } => {
+                    rp.set_vertex_buffer(0, self.fg_buf.slice(..));
+                    rp.set_stencil_reference(0x80);
+                    rp.set_pipeline(&self.pipe_smark); rp.draw(tris.0..tris.0 + tris.1, 0..1);
+                    rp.set_stencil_reference(0);
+                    rp.set_pipeline(&self.pipe_cover_band); rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                }
+                // knockout object (fill + translucent stroke): the band CUTS the fill beneath it, so the
+                // stroke blends against what's behind the OBJECT — never against its own fill.
+                Draw::Knockout { band, fan, fcover, bcover } => {
+                    // 1) mark the band bit (0x80) wherever the stroke covers, overlap-proof
+                    rp.set_vertex_buffer(0, self.fg_buf.slice(..));
+                    rp.set_stencil_reference(0x80);
+                    rp.set_pipeline(&self.pipe_smark);
+                    if band.1 > 0 { rp.draw(band.0..band.0 + band.1, 0..1); }
+                    // 2) even-odd fan the fill into parity bit 0x01
+                    rp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                    rp.set_pipeline(&self.pipe_stencil);
+                    if fan.1 > 0 { rp.draw(fan.0..fan.0 + fan.1, 0..1); }
+                    // 3) fill cover: paint where inside AND NOT under the band ((stencil&0x81)==0x01)
+                    rp.set_stencil_reference(0x01);
+                    rp.set_pipeline(&self.pipe_cover_knock);
+                    if fcover.1 > 0 { rp.draw(fcover.0..fcover.0 + fcover.1, 0..1); }
+                    // 4) band cover: paint the stroke once where marked; clears the band bit
+                    rp.set_vertex_buffer(0, self.fg_buf.slice(..));
+                    rp.set_stencil_reference(0);
+                    rp.set_pipeline(&self.pipe_cover_band);
+                    if bcover.1 > 0 { rp.draw(bcover.0..bcover.0 + bcover.1, 0..1); }
                 }
             }
         }

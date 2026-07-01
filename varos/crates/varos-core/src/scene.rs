@@ -34,12 +34,17 @@ pub enum Prim {
 /// A z-ordered draw group. `Opaque` runs paint straight onto the canvas. `Isolated` renders its prims
 /// to an offscreen buffer OPAQUELY, then composites the whole buffer at `opacity` — Illustrator group
 /// opacity, so an object's fill+stroke fade as ONE unit instead of double-blending each other.
+/// `Knockout` = ONE object whose translucent stroke must KNOCK OUT the fill beneath it (Illustrator/PDF
+/// knockout): the band blends against what's BEHIND the object — never against the object's own fill.
 pub enum Group {
     Opaque(Vec<Prim>),
+    Knockout(Vec<Prim>),
     Isolated { opacity: f32, prims: Vec<Prim> },
 }
 impl Group {
-    pub fn prims(&self) -> &[Prim] { match self { Group::Opaque(p) => p, Group::Isolated { prims, .. } => prims } }
+    pub fn prims(&self) -> &[Prim] {
+        match self { Group::Opaque(p) | Group::Knockout(p) => p, Group::Isolated { prims, .. } => prims }
+    }
 }
 
 #[derive(Default)]
@@ -141,6 +146,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     for pi in 0..ed.doc.paths.len() {
         if ed.doc.paths[pi].hidden { continue; }
         let o = ed.doc.paths[pi].opacity;
+        let s_alpha = ed.doc.paths[pi].stroke.map_or(1.0, |c| c[3]);
         let mut fp = fill_prims(pi);
         let mut sp = stroke_prims(pi);
         if o < 0.999 && !fp.is_empty() && !sp.is_empty() {
@@ -148,6 +154,12 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             if !open.is_empty() { groups.push(Group::Opaque(std::mem::take(&mut open))); }
             let mut lp = fp; lp.append(&mut sp);
             groups.push(Group::Isolated { opacity: o, prims: lp });
+        } else if !fp.is_empty() && !sp.is_empty() && s_alpha < 0.999 {
+            // translucent stroke on a filled object → knockout: the band must blend against what's BEHIND
+            // the object, never against the object's own fill (the fill is cut away under the band)
+            if !open.is_empty() { groups.push(Group::Opaque(std::mem::take(&mut open))); }
+            let mut lp = fp; lp.append(&mut sp);
+            groups.push(Group::Knockout(lp));
         } else if o < 0.999 {
             // single-primitive translucent → fold opacity into the colour's own alpha, stay in the run
             for mut pr in fp.drain(..) { scale_alpha(&mut pr, o); open.push(pr); }

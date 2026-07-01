@@ -145,12 +145,20 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
 }
 
 /// One draw step inside a group, in PAINT ORDER. `Fill` = a stencil fan + cover quad (ranges into the
-/// shared fill buffer); `Fg` = a run of stroke/marker triangles (range into the shared fg buffer). Steps
+/// shared fill buffer); `Fg` = a run of stroke/marker triangles (range into the shared fg buffer);
+/// `StrokeCov` = a TRANSLUCENT stroke — its self-overlapping segment quads + join discs stencil-MARK the
+/// covered pixels (colour writes off), then a bbox cover quad paints the whole band ONCE at the stroke
+/// colour, so no pixel double-blends (an opaque stroke doesn't need this: overlap is invisible). Steps
 /// are emitted per object — each object's fill directly before its own stroke — so an object above covers
 /// the stroke of the one below (Illustrator stacking), instead of all strokes floating above all fills.
+/// `Knockout` = one filled object with a translucent stroke: mark the band (stencil bit 0x80), even-odd
+/// fan the fill (bit 0x01), paint the fill only where inside AND NOT under the band, then paint the band
+/// once — so the stroke blends against what's BEHIND the object, never against its own fill.
 pub enum Draw {
     Fill { fan: (u32, u32), cover: (u32, u32) },
     Fg { range: (u32, u32) },
+    StrokeCov { tris: (u32, u32), cover: (u32, u32) },
+    Knockout { band: (u32, u32), fan: (u32, u32), fcover: (u32, u32), bcover: (u32, u32) },
 }
 
 /// How to draw one content Group on the GPU. `Layer` is an isolated translucent object: render its draws
@@ -161,15 +169,54 @@ pub enum GroupDraw {
     Layer  { draws: Vec<Draw>, quad: (u32, u32) },
 }
 
+/// One object's knockout steps: band triangles + band bbox cover from its stroke prims, and the fill's
+/// fan + cover. The renderer stencils the band, fans the fill, paints fill-outside-band, then the band.
+fn knock_draws(prims: &[Prim], view: View, zoom: f32, w: f32, h: f32,
+               fillv: &mut Vec<Vertex>, fgv: &mut Vec<Vertex>) -> Vec<Draw> {
+    let t0 = fgv.len() as u32;
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    let mut bcol = [0.0f32; 4];
+    for p in prims {
+        if let Prim::Stroke { pts, width, color } = p {
+            bcol = *color;
+            let sp: Vec<Pt> = pts.iter().map(|q| view.w2s(*q)).collect();
+            let r = width * zoom * 0.5 + 1.5;
+            for q in &sp { x0 = x0.min(q[0] - r); y0 = y0.min(q[1] - r); x1 = x1.max(q[0] + r); y1 = y1.max(q[1] + r); }
+            stroke_poly(fgv, &sp, width * zoom, bcol, w, h);
+        }
+    }
+    let band = (t0, fgv.len() as u32 - t0);
+    let (fv, fr) = build_fills(prims, view, w, h);
+    let off = fillv.len() as u32;
+    fillv.extend(fv);
+    let (fan, fcover) = fr.first().map(|((fs, fl), (cs, cl))| ((*fs + off, *fl), (*cs + off, *cl))).unwrap_or(((0, 0), (0, 0)));
+    let c0 = fgv.len() as u32;
+    if band.1 > 0 { quad(fgv, [x0, y0], [x1, y0], [x1, y1], [x0, y1], bcol, w, h); }
+    vec![Draw::Knockout { band, fan, fcover, bcover: (c0, fgv.len() as u32 - c0) }]
+}
+
+/// Does this (single-object) prim set need knockout? = has a fill AND a translucent stroke.
+fn needs_knockout(prims: &[Prim]) -> bool {
+    prims.iter().any(|p| matches!(p, Prim::Fill { .. }))
+        && prims.iter().any(|p| matches!(p, Prim::Stroke { color, .. } if color[3] < 0.999))
+}
+
 /// Tessellate every content Group into three shared vertex buffers — fills (fan+cover), strokes (fg), and
 /// composite quads (op) — plus per-group draw steps that preserve the group's internal paint order.
+/// Consecutive on-canvas groups (Opaque/Knockout) merge into one GroupDraw::Opaque → one render pass.
 pub fn build_content(groups: &[Group], view: View, zoom: f32, w: f32, h: f32)
     -> (Vec<Vertex>, Vec<Vertex>, Vec<Vertex>, Vec<GroupDraw>) {
     let mut fillv = Vec::new();
     let mut fgv = Vec::new();
     let mut opv = Vec::new();
-    let mut metas = Vec::new();
+    let mut metas: Vec<GroupDraw> = Vec::new();
     for g in groups {
+        // knockout objects (and isolated layers that contain a translucent stroke) take the dedicated path
+        if matches!(g, Group::Knockout(_)) || matches!(g, Group::Isolated { prims, .. } if needs_knockout(prims)) {
+            let draws = knock_draws(g.prims(), view, zoom, w, h, &mut fillv, &mut fgv);
+            push_group(&mut metas, &mut opv, g, draws);
+            continue;
+        }
         let prims = g.prims();
         let mut draws = Vec::new();
         let mut i = 0;
@@ -182,25 +229,66 @@ pub fn build_content(groups: &[Group], view: View, zoom: f32, w: f32, h: f32)
                 for ((fs, fl), (cs, cl)) in fr { draws.push(Draw::Fill { fan: (fs + off, fl), cover: (cs + off, cl) }); }
                 i += 1;
             } else {
-                // coalesce consecutive non-fill prims (an object's stroke runs) into one fg step
+                // a run of consecutive non-fill prims. Opaque ones coalesce into plain fg steps. A
+                // TRANSLUCENT stroke (colour alpha < 1 — from the colour itself or folded object opacity)
+                // must paint its overlapping quads + join discs EXACTLY ONCE → stencil-mark + cover step
+                // (otherwise every overlap re-blends and the band turns into the blotchy "blur").
                 let j = (i..prims.len()).find(|&k| matches!(prims[k], Prim::Fill { .. })).unwrap_or(prims.len());
-                let start = fgv.len() as u32;
-                fgv.extend(build_fg(&prims[i..j], view, zoom, w, h));
-                let n = fgv.len() as u32 - start;
-                if n > 0 { draws.push(Draw::Fg { range: (start, n) }); }
-                i = j;
+                while i < j {
+                    if let Prim::Stroke { color, .. } = &prims[i] {
+                        if color[3] < 0.999 {
+                            let col = *color;
+                            // an object's outer + hole rings share one colour → mark them together so
+                            // even ring-vs-ring overlap of one object's stroke still paints once
+                            let e = (i..j).find(|&k| !matches!(&prims[k], Prim::Stroke { color: c2, .. } if *c2 == col)).unwrap_or(j);
+                            let t0 = fgv.len() as u32;
+                            let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                            for p in &prims[i..e] {
+                                if let Prim::Stroke { pts, width, .. } = p {
+                                    let sp: Vec<Pt> = pts.iter().map(|q| view.w2s(*q)).collect();
+                                    let r = width * zoom * 0.5 + 1.5;
+                                    for q in &sp { x0 = x0.min(q[0] - r); y0 = y0.min(q[1] - r); x1 = x1.max(q[0] + r); y1 = y1.max(q[1] + r); }
+                                    stroke_poly(&mut fgv, &sp, width * zoom, col, w, h);
+                                }
+                            }
+                            let tris = (t0, fgv.len() as u32 - t0);
+                            let c0 = fgv.len() as u32;
+                            quad(&mut fgv, [x0, y0], [x1, y0], [x1, y1], [x0, y1], col, w, h);
+                            draws.push(Draw::StrokeCov { tris, cover: (c0, fgv.len() as u32 - c0) });
+                            i = e;
+                            continue;
+                        }
+                    }
+                    // opaque strokes / dashes etc. — coalesce until the next translucent stroke
+                    let e = (i + 1..j).find(|&k| matches!(&prims[k], Prim::Stroke { color, .. } if color[3] < 0.999)).unwrap_or(j);
+                    let start = fgv.len() as u32;
+                    fgv.extend(build_fg(&prims[i..e], view, zoom, w, h));
+                    let n = fgv.len() as u32 - start;
+                    if n > 0 { draws.push(Draw::Fg { range: (start, n) }); }
+                    i = e;
+                }
             }
         }
-        match g {
-            Group::Opaque(_) => metas.push(GroupDraw::Opaque { draws }),
-            Group::Isolated { opacity, .. } => {
-                let qs = opv.len() as u32;
-                fullscreen_quad(&mut opv, *opacity);
-                metas.push(GroupDraw::Layer { draws, quad: (qs, opv.len() as u32 - qs) });
-            }
-        }
+        push_group(&mut metas, &mut opv, g, draws);
     }
     (fillv, fgv, opv, metas)
+}
+
+/// File a group's draws: isolated layers get their composite quad; on-canvas groups (Opaque/Knockout)
+/// merge into the previous Opaque meta when adjacent — knockout steps are stencil-self-cleaning, so they
+/// share a render pass with plain content (no extra pass per knockout object).
+fn push_group(metas: &mut Vec<GroupDraw>, opv: &mut Vec<Vertex>, g: &Group, draws: Vec<Draw>) {
+    match g {
+        Group::Isolated { opacity, .. } => {
+            let qs = opv.len() as u32;
+            fullscreen_quad(opv, *opacity);
+            metas.push(GroupDraw::Layer { draws, quad: (qs, opv.len() as u32 - qs) });
+        }
+        _ => {
+            if let Some(GroupDraw::Opaque { draws: prev }) = metas.last_mut() { prev.extend(draws); }
+            else { metas.push(GroupDraw::Opaque { draws }); }
+        }
+    }
 }
 
 /// A full-NDC quad (two triangles); the object opacity rides in colour.a for the composite shader.
@@ -208,4 +296,57 @@ fn fullscreen_quad(v: &mut Vec<Vertex>, opacity: f32) {
     let col = [0.0, 0.0, 0.0, opacity];
     let (a, b, c, d) = ([-1.0f32, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]);
     for p in [a, b, c, a, c, d] { v.push(Vertex { pos: p, color: col }); }
+}
+
+// CPU-pure tessellation tests (no GPU): lock the translucent-stroke routing — mark+cover paints the
+// self-overlapping band exactly once; opaque strokes stay on the fast single-draw path.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use varos_core::scene::Group;
+
+    fn stroke(alpha: f32) -> Prim {
+        Prim::Stroke { pts: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], width: 4.0, color: [0.0, 0.0, 0.0, alpha] }
+    }
+
+    #[test]
+    fn translucent_stroke_goes_through_mark_and_cover() {
+        let g = [Group::Opaque(vec![stroke(0.5)])];
+        let (_f, fgv, _o, metas) = build_content(&g, View::identity(), 1.0, 100.0, 100.0);
+        let draws = match &metas[0] { GroupDraw::Opaque { draws } => draws, _ => panic!("opaque group expected") };
+        let (tris, cover) = match draws[0] { Draw::StrokeCov { tris, cover } => (tris, cover), _ => panic!("a translucent stroke must mark+cover (paint once)") };
+        assert!(tris.1 > 0 && cover.1 == 6, "mark triangles + one cover quad");
+        assert!((fgv[cover.0 as usize].color[3] - 0.5).abs() < 1e-6, "the cover quad carries the stroke's alpha");
+    }
+
+    #[test]
+    fn opaque_stroke_stays_on_the_fast_path() {
+        let g = [Group::Opaque(vec![stroke(1.0)])];
+        let (_f, _fg, _o, metas) = build_content(&g, View::identity(), 1.0, 100.0, 100.0);
+        let draws = match &metas[0] { GroupDraw::Opaque { draws } => draws, _ => panic!("opaque group expected") };
+        assert!(matches!(draws[0], Draw::Fg { .. }), "an opaque stroke needs no stencil pass");
+    }
+
+    #[test]
+    fn knockout_object_emits_band_fan_and_two_covers() {
+        let fill = Prim::Fill { rings: vec![vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]], color: [0.0, 1.0, 0.0, 1.0] };
+        let g = [Group::Knockout(vec![fill, stroke(0.5)])];
+        let (_f, fgv, _o, metas) = build_content(&g, View::identity(), 1.0, 100.0, 100.0);
+        let draws = match &metas[0] { GroupDraw::Opaque { draws } => draws, _ => panic!("knockout draws inline (opaque pass)") };
+        let (band, fan, fcover, bcover) = match draws[0] {
+            Draw::Knockout { band, fan, fcover, bcover } => (band, fan, fcover, bcover),
+            _ => panic!("a filled object with a translucent stroke must knock out"),
+        };
+        assert!(band.1 > 0 && fan.1 > 0 && fcover.1 == 6 && bcover.1 == 6, "band tris + fill fan + both covers");
+        assert!((fgv[bcover.0 as usize].color[3] - 0.5).abs() < 1e-6, "the band cover carries the stroke's alpha");
+    }
+
+    #[test]
+    fn isolated_layer_with_translucent_stroke_knocks_out_inside_the_layer() {
+        let fill = Prim::Fill { rings: vec![vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]], color: [0.0, 1.0, 0.0, 1.0] };
+        let g = [Group::Isolated { opacity: 0.5, prims: vec![fill, stroke(0.5)] }];
+        let (_f, _fg, _o, metas) = build_content(&g, View::identity(), 1.0, 100.0, 100.0);
+        let draws = match &metas[0] { GroupDraw::Layer { draws, .. } => draws, _ => panic!("layer expected") };
+        assert!(matches!(draws[0], Draw::Knockout { .. }), "knockout also applies inside an isolated layer");
+    }
 }
