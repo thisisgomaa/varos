@@ -11,6 +11,7 @@ pub mod object;
 pub mod shapes;
 pub mod convert;
 pub mod eyedropper;
+pub mod rotate;
 
 pub trait Tool {
     fn down(&self, ed: &mut Editor, pos: Pt);
@@ -23,6 +24,7 @@ pub fn get(kind: ToolKind) -> &'static dyn Tool {
         ToolKind::Object => &object::Object,
         ToolKind::Convert => &convert::Convert,
         ToolKind::Eyedropper => &eyedropper::Eyedropper,
+        ToolKind::Rotate | ToolKind::Scale => &rotate::Transform,
         ToolKind::Rect | ToolKind::Ellipse | ToolKind::Triangle | ToolKind::Polygon => &shapes::Shapes,
         // The Artboard tool is handled by `Editor::ab_down` before `get` is ever called — this arm only
         // keeps the match exhaustive (the value is never used).

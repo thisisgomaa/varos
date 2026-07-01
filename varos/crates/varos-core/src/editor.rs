@@ -23,7 +23,7 @@ pub struct Mods { pub shift: bool, pub alt: bool, pub ctrl: bool }
 pub enum PaintTarget { Fill, Stroke }
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum ToolKind { Object, Direct, Pen, Rect, Ellipse, Triangle, Polygon, Convert, Eyedropper, Artboard }
+pub enum ToolKind { Object, Direct, Pen, Rect, Ellipse, Triangle, Polygon, Convert, Eyedropper, Artboard, Rotate, Scale }
 
 /// What the Pen tool would do at the cursor right now — drives the contextual pen cursor (Illustrator
 /// shows pen+×/+/−/○/continue). Computed by `Editor::pen_hint`, mirrors `tools::pen` down logic.
@@ -53,12 +53,22 @@ pub enum Drag {
     // scale works in the frame's LOCAL (un-rotated) space; opp_l/cen_l/h0_l are local handle coords
     Scale { handle: u8, angle: f32, opp_l: Pt, cen_l: Pt, h0_l: Pt, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
     Rotate { center: Pt, start: f32, a0: f32, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
+    ScaleLive { pivot: Pt, down: Pt, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },   // Scale tool: about `pivot`, ratio from `down`
+    TfPending { pivot: Pt, down: Pt },   // Rotate/Scale pressed: a plain click relocates the pivot, a drag transforms
     ConvPull { aid: u32, down: Pt },
 }
 
 /// What a press on the object-selection bounding box hit.
 #[derive(Clone, Copy)]
 pub enum TfHit { Scale(u8), Rotate(u8) } // u8 = handle index 0..7 (corners 0-3, edge mids 4-7)
+
+/// The last transform, replayed by Transform Again (Ctrl+D) — move / rotate / scale / reflect.
+#[derive(Clone, Copy)]
+pub enum TfAgain {
+    Move(Pt),
+    Rotate { pivot: Pt, ang: f32 },
+    Scale { pivot: Pt, sx: f32, sy: f32 },
+}
 
 /// Artboard-tool drag state — kept STRICTLY separate from `Drag` (the object/anchor engine) so the two
 /// can never cross-grab (the no-cross-grab guarantee). `Move` carries the artwork base when "move artwork
@@ -158,12 +168,14 @@ pub struct Editor {
     pub ab_drag: AbDrag,     // Artboard-tool drag (move/resize/create) — parallel to `drag`, never crosses it
     pub snap_guides: Vec<SnapGuide>,    // this frame's snap feedback (transient, never serialized)
     pub snap_hud: Option<(Pt, String)>, // live measurement label: (world anchor near the cursor, text)
-    pub last_tf: Option<(Pt, bool)>,    // (net delta, was_copy) of the last Object transform — Transform Again (Ctrl+D)
+    pub last_tf: Option<(TfAgain, bool)>, // (last transform, was_copy) — Transform Again (Ctrl+D)
     gesture_copy: bool,                 // transient: did the current gesture duplicate (Alt-drag)?
     gesture_delta: Pt,                  // transient: running net delta of the current Object drag
+    gesture_tf: Option<TfAgain>,        // transient: the net rotate/scale/reflect this gesture (for Transform Again)
     pub cursor: Pt,
     pub ppu: f32,            // pixels-per-unit (view zoom) — so grab tolerances stay constant on screen
     pub obj_angle: f32,      // orientation of the object-selection transform frame (rotates with the selection)
+    pub pivot: Option<Pt>,   // Rotate/Scale/Reflect transform origin (None ⇒ selection centre); set by a click
     pub hover_path: Option<u32>,
     pub show_rulers: bool,   // View ▸ Rulers (Ctrl+R). View pref, not serialized; default ON.
     pub guides_hidden: bool, // View ▸ Hide Guides (Ctrl+;). View pref, not serialized.
@@ -179,8 +191,8 @@ impl Editor {
     pub fn new() -> Self {
         Editor { doc: Document::default(), tool: ToolKind::Object, gesture: ToolKind::Object, active: None,
                  selected: HashSet::new(), objsel: HashSet::new(), dsel_path: None, drag: Drag::None, ab_drag: AbDrag::None,
-                 snap_guides: vec![], snap_hud: None, last_tf: None, gesture_copy: false, gesture_delta: [0.0, 0.0], cursor: [0.0, 0.0],
-                 ppu: 1.0, obj_angle: 0.0, hover_path: None, show_rulers: true, guides_hidden: false,
+                 snap_guides: vec![], snap_hud: None, last_tf: None, gesture_copy: false, gesture_delta: [0.0, 0.0], gesture_tf: None, cursor: [0.0, 0.0],
+                 ppu: 1.0, obj_angle: 0.0, pivot: None, hover_path: None, show_rulers: true, guides_hidden: false,
                  origin_preview: None, guide_preview: None, mods: Mods::default(),
                  cur_fill: Some([0.95, 0.95, 0.96, 1.0]), cur_stroke: Some([0.12, 0.12, 0.13, 1.0]), cur_sw: 2.0, paint: PaintTarget::Fill,
                  dirty: false, undo: vec![], redo: vec![], pending: None }
@@ -330,6 +342,11 @@ impl Editor {
             for i in 0..4u8 { if dist(pos, hs[i as usize]) <= ring { return Some(TfHit::Rotate(i)); } }
         }
         None
+    }
+    /// The transform origin (world) for the Rotate/Scale/Reflect tools: the user-set pivot, or — until a
+    /// click relocates it — the object-selection bbox centre.
+    pub fn pivot_point(&self) -> Option<Pt> {
+        self.pivot.or_else(|| self.obj_bbox().map(|(x0, y0, x1, y1)| [(x0 + x1) * 0.5, (y0 + y1) * 0.5]))
     }
     pub fn start_transform(&mut self, hit: TfHit, pos: Pt) {
         let bb = match self.obj_local_bbox() { Some(b) => b, None => return };
@@ -598,7 +615,7 @@ impl Editor {
     /// the last gesture left a copy (Alt-drag duplicate), duplicate first then offset — so Ctrl+D Ctrl+D…
     /// step-and-repeats. One undo step each; updates the selection to the result so it chains.
     pub fn transform_again(&mut self) {
-        let (delta, was_copy) = match self.last_tf { Some(t) => t, None => return };
+        let (tf, was_copy) = match self.last_tf { Some(t) => t, None => return };
         if self.objsel.is_empty() { return; }
         self.begin();
         if was_copy {
@@ -606,11 +623,18 @@ impl Editor {
             let cids = self.doc.dup_paths(&srcs);
             self.objsel = cids.into_iter().collect();
         }
+        // the point map for the remembered transform — Ctrl+D repeats rotate/scale/reflect, not just moves
+        // (so rotate-a-copy then Ctrl+D+D… builds a radial pattern).
+        let f: Box<dyn Fn(Pt) -> Pt> = match tf {
+            TfAgain::Move(d) => Box::new(move |p| add(p, d)),
+            TfAgain::Rotate { pivot, ang } => Box::new(move |p| rotate_about(p, pivot, ang)),
+            TfAgain::Scale { pivot, sx, sy } => Box::new(move |p| [pivot[0] + (p[0]-pivot[0])*sx, pivot[1] + (p[1]-pivot[1])*sy]),
+        };
         let base = self.objsel_base();
         for (aid, p0, hin0, hout0) in &base {
-            if let Some(a) = self.doc.anchor_mut(*aid) { a.p = add(*p0, delta); a.hin = hin0.map(|h| add(h, delta)); a.hout = hout0.map(|h| add(h, delta)); }
+            if let Some(a) = self.doc.anchor_mut(*aid) { a.p = f(*p0); a.hin = hin0.map(|h| f(h)); a.hout = hout0.map(|h| f(h)); }
         }
-        self.obj_angle = 0.0;
+        self.obj_angle = if let TfAgain::Rotate { ang, .. } = tf { self.obj_angle + ang } else { 0.0 };
         self.dirty = true; self.commit();
     }
 
@@ -981,6 +1005,30 @@ impl Editor {
         [nx.unwrap_or(p[0]), ny.unwrap_or(p[1])]
     }
 
+    /// Snap the transform PIVOT (Rotate/Scale/Reflect origin). Prefers landing on a whole feature POINT —
+    /// an object anchor, a bbox corner, a centre (object or page) — within tolerance, so it sits exactly on
+    /// the point you aimed at; else falls back to the per-axis edge/grid snap (`snap_origin`).
+    pub fn snap_pivot(&self, p: Pt) -> Pt {
+        let cfg = &self.doc.snap;
+        if !cfg.enabled { return p; }
+        let tol = cfg.radius_px / self.ppu.max(1e-4);
+        let mut pts: Vec<Pt> = vec![];
+        if let Some(ab) = self.doc.active_artboard() {
+            let (x0, y0, x1, y1) = ab.rect();
+            pts.extend([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [(x0 + x1) * 0.5, (y0 + y1) * 0.5]]);
+        }
+        for pi in 0..self.doc.paths.len() {
+            let pp = &self.doc.paths[pi]; if pp.hidden { continue; }
+            let b = self.doc.outline_bbox(pi);
+            pts.extend([[b.0, b.1], [b.2, b.1], [b.2, b.3], [b.0, b.3], [(b.0 + b.2) * 0.5, (b.1 + b.3) * 0.5]]);
+            for a in pp.anchors.iter().chain(pp.holes.iter().flatten()) { pts.push(a.p); }
+        }
+        let mut best: Option<(f32, Pt)> = None;
+        for q in pts { let d = dist(p, q); if d <= tol && best.map_or(true, |(bd, _)| d < bd) { best = Some((d, q)); } }
+        if let Some((_, q)) = best { return q; }
+        self.snap_origin(p)   // no whole point in range → per-axis edges + grid
+    }
+
     // ---------- ruler guides ----------
     /// Nearest guide line within the screen-constant grab tolerance, or None (also None when hidden/locked).
     pub fn guide_at(&self, pos: Pt) -> Option<usize> {
@@ -1304,7 +1352,7 @@ impl Editor {
     pub fn pointer_down(&mut self, pos: Pt) {
         self.cursor = pos;
         self.begin();
-        self.gesture_copy = false; self.gesture_delta = [0.0, 0.0];
+        self.gesture_copy = false; self.gesture_delta = [0.0, 0.0]; self.gesture_tf = None;
         self.gesture = self.eff_tool();
         if self.gesture == ToolKind::Artboard { self.ab_down(pos); return; }
         // grab a ruler guide first (Selection / Direct tools) — drag to reposition it
@@ -1324,7 +1372,12 @@ impl Editor {
         }
         if let Drag::PenClose { .. } = self.drag { self.active = None; }
         if matches!(self.drag, Drag::Object { .. }) && (self.gesture_delta[0] != 0.0 || self.gesture_delta[1] != 0.0) {
-            self.last_tf = Some((self.gesture_delta, self.gesture_copy));   // remember for Transform Again
+            self.last_tf = Some((TfAgain::Move(self.gesture_delta), self.gesture_copy));   // remember for Transform Again
+        }
+        if let Some(tf) = self.gesture_tf.take() { self.last_tf = Some((tf, self.gesture_copy)); }   // rotate/scale/reflect
+        if let Drag::TfPending { down, .. } = self.drag {   // a click (no drag) relocates the pivot — snapped
+            self.pivot = Some(self.snap_pivot(down));        // lands on an anchor / corner / centre / edge / grid
+            self.dirty = false;
         }
         self.drag = Drag::None;
         self.commit();
@@ -1538,7 +1591,47 @@ impl Editor {
                     }
                 }
                 self.obj_angle = a0 + d;                                     // frame rotates with the selection
+                self.snap_hud = Some((pos, format!("{:.1}\u{b0}", -d.to_degrees())));   // CCW-positive (Illustrator)
+                self.gesture_tf = Some(TfAgain::Rotate { pivot: center, ang: d });
                 self.drag = Drag::Rotate { center, start, a0, base };
+                self.dirty = true;
+            }
+            Drag::TfPending { pivot, down } => {
+                if dist(pos, down) >= DRAG_THRESH {
+                    if self.mods.alt {                       // Alt-drag transforms a COPY (Illustrator)
+                        let srcs: Vec<u32> = self.objsel.iter().copied().collect();
+                        let cids = self.doc.dup_paths(&srcs);
+                        self.gesture_copy = true;
+                        self.objsel.clear();
+                        for cid in cids { self.objsel.insert(cid); }
+                    }
+                    let base = self.objsel_base();
+                    self.drag = match self.tool {
+                        ToolKind::Scale => Drag::ScaleLive { pivot, down, base },
+                        _ => { let start = (down[1] - pivot[1]).atan2(down[0] - pivot[0]);
+                               Drag::Rotate { center: pivot, start, a0: self.obj_angle, base } }
+                    };
+                    self.pointer_move(pos);                  // apply this frame's transform immediately
+                } else {
+                    self.drag = Drag::TfPending { pivot, down };
+                }
+            }
+            Drag::ScaleLive { pivot, down, base } => {
+                let (dx0, dy0) = (down[0] - pivot[0], down[1] - pivot[1]);
+                let (mut sx, mut sy) = (if dx0.abs() > 1e-3 { (pos[0]-pivot[0])/dx0 } else { 1.0 },
+                                        if dy0.abs() > 1e-3 { (pos[1]-pivot[1])/dy0 } else { 1.0 });
+                if self.mods.shift {   // uniform: project the drag onto the grab direction (signed)
+                    let den = dx0*dx0 + dy0*dy0;
+                    let s = if den > 1e-6 { ((pos[0]-pivot[0])*dx0 + (pos[1]-pivot[1])*dy0) / den } else { 1.0 };
+                    sx = s; sy = s;
+                }
+                let sc = |p: Pt| [pivot[0] + (p[0]-pivot[0])*sx, pivot[1] + (p[1]-pivot[1])*sy];
+                for (aid, p0, hin0, hout0) in &base {
+                    if let Some(a) = self.doc.anchor_mut(*aid) { a.p = sc(*p0); a.hin = hin0.map(sc); a.hout = hout0.map(sc); }
+                }
+                self.snap_hud = Some((pos, format!("{:.0}%   {:.0}%", sx*100.0, sy*100.0)));
+                self.gesture_tf = Some(TfAgain::Scale { pivot, sx, sy });
+                self.drag = Drag::ScaleLive { pivot, down, base };
                 self.dirty = true;
             }
             Drag::ConvPull { aid, down } => {
@@ -1571,7 +1664,14 @@ impl Editor {
             self.selected.clear(); self.objsel.clear(); self.dsel_path = None;
             self.obj_angle = 0.0; self.hover_path = None;
         }
+        if matches!(t, ToolKind::Rotate | ToolKind::Scale) && self.objsel.is_empty() {
+            // the transform tools act on whole objects — promote any anchor selection (coming from Direct)
+            let pids: Vec<u32> = self.selected.iter().filter_map(|&aid| self.doc.aidx(aid).map(|(pi, _)| self.doc.paths[pi].id)).collect();
+            for pid in pids { for m in self.doc.group_members(pid) { self.objsel.insert(m); } }
+            self.selected.clear();
+        }
         self.tool = t;
+        self.pivot = None;   // each tool entry re-homes the transform origin to the selection centre
         if t != ToolKind::Pen { self.active = None; }
         self.dsel_path = None;
         self.drag = Drag::None;

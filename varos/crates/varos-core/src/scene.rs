@@ -148,6 +148,14 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             }
         }
     }
+    // Rotate/Scale: the transform pivot (bullseye) — the origin a drag transforms around; click to move it
+    if matches!(ed.tool, ToolKind::Rotate | ToolKind::Scale) && !ed.objsel.is_empty() {
+        if let Some(c) = ed.pivot_point() {
+            s.overlay.push(Prim::Disc { c, r: 6.0, color: WHITE });
+            s.overlay.push(Prim::Disc { c, r: 4.5, color: ACCENT });
+            s.overlay.push(Prim::Disc { c, r: 1.6, color: WHITE });
+        }
+    }
     // pen rubber-band: dashed, curved
     if ed.tool == ToolKind::Pen {
         if let Some(ap) = ed.active {
