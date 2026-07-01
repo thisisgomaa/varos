@@ -1,7 +1,7 @@
 //! Turn the core's render-agnostic `Scene` primitives into GPU triangles (pixel space → NDC on CPU).
 
 use varos_core::geom::{Pt, View};
-use varos_core::scene::Prim;
+use varos_core::scene::{Group, Prim};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -142,4 +142,70 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
         }
     }
     v
+}
+
+/// One draw step inside a group, in PAINT ORDER. `Fill` = a stencil fan + cover quad (ranges into the
+/// shared fill buffer); `Fg` = a run of stroke/marker triangles (range into the shared fg buffer). Steps
+/// are emitted per object — each object's fill directly before its own stroke — so an object above covers
+/// the stroke of the one below (Illustrator stacking), instead of all strokes floating above all fills.
+pub enum Draw {
+    Fill { fan: (u32, u32), cover: (u32, u32) },
+    Fg { range: (u32, u32) },
+}
+
+/// How to draw one content Group on the GPU. `Layer` is an isolated translucent object: render its draws
+/// opaquely into an offscreen buffer, then composite `quad` (a fullscreen quad carrying its opacity) onto
+/// the scene.
+pub enum GroupDraw {
+    Opaque { draws: Vec<Draw> },
+    Layer  { draws: Vec<Draw>, quad: (u32, u32) },
+}
+
+/// Tessellate every content Group into three shared vertex buffers — fills (fan+cover), strokes (fg), and
+/// composite quads (op) — plus per-group draw steps that preserve the group's internal paint order.
+pub fn build_content(groups: &[Group], view: View, zoom: f32, w: f32, h: f32)
+    -> (Vec<Vertex>, Vec<Vertex>, Vec<Vertex>, Vec<GroupDraw>) {
+    let mut fillv = Vec::new();
+    let mut fgv = Vec::new();
+    let mut opv = Vec::new();
+    let mut metas = Vec::new();
+    for g in groups {
+        let prims = g.prims();
+        let mut draws = Vec::new();
+        let mut i = 0;
+        while i < prims.len() {
+            if matches!(prims[i], Prim::Fill { .. }) {
+                // one fill → its own stencil+cover step (offset into the shared fill buffer)
+                let (fv, fr) = build_fills(&prims[i..i + 1], view, w, h);
+                let off = fillv.len() as u32;
+                fillv.extend(fv);
+                for ((fs, fl), (cs, cl)) in fr { draws.push(Draw::Fill { fan: (fs + off, fl), cover: (cs + off, cl) }); }
+                i += 1;
+            } else {
+                // coalesce consecutive non-fill prims (an object's stroke runs) into one fg step
+                let j = (i..prims.len()).find(|&k| matches!(prims[k], Prim::Fill { .. })).unwrap_or(prims.len());
+                let start = fgv.len() as u32;
+                fgv.extend(build_fg(&prims[i..j], view, zoom, w, h));
+                let n = fgv.len() as u32 - start;
+                if n > 0 { draws.push(Draw::Fg { range: (start, n) }); }
+                i = j;
+            }
+        }
+        match g {
+            Group::Opaque(_) => metas.push(GroupDraw::Opaque { draws }),
+            Group::Isolated { opacity, .. } => {
+                let qs = opv.len() as u32;
+                fullscreen_quad(&mut opv, *opacity);
+                metas.push(GroupDraw::Layer { draws, quad: (qs, opv.len() as u32 - qs) });
+            }
+        }
+    }
+    (fillv, fgv, opv, metas)
+}
+
+/// A full-NDC quad (two triangles); the object opacity rides in colour.a for the composite shader.
+fn fullscreen_quad(v: &mut Vec<Vertex>, opacity: f32) {
+    let col = [0.0, 0.0, 0.0, opacity];
+    let (a, b, c, d) = ([-1.0f32, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]);
+    for p in [a, b, c, a, c, d] { v.push(Vertex { pos: p, color: col }); }
 }
