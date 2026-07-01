@@ -1,5 +1,10 @@
 # Varos — Native GPU UI: Phase 0 Spike Brief (for Production)
 
+> **⚠ UPDATE 2026-07-02 (Ahmed): FROSTED GLASS IS CANCELED — permanently.** SOLID panels are the one final
+> material (what's shipped today). No frosted material, no settings toggle, one code path. Strike gate #4's
+> frosted-perf requirement and every frosted mention below. Reason: priorities = clean, world-class,
+> build-on-able, no rework. The wgpu bump stays planned — as foundation hygiene, not for frosted.
+
 **Goal of the spike (the GATE):** prove we can draw the Varos UI **ourselves on the GPU**, composited with
 the existing wgpu canvas in ONE surface/frame — replacing the web (wry/WebView2) panels — **without** losing
 the native pen feel and **with** the look Ahmed approved (frosted-glass floating panels, zero black).
