@@ -74,6 +74,17 @@ fn opaque_objects_paint_fill_then_own_stroke_in_z_order() {
 }
 
 #[test]
+fn translucent_stroke_on_filled_object_becomes_knockout() {
+    // colour-level stroke alpha < 1 on a filled object → the band must knock out the fill beneath it
+    // (blend against what's BEHIND the object), so scene building routes it to Group::Knockout.
+    let mut ed = bare();
+    ed.doc.paths.push(rect(1, 1, Some(BLUE), Some([0.0, 0.0, 0.0, 0.5])));
+    let s = build_scene(&ed, 1.0);
+    assert!(s.content.iter().any(|g| matches!(g, Group::Knockout(_))), "fill + translucent stroke must emit a Knockout group");
+    assert_eq!(n_isolated(&s.content), 0, "colour alpha alone (object opacity = 1) needs no isolated layer");
+}
+
+#[test]
 fn isolated_layer_keeps_its_z_position() {
     let mut ed = bare();
     ed.doc.paths.push(rect(1, 1, Some(BLACK), None));          // opaque, BEHIND
