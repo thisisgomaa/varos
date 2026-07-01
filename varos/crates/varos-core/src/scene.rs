@@ -31,14 +31,42 @@ pub enum Prim {
     Tri { a: Pt, b: Pt, c: Pt, color: Rgba },   // a single filled triangle (icons)
 }
 
+/// A z-ordered draw group. `Opaque` runs paint straight onto the canvas. `Isolated` renders its prims
+/// to an offscreen buffer OPAQUELY, then composites the whole buffer at `opacity` — Illustrator group
+/// opacity, so an object's fill+stroke fade as ONE unit instead of double-blending each other.
+pub enum Group {
+    Opaque(Vec<Prim>),
+    Isolated { opacity: f32, prims: Vec<Prim> },
+}
+impl Group {
+    pub fn prims(&self) -> &[Prim] { match self { Group::Opaque(p) => p, Group::Isolated { prims, .. } => prims } }
+}
+
 #[derive(Default)]
 pub struct Scene {
-    pub content: Vec<Prim>, // artwork: scales with zoom
-    pub overlay: Vec<Prim>, // editing chrome: constant screen size, positions follow the view
+    pub content: Vec<Group>, // artwork groups (z-ordered): opaque runs + isolated translucent layers
+    pub overlay: Vec<Prim>,  // editing chrome: constant screen size, positions follow the view
+}
+
+/// Multiply a primitive's colour alpha — folds object-opacity into a single-primitive object (no overlap
+/// to double-blend, so no isolated layer needed).
+fn scale_alpha(p: &mut Prim, o: f32) {
+    let c = match p {
+        Prim::Fill { color, .. } => color, Prim::Stroke { color, .. } => color,
+        Prim::Dashed { color, .. } => color, Prim::Square { color, .. } => color,
+        Prim::Disc { color, .. } => color, Prim::Tri { color, .. } => color,
+    };
+    c[3] *= o;
 }
 
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     let mut s = Scene::default();
+    // content = z-ordered Groups. Opaque prims accumulate into the current run in PER-OBJECT paint order
+    // (each object's fill immediately followed by its own stroke — Illustrator stacking: an object above
+    // covers the stroke of the one below). A translucent fill+stroke object flushes the run and becomes
+    // its own isolated layer (group opacity).
+    let mut groups: Vec<Group> = Vec::new();
+    let mut open: Vec<Prim> = Vec::new();
 
     // ---- ARTBOARDS (the pages) ---- DEFINED rectangles sitting on the infinite dotted board. Each is a
     // page-colour Fill (pushed first → over the grid, behind artwork) unless TRANSPARENT, plus a boundary
@@ -52,7 +80,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             // page fill: a solid colour, or — when transparent — a faint translucent white so the page
             // still reads on the dark board instead of vanishing into it.
             let paper = ab.page_color.unwrap_or(AB_GHOST);
-            s.content.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+            open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
             let active = ab_tool && i == ed.doc.active;
             let edge_col = if active { ACCENT } else if ab.page_color.is_none() { AB_EDGE_T } else { AB_EDGE };
             let mut edge = ring; edge.push([x0, y0]);
@@ -67,10 +95,12 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
     }
 
-    // ---- CONTENT (scales with zoom) ----  `ppu` = zoom → curves stay smooth at any zoom
-    let with_op = |c: Rgba, o: f32| [c[0], c[1], c[2], c[3] * o];   // object opacity → alpha
-    // CLIP: if any page has clip on, artwork overlapping it is cut to that page's rect (Illustrator's
-    // "clip to artboard"). `None` ⇒ no clip (the common path: zero CPU when nothing clips).
+    // ---- CONTENT (scales with zoom): built into z-ordered Groups ----  `ppu` = zoom → curves stay smooth
+    // Colour alpha is honoured as-is. OBJECT opacity < 1 is the special case: fill+stroke must composite as
+    // ONE unit then fade together (Illustrator group opacity), so a translucent fill+stroke object becomes
+    // an isolated layer. With only a fill OR only a stroke there is no overlap to double-blend, so we just
+    // fold the opacity into that single colour's alpha and keep it in the fast opaque run.
+    // CLIP: if any page has clip on, artwork overlapping it is cut to that page's rect. None ⇒ no clip.
     let any_clip = ed.doc.artboards.iter().any(|a| a.clip);
     let clip_rect = |pi: usize| -> Option<(f32, f32, f32, f32)> {
         if !any_clip { return None; }
@@ -78,35 +108,57 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         ed.doc.artboards.iter().filter(|a| a.clip).map(|a| a.rect())
             .find(|r| r.0 <= b.2 && r.2 >= b.0 && r.1 <= b.3 && r.3 >= b.1)
     };
-    for pi in 0..ed.doc.paths.len() {
+    let fill_prims = |pi: usize| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
-        if p.hidden { continue; }
+        let mut out = Vec::new();
         if p.closed && p.anchors.len() >= 3 { if let Some(c) = p.fill {
-            let col = with_op(c, p.opacity);
             let mut rings = vec![ed.doc.outline_px(pi, ppu)];
             for hole in &p.holes { rings.push(Document::ring_px(hole, true, ppu)); }
-            if let Some(r) = clip_rect(pi) {
-                let clipped: Vec<Vec<Pt>> = rings.iter().map(|ring| clip_poly_rect(ring, r)).filter(|ring| ring.len() >= 3).collect();
-                if clipped.first().map_or(false, |o| o.len() >= 3) { s.content.push(Prim::Fill { rings: clipped, color: col }); }
-            } else {
-                s.content.push(Prim::Fill { rings, color: col });
+            match clip_rect(pi) {
+                Some(r) => {
+                    let clipped: Vec<Vec<Pt>> = rings.iter().map(|ring| clip_poly_rect(ring, r)).filter(|ring| ring.len() >= 3).collect();
+                    if clipped.first().map_or(false, |o| o.len() >= 3) { out.push(Prim::Fill { rings: clipped, color: c }); }
+                }
+                None => out.push(Prim::Fill { rings, color: c }),
             }
         } }
-    }
-    for pi in 0..ed.doc.paths.len() {
+        out
+    };
+    let stroke_prims = |pi: usize| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
-        if p.hidden { continue; }
+        let mut out = Vec::new();
         if p.anchors.len() >= 2 { if let Some(c) = p.stroke {
-            let c = with_op(c, p.opacity);
             let clip = clip_rect(pi);
-            let mut push_stroke = |pts: Vec<Pt>| match clip {
-                Some(r) => for run in clip_polyline_rect(&pts, r) { if run.len() >= 2 { s.content.push(Prim::Stroke { pts: run, width: p.stroke_width, color: c }); } },
-                None => s.content.push(Prim::Stroke { pts, width: p.stroke_width, color: c }),
+            let mut push = |pts: Vec<Pt>| match clip {
+                Some(r) => for run in clip_polyline_rect(&pts, r) { if run.len() >= 2 { out.push(Prim::Stroke { pts: run, width: p.stroke_width, color: c }); } },
+                None => out.push(Prim::Stroke { pts, width: p.stroke_width, color: c }),
             };
-            push_stroke(ed.doc.outline_px(pi, ppu));
-            for hole in &p.holes { let mut r = Document::ring_px(hole, true, ppu); if let Some(&f) = r.first() { r.push(f); } push_stroke(r); }
+            push(ed.doc.outline_px(pi, ppu));
+            for hole in &p.holes { let mut r = Document::ring_px(hole, true, ppu); if let Some(&f) = r.first() { r.push(f); } push(r); }
         } }
+        out
+    };
+    for pi in 0..ed.doc.paths.len() {
+        if ed.doc.paths[pi].hidden { continue; }
+        let o = ed.doc.paths[pi].opacity;
+        let mut fp = fill_prims(pi);
+        let mut sp = stroke_prims(pi);
+        if o < 0.999 && !fp.is_empty() && !sp.is_empty() {
+            // isolated layer: flush the current opaque run, then emit the object as one unit (fill(s) then stroke(s))
+            if !open.is_empty() { groups.push(Group::Opaque(std::mem::take(&mut open))); }
+            let mut lp = fp; lp.append(&mut sp);
+            groups.push(Group::Isolated { opacity: o, prims: lp });
+        } else if o < 0.999 {
+            // single-primitive translucent → fold opacity into the colour's own alpha, stay in the run
+            for mut pr in fp.drain(..) { scale_alpha(&mut pr, o); open.push(pr); }
+            for mut pr in sp.drain(..) { scale_alpha(&mut pr, o); open.push(pr); }
+        } else {
+            open.append(&mut fp);
+            open.append(&mut sp);
+        }
     }
+    if !open.is_empty() { groups.push(Group::Opaque(open)); }
+    s.content = groups;
 
     // ---- OVERLAY (constant screen size) ----
     // ruler guides (cyan, full-extent world lines) + the live ruler drag-out preview — unless hidden

@@ -3,7 +3,7 @@
 
 mod tess;
 use std::io::Write;
-use tess::{build_bg, build_fg, build_fills, Vertex};
+use tess::{build_bg, build_content, build_fg, Draw, GroupDraw, Vertex};
 use varos_core::geom::View;
 use varos_core::scene::{Prim, Scene};
 
@@ -32,6 +32,11 @@ pub struct Renderer {
     // offscreen scene target (the canvas is rendered here, then blitted to the surface). It is the
     // SAMPLE SOURCE for the frosted-glass panels (we blur this behind each panel).
     scene_tex: wgpu::Texture, scene_view: wgpu::TextureView, sampler: wgpu::Sampler,
+    // isolated-layer (group opacity): a reusable offscreen MSAA target — each translucent object is
+    // rendered here opaquely, resolved, then composited onto the scene at its opacity.
+    layer_msaa: wgpu::TextureView, layer_view: wgpu::TextureView,
+    pipe_composite: wgpu::RenderPipeline, comp_bg: wgpu::BindGroup,
+    op_buf: wgpu::Buffer, op_cap: u64,
     blit_pipe: wgpu::RenderPipeline, blit_bgl: wgpu::BindGroupLayout, blit_bg: wgpu::BindGroup,
     frost_pipe: wgpu::RenderPipeline, frost_bgl: wgpu::BindGroupLayout, frost_bg: wgpu::BindGroup, frost_uni: wgpu::Buffer,
     // native GPU UI (egui paints onto OUR frame, sharing OUR device/queue)
@@ -57,6 +62,28 @@ struct VO { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32> };
     o.uv = uv; o.p = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0); o.p.y = -o.p.y; return o;
 }
 @fragment fn fs(in: VO) -> @location(0) vec4<f32> { return textureSample(t, s, in.uv); }
+"#;
+
+// Composite an isolated layer onto the scene at the object's opacity. The layer texture is PREMULTIPLIED
+// (rendered opaquely over transparent, then MSAA-resolved — so edge texels are already colour·coverage).
+// We scale the whole premultiplied texel by `o` and blend premultiplied-over (src=One, dst=1-srcAlpha):
+// out = layer·o + scene·(1 − layer.a·o). In the stroke region that is scene·(1−o) + stroke·o — no fill
+// bleed. Opacity rides in the quad's colour.a (no push constants / uniforms needed).
+const COMP_SHADER: &str = r#"
+@group(0) @binding(0) var t: texture_2d<f32>;
+@group(0) @binding(1) var s: sampler;
+struct VO { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) @interpolate(flat) o: f32 };
+@vertex fn vs(@location(0) pos: vec2<f32>, @location(1) color: vec4<f32>) -> VO {
+    var out: VO;
+    out.p = vec4<f32>(pos, 0.0, 1.0);
+    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 0.5 - pos.y * 0.5);   // NDC → texture uv (y flipped, matches blit)
+    out.o = color.a;
+    return out;
+}
+@fragment fn fs(in: VO) -> @location(0) vec4<f32> {
+    let c = textureSample(t, s, in.uv);        // premultiplied (colour·coverage, coverage)
+    return vec4<f32>(c.rgb * in.o, c.a * in.o);
+}
 "#;
 
 /// Sampleable color texture (the offscreen scene target). Returns (texture, view).
@@ -234,6 +261,25 @@ impl Renderer {
             primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
             depth_stencil: None, multisample: wgpu::MultisampleState::default(), multiview: None });
         let blit_bg = make_blit_bg(&device, &blit_bgl, &scene_view, &sampler);
+        // isolated-layer target + composite pipeline (group opacity). Reuses blit_bgl (texture+sampler).
+        let layer_msaa = make_attach(&device, &config, samples, config.format, "layer_msaa");
+        let (_layer_tex, layer_view) = make_scene_tex(&device, &config);
+        let comp_sh = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("composite"), source: wgpu::ShaderSource::Wgsl(COMP_SHADER.into()) });
+        let comp_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("composite"), bind_group_layouts: &[&blit_bgl], push_constant_ranges: &[] });
+        // premultiplied-over: src is already colour·coverage·o, so src_factor = One (NOT SrcAlpha — that would double-premultiply → dark halos)
+        let premul_over = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add };
+        let pipe_composite = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor { label: Some("composite"), layout: Some(&comp_layout),
+            vertex: wgpu::VertexState { module: &comp_sh, entry_point: "vs", buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &VATTRS }] },
+            fragment: Some(wgpu::FragmentState { module: &comp_sh, entry_point: "fs", targets: &[Some(wgpu::ColorTargetState {
+                format: config.format, blend: Some(wgpu::BlendState { color: premul_over, alpha: premul_over }), write_mask: wgpu::ColorWrites::ALL })] }),
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            // the scene pass carries a depth-stencil attachment, so this pipeline must declare one too (it ignores it)
+            depth_stencil: Some(wgpu::DepthStencilState { format: DS_FORMAT, depth_write_enabled: false, depth_compare: wgpu::CompareFunction::Always, stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState::default() }),
+            multisample: wgpu::MultisampleState { count: samples, ..Default::default() }, multiview: None });
+        let comp_bg = make_blit_bg(&device, &blit_bgl, &layer_view, &sampler);
+        let op_cap = 1u64 << 16;
+        let op_buf = mk(op_cap);
         // frosted-glass pipeline (samples scene_view; blends onto the surface)
         let frost_sh = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("frost"), source: wgpu::ShaderSource::Wgsl(FROST_SHADER.into()) });
         let frost_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("frost"), entries: &[
@@ -252,7 +298,8 @@ impl Renderer {
         // egui paints onto the (single-sample) surface in its own pass we own
         let egui_rend = egui_wgpu::Renderer::new(&device, config.format, None, 1);
         Renderer { surface, device, queue, config, pipe_main, pipe_stencil, pipe_cover, msaa, ds, samples, bg_buf, bg_cap, fill_buf, fill_cap, fg_buf, fg_cap,
-                   scene_tex, scene_view, sampler, blit_pipe, blit_bgl, blit_bg, frost_pipe, frost_bgl, frost_bg, frost_uni, egui_rend }
+                   scene_tex, scene_view, sampler, layer_msaa, layer_view, pipe_composite, comp_bg, op_buf, op_cap,
+                   blit_pipe, blit_bgl, blit_bg, frost_pipe, frost_bgl, frost_bg, frost_uni, egui_rend }
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
@@ -263,6 +310,10 @@ impl Renderer {
             self.ds = make_attach(&self.device, &self.config, self.samples, DS_FORMAT, "ds");
             let (st, sv) = make_scene_tex(&self.device, &self.config);
             self.scene_tex = st; self.scene_view = sv;
+            self.layer_msaa = make_attach(&self.device, &self.config, self.samples, self.config.format, "layer_msaa");
+            let (_lt, lv) = make_scene_tex(&self.device, &self.config);
+            self.layer_view = lv;
+            self.comp_bg = make_blit_bg(&self.device, &self.blit_bgl, &self.layer_view, &self.sampler);
             self.blit_bg = make_blit_bg(&self.device, &self.blit_bgl, &self.scene_view, &self.sampler);
             self.frost_bg = make_frost_bg(&self.device, &self.frost_bgl, &self.scene_view, &self.sampler, &self.frost_uni);
         }
@@ -282,6 +333,94 @@ impl Renderer {
         verts.len() as u32
     }
 
+    /// The shared depth-stencil attachment for a scene/layer pass: stencil cleared to 0 (the even-odd fill
+    /// algorithm needs a known-zero start — never assume a loaded stencil is zero), depth cleared, both discarded.
+    fn ds_clear(&self) -> wgpu::RenderPassDepthStencilAttachment<'_> {
+        wgpu::RenderPassDepthStencilAttachment { view: &self.ds,
+            depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+            stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }) }
+    }
+
+    /// Play a group's draw steps in paint order: each object's fill (stencil fan → cover) immediately
+    /// followed by its own stroke — so an object above covers the stroke of the one below (Illustrator
+    /// stacking). Works inside any pass (scene or isolated layer); stroke drawing never touches stencil.
+    fn draw_steps<'a>(&'a self, rp: &mut wgpu::RenderPass<'a>, draws: &[Draw]) {
+        for d in draws {
+            match d {
+                Draw::Fill { fan, cover } => {
+                    rp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                    rp.set_pipeline(&self.pipe_stencil); rp.draw(fan.0..fan.0 + fan.1, 0..1);
+                    rp.set_pipeline(&self.pipe_cover);   rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                }
+                Draw::Fg { range } => {
+                    rp.set_vertex_buffer(0, self.fg_buf.slice(..));
+                    rp.set_pipeline(&self.pipe_main);
+                    rp.draw(range.0..range.0 + range.1, 0..1);
+                }
+            }
+        }
+    }
+
+    /// Record the canvas into `self.msaa`, resolving into `self.scene_view`. Opaque groups paint straight
+    /// onto the (accumulating, MSAA) scene target; each isolated layer is rendered opaquely into `layer_msaa`,
+    /// resolved to `layer_view`, then composited back at its opacity — in z-order, so a translucent object
+    /// sent behind an opaque one stays behind it. Overlay (editing chrome) draws last, on top of everything.
+    /// The scene target is cleared exactly once (bg pass); every later scene pass LOADs; resolve happens on
+    /// the final pass only.
+    fn record_scene(&self, enc: &mut wgpu::CommandEncoder, nbg: u32, metas: &[GroupDraw], overlay: (u32, u32)) {
+        let clearc = wgpu::Color { r: BG[0] as f64, g: BG[1] as f64, b: BG[2] as f64, a: 1.0 };
+        // bg pass — clear the scene target and lay the dot grid
+        {
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("scene-bg"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clearc), store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
+            rp.set_stencil_reference(0);
+            if nbg > 0 { rp.set_pipeline(&self.pipe_main); rp.set_vertex_buffer(0, self.bg_buf.slice(..)); rp.draw(0..nbg, 0..1); }
+        }
+        for m in metas {
+            match m {
+                GroupDraw::Opaque { draws } => {
+                    let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("scene-opaque"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+                        depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
+                    rp.set_stencil_reference(0);
+                    self.draw_steps(&mut rp, draws);
+                }
+                GroupDraw::Layer { draws, quad } => {
+                    // render the object OPAQUELY into the isolated layer (cleared transparent, MSAA-resolved)
+                    {
+                        let mut lp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("layer"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.layer_msaa, resolve_target: Some(&self.layer_view),
+                                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }), store: wgpu::StoreOp::Store } })],
+                            depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
+                        lp.set_stencil_reference(0);
+                        self.draw_steps(&mut lp, draws);
+                    }
+                    // composite the resolved layer onto the scene at the object's opacity
+                    {
+                        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("composite"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: None,
+                                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+                            depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
+                        rp.set_pipeline(&self.pipe_composite); rp.set_bind_group(0, &self.comp_bg, &[]);
+                        rp.set_vertex_buffer(0, self.op_buf.slice(..)); rp.draw(quad.0..quad.0 + quad.1, 0..1);
+                    }
+                }
+            }
+        }
+        // overlay (editing chrome) on top of everything, and RESOLVE the finished scene → scene_view
+        {
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("scene-overlay"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: Some(&self.scene_view),
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
+            rp.set_stencil_reference(0);
+            if overlay.1 > 0 { rp.set_pipeline(&self.pipe_main); rp.set_vertex_buffer(0, self.fg_buf.slice(..)); rp.draw(overlay.0..overlay.0 + overlay.1, 0..1); }
+        }
+    }
+
     pub fn render(&mut self, world: &Scene, ui: &[Prim], view: View) {
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
@@ -291,34 +430,18 @@ impl Renderer {
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
         let bg = build_bg(view, fw, fh);
-        let (fillv, franges) = build_fills(&world.content, view, fw, fh);
-        let mut fg = build_fg(&world.content, view, view.zoom, fw, fh);   // artwork: strokes scale with zoom
-        fg.extend(build_fg(&world.overlay, view, 1.0, fw, fh));           // editing chrome: constant screen size
-        fg.extend(build_fg(ui, View::identity(), 1.0, fw, fh));           // toolbar: screen-fixed
+        let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+        let ov_start = fgv.len() as u32;
+        fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh));   // editing chrome: constant screen size
+        fgv.extend(build_fg(ui, View::identity(), 1.0, fw, fh));   // toolbar: screen-fixed
+        let overlay = (ov_start, fgv.len() as u32 - ov_start);
         let nbg = Self::upload(&self.device, &self.queue, &mut self.bg_buf, &mut self.bg_cap, &bg);
         let _ = Self::upload(&self.device, &self.queue, &mut self.fill_buf, &mut self.fill_cap, &fillv);
-        let nfg = Self::upload(&self.device, &self.queue, &mut self.fg_buf, &mut self.fg_cap, &fg);
+        let _ = Self::upload(&self.device, &self.queue, &mut self.fg_buf, &mut self.fg_cap, &fgv);
+        let _ = Self::upload(&self.device, &self.queue, &mut self.op_buf, &mut self.op_cap, &opv);
         let mut enc = self.device.create_command_encoder(&Default::default());
-        // Pass 1: the varos-core Scene → offscreen (MSAA resolve to scene_view).
-        {
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("scene"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: Some(&self.scene_view),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: BG[0] as f64, g: BG[1] as f64, b: BG[2] as f64, a: 1.0 }), store: wgpu::StoreOp::Store } })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &self.ds,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
-                    stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }) }),
-                timestamp_writes: None, occlusion_query_set: None });
-            rp.set_stencil_reference(0);
-            if nbg > 0 { rp.set_pipeline(&self.pipe_main); rp.set_vertex_buffer(0, self.bg_buf.slice(..)); rp.draw(0..nbg, 0..1); }
-            if !franges.is_empty() {
-                rp.set_vertex_buffer(0, self.fill_buf.slice(..));
-                for ((fs, fl), (cs, cl)) in &franges {
-                    rp.set_pipeline(&self.pipe_stencil); rp.draw(*fs..*fs + *fl, 0..1);
-                    rp.set_pipeline(&self.pipe_cover);   rp.draw(*cs..*cs + *cl, 0..1);
-                }
-            }
-            if nfg > 0 { rp.set_pipeline(&self.pipe_main); rp.set_vertex_buffer(0, self.fg_buf.slice(..)); rp.draw(0..nfg, 0..1); }
-        }
+        // Pass 1: the varos-core Scene → offscreen (opaque + isolated layers, MSAA resolve to scene_view).
+        self.record_scene(&mut enc, nbg, &metas, overlay);
         // Pass 2: blit the offscreen scene onto the surface.
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("blit"),
@@ -369,12 +492,14 @@ impl Renderer {
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
         let bg = build_bg(view, fw, fh);
-        let (fillv, franges) = build_fills(&world.content, view, fw, fh);
-        let mut fg = build_fg(&world.content, view, view.zoom, fw, fh);
-        fg.extend(build_fg(&world.overlay, view, 1.0, fw, fh));
+        let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+        let ov_start = fgv.len() as u32;
+        fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh));
+        let overlay = (ov_start, fgv.len() as u32 - ov_start);
         let nbg = Self::upload(&self.device, &self.queue, &mut self.bg_buf, &mut self.bg_cap, &bg);
         let _ = Self::upload(&self.device, &self.queue, &mut self.fill_buf, &mut self.fill_cap, &fillv);
-        let nfg = Self::upload(&self.device, &self.queue, &mut self.fg_buf, &mut self.fg_cap, &fg);
+        let _ = Self::upload(&self.device, &self.queue, &mut self.fg_buf, &mut self.fg_cap, &fgv);
+        let _ = Self::upload(&self.device, &self.queue, &mut self.op_buf, &mut self.op_cap, &opv);
         for (id, delta) in &tdelta.set { self.egui_rend.update_texture(&self.device, &self.queue, *id, delta); }
         // frosted-glass uniform: one entry per panel. Tint = panel body #1f1f22 mixed 0.62 over the
         // blurred scene (dark enough for text, glassy enough to read shapes behind it). Radius/blur/
@@ -390,26 +515,8 @@ impl Renderer {
         self.queue.write_buffer(&self.frost_uni, 0, bytemuck::bytes_of(&fu));
         let mut enc = self.device.create_command_encoder(&Default::default());
         let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
-        // scene → offscreen
-        {
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("scene"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: Some(&self.scene_view),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: BG[0] as f64, g: BG[1] as f64, b: BG[2] as f64, a: 1.0 }), store: wgpu::StoreOp::Store } })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &self.ds,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
-                    stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }) }),
-                timestamp_writes: None, occlusion_query_set: None });
-            rp.set_stencil_reference(0);
-            if nbg > 0 { rp.set_pipeline(&self.pipe_main); rp.set_vertex_buffer(0, self.bg_buf.slice(..)); rp.draw(0..nbg, 0..1); }
-            if !franges.is_empty() {
-                rp.set_vertex_buffer(0, self.fill_buf.slice(..));
-                for ((fs, fl), (cs, cl)) in &franges {
-                    rp.set_pipeline(&self.pipe_stencil); rp.draw(*fs..*fs + *fl, 0..1);
-                    rp.set_pipeline(&self.pipe_cover);   rp.draw(*cs..*cs + *cl, 0..1);
-                }
-            }
-            if nfg > 0 { rp.set_pipeline(&self.pipe_main); rp.set_vertex_buffer(0, self.fg_buf.slice(..)); rp.draw(0..nfg, 0..1); }
-        }
+        // scene → offscreen (opaque groups + isolated translucent layers, MSAA resolve to scene_view)
+        self.record_scene(&mut enc, nbg, &metas, overlay);
         // blit offscreen → surface, then the frosted-glass panel backings on top of the canvas
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("blit+frost"),

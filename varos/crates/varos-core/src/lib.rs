@@ -12,5 +12,5 @@ pub mod boolean;
 pub use boolean::BoolOp;
 pub use editor::{AlignMode, DistAxis, Editor, Mods, ToolKind, ZOrder};
 pub use geom::{Pt, Rgba, View};
-pub use scene::{build_scene, Prim, Scene};
+pub use scene::{build_scene, Group, Prim, Scene};
 pub use units::{DocUnits, Unit};
