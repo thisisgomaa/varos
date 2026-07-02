@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 varos-core = { path = "../varos-core" }
 varos-render-wgpu = { path = "../varos-render-wgpu" }
+varos-pdf = { path = "../varos-pdf" }   # the .vrs PDF container (valid PDF + embedded model)
 winit = "0.29"
 pollster = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }

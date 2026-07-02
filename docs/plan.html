@@ -116,13 +116,16 @@
     <b>Look:</b> frosted glass <b>CANCELED</b> (07-02) — solid is the one final material [D9].
     <b>Direct-tool inspector bug ✅ FIXED</b> (07-02): a Direct path-level selection now receives paint /
     stroke / opacity edits, and the inspector reads its real colours (selected_pids + repr_path).
-    <b>🔖 the slice 🟡</b> (07-02): Ctrl+S/Shift+S/O native dialogs, atomic write, versioned model blob,
-    unsaved-★ title/tab, reopen-identical (4 headless tests) — <b>gap Ahmed named: the container is
-    still raw JSON</b>; per SAVE_EXPORT_PLAN the file must be a VALID PDF (opens in other apps) with the
-    model embedded — that container upgrade is NOW (Save #6 Stage-1 pulled forward).
-    <b>NEXT, in order:</b> ① <b>.vrs = PDF container</b> (valid pages + embedded model, .ai pattern) →
-    ② <b>engine-update spike</b> (wgpu — foundation hygiene, D7/D9) →
-    ③ <b>Layers</b> (the model system, D2) → ④ Colour Stage-2 (Swatches + Paint enum → gradients).
+    <b>🔖 the slice ✅</b> (07-02): Ctrl+S/Shift+S/O native dialogs, atomic write, unsaved-★ title/tab,
+    reopen-identical. <b>Save — PDF container ✅ pulled forward early (07-02)</b>, the rest of the Save
+    system (#6) stays on its slot: .vrs IS a valid PDF (.ai pattern — page per artboard, real cubics,
+    even-odd fills, /I+/K knockout groups, model embedded via /VAROS_Model + /AF + EmbeddedFiles;
+    *.pdf filter = same bytes). <b>Ahmed-verified in Chrome/Brave/Edge/Illustrator</b>; legacy JSON
+    .vrs still opens; 8 headless container tests. His 4 interop notes live in DETAILED_ROADMAP §Save
+    as the <b>PDF-interop backlog</b> (Save #6 work — not now).
+    <b>NEXT, in order:</b> ① <b>engine-update spike</b> (wgpu — foundation hygiene, D7/D9; time-boxed,
+    rollback to 0.19 if it fights; PASS = Ahmed notices ZERO difference) →
+    ② <b>Layers</b> (the model system, D2) → ③ Colour Stage-2 (Swatches + Paint enum → gradients).
   </div>
 
   <h2>Build order</h2>
@@ -268,7 +271,7 @@ const SYSTEMS = [
     ['13','Canvas feedback & affordances',1,'p'],
     ['14','Edge cases & correctness',2,''],
   ]},
-  {step:6, nm:'Save / File system', purpose:'The native .varos file system — open/save the document, New/templates, autosave + recovery, version history, recent files, Place/Import.', note:'The serde spine moved to Foundations (✅). This system = the container (zip/OPC) + native dialogs + dirty/recovery guards on top of a schema that already round-trips. Split Stage 1 → 1a round-trip, 1b dialogs/guards.', pts:[
+  {step:6, nm:'Save / File system', purpose:'The native .varos file system — open/save the document, New/templates, autosave + recovery, version history, recent files, Place/Import.', note:'The serde spine moved to Foundations (✅). This system = the container + native dialogs + dirty/recovery guards on top of a schema that already round-trips. 📌 PDF-interop backlog (Ahmed’s real test 07-02, do HERE not now): (a) write simple opaque objects as ONE fill+stroke op so Illustrator ungroups whole objects (knockout strokes stay split — Adobe splits too); (b) embed sRGB ICC/OutputIntent so colours match EXACTLY across apps (small shifts seen); (c) dissect a real Illustrator PDF (Ahmed provides samples ± Preserve-Editing) for the cleanest flat interchange; (d) foreign PDF = clear "no Varos model" message now — a real PDF importer is its own big feature (→ Place/Import).', pts:[
     ['1','The .varos document format — on-disk container',1,''],
     ['2','New document & New-from-template',1,''],
     ['3','Save / Save As / Save a Copy / Template',1,''],

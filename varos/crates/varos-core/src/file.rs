@@ -17,27 +17,42 @@ struct VrsFile {
     doc: Document,
 }
 
-/// Write the document to `path` atomically: serialize, write a sibling temp file, rename over the
-/// target — a crash mid-save can never leave a half-written `.vrs`.
-pub fn save_vrs(doc: &Document, path: &Path) -> Result<(), String> {
-    let body = serde_json::to_string(&VrsFile { varos: VRS_VERSION, doc: doc.clone() })
-        .map_err(|e| format!("serialize failed: {e}"))?;
-    let tmp = path.with_extension("vrs.tmp");
-    std::fs::write(&tmp, body).map_err(|e| format!("write failed: {e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("rename failed: {e}"))
+/// The versioned model blob — the exact payload the PDF container embeds (and the legacy raw-JSON
+/// `.vrs` body). One serializer, two homes.
+pub fn doc_to_blob(doc: &Document) -> Result<String, String> {
+    serde_json::to_string(&VrsFile { varos: VRS_VERSION, doc: doc.clone() })
+        .map_err(|e| format!("serialize failed: {e}"))
 }
-
-/// Read a `.vrs` back into a Document. The version is checked FIRST, on a header-only parse — a file
-/// written by a newer Varos (whose Document shape we may not know) gets the clear "newer" message,
-/// never a confusing field-level parse error. Never corrupt, never guess.
-pub fn load_vrs(path: &Path) -> Result<Document, String> {
+/// Parse a model blob back (version-checked header-first — see `load_vrs`).
+pub fn doc_from_blob(body: &str) -> Result<Document, String> {
     #[derive(Deserialize)]
     struct VrsHead { varos: u32 }   // serde skips unknown fields, so this reads ANY .vrs generation
-    let body = std::fs::read_to_string(path).map_err(|e| format!("read failed: {e}"))?;
-    let head: VrsHead = serde_json::from_str(&body).map_err(|e| format!("not a valid .vrs: {e}"))?;
+    let head: VrsHead = serde_json::from_str(body).map_err(|e| format!("not a valid .vrs model: {e}"))?;
     if head.varos > VRS_VERSION {
         return Err(format!("this file was saved by a newer Varos (v{}) — please update", head.varos));
     }
-    let f: VrsFile = serde_json::from_str(&body).map_err(|e| format!("not a valid .vrs: {e}"))?;
+    let f: VrsFile = serde_json::from_str(body).map_err(|e| format!("not a valid .vrs model: {e}"))?;
     Ok(f.doc)
+}
+
+/// Write the document to `path` atomically: serialize, write a sibling temp file, rename over the
+/// target — a crash mid-save can never leave a half-written `.vrs`.
+pub fn save_vrs(doc: &Document, path: &Path) -> Result<(), String> {
+    let body = doc_to_blob(doc)?;
+    write_atomic(path, body.as_bytes())
+}
+
+/// Atomic byte write (temp sibling + rename) — shared by the raw-JSON path and the PDF container.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension("vrs.tmp");
+    std::fs::write(&tmp, bytes).map_err(|e| format!("write failed: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename failed: {e}"))
+}
+
+/// Read a raw-JSON `.vrs` back into a Document. The version is checked FIRST, on a header-only parse —
+/// a file written by a newer Varos (whose Document shape we may not know) gets the clear "newer"
+/// message, never a confusing field-level parse error. Never corrupt, never guess.
+pub fn load_vrs(path: &Path) -> Result<Document, String> {
+    let body = std::fs::read_to_string(path).map_err(|e| format!("read failed: {e}"))?;
+    doc_from_blob(&body)
 }
