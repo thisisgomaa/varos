@@ -1,0 +1,43 @@
+//! `.vrs` on disk — the serde spine written as VERSIONED JSON: `{"varos": 1, "doc": {…}}`.
+//! This is the 🔖 slice's format: readable, diffable, and additive-tolerant (the model's
+//! `#[serde(default)]` hygiene means older files keep loading as fields are added). The FINAL
+//! container decision (PDF-native with the model embedded — docs/SAVE_EXPORT_PLAN.md §4) is
+//! untouched: this exact blob later rides inside that container, so nothing here is throwaway.
+
+use std::path::Path;
+use serde::{Deserialize, Serialize};
+use crate::model::Document;
+
+/// Bump when the wrapper itself changes shape (model evolution is handled by serde defaults).
+pub const VRS_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct VrsFile {
+    varos: u32,
+    doc: Document,
+}
+
+/// Write the document to `path` atomically: serialize, write a sibling temp file, rename over the
+/// target — a crash mid-save can never leave a half-written `.vrs`.
+pub fn save_vrs(doc: &Document, path: &Path) -> Result<(), String> {
+    let body = serde_json::to_string(&VrsFile { varos: VRS_VERSION, doc: doc.clone() })
+        .map_err(|e| format!("serialize failed: {e}"))?;
+    let tmp = path.with_extension("vrs.tmp");
+    std::fs::write(&tmp, body).map_err(|e| format!("write failed: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename failed: {e}"))
+}
+
+/// Read a `.vrs` back into a Document. The version is checked FIRST, on a header-only parse — a file
+/// written by a newer Varos (whose Document shape we may not know) gets the clear "newer" message,
+/// never a confusing field-level parse error. Never corrupt, never guess.
+pub fn load_vrs(path: &Path) -> Result<Document, String> {
+    #[derive(Deserialize)]
+    struct VrsHead { varos: u32 }   // serde skips unknown fields, so this reads ANY .vrs generation
+    let body = std::fs::read_to_string(path).map_err(|e| format!("read failed: {e}"))?;
+    let head: VrsHead = serde_json::from_str(&body).map_err(|e| format!("not a valid .vrs: {e}"))?;
+    if head.varos > VRS_VERSION {
+        return Err(format!("this file was saved by a newer Varos (v{}) — please update", head.varos));
+    }
+    let f: VrsFile = serde_json::from_str(&body).map_err(|e| format!("not a valid .vrs: {e}"))?;
+    Ok(f.doc)
+}
