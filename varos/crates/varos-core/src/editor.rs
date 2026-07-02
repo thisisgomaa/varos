@@ -1719,8 +1719,7 @@ impl Editor {
     pub fn swap_paint(&mut self) { self.paint = if self.paint == PaintTarget::Fill { PaintTarget::Stroke } else { PaintTarget::Fill }; }
     pub fn apply_paint(&mut self, color: Option<Rgba>) {
         match self.paint { PaintTarget::Fill => self.cur_fill = color, PaintTarget::Stroke => self.cur_stroke = color }
-        let mut pids: HashSet<u32> = self.objsel.clone();
-        for &aid in &self.selected { if let Some(pid) = self.doc.pid_of_anchor(aid) { pids.insert(pid); } }
+        let pids = self.selected_pids();
         if pids.is_empty() { return; }
         self.begin();
         for pid in pids { if let Some(pi) = self.doc.pidx(pid) {
@@ -1750,10 +1749,22 @@ impl Editor {
         }
         out
     }
+    /// Paths targeted by inspector edits (paint / stroke-weight / opacity): object selection ∪ the paths of
+    /// individually-selected anchors ∪ the Direct-tool path-level selection. Missing that last term was the
+    /// bug where changing colour / removing stroke did nothing while the Direct-Selection tool was active.
     fn selected_pids(&self) -> HashSet<u32> {
         let mut pids: HashSet<u32> = self.objsel.clone();
         for &aid in &self.selected { if let Some(pid) = self.doc.pid_of_anchor(aid) { pids.insert(pid); } }
+        if let Some(pid) = self.dsel_path { pids.insert(pid); }
         pids
+    }
+    /// The path whose fill/stroke/weight/opacity the inspector should DISPLAY (first of the same set).
+    pub fn repr_path(&self) -> Option<usize> {
+        self.objsel.iter().copied()
+            .chain(self.dsel_path)
+            .chain(self.selected.iter().filter_map(|&aid| self.doc.pid_of_anchor(aid)))
+            .filter_map(|pid| self.doc.pidx(pid))
+            .next()
     }
     fn apply_current(&mut self) {
         let (f, st) = (self.cur_fill, self.cur_stroke);
