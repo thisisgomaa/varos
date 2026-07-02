@@ -96,6 +96,29 @@ pub struct Gradient { kind, stops: Vec<GradStop>, midpoints: Vec<f32>, /* + line
 *single* undo; hue never snaps back to red at low saturation; typing hex updates thumb + RGB/HSB instantly;
 `X/Shift+X/D//` behave exactly like Illustrator. No egui default widget visible anywhere.
 
+### Stage 1b — The Color Picker MODAL (Ahmed, 2026-07-02: "مودال احترافي بكامل قوته")
+
+Replaces the quick popover entirely. Research inputs: Illustrator/Photoshop picker anatomy, the
+harmony math from htmlcolorcodes + colordesigner (rigid hue-offset sets: comp +180 · split ±150/210 ·
+analogous ±30 · triad ±120 · rect +60/180/240 · square +90/180/270 · mono = lightness steps), and the
+pro-vs-toy checklist (contextual gradient rails, split new/current swatch, channel radios, °/% suffixes).
+
+- **Entry:** double-click ANY colour swatch anywhere (rail fill/stroke control, dock rows, artboard page
+  colour) → the modal opens seeded with that target's colour. Single click keeps its old job (focus).
+- **A floating palette, NOT a blocking modal (Ahmed, 07-02):** no scrim — the canvas stays fully usable
+  beside the open dialog; drag any empty spot of it to move it (position remembered while the app runs).
+  Esc = Cancel, Enter = OK (reserved for the dialog while open; every other shortcut reaches the canvas).
+  OK = ONE apply op + MRU push; Cancel discards (no live-apply — the split swatch previews).
+- **Modal-A (shipped first): the field picker** — Photoshop/AI channel-radio mechanic: radios on
+  H/S/B/R/G/B choose which channel the vertical spectrum slider controls; the big field shows the other
+  two axes (H → S×B, S → H×B, B → H×S, R → B×G, G → B×R, Bl → R×G). All planes/rails are exact-colour
+  meshes (no textures). + alpha rail, split new/current swatch (click current = restore), hex (commit on
+  Enter/blur) + A%, HSB (°/%) + RGB (0-255) fields, RECENT/DOCUMENT strips.
+- **Modal-B (next): the Wheel view** — segmented tab `Picker | Wheel`: H×S disc (angle=hue, radius=sat,
+  texture-baked once, tinted by B) + brightness slider + harmony dropdown (the offsets above) with
+  rigid-linked handles + clickable result chips. Skip per locked decisions: CMYK, Only-Web-Colors, RYB.
+- Later polish: in-canvas eyedropper while open, remembered position/view, scrubby labels.
+
 ### Stage 2 — Swatches panel
 Hand-painted panel (thumbnail + list views), New/Edit/Duplicate/Delete/apply, drag-reorder,
 `[None]`+white+black builtins (immutable), colour groups (folders), "Add to Swatches" from the picker.

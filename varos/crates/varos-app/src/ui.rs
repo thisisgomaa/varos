@@ -86,6 +86,11 @@ enum Op {
     SetBBox(Option<f32>, Option<f32>, Option<f32>, Option<f32>, f32, f32), // nx,ny,nw,nh + ref ax,ay
     SetRot(f32), SetOpacity(f32), SetStrokeW(f32),
     Paint(PaintTarget, Option<Rgba>),
+    Recent(Rgba),                   // remember a committed colour in the picker MRU strip
+    PaintFocus(PaintTarget),        // rail fill/stroke control: focus the target (X toggles)
+    SwapColors,                     // Shift+X
+    DefaultPaint,                   // D — white fill / black stroke
+    OpenPicker(MTarget),            // double-click a swatch → open the Color Picker modal for it
     Flip(bool),
     Align(AlignMode), Distribute(DistAxis),
     // ---- artboard ops (i = artboard index) ----
@@ -105,6 +110,21 @@ enum Op {
 /// A window action the custom title bar asks the host (winit) to perform.
 pub enum WinAction { Minimize, ToggleMaximize, Close }
 
+// ───────────────────────────── colour-picker modal state ─────────────────────────────
+
+/// Where the modal's colour lands on OK.
+#[derive(Clone, Copy)]
+enum MTarget { Paint(PaintTarget), Ab(usize) }
+
+/// The spectrum-slider channel (the Photoshop/Illustrator radio mechanic): the selected channel becomes
+/// the vertical slider, and the big field shows the remaining two axes.
+#[derive(Clone, Copy, PartialEq)]
+enum Chan { H, S, B, R, G, Bl }
+
+/// The professional Color Picker modal (opened by double-clicking any colour swatch).
+/// Live HSVA is the single source of truth while open; OK commits once, Cancel discards.
+struct ColorModal { target: MTarget, orig: Option<Rgba>, hsva: [f32; 4], chan: Chan }
+
 struct TopIcons {
     menu: Option<egui::TextureHandle>,   // min/max/close are painted glyphs now (see `winctl`), not textures
     search: Option<egui::TextureHandle>, layout: Option<egui::TextureHandle>, panels: Option<egui::TextureHandle>,
@@ -118,6 +138,8 @@ struct Snap {
     name: String, sel: bool,
     x: f32, y: f32, w: f32, h: f32, rot: f32,
     fill: Option<Rgba>, stroke: Option<Rgba>, sw: f32, opacity: f32,
+    paint: PaintTarget,                       // which target has focus (the rail control + X)
+    recent: Vec<Rgba>, doc_colors: Vec<Rgba>, // the picker's swatch strips (MRU + derived document scan)
 }
 impl Snap {
     fn read(ed: &Editor) -> Self {
@@ -134,7 +156,8 @@ impl Snap {
         let name = if n == 0 { "No selection".into() }
             else if n == 1 { first.and_then(|pi| ed.doc.paths[pi].name.clone()).unwrap_or_else(|| "Path".into()) }
             else { format!("{n} objects") };
-        Snap { tool: ed.tool, name, sel, x, y, w, h, rot: ed.obj_angle.to_degrees(), fill, stroke, sw, opacity }
+        Snap { tool: ed.tool, name, sel, x, y, w, h, rot: ed.obj_angle.to_degrees(), fill, stroke, sw, opacity,
+               paint: ed.paint, recent: ed.recent_colors.clone(), doc_colors: ed.document_colors() }
     }
 }
 
@@ -206,6 +229,7 @@ pub struct Ui {
     logo: Option<egui::TextureHandle>,
     splash_start: Option<Instant>, // startup loading screen; None once it has faded out
     last_splash: bool,             // did this frame draw the splash (host renders it transparent)?
+    color_modal: Option<ColorModal>, // the Color Picker modal, when open
 }
 
 /// Rasterize a Lucide icon (white) to an egui texture once.
@@ -281,7 +305,7 @@ impl Ui {
              cursor: egui::CursorIcon::Default, refpt: (0.0, 0.0), lock: false,
              ab_lock: false, ab_name_edit: None, fit_request: None,
              top, win_action: None, show_rail: true, show_dock: true, tabs: vec!["Untitled-1".into()], tab_active: 0,
-             logo, splash_start: Some(Instant::now()), last_splash: false }
+             logo, splash_start: Some(Instant::now()), last_splash: false, color_modal: None }
     }
 
     /// Feed a window event to egui. Returns true if egui consumed it (so the canvas should NOT).
@@ -294,6 +318,8 @@ impl Ui {
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
     pub fn wants_keyboard(&self) -> bool { self.ctx.wants_keyboard_input() }
+    /// Is the Color Picker modal open? (canvas shortcuts must be fully gated off while it is)
+    pub fn modal_open(&self) -> bool { self.color_modal.is_some() }
     /// Is the pointer over a scrubbable number field? (so the host shows the ↔ resize cursor)
     pub fn scrub_hover(&self) -> bool { self.cursor == egui::CursorIcon::ResizeHorizontal }
     /// (Re)start the startup splash timer — call right before revealing the window.
@@ -340,6 +366,7 @@ impl Ui {
         let splash = self.splash_start.map(|t| t.elapsed().as_secs_f32());
         let splashing = splash.map_or(false, |e| e < SPLASH_DUR);
         let logo = &self.logo;
+        let mut color_modal = std::mem::take(&mut self.color_modal);
         let out = self.ctx.run(input, |ctx| {
             if splashing {
                 if let Some(e) = splash { build_splash(ctx, e, logo); } // only the floating card
@@ -359,8 +386,10 @@ impl Ui {
                                 absnap.count, ab_dots, &mut ops, &mut ab_name_edit, &mut fit_request);
                 build_snap_hud(ctx, view, ppp, &snap_hud);
                 build_origin_crosshair(ctx, view, ppp, origin_preview);
+                build_color_modal(ctx, &mut color_modal, &snap, &mut ops);   // over everything
             }
         });
+        self.color_modal = color_modal;
         self.last_splash = splashing;
         if let Some(e) = splash { if e >= SPLASH_DUR { self.splash_start = None; } }
         self.refpt = refpt;
@@ -375,6 +404,18 @@ impl Ui {
         self.tabs = tabs;
         self.tab_active = tab_active;
         ed.doc.snap = snap_cfg;   // commit the magnet-menu toggles (a non-undoable mode flag)
+        // OpenPicker is a UI op (it opens the modal, seeded from the target's colour) — intercept it here
+        ops.retain(|op| if let Op::OpenPicker(t) = op {
+            let seed = match *t {
+                MTarget::Paint(PaintTarget::Fill) => snap.fill,
+                MTarget::Paint(PaintTarget::Stroke) => snap.stroke,
+                MTarget::Ab(i) => ed.doc.artboards.get(i).and_then(|a| a.page_color),
+            };
+            let base = seed.unwrap_or([0.85, 0.85, 0.87, 1.0]);
+            let h = rgb_to_hsv(base);
+            self.color_modal = Some(ColorModal { target: *t, orig: seed, hsva: [h[0], h[1], h[2], base[3]], chan: Chan::H });
+            false
+        } else { true });
         apply_ops(ed, ops);
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
         self.state.handle_platform_output(window, out.platform_output);
@@ -479,6 +520,25 @@ fn num_field(ui: &mut egui::Ui, w: f32, lab: Lab, tip: &str, value: f32, decimal
             egui::TextEdit::singleline(&mut buf).id(id).frame(false).font(egui::FontId::proportional(13.0)).text_color(TEXT));
         if just { te.request_focus(); ui.data_mut(|d| d.remove::<bool>(id)); }
         ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+        // arrow nudge while focused: ↑/↓ = ±1 · Shift+↑/↓ = ±10 (Illustrator) — applies live
+        let dv = ui.input_mut(|i| {
+            let mut d = 0.0;
+            if i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowUp) { d += 10.0; }
+            if i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowDown) { d -= 10.0; }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) { d += 1.0; }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) { d -= 1.0; }
+            d
+        });
+        if dv != 0.0 {
+            let nv = (buf.trim().parse::<f32>().unwrap_or(value) + dv).clamp(lo, hi);
+            let s = format!("{nv:.decimals$}");
+            // keep the text selected so the next keystroke still replaces (same as click-to-type)
+            let mut st = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+            st.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(s.chars().count()))));
+            st.store(ui.ctx(), id);
+            ui.data_mut(|d| d.insert_temp(id, s));
+            out = Some(nv);
+        }
         if te.lost_focus() {
             if let Ok(v) = buf.trim().parse::<f32>() { out = Some(v.clamp(lo, hi)); }
             ui.data_mut(|d| { d.remove::<String>(id); d.remove::<bool>(id); });
@@ -608,23 +668,35 @@ fn checker(p: &egui::Painter, r: egui::Rect, sq: f32) {
         p.rect_filled(cell, Rounding::ZERO, Color32::from_gray(140));
     }}
 }
-/// Vertical hue spectrum (red→…→red), as a colour-interpolated mesh.
-fn draw_hue(p: &egui::Painter, r: egui::Rect) {
-    let mut m = egui::Mesh::default(); let n = 6u32;
-    for i in 0..=n {
-        let h = i as f32 / n as f32; let c = hsv_c32(h, 1.0, 1.0); let y = r.top() + h * r.height();
-        m.colored_vertex(egui::pos2(r.left(), y), c); m.colored_vertex(egui::pos2(r.right(), y), c);
-    }
-    for i in 0..n { let a = i * 2; m.add_triangle(a, a+1, a+3); m.add_triangle(a, a+3, a+2); }
-    p.add(egui::Shape::mesh(m));
-}
 fn rail_thumb(p: &egui::Painter, r: egui::Rect, y: f32) {
     let t = egui::Rect::from_min_max(egui::pos2(r.left()-2.0, y-2.5), egui::pos2(r.right()+2.0, y+2.5));
     p.rect(t, Rounding::same(2.0), Color32::TRANSPARENT, Stroke::new(2.0, Color32::WHITE));
     p.rect_stroke(t.expand(1.0), Rounding::same(3.0), Stroke::new(1.0, Color32::from_black_alpha(90)));
 }
 
-/// Fill / Stroke row: a hand-painted swatch that opens the custom colour picker, + hex + clear ×.
+/// A labelled row of small clickable swatches (hand-painted; checker under translucent colours).
+/// Returns the clicked colour. Hidden entirely when the list is empty.
+fn swatch_strip(ui: &mut egui::Ui, label: &str, colors: &[Rgba]) -> Option<Rgba> {
+    if colors.is_empty() { return None; }
+    let mut out = None;
+    ui.add_space(2.0);
+    ui.label(RichText::new(label).color(FAINT).size(10.5));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        for c in colors {
+            let (r, resp) = ui.allocate_exact_size(egui::vec2(15.0, 15.0), egui::Sense::click());
+            let round = Rounding::same(3.0);
+            if c[3] < 0.999 { checker(&ui.painter_at(r), r, 4.0); }
+            ui.painter().rect_filled(r, round, rgba_c32a(*c));
+            ui.painter().rect_stroke(r, round, Stroke::new(1.0, if resp.hovered() { Color32::WHITE } else { BORDER_2 }));
+            if resp.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+            if resp.clicked() { out = Some(*c); }
+        }
+    });
+    out
+}
+
+/// Fill / Stroke row: a hand-painted swatch (double-click → the Color Picker modal), + hex + clear ×.
 fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &mut Vec<Op>) {
     ui.horizontal(|ui| {
         let (sw, resp) = ui.allocate_exact_size(egui::vec2(26.0, 18.0), egui::Sense::click());
@@ -636,19 +708,10 @@ fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &
                       p.line_segment([sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)], Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a))); } // None = red slash
         }
         p.rect_stroke(sw, round, Stroke::new(1.0, BORDER_2));
-        let pid = ui.make_persistent_id(("picker", matches!(target, PaintTarget::Fill)));
-        if resp.clicked() {
-            let base = color.unwrap_or([0.85, 0.85, 0.87, 1.0]);   // seed the live HSVA from the current colour
-            let h = rgb_to_hsv(base);
-            ui.data_mut(|d| d.insert_temp(pid, [h[0], h[1], h[2], base[3]]));
-            ui.memory_mut(|m| m.toggle_popup(pid));
-        }
-        egui::popup_below_widget(ui, pid, &resp, |ui| {
-            ui.set_min_width(236.0);
-            if let Some(nc) = picker_body(ui, pid, color.unwrap_or([0.85, 0.85, 0.87, 1.0])) {
-                ops.push(Op::Paint(target, Some(nc)));
-            }
-        });
+        // single click = focus the target (X toggles) · DOUBLE-click = open the Color Picker modal
+        if resp.clicked() { ops.push(Op::PaintFocus(target)); }
+        if resp.double_clicked() { ops.push(Op::OpenPicker(MTarget::Paint(target))); }
+        resp.on_hover_text("Double-click to edit the colour");
         ui.add_space(8.0);
         ui.label(RichText::new(color.map(hex_of).unwrap_or_else(|| "None".into())).color(TEXT).monospace().size(12.0));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -657,77 +720,266 @@ fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &
     });
 }
 
-/// The hand-painted picker: SV square + hue & alpha rails + hex / RGB / HSB fields. Live HSVA lives in egui
-/// temp memory keyed by `id` (seeded from `cur`); returns Some(new rgba) whenever the colour changed.
-fn picker_body(ui: &mut egui::Ui, id: egui::Id, cur: Rgba) -> Option<Rgba> {
-    let mut hsva: [f32; 4] = ui.data_mut(|d| *d.get_temp_mut_or_insert_with(id, || { let h = rgb_to_hsv(cur); [h[0], h[1], h[2], cur[3]] }));
-    let mut changed = false;
-    ui.spacing_mut().item_spacing = egui::vec2(8.0, 7.0);
-    ui.horizontal(|ui| {
-        // SV square
-        let (sv, r) = ui.allocate_exact_size(egui::vec2(176.0, 132.0), egui::Sense::click_and_drag());
-        let mut m = egui::Mesh::default();
-        m.colored_vertex(sv.left_top(), Color32::WHITE); m.colored_vertex(sv.right_top(), hsv_c32(hsva[0], 1.0, 1.0));
-        m.colored_vertex(sv.right_bottom(), Color32::BLACK); m.colored_vertex(sv.left_bottom(), Color32::BLACK);
-        m.add_triangle(0, 1, 2); m.add_triangle(0, 2, 3);
-        ui.painter_at(sv).add(egui::Shape::mesh(m));
-        let tp = egui::pos2(sv.left() + hsva[1]*sv.width(), sv.top() + (1.0 - hsva[2])*sv.height());
-        ui.painter().circle_stroke(tp, 6.0, Stroke::new(2.0, Color32::WHITE));
-        ui.painter().circle_stroke(tp, 7.0, Stroke::new(1.0, Color32::from_black_alpha(90)));
-        if r.is_pointer_button_down_on() || r.dragged() { if let Some(pos) = r.interact_pointer_pos() {
-            hsva[1] = ((pos.x - sv.left())/sv.width()).clamp(0.0, 1.0);
-            hsva[2] = (1.0 - (pos.y - sv.top())/sv.height()).clamp(0.0, 1.0); changed = true;
-        }}
-        // hue rail
-        let (hr, hrr) = ui.allocate_exact_size(egui::vec2(15.0, 132.0), egui::Sense::click_and_drag());
-        draw_hue(&ui.painter_at(hr), hr);
-        rail_thumb(&ui.painter(), hr, hr.top() + hsva[0]*hr.height());
-        if hrr.is_pointer_button_down_on() || hrr.dragged() { if let Some(pos) = hrr.interact_pointer_pos() {
-            hsva[0] = ((pos.y - hr.top())/hr.height()).clamp(0.0, 0.9999); changed = true;
-        }}
-        // alpha rail (checker + colour→transparent gradient)
-        let (ar, arr) = ui.allocate_exact_size(egui::vec2(15.0, 132.0), egui::Sense::click_and_drag());
-        checker(&ui.painter_at(ar), ar, 6.0);
-        let solid = hsv_c32(hsva[0], hsva[1], hsva[2]);
-        let mut am = egui::Mesh::default();
-        am.colored_vertex(ar.left_top(), solid); am.colored_vertex(ar.right_top(), solid);
-        am.colored_vertex(ar.right_bottom(), Color32::TRANSPARENT); am.colored_vertex(ar.left_bottom(), Color32::TRANSPARENT);
-        am.add_triangle(0, 1, 2); am.add_triangle(0, 2, 3);
-        ui.painter_at(ar).add(egui::Shape::mesh(am));
-        rail_thumb(&ui.painter(), ar, ar.top() + (1.0 - hsva[3])*ar.height());
-        if arr.is_pointer_button_down_on() || arr.dragged() { if let Some(pos) = arr.interact_pointer_pos() {
-            hsva[3] = (1.0 - (pos.y - ar.top())/ar.height()).clamp(0.0, 1.0); changed = true;
-        }}
-    });
-    let rgb = hsv_to_rgb(hsva[0], hsva[1], hsva[2]);
-    // hex field
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Hex").color(FAINT).size(11.5));
-        let hid = id.with("hex");
-        let mut buf = ui.data_mut(|d| d.get_temp::<String>(hid)).unwrap_or_else(|| hex_of([rgb[0], rgb[1], rgb[2], 1.0]).trim_start_matches('#').to_string());
-        let te = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(66.0).font(egui::FontId::monospace(12.5)).text_color(TEXT));
-        if te.has_focus() || te.changed() { ui.data_mut(|d| d.insert_temp(hid, buf.clone())); } else { ui.data_mut(|d| d.remove::<String>(hid)); }
-        if te.changed() { if let Some(c) = parse_hex(&buf) { let h = rgb_to_hsv(c);
-            if h[1] > 0.001 { hsva[0] = h[0]; } hsva[1] = h[1]; hsva[2] = h[2]; hsva[3] = c[3]; changed = true; } }
-    });
-    // RGB fields
-    ui.horizontal(|ui| {
-        let mut nrgb = [rgb[0]*255.0, rgb[1]*255.0, rgb[2]*255.0];
-        let mut edited = false;
-        for (i, (lab, tip)) in [("R", "col-r"), ("G", "col-g"), ("B", "col-b")].iter().enumerate() {
-            if let Some(v) = num_field(ui, 52.0, Lab::Letter(lab), tip, nrgb[i], 0, 1.0, 1.0, 0.0..=255.0) { nrgb[i] = v; edited = true; }
+// ───────────────────────────── the Color Picker modal ─────────────────────────────
+
+/// Field-plane / spectrum-slider axis positions (all 0..1) for the current colour under a channel radio.
+fn pick_get(chan: Chan, hsva: [f32; 4]) -> (f32, f32, f32) {
+    let c = hsv_to_rgb(hsva[0], hsva[1], hsva[2]);
+    match chan {
+        Chan::H => (hsva[1], hsva[2], hsva[0]),
+        Chan::S => (hsva[0], hsva[2], hsva[1]),
+        Chan::B => (hsva[0], hsva[1], hsva[2]),
+        Chan::R => (c[2], c[1], c[0]),   // field x=Blue · y=Green · slider=Red (Photoshop convention)
+        Chan::G => (c[2], c[0], c[1]),   // x=Blue · y=Red
+        Chan::Bl => (c[0], c[1], c[2]),  // x=Red  · y=Green
+    }
+}
+/// Write plane/slider positions back into the live HSVA (grey RGB results keep the current hue).
+fn pick_set(chan: Chan, hsva: &mut [f32; 4], px: f32, py: f32, sl: f32) {
+    match chan {
+        Chan::H => { hsva[0] = sl.min(0.9999); hsva[1] = px; hsva[2] = py; }
+        Chan::S => { hsva[0] = px.min(0.9999); hsva[1] = sl; hsva[2] = py; }
+        Chan::B => { hsva[0] = px.min(0.9999); hsva[1] = py; hsva[2] = sl; }
+        _ => {
+            let rgb = match chan { Chan::R => [sl, py, px], Chan::G => [py, sl, px], _ => [px, py, sl] };
+            let h = rgb_to_hsv([rgb[0], rgb[1], rgb[2], 1.0]);
+            if h[1] > 0.001 { hsva[0] = h[0]; }
+            hsva[1] = h[1]; hsva[2] = h[2];
         }
-        if edited { let c = [nrgb[0]/255.0, nrgb[1]/255.0, nrgb[2]/255.0, hsva[3]];
-            let h = rgb_to_hsv(c); if h[1] > 0.001 { hsva[0] = h[0]; } hsva[1] = h[1]; hsva[2] = h[2]; changed = true; }
-    });
-    // HSB fields
-    ui.horizontal(|ui| {
-        if let Some(v) = num_field(ui, 52.0, Lab::Letter("H"), "col-h", hsva[0]*360.0, 0, 1.0, 1.0, 0.0..=360.0) { hsva[0] = v/360.0; changed = true; }
-        if let Some(v) = num_field(ui, 52.0, Lab::Letter("S"), "col-s", hsva[1]*100.0, 0, 1.0, 1.0, 0.0..=100.0) { hsva[1] = v/100.0; changed = true; }
-        if let Some(v) = num_field(ui, 52.0, Lab::Letter("B"), "col-v", hsva[2]*100.0, 0, 1.0, 1.0, 0.0..=100.0) { hsva[2] = v/100.0; changed = true; }
-    });
-    ui.data_mut(|d| d.insert_temp(id, hsva));
-    if changed { let c = hsv_to_rgb(hsva[0], hsva[1], hsva[2]); Some([c[0], c[1], c[2], hsva[3]]) } else { None }
+    }
+}
+/// Colour of a field/slider sample point (px, py, sl each 0..1) under a channel radio.
+fn pick_rgb(chan: Chan, px: f32, py: f32, sl: f32) -> [f32; 3] {
+    match chan {
+        Chan::H => hsv_to_rgb(sl, px, py),
+        Chan::S => hsv_to_rgb(px, sl, py),
+        Chan::B => hsv_to_rgb(px, py, sl),
+        Chan::R => [sl, py, px],
+        Chan::G => [py, sl, px],
+        Chan::Bl => [px, py, sl],
+    }
+}
+fn rgb_c32(c: [f32; 3]) -> Color32 { Color32::from_rgb((c[0]*255.0) as u8, (c[1]*255.0) as u8, (c[2]*255.0) as u8) }
+
+/// A hand-painted radio dot (the channel selectors). Returns true on click.
+fn radio_dot(ui: &mut egui::Ui, on: bool) -> bool {
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(15.0, 25.0), egui::Sense::click());
+    let c = r.center();
+    ui.painter().circle_stroke(c, 5.0, Stroke::new(1.2, if on { ACCENT } else if resp.hovered() { TEXT } else { MUTED }));
+    if on { ui.painter().circle_filled(c, 2.6, ACCENT); }
+    resp.clicked()
+}
+
+/// A hand-painted dialog button. `primary` = accent OK.
+fn dlg_btn(ui: &mut egui::Ui, label: &str, primary: bool, w: f32) -> bool {
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
+    let rr = Rounding::same(6.0);
+    if primary {
+        ui.painter().rect_filled(r, rr, if resp.hovered() { Color32::from_rgb(0x2b, 0x9d, 0xf4) } else { ACCENT });
+    } else {
+        ui.painter().rect_filled(r, rr, if resp.hovered() { HOVER } else { BG_SURFACE });
+        ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2));
+    }
+    ui.painter().text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.5),
+        if primary { Color32::WHITE } else { TEXT });
+    resp.clicked()
+}
+
+/// The professional Color Picker dialog — a FLOATING palette (Ahmed, 07-02: no scrim, the canvas stays
+/// fully usable beside it; drag any empty spot to move it, and it remembers its position). The field
+/// plane + spectrum slider are channel-radio driven (the Photoshop/Illustrator mechanic); alpha rail;
+/// split new/current preview (click the current half to restore); hex (Enter/blur) + A% + HSB/RGB fields;
+/// RECENT/DOCUMENT strips. OK commits ONE op + the MRU push · Cancel/Esc discards · Enter = OK when no
+/// field is focused (the host reserves Esc/Enter for the dialog while it is open).
+fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: &Snap, ops: &mut Vec<Op>) {
+    if modal.is_none() { return; }
+    let screen = ctx.screen_rect();
+    let (mut ok, mut cancel) = (false, false);
+    {
+        let m = modal.as_mut().unwrap();
+        let dw = 508.0;
+        let pos = egui::pos2((screen.center().x - dw * 0.5 - 14.0).round(), 84.0);
+        egui::Area::new(egui::Id::new("cm-dialog")).order(egui::Order::Foreground)
+            .movable(true).default_pos(pos).constrain(true).show(ctx, |ui| {
+            panel_frame(14.0).show(ui, |ui| {
+                ui.set_width(dw);
+                ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
+                // ── header ──
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Color Picker").color(TEXT).strong().size(13.5));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if mini_btn(ui, "×", "Close (Esc)") { cancel = true; }
+                    });
+                });
+                ui.add_space(2.0);
+                let (px, py, sl) = pick_get(m.chan, m.hsva);
+                ui.horizontal_top(|ui| {
+                    // ── the field plane (axes follow the channel radio) ──
+                    let (pw, ph) = (240.0, 240.0);
+                    let (pr, presp) = ui.allocate_exact_size(egui::vec2(pw, ph), egui::Sense::click_and_drag());
+                    let (nx, ny) = (24usize, 16usize);
+                    let mut mesh = egui::Mesh::default();
+                    for gy in 0..=ny { for gx in 0..=nx {
+                        let fx = gx as f32 / nx as f32; let fy = gy as f32 / ny as f32;
+                        mesh.colored_vertex(egui::pos2(pr.left() + fx * pw, pr.top() + fy * ph),
+                                            rgb_c32(pick_rgb(m.chan, fx, 1.0 - fy, sl)));
+                    }}
+                    for gy in 0..ny as u32 { for gx in 0..nx as u32 {
+                        let w1 = nx as u32 + 1; let i = gy * w1 + gx;
+                        mesh.add_triangle(i, i + 1, i + w1 + 1); mesh.add_triangle(i, i + w1 + 1, i + w1);
+                    }}
+                    ui.painter_at(pr).add(egui::Shape::mesh(mesh));
+                    ui.painter().rect_stroke(pr, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+                    let mp = egui::pos2(pr.left() + px * pw, pr.top() + (1.0 - py) * ph);
+                    ui.painter().circle_stroke(mp, 6.0, Stroke::new(2.0, Color32::WHITE));
+                    ui.painter().circle_stroke(mp, 7.0, Stroke::new(1.0, Color32::from_black_alpha(110)));
+                    if presp.is_pointer_button_down_on() || presp.dragged() { if let Some(p) = presp.interact_pointer_pos() {
+                        pick_set(m.chan, &mut m.hsva,
+                                 ((p.x - pr.left()) / pw).clamp(0.0, 1.0),
+                                 (1.0 - (p.y - pr.top()) / ph).clamp(0.0, 1.0), sl);
+                    }}
+                    // ── the channel spectrum slider (contextual gradient) ──
+                    let (sr, sresp) = ui.allocate_exact_size(egui::vec2(16.0, ph), egui::Sense::click_and_drag());
+                    let stops = 32;
+                    let mut sm = egui::Mesh::default();
+                    for i in 0..=stops {
+                        let t = i as f32 / stops as f32;
+                        let sv = if m.chan == Chan::H { t } else { 1.0 - t };
+                        let cc = rgb_c32(pick_rgb(m.chan, px, py, sv));
+                        let y = sr.top() + t * ph;
+                        sm.colored_vertex(egui::pos2(sr.left(), y), cc);
+                        sm.colored_vertex(egui::pos2(sr.right(), y), cc);
+                    }
+                    for i in 0..stops as u32 { let a = i * 2; sm.add_triangle(a, a + 1, a + 3); sm.add_triangle(a, a + 3, a + 2); }
+                    ui.painter_at(sr).add(egui::Shape::mesh(sm));
+                    ui.painter().rect_stroke(sr, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+                    rail_thumb(&ui.painter(), sr, sr.top() + (if m.chan == Chan::H { sl } else { 1.0 - sl }) * ph);
+                    if sresp.is_pointer_button_down_on() || sresp.dragged() { if let Some(p) = sresp.interact_pointer_pos() {
+                        let t = ((p.y - sr.top()) / ph).clamp(0.0, 1.0);
+                        let nsl = if m.chan == Chan::H { t.min(0.9999) } else { 1.0 - t };
+                        pick_set(m.chan, &mut m.hsva, px, py, nsl);
+                    }}
+                    // ── alpha rail ──
+                    let (ar, arr) = ui.allocate_exact_size(egui::vec2(16.0, ph), egui::Sense::click_and_drag());
+                    checker(&ui.painter_at(ar), ar, 6.0);
+                    let solid = hsv_c32(m.hsva[0], m.hsva[1], m.hsva[2]);
+                    let mut am = egui::Mesh::default();
+                    am.colored_vertex(ar.left_top(), solid); am.colored_vertex(ar.right_top(), solid);
+                    am.colored_vertex(ar.right_bottom(), Color32::TRANSPARENT); am.colored_vertex(ar.left_bottom(), Color32::TRANSPARENT);
+                    am.add_triangle(0, 1, 2); am.add_triangle(0, 2, 3);
+                    ui.painter_at(ar).add(egui::Shape::mesh(am));
+                    ui.painter().rect_stroke(ar, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+                    rail_thumb(&ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * ph);
+                    if arr.is_pointer_button_down_on() || arr.dragged() { if let Some(p) = arr.interact_pointer_pos() {
+                        m.hsva[3] = (1.0 - (p.y - ar.top()) / ph).clamp(0.0, 1.0);
+                    }}
+                    // ── right column ──
+                    ui.vertical(|ui| {
+                        ui.set_width(176.0);
+                        // new / current split preview + OK / Cancel
+                        ui.horizontal_top(|ui| {
+                            let (swr, swresp) = ui.allocate_exact_size(egui::vec2(44.0, 58.0), egui::Sense::click());
+                            let c = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
+                            let newc = [c[0], c[1], c[2], m.hsva[3]];
+                            let topr = egui::Rect::from_min_max(swr.min, egui::pos2(swr.right(), swr.center().y));
+                            let botr = egui::Rect::from_min_max(egui::pos2(swr.left(), swr.center().y), swr.max);
+                            if newc[3] < 0.999 { checker(&ui.painter_at(topr), topr, 5.0); }
+                            ui.painter().rect_filled(topr, Rounding::ZERO, rgba_c32a(newc));
+                            match m.orig {
+                                Some(oc) => { if oc[3] < 0.999 { checker(&ui.painter_at(botr), botr, 5.0); }
+                                              ui.painter().rect_filled(botr, Rounding::ZERO, rgba_c32a(oc)); }
+                                None => { ui.painter().rect_filled(botr, Rounding::ZERO, Color32::from_gray(32));
+                                          ui.painter().line_segment([botr.left_bottom() + egui::vec2(2.0, -2.0), botr.right_top() + egui::vec2(-2.0, 2.0)],
+                                              Stroke::new(1.4, Color32::from_rgb(0xd6, 0x3a, 0x3a))); }
+                            }
+                            ui.painter().rect_stroke(swr, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+                            if swresp.clicked() { if let Some(p) = swresp.interact_pointer_pos() { if p.y > swr.center().y {
+                                if let Some(oc) = m.orig { let h = rgb_to_hsv(oc);
+                                    if h[1] > 0.001 { m.hsva[0] = h[0]; } m.hsva[1] = h[1]; m.hsva[2] = h[2]; m.hsva[3] = oc[3]; }
+                            }}}
+                            swresp.on_hover_text("new / current \u{2014} click the bottom half to restore");
+                            ui.vertical(|ui| {
+                                if dlg_btn(ui, "OK", true, 118.0) { ok = true; }
+                                if dlg_btn(ui, "Cancel", false, 118.0) { cancel = true; }
+                            });
+                        });
+                        ui.add_space(4.0);
+                        // hex + alpha
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("#").color(FAINT).monospace().size(12.5));
+                            let hid = egui::Id::new("cm-hex");
+                            let rgbc = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
+                            let mut buf = ui.data_mut(|d| d.get_temp::<String>(hid))
+                                .unwrap_or_else(|| hex_of([rgbc[0], rgbc[1], rgbc[2], 1.0]).trim_start_matches('#').to_string());
+                            let te = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(64.0)
+                                .font(egui::FontId::monospace(12.5)).text_color(TEXT));
+                            // commit on Enter/blur only — no colour-jumping through 3-digit parses mid-typing
+                            if te.lost_focus() {
+                                if let Some(c2) = parse_hex(&buf) { let h = rgb_to_hsv(c2);
+                                    if h[1] > 0.001 { m.hsva[0] = h[0]; } m.hsva[1] = h[1]; m.hsva[2] = h[2]; m.hsva[3] = c2[3]; }
+                                ui.data_mut(|d| d.remove::<String>(hid));
+                            } else if te.has_focus() { ui.data_mut(|d| d.insert_temp(hid, buf.clone())); }
+                            else { ui.data_mut(|d| d.remove::<String>(hid)); }
+                            if let Some(v) = num_field(ui, 60.0, Lab::Letter("A"), "cm-a", m.hsva[3] * 100.0, 0, 1.0, 1.0, 0.0..=100.0) { m.hsva[3] = v / 100.0; }
+                            ui.label(RichText::new("%").color(FAINT).size(11.0));
+                        });
+                        // HSB rows (radio → that channel drives the slider; field shows the other two)
+                        for (chan, lab, tip, max, val, suf) in [
+                            (Chan::H, "H", "cm-h", 360.0, m.hsva[0] * 360.0, "\u{00b0}"),
+                            (Chan::S, "S", "cm-s", 100.0, m.hsva[1] * 100.0, "%"),
+                            (Chan::B, "B", "cm-b", 100.0, m.hsva[2] * 100.0, "%"),
+                        ] {
+                            ui.horizontal(|ui| {
+                                if radio_dot(ui, m.chan == chan) { m.chan = chan; }
+                                if let Some(v) = num_field(ui, 76.0, Lab::Letter(lab), tip, val, 0, 1.0, 1.0, 0.0..=max) {
+                                    match chan {
+                                        Chan::H => m.hsva[0] = (v / 360.0).min(0.9999),
+                                        Chan::S => m.hsva[1] = v / 100.0,
+                                        _ => m.hsva[2] = v / 100.0,
+                                    }
+                                }
+                                ui.label(RichText::new(suf).color(FAINT).size(11.0));
+                            });
+                        }
+                        // RGB rows
+                        let rgbv = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
+                        for (i, (chan, lab, tip)) in [(Chan::R, "R", "cm-r"), (Chan::G, "G", "cm-g"), (Chan::Bl, "B", "cm-bl")].into_iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                if radio_dot(ui, m.chan == chan) { m.chan = chan; }
+                                if let Some(v) = num_field(ui, 76.0, Lab::Letter(lab), tip, rgbv[i] * 255.0, 0, 1.0, 1.0, 0.0..=255.0) {
+                                    let mut c2 = rgbv; c2[i] = v / 255.0;
+                                    let h = rgb_to_hsv([c2[0], c2[1], c2[2], 1.0]);
+                                    if h[1] > 0.001 { m.hsva[0] = h[0]; } m.hsva[1] = h[1]; m.hsva[2] = h[2];
+                                }
+                            });
+                        }
+                    });
+                });
+                // ── recent + document strips ──
+                let mut adopt = None;
+                if let Some(c) = swatch_strip(ui, "RECENT", &snap.recent) { adopt = Some(c); }
+                if let Some(c) = swatch_strip(ui, "DOCUMENT", &snap.doc_colors) { adopt = Some(c); }
+                if let Some(c) = adopt {
+                    let h = rgb_to_hsv(c);
+                    if h[1] > 0.001 { m.hsva[0] = h[0]; }      // greys keep the current hue (no snap-to-red)
+                    m.hsva[1] = h[1]; m.hsva[2] = h[2]; m.hsva[3] = c[3];
+                }
+            });
+        });
+        // keyboard: Esc = Cancel · Enter = OK (only when no field is focused)
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { cancel = true; }
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && ctx.memory(|mem| mem.focused().is_none()) { ok = true; }
+        if ok {
+            let c = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
+            let col = [c[0], c[1], c[2], m.hsva[3]];
+            match m.target {
+                MTarget::Paint(t) => ops.push(Op::Paint(t, Some(col))),
+                MTarget::Ab(i) => ops.push(Op::AbColor(i, Some(col))),
+            }
+            ops.push(Op::Recent(col));
+        }
+    }
+    if ok || cancel { *modal = None; }
 }
 
 // ───────────────────────────── tool rail ─────────────────────────────
@@ -1050,8 +1302,78 @@ fn build_rail(ctx: &egui::Context, tools: &[ToolBtn], shapes: &[ToolBtn], shape_
                     divider(ui);
                 }
             }
+            divider(ui);
+            fill_stroke_control(ui, s, ops);            // Illustrator's fill/stroke box at the rail foot
         });
     if let Some(r) = r { rects.push(r.response.rect); }
+}
+
+/// Illustrator's fill/stroke control: overlapping FILL square (top-left) + STROKE ring (bottom-right);
+/// the focused target draws ON TOP with an accent edge. Click a swatch to focus it (X toggles) ·
+/// the ⤡ arrows swap the colours (Shift+X) · the mini pair resets to white/black (D). None = red slash.
+fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
+    let (area, _) = ui.allocate_exact_size(egui::vec2(40.0, 46.0), egui::Sense::hover());
+    let p = ui.painter().clone();
+    let fr = egui::Rect::from_min_size(area.min + egui::vec2(1.0, 3.0), egui::vec2(24.0, 24.0));   // fill
+    let sr = egui::Rect::from_min_size(area.min + egui::vec2(15.0, 17.0), egui::vec2(24.0, 24.0)); // stroke
+    let rr = Rounding::same(4.0);
+    let slash = |p: &egui::Painter, r: egui::Rect| p.line_segment(
+        [r.left_bottom() + egui::vec2(3.0, -3.0), r.right_top() + egui::vec2(-3.0, 3.0)],
+        Stroke::new(1.8, Color32::from_rgb(0xd6, 0x3a, 0x3a)));
+    let draw_fill = |p: &egui::Painter, active: bool| {
+        p.rect_filled(fr.expand(2.0), Rounding::same(5.0), SOLID_PANEL);   // separation halo
+        match s.fill {
+            Some(c) => { if c[3] < 0.999 { checker(p, fr, 5.0); } p.rect_filled(fr, rr, rgba_c32a(c)); }
+            None => { p.rect_filled(fr, rr, Color32::from_gray(32)); slash(p, fr); }
+        }
+        p.rect_stroke(fr, rr, Stroke::new(if active { 1.5 } else { 1.0 }, if active { ACCENT } else { BORDER_2 }));
+    };
+    let draw_stroke = |p: &egui::Painter, active: bool| {
+        p.rect_filled(sr.expand(2.0), Rounding::same(5.0), SOLID_PANEL);
+        let hole = sr.shrink(7.5);
+        match s.stroke {
+            Some(c) => { if c[3] < 0.999 { checker(p, sr, 5.0); } p.rect_filled(sr, rr, rgba_c32a(c));
+                         p.rect_filled(hole, Rounding::same(2.0), SOLID_PANEL); }
+            None => { p.rect_filled(sr, rr, Color32::from_gray(32));
+                      p.rect_filled(hole, Rounding::same(2.0), SOLID_PANEL); slash(p, sr); }
+        }
+        p.rect_stroke(hole, Rounding::same(2.0), Stroke::new(1.0, BORDER_2));
+        p.rect_stroke(sr, rr, Stroke::new(if active { 1.5 } else { 1.0 }, if active { ACCENT } else { BORDER_2 }));
+    };
+    let fill_on_top = s.paint == PaintTarget::Fill;
+    if fill_on_top { draw_stroke(&p, false); draw_fill(&p, true); } else { draw_fill(&p, false); draw_stroke(&p, true); }
+    // click → focus the swatch under the pointer (the TOP one wins in the overlap)
+    let resp = ui.interact(area, ui.id().with("fs"), egui::Sense::click());
+    let hit = |pos: egui::Pos2| -> Option<PaintTarget> {
+        let (top, bot, tt, bt) = if fill_on_top { (fr, sr, PaintTarget::Fill, PaintTarget::Stroke) }
+                                 else { (sr, fr, PaintTarget::Stroke, PaintTarget::Fill) };
+        if top.contains(pos) { Some(tt) } else if bot.contains(pos) { Some(bt) } else { None }
+    };
+    if resp.clicked() { if let Some(t) = resp.interact_pointer_pos().and_then(hit) { ops.push(Op::PaintFocus(t)); } }
+    // double-click a swatch → the Color Picker modal for that target (Illustrator)
+    if resp.double_clicked() { if let Some(t) = resp.interact_pointer_pos().and_then(hit) { ops.push(Op::OpenPicker(MTarget::Paint(t))); } }
+    resp.on_hover_text("Fill / Stroke — click to focus (X) · double-click to edit");
+    // swap (Shift+X): a tiny hand-painted double-headed arrow, top-right
+    let swr = egui::Rect::from_min_size(area.min + egui::vec2(28.0, 0.0), egui::vec2(12.0, 12.0));
+    let rsw = ui.interact(swr, ui.id().with("fs-swap"), egui::Sense::click());
+    let sc = if rsw.hovered() { Color32::WHITE } else { MUTED };
+    let (a, b) = (swr.center() + egui::vec2(-4.5, 2.5), swr.center() + egui::vec2(4.5, -2.5));
+    p.line_segment([a, b], Stroke::new(1.3, sc));
+    p.add(egui::Shape::convex_polygon(vec![b + egui::vec2(-3.5, -0.5), b + egui::vec2(-0.5, 3.0), b], sc, Stroke::NONE));
+    p.add(egui::Shape::convex_polygon(vec![a + egui::vec2(3.5, 0.5), a + egui::vec2(0.5, -3.0), a], sc, Stroke::NONE));
+    if rsw.clicked() { ops.push(Op::SwapColors); }
+    rsw.on_hover_text("Swap fill & stroke (Shift+X)");
+    // default (D): the mini white/black pair, bottom-left
+    let dfr = egui::Rect::from_min_size(area.min + egui::vec2(0.0, 33.0), egui::vec2(13.0, 13.0));
+    let rdf = ui.interact(dfr, ui.id().with("fs-def"), egui::Sense::click());
+    let m1 = egui::Rect::from_min_size(dfr.min, egui::vec2(8.0, 8.0));
+    let m2 = egui::Rect::from_min_size(dfr.min + egui::vec2(5.0, 5.0), egui::vec2(8.0, 8.0));
+    p.rect_filled(m2, Rounding::same(1.5), Color32::from_gray(30));
+    p.rect_stroke(m2, Rounding::same(1.5), Stroke::new(1.0, if rdf.hovered() { Color32::WHITE } else { BORDER_2 }));
+    p.rect_filled(m1, Rounding::same(1.5), Color32::from_gray(242));
+    p.rect_stroke(m1, Rounding::same(1.5), Stroke::new(1.0, if rdf.hovered() { Color32::WHITE } else { BORDER_2 }));
+    if rdf.clicked() { ops.push(Op::DefaultPaint); }
+    rdf.on_hover_text("Default colours (D)");
 }
 
 /// One rail slot standing in for all four shape tools. Left-click uses the current shape; right-click
@@ -1294,11 +1616,9 @@ fn build_ab_dock(ctx: &egui::Context, s: &AbSnap, ic: &AbIcons, ab_lock: &mut bo
                               ui.painter().line_segment([sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)], Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a))); }
                 }
                 ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2));
-                let pid = ui.make_persistent_id(("ab-picker", i));
-                if resp.clicked() { let base = col.unwrap_or([1.0, 1.0, 1.0, 1.0]); let h = rgb_to_hsv(base);
-                    ui.data_mut(|d| d.insert_temp(pid, [h[0], h[1], h[2], base[3]])); ui.memory_mut(|m| m.toggle_popup(pid)); }
-                egui::popup_below_widget(ui, pid, &resp, |ui| { ui.set_min_width(236.0);
-                    if let Some(nc) = picker_body(ui, pid, col.unwrap_or([1.0, 1.0, 1.0, 1.0])) { ops.push(Op::AbColor(i, Some(nc))); } });
+                // click → the Color Picker modal (a settings row: no focus semantics to preserve)
+                if resp.clicked() || resp.double_clicked() { ops.push(Op::OpenPicker(MTarget::Ab(i))); }
+                let _ = col;
                 ui.add_space(8.0);
                 ui.label(RichText::new(match s.color { Some(c) => hex_of(c), None => "Transparent".into() }).color(TEXT).monospace().size(12.0));
             });
@@ -1513,6 +1833,11 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::SetOpacity(o) => ed.set_opacity(o.clamp(0.0, 1.0)),
             Op::SetStrokeW(w) => set_stroke_width(ed, w),
             Op::Paint(tg, c) => { ed.paint = tg; ed.apply_paint(c); }
+            Op::Recent(c) => ed.push_recent(c),
+            Op::PaintFocus(t) => ed.paint = t,
+            Op::SwapColors => ed.swap_colors(),
+            Op::DefaultPaint => ed.default_paint(),
+            Op::OpenPicker(_) => {} // UI-only: intercepted in run() (opens the modal); never reaches here
             Op::Flip(h) => ed.flip(h),
             Op::Align(m) => ed.align(m),
             Op::Distribute(a) => ed.distribute(a),

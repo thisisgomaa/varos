@@ -183,6 +183,7 @@ pub struct Editor {
     pub guide_preview: Option<Guide>, // while dragging a NEW guide out of a ruler: the live (snapped) guide
     pub mods: Mods,
     pub cur_fill: Option<Rgba>, pub cur_stroke: Option<Rgba>, pub cur_sw: f32, pub paint: PaintTarget,
+    pub recent_colors: Vec<Rgba>, // picker MRU — newest first, deduped, cap 12; ephemeral (not serialized)
     pub dirty: bool,
     undo: Vec<Document>, redo: Vec<Document>, pending: Option<Document>,
 }
@@ -195,7 +196,7 @@ impl Editor {
                  ppu: 1.0, obj_angle: 0.0, pivot: None, hover_path: None, show_rulers: true, guides_hidden: false,
                  origin_preview: None, guide_preview: None, mods: Mods::default(),
                  cur_fill: Some([0.95, 0.95, 0.96, 1.0]), cur_stroke: Some([0.12, 0.12, 0.13, 1.0]), cur_sw: 2.0, paint: PaintTarget::Fill,
-                 dirty: false, undo: vec![], redo: vec![], pending: None }
+                 recent_colors: vec![], dirty: false, undo: vec![], redo: vec![], pending: None }
     }
 
     // ---------- selection-aware queries ----------
@@ -1726,6 +1727,28 @@ impl Editor {
             match self.paint { PaintTarget::Fill => self.doc.paths[pi].fill = color, PaintTarget::Stroke => self.doc.paths[pi].stroke = color }
         }}
         self.dirty = true; self.commit();
+    }
+    /// Remember an applied colour in the picker's MRU strip: newest first, value-deduped, cap 12.
+    pub fn push_recent(&mut self, c: Rgba) {
+        let same = |a: &Rgba, b: &Rgba| a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 1e-4);
+        self.recent_colors.retain(|r| !same(r, &c));
+        self.recent_colors.insert(0, c);
+        self.recent_colors.truncate(12);
+    }
+    /// The distinct colours the artwork uses RIGHT NOW (fills + strokes, first-appearance order, cap 12).
+    /// Derived on demand — never stored (COLOR_SPEC Stage 1).
+    pub fn document_colors(&self) -> Vec<Rgba> {
+        let same = |a: &Rgba, b: &Rgba| a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 1e-4);
+        let mut out: Vec<Rgba> = Vec::new();
+        for p in &self.doc.paths {
+            for c in [p.fill, p.stroke].into_iter().flatten() {
+                if !out.iter().any(|r| same(r, &c)) {
+                    out.push(c);
+                    if out.len() >= 12 { return out; }
+                }
+            }
+        }
+        out
     }
     fn selected_pids(&self) -> HashSet<u32> {
         let mut pids: HashSet<u32> = self.objsel.clone();
