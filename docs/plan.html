@@ -110,11 +110,13 @@
     Illustrator fill/stroke box on the rail with X/Shift+X/D) · <b>professional Color Picker ✅</b>
     (Ahmed-directed 07-02): a FLOATING palette (no scrim — canvas stays usable, draggable), opened by
     double-clicking any swatch; PS/AI channel-radio views (H/S/B/R/G/B remap the plane+slider), split
-    new/current preview, °/% suffixes, alpha, hex — 🟡 <b>Wheel view + harmonies still to build</b>.
+    new/current preview, °/% suffixes, alpha, hex; <b>Wheel view ✅</b> (H×S disc + brightness/alpha
+    rails + 8 harmony rules — comp/analog/split/triad/tetra/square/mono — with linked handles + chips).
+    <b>Colour Stage-1 is now COMPLETE.</b>
     <b>Look:</b> frosted glass <b>CANCELED</b> (07-02) — solid is the one final material [D9].
-    <b>NEXT, in order:</b> ① colour-wheel view + harmonies (in the modal) → ①b <b>bug:</b> inspector
-    edits while the Direct-Selection tool is active mis-apply (change colour / remove stroke — Ahmed,
-    07-02) → ② <b>🔖 the slice</b> (draw → colour → save → reopen <code>.vrs</code>) →
+    <b>NEXT, in order:</b> ① <b>bug:</b> inspector edits while the Direct-Selection tool is active
+    mis-apply (change colour / remove stroke — Ahmed, 07-02) →
+    ② <b>🔖 the slice</b> (draw → colour → save → reopen <code>.vrs</code>) →
     ③ <b>engine-update spike</b> (wgpu — foundation hygiene, D7/D9) →
     ④ <b>Layers</b> (the model system, D2) → ⑤ Colour Stage-2 (Swatches + Paint enum → gradients).
   </div>
@@ -213,16 +215,16 @@ const FOUNDATION = [
 ];
 
 const SYSTEMS = [
-  {step:4, nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', note:'PULLED AHEAD of Layers (conscious deviation — see the rail). Stage 1 BUILT (2026-07-02): hand-painted picker popover (SV square + hue/alpha rails; hex 3/6/8-digit + RGB-255 + HSB fields; HSV as live source of truth so hue survives S=0) replacing both egui default swatches — see docs/COLOR_SPEC.md for the 7 locked decisions. RENDER FIX shipped with it: isolated-layer group opacity (a translucent fill+stroke object composites opaquely offscreen, then fades as ONE unit — Illustrator/SaveLayer semantics; foundation for blend modes + effects); per-object fill→stroke paint stacking (an object above now covers the stroke below); and translucent strokes stencil-mark+cover so the band paints ONCE (no self-overlap blur) and KNOCKS OUT the fill beneath it (PDF knockout — the band blends only against what is behind the object). Polish SHIPPED (07-02): recent + document swatch strips, ±1/±10 arrow nudges, Illustrator fill/stroke box on the rail (X/Shift+X/D). PRO PICKER SHIPPED (07-02, Ahmed-directed): a FLOATING palette (no scrim — canvas stays live, draggable) opened by double-clicking any swatch; Photoshop/Illustrator channel-radio views (H/S/B/R/G/B remap the field plane + spectrum slider), split new/current preview (click current to restore), °/% suffixes, alpha, hex-on-commit — the Wheel view + harmony rules (pt 9) are the one remaining Stage-1b piece. After the wheel: 🔖 slice → engine spike → Layers come FIRST; only then Stage 2 — Swatches (the Paint enum migration) → Gradients.', pts:[
+  {step:4, nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', note:'PULLED AHEAD of Layers (conscious deviation — see the rail). Stage 1 BUILT (2026-07-02): hand-painted picker popover (SV square + hue/alpha rails; hex 3/6/8-digit + RGB-255 + HSB fields; HSV as live source of truth so hue survives S=0) replacing both egui default swatches — see docs/COLOR_SPEC.md for the 7 locked decisions. RENDER FIX shipped with it: isolated-layer group opacity (a translucent fill+stroke object composites opaquely offscreen, then fades as ONE unit — Illustrator/SaveLayer semantics; foundation for blend modes + effects); per-object fill→stroke paint stacking (an object above now covers the stroke below); and translucent strokes stencil-mark+cover so the band paints ONCE (no self-overlap blur) and KNOCKS OUT the fill beneath it (PDF knockout — the band blends only against what is behind the object). Polish SHIPPED (07-02): recent + document swatch strips, ±1/±10 arrow nudges, Illustrator fill/stroke box on the rail (X/Shift+X/D). PRO PICKER SHIPPED (07-02, Ahmed-directed): a FLOATING palette (no scrim — canvas stays live, draggable) opened by double-clicking any swatch; Photoshop/Illustrator channel-radio views (H/S/B/R/G/B remap the field plane + spectrum slider), split new/current preview (click current to restore), °/% suffixes, alpha, hex-on-commit. WHEEL VIEW SHIPPED (07-02): `Picker | Wheel` tab → an H×S disc (exact-radial HSV fan mesh, brightness-tinted) + brightness/alpha rails + 8 harmony rules (comp/analog/split/triad/tetra/square/mono, hue-offset math from htmlcolorcodes/colordesigner) with linked ghost handles + clickable result chips. Colour Stage-1 COMPLETE. NEXT: the Direct-Selection inspector bug → 🔖 slice → engine spike → Layers come FIRST; only then Stage 2 — Swatches (the Paint enum migration) → Gradients.', pts:[
     ['1','Color targets & active-color control (Fill/Stroke/None)',1,'d'],
     ['2','Color models / color-space representations',1,'p'],
-    ['3','Color Picker dialog (full)',1,'p'],
+    ['3','Color Picker dialog (full)',1,'d'],
     ['4','Color panel (docked inspector)',1,'p'],
     ['5','Swatches panel',2,''],
     ['6','Gradients',2,''],
     ['7','Opacity / alpha (color-level)',1,'d'],
     ['8','Eyedropper / color sampling',1,'d'],
-    ['9','Color Guide / harmony rules',3,''],
+    ['9','Color Guide / harmony rules',3,'p'],
     ['10','Recolor Artwork',3,''],
     ['11','Persistence, interop & document integration',2,''],
     ['12','Accessibility, theming & ergonomics',3,''],

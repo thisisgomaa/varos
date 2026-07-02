@@ -121,9 +121,51 @@ enum MTarget { Paint(PaintTarget), Ab(usize) }
 #[derive(Clone, Copy, PartialEq)]
 enum Chan { H, S, B, R, G, Bl }
 
+/// Which geometry the modal shows: the field-plane Picker or the harmony Wheel.
+#[derive(Clone, Copy, PartialEq)]
+enum MTab { Picker, Wheel }
+
+/// Colour-wheel harmony rule. Hue-rotation sets keep S,V; Mono varies brightness. (htmlcolorcodes/
+/// colordesigner math.)
+#[derive(Clone, Copy, PartialEq)]
+enum Harmony { None, Complementary, Analogous, Split, Triadic, Tetradic, Square, Mono }
+impl Harmony {
+    const ALL: [(Harmony, &'static str); 8] = [
+        (Harmony::None, "None"), (Harmony::Complementary, "Comp"), (Harmony::Analogous, "Analog"),
+        (Harmony::Split, "Split"), (Harmony::Triadic, "Triad"), (Harmony::Tetradic, "Tetra"),
+        (Harmony::Square, "Square"), (Harmony::Mono, "Mono"),
+    ];
+    /// Hue offsets (degrees) for the non-base members — empty for None/Mono.
+    fn offsets(self) -> &'static [f32] {
+        match self {
+            Harmony::Complementary => &[180.0],
+            Harmony::Analogous => &[-30.0, 30.0],
+            Harmony::Split => &[150.0, 210.0],
+            Harmony::Triadic => &[120.0, 240.0],
+            Harmony::Tetradic => &[60.0, 180.0, 240.0],
+            Harmony::Square => &[90.0, 180.0, 270.0],
+            _ => &[],
+        }
+    }
+}
+
+/// Every colour in a harmony set (base first). Hue modes rotate hue at fixed S,V; Mono steps brightness.
+fn harmony_set(h: Harmony, base: [f32; 3]) -> Vec<[f32; 3]> {
+    match h {
+        Harmony::None => vec![base],
+        Harmony::Mono => [1.0, 0.78, 0.56, 0.36].iter()
+            .map(|k| [base[0], base[1], (base[2] * k).clamp(0.06, 1.0)]).collect(),
+        _ => {
+            let mut v = vec![base];
+            for off in h.offsets() { v.push([(base[0] + off / 360.0).rem_euclid(1.0), base[1], base[2]]); }
+            v
+        }
+    }
+}
+
 /// The professional Color Picker modal (opened by double-clicking any colour swatch).
 /// Live HSVA is the single source of truth while open; OK commits once, Cancel discards.
-struct ColorModal { target: MTarget, orig: Option<Rgba>, hsva: [f32; 4], chan: Chan }
+struct ColorModal { target: MTarget, orig: Option<Rgba>, hsva: [f32; 4], chan: Chan, tab: MTab, harmony: Harmony }
 
 struct TopIcons {
     menu: Option<egui::TextureHandle>,   // min/max/close are painted glyphs now (see `winctl`), not textures
@@ -413,7 +455,8 @@ impl Ui {
             };
             let base = seed.unwrap_or([0.85, 0.85, 0.87, 1.0]);
             let h = rgb_to_hsv(base);
-            self.color_modal = Some(ColorModal { target: *t, orig: seed, hsva: [h[0], h[1], h[2], base[3]], chan: Chan::H });
+            self.color_modal = Some(ColorModal { target: *t, orig: seed, hsva: [h[0], h[1], h[2], base[3]],
+                                                 chan: Chan::H, tab: MTab::Picker, harmony: Harmony::None });
             false
         } else { true });
         apply_ops(ed, ops);
@@ -770,6 +813,112 @@ fn radio_dot(ui: &mut egui::Ui, on: bool) -> bool {
     resp.clicked()
 }
 
+/// Screen position of an H×S point on a wheel of radius `rad` centred at `c` (red at 12 o'clock,
+/// hue increasing clockwise; saturation = radius).
+fn wheel_pos(c: egui::Pos2, rad: f32, h: f32, s: f32) -> egui::Pos2 {
+    let a = h * std::f32::consts::TAU;
+    egui::pos2(c.x + a.sin() * s * rad, c.y - a.cos() * s * rad)
+}
+
+/// The Wheel view: an H×S disc (brightness-tinted) + brightness rail + alpha rail + harmony rule pills +
+/// clickable result chips. Draggable base handle; ghost handles for the linked harmony members. Edits the
+/// same live `hsva`. Returns nothing — mutates the modal in place.
+fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
+    let v = m.hsva[2];
+    ui.horizontal_top(|ui| {
+        // ── the H×S disc (a fan mesh from a grey centre to full-sat rim; radial interp is EXACT for HSV) ──
+        let d = 236.0;
+        let (dr, dresp) = ui.allocate_exact_size(egui::vec2(d, d), egui::Sense::click_and_drag());
+        let c = dr.center();
+        let rad = d * 0.5 - 1.0;
+        let n = 96u32;
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(c, hsv_c32(0.0, 0.0, v));   // centre = grey at the current brightness
+        for i in 0..=n {
+            let h = i as f32 / n as f32;
+            mesh.colored_vertex(wheel_pos(c, rad, h, 1.0), hsv_c32(h, 1.0, v));
+        }
+        for i in 1..=n { mesh.add_triangle(0, i, i + 1); }
+        ui.painter_at(dr).add(egui::Shape::mesh(mesh));
+        ui.painter().circle_stroke(c, rad + 0.5, Stroke::new(1.0, BORDER_2));
+        // harmony ghost handles (linked, display-only) then the draggable base handle on top
+        let set = harmony_set(m.harmony, [m.hsva[0], m.hsva[1], m.hsva[2]]);
+        for gc in set.iter().skip(1) {
+            let p = wheel_pos(c, rad, gc[0], gc[1]);
+            ui.painter().circle_filled(p, 4.5, rgb_c32(hsv_to_rgb(gc[0], gc[1], gc[2])));
+            ui.painter().circle_stroke(p, 4.5, Stroke::new(1.5, Color32::from_white_alpha(200)));
+        }
+        let bp = wheel_pos(c, rad, m.hsva[0], m.hsva[1]);
+        ui.painter().circle_stroke(bp, 6.5, Stroke::new(2.0, Color32::WHITE));
+        ui.painter().circle_stroke(bp, 7.5, Stroke::new(1.0, Color32::from_black_alpha(120)));
+        if dresp.is_pointer_button_down_on() || dresp.dragged() { if let Some(p) = dresp.interact_pointer_pos() {
+            let (dx, dy) = (p.x - c.x, p.y - c.y);
+            m.hsva[0] = dx.atan2(-dy).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU;
+            m.hsva[1] = ((dx * dx + dy * dy).sqrt() / rad).clamp(0.0, 1.0);
+            if m.hsva[0] >= 1.0 { m.hsva[0] = 0.9999; }
+        }}
+        // ── brightness rail (black → full colour) ──
+        let (br, brr) = ui.allocate_exact_size(egui::vec2(16.0, d), egui::Sense::click_and_drag());
+        let mut bm = egui::Mesh::default();
+        let top = hsv_c32(m.hsva[0], m.hsva[1], 1.0);
+        bm.colored_vertex(br.left_top(), top); bm.colored_vertex(br.right_top(), top);
+        bm.colored_vertex(br.right_bottom(), Color32::BLACK); bm.colored_vertex(br.left_bottom(), Color32::BLACK);
+        bm.add_triangle(0, 1, 2); bm.add_triangle(0, 2, 3);
+        ui.painter_at(br).add(egui::Shape::mesh(bm));
+        ui.painter().rect_stroke(br, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+        rail_thumb(&ui.painter(), br, br.top() + (1.0 - v) * d);
+        if brr.is_pointer_button_down_on() || brr.dragged() { if let Some(p) = brr.interact_pointer_pos() {
+            m.hsva[2] = (1.0 - (p.y - br.top()) / d).clamp(0.0, 1.0);
+        }}
+        // ── alpha rail ──
+        let (ar, arr) = ui.allocate_exact_size(egui::vec2(16.0, d), egui::Sense::click_and_drag());
+        checker(&ui.painter_at(ar), ar, 6.0);
+        let solid = hsv_c32(m.hsva[0], m.hsva[1], m.hsva[2]);
+        let mut am = egui::Mesh::default();
+        am.colored_vertex(ar.left_top(), solid); am.colored_vertex(ar.right_top(), solid);
+        am.colored_vertex(ar.right_bottom(), Color32::TRANSPARENT); am.colored_vertex(ar.left_bottom(), Color32::TRANSPARENT);
+        am.add_triangle(0, 1, 2); am.add_triangle(0, 2, 3);
+        ui.painter_at(ar).add(egui::Shape::mesh(am));
+        ui.painter().rect_stroke(ar, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+        rail_thumb(&ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * d);
+        if arr.is_pointer_button_down_on() || arr.dragged() { if let Some(p) = arr.interact_pointer_pos() {
+            m.hsva[3] = (1.0 - (p.y - ar.top()) / d).clamp(0.0, 1.0);
+        }}
+    });
+    ui.add_space(4.0);
+    // ── harmony rule pills ──
+    ui.label(RichText::new("HARMONY").color(FAINT).size(10.5));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        for (rule, label) in Harmony::ALL {
+            let on = m.harmony == rule;
+            let (r, resp) = ui.allocate_exact_size(egui::vec2(52.0, 22.0), egui::Sense::click());
+            let rr = Rounding::same(5.0);
+            if on { ui.painter().rect_filled(r, rr, ACCENT); }
+            else if resp.hovered() { ui.painter().rect_filled(r, rr, HOVER); }
+            else { ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2)); }
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(11.0),
+                if on { Color32::WHITE } else { TEXT });
+            if resp.clicked() { m.harmony = rule; }
+        }
+    });
+    // ── harmony result chips (click to adopt as the current colour) ──
+    if m.harmony != Harmony::None {
+        ui.add_space(3.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
+            for gc in harmony_set(m.harmony, [m.hsva[0], m.hsva[1], m.hsva[2]]) {
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(30.0, 22.0), egui::Sense::click());
+                ui.painter().rect_filled(r, Rounding::same(4.0), rgb_c32(hsv_to_rgb(gc[0], gc[1], gc[2])));
+                ui.painter().rect_stroke(r, Rounding::same(4.0), Stroke::new(1.0, if resp.hovered() { Color32::WHITE } else { BORDER_2 }));
+                let rgb = hsv_to_rgb(gc[0], gc[1], gc[2]);
+                resp.clone().on_hover_text(hex_of([rgb[0], rgb[1], rgb[2], 1.0]));
+                if resp.clicked() { m.hsva[0] = gc[0]; m.hsva[1] = gc[1]; m.hsva[2] = gc[2]; }
+            }
+        });
+    }
+}
+
 /// A hand-painted dialog button. `primary` = accent OK.
 fn dlg_btn(ui: &mut egui::Ui, label: &str, primary: bool, w: f32) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
@@ -804,9 +953,19 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
             panel_frame(14.0).show(ui, |ui| {
                 ui.set_width(dw);
                 ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-                // ── header ──
+                // ── header: title + Picker|Wheel tabs + close ──
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Color Picker").color(TEXT).strong().size(13.5));
+                    ui.add_space(10.0);
+                    for (tab, label) in [(MTab::Picker, "Picker"), (MTab::Wheel, "Wheel")] {
+                        let on = m.tab == tab;
+                        let (r, resp) = ui.allocate_exact_size(egui::vec2(56.0, 22.0), egui::Sense::click());
+                        let rr = Rounding::same(5.0);
+                        if on { ui.painter().rect_filled(r, rr, BG_SURFACE); ui.painter().rect_stroke(r, rr, Stroke::new(1.0, ACCENT)); }
+                        else if resp.hovered() { ui.painter().rect_filled(r, rr, HOVER); }
+                        ui.painter().text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.0), if on { TEXT } else { MUTED });
+                        if resp.clicked() { m.tab = tab; }
+                    }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if mini_btn(ui, "×", "Close (Esc)") { cancel = true; }
                     });
@@ -814,6 +973,9 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                 ui.add_space(2.0);
                 let (px, py, sl) = pick_get(m.chan, m.hsva);
                 ui.horizontal_top(|ui| {
+                  ui.vertical(|ui| {
+                   if m.tab == MTab::Wheel { build_wheel(ui, m); } else {
+                    ui.horizontal_top(|ui| {
                     // ── the field plane (axes follow the channel radio) ──
                     let (pw, ph) = (240.0, 240.0);
                     let (pr, presp) = ui.allocate_exact_size(egui::vec2(pw, ph), egui::Sense::click_and_drag());
@@ -873,7 +1035,10 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                     if arr.is_pointer_button_down_on() || arr.dragged() { if let Some(p) = arr.interact_pointer_pos() {
                         m.hsva[3] = (1.0 - (p.y - ar.top()) / ph).clamp(0.0, 1.0);
                     }}
-                    // ── right column ──
+                    }); // close the Picker plane+slider+alpha row
+                   } // close: else (the Picker tab)
+                  }); // close the left-region vertical (Picker plane OR Wheel)
+                    // ── right column (shared by both tabs) ──
                     ui.vertical(|ui| {
                         ui.set_width(176.0);
                         // new / current split preview + OK / Cancel
