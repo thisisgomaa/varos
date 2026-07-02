@@ -1,0 +1,13 @@
+[package]
+name = "varos-pdf"
+version = "0.1.0"
+edition = "2021"
+
+# The .vrs CONTAINER (SAVE_EXPORT_PLAN §1): a VALID PDF that every viewer renders (one page per
+# artboard) + the editable varos-core model embedded as an associated file — the .ai pattern.
+# Write = pdf-writer, read-back = lopdf. varos-core stays format-agnostic: PDF semantics live
+# ONLY in this crate (the §0 hedge — the container can be swapped with zero model rewrite).
+[dependencies]
+varos-core = { path = "../varos-core" }
+pdf-writer = "0.15"
+lopdf = "0.43"

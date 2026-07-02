@@ -473,13 +473,15 @@ fn main() {
                             } else if mc && code == KeyCode::KeyS {
                                 // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
                                 let dest = if ms { None } else { cur_file.clone() }.or_else(|| {
-                                    rfd::FileDialog::new().add_filter("Varos document", &["vrs"])
+                                    rfd::FileDialog::new()
+                                        .add_filter("Varos document (PDF-compatible)", &["vrs"])
+                                        .add_filter("PDF", &["pdf"])   // same bytes — a valid PDF either way
                                         .set_file_name(format!("{}.vrs", doc_stem(cur_file.as_deref())))
                                         .save_file()
                                 });
                                 if let Some(mut p) = dest {
-                                    if p.extension().map_or(true, |e| !e.eq_ignore_ascii_case("vrs")) { p.set_extension("vrs"); }
-                                    match varos_core::file::save_vrs(&ed.doc, &p) {
+                                    if p.extension().map_or(true, |e| !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))) { p.set_extension("vrs"); }
+                                    match varos_pdf::save_vrs(&ed.doc, &p) {
                                         Ok(()) => { cur_file = Some(p); saved_rev = ed.rev; }
                                         Err(e) => { rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error)
                                             .set_title("Varos").set_description(format!("Save failed: {e}")).show(); }
@@ -493,8 +495,9 @@ fn main() {
                                     .set_description("You have unsaved changes.\nDiscard them and open another file?")
                                     .set_buttons(rfd::MessageButtons::YesNo).show() == rfd::MessageDialogResult::Yes;
                                 if proceed {
-                                    if let Some(p) = rfd::FileDialog::new().add_filter("Varos document", &["vrs"]).pick_file() {
-                                        match varos_core::file::load_vrs(&p) {
+                                    if let Some(p) = rfd::FileDialog::new()
+                                        .add_filter("Varos document", &["vrs", "pdf"]).pick_file() {
+                                        match varos_pdf::load_vrs(&p) {
                                             Ok(doc) => {
                                                 ed.replace_doc(doc);
                                                 cur_file = Some(p); saved_rev = ed.rev;
