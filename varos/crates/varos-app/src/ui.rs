@@ -190,13 +190,16 @@ impl Snap {
             Some((x0, y0, x1, y1)) if n > 0 => (true, x0, y0, x1 - x0, y1 - y0),
             _ => (false, 0.0, 0.0, 0.0, 0.0),
         };
-        let first = ed.objsel.iter().copied().filter_map(|p| ed.doc.pidx(p)).next();
-        let (fill, stroke, sw, opacity) = match first {
+        // fill/stroke/weight/opacity follow the EFFECTIVE paint selection (object sel, a Direct path-level
+        // selection, or a selected anchor's path) — not objsel alone, so the Direct tool shows real colours.
+        let repr = ed.repr_path();
+        let (fill, stroke, sw, opacity) = match repr {
             Some(pi) => { let p = &ed.doc.paths[pi]; (p.fill, p.stroke, p.stroke_width, p.opacity) }
             None => (ed.cur_fill, ed.cur_stroke, ed.cur_sw, 1.0),
         };
-        let name = if n == 0 { "No selection".into() }
-            else if n == 1 { first.and_then(|pi| ed.doc.paths[pi].name.clone()).unwrap_or_else(|| "Path".into()) }
+        let name = if n == 0 {
+            match repr { Some(pi) => ed.doc.paths[pi].name.clone().unwrap_or_else(|| "Path".into()), None => "No selection".into() }
+        } else if n == 1 { repr.and_then(|pi| ed.doc.paths[pi].name.clone()).unwrap_or_else(|| "Path".into()) }
             else { format!("{n} objects") };
         Snap { tool: ed.tool, name, sel, x, y, w, h, rot: ed.obj_angle.to_degrees(), fill, stroke, sw, opacity,
                paint: ed.paint, recent: ed.recent_colors.clone(), doc_colors: ed.document_colors() }
