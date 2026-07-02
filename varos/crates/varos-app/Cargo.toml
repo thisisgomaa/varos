@@ -20,3 +20,4 @@ windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gd
 egui = "0.27"
 egui-wgpu = "0.27"
 egui-winit = "0.27"
+rfd = "0.15"   # native Save/Open/message dialogs (the 🔖 slice: .vrs on disk)

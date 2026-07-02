@@ -97,7 +97,15 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Scale => "Scale (S)",
     }
 }
-fn full_title(t: ToolKind) -> String { format!("Varos \u{3b1} \u{b7} pre-alpha \u{2014} {}", tool_name(t)) }
+/// Display name of the open document ("Untitled-1" until it lives on disk).
+fn doc_stem(file: Option<&std::path::Path>) -> String {
+    file.and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Untitled-1".into())
+}
+/// Window title: "name* · Varos α — Tool" (the * = unsaved changes, like every desktop editor).
+fn full_title(t: ToolKind, file: Option<&std::path::Path>, unsaved: bool) -> String {
+    format!("{}{} \u{b7} Varos \u{3b1} \u{2014} {}", doc_stem(file), if unsaved { "*" } else { "" }, tool_name(t))
+}
 
 /// Apply a keyboard shortcut. `code` is a W3C key code; shared by canvas focus + forwarded keys.
 fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bool, alt: bool) {
@@ -253,7 +261,7 @@ fn main() {
     }
     let event_loop = EventLoop::new().unwrap();
     let saved = load_win_state();   // remembered geometry from last session (None on first run)
-    let mut builder = WindowBuilder::new().with_title(full_title(ToolKind::Object))
+    let mut builder = WindowBuilder::new().with_title(full_title(ToolKind::Object, None, false))
         .with_window_icon(load_icon()).with_visible(false) // created hidden — no visible flash at all
         .with_transparent(true)                            // lets the startup splash card float over the desktop
         .with_decorations(false);                          // borderless during the splash → no window shadow; the
@@ -330,6 +338,11 @@ fn main() {
         saved.map(|(_, x, y, w, h)| (x, y, w, h)).unwrap_or((p.x, p.y, sz.width, sz.height))
     };
     let mut refit_pending = saved.map_or(false, |(m, ..)| m);
+
+    // ---- the 🔖 slice: the open .vrs + unsaved-changes tracking (drives the title/tab "*") ----
+    let mut cur_file: Option<std::path::PathBuf> = None;
+    let mut saved_rev: u64 = ed.rev;
+    let mut last_title = String::new();
 
     // Paint frame 0 imperatively while cloaked, then reveal — the first pixels on screen are our dark
     // UI + splash (never a white flash, never the native caption).
@@ -423,7 +436,6 @@ fn main() {
                         },
                         _ => {}
                     }
-                    window.set_title(&full_title(ed.tool));
                     window.request_redraw();
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
@@ -458,11 +470,48 @@ fn main() {
                                 let a = ed.doc.active_artboard().cloned().unwrap_or_default();
                                 let sz = window.inner_size();
                                 view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                            } else if mc && code == KeyCode::KeyS {
+                                // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
+                                let dest = if ms { None } else { cur_file.clone() }.or_else(|| {
+                                    rfd::FileDialog::new().add_filter("Varos document", &["vrs"])
+                                        .set_file_name(format!("{}.vrs", doc_stem(cur_file.as_deref())))
+                                        .save_file()
+                                });
+                                if let Some(mut p) = dest {
+                                    if p.extension().map_or(true, |e| !e.eq_ignore_ascii_case("vrs")) { p.set_extension("vrs"); }
+                                    match varos_core::file::save_vrs(&ed.doc, &p) {
+                                        Ok(()) => { cur_file = Some(p); saved_rev = ed.rev; }
+                                        Err(e) => { rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error)
+                                            .set_title("Varos").set_description(format!("Save failed: {e}")).show(); }
+                                    }
+                                }
+                                ed.mods = Default::default();   // the native dialog eats the key releases
+                            } else if mc && code == KeyCode::KeyO {
+                                // Ctrl+O = Open — guard unsaved changes first
+                                let proceed = ed.rev == saved_rev || rfd::MessageDialog::new()
+                                    .set_level(rfd::MessageLevel::Warning).set_title("Varos")
+                                    .set_description("You have unsaved changes.\nDiscard them and open another file?")
+                                    .set_buttons(rfd::MessageButtons::YesNo).show() == rfd::MessageDialogResult::Yes;
+                                if proceed {
+                                    if let Some(p) = rfd::FileDialog::new().add_filter("Varos document", &["vrs"]).pick_file() {
+                                        match varos_core::file::load_vrs(&p) {
+                                            Ok(doc) => {
+                                                ed.replace_doc(doc);
+                                                cur_file = Some(p); saved_rev = ed.rev;
+                                                let a = ed.doc.active_artboard().cloned().unwrap_or_default();
+                                                let sz = window.inner_size();
+                                                view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                                            }
+                                            Err(e) => { rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error)
+                                                .set_title("Varos").set_description(format!("Open failed: {e}")).show(); }
+                                        }
+                                    }
+                                }
+                                ed.mods = Default::default();
                             } else {
                                 apply_key(&mut ed, &mut view, &cs, mc, ms, ma);
                             }
-                            window.set_title(&full_title(ed.tool));
-                                    window.request_redraw();
+                            window.request_redraw();
                         }
                     }
                 }
@@ -474,9 +523,16 @@ fn main() {
                     ed.ppu = view.zoom;
                     // Native UI runs FIRST (the rail may switch the tool), THEN we build the scene from
                     // the updated editor so the change shows this same frame.
-                    let prev_tool = ed.tool;
                     let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32, view, cursors::is_maximized(hwnd));
-                    if ed.tool != prev_tool { window.set_title(&full_title(ed.tool)); }
+                    // title + tab track the document (name, unsaved *) and the active tool
+                    let unsaved = ed.rev != saved_rev;
+                    let title = full_title(ed.tool, cur_file.as_deref(), unsaved);
+                    if title != last_title {
+                        window.set_title(&title);
+                        gui.set_doc_tab(format!("{}{}", doc_stem(cur_file.as_deref()), if unsaved { " *" } else { "" }));
+                        last_title = title;
+                        window.request_redraw();   // repaint once more so the tab text shows this change
+                    }
                     // a "Fit in window" request from the artboard panel / ⋮ menu (this frame's view update)
                     if let Some(i) = gui.fit_request.take() {
                         if let Some(a) = ed.doc.artboards.get(i) {

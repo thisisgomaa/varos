@@ -184,6 +184,9 @@ pub struct Editor {
     pub mods: Mods,
     pub cur_fill: Option<Rgba>, pub cur_stroke: Option<Rgba>, pub cur_sw: f32, pub paint: PaintTarget,
     pub recent_colors: Vec<Rgba>, // picker MRU — newest first, deduped, cap 12; ephemeral (not serialized)
+    /// Document revision — bumps on every committed change, undo and redo. `rev != saved_rev` (held by
+    /// the app) = unsaved changes. (`dirty` below is a PER-GESTURE flag for begin/commit, not this.)
+    pub rev: u64,
     pub dirty: bool,
     undo: Vec<Document>, redo: Vec<Document>, pending: Option<Document>,
 }
@@ -196,7 +199,7 @@ impl Editor {
                  ppu: 1.0, obj_angle: 0.0, pivot: None, hover_path: None, show_rulers: true, guides_hidden: false,
                  origin_preview: None, guide_preview: None, mods: Mods::default(),
                  cur_fill: Some([0.95, 0.95, 0.96, 1.0]), cur_stroke: Some([0.12, 0.12, 0.13, 1.0]), cur_sw: 2.0, paint: PaintTarget::Fill,
-                 recent_colors: vec![], dirty: false, undo: vec![], redo: vec![], pending: None }
+                 recent_colors: vec![], rev: 0, dirty: false, undo: vec![], redo: vec![], pending: None }
     }
 
     // ---------- selection-aware queries ----------
@@ -1228,12 +1231,22 @@ impl Editor {
     pub fn begin(&mut self) { self.pending = Some(self.doc.clone()); self.dirty = false; }
     pub fn commit(&mut self) {
         self.doc.sync_groups();   // drop membership for deleted paths / empty groups
-        if self.dirty { if let Some(p) = self.pending.take() { self.undo.push(p); if self.undo.len() > 200 { self.undo.remove(0); } self.redo.clear(); } }
+        if self.dirty { if let Some(p) = self.pending.take() { self.undo.push(p); if self.undo.len() > 200 { self.undo.remove(0); } self.redo.clear(); self.rev += 1; } }
         self.pending = None; self.dirty = false;
     }
-    pub fn undo(&mut self) { if let Some(s) = self.undo.pop() { self.redo.push(self.doc.clone()); self.doc = s; self.clear_transient(); } }
-    pub fn redo(&mut self) { if let Some(s) = self.redo.pop() { self.undo.push(self.doc.clone()); self.doc = s; self.clear_transient(); } }
+    pub fn undo(&mut self) { if let Some(s) = self.undo.pop() { self.redo.push(self.doc.clone()); self.doc = s; self.clear_transient(); self.rev += 1; } }
+    pub fn redo(&mut self) { if let Some(s) = self.redo.pop() { self.undo.push(self.doc.clone()); self.doc = s; self.clear_transient(); self.rev += 1; } }
     fn clear_transient(&mut self) { self.selected.clear(); self.objsel.clear(); self.dsel_path = None; self.active = None; self.drag = Drag::None; }
+    /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
+    /// state reset — the new file starts clean, on the same tool.
+    pub fn replace_doc(&mut self, doc: Document) {
+        self.doc = doc;
+        self.undo.clear(); self.redo.clear(); self.pending = None;
+        self.clear_transient();
+        self.pivot = None; self.hover_path = None; self.guide_preview = None; self.origin_preview = None;
+        self.snap_guides.clear(); self.snap_hud = None; self.obj_angle = 0.0;
+        self.rev += 1;
+    }
 
     // ---------- shared mutating ops (used by tools) ----------
     pub fn reverse(&mut self, pi: usize) {

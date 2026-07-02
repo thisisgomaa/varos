@@ -365,6 +365,10 @@ impl Ui {
     pub fn wants_keyboard(&self) -> bool { self.ctx.wants_keyboard_input() }
     /// Is the Color Picker modal open? (canvas shortcuts must be fully gated off while it is)
     pub fn modal_open(&self) -> bool { self.color_modal.is_some() }
+    /// The 🔖 slice: the host names tab 0 after the open document ("name" / "name *").
+    pub fn set_doc_tab(&mut self, name: String) {
+        if self.tabs.is_empty() { self.tabs.push(name); } else { self.tabs[0] = name; }
+    }
     /// Is the pointer over a scrubbable number field? (so the host shows the ↔ resize cursor)
     pub fn scrub_hover(&self) -> bool { self.cursor == egui::CursorIcon::ResizeHorizontal }
     /// (Re)start the startup splash timer — call right before revealing the window.
