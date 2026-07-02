@@ -84,7 +84,7 @@
       <h1>Varos — Plan</h1>
       <div class="sub">The whole roadmap, every phase &amp; point. Source of truth: <code>docs/DETAILED_ROADMAP.md</code>.</div>
     </div>
-    <span class="pill">updated <b id="upd" style="color:var(--text)">&nbsp;2026-06-30</b></span>
+    <span class="pill">updated <b id="upd" style="color:var(--text)">&nbsp;2026-07-02</b></span>
   </div>
 
   <div class="row legend">
@@ -99,22 +99,31 @@
   </div>
 
   <div id="status" class="note" style="margin:18px 0 0 0">
-    <b>Where we are:</b> Foundations spine complete (serde&nbsp;✅ + units&nbsp;✅).
-    <b>Artboard system — Stage&nbsp;1 BUILT</b> (2026-06-30): multi-artboard model, the
-    Artboard tool (Shift+O), the inspector panel, and the on-canvas name + ⋮ menu.
-    <b>Snap + Rulers + Guides — BUILT</b> (2026-06-30): the shared snap engine
-    (object/anchor/path/geometry/equal-spacing/grid + Transform Again), the magnet menu &amp; measurement
-    HUD, Ctrl+R rulers (grid-aligned ticks, snapped draggable origin), and ruler guides (drag-out, snap,
-    move, delete, Ctrl+; / Alt+Ctrl+;). Plus window-state persistence &amp; Win11 caption glyphs.
-    Next: <b>Transform panel + tools</b> (the numeric/pivot side). North star: the
-    <b>“make a logo &amp; keep it” slice</b> after Colour.
+    <b>Where we are (2026-07-02):</b> Foundations spine ✅ (serde + units) ·
+    <b>Artboard Stage-1 ✅</b> (06-30) · <b>Snap + Rulers + Guides ✅</b> (06-30: snap engine, magnet
+    menu, measurement HUD, Ctrl+R rulers, drag-out guides) ·
+    <b>Transform TOOLS ✅</b> (07-01: Rotate R / Scale S, snapped draggable pivot, Alt-copy, Transform
+    Again) — the numeric <b>Transform panel is still open</b> ·
+    <b>Colour Stage-1 ✅</b> (07-02, <b>pulled ahead of Layers</b> — conscious call, see the rail):
+    render-correctness fix (isolated-layer group opacity, per-object fill→stroke stacking, stroke
+    knockout — 5 headless tests) · polish ✅ (recent + document swatch strips, ±1/±10 arrow nudges,
+    Illustrator fill/stroke box on the rail with X/Shift+X/D) · <b>professional Color Picker ✅</b>
+    (Ahmed-directed 07-02): a FLOATING palette (no scrim — canvas stays usable, draggable), opened by
+    double-clicking any swatch; PS/AI channel-radio views (H/S/B/R/G/B remap the plane+slider), split
+    new/current preview, °/% suffixes, alpha, hex — 🟡 <b>Wheel view + harmonies still to build</b>.
+    <b>Look:</b> frosted glass <b>CANCELED</b> (07-02) — solid is the one final material [D9].
+    <b>NEXT, in order:</b> ① colour-wheel view + harmonies (in the modal) → ①b <b>bug:</b> inspector
+    edits while the Direct-Selection tool is active mis-apply (change colour / remove stroke — Ahmed,
+    07-02) → ② <b>🔖 the slice</b> (draw → colour → save → reopen <code>.vrs</code>) →
+    ③ <b>engine-update spike</b> (wgpu — foundation hygiene, D7/D9) →
+    ④ <b>Layers</b> (the model system, D2) → ⑤ Colour Stage-2 (Swatches + Paint enum → gradients).
   </div>
 
   <h2>Build order</h2>
   <div id="rail" class="rail"></div>
 
-  <h2>Build decisions — 2026-06-29 (override anything that conflicts)</h2>
-  <details open><summary><span class="sysname">The 8 review-driven decisions</span></summary>
+  <h2>Build decisions — locked; override anything that conflicts (1–8: 06-29 · 9: 07-02)</h2>
+  <details open><summary><span class="sysname">The 9 locked decisions</span></summary>
     <div id="decisions" style="padding:4px 15px 14px"></div>
   </details>
 
@@ -132,12 +141,14 @@
 <script>
 // ---- data (edit here to keep in sync with DETAILED_ROADMAP.md) ----
 const ORDER = [
-  {k:'0', nm:'Foundations', state:'active'},
-  {k:'1', nm:'Artboard', state:'active'},
-  {k:'2', nm:'Transform + Snap'},
-  {k:'3', nm:'Layers'},
-  {k:'4', nm:'Colour'},
-  {milestone:'🔖 Slice: draw → colour → save → reopen  ("make a logo & keep it")'},
+  {k:'0', nm:'Foundations', state:'done', sec:'spine ✅ 06-29'},
+  {k:'1', nm:'Artboard', state:'done', sec:'Stage 1 ✅ 06-30'},
+  {k:'2', nm:'Transform + Snap', state:'part', sec:'snap+tools ✅ · panel open'},
+  {k:'4·S1', nm:'Colour — Stage 1', state:'active', sec:'picker ✅ 07-02 · polish'},
+  {milestone:'🔖 NEXT — Slice: draw → colour → save → reopen  ("make a logo & keep it")'},
+  {k:'⚙', nm:'Engine spike (wgpu)', state:'next', sec:'foundation hygiene [D7/D9]'},
+  {k:'3', nm:'Layers', sec:'the model system [D2]'},
+  {k:'4·S2', nm:'Colour — Stage 2', sec:'Swatches · Paint enum'},
   {k:'5', nm:'Stroke'},
   {k:'6', nm:'Save'},
   {k:'7', nm:'Geometric tools'},
@@ -156,6 +167,7 @@ const DECISIONS = [
   ['6','<b>Codex (after the foundation):</b> freeze Document/Op/Snap shape (one owner); no Color‖Stroke parallelism; clean seams by crate or non-adjacent systems.'],
   ['7','<b>Order tweaks:</b> Snapping with/before Transform; Artboard slot-1 = Stage-1 single board; wgpu 0.19→0.29 = its own spike w/ fallback (not a Phase-1 gate); Transform handle-coupling reconciled to the verified geometry-couple (Alt breaks).'],
   ['8','<b>v1 = Illustrator-class, not Figma-class.</b> Components/Symbols + Frames/Auto-Layout are post-v1 systems; extensibility/plugins/single-schema gets its true (deferred) weight.'],
+  ['9','<b>Frosted glass CANCELED (2026-07-02, Ahmed — final).</b> Solid panels are the ONE material — no material toggle, one code path (the frost plumbing may be deleted). The wgpu bump stays planned as <b>foundation hygiene</b>, not looks: slot = right after the 🔖 slice, before more panels stack on egui 0.27.'],
 ];
 
 // status: d=done(✅) p=partial(🟡) n=none(🔴) x=not built(❌) ''=planned
@@ -170,7 +182,7 @@ const FOUNDATION = [
     ['A6','Text inputs',2,'p'],
     ['A7','Dropdowns / selects / menus',2,'p'],
     ['A8','Sliders',2,'p'],
-    ['A9','Color swatch chips + picker entry',1,'p'],
+    ['A9','Color swatch chips + picker entry',1,'d'],
     ['A10','Tabs, collapsibles, tooltips, misc',1,'p'],
     ['A11','Window (show/hide) menu system',2,'p'],
     ['A12','Icon set (Lucide → textures)',1,'d'],
@@ -201,7 +213,7 @@ const FOUNDATION = [
 ];
 
 const SYSTEMS = [
-  {step:4, nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', note:'Stage 1 BUILT (2026-07-02): hand-painted picker popover (SV square + hue/alpha rails; hex 3/6/8-digit + RGB-255 + HSB fields; HSV as live source of truth so hue survives S=0) replacing both egui default swatches — see docs/COLOR_SPEC.md for the 7 locked decisions. RENDER FIX shipped with it: isolated-layer group opacity (a translucent fill+stroke object composites opaquely offscreen, then fades as ONE unit — Illustrator/SaveLayer semantics; foundation for blend modes + effects); per-object fill→stroke paint stacking (an object above now covers the stroke below); and translucent strokes stencil-mark+cover so the band paints ONCE (no self-overlap blur) and KNOCKS OUT the fill beneath it (PDF knockout — the band blends only against what is behind the object). Pending polish: recent/document colour strips + arrow-key nudges. Next: Swatches (Paint enum migration), then Gradients.', pts:[
+  {step:4, nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', note:'PULLED AHEAD of Layers (conscious deviation — see the rail). Stage 1 BUILT (2026-07-02): hand-painted picker popover (SV square + hue/alpha rails; hex 3/6/8-digit + RGB-255 + HSB fields; HSV as live source of truth so hue survives S=0) replacing both egui default swatches — see docs/COLOR_SPEC.md for the 7 locked decisions. RENDER FIX shipped with it: isolated-layer group opacity (a translucent fill+stroke object composites opaquely offscreen, then fades as ONE unit — Illustrator/SaveLayer semantics; foundation for blend modes + effects); per-object fill→stroke paint stacking (an object above now covers the stroke below); and translucent strokes stencil-mark+cover so the band paints ONCE (no self-overlap blur) and KNOCKS OUT the fill beneath it (PDF knockout — the band blends only against what is behind the object). Polish SHIPPED (07-02): recent + document swatch strips, ±1/±10 arrow nudges, Illustrator fill/stroke box on the rail (X/Shift+X/D). PRO PICKER SHIPPED (07-02, Ahmed-directed): a FLOATING palette (no scrim — canvas stays live, draggable) opened by double-clicking any swatch; Photoshop/Illustrator channel-radio views (H/S/B/R/G/B remap the field plane + spectrum slider), split new/current preview (click current to restore), °/% suffixes, alpha, hex-on-commit — the Wheel view + harmony rules (pt 9) are the one remaining Stage-1b piece. After the wheel: 🔖 slice → engine spike → Layers come FIRST; only then Stage 2 — Swatches (the Paint enum migration) → Gradients.', pts:[
     ['1','Color targets & active-color control (Fill/Stroke/None)',1,'d'],
     ['2','Color models / color-space representations',1,'p'],
     ['3','Color Picker dialog (full)',1,'p'],
@@ -233,21 +245,21 @@ const SYSTEMS = [
     ['15','Selection, multi-edit & state behavior',1,''],
     ['16','Edge cases & interactions','2–3',''],
   ]},
-  {step:2, nm:'Transform system', purpose:'Exact numeric + tool transforms — X/Y/W/H, rotate, shear, flip, 9-point pivot, Move/Rotate/Scale/Reflect/Shear, Free Transform, Offset Path.', note:'Build WITH Snapping — precise transform needs snap to feel right. Handle-coupling is reconciled to the verified model (geometry-couple, Alt breaks).', pts:[
+  {step:2, nm:'Transform system', purpose:'Exact numeric + tool transforms — X/Y/W/H, rotate, shear, flip, 9-point pivot, Move/Rotate/Scale/Reflect/Shear, Free Transform, Offset Path.', note:'Build WITH Snapping — precise transform needs snap to feel right. Handle-coupling is reconciled to the verified model (geometry-couple, Alt breaks). TOOLS BUILT (2026-07-01): Rotate (R) & Scale (S) — snapped draggable pivot, Alt-copy, Transform Again. Still open for Stage 1: the Transform panel, control-bar numerics, flips, menu/shortcut wiring. ➕ Control-bar expanded (Ahmed 07-02, Affinity/Figma): the top bar also carries quick Align, Flip/Rotate, snapping toggles, insertion-target (inside/behind) + a quick Export entry — everything reachable from the toolbar.', pts:[
     ['0','Foundations & shared model',1,''],
     ['1','Transform panel',1,''],
     ['2','Top control-bar numeric fields',1,''],
-    ['3','Reference point / pivot system',1,''],
-    ['4','Dedicated transform tools (pivot + Alt-copy)','tools',''],
+    ['3','Reference point / pivot system',1,'p'],
+    ['4','Dedicated transform tools (pivot + Alt-copy)','tools','d'],
     ['5','Transform Each',2,''],
-    ['6','Transform Again',2,''],
+    ['6','Transform Again',2,'d'],
     ['7','Scale Strokes & Effects',2,''],
     ['8','Flip Horizontal / Vertical',1,''],
     ['9','Constrain proportions (link)',1,'p'],
     ['10','Free Transform tool (E)',2,''],
     ['11','Offset Path',2,''],
     ['12','Menu integration & shortcuts',1,''],
-    ['13','Canvas feedback & affordances',1,''],
+    ['13','Canvas feedback & affordances',1,'p'],
     ['14','Edge cases & correctness',2,''],
   ]},
   {step:6, nm:'Save / File system', purpose:'The native .varos file system — open/save the document, New/templates, autosave + recovery, version history, recent files, Place/Import.', note:'The serde spine moved to Foundations (✅). This system = the container (zip/OPC) + native dialogs + dirty/recovery guards on top of a schema that already round-trips. Split Stage 1 → 1a round-trip, 1b dialogs/guards.', pts:[
@@ -263,7 +275,7 @@ const SYSTEMS = [
     ['10','OS & shell integration',2,''],
     ['11','Panels & UI surfaces this system needs','ui',''],
   ]},
-  {step:3, nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, targeting, z-order, grouping, masks, compound paths.', note:'MODEL system, not panel assembly. Today the model is a flat Vec<Path> + group_of side-table. Stage 1 = build the real scene-graph (Layer/node tree) and migrate selection + render-order + every tool onto it.', warn:true, pts:[
+  {step:3, nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, targeting, z-order, grouping, masks, compound paths.', note:'MODEL system, not panel assembly. Today the model is a flat Vec<Path> + group_of side-table. Stage 1 = build the real scene-graph (Layer/node tree) and migrate selection + render-order + every tool onto it. 🔒 UX locked (Ahmed 07-02, from Affinity): drag a row ONTO another row = clips/nests INSIDE it — our chosen mask interaction (complements the explicit Clipping Mask command); insertion-target (draw/paste inside · behind) joins the top bar.', warn:true, pts:[
     ['1','Layers panel — shell & structure',1,'d'],
     ['2','Layer & object naming',1,'p'],
     ['3','Visibility (show/hide)',1,''],
@@ -285,6 +297,7 @@ const SYSTEMS = [
     ['19','Context menu (panel & canvas)',1,''],
     ['20','Panel options & global commands menu',2,''],
     ['21','Schema, performance & edge cases','x-cut',''],
+    ['22','Insertion target (draw/paste inside · behind) — Affinity borrow',2,''],
   ]},
   {step:2, nm:'Snapping / Guides / Grid / Rulers', purpose:'The precision substrate — rulers, guides, smart alignment guides, grids, snap-to-geometry, tolerance, live dimension readouts.', note:'Built WITH/before Transform (Decision 7) — drawing + precise transform need snap to feel right.', pts:[
     ['0','System foundations & shared snap engine',1,'d'],
@@ -425,6 +438,37 @@ const GLOSS = {
     C8:'تسجيل الموديل لملف ‎.varos‎ ورجوعه زي ما هو.',
     C9:'الجسر بين اللوحات والمحرك (ناقل الـOp).',
   },
+  'Color system': {
+    1:'مين بياخد اللون: التعبئة ولا الحد ولا «من غير» — والمربعين اللي تحت في شريط الأدوات.',
+    2:'صيَغ اللون: RGB/HSB/Hex شغالين — CMYK لسه.',
+    3:'نافذة منتقي الألوان (المربع + شرايط الدرجة والشفافية + خانات القيم). اتبنت — ناقصها بوليش: آخر الألوان + ألوان الملف + أسهم ±.',
+    4:'لوحة اللون الصغيرة جوه الانسبكتور.',
+    5:'الحوامل: تحفظ ألوانك وتعيد استخدامها (بعد الطبقات).',
+    6:'التدرجات خطي/دائري (بعد الحوامل).',
+    7:'شفافية اللون — واتصلح رندر شفافية الجروب: بيبهت كقطعة واحدة زي اليستريتور.',
+    8:'القطارة: التقاط لون من أي حاجة على الكانفس.',
+    9:'اقتراح تناسقات ألوان (متقدم).',
+    10:'إعادة تلوين الشغل كله مرة واحدة (متقدم).',
+    11:'حفظ الألوان جوه الملف + التوافق.',
+    12:'وضوح/تباين وراحة استخدام (متقدم).',
+  },
+  'Transform system': {
+    0:'الأساس المشترك لكل التحويلات (حساب واحد موحّد).',
+    1:'لوحة Transform: تكتب الأرقام بالظبط.',
+    2:'خانات الأرقام في الشريط العلوي.',
+    3:'نقطة الارتكاز (٩ نقاط) اللي التدوير/التحجيم بيلف حواليها — موجودة في الأدوات، ناقصة في اللوحة.',
+    4:'أدوات التدوير R والتحجيم S بالسحب + Alt للنسخ. ✅ اتبنت 07-01.',
+    5:'تطبيق التحويل على كل عنصر لوحده (مش كمجموعة).',
+    6:'تكرار آخر تحويل Ctrl+D. ✅',
+    7:'هل سمك الحد يتحجم مع العنصر ولا يثبت.',
+    8:'قلب أفقي / رأسي.',
+    9:'قفل النسبة بين العرض والطول (السلسلة).',
+    10:'أداة التحويل الحر E.',
+    11:'نسخة موازية من المسار على مسافة (Offset Path).',
+    12:'ربط القوايم والاختصارات.',
+    13:'الخطوط والقياسات اللي بتظهر وانت بتسحب — جزء منها موجود (HUD القياس).',
+    14:'الحالات الشاذة والدقة.',
+  },
 };
 
 // ---- render ----
@@ -453,9 +497,12 @@ function ptsByStage(pts, gloss){
 // build-order rail
 document.getElementById('rail').innerHTML = ORDER.map(s=>{
   if(s.milestone) return `<div class="milestone">${s.milestone}</div>`;
-  const cls = s.state==='active'?'active':s.state==='next'?'next':(parseInt(s.k)<0?'':'');
-  const tag = s.state==='active'?'<span class="tag tag-active">▶ now</span>':s.state==='next'?'<span class="tag tag-next">next</span>':'';
-  return `<div class="step ${cls}">${tag}<div class="k">${s.k}</div><div class="nm">${s.nm}</div></div>`;
+  const cls = s.state==='done'?'done':s.state==='active'?'active':s.state==='next'?'next':'';
+  const tag = s.state==='done'?'<span class="tag tag-done">✓ done</span>'
+            : s.state==='active'?'<span class="tag tag-active">▶ now</span>'
+            : s.state==='next'?'<span class="tag tag-next">next</span>'
+            : s.state==='part'?'<span class="tag" style="background:rgba(245,166,35,.15);color:var(--amber);border:1px solid #6b5320">🟡 partial</span>':'';
+  return `<div class="step ${cls}">${tag}<div class="k">${s.k}</div><div class="nm">${s.nm}</div>${s.sec?`<div class="sec">${s.sec}</div>`:''}</div>`;
 }).join('');
 
 // decisions

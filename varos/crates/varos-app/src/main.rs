@@ -440,8 +440,13 @@ fn main() {
                 WindowEvent::KeyboardInput { event, .. } => {
                     // Only skip canvas shortcuts when a text field is actually focused — NOT on egui's
                     // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
+                    // The Color Picker is a floating palette: the canvas stays fully usable beside it,
+                    // but Esc/Enter belong to the dialog while it is open (Cancel / OK).
                     if gui.wants_keyboard() { /* typing into a field — keys go to egui */ }
                     else if let PhysicalKey::Code(code) = event.physical_key {
+                        if gui.modal_open() && matches!(code, KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter) {
+                            /* the dialog owns these */
+                        } else
                         if code == KeyCode::Space {
                             space_down = event.state == ElementState::Pressed;
                             if !space_down { panning = false; }
