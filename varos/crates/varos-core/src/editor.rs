@@ -1860,6 +1860,13 @@ impl Editor {
         self.dirty = true; self.commit();
     }
     pub fn set_active_layer(&mut self, nid: u32) { self.doc.active_layer = self.doc.layer_ancestor(nid); }
+    /// Drag & drop a row: move `src` relative to `target` (Before/Into/After). No-op + no undo entry if
+    /// the drop is illegal (cycle / into a leaf / layer-into-group).
+    pub fn layer_move(&mut self, src: u32, target: u32, pos: crate::model::DropPos) {
+        self.begin();
+        if self.doc.move_node_to(src, target, pos) { self.dirty = true; }
+        self.commit();
+    }
     /// Click a ROW: target its layer; a Path leaf ALSO becomes the canvas selection (Illustrator).
     pub fn layer_focus(&mut self, nid: u32) {
         self.doc.active_layer = self.doc.layer_ancestor(nid);

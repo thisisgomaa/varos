@@ -136,9 +136,17 @@
     no longer leaks to the canvas (panel captures the wheel), lock is REAL (locked art can't be picked /
     marquee'd / frame-moved — headless test), and the pro look pass (killed zebra, desaturated identity
     ramp, tokens, reveal-on-hover). Guided by <b>docs/LAYERS_SPEC.md</b> (4-agent deep-research +
-    gap analysis). <b>NEXT, in order:</b> ① <b>Layers B3 — drag &amp; drop</b> (reorder / nest / reparent:
-    3-zone hit-test + indented insertion line; then drag-the-select-square-to-move-art) →
-    ② Colour Stage-2 (Swatches + Paint enum → gradients).
+    gap analysis). <b>Layers B3 — drag &amp; drop 🟡</b> (07-03, awaiting Ahmed's feel): grab any row and
+    drag to <b>reorder / nest / reparent</b> — 3-zone hit-test (top-third Before · middle Into containers ·
+    bottom-third After), indented ACCENT insertion line for sibling drops + nest-highlight box for Into,
+    lifted-row dim, grabbing cursor; content-drag-to-scroll disabled so the gesture never fights the list.
+    Model `move_node_to`(DropPos) cycle-guards a container into its own subtree, refuses Into-a-leaf and
+    Layer-into-Group (headless test). <b>+ thumbnail pass 🟡</b> (Ahmed 07-03): every Layer/Group now shows a
+    <b>real composite mini-preview</b> of all its art (z-ordered into one bbox, true colours) instead of the
+    fake folder chip — the thin identity bar carries "which layer"; footer reordered to Illustrator's
+    [sublayer · new · trash] with a smaller sublayer button so it stops reading as a second +.
+    <b>NEXT:</b> ① B4 — drag-the-select-square-to-move-art + target/select
+    split → ② Colour Stage-2 (Swatches + Paint enum → gradients).
   </div>
 
   <h2>Build order</h2>
@@ -300,12 +308,12 @@ const SYSTEMS = [
   {step:3, nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, targeting, z-order, grouping, masks, compound paths.', note:'MODEL system, not panel assembly. Today the model is a flat Vec<Path> + group_of side-table. Stage 1 = build the real scene-graph (Layer/node tree) and migrate selection + render-order + every tool onto it. 🔒 UX locked (Ahmed 07-02, from Affinity): drag a row ONTO another row = clips/nests INSIDE it — our chosen mask interaction (complements the explicit Clipping Mask command); insertion-target (draw/paste inside · behind) joins the top bar.', warn:true, pts:[
     ['1','Layers panel — shell & structure',1,'d'],
     ['2','Layer & object naming',1,'p'],
-    ['3','Visibility (show/hide)',1,''],
-    ['4','Lock / unlock',1,''],
-    ['5','Targeting & appearance dot',2,''],
-    ['6','Selection-color indicator',2,''],
-    ['7','Thumbnails',2,''],
-    ['8','Reordering & restructuring (drag-drop)',1,''],
+    ['3','Visibility (show/hide)',1,'d'],
+    ['4','Lock / unlock',1,'d'],
+    ['5','Targeting & appearance dot',2,'p'],
+    ['6','Selection-color indicator',2,'d'],
+    ['7','Thumbnails',2,'d'],
+    ['8','Reordering & restructuring (drag-drop)',1,'p'],
     ['9','Z-order commands (arrange)',1,'d'],
     ['10','Groups & ungroup (nested)',1,'d'],
     ['11','Compound paths',2,''],
