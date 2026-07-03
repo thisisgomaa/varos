@@ -37,7 +37,7 @@ You have zero prior context. Before writing one line of code, read these three, 
 
 ## ✅ DECISIONS LOCKED — 2026-07-03 (Ahmed + planning team)
 
-These eight rulings are settled. Build to them; do not re-litigate.
+These nine rulings are settled. Build to them; do not re-litigate.
 
 1. **Tokens come from the mockup, not from `ui.rs`.** The `:root` block of `UI_VISION_MOCKUP.html` is the
    source of truth for every colour/radius/spacing value. `ui.rs`'s current literals are *legacy* and may
@@ -79,6 +79,14 @@ These eight rulings are settled. Build to them; do not re-litigate.
 8. **`plan.html` and `DETAILED_ROADMAP.md` belong to `main`.** The shell branch does **not** edit them.
    Log your progress inside **this file** (§10, Progress log) on your branch; the rail/roadmap are updated on
    `main` only at merge time (checklist in §9).
+
+9. **The app never imports `egui_tiles` directly — it is wrapped in ONE module of ours** (`shell/boxtree.rs`).
+   Every `use egui_tiles::…` lives in that single file; the rest of the app talks to a small API we own
+   (build the default tree · render into a `Ui` · swap a leaf's panel · (de)serialize). If the crate is ever
+   abandoned or lags a future egui bump, we swap **one module**, not the whole program — the project's
+   hard-separation philosophy applied to the layout engine.
+   *(عربي: أي تعامل مع egui_tiles متلفوف في ملف واحد بتاعنا — لو المكتبة وقفت أو اتأخرت عن egui، نبدّل موديول
+   واحد مش البرنامج كله.)*
 
 ---
 
@@ -344,10 +352,18 @@ mechanics come free with egui_tiles; this is a **later wave on the same tree**.
 ```
 git -C "D:\VAROS" worktree add "D:\VAROS-shell" -b shell/box-system
 ```
-- **New files only.** Suggested: `varos-app/src/tokens.rs`, `varos-app/src/boxtree.rs` (Behavior + tree),
-  `varos-app/src/registry.rs`, `varos-app/src/bin/shell-sandbox.rs`. Add `egui_tiles = "0.16"` to
-  `varos-app/Cargo.toml` and one `[[bin]] name="shell-sandbox" path="src/bin/shell-sandbox.rs"` block —
-  the **only** edits to existing files, and they live in your branch.
+- **New files only.** Structure (all NEW; `shell` lives in the lib so both the sandbox bin and later the real
+  app can use it):
+  - `varos-app/src/lib.rs` — `pub mod shell;`
+  - `varos-app/src/shell/mod.rs` — the shell's public API
+  - `varos-app/src/shell/tokens.rs` — the §3 tokens
+  - `varos-app/src/shell/boxtree.rs` — **the ONLY `egui_tiles` importer** (ruling 9): the `Tree`, the custom
+    `Behavior`, the swap/serde API
+  - `varos-app/src/shell/registry.rs` — panel registry + dummy panels
+  - `varos-app/src/bin/shell-sandbox.rs` — an `eframe` window that calls the shell API
+  - Manifest: add `egui_tiles = "0.16"` + `eframe = "0.35"` to `varos-app/Cargo.toml` and one
+    `[[bin]] name="shell-sandbox" path="src/bin/shell-sandbox.rs"` block — the **only** edit to an existing
+    file, in your branch.
 - **NEVER touch `ui.rs` or `varos-core`.** A Layers session is in `ui.rs` right now; that is the collision file.
 - Run with `cargo run -p varos-app --bin shell-sandbox`. Gate each stage with Ahmed in that window.
 - **The sandbox survives afterward as the design-system gallery** — every new puzzle piece gets shown there.
@@ -398,6 +414,9 @@ When a wave merges to `main`, update (in the **same** merge):
 
 - 2026-07-03 — Brief written. Spike DONE (`451ca2a`). Decision: `egui_tiles` 0.16 (egui 0.35). Current stage =
   **Wave 1 / Stage 2** (not started). Worktree `D:\VAROS-shell`, branch `shell/box-system`.
+- 2026-07-03 — Ruling 9 added (egui_tiles wrapped in `shell/boxtree.rs` only). Ahmed handed the build to THIS
+  session (no separate shell session). Starting the autonomous Wave 1 sprint: Step −1 → Stage 2 → Stage 3, stop
+  at end of Stage 3. Boot = `eframe` (version-aligned with egui 0.35); shell modules stay context-agnostic.
 - _(next: Stage 2 — box tree + registry + tokens.rs + 3 dummies + dummy board + chip tabs + `⌄` swap menu…)_
 
 ---
