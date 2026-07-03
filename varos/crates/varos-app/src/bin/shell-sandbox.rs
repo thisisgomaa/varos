@@ -4,7 +4,7 @@
 //! sandbox's window boot trivial and version-aligned with egui 0.35.
 //!
 //! Run:  cargo run -p varos-app --bin shell-sandbox
-#![windows_subsystem = "windows"]
+//! (console stays attached on purpose — a dev sandbox should print panics/logs to the terminal.)
 use varos_app::shell::{tokens, ShellState};
 
 struct Sandbox {
