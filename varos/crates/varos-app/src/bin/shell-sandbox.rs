@@ -14,10 +14,10 @@ struct Sandbox {
 impl eframe::App for Sandbox {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         tokens::apply(ui.ctx()); // warm-dark visuals + INSTANT (animation_time = 0); idempotent
-        // the whole surface IS the void: seam-coloured, 6px outer padding around the boxes.
+        // the whole surface IS the void: seam-coloured, with an outer seam matching the inner ones.
         egui::Frame::default()
             .fill(tokens::SEAM)
-            .inner_margin(egui::Margin::same(6))
+            .inner_margin(egui::Margin::same(tokens::SEAM_GAP as i8))
             .show(ui, |ui| self.shell.ui(ui));
     }
 }

@@ -6,5 +6,5 @@ pub mod tokens;
 pub mod registry;
 pub mod boxtree;
 
-pub use boxtree::{BoxState, ShellState};
+pub use boxtree::ShellState;
 pub use registry::PanelId;

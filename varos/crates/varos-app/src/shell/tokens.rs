@@ -33,7 +33,7 @@ pub const VOID_HOVER: Color32 = Color32::from_rgba_premultiplied(10, 10, 10, 10)
 // ── radii & rhythm ──
 pub const R: u8 = 3;        // controls: fields, chips, buttons, tabs
 pub const RBOX: u8 = 4;     // boxes / panels
-pub const SEAM_GAP: f32 = 6.0; // equal void between all boxes
+pub const SEAM_GAP: f32 = 10.0; // equal void between all boxes (wider so boxes read as floating — Ahmed 07-04)
 
 pub fn r_ctrl() -> CornerRadius { CornerRadius::same(R) }
 pub fn r_box()  -> CornerRadius { CornerRadius::same(RBOX) }
