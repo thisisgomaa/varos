@@ -32,7 +32,9 @@ pub fn doc_from_blob(body: &str) -> Result<Document, String> {
         return Err(format!("this file was saved by a newer Varos (v{}) — please update", head.varos));
     }
     let f: VrsFile = serde_json::from_str(body).map_err(|e| format!("not a valid .vrs model: {e}"))?;
-    Ok(f.doc)
+    let mut doc = f.doc;
+    doc.sync_tree();   // legacy files: registry → tree + wrap tree-less paths into Layer 1 (z preserved)
+    Ok(doc)
 }
 
 /// Write the document to `path` atomically: serialize, write a sibling temp file, rename over the

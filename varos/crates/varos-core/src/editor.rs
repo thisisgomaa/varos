@@ -233,14 +233,14 @@ impl Editor {
         let edge_r = EDGE_R / self.ppu;
         let mut best: Option<(u32, f32)> = None;
         for pi in 0..self.doc.paths.len() {
-            if self.doc.paths[pi].hidden || self.doc.paths[pi].locked { continue; } // not clickable
+            if self.doc.eff_hidden(self.doc.paths[pi].id) || self.doc.eff_locked(self.doc.paths[pi].id) { continue; } // not clickable (cascades)
             if let Some((_, _, d)) = self.doc.nearest_seg(pi, pos) {
                 if d <= edge_r && best.map_or(true, |(_, bd)| d < bd) { best = Some((self.doc.paths[pi].id, d)); }
             }
         }
         if let Some((id, _)) = best { return Some(id); }
         for pi in 0..self.doc.paths.len() {
-            if self.doc.paths[pi].hidden || self.doc.paths[pi].locked { continue; }
+            if self.doc.eff_hidden(self.doc.paths[pi].id) || self.doc.eff_locked(self.doc.paths[pi].id) { continue; }
             if self.doc.point_in_path(pi, pos) { return Some(self.doc.paths[pi].id); }
         }
         None
@@ -431,14 +431,12 @@ impl Editor {
         if self.objsel.is_empty() { return; }
         self.begin();
         let sel = self.objsel.clone();
-        match op {
-            ZOrder::Front => { let (s, r): (Vec<_>, Vec<_>) = std::mem::take(&mut self.doc.paths).into_iter().partition(|p| sel.contains(&p.id)); self.doc.paths = r; self.doc.paths.extend(s); }
-            ZOrder::Back  => { let (s, r): (Vec<_>, Vec<_>) = std::mem::take(&mut self.doc.paths).into_iter().partition(|p| sel.contains(&p.id)); self.doc.paths = s; self.doc.paths.extend(r); }
-            ZOrder::Forward => { let n = self.doc.paths.len(); for i in (0..n.saturating_sub(1)).rev() {
-                if sel.contains(&self.doc.paths[i].id) && !sel.contains(&self.doc.paths[i+1].id) { self.doc.paths.swap(i, i+1); } } }
-            ZOrder::Backward => { let n = self.doc.paths.len(); for i in 1..n {
-                if sel.contains(&self.doc.paths[i].id) && !sel.contains(&self.doc.paths[i-1].id) { self.doc.paths.swap(i, i-1); } } }
-        }
+        // tree-side arrange: units move within their OWN parent (Illustrator scope) + re-flatten
+        let (toward_front, extreme) = match op {
+            ZOrder::Front => (true, true), ZOrder::Back => (false, true),
+            ZOrder::Forward => (true, false), ZOrder::Backward => (false, false),
+        };
+        self.doc.arrange_units(&sel, toward_front, extreme);
         self.dirty = true; self.commit();
     }
     /// Align selected ANCHOR POINTS (Direct Selection) to a shared edge/centre of their bbox — handles
@@ -665,7 +663,7 @@ impl Editor {
     fn paths_on_ab(&self, i: usize) -> Vec<u32> {
         let (x0, y0, x1, y1) = match self.doc.artboards.get(i) { Some(a) => a.rect(), None => return vec![] };
         (0..self.doc.paths.len()).filter(|&pi| {
-            if self.doc.paths[pi].hidden || self.doc.paths[pi].locked { return false; }
+            if self.doc.eff_hidden(self.doc.paths[pi].id) || self.doc.eff_locked(self.doc.paths[pi].id) { return false; }
             let b = self.doc.outline_bbox(pi);
             b.0 <= x1 && b.2 >= x0 && b.1 <= y1 && b.3 >= y0
         }).map(|pi| self.doc.paths[pi].id).collect()
@@ -1230,7 +1228,7 @@ impl Editor {
     // ---------- history ----------
     pub fn begin(&mut self) { self.pending = Some(self.doc.clone()); self.dirty = false; }
     pub fn commit(&mut self) {
-        self.doc.sync_groups();   // drop membership for deleted paths / empty groups
+        self.doc.sync_tree();   // adopt new paths / prune dead + empty nodes / re-flatten z
         if self.dirty { if let Some(p) = self.pending.take() { self.undo.push(p); if self.undo.len() > 200 { self.undo.remove(0); } self.redo.clear(); self.rev += 1; } }
         self.pending = None; self.dirty = false;
     }
@@ -1241,6 +1239,7 @@ impl Editor {
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
         self.doc = doc;
+        self.doc.sync_tree();   // migrate legacy registries / adopt tree-less paths (old files)
         self.undo.clear(); self.redo.clear(); self.pending = None;
         self.clear_transient();
         self.pivot = None; self.hover_path = None; self.guide_preview = None; self.origin_preview = None;

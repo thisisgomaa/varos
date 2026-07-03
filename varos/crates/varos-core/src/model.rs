@@ -43,9 +43,34 @@ impl Path {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ShapeKind { Rect, Ellipse, Triangle, Polygon }
 
-/// A group: a named container for paths. `parent` lets groups nest (unused in the flat v1).
+/// LEGACY group registry entry (pre-tree files only): kept so old `.vrs` documents still deserialize;
+/// `migrate_legacy()` converts the registry into tree nodes on load and clears it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Group { pub id: u32, pub name: String, pub parent: Option<u32> }
+
+/// What a scene-graph node IS. `Path` leaves point at an entry in the flat `paths` storage.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum NodeKind { Layer, Group, Path(u32) }
+
+/// One node of the REAL scene graph (the Layers system, D2). Structure lives here; geometry/appearance
+/// stay in the flat `Vec<Path>` (which is kept re-flattened to tree order, so everything that reads
+/// "vec order = z" keeps working untouched).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Node {
+    pub id: u32,
+    pub kind: NodeKind,
+    /// Display name for Layer/Group rows (Path leaves show their Path.name / auto-name instead).
+    #[serde(default)] pub name: String,
+    /// Parent node id (None = a root Layer).
+    #[serde(default)] pub parent: Option<u32>,
+    /// Children, FRONT-FIRST (index 0 = top row of the panel = front-most on canvas).
+    #[serde(default)] pub children: Vec<u32>,
+    /// Node-level hide/lock (the panel's eye/padlock on containers) — cascades to descendants.
+    #[serde(default)] pub hidden: bool,
+    #[serde(default)] pub locked: bool,
+    /// The layer colour strip (panel); None = default.
+    #[serde(default)] pub color: Option<Rgba>,
+}
 
 /// A single artboard (a defined PAGE) on the infinite board, in world points (1pt = 1/72in). The
 /// document holds a `Vec<Artboard>` + an `active` index (the Artboard system, Shift+O). An artboard is
@@ -155,11 +180,21 @@ pub struct Guide { pub vertical: bool, pub pos: f32 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub paths: Vec<Path>,
-    /// Group registry. Membership lives in `group_of` so `Path` (and every Path-construction site)
-    /// stays untouched. The flat path list is still the z-order / render source of truth.
+    /// LEGACY registry (pre-tree files). Deserialized for compatibility, converted by
+    /// `migrate_legacy()`, then stays empty. New code never writes it.
+    #[serde(default)]
     pub groups: Vec<Group>,
-    /// path id → its innermost group id. Absent = ungrouped. Reconciled by `sync_groups`.
+    #[serde(default)]
     pub group_of: HashMap<u32, u32>,
+    /// THE SCENE GRAPH (Layers system, D2): a node arena + the root Layers, FRONT-FIRST. Structure is
+    /// authoritative here; `paths` is storage kept re-flattened to traversal order by `sync_tree`.
+    #[serde(default)]
+    pub nodes: Vec<Node>,
+    #[serde(default)]
+    pub roots: Vec<u32>,
+    /// The ACTIVE layer (new objects land here — Illustrator). Fixed up by `sync_tree` if stale.
+    #[serde(default)]
+    pub active_layer: u32,
     pub ids: u32,
     /// Document measurement settings (ppi + display unit). `#[serde(default)]` so older `.varos`
     /// files written before this field still load.
@@ -192,7 +227,11 @@ pub struct Document {
 }
 impl Default for Document {
     fn default() -> Self {
-        Document { paths: vec![], groups: vec![], group_of: HashMap::new(), ids: 0,
+        // a fresh document opens with one empty "Layer 1" (the roadmap's empty state)
+        Document { paths: vec![], groups: vec![], group_of: HashMap::new(),
+                   nodes: vec![Node { id: 1, kind: NodeKind::Layer, name: "Layer 1".into(), parent: None,
+                                      children: vec![], hidden: false, locked: false, color: None }],
+                   roots: vec![1], active_layer: 1, ids: 1,
                    units: DocUnits::default(), artboards: one_artboard(), active: 0, move_art_with_ab: true,
                    snap: SnapConfig::default(), ruler_origin: [0.0, 0.0], guides: vec![], guides_locked: false }
     }
@@ -364,68 +403,136 @@ impl Document {
                ..Path::new(id, anchors, src.closed, src.fill, src.stroke, src.stroke_width) }
     }
 
-    // ---------- groups (hierarchy on top of the flat path list) ----------
-    /// The outermost group ancestor of a group id (walks `parent`, with a cycle guard).
-    pub fn group_root(&self, gid: u32) -> u32 {
-        let mut g = gid;
+    // ---------- THE SCENE GRAPH (Layers system, D2) ----------
+    // Structure is authoritative in `nodes`/`roots` (FRONT-first children); `paths` is storage that
+    // `sync_tree` keeps re-flattened to traversal order — so every consumer of "vec order = z"
+    // (renderer, hit-testing, export) keeps working untouched.
+
+    pub fn node(&self, id: u32) -> Option<&Node> { self.nodes.iter().find(|n| n.id == id) }
+    fn node_mut(&mut self, id: u32) -> Option<&mut Node> { self.nodes.iter_mut().find(|n| n.id == id) }
+    /// The leaf node representing a path.
+    pub fn node_of_path(&self, pid: u32) -> Option<u32> {
+        self.nodes.iter().find(|n| matches!(n.kind, NodeKind::Path(p) if p == pid)).map(|n| n.id)
+    }
+    /// The HIGHEST Group ancestor of a path's leaf (stops at the Layer). None = ungrouped.
+    pub fn top_group_of_path(&self, pid: u32) -> Option<u32> {
+        let mut cur = self.node_of_path(pid)?;
+        let mut top = None;
         for _ in 0..4096 {
-            match self.groups.iter().find(|x| x.id == g).and_then(|grp| grp.parent) {
-                Some(p) => g = p,
+            let n = self.node(cur)?;
+            match n.parent {
+                Some(p) => {
+                    if matches!(self.node(p)?.kind, NodeKind::Group) { top = Some(p); }
+                    cur = p;
+                }
                 None => break,
             }
         }
-        g
+        top
     }
-    /// The top-level group a path belongs to, or None if ungrouped.
-    pub fn top_group_of_path(&self, pid: u32) -> Option<u32> {
-        self.group_of.get(&pid).map(|&g| self.group_root(g))
+    /// All path ids in `nid`'s subtree, front-first (traversal order).
+    fn collect_paths(&self, nid: u32, out: &mut Vec<u32>) {
+        if let Some(n) = self.node(nid) {
+            if let NodeKind::Path(p) = n.kind { out.push(p); }
+            for &c in &n.children { self.collect_paths(c, out); }
+        }
     }
-    /// Every path id in the same top-level group as `pid` (in z order). Just `[pid]` if ungrouped.
+    /// Every path id in the same top-level group as `pid` (z order, back→front). `[pid]` if ungrouped.
     pub fn group_members(&self, pid: u32) -> Vec<u32> {
         match self.top_group_of_path(pid) {
             None => vec![pid],
-            Some(top) => self.paths.iter().map(|p| p.id)
-                .filter(|&q| self.top_group_of_path(q) == Some(top)).collect(),
+            Some(top) => { let mut v = vec![]; self.collect_paths(top, &mut v); v.reverse(); v }
         }
     }
-    /// Group these paths into a new group (returns its id). Members become contiguous in z order.
-    /// Grouping items that are themselves groups NESTS them (the existing groups become children of
-    /// the new one) — so a later single ungroup peels exactly one level, like Illustrator.
+    /// The selection UNIT a path belongs to: its top-level group node, else its own leaf node.
+    fn unit_of(&self, pid: u32) -> Option<u32> {
+        self.top_group_of_path(pid).or_else(|| self.node_of_path(pid))
+    }
+    /// Effective visibility: the path's own flag OR any ancestor container's (the panel eye cascade).
+    pub fn eff_hidden(&self, pid: u32) -> bool {
+        if self.pidx(pid).map_or(true, |i| self.paths[i].hidden) { return true; }
+        let mut cur = self.node_of_path(pid);
+        while let Some(id) = cur {
+            let Some(n) = self.node(id) else { break };
+            if n.hidden { return true; }
+            cur = n.parent;
+        }
+        false
+    }
+    /// Effective lock: the path's own flag OR any ancestor container's (cascade).
+    pub fn eff_locked(&self, pid: u32) -> bool {
+        if self.pidx(pid).map_or(false, |i| self.paths[i].locked) { return true; }
+        let mut cur = self.node_of_path(pid);
+        while let Some(id) = cur {
+            let Some(n) = self.node(id) else { break };
+            if n.locked { return true; }
+            cur = n.parent;
+        }
+        false
+    }
+    /// Group these paths into a new Group node (returns its id). The group lands at the FRONT-most
+    /// member's slot in ITS parent (Illustrator: pulled to the top-most member — cross-layer selections
+    /// collect onto the front-most member's layer). Grouping groups NESTS them, so a later single
+    /// ungroup peels exactly one level.
     pub fn group(&mut self, pids: &[u32]) -> Option<u32> {
         use std::collections::HashSet;
-        let set: HashSet<u32> = pids.iter().copied().filter(|&p| self.pidx(p).is_some()).collect();
-        // need ≥2 distinct top-level UNITS (a group counts once, a lone path counts once): so
-        // re-grouping a single existing group is a no-op, and grouping 2 groups nests cleanly.
-        let units: HashSet<u32> = set.iter().map(|&p| self.top_group_of_path(p).unwrap_or(p)).collect();
+        self.sync_tree();   // self-sufficient: adopt any raw pushes first (tests / direct callers)
+        let mut seen = HashSet::new();
+        let mut units: Vec<u32> = vec![];
+        for &p in pids {
+            if self.pidx(p).is_none() { continue; }
+            if let Some(u) = self.unit_of(p) { if seen.insert(u) { units.push(u); } }
+        }
         if units.len() < 2 { return None; }
+        // FRONT-first ordering of the units = descending front-most storage index of their contents
+        let vec_pos = |d: &Document, u: u32| -> usize {
+            let mut v = vec![]; d.collect_paths(u, &mut v);
+            v.iter().filter_map(|p| d.pidx(*p)).max().unwrap_or(0)
+        };
+        units.sort_by_key(|&u| std::cmp::Reverse(vec_pos(self, u)));
+        let front = units[0];
+        let host = self.node(front)?.parent?;
+        let slot = self.node(host)?.children.iter().position(|&c| c == front)?;
+        // where the group lands in host = slot minus the selected units sitting above it
+        let idx = self.node(host)?.children.iter().take(slot).filter(|c| !units.contains(c)).count();
         let gid = self.nid();
-        self.groups.push(Group { id: gid, name: format!("Group {gid}"), parent: None });
-        // existing top-level groups in the selection become CHILDREN of the new group (nesting)…
-        let tops: Vec<u32> = set.iter().filter_map(|&p| self.top_group_of_path(p)).collect();
-        for t in tops { if let Some(g) = self.groups.iter_mut().find(|g| g.id == t) { g.parent = Some(gid); } }
-        // …and lone (ungrouped) paths take the new group as their innermost.
-        for &p in &set { if !self.group_of.contains_key(&p) { self.group_of.insert(p, gid); } }
-        self.contiguous(&set);
+        self.nodes.push(Node { id: gid, kind: NodeKind::Group, name: format!("Group {gid}"), parent: Some(host),
+                               children: vec![], hidden: false, locked: false, color: None });
+        for &u in &units {
+            if let Some(par) = self.node(u).and_then(|n| n.parent) {
+                if let Some(pn) = self.node_mut(par) { pn.children.retain(|&c| c != u); }
+            }
+            if let Some(un) = self.node_mut(u) { un.parent = Some(gid); }
+        }
+        if let Some(hn) = self.node_mut(host) { hn.children.insert(idx, gid); }
+        if let Some(gn) = self.node_mut(gid) { gn.children = units; }
+        self.flatten();
         Some(gid)
     }
     /// Ungroup: peel exactly ONE level off the top-level group(s) the selection belongs to. The
-    /// dissolved group's direct children move up to its parent (None ⇒ top-level); inner groups survive.
+    /// dissolved group's children rise into its parent AT ITS SLOT (z preserved); inner groups survive.
     pub fn ungroup(&mut self, pids: &[u32]) {
         use std::collections::HashSet;
+        self.sync_tree();
         let tops: HashSet<u32> = pids.iter().filter_map(|&p| self.top_group_of_path(p)).collect();
         for top in tops {
-            let parent = self.groups.iter().find(|g| g.id == top).and_then(|g| g.parent);
-            for g in self.groups.iter_mut() { if g.parent == Some(top) { g.parent = parent; } } // child groups rise
-            let direct: Vec<u32> = self.group_of.iter().filter(|(_, &g)| g == top).map(|(&p, _)| p).collect();
-            for p in direct { match parent { Some(pg) => { self.group_of.insert(p, pg); } None => { self.group_of.remove(&p); } } }
-            self.groups.retain(|g| g.id != top);
+            let Some(tn) = self.node(top).cloned() else { continue };
+            let Some(host) = tn.parent else { continue };
+            let Some(hidx) = self.node(host).and_then(|h| h.children.iter().position(|&c| c == top)) else { continue };
+            for (k, &c) in tn.children.iter().enumerate() {
+                if let Some(cn) = self.node_mut(c) { cn.parent = Some(host); }
+                if let Some(hn) = self.node_mut(host) { hn.children.insert(hidx + 1 + k, c); }
+            }
+            if let Some(hn) = self.node_mut(host) { hn.children.retain(|&c| c != top); }
+            self.nodes.retain(|n| n.id != top);
         }
+        self.flatten();
     }
-    /// Duplicate a set of paths, PRESERVING their group structure: the copies form parallel groups
-    /// that mirror the originals' nesting. Returns the new path ids (in `srcs` order). Used by the
-    /// Alt-drag duplicate so copying a group yields a group, not loose paths.
+    /// Duplicate a set of paths, PRESERVING their group structure: the copies mirror the originals'
+    /// subtree and land at the FRONT of the originals' container (single layer ⇒ the old "copy lands on
+    /// top"). Returns the new path ids (in `srcs` order). Used by Alt-drag duplicate + Transform Again.
     pub fn dup_paths(&mut self, srcs: &[u32]) -> Vec<u32> {
-        use std::collections::HashMap;
+        self.sync_tree();   // sources must be in the tree before mirroring their subtree
         // 1) clone the paths (clone_path gives fresh anchor + path ids)
         let mut pmap: HashMap<u32, u32> = HashMap::new();
         let mut new_pids = vec![];
@@ -436,66 +543,192 @@ impl Document {
             new_pids.push(c.id);
             self.paths.push(c);
         }
-        // 2) every old group in the chains of the sources (innermost → root)
-        let mut old_groups: Vec<u32> = vec![];
+        // 2) every Group ancestor of the sources (innermost → up to the Layer)
+        let mut gset: Vec<u32> = vec![];
         for &s in srcs {
-            let mut g = self.group_of.get(&s).copied();
-            while let Some(gid) = g {
-                if !old_groups.contains(&gid) { old_groups.push(gid); }
-                g = self.groups.iter().find(|x| x.id == gid).and_then(|x| x.parent);
+            let mut cur = self.node_of_path(s).and_then(|n| self.node(n)).and_then(|n| n.parent);
+            while let Some(g) = cur {
+                let Some(gn) = self.node(g) else { break };
+                if !matches!(gn.kind, NodeKind::Group) { break; }
+                if !gset.contains(&g) { gset.push(g); }
+                cur = gn.parent;
             }
         }
-        // 3) a parallel new group for each old one
+        // 3) mirrored Group nodes + copied leaf nodes
         let mut gmap: HashMap<u32, u32> = HashMap::new();
-        for &og in &old_groups {
+        for &og in &gset {
             let ng = self.nid();
-            let name = self.groups.iter().find(|x| x.id == og).map(|x| x.name.clone()).unwrap_or_else(|| format!("Group {ng}"));
-            self.groups.push(Group { id: ng, name, parent: None });
+            let name = self.node(og).map(|n| n.name.clone()).unwrap_or_default();
+            self.nodes.push(Node { id: ng, kind: NodeKind::Group, name, parent: None,
+                                   children: vec![], hidden: false, locked: false, color: None });
             gmap.insert(og, ng);
         }
-        // 4) mirror parent links inside the duplicated subtree
-        for &og in &old_groups {
-            let old_parent = self.groups.iter().find(|x| x.id == og).and_then(|x| x.parent);
-            let new_parent = old_parent.and_then(|p| gmap.get(&p).copied());
-            let ng = gmap[&og];
-            if let Some(g) = self.groups.iter_mut().find(|x| x.id == ng) { g.parent = new_parent; }
-        }
-        // 5) attach each clone to its mirrored innermost group
+        let mut leafmap: HashMap<u32, u32> = HashMap::new();   // old LEAF node id → new leaf node id
         for (&old_p, &new_p) in &pmap {
-            if let Some(&old_g) = self.group_of.get(&old_p) {
-                if let Some(&new_g) = gmap.get(&old_g) { self.group_of.insert(new_p, new_g); }
+            if let Some(old_leaf) = self.node_of_path(old_p) {
+                let nl = self.nid();
+                self.nodes.push(Node { id: nl, kind: NodeKind::Path(new_p), name: String::new(), parent: None,
+                                       children: vec![], hidden: false, locked: false, color: None });
+                leafmap.insert(old_leaf, nl);
             }
         }
+        // 4) mirror children lists (originals' order restricted to copied nodes) + parent links
+        for &og in &gset {
+            let kids: Vec<u32> = self.node(og).map(|n| n.children.iter()
+                .filter_map(|c| gmap.get(c).copied().or_else(|| leafmap.get(c).copied())).collect())
+                .unwrap_or_default();
+            let ng = gmap[&og];
+            for &k in &kids { if let Some(kn) = self.node_mut(k) { kn.parent = Some(ng); } }
+            if let Some(n) = self.node_mut(ng) { n.children = kids; }
+        }
+        // 5) copied roots (mirrored node whose ORIGINAL parent wasn't copied) → front of that parent
+        let mut attach: Vec<(u32, u32)> = vec![];
+        for &og in &gset {
+            if let Some(op) = self.node(og).and_then(|n| n.parent) {
+                if !gmap.contains_key(&op) { attach.push((gmap[&og], op)); }
+            }
+        }
+        for (&old_leaf, &new_leaf) in &leafmap {
+            if let Some(op) = self.node(old_leaf).and_then(|n| n.parent) {
+                if !gmap.contains_key(&op) { attach.push((new_leaf, op)); }
+            }
+        }
+        for (nn, host) in attach {
+            if let Some(n) = self.node_mut(nn) { n.parent = Some(host); }
+            if let Some(hn) = self.node_mut(host) { hn.children.insert(0, nn); }
+        }
+        self.flatten();
         new_pids
     }
-    /// Reorder `paths` so the given ids form one contiguous run ending at the topmost member's z
-    /// position (Illustrator brings a group up to its front-most member). Inner order preserved.
-    fn contiguous(&mut self, set: &std::collections::HashSet<u32>) {
-        let n = self.paths.len();
-        let top_idx = match (0..n).filter(|&i| set.contains(&self.paths[i].id)).max() { Some(i) => i, None => return };
-        let above = (top_idx + 1..n).filter(|&i| !set.contains(&self.paths[i].id)).count();
-        let taken = std::mem::take(&mut self.paths);
-        let (block, mut rest): (Vec<Path>, Vec<Path>) = taken.into_iter().partition(|p| set.contains(&p.id));
-        let split = rest.len() - above;
-        let tail = rest.split_off(split);
-        rest.extend(block);
-        rest.extend(tail);
-        self.paths = rest;
-    }
-    /// Reconcile group bookkeeping after path create/delete: drop membership for dead paths and
-    /// remove groups that hold nothing. A group stays alive if it is some live path's innermost
-    /// group OR an ancestor of such a group (so nesting levels aren't pruned away).
-    pub fn sync_groups(&mut self) {
+    /// Arrange the selection's UNITS within their own parents (Illustrator scope: front/back relative
+    /// to siblings). `extreme` = to Front/Back; otherwise one step Forward/Backward.
+    pub fn arrange_units(&mut self, sel: &std::collections::HashSet<u32>, toward_front: bool, extreme: bool) {
         use std::collections::HashSet;
-        let live: HashSet<u32> = self.paths.iter().map(|p| p.id).collect();
-        self.group_of.retain(|pid, _| live.contains(pid));
-        let mut alive: HashSet<u32> = self.group_of.values().copied().collect();
-        let mut frontier: Vec<u32> = alive.iter().copied().collect();
-        while let Some(g) = frontier.pop() {
-            if let Some(p) = self.groups.iter().find(|x| x.id == g).and_then(|x| x.parent) {
-                if alive.insert(p) { frontier.push(p); }
+        self.sync_tree();
+        let mut units: HashSet<u32> = HashSet::new();
+        for &p in sel { if let Some(u) = self.unit_of(p) { units.insert(u); } }
+        let parents: HashSet<u32> = units.iter().filter_map(|&u| self.node(u).and_then(|n| n.parent)).collect();
+        for par in parents {
+            let Some(pn) = self.node(par) else { continue };
+            let mut kids = pn.children.clone();          // FRONT-first
+            if extreme {
+                let (s, r): (Vec<u32>, Vec<u32>) = kids.into_iter().partition(|c| units.contains(c));
+                kids = if toward_front { s.into_iter().chain(r).collect() } else { r.into_iter().chain(s).collect() };
+            } else if toward_front {
+                for i in 1..kids.len() {
+                    if units.contains(&kids[i]) && !units.contains(&kids[i - 1]) { kids.swap(i, i - 1); }
+                }
+            } else {
+                for i in (0..kids.len().saturating_sub(1)).rev() {
+                    if units.contains(&kids[i]) && !units.contains(&kids[i + 1]) { kids.swap(i, i + 1); }
+                }
             }
+            if let Some(pm) = self.node_mut(par) { pm.children = kids; }
         }
-        self.groups.retain(|g| alive.contains(&g.id));
+        self.flatten();
+    }
+    /// Detach a node from its parent (or roots) and drop it from the arena. Children are NOT touched —
+    /// callers re-home them first when that matters.
+    fn remove_node(&mut self, id: u32) {
+        match self.node(id).and_then(|n| n.parent) {
+            Some(par) => { if let Some(pn) = self.node_mut(par) { pn.children.retain(|&c| c != id); } }
+            None => self.roots.retain(|&r| r != id),
+        }
+        self.nodes.retain(|n| n.id != id);
+    }
+    /// Ensure `id` is linked into its parent's children (at the FRONT), attaching unattached ancestors
+    /// first. Used by the legacy migration's back→front walk (reproduces flat z exactly).
+    fn attach_front(&mut self, id: u32) {
+        let Some(par) = self.node(id).and_then(|n| n.parent) else { return };
+        if self.node(par).map_or(true, |p| p.children.contains(&id)) { return; }
+        self.attach_front(par);
+        if let Some(pn) = self.node_mut(par) { pn.children.insert(0, id); }
+    }
+    /// Convert the pre-tree registry (groups/group_of) into tree nodes ONCE (legacy files), then clear
+    /// it. Walking storage back→front and front-inserting reproduces the original z exactly.
+    pub fn migrate_legacy(&mut self) {
+        if self.groups.is_empty() && self.group_of.is_empty() { return; }
+        if self.roots.is_empty() {
+            let id = self.nid();
+            self.nodes.push(Node { id, kind: NodeKind::Layer, name: "Layer 1".into(), parent: None,
+                                   children: vec![], hidden: false, locked: false, color: None });
+            self.roots.push(id);
+        }
+        let host = self.roots[0];
+        let legacy = std::mem::take(&mut self.groups);
+        let memb = std::mem::take(&mut self.group_of);
+        let mut gmap: HashMap<u32, u32> = HashMap::new();
+        for g in &legacy {
+            let id = self.nid();
+            self.nodes.push(Node { id, kind: NodeKind::Group, name: g.name.clone(), parent: None,
+                                   children: vec![], hidden: false, locked: false, color: None });
+            gmap.insert(g.id, id);
+        }
+        for g in &legacy {
+            let ng = gmap[&g.id];
+            let np = g.parent.and_then(|p| gmap.get(&p).copied()).unwrap_or(host);
+            if let Some(n) = self.node_mut(ng) { n.parent = Some(np); }
+        }
+        let order: Vec<u32> = self.paths.iter().map(|p| p.id).collect();   // back→front
+        for pid in order {
+            let parent = memb.get(&pid).and_then(|g| gmap.get(g).copied()).unwrap_or(host);
+            let id = self.nid();
+            self.nodes.push(Node { id, kind: NodeKind::Path(pid), name: String::new(), parent: Some(parent),
+                                   children: vec![], hidden: false, locked: false, color: None });
+            self.attach_front(id);
+        }
+    }
+    /// Re-order the flat storage to tree traversal (back→front) — the invariant every "vec order = z"
+    /// consumer relies on. Paths not yet in the tree keep their push order at the very front (they are
+    /// adopted by the next `sync_tree`).
+    pub fn flatten(&mut self) {
+        let mut order: Vec<u32> = vec![];
+        let roots = self.roots.clone();
+        for r in roots { self.collect_paths(r, &mut order); }
+        order.reverse();
+        let pos: HashMap<u32, usize> = order.iter().enumerate().map(|(i, &p)| (p, i)).collect();
+        let n = order.len();
+        let mut indexed: Vec<(usize, Path)> = std::mem::take(&mut self.paths).into_iter().enumerate()
+            .map(|(i, p)| (pos.get(&p.id).copied().unwrap_or(n + i), p)).collect();
+        indexed.sort_by_key(|(k, _)| *k);
+        self.paths = indexed.into_iter().map(|(_, p)| p).collect();
+    }
+    /// Reconcile the tree with storage after any mutation (runs at commit — sync_groups' successor):
+    /// migrate legacy registries, prune leaves of deleted paths + emptied Groups, adopt new paths
+    /// under the ACTIVE layer (at its front), guarantee ≥1 Layer + a valid active_layer, re-flatten.
+    pub fn sync_tree(&mut self) {
+        use std::collections::HashSet;
+        self.migrate_legacy();
+        let live: HashSet<u32> = self.paths.iter().map(|p| p.id).collect();
+        let dead: Vec<u32> = self.nodes.iter()
+            .filter(|n| matches!(n.kind, NodeKind::Path(p) if !live.contains(&p))).map(|n| n.id).collect();
+        for d in dead { self.remove_node(d); }
+        loop {
+            let empty: Vec<u32> = self.nodes.iter()
+                .filter(|n| matches!(n.kind, NodeKind::Group) && n.children.is_empty()).map(|n| n.id).collect();
+            if empty.is_empty() { break; }
+            for e in empty { self.remove_node(e); }
+        }
+        if !self.roots.iter().any(|&r| self.node(r).map_or(false, |n| matches!(n.kind, NodeKind::Layer))) {
+            let id = self.nid();
+            self.nodes.push(Node { id, kind: NodeKind::Layer, name: "Layer 1".into(), parent: None,
+                                   children: vec![], hidden: false, locked: false, color: None });
+            self.roots.insert(0, id);
+        }
+        if self.node(self.active_layer).map_or(true, |n| !matches!(n.kind, NodeKind::Layer)) {
+            self.active_layer = self.roots.iter().copied()
+                .find(|&r| self.node(r).map_or(false, |n| matches!(n.kind, NodeKind::Layer))).unwrap_or(0);
+        }
+        let known: HashSet<u32> = self.nodes.iter()
+            .filter_map(|n| if let NodeKind::Path(p) = n.kind { Some(p) } else { None }).collect();
+        let newbies: Vec<u32> = self.paths.iter().map(|p| p.id).filter(|p| !known.contains(p)).collect();
+        let host = self.active_layer;
+        for pid in newbies {   // back→front; front-inserting each keeps their relative order
+            let id = self.nid();
+            self.nodes.push(Node { id, kind: NodeKind::Path(pid), name: String::new(), parent: Some(host),
+                                   children: vec![], hidden: false, locked: false, color: None });
+            if let Some(h) = self.node_mut(host) { h.children.insert(0, id); }
+        }
+        self.flatten();
     }
 }

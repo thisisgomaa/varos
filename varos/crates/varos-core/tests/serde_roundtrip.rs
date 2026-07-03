@@ -58,8 +58,12 @@ fn sample_doc() -> Document {
 
     Document {
         paths: vec![body, mark],
+        // deliberately LEGACY-shaped: registry populated, tree empty — load paths migrate it
         groups: vec![Group { id: 100, name: "Logo".to_string(), parent: None }],
         group_of,
+        nodes: vec![],
+        roots: vec![],
+        active_layer: 0,
         ids: 100,
         // non-default units + a MULTI-artboard set, so the round-trip exercises every new field:
         // a square white page with bleed + clip, and a transparent page (page_color = None).

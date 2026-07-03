@@ -21,6 +21,7 @@ fn vrs_round_trips_identically_on_disk() {
     ed.doc.paths[0].opacity = 0.8;
     ed.doc.paths[0].name = Some("Hero triangle".into());
     ed.doc.ids = 3;
+    ed.doc.sync_tree();   // adopt the raw push into the tree (every real commit does this)
 
     let p = tmp("roundtrip.vrs");
     save_vrs(&ed.doc, &p).expect("save writes the file");

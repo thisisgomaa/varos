@@ -236,22 +236,23 @@ fn app_flow_group_two_groups_then_ungroup() {
 }
 
 #[test]
-fn sync_groups_drops_deleted_paths() {
+fn sync_tree_drops_deleted_paths() {
     let mut doc = Document::default();
     let a = add_rect(&mut doc, 0.0, 0.0, 10.0, 10.0);
     let b = add_rect(&mut doc, 20.0, 0.0, 30.0, 10.0);
+    doc.sync_tree();                    // adopt the raw pushes into the tree (commit does this)
     doc.group(&[a, b]).unwrap();
 
     // delete path a directly (as delete_selected does), then reconcile
     doc.paths.retain(|p| p.id != a);
-    doc.sync_groups();
-    assert!(!doc.group_of.contains_key(&a), "membership for a deleted path must be dropped");
+    doc.sync_tree();
+    assert!(doc.node_of_path(a).is_none(), "the deleted path's leaf node must be dropped");
     // group still has b → stays alive
     assert!(doc.top_group_of_path(b).is_some());
 
     // delete b too → group becomes empty and is removed
     doc.paths.retain(|p| p.id != b);
-    doc.sync_groups();
-    assert!(doc.groups.is_empty(), "an empty group must be removed");
-    assert!(doc.group_of.is_empty());
+    doc.sync_tree();
+    assert!(!doc.nodes.iter().any(|n| matches!(n.kind, varos_core::model::NodeKind::Group)),
+            "an empty group must be removed");
 }
