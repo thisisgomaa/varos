@@ -127,12 +127,17 @@
     winit 0.29→0.30 — 79/79 tests green, boot fingerprint identical (Vulkan/Mailbox/Bgra8Unorm/msaa 8),
     feel verified by hand. Post-migration fixes folded in: exponential wheel zoom (coalesced notches),
     animation_time = 0 (instant menus — a WORK tool), exact menu widths, hand-rolled dropdowns.
-    <b>Layers Stage A ✅</b> (07-03): the REAL scene-graph now lives in the model — a node tree
-    (Layer/Group/Path) + roots, z = pre-order traversal, flat `paths` re-flattened by `sync_tree`;
-    legacy files migrate (registry→tree, z preserved); eye/lock CASCADE; arrange scoped to siblings.
-    Canvas identical (Ahmed saw no difference — the acceptance bar); 6 new headless tests, 85 total.
-    <b>NEXT, in order:</b> ① <b>Layers Stage B</b> — the visible PANEL (rows/thumbnails/eye/lock/
-    select-column/rename/footer/counter/search, under Properties, temp) →
+    <b>Layers Stage A ✅</b> (07-03): the REAL scene-graph in the model — node tree (Layer/Group/Path)
+    + roots, z = pre-order, flat `paths` re-flattened by `sync_tree`; legacy files migrate; eye/lock
+    CASCADE; arrange scoped to siblings. Canvas identical. <b>Layers panel — Stage B0–B2 ✅</b> (07-03):
+    hand-painted panel docked UNDER Properties growing down; rows (eye/lock reveal-on-hover, identity-
+    colour bar, disclosure, vector thumbnail, name, target ○ + select ▢), search, inline rename, footer
+    +layer/+sublayer/delete, counter; two-way sync. <b>3 blocker bugs FIXED</b> (Ahmed's report): scroll
+    no longer leaks to the canvas (panel captures the wheel), lock is REAL (locked art can't be picked /
+    marquee'd / frame-moved — headless test), and the pro look pass (killed zebra, desaturated identity
+    ramp, tokens, reveal-on-hover). Guided by <b>docs/LAYERS_SPEC.md</b> (4-agent deep-research +
+    gap analysis). <b>NEXT, in order:</b> ① <b>Layers B3 — drag &amp; drop</b> (reorder / nest / reparent:
+    3-zone hit-test + indented insertion line; then drag-the-select-square-to-move-art) →
     ② Colour Stage-2 (Swatches + Paint enum → gradients).
   </div>
 

@@ -99,6 +99,28 @@ fn arrange_moves_units_within_their_own_parent() {
 }
 
 #[test]
+fn a_locked_layer_is_truly_immovable() {
+    // Ahmed's "lock is fake" bug: after locking, the object still dragged. Lock must block hit-test,
+    // marquee AND the transform-frame grab (drop it from the selection at gesture start).
+    let mut ed = Editor::new();
+    ed.doc.artboards.clear(); ed.ppu = 1.0;
+    ed.doc.paths.push(tri(1, 1, 0.0));
+    ed.doc.ids = 3;
+    ed.doc.sync_tree();
+    ed.set_tool(ToolKind::Object);
+    ed.objsel.insert(1);                       // selected first…
+    let layer = ed.doc.active_layer;
+    ed.layer_toggle_locked(layer);             // …then the layer is locked
+    assert!(!ed.objsel.contains(&1), "locking drops the object from the selection");
+    assert!(ed.path_under([5.0, 5.0]).is_none(), "a locked object is not clickable");
+    // even if it lingered in the selection, a drag can't move it
+    ed.objsel.insert(1);
+    let before = ed.doc.paths[0].anchors[0].p;
+    ed.pointer_down([5.0, 5.0]); ed.pointer_move([50.0, 50.0]); ed.pointer_up();
+    assert_eq!(ed.doc.paths[0].anchors[0].p, before, "a locked object never moves");
+}
+
+#[test]
 fn a_second_layer_receives_new_drawings() {
     let mut d = Document::default();
     d.paths.push(tri(1, 1, 0.0));

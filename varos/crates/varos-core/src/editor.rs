@@ -1367,6 +1367,9 @@ impl Editor {
         self.begin();
         self.gesture_copy = false; self.gesture_delta = [0.0, 0.0]; self.gesture_tf = None;
         self.gesture = self.eff_tool();
+        // a locked/hidden object is inert on canvas: drop it from the selection so grabbing the transform
+        // frame can never move it (the hit-test already refuses to newly pick it). This is the REAL lock.
+        self.objsel.retain(|&p| !self.doc.eff_locked(p) && !self.doc.eff_hidden(p));
         if self.gesture == ToolKind::Artboard { self.ab_down(pos); return; }
         // grab a ruler guide first (Selection / Direct tools) — drag to reposition it
         if matches!(self.gesture, ToolKind::Object | ToolKind::Direct) {
@@ -1495,7 +1498,7 @@ impl Editor {
                 let inside = |p: Pt| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1;
                 let mut sel: HashSet<u32> = base.iter().copied().collect();
                 for p in &self.doc.paths {
-                    if p.hidden { continue; }
+                    if self.doc.eff_hidden(p.id) || self.doc.eff_locked(p.id) { continue; }   // locked/hidden = not marquee-able
                     // anchors whose POINT lands inside the marquee
                     for a in p.anchors.iter().chain(p.holes.iter().flatten()) { if inside(a.p) { sel.insert(a.id); } }
                     // …plus the two endpoints of any SEGMENT the marquee crosses, so their handles appear when
@@ -1521,7 +1524,9 @@ impl Editor {
                 let (x1, y1) = (start[0].max(pos[0]), start[1].max(pos[1]));
                 self.objsel = base.iter().copied().collect();
                 for pi in 0..self.doc.paths.len() {
-                    if self.path_in_rect(pi, x0, y0, x1, y1) { self.objsel.insert(self.doc.paths[pi].id); }
+                    let id = self.doc.paths[pi].id;
+                    if self.doc.eff_locked(id) || self.doc.eff_hidden(id) { continue; }   // locked/hidden = not marquee-able
+                    if self.path_in_rect(pi, x0, y0, x1, y1) { self.objsel.insert(id); }
                 }
                 // a marquee that catches any group member selects the whole group
                 let expanded: Vec<u32> = self.objsel.iter().flat_map(|&p| self.doc.group_members(p)).collect();
@@ -1822,6 +1827,55 @@ impl Editor {
         let n = name.trim();
         if let Some(pi) = self.doc.pidx(pid) { self.doc.paths[pi].name = if n.is_empty() { None } else { Some(n.to_string()) }; }
         self.dirty = true; self.commit();
+    }
+
+    // ---------- Layers PANEL ops (node-level; structural = undoable, focus/select = not) ----------
+    /// + New Layer (front) → becomes active.
+    pub fn layer_new(&mut self) { self.begin(); let id = self.doc.add_layer(); self.doc.active_layer = id; self.dirty = true; self.commit(); }
+    /// New Sublayer inside the active layer → becomes active.
+    pub fn layer_new_sublayer(&mut self) {
+        self.begin();
+        let parent = self.doc.layer_ancestor(self.doc.active_layer);
+        let id = self.doc.add_sublayer(parent); self.doc.active_layer = id; self.dirty = true; self.commit();
+    }
+    /// Delete a row (node + its subtree + its paths). No confirm (undo covers it); sync_tree re-guarantees
+    /// a Layer 1 if the last layer went.
+    pub fn layer_delete(&mut self, nid: u32) {
+        self.begin();
+        for p in self.doc.node_paths(nid) { self.objsel.remove(&p); }
+        self.doc.delete_node(nid);
+        self.dirty = true; self.commit();
+    }
+    pub fn layer_rename(&mut self, nid: u32, name: String) {
+        self.begin(); self.doc.set_node_name(nid, name.trim().to_string()); self.dirty = true; self.commit();
+    }
+    pub fn layer_toggle_hidden(&mut self, nid: u32) {
+        self.begin(); self.doc.toggle_node_hidden(nid);
+        for p in self.doc.node_paths(nid) { if self.doc.eff_hidden(p) { self.objsel.remove(&p); } }
+        self.dirty = true; self.commit();
+    }
+    pub fn layer_toggle_locked(&mut self, nid: u32) {
+        self.begin(); self.doc.toggle_node_locked(nid);
+        for p in self.doc.node_paths(nid) { if self.doc.eff_locked(p) { self.objsel.remove(&p); } }
+        self.dirty = true; self.commit();
+    }
+    pub fn set_active_layer(&mut self, nid: u32) { self.doc.active_layer = self.doc.layer_ancestor(nid); }
+    /// Click a ROW: target its layer; a Path leaf ALSO becomes the canvas selection (Illustrator).
+    pub fn layer_focus(&mut self, nid: u32) {
+        self.doc.active_layer = self.doc.layer_ancestor(nid);
+        if let Some(crate::model::NodeKind::Path(pid)) = self.doc.node(nid).map(|n| n.kind) {
+            if !self.doc.eff_locked(pid) {
+                self.tool = ToolKind::Object; self.objsel.clear(); self.selected.clear();
+                self.objsel.insert(pid); self.obj_angle = 0.0;
+            }
+        }
+    }
+    /// Click the SELECTION COLUMN: select ALL of a row's (unlocked) art on the canvas.
+    pub fn layer_select_art(&mut self, nid: u32, additive: bool) {
+        if !additive { self.objsel.clear(); self.selected.clear(); }
+        for p in self.doc.node_paths(nid) { if !self.doc.eff_locked(p) { self.objsel.insert(p); } }
+        self.doc.active_layer = self.doc.layer_ancestor(nid);
+        self.tool = ToolKind::Object; self.obj_angle = 0.0;
     }
     pub fn eyedrop(&mut self, pid: u32) {
         let (f, st, sw) = if let Some(pi) = self.doc.pidx(pid) { let p = &self.doc.paths[pi]; (p.fill, p.stroke, p.stroke_width) } else { return };

@@ -442,6 +442,9 @@ fn main() {
                     window.request_redraw();
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
+                    // a panel is a hard scroll boundary: if the pointer is over egui chrome (e.g. the
+                    // Layers list), the wheel scrolls THAT — it must never leak to canvas pan/zoom.
+                    if gui.wants_pointer() { window.request_redraw(); return; }
                     let (dx, dy) = match delta { MouseScrollDelta::LineDelta(x, y) => (x, y), MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 40.0, p.y as f32 / 40.0) };
                     if ed.mods.alt {
                         // exponential per notch: winit 0.30 coalesces fast wheel notches into ONE event

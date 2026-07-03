@@ -8,7 +8,7 @@
 use std::time::Instant;
 use egui::{Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, RichText, Stroke, StrokeKind};
 use varos_core::editor::{AlignMode, DistAxis, Editor, PaintTarget, ToolKind};
-use varos_core::geom::{Rgba, View};
+use varos_core::geom::{Pt, Rgba, View};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
@@ -33,6 +33,16 @@ const IC_RECT: &str = r#"<rect width="18" height="18" x="3" y="3" rx="2"/>"#;
 const IC_ELLIPSE: &str = r#"<circle cx="12" cy="12" r="10"/>"#;
 const IC_TRIANGLE: &str = r#"<path d="M13.73 4a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>"#;
 const IC_EYE: &str = r#"<path d="m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12"/><path d="m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z"/><path d="m2 22 .414-.414"/>"#;
+// Layers-panel icons (Lucide): eye / eye-off · lock / lock-open · new-layer + · new-sublayer · trash
+const IC_L_EYE: &str = r#"<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>"#;
+const IC_L_EYEOFF: &str = r#"<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>"#;
+const IC_L_LOCK: &str = r#"<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>"#;
+const IC_L_UNLOCK: &str = r#"<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>"#;
+const IC_L_NEW: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
+const IC_L_SUB: &str = r#"<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#;
+const IC_L_TRASH: &str = r#"<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>"#;
+const IC_L_SEARCH: &str = r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>"#;
+
 // field-label icons (Illustrator-style, gray): rotation · opacity · stroke weight
 const IC_ROTATE: &str = r#"<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>"#;
 // transform-tool rail icon: scale (move-diagonal)
@@ -91,6 +101,11 @@ enum Op {
     SwapColors,                     // Shift+X
     DefaultPaint,                   // D — white fill / black stroke
     OpenPicker(MTarget),            // double-click a swatch → open the Color Picker modal for it
+    // ---- layers panel (node ids) ----
+    LayerFocus(u32),                // click a row: target its layer (+ select a leaf path)
+    LayerSelectArt(u32, bool),      // click the selection column: select the row's art (bool = additive)
+    LayerEye(u32), LayerLock(u32), LayerRename(u32, String),
+    LayerNew, LayerNewSub, LayerDelete(u32),
     Flip(bool),
     Align(AlignMode), Distribute(DistAxis),
     // ---- artboard ops (i = artboard index) ----
@@ -172,6 +187,107 @@ struct TopIcons {
     search: Option<egui::TextureHandle>, layout: Option<egui::TextureHandle>, panels: Option<egui::TextureHandle>,
     plus: Option<egui::TextureHandle>, x: Option<egui::TextureHandle>, check: Option<egui::TextureHandle>,
     magnet: Option<egui::TextureHandle>,
+}
+
+// ───────────────────────────── layers panel snapshot ─────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+enum LKind { Layer, Group, Path }
+
+/// One rendered row of the Layers panel (a flattened, display-ordered view of the scene tree).
+struct LRow {
+    id: u32, depth: u16, kind: LKind, name: String,
+    hidden: bool, locked: bool,          // OWN flags (drive the toggle icons)
+    eff_hidden: bool, eff_locked: bool,  // cascaded (drive dimming + "forced" look)
+    has_children: bool, collapsed: bool,
+    selected: bool,                      // any of the row's art is selected on canvas
+    active: bool,                        // the active (target) layer
+    lay_color: Rgba,                     // the enclosing layer's identity colour (left bar + accents)
+    fill: Option<Rgba>, stroke: Option<Rgba>, // leaf swatch/thumb colours
+    thumb: Vec<Vec<Pt>>,                 // leaf outline rings in LOCAL (bbox-relative 0..1) space
+}
+
+/// Layer identity colours — a DESATURATED 12-colour ramp (S≤55%, L 62–70%) so per-layer colour reads
+/// as a quiet accent, never a rainbow clash with the dark theme (LAYERS_SPEC §2 bug 4).
+const LAYER_PALETTE: [Rgba; 12] = [
+    [0.37, 0.69, 0.66, 1.0], [0.78, 0.50, 0.53, 1.0], [0.79, 0.66, 0.42, 1.0], [0.55, 0.58, 0.81, 1.0],
+    [0.53, 0.69, 0.51, 1.0], [0.69, 0.51, 0.72, 1.0], [0.44, 0.66, 0.81, 1.0], [0.72, 0.57, 0.37, 1.0],
+    [0.81, 0.54, 0.44, 1.0], [0.62, 0.55, 0.81, 1.0], [0.61, 0.67, 0.39, 1.0], [0.50, 0.58, 0.66, 1.0],
+];
+const ROW_HOVER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2c);   // row hover (calmer than the chip HOVER)
+const COL_RULE: Color32 = Color32::from_rgb(0x23, 0x23, 0x26);    // faint vertical column separators
+
+/// Auto-name for a leaf path (Illustrator angle-bracket style) unless the user renamed it.
+fn path_auto_name(p: &varos_core::model::Path) -> String {
+    p.name.clone().unwrap_or_else(|| "<Path>".into())
+}
+
+/// Flatten the scene tree into display rows (roots front-first, pre-order; collapsed subtrees skipped).
+/// `search` (lowercased) keeps only matching rows + their ancestors. Thumbs are unit-square outlines.
+fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, search: &str) -> Vec<LRow> {
+    use varos_core::model::NodeKind;
+    let q = search.trim().to_lowercase();
+    let mut rows: Vec<LRow> = Vec::new();
+    let mut parent: Vec<Option<usize>> = Vec::new();   // parallel: each row's parent ROW index
+
+    fn walk(ed: &Editor, nid: u32, depth: u16, par: Option<usize>,
+            collapsed: &std::collections::HashSet<u32>, rows: &mut Vec<LRow>, parent: &mut Vec<Option<usize>>) {
+        let Some(n) = ed.doc.node(nid) else { return };
+        let anc_hidden = || { let mut c = n.parent; while let Some(i) = c { let Some(x) = ed.doc.node(i) else { break }; if x.hidden { return true; } c = x.parent; } false };
+        let anc_locked = || { let mut c = n.parent; while let Some(i) = c { let Some(x) = ed.doc.node(i) else { break }; if x.locked { return true; } c = x.parent; } false };
+        let (kind, name, fill, stroke, thumb) = match n.kind {
+            NodeKind::Layer => (LKind::Layer, n.name.clone(), None, None, vec![]),
+            NodeKind::Group => (LKind::Group, if n.name.is_empty() { "<Group>".into() } else { n.name.clone() }, None, None, vec![]),
+            NodeKind::Path(pid) => ed.doc.pidx(pid).map(|pi| {
+                let p = &ed.doc.paths[pi];
+                let mut rings = vec![ed.doc.outline_px(pi, 1.0)];
+                for h in &p.holes { rings.push(varos_core::model::Document::ring_px(h, true, 1.0)); }
+                (LKind::Path, path_auto_name(p), p.fill, p.stroke, norm_rings(rings))
+            }).unwrap_or((LKind::Path, "<Path>".into(), None, None, vec![])),
+        };
+        let paths = ed.doc.node_paths(nid);
+        // identity colour = the top-level (root) layer's palette slot; sublayers inherit it
+        let root = { let mut c = nid; while let Some(x) = ed.doc.node(c) { match x.parent { Some(p) => c = p, None => break } } c };
+        let lay_color = ed.doc.node(root).and_then(|x| x.color)
+            .unwrap_or_else(|| LAYER_PALETTE[ed.doc.roots.iter().position(|&r| r == root).unwrap_or(0) % LAYER_PALETTE.len()]);
+        rows.push(LRow {
+            id: nid, depth, kind, name,
+            hidden: n.hidden, locked: n.locked,
+            eff_hidden: n.hidden || anc_hidden(),
+            eff_locked: n.locked || anc_locked(),
+            has_children: !n.children.is_empty(), collapsed: collapsed.contains(&nid),
+            selected: paths.iter().any(|p| ed.objsel.contains(p)),
+            active: nid == ed.doc.active_layer,
+            lay_color, fill, stroke, thumb,
+        });
+        parent.push(par);
+        let me = rows.len() - 1;
+        if !collapsed.contains(&nid) {
+            for &c in &n.children { walk(ed, c, depth + 1, Some(me), collapsed, rows, parent); }
+        }
+    }
+    for &r in &ed.doc.roots { walk(ed, r, 0, None, collapsed, &mut rows, &mut parent); }
+
+    if q.is_empty() { return rows; }
+    // keep matches + all their ancestors (so hierarchy stays readable)
+    let mut keep = vec![false; rows.len()];
+    for i in 0..rows.len() {
+        if rows[i].name.to_lowercase().contains(&q) {
+            keep[i] = true;
+            let mut p = parent[i];
+            while let Some(pi) = p { keep[pi] = true; p = parent[pi]; }
+        }
+    }
+    rows.into_iter().zip(keep).filter(|(_, k)| *k).map(|(r, _)| r).collect()
+}
+/// Normalise outline rings into the unit square (fit the combined bbox to 0..1, Y kept down).
+fn norm_rings(rings: Vec<Vec<Pt>>) -> Vec<Vec<Pt>> {
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for r in &rings { for p in r { x0 = x0.min(p[0]); y0 = y0.min(p[1]); x1 = x1.max(p[0]); y1 = y1.max(p[1]); } }
+    let (w, h) = ((x1 - x0).max(1e-3), (y1 - y0).max(1e-3));
+    let s = 1.0 / w.max(h);
+    let (ox, oy) = ((1.0 - w * s) * 0.5, (1.0 - h * s) * 0.5);   // centre the shorter axis
+    rings.into_iter().map(|r| r.into_iter().map(|p| [ox + (p[0] - x0) * s, oy + (p[1] - y0) * s]).collect()).collect()
 }
 
 /// Read-only snapshot of the editor for this frame's panels.
@@ -275,6 +391,18 @@ pub struct Ui {
     splash_start: Option<Instant>, // startup loading screen; None once it has faded out
     last_splash: bool,             // did this frame draw the splash (host renders it transparent)?
     color_modal: Option<ColorModal>, // the Color Picker modal, when open
+    layer_icons: LayerIcons,
+    lay_collapsed: std::collections::HashSet<u32>, // collapsed container node ids (UI-only)
+    lay_search: String,
+    lay_rename: Option<(u32, String)>,             // inline rename in progress (node id + buffer)
+}
+
+/// The Layers-panel icon set (rasterized Lucide, white).
+struct LayerIcons {
+    eye: Option<egui::TextureHandle>, eye_off: Option<egui::TextureHandle>,
+    lock: Option<egui::TextureHandle>, unlock: Option<egui::TextureHandle>,
+    new: Option<egui::TextureHandle>, sub: Option<egui::TextureHandle>,
+    trash: Option<egui::TextureHandle>, search: Option<egui::TextureHandle>,
 }
 
 /// Rasterize a Lucide icon (white) to an egui texture once.
@@ -344,13 +472,21 @@ impl Ui {
             let rgba = im.into_rgba8(); let (w, h) = rgba.dimensions();
             ctx.load_texture("logo", egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], rgba.as_raw()), egui::TextureOptions::LINEAR)
         });
+        let layer_icons = LayerIcons {
+            eye: load_icon(&ctx, "l-eye", IC_L_EYE), eye_off: load_icon(&ctx, "l-eyeoff", IC_L_EYEOFF),
+            lock: load_icon(&ctx, "l-lock", IC_L_LOCK), unlock: load_icon(&ctx, "l-unlock", IC_L_UNLOCK),
+            new: load_icon(&ctx, "l-new", IC_L_NEW), sub: load_icon(&ctx, "l-sub", IC_L_SUB),
+            trash: load_icon(&ctx, "l-trash", IC_L_TRASH), search: load_icon(&ctx, "l-search", IC_L_SEARCH),
+        };
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, None, None, None);
         Ui { ctx, state, frosted: false, rects: vec![], repaint: false, tools, shapes, shape_active: ToolKind::Rect, ic_rotate, ic_opacity, ic_strokew,
              ic_link, ic_fliph, ic_flipv, ic_portrait, ic_landscape, ic_fit, ab_dots, align_icons,
              cursor: egui::CursorIcon::Default, refpt: (0.0, 0.0), lock: false,
              ab_lock: false, ab_name_edit: None, fit_request: None,
              top, win_action: None, show_rail: true, show_dock: true, tabs: vec!["Untitled-1".into()], tab_active: 0,
-             logo, splash_start: Some(Instant::now()), last_splash: false, color_modal: None }
+             logo, splash_start: Some(Instant::now()), last_splash: false, color_modal: None,
+             layer_icons, lay_collapsed: std::collections::HashSet::new(), lay_search: String::new(),
+             lay_rename: None }
     }
 
     /// Feed a window event to egui. Returns true if egui consumed it (so the canvas should NOT).
@@ -398,6 +534,13 @@ impl Ui {
             landscape: &self.ic_landscape, fit: &self.ic_fit };
         let ab_dots = &self.ab_dots;
         let top = &self.top;
+        // layers snapshot (built before the closure — like Snap/AbSnap)
+        let layer_rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search);
+        let layer_ct = ed.doc.nodes.iter().filter(|n| matches!(n.kind, varos_core::model::NodeKind::Layer)).count();
+        let layer_icons = &self.layer_icons;
+        let mut lay_search = std::mem::take(&mut self.lay_search);
+        let mut lay_rename = std::mem::take(&mut self.lay_rename);
+        let mut lay_collapsed = std::mem::take(&mut self.lay_collapsed);
         let mut ops: Vec<Op> = Vec::new();
         let mut rects: Vec<egui::Rect> = Vec::new();
         let mut refpt = self.refpt;
@@ -432,6 +575,10 @@ impl Ui {
                     } else {
                         build_dock(ctx, &snap, &icons, &mut refpt, &mut lock, &mut ops, &mut rects);
                     }
+                    // the Layers panel docks UNDER the inspector and grows downward (Ahmed) — pass the
+                    // inspector's rect (just pushed) so it pins to its bottom edge.
+                    let inspector = rects.last().copied();
+                    build_layers(ctx, &layer_rows, layer_icons, layer_ct, inspector, &mut lay_search, &mut lay_rename, &mut lay_collapsed, &mut ops, &mut rects);
                 }
                 // on-canvas page chrome: a name label + ⋮ menu pinned over each artboard (any tool)
                 build_ab_chrome(ctx, view, ppp, &abs, absnap.active, snap.tool == ToolKind::Artboard,
@@ -448,6 +595,9 @@ impl Ui {
         self.lock = lock;
         self.ab_lock = ab_lock;
         self.ab_name_edit = ab_name_edit;
+        self.lay_search = lay_search;
+        self.lay_rename = lay_rename;
+        self.lay_collapsed = lay_collapsed;
         self.shape_active = shape_active;
         if fit_request.is_some() { self.fit_request = fit_request; }
         self.win_action = win_action;
@@ -1622,6 +1772,195 @@ struct DockIcons<'a> {
     align: &'a [Option<egui::TextureHandle>; 8],
 }
 
+/// A reveal-on-hover column toggle (eye / lock). `marked` = the persistent state that always shows its
+/// glyph (hidden / locked); otherwise the glyph appears only when the row is hovered. `forced` = the
+/// state is inherited from an ancestor (drawn dim, the "you can't change it here" cue). Returns clicked.
+fn col_toggle(ui: &mut egui::Ui, rect: egui::Rect, row_hovered: bool, marked: bool, forced: bool,
+              marked_tex: &Option<egui::TextureHandle>, hint_tex: &Option<egui::TextureHandle>, tip: &str) -> bool {
+    let resp = ui.interact(rect, ui.id().with(("col", rect.left() as i32, rect.top() as i32)), egui::Sense::click());
+    if marked || forced || row_hovered {
+        let (tex, col) = if marked || forced { (marked_tex, if forced && !marked { Color32::from_gray(74) } else { TEXT }) }
+                         else { (hint_tex, MUTED) };
+        if let Some(t) = tex { ui.painter().image(t.id(), egui::Rect::from_center_size(rect.center(), egui::vec2(14.0, 14.0)), UV01(), col); }
+    }
+    resp.on_hover_text(tip).clicked()
+}
+
+/// The Layers panel — a live indented VIEW of the scene tree, docked UNDER the inspector (`dock_below`)
+/// and growing downward. Row anatomy (LAYERS_SPEC §3): eye · lock ‖ identity-bar · disclosure · thumb ·
+/// name ‖ target ○ · select ▢. Header: title + search. Footer: counter + new/sub/delete.
+fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: usize, dock_below: Option<egui::Rect>,
+                search: &mut String, rename: &mut Option<(u32, String)>,
+                collapsed: &mut std::collections::HashSet<u32>, ops: &mut Vec<Op>, rects: &mut Vec<egui::Rect>) {
+    let scr = ctx.content_rect();
+    // pin under the inspector, share its x + width; grow down to the workspace floor
+    let w = dock_below.map(|r| r.width()).unwrap_or(258.0);
+    let left = dock_below.map(|r| r.left()).unwrap_or(scr.right() - w - 16.0);
+    let top = dock_below.map(|r| r.bottom() + 8.0).unwrap_or(scr.top() + 120.0);
+    let list_h = (scr.bottom() - 16.0 - top - 104.0).clamp(90.0, 520.0);   // header 70 + footer 34
+    // column geometry (x, width) — LAYERS_SPEC §3
+    let (eye_w, lock_w) = (26.0, 22.0);
+    let col_sep = eye_w + lock_w;                // vertical rule after eye/lock
+    let bar_x = col_sep + 4.0;                    // 3px identity bar
+    let body_x0 = bar_x + 10.0;                   // indentation origin
+    let gutter_x = w - 44.0;                      // vertical rule before target/select
+    let frame = egui::Frame { fill: BG, corner_radius: CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 },
+        stroke: Stroke::new(1.0, BORDER), inner_margin: Margin::same(0), ..Default::default() };
+    let r = egui::Window::new("layers").title_bar(false).resizable(false)
+        .fixed_pos(egui::pos2(left, top)).fixed_size(egui::vec2(w, list_h + 104.0)).frame(frame)
+        .show(&mut ctx.clone(), |ui| {
+            ui.set_width(w);
+            let hairline = |ui: &mut egui::Ui| { let (r, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
+                ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, BORDER)); };
+            // ── header: title + search ──
+            ui.add_space(9.0);
+            ui.horizontal(|ui| { ui.add_space(13.0); ui.label(RichText::new("Layers").color(TEXT).strong().size(12.5)); });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add_space(11.0);
+                let (sr, _) = ui.allocate_exact_size(egui::vec2(w - 22.0, 26.0), egui::Sense::hover());
+                ui.painter().rect(sr, CornerRadius::same(6), BG_SURFACE, Stroke::new(1.0, BORDER), StrokeKind::Middle);
+                if let Some(t) = &ic.search { ui.painter().image(t.id(), egui::Rect::from_center_size(egui::pos2(sr.left() + 14.0, sr.center().y), egui::vec2(13.0, 13.0)), UV01(), MUTED); }
+                ui.put(egui::Rect::from_min_max(egui::pos2(sr.left() + 28.0, sr.top()), sr.max).shrink2(egui::vec2(2.0, 3.0)),
+                    egui::TextEdit::singleline(search).frame(egui::Frame::NONE).hint_text("Search").font(egui::FontId::proportional(12.5)).text_color(TEXT));
+            });
+            ui.add_space(8.0);
+            hairline(ui);
+
+            // ── the row list ──
+            let row_h = 26.0;
+            egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
+                if rows.is_empty() {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(w, 40.0), egui::Sense::hover());
+                    ui.painter().text(r.center(), Align2::CENTER_CENTER, "No matching layers", FontId::proportional(12.0), FAINT);
+                }
+                for row in rows {
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
+                    let p = ui.painter_at(rect);
+                    let dim = if row.eff_hidden { 0.42 } else { 1.0 };
+                    let hov = resp.hovered();
+                    // state ladder (all from tokens): active > selected > hover > rest
+                    if row.active {
+                        p.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 30));
+                        p.rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, row_h)), CornerRadius::ZERO, ACCENT);
+                    } else if row.selected { p.rect_filled(rect, CornerRadius::ZERO, BG_SURFACE); }
+                    else if hov { p.rect_filled(rect, CornerRadius::ZERO, ROW_HOVER); }
+                    // faint column rules
+                    p.vline(rect.left() + col_sep, rect.y_range(), Stroke::new(1.0, COL_RULE));
+                    p.vline(rect.left() + gutter_x, rect.y_range(), Stroke::new(1.0, COL_RULE));
+                    // eye + lock (reveal on hover; hidden/locked persist)
+                    let eye = egui::Rect::from_min_size(rect.min, egui::vec2(eye_w, row_h));
+                    let lok = egui::Rect::from_min_size(rect.min + egui::vec2(eye_w, 0.0), egui::vec2(lock_w, row_h));
+                    if col_toggle(ui, eye, hov, row.hidden, row.eff_hidden && !row.hidden, &ic.eye_off, &ic.eye, "Show/Hide") { ops.push(Op::LayerEye(row.id)); }
+                    if col_toggle(ui, lok, hov, row.locked, row.eff_locked && !row.locked, &ic.lock, &ic.unlock, "Lock/Unlock") { ops.push(Op::LayerLock(row.id)); }
+                    // identity colour bar
+                    p.rect_filled(egui::Rect::from_min_size(rect.min + egui::vec2(bar_x, 4.0), egui::vec2(3.0, row_h - 8.0)),
+                        CornerRadius::same(1), with_a(rgba_c32a(row.lay_color), dim));
+                    // indent guides (~8% white) + disclosure
+                    for lvl in 0..row.depth { p.vline(rect.left() + body_x0 + lvl as f32 * 13.0 + 2.0, rect.y_range(), Stroke::new(1.0, Color32::from_white_alpha(18))); }
+                    let mut x = rect.left() + body_x0 + row.depth as f32 * 13.0;
+                    if row.has_children {
+                        let c = egui::pos2(x + 3.0, rect.center().y);
+                        let pts = if row.collapsed { vec![c + egui::vec2(-3.0, -4.0), c + egui::vec2(3.0, 0.0), c + egui::vec2(-3.0, 4.0)] }
+                                  else { vec![c + egui::vec2(-4.0, -2.5), c + egui::vec2(4.0, -2.5), c + egui::vec2(0.0, 3.5)] };
+                        p.add(egui::Shape::convex_polygon(pts, with_a(MUTED, dim), Stroke::NONE));
+                        if ui.interact(egui::Rect::from_center_size(c, egui::vec2(16.0, row_h)), ui.id().with(("disc", row.id)), egui::Sense::click()).clicked() {
+                            if row.collapsed { collapsed.remove(&row.id); } else { collapsed.insert(row.id); }
+                        }
+                    }
+                    x += 13.0;
+                    // thumbnail
+                    let thumb = egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 9.0), egui::vec2(18.0, 18.0));
+                    if row.kind == LKind::Path {
+                        let translucent = row.fill.map_or(false, |c| c[3] < 0.999) || row.fill.is_none();
+                        if translucent { checker(&p, thumb, 4.5); }
+                        p.rect(thumb, CornerRadius::same(2), if translucent { Color32::TRANSPARENT } else { Color32::from_gray(24) }, Stroke::new(1.0, with_a(BORDER_2, 0.8)), StrokeKind::Middle);
+                        for ring in &row.thumb {
+                            if ring.len() >= 3 {
+                                let pts: Vec<egui::Pos2> = ring.iter().map(|q| thumb.min + egui::vec2(q[0], q[1]) * 18.0).collect();
+                                let fill = row.fill.map(|c| with_a(rgba_c32a(c), dim)).unwrap_or(Color32::TRANSPARENT);
+                                let stroke = row.stroke.map(|c| with_a(rgba_c32a(c), dim)).unwrap_or(Color32::from_gray((160.0 * dim) as u8));
+                                p.add(egui::Shape::convex_polygon(pts, fill, Stroke::new(1.0, stroke)));
+                            }
+                        }
+                    } else {
+                        // container: identity-colour chip (disclosure carries the "it's a container" meaning)
+                        p.rect_filled(thumb, CornerRadius::same(3), with_a(rgba_c32a(row.lay_color), dim * 0.9));
+                        p.rect_filled(egui::Rect::from_min_size(thumb.min + egui::vec2(3.0, 3.0), egui::vec2(12.0, 4.0)), CornerRadius::same(1), Color32::from_white_alpha((60.0 * dim) as u8));
+                    }
+                    x += 24.0;
+                    // name (auto-names muted; user/layer names bright) — or inline rename
+                    let name_rect = egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(rect.left() + gutter_x - 4.0, rect.bottom()));
+                    let renaming = rename.as_ref().map_or(false, |(id, _)| *id == row.id);
+                    if renaming {
+                        let buf = &mut rename.as_mut().unwrap().1;
+                        let te = ui.put(name_rect.shrink2(egui::vec2(2.0, 4.0)),
+                            egui::TextEdit::singleline(buf).frame(egui::Frame::NONE).font(egui::FontId::proportional(12.5)).text_color(TEXT));
+                        te.request_focus();
+                        if te.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            ops.push(Op::LayerRename(row.id, std::mem::take(buf))); *rename = None;
+                        }
+                    } else {
+                        let auto = row.name.starts_with('<');
+                        let (size, base) = match row.kind {
+                            LKind::Layer => (12.5, TEXT),
+                            _ if auto => (12.0, MUTED),
+                            _ => (12.0, Color32::from_gray(208)),
+                        };
+                        let s = elide(&row.name, name_rect.width(), size);
+                        p.text(egui::pos2(name_rect.left(), rect.center().y), Align2::LEFT_CENTER, s, FontId::proportional(size), with_a(base, dim));
+                    }
+                    // right gutter: target ring + selection square
+                    let tgt = egui::pos2(rect.right() - 30.0, rect.center().y);
+                    let tresp = ui.interact(egui::Rect::from_center_size(tgt, egui::vec2(16.0, row_h)), ui.id().with(("tgt", row.id)), egui::Sense::click());
+                    p.circle_stroke(tgt, 4.5, Stroke::new(1.3, if row.active { ACCENT } else if tresp.hovered() { TEXT } else { MUTED }));
+                    if row.active { p.circle_filled(tgt, 2.0, ACCENT); }
+                    if tresp.clicked() { ops.push(Op::LayerFocus(row.id)); }
+                    let selr = egui::Rect::from_center_size(egui::pos2(rect.right() - 15.0, rect.center().y), egui::vec2(11.0, 11.0));
+                    let sresp = ui.interact(selr.expand(3.0), ui.id().with(("sel", row.id)), egui::Sense::click());
+                    if row.selected { p.rect_filled(selr, CornerRadius::same(2), with_a(rgba_c32a(row.lay_color), dim)); }
+                    else if sresp.hovered() { p.rect(selr, CornerRadius::same(2), Color32::TRANSPARENT, Stroke::new(1.0, MUTED), StrokeKind::Middle); }
+                    if sresp.clicked() { ops.push(Op::LayerSelectArt(row.id, ui.input(|i| i.modifiers.shift))); }
+                    if resp.clicked() && !renaming { ops.push(Op::LayerFocus(row.id)); }
+                    if resp.double_clicked() { *rename = Some((row.id, row.name.clone())); }
+                    // NO per-row separator — rhythm + indentation carry structure (killed the zebra)
+                }
+            });
+            hairline(ui);
+            // ── footer ──
+            ui.add_space(3.0);
+            ui.horizontal(|ui| {
+                ui.add_space(13.0);
+                ui.label(RichText::new(format!("{layer_ct} Layer{}", if layer_ct == 1 { "" } else { "s" })).color(FAINT).size(11.0));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.add_space(9.0);
+                    let footer = |ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str| -> bool {
+                        let (rr, rp) = ui.allocate_exact_size(egui::vec2(28.0, 24.0), egui::Sense::click());
+                        if rp.hovered() { ui.painter().rect_filled(rr, CornerRadius::same(5), HOVER); }
+                        if let Some(t) = tex { ui.painter().image(t.id(), egui::Rect::from_center_size(rr.center(), egui::vec2(15.0, 15.0)), UV01(), if rp.hovered() { TEXT } else { MUTED }); }
+                        rp.on_hover_text(tip).clicked()
+                    };
+                    if footer(ui, &ic.trash, "Delete") {
+                        if let Some(row) = rows.iter().find(|r| r.active).or_else(|| rows.first()) { ops.push(Op::LayerDelete(row.id)); }
+                    }
+                    if footer(ui, &ic.sub, "New Sublayer") { ops.push(Op::LayerNewSub); }
+                    if footer(ui, &ic.new, "New Layer") { ops.push(Op::LayerNew); }
+                });
+            });
+        });
+    if let Some(r) = r { rects.push(r.response.rect); }
+}
+
+/// Truncate a name with a trailing "…" so it fits `avail` px at `size` (rough per-glyph estimate).
+fn elide(name: &str, avail: f32, size: f32) -> String {
+    let per = size * 0.55;
+    let max = (avail / per).floor() as usize;
+    if name.chars().count() <= max || max < 2 { return name.to_string(); }
+    let mut s: String = name.chars().take(max.saturating_sub(1)).collect();
+    s.push('\u{2026}');
+    s
+}
+
 fn build_dock(ctx: &egui::Context, s: &Snap, ic: &DockIcons, refpt: &mut (f32, f32), lock: &mut bool,
               ops: &mut Vec<Op>, rects: &mut Vec<egui::Rect>) {
     let inner = 214.0;
@@ -2044,6 +2383,14 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::SwapColors => ed.swap_colors(),
             Op::DefaultPaint => ed.default_paint(),
             Op::OpenPicker(_) => {} // UI-only: intercepted in run() (opens the modal); never reaches here
+            Op::LayerFocus(n) => ed.layer_focus(n),
+            Op::LayerSelectArt(n, add) => ed.layer_select_art(n, add),
+            Op::LayerEye(n) => ed.layer_toggle_hidden(n),
+            Op::LayerLock(n) => ed.layer_toggle_locked(n),
+            Op::LayerRename(n, s) => ed.layer_rename(n, s),
+            Op::LayerNew => ed.layer_new(),
+            Op::LayerNewSub => ed.layer_new_sublayer(),
+            Op::LayerDelete(n) => ed.layer_delete(n),
             Op::Flip(h) => ed.flip(h),
             Op::Align(m) => ed.align(m),
             Op::Distribute(a) => ed.distribute(a),
