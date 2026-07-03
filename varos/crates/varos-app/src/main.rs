@@ -1,4 +1,5 @@
 #![windows_subsystem = "windows"] // no console window alongside the app
+#![allow(deprecated)] // winit 0.30: the closure EventLoop::run + create_window are deprecated-but-present — the zero-drift path
 //! Varos desktop shell: a winit window + wgpu canvas, with the entire UI chrome painted natively in
 //! egui on the same wgpu surface (top bar, left tool rail + Fill/Stroke swatch, right inspector
 //! dock). Canvas pointer input stays native (winit → Editor) so the pen feel is untouched; the egui
@@ -13,7 +14,7 @@ use winit::{
     event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::WindowBuilder,
+    window::Window,
 };
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{Pt, View};
@@ -261,21 +262,23 @@ fn main() {
     }
     let event_loop = EventLoop::new().unwrap();
     let saved = load_win_state();   // remembered geometry from last session (None on first run)
-    let mut builder = WindowBuilder::new().with_title(full_title(ToolKind::Object, None, false))
+    // winit 0.30 removed WindowBuilder — WindowAttributes carries the identical with_* methods
+    let mut attrs = Window::default_attributes().with_title(full_title(ToolKind::Object, None, false))
         .with_window_icon(load_icon()).with_visible(false) // created hidden — no visible flash at all
         .with_transparent(true)                            // lets the startup splash card float over the desktop
         .with_decorations(false);                          // borderless during the splash → no window shadow; the
         // editor frame (decorations + shadow + snap) is applied once the splash finishes, below.
-    builder = match saved {
-        Some((_, _, _, w, h)) => builder.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
-        None => builder.with_inner_size(winit::dpi::LogicalSize::new(1460.0, 860.0)),
+    attrs = match saved {
+        Some((_, _, _, w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
+        None => attrs.with_inner_size(winit::dpi::LogicalSize::new(1460.0, 860.0)),
     };
-    let window = Arc::new(builder.build(&event_loop).unwrap());
+    #[allow(deprecated)]
+    let window = Arc::new(event_loop.create_window(attrs).unwrap());
     match saved {
         // re-open exactly where it was last time …
         Some((_, x, y, _, _)) => window.set_outer_position(PhysicalPosition::new(x, y)),
         // … or, first run, centre on the primary monitor (the splash card lands mid-screen)
-        None => if let Some(mon) = event_loop.primary_monitor() {
+        None => if let Some(mon) = window.primary_monitor() {
             let (ms, mp, ws) = (mon.size(), mon.position(), window.outer_size());
             window.set_outer_position(PhysicalPosition::new(
                 mp.x + (ms.width as i32 - ws.width as i32) / 2,
@@ -365,7 +368,7 @@ fn main() {
 
     let mut editor_framed = false; // becomes true when we switch the splash → the framed editor window
     event_loop.set_control_flow(ControlFlow::Wait);
-    event_loop.run(move |event, elwt| {
+    event_loop.run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
         match event {
         Event::WindowEvent { event, window_id } => {
             if window_id != window.id() { return; }
@@ -441,7 +444,10 @@ fn main() {
                 WindowEvent::MouseWheel { delta, .. } => {
                     let (dx, dy) = match delta { MouseScrollDelta::LineDelta(x, y) => (x, y), MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 40.0, p.y as f32 / 40.0) };
                     if ed.mods.alt {
-                        let f = (1.0 + dy * 0.12).clamp(0.2, 5.0);
+                        // exponential per notch: winit 0.30 coalesces fast wheel notches into ONE event
+                        // with a bigger dy — 1.12^dy makes that identical to the old one-event-per-notch
+                        // stream (a linear 1+0.12·dy overshoots in a single visible jump)
+                        let f = 1.12f32.powf(dy).clamp(0.2, 5.0);
                         let wc = view.s2w(screen_cursor);
                         view.zoom = (view.zoom * f).clamp(0.05, 40.0);
                         view.pan = [screen_cursor[0]-wc[0]*view.zoom, screen_cursor[1]-wc[1]*view.zoom];

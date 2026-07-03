@@ -47,6 +47,40 @@ fn garbage_is_a_clear_error() {
 }
 
 #[test]
+fn a_group_still_moves_as_one_after_reopen() {
+    // Ahmed's report: after reopening a file, dragging a grouped shape moves it disintegrated.
+    // Full path: build a group → save → load → replace_doc → Object-tool drag one member.
+    let mut ed = Editor::new();
+    ed.doc.artboards.clear(); ed.ppu = 1.0;
+    ed.doc.paths.push(Path::new(1, vec![anc(1, 0.0, 0.0), anc(2, 20.0, 0.0), anc(3, 0.0, 20.0)],
+                                true, Some([1.0, 0.0, 0.0, 1.0]), None, 1.0));
+    ed.doc.paths.push(Path::new(2, vec![anc(4, 100.0, 0.0), anc(5, 120.0, 0.0), anc(6, 100.0, 20.0)],
+                                true, None, Some([0.0, 0.0, 0.0, 1.0]), 2.0));
+    ed.doc.ids = 6;
+    ed.objsel.insert(1); ed.objsel.insert(2);
+    ed.group_selection();
+    assert_eq!(ed.doc.group_members(1).len(), 2, "precondition: both paths share the group");
+
+    let p = tmp("grouped.vrs");
+    save_vrs(&ed.doc, &p).expect("save");
+    let loaded = load_vrs(&p).expect("load");
+    let mut ed2 = Editor::new();
+    ed2.ppu = 1.0;
+    ed2.replace_doc(loaded);
+    assert_eq!(ed2.doc.group_members(1).len(), 2, "membership survives the reopen");
+
+    ed2.set_tool(ToolKind::Object);
+    ed2.pointer_down([5.0, 5.0]);      // grab path 1 (inside its triangle)
+    ed2.pointer_move([15.0, 5.0]);     // drag +10 in x
+    ed2.pointer_up();
+    let p1 = ed2.doc.paths[0].anchors[0].p;
+    let p2 = ed2.doc.paths[1].anchors[0].p;
+    assert!((p1[0] - 10.0).abs() < 0.5, "the grabbed member moved, got {:?}", p1);
+    assert!((p2[0] - 110.0).abs() < 0.5, "its GROUP-MATE moved with it (not disintegrated), got {:?}", p2);
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
 fn open_resets_history_and_selection() {
     let mut ed = Editor::new();
     ed.doc.paths.push(Path::new(1, vec![anc(1, 0.0, 0.0), anc(2, 10.0, 0.0), anc(3, 0.0, 10.0)],
