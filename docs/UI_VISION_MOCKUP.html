@@ -1,0 +1,409 @@
+<title>Varos — Vision (Boxes Constitution)</title>
+<style>
+  :root{
+    /* rule 7 — warm-black ramp (R ≥ G ≥ B) */
+    --bg:#141313; --panel:#1b1919; --surface:#242121; --hover:#2b2828;
+    --line:#2c2929; --line2:#3b3735;
+    --text:#e9e6e3; --muted:#8f8a86; --faint:#6e6a66;
+    --accent:#0c8ce9; --guide:#ff54a8;
+    --navy:#12263a; --amber:#f0b429;
+    --ui:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;
+    --mono:'Cascadia Code',Consolas,monospace;
+    --r:3px; --rbox:4px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{background:var(--bg);color:var(--text);font:13px/1.35 var(--ui);-webkit-font-smoothing:antialiased}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .ic{width:16px;height:16px;display:block;flex:none}
+  .ic-s{width:13px;height:13px}
+  /* the ONE box — every region is the same kind of thing (container model) */
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:var(--rbox)}
+
+  .app{position:fixed;inset:0;display:flex;flex-direction:column}
+
+  /* ===== app bar (docked box, edge style) ===== */
+  /* app bar = the VOID itself (seam colour), not a panel — Brave/Claude pattern */
+  .appbar{height:40px;flex:none;background:#0e0d0d;display:flex;align-items:center;padding-left:4px}
+  .menu{width:36px;height:40px;display:grid;place-items:center;color:var(--muted)}
+  .menu:hover{background:var(--hover);color:var(--text)}
+  /* doc tabs = Brave-style chips floating in the void: active = filled block */
+  .tabs{display:flex;align-items:center;gap:4px;height:40px}
+  .tab{display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;font-size:12px;
+    color:var(--muted);border-radius:var(--rbox);white-space:nowrap}
+  .tab:hover{background:rgba(255,255,255,.04)}
+  .tab.on{background:var(--panel);color:var(--text)}
+  .tab .x{color:var(--faint)}
+  .tab-add{display:grid;place-items:center;width:32px;color:var(--muted)}
+  .abr{display:flex;align-items:center;gap:8px;margin-left:auto}
+  .kpill{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r);padding:4px 9px;color:var(--faint);font-size:11.5px}
+  .kpill kbd{font-family:var(--mono);font-size:10px;border:1px solid var(--line2);border-radius:2px;padding:0 3px;color:var(--muted)}
+  .btn{padding:5px 12px;font-size:12px;border-radius:var(--r);color:var(--text);background:var(--surface);border:1px solid var(--line2)}
+  .btn.ghost{background:none;color:var(--muted)}
+  .caption{display:flex;align-items:stretch;height:40px;margin-left:4px}
+  .cap{width:42px;display:grid;place-items:center;color:var(--muted)}
+  .cap:hover{background:var(--hover)}
+  .cap.close:hover{background:#c42b1c;color:#fff}
+
+  /* ===== middle — the box workspace: equal seams everywhere ===== */
+  .mid{flex:1;display:flex;min-height:0;gap:6px;padding:6px;background:#0e0d0d}
+  .boardwrap{flex:1;position:relative;min-width:0;display:flex;flex-direction:column;
+    background:var(--bg);border:1px solid var(--line);border-radius:var(--rbox);overflow:hidden}
+  .hrul{height:18px;flex:none;background:#181616;border-bottom:1px solid var(--line);position:relative;
+    background-image:repeating-linear-gradient(90deg,var(--line2) 0 1px,transparent 1px 10px);
+    background-size:10px 4px;background-position:18px bottom;background-repeat:repeat-x}
+  .vrul{position:absolute;left:0;top:18px;bottom:0;width:18px;background:#181616;border-right:1px solid var(--line);z-index:5;
+    background-image:repeating-linear-gradient(180deg,var(--line2) 0 1px,transparent 1px 10px);
+    background-size:4px 10px;background-position:right top;background-repeat:repeat-y}
+  .corner{position:absolute;left:0;top:0;width:18px;height:18px;background:#181616;
+    border-right:1px solid var(--line);border-bottom:1px solid var(--line);z-index:6}
+  .rnum{position:absolute;top:2px;font:8.5px var(--mono);color:var(--faint)}
+  .board{flex:1;position:relative;overflow:hidden;background:var(--bg);
+    background-image:radial-gradient(rgba(255,255,255,.045) 1px,transparent 1.15px);
+    background-size:22px 22px;background-position:11px 11px}
+
+  /* ===== HAND 1 — floating control bar (top of board) ===== */
+  .ctlbar{position:absolute;top:30px;left:50%;transform:translateX(-50%);z-index:20;
+    display:flex;align-items:center;gap:6px;height:36px;padding:0 10px;font-size:12px}
+  .obj{color:var(--muted);font-size:11.5px}
+  .mini{display:flex;align-items:center;gap:5px;background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r);height:24px;padding:0 7px}
+  .mini .l{font-size:9.5px;color:var(--faint)}
+  .mini .v{font:11px var(--mono);color:var(--text);font-variant-numeric:tabular-nums}
+  .chip{width:17px;height:17px;border-radius:2px;border:1px solid var(--line2);flex:none}
+  .chip.none{background:linear-gradient(135deg,var(--surface) 44%,#e05c5c 44%,#e05c5c 56%,var(--surface) 56%)}
+  .cbtn{width:26px;height:26px;display:grid;place-items:center;color:var(--muted);border-radius:var(--r);flex:none}
+  .cbtn:hover{background:var(--hover);color:var(--text)}
+  .cbtn.on{color:var(--text);position:relative}
+  .cbtn.on::after{content:'';position:absolute;bottom:1px;left:50%;transform:translateX(-50%);width:10px;height:2px;background:var(--accent)}
+  .vsep{width:1px;height:16px;background:var(--line);margin:0 4px;flex:none}
+  .more{color:var(--faint);font-size:12px;padding:0 5px}
+
+  /* ===== HAND 2 — floating tool rail (left, over the board) ===== */
+  .rail{position:absolute;left:34px;top:104px;z-index:20;width:44px;
+    display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:2px}
+  .tbtn{width:32px;height:32px;display:grid;place-items:center;color:var(--muted);border-radius:var(--r);position:relative}
+  .tbtn:hover{background:var(--hover);color:var(--text)}
+  .tbtn.on{background:var(--accent);color:#fff}
+  .tbtn .fly{position:absolute;right:3px;bottom:3px;width:0;height:0;
+    border-left:3px solid transparent;border-bottom:3px solid currentColor;opacity:.65}
+  .rsep{width:22px;height:1px;background:var(--line);margin:5px 0;flex:none}
+  .fs{position:relative;width:32px;height:32px;margin-top:4px}
+  .fs .b{position:absolute;width:16px;height:16px;border-radius:2px}
+  .fs .back{right:2px;bottom:2px;border:1.5px solid var(--navy);background:var(--panel)}
+  .fs .front{left:2px;top:2px;background:var(--amber);border:1.5px solid var(--line2)}
+  .trio{display:flex;gap:3px;margin:4px 0 2px}
+  .trio i{width:9px;height:9px;border-radius:1.5px;border:1px solid var(--line2);display:block}
+  .trio .t1{background:var(--amber)}
+  .trio .t2{background:linear-gradient(135deg,#e9e6e3,#6e6a66)}
+  .trio .t3{background:linear-gradient(135deg,var(--surface) 42%,#e05c5c 42%,#e05c5c 58%,var(--surface) 58%)}
+
+  /* ===== artboards ===== */
+  .ab{position:absolute;background:#fff;outline:1px solid rgba(0,0,0,.55)}
+  .ab-label{position:absolute;top:-22px;left:0;display:flex;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap}
+  .ab-label .dots{color:var(--faint)}
+  .ab1{left:calc(50% - 240px);top:118px;width:520px;height:520px}
+  .ab2{right:-140px;top:118px;width:250px;height:445px}
+  .sel{position:absolute;border:1px solid var(--accent);pointer-events:none}
+  .hnd{position:absolute;width:7px;height:7px;background:#fff;border:1px solid var(--accent)}
+  .hud{position:absolute;background:var(--accent);color:#fff;font:10px var(--mono);padding:2px 6px;border-radius:2px;white-space:nowrap}
+  .guide{position:absolute;width:1px;background:var(--guide)}
+  .gtick{position:absolute;width:7px;height:1px;background:var(--guide)}
+  .wordmark{position:absolute;left:0;right:0;top:322px;text-align:center;color:var(--navy)}
+  .wordmark .ar{font-size:64px;font-weight:700;line-height:1;direction:rtl;font-family:'Segoe UI',sans-serif}
+  .wordmark .lat{margin-top:9px;font-size:11.5px;letter-spacing:9px;color:#787878;font-weight:600}
+
+  /* ===== right column — stacked BOXES (the container model made visible) ===== */
+  .col{width:274px;flex:none;display:flex;flex-direction:column;gap:6px;min-height:0}
+  .grp{display:flex;flex-direction:column;min-height:0}
+  .grp.grow{flex:1}
+  /* multiple panels in one box → Claude-style pill tabs */
+  .gtabs{display:flex;flex:none;gap:4px;padding:6px;border-bottom:1px solid var(--line)}
+  .gtab{padding:5px 12px;border-radius:var(--r);font-size:12px;color:var(--muted)}
+  .gtab.on{background:var(--surface);color:var(--text)}
+  .gbody{overflow:hidden}
+  .sec{padding:10px 12px 12px;border-bottom:1px solid var(--line)}
+  .sec:last-child{border-bottom:none}
+  .sechead{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+  .slabel{font-size:9.5px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint)}
+  .shmore{color:var(--faint);font-size:12px;line-height:1}
+  .frow{display:flex;align-items:center;gap:6px;margin-top:6px}
+  .frow:first-of-type{margin-top:0}
+  .fld{display:flex;align-items:center;gap:5px;background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r);height:25px;padding:0 7px;min-width:0;flex:1}
+  .fld .l{font-size:9.5px;color:var(--faint);flex:none}
+  .fld .v{font:11px var(--mono);color:var(--text);font-variant-numeric:tabular-nums;overflow:hidden}
+  .ref{display:grid;grid-template-columns:repeat(3,4px);grid-template-rows:repeat(3,4px);gap:3.5px;flex:none;margin-right:2px}
+  .ref i{width:4px;height:4px;border-radius:50%;background:var(--line2)}
+  .ref i.on{background:var(--accent)}
+  .sw{width:18px;height:18px;border-radius:2px;border:1px solid var(--line2);flex:none}
+  .sw.none{background:linear-gradient(135deg,var(--surface) 44%,#e05c5c 44%,#e05c5c 56%,var(--surface) 56%)}
+  .rowlbl{font-size:11.5px;color:var(--muted);width:44px;flex:none}
+  .slider{flex:1;height:2px;background:var(--line2);position:relative}
+  .slider i{position:absolute;left:0;top:0;bottom:0;width:85%;background:var(--muted)}
+  .slider b{position:absolute;top:50%;left:85%;transform:translate(-50%,-50%);width:9px;height:9px;border-radius:50%;background:var(--text)}
+  .irow{display:flex;justify-content:space-between}
+  .ibtn{width:26px;height:24px;display:grid;place-items:center;color:var(--muted);border-radius:var(--r)}
+  .ibtn:hover{background:var(--hover);color:var(--text)}
+  .alto{display:flex;align-items:center;gap:6px;margin-top:8px}
+
+  /* ===== status bar ===== */
+  .status{height:25px;flex:none;background:#0e0d0d;
+    display:flex;align-items:center;gap:14px;padding:0 10px;font-size:11px;color:var(--faint)}
+  .status .grow{flex:1}
+  .status b{color:var(--muted);font-weight:400}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <g id="i-burger" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4.5 7h15M4.5 12h15M4.5 17h15"/></g>
+  <g id="i-cursor"><path d="M6.5 3.5 17 12.4l-4.8.7 2.3 5.6-2.3 1-2.3-5.7-3.4 3z" fill="currentColor" stroke="none"/></g>
+  <g id="i-dcursor"><path d="M6.5 3.5 17 12.4l-4.8.7 2.3 5.6-2.3 1-2.3-5.7-3.4 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></g>
+  <g id="i-frame" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8.5 3v18M15.5 3v18M3 8.5h18M3 15.5h18"/></g>
+  <g id="i-pen" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13.5 5.5 18.5 10.5 9.5 19.5H4.5v-5z"/><path d="m13.5 5.5 2.2-2.2 5 5-2.2 2.2"/></g>
+  <g id="i-rect" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4.5" y="6" width="15" height="12"/></g>
+  <g id="i-ell" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="7.2"/></g>
+  <g id="i-text" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5.5 7V4.5h13V7M12 4.5v15M9 19.5h6"/></g>
+  <g id="i-hand" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 11.5V7a1.7 1.7 0 0 1 3.4 0v4M10.9 11V4.9a1.7 1.7 0 0 1 3.4 0V11M14.3 11.2V6.4a1.7 1.7 0 0 1 3.4 0v7.8a6.3 6.3 0 0 1-6.3 6.3h-.6a6.3 6.3 0 0 1-6.3-6.3v-2a1.7 1.7 0 0 1 3.3-.6l.5 1.2"/></g>
+  <g id="i-zoomt" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="6.2"/><path d="m15.6 15.6 4 4M8.5 11h5M11 8.5v5"/></g>
+  <g id="i-drop" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 20.5 1-.3 8-8M10 9.5l4.5 4.5M13.5 6l4.5 4.5 2.5-2.5a1.8 1.8 0 0 0 0-2.5l-2-2a1.8 1.8 0 0 0-2.5 0z"/></g>
+  <g id="i-line" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5 19 19 5"/></g>
+  <g id="i-search" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="6.2"/><path d="m15.6 15.6 4 4"/></g>
+  <g id="i-magnet" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M6 4h4.2v9a1.8 1.8 0 0 0 3.6 0V4H18v9a6 6 0 0 1-12 0zM6 8.2h4.2M13.8 8.2H18"/></g>
+  <g id="i-fliph" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v17M8 8.5 4.5 12 8 15.5M16 8.5l3.5 3.5L16 15.5"/></g>
+  <g id="i-flipv" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12h17M8.5 8 12 4.5 15.5 8M8.5 16l3.5 3.5L15.5 16"/></g>
+  <g id="i-rot" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M17.5 3.5v3.6h-3.6"/></g>
+  <g id="i-al-l" stroke="none" fill="currentColor"><path d="M4 3.5h1.6v17H4z"/><rect x="7.5" y="6.5" width="9" height="4"/><rect x="7.5" y="13.5" width="13" height="4"/></g>
+  <g id="i-al-ch" stroke="none" fill="currentColor"><path d="M11.2 3.5h1.6v17h-1.6z"/><rect x="7" y="6.5" width="10" height="4"/><rect x="4.5" y="13.5" width="15" height="4"/></g>
+  <g id="i-al-r" stroke="none" fill="currentColor"><path d="M18.4 3.5H20v17h-1.6z"/><rect x="7.5" y="6.5" width="9" height="4"/><rect x="3.5" y="13.5" width="13" height="4"/></g>
+  <g id="i-al-t" stroke="none" fill="currentColor"><path d="M3.5 4h17v1.6h-17z"/><rect x="6.5" y="7.5" width="4" height="9"/><rect x="13.5" y="7.5" width="4" height="13"/></g>
+  <g id="i-al-cv" stroke="none" fill="currentColor"><path d="M3.5 11.2h17v1.6h-17z"/><rect x="6.5" y="7" width="4" height="10"/><rect x="13.5" y="4.5" width="4" height="15"/></g>
+  <g id="i-al-b" stroke="none" fill="currentColor"><path d="M3.5 18.4h17V20h-17z"/><rect x="6.5" y="7.5" width="4" height="9"/><rect x="13.5" y="3.5" width="4" height="13"/></g>
+  <g id="i-ins-in" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16"/><rect x="9" y="9" width="6" height="6" fill="currentColor" stroke="none"/></g>
+  <g id="i-ins-bk" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7.5" y="7.5" width="12" height="12"/><path d="M4.5 13.5v-9h9"/></g>
+  <g id="i-link" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 14 14 10M8.5 12l-2.3 2.3a3.2 3.2 0 0 0 4.5 4.5L13 16.5M15.5 12l2.3-2.3a3.2 3.2 0 0 0-4.5-4.5L11 7.5"/></g>
+  <g id="i-min" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M6 12h12"/></g>
+  <g id="i-max" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="6.5" y="6.5" width="11" height="11" rx="1"/></g>
+  <g id="i-x" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></g>
+  <g id="i-plus" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></g>
+  <g id="i-un" stroke="none" fill="currentColor"><rect x="4" y="4" width="10" height="10"/><rect x="10" y="10" width="10" height="10" opacity=".55"/></g>
+  <g id="i-sub" stroke="none" fill="currentColor"><rect x="4" y="4" width="10" height="10"/><rect x="10" y="10" width="10" height="10" opacity=".2"/></g>
+  <g id="i-int" stroke="none" fill="currentColor"><rect x="4" y="4" width="10" height="10" opacity=".25"/><rect x="10" y="10" width="10" height="10" opacity=".25"/><rect x="10" y="10" width="4" height="4"/></g>
+  <g id="i-exc" stroke="none" fill="currentColor"><rect x="4" y="4" width="10" height="10"/><rect x="10" y="10" width="10" height="10"/><rect x="10" y="10" width="4" height="4" fill="#1b1919"/></g>
+  <g id="i-sb" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9.5" cy="12" r="5.5"/><circle cx="15.5" cy="12" r="5.5"/></g>
+  <g id="i-fit" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></g>
+  <g id="i-chd" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m8.5 10.5 3.5 3.5 3.5-3.5"/></g>
+</defs></svg>
+
+<div class="app">
+
+  <!-- ===== APP BAR ===== -->
+  <header class="appbar">
+    <div class="menu"><svg class="ic"><use href="#i-burger"/></svg></div>
+    <nav class="tabs">
+      <div class="tab on">lighthouse-brand.vrs <span class="x">×</span></div>
+      <div class="tab">Untitled-1&nbsp;* <span class="x">×</span></div>
+      <div class="tab-add"><svg class="ic ic-s"><use href="#i-plus"/></svg></div>
+    </nav>
+    <div class="abr">
+      <div class="kpill"><svg class="ic ic-s"><use href="#i-search"/></svg> Search <kbd>Ctrl K</kbd></div>
+      <div class="btn ghost">Export</div>
+      <div class="btn">Share</div>
+      <div class="caption">
+        <div class="cap"><svg class="ic ic-s"><use href="#i-min"/></svg></div>
+        <div class="cap"><svg class="ic ic-s"><use href="#i-max"/></svg></div>
+        <div class="cap close"><svg class="ic ic-s"><use href="#i-x"/></svg></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="mid">
+    <div class="boardwrap">
+      <div class="hrul">
+        <span class="rnum" style="left:120px">0</span><span class="rnum" style="left:320px">200</span>
+        <span class="rnum" style="left:520px">400</span><span class="rnum" style="left:720px">600</span>
+        <span class="rnum" style="left:920px">800</span><span class="rnum" style="left:1120px">1000</span>
+      </div>
+      <div class="corner"></div>
+      <div class="vrul"></div>
+
+      <main class="board">
+
+        <!-- HAND 1: floating control bar -->
+        <div class="ctlbar box">
+          <span class="obj">Path</span>
+          <div class="mini"><span class="l">X</span><span class="v">266</span></div>
+          <div class="mini"><span class="l">Y</span><span class="v">118</span></div>
+          <div class="mini"><span class="l">W</span><span class="v">126</span></div>
+          <div class="mini"><span class="l">H</span><span class="v">64</span></div>
+          <div class="mini"><span class="l">∠</span><span class="v">0°</span></div>
+          <span class="vsep"></span>
+          <span class="chip" style="background:var(--amber)"></span>
+          <span class="chip none"></span>
+          <div class="mini"><span class="l">Op</span><span class="v">85%</span></div>
+          <span class="vsep"></span>
+          <span class="cbtn"><svg class="ic ic-s"><use href="#i-al-l"/></svg></span>
+          <span class="cbtn"><svg class="ic ic-s"><use href="#i-al-ch"/></svg></span>
+          <span class="cbtn"><svg class="ic ic-s"><use href="#i-al-r"/></svg></span>
+          <span class="cbtn"><svg class="ic ic-s"><use href="#i-al-cv"/></svg></span>
+          <span class="vsep"></span>
+          <span class="cbtn"><svg class="ic ic-s"><use href="#i-ins-in"/></svg></span>
+          <span class="cbtn"><svg class="ic ic-s"><use href="#i-ins-bk"/></svg></span>
+          <span class="cbtn on"><svg class="ic ic-s"><use href="#i-magnet"/></svg></span>
+          <span class="more">⋯</span>
+        </div>
+
+        <!-- HAND 2: floating tool rail -->
+        <nav class="rail box">
+          <span class="tbtn on"><svg class="ic"><use href="#i-cursor"/></svg></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-dcursor"/></svg></span>
+          <span class="rsep"></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-frame"/></svg></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-pen"/></svg><i class="fly"></i></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-rect"/></svg><i class="fly"></i></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-ell"/></svg></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-line"/></svg></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-text"/></svg></span>
+          <span class="rsep"></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-drop"/></svg></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-hand"/></svg></span>
+          <span class="tbtn"><svg class="ic"><use href="#i-zoomt"/></svg></span>
+          <span class="rsep"></span>
+          <span class="fs"><span class="b back"></span><span class="b front"></span></span>
+          <span class="trio"><i class="t1"></i><i class="t2"></i><i class="t3"></i></span>
+        </nav>
+
+        <section class="ab ab2"><div class="ab-label">Artboard 2 <span class="dots">⋮</span></div></section>
+
+        <section class="ab ab1">
+          <div class="ab-label">Artboard 1 <span class="dots">⋮</span></div>
+          <svg style="position:absolute;inset:0" viewBox="0 0 520 520">
+            <circle cx="260" cy="185" r="122" fill="none" stroke="#12263a" stroke-width="3"/>
+            <polygon points="266,150 392,118 392,182" fill="#f0b429" opacity=".85"/>
+            <polygon points="238,268 282,268 288,292 232,292" fill="#12263a"/>
+            <polygon points="246,168 274,168 270,268 250,268" fill="#12263a"/>
+            <rect x="243" y="152" width="34" height="12" fill="#12263a"/>
+            <rect x="250" y="136" width="20" height="16" fill="#f0b429" opacity=".85"/>
+            <path d="M248 136 a14 12 0 0 1 24 0 z" fill="#12263a"/>
+            <polygon points="249,196 271,196 270.4,208 249.6,208" fill="#fff"/>
+            <polygon points="248,232 272,232 271.4,244 248.6,244" fill="#fff"/>
+          </svg>
+          <div class="wordmark">
+            <div class="ar">فاروس</div>
+            <div class="lat">V A R O S</div>
+          </div>
+          <div class="guide" style="left:260px;top:0;height:520px"></div>
+          <div class="gtick" style="left:257px;top:149px"></div>
+          <div class="gtick" style="left:257px;top:183px"></div>
+          <div class="sel" style="left:266px;top:118px;width:126px;height:64px">
+            <i class="hnd" style="left:-4px;top:-4px"></i><i class="hnd" style="left:50%;top:-4px;margin-left:-4px"></i><i class="hnd" style="right:-4px;top:-4px"></i>
+            <i class="hnd" style="left:-4px;top:50%;margin-top:-4px"></i><i class="hnd" style="right:-4px;top:50%;margin-top:-4px"></i>
+            <i class="hnd" style="left:-4px;bottom:-4px"></i><i class="hnd" style="left:50%;bottom:-4px;margin-left:-4px"></i><i class="hnd" style="right:-4px;bottom:-4px"></i>
+            <span class="hud" style="right:-8px;bottom:-26px">126 × 64</span>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- ===== RIGHT: stacked boxes ===== -->
+    <aside class="col">
+
+      <div class="grp box">
+        <div class="gtabs">
+          <div class="gtab on">Align</div>
+          <div class="gtab">Pathfinder</div>
+        </div>
+        <div class="gbody">
+          <div class="sec">
+            <div class="irow">
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-al-l"/></svg></span>
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-al-ch"/></svg></span>
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-al-r"/></svg></span>
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-al-t"/></svg></span>
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-al-cv"/></svg></span>
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-al-b"/></svg></span>
+            </div>
+            <div class="alto">
+              <span class="rowlbl" style="width:auto">Align to</span>
+              <div class="fld"><span class="v" style="font-family:var(--ui);font-size:11.5px">Artboard</span>
+                <svg class="ic ic-s" style="margin-left:auto;color:var(--faint)"><use href="#i-chd"/></svg></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grp box grow">
+        <div class="gtabs">
+          <div class="gtab on">Properties</div>
+          <div class="gtab">Layers</div>
+        </div>
+        <div class="gbody">
+
+          <div class="sec">
+            <div class="sechead"><span class="slabel">Transform</span><span class="shmore">⋯</span></div>
+            <div class="frow">
+              <span class="ref"><i></i><i></i><i></i><i></i><i class="on"></i><i></i><i></i><i></i><i></i></span>
+              <div class="fld"><span class="l">X</span><span class="v">266</span></div>
+              <div class="fld"><span class="l">Y</span><span class="v">118</span></div>
+            </div>
+            <div class="frow">
+              <span style="width:16px;flex:none"></span>
+              <div class="fld"><span class="l">W</span><span class="v">126</span></div>
+              <div class="fld"><span class="l">H</span><span class="v">64</span></div>
+              <svg class="ic ic-s" style="color:var(--faint)"><use href="#i-link"/></svg>
+            </div>
+            <div class="frow">
+              <div class="fld" style="flex:0 0 84px"><span class="l">∠</span><span class="v">0°</span></div>
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-fliph"/></svg></span>
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-flipv"/></svg></span>
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-rot"/></svg></span>
+            </div>
+          </div>
+
+          <div class="sec">
+            <div class="sechead"><span class="slabel">Appearance</span><span class="shmore">⋯</span></div>
+            <div class="frow">
+              <span class="rowlbl">Fill</span>
+              <span class="sw" style="background:var(--amber)"></span>
+              <div class="fld"><span class="v">F0B429</span></div>
+              <div class="fld" style="flex:0 0 52px"><span class="v">85</span><span class="l">%</span></div>
+            </div>
+            <div class="frow">
+              <span class="rowlbl">Stroke</span>
+              <span class="sw none"></span>
+              <div class="fld"><span class="v" style="color:var(--faint)">None</span></div>
+              <span class="ibtn"><svg class="ic ic-s"><use href="#i-plus"/></svg></span>
+            </div>
+            <div class="frow">
+              <span class="rowlbl">Opacity</span>
+              <span class="slider"><i></i><b></b></span>
+              <span class="v num" style="font-size:11px;color:var(--muted)">85%</span>
+            </div>
+          </div>
+
+          <div class="sec">
+            <div class="sechead"><span class="slabel">Shape</span><span class="shmore">⋯</span></div>
+            <div class="irow">
+              <span class="ibtn"><svg class="ic"><use href="#i-un"/></svg></span>
+              <span class="ibtn"><svg class="ic"><use href="#i-sub"/></svg></span>
+              <span class="ibtn"><svg class="ic"><use href="#i-int"/></svg></span>
+              <span class="ibtn"><svg class="ic"><use href="#i-exc"/></svg></span>
+              <span style="width:1px;background:var(--line)"></span>
+              <span class="ibtn" style="width:44px"><svg class="ic"><use href="#i-sb"/></svg></span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ===== STATUS BAR ===== -->
+  <footer class="status">
+    <span><b>V</b> select · <b>A</b> direct · <b>Alt</b>+drag duplicates</span>
+    <span class="grow"></span>
+    <span>Artboard <span class="num">1 / 2</span></span>
+    <span style="display:flex;align-items:center;gap:5px"><svg class="ic ic-s"><use href="#i-fit"/></svg> Fit</span>
+    <span class="num" style="color:var(--muted)">100%</span>
+  </footer>
+</div>
