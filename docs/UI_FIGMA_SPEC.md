@@ -1,5 +1,10 @@
 # Varos — EXACT UI Spec (pulled from Ahmed's Figma)
 
+> **⚠ DIRECTION UPDATE (2026-07-03):** the look law now lives in **`UI_DIRECTION.md`** — DOCKED workbench
+> (floating canceled for the standard layout), zero shadows, 0–4px corners, one-home rule, warm-black
+> signature. **This file's PALETTE + fonts + cursors stay valid**; its floating-shell/radii/shadow parts
+> are superseded.
+
 > 🔁 **Right-dock UPDATE (2026-06-26):** the inspector is no longer "Design | Layers" (2 below).
 > Ahmed evolved it toward **Illustrator's panel structure** — see **`PANELS_PRO_SPEC.md`** for the
 > right dock (`Transform·Align·Pathfinder` + `Properties·Layers·Libraries`), the floating left toolbar

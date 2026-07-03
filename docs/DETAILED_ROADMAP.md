@@ -4,7 +4,7 @@
 > Stages: **Stage 1** = core/MVP of the system · **Stage 2** = standard · **Stage 3** = advanced. ✅ have · 🟡 partial · 🔴 not started.
 > This is the working map (from `ELEMENTS_CATALOG.md`). Ahmed reorders freely; new ideas get slotted into the right system.
 
-## ⓘ Build decisions — 2026-06-29 (review-driven; these OVERRIDE anything below that conflicts)
+## ⓘ Build decisions — locked (these OVERRIDE anything below that conflicts) · 1–8: 2026-06-29 · 9: 2026-07-02
 A grounded code-vs-plan review (5-agent pass over the real repo) produced these amendments. Each is load-bearing:
 
 1. **Serde spine is FOUNDATIONS, not the Save system.** `model.rs` has zero serde today; Color/Stroke/Transform/Layers/Artboard all assume "saved to the `.varos` schema." So `#[derive(Serialize, Deserialize)]` on `Anchor/Path/Group/Document/Rgba/Pt` + one round-trip test ships in Foundations (Stage-0) BEFORE any system. The Save system then = container (zip/OPC) + dialogs + guards over a schema that already round-trips.
@@ -13,19 +13,22 @@ A grounded code-vs-plan review (5-agent pass over the real repo) produced these 
 4. **Depth-first stays — with ONE early confirmation slice.** After Colour, build a single end-to-end vertical slice: **draw → colour → save → reopen** ("make a logo and keep it"). It proves the foundation holds before 9 systems stack on it. Then resume depth-first. This is ONE slice, not breadth.
 5. **B6 (the property→inspector+save "master component") is NOT built in the foundation.** Build Color + Stroke + Transform by hand (accept wiring each property ~3× for these 3 systems), THEN extract B6 from their real shapes. Designing it blind = abstracting the wrong thing. ⚠️ Explicit contradiction accepted: **the foundation is NOT 100% complete before system 1** — B6 is derived after 3 real systems exist.
 6. **Codex parallelism (after the foundation):** FREEZE the shape of `Document` / `Op` / `Snap`; one agent owns those three files, the other sends change-requests. Do NOT parallelize adjacent or renderer-deep systems — **Color‖Stroke is forbidden** (both extend `Path`, both need new renderer pipelines + C2/C4 math). Clean seams = by crate (one in `varos-core`, one in `varos-app`) or non-adjacent systems.
-7. **Order tweaks:** Snapping moves up to sit WITH/before Transform (precise transform + drawing need snap to feel right — feel is the thesis). Artboard slot-1 = Stage-1 only (single board), not full multi-artboard. The wgpu 0.19→0.29 bump is its OWN de-risking spike with a fallback (stay on 0.19, defer frosted glass) — it must NOT gate Phase 1. Transform's handle-coupling (Shift=proportional) is RECONCILED against the locked, Ahmed-verified model (geometry-based couple, **Alt breaks**) before coding — feel wins over the Illustrator default.
+7. **Order tweaks:** Snapping moves up to sit WITH/before Transform (precise transform + drawing need snap to feel right — feel is the thesis). Artboard slot-1 = Stage-1 only (single board), not full multi-artboard. The wgpu 0.19→0.29 bump is its OWN de-risking spike with a fallback (stay on 0.19 temporarily) — it must NOT gate any system; slot = right after the 🔖 slice [D9]. Transform's handle-coupling (Shift=proportional) is RECONCILED against the locked, Ahmed-verified model (geometry-based couple, **Alt breaks**) before coding — feel wins over the Illustrator default.
 8. **v1 scope = Illustrator-class, NOT Figma-class.** Components/Symbols and the Figma layer (Frames/Auto-Layout/Dev-Mode) are post-v1 SYSTEMS (not panel stubs). Extensibility/Plugins/single-schema (the stated moat) is a real system, deferred — given its true weight, not a one-line bullet. (See `ELEMENTS_CATALOG.md` header.)
+9. **Frosted glass CANCELED (2026-07-02, Ahmed — final).** Solid panels are the ONE material — no material toggle, one code path; the frost plumbing (`Ui.frosted`/`frost_pipe`) may be deleted when convenient. The wgpu bump stays planned as **foundation hygiene** (slot: right after the 🔖 slice) — its driver is a current base for the panels still to come, not looks.
 
 ## Build order — the real timeline
 Depth-first: each step reaches at least Stage 1 before the next, then we circle back to deepen (D4).
 Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering — build steps. The detailed sections below are titled BY NAME (no numbers); find them by the system name.**
 
-- **0 · Foundations** ✅ *spine done (serde + units)* — the shared UI pieces + architecture + technical core every system plugs into.
-- **1 · Artboard / Document** ▶ **NEXT** — a single page (Stage-1) + the document model (size, units, DPI); owns the units / world↔screen coordinate contract [D3/D7].
-- **2 · Transform + Snapping** — exact numeric + tool transforms (X/Y/W/H, rotate, flip, 9-point pivot), built WITH snapping so it feels right [D7].
-- **3 · Layers / Structure** — the real scene-graph (a Layer tree, z-order, sublayers, groups, masks) — a MODEL system, not a panel [D2].
-- **4 · Colour** — the colour pipeline: fill/stroke targets, colour models, picker, swatches, gradients, eyedropper, opacity.
-- **▶ CONFIRMATION SLICE** — draw → colour → save → reopen ("make a logo & keep it"): proves the foundation holds before stacking more [D4].
+- **0 · Foundations** ✅ *spine done 06-29 (serde + units)* — the shared UI pieces + architecture + technical core every system plugs into.
+- **1 · Artboard / Document** ✅ *Stage 1 BUILT 06-30* — multi-board model + Artboard tool (Shift+O) + inspector panel + on-canvas name/⋮ menu; owns the units / world↔screen coordinate contract [D3/D7].
+- **2 · Transform + Snapping** 🟡 *mostly built* — Snap + Rulers + Guides ✅ (06-30) and the Rotate/Scale tools with snapped pivot + Alt-copy + Transform Again ✅ (07-01); **still open:** the numeric Transform panel + control-bar fields + flips + menu wiring [D7].
+- **4 · Colour — Stage 1** ✅ *BUILT 07-02 — PULLED AHEAD of Layers (conscious deviation)* — hand-painted picker (SV/hue/alpha, hex/RGB/HSB) + the render-correctness fix (isolated-layer group opacity, per-object fill→stroke stacking, 5 headless tests). Polish (recent/document colours, arrow nudges) in flight.
+- **▶ 🔖 CONFIRMATION SLICE — NEXT** — draw → colour → save → reopen ("make a logo & keep it"): proves the foundation holds before stacking more [D4].
+- **⚙ · Engine-update spike** — wgpu 0.19→~0.29 as its own risk-boxed spike with a fallback; foundation hygiene, not looks (frosted canceled) [D7/D9].
+- **3 · Layers / Structure** — the real scene-graph (a Layer tree, z-order, sublayers, groups, masks) — a MODEL system, not a panel [D2]. Deliberately BEFORE Colour Stage 2, so the two model changes land in order.
+- **4 · Colour — Stage 2** — Swatches + the Paint enum migration (opens gradients) → Gradients; then the rest of the colour pipeline.
 - **5 · Stroke** — weight, caps, joins, alignment, dashes, arrowheads, variable width; the Stroke panel.
 - **6 · Save system** — the .varos container (zip) + native Save/Open dialogs + autosave/recovery, on the serde spine already built [D1].
 - **7 · Geometric tools** — Line Segment, Shape Builder, cut tools (Scissors / Knife / Eraser), Clipping Mask / Compound Path.
@@ -39,7 +42,7 @@ Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering �
 ## Foundations (shared base — BEFORE any system)
 *The shared three-layer base — design-system UI widgets, the data-model/Op/undo/property-binding architecture, and the GPU/math/units/serialization technical core — that every later Varos system plugs into.*
 
-> Grounded against the real repo: native egui+wgpu UI shell live (`varos-app/src/ui.rs`), `varos-core` (model/editor/tools/geom/scene/boolean), wgpu renderer with stencil-cover fills + frosted plumbing. Snapshot-clone undo, stable u32 IDs, deferred-`Op` panel pattern all exist. Gaps flagged inline (no serde/`.varos`, no unit system, no property-definition abstraction, RGBA-f32-only color, no text glyph / gradient rendering).
+> Grounded against the real repo: native egui+wgpu UI shell live (`varos-app/src/ui.rs`), `varos-core` (model/editor/tools/geom/scene/boolean), wgpu renderer with stencil-cover fills (+ frost plumbing, now unused — frosted canceled 2026-07-02 [D9]). Snapshot-clone undo, stable u32 IDs, deferred-`Op` panel pattern all exist. Gaps flagged inline (no serde/`.varos`, no unit system, no property-definition abstraction, RGBA-f32-only color, no text glyph / gradient rendering).
 
 > **Stage-0 spine [D1/D3] — ✅ DONE (2026-06-29):** (a) serde derives on `Anchor/Path/Group/Document/ShapeKind` + a round-trip test; (b) the Units + world↔screen coordinate contract (`units.rs`: pt-internal, px/pt/mm derived, parse/format). The two gaps every early system silently assumed are now closed. Next: Artboard slot-1 (embeds `DocUnits` into `Document`).
 
@@ -59,19 +62,19 @@ Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering �
 - A1.3 Radius scale _(Stage 1)_ 🟡 (partial) — panels/pills 12px, buttons 6–8px, inputs 5–6px, round toggles/pills 999px
 - A1.4 Typography tokens _(Stage 1)_ 🟡 (partial) — UI = Inter; numbers = JetBrains Mono; base 13px / line-height 1.5; section labels 11–12px letter-spaced
 - A1.5 Elevation/shadow tokens _(Stage 1)_ ✅ (have basic) — floating shadow `0 8px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.03)`; currently one light GPU shadow pass behind panel rects
-- A1.6 Promote to a real token module _(Stage 2)_ — extract all consts into one `tokens.rs`/`theme` struct so light/alt themes + a future "solid vs frosted" material flag read from one place (today they are scattered consts)
+- A1.6 Promote to a real token module _(Stage 2)_ — extract all consts into one `tokens.rs`/`theme` struct so light/alt themes read from one place (today they are scattered consts; the "solid vs frosted" material flag is GONE — frosted canceled [D9]). Includes a RADIUS token: Ahmed (07-02) wants rounded corners RESTRICTED to a few surfaces — less rounding everywhere reads bigger/more professional; exact values come from the full-vision mockup
 - A1.7 Motion tokens _(Stage 3)_ — hover/press transition durations, easing curves for panel show/hide + dropdown open
 
 **A2. The floating panel container** _(Stage 1 — core/MVP)_ ✅ (have basic) — tool rail + inspector dock exist
 - A2.1 Body — rounded 12px, `--bg-panel`, hairline `--border`, GPU drop-shadow; rects tracked in `Ui.rects` for the shadow pass
-- A2.2 Material toggle _(Stage 2)_ 🟡 (plumbing exists) — frosted-glass (blur scene texture behind panel) vs solid; `Ui.frosted` flag + `frost_pipe` in renderer already wired but currently forced solid
+- A2.2 ~~Material toggle~~ **CANCELED 2026-07-02 [D9]** — frosted glass is permanently off; SOLID is the one final material (no toggle). The `Ui.frosted` flag + `frost_pipe` plumbing may be deleted when convenient.
 - A2.3 Header — title text, optional left icon, optional right action icons (collapse, more "…"), drag-to-move affordance _(Stage 2)_
 - A2.4 Show/hide + collapse — whole-panel toggle (Window menu, A11) + collapse-to-header _(Stage 2)_
 - A2.5 Dock vs float _(Stage 3)_ — panels can be docked to an edge or float over the board; remember last position
 - A2.6 Resize + min/max size + scroll-on-overflow _(Stage 2)_ — inspector grows; internal scroll when content exceeds height
 - A2.7 Tabbed panel host _(Stage 2)_ 🟡 (spec'd) — e.g. `Design | Layers`, `Transform·Align·Pathfinder` / `Properties·Layers·Libraries` per PANELS_PRO_SPEC
 - A2.8 Tear-off / re-dock + multi-monitor _(Stage 3)_
-- A2.9 Panel-arrange/coordinate system _(Stage 2)_ — shared layout that positions every panel + reports its rect to the GPU shadow/frost pass (phase-1 of the GPU-UI plan)
+- A2.9 Panel-arrange/coordinate system _(Stage 2)_ — shared layout that positions every panel + reports its rect to the GPU shadow pass (frost dropped [D9]) (phase-1 of the GPU-UI plan). Ahmed's requested freedom (07-02): panels dock/park anywhere (left/right/bottom); candidate default = tool rail bottom-center, left side reserved for a BIGGER Layers panel — final layout decided via the full-vision mockup, then built here
 
 **A3. Buttons** _(Stage 1 — core/MVP)_ ✅ (have basic) — tool chips + window controls drawn hand-painted
 - A3.1 Variants — primary (azure filled `Share`), secondary (surface), ghost/icon-only (tool rail), destructive (red)
@@ -246,10 +249,10 @@ Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering �
 - C1.6 Gradients — linear/radial/conic fill rendering; no gradient shader yet (color model is flat RGBA only) _(Stage 2)_ 🔴
 - C1.7 Images/raster fills, patterns _(Stage 3)_ 🔴
 - C1.8 Compositing & effects — per-object opacity ✅; blend modes, masks, shadow/blur effects _(Stage 3)_
-- C1.9 Offscreen scene target + blit — scene rendered to `scene_tex`, blitted to surface; doubles as blur source for frosted panels ✅
-- C1.10 Frosted-glass pass — `frost_pipe`/`frost_bg` sample-blur scene behind panel rects (plumbed, off by default) _(Stage 2)_ 🟡
+- C1.9 Offscreen scene target + blit — scene rendered to `scene_tex`, blitted to surface ✅ (its frosted-blur use is gone [D9]; the offscreen target stays useful for future effects)
+- C1.10 ~~Frosted-glass pass~~ **CANCELED 2026-07-02 [D9]** — `frost_pipe`/`frost_bg` plumbing may be deleted; solid is final.
 - C1.11 GPU UI shadow pass — light shadow drawn behind each panel rect from `Ui.rects` ✅
-- C1.12 wgpu version — currently 0.19/egui 0.27; bump to ~0.29 _(its OWN de-risking spike [D7], NOT a Phase-1 gate)_ 🟡 — fallback: stay on 0.19 and defer frosted glass if the 10-version jump gets hairy. Must not block any system.
+- C1.12 wgpu version — ✅ **DONE 2026-07-03 (`451ca2a`): wgpu 0.19→29 · egui 0.27→0.35 · winit 0.29→0.30** — zero-perceptible-difference migration; the foundation-hygiene debt is cleared. The UI shell (see `BOX_SYSTEM_PLAN.md`) builds on the new base.
 - C1.13 Selection/overlay layer — handles, bbox, anchors, marquee, snap guides drawn over the scene (currently part of fg) _(Stage 2)_ 🟡
 - C1.14 Dot-grid background render ✅ (have basic)
 
@@ -322,7 +325,7 @@ Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering �
 
 **Stage 1 (must exist before ANY system):** token module (A1), panel container + tool rail + inspector (A2), core widgets — button/toggle/number-field/swatch/section/tooltip (A3–A5, A9–A10), icon pipeline (A12), states (A13), basic cursors (A14); the data model (B1), Op + begin/commit + undo (B2/B3), per-frame Snap (B4), the written add-a-system template (B5), tool dispatch (B7); GPU fills/strokes/paths (C1.1–C1.4, C1.9–C1.12), bezier + boolean + transform/view math (C2/C3/C5/C6), the panel↔engine bus (C9), and a first-cut `.varos` save (C8.1–C8.2). 🔴 Real Stage-1 gaps to close: `.varos` serialization (C8), and the wgpu bump (C1.12).
 
-**Stage 2 (makes it pro):** property-definition→field/save binding (B6, the master-component moat), units (C7) + unit-aware number fields (A5.6), pro strokes (C1.3) + gradients (C1.6) + color conversions/picker (C4, A8.4), dropdowns/menus/context-menus (A7), frosted material (A2.2/C1.10), tabs/collapsibles/Window-menu (A10/A11), snapping (C5.5/C6.3), affine-matrix refactor (C5.2).
+**Stage 2 (makes it pro):** property-definition→field/save binding (B6, the master-component moat), units (C7) + unit-aware number fields (A5.6), pro strokes (C1.3) + gradients (C1.6) + color conversions/picker (C4, A8.4), dropdowns/menus/context-menus (A7), tabs/collapsibles/Window-menu (A10/A11), snapping (C5.5/C6.3), affine-matrix refactor (C5.2).
 
 **Stage 3 (advanced):** RNA-style generic schema (B1.6/B6.3), text glyph rendering (C1.5), images/blend modes/effects/masks (C1.7–C1.8), history panel (B3.4), workspaces/tear-off panels (A2.5/A11.3), color management (C4.7), import/export adapters (C8.7).
 
@@ -499,7 +502,7 @@ Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering �
 - 12.1 Contrast checker / WCAG ratio readout between two chosen colors _(Stage 3)_
 - 12.2 Colorblind-simulation preview of the artwork palette _(Stage 3)_
 - 12.3 Numeric scrubbing (drag on field labels), arrow-key nudge, copy-as (hex/rgb/css) on any swatch _(Stage 2)_
-- 12.4 Frosted-glass floating Color/Swatches/Gradient panels consistent with Varos GPU UI shell; dockable/tear-off _(Stage 2)_
+- 12.4 Floating Color/Swatches/Gradient panels consistent with the (solid) Varos GPU UI shell; dockable/tear-off _(Stage 2)_
 - 12.5 Keyboard-first: shortcuts for `<`/`>`/`/`, `X`, `Shift+X`, `D`, `G`, `I` (eyedropper) wired to the modeless engine _(Stage 1 for the core ones)_
 
 ---
@@ -706,9 +709,10 @@ Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering �
   - 1.10.c Align to (Pixel) Grid / Transform Object Only / Transform Pattern Only / Transform Both _(Stage 3)_ — controls whether a fill pattern transforms with the object.
 - 1.11 Live readout while dragging — bbox handle drags ✅ update these fields in real time; numeric fields update during tool drags too (two-way binding).
 - 1.12 Empty / mixed states — no selection = fields blank/disabled; multi-selection shows combined bbox values; mixed rotation shows blank rotate field (typing applies absolutely to all).
-- 1.13 Panel chrome — collapsible, dockable in the inspector, matches the floating frosted panel shell; reachable via Window ▸ Transform (Shift+F8).
+- 1.13 Panel chrome — collapsible, dockable in the inspector, matches the floating solid panel shell; reachable via Window ▸ Transform (Shift+F8).
 
 **2. Top control-bar numeric fields** _(Stage 1 — core/MVP)_ — the always-visible quick-transform strip; mirror of the panel.
+> ➕ Expanded (Ahmed 2026-07-02, Affinity/Figma borrow): the top bar also carries **quick Align**, **Flip/Rotate actions**, **snapping toggles**, **insertion-target (inside/behind)** and a **quick Export entry** — "everything reachable from the toolbar", panels stay the deep/secondary path.
 - 2.1 Mini reference-point proxy + X / Y / W / H inline — same semantics as panel, condensed into the control bar when a selection exists.
 - 2.2 Rotate + Flip H / Flip V buttons inline — one-click common ops without opening the panel.
 - 2.3 Constrain-link toggle inline — duplicates 1.6 in the bar.
@@ -838,6 +842,12 @@ Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering �
 *The native .varos file system — serialize/open/save the document model, with New/templates, autosave + crash recovery, version history, recent files, and Place/Import with linked vs embedded assets.*
 
 > ⓘ AMENDED [D1]: the **serde spine** (derives on the model + round-trip test) moves to **Foundations**, built before any system. This system = the **container (zip/OPC) + native dialogs + dirty/recovery guards** over a schema that already round-trips. Split Stage 1 → **1a** (round-trip one `.varos` + Save/Open + dirty flag) and **1b** (dialogs, atomic write, .bak, new-doc preset); drop advisory file-locks + per-artboard thumbnails out of MVP.
+
+> 📌 **PDF-interop backlog** (from Ahmed's first real-world test of the pulled-forward PDF container, 2026-07-02 — belongs to THIS system's slot, not now):
+> (a) **Whole-object emission:** simple opaque objects should be written as ONE fill+stroke op (PDF `B`) so Illustrator ungroups them into whole objects — today fill & stroke import as separate pieces. (Translucent-knockout strokes must stay split — even Adobe splits those; document, don't chase.)
+> (b) **Colour tagging:** embed an sRGB ICC profile / OutputIntent so every app shows EXACTLY the same colours — Ahmed saw small shifts between apps; untagged RGB is interpreted per-app. Verify parity after tagging.
+> (c) **Study a real Illustrator PDF:** Ahmed provides samples (with + without "Preserve Editing") — dissect how AI structures pages/groups (incl. `/PieceInfo` private data) to make OUR flat output import as cleanly as possible. Honest ceiling: Illustrator will never read the Varos MODEL — the goal is the cleanest possible flat interchange.
+> (d) **Foreign PDFs:** today Varos opens only files carrying its own model — a foreign PDF must fail with a CLEAR message (verify). A real PDF **importer** (operators → editable paths) is its own large feature; ties to Place/Import (pt 7), valuable later for the Arabic-recovery story.
 
 **1. The `.varos` document format — on-disk container** _(Stage 1 — core/MVP)_
 - 1.1 Container shape — a ZIP/OPC-style package (zip64-capable) renamed `.varos`, NOT a single flat blob; lets us stream-read large docs & swap parts without full rewrite
@@ -1001,6 +1011,8 @@ Status: ✅ done · ▶ now / next · ⬜ later. **This is the only numbering �
 *The hierarchical document tree — Layers panel with nested layers/sublayers/objects, visibility & lock, targeting, z-order, grouping, masks, compound paths, and structural selection — that organizes every object on the canvas.*
 
 > ⚠️ AMENDED [D2]: this is a **MODEL system, not panel assembly.** Today the model is a flat `Vec<Path>` + a `group_of` side-table (no `Layer` type, no z-order on `Group`, no sublayers; `scene.rs` uses flat-Vec order AS z-order). Stage 1 here = **build the real scene-graph** (a `Layer`/node tree owning children + attributes) and migrate selection + render-order + every tool onto it. The panel is the easy part on top.
+
+> 🔒 UX decisions (Ahmed 2026-07-02, from Affinity): **dragging a row ONTO another row = it clips/nests INSIDE it** — this is our chosen mask interaction (no select-both + menu ritual; it complements the explicit Clipping Mask command, not replaces it). And **insertion-target actions** (draw/paste INSIDE or BEHIND the selection) join the top control bar later (see Transform §2).
 
 **1. Layers panel — shell & structure** _(Stage 1 — core/MVP)_ ✅ (have basic)
 - 1.1 Panel container — floating rounded panel in the native GPU UI; dockable/collapsible; resizable height; scrollable list

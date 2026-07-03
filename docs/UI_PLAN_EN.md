@@ -1,5 +1,9 @@
 # Varos — Native GPU UI: Plan & Handoff (for the Production session)
 
+> **⚠ UPDATE 2026-07-02 (Ahmed): FROSTED GLASS CANCELED — permanently.** Solid panels are the one final
+> material; no settings toggle, one code path. Every frosted mention below is historical: Step 2's frosted
+> half and gate 4's frosted-perf clause are VOID. The wgpu bump remains planned (foundation hygiene).
+
 > **You (Production) implement this. Ahmed judges the result in the real window. The advisor wrote this
 > plan.** It explains the GOAL, the TECHNOLOGY, the RESEARCH, the DIRECTION, your DECISION FREEDOM, and the
 > TEST. Read it fully before writing code. Hard requirements are marked **MUST**; everything else is guidance
@@ -53,7 +57,7 @@ options against Varos's exact constraints. Findings, as **guidance**:
   the **full** build the bump is needed; for an early visual proof an older compatible egui can answer the look
   question without it. **You decide the sequencing** (see 4).
 - egui's default look is plain by design — that's fine: use it as the **skeleton** (layout / events / widgets)
-  and **hand-paint the beautiful chrome** (rounded panels, soft shadow, later frosted glass) in our own wgpu
+  and **hand-paint the beautiful chrome** (rounded panels, soft shadow) in our own wgpu
   pass. That hand-painted layer is also what keeps the seam clean (egui can be swapped out later).
 
 Full technical detail: **`D:/VAROS/docs/GPU_UI_SPIKE_BRIEF.md`**. Palette/look: **`D:/VAROS/docs/UI_FIGMA_SPEC.md`**.
@@ -81,9 +85,8 @@ Full technical detail: **`D:/VAROS/docs/GPU_UI_SPIKE_BRIEF.md`**. Palette/look: 
 board that **fills 100% of the screen**, with **ZERO black** anywhere around it (you see the board around the
 rounded panel). Nothing else floating, no clutter. **Do not proceed until Ahmed approves this in the real window.**
 
-**Step 2 — make it beautiful:** match the design exactly (colors, spacing, soft shadow from 6/UI_FIGMA_SPEC),
-then add **frosted glass as the DEFAULT** + a **settings toggle to turn it off** (→ solid). Keep frosting cheap
-(blur only the panel's region, downsample, cache while the canvas is idle) and measure its cost while drawing.
+**Step 2 — make it beautiful:** match the design exactly (colors, spacing, soft shadow from 6/UI_FIGMA_SPEC).
+*(The frosted-glass half of this step was CANCELED 2026-07-02 — solid is the one final material, no toggle.)*
 
 **Step 3 — the panel design-system ("puzzle pieces"):** build the reusable primitives once — the floating-panel
 container, buttons, number fields (type + click-drag scrub + wheel), swatches, tabs, sections, tokens — so any
@@ -99,9 +102,9 @@ Retire the web panels only once parity is reached.
 ## 6. The Details (what Ahmed wants — the experience)
 
 - **Board:** 100% of the screen, edge to edge, with the dot grid.
-- **Panel:** rounded corners (~12px); clean **solid dark** fill now (frosted later); floats on the board;
+- **Panel:** rounded corners (~12px); clean **solid dark** fill (final — frosted canceled); floats on the board;
   **ZERO black** around it; draggable; can be shown/hidden.
-- **Material:** solid now → **frosted glass default + a settings toggle to disable it** later.
+- **Material:** **solid — FINAL** (frosted glass canceled 2026-07-02; no toggle).
 - **Personality:** **balanced** — clean, but the important controls stay visible (not over-minimal, not cluttered).
 - **Colors:** bg `#141313` · panel surface `#262627` · text `#e6e6e6` · muted `#8a8a8a` · accent `#0c8ce9`.
 - **Fonts:** Inter for UI, a mono for numbers; ~13px base.
@@ -119,8 +122,8 @@ around it; the pen feels unchanged. PASS → continue to Step 2. FAIL → fix be
 2. **Clean compositing, no seam** — one surface, one frame: canvas pass, then UI onto a pass we own, then
    present. Zero second window, zero OS transparency hack, no seam/z-fighting.
 3. **Native pen feel untouched** — drawing/dragging on the full-bleed board has identical latency/feel to today.
-4. **Tolerable dev loop + perf** — new panels are quick to author; idle CPU fine; frosted glass holds the frame
-   budget while drawing (or the downsample/cache fixes it; else default to solid).
+4. **Tolerable dev loop + perf** — new panels are quick to author; idle CPU fine. *(The frosted-perf clause
+   is VOID — frosted canceled 2026-07-02.)*
 
 **Report PASS/FAIL honestly per gate, with Ahmed seeing it run.** Never claim "works" from an automated/headless pass.
 
