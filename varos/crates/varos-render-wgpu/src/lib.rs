@@ -184,21 +184,21 @@ fn make_attach(d: &wgpu::Device, c: &wgpu::SurfaceConfiguration, samples: u32, f
 fn make_pipe(d: &wgpu::Device, l: &wgpu::PipelineLayout, sh: &wgpu::ShaderModule, fmt: wgpu::TextureFormat, samples: u32, color: bool, stencil: wgpu::StencilState) -> wgpu::RenderPipeline {
     d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: None, layout: Some(l),
-        vertex: wgpu::VertexState { module: sh, entry_point: "vs", buffers: &[wgpu::VertexBufferLayout {
+        vertex: wgpu::VertexState { module: sh, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &VATTRS }] },
-        fragment: Some(wgpu::FragmentState { module: sh, entry_point: "fs", targets: &[Some(wgpu::ColorTargetState {
+        fragment: Some(wgpu::FragmentState { module: sh, entry_point: Some("fs"), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState {
             format: fmt, blend: Some(wgpu::BlendState::ALPHA_BLENDING),
             write_mask: if color { wgpu::ColorWrites::ALL } else { wgpu::ColorWrites::empty() } })] }),
         primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
-        depth_stencil: Some(wgpu::DepthStencilState { format: DS_FORMAT, depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::Always, stencil, bias: wgpu::DepthBiasState::default() }),
-        multisample: wgpu::MultisampleState { count: samples, ..Default::default() }, multiview: None,
+        depth_stencil: Some(wgpu::DepthStencilState { format: DS_FORMAT, depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always), stencil, bias: wgpu::DepthBiasState::default() }),
+        multisample: wgpu::MultisampleState { count: samples, ..Default::default() }, multiview_mask: None, cache: None,
     })
 }
 
 impl Renderer {
     pub async fn new(target: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32) -> Self {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, ..Default::default() });
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, ..wgpu::InstanceDescriptor::new_without_display_handle() });
         let surface = instance.create_surface(target).unwrap();
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance, compatible_surface: Some(&surface), force_fallback_adapter: false,
@@ -208,7 +208,8 @@ impl Renderer {
         let extra = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES & adapter.features();
         let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
             label: None, required_features: extra, required_limits: wgpu::Limits::downlevel_defaults(),
-        }, None).await.expect("no device");
+            ..Default::default()
+        }).await.expect("no device");
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
         // crisper edges: 8x MSAA only if the DEVICE truly supports it (needs the feature above), else 4x
@@ -234,7 +235,7 @@ impl Renderer {
         surface.configure(&device, &config);
         log!("[varos] present: {:?} | format: {:?} | msaa: {}", config.present_mode, config.format, samples);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[], push_constant_ranges: &[] });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[], immediate_size: 0 });
         // TWO stencil bits share the buffer: bit 0x01 = fill even-odd parity, bit 0x80 = translucent-stroke
         // band mask. Fans/covers confine themselves to 0x01, band mark/cover to 0x80, so a knockout object
         // can hold both at once (fill paints where parity=1 AND band=0 → the stroke cuts the fill beneath it).
@@ -274,29 +275,29 @@ impl Renderer {
             wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
             wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
         ] });
-        let blit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("blit"), bind_group_layouts: &[&blit_bgl], push_constant_ranges: &[] });
+        let blit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("blit"), bind_group_layouts: &[Some(&blit_bgl)], immediate_size: 0 });
         let blit_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor { label: Some("blit"), layout: Some(&blit_layout),
-            vertex: wgpu::VertexState { module: &blit_sh, entry_point: "vs", buffers: &[] },
-            fragment: Some(wgpu::FragmentState { module: &blit_sh, entry_point: "fs", targets: &[Some(wgpu::ColorTargetState { format: config.format, blend: None, write_mask: wgpu::ColorWrites::ALL })] }),
+            vertex: wgpu::VertexState { module: &blit_sh, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+            fragment: Some(wgpu::FragmentState { module: &blit_sh, entry_point: Some("fs"), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: config.format, blend: None, write_mask: wgpu::ColorWrites::ALL })] }),
             primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
-            depth_stencil: None, multisample: wgpu::MultisampleState::default(), multiview: None });
+            depth_stencil: None, multisample: wgpu::MultisampleState::default(), multiview_mask: None, cache: None });
         let blit_bg = make_blit_bg(&device, &blit_bgl, &scene_view, &sampler);
         // isolated-layer target + composite pipeline (group opacity). Reuses blit_bgl (texture+sampler).
         let layer_msaa = make_attach(&device, &config, samples, config.format, "layer_msaa");
         let (_layer_tex, layer_view) = make_scene_tex(&device, &config);
         let comp_sh = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("composite"), source: wgpu::ShaderSource::Wgsl(COMP_SHADER.into()) });
-        let comp_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("composite"), bind_group_layouts: &[&blit_bgl], push_constant_ranges: &[] });
+        let comp_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("composite"), bind_group_layouts: &[Some(&blit_bgl)], immediate_size: 0 });
         // premultiplied-over: src is already colour·coverage·o, so src_factor = One (NOT SrcAlpha — that would double-premultiply → dark halos)
         let premul_over = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add };
         let pipe_composite = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor { label: Some("composite"), layout: Some(&comp_layout),
-            vertex: wgpu::VertexState { module: &comp_sh, entry_point: "vs", buffers: &[wgpu::VertexBufferLayout {
+            vertex: wgpu::VertexState { module: &comp_sh, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &VATTRS }] },
-            fragment: Some(wgpu::FragmentState { module: &comp_sh, entry_point: "fs", targets: &[Some(wgpu::ColorTargetState {
+            fragment: Some(wgpu::FragmentState { module: &comp_sh, entry_point: Some("fs"), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState {
                 format: config.format, blend: Some(wgpu::BlendState { color: premul_over, alpha: premul_over }), write_mask: wgpu::ColorWrites::ALL })] }),
             primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
             // the scene pass carries a depth-stencil attachment, so this pipeline must declare one too (it ignores it)
-            depth_stencil: Some(wgpu::DepthStencilState { format: DS_FORMAT, depth_write_enabled: false, depth_compare: wgpu::CompareFunction::Always, stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState::default() }),
-            multisample: wgpu::MultisampleState { count: samples, ..Default::default() }, multiview: None });
+            depth_stencil: Some(wgpu::DepthStencilState { format: DS_FORMAT, depth_write_enabled: Some(false), depth_compare: Some(wgpu::CompareFunction::Always), stencil: wgpu::StencilState::default(), bias: wgpu::DepthBiasState::default() }),
+            multisample: wgpu::MultisampleState { count: samples, ..Default::default() }, multiview_mask: None, cache: None });
         let comp_bg = make_blit_bg(&device, &blit_bgl, &layer_view, &sampler);
         let op_cap = 1u64 << 16;
         let op_buf = mk(op_cap);
@@ -307,16 +308,16 @@ impl Renderer {
             wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
             wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::VERTEX_FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
         ] });
-        let frost_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("frost"), bind_group_layouts: &[&frost_bgl], push_constant_ranges: &[] });
+        let frost_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("frost"), bind_group_layouts: &[Some(&frost_bgl)], immediate_size: 0 });
         let frost_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor { label: Some("frost"), layout: Some(&frost_layout),
-            vertex: wgpu::VertexState { module: &frost_sh, entry_point: "vs", buffers: &[] },
-            fragment: Some(wgpu::FragmentState { module: &frost_sh, entry_point: "fs", targets: &[Some(wgpu::ColorTargetState { format: config.format, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })] }),
+            vertex: wgpu::VertexState { module: &frost_sh, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+            fragment: Some(wgpu::FragmentState { module: &frost_sh, entry_point: Some("fs"), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: config.format, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })] }),
             primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
-            depth_stencil: None, multisample: wgpu::MultisampleState::default(), multiview: None });
+            depth_stencil: None, multisample: wgpu::MultisampleState::default(), multiview_mask: None, cache: None });
         let frost_uni = device.create_buffer(&wgpu::BufferDescriptor { label: Some("frostU"), size: std::mem::size_of::<FrostU>() as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let frost_bg = make_frost_bg(&device, &frost_bgl, &scene_view, &sampler, &frost_uni);
         // egui paints onto the (single-sample) surface in its own pass we own
-        let egui_rend = egui_wgpu::Renderer::new(&device, config.format, None, 1);
+        let egui_rend = egui_wgpu::Renderer::new(&device, config.format, egui_wgpu::RendererOptions { msaa_samples: 1, depth_stencil_format: None, dithering: false, ..Default::default() });
         Renderer { surface, device, queue, config, pipe_main, pipe_stencil, pipe_cover, pipe_smark, pipe_cover_knock, pipe_cover_band, msaa, ds, samples, bg_buf, bg_cap, fill_buf, fill_cap, fg_buf, fg_cap,
                    scene_tex, scene_view, sampler, layer_msaa, layer_view, pipe_composite, comp_bg, op_buf, op_cap,
                    blit_pipe, blit_bgl, blit_bg, frost_pipe, frost_bgl, frost_bg, frost_uni, egui_rend }
@@ -422,8 +423,8 @@ impl Renderer {
         let clearc = wgpu::Color { r: BG[0] as f64, g: BG[1] as f64, b: BG[2] as f64, a: 1.0 };
         // bg pass — clear the scene target and lay the dot grid
         {
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("scene-bg"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: None,
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { multiview_mask: None, label: Some("scene-bg"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { depth_slice: None, view: &self.msaa, resolve_target: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clearc), store: wgpu::StoreOp::Store } })],
                 depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
             rp.set_stencil_reference(0);
@@ -432,8 +433,8 @@ impl Renderer {
         for m in metas {
             match m {
                 GroupDraw::Opaque { draws } => {
-                    let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("scene-opaque"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: None,
+                    let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { multiview_mask: None, label: Some("scene-opaque"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment { depth_slice: None, view: &self.msaa, resolve_target: None,
                             ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
                         depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
                     rp.set_stencil_reference(0);
@@ -442,8 +443,8 @@ impl Renderer {
                 GroupDraw::Layer { draws, quad } => {
                     // render the object OPAQUELY into the isolated layer (cleared transparent, MSAA-resolved)
                     {
-                        let mut lp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("layer"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.layer_msaa, resolve_target: Some(&self.layer_view),
+                        let mut lp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { multiview_mask: None, label: Some("layer"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment { depth_slice: None, view: &self.layer_msaa, resolve_target: Some(&self.layer_view),
                                 ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }), store: wgpu::StoreOp::Store } })],
                             depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
                         lp.set_stencil_reference(0);
@@ -451,8 +452,8 @@ impl Renderer {
                     }
                     // composite the resolved layer onto the scene at the object's opacity
                     {
-                        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("composite"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: None,
+                        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { multiview_mask: None, label: Some("composite"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment { depth_slice: None, view: &self.msaa, resolve_target: None,
                                 ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
                             depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
                         rp.set_pipeline(&self.pipe_composite); rp.set_bind_group(0, &self.comp_bg, &[]);
@@ -463,8 +464,8 @@ impl Renderer {
         }
         // overlay (editing chrome) on top of everything, and RESOLVE the finished scene → scene_view
         {
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("scene-overlay"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.msaa, resolve_target: Some(&self.scene_view),
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { multiview_mask: None, label: Some("scene-overlay"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { depth_slice: None, view: &self.msaa, resolve_target: Some(&self.scene_view),
                     ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
                 depth_stencil_attachment: Some(self.ds_clear()), timestamp_writes: None, occlusion_query_set: None });
             rp.set_stencil_reference(0);
@@ -474,9 +475,9 @@ impl Renderer {
 
     pub fn render(&mut self, world: &Scene, ui: &[Prim], view: View) {
         let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => { self.surface.configure(&self.device, &self.config); return; }
-            Err(_) => return,
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => { self.surface.configure(&self.device, &self.config); return; }
+            _ => return,
         };
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
@@ -495,8 +496,8 @@ impl Renderer {
         self.record_scene(&mut enc, nbg, &metas, overlay);
         // Pass 2: blit the offscreen scene onto the surface.
         {
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("blit"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &tview, resolve_target: None,
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { multiview_mask: None, label: Some("blit"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { depth_slice: None, view: &tview, resolve_target: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store } })],
                 depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None });
             rp.set_pipeline(&self.blit_pipe); rp.set_bind_group(0, &self.blit_bg, &[]); rp.draw(0..3, 0..1);
@@ -512,19 +513,20 @@ impl Renderer {
     /// so it composites over the desktop — no board, no panels, no dark scrim.
     pub fn render_splash(&mut self, paint_jobs: &[egui::ClippedPrimitive], tdelta: &egui::TexturesDelta, screen: &egui_wgpu::ScreenDescriptor) {
         let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => { self.surface.configure(&self.device, &self.config); return; }
-            Err(_) => return,
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => { self.surface.configure(&self.device, &self.config); return; }
+            _ => return,
         };
         let tview = frame.texture.create_view(&Default::default());
         for (id, delta) in &tdelta.set { self.egui_rend.update_texture(&self.device, &self.queue, *id, delta); }
         let mut enc = self.device.create_command_encoder(&Default::default());
         let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
         {
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("splash"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &tview, resolve_target: None,
+            // egui-wgpu 0.35 wants RenderPass<'static> → detach from the encoder borrow (behaviour identical)
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { multiview_mask: None, label: Some("splash"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { depth_slice: None, view: &tview, resolve_target: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }), store: wgpu::StoreOp::Store } })],
-                depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None });
+                depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None }).forget_lifetime();
             self.egui_rend.render(&mut rp, paint_jobs, screen);
         }
         self.queue.submit(user_cmds.into_iter().chain(std::iter::once(enc.finish())));
@@ -536,9 +538,9 @@ impl Renderer {
         paint_jobs: &[egui::ClippedPrimitive], tdelta: &egui::TexturesDelta, screen: &egui_wgpu::ScreenDescriptor,
         panels: &[[f32; 4]], frosted: bool) {
         let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => { self.surface.configure(&self.device, &self.config); return; }
-            Err(_) => return,
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => { self.surface.configure(&self.device, &self.config); return; }
+            _ => return,
         };
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
@@ -570,8 +572,8 @@ impl Renderer {
         self.record_scene(&mut enc, nbg, &metas, overlay);
         // blit offscreen → surface, then the frosted-glass panel backings on top of the canvas
         {
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("blit+frost"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &tview, resolve_target: None,
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { multiview_mask: None, label: Some("blit+frost"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { depth_slice: None, view: &tview, resolve_target: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store } })],
                 depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None });
             rp.set_pipeline(&self.blit_pipe); rp.set_bind_group(0, &self.blit_bg, &[]); rp.draw(0..3, 0..1);
@@ -579,10 +581,11 @@ impl Renderer {
         }
         // egui chrome → surface (load — drawn over the canvas)
         {
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("egui"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &tview, resolve_target: None,
+            // egui-wgpu 0.35 wants RenderPass<'static> → detach from the encoder borrow (behaviour identical)
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor { multiview_mask: None, label: Some("egui"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { depth_slice: None, view: &tview, resolve_target: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
-                depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None });
+                depth_stencil_attachment: None, timestamp_writes: None, occlusion_query_set: None }).forget_lifetime();
             self.egui_rend.render(&mut rp, paint_jobs, screen);
         }
         self.queue.submit(user_cmds.into_iter().chain(std::iter::once(enc.finish())));

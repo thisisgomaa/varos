@@ -56,6 +56,25 @@ fn one_page_per_artboard() {
 }
 
 #[test]
+fn groups_survive_the_container_round_trip() {
+    // Ahmed's report: after reopening a file, a group moves disintegrated. Groups live in
+    // Document.groups + group_of (HashMap<u32,u32> — integer keys through JSON are the suspect).
+    let mut d = demo_doc();
+    d.paths.push(Path::new(3, vec![anc(6, 10.0, 10.0), anc(7, 20.0, 10.0), anc(8, 15.0, 20.0)],
+                           true, Some([0.5, 0.5, 0.5, 1.0]), None, 1.0));
+    d.ids = 8;
+    d.groups.push(varos_core::model::Group { id: 100, name: "G".into(), parent: None });
+    d.group_of.insert(1, 100);
+    d.group_of.insert(3, 100);
+    let p = tmp("groups.vrs");
+    save_vrs(&d, &p).expect("save");
+    let loaded = load_vrs(&p).expect("load");
+    assert_eq!(loaded.group_of, d.group_of, "group membership must survive save/reopen");
+    assert_eq!(loaded.groups.len(), 1, "the group registry must survive save/reopen");
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
 fn legacy_raw_json_vrs_still_opens() {
     let doc = demo_doc();
     let p = tmp("legacy.vrs");

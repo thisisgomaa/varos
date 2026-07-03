@@ -6,7 +6,7 @@
 //! `&mut Editor` after layout (no IPC, no borrow fights). varos-core itself is untouched.
 
 use std::time::Instant;
-use egui::{Align, Align2, Color32, FontId, Layout, Margin, RichText, Rounding, Stroke};
+use egui::{Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, RichText, Stroke, StrokeKind};
 use varos_core::editor::{AlignMode, DistAxis, Editor, PaintTarget, ToolKind};
 use varos_core::geom::{Rgba, View};
 use winit::event::WindowEvent;
@@ -344,7 +344,7 @@ impl Ui {
             let rgba = im.into_rgba8(); let (w, h) = rgba.dimensions();
             ctx.load_texture("logo", egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], rgba.as_raw()), egui::TextureOptions::LINEAR)
         });
-        let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, None, None);
+        let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, None, None, None);
         Ui { ctx, state, frosted: false, rects: vec![], repaint: false, tools, shapes, shape_active: ToolKind::Rect, ic_rotate, ic_opacity, ic_strokew,
              ic_link, ic_fliph, ic_flipv, ic_portrait, ic_landscape, ic_fit, ab_dots, align_icons,
              cursor: egui::CursorIcon::Default, refpt: (0.0, 0.0), lock: false,
@@ -358,11 +358,11 @@ impl Ui {
         self.state.on_window_event(window, ev).consumed
     }
     /// Is the pointer over a panel / popup? (canvas strokes must NOT be swallowed by the panels)
-    pub fn wants_pointer(&self) -> bool { self.ctx.is_pointer_over_area() || self.ctx.wants_pointer_input() }
+    pub fn wants_pointer(&self) -> bool { self.ctx.is_pointer_over_egui() || self.ctx.egui_wants_pointer_input() }
     /// Is a text field actually focused? Only THEN should keys go to egui instead of canvas shortcuts.
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
-    pub fn wants_keyboard(&self) -> bool { self.ctx.wants_keyboard_input() }
+    pub fn wants_keyboard(&self) -> bool { self.ctx.egui_wants_keyboard_input() }
     /// Is the Color Picker modal open? (canvas shortcuts must be fully gated off while it is)
     pub fn modal_open(&self) -> bool { self.color_modal.is_some() }
     /// The 🔖 slice: the host names tab 0 after the open document ("name" / "name *").
@@ -416,12 +416,15 @@ impl Ui {
         let splashing = splash.map_or(false, |e| e < SPLASH_DUR);
         let logo = &self.logo;
         let mut color_modal = std::mem::take(&mut self.color_modal);
-        let out = self.ctx.run(input, |ctx| {
+        // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
+        let out = self.ctx.run_ui(input, |root| {
+            let ctx = root.ctx().clone();
+            let ctx = &ctx;
             if splashing {
                 if let Some(e) = splash { build_splash(ctx, e, logo); } // only the floating card
             } else {
-                build_topbar(ctx, top, &mut win_action, &mut tabs, &mut tab_active, &mut show_rail, &mut show_dock, &mut snap_cfg, maximized);
-                if show_rulers { build_rulers(ctx, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops); }
+                build_topbar(root, top, &mut win_action, &mut tabs, &mut tab_active, &mut show_rail, &mut show_dock, &mut snap_cfg, maximized);
+                if show_rulers { build_rulers(root, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops); }
                 if show_rail { build_rail(ctx, tools, shapes, &mut shape_active, &snap, &mut ops, &mut rects); }
                 if show_dock {
                     if snap.tool == ToolKind::Artboard {
@@ -490,11 +493,11 @@ fn lucide(inner: &str) -> String {
 fn install_fonts(ctx: &egui::Context) {
     let mut f = egui::FontDefinitions::default();
     if let Ok(b) = std::fs::read("C:/Windows/Fonts/segoeui.ttf") {
-        f.font_data.insert("ui".to_owned(), egui::FontData::from_owned(b));
+        f.font_data.insert("ui".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(b)));
         f.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "ui".to_owned());
     }
     if let Ok(b) = std::fs::read("C:/Windows/Fonts/consola.ttf") {
-        f.font_data.insert("mono".to_owned(), egui::FontData::from_owned(b));
+        f.font_data.insert("mono".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(b)));
         f.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "mono".to_owned());
     }
     ctx.set_fonts(f);
@@ -502,7 +505,8 @@ fn install_fonts(ctx: &egui::Context) {
 
 fn install_style(ctx: &egui::Context) {
     use egui::{FontFamily, TextStyle};
-    let mut s = (*ctx.style()).clone();
+    ctx.set_theme(egui::Theme::Dark);
+    let mut s = (*ctx.style_of(egui::Theme::Dark)).clone();
     s.text_styles = [
         (TextStyle::Heading,   FontId::new(13.5, FontFamily::Proportional)),
         (TextStyle::Body,      FontId::new(13.0, FontFamily::Proportional)),
@@ -510,25 +514,55 @@ fn install_style(ctx: &egui::Context) {
         (TextStyle::Small,     FontId::new(11.0, FontFamily::Proportional)),
         (TextStyle::Monospace, FontId::new(12.5, FontFamily::Monospace)),
     ].into();
+    s.animation_time = 0.0;   // a WORK tool: menus/popups appear INSTANTLY, no fade-in (Ahmed, 07-03)
     let mut v = egui::Visuals::dark();
     v.override_text_color = Some(TEXT);
     v.window_shadow = egui::epaint::Shadow::NONE;  // GPU pass owns the panel shadow
     v.popup_shadow = egui::epaint::Shadow::NONE;
     v.window_fill = SOLID_PANEL;
     v.window_stroke = Stroke::new(1.0, BORDER);
-    v.window_rounding = Rounding::same(10.0);
+    v.window_corner_radius = CornerRadius::same(10);
     v.selection.bg_fill = Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 90);
     v.selection.stroke = Stroke::new(1.0, ACCENT);
     s.visuals = v;
-    ctx.set_style(s);
+    ctx.set_style_of(egui::Theme::Dark, s);
 }
 
-fn panel_frame(margin: f32) -> egui::Frame {
+// ───────────────────────────── hand-rolled dropdown menus ─────────────────────────────
+// egui 0.35 removed the old memory-popup API (toggle_popup/is_popup_open/popup_below_widget). We
+// hand-roll the replacement on Area — same look as the 0.27 popups (our Visuals drove those) and
+// our close rules: open = a temp bool at `id`; closes on Escape or a primary press outside menu+anchor.
+
+fn menu_open(ui: &egui::Ui, id: egui::Id) -> bool { ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false)) }
+fn menu_set(ui: &egui::Ui, id: egui::Id, open: bool) { ui.data_mut(|d| d.insert_temp(id, open)); }
+fn menu_toggle(ui: &egui::Ui, id: egui::Id) { let v = !menu_open(ui, id); menu_set(ui, id, v); }
+
+/// The dropdown body anchored below `anchor` (only when open).
+fn menu_below(ui: &egui::Ui, id: egui::Id, anchor: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
+    if !menu_open(ui, id) { return; }
+    let ctx = ui.ctx().clone();
+    // the exact frame the 0.27 popups got from our Visuals: panel fill + border, radius 10, margin 6
+    // (5 here — egui 0.31+ counts the 1px stroke as padding, so 5+1 = the old 6).
+    let frame = egui::Frame { fill: SOLID_PANEL, stroke: Stroke::new(1.0, BORDER),
+        corner_radius: CornerRadius::same(10), inner_margin: Margin::same(5), ..Default::default() };
+    let out = egui::Area::new(id.with("menu")).order(egui::Order::Foreground)
+        .fixed_pos(anchor.rect.left_bottom() + egui::vec2(0.0, 4.0)).constrain(true)
+        .show(&ctx, |ui| { frame.show(ui, |ui| add(ui)).response.rect });
+    let rect = out.inner;
+    let close = ctx.input(|i| i.key_pressed(egui::Key::Escape))
+        || ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().map_or(false, |p|
+               !rect.expand(4.0).contains(p) && !anchor.rect.contains(p)));
+    if close { ctx.data_mut(|d| d.insert_temp(id, false)); }
+}
+
+fn panel_frame(margin: i8) -> egui::Frame {
     egui::Frame {
         fill: SOLID_PANEL,
-        rounding: Rounding::same(14.0),
+        corner_radius: CornerRadius::same(14),
         stroke: Stroke::new(1.0, BORDER),
-        inner_margin: Margin::same(margin),
+        // egui 0.31+ counts the 1px stroke as padding — compensate so content sits EXACTLY where it
+        // did on 0.27 (the zero-perceptible-difference bar).
+        inner_margin: Margin::same(margin - 1),
         ..Default::default()
     }
 }
@@ -559,15 +593,15 @@ fn num_field(ui: &mut egui::Ui, w: f32, lab: Lab, tip: &str, value: f32, decimal
     }
     let bx = egui::Rect::from_min_max(egui::pos2(row.left() + labw + 2.0, row.top()), row.max);
     let id = ui.make_persistent_id(("numf", tip));
-    let r5 = Rounding::same(5.0);
+    let r5 = CornerRadius::same(5);
     // 'just entered' flag (set on click) survives the one frame until the TextEdit claims focus.
     let just = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
     let editing = just || ui.memory(|m| m.has_focus(id));
     if editing {
-        p.rect(bx, r5, Color32::from_rgb(0x17, 0x17, 0x1a), Stroke::new(1.0, ACCENT)); // dark "input well"
+        p.rect(bx, r5, Color32::from_rgb(0x17, 0x17, 0x1a), Stroke::new(1.0, ACCENT), StrokeKind::Middle); // dark "input well"
         let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| format!("{value:.decimals$}"));
         let te = ui.put(bx.shrink2(egui::vec2(8.0, 3.0)),
-            egui::TextEdit::singleline(&mut buf).id(id).frame(false).font(egui::FontId::proportional(13.0)).text_color(TEXT));
+            egui::TextEdit::singleline(&mut buf).id(id).frame(egui::Frame::NONE).font(egui::FontId::proportional(13.0)).text_color(TEXT));
         if just { te.request_focus(); ui.data_mut(|d| d.remove::<bool>(id)); }
         ui.data_mut(|d| d.insert_temp(id, buf.clone()));
         // arrow nudge while focused: ↑/↓ = ±1 · Shift+↑/↓ = ±10 (Illustrator) — applies live
@@ -596,7 +630,7 @@ fn num_field(ui: &mut egui::Ui, w: f32, lab: Lab, tip: &str, value: f32, decimal
     } else {
         let resp = ui.interact(bx, id.with("box"), egui::Sense::click_and_drag());
         let hot = resp.hovered() || resp.dragged();
-        if hot { p.rect(bx, r5, HOVER, Stroke::new(1.0, BORDER_2)); } else { p.rect_filled(bx, r5, BG_SURFACE); }
+        if hot { p.rect(bx, r5, HOVER, Stroke::new(1.0, BORDER_2), StrokeKind::Middle); } else { p.rect_filled(bx, r5, BG_SURFACE); }
         p.text(bx.center(), Align2::CENTER_CENTER, format!("{value:.decimals$}"), FontId::proportional(13.0), TEXT);
         if hot { ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal); }
         if resp.dragged() {
@@ -621,7 +655,7 @@ fn num_field(ui: &mut egui::Ui, w: f32, lab: Lab, tip: &str, value: f32, decimal
 /// Tiny hand-painted glyph button (e.g. the clear-paint ×). Returns true on click.
 fn mini_btn(ui: &mut egui::Ui, glyph: &str, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
-    if resp.hovered() { ui.painter().rect_filled(rect, Rounding::same(5.0), HOVER); }
+    if resp.hovered() { ui.painter().rect_filled(rect, CornerRadius::same(5), HOVER); }
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(14.0), MUTED);
     resp.on_hover_text(tip).clicked()
 }
@@ -650,8 +684,8 @@ fn refpoint(ui: &mut egui::Ui, sz: f32, refpt: &mut (f32, f32)) {
 /// Small icon toggle (e.g. the constrain-proportions link). Accent when on.
 fn icon_toggle(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, on: bool, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
-    if on { ui.painter().rect_filled(rect, Rounding::same(5.0), ACCENT); }
-    else if resp.hovered() { ui.painter().rect_filled(rect, Rounding::same(5.0), HOVER); }
+    if on { ui.painter().rect_filled(rect, CornerRadius::same(5), ACCENT); }
+    else if resp.hovered() { ui.painter().rect_filled(rect, CornerRadius::same(5), HOVER); }
     if let Some(t) = tex { ui.painter().image(t.id(),
         egui::Rect::from_center_size(rect.center(), egui::vec2(15.0, 15.0)), UV01(),
         if on { Color32::WHITE } else { MUTED }); }
@@ -661,7 +695,7 @@ fn icon_toggle(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, on: bool, t
 /// Small icon action button (e.g. flip). White on hover.
 fn icon_btn(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 24.0), egui::Sense::click());
-    if resp.hovered() { ui.painter().rect_filled(rect, Rounding::same(5.0), HOVER); }
+    if resp.hovered() { ui.painter().rect_filled(rect, CornerRadius::same(5), HOVER); }
     if let Some(t) = tex { ui.painter().image(t.id(),
         egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)), UV01(),
         if resp.hovered() { Color32::WHITE } else { MUTED }); }
@@ -709,19 +743,19 @@ fn parse_hex(s: &str) -> Option<Rgba> {
 }
 /// Grey checkerboard behind translucent colours.
 fn checker(p: &egui::Painter, r: egui::Rect, sq: f32) {
-    p.rect_filled(r, Rounding::ZERO, Color32::from_gray(90));
+    p.rect_filled(r, CornerRadius::ZERO, Color32::from_gray(90));
     let (cols, rows) = ((r.width()/sq).ceil() as i32, (r.height()/sq).ceil() as i32);
     for gy in 0..rows { for gx in 0..cols {
         if (gx + gy) % 2 == 0 { continue; }
         let (x, y) = (r.left() + gx as f32 * sq, r.top() + gy as f32 * sq);
         let cell = egui::Rect::from_min_max(egui::pos2(x, y), egui::pos2((x+sq).min(r.right()), (y+sq).min(r.bottom())));
-        p.rect_filled(cell, Rounding::ZERO, Color32::from_gray(140));
+        p.rect_filled(cell, CornerRadius::ZERO, Color32::from_gray(140));
     }}
 }
 fn rail_thumb(p: &egui::Painter, r: egui::Rect, y: f32) {
     let t = egui::Rect::from_min_max(egui::pos2(r.left()-2.0, y-2.5), egui::pos2(r.right()+2.0, y+2.5));
-    p.rect(t, Rounding::same(2.0), Color32::TRANSPARENT, Stroke::new(2.0, Color32::WHITE));
-    p.rect_stroke(t.expand(1.0), Rounding::same(3.0), Stroke::new(1.0, Color32::from_black_alpha(90)));
+    p.rect(t, CornerRadius::same(2), Color32::TRANSPARENT, Stroke::new(2.0, Color32::WHITE), StrokeKind::Middle);
+    p.rect_stroke(t.expand(1.0), CornerRadius::same(3), Stroke::new(1.0, Color32::from_black_alpha(90)), StrokeKind::Middle);
 }
 
 /// A labelled row of small clickable swatches (hand-painted; checker under translucent colours).
@@ -735,10 +769,10 @@ fn swatch_strip(ui: &mut egui::Ui, label: &str, colors: &[Rgba]) -> Option<Rgba>
         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
         for c in colors {
             let (r, resp) = ui.allocate_exact_size(egui::vec2(15.0, 15.0), egui::Sense::click());
-            let round = Rounding::same(3.0);
+            let round = CornerRadius::same(3);
             if c[3] < 0.999 { checker(&ui.painter_at(r), r, 4.0); }
             ui.painter().rect_filled(r, round, rgba_c32a(*c));
-            ui.painter().rect_stroke(r, round, Stroke::new(1.0, if resp.hovered() { Color32::WHITE } else { BORDER_2 }));
+            ui.painter().rect_stroke(r, round, Stroke::new(1.0, if resp.hovered() { Color32::WHITE } else { BORDER_2 }), StrokeKind::Middle);
             if resp.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
             if resp.clicked() { out = Some(*c); }
         }
@@ -750,14 +784,14 @@ fn swatch_strip(ui: &mut egui::Ui, label: &str, colors: &[Rgba]) -> Option<Rgba>
 fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &mut Vec<Op>) {
     ui.horizontal(|ui| {
         let (sw, resp) = ui.allocate_exact_size(egui::vec2(26.0, 18.0), egui::Sense::click());
-        let round = Rounding::same(4.0);
+        let round = CornerRadius::same(4);
         let p = ui.painter();
         match color {
             Some(c) => { if c[3] < 0.999 { checker(&ui.painter_at(sw), sw, 5.0); } p.rect_filled(sw, round, rgba_c32a(c)); }
             None => { p.rect_filled(sw, round, Color32::from_gray(32));
                       p.line_segment([sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)], Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a))); } // None = red slash
         }
-        p.rect_stroke(sw, round, Stroke::new(1.0, BORDER_2));
+        p.rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
         // single click = focus the target (X toggles) · DOUBLE-click = open the Color Picker modal
         if resp.clicked() { ops.push(Op::PaintFocus(target)); }
         if resp.double_clicked() { ops.push(Op::OpenPicker(MTarget::Paint(target))); }
@@ -872,7 +906,7 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
         bm.colored_vertex(br.right_bottom(), Color32::BLACK); bm.colored_vertex(br.left_bottom(), Color32::BLACK);
         bm.add_triangle(0, 1, 2); bm.add_triangle(0, 2, 3);
         ui.painter_at(br).add(egui::Shape::mesh(bm));
-        ui.painter().rect_stroke(br, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+        ui.painter().rect_stroke(br, CornerRadius::ZERO, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
         rail_thumb(&ui.painter(), br, br.top() + (1.0 - v) * d);
         if brr.is_pointer_button_down_on() || brr.dragged() { if let Some(p) = brr.interact_pointer_pos() {
             m.hsva[2] = (1.0 - (p.y - br.top()) / d).clamp(0.0, 1.0);
@@ -886,7 +920,7 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
         am.colored_vertex(ar.right_bottom(), Color32::TRANSPARENT); am.colored_vertex(ar.left_bottom(), Color32::TRANSPARENT);
         am.add_triangle(0, 1, 2); am.add_triangle(0, 2, 3);
         ui.painter_at(ar).add(egui::Shape::mesh(am));
-        ui.painter().rect_stroke(ar, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+        ui.painter().rect_stroke(ar, CornerRadius::ZERO, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
         rail_thumb(&ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * d);
         if arr.is_pointer_button_down_on() || arr.dragged() { if let Some(p) = arr.interact_pointer_pos() {
             m.hsva[3] = (1.0 - (p.y - ar.top()) / d).clamp(0.0, 1.0);
@@ -900,10 +934,10 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
         for (rule, label) in Harmony::ALL {
             let on = m.harmony == rule;
             let (r, resp) = ui.allocate_exact_size(egui::vec2(52.0, 22.0), egui::Sense::click());
-            let rr = Rounding::same(5.0);
+            let rr = CornerRadius::same(5);
             if on { ui.painter().rect_filled(r, rr, ACCENT); }
             else if resp.hovered() { ui.painter().rect_filled(r, rr, HOVER); }
-            else { ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2)); }
+            else { ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle); }
             ui.painter().text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(11.0),
                 if on { Color32::WHITE } else { TEXT });
             if resp.clicked() { m.harmony = rule; }
@@ -916,8 +950,8 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
             ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
             for gc in harmony_set(m.harmony, [m.hsva[0], m.hsva[1], m.hsva[2]]) {
                 let (r, resp) = ui.allocate_exact_size(egui::vec2(30.0, 22.0), egui::Sense::click());
-                ui.painter().rect_filled(r, Rounding::same(4.0), rgb_c32(hsv_to_rgb(gc[0], gc[1], gc[2])));
-                ui.painter().rect_stroke(r, Rounding::same(4.0), Stroke::new(1.0, if resp.hovered() { Color32::WHITE } else { BORDER_2 }));
+                ui.painter().rect_filled(r, CornerRadius::same(4), rgb_c32(hsv_to_rgb(gc[0], gc[1], gc[2])));
+                ui.painter().rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0, if resp.hovered() { Color32::WHITE } else { BORDER_2 }), StrokeKind::Middle);
                 let rgb = hsv_to_rgb(gc[0], gc[1], gc[2]);
                 resp.clone().on_hover_text(hex_of([rgb[0], rgb[1], rgb[2], 1.0]));
                 if resp.clicked() { m.hsva[0] = gc[0]; m.hsva[1] = gc[1]; m.hsva[2] = gc[2]; }
@@ -929,12 +963,12 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
 /// A hand-painted dialog button. `primary` = accent OK.
 fn dlg_btn(ui: &mut egui::Ui, label: &str, primary: bool, w: f32) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
-    let rr = Rounding::same(6.0);
+    let rr = CornerRadius::same(6);
     if primary {
         ui.painter().rect_filled(r, rr, if resp.hovered() { Color32::from_rgb(0x2b, 0x9d, 0xf4) } else { ACCENT });
     } else {
         ui.painter().rect_filled(r, rr, if resp.hovered() { HOVER } else { BG_SURFACE });
-        ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2));
+        ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
     }
     ui.painter().text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.5),
         if primary { Color32::WHITE } else { TEXT });
@@ -949,7 +983,7 @@ fn dlg_btn(ui: &mut egui::Ui, label: &str, primary: bool, w: f32) -> bool {
 /// field is focused (the host reserves Esc/Enter for the dialog while it is open).
 fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: &Snap, ops: &mut Vec<Op>) {
     if modal.is_none() { return; }
-    let screen = ctx.screen_rect();
+    let screen = ctx.content_rect();
     let (mut ok, mut cancel) = (false, false);
     {
         let m = modal.as_mut().unwrap();
@@ -957,7 +991,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
         let pos = egui::pos2((screen.center().x - dw * 0.5 - 14.0).round(), 84.0);
         egui::Area::new(egui::Id::new("cm-dialog")).order(egui::Order::Foreground)
             .movable(true).default_pos(pos).constrain(true).show(ctx, |ui| {
-            panel_frame(14.0).show(ui, |ui| {
+            panel_frame(14).show(ui, |ui| {
                 ui.set_width(dw);
                 ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
                 // ── header: title + Picker|Wheel tabs + close ──
@@ -967,8 +1001,8 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                     for (tab, label) in [(MTab::Picker, "Picker"), (MTab::Wheel, "Wheel")] {
                         let on = m.tab == tab;
                         let (r, resp) = ui.allocate_exact_size(egui::vec2(56.0, 22.0), egui::Sense::click());
-                        let rr = Rounding::same(5.0);
-                        if on { ui.painter().rect_filled(r, rr, BG_SURFACE); ui.painter().rect_stroke(r, rr, Stroke::new(1.0, ACCENT)); }
+                        let rr = CornerRadius::same(5);
+                        if on { ui.painter().rect_filled(r, rr, BG_SURFACE); ui.painter().rect_stroke(r, rr, Stroke::new(1.0, ACCENT), StrokeKind::Middle); }
                         else if resp.hovered() { ui.painter().rect_filled(r, rr, HOVER); }
                         ui.painter().text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.0), if on { TEXT } else { MUTED });
                         if resp.clicked() { m.tab = tab; }
@@ -998,7 +1032,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                         mesh.add_triangle(i, i + 1, i + w1 + 1); mesh.add_triangle(i, i + w1 + 1, i + w1);
                     }}
                     ui.painter_at(pr).add(egui::Shape::mesh(mesh));
-                    ui.painter().rect_stroke(pr, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+                    ui.painter().rect_stroke(pr, CornerRadius::ZERO, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
                     let mp = egui::pos2(pr.left() + px * pw, pr.top() + (1.0 - py) * ph);
                     ui.painter().circle_stroke(mp, 6.0, Stroke::new(2.0, Color32::WHITE));
                     ui.painter().circle_stroke(mp, 7.0, Stroke::new(1.0, Color32::from_black_alpha(110)));
@@ -1021,7 +1055,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                     }
                     for i in 0..stops as u32 { let a = i * 2; sm.add_triangle(a, a + 1, a + 3); sm.add_triangle(a, a + 3, a + 2); }
                     ui.painter_at(sr).add(egui::Shape::mesh(sm));
-                    ui.painter().rect_stroke(sr, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+                    ui.painter().rect_stroke(sr, CornerRadius::ZERO, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
                     rail_thumb(&ui.painter(), sr, sr.top() + (if m.chan == Chan::H { sl } else { 1.0 - sl }) * ph);
                     if sresp.is_pointer_button_down_on() || sresp.dragged() { if let Some(p) = sresp.interact_pointer_pos() {
                         let t = ((p.y - sr.top()) / ph).clamp(0.0, 1.0);
@@ -1037,7 +1071,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                     am.colored_vertex(ar.right_bottom(), Color32::TRANSPARENT); am.colored_vertex(ar.left_bottom(), Color32::TRANSPARENT);
                     am.add_triangle(0, 1, 2); am.add_triangle(0, 2, 3);
                     ui.painter_at(ar).add(egui::Shape::mesh(am));
-                    ui.painter().rect_stroke(ar, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+                    ui.painter().rect_stroke(ar, CornerRadius::ZERO, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
                     rail_thumb(&ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * ph);
                     if arr.is_pointer_button_down_on() || arr.dragged() { if let Some(p) = arr.interact_pointer_pos() {
                         m.hsva[3] = (1.0 - (p.y - ar.top()) / ph).clamp(0.0, 1.0);
@@ -1056,15 +1090,15 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                             let topr = egui::Rect::from_min_max(swr.min, egui::pos2(swr.right(), swr.center().y));
                             let botr = egui::Rect::from_min_max(egui::pos2(swr.left(), swr.center().y), swr.max);
                             if newc[3] < 0.999 { checker(&ui.painter_at(topr), topr, 5.0); }
-                            ui.painter().rect_filled(topr, Rounding::ZERO, rgba_c32a(newc));
+                            ui.painter().rect_filled(topr, CornerRadius::ZERO, rgba_c32a(newc));
                             match m.orig {
                                 Some(oc) => { if oc[3] < 0.999 { checker(&ui.painter_at(botr), botr, 5.0); }
-                                              ui.painter().rect_filled(botr, Rounding::ZERO, rgba_c32a(oc)); }
-                                None => { ui.painter().rect_filled(botr, Rounding::ZERO, Color32::from_gray(32));
+                                              ui.painter().rect_filled(botr, CornerRadius::ZERO, rgba_c32a(oc)); }
+                                None => { ui.painter().rect_filled(botr, CornerRadius::ZERO, Color32::from_gray(32));
                                           ui.painter().line_segment([botr.left_bottom() + egui::vec2(2.0, -2.0), botr.right_top() + egui::vec2(-2.0, 2.0)],
                                               Stroke::new(1.4, Color32::from_rgb(0xd6, 0x3a, 0x3a))); }
                             }
-                            ui.painter().rect_stroke(swr, Rounding::ZERO, Stroke::new(1.0, BORDER_2));
+                            ui.painter().rect_stroke(swr, CornerRadius::ZERO, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
                             if swresp.clicked() { if let Some(p) = swresp.interact_pointer_pos() { if p.y > swr.center().y {
                                 if let Some(oc) = m.orig { let h = rgb_to_hsv(oc);
                                     if h[1] > 0.001 { m.hsva[0] = h[0]; } m.hsva[1] = h[1]; m.hsva[2] = h[2]; m.hsva[3] = oc[3]; }
@@ -1159,7 +1193,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
 fn icon_button(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, active: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
     let painter = ui.painter();
-    let rounding = Rounding::same(9.0);
+    let rounding = CornerRadius::same(9);
     if active { painter.rect_filled(rect, rounding, ACCENT); }
     else if resp.hovered() { painter.rect_filled(rect, rounding, HOVER); }
     if let Some(t) = tex {
@@ -1195,7 +1229,7 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
     if ca <= 0.001 { return; }
 
     // The card floats on the window's transparent surface (no dark scrim) → it sits over the desktop.
-    let scr = ctx.screen_rect();
+    let scr = ctx.content_rect();
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("splash")));
     let card = egui::Rect::from_center_size(scr.center() + egui::vec2(0.0, 2.0), egui::vec2(520.0, 300.0));
     // soft drop shadow — many faint layers (smooth, light), spread wide with a quadratic fade-out
@@ -1205,10 +1239,10 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
         let grow = 1.0 + f * 40.0;
         let off = 3.0 + f * 9.0;
         let a = (1.0 - f).powi(2) * (6.0 / 255.0) * ca;
-        p.rect_filled(card.translate(egui::vec2(0.0, off)).expand(grow), Rounding::same(16.0 + grow), rgba_a(0, 0, 0, a));
+        p.rect_filled(card.translate(egui::vec2(0.0, off)).expand(grow), CornerRadius::same((16.0 + grow) as u8), rgba_a(0, 0, 0, a));
     }
-    p.rect_filled(card, Rounding::same(16.0), with_a(SOLID_PANEL, ca));
-    p.rect_stroke(card, Rounding::same(16.0), Stroke::new(1.0, with_a(BORDER, ca)));
+    p.rect_filled(card, CornerRadius::same(16), with_a(SOLID_PANEL, ca));
+    p.rect_stroke(card, CornerRadius::same(16), Stroke::new(1.0, with_a(BORDER, ca)), StrokeKind::Middle);
     p.line_segment([card.left_top() + egui::vec2(16.0, 1.0), card.right_top() + egui::vec2(-16.0, 1.0)], Stroke::new(1.0, rgba_a(255, 255, 255, 0.04 * ca)));
 
     let (l, t) = (card.left(), card.top());
@@ -1222,27 +1256,27 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
     p.hline((l + 28.0)..=(l + 282.0), t + 150.0, Stroke::new(1.0, with_a(BORDER, ca)));
     // progress bar (fills 0→1 over the hold, ease-out)
     let bar = egui::Rect::from_min_size(egui::pos2(l + 28.0, t + 174.0), egui::vec2(196.0, 4.0));
-    p.rect_filled(bar, Rounding::same(2.0), with_a(BG_SURFACE, ca));
+    p.rect_filled(bar, CornerRadius::same(2), with_a(BG_SURFACE, ca));
     let prog = { let tt = (e / SPLASH_HOLD).clamp(0.0, 1.0); 1.0 - (1.0 - tt).powi(2) };
     let fw = (bar.width() * prog).max(8.0);
-    p.rect_filled(egui::Rect::from_min_size(bar.min, egui::vec2(fw, 4.0)), Rounding::same(2.0), with_a(ACCENT, ca));
+    p.rect_filled(egui::Rect::from_min_size(bar.min, egui::vec2(fw, 4.0)), CornerRadius::same(2), with_a(ACCENT, ca));
     p.circle_filled(egui::pos2(bar.left() + fw, bar.center().y), 3.0, rgba_a(0x0c, 0x8c, 0xe9, 0.59 * ca));
     p.text(egui::pos2(l + 236.0, t + 176.0), Align2::LEFT_CENTER, "loading\u{2026}", FontId::proportional(11.0), with_a(MUTED, ca));
     p.text(egui::pos2(l + 28.0, card.bottom() - 22.0), Align2::LEFT_BOTTOM, "\u{a9} 2026 Varos \u{b7} pre-alpha \u{b7} built with wgpu + egui", FontId::proportional(10.5), rgba_a(0x60, 0x60, 0x64, ca));
 
     // ── abstract "vector editor" art panel (right) ──
     let a = egui::Rect::from_min_max(egui::pos2(card.right() - 224.0, t + 28.0), egui::pos2(card.right() - 28.0, card.bottom() - 28.0));
-    p.rect_filled(a, Rounding::same(10.0), with_a(BG_SURFACE, ca));
-    p.rect_stroke(a, Rounding::same(10.0), Stroke::new(1.0, with_a(BORDER, ca)));
+    p.rect_filled(a, CornerRadius::same(10), with_a(BG_SURFACE, ca));
+    p.rect_stroke(a, CornerRadius::same(10), Stroke::new(1.0, with_a(BORDER, ca)), StrokeKind::Middle);
     let pa = p.with_clip_rect(a);
     // diagonal accent corner-glow (faint, top-left of the panel)
     for i in 0..3 { pa.circle_filled(a.min + egui::vec2(6.0, 6.0), 70.0 - i as f32 * 18.0, rgba_a(0x0c, 0x8c, 0xe9, (0.05 + i as f32 * 0.025) * ca)); }
     // two ghosted "artboards"
     let ab = |x: f32, y: f32| egui::Rect::from_min_size(egui::pos2(a.left() + x, a.top() + y), egui::vec2(116.0, 92.0));
-    pa.rect_filled(ab(30.0, 44.0), Rounding::same(8.0), rgba_a(255, 255, 255, 0.03 * ca));
-    pa.rect_stroke(ab(30.0, 44.0), Rounding::same(8.0), Stroke::new(1.0, rgba_a(255, 255, 255, 0.07 * ca)));
-    pa.rect_filled(ab(56.0, 84.0), Rounding::same(8.0), rgba_a(0x0c, 0x8c, 0xe9, 0.055 * ca));
-    pa.rect_stroke(ab(56.0, 84.0), Rounding::same(8.0), Stroke::new(1.0, with_a(ACCENT, 0.45 * ca)));
+    pa.rect_filled(ab(30.0, 44.0), CornerRadius::same(8), rgba_a(255, 255, 255, 0.03 * ca));
+    pa.rect_stroke(ab(30.0, 44.0), CornerRadius::same(8), Stroke::new(1.0, rgba_a(255, 255, 255, 0.07 * ca)), StrokeKind::Middle);
+    pa.rect_filled(ab(56.0, 84.0), CornerRadius::same(8), rgba_a(0x0c, 0x8c, 0xe9, 0.055 * ca));
+    pa.rect_stroke(ab(56.0, 84.0), CornerRadius::same(8), Stroke::new(1.0, with_a(ACCENT, 0.45 * ca)), StrokeKind::Middle);
     // ghost "V" monogram
     let vc = a.center();
     pa.line_segment([vc + egui::vec2(-42.0, -38.0), vc + egui::vec2(0.0, 44.0)], Stroke::new(10.0, rgba_a(255, 255, 255, 0.055 * ca)));
@@ -1258,8 +1292,8 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
     pa.line_segment([p3, p2], Stroke::new(1.0, rgba_a(0x0c, 0x8c, 0xe9, 0.47 * ca)));
     for cp in [p1, p2] { pa.circle_stroke(cp, 2.5, Stroke::new(1.0, with_a(ACCENT, ca))); }
     for an in [p0, p3] {
-        pa.rect_filled(egui::Rect::from_center_size(an, egui::vec2(6.0, 6.0)), Rounding::same(1.0), with_a(ACCENT, ca));
-        pa.rect_stroke(egui::Rect::from_center_size(an, egui::vec2(6.0, 6.0)), Rounding::same(1.0), Stroke::new(1.0, rgba_a(255, 255, 255, 0.78 * ca)));
+        pa.rect_filled(egui::Rect::from_center_size(an, egui::vec2(6.0, 6.0)), CornerRadius::same(1), with_a(ACCENT, ca));
+        pa.rect_stroke(egui::Rect::from_center_size(an, egui::vec2(6.0, 6.0)), CornerRadius::same(1), Stroke::new(1.0, rgba_a(255, 255, 255, 0.78 * ca)), StrokeKind::Middle);
     }
 }
 
@@ -1275,15 +1309,15 @@ fn winctl(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, cap: Cap,
           key: &str, hover_bg: Color32, white_on_hover: bool) -> bool {
     let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
     let hov = resp.hovered();
-    if hov { p.rect_filled(rect, Rounding::ZERO, hover_bg); }
+    if hov { p.rect_filled(rect, CornerRadius::ZERO, hover_bg); }
     let col = if white_on_hover && hov { Color32::WHITE } else { TEXT };
     let s = Stroke::new(1.0, col);
     let c = rect.center();
     match cap {
         Cap::Min => { let y = c.y.round() + 0.5; p.line_segment([egui::pos2(c.x - 5.0, y), egui::pos2(c.x + 5.0, y)], s); }
-        Cap::Max => { p.rect_stroke(egui::Rect::from_center_size(c, egui::vec2(10.0, 10.0)), Rounding::ZERO, s); }
+        Cap::Max => { p.rect_stroke(egui::Rect::from_center_size(c, egui::vec2(10.0, 10.0)), CornerRadius::ZERO, s, StrokeKind::Middle); }
         Cap::Restore => {   // two overlapping windows — the "restore down" glyph shown WHILE maximized
-            p.rect_stroke(egui::Rect::from_min_size(egui::pos2(c.x - 5.0, c.y - 2.0), egui::vec2(7.0, 7.0)), Rounding::ZERO, s); // front
+            p.rect_stroke(egui::Rect::from_min_size(egui::pos2(c.x - 5.0, c.y - 2.0), egui::vec2(7.0, 7.0)), CornerRadius::ZERO, s, StrokeKind::Middle); // front
             p.line_segment([egui::pos2(c.x - 2.0, c.y - 5.0), egui::pos2(c.x + 5.0, c.y - 5.0)], s);  // back top edge
             p.line_segment([egui::pos2(c.x + 5.0, c.y - 5.0), egui::pos2(c.x + 5.0, c.y + 2.0)], s);  // back right edge
         }
@@ -1298,7 +1332,7 @@ fn winctl(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, cap: Cap,
 /// A 34×30 top-bar icon button (menu/search/layout/panels). Returns its Response.
 fn topbtn(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, tex: &Option<egui::TextureHandle>, key: &str, active: bool) -> egui::Response {
     let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
-    let r6 = Rounding::same(6.0);
+    let r6 = CornerRadius::same(6);
     if active { p.rect_filled(rect, r6, BG_SURFACE); } else if resp.hovered() { p.rect_filled(rect, r6, HOVER); }
     let col = if active || resp.hovered() { TEXT } else { MUTED };
     if let Some(t) = tex { p.image(t.id(), egui::Rect::from_center_size(rect.center(), egui::vec2(17.0, 17.0)), UV01(), col); }
@@ -1309,23 +1343,23 @@ fn topbtn(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, tex: &Option<e
 fn tab_item(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, label: &str, active: bool, tex_x: &Option<egui::TextureHandle>, key: &str) -> (bool, bool) {
     let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
     if active {
-        p.rect_filled(rect, Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 }, SOLID_PANEL);
+        p.rect_filled(rect, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, SOLID_PANEL);
         p.hline(rect.left()..=rect.right(), rect.top() + 1.0, Stroke::new(2.0, ACCENT));
     } else if resp.hovered() {
         let inner = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() + 5.0), rect.max);
-        p.rect_filled(inner, Rounding::same(6.0), BG_SURFACE);
+        p.rect_filled(inner, CornerRadius::same(6), BG_SURFACE);
     }
     p.text(egui::pos2(rect.left() + 12.0, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), if active { TEXT } else { MUTED });
     let x_r = egui::Rect::from_center_size(egui::pos2(rect.right() - 14.0, rect.center().y), egui::vec2(18.0, 18.0));
     let xr = ui.interact(x_r, ui.id().with((key, "x")), egui::Sense::click());
-    if xr.hovered() { p.rect_filled(x_r, Rounding::same(4.0), HOVER); }
+    if xr.hovered() { p.rect_filled(x_r, CornerRadius::same(4), HOVER); }
     if let Some(t) = tex_x { p.image(t.id(), egui::Rect::from_center_size(x_r.center(), egui::vec2(11.0, 11.0)), UV01(), if xr.hovered() { TEXT } else { MUTED }); }
     (resp.clicked(), xr.clicked())
 }
 
 fn menu_row(ui: &mut egui::Ui, label: &str, shortcut: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::click());
-    if resp.hovered() { ui.painter().rect_filled(rect, Rounding::same(6.0), BG_SURFACE); }
+    if resp.hovered() { ui.painter().rect_filled(rect, CornerRadius::same(6), BG_SURFACE); }
     ui.painter().text(egui::pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), TEXT);
     if !shortcut.is_empty() { ui.painter().text(egui::pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, shortcut, FontId::monospace(11.0), MUTED); }
     resp.clicked()
@@ -1334,13 +1368,13 @@ fn menu_row(ui: &mut egui::Ui, label: &str, shortcut: &str) -> bool {
 /// A checklist row (panels show/hide). Returns true on click.
 fn check_row(ui: &mut egui::Ui, label: &str, checked: bool, tex_check: &Option<egui::TextureHandle>) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::click());
-    if resp.hovered() { ui.painter().rect_filled(rect, Rounding::same(6.0), BG_SURFACE); }
+    if resp.hovered() { ui.painter().rect_filled(rect, CornerRadius::same(6), BG_SURFACE); }
     let box_r = egui::Rect::from_center_size(egui::pos2(rect.left() + 16.0, rect.center().y), egui::vec2(16.0, 16.0));
     if checked {
-        ui.painter().rect_filled(box_r, Rounding::same(4.0), ACCENT);
+        ui.painter().rect_filled(box_r, CornerRadius::same(4), ACCENT);
         if let Some(t) = tex_check { ui.painter().image(t.id(), egui::Rect::from_center_size(box_r.center(), egui::vec2(12.0, 12.0)), UV01(), Color32::WHITE); }
     } else {
-        ui.painter().rect_stroke(box_r, Rounding::same(4.0), Stroke::new(1.0, BORDER_2));
+        ui.painter().rect_stroke(box_r, CornerRadius::same(4), Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
     }
     ui.painter().text(egui::pos2(rect.left() + 32.0, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), TEXT);
     resp.clicked()
@@ -1349,12 +1383,12 @@ fn check_row(ui: &mut egui::Ui, label: &str, checked: bool, tex_check: &Option<e
 /// Custom top bar (the native caption is stripped in WM_NCCALCSIZE): menu · tabs · drag · right tools ·
 /// window controls. Interactive rects are published as exclusions so the OS hit-test makes them HTCLIENT
 /// (egui handles them) while the empty band is HTCAPTION (the OS drags/snaps the window).
-fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<WinAction>,
+fn build_topbar(root: &mut egui::Ui, top: &TopIcons, win_action: &mut Option<WinAction>,
                 tabs: &mut Vec<String>, tab_active: &mut usize, show_rail: &mut bool, show_dock: &mut bool,
                 snap: &mut varos_core::model::SnapConfig, maximized: bool) {
     let h = 40.0;
     let frame = egui::Frame { fill: BG, inner_margin: Margin::ZERO, ..Default::default() };
-    egui::TopBottomPanel::top("topbar").exact_height(h).frame(frame).show(ctx, |ui| {
+    egui::Panel::top("topbar").exact_size(h).frame(frame).show(root, |ui| {
         let bar = ui.max_rect();
         let p = ui.painter().clone();
         let cy = bar.center().y;
@@ -1377,9 +1411,9 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
         let panels_id = ui.make_persistent_id("panels_menu");
         let menu_id = ui.make_persistent_id("app_menu");
         let panels_r = cell(min_r.left() - 8.0);
-        let panels_active = ui.memory(|m| m.is_popup_open(panels_id)) || !*show_rail || !*show_dock;
+        let panels_active = menu_open(ui, panels_id) || !*show_rail || !*show_dock;
         let pr = topbtn(ui, &p, panels_r, &top.panels, "tb-panels", panels_active);
-        if pr.clicked() { ui.memory_mut(|m| m.toggle_popup(panels_id)); }
+        if pr.clicked() { menu_toggle(ui, panels_id); }
         let layout_r = cell(panels_r.left() - 2.0);
         topbtn(ui, &p, layout_r, &top.layout, "tb-layout", false).on_hover_text("Layout");
         let search_r = cell(layout_r.left() - 2.0);
@@ -1387,15 +1421,15 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
         // magnet = the Snapping quick-menu (Illustrator layout)
         let magnet_id = ui.make_persistent_id("snap_menu");
         let magnet_r = cell(search_r.left() - 2.0);
-        let magnet_active = ui.memory(|m| m.is_popup_open(magnet_id)) || snap.smart || snap.grid;
+        let magnet_active = menu_open(ui, magnet_id) || snap.smart || snap.grid;
         let magr = topbtn(ui, &p, magnet_r, &top.magnet, "tb-magnet", magnet_active);
-        if magr.clicked() { ui.memory_mut(|m| m.toggle_popup(magnet_id)); }
+        if magr.clicked() { menu_toggle(ui, magnet_id); }
         excl.extend([panels_r, layout_r, search_r, magnet_r]);
 
         // menu button (left)
         let menu_r = egui::Rect::from_min_max(egui::pos2(bar.left() + 6.0, cy - 15.0), egui::pos2(bar.left() + 40.0, cy + 15.0));
-        let mr = topbtn(ui, &p, menu_r, &top.menu, "tb-menu", ui.memory(|m| m.is_popup_open(menu_id)));
-        if mr.clicked() { ui.memory_mut(|m| m.toggle_popup(menu_id)); }
+        let mr = topbtn(ui, &p, menu_r, &top.menu, "tb-menu", menu_open(ui, menu_id));
+        if mr.clicked() { menu_toggle(ui, menu_id); }
         excl.push(menu_r);
 
         // tabs + new-tab
@@ -1423,21 +1457,21 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
         if let Some(i) = to_close { if tabs.len() > 1 { tabs.remove(i); if *tab_active >= tabs.len() { *tab_active = tabs.len() - 1; } } }
 
         // dropdowns
-        egui::popup_below_widget(ui, menu_id, &mr, |ui| {
-            ui.set_min_width(196.0);
+        menu_below(ui, menu_id, &mr, |ui| {
+            ui.set_width(196.0);
             menu_row(ui, "New", "Ctrl+N"); menu_row(ui, "Open\u{2026}", "Ctrl+O"); menu_row(ui, "Save", "Ctrl+S");
             ui.add_space(4.0); let (sr, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
             ui.painter().hline(sr.left() + 4.0..=sr.right() - 4.0, sr.center().y, Stroke::new(1.0, BORDER)); ui.add_space(4.0);
             menu_row(ui, "Export\u{2026}", "");
         });
-        egui::popup_below_widget(ui, panels_id, &pr, |ui| {
-            ui.set_min_width(186.0);
+        menu_below(ui, panels_id, &pr, |ui| {
+            ui.set_width(186.0);
             if check_row(ui, "Tool rail", *show_rail, &top.check) { *show_rail = !*show_rail; }
             if check_row(ui, "Inspector", *show_dock, &top.check) { *show_dock = !*show_dock; }
         });
         // Snapping quick-menu (Illustrator "Snapping" popover)
-        egui::popup_below_widget(ui, magnet_id, &magr, |ui| {
-            ui.set_min_width(204.0);
+        menu_below(ui, magnet_id, &magr, |ui| {
+            ui.set_width(204.0);
             if check_row(ui, "Snap to Grid", snap.grid, &top.check) { snap.grid = !snap.grid; }
             if check_row(ui, "Snap to Point", snap.key_points, &top.check) { snap.key_points = !snap.key_points; }
             ui.add_space(4.0);
@@ -1449,7 +1483,7 @@ fn build_topbar(ctx: &egui::Context, top: &TopIcons, win_action: &mut Option<Win
         });
 
         // publish caption height + interactive (non-drag) rects, in physical px
-        let ppp = ctx.pixels_per_point();
+        let ppp = ui.ctx().pixels_per_point();
         let px: Vec<[i32; 4]> = excl.iter()
             .map(|r| [(r.left() * ppp) as i32, (r.top() * ppp) as i32, (r.right() * ppp) as i32, (r.bottom() * ppp) as i32]).collect();
         crate::cursors::set_caption((h * ppp) as i32, &px);
@@ -1461,7 +1495,7 @@ fn build_rail(ctx: &egui::Context, tools: &[ToolBtn], shapes: &[ToolBtn], shape_
     // the shapes slot mirrors whichever shape tool is actually active (so the M/L keys update it too)
     if shapes.iter().any(|t| t.kind == s.tool) { *shape_active = s.tool; }
     let r = egui::Window::new("tools").title_bar(false).resizable(false)
-        .anchor(Align2::LEFT_CENTER, egui::vec2(16.0, 0.0)).frame(panel_frame(7.0))
+        .anchor(Align2::LEFT_CENTER, egui::vec2(16.0, 0.0)).frame(panel_frame(7))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             for t in tools {
@@ -1488,29 +1522,29 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
     let p = ui.painter().clone();
     let fr = egui::Rect::from_min_size(area.min + egui::vec2(1.0, 3.0), egui::vec2(24.0, 24.0));   // fill
     let sr = egui::Rect::from_min_size(area.min + egui::vec2(15.0, 17.0), egui::vec2(24.0, 24.0)); // stroke
-    let rr = Rounding::same(4.0);
+    let rr = CornerRadius::same(4);
     let slash = |p: &egui::Painter, r: egui::Rect| p.line_segment(
         [r.left_bottom() + egui::vec2(3.0, -3.0), r.right_top() + egui::vec2(-3.0, 3.0)],
         Stroke::new(1.8, Color32::from_rgb(0xd6, 0x3a, 0x3a)));
     let draw_fill = |p: &egui::Painter, active: bool| {
-        p.rect_filled(fr.expand(2.0), Rounding::same(5.0), SOLID_PANEL);   // separation halo
+        p.rect_filled(fr.expand(2.0), CornerRadius::same(5), SOLID_PANEL);   // separation halo
         match s.fill {
             Some(c) => { if c[3] < 0.999 { checker(p, fr, 5.0); } p.rect_filled(fr, rr, rgba_c32a(c)); }
             None => { p.rect_filled(fr, rr, Color32::from_gray(32)); slash(p, fr); }
         }
-        p.rect_stroke(fr, rr, Stroke::new(if active { 1.5 } else { 1.0 }, if active { ACCENT } else { BORDER_2 }));
+        p.rect_stroke(fr, rr, Stroke::new(if active { 1.5 } else { 1.0 }, if active { ACCENT } else { BORDER_2 }), StrokeKind::Middle);
     };
     let draw_stroke = |p: &egui::Painter, active: bool| {
-        p.rect_filled(sr.expand(2.0), Rounding::same(5.0), SOLID_PANEL);
+        p.rect_filled(sr.expand(2.0), CornerRadius::same(5), SOLID_PANEL);
         let hole = sr.shrink(7.5);
         match s.stroke {
             Some(c) => { if c[3] < 0.999 { checker(p, sr, 5.0); } p.rect_filled(sr, rr, rgba_c32a(c));
-                         p.rect_filled(hole, Rounding::same(2.0), SOLID_PANEL); }
+                         p.rect_filled(hole, CornerRadius::same(2), SOLID_PANEL); }
             None => { p.rect_filled(sr, rr, Color32::from_gray(32));
-                      p.rect_filled(hole, Rounding::same(2.0), SOLID_PANEL); slash(p, sr); }
+                      p.rect_filled(hole, CornerRadius::same(2), SOLID_PANEL); slash(p, sr); }
         }
-        p.rect_stroke(hole, Rounding::same(2.0), Stroke::new(1.0, BORDER_2));
-        p.rect_stroke(sr, rr, Stroke::new(if active { 1.5 } else { 1.0 }, if active { ACCENT } else { BORDER_2 }));
+        p.rect_stroke(hole, CornerRadius::same(2), Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+        p.rect_stroke(sr, rr, Stroke::new(if active { 1.5 } else { 1.0 }, if active { ACCENT } else { BORDER_2 }), StrokeKind::Middle);
     };
     let fill_on_top = s.paint == PaintTarget::Fill;
     if fill_on_top { draw_stroke(&p, false); draw_fill(&p, true); } else { draw_fill(&p, false); draw_stroke(&p, true); }
@@ -1540,10 +1574,10 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
     let rdf = ui.interact(dfr, ui.id().with("fs-def"), egui::Sense::click());
     let m1 = egui::Rect::from_min_size(dfr.min, egui::vec2(8.0, 8.0));
     let m2 = egui::Rect::from_min_size(dfr.min + egui::vec2(5.0, 5.0), egui::vec2(8.0, 8.0));
-    p.rect_filled(m2, Rounding::same(1.5), Color32::from_gray(30));
-    p.rect_stroke(m2, Rounding::same(1.5), Stroke::new(1.0, if rdf.hovered() { Color32::WHITE } else { BORDER_2 }));
-    p.rect_filled(m1, Rounding::same(1.5), Color32::from_gray(242));
-    p.rect_stroke(m1, Rounding::same(1.5), Stroke::new(1.0, if rdf.hovered() { Color32::WHITE } else { BORDER_2 }));
+    p.rect_filled(m2, CornerRadius::same(2), Color32::from_gray(30));
+    p.rect_stroke(m2, CornerRadius::same(2), Stroke::new(1.0, if rdf.hovered() { Color32::WHITE } else { BORDER_2 }), StrokeKind::Middle);
+    p.rect_filled(m1, CornerRadius::same(2), Color32::from_gray(242));
+    p.rect_stroke(m1, CornerRadius::same(2), Stroke::new(1.0, if rdf.hovered() { Color32::WHITE } else { BORDER_2 }), StrokeKind::Middle);
     if rdf.clicked() { ops.push(Op::DefaultPaint); }
     rdf.on_hover_text("Default colours (D)");
 }
@@ -1554,7 +1588,7 @@ fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind
     let cur = shapes.iter().find(|t| t.kind == *shape_active).unwrap_or(&shapes[0]);
     let is_active = shapes.iter().any(|t| t.kind == s.tool);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
-    let rounding = Rounding::same(9.0);
+    let rounding = CornerRadius::same(9);
     if is_active { ui.painter().rect_filled(rect, rounding, ACCENT); }
     else if resp.hovered() { ui.painter().rect_filled(rect, rounding, HOVER); }
     if let Some(t) = &cur.tex {
@@ -1567,13 +1601,13 @@ fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind
     if resp.clicked() { ops.push(Op::Tool(*shape_active)); }
     resp.clone().on_hover_text("Shapes \u{2014} click to use \u{00b7} right-click for more");
     let pop = ui.make_persistent_id("shape-flyout");
-    if resp.secondary_clicked() { ui.memory_mut(|m| m.toggle_popup(pop)); }
-    egui::popup_below_widget(ui, pop, &resp, |ui| {
+    if resp.secondary_clicked() { menu_toggle(ui, pop); }
+    menu_below(ui, pop, &resp, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             for t in shapes {
                 if icon_button(ui, &t.tex, s.tool == t.kind).on_hover_text(t.tip).clicked() {
-                    *shape_active = t.kind; ops.push(Op::Tool(t.kind)); ui.memory_mut(|m| m.close_popup());
+                    *shape_active = t.kind; ops.push(Op::Tool(t.kind)); menu_set(ui, pop, false);
                 }
             }
         });
@@ -1593,7 +1627,7 @@ fn build_dock(ctx: &egui::Context, s: &Snap, ic: &DockIcons, refpt: &mut (f32, f
     let inner = 214.0;
     let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
     let r = egui::Window::new("dock").title_bar(false).resizable(false)
-        .anchor(Align2::RIGHT_CENTER, egui::vec2(-16.0, 0.0)).frame(panel_frame(13.0))
+        .anchor(Align2::RIGHT_CENTER, egui::vec2(-16.0, 0.0)).frame(panel_frame(13))
         .show(ctx, |ui| {
             ui.set_width(inner);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
@@ -1682,9 +1716,9 @@ fn name_field(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str) -> Option<St
     let editing = ui.memory(|m| m.has_focus(id));
     let mut buf = if editing { ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.to_string()) } else { value.to_string() };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::hover());
-    ui.painter().rect(rect, Rounding::same(6.0), BG_SURFACE, Stroke::new(1.0, if editing { ACCENT } else { BORDER }));
+    ui.painter().rect(rect, CornerRadius::same(6), BG_SURFACE, Stroke::new(1.0, if editing { ACCENT } else { BORDER }), StrokeKind::Middle);
     let te = ui.put(rect.shrink2(egui::vec2(8.0, 3.0)),
-        egui::TextEdit::singleline(&mut buf).id(id).frame(false).font(FontId::proportional(13.0)).text_color(TEXT));
+        egui::TextEdit::singleline(&mut buf).id(id).frame(egui::Frame::NONE).font(FontId::proportional(13.0)).text_color(TEXT));
     if te.has_focus() { ui.data_mut(|d| d.insert_temp(id, buf.clone())); }
     let mut out = None;
     if te.lost_focus() { out = Some(buf.clone()); ui.data_mut(|d| d.remove::<String>(id)); }
@@ -1694,10 +1728,10 @@ fn name_field(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str) -> Option<St
 /// A label + a hand-painted pill switch (the Clip / transparent / move-with toggles). Returns true on click.
 fn toggle_row(ui: &mut egui::Ui, w: f32, label: &str, on: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
-    if resp.hovered() { ui.painter().rect_filled(rect, Rounding::same(6.0), HOVER); }
+    if resp.hovered() { ui.painter().rect_filled(rect, CornerRadius::same(6), HOVER); }
     ui.painter().text(egui::pos2(rect.left() + 4.0, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(12.5), if on { TEXT } else { MUTED });
     let pill = egui::Rect::from_min_size(egui::pos2(rect.right() - 36.0, rect.center().y - 9.0), egui::vec2(32.0, 18.0));
-    ui.painter().rect_filled(pill, Rounding::same(9.0), if on { ACCENT } else { BG_SURFACE });
+    ui.painter().rect_filled(pill, CornerRadius::same(9), if on { ACCENT } else { BG_SURFACE });
     let knob = egui::pos2(if on { pill.right() - 9.0 } else { pill.left() + 9.0 }, pill.center().y);
     ui.painter().circle_filled(knob, 6.5, Color32::WHITE);
     resp.clicked()
@@ -1708,7 +1742,7 @@ fn pill_btn(ui: &mut egui::Ui, label: &str, disabled: bool) -> bool {
     let w = ui.available_width().min(64.0).max(40.0);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
     let hot = resp.hovered() && !disabled;
-    ui.painter().rect(rect, Rounding::same(6.0), if hot { HOVER } else { BG_SURFACE }, Stroke::new(1.0, BORDER));
+    ui.painter().rect(rect, CornerRadius::same(6), if hot { HOVER } else { BG_SURFACE }, Stroke::new(1.0, BORDER), StrokeKind::Middle);
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.0), if disabled { FAINT } else { TEXT });
     resp.clicked() && !disabled
 }
@@ -1720,7 +1754,7 @@ fn build_ab_dock(ctx: &egui::Context, s: &AbSnap, ic: &AbIcons, ab_lock: &mut bo
     let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
     let i = s.active;
     let r = egui::Window::new("ab-dock").title_bar(false).resizable(false)
-        .anchor(Align2::RIGHT_CENTER, egui::vec2(-16.0, 0.0)).frame(panel_frame(13.0))
+        .anchor(Align2::RIGHT_CENTER, egui::vec2(-16.0, 0.0)).frame(panel_frame(13))
         .show(ctx, |ui| {
             ui.set_width(inner);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
@@ -1737,14 +1771,14 @@ fn build_ab_dock(ctx: &egui::Context, s: &AbSnap, ic: &AbIcons, ab_lock: &mut bo
             // preset dropdown
             let preset_id = ui.make_persistent_id("ab-preset");
             let (prect, presp) = ui.allocate_exact_size(egui::vec2(inner, 26.0), egui::Sense::click());
-            ui.painter().rect(prect, Rounding::same(6.0), BG_SURFACE, Stroke::new(1.0, if presp.hovered() { BORDER_2 } else { BORDER }));
+            ui.painter().rect(prect, CornerRadius::same(6), BG_SURFACE, Stroke::new(1.0, if presp.hovered() { BORDER_2 } else { BORDER }), StrokeKind::Middle);
             ui.painter().text(egui::pos2(prect.left() + 10.0, prect.center().y), Align2::LEFT_CENTER, "Presets\u{2026}", FontId::proportional(12.5), TEXT);
             ui.painter().text(egui::pos2(prect.right() - 10.0, prect.center().y), Align2::RIGHT_CENTER, "\u{25be}", FontId::proportional(11.0), MUTED);
-            if presp.clicked() { ui.memory_mut(|m| m.toggle_popup(preset_id)); }
-            egui::popup_below_widget(ui, preset_id, &presp, |ui| {
-                ui.set_min_width(inner);
+            if presp.clicked() { menu_toggle(ui, preset_id); }
+            menu_below(ui, preset_id, &presp, |ui| {
+                ui.set_width(inner);
                 for (label, w, h) in AB_PRESETS {
-                    if menu_row(ui, label, "") { ops.push(Op::AbRect(i, None, None, Some(w), Some(h))); ui.memory_mut(|m| m.close_popup()); }
+                    if menu_row(ui, label, "") { ops.push(Op::AbRect(i, None, None, Some(w), Some(h))); menu_set(ui, preset_id, false); }
                 }
             });
             // W / H + constrain
@@ -1781,13 +1815,13 @@ fn build_ab_dock(ctx: &egui::Context, s: &AbSnap, ic: &AbIcons, ab_lock: &mut bo
             ui.horizontal(|ui| {
                 let col = s.color;
                 let (sw, resp) = ui.allocate_exact_size(egui::vec2(26.0, 18.0), egui::Sense::click());
-                let round = Rounding::same(4.0);
+                let round = CornerRadius::same(4);
                 match col {
                     Some(c) => { if c[3] < 0.999 { checker(&ui.painter_at(sw), sw, 5.0); } ui.painter().rect_filled(sw, round, rgba_c32a(c)); }
                     None => { ui.painter().rect_filled(sw, round, Color32::from_gray(32));
                               ui.painter().line_segment([sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)], Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a))); }
                 }
-                ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2));
+                ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
                 // click → the Color Picker modal (a settings row: no focus semantics to preserve)
                 if resp.clicked() || resp.double_clicked() { ops.push(Op::OpenPicker(MTarget::Ab(i))); }
                 let _ = col;
@@ -1821,7 +1855,7 @@ fn build_ab_dock(ctx: &egui::Context, s: &AbSnap, ic: &AbIcons, ab_lock: &mut bo
 fn build_ab_chrome(ctx: &egui::Context, view: View, ppp: f32, abs: &[AbInfo], active: usize, tool_ab: bool,
                    count: usize, dots: &Option<egui::TextureHandle>, ops: &mut Vec<Op>,
                    name_edit: &mut Option<(usize, String)>, fit_request: &mut Option<usize>) {
-    let scr = ctx.screen_rect();
+    let scr = ctx.content_rect();
     let mut clear_edit = false;
     for ab in abs {
         // top-left of the page in screen POINTS (view maps world→physical px; egui works in points)
@@ -1845,21 +1879,21 @@ fn build_ab_chrome(ctx: &egui::Context, view: View, ppp: f32, abs: &[AbInfo], ac
                     if lbl.double_clicked() { *name_edit = Some((ab.i, ab.name.clone())); }
                 }
                 let (dr, dresp) = ui.allocate_exact_size(egui::vec2(15.0, 18.0), egui::Sense::click());
-                if dresp.hovered() { ui.painter().rect_filled(dr, Rounding::same(4.0), HOVER); }
+                if dresp.hovered() { ui.painter().rect_filled(dr, CornerRadius::same(4), HOVER); }
                 if let Some(t) = dots { ui.painter().image(t.id(), egui::Rect::from_center_size(dr.center(), egui::vec2(12.0, 12.0)), UV01(), if dresp.hovered() || is_active { TEXT } else { MUTED }); }
                 let menu_id = ui.make_persistent_id(("ab-menu", ab.i));
-                if dresp.clicked() { ui.memory_mut(|m| m.toggle_popup(menu_id)); }
-                egui::popup_below_widget(ui, menu_id, &dresp, |ui| {
-                    ui.set_min_width(170.0);
-                    if menu_row(ui, "Rename", "") { *name_edit = Some((ab.i, ab.name.clone())); ui.memory_mut(|m| m.close_popup()); }
-                    if menu_row(ui, "Duplicate", "") { ops.push(Op::AbDup(ab.i)); ui.memory_mut(|m| m.close_popup()); }
-                    if menu_row(ui, if ab.h >= ab.w { "Make landscape" } else { "Make portrait" }, "") { ops.push(Op::AbOrient(ab.i)); ui.memory_mut(|m| m.close_popup()); }
+                if dresp.clicked() { menu_toggle(ui, menu_id); }
+                menu_below(ui, menu_id, &dresp, |ui| {
+                    ui.set_width(170.0);
+                    if menu_row(ui, "Rename", "") { *name_edit = Some((ab.i, ab.name.clone())); menu_set(ui, menu_id, false); }
+                    if menu_row(ui, "Duplicate", "") { ops.push(Op::AbDup(ab.i)); menu_set(ui, menu_id, false); }
+                    if menu_row(ui, if ab.h >= ab.w { "Make landscape" } else { "Make portrait" }, "") { ops.push(Op::AbOrient(ab.i)); menu_set(ui, menu_id, false); }
                     if menu_row(ui, if ab.transparent { "White background" } else { "Transparent" }, "") {
-                        ops.push(Op::AbColor(ab.i, if ab.transparent { Some([1.0, 1.0, 1.0, 1.0]) } else { None })); ui.memory_mut(|m| m.close_popup());
+                        ops.push(Op::AbColor(ab.i, if ab.transparent { Some([1.0, 1.0, 1.0, 1.0]) } else { None })); menu_set(ui, menu_id, false);
                     }
-                    if menu_row(ui, if ab.clip { "Unclip" } else { "Clip to page" }, "") { ops.push(Op::AbClip(ab.i)); ui.memory_mut(|m| m.close_popup()); }
-                    if menu_row(ui, "Fit in window", "") { *fit_request = Some(ab.i); ui.memory_mut(|m| m.close_popup()); }
-                    if count > 1 && menu_row(ui, "Delete", "") { ops.push(Op::AbDel(ab.i)); ui.memory_mut(|m| m.close_popup()); }
+                    if menu_row(ui, if ab.clip { "Unclip" } else { "Clip to page" }, "") { ops.push(Op::AbClip(ab.i)); menu_set(ui, menu_id, false); }
+                    if menu_row(ui, "Fit in window", "") { *fit_request = Some(ab.i); menu_set(ui, menu_id, false); }
+                    if count > 1 && menu_row(ui, "Delete", "") { ops.push(Op::AbDel(ab.i)); menu_set(ui, menu_id, false); }
                 });
             });
         });
@@ -1883,7 +1917,7 @@ fn fmt_ruler(v: f32, grid: f32, dec: usize) -> String {
 /// visible dot spacing) so they line up exactly; every 5th tick is labeled. Numbers read relative to
 /// `origin` (top-left, Y-down). A live cyan tick tracks the pointer; the corner box drag-sets the origin
 /// (snapped to page corners / grid) and double-click resets it. egui panels, so canvas input is gated.
-fn build_rulers(ctx: &egui::Context, view: View, ppp: f32, grid: f32, origin: [f32; 2], reset: [f32; 2], ops: &mut Vec<Op>) {
+fn build_rulers(root: &mut egui::Ui, view: View, ppp: f32, grid: f32, origin: [f32; 2], reset: [f32; 2], ops: &mut Vec<Op>) {
     let frame = egui::Frame { fill: BG, inner_margin: Margin::ZERO, ..Default::default() };
     let num_font = FontId::proportional(9.5);
     let dec = ruler_dec(grid);
@@ -1891,10 +1925,10 @@ fn build_rulers(ctx: &egui::Context, view: View, ppp: f32, grid: f32, origin: [f
     // grid multiple, so labels still land on dots; small N → rounder numbers (×2 = 250s, not ×5 = 625s).
     let ms_pts = grid * view.zoom / ppp.max(1e-6);      // one grid-tick in screen points
     let label_every = [1i64, 2, 5, 10, 20, 50, 100, 200].into_iter().find(|&n| n as f32 * ms_pts >= 70.0).unwrap_or(200);
-    let pointer = ctx.pointer_latest_pos();
+    let pointer = root.ctx().pointer_latest_pos();
 
     // top (horizontal) ruler — ticks at WORLD multiples of `grid` (land on the dots), label every 5th
-    egui::TopBottomPanel::top("ruler-h").exact_height(RULER).frame(frame).show(ctx, |ui| {
+    egui::Panel::top("ruler-h").exact_size(RULER).frame(frame).show(root, |ui| {
         let r = ui.max_rect();
         let p = ui.painter_at(r);
         p.hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, BORDER));
@@ -1917,23 +1951,23 @@ fn build_rulers(ctx: &egui::Context, view: View, ppp: f32, grid: f32, origin: [f
         // drag off the strip body → pull out a HORIZONTAL guide (follows the pointer onto the canvas)
         let body = egui::Rect::from_min_max(egui::pos2(r.left() + RULER, r.top()), r.right_bottom());
         let dr = ui.interact(body, ui.id().with("ruler-h-body"), egui::Sense::drag());
-        if dr.dragged() { if let Some(pp) = ctx.pointer_latest_pos() { ops.push(Op::GuidePreview(false, view.s2w([pp.x * ppp, pp.y * ppp]))); } }
+        if dr.dragged() { if let Some(pp) = ui.ctx().pointer_latest_pos() { ops.push(Op::GuidePreview(false, view.s2w([pp.x * ppp, pp.y * ppp]))); } }
         if dr.drag_stopped() { ops.push(Op::GuideCommit); }
         // corner box: drag sets the origin (snapped), double-click resets it
         let corner = egui::Rect::from_min_size(r.left_top(), egui::vec2(RULER, RULER));
         let resp = ui.interact(corner, ui.id().with("ruler-corner"), egui::Sense::click_and_drag());
-        p.rect_filled(corner, Rounding::ZERO, BG);
+        p.rect_filled(corner, CornerRadius::ZERO, BG);
         p.vline(corner.right() - 0.5, r.y_range(), Stroke::new(1.0, BORDER));
         let c = corner.center();
         p.line_segment([egui::pos2(c.x - 3.0, c.y), egui::pos2(c.x + 3.0, c.y)], Stroke::new(1.0, MUTED));
         p.line_segment([egui::pos2(c.x, c.y - 3.0), egui::pos2(c.x, c.y + 3.0)], Stroke::new(1.0, MUTED));
         if resp.double_clicked() { ops.push(Op::RulerOrigin(Some(reset))); ops.push(Op::RulerOrigin(None)); }
-        else if resp.dragged() { if let Some(pp) = ctx.pointer_latest_pos() { ops.push(Op::RulerOrigin(Some(view.s2w([pp.x * ppp, pp.y * ppp])))); } }
+        else if resp.dragged() { if let Some(pp) = ui.ctx().pointer_latest_pos() { ops.push(Op::RulerOrigin(Some(view.s2w([pp.x * ppp, pp.y * ppp])))); } }
         if resp.drag_stopped() { ops.push(Op::RulerOrigin(None)); }
     });
 
     // left (vertical) ruler — numbers rotated 90° (read upward), like Illustrator
-    egui::SidePanel::left("ruler-v").exact_width(RULER).resizable(false).frame(frame).show(ctx, |ui| {
+    egui::Panel::left("ruler-v").exact_size(RULER).resizable(false).frame(frame).show(root, |ui| {
         let r = ui.max_rect();
         let p = ui.painter_at(r);
         p.vline(r.right() - 0.5, r.y_range(), Stroke::new(1.0, BORDER));
@@ -1960,7 +1994,7 @@ fn build_rulers(ctx: &egui::Context, view: View, ppp: f32, grid: f32, origin: [f
         if let Some(pt) = pointer { p.hline(r.x_range(), pt.y, Stroke::new(1.0, ACCENT)); }
         // drag off the strip → pull out a VERTICAL guide (follows the pointer onto the canvas)
         let dr = ui.interact(r, ui.id().with("ruler-v-body"), egui::Sense::drag());
-        if dr.dragged() { if let Some(pp) = ctx.pointer_latest_pos() { ops.push(Op::GuidePreview(true, view.s2w([pp.x * ppp, pp.y * ppp]))); } }
+        if dr.dragged() { if let Some(pp) = ui.ctx().pointer_latest_pos() { ops.push(Op::GuidePreview(true, view.s2w([pp.x * ppp, pp.y * ppp]))); } }
         if dr.drag_stopped() { ops.push(Op::GuideCommit); }
     });
 }
@@ -1972,7 +2006,7 @@ fn build_origin_crosshair(ctx: &egui::Context, view: View, ppp: f32, preview: Op
     let Some(w) = preview else { return; };
     let s = view.w2s(w);
     let (sx, sy) = (s[0] / ppp, s[1] / ppp);
-    let scr = ctx.screen_rect();
+    let scr = ctx.content_rect();
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("origin-cross")));
     let stroke = Stroke::new(1.0, ACCENT);
     for seg in egui::Shape::dashed_line(&[egui::pos2(sx, scr.top()), egui::pos2(sx, scr.bottom())], stroke, 5.0, 4.0) { p.add(seg); }
@@ -1989,8 +2023,8 @@ fn build_snap_hud(ctx: &egui::Context, view: View, ppp: f32, hud: &Option<(varos
     let font = FontId::proportional(12.0);
     let galley = p.layout_no_wrap(text.clone(), font.clone(), TEXT);
     let rect = egui::Rect::from_min_size(anchor, galley.size() + egui::vec2(14.0, 7.0));
-    p.rect_filled(rect, Rounding::same(6.0), SOLID_PANEL);
-    p.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0, BORDER));
+    p.rect_filled(rect, CornerRadius::same(6), SOLID_PANEL);
+    p.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0, BORDER), StrokeKind::Middle);
     p.text(rect.center(), Align2::CENTER_CENTER, text, font, TEXT);
 }
 

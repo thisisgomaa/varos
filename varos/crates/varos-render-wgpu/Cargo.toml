@@ -7,7 +7,7 @@ edition = "2021"
 # Depends on the core, NEVER the reverse. No winit dep (takes a raw window handle target).
 [dependencies]
 varos-core = { path = "../varos-core" }
-wgpu = "0.19"
+wgpu = "29"
 bytemuck = { version = "1", features = ["derive"] }
-egui = "0.27"
-egui-wgpu = "0.27"
+egui = "0.35"
+egui-wgpu = "0.35"
