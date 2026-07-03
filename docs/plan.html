@@ -99,7 +99,7 @@
   </div>
 
   <div id="status" class="note" style="margin:18px 0 0 0">
-    <b>Where we are (2026-07-02):</b> Foundations spine ✅ (serde + units) ·
+    <b>Where we are (2026-07-03):</b> Foundations spine ✅ (serde + units) ·
     <b>Artboard Stage-1 ✅</b> (06-30) · <b>Snap + Rulers + Guides ✅</b> (06-30: snap engine, magnet
     menu, measurement HUD, Ctrl+R rulers, drag-out guides) ·
     <b>Transform TOOLS ✅</b> (07-01: Rotate R / Scale S, snapped draggable pivot, Alt-copy, Transform
@@ -150,8 +150,8 @@
   <h2>Build order</h2>
   <div id="rail" class="rail"></div>
 
-  <h2>Build decisions — locked; override anything that conflicts (1–8: 06-29 · 9: 07-02)</h2>
-  <details open><summary><span class="sysname">The 9 locked decisions</span></summary>
+  <h2>Build decisions — locked; override anything that conflicts (1–8: 06-29 · 9: 07-02 · 10: 07-03)</h2>
+  <details open><summary><span class="sysname">The 10 locked decisions</span></summary>
     <div id="decisions" style="padding:4px 15px 14px"></div>
   </details>
 
@@ -171,11 +171,12 @@
 const ORDER = [
   {k:'0', nm:'Foundations', state:'done', sec:'spine ✅ 06-29'},
   {k:'1', nm:'Artboard', state:'done', sec:'Stage 1 ✅ 06-30'},
-  {k:'2', nm:'Transform + Snap', state:'part', sec:'snap+tools ✅ · panel open'},
-  {k:'4·S1', nm:'Colour — Stage 1', state:'active', sec:'picker ✅ 07-02 · polish'},
-  {milestone:'🔖 NEXT — Slice: draw → colour → save → reopen  ("make a logo & keep it")'},
-  {k:'⚙', nm:'Engine spike (wgpu)', state:'next', sec:'foundation hygiene [D7/D9]'},
-  {k:'3', nm:'Layers', sec:'the model system [D2]'},
+  {k:'2', nm:'Transform + Snap', state:'part', sec:'snap+rulers+guides+tools ✅ · numeric panel open'},
+  {k:'4·S1', nm:'Colour — Stage 1', state:'done', sec:'picker + wheel ✅ 07-02'},
+  {k:'🔖', nm:'Slice — draw→colour→save→reopen', state:'done', sec:'.vrs = PDF container ✅ 07-02'},
+  {k:'⚙', nm:'Engine spike (wgpu 0.19→29)', state:'done', sec:'✅ 07-03 "كله برفكت"'},
+  {k:'3', nm:'Layers', state:'active', sec:'Stage A + SIMPLE panel ✅ 07-03 · masks next'},
+  {milestone:'▶ NOW — Layers masks / clipping (Ctrl+Alt+G · drag-into · Add-Mask button)'},
   {k:'4·S2', nm:'Colour — Stage 2', sec:'Swatches · Paint enum'},
   {k:'5', nm:'Stroke'},
   {k:'6', nm:'Save'},
@@ -196,6 +197,7 @@ const DECISIONS = [
   ['7','<b>Order tweaks:</b> Snapping with/before Transform; Artboard slot-1 = Stage-1 single board; wgpu 0.19→0.29 = its own spike w/ fallback (not a Phase-1 gate); Transform handle-coupling reconciled to the verified geometry-couple (Alt breaks).'],
   ['8','<b>v1 = Illustrator-class, not Figma-class.</b> Components/Symbols + Frames/Auto-Layout are post-v1 systems; extensibility/plugins/single-schema gets its true (deferred) weight.'],
   ['9','<b>Frosted glass CANCELED (2026-07-02, Ahmed — final).</b> Solid panels are the ONE material — no material toggle, one code path (the frost plumbing may be deleted). The wgpu bump stays planned as <b>foundation hygiene</b>, not looks: slot = right after the 🔖 slice, before more panels stack on egui 0.27.'],
+  ['10','<b>Layers = SIMPLE, Photoshop/Affinity (2026-07-03, Ahmed — "Layers are 100% the program").</b> The Illustrator panel (target-ring + coloured select-square) was too complex and only fed an Appearance system Varos doesn’t have — dropped for a stacked <b>eye·lock·thumb·name</b> panel where <b>click/Ctrl/Shift/drag/Alt-drag act on the ROW</b>. <b>Masks</b> = ONE stored clip form reached by two gestures (drag-into-the-shape-below <i>and</i> Ctrl+Alt+G); structural Top/Middle/Background bands <b>deferred</b> (spec-kept, zero-rework); a <b>paint_list()</b> indirection lands before masks so clip/mask/pages never force a 30-site rewrite. Design of record: <b>docs/LAYERS_VISION.md</b> (5-agent pass w/ adversarial critique). Supersedes the old "drag-onto-row clips" phrasing in D2/§Layers.'],
 ];
 
 // status: d=done(✅) p=partial(🟡) n=none(🔴) x=not built(❌) ''=planned
@@ -303,19 +305,19 @@ const SYSTEMS = [
     ['10','OS & shell integration',2,''],
     ['11','Panels & UI surfaces this system needs','ui',''],
   ]},
-  {step:3, nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, targeting, z-order, grouping, masks, compound paths.', note:'MODEL system, not panel assembly. Today the model is a flat Vec<Path> + group_of side-table. Stage 1 = build the real scene-graph (Layer/node tree) and migrate selection + render-order + every tool onto it. 🔒 UX locked (Ahmed 07-02, from Affinity): drag a row ONTO another row = clips/nests INSIDE it — our chosen mask interaction (complements the explicit Clipping Mask command); insertion-target (draw/paste inside · behind) joins the top bar.', warn:true, pts:[
-    ['1','Layers panel — shell & structure',1,'d'],
-    ['2','Layer & object naming',1,'p'],
-    ['3','Visibility (show/hide)',1,'d'],
-    ['4','Lock / unlock',1,'d'],
-    ['5','Targeting & appearance dot',2,'p'],
-    ['6','Selection-color indicator',2,'d'],
-    ['7','Thumbnails',2,'d'],
-    ['8','Reordering & restructuring (drag-drop)',1,'p'],
+  {step:3, nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, z-order, grouping, MASKS, compound paths. PIVOTED to Photoshop/Affinity-simple (07-03).', note:'MODEL system, not panel assembly. STAGE A ✅ (07-03): the real scene-graph — node tree (Layer/Group/Path) + roots, z = pre-order, flat paths re-flattened by sync_tree, legacy files migrate, eye/lock CASCADE, arrange scoped to siblings; canvas identical. THE PIVOT ✅ (Ahmed 07-03, verified "كله شغال تمام" — "Layers are 100% the program"): the Illustrator panel (target-ring + coloured select-square) was TOO COMPLEX and only fed an absent Appearance system → dropped for a SIMPLE stacked panel. Row = eye·lock·thumbnail·name; click/Ctrl/Shift/dbl/drag/Alt-drag act on the ROW (click=select · Ctrl=add/remove · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate); footer = Group·Delete. This FIXED the Shift/Ctrl bug (the row click had ignored modifiers). Real drag-drop reorder/nest + real composite thumbnails kept from the earlier build. Design of record = docs/LAYERS_VISION.md (5-agent pass: research → synthesis → adversarial critique). NEXT ▶ MASKS: one stored clip form (Group role=Clip + mask_child), reached by drag-into-the-shape-below AND Ctrl+Alt+G; UI word "Mask" + an Add-Mask button; lands on a paint_list() indirection FIRST (the critique’s anti-rewrite insurance). Structural Top/Middle/Background bands DEFERRED (spec-kept, zero-rework). Supersedes the old "drag-onto-row clips" note.', warn:true, pts:[
+    ['1','Layers panel — SIMPLE shell (eye·lock·thumb·name)',1,'d'],
+    ['2','Layer & object naming (inline rename)',1,'d'],
+    ['3','Visibility (show/hide) + cascade',1,'d'],
+    ['4','Lock / unlock + cascade (real lock)',1,'d'],
+    ['5','Row selection — click/Ctrl/Shift on the row',1,'d'],
+    ['6','Two-way canvas↔panel selection sync',2,'d'],
+    ['7','Real composite thumbnails',2,'d'],
+    ['8','Reordering & restructuring (drag-drop + Alt-dup)',1,'d'],
     ['9','Z-order commands (arrange)',1,'d'],
     ['10','Groups & ungroup (nested)',1,'d'],
     ['11','Compound paths',2,''],
-    ['12','Clipping masks',2,''],
+    ['12','Masks / clipping (drag-into + Ctrl+Alt+G) ▶ NEXT',1,''],
     ['13','Isolation mode',2,''],
     ['14','Opacity masks',3,''],
     ['15','Locate / find object',2,''],
