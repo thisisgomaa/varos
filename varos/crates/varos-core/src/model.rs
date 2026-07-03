@@ -49,7 +49,7 @@ pub enum ShapeKind { Rect, Ellipse, Triangle, Polygon }
 pub struct Group { pub id: u32, pub name: String, pub parent: Option<u32> }
 
 /// What a scene-graph node IS. `Path` leaves point at an entry in the flat `paths` storage.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind { Layer, Group, Path(u32) }
 
 /// One node of the REAL scene graph (the Layers system, D2). Structure lives here; geometry/appearance
@@ -731,4 +731,51 @@ impl Document {
         }
         self.flatten();
     }
+
+    // ---------- Layers panel API (structural ops the panel drives) ----------
+    /// The Layer node an id lives under (walk parents to the enclosing Layer; returns nid if it IS one).
+    pub fn layer_ancestor(&self, nid: u32) -> u32 {
+        let mut cur = nid;
+        for _ in 0..4096 {
+            let Some(n) = self.node(cur) else { break };
+            if matches!(n.kind, NodeKind::Layer) { return cur; }
+            match n.parent { Some(p) => cur = p, None => break }
+        }
+        cur
+    }
+    /// All path ids in a node's subtree, z order (back→front).
+    pub fn node_paths(&self, nid: u32) -> Vec<u32> { let mut v = vec![]; self.collect_paths(nid, &mut v); v.reverse(); v }
+    fn layer_count(&self) -> usize {
+        self.nodes.iter().filter(|n| matches!(n.kind, NodeKind::Layer)).count()
+    }
+    /// Add an empty Layer at the FRONT of the root list; returns its id.
+    pub fn add_layer(&mut self) -> u32 {
+        let id = self.nid();
+        let name = format!("Layer {}", self.layer_count() + 1);
+        self.nodes.push(Node { id, kind: NodeKind::Layer, name, parent: None, children: vec![], hidden: false, locked: false, color: None });
+        self.roots.insert(0, id);
+        id
+    }
+    /// Add a sublayer (a Layer nested inside `parent`) at its front; returns its id.
+    pub fn add_sublayer(&mut self, parent: u32) -> u32 {
+        let id = self.nid();
+        let name = format!("Layer {}", self.layer_count() + 1);
+        self.nodes.push(Node { id, kind: NodeKind::Layer, name, parent: Some(parent), children: vec![], hidden: false, locked: false, color: None });
+        if let Some(pn) = self.node_mut(parent) { pn.children.insert(0, id); }
+        id
+    }
+    /// Delete a node + its whole subtree (nodes AND the paths they hold).
+    pub fn delete_node(&mut self, nid: u32) {
+        let paths = self.node_paths(nid);
+        self.paths.retain(|p| !paths.contains(&p.id));
+        self.remove_subtree(nid);
+    }
+    fn remove_subtree(&mut self, nid: u32) {
+        let kids = self.node(nid).map(|n| n.children.clone()).unwrap_or_default();
+        for k in kids { self.remove_subtree(k); }
+        self.remove_node(nid);
+    }
+    pub fn set_node_name(&mut self, nid: u32, name: String) { if let Some(n) = self.node_mut(nid) { n.name = name; } }
+    pub fn toggle_node_hidden(&mut self, nid: u32) { if let Some(n) = self.node_mut(nid) { n.hidden = !n.hidden; } }
+    pub fn toggle_node_locked(&mut self, nid: u32) { if let Some(n) = self.node_mut(nid) { n.locked = !n.locked; } }
 }
