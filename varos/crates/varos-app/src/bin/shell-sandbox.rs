@@ -1,0 +1,41 @@
+//! The box-system SANDBOX (BOX_SYSTEM_PLAN Wave 1 / Stage 2–3): an eframe window hosting the shell's
+//! box tree with DUMMY panels — the playground where the container model is proven before the real app
+//! ever moves in. eframe is used ONLY here (the shell modules are context-agnostic); it keeps the
+//! sandbox's window boot trivial and version-aligned with egui 0.35.
+//!
+//! Run:  cargo run -p varos-app --bin shell-sandbox
+#![windows_subsystem = "windows"]
+use varos_app::shell::{tokens, ShellState};
+
+struct Sandbox {
+    shell: ShellState,
+}
+
+impl eframe::App for Sandbox {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        tokens::apply(ui.ctx()); // warm-dark visuals + INSTANT (animation_time = 0); idempotent
+        // the whole surface IS the void: seam-coloured, 6px outer padding around the boxes.
+        egui::Frame::default()
+            .fill(tokens::SEAM)
+            .inner_margin(egui::Margin::same(6))
+            .show(ui, |ui| self.shell.ui(ui));
+    }
+}
+
+fn main() -> eframe::Result<()> {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("Varos — Shell Sandbox")
+            .with_inner_size([1280.0, 820.0])
+            .with_min_inner_size([560.0, 380.0]), // small enough to test the tiny-window edge cases
+        ..Default::default()
+    };
+    eframe::run_native(
+        "Varos — Shell Sandbox",
+        options,
+        Box::new(|cc| {
+            tokens::apply(&cc.egui_ctx);
+            Ok(Box::new(Sandbox { shell: ShellState::standard() }))
+        }),
+    )
+}
