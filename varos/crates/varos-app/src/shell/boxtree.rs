@@ -178,6 +178,14 @@ fn draw_board(ui: &mut egui::Ui, rect: egui::Rect) {
             }
             y += step;
         }
+        // a dummy "artboard" (the page) so the board reads as a real canvas, not an empty field
+        let aw = (rect.width() * 0.44).min(360.0);
+        let ah = (rect.height() * 0.62).min(380.0);
+        if aw > 90.0 && ah > 90.0 {
+            let ab = egui::Rect::from_center_size(rect.center(), vec2(aw, ah));
+            p.rect(ab, egui::CornerRadius::ZERO, egui::Color32::from_gray(245), egui::Stroke::new(1.0, egui::Color32::from_black_alpha(70)), StrokeKind::Middle);
+            p.text(ab.center(), Align2::CENTER_CENTER, "VAROS", FontId::proportional((ah * 0.13).min(46.0)), T::NAVY);
+        }
     }
     draw_hands(ui, rect);
 }
@@ -273,5 +281,18 @@ mod tests {
         for _ in 0..3 {
             let _ = ctx.run_ui(egui::RawInput::default(), |ui| shell.ui(ui));
         }
+    }
+
+    /// Render EVERY panel body headlessly (not just the ones active in the default layout) — so a
+    /// panic hiding in an inactive tab's content is caught before Ahmed opens the window.
+    #[test]
+    fn every_panel_body_renders_headless() {
+        let ctx = egui::Context::default();
+        super::T::apply(&ctx);
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for id in PanelId::DOCKABLE {
+                registry::render_panel(id, ui);
+            }
+        });
     }
 }
