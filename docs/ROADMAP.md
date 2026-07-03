@@ -1,4 +1,8 @@
-# Varos — Roadmap & Backlog (the single source of priority)
+# Varos — Roadmap & Backlog (⚠ SUPERSEDED — historical)
+
+> **⚠ SUPERSEDED (2026-06-29):** priority + live status moved to **`docs/plan.html`** + **`docs/DETAILED_ROADMAP.md`**.
+> Do not work from this file — kept for history only. (2026-07-02: frosted glass CANCELED — solid is the one
+> final material; ignore any frosted mention below.)
 
 > Everything Varos needs, by priority, in build order. **✅ = done.** Work top-down, one phase at a time.
 > Ahmed sets/adjusts priority; the advisor maintains this file; Production executes the current phase.
@@ -15,10 +19,10 @@
   inspector, top bar, splash; cursors; web→native migration + repo cleanup
 
 ## ▶ PHASE 1 — Finish the UI (NOW) — *the multiplier: makes every later panel cheap*
-1. **Engine update** (wgpu bump) — enables modern egui + frosted glass
+1. **Engine update** (wgpu bump) — enables modern egui *(frosted canceled 2026-07-02)*
 2. **Design-system "puzzle pieces":** panel container · sections · tabs · buttons · **number fields
    (type + click-drag scrub + wheel)** · swatches · color/spacing/type tokens · icons
-3. **Frosted-glass material (default) + a Solid toggle** in settings
+3. ~~Frosted-glass material (default) + a Solid toggle~~ **CANCELED 2026-07-02 — solid is the one final material**
 4. **Show / hide panels** (Window menu)
 5. **Assemble the panels** on the system:
    - **Properties** (contextual: Transform 9-point · Appearance · opacity)

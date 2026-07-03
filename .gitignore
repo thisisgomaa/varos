@@ -13,11 +13,14 @@ out.txt
 *.tmp
 ~ai-*
 
-# ---- Adobe Illustrator cursor PNGs (proprietary, TEMP local-dev only — never commit/ship) ----
-# Extracted from Adobe's dvaui.dll for Ahmed's local feel-testing. The shippable cursor set is
-# the legal SVG one (Font Awesome / Lucide / our own) rendered in cursors.rs.
+# ---- Adobe Illustrator cursors (proprietary, TEMP local-dev only — never commit/ship) ----
+# Extracted from Adobe's Illustrator.exe / .aip / dvaui.dll for Ahmed's local feel-testing +
+# reference. The shippable cursor set is the legal SVG one (Font Awesome / Lucide / our own)
+# rendered in cursors.rs. `Cursors/` = the full extracted SVG+PNG reference dump (326 tool SVGs
+# + 25 frame PNGs) — reference only, do NOT commit.
 assets/cursors-ai/
 **/cursors-ai/
+/Cursors/
 
 # ---- OS junk ----
 Thumbs.db
