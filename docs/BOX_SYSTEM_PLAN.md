@@ -417,7 +417,22 @@ When a wave merges to `main`, update (in the **same** merge):
 - 2026-07-03 — Ruling 9 added (egui_tiles wrapped in `shell/boxtree.rs` only). Ahmed handed the build to THIS
   session (no separate shell session). Starting the autonomous Wave 1 sprint: Step −1 → Stage 2 → Stage 3, stop
   at end of Stage 3. Boot = `eframe` (version-aligned with egui 0.35); shell modules stay context-agnostic.
-- _(next: Stage 2 — box tree + registry + tokens.rs + 3 dummies + dummy board + chip tabs + `⌄` swap menu…)_
+- 2026-07-03 — **Wave 1 COMPLETE** (autonomous sprint; worktree `D:\VAROS-shell` @ `shell/box-system`;
+  ui.rs / varos-core / main-docs untouched; no merge):
+  - `cf9f496` **Stage 2** — `shell` lib module (tokens · registry · boxtree) + eframe `shell-sandbox` bin.
+    Box tree on egui_tiles (confined to `boxtree.rs`, ruling 9); `BoxState{panels,active}` is the pane so the
+    tree serialises via serde. Standard layout `Split(H)[Board, Split(V)[[Align|Pathfinder],[Properties|Layers]]]`
+    biased 80/20. 7 hand-painted dummy panels + dummy board. Auto chip-tabs, drag-resize (6px seams), and the
+    **⌄ host-menu** (swap / add / close a tab) — the gate interaction.
+  - `d4e4d09` **Stage 3** — the two floating hands over the board (clamped, shrink/vanish on a tiny board) +
+    collapsible Properties sections (instant, no fade) + `min_size` clamp.
+  - `fc2d303` **polish** — dummy artboard on the board; a test that renders every panel body headlessly.
+  - Verified: builds clean (both bins + lib, no warnings); **4 headless tests green** (serde roundtrip +
+    full-tree render + every-panel render). Run: `cargo run -p varos-app --bin shell-sandbox`.
+  - **Stopped at end of Stage 3 as instructed.** Could NOT verify the *look/feel* (no display) — that is
+    Ahmed's hands-on gate. Receipt (تشغيل · تجربة · صادق) delivered in the session hand-off.
+- _(next, on Ahmed's go: Wave 2 — Stage 0 tokens (0a→0b) → Stage 1 void frame → Stage 4 migration, once the
+  Layers wave frees `ui.rs`.)_
 
 ---
 
