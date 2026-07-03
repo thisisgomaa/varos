@@ -1867,6 +1867,25 @@ impl Editor {
         if self.doc.move_node_to(src, target, pos) { self.dirty = true; }
         self.commit();
     }
+    /// Drag a row's SELECTION SQUARE to move the canvas selection onto another row/layer (Alt = copy).
+    /// Payload = the current object selection; if the grabbed row's art isn't part of it, grab that row's
+    /// own art instead ("grab the square = grab what's under it"). Reselects whatever landed.
+    pub fn layer_move_art(&mut self, src_row: u32, target: u32, pos: crate::model::DropPos, copy: bool) {
+        let row_paths = self.doc.node_paths(src_row);
+        let mut paths: Vec<u32> = self.objsel.iter().copied().collect();
+        if paths.is_empty() || !row_paths.iter().any(|p| self.objsel.contains(p)) { paths = row_paths; }
+        if paths.is_empty() { return; }
+        self.begin();
+        let landed = self.doc.move_paths_to(&paths, target, pos, copy);
+        if !landed.is_empty() {
+            self.dirty = true;
+            self.tool = ToolKind::Object;
+            self.objsel.clear(); self.selected.clear(); self.dsel_path = None; self.obj_angle = 0.0;
+            for pid in landed { self.objsel.insert(pid); }
+            self.doc.active_layer = self.doc.layer_ancestor(target);
+        }
+        self.commit();
+    }
     /// Click a ROW: target its layer; a Path leaf ALSO becomes the canvas selection (Illustrator).
     pub fn layer_focus(&mut self, nid: u32) {
         self.doc.active_layer = self.doc.layer_ancestor(nid);
@@ -1883,6 +1902,48 @@ impl Editor {
         for p in self.doc.node_paths(nid) { if !self.doc.eff_locked(p) { self.objsel.insert(p); } }
         self.doc.active_layer = self.doc.layer_ancestor(nid);
         self.tool = ToolKind::Object; self.obj_angle = 0.0;
+    }
+    // ── the SIMPLE panel: click / Ctrl-toggle / Shift-range act on the ROW (07-03 pivot) ──
+    /// Plain click (or Shift-range): select the art of these rows on the canvas, replacing the selection.
+    pub fn layer_select_set(&mut self, nids: &[u32]) {
+        self.tool = ToolKind::Object;
+        self.objsel.clear(); self.selected.clear(); self.dsel_path = None; self.obj_angle = 0.0;
+        for &nid in nids {
+            for p in self.doc.node_paths(nid) { if !self.doc.eff_locked(p) && !self.doc.eff_hidden(p) { self.objsel.insert(p); } }
+        }
+        if let Some(&last) = nids.last() { self.doc.active_layer = self.doc.layer_ancestor(last); }
+    }
+    /// Ctrl+click a row: toggle its art in/out of the canvas selection (add if any is out, else remove all).
+    pub fn layer_toggle(&mut self, nid: u32) {
+        self.tool = ToolKind::Object; self.obj_angle = 0.0;
+        let paths = self.doc.node_paths(nid);
+        let all_in = !paths.is_empty() && paths.iter().all(|p| self.objsel.contains(p));
+        if all_in { for p in &paths { self.objsel.remove(p); } }
+        else { for p in paths { if !self.doc.eff_locked(p) && !self.doc.eff_hidden(p) { self.objsel.insert(p); } } }
+        self.doc.active_layer = self.doc.layer_ancestor(nid);
+    }
+    /// Alt+drag a row: duplicate its art into the drop target (original stays), reselect the copies.
+    pub fn layer_dup_move(&mut self, src: u32, target: u32, pos: crate::model::DropPos) {
+        let paths = self.doc.node_paths(src);
+        if paths.is_empty() { return; }
+        self.begin();
+        let landed = self.doc.move_paths_to(&paths, target, pos, true);
+        if !landed.is_empty() {
+            self.dirty = true; self.tool = ToolKind::Object;
+            self.objsel.clear(); self.selected.clear(); self.dsel_path = None; self.obj_angle = 0.0;
+            for pid in landed { self.objsel.insert(pid); }
+            self.doc.active_layer = self.doc.layer_ancestor(target);
+        }
+        self.commit();
+    }
+    /// The panel trash button: delete the current canvas selection.
+    pub fn layer_delete_selection(&mut self) {
+        if self.objsel.is_empty() { return; }
+        self.begin();
+        let pids: Vec<u32> = self.objsel.iter().copied().collect();
+        for pid in pids { if let Some(pi) = self.doc.pidx(pid) { self.doc.paths.remove(pi); } }
+        self.objsel.clear(); self.selected.clear(); self.dsel_path = None;
+        self.dirty = true; self.commit();
     }
     pub fn eyedrop(&mut self, pid: u32) {
         let (f, st, sw) = if let Some(pi) = self.doc.pidx(pid) { let p = &self.doc.paths[pi]; (p.fill, p.stroke, p.stroke_width) } else { return };
