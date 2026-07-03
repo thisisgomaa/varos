@@ -124,19 +124,45 @@ fn pathfinder_panel(ui: &mut egui::Ui) {
 }
 
 fn properties_panel(ui: &mut egui::Ui) {
-    micro(ui, "TRANSFORM");
-    ui.horizontal(|ui| { fake_field(ui, "X", "266", 84.0); ui.add_space(6.0); fake_field(ui, "Y", "118", 84.0); });
-    ui.add_space(6.0);
-    ui.horizontal(|ui| { fake_field(ui, "W", "126", 84.0); ui.add_space(6.0); fake_field(ui, "H", "64", 84.0); });
-    ui.add_space(6.0);
-    ui.horizontal(|ui| { fake_field(ui, "∠", "0°", 84.0); ui.add_space(6.0); icon_btn(ui, "⤢", false); icon_btn(ui, "⤡", false); icon_btn(ui, "⟳", false); });
-    ui.add_space(10.0);
-    micro(ui, "APPEARANCE");
-    ui.horizontal(|ui| { ui.label(RichText::new("Fill").color(T::MUTED).size(11.5)); swatch(ui, T::AMBER); fake_field(ui, "", "F0B429", 92.0); });
-    ui.add_space(6.0);
-    ui.horizontal(|ui| { ui.label(RichText::new("Stroke").color(T::MUTED).size(11.5)); swatch(ui, T::NONE_RED); fake_field(ui, "", "None", 92.0); });
-    ui.add_space(6.0);
-    ui.horizontal(|ui| { ui.label(RichText::new("Opacity").color(T::MUTED).size(11.5)); fake_field(ui, "", "85 %", 72.0); });
+    // collapsible section homes (Stage 3 "collapse states" — instant, animation_time = 0)
+    section(ui, "transform", "TRANSFORM", |ui| {
+        ui.horizontal(|ui| { fake_field(ui, "X", "266", 84.0); ui.add_space(6.0); fake_field(ui, "Y", "118", 84.0); });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| { fake_field(ui, "W", "126", 84.0); ui.add_space(6.0); fake_field(ui, "H", "64", 84.0); });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| { fake_field(ui, "∠", "0°", 84.0); ui.add_space(6.0); icon_btn(ui, "⤢", false); icon_btn(ui, "⤡", false); icon_btn(ui, "⟳", false); });
+    });
+    section(ui, "appearance", "APPEARANCE", |ui| {
+        ui.horizontal(|ui| { ui.label(RichText::new("Fill").color(T::MUTED).size(11.5)); swatch(ui, T::AMBER); fake_field(ui, "", "F0B429", 92.0); });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| { ui.label(RichText::new("Stroke").color(T::MUTED).size(11.5)); swatch(ui, T::NONE_RED); fake_field(ui, "", "None", 92.0); });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| { ui.label(RichText::new("Opacity").color(T::MUTED).size(11.5)); fake_field(ui, "", "85 %", 72.0); });
+    });
+    section(ui, "shape", "SHAPE", |ui| {
+        ui.horizontal(|ui| { for g in ["◐", "◑", "◒", "◓"] { icon_btn(ui, g, false); ui.add_space(3.0); } icon_btn(ui, "⊙", true); });
+    });
+}
+
+/// A collapsible section home: a clickable header (chevron + micro-label) that toggles its body.
+/// Open-state persists in egui memory; toggling is INSTANT (no animation). Used by Properties.
+fn section(ui: &mut egui::Ui, key: &str, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+    let id = egui::Id::new(("shell.sec", key));
+    let mut open = ui.ctx().data_mut(|d| d.get_temp::<bool>(id)).unwrap_or(true);
+    ui.add_space(3.0);
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::click());
+    if resp.clicked() {
+        open = !open;
+        ui.ctx().data_mut(|d| d.insert_temp(id, open));
+    }
+    let p = ui.painter();
+    p.text(egui::pos2(rect.left() + 1.0, rect.center().y), Align2::LEFT_CENTER, if open { "⌄" } else { "›" }, FontId::proportional(11.0), T::FAINT);
+    p.text(egui::pos2(rect.left() + 15.0, rect.center().y), Align2::LEFT_CENTER, title, FontId::proportional(9.5), if resp.hovered() { T::MUTED } else { T::FAINT });
+    if open {
+        ui.add_space(4.0);
+        body(ui);
+    }
+    ui.add_space(4.0);
 }
 
 fn layers_panel(ui: &mut egui::Ui) {
