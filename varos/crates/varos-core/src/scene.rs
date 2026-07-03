@@ -144,7 +144,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         out
     };
     for pi in 0..ed.doc.paths.len() {
-        if ed.doc.paths[pi].hidden { continue; }
+        if ed.doc.eff_hidden(ed.doc.paths[pi].id) { continue; }   // cascades from layer/group eyes
         let o = ed.doc.paths[pi].opacity;
         let s_alpha = ed.doc.paths[pi].stroke.map_or(1.0, |c| c[3]);
         let mut fp = fill_prims(pi);
@@ -183,7 +183,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     }
     // editing skeleton: a thin accent outline for any path being hovered/selected/drawn
     for pi in 0..ed.doc.paths.len() {
-        if ed.doc.paths[pi].hidden { continue; }
+        if ed.doc.eff_hidden(ed.doc.paths[pi].id) { continue; }   // cascades from layer/group eyes
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
             s.overlay.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: 1.7, color: ACCENT });
             for hole in &ed.doc.paths[pi].holes { let mut r = Document::ring_px(hole, true, ppu); if let Some(&f) = r.first() { r.push(f); } s.overlay.push(Prim::Stroke { pts: r, width: 1.7, color: ACCENT }); }
@@ -261,7 +261,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     }}}
     // anchor markers — only on SELECTED paths (never on mere hover), and not in object mode — outer + hole anchors
     for p in &ed.doc.paths {
-        if p.hidden || !ed.path_selected(p.id) || ed.tool == ToolKind::Object { continue; }
+        if ed.doc.eff_hidden(p.id) || !ed.path_selected(p.id) || ed.tool == ToolKind::Object { continue; }
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             let sel = ed.selected.contains(&a.id);
             if a.smooth {

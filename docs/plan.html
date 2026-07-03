@@ -127,7 +127,12 @@
     winit 0.29→0.30 — 79/79 tests green, boot fingerprint identical (Vulkan/Mailbox/Bgra8Unorm/msaa 8),
     feel verified by hand. Post-migration fixes folded in: exponential wheel zoom (coalesced notches),
     animation_time = 0 (instant menus — a WORK tool), exact menu widths, hand-rolled dropdowns.
-    <b>NEXT, in order:</b> ① <b>Layers</b> (the model system, D2) →
+    <b>Layers Stage A ✅</b> (07-03): the REAL scene-graph now lives in the model — a node tree
+    (Layer/Group/Path) + roots, z = pre-order traversal, flat `paths` re-flattened by `sync_tree`;
+    legacy files migrate (registry→tree, z preserved); eye/lock CASCADE; arrange scoped to siblings.
+    Canvas identical (Ahmed saw no difference — the acceptance bar); 6 new headless tests, 85 total.
+    <b>NEXT, in order:</b> ① <b>Layers Stage B</b> — the visible PANEL (rows/thumbnails/eye/lock/
+    select-column/rename/footer/counter/search, under Properties, temp) →
     ② Colour Stage-2 (Swatches + Paint enum → gradients).
   </div>
 

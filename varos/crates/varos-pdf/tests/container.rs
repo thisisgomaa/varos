@@ -14,6 +14,7 @@ fn demo_doc() -> Document {
                            false, None, Some([0.9, 0.2, 0.2, 1.0]), 3.0));                      // open stroke
     d.paths[0].opacity = 0.8;
     d.ids = 5;
+    d.sync_tree();   // adopt the raw pushes into the scene tree (every real commit does this)
     d
 }
 fn tmp(name: &str) -> std::path::PathBuf {
@@ -57,20 +58,19 @@ fn one_page_per_artboard() {
 
 #[test]
 fn groups_survive_the_container_round_trip() {
-    // Ahmed's report: after reopening a file, a group moves disintegrated. Groups live in
-    // Document.groups + group_of (HashMap<u32,u32> — integer keys through JSON are the suspect).
+    // Ahmed's report: after reopening a file, a group moves disintegrated. Groups now live in the
+    // scene TREE (Layers Stage A) — the container must carry it intact.
     let mut d = demo_doc();
     d.paths.push(Path::new(3, vec![anc(6, 10.0, 10.0), anc(7, 20.0, 10.0), anc(8, 15.0, 20.0)],
                            true, Some([0.5, 0.5, 0.5, 1.0]), None, 1.0));
     d.ids = 8;
-    d.groups.push(varos_core::model::Group { id: 100, name: "G".into(), parent: None });
-    d.group_of.insert(1, 100);
-    d.group_of.insert(3, 100);
+    d.group(&[1, 3]).expect("group the two shapes");
     let p = tmp("groups.vrs");
     save_vrs(&d, &p).expect("save");
     let loaded = load_vrs(&p).expect("load");
-    assert_eq!(loaded.group_of, d.group_of, "group membership must survive save/reopen");
-    assert_eq!(loaded.groups.len(), 1, "the group registry must survive save/reopen");
+    assert_eq!(loaded, d, "the whole document — tree included — must survive save/reopen");
+    let mut m = loaded.group_members(1); m.sort();
+    assert_eq!(m, vec![1, 3], "group membership works after reopen");
     let _ = std::fs::remove_file(&p);
 }
 
