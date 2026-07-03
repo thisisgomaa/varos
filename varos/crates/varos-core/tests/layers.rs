@@ -3,7 +3,7 @@
 //! before with one implicit "Layer 1".
 
 use varos_core::editor::{Editor, ToolKind};
-use varos_core::model::{Anchor, Document, Node, NodeKind, Path};
+use varos_core::model::{Anchor, Document, DropPos, Node, NodeKind, Path};
 
 fn anc(id: u32, x: f32, y: f32) -> Anchor { Anchor { id, p: [x, y], hin: None, hout: None, smooth: false } }
 fn tri(id: u32, base: u32, x: f32) -> Path {
@@ -96,6 +96,38 @@ fn arrange_moves_units_within_their_own_parent() {
     ed.arrange(varos_core::editor::ZOrder::Backward);
     let order: Vec<u32> = ed.doc.paths.iter().map(|p| p.id).collect();
     assert_eq!(order, vec![2, 1, 3], "Send Backward steps down exactly one sibling");
+}
+
+#[test]
+fn drag_drop_reorders_nests_and_refuses_cycles() {
+    let mut d = Document::default();
+    d.paths.push(tri(1, 1, 0.0));
+    d.paths.push(tri(2, 4, 40.0));
+    d.paths.push(tri(3, 7, 80.0));   // front-most
+    d.ids = 10;
+    d.sync_tree();
+    let layer = d.active_layer;
+    let leaf = |d: &Document, pid: u32| d.node_of_path(pid).unwrap();
+
+    // reorder: drop path 1 (back) BEFORE path 3 (rows are front-first, so Before = above = more front)
+    // → 1 becomes front-most; flat z back→front = [2,3,1]
+    let (n1, n3) = (leaf(&d, 1), leaf(&d, 3));
+    assert!(d.move_node_to(n1, n3, DropPos::Before));
+    assert_eq!(d.paths.iter().map(|p| p.id).collect::<Vec<_>>(), vec![2, 3, 1], "reordered by drag");
+
+    // nest: make a Group, then drag path 2's leaf INTO it
+    d.group(&[1, 3]).unwrap();
+    let g = d.top_group_of_path(1).unwrap();
+    let n2 = leaf(&d, 2);
+    assert!(d.move_node_to(n2, g, DropPos::Into), "drop a leaf INTO a group nests it");
+    assert_eq!(d.node(n2).unwrap().parent, Some(g), "the leaf is now a child of the group");
+
+    // cycle guard: a group can't be dropped into its own descendant
+    assert!(!d.move_node_to(g, n2, DropPos::Into), "dropping a container into its own child is refused");
+    // into-a-leaf is refused
+    assert!(!d.move_node_to(leaf(&d, 1), n2, DropPos::Into), "can't nest INTO a Path leaf");
+    // a Layer can't be dropped into a Group
+    assert!(!d.move_node_to(layer, g, DropPos::Into), "a Layer can't nest inside a Group");
 }
 
 #[test]

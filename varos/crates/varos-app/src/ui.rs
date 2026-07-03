@@ -106,6 +106,7 @@ enum Op {
     LayerSelectArt(u32, bool),      // click the selection column: select the row's art (bool = additive)
     LayerEye(u32), LayerLock(u32), LayerRename(u32, String),
     LayerNew, LayerNewSub, LayerDelete(u32),
+    LayerMove(u32, u32, u8),        // drag-drop: src, target, zone (0=before · 1=into · 2=after)
     Flip(bool),
     Align(AlignMode), Distribute(DistAxis),
     // ---- artboard ops (i = artboard index) ----
@@ -194,6 +195,11 @@ struct TopIcons {
 #[derive(Clone, Copy, PartialEq)]
 enum LKind { Layer, Group, Path }
 
+/// One drawable shape in a row's thumbnail — its outline rings (normalised into the row's COMBINED
+/// bbox, 0..1, Y down) plus its own paint. A leaf has one; a Layer/Group stacks all its art (Ahmed:
+/// the container thumbnail is a real mini-preview of everything inside, like Illustrator).
+struct ThumbShape { rings: Vec<Vec<Pt>>, fill: Option<Rgba>, stroke: Option<Rgba> }
+
 /// One rendered row of the Layers panel (a flattened, display-ordered view of the scene tree).
 struct LRow {
     id: u32, depth: u16, kind: LKind, name: String,
@@ -203,8 +209,7 @@ struct LRow {
     selected: bool,                      // any of the row's art is selected on canvas
     active: bool,                        // the active (target) layer
     lay_color: Rgba,                     // the enclosing layer's identity colour (left bar + accents)
-    fill: Option<Rgba>, stroke: Option<Rgba>, // leaf swatch/thumb colours
-    thumb: Vec<Vec<Pt>>,                 // leaf outline rings in LOCAL (bbox-relative 0..1) space
+    thumb: Vec<ThumbShape>,              // real mini-preview, back→front; empty = no art (blank box)
 }
 
 /// Layer identity colours — a DESATURATED 12-colour ramp (S≤55%, L 62–70%) so per-layer colour reads
@@ -235,17 +240,16 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         let Some(n) = ed.doc.node(nid) else { return };
         let anc_hidden = || { let mut c = n.parent; while let Some(i) = c { let Some(x) = ed.doc.node(i) else { break }; if x.hidden { return true; } c = x.parent; } false };
         let anc_locked = || { let mut c = n.parent; while let Some(i) = c { let Some(x) = ed.doc.node(i) else { break }; if x.locked { return true; } c = x.parent; } false };
-        let (kind, name, fill, stroke, thumb) = match n.kind {
-            NodeKind::Layer => (LKind::Layer, n.name.clone(), None, None, vec![]),
-            NodeKind::Group => (LKind::Group, if n.name.is_empty() { "<Group>".into() } else { n.name.clone() }, None, None, vec![]),
-            NodeKind::Path(pid) => ed.doc.pidx(pid).map(|pi| {
-                let p = &ed.doc.paths[pi];
-                let mut rings = vec![ed.doc.outline_px(pi, 1.0)];
-                for h in &p.holes { rings.push(varos_core::model::Document::ring_px(h, true, 1.0)); }
-                (LKind::Path, path_auto_name(p), p.fill, p.stroke, norm_rings(rings))
-            }).unwrap_or((LKind::Path, "<Path>".into(), None, None, vec![])),
+        let (kind, name) = match n.kind {
+            NodeKind::Layer => (LKind::Layer, n.name.clone()),
+            NodeKind::Group => (LKind::Group, if n.name.is_empty() { "<Group>".into() } else { n.name.clone() }),
+            NodeKind::Path(pid) => (LKind::Path, ed.doc.pidx(pid).map(|pi| path_auto_name(&ed.doc.paths[pi])).unwrap_or_else(|| "<Path>".into())),
         };
-        let paths = ed.doc.node_paths(nid);
+        // thumbnail = every path under this node, composited in z-order (back→front) into one bbox —
+        // a leaf shows itself; a Layer/Group shows a true preview of its contents.
+        let mut paths = ed.doc.node_paths(nid);
+        paths.sort_by_key(|pid| ed.doc.pidx(*pid).unwrap_or(usize::MAX));   // back→front z
+        let thumb = thumb_shapes(ed, &paths);
         // identity colour = the top-level (root) layer's palette slot; sublayers inherit it
         let root = { let mut c = nid; while let Some(x) = ed.doc.node(c) { match x.parent { Some(p) => c = p, None => break } } c };
         let lay_color = ed.doc.node(root).and_then(|x| x.color)
@@ -258,7 +262,7 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
             has_children: !n.children.is_empty(), collapsed: collapsed.contains(&nid),
             selected: paths.iter().any(|p| ed.objsel.contains(p)),
             active: nid == ed.doc.active_layer,
-            lay_color, fill, stroke, thumb,
+            lay_color, thumb,
         });
         parent.push(par);
         let me = rows.len() - 1;
@@ -280,14 +284,28 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
     }
     rows.into_iter().zip(keep).filter(|(_, k)| *k).map(|(r, _)| r).collect()
 }
-/// Normalise outline rings into the unit square (fit the combined bbox to 0..1, Y kept down).
-fn norm_rings(rings: Vec<Vec<Pt>>) -> Vec<Vec<Pt>> {
+/// Build a row's thumbnail: gather every path (already in back→front z order), collect its outline
+/// rings + paint in pixel space, then fit the ONE combined bbox to the unit square (Y down, shorter
+/// axis centred) so the composite preview keeps each shape's real position, size and colour.
+fn thumb_shapes(ed: &Editor, pids_zorder: &[u32]) -> Vec<ThumbShape> {
+    let mut raw: Vec<(Vec<Vec<Pt>>, Option<Rgba>, Option<Rgba>)> = Vec::new();
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for r in &rings { for p in r { x0 = x0.min(p[0]); y0 = y0.min(p[1]); x1 = x1.max(p[0]); y1 = y1.max(p[1]); } }
+    for &pid in pids_zorder {
+        let Some(pi) = ed.doc.pidx(pid) else { continue };
+        let p = &ed.doc.paths[pi];
+        let mut rings = vec![ed.doc.outline_px(pi, 1.0)];
+        for h in &p.holes { rings.push(varos_core::model::Document::ring_px(h, true, 1.0)); }
+        for r in &rings { for q in r { x0 = x0.min(q[0]); y0 = y0.min(q[1]); x1 = x1.max(q[0]); y1 = y1.max(q[1]); } }
+        raw.push((rings, p.fill, p.stroke));
+    }
+    if raw.is_empty() { return vec![]; }
     let (w, h) = ((x1 - x0).max(1e-3), (y1 - y0).max(1e-3));
     let s = 1.0 / w.max(h);
     let (ox, oy) = ((1.0 - w * s) * 0.5, (1.0 - h * s) * 0.5);   // centre the shorter axis
-    rings.into_iter().map(|r| r.into_iter().map(|p| [ox + (p[0] - x0) * s, oy + (p[1] - y0) * s]).collect()).collect()
+    raw.into_iter().map(|(rings, fill, stroke)| ThumbShape {
+        rings: rings.into_iter().map(|r| r.into_iter().map(|q| [ox + (q[0] - x0) * s, oy + (q[1] - y0) * s]).collect()).collect(),
+        fill, stroke,
+    }).collect()
 }
 
 /// Read-only snapshot of the editor for this frame's panels.
@@ -395,6 +413,7 @@ pub struct Ui {
     lay_collapsed: std::collections::HashSet<u32>, // collapsed container node ids (UI-only)
     lay_search: String,
     lay_rename: Option<(u32, String)>,             // inline rename in progress (node id + buffer)
+    lay_drag: Option<u32>,                         // node id being dragged in the Layers panel (UI-only)
 }
 
 /// The Layers-panel icon set (rasterized Lucide, white).
@@ -486,7 +505,7 @@ impl Ui {
              top, win_action: None, show_rail: true, show_dock: true, tabs: vec!["Untitled-1".into()], tab_active: 0,
              logo, splash_start: Some(Instant::now()), last_splash: false, color_modal: None,
              layer_icons, lay_collapsed: std::collections::HashSet::new(), lay_search: String::new(),
-             lay_rename: None }
+             lay_rename: None, lay_drag: None }
     }
 
     /// Feed a window event to egui. Returns true if egui consumed it (so the canvas should NOT).
@@ -541,6 +560,7 @@ impl Ui {
         let mut lay_search = std::mem::take(&mut self.lay_search);
         let mut lay_rename = std::mem::take(&mut self.lay_rename);
         let mut lay_collapsed = std::mem::take(&mut self.lay_collapsed);
+        let mut lay_drag = self.lay_drag;
         let mut ops: Vec<Op> = Vec::new();
         let mut rects: Vec<egui::Rect> = Vec::new();
         let mut refpt = self.refpt;
@@ -578,7 +598,7 @@ impl Ui {
                     // the Layers panel docks UNDER the inspector and grows downward (Ahmed) — pass the
                     // inspector's rect (just pushed) so it pins to its bottom edge.
                     let inspector = rects.last().copied();
-                    build_layers(ctx, &layer_rows, layer_icons, layer_ct, inspector, &mut lay_search, &mut lay_rename, &mut lay_collapsed, &mut ops, &mut rects);
+                    build_layers(ctx, &layer_rows, layer_icons, layer_ct, inspector, &mut lay_search, &mut lay_rename, &mut lay_collapsed, &mut lay_drag, &mut ops, &mut rects);
                 }
                 // on-canvas page chrome: a name label + ⋮ menu pinned over each artboard (any tool)
                 build_ab_chrome(ctx, view, ppp, &abs, absnap.active, snap.tool == ToolKind::Artboard,
@@ -598,6 +618,7 @@ impl Ui {
         self.lay_search = lay_search;
         self.lay_rename = lay_rename;
         self.lay_collapsed = lay_collapsed;
+        self.lay_drag = lay_drag;
         self.shape_active = shape_active;
         if fit_request.is_some() { self.fit_request = fit_request; }
         self.win_action = win_action;
@@ -1791,7 +1812,8 @@ fn col_toggle(ui: &mut egui::Ui, rect: egui::Rect, row_hovered: bool, marked: bo
 /// name ‖ target ○ · select ▢. Header: title + search. Footer: counter + new/sub/delete.
 fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: usize, dock_below: Option<egui::Rect>,
                 search: &mut String, rename: &mut Option<(u32, String)>,
-                collapsed: &mut std::collections::HashSet<u32>, ops: &mut Vec<Op>, rects: &mut Vec<egui::Rect>) {
+                collapsed: &mut std::collections::HashSet<u32>, drag: &mut Option<u32>,
+                ops: &mut Vec<Op>, rects: &mut Vec<egui::Rect>) {
     let scr = ctx.content_rect();
     // pin under the inspector, share its x + width; grow down to the workspace floor
     let w = dock_below.map(|r| r.width()).unwrap_or(258.0);
@@ -1829,13 +1851,41 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
 
             // ── the row list ──
             let row_h = 26.0;
-            egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
+            // drag-drop bookkeeping (Stage B3). `drag` = the node being dragged; forbidden = itself + its
+            // whole subtree (can't drop a container into its own descendant); the model re-guards anyway.
+            let ptr = ui.input(|i| i.pointer.interact_pos());
+            let src_is_layer = drag.and_then(|s| rows.iter().find(|r| r.id == s)).map_or(false, |r| r.kind == LKind::Layer);
+            let forbidden: std::collections::HashSet<u32> = drag.map(|s| {
+                let mut set = std::collections::HashSet::new();
+                if let Some(si) = rows.iter().position(|r| r.id == s) {
+                    set.insert(s);
+                    let sd = rows[si].depth;
+                    for r in &rows[si + 1..] { if r.depth > sd { set.insert(r.id); } else { break; } }
+                }
+                set
+            }).unwrap_or_default();
+            let mut drop_ind: Option<(u32, u8, egui::Rect, u16)> = None;   // target id, zone, rect, depth
+            // scroll by wheel + bar only — NEVER by dragging content (that would fight our row drag-drop)
+            let scroll_src = egui::scroll_area::ScrollSource { scroll_bar: true, drag: egui::scroll_area::DragScroll::Never, mouse_wheel: true };
+            egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, false]).scroll_source(scroll_src).show(ui, |ui| {
                 if rows.is_empty() {
                     let (r, _) = ui.allocate_exact_size(egui::vec2(w, 40.0), egui::Sense::hover());
                     ui.painter().text(r.center(), Align2::CENTER_CENTER, "No matching layers", FontId::proportional(12.0), FAINT);
                 }
                 for row in rows {
-                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click_and_drag());
+                    if resp.drag_started() { *drag = Some(row.id); }
+                    // as a drag hovers this row, decide the drop zone: top third = Before, bottom third =
+                    // After, middle = Into (containers only). Leaves halve into Before/After.
+                    if drag.is_some() && *drag != Some(row.id) && !forbidden.contains(&row.id) {
+                        if let Some(pp) = ptr { if rect.contains(pp) {
+                            let f = ((pp.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+                            let into_ok = row.kind != LKind::Path && !(src_is_layer && row.kind == LKind::Group);
+                            let zone = if into_ok { if f < 0.30 { 0 } else if f > 0.70 { 2 } else { 1 } }
+                                       else if f < 0.5 { 0 } else { 2 };
+                            drop_ind = Some((row.id, zone, rect, row.depth));
+                        }}
+                    }
                     let p = ui.painter_at(rect);
                     let dim = if row.eff_hidden { 0.42 } else { 1.0 };
                     let hov = resp.hovered();
@@ -1869,24 +1919,24 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
                         }
                     }
                     x += 13.0;
-                    // thumbnail
+                    // thumbnail — one path or a whole container, composited as a real mini-preview
+                    // (Ahmed: no more folder chip; the thin identity bar carries "which layer"). Empty
+                    // containers/paths draw nothing — the bar alone identifies them.
                     let thumb = egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 9.0), egui::vec2(18.0, 18.0));
-                    if row.kind == LKind::Path {
-                        let translucent = row.fill.map_or(false, |c| c[3] < 0.999) || row.fill.is_none();
+                    if !row.thumb.is_empty() {
+                        let translucent = row.thumb.iter().any(|s| s.fill.map_or(true, |c| c[3] < 0.999));
                         if translucent { checker(&p, thumb, 4.5); }
                         p.rect(thumb, CornerRadius::same(2), if translucent { Color32::TRANSPARENT } else { Color32::from_gray(24) }, Stroke::new(1.0, with_a(BORDER_2, 0.8)), StrokeKind::Middle);
-                        for ring in &row.thumb {
-                            if ring.len() >= 3 {
-                                let pts: Vec<egui::Pos2> = ring.iter().map(|q| thumb.min + egui::vec2(q[0], q[1]) * 18.0).collect();
-                                let fill = row.fill.map(|c| with_a(rgba_c32a(c), dim)).unwrap_or(Color32::TRANSPARENT);
-                                let stroke = row.stroke.map(|c| with_a(rgba_c32a(c), dim)).unwrap_or(Color32::from_gray((160.0 * dim) as u8));
-                                p.add(egui::Shape::convex_polygon(pts, fill, Stroke::new(1.0, stroke)));
+                        for sh in &row.thumb {
+                            let fill = sh.fill.map(|c| with_a(rgba_c32a(c), dim)).unwrap_or(Color32::TRANSPARENT);
+                            let stroke = sh.stroke.map(|c| with_a(rgba_c32a(c), dim)).unwrap_or(Color32::from_gray((160.0 * dim) as u8));
+                            for ring in &sh.rings {
+                                if ring.len() >= 3 {
+                                    let pts: Vec<egui::Pos2> = ring.iter().map(|q| thumb.min + egui::vec2(q[0], q[1]) * 18.0).collect();
+                                    p.add(egui::Shape::convex_polygon(pts, fill, Stroke::new(1.0, stroke)));
+                                }
                             }
                         }
-                    } else {
-                        // container: identity-colour chip (disclosure carries the "it's a container" meaning)
-                        p.rect_filled(thumb, CornerRadius::same(3), with_a(rgba_c32a(row.lay_color), dim * 0.9));
-                        p.rect_filled(egui::Rect::from_min_size(thumb.min + egui::vec2(3.0, 3.0), egui::vec2(12.0, 4.0)), CornerRadius::same(1), Color32::from_white_alpha((60.0 * dim) as u8));
                     }
                     x += 24.0;
                     // name (auto-names muted; user/layer names bright) — or inline rename
@@ -1923,9 +1973,31 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
                     if sresp.clicked() { ops.push(Op::LayerSelectArt(row.id, ui.input(|i| i.modifiers.shift))); }
                     if resp.clicked() && !renaming { ops.push(Op::LayerFocus(row.id)); }
                     if resp.double_clicked() { *rename = Some((row.id, row.name.clone())); }
+                    // the lifted row reads as "picked up" — dim it while it's being dragged
+                    if *drag == Some(row.id) { p.rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(120)); }
                     // NO per-row separator — rhythm + indentation carry structure (killed the zebra)
                 }
+                // ── drop indicator: a nest box for Into, an indented ACCENT line for Before/After ──
+                if drag.is_some() {
+                    if let Some((_, zone, trect, depth)) = drop_ind {
+                        let dp = ui.painter();
+                        if zone == 1 {
+                            dp.rect(trect.shrink(1.5), CornerRadius::same(3), Color32::TRANSPARENT, Stroke::new(2.0, ACCENT), StrokeKind::Inside);
+                        } else {
+                            let y = if zone == 0 { trect.top() + 1.0 } else { trect.bottom() - 1.0 };
+                            let ix = trect.left() + body_x0 + depth as f32 * 13.0;
+                            dp.hline(ix..=(trect.right() - 10.0), y, Stroke::new(2.0, ACCENT));
+                            dp.circle_filled(egui::pos2(ix, y), 3.0, ACCENT);
+                        }
+                    }
+                }
             });
+            // release anywhere ends the drag; a valid target commits the move (model re-guards)
+            if drag.is_some() && ui.input(|i| i.pointer.any_released()) {
+                if let (Some(src), Some((tid, zone, _, _))) = (*drag, drop_ind) { ops.push(Op::LayerMove(src, tid, zone)); }
+                *drag = None;
+            }
+            if drag.is_some() { ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing); }
             hairline(ui);
             // ── footer ──
             ui.add_space(3.0);
@@ -1934,17 +2006,20 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
                 ui.label(RichText::new(format!("{layer_ct} Layer{}", if layer_ct == 1 { "" } else { "s" })).color(FAINT).size(11.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(9.0);
-                    let footer = |ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str| -> bool {
+                    // `isz` = icon size: the sublayer button is smaller + sits LEFT of New Layer so it
+                    // stops getting mistaken for the primary + (Ahmed) — matches Illustrator's order.
+                    let footer = |ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str, isz: f32| -> bool {
                         let (rr, rp) = ui.allocate_exact_size(egui::vec2(28.0, 24.0), egui::Sense::click());
                         if rp.hovered() { ui.painter().rect_filled(rr, CornerRadius::same(5), HOVER); }
-                        if let Some(t) = tex { ui.painter().image(t.id(), egui::Rect::from_center_size(rr.center(), egui::vec2(15.0, 15.0)), UV01(), if rp.hovered() { TEXT } else { MUTED }); }
+                        if let Some(t) = tex { ui.painter().image(t.id(), egui::Rect::from_center_size(rr.center(), egui::vec2(isz, isz)), UV01(), if rp.hovered() { TEXT } else { MUTED }); }
                         rp.on_hover_text(tip).clicked()
                     };
-                    if footer(ui, &ic.trash, "Delete") {
+                    // right_to_left: added first = rightmost → visual L→R is [sublayer · new · trash]
+                    if footer(ui, &ic.trash, "Delete", 15.0) {
                         if let Some(row) = rows.iter().find(|r| r.active).or_else(|| rows.first()) { ops.push(Op::LayerDelete(row.id)); }
                     }
-                    if footer(ui, &ic.sub, "New Sublayer") { ops.push(Op::LayerNewSub); }
-                    if footer(ui, &ic.new, "New Layer") { ops.push(Op::LayerNew); }
+                    if footer(ui, &ic.new, "New Layer", 15.0) { ops.push(Op::LayerNew); }
+                    if footer(ui, &ic.sub, "New Sublayer", 12.0) { ops.push(Op::LayerNewSub); }
                 });
             });
         });
@@ -2391,6 +2466,10 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::LayerNew => ed.layer_new(),
             Op::LayerNewSub => ed.layer_new_sublayer(),
             Op::LayerDelete(n) => ed.layer_delete(n),
+            Op::LayerMove(src, target, zone) => {
+                let pos = match zone { 0 => varos_core::model::DropPos::Before, 1 => varos_core::model::DropPos::Into, _ => varos_core::model::DropPos::After };
+                ed.layer_move(src, target, pos);
+            }
             Op::Flip(h) => ed.flip(h),
             Op::Align(m) => ed.align(m),
             Op::Distribute(a) => ed.distribute(a),

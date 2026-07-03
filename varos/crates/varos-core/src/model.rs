@@ -52,6 +52,10 @@ pub struct Group { pub id: u32, pub name: String, pub parent: Option<u32> }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind { Layer, Group, Path(u32) }
 
+/// Where a dragged row lands relative to the target row (the 3-zone drag model).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DropPos { Before, Into, After }
+
 /// One node of the REAL scene graph (the Layers system, D2). Structure lives here; geometry/appearance
 /// stay in the flat `Vec<Path>` (which is kept re-flattened to tree order, so everything that reads
 /// "vec order = z" keeps working untouched).
@@ -774,6 +778,61 @@ impl Document {
         let kids = self.node(nid).map(|n| n.children.clone()).unwrap_or_default();
         for k in kids { self.remove_subtree(k); }
         self.remove_node(nid);
+    }
+    fn children_of(&self, parent: Option<u32>) -> Vec<u32> {
+        match parent { Some(p) => self.node(p).map(|n| n.children.clone()).unwrap_or_default(), None => self.roots.clone() }
+    }
+    fn is_descendant(&self, node: u32, ancestor: u32) -> bool {
+        let mut cur = self.node(node).and_then(|n| n.parent);
+        while let Some(c) = cur { if c == ancestor { return true; } cur = self.node(c).and_then(|n| n.parent); }
+        false
+    }
+    fn unlink(&mut self, id: u32) {
+        match self.node(id).and_then(|n| n.parent) {
+            Some(p) => { if let Some(n) = self.node_mut(p) { n.children.retain(|&c| c != id); } }
+            None => self.roots.retain(|&r| r != id),
+        }
+    }
+    /// Drag & drop: move `src` (+ its subtree) relative to `target`. Returns false (no-op) for illegal
+    /// drops — cycle (into self/own descendant), Into a leaf Path, or a Layer into a Group. Undoable via
+    /// the caller's begin/commit; re-flattens z on success.
+    pub fn move_node_to(&mut self, src: u32, target: u32, pos: DropPos) -> bool {
+        if src == target || self.node(src).is_none() || self.node(target).is_none() { return false; }
+        let src_is_layer = matches!(self.node(src).unwrap().kind, NodeKind::Layer);
+        let (parent, mut index) = match pos {
+            DropPos::Into => {
+                if !matches!(self.node(target).unwrap().kind, NodeKind::Layer | NodeKind::Group) { return false; }
+                (Some(target), 0usize)   // Illustrator drops at the FRONT (top) of the container
+            }
+            DropPos::Before | DropPos::After => {
+                let par = self.node(target).unwrap().parent;
+                let sib = self.children_of(par);
+                let ti = sib.iter().position(|&c| c == target).unwrap_or(0);
+                (par, if matches!(pos, DropPos::After) { ti + 1 } else { ti })
+            }
+        };
+        // cycle guard: src can't become a child of itself or its own descendant
+        if let Some(p) = parent { if p == src || self.is_descendant(p, src) { return false; } }
+        // a Layer can nest in a Layer (sublayer) but never inside a Group
+        if src_is_layer { if let Some(p) = parent { if matches!(self.node(p).unwrap().kind, NodeKind::Group) { return false; } } }
+        // same-parent reorder: removing src first shifts the insertion index down by one if src was above it
+        let old_parent = self.node(src).unwrap().parent;
+        if old_parent == parent {
+            let sib = self.children_of(parent);
+            if let Some(si) = sib.iter().position(|&c| c == src) { if si < index { index -= 1; } }
+        }
+        self.unlink(src);
+        match parent {
+            Some(p) => {
+                let n = self.node(p).map(|n| n.children.len()).unwrap_or(0);
+                if let Some(pn) = self.node_mut(p) { pn.children.insert(index.min(n), src); }
+                if let Some(sn) = self.node_mut(src) { sn.parent = Some(p); }
+            }
+            None => { let i = index.min(self.roots.len()); self.roots.insert(i, src);
+                      if let Some(sn) = self.node_mut(src) { sn.parent = None; } }
+        }
+        self.flatten();
+        true
     }
     pub fn set_node_name(&mut self, nid: u32, name: String) { if let Some(n) = self.node_mut(nid) { n.name = name; } }
     pub fn toggle_node_hidden(&mut self, nid: u32) { if let Some(n) = self.node_mut(nid) { n.hidden = !n.hidden; } }
