@@ -131,6 +131,66 @@ fn drag_drop_reorders_nests_and_refuses_cycles() {
 }
 
 #[test]
+fn selection_square_moves_and_copies_art_across_layers() {
+    // B4: drag a row's select-square → move the canvas selection onto another layer; Alt = duplicate.
+    let mut d = Document::default();
+    d.paths.push(tri(1, 1, 0.0));
+    d.paths.push(tri(2, 4, 40.0));
+    d.paths.push(tri(3, 7, 80.0));   // all on Layer 1
+    d.ids = 10;
+    d.sync_tree();
+    let l1 = d.active_layer;
+    // add Layer 2 on top
+    let l2 = { let id = d.ids + 1; d.ids = id;
+        d.nodes.push(Node { id, kind: NodeKind::Layer, name: "Layer 2".into(), parent: None,
+                            children: vec![], hidden: false, locked: false, color: None });
+        d.roots.insert(0, id); id };
+
+    // move paths 1 & 3 INTO Layer 2 (keep relative z: 1 behind 3)
+    let landed = d.move_paths_to(&[1, 3], l2, DropPos::Into, false);
+    assert_eq!(landed, vec![1, 3], "the same two paths moved (no copy)");
+    assert_eq!(d.node_paths(l2), vec![1, 3], "node_paths is back→front: 1 stays behind 3 in Layer 2");
+    assert_eq!(d.node_paths(l1), vec![2], "only path 2 is left on Layer 1");
+    assert_eq!(d.paths.iter().map(|p| p.id).collect::<Vec<_>>(), vec![2, 1, 3], "flat z: L1 art below L2 art, 1 behind 3");
+
+    // Alt-copy path 2 into Layer 2 → a NEW path id, original stays on Layer 1
+    let before = d.paths.len();
+    let landed = d.move_paths_to(&[2], l2, DropPos::Into, true);
+    assert_eq!(landed.len(), 1);
+    assert!(landed[0] != 2 && d.pidx(2).is_some(), "copy makes a fresh id and leaves the original");
+    assert_eq!(d.paths.len(), before + 1, "exactly one new path");
+    assert_eq!(d.node_paths(l1), vec![2], "the original is still on Layer 1");
+    assert!(d.node_paths(l2).contains(&landed[0]), "the copy landed on Layer 2");
+
+    // Into a Path leaf is refused (only containers accept Into)
+    let leaf2 = d.node_of_path(2).unwrap();
+    assert!(d.move_paths_to(&[landed[0]], leaf2, DropPos::Into, false).is_empty(), "can't drop art INTO a leaf");
+}
+
+#[test]
+fn alt_drag_on_canvas_leaves_a_moved_copy() {
+    // Ahmed's bug report: "Alt+click+drag doesn't copy anything." Prove the editor path at the model level.
+    let mut ed = Editor::new();
+    ed.doc.artboards.clear(); ed.ppu = 1.0;
+    ed.doc.paths.push(tri(1, 1, 0.0));   // a triangle around (0,0)-(20,20)
+    ed.doc.ids = 3;
+    ed.doc.sync_tree();
+    ed.set_tool(ToolKind::Object);
+    ed.objsel.insert(1);
+    ed.mods.alt = true;
+    let before = ed.doc.paths.len();
+    ed.pointer_down([5.0, 5.0]);          // Alt on the object → DupPending
+    ed.pointer_move([60.0, 60.0]);        // past DRAG_THRESH → duplicate + drag the COPY
+    ed.pointer_up();
+    assert_eq!(ed.doc.paths.len(), before + 1, "Alt-drag must leave a copy behind");
+    // the original stays put; the copy is the one that moved and is now selected
+    let orig = ed.doc.paths.iter().find(|p| p.id == 1).unwrap();
+    assert_eq!(orig.anchors[0].p, [0.0, 0.0], "the ORIGINAL never moves under Alt-drag");
+    assert_eq!(ed.objsel.len(), 1, "the copy is the new selection");
+    assert!(!ed.objsel.contains(&1), "selection moved off the original onto the copy");
+}
+
+#[test]
 fn a_locked_layer_is_truly_immovable() {
     // Ahmed's "lock is fake" bug: after locking, the object still dragged. Lock must block hit-test,
     // marquee AND the transform-frame grab (drop it from the selection at gesture start).

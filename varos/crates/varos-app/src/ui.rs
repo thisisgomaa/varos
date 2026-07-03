@@ -38,7 +38,6 @@ const IC_L_EYE: &str = r#"<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 
 const IC_L_EYEOFF: &str = r#"<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>"#;
 const IC_L_LOCK: &str = r#"<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>"#;
 const IC_L_UNLOCK: &str = r#"<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>"#;
-const IC_L_NEW: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
 const IC_L_SUB: &str = r#"<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#;
 const IC_L_TRASH: &str = r#"<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>"#;
 const IC_L_SEARCH: &str = r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>"#;
@@ -101,12 +100,13 @@ enum Op {
     SwapColors,                     // Shift+X
     DefaultPaint,                   // D — white fill / black stroke
     OpenPicker(MTarget),            // double-click a swatch → open the Color Picker modal for it
-    // ---- layers panel (node ids) ----
-    LayerFocus(u32),                // click a row: target its layer (+ select a leaf path)
-    LayerSelectArt(u32, bool),      // click the selection column: select the row's art (bool = additive)
+    // ---- layers panel (node ids) — the SIMPLE panel (07-03 pivot) ----
+    LayerSelectSet(Vec<u32>),       // plain click / Shift-range: select these rows' art (replace)
+    LayerToggle(u32),               // Ctrl+click a row: toggle its art in/out of the selection
     LayerEye(u32), LayerLock(u32), LayerRename(u32, String),
-    LayerNew, LayerNewSub, LayerDelete(u32),
+    LayerGroup, LayerDeleteSel,     // footer: Group the selection · Delete the selection
     LayerMove(u32, u32, u8),        // drag-drop: src, target, zone (0=before · 1=into · 2=after)
+    LayerDupMove(u32, u32, u8),     // Alt+drag: duplicate the row's art into the target
     Flip(bool),
     Align(AlignMode), Distribute(DistAxis),
     // ---- artboard ops (i = artboard index) ----
@@ -208,19 +208,10 @@ struct LRow {
     has_children: bool, collapsed: bool,
     selected: bool,                      // any of the row's art is selected on canvas
     active: bool,                        // the active (target) layer
-    lay_color: Rgba,                     // the enclosing layer's identity colour (left bar + accents)
     thumb: Vec<ThumbShape>,              // real mini-preview, back→front; empty = no art (blank box)
 }
 
-/// Layer identity colours — a DESATURATED 12-colour ramp (S≤55%, L 62–70%) so per-layer colour reads
-/// as a quiet accent, never a rainbow clash with the dark theme (LAYERS_SPEC §2 bug 4).
-const LAYER_PALETTE: [Rgba; 12] = [
-    [0.37, 0.69, 0.66, 1.0], [0.78, 0.50, 0.53, 1.0], [0.79, 0.66, 0.42, 1.0], [0.55, 0.58, 0.81, 1.0],
-    [0.53, 0.69, 0.51, 1.0], [0.69, 0.51, 0.72, 1.0], [0.44, 0.66, 0.81, 1.0], [0.72, 0.57, 0.37, 1.0],
-    [0.81, 0.54, 0.44, 1.0], [0.62, 0.55, 0.81, 1.0], [0.61, 0.67, 0.39, 1.0], [0.50, 0.58, 0.66, 1.0],
-];
 const ROW_HOVER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2c);   // row hover (calmer than the chip HOVER)
-const COL_RULE: Color32 = Color32::from_rgb(0x23, 0x23, 0x26);    // faint vertical column separators
 
 /// Auto-name for a leaf path (Illustrator angle-bracket style) unless the user renamed it.
 fn path_auto_name(p: &varos_core::model::Path) -> String {
@@ -250,10 +241,6 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         let mut paths = ed.doc.node_paths(nid);
         paths.sort_by_key(|pid| ed.doc.pidx(*pid).unwrap_or(usize::MAX));   // back→front z
         let thumb = thumb_shapes(ed, &paths);
-        // identity colour = the top-level (root) layer's palette slot; sublayers inherit it
-        let root = { let mut c = nid; while let Some(x) = ed.doc.node(c) { match x.parent { Some(p) => c = p, None => break } } c };
-        let lay_color = ed.doc.node(root).and_then(|x| x.color)
-            .unwrap_or_else(|| LAYER_PALETTE[ed.doc.roots.iter().position(|&r| r == root).unwrap_or(0) % LAYER_PALETTE.len()]);
         rows.push(LRow {
             id: nid, depth, kind, name,
             hidden: n.hidden, locked: n.locked,
@@ -262,7 +249,7 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
             has_children: !n.children.is_empty(), collapsed: collapsed.contains(&nid),
             selected: paths.iter().any(|p| ed.objsel.contains(p)),
             active: nid == ed.doc.active_layer,
-            lay_color, thumb,
+            thumb,
         });
         parent.push(par);
         let me = rows.len() - 1;
@@ -413,14 +400,15 @@ pub struct Ui {
     lay_collapsed: std::collections::HashSet<u32>, // collapsed container node ids (UI-only)
     lay_search: String,
     lay_rename: Option<(u32, String)>,             // inline rename in progress (node id + buffer)
-    lay_drag: Option<u32>,                         // node id being dragged in the Layers panel (UI-only)
+    lay_drag: Option<u32>,                         // Layers row being dragged (reorder / nest); UI-only
+    lay_anchor: Option<u32>,                       // last-clicked row — the Shift-range selection anchor
 }
 
 /// The Layers-panel icon set (rasterized Lucide, white).
 struct LayerIcons {
     eye: Option<egui::TextureHandle>, eye_off: Option<egui::TextureHandle>,
     lock: Option<egui::TextureHandle>, unlock: Option<egui::TextureHandle>,
-    new: Option<egui::TextureHandle>, sub: Option<egui::TextureHandle>,
+    sub: Option<egui::TextureHandle>,
     trash: Option<egui::TextureHandle>, search: Option<egui::TextureHandle>,
 }
 
@@ -494,7 +482,7 @@ impl Ui {
         let layer_icons = LayerIcons {
             eye: load_icon(&ctx, "l-eye", IC_L_EYE), eye_off: load_icon(&ctx, "l-eyeoff", IC_L_EYEOFF),
             lock: load_icon(&ctx, "l-lock", IC_L_LOCK), unlock: load_icon(&ctx, "l-unlock", IC_L_UNLOCK),
-            new: load_icon(&ctx, "l-new", IC_L_NEW), sub: load_icon(&ctx, "l-sub", IC_L_SUB),
+            sub: load_icon(&ctx, "l-sub", IC_L_SUB),
             trash: load_icon(&ctx, "l-trash", IC_L_TRASH), search: load_icon(&ctx, "l-search", IC_L_SEARCH),
         };
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, None, None, None);
@@ -505,7 +493,7 @@ impl Ui {
              top, win_action: None, show_rail: true, show_dock: true, tabs: vec!["Untitled-1".into()], tab_active: 0,
              logo, splash_start: Some(Instant::now()), last_splash: false, color_modal: None,
              layer_icons, lay_collapsed: std::collections::HashSet::new(), lay_search: String::new(),
-             lay_rename: None, lay_drag: None }
+             lay_rename: None, lay_drag: None, lay_anchor: None }
     }
 
     /// Feed a window event to egui. Returns true if egui consumed it (so the canvas should NOT).
@@ -555,12 +543,12 @@ impl Ui {
         let top = &self.top;
         // layers snapshot (built before the closure — like Snap/AbSnap)
         let layer_rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search);
-        let layer_ct = ed.doc.nodes.iter().filter(|n| matches!(n.kind, varos_core::model::NodeKind::Layer)).count();
         let layer_icons = &self.layer_icons;
         let mut lay_search = std::mem::take(&mut self.lay_search);
         let mut lay_rename = std::mem::take(&mut self.lay_rename);
         let mut lay_collapsed = std::mem::take(&mut self.lay_collapsed);
         let mut lay_drag = self.lay_drag;
+        let mut lay_anchor = self.lay_anchor;
         let mut ops: Vec<Op> = Vec::new();
         let mut rects: Vec<egui::Rect> = Vec::new();
         let mut refpt = self.refpt;
@@ -598,7 +586,7 @@ impl Ui {
                     // the Layers panel docks UNDER the inspector and grows downward (Ahmed) — pass the
                     // inspector's rect (just pushed) so it pins to its bottom edge.
                     let inspector = rects.last().copied();
-                    build_layers(ctx, &layer_rows, layer_icons, layer_ct, inspector, &mut lay_search, &mut lay_rename, &mut lay_collapsed, &mut lay_drag, &mut ops, &mut rects);
+                    build_layers(ctx, &layer_rows, layer_icons, inspector, &mut lay_search, &mut lay_rename, &mut lay_collapsed, &mut lay_drag, &mut lay_anchor, &mut ops, &mut rects);
                 }
                 // on-canvas page chrome: a name label + ⋮ menu pinned over each artboard (any tool)
                 build_ab_chrome(ctx, view, ppp, &abs, absnap.active, snap.tool == ToolKind::Artboard,
@@ -619,6 +607,7 @@ impl Ui {
         self.lay_rename = lay_rename;
         self.lay_collapsed = lay_collapsed;
         self.lay_drag = lay_drag;
+        self.lay_anchor = lay_anchor;
         self.shape_active = shape_active;
         if fit_request.is_some() { self.fit_request = fit_request; }
         self.win_action = win_action;
@@ -1807,25 +1796,23 @@ fn col_toggle(ui: &mut egui::Ui, rect: egui::Rect, row_hovered: bool, marked: bo
     resp.on_hover_text(tip).clicked()
 }
 
-/// The Layers panel — a live indented VIEW of the scene tree, docked UNDER the inspector (`dock_below`)
-/// and growing downward. Row anatomy (LAYERS_SPEC §3): eye · lock ‖ identity-bar · disclosure · thumb ·
-/// name ‖ target ○ · select ▢. Header: title + search. Footer: counter + new/sub/delete.
-fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: usize, dock_below: Option<egui::Rect>,
+/// The Layers panel — the SIMPLE (Photoshop/Affinity) VIEW of the scene tree (07-03 pivot), docked UNDER
+/// the inspector (`dock_below`) and growing downward. Row = eye · lock · disclosure · thumbnail · name.
+/// Click=select · Ctrl=toggle · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate.
+/// Header: title + search. Footer: Group · Delete.
+fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, dock_below: Option<egui::Rect>,
                 search: &mut String, rename: &mut Option<(u32, String)>,
                 collapsed: &mut std::collections::HashSet<u32>, drag: &mut Option<u32>,
-                ops: &mut Vec<Op>, rects: &mut Vec<egui::Rect>) {
+                anchor: &mut Option<u32>, ops: &mut Vec<Op>, rects: &mut Vec<egui::Rect>) {
     let scr = ctx.content_rect();
     // pin under the inspector, share its x + width; grow down to the workspace floor
     let w = dock_below.map(|r| r.width()).unwrap_or(258.0);
     let left = dock_below.map(|r| r.left()).unwrap_or(scr.right() - w - 16.0);
     let top = dock_below.map(|r| r.bottom() + 8.0).unwrap_or(scr.top() + 120.0);
     let list_h = (scr.bottom() - 16.0 - top - 104.0).clamp(90.0, 520.0);   // header 70 + footer 34
-    // column geometry (x, width) — LAYERS_SPEC §3
+    // columns: eye · lock · [disclosure · thumb · name]. No identity bar, no target/select gutter.
     let (eye_w, lock_w) = (26.0, 22.0);
-    let col_sep = eye_w + lock_w;                // vertical rule after eye/lock
-    let bar_x = col_sep + 4.0;                    // 3px identity bar
-    let body_x0 = bar_x + 10.0;                   // indentation origin
-    let gutter_x = w - 44.0;                      // vertical rule before target/select
+    let body_x0 = eye_w + lock_w + 8.0;
     let frame = egui::Frame { fill: BG, corner_radius: CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 },
         stroke: Stroke::new(1.0, BORDER), inner_margin: Margin::same(0), ..Default::default() };
     let r = egui::Window::new("layers").title_bar(false).resizable(false)
@@ -1851,8 +1838,8 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
 
             // ── the row list ──
             let row_h = 26.0;
-            // drag-drop bookkeeping (Stage B3). `drag` = the node being dragged; forbidden = itself + its
-            // whole subtree (can't drop a container into its own descendant); the model re-guards anyway.
+            // drag bookkeeping — ROW drag only (reorder / nest). forbidden = the node + its whole subtree
+            // (can't nest a container in its own descendant); the model re-guards. Alt at drop = duplicate.
             let ptr = ui.input(|i| i.pointer.interact_pos());
             let src_is_layer = drag.and_then(|s| rows.iter().find(|r| r.id == s)).map_or(false, |r| r.kind == LKind::Layer);
             let forbidden: std::collections::HashSet<u32> = drag.map(|s| {
@@ -1872,11 +1859,11 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
                     let (r, _) = ui.allocate_exact_size(egui::vec2(w, 40.0), egui::Sense::hover());
                     ui.painter().text(r.center(), Align2::CENTER_CENTER, "No matching layers", FontId::proportional(12.0), FAINT);
                 }
-                for row in rows {
+                for (ri, row) in rows.iter().enumerate() {
                     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click_and_drag());
                     if resp.drag_started() { *drag = Some(row.id); }
-                    // as a drag hovers this row, decide the drop zone: top third = Before, bottom third =
-                    // After, middle = Into (containers only). Leaves halve into Before/After.
+                    // decide the drop zone: top third = Before, bottom third = After, middle = Into (into a
+                    // container only; a Layer can't nest into a Group). Leaves halve into Before/After.
                     if drag.is_some() && *drag != Some(row.id) && !forbidden.contains(&row.id) {
                         if let Some(pp) = ptr { if rect.contains(pp) {
                             let f = ((pp.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
@@ -1889,26 +1876,21 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
                     let p = ui.painter_at(rect);
                     let dim = if row.eff_hidden { 0.42 } else { 1.0 };
                     let hov = resp.hovered();
-                    // state ladder (all from tokens): active > selected > hover > rest
-                    if row.active {
-                        p.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 30));
+                    // state: SELECTED (its art is in the canvas selection) is the strong highlight; the
+                    // active layer keeps a subtle accent edge even when nothing on it is selected.
+                    if row.selected {
+                        p.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 34));
                         p.rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, row_h)), CornerRadius::ZERO, ACCENT);
-                    } else if row.selected { p.rect_filled(rect, CornerRadius::ZERO, BG_SURFACE); }
-                    else if hov { p.rect_filled(rect, CornerRadius::ZERO, ROW_HOVER); }
-                    // faint column rules
-                    p.vline(rect.left() + col_sep, rect.y_range(), Stroke::new(1.0, COL_RULE));
-                    p.vline(rect.left() + gutter_x, rect.y_range(), Stroke::new(1.0, COL_RULE));
+                    } else if hov { p.rect_filled(rect, CornerRadius::ZERO, ROW_HOVER); }
+                    else if row.active { p.rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, row_h)), CornerRadius::ZERO, with_a(ACCENT, 0.5)); }
                     // eye + lock (reveal on hover; hidden/locked persist)
                     let eye = egui::Rect::from_min_size(rect.min, egui::vec2(eye_w, row_h));
                     let lok = egui::Rect::from_min_size(rect.min + egui::vec2(eye_w, 0.0), egui::vec2(lock_w, row_h));
                     if col_toggle(ui, eye, hov, row.hidden, row.eff_hidden && !row.hidden, &ic.eye_off, &ic.eye, "Show/Hide") { ops.push(Op::LayerEye(row.id)); }
                     if col_toggle(ui, lok, hov, row.locked, row.eff_locked && !row.locked, &ic.lock, &ic.unlock, "Lock/Unlock") { ops.push(Op::LayerLock(row.id)); }
-                    // identity colour bar
-                    p.rect_filled(egui::Rect::from_min_size(rect.min + egui::vec2(bar_x, 4.0), egui::vec2(3.0, row_h - 8.0)),
-                        CornerRadius::same(1), with_a(rgba_c32a(row.lay_color), dim));
-                    // indent guides (~8% white) + disclosure
-                    for lvl in 0..row.depth { p.vline(rect.left() + body_x0 + lvl as f32 * 13.0 + 2.0, rect.y_range(), Stroke::new(1.0, Color32::from_white_alpha(18))); }
-                    let mut x = rect.left() + body_x0 + row.depth as f32 * 13.0;
+                    // indent guides (~6% white) + disclosure
+                    for lvl in 0..row.depth { p.vline(rect.left() + body_x0 + lvl as f32 * 14.0 + 2.0, rect.y_range(), Stroke::new(1.0, Color32::from_white_alpha(16))); }
+                    let mut x = rect.left() + body_x0 + row.depth as f32 * 14.0;
                     if row.has_children {
                         let c = egui::pos2(x + 3.0, rect.center().y);
                         let pts = if row.collapsed { vec![c + egui::vec2(-3.0, -4.0), c + egui::vec2(3.0, 0.0), c + egui::vec2(-3.0, 4.0)] }
@@ -1918,7 +1900,7 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
                             if row.collapsed { collapsed.remove(&row.id); } else { collapsed.insert(row.id); }
                         }
                     }
-                    x += 13.0;
+                    x += 14.0;
                     // thumbnail — one path or a whole container, composited as a real mini-preview
                     // (Ahmed: no more folder chip; the thin identity bar carries "which layer"). Empty
                     // containers/paths draw nothing — the bar alone identifies them.
@@ -1940,7 +1922,7 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
                     }
                     x += 24.0;
                     // name (auto-names muted; user/layer names bright) — or inline rename
-                    let name_rect = egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(rect.left() + gutter_x - 4.0, rect.bottom()));
+                    let name_rect = egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(rect.right() - 10.0, rect.bottom()));
                     let renaming = rename.as_ref().map_or(false, |(id, _)| *id == row.id);
                     if renaming {
                         let buf = &mut rename.as_mut().unwrap().1;
@@ -1960,22 +1942,19 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
                         let s = elide(&row.name, name_rect.width(), size);
                         p.text(egui::pos2(name_rect.left(), rect.center().y), Align2::LEFT_CENTER, s, FontId::proportional(size), with_a(base, dim));
                     }
-                    // right gutter: target ring + selection square
-                    let tgt = egui::pos2(rect.right() - 30.0, rect.center().y);
-                    let tresp = ui.interact(egui::Rect::from_center_size(tgt, egui::vec2(16.0, row_h)), ui.id().with(("tgt", row.id)), egui::Sense::click());
-                    p.circle_stroke(tgt, 4.5, Stroke::new(1.3, if row.active { ACCENT } else if tresp.hovered() { TEXT } else { MUTED }));
-                    if row.active { p.circle_filled(tgt, 2.0, ACCENT); }
-                    if tresp.clicked() { ops.push(Op::LayerFocus(row.id)); }
-                    let selr = egui::Rect::from_center_size(egui::pos2(rect.right() - 15.0, rect.center().y), egui::vec2(11.0, 11.0));
-                    let sresp = ui.interact(selr.expand(3.0), ui.id().with(("sel", row.id)), egui::Sense::click());
-                    if row.selected { p.rect_filled(selr, CornerRadius::same(2), with_a(rgba_c32a(row.lay_color), dim)); }
-                    else if sresp.hovered() { p.rect(selr, CornerRadius::same(2), Color32::TRANSPARENT, Stroke::new(1.0, MUTED), StrokeKind::Middle); }
-                    if sresp.clicked() { ops.push(Op::LayerSelectArt(row.id, ui.input(|i| i.modifiers.shift))); }
-                    if resp.clicked() && !renaming { ops.push(Op::LayerFocus(row.id)); }
+                    // selection — click / Ctrl-toggle / Shift-range act on the ROW (the 07-03 bug fix)
+                    if resp.clicked() && !renaming {
+                        let (ctrl, shift) = ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
+                        if ctrl { ops.push(Op::LayerToggle(row.id)); *anchor = Some(row.id); }
+                        else if shift {
+                            let a = anchor.and_then(|aid| rows.iter().position(|r| r.id == aid)).unwrap_or(ri);
+                            let (lo, hi) = if a <= ri { (a, ri) } else { (ri, a) };
+                            ops.push(Op::LayerSelectSet(rows[lo..=hi].iter().map(|r| r.id).collect()));
+                        } else { ops.push(Op::LayerSelectSet(vec![row.id])); *anchor = Some(row.id); }
+                    }
                     if resp.double_clicked() { *rename = Some((row.id, row.name.clone())); }
                     // the lifted row reads as "picked up" — dim it while it's being dragged
                     if *drag == Some(row.id) { p.rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(120)); }
-                    // NO per-row separator — rhythm + indentation carry structure (killed the zebra)
                 }
                 // ── drop indicator: a nest box for Into, an indented ACCENT line for Before/After ──
                 if drag.is_some() {
@@ -1992,35 +1971,30 @@ fn build_layers(ctx: &egui::Context, rows: &[LRow], ic: &LayerIcons, layer_ct: u
                     }
                 }
             });
-            // release anywhere ends the drag; a valid target commits the move (model re-guards)
-            if drag.is_some() && ui.input(|i| i.pointer.any_released()) {
-                if let (Some(src), Some((tid, zone, _, _))) = (*drag, drop_ind) { ops.push(Op::LayerMove(src, tid, zone)); }
-                *drag = None;
+            // release: Alt = duplicate the row's art into the target; else reorder / nest the node
+            if let Some(src) = *drag {
+                if ui.input(|i| i.pointer.any_released()) {
+                    if let Some((tid, zone, _, _)) = drop_ind {
+                        if ui.input(|i| i.modifiers.alt) { ops.push(Op::LayerDupMove(src, tid, zone)); }
+                        else { ops.push(Op::LayerMove(src, tid, zone)); }
+                    }
+                    *drag = None;
+                }
             }
             if drag.is_some() { ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing); }
             hairline(ui);
-            // ── footer ──
+            // ── footer: Group · Delete ──
             ui.add_space(3.0);
             ui.horizontal(|ui| {
-                ui.add_space(13.0);
-                ui.label(RichText::new(format!("{layer_ct} Layer{}", if layer_ct == 1 { "" } else { "s" })).color(FAINT).size(11.0));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_space(9.0);
-                    // `isz` = icon size: the sublayer button is smaller + sits LEFT of New Layer so it
-                    // stops getting mistaken for the primary + (Ahmed) — matches Illustrator's order.
-                    let footer = |ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str, isz: f32| -> bool {
-                        let (rr, rp) = ui.allocate_exact_size(egui::vec2(28.0, 24.0), egui::Sense::click());
-                        if rp.hovered() { ui.painter().rect_filled(rr, CornerRadius::same(5), HOVER); }
-                        if let Some(t) = tex { ui.painter().image(t.id(), egui::Rect::from_center_size(rr.center(), egui::vec2(isz, isz)), UV01(), if rp.hovered() { TEXT } else { MUTED }); }
-                        rp.on_hover_text(tip).clicked()
-                    };
-                    // right_to_left: added first = rightmost → visual L→R is [sublayer · new · trash]
-                    if footer(ui, &ic.trash, "Delete", 15.0) {
-                        if let Some(row) = rows.iter().find(|r| r.active).or_else(|| rows.first()) { ops.push(Op::LayerDelete(row.id)); }
-                    }
-                    if footer(ui, &ic.new, "New Layer", 15.0) { ops.push(Op::LayerNew); }
-                    if footer(ui, &ic.sub, "New Sublayer", 12.0) { ops.push(Op::LayerNewSub); }
-                });
+                ui.add_space(11.0);
+                let fbtn = |ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str| -> bool {
+                    let (rr, rp) = ui.allocate_exact_size(egui::vec2(30.0, 24.0), egui::Sense::click());
+                    if rp.hovered() { ui.painter().rect_filled(rr, CornerRadius::same(5), HOVER); }
+                    if let Some(t) = tex { ui.painter().image(t.id(), egui::Rect::from_center_size(rr.center(), egui::vec2(15.0, 15.0)), UV01(), if rp.hovered() { TEXT } else { MUTED }); }
+                    rp.on_hover_text(tip).clicked()
+                };
+                if fbtn(ui, &ic.sub, "Group (Ctrl+G)") { ops.push(Op::LayerGroup); }
+                if fbtn(ui, &ic.trash, "Delete") { ops.push(Op::LayerDeleteSel); }
             });
         });
     if let Some(r) = r { rects.push(r.response.rect); }
@@ -2458,17 +2432,20 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::SwapColors => ed.swap_colors(),
             Op::DefaultPaint => ed.default_paint(),
             Op::OpenPicker(_) => {} // UI-only: intercepted in run() (opens the modal); never reaches here
-            Op::LayerFocus(n) => ed.layer_focus(n),
-            Op::LayerSelectArt(n, add) => ed.layer_select_art(n, add),
+            Op::LayerSelectSet(nids) => ed.layer_select_set(&nids),
+            Op::LayerToggle(n) => ed.layer_toggle(n),
             Op::LayerEye(n) => ed.layer_toggle_hidden(n),
             Op::LayerLock(n) => ed.layer_toggle_locked(n),
             Op::LayerRename(n, s) => ed.layer_rename(n, s),
-            Op::LayerNew => ed.layer_new(),
-            Op::LayerNewSub => ed.layer_new_sublayer(),
-            Op::LayerDelete(n) => ed.layer_delete(n),
+            Op::LayerGroup => ed.group_selection(),
+            Op::LayerDeleteSel => ed.layer_delete_selection(),
             Op::LayerMove(src, target, zone) => {
                 let pos = match zone { 0 => varos_core::model::DropPos::Before, 1 => varos_core::model::DropPos::Into, _ => varos_core::model::DropPos::After };
                 ed.layer_move(src, target, pos);
+            }
+            Op::LayerDupMove(src, target, zone) => {
+                let pos = match zone { 0 => varos_core::model::DropPos::Before, 1 => varos_core::model::DropPos::Into, _ => varos_core::model::DropPos::After };
+                ed.layer_dup_move(src, target, pos);
             }
             Op::Flip(h) => ed.flip(h),
             Op::Align(m) => ed.align(m),

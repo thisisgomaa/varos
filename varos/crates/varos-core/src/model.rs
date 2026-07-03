@@ -834,6 +834,57 @@ impl Document {
         self.flatten();
         true
     }
+    /// Drag-the-selection-square-to-move-art (Layers B4): move a SET of paths (the canvas selection) to a
+    /// drop target, keeping their relative z. `copy` first flat-clones each into a fresh leaf (Alt-drag).
+    /// Returns the pids now at the destination (`[]` on no-op) so the caller can reselect them. Paths are
+    /// always leaves → no cycle/Layer guard; only `Into` must land on a container. An emptied source Group
+    /// is dissolved by the next `sync_tree` (commit); source Layers are kept even when emptied.
+    pub fn move_paths_to(&mut self, paths: &[u32], target: u32, pos: DropPos, copy: bool) -> Vec<u32> {
+        let Some(tkind) = self.node(target).map(|n| n.kind) else { return vec![] };
+        if matches!(pos, DropPos::Into) && !matches!(tkind, NodeKind::Layer | NodeKind::Group) { return vec![]; }
+        // sources present in the tree, ordered back→front so they keep relative z at the destination
+        let mut pids: Vec<u32> = paths.iter().copied().filter(|p| self.pidx(*p).is_some()).collect();
+        pids.sort_by_key(|pid| self.pidx(*pid).unwrap());
+        pids.dedup();
+        if pids.is_empty() { return vec![]; }
+        // Alt-copy: a flat clone into a new leaf — grouping is irrelevant once the art lands elsewhere
+        let pids: Vec<u32> = if copy {
+            pids.iter().map(|&s| {
+                let c = self.clone_path(s); let cid = c.id; self.paths.push(c);
+                let nl = self.nid();
+                self.nodes.push(Node { id: nl, kind: NodeKind::Path(cid), name: String::new(), parent: None,
+                                       children: vec![], hidden: false, locked: false, color: None });
+                cid
+            }).collect()
+        } else { pids };
+        let nodes: Vec<u32> = pids.iter().filter_map(|&pid| self.node_of_path(pid)).collect();
+        if nodes.is_empty() || nodes.contains(&target) { return vec![]; }
+        for &n in &nodes { self.unlink(n); }
+        // destination parent + base index, resolved AFTER unlink so sibling indices are already settled
+        let (parent, base) = match pos {
+            DropPos::Into => (Some(target), 0usize),
+            DropPos::Before | DropPos::After => {
+                let par = self.node(target).and_then(|n| n.parent);
+                let sib = self.children_of(par);
+                let ti = sib.iter().position(|&c| c == target).unwrap_or(sib.len());
+                (par, if matches!(pos, DropPos::After) { ti + 1 } else { ti })
+            }
+        };
+        // front-first children: insert front-most first at `base` so back→front z survives and the whole
+        // run lands together (Into → front of the container, Illustrator-style)
+        for (i, &n) in nodes.iter().rev().enumerate() {
+            let idx = base + i;
+            match parent {
+                Some(p) => { let cn = self.node(p).map(|x| x.children.len()).unwrap_or(0);
+                             if let Some(pn) = self.node_mut(p) { pn.children.insert(idx.min(cn), n); }
+                             if let Some(sn) = self.node_mut(n) { sn.parent = Some(p); } }
+                None => { let cn = self.roots.len(); self.roots.insert(idx.min(cn), n);
+                          if let Some(sn) = self.node_mut(n) { sn.parent = None; } }
+            }
+        }
+        self.flatten();
+        pids
+    }
     pub fn set_node_name(&mut self, nid: u32, name: String) { if let Some(n) = self.node_mut(nid) { n.name = name; } }
     pub fn toggle_node_hidden(&mut self, nid: u32) { if let Some(n) = self.node_mut(nid) { n.hidden = !n.hidden; } }
     pub fn toggle_node_locked(&mut self, nid: u32) { if let Some(n) = self.node_mut(nid) { n.locked = !n.locked; } }

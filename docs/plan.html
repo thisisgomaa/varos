@@ -129,24 +129,22 @@
     animation_time = 0 (instant menus — a WORK tool), exact menu widths, hand-rolled dropdowns.
     <b>Layers Stage A ✅</b> (07-03): the REAL scene-graph in the model — node tree (Layer/Group/Path)
     + roots, z = pre-order, flat `paths` re-flattened by `sync_tree`; legacy files migrate; eye/lock
-    CASCADE; arrange scoped to siblings. Canvas identical. <b>Layers panel — Stage B0–B2 ✅</b> (07-03):
-    hand-painted panel docked UNDER Properties growing down; rows (eye/lock reveal-on-hover, identity-
-    colour bar, disclosure, vector thumbnail, name, target ○ + select ▢), search, inline rename, footer
-    +layer/+sublayer/delete, counter; two-way sync. <b>3 blocker bugs FIXED</b> (Ahmed's report): scroll
-    no longer leaks to the canvas (panel captures the wheel), lock is REAL (locked art can't be picked /
-    marquee'd / frame-moved — headless test), and the pro look pass (killed zebra, desaturated identity
-    ramp, tokens, reveal-on-hover). Guided by <b>docs/LAYERS_SPEC.md</b> (4-agent deep-research +
-    gap analysis). <b>Layers B3 — drag &amp; drop 🟡</b> (07-03, awaiting Ahmed's feel): grab any row and
-    drag to <b>reorder / nest / reparent</b> — 3-zone hit-test (top-third Before · middle Into containers ·
-    bottom-third After), indented ACCENT insertion line for sibling drops + nest-highlight box for Into,
-    lifted-row dim, grabbing cursor; content-drag-to-scroll disabled so the gesture never fights the list.
-    Model `move_node_to`(DropPos) cycle-guards a container into its own subtree, refuses Into-a-leaf and
-    Layer-into-Group (headless test). <b>+ thumbnail pass 🟡</b> (Ahmed 07-03): every Layer/Group now shows a
-    <b>real composite mini-preview</b> of all its art (z-ordered into one bbox, true colours) instead of the
-    fake folder chip — the thin identity bar carries "which layer"; footer reordered to Illustrator's
-    [sublayer · new · trash] with a smaller sublayer button so it stops reading as a second +.
-    <b>NEXT:</b> ① B4 — drag-the-select-square-to-move-art + target/select
-    split → ② Colour Stage-2 (Swatches + Paint enum → gradients).
+    CASCADE; arrange scoped to siblings. Canvas identical. An Illustrator-style panel was built on top
+    (B0–B3: docked rows, real drag-drop reorder/nest, real composite thumbnails) — then <b>PIVOTED</b>.
+    <b>THE PIVOT ✅</b> (Ahmed 07-03, verified "كله شغال تمام"): the Illustrator panel was <b>too complex</b>
+    (target-ring + coloured select-square only feed an Appearance system we don't have) — so Layers went
+    <b>Photoshop/Affinity-SIMPLE</b>. Row = <b>eye · lock · thumbnail · name</b>; <b>click/Ctrl/Shift/dbl/
+    drag/Alt-drag act on the ROW</b> (click=select · Ctrl=add/remove · Shift=range · dbl=rename · drag=
+    reorder/nest · Alt+drag=duplicate); footer = Group · Delete. Deleted the target-ring, select-square,
+    identity-colour bar, +layer/+sublayer buttons, counter. This <b>fixed the Shift/Ctrl bug</b> (the row
+    click had ignored modifiers — they were only wired to the tiny select-square); canvas Alt-drag-copy
+    proven correct by a headless test. Design of record = <b>docs/LAYERS_VISION.md</b> (5-agent pass:
+    research → synthesis → adversarial critique). Locked decisions: <b>Masks</b> (both gestures — drag-into-
+    the-shape-below AND Ctrl+Alt+G — fold onto ONE stored clip form; UI word "Mask"); structural Top/Middle/
+    Background bands <b>dropped for now</b> (spec-kept, zero-rework to switch on); a <b>paint_list()</b>
+    indirection lands before masks so clip/mask/page each become one filter, never a 30-site rewrite.
+    <b>NEXT:</b> ① Masks/clipping (drag-into + Ctrl+Alt+G + Add-Mask button) → ② Colour Stage-2
+    (Swatches + Paint enum → gradients).
   </div>
 
   <h2>Build order</h2>
