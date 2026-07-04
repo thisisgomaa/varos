@@ -291,31 +291,35 @@ impl Behavior<PanelId> for ShellBehavior {
             let controls_left = self.header_controls(ui, tile_id, rect.top() + 12.0, rect.right());
             let g = draw_grip(ui, rect, tile_id);
 
-            // capsule PILLS, centred as a group (click = activate; drag the active one = lift it out)
-            let pill_mid = rect.top() + 30.0;
+            // capsule PILLS in a clipped, horizontally-scrollable strip so they NEVER overflow into the
+            // controls or vanish in a narrow panel — the bug that made dropping-to-tab hide the other
+            // panel (Ahmed 07-05). Click = activate; drag the active one = lift it out.
             let font = FontId::proportional(12.0);
-            let widths: Vec<f32> = group.tabs.iter()
-                .map(|(_, p)| ui.painter().layout_no_wrap(p.title().to_owned(), font.clone(), T::TEXT).size().x + 24.0)
-                .collect();
-            let gaps = 6.0 * group.tabs.len().saturating_sub(1) as f32;
-            let total: f32 = widths.iter().sum::<f32>() + gaps;
-            let avail_left = rect.left() + 12.0;
-            let avail_right = controls_left - 8.0;
-            let mut px = (rect.center().x - total * 0.5).max(avail_left);
+            let strip = Rect::from_min_max(
+                pos2(rect.left() + 12.0, rect.top() + 17.0),
+                pos2(controls_left - 6.0, rect.top() + hh - 1.0),
+            );
             let mut clicked = None;
             let mut drag_active = false;
-            for ((tid, pid), pw) in group.tabs.iter().zip(&widths) {
-                if px + pw > avail_right { break; } // never collide with the controls
-                let active = *tid == group.active;
-                let pill = Rect::from_min_size(pos2(px, pill_mid - 11.0), vec2(*pw, 22.0));
-                let r = ui.interact(pill, ui.id().with(("tab", *tid)), Sense::click_and_drag());
-                let bg = if active { T::SURFACE } else if r.hovered() { T::HOVER } else { Color32::TRANSPARENT };
-                ui.painter().rect_filled(pill, CornerRadius::same(11), bg); // capsule (half-height) = a Claude bubble
-                ui.painter().text(pill.center(), Align2::CENTER_CENTER, pid.title(), font.clone(), if active || r.hovered() { T::TEXT } else { T::MUTED });
-                if r.clicked() { clicked = Some(*tid); }
-                if active && r.drag_started() { drag_active = true; }
-                px += pw + 6.0;
-            }
+            ui.scope_builder(UiBuilder::new().max_rect(strip), |ui| {
+                egui::ScrollArea::horizontal()
+                    .scroll_source(egui::scroll_area::ScrollSource::MOUSE_WHEEL) // wheel scrolls; drag LIFTS the pill
+                    .show(ui, |ui| {
+                        ui.horizontal_centered(|ui| {
+                            ui.spacing_mut().item_spacing.x = 5.0;
+                            for (tid, pid) in &group.tabs {
+                                let active = *tid == group.active;
+                                let tw = ui.painter().layout_no_wrap(pid.title().to_owned(), font.clone(), T::TEXT).size().x;
+                                let (pill, r) = ui.allocate_exact_size(vec2(tw + 20.0, 22.0), Sense::click_and_drag());
+                                let bg = if active { T::SURFACE } else if r.hovered() { T::HOVER } else { Color32::TRANSPARENT };
+                                ui.painter().rect_filled(pill, CornerRadius::same(11), bg); // capsule = a Claude bubble
+                                ui.painter().text(pill.center(), Align2::CENTER_CENTER, pid.title(), font.clone(), if active || r.hovered() { T::TEXT } else { T::MUTED });
+                                if r.clicked() { clicked = Some(*tid); }
+                                if active && r.drag_started() { drag_active = true; }
+                            }
+                        });
+                    });
+            });
             if let Some(t) = clicked { self.set_active = Some((group.container, t)); }
 
             ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
@@ -493,6 +497,24 @@ mod tests {
         let ctx = egui::Context::default();
         super::T::apply(&ctx);
         let mut shell = ShellState::standard();
+        for _ in 0..3 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| shell.ui(ui));
+        }
+    }
+
+    /// Dropping-to-tab creates a Tabs container; a narrow one must still render BOTH pills (the
+    /// regression Ahmed hit 07-05, where the second pill was skipped and the panel looked lost).
+    #[test]
+    fn tabbed_group_renders_headless() {
+        let mut tiles = Tiles::default();
+        let board = tiles.insert_pane(PanelId::Board);
+        let align = tiles.insert_pane(PanelId::Align);
+        let props = tiles.insert_pane(PanelId::Properties);
+        let tabs = tiles.insert_tab_tile(vec![align, props]);
+        let root = tiles.insert_horizontal_tile(vec![board, tabs]);
+        let mut shell = ShellState { tree: Tree::new("varos_shell_tabs", root, tiles) };
+        let ctx = egui::Context::default();
+        super::T::apply(&ctx);
         for _ in 0..3 {
             let _ = ctx.run_ui(egui::RawInput::default(), |ui| shell.ui(ui));
         }
