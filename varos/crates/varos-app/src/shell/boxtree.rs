@@ -1,31 +1,34 @@
-//! The box tree — the SINGLE place `egui_tiles` is used in the whole app (ruling 9). The rest of the
-//! code holds only [`ShellState`] and calls its small API.
+//! The box tree — the SINGLE place `egui_tiles` is used in the whole app (ruling 9).
 //!
-//! Two models (Ahmed 07-04):
-//!  - a box with ONE panel = a bare pane with our dead-simple header `[name] · move-pill · ☰ · ✕`;
-//!  - a box with MANY panels = an egui_tiles Tabs container, its tab bar styled by us (chip tabs),
-//!    with the controls (☰ change-type, ✕ close) up on the tab-bar's right.
-//! egui_tiles owns the dynamic layout (split tree, resize, drag-to-re-dock); we own every pixel.
+//! egui_tiles gives us the split-tree data model + rendering + resize. But its docking only reflows on
+//! DROP; Ahmed wants LIVE reflow (neighbours make room and the panel takes its real slot while you drag).
+//! So we drive the drag OURSELVES (from the move-pill), and each frame we rebuild the layout from a
+//! snapshot taken at grab-time + one `dock()` into the slot under the cursor. The result: the real
+//! layout reflows live under the hand. All of it stays inside this file.
 use egui::{
-    Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Rect, RichText, Sense, Stroke,
+    Align, Align2, Color32, CornerRadius, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke,
     StrokeKind, UiBuilder, Visuals, pos2, vec2,
 };
 use egui_tiles::{
-    Behavior, Container, LinearDir, ResizeState, SimplificationOptions, TabState, Tabs, Tile, TileId,
-    Tiles, Tree, UiResponse,
+    Behavior, Container, LinearDir, SimplificationOptions, TabState, Tabs, Tile, TileId, Tiles, Tree,
+    UiResponse,
 };
 use std::collections::HashSet;
 use super::registry::{self, PanelId};
 use super::tokens as T;
 
-/// The public handle the whole app holds. The app never names `egui_tiles`.
 pub struct ShellState {
     tree: Tree<PanelId>,
+    /// Active custom drag: the grabbed tile + the layout snapshot taken when the grab began.
+    drag: Option<DragState>,
+}
+
+struct DragState {
+    tile: TileId,
+    base: Tree<PanelId>,
 }
 
 impl ShellState {
-    /// The STANDARD layout: `Split(H)[ Board , Split(V)[ Align , Properties , Layers ] ]` — each box is one
-    /// bare panel. Drop a panel onto another to make tabs; change any box's type with its ☰.
     pub fn standard() -> Self {
         let mut tiles = Tiles::default();
         let board = tiles.insert_pane(PanelId::Board);
@@ -40,13 +43,11 @@ impl ShellState {
         set_share(&mut tree, right, align, 0.26);
         set_share(&mut tree, right, props, 0.42);
         set_share(&mut tree, right, layers, 0.32);
-        Self { tree }
+        Self { tree, drag: None }
     }
 
-    /// Render the whole box tree into `ui`.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        // Which panes sit inside a Tabs container → they get egui_tiles' tab bar (styled by us),
-        // NOT our single-box header. Computed before the (mutable) render pass.
+        // panes inside a Tabs container get egui_tiles' (styled) tab bar, not our single-box header
         let mut tabbed = HashSet::new();
         for (_id, tile) in self.tree.tiles.iter() {
             if let Tile::Container(Container::Tabs(t)) = tile {
@@ -56,77 +57,64 @@ impl ShellState {
             }
         }
 
-        let mut behavior = ShellBehavior { tabbed, ..Default::default() };
+        let mut behavior = ShellBehavior {
+            tabbed,
+            dragging: self.drag.as_ref().map(|d| d.tile),
+            ..Default::default()
+        };
         self.tree.ui(&mut behavior, ui);
 
-        // apply the deferred intents (change type / close)
-        if let Some((id, panel)) = behavior.switch {
-            if let Some(Tile::Pane(p)) = self.tree.tiles.get_mut(id) {
-                *p = panel;
-            }
-        }
-        if let Some(id) = behavior.close {
-            if let Some(parent) = self.tree.tiles.parent_of(id) {
-                if let Some(Tile::Container(c)) = self.tree.tiles.get_mut(parent) {
-                    match c {
-                        Container::Linear(l) => {
-                            l.children.retain(|&x| x != id);
-                            l.shares.retain(|x| x != id);
-                        }
-                        Container::Tabs(t) => {
-                            t.children.retain(|&x| x != id);
-                            if t.active == Some(id) {
-                                t.active = t.children.first().copied();
-                            }
-                        }
-                        Container::Grid(_) => {}
-                    }
+        // menu intents apply only when not dragging
+        if self.drag.is_none() {
+            if let Some((id, panel)) = behavior.switch {
+                if let Some(Tile::Pane(p)) = self.tree.tiles.get_mut(id) {
+                    *p = panel;
                 }
             }
-            self.tree.tiles.remove(id);
-        }
-
-        // While dragging: draw ONE clean floating ghost of the panel, glued to the cursor 1:1
-        // (Ahmed: the panel itself moves with me — no distortion, no double-render).
-        if let Some(dragged) = self.tree.dragged_id(ui.ctx()) {
-            let panel = match self.tree.tiles.get(dragged) {
-                Some(Tile::Pane(p)) => Some(*p),
-                _ => None,
-            };
-            if let (Some(panel), Some(ptr)) = (panel, ui.input(|i| i.pointer.hover_pos())) {
-                if !panel.is_board() {
-                    let (w, h) = (210.0, 132.0);
-                    egui::Area::new(egui::Id::new("varos_drag_ghost"))
-                        .order(egui::Order::Foreground)
-                        .fixed_pos(ptr - vec2(w * 0.5, 8.0))
-                        .show(ui.ctx(), |ui| {
-                            let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-                            let p = ui.painter();
-                            p.rect(rect, T::r_box(), T::PANEL, Stroke::new(1.0, T::ACCENT), StrokeKind::Middle);
-                            p.text(pos2(rect.left() + 12.0, rect.top() + 16.0), Align2::LEFT_CENTER, panel.title(), FontId::proportional(12.5), T::TEXT);
-                            p.hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + 30.0, T::hairline());
-                            for i in 0..3 {
-                                let y = rect.top() + 48.0 + i as f32 * 22.0;
-                                p.rect_filled(Rect::from_min_size(pos2(rect.left() + 12.0, y), vec2(w - 24.0, 12.0)), T::r_ctrl(), T::SURFACE);
-                            }
-                        });
-                }
+            if let Some(id) = behavior.close {
+                detach(&mut self.tree, id);
+                self.tree.tiles.remove(id);
+            }
+            // a grab just started
+            if let Some(t) = behavior.drag_start {
+                self.drag = Some(DragState { tile: t, base: self.tree.clone() });
             }
         }
 
-        // keep it buttery-smooth: repaint every frame while actively dragging (no stutter/lag)
-        if ui.input(|i| i.pointer.is_decidedly_dragging()) {
-            ui.ctx().request_repaint();
+        // LIVE docking: rebuild from the snapshot + dock into the slot under the cursor, every frame
+        if self.drag.is_some() {
+            if !ui.input(|i| i.pointer.any_down()) {
+                self.drag = None; // released → commit the current layout
+            } else if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
+                let (tile, mut rebuilt) = {
+                    let d = self.drag.as_ref().unwrap();
+                    (d.tile, d.base.clone())
+                };
+                if let Some((target, side)) = compute_drop(&self.tree, tile, ptr) {
+                    dock(&mut rebuilt, tile, target, side);
+                }
+                self.tree = rebuilt;
+                ui.ctx().request_repaint();
+            }
         }
 
-        // the small fixed resize-grabber on the hovered seam
         draw_resize_handles(&self.tree, ui);
     }
 
-    /// Serialise the layout — proves "serde from day one" (future: saved workspaces).
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(&self.tree)
     }
+}
+
+// ───────────────────────── tree surgery (all public egui_tiles API) ─────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Side {
+    Left,
+    Right,
+    Top,
+    Bottom,
+    Center,
 }
 
 fn set_share(tree: &mut Tree<PanelId>, container: TileId, child: TileId, share: f32) {
@@ -135,12 +123,142 @@ fn set_share(tree: &mut Tree<PanelId>, container: TileId, child: TileId, share: 
     }
 }
 
-fn is_board(tiles: &Tiles<PanelId>, id: TileId) -> bool {
-    matches!(tiles.get(id), Some(Tile::Pane(PanelId::Board)))
+/// Which leaf pane the cursor is over, and which edge/centre of it → the drop slot.
+fn compute_drop(tree: &Tree<PanelId>, dragged: TileId, ptr: Pos2) -> Option<(TileId, Side)> {
+    let mut hit = None;
+    for (id, tile) in tree.tiles.iter() {
+        if *id == dragged || !matches!(tile, Tile::Pane(_)) {
+            continue;
+        }
+        if let Some(r) = tree.tiles.rect(*id) {
+            if r.contains(ptr) {
+                hit = Some((*id, r));
+            }
+        }
+    }
+    let (tid, r) = hit?;
+    let fx = ((ptr.x - r.left()) / r.width().max(1.0)).clamp(0.0, 1.0);
+    let fy = ((ptr.y - r.top()) / r.height().max(1.0)).clamp(0.0, 1.0);
+    let (l, rt, tp, bt) = (fx, 1.0 - fx, fy, 1.0 - fy);
+    let m = l.min(rt).min(tp).min(bt);
+    let board = matches!(tree.tiles.get(tid), Some(Tile::Pane(PanelId::Board)));
+    let side = if m > 0.28 && !board {
+        Side::Center
+    } else if m == l {
+        Side::Left
+    } else if m == rt {
+        Side::Right
+    } else if m == tp {
+        Side::Top
+    } else {
+        Side::Bottom
+    };
+    Some((tid, side))
 }
 
-/// Paint a small FIXED resize-grabber on the seam under the pointer (hover only) — egui_tiles owns the
-/// drag; this is just the calm little handle Ahmed asked for, parked at the seam centre.
+/// Move `dragged` next to `target` on the given side (split), or into a tab group (centre).
+fn dock(tree: &mut Tree<PanelId>, dragged: TileId, target: TileId, side: Side) {
+    if dragged == target {
+        return;
+    }
+    detach(tree, dragged);
+    match side {
+        Side::Center => {
+            let parent = tree.tiles.parent_of(target);
+            if let Some(p) = parent {
+                if let Some(Tile::Container(Container::Tabs(t))) = tree.tiles.get_mut(p) {
+                    let idx = t.children.iter().position(|&x| x == target).map_or(t.children.len(), |i| i + 1);
+                    t.children.insert(idx, dragged);
+                    t.active = Some(dragged);
+                    return;
+                }
+            }
+            let new = tree.tiles.insert_tab_tile(vec![target, dragged]);
+            if let Some(Tile::Container(Container::Tabs(t))) = tree.tiles.get_mut(new) {
+                t.active = Some(dragged);
+            }
+            replace_child(tree, parent, target, new);
+        }
+        _ => {
+            let horizontal = matches!(side, Side::Left | Side::Right);
+            let before = matches!(side, Side::Left | Side::Top);
+            let parent = tree.tiles.parent_of(target);
+            // fast path: target's parent is already a Linear of the right direction → just insert
+            if let Some(p) = parent {
+                let same_dir = matches!(
+                    tree.tiles.get(p),
+                    Some(Tile::Container(Container::Linear(l))) if (l.dir == LinearDir::Horizontal) == horizontal
+                );
+                if same_dir {
+                    if let Some(Tile::Container(Container::Linear(l))) = tree.tiles.get_mut(p) {
+                        let pos = l.children.iter().position(|&x| x == target).unwrap_or(l.children.len());
+                        let at = (if before { pos } else { pos + 1 }).min(l.children.len());
+                        l.children.insert(at, dragged);
+                    }
+                    return;
+                }
+            }
+            let children = if before { vec![dragged, target] } else { vec![target, dragged] };
+            let new = if horizontal {
+                tree.tiles.insert_horizontal_tile(children)
+            } else {
+                tree.tiles.insert_vertical_tile(children)
+            };
+            replace_child(tree, parent, target, new);
+        }
+    }
+}
+
+/// Remove `id` from its parent container's child list (does NOT delete the tile itself).
+fn detach(tree: &mut Tree<PanelId>, id: TileId) {
+    if let Some(parent) = tree.tiles.parent_of(id) {
+        if let Some(Tile::Container(c)) = tree.tiles.get_mut(parent) {
+            match c {
+                Container::Linear(l) => {
+                    l.children.retain(|&x| x != id);
+                    l.shares.retain(|x| x != id);
+                }
+                Container::Tabs(t) => {
+                    t.children.retain(|&x| x != id);
+                    if t.active == Some(id) {
+                        t.active = t.children.first().copied();
+                    }
+                }
+                Container::Grid(_) => {}
+            }
+        }
+    }
+}
+
+/// Replace `target` with `new` in `parent`'s child list (or make `new` the root if there is no parent).
+fn replace_child(tree: &mut Tree<PanelId>, parent: Option<TileId>, target: TileId, new: TileId) {
+    match parent {
+        Some(p) => {
+            if let Some(Tile::Container(c)) = tree.tiles.get_mut(p) {
+                match c {
+                    Container::Linear(l) => {
+                        if let Some(pos) = l.children.iter().position(|&x| x == target) {
+                            l.children[pos] = new;
+                            l.shares.replace_with(target, new);
+                        }
+                    }
+                    Container::Tabs(t) => {
+                        if let Some(pos) = t.children.iter().position(|&x| x == target) {
+                            t.children[pos] = new;
+                            if t.active == Some(target) {
+                                t.active = Some(new);
+                            }
+                        }
+                    }
+                    Container::Grid(_) => {}
+                }
+            }
+        }
+        None => tree.root = Some(new),
+    }
+}
+
+/// Small FIXED resize-grabber on the hovered seam.
 fn draw_resize_handles(tree: &Tree<PanelId>, ui: &egui::Ui) {
     let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) else { return };
     for (_id, tile) in tree.tiles.iter() {
@@ -172,6 +290,8 @@ struct ShellBehavior {
     switch: Option<(TileId, PanelId)>,
     close: Option<TileId>,
     tabbed: HashSet<TileId>,
+    dragging: Option<TileId>,
+    drag_start: Option<TileId>,
 }
 
 impl Behavior<PanelId> for ShellBehavior {
@@ -186,17 +306,20 @@ impl Behavior<PanelId> for ShellBehavior {
             return UiResponse::None;
         }
 
-        // MULTI-panel box: egui_tiles already drew our styled tab bar above → just the body here.
+        let being_dragged = self.dragging == Some(tile_id);
+        let border = if being_dragged { Stroke::new(1.5, T::ACCENT) } else { T::hairline() };
+
+        // MULTI-panel box: egui_tiles drew our styled tab bar above → just the body here.
         if self.tabbed.contains(&tile_id) {
             ui.painter().rect_filled(rect, CornerRadius::ZERO, T::PANEL);
             egui::Frame::NONE
-                .inner_margin(Margin::same(10))
+                .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| registry::render_panel(*pane, ui));
             return UiResponse::None;
         }
 
         // SINGLE-panel box: our dead-simple header + body.
-        ui.painter().rect(rect, T::r_box(), T::PANEL, T::hairline(), StrokeKind::Middle);
+        ui.painter().rect(rect, T::r_box(), T::PANEL, border, StrokeKind::Middle);
         let hh = 30.0;
         let pad = 10.0;
         let mid = rect.top() + hh / 2.0;
@@ -243,10 +366,8 @@ impl Behavior<PanelId> for ShellBehavior {
             self.switch = Some((tile_id, p));
         }
 
-        // hairline under header
         ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
 
-        // body
         let body = Rect::from_min_max(pos2(rect.left(), rect.top() + hh), rect.max);
         ui.scope_builder(
             UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 8.0))).layout(Layout::top_down(Align::Min)),
@@ -256,13 +377,13 @@ impl Behavior<PanelId> for ShellBehavior {
         if x.clicked() {
             self.close = Some(tile_id);
         }
+        // start our OWN drag from the move-pill (egui_tiles' drag stays off)
         if mv.drag_started() {
-            return UiResponse::DragStarted;
+            self.drag_start = Some(tile_id);
         }
         UiResponse::None
     }
 
-    /// Controls for a MULTI-panel box, up on the tab-bar's right: ✕ close active, ☰ change active type.
     fn top_bar_right_ui(&mut self, _tiles: &Tiles<PanelId>, ui: &mut egui::Ui, _tile_id: TileId, tabs: &Tabs, _scroll: &mut f32) {
         let active = tabs.active;
         let mut do_close = false;
@@ -296,7 +417,6 @@ impl Behavior<PanelId> for ShellBehavior {
         }
     }
 
-    // ── chip-style tab bar (for multi-panel boxes) ──
     fn tab_bar_color(&self, _v: &Visuals) -> Color32 { T::PANEL }
     fn tab_bar_height(&self, _s: &egui::Style) -> f32 { 30.0 }
     fn tab_title_spacing(&self, _v: &Visuals) -> f32 { 12.0 }
@@ -307,29 +427,16 @@ impl Behavior<PanelId> for ShellBehavior {
     fn tab_text_color(&self, _v: &Visuals, _t: &Tiles<PanelId>, _id: TileId, state: &TabState) -> Color32 {
         if state.active { T::TEXT } else { T::MUTED }
     }
-    fn is_tab_closable(&self, _t: &Tiles<PanelId>, _id: TileId) -> bool { false } // ✕ lives up in top_bar_right_ui
+    fn is_tab_closable(&self, _t: &Tiles<PanelId>, _id: TileId) -> bool { false }
 
-    // ── seams: no divider line (just the cursor + our fixed grabber) ──
     fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
-    fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke { Stroke::NONE }
-
-    // ── we draw our OWN clean floating ghost (in ShellState::ui) glued to the cursor; egui_tiles just
-    //    shows a thin azure outline of where it'll land — no fill, no distorted double-render ──
-    fn preview_dragged_panes(&self) -> bool { false }
-    fn drag_preview_stroke(&self, _visuals: &Visuals) -> Stroke { Stroke::new(1.5, T::ACCENT) }
-    fn drag_preview_color(&self, _visuals: &Visuals) -> Color32 { Color32::TRANSPARENT }
-    fn dragged_overlay_color(&self, _visuals: &Visuals) -> Color32 {
-        Color32::from_rgba_unmultiplied(0x1b, 0x19, 0x19, 150)
-    }
-
-    // ── dynamics ──
-    fn is_tile_draggable(&self, tiles: &Tiles<PanelId>, tile_id: TileId) -> bool { !is_board(tiles, tile_id) }
+    fn is_tile_draggable(&self, _tiles: &Tiles<PanelId>, _tile_id: TileId) -> bool { false } // we drive drag ourselves
     fn min_size(&self) -> f32 { 120.0 }
     fn simplification_options(&self) -> SimplificationOptions {
         SimplificationOptions {
             prune_empty_tabs: true,
             prune_empty_containers: true,
-            prune_single_child_tabs: true, // 1 tab left → collapse back to a bare single box (our header)
+            prune_single_child_tabs: true,
             prune_single_child_containers: true,
             all_panes_must_have_tabs: false,
             join_nested_linear_containers: true,
@@ -337,7 +444,6 @@ impl Behavior<PanelId> for ShellBehavior {
     }
 }
 
-/// Make buttons in this ui frameless (transparent until hover) — for the small ☰ / ✕ controls.
 fn frameless_buttons(ui: &mut egui::Ui) {
     let v = ui.visuals_mut();
     v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
@@ -429,11 +535,54 @@ fn draw_hands(ui: &egui::Ui, board: egui::Rect) {
     }
 }
 
-// ───────────────────────── headless safety net ─────────────────────────
+// ───────────────────────── headless tests (validate the docking logic) ─────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn col3() -> (Tree<PanelId>, TileId, TileId, TileId, TileId) {
+        let mut tiles = Tiles::default();
+        let a = tiles.insert_pane(PanelId::Align);
+        let b = tiles.insert_pane(PanelId::Properties);
+        let c = tiles.insert_pane(PanelId::Layers);
+        let col = tiles.insert_vertical_tile(vec![a, b, c]);
+        (Tree::new("t", col, tiles), col, a, b, c)
+    }
+
+    #[test]
+    fn dock_reorder_within_column() {
+        let (mut tree, col, a, _b, c) = col3();
+        dock(&mut tree, c, a, Side::Top); // move c above a
+        let Some(Tile::Container(Container::Linear(l))) = tree.tiles.get(col) else { panic!() };
+        let pc = l.children.iter().position(|&x| x == c).unwrap();
+        let pa = l.children.iter().position(|&x| x == a).unwrap();
+        assert!(pc < pa, "c should now sit above a");
+        assert_eq!(l.children.len(), 3, "no tile lost");
+    }
+
+    #[test]
+    fn dock_right_makes_horizontal_split() {
+        let (mut tree, _col, a, b, _c) = col3();
+        dock(&mut tree, b, a, Side::Right); // b to the right of a → a new horizontal container around them
+        let parent = tree.tiles.parent_of(a).unwrap();
+        let Some(Tile::Container(Container::Linear(l))) = tree.tiles.get(parent) else { panic!() };
+        assert_eq!(l.dir, LinearDir::Horizontal);
+        assert!(l.children.contains(&a) && l.children.contains(&b));
+        let pa = l.children.iter().position(|&x| x == a).unwrap();
+        let pb = l.children.iter().position(|&x| x == b).unwrap();
+        assert!(pa < pb, "a on the left, b on the right");
+    }
+
+    #[test]
+    fn dock_center_tabifies() {
+        let (mut tree, _col, a, _b, c) = col3();
+        dock(&mut tree, c, a, Side::Center); // c onto a → tabs
+        let parent = tree.tiles.parent_of(a).unwrap();
+        let Some(Tile::Container(Container::Tabs(t))) = tree.tiles.get(parent) else { panic!() };
+        assert!(t.children.contains(&a) && t.children.contains(&c));
+        assert_eq!(t.active, Some(c));
+    }
 
     #[test]
     fn standard_layout_serdes_roundtrip() {
@@ -451,16 +600,5 @@ mod tests {
         for _ in 0..3 {
             let _ = ctx.run_ui(egui::RawInput::default(), |ui| shell.ui(ui));
         }
-    }
-
-    #[test]
-    fn every_panel_body_renders_headless() {
-        let ctx = egui::Context::default();
-        super::T::apply(&ctx);
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
-            for id in PanelId::DOCKABLE {
-                registry::render_panel(id, ui);
-            }
-        });
     }
 }
