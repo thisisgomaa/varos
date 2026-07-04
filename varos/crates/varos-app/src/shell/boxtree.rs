@@ -86,7 +86,35 @@ impl ShellState {
             self.tree.tiles.remove(id);
         }
 
-        // keep the drag buttery-smooth: repaint every frame while actively dragging (no stutter/lag)
+        // While dragging: draw ONE clean floating ghost of the panel, glued to the cursor 1:1
+        // (Ahmed: the panel itself moves with me — no distortion, no double-render).
+        if let Some(dragged) = self.tree.dragged_id(ui.ctx()) {
+            let panel = match self.tree.tiles.get(dragged) {
+                Some(Tile::Pane(p)) => Some(*p),
+                _ => None,
+            };
+            if let (Some(panel), Some(ptr)) = (panel, ui.input(|i| i.pointer.hover_pos())) {
+                if !panel.is_board() {
+                    let (w, h) = (210.0, 132.0);
+                    egui::Area::new(egui::Id::new("varos_drag_ghost"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(ptr - vec2(w * 0.5, 8.0))
+                        .show(ui.ctx(), |ui| {
+                            let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+                            let p = ui.painter();
+                            p.rect(rect, T::r_box(), T::PANEL, Stroke::new(1.0, T::ACCENT), StrokeKind::Middle);
+                            p.text(pos2(rect.left() + 12.0, rect.top() + 16.0), Align2::LEFT_CENTER, panel.title(), FontId::proportional(12.5), T::TEXT);
+                            p.hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + 30.0, T::hairline());
+                            for i in 0..3 {
+                                let y = rect.top() + 48.0 + i as f32 * 22.0;
+                                p.rect_filled(Rect::from_min_size(pos2(rect.left() + 12.0, y), vec2(w - 24.0, 12.0)), T::r_ctrl(), T::SURFACE);
+                            }
+                        });
+                }
+            }
+        }
+
+        // keep it buttery-smooth: repaint every frame while actively dragging (no stutter/lag)
         if ui.input(|i| i.pointer.is_decidedly_dragging()) {
             ui.ctx().request_repaint();
         }
@@ -285,14 +313,11 @@ impl Behavior<PanelId> for ShellBehavior {
     fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
     fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke { Stroke::NONE }
 
-    // ── the PANEL ITSELF follows toward the drop, not just a guide (Ahmed) ──
-    fn preview_dragged_panes(&self) -> bool { true }
-
-    // ── drop preview when re-docking — kept subtle (azure, low alpha) ──
+    // ── we draw our OWN clean floating ghost (in ShellState::ui) glued to the cursor; egui_tiles just
+    //    shows a thin azure outline of where it'll land — no fill, no distorted double-render ──
+    fn preview_dragged_panes(&self) -> bool { false }
     fn drag_preview_stroke(&self, _visuals: &Visuals) -> Stroke { Stroke::new(1.5, T::ACCENT) }
-    fn drag_preview_color(&self, _visuals: &Visuals) -> Color32 {
-        Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 32)
-    }
+    fn drag_preview_color(&self, _visuals: &Visuals) -> Color32 { Color32::TRANSPARENT }
     fn dragged_overlay_color(&self, _visuals: &Visuals) -> Color32 {
         Color32::from_rgba_unmultiplied(0x1b, 0x19, 0x19, 150)
     }
