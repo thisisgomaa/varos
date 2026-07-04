@@ -13,6 +13,15 @@ struct Sandbox {
 
 impl eframe::App for Sandbox {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Windows/eframe: a minimized (or zero-sized) window drives pixels_per_point → 0, which panics
+        // deep in epaint text layout ("Bad px_scale_factor: 0"). Skip the frame while degenerate;
+        // rendering resumes cleanly once the window is restored.
+        if ui.ctx().pixels_per_point() < 0.1
+            || ui.ctx().input(|i| i.viewport().minimized == Some(true))
+            || ui.available_size().min_elem() < 1.0
+        {
+            return;
+        }
         tokens::apply(ui.ctx()); // warm-dark visuals + INSTANT (animation_time = 0); idempotent
         // the whole surface IS the void: seam-coloured, with an outer seam matching the inner ones.
         egui::Frame::default()
