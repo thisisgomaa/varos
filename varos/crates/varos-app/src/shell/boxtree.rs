@@ -370,14 +370,33 @@ impl Behavior<PanelId> for ShellBehavior {
     fn preview_dragged_panes(&self) -> bool { false }
     /// ONE clean guide: a rounded azure outline of the drop slot only (the default also outlines the
     /// parent container — that's the "too many guides" Ahmed saw). Light fill, thin stroke.
-    fn paint_drag_preview(&self, _visuals: &Visuals, painter: &egui::Painter, _parent_rect: Option<Rect>, preview_rect: Rect) {
+    fn paint_drag_preview(&self, _visuals: &Visuals, painter: &egui::Painter, parent_rect: Option<Rect>, preview_rect: Rect) {
         painter.rect(
             preview_rect.shrink(1.0),
             T::r_box(),
-            Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 20),
+            Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 28),
             Stroke::new(1.5, T::ACCENT),
             StrokeKind::Inside,
         );
+        // A directional ARROW so a split reads at a glance — ↑ above, ↓ below, ← / → beside (Ahmed 07-05).
+        // A TAB drop (the slot covers most of the box) shows no arrow, just the filled slot.
+        if let Some(parent) = parent_rect {
+            let cov = (preview_rect.width() * preview_rect.height())
+                / (parent.width() * parent.height()).max(1.0);
+            if cov <= 0.6 {
+                let dir = if preview_rect.width() >= preview_rect.height() {
+                    if preview_rect.center().y < parent.center().y { vec2(0.0, -1.0) } else { vec2(0.0, 1.0) }
+                } else if preview_rect.center().x < parent.center().x {
+                    vec2(-1.0, 0.0)
+                } else {
+                    vec2(1.0, 0.0)
+                };
+                let s = preview_rect.width().min(preview_rect.height());
+                let len = (s * 0.30).clamp(9.0, 18.0);
+                let head = (s * 0.17).clamp(6.0, 11.0);
+                paint_arrow(painter, preview_rect.center(), dir, len, head, T::ACCENT);
+            }
+        }
     }
     fn dragged_overlay_color(&self, _visuals: &Visuals) -> Color32 {
         Color32::from_rgba_unmultiplied(0x14, 0x13, 0x13, 170)
@@ -402,6 +421,19 @@ fn frameless_buttons(ui: &mut egui::Ui) {
     v.widgets.hovered.weak_bg_fill = T::HOVER;
     v.widgets.hovered.bg_stroke = Stroke::NONE;
     v.widgets.active.weak_bg_fill = T::HOVER;
+}
+
+/// A clean azure arrow (shaft + filled head) pointing along unit vector `dir` — the drop-direction hint.
+fn paint_arrow(painter: &egui::Painter, c: Pos2, dir: egui::Vec2, len: f32, head: f32, col: Color32) {
+    let perp = vec2(-dir.y, dir.x);
+    let tip = c + dir * len;
+    let base = tip - dir * head;
+    painter.line_segment([c - dir * len, base], Stroke::new(3.0, col));
+    painter.add(egui::Shape::convex_polygon(
+        vec![tip, base + perp * head * 0.7, base - perp * head * 0.7],
+        col,
+        Stroke::NONE,
+    ));
 }
 
 fn paint_cross(ui: &egui::Ui, rect: Rect, col: Color32) {
