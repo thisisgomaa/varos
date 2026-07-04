@@ -210,9 +210,9 @@ impl Behavior<PanelId> for ShellBehavior {
         // MULTI-panel box: egui_tiles drew our styled tab bar above → just the body here.
         if self.tabbed.contains(&tile_id) {
             ui.painter().rect_filled(rect, CornerRadius::ZERO, T::PANEL);
-            egui::Frame::NONE
-                .inner_margin(Margin::same(10))
-                .show(ui, |ui| registry::render_panel(*pane, ui));
+            egui::Frame::NONE.inner_margin(Margin::same(10)).show(ui, |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| registry::render_panel(*pane, ui));
+            });
             return UiResponse::None;
         }
 
@@ -266,7 +266,9 @@ impl Behavior<PanelId> for ShellBehavior {
         let body = Rect::from_min_max(pos2(rect.left(), rect.top() + hh), rect.max);
         ui.scope_builder(
             UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 8.0))).layout(Layout::top_down(Align::Min)),
-            |ui| registry::render_panel(*pane, ui),
+            |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| registry::render_panel(*pane, ui));
+            },
         );
 
         if x.clicked() {
@@ -281,14 +283,11 @@ impl Behavior<PanelId> for ShellBehavior {
 
     fn top_bar_right_ui(&mut self, _tiles: &Tiles<PanelId>, ui: &mut egui::Ui, _tile_id: TileId, tabs: &Tabs, _scroll: &mut f32) {
         let active = tabs.active;
-        let mut do_close = false;
         let mut do_switch: Option<PanelId> = None;
-        ui.add_space(4.0);
+        ui.add_space(6.0);
+        // ☰ change-type menu
         ui.scope(|ui| {
             frameless_buttons(ui);
-            if ui.button(RichText::new("✕").color(T::MUTED).size(13.0)).clicked() {
-                do_close = true;
-            }
             ui.menu_button(RichText::new("☰").color(T::MUTED).size(14.0), |ui| {
                 ui.set_min_width(172.0);
                 ui.label(RichText::new("CHANGE THIS PANEL TO").color(T::FAINT).size(9.5).strong());
@@ -300,7 +299,14 @@ impl Behavior<PanelId> for ShellBehavior {
                 }
             });
         });
-        if do_close {
+        // ✕ close — painted (a text glyph rendered as tofu □ before)
+        let (xr, x) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
+        if x.hovered() {
+            ui.painter().rect_filled(xr, T::r_ctrl(), T::HOVER);
+        }
+        paint_cross(ui, xr, if x.hovered() { T::CLOSE_RED } else { T::MUTED });
+        ui.add_space(4.0);
+        if x.clicked() {
             if let Some(a) = active {
                 self.close = Some(a);
             }
@@ -313,8 +319,8 @@ impl Behavior<PanelId> for ShellBehavior {
     }
 
     fn tab_bar_color(&self, _v: &Visuals) -> Color32 { T::PANEL }
-    fn tab_bar_height(&self, _s: &egui::Style) -> f32 { 30.0 }
-    fn tab_title_spacing(&self, _v: &Visuals) -> f32 { 12.0 }
+    fn tab_bar_height(&self, _s: &egui::Style) -> f32 { 32.0 }
+    fn tab_title_spacing(&self, _v: &Visuals) -> f32 { 16.0 }
     fn tab_bar_hline_stroke(&self, _v: &Visuals) -> Stroke { Stroke::new(1.0, T::LINE) }
     fn tab_bg_color(&self, _v: &Visuals, _t: &Tiles<PanelId>, _id: TileId, state: &TabState) -> Color32 {
         if state.active { T::SURFACE } else { Color32::TRANSPARENT }
@@ -327,7 +333,7 @@ impl Behavior<PanelId> for ShellBehavior {
     fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
     fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke { Stroke::NONE } // pure void seam — no line
     fn is_tile_draggable(&self, tiles: &Tiles<PanelId>, tile_id: TileId) -> bool { !is_board_tile(tiles, tile_id) }
-    fn min_size(&self) -> f32 { 120.0 }
+    fn min_size(&self) -> f32 { 170.0 } // panels stay usable; content scrolls (never breaks)
 
     // ── drag look: no distorted double-render (we paint our own lifted ghost); egui_tiles shows a
     //    clean azure preview of the drop slot; the vacated spot dims ──
