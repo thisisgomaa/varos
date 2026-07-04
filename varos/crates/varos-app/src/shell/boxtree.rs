@@ -291,8 +291,10 @@ impl Behavior<PanelId> for ShellBehavior {
 
         // MULTI-panel (tabbed) box: persistent grip + centred capsule pills + controls, then the body.
         if let Some(group) = self.groups.get(&tile_id).cloned() {
-            let hh = 44.0;
-            let controls_left = self.header_controls(ui, tile_id, rect.top() + 12.0, rect.right());
+            let hh = 40.0;
+            // controls share the SAME row as the pills (both centred at top+25) — not floating up by the
+            // grip, which read as misaligned (Ahmed 07-05 "التنسيق مش حلو").
+            let controls_left = self.header_controls(ui, tile_id, rect.top() + 25.0, rect.right());
             let g = draw_grip(ui, rect, tile_id);
 
             // capsule PILLS in a clipped, horizontally-scrollable strip so they NEVER overflow into the
@@ -300,8 +302,8 @@ impl Behavior<PanelId> for ShellBehavior {
             // panel (Ahmed 07-05). Click = activate; drag the active one = lift it out.
             let font = FontId::proportional(12.0);
             let strip = Rect::from_min_max(
-                pos2(rect.left() + 12.0, rect.top() + 17.0),
-                pos2(controls_left - 6.0, rect.top() + hh - 1.0),
+                pos2(rect.left() + 12.0, rect.top() + 13.0),
+                pos2(controls_left - 6.0, rect.top() + 37.0),
             );
             let mut clicked = None;
             let mut drag_active = false;
