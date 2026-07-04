@@ -118,13 +118,17 @@ impl Behavior<PanelId> for ShellBehavior {
         let pad = 10.0;
         let mid = rect.top() + hh / 2.0;
 
-        // ── the move-pill: a small horizontal grab handle centred at the top (Windows/Claude style) ──
+        // ── the move-pill: HIDDEN until you hover the header, then a small grab handle (Windows/Claude style) ──
+        let header_rect = Rect::from_min_size(rect.min, vec2(rect.width(), hh));
+        let header_hovered = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| header_rect.contains(p));
         let move_id = ui.id().with(("move", tile_id));
         let pill = Rect::from_center_size(pos2(rect.center().x, rect.top() + 8.0), vec2(30.0, 4.0));
         let mv = ui
-            .interact(pill.expand2(vec2(8.0, 7.0)), move_id, Sense::click_and_drag())
+            .interact(pill.expand2(vec2(10.0, 8.0)), move_id, Sense::click_and_drag())
             .on_hover_text("Move");
-        ui.painter().rect_filled(pill, CornerRadius::same(2), if mv.hovered() || mv.dragged() { T::TEXT } else { T::FAINT });
+        if header_hovered || mv.dragged() {
+            ui.painter().rect_filled(pill, CornerRadius::same(2), if mv.hovered() || mv.dragged() { T::TEXT } else { T::MUTED });
+        }
 
         // ── name (left) ──
         ui.painter().text(pos2(rect.left() + pad, mid), Align2::LEFT_CENTER, pane.title(), FontId::proportional(12.5), T::TEXT);
@@ -176,11 +180,8 @@ impl Behavior<PanelId> for ShellBehavior {
 
     // ── seams: pure void, a THIN azure line only while hovering/dragging (Ahmed: small, on the mouse) ──
     fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
-    fn resize_stroke(&self, _style: &egui::Style, state: ResizeState) -> Stroke {
-        match state {
-            ResizeState::Idle => Stroke::NONE,
-            ResizeState::Hovering | ResizeState::Dragging => Stroke::new(1.5, T::ACCENT),
-        }
+    fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke {
+        Stroke::NONE // no full-height divider line at all — just the resize cursor (Ahmed: keep it tiny)
     }
 
     // ── drop preview when re-docking (azure, per rule 4) ──
