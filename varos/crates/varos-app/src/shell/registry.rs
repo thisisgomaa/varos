@@ -156,7 +156,14 @@ fn section(ui: &mut egui::Ui, key: &str, title: &str, body: impl FnOnce(&mut egu
         ui.ctx().data_mut(|d| d.insert_temp(id, open));
     }
     let p = ui.painter();
-    p.text(egui::pos2(rect.left() + 1.0, rect.center().y), Align2::LEFT_CENTER, if open { "⌄" } else { "›" }, FontId::proportional(11.0), T::FAINT);
+    // hand-painted disclosure triangle — the "⌄"/"›" glyphs were tofu (☐) in the default font (Ahmed 07-05).
+    let (cx, cy) = (rect.left() + 4.0, rect.center().y);
+    let tri = if open {
+        vec![egui::pos2(cx - 4.0, cy - 2.0), egui::pos2(cx + 4.0, cy - 2.0), egui::pos2(cx, cy + 3.0)]
+    } else {
+        vec![egui::pos2(cx - 2.0, cy - 4.0), egui::pos2(cx - 2.0, cy + 4.0), egui::pos2(cx + 3.0, cy)]
+    };
+    p.add(egui::Shape::convex_polygon(tri, if resp.hovered() { T::MUTED } else { T::FAINT }, egui::Stroke::NONE));
     p.text(egui::pos2(rect.left() + 15.0, rect.center().y), Align2::LEFT_CENTER, title, FontId::proportional(9.5), if resp.hovered() { T::MUTED } else { T::FAINT });
     if open {
         ui.add_space(4.0);
