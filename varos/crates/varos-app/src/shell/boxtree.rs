@@ -331,9 +331,16 @@ impl Behavior<PanelId> for ShellBehavior {
     // ── drag look: no distorted double-render (we paint our own lifted ghost); egui_tiles shows a
     //    clean azure preview of the drop slot; the vacated spot dims ──
     fn preview_dragged_panes(&self) -> bool { false }
-    fn drag_preview_stroke(&self, _visuals: &Visuals) -> Stroke { Stroke::new(2.0, T::ACCENT) }
-    fn drag_preview_color(&self, _visuals: &Visuals) -> Color32 {
-        Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 46)
+    /// ONE clean guide: a rounded azure outline of the drop slot only (the default also outlines the
+    /// parent container — that's the "too many guides" Ahmed saw). Light fill, thin stroke.
+    fn paint_drag_preview(&self, _visuals: &Visuals, painter: &egui::Painter, _parent_rect: Option<Rect>, preview_rect: Rect) {
+        painter.rect(
+            preview_rect.shrink(1.0),
+            T::r_box(),
+            Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 20),
+            Stroke::new(1.5, T::ACCENT),
+            StrokeKind::Inside,
+        );
     }
     fn dragged_overlay_color(&self, _visuals: &Visuals) -> Color32 {
         Color32::from_rgba_unmultiplied(0x14, 0x13, 0x13, 170)
