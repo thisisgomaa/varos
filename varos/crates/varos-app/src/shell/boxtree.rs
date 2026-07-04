@@ -9,8 +9,8 @@ use egui::{
     StrokeKind, UiBuilder, Visuals, pos2, vec2,
 };
 use egui_tiles::{
-    Behavior, Container, LinearDir, ResizeState, SimplificationOptions, TabState, Tabs, Tile, TileId,
-    Tiles, Tree, UiResponse,
+    Behavior, Container, LinearDir, ResizeState, SimplificationOptions, Tile, TileId, Tiles, Tree,
+    UiResponse,
 };
 use std::collections::HashMap;
 use super::registry::{self, PanelId};
@@ -196,6 +196,30 @@ fn draw_resize_handles(tree: &Tree<PanelId>, ui: &egui::Ui) {
     }
 }
 
+/// The persistent move-grip: a small bar at the top-centre of EVERY box. Always drawn — never hidden by
+/// scroll or by being in a tab group (Ahmed 07-04: "المقبض بيختفي"). Faint at rest (LINE2), bright when
+/// hovered/held (TEXT). Grabbing it hands the drag to egui_tiles (lift → drop preview → dock).
+fn draw_grip(ui: &egui::Ui, rect: Rect, tile_id: TileId) -> egui::Response {
+    let grip = Rect::from_center_size(pos2(rect.center().x, rect.top() + 8.0), vec2(26.0, 3.0));
+    let r = ui.interact(grip.expand2(vec2(16.0, 8.0)), ui.id().with(("grip", tile_id)), Sense::click_and_drag());
+    let col = if r.hovered() || r.dragged() { T::TEXT } else { T::LINE2 };
+    ui.painter().rect_filled(grip, CornerRadius::same(2), col);
+    r
+}
+
+/// The scrollable body below a box's header, with one consistent inner margin (12 × 10) so every panel
+/// breathes the same (Ahmed 07-04: "مفيش مسافات مظبوطة"). Scrollbars are the thin floating overlay set
+/// globally in `tokens::apply`.
+fn render_body(ui: &mut egui::Ui, rect: Rect, hh: f32, pane: PanelId) {
+    let body = Rect::from_min_max(pos2(rect.left(), rect.top() + hh), rect.max);
+    ui.scope_builder(
+        UiBuilder::new().max_rect(body.shrink2(vec2(12.0, 10.0))).layout(Layout::top_down(Align::Min)),
+        |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| registry::render_panel(pane, ui));
+        },
+    );
+}
+
 // ───────────────────────── the behaviour ─────────────────────────
 
 /// A tabbed box, keyed by its ACTIVE pane's tile (the only one egui_tiles calls pane_ui for). We draw
@@ -215,6 +239,35 @@ struct ShellBehavior {
     groups: HashMap<TileId, TabGroup>,
 }
 
+impl ShellBehavior {
+    /// Draw the ☰ (change-type) + ✕ (close) controls at the header's right edge and wire their intents.
+    /// Returns the left x of the controls block so the caller keeps the title / pills clear of them.
+    fn header_controls(&mut self, ui: &mut egui::Ui, tile_id: TileId, mid: f32, right: f32) -> f32 {
+        let pad = 10.0;
+        let x_rect = Rect::from_min_size(pos2(right - pad - 18.0, mid - 9.0), vec2(18.0, 18.0));
+        let x = ui.interact(x_rect, ui.id().with(("close", tile_id)), Sense::click());
+        if x.hovered() { ui.painter().rect_filled(x_rect, T::r_ctrl(), T::HOVER); }
+        paint_cross(ui, x_rect, if x.hovered() { T::CLOSE_RED } else { T::MUTED });
+        if x.clicked() { self.close = Some(tile_id); }
+
+        let menu_rect = Rect::from_min_size(pos2(x_rect.left() - 6.0 - 22.0, mid - 12.0), vec2(22.0, 24.0));
+        let mut menu_switch: Option<PanelId> = None;
+        ui.scope_builder(UiBuilder::new().max_rect(menu_rect), |ui| {
+            frameless_buttons(ui);
+            ui.menu_button(RichText::new("☰").color(T::MUTED).size(14.0), |ui| {
+                ui.set_min_width(180.0);
+                ui.label(RichText::new("CHANGE THIS PANEL TO").color(T::FAINT).size(9.5).strong());
+                ui.add_space(2.0);
+                for p in PanelId::DOCKABLE {
+                    if ui.button(p.title()).clicked() { menu_switch = Some(p); ui.close(); }
+                }
+            });
+        });
+        if let Some(p) = menu_switch { self.switch = Some((tile_id, p)); }
+        menu_rect.left() - 8.0
+    }
+}
+
 impl Behavior<PanelId> for ShellBehavior {
     fn tab_title_for_pane(&mut self, pane: &PanelId) -> egui::WidgetText {
         pane.title().into()
@@ -227,222 +280,73 @@ impl Behavior<PanelId> for ShellBehavior {
             return UiResponse::None;
         }
 
-        // MULTI-panel box: we draw the WHOLE thing (fully rounded, floating pills) — egui_tiles' tab bar
-        // is 0-height, so this pane_ui owns the entire box.
+        // Every box is ONE rounded shell on the void; we paint it ourselves (egui_tiles' tab bar is
+        // 0-height and draws nothing behind us). Border INSIDE → the silhouette is exactly `rect`,
+        // so the rounded corners sit clean against the seam (Ahmed 07-04: "الراوند باظ").
+        ui.painter().rect(rect, T::r_box(), T::PANEL, T::hairline(), StrokeKind::Inside);
+
+        // MULTI-panel (tabbed) box: persistent grip + centred capsule pills + controls, then the body.
         if let Some(group) = self.groups.get(&tile_id).cloned() {
-            ui.painter().rect(rect, T::r_box(), T::PANEL, T::hairline(), StrokeKind::Middle);
-            let hh = 34.0;
-            let mid = rect.top() + hh / 2.0;
+            let hh = 44.0;
+            let controls_left = self.header_controls(ui, tile_id, rect.top() + 12.0, rect.right());
+            let g = draw_grip(ui, rect, tile_id);
 
-            // ✕ close (right)
-            let x_rect = Rect::from_min_size(pos2(rect.right() - 10.0 - 18.0, mid - 9.0), vec2(18.0, 18.0));
-            let x = ui.interact(x_rect, ui.id().with(("tclose", tile_id)), Sense::click());
-            if x.hovered() {
-                ui.painter().rect_filled(x_rect, T::r_ctrl(), T::HOVER);
-            }
-            paint_cross(ui, x_rect, if x.hovered() { T::CLOSE_RED } else { T::MUTED });
-
-            // ☰ change-type menu (left of ✕)
-            let menu_rect = Rect::from_min_size(pos2(x_rect.left() - 6.0 - 22.0, mid - 12.0), vec2(22.0, 24.0));
-            let mut menu_switch: Option<PanelId> = None;
-            ui.scope_builder(UiBuilder::new().max_rect(menu_rect), |ui| {
-                frameless_buttons(ui);
-                ui.menu_button(RichText::new("☰").color(T::MUTED).size(14.0), |ui| {
-                    ui.set_min_width(172.0);
-                    ui.label(RichText::new("CHANGE THIS PANEL TO").color(T::FAINT).size(9.5).strong());
-                    for p in PanelId::DOCKABLE {
-                        if ui.button(p.title()).clicked() {
-                            menu_switch = Some(p);
-                            ui.close();
-                        }
-                    }
-                });
-            });
-
-            // floating PILLS (click = activate; drag the active pill = move that panel out)
-            let mut px = rect.left() + 10.0;
+            // capsule PILLS, centred as a group (click = activate; drag the active one = lift it out)
+            let pill_mid = rect.top() + 30.0;
+            let font = FontId::proportional(12.0);
+            let widths: Vec<f32> = group.tabs.iter()
+                .map(|(_, p)| ui.painter().layout_no_wrap(p.title().to_owned(), font.clone(), T::TEXT).size().x + 24.0)
+                .collect();
+            let gaps = 6.0 * group.tabs.len().saturating_sub(1) as f32;
+            let total: f32 = widths.iter().sum::<f32>() + gaps;
+            let avail_left = rect.left() + 12.0;
+            let avail_right = controls_left - 8.0;
+            let mut px = (rect.center().x - total * 0.5).max(avail_left);
             let mut clicked = None;
             let mut drag_active = false;
-            for (tid, pid) in &group.tabs {
+            for ((tid, pid), pw) in group.tabs.iter().zip(&widths) {
+                if px + pw > avail_right { break; } // never collide with the controls
                 let active = *tid == group.active;
-                let tw = ui.painter().layout_no_wrap(pid.title().to_owned(), FontId::proportional(12.0), T::TEXT).size().x;
-                let pw = tw + 26.0;
-                let pill = Rect::from_min_size(pos2(px, mid - 12.0), vec2(pw, 24.0));
+                let pill = Rect::from_min_size(pos2(px, pill_mid - 11.0), vec2(*pw, 22.0));
                 let r = ui.interact(pill, ui.id().with(("tab", *tid)), Sense::click_and_drag());
-                let bg = if active { T::SURFACE } else if r.hovered() { T::VOID_HOVER } else { Color32::TRANSPARENT };
-                ui.painter().rect_filled(pill, CornerRadius::same(6), bg);
-                ui.painter().text(pill.center(), Align2::CENTER_CENTER, pid.title(), FontId::proportional(12.0), if active || r.hovered() { T::TEXT } else { T::MUTED });
-                if r.clicked() {
-                    clicked = Some(*tid);
-                }
-                if active && r.drag_started() {
-                    drag_active = true;
-                }
-                px += pw + 5.0;
+                let bg = if active { T::SURFACE } else if r.hovered() { T::HOVER } else { Color32::TRANSPARENT };
+                ui.painter().rect_filled(pill, CornerRadius::same(11), bg); // capsule (half-height) = a Claude bubble
+                ui.painter().text(pill.center(), Align2::CENTER_CENTER, pid.title(), font.clone(), if active || r.hovered() { T::TEXT } else { T::MUTED });
+                if r.clicked() { clicked = Some(*tid); }
+                if active && r.drag_started() { drag_active = true; }
+                px += pw + 6.0;
             }
-            if let Some(t) = clicked {
-                self.set_active = Some((group.container, t));
-            }
-            if let Some(p) = menu_switch {
-                self.switch = Some((tile_id, p));
-            }
-            if x.clicked() {
-                self.close = Some(tile_id);
-            }
+            if let Some(t) = clicked { self.set_active = Some((group.container, t)); }
 
             ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
+            render_body(ui, rect, hh, *pane);
 
-            let body = Rect::from_min_max(pos2(rect.left(), rect.top() + hh), rect.max);
-            ui.scope_builder(
-                UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 8.0))).layout(Layout::top_down(Align::Min)),
-                |ui| {
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| registry::render_panel(*pane, ui));
-                },
-            );
-
-            if drag_active {
-                return UiResponse::DragStarted;
-            }
+            if drag_active || g.drag_started() { return UiResponse::DragStarted; }
             return UiResponse::None;
         }
 
-        // SINGLE-panel box: our dead-simple header + body.
-        ui.painter().rect(rect, T::r_box(), T::PANEL, T::hairline(), StrokeKind::Middle);
-        let hh = 30.0;
-        let pad = 10.0;
-        let mid = rect.top() + hh / 2.0;
-
-        // move-pill — hidden until the header is hovered; soft light-grey; grabbing it LIFTS the panel
-        let header_rect = Rect::from_min_size(rect.min, vec2(rect.width(), hh));
-        let header_hovered = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| header_rect.contains(p));
-        let pill = Rect::from_center_size(pos2(rect.center().x, rect.top() + 8.0), vec2(30.0, 4.0));
-        let mv = ui
-            .interact(pill.expand2(vec2(10.0, 8.0)), ui.id().with(("move", tile_id)), Sense::click_and_drag())
-            .on_hover_text("Move");
-        if header_hovered || mv.dragged() {
-            ui.painter().rect_filled(pill, CornerRadius::same(2), if mv.hovered() || mv.dragged() { T::TEXT } else { T::GRIP });
-        }
-
-        ui.painter().text(pos2(rect.left() + pad, mid), Align2::LEFT_CENTER, pane.title(), FontId::proportional(12.5), T::TEXT);
-
-        let x_rect = Rect::from_min_size(pos2(rect.right() - pad - 18.0, mid - 9.0), vec2(18.0, 18.0));
-        let x = ui.interact(x_rect, ui.id().with(("close", tile_id)), Sense::click());
-        if x.hovered() {
-            ui.painter().rect_filled(x_rect, T::r_ctrl(), T::HOVER);
-        }
-        paint_cross(ui, x_rect, if x.hovered() { T::CLOSE_RED } else { T::MUTED });
-
-        let menu_rect = Rect::from_min_size(pos2(x_rect.left() - 6.0 - 22.0, mid - 12.0), vec2(22.0, 24.0));
-        let mut menu_switch: Option<PanelId> = None;
-        ui.scope_builder(UiBuilder::new().max_rect(menu_rect), |ui| {
-            frameless_buttons(ui);
-            ui.menu_button(RichText::new("☰").color(T::MUTED).size(14.0), |ui| {
-                ui.set_min_width(172.0);
-                ui.label(RichText::new("CHANGE THIS PANEL TO").color(T::FAINT).size(9.5).strong());
-                for p in PanelId::DOCKABLE {
-                    if ui.button(p.title()).clicked() {
-                        menu_switch = Some(p);
-                        ui.close();
-                    }
-                }
-            });
-        });
-        if let Some(p) = menu_switch {
-            self.switch = Some((tile_id, p));
-        }
+        // SINGLE-panel box: persistent grip + title + controls.
+        let hh = 34.0;
+        let mid = rect.top() + 20.0;
+        let controls_left = self.header_controls(ui, tile_id, mid, rect.right());
+        let g = draw_grip(ui, rect, tile_id);
+        // the WHOLE title bar (below the grip, left of the controls) is ALSO a drag handle — a big,
+        // forgiving target so a box is never "impossible to grab" (Ahmed 07-04: "مستحيل تتحرك").
+        let drag_rect = Rect::from_min_max(pos2(rect.left(), rect.top() + 14.0), pos2(controls_left, rect.top() + hh));
+        let hdr = ui.interact(drag_rect, ui.id().with(("hdr", tile_id)), Sense::click_and_drag());
+        ui.painter().text(pos2(rect.left() + 12.0, mid), Align2::LEFT_CENTER, pane.title(), FontId::proportional(12.5), T::TEXT);
 
         ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
+        render_body(ui, rect, hh, *pane);
 
-        let body = Rect::from_min_max(pos2(rect.left(), rect.top() + hh), rect.max);
-        ui.scope_builder(
-            UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 8.0))).layout(Layout::top_down(Align::Min)),
-            |ui| {
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| registry::render_panel(*pane, ui));
-            },
-        );
-
-        if x.clicked() {
-            self.close = Some(tile_id);
-        }
-        // grabbing the move-pill hands the drag to egui_tiles (lift + drop preview + dock on release)
-        if mv.drag_started() {
-            return UiResponse::DragStarted;
-        }
+        if g.drag_started() || hdr.drag_started() { return UiResponse::DragStarted; }
         UiResponse::None
     }
 
-    fn top_bar_right_ui(&mut self, _tiles: &Tiles<PanelId>, ui: &mut egui::Ui, _tile_id: TileId, tabs: &Tabs, _scroll: &mut f32) {
-        let active = tabs.active;
-        let mut do_switch: Option<PanelId> = None;
-        ui.add_space(6.0);
-        // ☰ change-type menu
-        ui.scope(|ui| {
-            frameless_buttons(ui);
-            ui.menu_button(RichText::new("☰").color(T::MUTED).size(14.0), |ui| {
-                ui.set_min_width(172.0);
-                ui.label(RichText::new("CHANGE THIS PANEL TO").color(T::FAINT).size(9.5).strong());
-                for p in PanelId::DOCKABLE {
-                    if ui.button(p.title()).clicked() {
-                        do_switch = Some(p);
-                        ui.close();
-                    }
-                }
-            });
-        });
-        // ✕ close — painted (a text glyph rendered as tofu □ before)
-        let (xr, x) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
-        if x.hovered() {
-            ui.painter().rect_filled(xr, T::r_ctrl(), T::HOVER);
-        }
-        paint_cross(ui, xr, if x.hovered() { T::CLOSE_RED } else { T::MUTED });
-        ui.add_space(4.0);
-        if x.clicked() {
-            if let Some(a) = active {
-                self.close = Some(a);
-            }
-        }
-        if let Some(p) = do_switch {
-            if let Some(a) = active {
-                self.switch = Some((a, p));
-            }
-        }
-    }
-
-    fn tab_bar_color(&self, _v: &Visuals) -> Color32 { T::PANEL }
-    fn tab_bar_height(&self, _s: &egui::Style) -> f32 { 0.0 } // we draw the tabbed box ourselves (pane_ui)
-    fn tab_title_spacing(&self, _v: &Visuals) -> f32 { 16.0 }
-    fn tab_bar_hline_stroke(&self, _v: &Visuals) -> Stroke { Stroke::new(1.0, T::LINE) }
-    fn tab_bg_color(&self, _v: &Visuals, _t: &Tiles<PanelId>, _id: TileId, state: &TabState) -> Color32 {
-        if state.active { T::SURFACE } else { Color32::TRANSPARENT }
-    }
-    fn tab_text_color(&self, _v: &Visuals, _t: &Tiles<PanelId>, _id: TileId, state: &TabState) -> Color32 {
-        if state.active { T::TEXT } else { T::MUTED }
-    }
-    fn is_tab_closable(&self, _t: &Tiles<PanelId>, _id: TileId) -> bool { false }
-
-    /// Custom tab = a floating rounded PILL (Claude segmented-control style), not egui_tiles' square
-    /// edge-attached tab. Active = filled SURFACE pill; inactive = bare muted text; no connecting line.
-    fn tab_ui(&mut self, tiles: &mut Tiles<PanelId>, ui: &mut egui::Ui, id: egui::Id, tile_id: TileId, state: &TabState) -> egui::Response {
-        let text = self.tab_title_for_tile(tiles, tile_id);
-        let galley = text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, FontId::proportional(12.0));
-        let pad_x = 13.0;
-        let gap = 5.0;
-        let pill_w = galley.size().x + 2.0 * pad_x;
-        let h = ui.available_height();
-        let (_, cell) = ui.allocate_space(vec2(pill_w + gap, h));
-        let pill = Rect::from_min_size(pos2(cell.left(), cell.center().y - 12.0), vec2(pill_w, 24.0));
-        let draggable = self.is_tile_draggable(tiles, tile_id);
-        let sense = if draggable { Sense::click_and_drag() } else { Sense::click() };
-        let resp = ui.interact(pill, id, sense);
-        if !state.is_being_dragged && ui.is_rect_visible(pill) {
-            let bg = if state.active { T::SURFACE } else if resp.hovered() { T::VOID_HOVER } else { Color32::TRANSPARENT };
-            ui.painter().rect_filled(pill, CornerRadius::same(6), bg);
-            let col = if state.active || resp.hovered() { T::TEXT } else { T::MUTED };
-            let tp = Align2::CENTER_CENTER.align_size_within_rect(galley.size(), pill).min;
-            ui.painter().galley(tp, galley, col);
-        }
-        resp
-    }
+    // egui_tiles' own tab bar is 0-height — we draw the whole tabbed box in `pane_ui` instead. This is
+    // the ONE tab-bar method we keep; the rest (tab_ui / tab colours / top_bar_right_ui) were dead code
+    // that also painted a stray glyph into the 0-height strip — the "weird corner" (Ahmed 07-04).
+    fn tab_bar_height(&self, _s: &egui::Style) -> f32 { 0.0 }
 
     fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
     fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke { Stroke::NONE } // pure void seam — no line
