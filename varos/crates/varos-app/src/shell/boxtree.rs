@@ -9,8 +9,8 @@ use egui::{
     StrokeKind, UiBuilder, Visuals, pos2, vec2,
 };
 use egui_tiles::{
-    Behavior, Container, LinearDir, SimplificationOptions, TabState, Tabs, Tile, TileId, Tiles, Tree,
-    UiResponse,
+    Behavior, Container, LinearDir, ResizeState, SimplificationOptions, TabState, Tabs, Tile, TileId,
+    Tiles, Tree, UiResponse,
 };
 use std::collections::HashSet;
 use super::registry::{self, PanelId};
@@ -74,7 +74,7 @@ impl ShellState {
             if let (Some(panel), Some(cur)) = (panel, cursor) {
                 if !panel.is_board() {
                     let mut gpos = ui.ctx().data(|d| d.get_temp::<Pos2>(ghost_id)).unwrap_or(cur);
-                    gpos += (cur - gpos) * 0.4; // ease toward the cursor — the floaty lift
+                    gpos += (cur - gpos) * 0.55; // ease toward the cursor — snappier so it doesn't feel heavy
                     ui.ctx().data_mut(|d| d.insert_temp(ghost_id, gpos));
                     render_drag_ghost(ui, panel, gpos);
                     ui.ctx().request_repaint();
@@ -325,6 +325,7 @@ impl Behavior<PanelId> for ShellBehavior {
     fn is_tab_closable(&self, _t: &Tiles<PanelId>, _id: TileId) -> bool { false }
 
     fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
+    fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke { Stroke::NONE } // pure void seam — no line
     fn is_tile_draggable(&self, tiles: &Tiles<PanelId>, tile_id: TileId) -> bool { !is_board_tile(tiles, tile_id) }
     fn min_size(&self) -> f32 { 120.0 }
 
