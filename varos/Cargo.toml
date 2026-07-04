@@ -6,3 +6,10 @@ members = ["crates/varos-core", "crates/varos-render-wgpu", "crates/varos-app", 
 
 [profile.dev]
 debug = 0           # lighter/faster build loop (we judge feel, not step-debug)
+
+# Local fork of egui_tiles: the crate hardcodes its drop zones with no Behavior hook, and Varos needs a
+# specific drop model (Ahmed 07-05: inside a box = tab, left/right 20% = dock beside, no top/bottom box
+# split; above/below lives on the seam between boxes). The only edit is `DropContext::on_tile` in
+# vendor/egui_tiles/src/lib.rs + one `pane_is_drop_target` Behavior hook. Everything else is upstream 0.16.0.
+[patch.crates-io]
+egui_tiles = { path = "vendor/egui_tiles" }

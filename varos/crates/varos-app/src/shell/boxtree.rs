@@ -362,6 +362,7 @@ impl Behavior<PanelId> for ShellBehavior {
     fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
     fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke { Stroke::NONE } // pure void seam — no line
     fn is_tile_draggable(&self, tiles: &Tiles<PanelId>, tile_id: TileId) -> bool { !is_board_tile(tiles, tile_id) }
+    fn pane_is_drop_target(&self, pane: &PanelId) -> bool { !pane.is_board() } // never dock/tab INTO the canvas
     fn min_size(&self) -> f32 { 170.0 } // panels stay usable; content scrolls (never breaks)
 
     // ── drag look: no distorted double-render (we paint our own lifted ghost); egui_tiles shows a
