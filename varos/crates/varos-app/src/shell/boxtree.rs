@@ -209,13 +209,17 @@ fn draw_grip(ui: &egui::Ui, rect: Rect, tile_id: TileId) -> egui::Response {
 
 /// The scrollable body below a box's header, with one consistent inner margin (12 × 10) so every panel
 /// breathes the same (Ahmed 07-04: "مفيش مسافات مظبوطة"). Scrollbars are the thin floating overlay set
-/// globally in `tokens::apply`.
-fn render_body(ui: &mut egui::Ui, rect: Rect, hh: f32, pane: PanelId) {
+/// globally in `tokens::apply`. The ScrollArea (and the whole body) is id-salted by `tile_id` so a
+/// tabbed box's body never collides with its pills strip — the "ScrollArea ID clash" (Ahmed 07-05).
+fn render_body(ui: &mut egui::Ui, rect: Rect, hh: f32, tile_id: TileId, pane: PanelId) {
     let body = Rect::from_min_max(pos2(rect.left(), rect.top() + hh), rect.max);
     ui.scope_builder(
         UiBuilder::new().max_rect(body.shrink2(vec2(12.0, 10.0))).layout(Layout::top_down(Align::Min)),
         |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| registry::render_panel(pane, ui));
+            egui::ScrollArea::vertical()
+                .id_salt(("body", tile_id))
+                .auto_shrink([false, false])
+                .show(ui, |ui| registry::render_panel(pane, ui));
         },
     );
 }
@@ -303,6 +307,7 @@ impl Behavior<PanelId> for ShellBehavior {
             let mut drag_active = false;
             ui.scope_builder(UiBuilder::new().max_rect(strip), |ui| {
                 egui::ScrollArea::horizontal()
+                    .id_salt(("pills", tile_id))
                     .scroll_source(egui::scroll_area::ScrollSource::MOUSE_WHEEL) // wheel scrolls; drag LIFTS the pill
                     .show(ui, |ui| {
                         ui.horizontal_centered(|ui| {
@@ -323,7 +328,7 @@ impl Behavior<PanelId> for ShellBehavior {
             if let Some(t) = clicked { self.set_active = Some((group.container, t)); }
 
             ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
-            render_body(ui, rect, hh, *pane);
+            render_body(ui, rect, hh, tile_id, *pane);
 
             if drag_active || g.drag_started() { return UiResponse::DragStarted; }
             return UiResponse::None;
@@ -341,7 +346,7 @@ impl Behavior<PanelId> for ShellBehavior {
         ui.painter().text(pos2(rect.left() + 12.0, mid), Align2::LEFT_CENTER, pane.title(), FontId::proportional(12.5), T::TEXT);
 
         ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
-        render_body(ui, rect, hh, *pane);
+        render_body(ui, rect, hh, tile_id, *pane);
 
         if g.drag_started() || hdr.drag_started() { return UiResponse::DragStarted; }
         UiResponse::None
