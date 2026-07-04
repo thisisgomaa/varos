@@ -26,6 +26,11 @@ pub struct ShellState {
 struct DragState {
     tile: TileId,
     base: Tree<PanelId>,
+    /// The layout's tile rects captured at grab-time — a STABLE reference for the drop test, so the
+    /// live reflow never oscillates.
+    base_rects: Vec<(TileId, Rect)>,
+    /// The last slot we docked into — we only rebuild the tree when this changes (no per-frame churn).
+    last: Option<(TileId, Side)>,
 }
 
 impl ShellState {
@@ -75,26 +80,40 @@ impl ShellState {
                 detach(&mut self.tree, id);
                 self.tree.tiles.remove(id);
             }
-            // a grab just started
+            // a grab just started — snapshot the layout AND its rects (the stable reference)
             if let Some(t) = behavior.drag_start {
-                self.drag = Some(DragState { tile: t, base: self.tree.clone() });
+                let base_rects: Vec<(TileId, Rect)> = self
+                    .tree
+                    .tiles
+                    .iter()
+                    .filter_map(|(id, _)| self.tree.tiles.rect(*id).map(|r| (*id, r)))
+                    .collect();
+                self.drag = Some(DragState { tile: t, base: self.tree.clone(), base_rects, last: None });
             }
         }
 
-        // LIVE docking: rebuild from the snapshot + dock into the slot under the cursor, every frame
+        // LIVE docking: measure the drop slot against the STABLE snapshot rects (never oscillates),
+        // and only rebuild when the slot actually CHANGES (no per-frame churn → no flicker).
         if self.drag.is_some() {
             if !ui.input(|i| i.pointer.any_down()) {
-                self.drag = None; // released → commit the current layout
+                self.drag = None; // released → commit
             } else if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
-                let (tile, mut rebuilt) = {
+                let cur = {
                     let d = self.drag.as_ref().unwrap();
-                    (d.tile, d.base.clone())
+                    compute_drop(&d.base, &d.base_rects, d.tile, ptr)
                 };
-                if let Some((target, side)) = compute_drop(&self.tree, tile, ptr) {
-                    dock(&mut rebuilt, tile, target, side);
+                if self.drag.as_ref().unwrap().last != cur {
+                    let (tile, mut rebuilt) = {
+                        let d = self.drag.as_ref().unwrap();
+                        (d.tile, d.base.clone())
+                    };
+                    if let Some((target, side)) = cur {
+                        dock(&mut rebuilt, tile, target, side);
+                    }
+                    self.tree = rebuilt;
+                    self.drag.as_mut().unwrap().last = cur;
+                    ui.ctx().request_repaint();
                 }
-                self.tree = rebuilt;
-                ui.ctx().request_repaint();
             }
         }
 
@@ -123,17 +142,15 @@ fn set_share(tree: &mut Tree<PanelId>, container: TileId, child: TileId, share: 
     }
 }
 
-/// Which leaf pane the cursor is over, and which edge/centre of it → the drop slot.
-fn compute_drop(tree: &Tree<PanelId>, dragged: TileId, ptr: Pos2) -> Option<(TileId, Side)> {
+/// Which leaf pane the cursor is over (in the STABLE snapshot), and which edge/centre → the drop slot.
+fn compute_drop(base: &Tree<PanelId>, base_rects: &[(TileId, Rect)], dragged: TileId, ptr: Pos2) -> Option<(TileId, Side)> {
     let mut hit = None;
-    for (id, tile) in tree.tiles.iter() {
-        if *id == dragged || !matches!(tile, Tile::Pane(_)) {
+    for &(id, r) in base_rects {
+        if id == dragged || !matches!(base.tiles.get(id), Some(Tile::Pane(_))) {
             continue;
         }
-        if let Some(r) = tree.tiles.rect(*id) {
-            if r.contains(ptr) {
-                hit = Some((*id, r));
-            }
+        if r.contains(ptr) {
+            hit = Some((id, r));
         }
     }
     let (tid, r) = hit?;
@@ -141,7 +158,7 @@ fn compute_drop(tree: &Tree<PanelId>, dragged: TileId, ptr: Pos2) -> Option<(Til
     let fy = ((ptr.y - r.top()) / r.height().max(1.0)).clamp(0.0, 1.0);
     let (l, rt, tp, bt) = (fx, 1.0 - fx, fy, 1.0 - fy);
     let m = l.min(rt).min(tp).min(bt);
-    let board = matches!(tree.tiles.get(tid), Some(Tile::Pane(PanelId::Board)));
+    let board = matches!(base.tiles.get(tid), Some(Tile::Pane(PanelId::Board)));
     let side = if m > 0.28 && !board {
         Side::Center
     } else if m == l {
@@ -204,6 +221,11 @@ fn dock(tree: &mut Tree<PanelId>, dragged: TileId, target: TileId, side: Side) {
             } else {
                 tree.tiles.insert_vertical_tile(children)
             };
+            // balanced-ish split so the layout doesn't jump to weird proportions (target stays dominant)
+            if let Some(Tile::Container(Container::Linear(l))) = tree.tiles.get_mut(new) {
+                l.shares.set_share(dragged, 0.34);
+                l.shares.set_share(target, 0.66);
+            }
             replace_child(tree, parent, target, new);
         }
     }
