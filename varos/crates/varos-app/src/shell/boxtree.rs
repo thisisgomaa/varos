@@ -12,7 +12,7 @@ use egui_tiles::{
     Behavior, Container, LinearDir, ResizeState, SimplificationOptions, TabState, Tabs, Tile, TileId,
     Tiles, Tree, UiResponse,
 };
-use std::collections::HashSet;
+use std::collections::HashMap;
 use super::registry::{self, PanelId};
 use super::tokens as T;
 
@@ -39,19 +39,29 @@ impl ShellState {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        // panes inside a Tabs container get egui_tiles' (styled) tab bar, not our single-box header
-        let mut tabbed = HashSet::new();
-        for (_id, tile) in self.tree.tiles.iter() {
+        // For each Tabs container, map its ACTIVE pane's tile → the group; we render the whole tabbed
+        // box ourselves in pane_ui (fully rounded, floating pills), with egui_tiles' tab bar at 0 height.
+        let mut groups: HashMap<TileId, TabGroup> = HashMap::new();
+        for (id, tile) in self.tree.tiles.iter() {
             if let Tile::Container(Container::Tabs(t)) = tile {
-                for &c in &t.children {
-                    tabbed.insert(c);
+                if let Some(active) = t.active.or_else(|| t.children.first().copied()) {
+                    let tabs = t.children.iter().filter_map(|&c| match self.tree.tiles.get(c) {
+                        Some(Tile::Pane(p)) => Some((c, *p)),
+                        _ => None,
+                    }).collect();
+                    groups.insert(active, TabGroup { container: *id, tabs, active });
                 }
             }
         }
 
-        let mut behavior = ShellBehavior { tabbed, ..Default::default() };
+        let mut behavior = ShellBehavior { groups, ..Default::default() };
         self.tree.ui(&mut behavior, ui);
 
+        if let Some((container, tile)) = behavior.set_active {
+            if let Some(Tile::Container(Container::Tabs(t))) = self.tree.tiles.get_mut(container) {
+                t.active = Some(tile);
+            }
+        }
         if let Some((id, panel)) = behavior.switch {
             if let Some(Tile::Pane(p)) = self.tree.tiles.get_mut(id) {
                 *p = panel;
@@ -188,11 +198,21 @@ fn draw_resize_handles(tree: &Tree<PanelId>, ui: &egui::Ui) {
 
 // ───────────────────────── the behaviour ─────────────────────────
 
+/// A tabbed box, keyed by its ACTIVE pane's tile (the only one egui_tiles calls pane_ui for). We draw
+/// the whole box ourselves so it can be fully rounded with floating pills.
+#[derive(Clone)]
+struct TabGroup {
+    container: TileId,
+    tabs: Vec<(TileId, PanelId)>,
+    active: TileId,
+}
+
 #[derive(Default)]
 struct ShellBehavior {
     switch: Option<(TileId, PanelId)>,
     close: Option<TileId>,
-    tabbed: HashSet<TileId>,
+    set_active: Option<(TileId, TileId)>,
+    groups: HashMap<TileId, TabGroup>,
 }
 
 impl Behavior<PanelId> for ShellBehavior {
@@ -207,12 +227,82 @@ impl Behavior<PanelId> for ShellBehavior {
             return UiResponse::None;
         }
 
-        // MULTI-panel box: egui_tiles drew our styled tab bar above → just the body here.
-        if self.tabbed.contains(&tile_id) {
-            ui.painter().rect_filled(rect, CornerRadius::ZERO, T::PANEL);
-            egui::Frame::NONE.inner_margin(Margin::same(10)).show(ui, |ui| {
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| registry::render_panel(*pane, ui));
+        // MULTI-panel box: we draw the WHOLE thing (fully rounded, floating pills) — egui_tiles' tab bar
+        // is 0-height, so this pane_ui owns the entire box.
+        if let Some(group) = self.groups.get(&tile_id).cloned() {
+            ui.painter().rect(rect, T::r_box(), T::PANEL, T::hairline(), StrokeKind::Middle);
+            let hh = 34.0;
+            let mid = rect.top() + hh / 2.0;
+
+            // ✕ close (right)
+            let x_rect = Rect::from_min_size(pos2(rect.right() - 10.0 - 18.0, mid - 9.0), vec2(18.0, 18.0));
+            let x = ui.interact(x_rect, ui.id().with(("tclose", tile_id)), Sense::click());
+            if x.hovered() {
+                ui.painter().rect_filled(x_rect, T::r_ctrl(), T::HOVER);
+            }
+            paint_cross(ui, x_rect, if x.hovered() { T::CLOSE_RED } else { T::MUTED });
+
+            // ☰ change-type menu (left of ✕)
+            let menu_rect = Rect::from_min_size(pos2(x_rect.left() - 6.0 - 22.0, mid - 12.0), vec2(22.0, 24.0));
+            let mut menu_switch: Option<PanelId> = None;
+            ui.scope_builder(UiBuilder::new().max_rect(menu_rect), |ui| {
+                frameless_buttons(ui);
+                ui.menu_button(RichText::new("☰").color(T::MUTED).size(14.0), |ui| {
+                    ui.set_min_width(172.0);
+                    ui.label(RichText::new("CHANGE THIS PANEL TO").color(T::FAINT).size(9.5).strong());
+                    for p in PanelId::DOCKABLE {
+                        if ui.button(p.title()).clicked() {
+                            menu_switch = Some(p);
+                            ui.close();
+                        }
+                    }
+                });
             });
+
+            // floating PILLS (click = activate; drag the active pill = move that panel out)
+            let mut px = rect.left() + 10.0;
+            let mut clicked = None;
+            let mut drag_active = false;
+            for (tid, pid) in &group.tabs {
+                let active = *tid == group.active;
+                let tw = ui.painter().layout_no_wrap(pid.title().to_owned(), FontId::proportional(12.0), T::TEXT).size().x;
+                let pw = tw + 26.0;
+                let pill = Rect::from_min_size(pos2(px, mid - 12.0), vec2(pw, 24.0));
+                let r = ui.interact(pill, ui.id().with(("tab", *tid)), Sense::click_and_drag());
+                let bg = if active { T::SURFACE } else if r.hovered() { T::VOID_HOVER } else { Color32::TRANSPARENT };
+                ui.painter().rect_filled(pill, CornerRadius::same(6), bg);
+                ui.painter().text(pill.center(), Align2::CENTER_CENTER, pid.title(), FontId::proportional(12.0), if active || r.hovered() { T::TEXT } else { T::MUTED });
+                if r.clicked() {
+                    clicked = Some(*tid);
+                }
+                if active && r.drag_started() {
+                    drag_active = true;
+                }
+                px += pw + 5.0;
+            }
+            if let Some(t) = clicked {
+                self.set_active = Some((group.container, t));
+            }
+            if let Some(p) = menu_switch {
+                self.switch = Some((tile_id, p));
+            }
+            if x.clicked() {
+                self.close = Some(tile_id);
+            }
+
+            ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
+
+            let body = Rect::from_min_max(pos2(rect.left(), rect.top() + hh), rect.max);
+            ui.scope_builder(
+                UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 8.0))).layout(Layout::top_down(Align::Min)),
+                |ui| {
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| registry::render_panel(*pane, ui));
+                },
+            );
+
+            if drag_active {
+                return UiResponse::DragStarted;
+            }
             return UiResponse::None;
         }
 
@@ -319,7 +409,7 @@ impl Behavior<PanelId> for ShellBehavior {
     }
 
     fn tab_bar_color(&self, _v: &Visuals) -> Color32 { T::PANEL }
-    fn tab_bar_height(&self, _s: &egui::Style) -> f32 { 32.0 }
+    fn tab_bar_height(&self, _s: &egui::Style) -> f32 { 0.0 } // we draw the tabbed box ourselves (pane_ui)
     fn tab_title_spacing(&self, _v: &Visuals) -> f32 { 16.0 }
     fn tab_bar_hline_stroke(&self, _v: &Visuals) -> Stroke { Stroke::new(1.0, T::LINE) }
     fn tab_bg_color(&self, _v: &Visuals, _t: &Tiles<PanelId>, _id: TileId, state: &TabState) -> Color32 {
