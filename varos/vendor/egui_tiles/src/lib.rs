@@ -337,11 +337,10 @@ impl DropContext {
         // ── Varos drop model (LOCAL FORK of egui_tiles; Ahmed 07-05) ────────────────────────────────
         // Only a "box" (a leaf Pane, or a Tabs container we render as a box) is a drop target, and while
         // the cursor is inside one it claims the drop deterministically (dist 0) so it ALWAYS beats the
-        // between-box seams. Result: a box's own area never triggers insert-above/below — the confusing
-        // zone at the top of a box is gone. Zones inside a box:
-        //   left 20% → dock left      right 20% → dock right      middle 60% → tab.
-        // Above/below is reached ONLY on the thin seam between two boxes (the linear container suggests
-        // those, and they win in the gap where no box contains the cursor).
+        // between-box seams. Zones inside a box (Ahmed 07-05: reaching above/below via the seams alone
+        // was too hard, so EVERY side of a box is a dock edge now):
+        //   left/right 20% → dock beside     top/bottom 15% → new box above/below     middle → tab.
+        // The seams between boxes still work too (they win in the gap where no box contains the cursor).
         let is_box = matches!(tile.kind(), None | Some(ContainerKind::Tabs));
         if !is_box {
             return; // linear / grid containers are invisible scaffolding, not drop targets
@@ -356,21 +355,23 @@ impl DropContext {
             return; // the canvas / board opts out of being a drop target
         }
         let fx = ((mouse.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
-        let (insertion, preview_rect) = if fx < 0.2 {
-            (
-                ContainerInsertion::Horizontal(0),
-                rect.split_left_right_at_fraction(0.2).0,
-            )
-        } else if fx > 0.8 {
-            (
-                ContainerInsertion::Horizontal(usize::MAX),
-                rect.split_left_right_at_fraction(0.8).1,
-            )
+        let fy = ((mouse.y - rect.top()) / rect.height().max(1.0)).clamp(0.0, 1.0);
+        const HX: f32 = 0.20; // left/right dock band
+        const HY: f32 = 0.15; // top/bottom dock band (slimmer so the middle stays mostly "tab")
+        // closeness to each edge, normalised by its band (< 1 ⇒ the cursor is inside that dock edge)
+        let edges = [
+            (fx / HX, ContainerInsertion::Horizontal(0), rect.split_left_right_at_fraction(HX).0),
+            ((1.0 - fx) / HX, ContainerInsertion::Horizontal(usize::MAX), rect.split_left_right_at_fraction(1.0 - HX).1),
+            (fy / HY, ContainerInsertion::Vertical(0), rect.split_top_bottom_at_fraction(HY).0),
+            ((1.0 - fy) / HY, ContainerInsertion::Vertical(usize::MAX), rect.split_top_bottom_at_fraction(1.0 - HY).1),
+        ];
+        let nearest = edges.iter().min_by(|a, b| a.0.total_cmp(&b.0)).unwrap();
+        let (insertion, preview_rect) = if nearest.0 < 1.0 {
+            (nearest.1, nearest.2) // in a dock edge → split beside / above / below
         } else {
             (
-                ContainerInsertion::Tabs(usize::MAX),
-                rect.split_top_bottom_at_y(rect.top() + behavior.tab_bar_height(style))
-                    .1,
+                ContainerInsertion::Tabs(usize::MAX), // the middle → tab
+                rect.split_top_bottom_at_y(rect.top() + behavior.tab_bar_height(style)).1,
             )
         };
         self.best_insertion = Some(InsertionPoint::new(parent_id, insertion));
