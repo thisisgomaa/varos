@@ -285,6 +285,9 @@ impl Behavior<PanelId> for ShellBehavior {
     fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
     fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke { Stroke::NONE }
 
+    // ── the PANEL ITSELF follows toward the drop, not just a guide (Ahmed) ──
+    fn preview_dragged_panes(&self) -> bool { true }
+
     // ── drop preview when re-docking — kept subtle (azure, low alpha) ──
     fn drag_preview_stroke(&self, _visuals: &Visuals) -> Stroke { Stroke::new(1.5, T::ACCENT) }
     fn drag_preview_color(&self, _visuals: &Visuals) -> Color32 {
