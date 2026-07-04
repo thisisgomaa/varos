@@ -107,15 +107,15 @@ fn draw_resize_handles(tree: &Tree<PanelId>, ui: &egui::Ui) {
                 LinearDir::Horizontal => {
                     let x = (ra.right() + rb.left()) * 0.5;
                     if (ptr.x - x).abs() <= 6.0 && ptr.y >= ra.top() && ptr.y <= ra.bottom() {
-                        let y = ptr.y.clamp(ra.top() + 20.0, ra.bottom() - 20.0);
-                        ui.painter().rect_filled(Rect::from_center_size(pos2(x, y), vec2(4.0, 34.0)), CornerRadius::same(2), T::MUTED);
+                        let y = ra.center().y; // FIXED at the seam centre — doesn't chase the cursor
+                        ui.painter().rect_filled(Rect::from_center_size(pos2(x, y), vec2(3.0, 22.0)), CornerRadius::same(2), T::FAINT);
                     }
                 }
                 LinearDir::Vertical => {
                     let y = (ra.bottom() + rb.top()) * 0.5;
                     if (ptr.y - y).abs() <= 6.0 && ptr.x >= ra.left() && ptr.x <= ra.right() {
-                        let x = ptr.x.clamp(ra.left() + 20.0, ra.right() - 20.0);
-                        ui.painter().rect_filled(Rect::from_center_size(pos2(x, y), vec2(34.0, 4.0)), CornerRadius::same(2), T::MUTED);
+                        let x = ra.center().x; // FIXED at the seam centre
+                        ui.painter().rect_filled(Rect::from_center_size(pos2(x, y), vec2(22.0, 3.0)), CornerRadius::same(2), T::FAINT);
                     }
                 }
             }
