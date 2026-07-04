@@ -46,6 +46,13 @@ pub fn apply(ctx: &egui::Context) {
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
     style.animation_time = 0.0; // a WORK tool: menus/popups appear INSTANTLY, never a fade (memory: no-animations)
     style.interaction.resize_grab_radius_side = 4.0; // tight seam-grab zone — precise, "on the mouse" (Ahmed 07-04)
+    // thin OVERLAY scrollbars — the default solid bar was a fat grey slab (Ahmed 07-04 "ضخم جدا").
+    // floating = invisible until you hover the body, then a slim handle; never steals layout width.
+    let mut scroll = egui::style::ScrollStyle::floating();
+    scroll.bar_width = 8.0;
+    scroll.floating_width = 6.0;
+    scroll.handle_min_length = 24.0;
+    style.spacing.scroll = scroll;
     let mut v = egui::Visuals::dark();
     v.panel_fill = PANEL;
     v.window_fill = PANEL;
