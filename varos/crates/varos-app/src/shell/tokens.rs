@@ -29,6 +29,7 @@ pub const CLOSE_RED: Color32 = rgb(0xc42b1c);
 pub const NONE_RED: Color32  = rgb(0xe05c5c);
 pub const DOT_GRID: Color32  = Color32::from_rgba_premultiplied(11, 11, 11, 11); // rgba(255,255,255,.045)
 pub const VOID_HOVER: Color32 = Color32::from_rgba_premultiplied(10, 10, 10, 10); // rgba(255,255,255,.04)
+pub const GRIP: Color32      = rgb(0x9d9893); // the move-handle pill — soft light grey (Ahmed's reference)
 
 // ── radii & rhythm ──
 pub const R: u8 = 3;        // controls: fields, chips, buttons, tabs
