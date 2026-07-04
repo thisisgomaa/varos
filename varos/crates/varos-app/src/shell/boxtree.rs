@@ -330,6 +330,30 @@ impl Behavior<PanelId> for ShellBehavior {
     }
     fn is_tab_closable(&self, _t: &Tiles<PanelId>, _id: TileId) -> bool { false }
 
+    /// Custom tab = a floating rounded PILL (Claude segmented-control style), not egui_tiles' square
+    /// edge-attached tab. Active = filled SURFACE pill; inactive = bare muted text; no connecting line.
+    fn tab_ui(&mut self, tiles: &mut Tiles<PanelId>, ui: &mut egui::Ui, id: egui::Id, tile_id: TileId, state: &TabState) -> egui::Response {
+        let text = self.tab_title_for_tile(tiles, tile_id);
+        let galley = text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, FontId::proportional(12.0));
+        let pad_x = 13.0;
+        let gap = 5.0;
+        let pill_w = galley.size().x + 2.0 * pad_x;
+        let h = ui.available_height();
+        let (_, cell) = ui.allocate_space(vec2(pill_w + gap, h));
+        let pill = Rect::from_min_size(pos2(cell.left(), cell.center().y - 12.0), vec2(pill_w, 24.0));
+        let draggable = self.is_tile_draggable(tiles, tile_id);
+        let sense = if draggable { Sense::click_and_drag() } else { Sense::click() };
+        let resp = ui.interact(pill, id, sense);
+        if !state.is_being_dragged && ui.is_rect_visible(pill) {
+            let bg = if state.active { T::SURFACE } else if resp.hovered() { T::VOID_HOVER } else { Color32::TRANSPARENT };
+            ui.painter().rect_filled(pill, CornerRadius::same(6), bg);
+            let col = if state.active || resp.hovered() { T::TEXT } else { T::MUTED };
+            let tp = Align2::CENTER_CENTER.align_size_within_rect(galley.size(), pill).min;
+            ui.painter().galley(tp, galley, col);
+        }
+        resp
+    }
+
     fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
     fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke { Stroke::NONE } // pure void seam — no line
     fn is_tile_draggable(&self, tiles: &Tiles<PanelId>, tile_id: TileId) -> bool { !is_board_tile(tiles, tile_id) }
