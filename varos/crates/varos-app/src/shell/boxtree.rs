@@ -10,7 +10,8 @@ use egui::{
     UiBuilder, Visuals, pos2, vec2,
 };
 use egui_tiles::{
-    Behavior, Container, ResizeState, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse,
+    Behavior, Container, LinearDir, ResizeState, SimplificationOptions, Tile, TileId, Tiles, Tree,
+    UiResponse,
 };
 use super::registry::{self, PanelId};
 use super::tokens as T;
@@ -72,6 +73,9 @@ impl ShellState {
             }
             self.tree.tiles.remove(id);
         }
+
+        // a small resize grabber that shows ONLY when hovering a seam (Ahmed: like the move handle)
+        draw_resize_handles(&self.tree, ui);
     }
 
     /// Serialise the layout — proves "serde from day one" (future: saved workspaces).
@@ -89,6 +93,34 @@ fn set_share(tree: &mut Tree<PanelId>, container: TileId, child: TileId, share: 
 
 fn is_board(tiles: &Tiles<PanelId>, id: TileId) -> bool {
     matches!(tiles.get(id), Some(Tile::Pane(PanelId::Board)))
+}
+
+/// Paint a small resize-grabber pill on the seam under the pointer (hover only) — egui_tiles owns the
+/// drag interaction; this is just the little handle Ahmed asked for, following the cursor along the seam.
+fn draw_resize_handles(tree: &Tree<PanelId>, ui: &egui::Ui) {
+    let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) else { return };
+    for (_id, tile) in tree.tiles.iter() {
+        let Tile::Container(Container::Linear(lin)) = tile else { continue };
+        for pair in lin.children.windows(2) {
+            let (Some(ra), Some(rb)) = (tree.tiles.rect(pair[0]), tree.tiles.rect(pair[1])) else { continue };
+            match lin.dir {
+                LinearDir::Horizontal => {
+                    let x = (ra.right() + rb.left()) * 0.5;
+                    if (ptr.x - x).abs() <= 6.0 && ptr.y >= ra.top() && ptr.y <= ra.bottom() {
+                        let y = ptr.y.clamp(ra.top() + 20.0, ra.bottom() - 20.0);
+                        ui.painter().rect_filled(Rect::from_center_size(pos2(x, y), vec2(4.0, 34.0)), CornerRadius::same(2), T::MUTED);
+                    }
+                }
+                LinearDir::Vertical => {
+                    let y = (ra.bottom() + rb.top()) * 0.5;
+                    if (ptr.y - y).abs() <= 6.0 && ptr.x >= ra.left() && ptr.x <= ra.right() {
+                        let x = ptr.x.clamp(ra.left() + 20.0, ra.right() - 20.0);
+                        ui.painter().rect_filled(Rect::from_center_size(pos2(x, y), vec2(34.0, 4.0)), CornerRadius::same(2), T::MUTED);
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ───────────────────────── the behaviour: our simple header over egui_tiles' dynamic layout ─────────────────────────
