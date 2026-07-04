@@ -32,7 +32,7 @@ pub const VOID_HOVER: Color32 = Color32::from_rgba_premultiplied(10, 10, 10, 10)
 
 // ── radii & rhythm ──
 pub const R: u8 = 3;        // controls: fields, chips, buttons, tabs
-pub const RBOX: u8 = 6;     // boxes / panels (rounded a touch more — Ahmed 07-04)
+pub const RBOX: u8 = 8;     // boxes / panels (rounder / fancier — Ahmed 07-04)
 pub const SEAM_GAP: f32 = 12.0; // equal void between all boxes (wider +20% so boxes breathe — Ahmed 07-04)
 
 pub fn r_ctrl() -> CornerRadius { CornerRadius::same(R) }
@@ -44,6 +44,7 @@ pub fn hairline() -> Stroke { Stroke::new(1.0, LINE) }
 pub fn apply(ctx: &egui::Context) {
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
     style.animation_time = 0.0; // a WORK tool: menus/popups appear INSTANTLY, never a fade (memory: no-animations)
+    style.interaction.resize_grab_radius_side = 4.0; // tight seam-grab zone — precise, "on the mouse" (Ahmed 07-04)
     let mut v = egui::Visuals::dark();
     v.panel_fill = PANEL;
     v.window_fill = PANEL;
