@@ -372,25 +372,36 @@ impl Behavior<PanelId> for ShellBehavior {
     /// parent container — that's the "too many guides" Ahmed saw). Light fill, thin stroke.
     fn paint_drag_preview(&self, _visuals: &Visuals, painter: &egui::Painter, parent_rect: Option<Rect>, preview_rect: Rect) {
         let slot = preview_rect.shrink(1.0);
-        // base: a faint, even azure wash over the whole slot
-        painter.rect_filled(slot, T::r_box(), Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 20));
-        // split → a GRADIENT glowing at the docking edge and fading away, so above / below / beside reads
-        // at a glance; a TAB drop (slot covers most of the box) stays an even wash. (Ahmed 07-05.)
-        if let Some(parent) = parent_rect {
-            let cov = (preview_rect.width() * preview_rect.height())
-                / (parent.width() * parent.height()).max(1.0);
-            if cov <= 0.6 {
-                let dir = if preview_rect.width() >= preview_rect.height() {
-                    if preview_rect.center().y < parent.center().y { vec2(0.0, -1.0) } else { vec2(0.0, 1.0) }
-                } else if preview_rect.center().x < parent.center().x {
-                    vec2(-1.0, 0.0)
-                } else {
-                    vec2(1.0, 0.0)
-                };
-                fill_gradient(painter, slot.shrink(2.0), dir, 130, 0);
+        // direction of a SPLIT drop (None = tab, or slot covers most of the box).
+        let dir = parent_rect.and_then(|parent| {
+            let area = (parent.width() * parent.height()).max(1.0);
+            let cov = (preview_rect.width() * preview_rect.height()) / area;
+            if cov > 0.6 {
+                return None;
+            }
+            Some(if preview_rect.width() >= preview_rect.height() {
+                if preview_rect.center().y < parent.center().y { vec2(0.0, -1.0) } else { vec2(0.0, 1.0) }
+            } else if preview_rect.center().x < parent.center().x {
+                vec2(-1.0, 0.0)
+            } else {
+                vec2(1.0, 0.0)
+            })
+        });
+        match dir {
+            // SPLIT: BOTH the fill and the stroke are a gradient that glows at the docking edge and fades
+            // away — matches Ahmed's sketch (07-05). Up = above, down = below, left/right = beside.
+            Some(dir) => {
+                painter.rect_filled(slot, T::r_box(), Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 10));
+                let grad = if dir.x == 0.0 { slot.shrink2(vec2(8.0, 1.0)) } else { slot.shrink2(vec2(1.0, 8.0)) };
+                fill_gradient(painter, grad, dir, 130, 0);
+                gradient_stroke(painter, slot, T::RBOX as f32, dir, 255, 40, 1.6);
+            }
+            // TAB (or unknown): an even azure wash + uniform outline, so tab vs split still reads.
+            None => {
+                painter.rect_filled(slot, T::r_box(), Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 22));
+                painter.rect_stroke(slot, T::r_box(), Stroke::new(1.5, T::ACCENT), StrokeKind::Inside);
             }
         }
-        painter.rect_stroke(slot, T::r_box(), Stroke::new(1.5, T::ACCENT), StrokeKind::Inside);
     }
     fn dragged_overlay_color(&self, _visuals: &Visuals) -> Color32 {
         Color32::from_rgba_unmultiplied(0x14, 0x13, 0x13, 170)
@@ -417,6 +428,9 @@ fn frameless_buttons(ui: &mut egui::Ui) {
     v.widgets.active.weak_bg_fill = T::HOVER;
 }
 
+/// Azure alpha `a` at the given normalised position — one place for the gradient's colour ramp.
+fn azure(a: u8) -> Color32 { Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, a) }
+
 /// Fill `rect` with a linear azure gradient: alpha `a_strong` at the edge `dir` points to, fading to
 /// `a_faint` at the opposite edge — the drop-direction hint on the phantom slot (Ahmed 07-05).
 fn fill_gradient(painter: &egui::Painter, rect: Rect, dir: egui::Vec2, a_strong: u8, a_faint: u8) {
@@ -425,12 +439,47 @@ fn fill_gradient(painter: &egui::Painter, rect: Rect, dir: egui::Vec2, a_strong:
     let half = 0.5 * (rect.width() * dir.x.abs() + rect.height() * dir.y.abs());
     for p in [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()] {
         let t = if half > 0.0 { (((p - c).dot(dir)) / half + 1.0) * 0.5 } else { 0.5 };
-        let a = (a_faint as f32 + (a_strong as f32 - a_faint as f32) * t.clamp(0.0, 1.0)) as u8;
-        mesh.colored_vertex(p, Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, a));
+        mesh.colored_vertex(p, azure((a_faint as f32 + (a_strong as f32 - a_faint as f32) * t.clamp(0.0, 1.0)) as u8));
     }
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
     painter.add(egui::Shape::mesh(mesh));
+}
+
+/// Perimeter polyline of a rounded rect (arcs approximated), clockwise — for a per-segment gradient stroke.
+fn rounded_rect_points(rect: Rect, r: f32) -> Vec<Pos2> {
+    let r = r.min(rect.width() * 0.5).min(rect.height() * 0.5).max(0.0);
+    let corners = [
+        (rect.right() - r, rect.top() + r, 270.0_f32),
+        (rect.right() - r, rect.bottom() - r, 0.0),
+        (rect.left() + r, rect.bottom() - r, 90.0),
+        (rect.left() + r, rect.top() + r, 180.0),
+    ];
+    let steps = 4;
+    let mut pts = Vec::with_capacity(corners.len() * (steps + 1));
+    for (cx, cy, a0) in corners {
+        for k in 0..=steps {
+            let ang = (a0 + 90.0 * (k as f32 / steps as f32)).to_radians();
+            pts.push(pos2(cx + r * ang.cos(), cy + r * ang.sin()));
+        }
+    }
+    pts
+}
+
+/// Stroke a rounded rect where the outline ITSELF is the gradient: alpha `a_strong` at the edge `dir`
+/// points to, `a_faint` at the opposite edge (Ahmed 07-05 wanted the glow on the stroke, not just the fill).
+fn gradient_stroke(painter: &egui::Painter, rect: Rect, radius: f32, dir: egui::Vec2, a_strong: u8, a_faint: u8, w: f32) {
+    let pts = rounded_rect_points(rect, radius);
+    let c = rect.center();
+    let half = (0.5 * (rect.width() * dir.x.abs() + rect.height() * dir.y.abs())).max(1.0);
+    let n = pts.len();
+    for i in 0..n {
+        let (p0, p1) = (pts[i], pts[(i + 1) % n]);
+        let mid = pos2((p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5);
+        let t = (((mid - c).dot(dir)) / half + 1.0) * 0.5;
+        let a = (a_faint as f32 + (a_strong as f32 - a_faint as f32) * t.clamp(0.0, 1.0)) as u8;
+        painter.line_segment([p0, p1], Stroke::new(w, azure(a)));
+    }
 }
 
 fn paint_cross(ui: &egui::Ui, rect: Rect, col: Color32) {
