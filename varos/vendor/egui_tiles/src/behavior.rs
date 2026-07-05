@@ -3,7 +3,7 @@ use egui::{
     vec2,
 };
 
-use super::{ResizeState, SimplificationOptions, Tile, TileId, Tiles, UiResponse};
+use super::{DropPreview, ResizeState, SimplificationOptions, Tile, TileId, Tiles, UiResponse};
 
 /// The kind of edit that triggered the call to [`Behavior::on_edit`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -385,28 +385,15 @@ pub trait Behavior<Pane> {
     }
 
     /// When drag-and-dropping a tile, how do we preview what is about to happen?
-    fn paint_drag_preview(
-        &self,
-        visuals: &Visuals,
-        painter: &egui::Painter,
-        parent_rect: Option<Rect>,
-        preview_rect: Rect,
-    ) {
-        let preview_stroke = self.drag_preview_stroke(visuals);
-        let preview_color = self.drag_preview_color(visuals);
-
-        if let Some(parent_rect) = parent_rect {
-            // Show which parent we will be dropped into
-            painter.rect_stroke(parent_rect, 1.0, preview_stroke, egui::StrokeKind::Inside);
+    ///
+    /// Varos LOCAL FORK: receives an explicit [`DropPreview`] (target box + dock side + neighbour) so the
+    /// look is decided from intent, not re-derived from a rect. The default just outlines what's affected.
+    fn paint_drag_preview(&self, visuals: &Visuals, painter: &egui::Painter, preview: DropPreview) {
+        let stroke = self.drag_preview_stroke(visuals);
+        painter.rect_stroke(preview.target, 1.0, stroke, egui::StrokeKind::Inside);
+        if let Some(neighbor) = preview.neighbor {
+            painter.rect_stroke(neighbor, 1.0, stroke, egui::StrokeKind::Inside);
         }
-
-        painter.rect(
-            preview_rect,
-            1.0,
-            preview_color,
-            preview_stroke,
-            egui::StrokeKind::Inside,
-        );
     }
 
     /// How many columns should we use for a [`crate::Grid`] put into [`crate::GridLayout::Auto`]?

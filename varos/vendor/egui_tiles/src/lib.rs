@@ -222,6 +222,45 @@ pub enum ResizeState {
 
 // ----------------------------------------------------------------------------
 
+/// Which edge of a box a drag is docking against (Varos LOCAL FORK; Ahmed 07-05).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropSide {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl DropSide {
+    /// The opposite edge — used to glow the neighbour box toward the shared seam.
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+            Self::Top => Self::Bottom,
+            Self::Bottom => Self::Top,
+        }
+    }
+}
+
+/// Everything [`Behavior::paint_drag_preview`] needs to draw the Varos drop highlight (LOCAL FORK).
+///
+/// The direction is decided up-front and passed explicitly — no re-deriving it from geometry — and the
+/// neighbour (if any) turns a plain edge-dock into the "between two boxes" look.
+#[derive(Clone, Copy, Debug)]
+pub struct DropPreview {
+    /// The box the cursor is over — always highlighted.
+    pub target: Rect,
+
+    /// The dock edge, or `None` for a tab drop (an even glow, no direction, no bar).
+    pub side: Option<DropSide>,
+
+    /// The box sharing `side`'s edge, if any → the "between two" case (both glow + one seam line).
+    pub neighbor: Option<Rect>,
+}
+
+// ----------------------------------------------------------------------------
+
 /// An insertion point in a specific container.
 ///
 /// Specifies the expected container layout type, and where to insert.
@@ -318,15 +357,16 @@ struct DropContext {
 
     best_insertion: Option<InsertionPoint>,
     best_dist_sq: f32,
-    preview_rect: Option<Rect>,
+    /// Which edge of `best_insertion`'s box we're docking against — `None` = tab (Varos fork).
+    dock_side: Option<DropSide>,
 }
 
 impl DropContext {
     fn on_tile<Pane>(
         &mut self,
         behavior: &dyn Behavior<Pane>,
-        style: &egui::Style,
-        parent_id: TileId,
+        _style: &egui::Style,
+        box_id: TileId,
         rect: Rect,
         tile: &Tile<Pane>,
     ) {
@@ -335,12 +375,11 @@ impl DropContext {
         }
 
         // ── Varos drop model (LOCAL FORK of egui_tiles; Ahmed 07-05) ────────────────────────────────
-        // Only a "box" (a leaf Pane, or a Tabs container we render as a box) is a drop target, and while
-        // the cursor is inside one it claims the drop deterministically (dist 0) so it ALWAYS beats the
-        // between-box seams. Zones inside a box (Ahmed 07-05: reaching above/below via the seams alone
-        // was too hard, so EVERY side of a box is a dock edge now):
-        //   left/right 20% → dock beside     top/bottom 15% → new box above/below     middle → tab.
-        // The seams between boxes still work too (they win in the gap where no box contains the cursor).
+        // Only a "box" (a leaf Pane, or a Tabs container we render as a box) is a drop target. While the
+        // cursor is inside one it claims the drop deterministically (dist 0) so it beats everything else.
+        // Every edge is a dock zone with ONE fixed band; the middle is a tab. We store the *direction*
+        // explicitly (no encoding it into a rect and guessing it back) and let paint find the neighbour:
+        //   edge 20% → dock beside / above / below     middle 60% → tab.
         let is_box = matches!(tile.kind(), None | Some(ContainerKind::Tabs));
         if !is_box {
             return; // linear / grid containers are invisible scaffolding, not drop targets
@@ -356,28 +395,22 @@ impl DropContext {
         }
         let fx = ((mouse.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
         let fy = ((mouse.y - rect.top()) / rect.height().max(1.0)).clamp(0.0, 1.0);
-        const HX: f32 = 0.20; // left/right dock band
-        const HY: f32 = 0.15; // top/bottom dock band (slimmer so the middle stays mostly "tab")
-        // closeness to each edge, normalised by its band (< 1 ⇒ the cursor is inside that dock edge)
-        // trigger by the slim edge band (fx/HX …); the preview is a thin strip ON that entry edge so the
-        // highlight can point the gradient the right way — the box itself stays the highlight (Ahmed 07-05).
+        const BAND: f32 = 0.20; // one fixed dock band on EVERY edge (Ahmed 07-05)
+        // closeness to each edge, normalised by the band (< 1 ⇒ the cursor is inside that dock edge)
         let edges = [
-            (fx / HX, ContainerInsertion::Horizontal(0), rect.split_left_right_at_fraction(0.18).0),
-            ((1.0 - fx) / HX, ContainerInsertion::Horizontal(usize::MAX), rect.split_left_right_at_fraction(0.82).1),
-            (fy / HY, ContainerInsertion::Vertical(0), rect.split_top_bottom_at_fraction(0.18).0),
-            ((1.0 - fy) / HY, ContainerInsertion::Vertical(usize::MAX), rect.split_top_bottom_at_fraction(0.82).1),
+            (fx / BAND, DropSide::Left, ContainerInsertion::Horizontal(0)),
+            ((1.0 - fx) / BAND, DropSide::Right, ContainerInsertion::Horizontal(usize::MAX)),
+            (fy / BAND, DropSide::Top, ContainerInsertion::Vertical(0)),
+            ((1.0 - fy) / BAND, DropSide::Bottom, ContainerInsertion::Vertical(usize::MAX)),
         ];
         let nearest = edges.iter().min_by(|a, b| a.0.total_cmp(&b.0)).unwrap();
-        let (insertion, preview_rect) = if nearest.0 < 1.0 {
-            (nearest.1, nearest.2) // in a dock edge → split beside / above / below
+        let (side, insertion) = if nearest.0 < 1.0 {
+            (Some(nearest.1), nearest.2) // in a dock edge → split beside / above / below
         } else {
-            (
-                ContainerInsertion::Tabs(usize::MAX), // the middle → tab
-                rect.split_top_bottom_at_y(rect.top() + behavior.tab_bar_height(style)).1,
-            )
+            (None, ContainerInsertion::Tabs(usize::MAX)) // the middle → tab
         };
-        self.best_insertion = Some(InsertionPoint::new(parent_id, insertion));
-        self.preview_rect = Some(preview_rect);
+        self.best_insertion = Some(InsertionPoint::new(box_id, insertion));
+        self.dock_side = side;
         self.best_dist_sq = 0.0;
     }
 
@@ -391,7 +424,7 @@ impl DropContext {
             if dist_sq < self.best_dist_sq {
                 self.best_dist_sq = dist_sq;
                 self.best_insertion = Some(insertion);
-                self.preview_rect = Some(preview_rect);
+                self.dock_side = None; // tab-bar / grid seam drops → even glow (no direction)
             }
         }
     }
