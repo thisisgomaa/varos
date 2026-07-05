@@ -224,6 +224,12 @@ impl Tabs {
         let mut next_active = self.active;
 
         let tab_bar_height = behavior.tab_bar_height(ui.style());
+        // Varos LOCAL FORK: when the tab bar is 0-height we render our OWN chip tabs in `Behavior::pane_ui`
+        // — skip the native bar entirely. Its overflow scroll-arrow buttons lay their glyph out at a font
+        // scale of 0 (arrow_size = splat(0)), which panics deep in epaint: "Bad px_scale_factor: 0".
+        if tab_bar_height < 1.0 {
+            return next_active;
+        }
         let arrow_size = egui::Vec2::splat(tab_bar_height);
         let tab_bar_rect = rect.split_top_bottom_at_y(rect.top() + tab_bar_height).0;
         let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(tab_bar_rect));
