@@ -1,7 +1,7 @@
-use egui::{NumExt as _, Rect, Ui};
+use egui::{NumExt as _, Pos2, Rect, Ui, pos2};
 
 use crate::behavior::EditAction;
-use crate::{ContainerInsertion, ContainerKind, UiResponse};
+use crate::{ContainerInsertion, ContainerKind, DropPreview, DropSide, UiResponse};
 
 use super::{
     Behavior, Container, DropContext, InsertionPoint, SimplificationOptions, SimplifyAction, Tile,
@@ -318,7 +318,7 @@ impl<Pane> Tree<Pane> {
             mouse_pos: ui.input(|i| i.pointer.interact_pos()),
             best_dist_sq: f32::INFINITY,
             best_insertion: None,
-            preview_rect: None,
+            dock_side: None,
         };
 
         let mut rect = ui.available_rect_before_wrap();
@@ -330,6 +330,10 @@ impl<Pane> Tree<Pane> {
         }
         if let Some(root) = self.root {
             self.tiles.layout_tile(ui.style(), behavior, rect, root);
+
+            // Varos LOCAL FORK: glide boxes toward their fresh layout targets so a dock re-shuffle is
+            // silky, never a snap (Ahmed 07-05). Runs on the laid-out rects, before anything is drawn.
+            self.smooth_tile_rects(ui.ctx());
 
             self.tile_ui(behavior, &mut drop_context, ui, root);
         }
@@ -460,29 +464,36 @@ impl<Pane> Tree<Pane> {
                 behavior.drag_ui(&self.tiles, ui, dragged_tile_id);
             });
 
-        if let Some(preview_rect) = drop_context.preview_rect {
-            let preview_rect = smooth_preview_rect(ui, dragged_tile_id, preview_rect);
+        // Varos LOCAL FORK: the highlight is the box the cursor is over (`target`), plus — when docking on
+        // an edge shared with another box — that neighbour, so BOTH glow toward the seam. The direction is
+        // carried explicitly in `dock_side`; the neighbour is found geometrically from the laid-out rects.
+        if let Some(insertion) = drop_context.best_insertion
+            && let Some(box_rect) = self.tiles.rect(insertion.parent_id)
+        {
+            let target = smooth_preview_rect(ui, dragged_tile_id, box_rect);
+            let side = drop_context.dock_side;
+            let neighbor = side.and_then(|s| {
+                self.neighbor_box_rect(insertion.parent_id, drop_context.dragged_tile_id, box_rect, s)
+            });
 
-            let parent_rect = drop_context
-                .best_insertion
-                .and_then(|insertion_point| self.tiles.rect(insertion_point.parent_id));
+            behavior.paint_drag_preview(
+                ui.visuals(),
+                ui.painter(),
+                DropPreview { target, side, neighbor },
+            );
 
-            behavior.paint_drag_preview(ui.visuals(), ui.painter(), parent_rect, preview_rect);
-
-            if behavior.preview_dragged_panes() {
-                // TODO(emilk): add support for previewing containers too.
-                if preview_rect.width() > 32.0
-                    && preview_rect.height() > 32.0
-                    && let Some(Tile::Pane(pane)) = self.tiles.get_mut(dragged_tile_id)
-                {
-                    // Intentionally ignore the response, since the user cannot possibly
-                    // begin a drag on the preview pane.
-                    let _ignored: UiResponse = behavior.pane_ui(
-                        &mut ui.new_child(egui::UiBuilder::new().max_rect(preview_rect)),
-                        dragged_tile_id,
-                        pane,
-                    );
-                }
+            if behavior.preview_dragged_panes()
+                && target.width() > 32.0
+                && target.height() > 32.0
+                && let Some(Tile::Pane(pane)) = self.tiles.get_mut(dragged_tile_id)
+            {
+                // Intentionally ignore the response, since the user cannot possibly
+                // begin a drag on the preview pane.
+                let _ignored: UiResponse = behavior.pane_ui(
+                    &mut ui.new_child(egui::UiBuilder::new().max_rect(target)),
+                    dragged_tile_id,
+                    pane,
+                );
             }
         }
 
@@ -490,8 +501,119 @@ impl<Pane> Tree<Pane> {
             if let Some(insertion_point) = drop_context.best_insertion {
                 behavior.on_edit(EditAction::TileDropped);
                 self.move_tile(dragged_tile_id, insertion_point, false);
+                // Varos LOCAL FORK: open a short glide window so neighbours slide to make room, and
+                // remember the moved tile + the drop point so IT flies from the cursor (where you let go)
+                // into its new slot — not a snap, and not a long slide from its old home (Ahmed 07-05).
+                let now = ui.ctx().input(|i| i.time);
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(glide_until_id(), now + 0.25);
+                    d.insert_temp(moved_tile_id(), dragged_tile_id);
+                    d.insert_temp(fly_from_id(), mouse_pos);
+                });
             }
             clear_smooth_preview_rect(ui, dragged_tile_id);
+        }
+    }
+
+    /// Varos LOCAL FORK: the visible box whose opposite edge is flush against `rect`'s `side` edge — used
+    /// to glow BOTH boxes when docking between them. Returns the best-overlapping neighbour, or `None`
+    /// when `rect` is at the outer boundary on that side. Only real boxes (panes / tab containers) count.
+    fn neighbor_box_rect(
+        &self,
+        target_id: TileId,
+        dragged_id: Option<TileId>,
+        rect: Rect,
+        side: DropSide,
+    ) -> Option<Rect> {
+        const FLUSH: f32 = 18.0; // seam gap + slack: edges within this are "touching"
+        let mut best: Option<(f32, Rect)> = None;
+        for (&id, &r) in &self.tiles.rects {
+            if id == target_id || Some(id) == dragged_id {
+                continue;
+            }
+            let is_box =
+                matches!(self.tiles.get(id).map(Tile::kind), Some(None | Some(ContainerKind::Tabs)));
+            if !is_box {
+                continue;
+            }
+            // `gap` = signed distance from `rect`'s dock edge to `r`'s opposite edge (≈ seam gap when
+            // flush); `overlap` = how much they share along the seam axis. Nearest flush box with real
+            // overlap on the correct side wins.
+            let (gap, overlap) = match side {
+                DropSide::Bottom => (r.top() - rect.bottom(), x_overlap(rect, r)),
+                DropSide::Top => (rect.top() - r.bottom(), x_overlap(rect, r)),
+                DropSide::Right => (r.left() - rect.right(), y_overlap(rect, r)),
+                DropSide::Left => (rect.left() - r.right(), y_overlap(rect, r)),
+            };
+            if (-4.0..=FLUSH).contains(&gap)
+                && overlap > 1.0
+                && best.map_or(true, |(o, _)| overlap > o)
+            {
+                best = Some((overlap, r));
+            }
+        }
+        best.map(|(_, r)| r)
+    }
+
+    /// Varos LOCAL FORK: ease every tile from where it was drawn last frame toward its fresh layout
+    /// target, so docking GLIDES instead of snapping (Ahmed 07-05). Time-based (frame-rate independent)
+    /// and independent of `style.animation_time` — that stays 0 for instant chrome; this is functional
+    /// motion on the boxes only. Gated to a short window after a drop so window-resizes stay exact (no
+    /// trailing). The just-docked tile snaps straight to its slot (its displayed rect is cleared on drop);
+    /// its neighbours glide to make room.
+    fn smooth_tile_rects(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        let glide_until = ctx.data(|d| d.get_temp::<f64>(glide_until_id())).unwrap_or(0.0);
+        let gliding = now < glide_until;
+        let dt = ctx.input(|i| i.stable_dt).at_most(0.1);
+        let t = egui::emath::exponential_smooth_factor(0.9, 0.09, dt); // silky settle (~90ms), not slow
+
+        // A just-dropped tile flies in from the drop point (the cursor). Consume the one-shot markers.
+        let just_dropped: Option<(TileId, Pos2)> = ctx.data_mut(|d| {
+            let mt = d.get_temp::<TileId>(moved_tile_id());
+            let ff = d.get_temp::<Pos2>(fly_from_id());
+            if mt.is_some() {
+                d.remove::<TileId>(moved_tile_id());
+            }
+            if ff.is_some() {
+                d.remove::<Pos2>(fly_from_id());
+            }
+            mt.zip(ff)
+        });
+
+        let targets: Vec<(TileId, Rect)> =
+            self.tiles.rects.iter().map(|(&id, &r)| (id, r)).collect();
+        let mut still_moving = false;
+        for (id, target) in targets {
+            let key = displayed_rect_id(id);
+            // Seed the moved tile's starting rect at the drop point (cursor at its top-centre), same size
+            // as the slot — so it glides from where you let go into place, instead of snapping.
+            if let Some((mt, ff)) = just_dropped
+                && mt == id
+            {
+                let start =
+                    Rect::from_min_size(pos2(ff.x - target.width() * 0.5, ff.y), target.size());
+                ctx.data_mut(|d| d.insert_temp(key, start));
+            }
+            let smoothed = ctx.data_mut(|data| {
+                let disp: &mut Rect = data.get_temp_mut_or(key, target);
+                if gliding {
+                    *disp = disp.lerp_towards(&target, t);
+                    if disp.min.distance(target.min) + disp.max.distance(target.max) < 0.5 {
+                        *disp = target;
+                    }
+                } else {
+                    *disp = target; // idle / resizing → exact position, never a trailing lag
+                }
+                *disp
+            });
+            if smoothed != target {
+                still_moving = true;
+            }
+            self.tiles.rects.insert(id, smoothed);
+        }
+        if gliding && still_moving {
+            ctx.request_repaint();
         }
     }
 
@@ -710,10 +832,40 @@ impl<Pane> Tree<Pane> {
 
 // ----------------------------------------------------------------------------
 
+/// Overlap of two rects along X (≤ 0 ⇒ disjoint) — Varos fork neighbour test.
+fn x_overlap(a: Rect, b: Rect) -> f32 {
+    a.right().min(b.right()) - a.left().max(b.left())
+}
+
+/// Overlap of two rects along Y (≤ 0 ⇒ disjoint) — Varos fork neighbour test.
+fn y_overlap(a: Rect, b: Rect) -> f32 {
+    a.bottom().min(b.bottom()) - a.top().max(b.top())
+}
+
 /// We store the preview rect in egui temp storage so that it is not serialized,
 /// and so that a user could re-create the [`Tree`] each frame and still get smooth previews.
 fn smooth_preview_rect_id(dragged_tile_id: TileId) -> egui::Id {
     egui::Id::new((dragged_tile_id, "smoothed_preview_rect"))
+}
+
+/// Varos fork: a tile's on-screen (eased) rect, in egui temp storage so it's not serialized.
+fn displayed_rect_id(tile_id: TileId) -> egui::Id {
+    egui::Id::new((tile_id, "varos_disp_rect"))
+}
+
+/// Varos fork: the timestamp until which boxes glide toward their targets (set on each drop).
+fn glide_until_id() -> egui::Id {
+    egui::Id::new("varos_glide_until")
+}
+
+/// Varos fork: one-shot marker — the tile that was just dropped (flies in from the drop point).
+fn moved_tile_id() -> egui::Id {
+    egui::Id::new("varos_moved_tile")
+}
+
+/// Varos fork: one-shot marker — the cursor position at the moment of the drop.
+fn fly_from_id() -> egui::Id {
+    egui::Id::new("varos_fly_from")
 }
 
 fn clear_smooth_preview_rect(ctx: &egui::Context, dragged_tile_id: TileId) {

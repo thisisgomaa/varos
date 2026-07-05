@@ -4,10 +4,7 @@ use egui::{NumExt as _, Rect, emath::GuiRounding as _, pos2, vec2};
 use itertools::Itertools as _;
 
 use crate::behavior::EditAction;
-use crate::{
-    Behavior, ContainerInsertion, DropContext, InsertionPoint, ResizeState, SimplifyAction, TileId,
-    Tiles, Tree, is_being_dragged,
-};
+use crate::{Behavior, DropContext, ResizeState, SimplifyAction, TileId, Tiles, Tree};
 
 // ----------------------------------------------------------------------------
 
@@ -473,39 +470,11 @@ fn shrink_shares<Pane>(
     total_shares_lost
 }
 
-fn linear_drop_zones<Pane>(
-    egui_ctx: &egui::Context,
-    tree: &Tree<Pane>,
-    children: &[TileId],
-    dir: LinearDir,
-    add_drop_drect: impl FnMut(Rect, usize),
-) {
-    let preview_thickness = 12.0;
-    let dragged_index = children
-        .iter()
-        .position(|&child| is_being_dragged(egui_ctx, tree.id, child));
-
-    let after_rect = |rect: Rect| match dir {
-        LinearDir::Horizontal => Rect::from_min_max(
-            rect.right_top() - vec2(preview_thickness, 0.0),
-            rect.right_bottom(),
-        ),
-        LinearDir::Vertical => Rect::from_min_max(
-            rect.left_bottom() - vec2(0.0, preview_thickness),
-            rect.right_bottom(),
-        ),
-    };
-
-    drop_zones(
-        preview_thickness,
-        children,
-        dragged_index,
-        dir,
-        |tile_id| tree.tiles.rect(tile_id),
-        add_drop_drect,
-        after_rect,
-    );
-}
+// Varos LOCAL FORK: `linear_drop_zones` (the between-children seam drops) is deleted. Seams targeted the
+// whole container, so the drop preview covered the entire bank; Varos docks on a box's own edge (see
+// `DropContext::on_tile`) and the "between two boxes" highlight comes from the neighbour lookup at paint
+// time — no seam drop needed. `drop_zones` below stays: the tab bar still uses it. Reordering within a
+// bank still works via edge docks + simplify.
 
 /// Register drop-zones for a linear container.
 ///
