@@ -5,13 +5,13 @@
 use crate::editor::{Editor, ToolKind};
 use crate::geom::Pt;
 
-pub mod pen;
-pub mod direct;
-pub mod object;
-pub mod shapes;
 pub mod convert;
+pub mod direct;
 pub mod eyedropper;
+pub mod object;
+pub mod pen;
 pub mod rotate;
+pub mod shapes;
 
 pub trait Tool {
     fn down(&self, ed: &mut Editor, pos: Pt);

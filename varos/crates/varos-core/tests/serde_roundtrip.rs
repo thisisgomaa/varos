@@ -69,16 +69,39 @@ fn sample_doc() -> Document {
         // a square white page with bleed + clip, and a transparent page (page_color = None).
         units: DocUnits { ppi: 96.0, display: Unit::Mm },
         artboards: vec![
-            Artboard { x: 0.0, y: 0.0, w: 800.0, h: 600.0, name: "Page".to_string(),
-                       bleed: 9.0, page_color: Some([1.0, 1.0, 1.0, 1.0]), clip: true },
-            Artboard { x: 900.0, y: 0.0, w: 1080.0, h: 1080.0, name: "Logo".to_string(),
-                       bleed: 0.0, page_color: None, clip: false },
+            Artboard {
+                x: 0.0,
+                y: 0.0,
+                w: 800.0,
+                h: 600.0,
+                name: "Page".to_string(),
+                bleed: 9.0,
+                page_color: Some([1.0, 1.0, 1.0, 1.0]),
+                clip: true,
+            },
+            Artboard {
+                x: 900.0,
+                y: 0.0,
+                w: 1080.0,
+                h: 1080.0,
+                name: "Logo".to_string(),
+                bleed: 0.0,
+                page_color: None,
+                clip: false,
+            },
         ],
         active: 1,
         move_art_with_ab: false,
         // non-default snap config so the round-trip exercises the new fields
-        snap: SnapConfig { smart: false, radius_px: 6.0, candidate_max: 5, grid: true, path_intersections: false, ..SnapConfig::default() },
-        ruler_origin: [12.0, 34.0],   // non-default ruler zero-point exercises the new field
+        snap: SnapConfig {
+            smart: false,
+            radius_px: 6.0,
+            candidate_max: 5,
+            grid: true,
+            path_intersections: false,
+            ..SnapConfig::default()
+        },
+        ruler_origin: [12.0, 34.0], // non-default ruler zero-point exercises the new field
         guides: vec![Guide { vertical: true, pos: 100.0 }, Guide { vertical: false, pos: 250.0 }],
         guides_locked: true,
     }

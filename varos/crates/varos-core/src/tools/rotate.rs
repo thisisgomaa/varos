@@ -13,7 +13,12 @@ impl Tool for Transform {
         // the tool acts on a selection — with none, grab the object under the cursor (else nothing to do)
         if ed.objsel.is_empty() {
             match ed.path_under(pos) {
-                Some(pid) => { for m in ed.doc.group_members(pid) { ed.objsel.insert(m); } ed.objsel.insert(pid); }
+                Some(pid) => {
+                    for m in ed.doc.group_members(pid) {
+                        ed.objsel.insert(m);
+                    }
+                    ed.objsel.insert(pid);
+                }
                 None => return,
             }
         }
