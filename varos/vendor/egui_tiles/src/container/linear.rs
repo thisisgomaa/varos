@@ -244,12 +244,9 @@ impl Linear {
             crate::cover_tile_if_dragged(tree, behavior, ui, child);
         }
 
-        linear_drop_zones(ui, tree, &self.children, self.dir, |rect, i| {
-            drop_context.suggest_rect(
-                InsertionPoint::new(parent_id, ContainerInsertion::Horizontal(i)),
-                rect,
-            );
-        });
+        // Varos LOCAL FORK: between-children (seam) drops disabled. They target the whole container, so
+        // the drop preview covered the entire bank; Varos docks only on a box's own edge (see on_tile),
+        // which keeps every highlight sized to one box. Reordering still works via edge docks + simplify.
 
         // ------------------------
         // resizing:
@@ -318,12 +315,7 @@ impl Linear {
             crate::cover_tile_if_dragged(tree, behavior, ui, child);
         }
 
-        linear_drop_zones(ui, tree, &self.children, self.dir, |rect, i| {
-            drop_context.suggest_rect(
-                InsertionPoint::new(parent_id, ContainerInsertion::Vertical(i)),
-                rect,
-            );
-        });
+        // Varos LOCAL FORK: between-children (seam) drops disabled — see the note in `horizontal_ui`.
 
         // ------------------------
         // resizing:

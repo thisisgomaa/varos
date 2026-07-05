@@ -371,34 +371,30 @@ impl Behavior<PanelId> for ShellBehavior {
     /// ONE clean guide: a rounded azure outline of the drop slot only (the default also outlines the
     /// parent container — that's the "too many guides" Ahmed saw). Light fill, thin stroke.
     fn paint_drag_preview(&self, _visuals: &Visuals, painter: &egui::Painter, parent_rect: Option<Rect>, preview_rect: Rect) {
-        // No parent info → a single glowing outline of the slot.
+        // The highlight is ONE box — the target box itself, never the whole bank (Ahmed 07-05).
         let Some(parent) = parent_rect else {
-            glow_half(painter, preview_rect.shrink(1.0), vec2(0.0, 0.0));
+            glow_half(painter, preview_rect.shrink(1.0), egui::Vec2::ZERO);
             return;
         };
+        let rect = parent.shrink(1.0);
         let ratio = (preview_rect.width() * preview_rect.height()) / (parent.width() * parent.height()).max(1.0);
-        // TAB: the slot is ~the whole box → one even-glow box, no bar.
-        if ratio > 0.85 {
-            glow_half(painter, parent.shrink(1.0), vec2(0.0, 0.0));
+        // TAB: the slot is ~the whole box → one even glow, no direction, no bar.
+        if ratio > 0.6 {
+            glow_half(painter, rect, egui::Vec2::ZERO);
             return;
         }
-        // SPLIT: the box divides into TWO glowing halves, each fading toward the shared seam, with ONE
-        // thick bright bar between them — all shown together (Ahmed 07-05: they express the same thing).
-        let gap = 8.0;
-        let bar = Stroke::new(3.0, azure(255));
-        if preview_rect.height() < parent.height() * 0.9 {
-            // horizontal seam → top / bottom halves
-            let m = parent.center().y;
-            glow_half(painter, Rect::from_min_max(parent.min, pos2(parent.right(), m - gap * 0.5)).shrink(1.0), vec2(0.0, 1.0));
-            glow_half(painter, Rect::from_min_max(pos2(parent.left(), m + gap * 0.5), parent.max).shrink(1.0), vec2(0.0, -1.0));
-            painter.line_segment([pos2(parent.left() + 9.0, m), pos2(parent.right() - 9.0, m)], bar);
+        // EDGE DOCK: the box glows with a gradient toward the entry edge (where the new panel comes in),
+        // and one thick bright bar sits on that edge. Above → glow+bar at top; below → bottom; etc.
+        let d = preview_rect.center() - parent.center();
+        let dir = if d.x.abs() >= d.y.abs() {
+            if d.x >= 0.0 { vec2(1.0, 0.0) } else { vec2(-1.0, 0.0) }
+        } else if d.y >= 0.0 {
+            vec2(0.0, 1.0)
         } else {
-            // vertical seam → left / right halves
-            let m = parent.center().x;
-            glow_half(painter, Rect::from_min_max(parent.min, pos2(m - gap * 0.5, parent.bottom())).shrink(1.0), vec2(1.0, 0.0));
-            glow_half(painter, Rect::from_min_max(pos2(m + gap * 0.5, parent.top()), parent.max).shrink(1.0), vec2(-1.0, 0.0));
-            painter.line_segment([pos2(m, parent.top() + 9.0), pos2(m, parent.bottom() - 9.0)], bar);
-        }
+            vec2(0.0, -1.0)
+        };
+        glow_half(painter, rect, dir);
+        edge_bar(painter, rect, dir);
     }
     fn dragged_overlay_color(&self, _visuals: &Visuals) -> Color32 {
         Color32::from_rgba_unmultiplied(0x14, 0x13, 0x13, 170)
@@ -443,8 +439,8 @@ fn fill_gradient(painter: &egui::Painter, rect: Rect, dir: egui::Vec2, a_strong:
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// One glowing half-box: a soft azure fill gradient fading toward the `dir` edge (the shared seam) inside
-/// a crisp uniform rounded azure outline. `dir` = (0,0) → an even wash (a tab / whole-box highlight).
+/// One glowing box: a soft azure fill gradient fading toward the `dir` edge inside a crisp uniform rounded
+/// azure outline. `dir` = (0,0) → an even wash (a tab / whole-box highlight).
 fn glow_half(painter: &egui::Painter, rect: Rect, dir: egui::Vec2) {
     painter.rect_filled(rect, T::r_box(), azure(if dir == egui::Vec2::ZERO { 20 } else { 8 }));
     if dir != egui::Vec2::ZERO {
@@ -452,6 +448,21 @@ fn glow_half(painter: &egui::Painter, rect: Rect, dir: egui::Vec2) {
         fill_gradient(painter, grad, dir, 78, 0);
     }
     painter.rect_stroke(rect, T::r_box(), Stroke::new(1.6, T::ACCENT), StrokeKind::Inside);
+}
+
+/// One thick bright azure bar along the entry edge that `dir` points to (the "خط" — Ahmed 07-05).
+fn edge_bar(painter: &egui::Painter, rect: Rect, dir: egui::Vec2) {
+    let (w, inset) = (3.0, 9.0);
+    let (a, b) = if dir.y > 0.0 {
+        (pos2(rect.left() + inset, rect.bottom() - w * 0.5), pos2(rect.right() - inset, rect.bottom() - w * 0.5))
+    } else if dir.y < 0.0 {
+        (pos2(rect.left() + inset, rect.top() + w * 0.5), pos2(rect.right() - inset, rect.top() + w * 0.5))
+    } else if dir.x > 0.0 {
+        (pos2(rect.right() - w * 0.5, rect.top() + inset), pos2(rect.right() - w * 0.5, rect.bottom() - inset))
+    } else {
+        (pos2(rect.left() + w * 0.5, rect.top() + inset), pos2(rect.left() + w * 0.5, rect.bottom() - inset))
+    };
+    painter.line_segment([a, b], Stroke::new(w, azure(255)));
 }
 
 fn paint_cross(ui: &egui::Ui, rect: Rect, col: Color32) {
