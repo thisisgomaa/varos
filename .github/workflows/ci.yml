@@ -1,0 +1,26 @@
+# VAROS CI — ENGINEERING_REVIEW.md §5.1 (corrected YAML), backlog #1.
+# Guards the 90 headless tests + lint on every push/PR. Invariant (§3.1): no test may
+# construct a GPU `Renderer` or an `EventLoop` — the suite is CPU-pure by design; a GPU
+# integration test would hang headless CI. Gate such tests behind `#[ignore]` if ever added.
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  check:
+    runs-on: windows-latest        # matches the real target (Win32/WebView2/wgpu)
+    defaults:
+      run:
+        working-directory: varos    # Cargo workspace sits one level below git root
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy, rustfmt }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: varos } # REQUIRED — manifest is not at repo root, or the cache no-ops
+      - run: cargo fmt --all --check           # the fmt commit landed with rustfmt.toml (f46d25f)
+      - run: cargo clippy --workspace --all-targets -- -D warnings   # cleaned to 0 in 609e4af → real gate from day one
+      - run: cargo test --workspace            # safe while no test builds a Renderer/EventLoop (§3.1)
+      - run: cargo build --workspace
+      - run: cargo install cargo-audit --locked && cargo audit
+        continue-on-error: true                # triage advisories first, then make it a gate
