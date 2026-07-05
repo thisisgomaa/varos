@@ -359,11 +359,13 @@ impl DropContext {
         const HX: f32 = 0.20; // left/right dock band
         const HY: f32 = 0.15; // top/bottom dock band (slimmer so the middle stays mostly "tab")
         // closeness to each edge, normalised by its band (< 1 ⇒ the cursor is inside that dock edge)
+        // trigger by the slim edge band (fx/HX …); the preview is a thin strip ON that entry edge so the
+        // highlight can point the gradient the right way — the box itself stays the highlight (Ahmed 07-05).
         let edges = [
-            (fx / HX, ContainerInsertion::Horizontal(0), rect.split_left_right_at_fraction(HX).0),
-            ((1.0 - fx) / HX, ContainerInsertion::Horizontal(usize::MAX), rect.split_left_right_at_fraction(1.0 - HX).1),
-            (fy / HY, ContainerInsertion::Vertical(0), rect.split_top_bottom_at_fraction(HY).0),
-            ((1.0 - fy) / HY, ContainerInsertion::Vertical(usize::MAX), rect.split_top_bottom_at_fraction(1.0 - HY).1),
+            (fx / HX, ContainerInsertion::Horizontal(0), rect.split_left_right_at_fraction(0.18).0),
+            ((1.0 - fx) / HX, ContainerInsertion::Horizontal(usize::MAX), rect.split_left_right_at_fraction(0.82).1),
+            (fy / HY, ContainerInsertion::Vertical(0), rect.split_top_bottom_at_fraction(0.18).0),
+            ((1.0 - fy) / HY, ContainerInsertion::Vertical(usize::MAX), rect.split_top_bottom_at_fraction(0.82).1),
         ];
         let nearest = edges.iter().min_by(|a, b| a.0.total_cmp(&b.0)).unwrap();
         let (insertion, preview_rect) = if nearest.0 < 1.0 {
