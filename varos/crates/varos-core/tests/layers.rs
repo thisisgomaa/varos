@@ -213,6 +213,32 @@ fn a_locked_layer_is_truly_immovable() {
 }
 
 #[test]
+fn ctrl_click_toggles_a_row_even_with_locked_members() {
+    // 07-04 review bug #1: `all_in` counted locked/hidden paths (which can never be in objsel),
+    // so Ctrl+click could only ever ADD on a mixed-lock row — deselect was unreachable.
+    let mut ed = Editor::new();
+    ed.doc.artboards.clear(); ed.ppu = 1.0;
+    ed.doc.paths.push(tri(1, 1, 0.0));
+    ed.doc.paths.push(tri(2, 4, 40.0));
+    ed.doc.paths.push(tri(3, 7, 80.0));
+    ed.doc.ids = 12;
+    ed.doc.sync_tree();
+    let layer = ed.doc.active_layer;
+    ed.set_locked(3, true);                    // one locked member → a mixed row
+
+    ed.layer_toggle(layer);                    // Ctrl+click: select what's selectable
+    assert_eq!(ed.objsel.len(), 2, "only the unlocked art is selected");
+    assert!(ed.objsel.contains(&1) && ed.objsel.contains(&2) && !ed.objsel.contains(&3));
+    ed.layer_toggle(layer);                    // Ctrl+click again: must DESELECT
+    assert!(ed.objsel.is_empty(), "a mixed-lock row toggles OFF once its selectable art is all in");
+
+    // and a fully-locked row toggles nothing at all
+    ed.set_locked(1, true); ed.set_locked(2, true);
+    ed.layer_toggle(layer);
+    assert!(ed.objsel.is_empty(), "a fully-locked row can't grab the selection");
+}
+
+#[test]
 fn a_second_layer_receives_new_drawings() {
     let mut d = Document::default();
     d.paths.push(tri(1, 1, 0.0));
