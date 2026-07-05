@@ -39,6 +39,10 @@ impl ShellState {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        // Merge any nested Tabs-in-Tabs a prior drop may have created, so every box reads as ONE flat tab
+        // strip (dropping a multi-tab box onto a tab must give siblings, not a hidden nested box).
+        flatten_nested_tabs(&mut self.tree);
+
         // For each Tabs container, map its ACTIVE pane's tile → the group; we render the whole tabbed
         // box ourselves in pane_ui (fully rounded, floating pills), with egui_tiles' tab bar at 0 height.
         let mut groups: HashMap<TileId, TabGroup> = HashMap::new();
@@ -54,7 +58,7 @@ impl ShellState {
             }
         }
 
-        let mut behavior = ShellBehavior { groups, ..Default::default() };
+        let mut behavior = ShellBehavior { groups, tree_id: Some(self.tree.id()), ..Default::default() };
         self.tree.ui(&mut behavior, ui);
 
         if let Some((container, tile)) = behavior.set_active {
@@ -79,6 +83,14 @@ impl ShellState {
         if let Some(dragged) = self.tree.dragged_id(ui.ctx()) {
             let panel = match self.tree.tiles.get(dragged) {
                 Some(Tile::Pane(p)) => Some(*p),
+                // dragging a whole tabbed box (grip) → ghost the active tab's panel as its stand-in
+                Some(Tile::Container(Container::Tabs(t))) => t
+                    .active
+                    .or_else(|| t.children.first().copied())
+                    .and_then(|c| match self.tree.tiles.get(c) {
+                        Some(Tile::Pane(p)) => Some(*p),
+                        _ => None,
+                    }),
                 _ => None,
             };
             if let (Some(panel), Some(cur)) = (panel, cursor) {
@@ -105,6 +117,42 @@ impl ShellState {
 fn set_share(tree: &mut Tree<PanelId>, container: TileId, child: TileId, share: f32) {
     if let Some(Tile::Container(Container::Linear(lin))) = tree.tiles.get_mut(container) {
         lin.shares.set_share(child, share);
+    }
+}
+
+/// Flatten Tabs-in-Tabs into ONE tab strip: dropping a multi-tab box onto a tab must give all panes as
+/// siblings in the same box, not a hidden nested container (Ahmed 07-06). egui_tiles has no "join nested
+/// tabs" simplification, so we splice the inner tabs' children into the outer each frame before rendering.
+fn flatten_nested_tabs(tree: &mut Tree<PanelId>) {
+    loop {
+        // find an outer Tabs whose child at `index` is itself a Tabs container
+        let mut hit: Option<(TileId, usize, TileId)> = None;
+        for (id, tile) in tree.tiles.iter() {
+            if let Tile::Container(Container::Tabs(t)) = tile {
+                for (i, &child) in t.children.iter().enumerate() {
+                    if matches!(tree.tiles.get(child), Some(Tile::Container(Container::Tabs(_)))) {
+                        hit = Some((*id, i, child));
+                        break;
+                    }
+                }
+            }
+            if hit.is_some() {
+                break;
+            }
+        }
+        let Some((outer_id, index, inner_id)) = hit else { break };
+        let (kids, inner_active) = match tree.tiles.get(inner_id) {
+            Some(Tile::Container(Container::Tabs(inner))) => (inner.children.clone(), inner.active),
+            _ => break,
+        };
+        if let Some(Tile::Container(Container::Tabs(outer))) = tree.tiles.get_mut(outer_id) {
+            let adopt = outer.active == Some(inner_id); // if the dropped box was the active tab, keep its active
+            outer.children.splice(index..=index, kids.iter().copied());
+            if adopt {
+                outer.active = inner_active.or_else(|| kids.first().copied());
+            }
+        }
+        tree.tiles.remove(inner_id);
     }
 }
 
@@ -196,15 +244,36 @@ fn draw_resize_handles(tree: &Tree<PanelId>, ui: &egui::Ui) {
     }
 }
 
-/// The persistent move-grip: a small bar at the top-centre of EVERY box. Always drawn — never hidden by
-/// scroll or by being in a tab group (Ahmed 07-04: "المقبض بيختفي"). Faint at rest (LINE2), bright when
-/// hovered/held (TEXT). Grabbing it hands the drag to egui_tiles (lift → drop preview → dock).
+/// The move-grip: a small bar at the top-centre of a box. HIDDEN at rest, revealed only when the cursor
+/// is over the box's top band (or while it's being dragged) — Ahmed 07-05: "مخفي لحد ما أعمل hover عنده".
+/// The grab zone stays live always, so grabbing still hands the drag to egui_tiles (lift → preview → dock).
 fn draw_grip(ui: &egui::Ui, rect: Rect, tile_id: TileId) -> egui::Response {
     let grip = Rect::from_center_size(pos2(rect.center().x, rect.top() + 8.0), vec2(26.0, 3.0));
     let r = ui.interact(grip.expand2(vec2(16.0, 8.0)), ui.id().with(("grip", tile_id)), Sense::click_and_drag());
-    let col = if r.hovered() || r.dragged() { T::TEXT } else { T::LINE2 };
-    ui.painter().rect_filled(grip, CornerRadius::same(2), col);
+    // reveal only near the top of the box (where the grip lives) — everywhere else it's invisible chrome.
+    let near_top = ui.rect_contains_pointer(Rect::from_min_max(rect.left_top(), pos2(rect.right(), rect.top() + 24.0)));
+    if near_top || r.dragged() {
+        let col = if r.hovered() || r.dragged() { T::TEXT } else { T::LINE2 };
+        ui.painter().rect_filled(grip, CornerRadius::same(2), col);
+    }
     r
+}
+
+/// A round, tab-shaped chevron button for scrolling the pill strip when tabs overflow (Ahmed 07-06).
+/// `dir`: -1.0 draws ‹ (scroll left), +1.0 draws › (scroll right). Same capsule look as a tab. Returns
+/// true on click. Only the caller decides WHEN to show it (left only if scrolled off left, etc.).
+fn scroll_arrow(ui: &egui::Ui, center: Pos2, dir: f32, tile_id: TileId) -> bool {
+    let rad = 11.0;
+    let hit = Rect::from_center_size(center, vec2(2.0 * rad, 2.0 * rad));
+    let r = ui.interact(hit, ui.id().with(("tabarrow", tile_id, dir as i32)), Sense::click());
+    let p = ui.painter();
+    p.circle_filled(center, rad, if r.hovered() { T::HOVER } else { T::SURFACE });
+    let col = if r.hovered() { T::TEXT } else { T::MUTED };
+    // a chevron: two short strokes meeting at the tip (tip points the way it scrolls)
+    let tip = pos2(center.x + dir * 2.5, center.y);
+    p.line_segment([pos2(center.x - dir * 2.5, center.y - 4.0), tip], Stroke::new(1.7, col));
+    p.line_segment([tip, pos2(center.x - dir * 2.5, center.y + 4.0)], Stroke::new(1.7, col));
+    r.clicked()
 }
 
 /// The scrollable body below a box's header, with one consistent inner margin (12 × 10) so every panel
@@ -241,6 +310,8 @@ struct ShellBehavior {
     close: Option<TileId>,
     set_active: Option<(TileId, TileId)>,
     groups: HashMap<TileId, TabGroup>,
+    /// The tree's egui id, set each frame — lets a pill/grip drag start the drag on the RIGHT tile.
+    tree_id: Option<egui::Id>,
 }
 
 impl ShellBehavior {
@@ -306,33 +377,67 @@ impl Behavior<PanelId> for ShellBehavior {
                 pos2(controls_left - 6.0, rect.top() + 37.0),
             );
             let mut clicked = None;
-            let mut drag_active = false;
+            let mut pill_drag: Option<TileId> = None;
+            // one-shot forced offset set by an arrow click last frame; the wheel scrolls the rest of the time
+            let scroll_key = egui::Id::new(("pills_scroll", tile_id));
+            let forced = ui.ctx().data(|d| d.get_temp::<f32>(scroll_key));
+            if forced.is_some() { ui.ctx().data_mut(|d| d.remove::<f32>(scroll_key)); }
+            let (mut offset_x, mut viewport_w, mut content_w) = (0.0_f32, 0.0_f32, 0.0_f32);
             ui.scope_builder(UiBuilder::new().max_rect(strip), |ui| {
-                egui::ScrollArea::horizontal()
+                let mut sa = egui::ScrollArea::horizontal()
                     .id_salt(("pills", tile_id))
-                    .scroll_source(egui::scroll_area::ScrollSource::MOUSE_WHEEL) // wheel scrolls; drag LIFTS the pill
-                    .show(ui, |ui| {
-                        ui.horizontal_centered(|ui| {
-                            ui.spacing_mut().item_spacing.x = 5.0;
-                            for (tid, pid) in &group.tabs {
-                                let active = *tid == group.active;
-                                let tw = ui.painter().layout_no_wrap(pid.title().to_owned(), font.clone(), T::TEXT).size().x;
-                                let (pill, r) = ui.allocate_exact_size(vec2(tw + 20.0, 22.0), Sense::click_and_drag());
-                                let bg = if active { T::SURFACE } else if r.hovered() { T::HOVER } else { Color32::TRANSPARENT };
-                                ui.painter().rect_filled(pill, CornerRadius::same(11), bg); // capsule = a Claude bubble
-                                ui.painter().text(pill.center(), Align2::CENTER_CENTER, pid.title(), font.clone(), if active || r.hovered() { T::TEXT } else { T::MUTED });
-                                if r.clicked() { clicked = Some(*tid); }
-                                if active && r.drag_started() { drag_active = true; }
-                            }
-                        });
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden) // chevrons replace the ugly slider (Ahmed)
+                    .scroll_source(egui::scroll_area::ScrollSource::MOUSE_WHEEL); // wheel scrolls; drag LIFTS the pill
+                if let Some(x) = forced { sa = sa.horizontal_scroll_offset(x); }
+                let out = sa.show(ui, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        ui.spacing_mut().item_spacing.x = 5.0;
+                        for (tid, pid) in &group.tabs {
+                            let active = *tid == group.active;
+                            let tw = ui.painter().layout_no_wrap(pid.title().to_owned(), font.clone(), T::TEXT).size().x;
+                            let (pill, r) = ui.allocate_exact_size(vec2(tw + 20.0, 22.0), Sense::click_and_drag());
+                            let bg = if active { T::SURFACE } else if r.hovered() { T::HOVER } else { Color32::TRANSPARENT };
+                            ui.painter().rect_filled(pill, CornerRadius::same(11), bg); // capsule = a Claude bubble
+                            ui.painter().text(pill.center(), Align2::CENTER_CENTER, pid.title(), font.clone(), if active || r.hovered() { T::TEXT } else { T::MUTED });
+                            if r.clicked() { clicked = Some(*tid); }
+                            // ANY pill (active or inactive) can be lifted out as its own tab.
+                            if r.drag_started() { pill_drag = Some(*tid); }
+                        }
                     });
+                });
+                offset_x = out.state.offset.x;
+                viewport_w = out.inner_rect.width();
+                content_w = out.content_size.x;
             });
+            // overflow chevrons: a round tab-shaped button at each end, shown ONLY when there's more that
+            // way — ‹ if scrolled off the left, › if tabs run past the right (Ahmed 07-06).
+            let step = (viewport_w * 0.7).max(40.0);
+            if offset_x > 1.0
+                && scroll_arrow(ui, pos2(strip.left() + 10.0, strip.center().y), -1.0, tile_id)
+            {
+                ui.ctx().data_mut(|d| d.insert_temp(scroll_key, (offset_x - step).max(0.0)));
+            }
+            if offset_x + viewport_w < content_w - 1.0
+                && scroll_arrow(ui, pos2(strip.right() - 10.0, strip.center().y), 1.0, tile_id)
+            {
+                ui.ctx().data_mut(|d| d.insert_temp(scroll_key, offset_x + step));
+            }
             if let Some(t) = clicked { self.set_active = Some((group.container, t)); }
+
+            // Two grab targets (Ahmed 07-05): a PILL (active OR inactive) lifts THAT one tab; the GRIP
+            // lifts the WHOLE box (its Tabs container — all tabs). We start the egui_tiles drag on the right
+            // tile ourselves; returning DragStarted would only ever drag the rendered (active) pane.
+            if let Some(tree_id) = self.tree_id {
+                if let Some(tid) = pill_drag {
+                    ui.set_dragged_id(tid.egui_id(tree_id));
+                } else if g.drag_started() {
+                    ui.set_dragged_id(group.container.egui_id(tree_id));
+                }
+            }
 
             ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
             render_body(ui, rect, hh, tile_id, *pane);
 
-            if drag_active || g.drag_started() { return UiResponse::DragStarted; }
             return UiResponse::None;
         }
 
