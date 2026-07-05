@@ -77,8 +77,8 @@ fn flo_op(op: BoolOp, shapes: &[Vec<SimpleBezierPath>], acc: f64) -> Vec<SimpleB
         a
     };
     match op {
-        BoolOp::Unite => fold(|a, b, e| path_add::<SimpleBezierPath>(a, b, e)),
-        BoolOp::Intersect => fold(|a, b, e| path_intersect::<SimpleBezierPath>(a, b, e)),
+        BoolOp::Unite => fold(path_add::<SimpleBezierPath>),
+        BoolOp::Intersect => fold(path_intersect::<SimpleBezierPath>),
         BoolOp::Exclude => {
             // XOR via symmetric difference (A−B)∪(B−A), folded pairwise. This is robust to
             // the pinch/touch cases where (A∪B)−(A∩B) degenerates into a self-cancelling result.
@@ -123,7 +123,7 @@ fn group(contours: Vec<Vec<Seg>>) -> Vec<ResultShape> {
     let mut shapes: Vec<ResultShape> = vec![];
     let mut idx_of = vec![usize::MAX; n];
     for i in 0..n {
-        if depth[i] % 2 == 0 && contours[i].len() >= 2 {
+        if depth[i].is_multiple_of(2) && contours[i].len() >= 2 {
             idx_of[i] = shapes.len();
             shapes.push(ResultShape { outer: contours[i].clone(), holes: vec![] });
         }
@@ -135,7 +135,7 @@ fn group(contours: Vec<Vec<Seg>>) -> Vec<ResultShape> {
             let mut bestd = 0usize;
             for j in 0..n {
                 if j != i
-                    && depth[j] % 2 == 0
+                    && depth[j].is_multiple_of(2)
                     && polys[j].len() >= 3
                     && point_in_poly(&polys[j], rep)
                     && (best.is_none() || depth[j] >= bestd)
@@ -257,8 +257,8 @@ fn rdp(pts: &[[f64; 2]], tol: f64) -> Vec<[f64; 2]> {
     }
     let (a, b) = (pts[0], pts[pts.len() - 1]);
     let (mut idx, mut dmax) = (0usize, 0.0f64);
-    for i in 1..pts.len() - 1 {
-        let d = perp(pts[i], a, b);
+    for (i, &pt) in pts.iter().enumerate().skip(1).take(pts.len() - 2) {
+        let d = perp(pt, a, b);
         if d > dmax {
             dmax = d;
             idx = i;

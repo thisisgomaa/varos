@@ -1025,6 +1025,8 @@ impl Renderer {
         }
     }
 
+    // one frame in, one call — the whole frame's inputs really are 8 distinct things
+    #[allow(clippy::too_many_arguments)]
     pub fn render_ui(
         &mut self,
         world: &Scene,
@@ -1068,9 +1070,9 @@ impl Renderer {
             _pad: [0.0, 0.0],
             panels: [FrostP { rect: [0.0; 4], col: [0.0; 4], prm: [0.0; 4] }; MAX_PANELS],
         };
-        for i in 0..np {
-            fu.panels[i] = FrostP {
-                rect: panels[i],
+        for (fp, &rect) in fu.panels.iter_mut().zip(panels) {
+            *fp = FrostP {
+                rect,
                 col: [TINT[0], TINT[1], TINT[2], 0.62],
                 prm: [14.0 * s, 16.0 * s, 16.0 * s, if frosted { 0.0 } else { 1.0 }],
             }; // [rounding(14), blur, shadow-spread(16)] — light shadow

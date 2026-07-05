@@ -33,24 +33,6 @@ impl View {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn fit_centres_and_scales() {
-        // a 1000×500 board in an 800×800 window, 10% margin → zoom limited by width: 0.8*0.9 = 0.72
-        let v = View::fit(0.0, 0.0, 1000.0, 500.0, 800.0, 800.0, 0.9);
-        assert!((v.zoom - 0.72).abs() < 1e-4, "zoom {}", v.zoom);
-        // the board centre (500,250) must land at the window centre (400,400)
-        let c = v.w2s([500.0, 250.0]);
-        assert!((c[0] - 400.0).abs() < 1e-3 && (c[1] - 400.0).abs() < 1e-3, "centre {:?}", c);
-    }
-    #[test]
-    fn fit_degenerate_is_identity() {
-        assert_eq!(View::fit(0.0, 0.0, 0.0, 100.0, 800.0, 600.0, 0.9).zoom, 1.0);
-    }
-}
-
 pub fn sub(a: Pt, b: Pt) -> Pt {
     [a[0] - b[0], a[1] - b[1]]
 }
@@ -117,4 +99,22 @@ pub fn point_in_poly(poly: &[Pt], pt: Pt) -> bool {
         j = i;
     }
     inside
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn fit_centres_and_scales() {
+        // a 1000×500 board in an 800×800 window, 10% margin → zoom limited by width: 0.8*0.9 = 0.72
+        let v = View::fit(0.0, 0.0, 1000.0, 500.0, 800.0, 800.0, 0.9);
+        assert!((v.zoom - 0.72).abs() < 1e-4, "zoom {}", v.zoom);
+        // the board centre (500,250) must land at the window centre (400,400)
+        let c = v.w2s([500.0, 250.0]);
+        assert!((c[0] - 400.0).abs() < 1e-3 && (c[1] - 400.0).abs() < 1e-3, "centre {:?}", c);
+    }
+    #[test]
+    fn fit_degenerate_is_identity() {
+        assert_eq!(View::fit(0.0, 0.0, 0.0, 100.0, 800.0, 600.0, 0.9).zoom, 1.0);
+    }
 }

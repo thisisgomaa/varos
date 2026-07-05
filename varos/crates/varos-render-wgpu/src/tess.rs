@@ -21,6 +21,7 @@ fn tri(v: &mut Vec<Vertex>, a: Pt, b: Pt, c: Pt, col: [f32; 4], w: f32, h: f32) 
     v.push(Vertex { pos: ndc(b, w, h), color: col });
     v.push(Vertex { pos: ndc(c, w, h), color: col });
 }
+#[allow(clippy::too_many_arguments)] // 4 corners + paint + framebuffer — bundling would obscure it
 fn quad(v: &mut Vec<Vertex>, p0: Pt, p1: Pt, p2: Pt, p3: Pt, col: [f32; 4], w: f32, h: f32) {
     tri(v, p0, p1, p2, col, w, h);
     tri(v, p0, p2, p3, col, w, h);
@@ -160,8 +161,10 @@ pub fn build_bg(view: View, w: f32, h: f32) -> Vec<Vertex> {
     v
 }
 
+/// One Fill prim's vertex ranges: `((fan_start, fan_len), (cover_start, cover_len))`.
+pub type FillRanges = ((u32, u32), (u32, u32));
 /// fills: per Fill prim → a triangle-fan (stencil) + a bbox cover quad. Points are mapped world→screen via `view`.
-pub fn build_fills(prims: &[Prim], view: View, w: f32, h: f32) -> (Vec<Vertex>, Vec<((u32, u32), (u32, u32))>) {
+pub fn build_fills(prims: &[Prim], view: View, w: f32, h: f32) -> (Vec<Vertex>, Vec<FillRanges>) {
     let mut v = Vec::new();
     let mut ranges = Vec::new();
     for prim in prims {

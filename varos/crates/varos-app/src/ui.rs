@@ -386,11 +386,13 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
     }
     rows.into_iter().zip(keep).filter(|(_, k)| *k).map(|(r, _)| r).collect()
 }
+/// One path's raw thumbnail ingredients before bbox-fitting: `(rings, fill, stroke)`.
+type RawThumb = (Vec<Vec<Pt>>, Option<Rgba>, Option<Rgba>);
 /// Build a row's thumbnail: gather every path (already in back→front z order), collect its outline
 /// rings + paint in pixel space, then fit the ONE combined bbox to the unit square (Y down, shorter
 /// axis centred) so the composite preview keeps each shape's real position, size and colour.
 fn thumb_shapes(ed: &Editor, pids_zorder: &[u32]) -> Vec<ThumbShape> {
-    let mut raw: Vec<(Vec<Vec<Pt>>, Option<Rgba>, Option<Rgba>)> = Vec::new();
+    let mut raw: Vec<RawThumb> = Vec::new();
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for &pid in pids_zorder {
         let Some(pi) = ed.doc.pidx(pid) else { continue };
@@ -870,7 +872,7 @@ impl Ui {
         let mut tabs = std::mem::take(&mut self.tabs);
         let mut tab_active = self.tab_active;
         let splash = self.splash_start.map(|t| t.elapsed().as_secs_f32());
-        let splashing = splash.map_or(false, |e| e < SPLASH_DUR);
+        let splashing = splash.is_some_and(|e| e < SPLASH_DUR);
         let logo = &self.logo;
         let mut color_modal = std::mem::take(&mut self.color_modal);
         // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
@@ -997,8 +999,8 @@ impl Ui {
             .into_iter()
             .map(|r| egui::Rect::from_min_max((r.min.to_vec2() * ppp).to_pos2(), (r.max.to_vec2() * ppp).to_pos2()))
             .collect();
-        self.repaint = out.viewport_output.get(&egui::ViewportId::ROOT).map_or(false, |v| v.repaint_delay.is_zero())
-            || splash.map_or(false, |e| e < SPLASH_DUR); // keep animating the splash
+        self.repaint = out.viewport_output.get(&egui::ViewportId::ROOT).is_some_and(|v| v.repaint_delay.is_zero())
+            || splash.is_some_and(|e| e < SPLASH_DUR); // keep animating the splash
         let jobs = self.ctx.tessellate(out.shapes, out.pixels_per_point);
         let sz = window.inner_size();
         let screen = egui_wgpu::ScreenDescriptor {
@@ -1097,7 +1099,7 @@ fn menu_below(ui: &egui::Ui, id: egui::Id, anchor: &egui::Response, add: impl Fn
     let close = ctx.input(|i| i.key_pressed(egui::Key::Escape))
         || ctx.input(|i| {
             i.pointer.any_pressed()
-                && i.pointer.interact_pos().map_or(false, |p| !rect.expand(4.0).contains(p) && !anchor.rect.contains(p))
+                && i.pointer.interact_pos().is_some_and(|p| !rect.expand(4.0).contains(p) && !anchor.rect.contains(p))
         });
     if close {
         ctx.data_mut(|d| d.insert_temp(id, false));
@@ -1130,6 +1132,7 @@ const UV01: fn() -> egui::Rect = || egui::Rect::from_min_max(egui::pos2(0.0, 0.0
 /// one interactive target via `ui.interact` (the exact mechanism the tool-rail buttons use): drag it to
 /// scrub (↔ cursor), single-click to type (value pre-selected). Returns Some(new) on change.
 /// (Blender ‹ › steppers come back once the core drag/type is confirmed.)
+#[allow(clippy::too_many_arguments)] // hand-painted widget: geometry + behaviour knobs, split deferred with ui.rs
 fn num_field(
     ui: &mut egui::Ui,
     w: f32,
@@ -1675,7 +1678,7 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
         bm.add_triangle(0, 2, 3);
         ui.painter_at(br).add(egui::Shape::mesh(bm));
         ui.painter().rect_stroke(br, CornerRadius::ZERO, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
-        rail_thumb(&ui.painter(), br, br.top() + (1.0 - v) * d);
+        rail_thumb(ui.painter(), br, br.top() + (1.0 - v) * d);
         if brr.is_pointer_button_down_on() || brr.dragged() {
             if let Some(p) = brr.interact_pointer_pos() {
                 m.hsva[2] = (1.0 - (p.y - br.top()) / d).clamp(0.0, 1.0);
@@ -1694,7 +1697,7 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
         am.add_triangle(0, 2, 3);
         ui.painter_at(ar).add(egui::Shape::mesh(am));
         ui.painter().rect_stroke(ar, CornerRadius::ZERO, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
-        rail_thumb(&ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * d);
+        rail_thumb(ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * d);
         if arr.is_pointer_button_down_on() || arr.dragged() {
             if let Some(p) = arr.interact_pointer_pos() {
                 m.hsva[3] = (1.0 - (p.y - ar.top()) / d).clamp(0.0, 1.0);
@@ -1914,7 +1917,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                                         StrokeKind::Middle,
                                     );
                                     rail_thumb(
-                                        &ui.painter(),
+                                        ui.painter(),
                                         sr,
                                         sr.top() + (if m.chan == Chan::H { sl } else { 1.0 - sl }) * ph,
                                     );
@@ -1944,7 +1947,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                                         Stroke::new(1.0, BORDER_2),
                                         StrokeKind::Middle,
                                     );
-                                    rail_thumb(&ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * ph);
+                                    rail_thumb(ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * ph);
                                     if arr.is_pointer_button_down_on() || arr.dragged() {
                                         if let Some(p) = arr.interact_pointer_pos() {
                                             m.hsva[3] = (1.0 - (p.y - ar.top()) / ph).clamp(0.0, 1.0);
@@ -2551,6 +2554,7 @@ fn check_row(ui: &mut egui::Ui, label: &str, checked: bool, tex_check: &Option<e
 /// Custom top bar (the native caption is stripped in WM_NCCALCSIZE): menu · tabs · drag · right tools ·
 /// window controls. Interactive rects are published as exclusions so the OS hit-test makes them HTCLIENT
 /// (egui handles them) while the empty band is HTCAPTION (the OS drags/snaps the window).
+#[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state, split deferred with ui.rs
 fn build_topbar(
     root: &mut egui::Ui,
     top: &TopIcons,
@@ -2634,12 +2638,12 @@ fn build_topbar(
         let mut tx = menu_r.right() + 8.0;
         let tw = 154.0;
         let (mut to_close, mut to_activate) = (None, None);
-        for i in 0..tabs.len() {
+        for (i, tab) in tabs.iter().enumerate() {
             if tx + tw > tabs_right {
                 break;
             }
             let trect = egui::Rect::from_min_max(egui::pos2(tx, bar.top()), egui::pos2(tx + tw, bar.bottom()));
-            let (click, close) = tab_item(ui, &p, trect, &tabs[i], i == *tab_active, &top.x, &format!("tab{i}"));
+            let (click, close) = tab_item(ui, &p, trect, tab, i == *tab_active, &top.x, &format!("tab{i}"));
             if click {
                 to_activate = Some(i);
             }
@@ -2969,6 +2973,7 @@ struct DockIcons<'a> {
 /// A reveal-on-hover column toggle (eye / lock). `marked` = the persistent state that always shows its
 /// glyph (hidden / locked); otherwise the glyph appears only when the row is hovered. `forced` = the
 /// state is inherited from an ancestor (drawn dim, the "you can't change it here" cue). Returns clicked.
+#[allow(clippy::too_many_arguments)] // hand-painted widget: geometry + behaviour knobs, split deferred with ui.rs
 fn col_toggle(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -3002,6 +3007,7 @@ fn col_toggle(
 /// the inspector (`dock_below`) and growing downward. Row = eye · lock · disclosure · thumbnail · name.
 /// Click=select · Ctrl=toggle · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate.
 /// Header: title + search. Footer: Group · Delete.
+#[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state, split deferred with ui.rs
 fn build_layers(
     ctx: &egui::Context,
     rows: &[LRow],
@@ -3037,7 +3043,7 @@ fn build_layers(
         .fixed_pos(egui::pos2(left, top))
         .fixed_size(egui::vec2(w, list_h + 104.0))
         .frame(frame)
-        .show(&mut ctx.clone(), |ui| {
+        .show(&ctx.clone(), |ui| {
             ui.set_width(w);
             let hairline = |ui: &mut egui::Ui| {
                 let (r, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
@@ -3084,7 +3090,7 @@ fn build_layers(
             // (can't nest a container in its own descendant); the model re-guards. Alt at drop = duplicate.
             let ptr = ui.input(|i| i.pointer.interact_pos());
             let src_is_layer =
-                drag.and_then(|s| rows.iter().find(|r| r.id == s)).map_or(false, |r| r.kind == LKind::Layer);
+                drag.and_then(|s| rows.iter().find(|r| r.id == s)).is_some_and(|r| r.kind == LKind::Layer);
             let forbidden: std::collections::HashSet<u32> = drag
                 .map(|s| {
                     let mut set = std::collections::HashSet::new();
@@ -3244,7 +3250,7 @@ fn build_layers(
                         let thumb =
                             egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 9.0), egui::vec2(18.0, 18.0));
                         if !row.thumb.is_empty() {
-                            let translucent = row.thumb.iter().any(|s| s.fill.map_or(true, |c| c[3] < 0.999));
+                            let translucent = row.thumb.iter().any(|s| s.fill.is_none_or(|c| c[3] < 0.999));
                             if translucent {
                                 checker(&p, thumb, 4.5);
                             }
@@ -3276,7 +3282,7 @@ fn build_layers(
                             egui::pos2(x, rect.top()),
                             egui::pos2(rect.right() - 10.0, rect.bottom()),
                         );
-                        let renaming = rename.as_ref().map_or(false, |(id, _)| *id == row.id);
+                        let renaming = rename.as_ref().is_some_and(|(id, _)| *id == row.id);
                         if renaming {
                             let buf = &mut rename.as_mut().unwrap().1;
                             let te = ui.put(
@@ -3629,7 +3635,7 @@ fn toggle_row(ui: &mut egui::Ui, w: f32, label: &str, on: bool) -> bool {
 
 /// A small text button (Add / Duplicate / Delete). `disabled` greys it out and swallows clicks.
 fn pill_btn(ui: &mut egui::Ui, label: &str, disabled: bool) -> bool {
-    let w = ui.available_width().min(64.0).max(40.0);
+    let w = ui.available_width().clamp(40.0, 64.0);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
     let hot = resp.hovered() && !disabled;
     ui.painter().rect(
@@ -3841,6 +3847,7 @@ fn build_ab_dock(
 /// On-canvas page chrome: a name label (top-left of each page) + a ⋮ button opening the edit menu. The
 /// menu is the ungated way to edit a page from ANY tool (Decision 8); selecting a page by clicking its
 /// name only works in the Artboard tool. Positions are pinned to each page via the view transform.
+#[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state, split deferred with ui.rs
 fn build_ab_chrome(
     ctx: &egui::Context,
     view: View,

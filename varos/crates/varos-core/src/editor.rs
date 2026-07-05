@@ -155,6 +155,8 @@ pub enum DistAxis {
     Horizontal,
     Vertical,
 }
+/// A snap target line: `(coord, span_lo, span_hi)` on one axis.
+type SnapLine = (f32, f32, f32);
 
 /// Build an anchor from a boolean-result endpoint + its two raw handle points.
 /// Handles coincident with the point → None (straight). Smooth when both handles are collinear & opposite.
@@ -204,7 +206,7 @@ fn ab_resized(h: u8, ox: f32, oy: f32, ow: f32, oh: f32, pos: Pt, shift: bool) -
     if mb {
         y1 = pos[1];
     }
-    if shift && matches!(h, 0 | 1 | 2 | 3) && ow > 1e-3 && oh > 1e-3 {
+    if shift && matches!(h, 0..=3) && ow > 1e-3 && oh > 1e-3 {
         let (fx, fy) = (if ml { x1 } else { x0 }, if mt { y1 } else { y0 }); // the fixed (opposite) corner
         let s = ((x1 - x0).abs() / ow).max((y1 - y0).abs() / oh);
         let (w, ht) = (ow * s, oh * s);
@@ -284,6 +286,12 @@ pub struct Editor {
     pending: Option<Document>,
 }
 
+impl Default for Editor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Editor {
     pub fn new() -> Self {
         Editor {
@@ -329,7 +337,7 @@ impl Editor {
     pub fn is_editable(&self, pid: u32) -> bool {
         self.active == Some(pid)
             || self.objsel.contains(&pid)
-            || self.doc.paths.iter().find(|p| p.id == pid).map_or(false, |p| {
+            || self.doc.paths.iter().find(|p| p.id == pid).is_some_and(|p| {
                 p.anchors.iter().chain(p.holes.iter().flatten()).any(|a| self.selected.contains(&a.id))
             })
     }
@@ -343,7 +351,7 @@ impl Editor {
         self.active == Some(pid)
             || self.objsel.contains(&pid)
             || self.dsel_path == Some(pid)
-            || self.doc.paths.iter().find(|p| p.id == pid).map_or(false, |p| {
+            || self.doc.paths.iter().find(|p| p.id == pid).is_some_and(|p| {
                 p.anchors.iter().chain(p.holes.iter().flatten()).any(|a| self.selected.contains(&a.id))
             })
     }
@@ -357,7 +365,7 @@ impl Editor {
             for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
                 // outer + hole anchors
                 let d = dist(pos, a.p);
-                if d <= r && best.map_or(true, |(_, bd)| d < bd) {
+                if d <= r && best.is_none_or(|(_, bd)| d < bd) {
                     best = Some((a.id, d));
                 }
             }
@@ -372,7 +380,7 @@ impl Editor {
                 continue;
             } // not clickable (cascades)
             if let Some((_, _, d)) = self.doc.nearest_seg(pi, pos) {
-                if d <= edge_r && best.map_or(true, |(_, bd)| d < bd) {
+                if d <= edge_r && best.is_none_or(|(_, bd)| d < bd) {
                     best = Some((self.doc.paths[pi].id, d));
                 }
             }
@@ -564,7 +572,7 @@ impl Editor {
         let mut best: Option<(u8, f32)> = None;
         for (i, h) in hs.iter().enumerate() {
             let d = dist(pos, *h);
-            if d <= r && best.map_or(true, |(_, bd)| d < bd) {
+            if d <= r && best.is_none_or(|(_, bd)| d < bd) {
                 best = Some((i as u8, d));
             }
         }
@@ -873,9 +881,9 @@ impl Editor {
         let (c0, c1) = (items[0].1, items[n - 1].1);
         let step = (c1 - c0) / (n as f32 - 1.0);
         self.begin();
-        for k in 1..n - 1 {
-            let d = c0 + step * k as f32 - items[k].1;
-            if let Some(pi) = self.doc.pidx(items[k].0) {
+        for (k, &(pid, c)) in items.iter().enumerate().skip(1).take(n - 2) {
+            let d = c0 + step * k as f32 - c;
+            if let Some(pi) = self.doc.pidx(pid) {
                 self.translate_path(
                     pi,
                     match axis {
@@ -911,8 +919,7 @@ impl Editor {
         items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         self.begin();
         let mut cur = items[0].1 + items[0].2 + gap; // edge just after the first object
-        for k in 1..items.len() {
-            let (pid, lo, len) = items[k];
+        for &(pid, lo, len) in items.iter().skip(1) {
             let d = cur - lo;
             if let Some(pi) = self.doc.pidx(pid) {
                 self.translate_path(
@@ -1073,8 +1080,8 @@ impl Editor {
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
                 a.p = f(*p0);
-                a.hin = hin0.map(|h| f(h));
-                a.hout = hout0.map(|h| f(h));
+                a.hin = hin0.map(&f);
+                a.hout = hout0.map(&f);
             }
         }
         self.obj_angle = if let TfAgain::Rotate { ang, .. } = tf { self.obj_angle + ang } else { 0.0 };
@@ -1358,7 +1365,7 @@ impl Editor {
     // ---------- snapping (the SnapEngine — SNAP_TRANSFORM_SPEC) ----------
     /// All object + artboard X/Y target lines for snapping, each as `(coord, span_lo, span_hi)` (the span
     /// lets a guide reach both the moving and the target object). Excludes the current selection + hidden.
-    fn snap_target_lines(&self) -> (Vec<(f32, f32, f32)>, Vec<(f32, f32, f32)>) {
+    fn snap_target_lines(&self) -> (Vec<SnapLine>, Vec<SnapLine>) {
         let cfg = &self.doc.snap;
         let (mut txl, mut tyl) = (vec![], vec![]);
         for pi in 0..self.doc.paths.len() {
@@ -1469,7 +1476,7 @@ impl Editor {
         let mut best: Option<(f32, Vec<(f32, f32)>)> = None;
         for (t, segs) in cands {
             let diff = t - m0;
-            if diff.abs() <= tol && best.as_ref().map_or(true, |(bd, _)| diff.abs() < bd.abs()) {
+            if diff.abs() <= tol && best.as_ref().is_none_or(|(bd, _)| diff.abs() < bd.abs()) {
                 best = Some((diff, segs));
             }
         }
@@ -1510,7 +1517,7 @@ impl Editor {
         for (mi, &mx) in mxs.iter().enumerate() {
             for &(x, s0, s1) in &txl {
                 let diff = x - mx;
-                if diff.abs() <= tol && bx.map_or(true, |(bd, _, _, _)| diff.abs() < bd.abs()) {
+                if diff.abs() <= tol && bx.is_none_or(|(bd, _, _, _)| diff.abs() < bd.abs()) {
                     bx = Some((diff, x, my0.min(s0), my1.max(s1)));
                     bx_center = mi == 1;
                 }
@@ -1521,7 +1528,7 @@ impl Editor {
         for (mi, &my) in mys.iter().enumerate() {
             for &(y, s0, s1) in &tyl {
                 let diff = y - my;
-                if diff.abs() <= tol && by.map_or(true, |(bd, _, _, _)| diff.abs() < bd.abs()) {
+                if diff.abs() <= tol && by.is_none_or(|(bd, _, _, _)| diff.abs() < bd.abs()) {
                     by = Some((diff, y, mx0.min(s0), mx1.max(s1)));
                     by_center = mi == 1;
                 }
@@ -1598,7 +1605,7 @@ impl Editor {
             let mut best: Option<(f32, f32, f32, f32)> = None;
             for &(x, s0, s1) in &txl {
                 let diff = x - w[0];
-                if diff.abs() <= tol && best.map_or(true, |(bd, _, _, _)| diff.abs() < bd.abs()) {
+                if diff.abs() <= tol && best.is_none_or(|(bd, _, _, _)| diff.abs() < bd.abs()) {
                     best = Some((diff, x, s0, s1));
                 }
             }
@@ -1616,7 +1623,7 @@ impl Editor {
             let mut best: Option<(f32, f32, f32, f32)> = None;
             for &(y, s0, s1) in &tyl {
                 let diff = y - w[1];
-                if diff.abs() <= tol && best.map_or(true, |(bd, _, _, _)| diff.abs() < bd.abs()) {
+                if diff.abs() <= tol && best.is_none_or(|(bd, _, _, _)| diff.abs() < bd.abs()) {
                     best = Some((diff, y, s0, s1));
                 }
             }
@@ -1715,7 +1722,7 @@ impl Editor {
         let mut best: Option<(f32, Pt)> = None;
         for q in pts {
             let d = dist(p, q);
-            if d <= tol && best.map_or(true, |(bd, _)| d < bd) {
+            if d <= tol && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, q));
             }
         }
@@ -1735,7 +1742,7 @@ impl Editor {
         let mut best: Option<(f32, usize)> = None;
         for (i, g) in self.doc.guides.iter().enumerate() {
             let d = if g.vertical { (g.pos - pos[0]).abs() } else { (g.pos - pos[1]).abs() };
-            if d <= tol && best.map_or(true, |(bd, _)| d < bd) {
+            if d <= tol && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, i));
             }
         }
@@ -1775,7 +1782,7 @@ impl Editor {
         let mut best: Option<(f32, f32)> = None;
         for c in cands {
             let d = (c - v).abs();
-            if d <= tol && best.map_or(true, |(bd, _)| d < bd) {
+            if d <= tol && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, c));
             }
         }
@@ -1828,7 +1835,7 @@ impl Editor {
                 if cfg.key_points {
                     for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
                         let dd = dist(moved, a.p);
-                        if dd <= tol && best.map_or(true, |(bd, _, _)| dd < bd) {
+                        if dd <= tol && best.is_none_or(|(bd, _, _)| dd < bd) {
                             best = Some((dd, a.p, moved));
                         }
                     }
@@ -1840,14 +1847,14 @@ impl Editor {
                         let (q, r) = (p.anchors[i].p, p.anchors[(i + 1) % n].p);
                         let mid = [(q[0] + r[0]) * 0.5, (q[1] + r[1]) * 0.5];
                         let dd = dist(moved, mid);
-                        if dd <= tol && best.map_or(true, |(bd, _, _)| dd < bd) {
+                        if dd <= tol && best.is_none_or(|(bd, _, _)| dd < bd) {
                             best = Some((dd, mid, moved));
                         }
                     }
                 }
                 if cfg.object_geometry {
                     if let Some((si, t, dd)) = self.doc.nearest_seg(pi, moved) {
-                        if dd <= tol && best.map_or(true, |(bd, _, _)| dd < bd) {
+                        if dd <= tol && best.is_none_or(|(bd, _, _)| dd < bd) {
                             let n = p.anchors.len();
                             let a = &p.anchors[si];
                             let b = &p.anchors[(si + 1) % n];
@@ -1894,7 +1901,7 @@ impl Editor {
             for k in 0..=24 {
                 let pt = cubic(p0, p1, p2, p3, k as f32 / 24.0);
                 let dd = dist(pt, pos);
-                if best.map_or(true, |(_, bd)| dd < bd) {
+                if best.is_none_or(|(_, bd)| dd < bd) {
                     best = Some((pt, dd));
                 }
             }
@@ -1955,7 +1962,7 @@ impl Editor {
         let mut best_pid: Option<u32> = None; // set only when the winner is a path EDGE (→ highlight it)
         for &tp in &pts {
             let dd = dist(moved, tp);
-            if dd <= tol && best.map_or(true, |(bd, _)| dd < bd) {
+            if dd <= tol && best.is_none_or(|(bd, _)| dd < bd) {
                 best = Some((dd, tp));
                 best_pid = None;
             }
@@ -1966,7 +1973,7 @@ impl Editor {
                     continue;
                 }
                 if let Some((pt, dd)) = self.nearest_edge(pi, moved) {
-                    if dd <= tol && best.map_or(true, |(bd, _)| dd < bd) {
+                    if dd <= tol && best.is_none_or(|(bd, _)| dd < bd) {
                         best = Some((dd, pt));
                         best_pid = Some(self.doc.paths[pi].id);
                     }
@@ -1988,7 +1995,7 @@ impl Editor {
         let mut bx: Option<(f32, Pt)> = None;
         for &tp in &pts {
             let diff = tp[0] - moved[0];
-            if diff.abs() <= tol && bx.map_or(true, |(bd, _)| diff.abs() < bd.abs()) {
+            if diff.abs() <= tol && bx.is_none_or(|(bd, _)| diff.abs() < bd.abs()) {
                 bx = Some((diff, tp));
             }
         }
@@ -2002,7 +2009,7 @@ impl Editor {
         let mut by: Option<(f32, Pt)> = None;
         for &tp in &pts {
             let diff = tp[1] - moved[1];
-            if diff.abs() <= tol && by.map_or(true, |(bd, _)| diff.abs() < bd.abs()) {
+            if diff.abs() <= tol && by.is_none_or(|(bd, _)| diff.abs() < bd.abs()) {
                 by = Some((diff, tp));
             }
         }

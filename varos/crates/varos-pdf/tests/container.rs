@@ -8,8 +8,10 @@ fn anc(id: u32, x: f32, y: f32) -> Anchor {
     Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
 }
 fn demo_doc() -> Document {
-    let mut d = Document::default();
-    d.artboards = vec![Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, ..Default::default() }];
+    let mut d = Document {
+        artboards: vec![Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, ..Default::default() }],
+        ..Default::default()
+    };
     d.paths.push(Path::new(
         1,
         vec![anc(1, 40.0, 40.0), anc(2, 200.0, 60.0), anc(3, 120.0, 220.0)],
