@@ -749,36 +749,6 @@ impl Document {
     }
     /// All path ids in a node's subtree, z order (back→front).
     pub fn node_paths(&self, nid: u32) -> Vec<u32> { let mut v = vec![]; self.collect_paths(nid, &mut v); v.reverse(); v }
-    fn layer_count(&self) -> usize {
-        self.nodes.iter().filter(|n| matches!(n.kind, NodeKind::Layer)).count()
-    }
-    /// Add an empty Layer at the FRONT of the root list; returns its id.
-    pub fn add_layer(&mut self) -> u32 {
-        let id = self.nid();
-        let name = format!("Layer {}", self.layer_count() + 1);
-        self.nodes.push(Node { id, kind: NodeKind::Layer, name, parent: None, children: vec![], hidden: false, locked: false, color: None });
-        self.roots.insert(0, id);
-        id
-    }
-    /// Add a sublayer (a Layer nested inside `parent`) at its front; returns its id.
-    pub fn add_sublayer(&mut self, parent: u32) -> u32 {
-        let id = self.nid();
-        let name = format!("Layer {}", self.layer_count() + 1);
-        self.nodes.push(Node { id, kind: NodeKind::Layer, name, parent: Some(parent), children: vec![], hidden: false, locked: false, color: None });
-        if let Some(pn) = self.node_mut(parent) { pn.children.insert(0, id); }
-        id
-    }
-    /// Delete a node + its whole subtree (nodes AND the paths they hold).
-    pub fn delete_node(&mut self, nid: u32) {
-        let paths = self.node_paths(nid);
-        self.paths.retain(|p| !paths.contains(&p.id));
-        self.remove_subtree(nid);
-    }
-    fn remove_subtree(&mut self, nid: u32) {
-        let kids = self.node(nid).map(|n| n.children.clone()).unwrap_or_default();
-        for k in kids { self.remove_subtree(k); }
-        self.remove_node(nid);
-    }
     fn children_of(&self, parent: Option<u32>) -> Vec<u32> {
         match parent { Some(p) => self.node(p).map(|n| n.children.clone()).unwrap_or_default(), None => self.roots.clone() }
     }
