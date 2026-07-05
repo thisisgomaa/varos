@@ -145,7 +145,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                     Some(r) => {
                         let clipped: Vec<Vec<Pt>> =
                             rings.iter().map(|ring| clip_poly_rect(ring, r)).filter(|ring| ring.len() >= 3).collect();
-                        if clipped.first().map_or(false, |o| o.len() >= 3) {
+                        if clipped.first().is_some_and(|o| o.len() >= 3) {
                             out.push(Prim::Fill { rings: clipped, color: c });
                         }
                     }
@@ -519,7 +519,7 @@ fn clip_polyline_rect(pts: &[Pt], r: (f32, f32, f32, f32)) -> Vec<Vec<Pt>> {
     for i in 0..pts.len().saturating_sub(1) {
         match clip_seg_rect(pts[i], pts[i + 1], r) {
             Some((a, b)) => {
-                if cur.last().map_or(false, |l| dist(*l, a) < 1e-3) {
+                if cur.last().is_some_and(|l| dist(*l, a) < 1e-3) {
                     cur.push(b);
                 } else {
                     if cur.len() >= 2 {

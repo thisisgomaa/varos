@@ -435,7 +435,7 @@ impl Document {
             for k in 0..=24 {
                 let t = k as f32 / 24.0;
                 let d = dist(cubic(p0, p1, p2, p3, t), pos);
-                if best.map_or(true, |(_, _, bd)| d < bd) {
+                if best.is_none_or(|(_, _, bd)| d < bd) {
                     best = Some((i, t, d));
                 }
             }
@@ -679,7 +679,7 @@ impl Document {
     }
     /// Effective visibility: the path's own flag OR any ancestor container's (the panel eye cascade).
     pub fn eff_hidden(&self, pid: u32) -> bool {
-        if self.pidx(pid).map_or(true, |i| self.paths[i].hidden) {
+        if self.pidx(pid).is_none_or(|i| self.paths[i].hidden) {
             return true;
         }
         let mut cur = self.node_of_path(pid);
@@ -694,7 +694,7 @@ impl Document {
     }
     /// Effective lock: the path's own flag OR any ancestor container's (cascade).
     pub fn eff_locked(&self, pid: u32) -> bool {
-        if self.pidx(pid).map_or(false, |i| self.paths[i].locked) {
+        if self.pidx(pid).is_some_and(|i| self.paths[i].locked) {
             return true;
         }
         let mut cur = self.node_of_path(pid);
@@ -961,7 +961,7 @@ impl Document {
     /// first. Used by the legacy migration's back→front walk (reproduces flat z exactly).
     fn attach_front(&mut self, id: u32) {
         let Some(par) = self.node(id).and_then(|n| n.parent) else { return };
-        if self.node(par).map_or(true, |p| p.children.contains(&id)) {
+        if self.node(par).is_none_or(|p| p.children.contains(&id)) {
             return;
         }
         self.attach_front(par);
@@ -1081,7 +1081,7 @@ impl Document {
                 self.remove_node(e);
             }
         }
-        if !self.roots.iter().any(|&r| self.node(r).map_or(false, |n| matches!(n.kind, NodeKind::Layer))) {
+        if !self.roots.iter().any(|&r| self.node(r).is_some_and(|n| matches!(n.kind, NodeKind::Layer))) {
             let id = self.nid();
             self.nodes.push(Node {
                 id,
@@ -1095,12 +1095,12 @@ impl Document {
             });
             self.roots.insert(0, id);
         }
-        if self.node(self.active_layer).map_or(true, |n| !matches!(n.kind, NodeKind::Layer)) {
+        if self.node(self.active_layer).is_none_or(|n| !matches!(n.kind, NodeKind::Layer)) {
             self.active_layer = self
                 .roots
                 .iter()
                 .copied()
-                .find(|&r| self.node(r).map_or(false, |n| matches!(n.kind, NodeKind::Layer)))
+                .find(|&r| self.node(r).is_some_and(|n| matches!(n.kind, NodeKind::Layer)))
                 .unwrap_or(0);
         }
         let known: HashSet<u32> =

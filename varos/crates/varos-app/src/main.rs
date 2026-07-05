@@ -450,7 +450,7 @@ fn main() {
         let p = window.outer_position().unwrap_or(PhysicalPosition::new(0, 0));
         saved.map(|(_, x, y, w, h)| (x, y, w, h)).unwrap_or((p.x, p.y, sz.width, sz.height))
     };
-    let mut refit_pending = saved.map_or(false, |(m, ..)| m);
+    let mut refit_pending = saved.is_some_and(|(m, ..)| m);
 
     // ---- the 🔖 slice: the open .vrs + unsaved-changes tracking (drives the title/tab "*") ----
     let mut cur_file: Option<std::path::PathBuf> = None;
@@ -480,376 +480,370 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
-            match event {
-                Event::WindowEvent { event, window_id } => {
-                    if window_id != window.id() {
-                        return;
+            if let Event::WindowEvent { event, window_id } = event {
+                if window_id != window.id() {
+                    return;
+                }
+                // Feed egui first. `over_panel` = pointer is over a native panel → the canvas must NOT
+                // get the event (gate #3: panels don't swallow canvas strokes; canvas input stays native).
+                let egui_consumed = gui.on_event(&window, &event);
+                let over_panel = gui.wants_pointer();
+                if egui_consumed {
+                    window.request_redraw();
+                }
+                match event {
+                    WindowEvent::CloseRequested => {
+                        save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
+                        elwt.exit();
                     }
-                    // Feed egui first. `over_panel` = pointer is over a native panel → the canvas must NOT
-                    // get the event (gate #3: panels don't swallow canvas strokes; canvas input stays native).
-                    let egui_consumed = gui.on_event(&window, &event);
-                    let over_panel = gui.wants_pointer();
-                    if egui_consumed {
+                    WindowEvent::Resized(size) => {
+                        renderer.resize(size.width, size.height);
+                        if !cursors::is_maximized(hwnd) {
+                            // remember the normal bounds (so un-maximize/next-open restores them)
+                            if let Ok(pos) = window.outer_position() {
+                                win_norm = (pos.x, pos.y, size.width, size.height);
+                            }
+                        } else if refit_pending {
+                            // restored a maximized window → fit the page to the (now large) view ONCE
+                            let a = ed.doc.active_artboard().cloned().unwrap_or_default();
+                            view = View::fit(a.x, a.y, a.w, a.h, size.width as f32, size.height as f32, 0.9);
+                            refit_pending = false;
+                        }
                         window.request_redraw();
                     }
-                    match event {
-                        WindowEvent::CloseRequested => {
-                            save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
-                            elwt.exit();
+                    WindowEvent::Moved(pos) => {
+                        if !cursors::is_maximized(hwnd) {
+                            let sz = window.inner_size();
+                            win_norm = (pos.x, pos.y, sz.width, sz.height);
                         }
-                        WindowEvent::Resized(size) => {
-                            renderer.resize(size.width, size.height);
-                            if !cursors::is_maximized(hwnd) {
-                                // remember the normal bounds (so un-maximize/next-open restores them)
-                                if let Ok(pos) = window.outer_position() {
-                                    win_norm = (pos.x, pos.y, size.width, size.height);
-                                }
-                            } else if refit_pending {
-                                // restored a maximized window → fit the page to the (now large) view ONCE
-                                let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                view = View::fit(a.x, a.y, a.w, a.h, size.width as f32, size.height as f32, 0.9);
-                                refit_pending = false;
-                            }
-                            window.request_redraw();
+                    }
+                    WindowEvent::CursorMoved { position, .. } => {
+                        let PhysicalPosition { x, y } = position;
+                        screen_cursor = [x as f32, y as f32];
+                        if panning {
+                            view.pan = [
+                                view.pan[0] + screen_cursor[0] - pan_last[0],
+                                view.pan[1] + screen_cursor[1] - pan_last[1],
+                            ];
+                            pan_last = screen_cursor;
+                        } else if !over_panel {
+                            ed.ppu = view.zoom;
+                            ed.pointer_move(view.s2w(screen_cursor));
                         }
-                        WindowEvent::Moved(pos) => {
-                            if !cursors::is_maximized(hwnd) {
-                                let sz = window.inner_size();
-                                win_norm = (pos.x, pos.y, sz.width, sz.height);
-                            }
-                        }
-                        WindowEvent::CursorMoved { position, .. } => {
-                            let PhysicalPosition { x, y } = position;
-                            screen_cursor = [x as f32, y as f32];
-                            if panning {
-                                view.pan = [
-                                    view.pan[0] + screen_cursor[0] - pan_last[0],
-                                    view.pan[1] + screen_cursor[1] - pan_last[1],
-                                ];
-                                pan_last = screen_cursor;
-                            } else if !over_panel {
-                                ed.ppu = view.zoom;
-                                ed.pointer_move(view.s2w(screen_cursor));
-                            }
-                            window.request_redraw();
-                        }
-                        WindowEvent::ModifiersChanged(m) => {
-                            ed.mods = Mods {
-                                shift: m.state().shift_key(),
-                                alt: m.state().alt_key(),
-                                ctrl: m.state().control_key() || m.state().super_key(),
-                            };
-                        }
-                        WindowEvent::MouseInput { state, button, .. } => {
-                            match button {
-                                MouseButton::Left => match state {
-                                    ElementState::Pressed => {
-                                        if space_down {
-                                            if ed.mods.ctrl {
-                                                let f = if ed.mods.alt { 1.0 / 1.5 } else { 1.5 };
-                                                let wc = view.s2w(screen_cursor);
-                                                view.zoom = (view.zoom * f).clamp(0.05, 40.0);
-                                                view.pan = [
-                                                    screen_cursor[0] - wc[0] * view.zoom,
-                                                    screen_cursor[1] - wc[1] * view.zoom,
-                                                ];
-                                            } else {
-                                                panning = true;
-                                                pan_last = screen_cursor;
-                                            }
-                                            window.request_redraw();
-                                            return;
-                                        }
-                                        if over_panel {
-                                            window.request_redraw();
-                                            return;
-                                        } // egui handles the click
-                                        let now = Instant::now();
-                                        let dbl = last_click.map_or(false, |(t, p)| {
-                                            now.duration_since(t).as_millis() < 350
-                                                && ((p[0] - screen_cursor[0]).powi(2)
-                                                    + (p[1] - screen_cursor[1]).powi(2))
-                                                .sqrt()
-                                                    < 6.0
-                                        });
-                                        last_click = Some((now, screen_cursor));
-                                        ed.ppu = view.zoom;
-                                        let wp = view.s2w(screen_cursor);
-                                        if dbl && matches!(ed.tool, ToolKind::Object | ToolKind::Direct) {
-                                            ed.double_click(wp);
+                        window.request_redraw();
+                    }
+                    WindowEvent::ModifiersChanged(m) => {
+                        ed.mods = Mods {
+                            shift: m.state().shift_key(),
+                            alt: m.state().alt_key(),
+                            ctrl: m.state().control_key() || m.state().super_key(),
+                        };
+                    }
+                    WindowEvent::MouseInput { state, button, .. } => {
+                        match button {
+                            MouseButton::Left => match state {
+                                ElementState::Pressed => {
+                                    if space_down {
+                                        if ed.mods.ctrl {
+                                            let f = if ed.mods.alt { 1.0 / 1.5 } else { 1.5 };
+                                            let wc = view.s2w(screen_cursor);
+                                            view.zoom = (view.zoom * f).clamp(0.05, 40.0);
+                                            view.pan = [
+                                                screen_cursor[0] - wc[0] * view.zoom,
+                                                screen_cursor[1] - wc[1] * view.zoom,
+                                            ];
                                         } else {
-                                            ed.pointer_down(wp);
+                                            panning = true;
+                                            pan_last = screen_cursor;
                                         }
+                                        window.request_redraw();
+                                        return;
                                     }
-                                    ElementState::Released => {
-                                        if panning {
-                                            panning = false;
-                                        } else if over_panel && ed.delete_dragged_guide() {
-                                            window.request_redraw();
-                                        }
-                                        // dropped a guide onto a ruler → delete
-                                        else {
-                                            ed.pointer_up();
-                                        }
+                                    if over_panel {
+                                        window.request_redraw();
+                                        return;
+                                    } // egui handles the click
+                                    let now = Instant::now();
+                                    let dbl = last_click.is_some_and(|(t, p)| {
+                                        now.duration_since(t).as_millis() < 350
+                                            && ((p[0] - screen_cursor[0]).powi(2) + (p[1] - screen_cursor[1]).powi(2))
+                                                .sqrt()
+                                                < 6.0
+                                    });
+                                    last_click = Some((now, screen_cursor));
+                                    ed.ppu = view.zoom;
+                                    let wp = view.s2w(screen_cursor);
+                                    if dbl && matches!(ed.tool, ToolKind::Object | ToolKind::Direct) {
+                                        ed.double_click(wp);
+                                    } else {
+                                        ed.pointer_down(wp);
                                     }
-                                },
-                                MouseButton::Middle => match state {
-                                    ElementState::Pressed => {
-                                        panning = true;
-                                        pan_last = screen_cursor;
-                                    }
-                                    ElementState::Released => panning = false,
-                                },
-                                _ => {}
-                            }
-                            window.request_redraw();
-                        }
-                        WindowEvent::MouseWheel { delta, .. } => {
-                            // a panel is a hard scroll boundary: if the pointer is over egui chrome (e.g. the
-                            // Layers list), the wheel scrolls THAT — it must never leak to canvas pan/zoom.
-                            if gui.wants_pointer() {
-                                window.request_redraw();
-                                return;
-                            }
-                            let (dx, dy) = match delta {
-                                MouseScrollDelta::LineDelta(x, y) => (x, y),
-                                MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 40.0, p.y as f32 / 40.0),
-                            };
-                            if ed.mods.alt {
-                                // exponential per notch: winit 0.30 coalesces fast wheel notches into ONE event
-                                // with a bigger dy — 1.12^dy makes that identical to the old one-event-per-notch
-                                // stream (a linear 1+0.12·dy overshoots in a single visible jump)
-                                let f = 1.12f32.powf(dy).clamp(0.2, 5.0);
-                                let wc = view.s2w(screen_cursor);
-                                view.zoom = (view.zoom * f).clamp(0.05, 40.0);
-                                view.pan = [screen_cursor[0] - wc[0] * view.zoom, screen_cursor[1] - wc[1] * view.zoom];
-                            } else if ed.mods.shift {
-                                view.pan[0] += (dy + dx) * 30.0;
-                            } else {
-                                view.pan[1] += dy * 30.0;
-                                view.pan[0] += dx * 30.0;
-                            }
-                            window.request_redraw();
-                        }
-                        WindowEvent::KeyboardInput { event, .. } => {
-                            // Only skip canvas shortcuts when a text field is actually focused — NOT on egui's
-                            // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
-                            // The Color Picker is a floating palette: the canvas stays fully usable beside it,
-                            // but Esc/Enter belong to the dialog while it is open (Cancel / OK).
-                            if gui.wants_keyboard() { /* typing into a field — keys go to egui */
-                            } else if let PhysicalKey::Code(code) = event.physical_key {
-                                if gui.modal_open()
-                                    && matches!(code, KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter)
-                                {
-                                    /* the dialog owns these */
-                                } else if code == KeyCode::Space {
-                                    space_down = event.state == ElementState::Pressed;
-                                    if !space_down {
+                                }
+                                ElementState::Released => {
+                                    if panning {
                                         panning = false;
+                                    } else if over_panel && ed.delete_dragged_guide() {
+                                        window.request_redraw();
                                     }
-                                    window.request_redraw();
-                                } else if event.state == ElementState::Pressed {
-                                    let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
-                                    let cs = format!("{:?}", code);
-                                    if mc && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {
-                                        // Ctrl+0 = Fit Artboard in Window
-                                        let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                        let sz = window.inner_size();
-                                        view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
-                                    } else if mc && code == KeyCode::KeyS {
-                                        // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
-                                        let dest = if ms { None } else { cur_file.clone() }.or_else(|| {
-                                            rfd::FileDialog::new()
-                                                .add_filter("Varos document (PDF-compatible)", &["vrs"])
-                                                .add_filter("PDF", &["pdf"]) // same bytes — a valid PDF either way
-                                                .set_file_name(format!("{}.vrs", doc_stem(cur_file.as_deref())))
-                                                .save_file()
-                                        });
-                                        if let Some(mut p) = dest {
-                                            if p.extension().map_or(true, |e| {
-                                                !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))
-                                            }) {
-                                                p.set_extension("vrs");
+                                    // dropped a guide onto a ruler → delete
+                                    else {
+                                        ed.pointer_up();
+                                    }
+                                }
+                            },
+                            MouseButton::Middle => match state {
+                                ElementState::Pressed => {
+                                    panning = true;
+                                    pan_last = screen_cursor;
+                                }
+                                ElementState::Released => panning = false,
+                            },
+                            _ => {}
+                        }
+                        window.request_redraw();
+                    }
+                    WindowEvent::MouseWheel { delta, .. } => {
+                        // a panel is a hard scroll boundary: if the pointer is over egui chrome (e.g. the
+                        // Layers list), the wheel scrolls THAT — it must never leak to canvas pan/zoom.
+                        if gui.wants_pointer() {
+                            window.request_redraw();
+                            return;
+                        }
+                        let (dx, dy) = match delta {
+                            MouseScrollDelta::LineDelta(x, y) => (x, y),
+                            MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 40.0, p.y as f32 / 40.0),
+                        };
+                        if ed.mods.alt {
+                            // exponential per notch: winit 0.30 coalesces fast wheel notches into ONE event
+                            // with a bigger dy — 1.12^dy makes that identical to the old one-event-per-notch
+                            // stream (a linear 1+0.12·dy overshoots in a single visible jump)
+                            let f = 1.12f32.powf(dy).clamp(0.2, 5.0);
+                            let wc = view.s2w(screen_cursor);
+                            view.zoom = (view.zoom * f).clamp(0.05, 40.0);
+                            view.pan = [screen_cursor[0] - wc[0] * view.zoom, screen_cursor[1] - wc[1] * view.zoom];
+                        } else if ed.mods.shift {
+                            view.pan[0] += (dy + dx) * 30.0;
+                        } else {
+                            view.pan[1] += dy * 30.0;
+                            view.pan[0] += dx * 30.0;
+                        }
+                        window.request_redraw();
+                    }
+                    WindowEvent::KeyboardInput { event, .. } => {
+                        // Only skip canvas shortcuts when a text field is actually focused — NOT on egui's
+                        // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
+                        // The Color Picker is a floating palette: the canvas stays fully usable beside it,
+                        // but Esc/Enter belong to the dialog while it is open (Cancel / OK).
+                        if gui.wants_keyboard() { /* typing into a field — keys go to egui */
+                        } else if let PhysicalKey::Code(code) = event.physical_key {
+                            if gui.modal_open()
+                                && matches!(code, KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter)
+                            {
+                                /* the dialog owns these */
+                            } else if code == KeyCode::Space {
+                                space_down = event.state == ElementState::Pressed;
+                                if !space_down {
+                                    panning = false;
+                                }
+                                window.request_redraw();
+                            } else if event.state == ElementState::Pressed {
+                                let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
+                                let cs = format!("{:?}", code);
+                                if mc && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {
+                                    // Ctrl+0 = Fit Artboard in Window
+                                    let a = ed.doc.active_artboard().cloned().unwrap_or_default();
+                                    let sz = window.inner_size();
+                                    view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                                } else if mc && code == KeyCode::KeyS {
+                                    // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
+                                    let dest = if ms { None } else { cur_file.clone() }.or_else(|| {
+                                        rfd::FileDialog::new()
+                                            .add_filter("Varos document (PDF-compatible)", &["vrs"])
+                                            .add_filter("PDF", &["pdf"]) // same bytes — a valid PDF either way
+                                            .set_file_name(format!("{}.vrs", doc_stem(cur_file.as_deref())))
+                                            .save_file()
+                                    });
+                                    if let Some(mut p) = dest {
+                                        if p.extension().is_none_or(|e| {
+                                            !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))
+                                        }) {
+                                            p.set_extension("vrs");
+                                        }
+                                        match varos_pdf::save_vrs(&ed.doc, &p) {
+                                            Ok(()) => {
+                                                cur_file = Some(p);
+                                                saved_rev = ed.rev;
                                             }
-                                            match varos_pdf::save_vrs(&ed.doc, &p) {
-                                                Ok(()) => {
+                                            Err(e) => {
+                                                rfd::MessageDialog::new()
+                                                    .set_level(rfd::MessageLevel::Error)
+                                                    .set_title("Varos")
+                                                    .set_description(format!("Save failed: {e}"))
+                                                    .show();
+                                            }
+                                        }
+                                    }
+                                    ed.mods = Default::default(); // the native dialog eats the key releases
+                                } else if mc && code == KeyCode::KeyO {
+                                    // Ctrl+O = Open — guard unsaved changes first
+                                    let proceed = ed.rev == saved_rev
+                                        || rfd::MessageDialog::new()
+                                            .set_level(rfd::MessageLevel::Warning)
+                                            .set_title("Varos")
+                                            .set_description(
+                                                "You have unsaved changes.\nDiscard them and open another file?",
+                                            )
+                                            .set_buttons(rfd::MessageButtons::YesNo)
+                                            .show()
+                                            == rfd::MessageDialogResult::Yes;
+                                    if proceed {
+                                        if let Some(p) = rfd::FileDialog::new()
+                                            .add_filter("Varos document", &["vrs", "pdf"])
+                                            .pick_file()
+                                        {
+                                            match varos_pdf::load_vrs(&p) {
+                                                Ok(doc) => {
+                                                    ed.replace_doc(doc);
                                                     cur_file = Some(p);
                                                     saved_rev = ed.rev;
+                                                    let a = ed.doc.active_artboard().cloned().unwrap_or_default();
+                                                    let sz = window.inner_size();
+                                                    view = View::fit(
+                                                        a.x,
+                                                        a.y,
+                                                        a.w,
+                                                        a.h,
+                                                        sz.width as f32,
+                                                        sz.height as f32,
+                                                        0.9,
+                                                    );
                                                 }
                                                 Err(e) => {
                                                     rfd::MessageDialog::new()
                                                         .set_level(rfd::MessageLevel::Error)
                                                         .set_title("Varos")
-                                                        .set_description(format!("Save failed: {e}"))
+                                                        .set_description(format!("Open failed: {e}"))
                                                         .show();
                                                 }
                                             }
                                         }
-                                        ed.mods = Default::default(); // the native dialog eats the key releases
-                                    } else if mc && code == KeyCode::KeyO {
-                                        // Ctrl+O = Open — guard unsaved changes first
-                                        let proceed = ed.rev == saved_rev
-                                            || rfd::MessageDialog::new()
-                                                .set_level(rfd::MessageLevel::Warning)
-                                                .set_title("Varos")
-                                                .set_description(
-                                                    "You have unsaved changes.\nDiscard them and open another file?",
-                                                )
-                                                .set_buttons(rfd::MessageButtons::YesNo)
-                                                .show()
-                                                == rfd::MessageDialogResult::Yes;
-                                        if proceed {
-                                            if let Some(p) = rfd::FileDialog::new()
-                                                .add_filter("Varos document", &["vrs", "pdf"])
-                                                .pick_file()
-                                            {
-                                                match varos_pdf::load_vrs(&p) {
-                                                    Ok(doc) => {
-                                                        ed.replace_doc(doc);
-                                                        cur_file = Some(p);
-                                                        saved_rev = ed.rev;
-                                                        let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                                        let sz = window.inner_size();
-                                                        view = View::fit(
-                                                            a.x,
-                                                            a.y,
-                                                            a.w,
-                                                            a.h,
-                                                            sz.width as f32,
-                                                            sz.height as f32,
-                                                            0.9,
-                                                        );
-                                                    }
-                                                    Err(e) => {
-                                                        rfd::MessageDialog::new()
-                                                            .set_level(rfd::MessageLevel::Error)
-                                                            .set_title("Varos")
-                                                            .set_description(format!("Open failed: {e}"))
-                                                            .show();
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        ed.mods = Default::default();
-                                    } else {
-                                        apply_key(&mut ed, &mut view, &cs, mc, ms, ma);
                                     }
-                                    window.request_redraw();
-                                }
-                            }
-                        }
-                        WindowEvent::RedrawRequested => {
-                            // While minimized the window is 0×0 — rendering into a 0-size surface/egui panics
-                            // (that was closing the app on minimize). Skip the frame until it's restored.
-                            let psz = window.inner_size();
-                            if psz.width == 0 || psz.height == 0 {
-                                return;
-                            }
-                            ed.ppu = view.zoom;
-                            // Native UI runs FIRST (the rail may switch the tool), THEN we build the scene from
-                            // the updated editor so the change shows this same frame.
-                            let (jobs, tdelta, screen) =
-                                gui.run(&window, &mut ed, scale as f32, view, cursors::is_maximized(hwnd));
-                            // title + tab track the document (name, unsaved *) and the active tool
-                            let unsaved = ed.rev != saved_rev;
-                            let title = full_title(ed.tool, cur_file.as_deref(), unsaved);
-                            if title != last_title {
-                                window.set_title(&title);
-                                gui.set_doc_tab(format!(
-                                    "{}{}",
-                                    doc_stem(cur_file.as_deref()),
-                                    if unsaved { " *" } else { "" }
-                                ));
-                                last_title = title;
-                                window.request_redraw(); // repaint once more so the tab text shows this change
-                            }
-                            // a "Fit in window" request from the artboard panel / ⋮ menu (this frame's view update)
-                            if let Some(i) = gui.fit_request.take() {
-                                if let Some(a) = ed.doc.artboards.get(i) {
-                                    let sz = window.inner_size();
-                                    view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
-                                }
-                            }
-                            // custom title-bar window controls
-                            if let Some(act) = gui.win_action.take() {
-                                match act {
-                                    ui::WinAction::Minimize => window.set_minimized(true),
-                                    ui::WinAction::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
-                                    ui::WinAction::Close => {
-                                        save_win_state(
-                                            cursors::is_maximized(hwnd),
-                                            win_norm.0,
-                                            win_norm.1,
-                                            win_norm.2,
-                                            win_norm.3,
-                                        );
-                                        elwt.exit();
-                                    }
-                                }
-                            }
-                            // Cursor: over a panel show a UI cursor (↔ on a number field, arrow elsewhere) — NOT
-                            // the tool/pen cursor; over the canvas show the tool's cursor.
-                            let ck = if panning {
-                                CK::Grab
-                            } else if space_down {
-                                CK::Hand
-                            } else if gui.wants_pointer() {
-                                if gui.scrub_hover() {
-                                    CK::ResizeH
+                                    ed.mods = Default::default();
                                 } else {
-                                    CK::Select
+                                    apply_key(&mut ed, &mut view, &cs, mc, ms, ma);
                                 }
-                            } else {
-                                desired_ck(&ed, view.s2w(screen_cursor))
-                            };
-                            if Some(ck) != last_ck {
-                                cursors::set(hcur[&ck]);
-                                last_ck = Some(ck);
-                                let (hw, ins, hits, cur) = cursors::dbg();
-                                let _ = std::fs::write(
-                                    "target/cursor-debug.txt",
-                                    format!(
-                                        "hwnd={hw}\ninstalled={ins}\nsetcursor_hits={hits}\ncurrent_hcursor={cur}\n"
-                                    ),
-                                );
-                            }
-                            if gui.splashing() {
-                                renderer.render_splash(&jobs, &tdelta, &screen);
-                            // floating card on a transparent surface
-                            } else {
-                                let world = build_scene(&ed, view.zoom);
-                                // Solid panel (no glass) + one light GPU drop shadow per panel rect.
-                                let panels: Vec<[f32; 4]> =
-                                    gui.rects.iter().map(|r| [r.min.x, r.min.y, r.width(), r.height()]).collect();
-                                renderer.render_ui(&world, view, &jobs, &tdelta, &screen, &panels, gui.frosted);
-                            }
-                            // AFTER rendering this frame (so no mid-frame size change), switch the borderless splash
-                            // window into the framed editor; the resulting Resized event syncs the surface next frame.
-                            if !gui.splashing() && !editor_framed {
-                                window.set_decorations(true);
-                                cursors::custom_frame(hwnd);
-                                if saved.map_or(false, |(m, ..)| m) {
-                                    // re-open maximized if it was last time
-                                    cursors::maximize(hwnd);
-                                    // sync the surface + view to the NEW (maximized) size NOW, before the next render —
-                                    // otherwise a frame draws a maximized viewport into the still-small target (wgpu panic).
-                                    let sz = window.inner_size();
-                                    renderer.resize(sz.width, sz.height);
-                                    let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                    view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
-                                    refit_pending = false;
-                                }
-                                editor_framed = true;
-                                window.request_redraw();
-                            }
-                            if gui.repaint {
                                 window.request_redraw();
                             }
                         }
-                        _ => {}
                     }
+                    WindowEvent::RedrawRequested => {
+                        // While minimized the window is 0×0 — rendering into a 0-size surface/egui panics
+                        // (that was closing the app on minimize). Skip the frame until it's restored.
+                        let psz = window.inner_size();
+                        if psz.width == 0 || psz.height == 0 {
+                            return;
+                        }
+                        ed.ppu = view.zoom;
+                        // Native UI runs FIRST (the rail may switch the tool), THEN we build the scene from
+                        // the updated editor so the change shows this same frame.
+                        let (jobs, tdelta, screen) =
+                            gui.run(&window, &mut ed, scale as f32, view, cursors::is_maximized(hwnd));
+                        // title + tab track the document (name, unsaved *) and the active tool
+                        let unsaved = ed.rev != saved_rev;
+                        let title = full_title(ed.tool, cur_file.as_deref(), unsaved);
+                        if title != last_title {
+                            window.set_title(&title);
+                            gui.set_doc_tab(format!(
+                                "{}{}",
+                                doc_stem(cur_file.as_deref()),
+                                if unsaved { " *" } else { "" }
+                            ));
+                            last_title = title;
+                            window.request_redraw(); // repaint once more so the tab text shows this change
+                        }
+                        // a "Fit in window" request from the artboard panel / ⋮ menu (this frame's view update)
+                        if let Some(i) = gui.fit_request.take() {
+                            if let Some(a) = ed.doc.artboards.get(i) {
+                                let sz = window.inner_size();
+                                view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                            }
+                        }
+                        // custom title-bar window controls
+                        if let Some(act) = gui.win_action.take() {
+                            match act {
+                                ui::WinAction::Minimize => window.set_minimized(true),
+                                ui::WinAction::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
+                                ui::WinAction::Close => {
+                                    save_win_state(
+                                        cursors::is_maximized(hwnd),
+                                        win_norm.0,
+                                        win_norm.1,
+                                        win_norm.2,
+                                        win_norm.3,
+                                    );
+                                    elwt.exit();
+                                }
+                            }
+                        }
+                        // Cursor: over a panel show a UI cursor (↔ on a number field, arrow elsewhere) — NOT
+                        // the tool/pen cursor; over the canvas show the tool's cursor.
+                        let ck = if panning {
+                            CK::Grab
+                        } else if space_down {
+                            CK::Hand
+                        } else if gui.wants_pointer() {
+                            if gui.scrub_hover() {
+                                CK::ResizeH
+                            } else {
+                                CK::Select
+                            }
+                        } else {
+                            desired_ck(&ed, view.s2w(screen_cursor))
+                        };
+                        if Some(ck) != last_ck {
+                            cursors::set(hcur[&ck]);
+                            last_ck = Some(ck);
+                            let (hw, ins, hits, cur) = cursors::dbg();
+                            let _ = std::fs::write(
+                                "target/cursor-debug.txt",
+                                format!("hwnd={hw}\ninstalled={ins}\nsetcursor_hits={hits}\ncurrent_hcursor={cur}\n"),
+                            );
+                        }
+                        if gui.splashing() {
+                            renderer.render_splash(&jobs, &tdelta, &screen);
+                        // floating card on a transparent surface
+                        } else {
+                            let world = build_scene(&ed, view.zoom);
+                            // Solid panel (no glass) + one light GPU drop shadow per panel rect.
+                            let panels: Vec<[f32; 4]> =
+                                gui.rects.iter().map(|r| [r.min.x, r.min.y, r.width(), r.height()]).collect();
+                            renderer.render_ui(&world, view, &jobs, &tdelta, &screen, &panels, gui.frosted);
+                        }
+                        // AFTER rendering this frame (so no mid-frame size change), switch the borderless splash
+                        // window into the framed editor; the resulting Resized event syncs the surface next frame.
+                        if !gui.splashing() && !editor_framed {
+                            window.set_decorations(true);
+                            cursors::custom_frame(hwnd);
+                            if saved.is_some_and(|(m, ..)| m) {
+                                // re-open maximized if it was last time
+                                cursors::maximize(hwnd);
+                                // sync the surface + view to the NEW (maximized) size NOW, before the next render —
+                                // otherwise a frame draws a maximized viewport into the still-small target (wgpu panic).
+                                let sz = window.inner_size();
+                                renderer.resize(sz.width, sz.height);
+                                let a = ed.doc.active_artboard().cloned().unwrap_or_default();
+                                view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                                refit_pending = false;
+                            }
+                            editor_framed = true;
+                            window.request_redraw();
+                        }
+                        if gui.repaint {
+                            window.request_redraw();
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         })
         .unwrap();

@@ -32,7 +32,7 @@ impl Tool for Object {
                     }
                 }
                 ed.obj_angle = 0.0; // selection set changed → axis-align
-            } else if !members.iter().any(|m| ed.objsel.contains(&m)) {
+            } else if !members.iter().any(|m| ed.objsel.contains(m)) {
                 ed.objsel.clear();
                 for m in members {
                     ed.objsel.insert(m);

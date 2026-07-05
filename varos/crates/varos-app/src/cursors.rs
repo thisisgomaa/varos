@@ -328,7 +328,7 @@ fn build_hcursor(rgba: &[u8], w: u32, h: u32, hx: u16, hy: u16) -> isize {
             dst[i * 4 + 2] = pm(r);
             dst[i * 4 + 3] = a;
         }
-        let mask_bytes = vec![0u8; (((w as usize) + 15) / 16 * 2) * h as usize];
+        let mask_bytes = vec![0u8; ((w as usize).div_ceil(16) * 2) * h as usize];
         let mask = CreateBitmap(w as i32, h as i32, 1, 1, Some(mask_bytes.as_ptr() as *const _));
         let ii =
             ICONINFO { fIcon: false.into(), xHotspot: hx as u32, yHotspot: hy as u32, hbmMask: mask, hbmColor: hbm };
