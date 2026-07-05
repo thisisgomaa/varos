@@ -6,7 +6,9 @@ use varos_core::editor::{Editor, ToolKind};
 use varos_core::file::{load_vrs, save_vrs};
 use varos_core::model::{Anchor, Path};
 
-fn anc(id: u32, x: f32, y: f32) -> Anchor { Anchor { id, p: [x, y], hin: None, hout: None, smooth: false } }
+fn anc(id: u32, x: f32, y: f32) -> Anchor {
+    Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
+}
 fn tmp(name: &str) -> std::path::PathBuf {
     let p = std::env::temp_dir().join(format!("varos-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_file(&p);
@@ -16,12 +18,18 @@ fn tmp(name: &str) -> std::path::PathBuf {
 #[test]
 fn vrs_round_trips_identically_on_disk() {
     let mut ed = Editor::new();
-    ed.doc.paths.push(Path::new(1, vec![anc(1, 0.0, 0.0), anc(2, 80.0, 0.0), anc(3, 40.0, 60.0)],
-                                true, Some([0.2, 0.7, 0.3, 1.0]), Some([0.0, 0.0, 0.0, 0.5]), 4.0));
+    ed.doc.paths.push(Path::new(
+        1,
+        vec![anc(1, 0.0, 0.0), anc(2, 80.0, 0.0), anc(3, 40.0, 60.0)],
+        true,
+        Some([0.2, 0.7, 0.3, 1.0]),
+        Some([0.0, 0.0, 0.0, 0.5]),
+        4.0,
+    ));
     ed.doc.paths[0].opacity = 0.8;
     ed.doc.paths[0].name = Some("Hero triangle".into());
     ed.doc.ids = 3;
-    ed.doc.sync_tree();   // adopt the raw push into the tree (every real commit does this)
+    ed.doc.sync_tree(); // adopt the raw push into the tree (every real commit does this)
 
     let p = tmp("roundtrip.vrs");
     save_vrs(&ed.doc, &p).expect("save writes the file");
@@ -52,13 +60,27 @@ fn a_group_still_moves_as_one_after_reopen() {
     // Ahmed's report: after reopening a file, dragging a grouped shape moves it disintegrated.
     // Full path: build a group → save → load → replace_doc → Object-tool drag one member.
     let mut ed = Editor::new();
-    ed.doc.artboards.clear(); ed.ppu = 1.0;
-    ed.doc.paths.push(Path::new(1, vec![anc(1, 0.0, 0.0), anc(2, 20.0, 0.0), anc(3, 0.0, 20.0)],
-                                true, Some([1.0, 0.0, 0.0, 1.0]), None, 1.0));
-    ed.doc.paths.push(Path::new(2, vec![anc(4, 100.0, 0.0), anc(5, 120.0, 0.0), anc(6, 100.0, 20.0)],
-                                true, None, Some([0.0, 0.0, 0.0, 1.0]), 2.0));
+    ed.doc.artboards.clear();
+    ed.ppu = 1.0;
+    ed.doc.paths.push(Path::new(
+        1,
+        vec![anc(1, 0.0, 0.0), anc(2, 20.0, 0.0), anc(3, 0.0, 20.0)],
+        true,
+        Some([1.0, 0.0, 0.0, 1.0]),
+        None,
+        1.0,
+    ));
+    ed.doc.paths.push(Path::new(
+        2,
+        vec![anc(4, 100.0, 0.0), anc(5, 120.0, 0.0), anc(6, 100.0, 20.0)],
+        true,
+        None,
+        Some([0.0, 0.0, 0.0, 1.0]),
+        2.0,
+    ));
     ed.doc.ids = 6;
-    ed.objsel.insert(1); ed.objsel.insert(2);
+    ed.objsel.insert(1);
+    ed.objsel.insert(2);
     ed.group_selection();
     assert_eq!(ed.doc.group_members(1).len(), 2, "precondition: both paths share the group");
 
@@ -71,8 +93,8 @@ fn a_group_still_moves_as_one_after_reopen() {
     assert_eq!(ed2.doc.group_members(1).len(), 2, "membership survives the reopen");
 
     ed2.set_tool(ToolKind::Object);
-    ed2.pointer_down([5.0, 5.0]);      // grab path 1 (inside its triangle)
-    ed2.pointer_move([15.0, 5.0]);     // drag +10 in x
+    ed2.pointer_down([5.0, 5.0]); // grab path 1 (inside its triangle)
+    ed2.pointer_move([15.0, 5.0]); // drag +10 in x
     ed2.pointer_up();
     let p1 = ed2.doc.paths[0].anchors[0].p;
     let p2 = ed2.doc.paths[1].anchors[0].p;
@@ -84,12 +106,21 @@ fn a_group_still_moves_as_one_after_reopen() {
 #[test]
 fn open_resets_history_and_selection() {
     let mut ed = Editor::new();
-    ed.doc.paths.push(Path::new(1, vec![anc(1, 0.0, 0.0), anc(2, 10.0, 0.0), anc(3, 0.0, 10.0)],
-                                true, Some([1.0, 0.0, 0.0, 1.0]), None, 1.0));
+    ed.doc.paths.push(Path::new(
+        1,
+        vec![anc(1, 0.0, 0.0), anc(2, 10.0, 0.0), anc(3, 0.0, 10.0)],
+        true,
+        Some([1.0, 0.0, 0.0, 1.0]),
+        None,
+        1.0,
+    ));
     ed.doc.ids = 3;
     ed.set_tool(ToolKind::Object);
     ed.objsel.insert(1);
-    ed.begin(); ed.doc.paths[0].opacity = 0.5; ed.dirty = true; ed.commit();   // one undoable change
+    ed.begin();
+    ed.doc.paths[0].opacity = 0.5;
+    ed.dirty = true;
+    ed.commit(); // one undoable change
     let rev_before = ed.rev;
     assert!(rev_before > 0, "a committed change bumps rev");
 

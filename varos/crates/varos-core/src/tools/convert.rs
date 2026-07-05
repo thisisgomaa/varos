@@ -19,15 +19,24 @@ impl Tool for Convert {
         // anchor: smooth -> corner (click); corner -> drag to pull handles
         if let Some(aid) = ed.nearest_anchor(pos, ANCHOR_R, true) {
             let (pi, ai) = ed.doc.aidx(aid).unwrap();
-            ed.selected.clear(); ed.selected.insert(aid);
-            if ed.doc.paths[pi].anchors[ai].smooth { ed.toggle_type(aid); ed.dirty = true; }
-            else { ed.drag = Drag::ConvPull { aid, down: pos }; }
+            ed.selected.clear();
+            ed.selected.insert(aid);
+            if ed.doc.paths[pi].anchors[ai].smooth {
+                ed.toggle_type(aid);
+                ed.dirty = true;
+            } else {
+                ed.drag = Drag::ConvPull { aid, down: pos };
+            }
             return;
         }
         // segment -> reshape
         if let Some(pid) = ed.path_under(pos) {
             if let Some(pi) = ed.doc.pidx(pid) {
-                if let Some((i, _, d)) = ed.doc.nearest_seg(pi, pos) { if d <= EDGE_R { ed.start_segment(pid, i, pos); } }
+                if let Some((i, _, d)) = ed.doc.nearest_seg(pi, pos) {
+                    if d <= EDGE_R {
+                        ed.start_segment(pid, i, pos);
+                    }
+                }
             }
         }
     }

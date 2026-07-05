@@ -91,7 +91,9 @@ fn nested_group_ungroup_peels_one_level() {
     let outer = doc.group(&[a1, a2, b1, b2]).unwrap(); // group the two groups
 
     // everything now resolves to the outer group
-    for p in [a1, a2, b1, b2] { assert_eq!(doc.top_group_of_path(p), Some(outer)); }
+    for p in [a1, a2, b1, b2] {
+        assert_eq!(doc.top_group_of_path(p), Some(outer));
+    }
     assert_eq!(sorted(doc.group_members(a1)), sorted(vec![a1, a2, b1, b2]));
 
     // peel one level
@@ -141,12 +143,13 @@ fn duplicating_nested_group_preserves_nesting() {
     assert_eq!(copies.len(), 4);
     // all copies under one new top group (≠ x)
     let ctop = doc.top_group_of_path(copies[0]).unwrap();
-    for c in &copies { assert_eq!(doc.top_group_of_path(*c), Some(ctop)); }
+    for c in &copies {
+        assert_eq!(doc.top_group_of_path(*c), Some(ctop));
+    }
     assert_ne!(ctop, x);
     // peeling one level off the copy must reveal TWO inner sub-groups (mirroring A and B)
     doc.ungroup(&copies);
-    let tops: std::collections::HashSet<u32> =
-        copies.iter().map(|c| doc.top_group_of_path(*c).unwrap()).collect();
+    let tops: std::collections::HashSet<u32> = copies.iter().map(|c| doc.top_group_of_path(*c).unwrap()).collect();
     assert_eq!(tops.len(), 2, "the copy preserved its two inner sub-groups");
 }
 
@@ -172,7 +175,7 @@ fn shift_click_near_selection_corner_still_selects() {
     ed.set_tool(ToolKind::Object);
     click(&mut ed, 20.0, 20.0, false); // select s1
     assert_eq!(ed.objsel.len(), 1);
-    click(&mut ed, 52.0, 8.0, true);   // shift-click s2 near s1's (40,0) corner
+    click(&mut ed, 52.0, 8.0, true); // shift-click s2 near s1's (40,0) corner
     assert!(ed.objsel.contains(&s1) && ed.objsel.contains(&s2), "both shapes must be selected");
     assert_eq!(ed.objsel.len(), 2, "shift-click on a nearby object must select it, not rotate");
 }
@@ -240,7 +243,7 @@ fn sync_tree_drops_deleted_paths() {
     let mut doc = Document::default();
     let a = add_rect(&mut doc, 0.0, 0.0, 10.0, 10.0);
     let b = add_rect(&mut doc, 20.0, 0.0, 30.0, 10.0);
-    doc.sync_tree();                    // adopt the raw pushes into the tree (commit does this)
+    doc.sync_tree(); // adopt the raw pushes into the tree (commit does this)
     doc.group(&[a, b]).unwrap();
 
     // delete path a directly (as delete_selected does), then reconcile
@@ -253,6 +256,8 @@ fn sync_tree_drops_deleted_paths() {
     // delete b too → group becomes empty and is removed
     doc.paths.retain(|p| p.id != b);
     doc.sync_tree();
-    assert!(!doc.nodes.iter().any(|n| matches!(n.kind, varos_core::model::NodeKind::Group)),
-            "an empty group must be removed");
+    assert!(
+        !doc.nodes.iter().any(|n| matches!(n.kind, varos_core::model::NodeKind::Group)),
+        "an empty group must be removed"
+    );
 }

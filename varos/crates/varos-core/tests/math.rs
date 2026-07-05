@@ -6,9 +6,7 @@
 //! Run with:  cargo test -p varos-core
 
 use varos_core::boolean::{run_boolean_curves, BoolOp, ResultShape, Seg};
-use varos_core::geom::{
-    add, cubic, dist, mirror, point_in_poly, rotate_about, scale, sub, Pt,
-};
+use varos_core::geom::{add, cubic, dist, mirror, point_in_poly, rotate_about, scale, sub, Pt};
 use varos_core::model::{Anchor, Document, Path};
 
 // ---------------------------------------------------------------- helpers
@@ -105,10 +103,7 @@ fn minus_front_area() {
 #[test]
 fn exclude_disjoint() {
     // XOR of two non-touching squares = both of them = 200.
-    let shapes = vec![
-        vec![rect_segs(0.0, 0.0, 10.0, 10.0)],
-        vec![rect_segs(20.0, 20.0, 30.0, 30.0)],
-    ];
+    let shapes = vec![vec![rect_segs(0.0, 0.0, 10.0, 10.0)], vec![rect_segs(20.0, 20.0, 30.0, 30.0)]];
     let r = run_boolean_curves(BoolOp::Exclude, &shapes);
     let a = result_area(&r);
     assert!(close(a, 200.0, 2.0), "Exclude(disjoint) area = {a}, expected ~200");
@@ -142,8 +137,8 @@ fn exclude_corner_overlap() {
 fn minus_front_makes_a_hole() {
     // a small square fully inside a big one → subtracting it leaves a donut: outer + 1 hole.
     let shapes = vec![
-        vec![rect_segs(0.0, 0.0, 20.0, 20.0)],  // big, bottom (area 400)
-        vec![rect_segs(5.0, 5.0, 15.0, 15.0)],  // small, fully inside (area 100)
+        vec![rect_segs(0.0, 0.0, 20.0, 20.0)], // big, bottom (area 400)
+        vec![rect_segs(5.0, 5.0, 15.0, 15.0)], // small, fully inside (area 100)
     ];
     let r = run_boolean_curves(BoolOp::MinusFront, &shapes);
     assert!(!r.is_empty(), "donut produced nothing");
@@ -220,13 +215,7 @@ fn point_in_poly_basic() {
 #[test]
 fn point_in_path_respects_holes() {
     // a 20×20 square with a 5..15 square hole (donut). even-odd: hole interior is NOT filled.
-    let mk = |id: u32, x: f32, y: f32| Anchor {
-        id,
-        p: [x, y],
-        hin: None,
-        hout: None,
-        smooth: false,
-    };
+    let mk = |id: u32, x: f32, y: f32| Anchor { id, p: [x, y], hin: None, hout: None, smooth: false };
     let outer = vec![mk(1, 0.0, 0.0), mk(2, 20.0, 0.0), mk(3, 20.0, 20.0), mk(4, 0.0, 20.0)];
     let hole = vec![mk(5, 5.0, 5.0), mk(6, 15.0, 5.0), mk(7, 15.0, 15.0), mk(8, 5.0, 15.0)];
     let mut doc = Document::default();

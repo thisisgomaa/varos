@@ -4,17 +4,31 @@
 use varos_core::model::{Anchor, Artboard, Document, Path};
 use varos_pdf::{load_vrs, save_vrs, write_pdf};
 
-fn anc(id: u32, x: f32, y: f32) -> Anchor { Anchor { id, p: [x, y], hin: None, hout: None, smooth: false } }
+fn anc(id: u32, x: f32, y: f32) -> Anchor {
+    Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
+}
 fn demo_doc() -> Document {
     let mut d = Document::default();
     d.artboards = vec![Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, ..Default::default() }];
-    d.paths.push(Path::new(1, vec![anc(1, 40.0, 40.0), anc(2, 200.0, 60.0), anc(3, 120.0, 220.0)],
-                           true, Some([0.2, 0.7, 0.3, 1.0]), Some([0.0, 0.0, 0.0, 0.5]), 6.0)); // knockout case
-    d.paths.push(Path::new(2, vec![anc(4, 250.0, 50.0), anc(5, 350.0, 250.0)],
-                           false, None, Some([0.9, 0.2, 0.2, 1.0]), 3.0));                      // open stroke
+    d.paths.push(Path::new(
+        1,
+        vec![anc(1, 40.0, 40.0), anc(2, 200.0, 60.0), anc(3, 120.0, 220.0)],
+        true,
+        Some([0.2, 0.7, 0.3, 1.0]),
+        Some([0.0, 0.0, 0.0, 0.5]),
+        6.0,
+    )); // knockout case
+    d.paths.push(Path::new(
+        2,
+        vec![anc(4, 250.0, 50.0), anc(5, 350.0, 250.0)],
+        false,
+        None,
+        Some([0.9, 0.2, 0.2, 1.0]),
+        3.0,
+    )); // open stroke
     d.paths[0].opacity = 0.8;
     d.ids = 5;
-    d.sync_tree();   // adopt the raw pushes into the scene tree (every real commit does this)
+    d.sync_tree(); // adopt the raw pushes into the scene tree (every real commit does this)
     d
 }
 fn tmp(name: &str) -> std::path::PathBuf {
@@ -61,15 +75,22 @@ fn groups_survive_the_container_round_trip() {
     // Ahmed's report: after reopening a file, a group moves disintegrated. Groups now live in the
     // scene TREE (Layers Stage A) — the container must carry it intact.
     let mut d = demo_doc();
-    d.paths.push(Path::new(3, vec![anc(6, 10.0, 10.0), anc(7, 20.0, 10.0), anc(8, 15.0, 20.0)],
-                           true, Some([0.5, 0.5, 0.5, 1.0]), None, 1.0));
+    d.paths.push(Path::new(
+        3,
+        vec![anc(6, 10.0, 10.0), anc(7, 20.0, 10.0), anc(8, 15.0, 20.0)],
+        true,
+        Some([0.5, 0.5, 0.5, 1.0]),
+        None,
+        1.0,
+    ));
     d.ids = 8;
     d.group(&[1, 3]).expect("group the two shapes");
     let p = tmp("groups.vrs");
     save_vrs(&d, &p).expect("save");
     let loaded = load_vrs(&p).expect("load");
     assert_eq!(loaded, d, "the whole document — tree included — must survive save/reopen");
-    let mut m = loaded.group_members(1); m.sort();
+    let mut m = loaded.group_members(1);
+    m.sort();
     assert_eq!(m, vec![1, 3], "group membership works after reopen");
     let _ = std::fs::remove_file(&p);
 }
@@ -78,7 +99,7 @@ fn groups_survive_the_container_round_trip() {
 fn legacy_raw_json_vrs_still_opens() {
     let doc = demo_doc();
     let p = tmp("legacy.vrs");
-    varos_core::file::save_vrs(&doc, &p).expect("legacy JSON writer");   // the first slice's format
+    varos_core::file::save_vrs(&doc, &p).expect("legacy JSON writer"); // the first slice's format
     let loaded = load_vrs(&p).expect("the PDF loader sniffs and falls back to JSON");
     assert_eq!(loaded, doc);
     let _ = std::fs::remove_file(&p);
