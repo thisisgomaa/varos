@@ -9,25 +9,83 @@ use resvg::{tiny_skia, usvg};
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CK {
     // ---- our own SVG-rendered cursors (shippable: Font Awesome / Lucide / drawn) ----
-    Select, Direct, Pen, PenNew, PenAdd, PenDel, PenClose, PenConnect, Convert, Cross, Eye,
+    Select,
+    Direct,
+    Pen,
+    PenNew,
+    PenAdd,
+    PenDel,
+    PenClose,
+    PenConnect,
+    Convert,
+    Cross,
+    Eye,
     // ---- interaction-state cursors backed by the Illustrator set (TEMP local, see ai_svg) ----
-    ResizeH, ResizeV, ResizeNE, ResizeNW, Move, Hand, Grab, Copy, NoDrop,
+    ResizeH,
+    ResizeV,
+    ResizeNE,
+    ResizeNW,
+    Move,
+    Hand,
+    Grab,
+    Copy,
+    NoDrop,
     // ---- rotate cursors, 8 compass directions (corner of the transform frame) ----
-    RotateE, RotateSE, RotateS, RotateSW, RotateW, RotateNW, RotateN, RotateNE,
+    RotateE,
+    RotateSE,
+    RotateS,
+    RotateSW,
+    RotateW,
+    RotateNW,
+    RotateN,
+    RotateNE,
 }
 
 // SVG-backed cursors only — these are what the dev `--dump-cursors` previews.
 pub const ALL: [CK; 11] = [
-    CK::Select, CK::Direct, CK::Pen, CK::PenNew, CK::PenAdd, CK::PenDel,
-    CK::PenClose, CK::PenConnect, CK::Convert, CK::Cross, CK::Eye,
+    CK::Select,
+    CK::Direct,
+    CK::Pen,
+    CK::PenNew,
+    CK::PenAdd,
+    CK::PenDel,
+    CK::PenClose,
+    CK::PenConnect,
+    CK::Convert,
+    CK::Cross,
+    CK::Eye,
 ];
 
 // Every cursor we build an HCURSOR for (SVG ones + the interaction/rotate states).
 pub const ALL_CURSORS: [CK; 28] = [
-    CK::Select, CK::Direct, CK::Pen, CK::PenNew, CK::PenAdd, CK::PenDel,
-    CK::PenClose, CK::PenConnect, CK::Convert, CK::Cross, CK::Eye,
-    CK::ResizeH, CK::ResizeV, CK::ResizeNE, CK::ResizeNW, CK::Move, CK::Hand, CK::Grab, CK::Copy, CK::NoDrop,
-    CK::RotateE, CK::RotateSE, CK::RotateS, CK::RotateSW, CK::RotateW, CK::RotateNW, CK::RotateN, CK::RotateNE,
+    CK::Select,
+    CK::Direct,
+    CK::Pen,
+    CK::PenNew,
+    CK::PenAdd,
+    CK::PenDel,
+    CK::PenClose,
+    CK::PenConnect,
+    CK::Convert,
+    CK::Cross,
+    CK::Eye,
+    CK::ResizeH,
+    CK::ResizeV,
+    CK::ResizeNE,
+    CK::ResizeNW,
+    CK::Move,
+    CK::Hand,
+    CK::Grab,
+    CK::Copy,
+    CK::NoDrop,
+    CK::RotateE,
+    CK::RotateSE,
+    CK::RotateS,
+    CK::RotateSW,
+    CK::RotateW,
+    CK::RotateNW,
+    CK::RotateN,
+    CK::RotateNE,
 ];
 
 /// The real Adobe Illustrator vector cursor for a CK: (SVG filename stem, hotspot_x, hotspot_y).
@@ -48,8 +106,8 @@ pub fn ai_svg(ck: CK) -> Option<(&'static str, f32, f32)> {
         CK::Eye => ("CUR_EYEDROPPER", 2.0, 17.0),
         CK::ResizeH => ("CUR_SCALEHORIZONTAL", 9.0, 9.0),
         CK::ResizeV => ("CUR_SCALEVERTICAL", 9.0, 9.0),
-        CK::ResizeNW => ("CUR_SCALETLBR", 9.0, 9.0),   // ↖↘
-        CK::ResizeNE => ("CUR_SCALETRBL", 9.0, 9.0),   // ↗↙
+        CK::ResizeNW => ("CUR_SCALETLBR", 9.0, 9.0), // ↖↘
+        CK::ResizeNE => ("CUR_SCALETRBL", 9.0, 9.0), // ↗↙
         CK::Move => ("CUR_MOVE", 1.0, 1.0),
         CK::Hand => ("CUR_HAND", 11.0, 11.0),
         CK::Grab => ("CUR_FIST", 11.0, 11.0),
@@ -82,20 +140,30 @@ const CROSS: &str = r##"<path d="M12 4V10"/><path d="M12 14V20"/><path d="M4 12H
 
 /// stroked line-glyph (caret / crosshair / pipette): thin white halo + dark glyph.
 fn stroked(paths: &str) -> String {
-    format!(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><g stroke="#f4f4f7" stroke-width="2.2">{paths}</g><g stroke="#161619" stroke-width="1.4">{paths}</g></svg>"##)
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><g stroke="#f4f4f7" stroke-width="2.2">{paths}</g><g stroke="#161619" stroke-width="1.4">{paths}</g></svg>"##
+    )
 }
 
 /// solid (Select) or hollow (Direct) arrow with a thin contrasting edge.
 fn arrow(fill: &str, edge: &str) -> String {
-    format!(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-linejoin="round"><path d="{ARROW}" fill="{fill}" stroke="{edge}" stroke-width="1.3"/></svg>"##)
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-linejoin="round"><path d="{ARROW}" fill="{fill}" stroke="{edge}" stroke-width="1.3"/></svg>"##
+    )
 }
 
 /// the pen nib, optionally with a small state badge (✱/+/−/○/⁄) at its lower-right.
 fn pen(glyph: &str) -> String {
-    let badge = if glyph.is_empty() { String::new() } else {
-        format!(r##"<g transform="translate(14.5,15)" stroke-linecap="round" stroke-linejoin="round"><g stroke="#f4f4f7" stroke-width="2.6" fill="none">{glyph}</g><g stroke="#161619" stroke-width="1.5" fill="none">{glyph}</g></g>"##)
+    let badge = if glyph.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r##"<g transform="translate(14.5,15)" stroke-linecap="round" stroke-linejoin="round"><g stroke="#f4f4f7" stroke-width="2.6" fill="none">{glyph}</g><g stroke="#161619" stroke-width="1.5" fill="none">{glyph}</g></g>"##
+        )
     };
-    format!(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g transform="translate(1.4 1.4) scale(0.0415)" stroke-linejoin="round"><path d="{FA_NIB}" fill="none" stroke="#f4f4f7" stroke-width="58"/><path d="{FA_NIB}" fill="#161619"/></g>{badge}</svg>"##)
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g transform="translate(1.4 1.4) scale(0.0415)" stroke-linejoin="round"><path d="{FA_NIB}" fill="none" stroke="#f4f4f7" stroke-width="58"/><path d="{FA_NIB}" fill="#161619"/></g>{badge}</svg>"##
+    )
 }
 
 /// (svg, hotspot_x, hotspot_y) in the 24×24 viewBox space
@@ -104,7 +172,9 @@ fn svg(ck: CK) -> (String, f32, f32) {
         CK::Select => (arrow("#161619", "#f4f4f7"), 3.0, 3.0),
         CK::Direct => (arrow("#f4f4f7", "#161619"), 3.0, 3.0),
         CK::Pen => (pen(""), 2.7, 21.8),
-        CK::PenNew => (pen(r##"<path d="M3 0V6"/><path d="M0.6 1.5 5.4 4.5"/><path d="M5.4 1.5 0.6 4.5"/>"##), 2.7, 21.8),
+        CK::PenNew => {
+            (pen(r##"<path d="M3 0V6"/><path d="M0.6 1.5 5.4 4.5"/><path d="M5.4 1.5 0.6 4.5"/>"##), 2.7, 21.8)
+        }
         CK::PenAdd => (pen(r##"<path d="M3 0V6"/><path d="M0 3H6"/>"##), 2.7, 21.8),
         CK::PenDel => (pen(r##"<path d="M0 3H6"/>"##), 2.7, 21.8),
         CK::PenClose => (pen(r##"<circle cx="3" cy="3" r="2.8"/>"##), 2.7, 21.8),
@@ -124,14 +194,21 @@ pub fn render_svg(svg: &str, size: u32, force_black: bool) -> Option<(Vec<u8>, u
     let svg = if force_black {
         // strip explicit fills/strokes so our wrapper color wins; cheap textual nudge
         svg.replace("currentColor", "#000").replace("fill=\"none\"", "")
-    } else { svg.to_string() };
+    } else {
+        svg.to_string()
+    };
     let wrapped = if force_black {
-        format!("<g fill=\"#000\" stroke=\"none\">{}</g>", inner_of(&svg))
-            .replacen("<g", &format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{}\"><g", viewbox_of(&svg)), 1)
-            + "</svg>"
-    } else { svg.clone() };
+        format!("<g fill=\"#000\" stroke=\"none\">{}</g>", inner_of(&svg)).replacen(
+            "<g",
+            &format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{}\"><g", viewbox_of(&svg)),
+            1,
+        ) + "</svg>"
+    } else {
+        svg.clone()
+    };
     let tree = usvg::Tree::from_str(&wrapped, &usvg::Options::default())
-        .or_else(|_| usvg::Tree::from_str(&svg, &usvg::Options::default())).ok()?;
+        .or_else(|_| usvg::Tree::from_str(&svg, &usvg::Options::default()))
+        .ok()?;
     let ts = tree.size();
     let sc = (size as f32 / ts.width().max(ts.height())).max(0.01);
     let (w, h) = (((ts.width() * sc).ceil() as u32).max(1), ((ts.height() * sc).ceil() as u32).max(1));
@@ -140,16 +217,29 @@ pub fn render_svg(svg: &str, size: u32, force_black: bool) -> Option<(Vec<u8>, u
     let mut d = pm.data().to_vec();
     for px in d.chunks_mut(4) {
         let a = px[3] as u32;
-        if a > 0 && a < 255 { px[0] = ((px[0] as u32 * 255) / a) as u8; px[1] = ((px[1] as u32 * 255) / a) as u8; px[2] = ((px[2] as u32 * 255) / a) as u8; }
+        if a > 0 && a < 255 {
+            px[0] = ((px[0] as u32 * 255) / a) as u8;
+            px[1] = ((px[1] as u32 * 255) / a) as u8;
+            px[2] = ((px[2] as u32 * 255) / a) as u8;
+        }
     }
     Some((d, w, h))
 }
 fn viewbox_of(svg: &str) -> String {
-    if let Some(i) = svg.find("viewBox=\"") { let r = &svg[i+9..]; if let Some(j) = r.find('"') { return r[..j].to_string(); } }
+    if let Some(i) = svg.find("viewBox=\"") {
+        let r = &svg[i + 9..];
+        if let Some(j) = r.find('"') {
+            return r[..j].to_string();
+        }
+    }
     "0 0 24 24".into()
 }
 fn inner_of(svg: &str) -> String {
-    if let (Some(a), Some(b)) = (svg.find('>'), svg.rfind("</svg>")) { svg[a+1..b].to_string() } else { svg.to_string() }
+    if let (Some(a), Some(b)) = (svg.find('>'), svg.rfind("</svg>")) {
+        svg[a + 1..b].to_string()
+    } else {
+        svg.to_string()
+    }
 }
 
 /// straight-alpha RGBA + hotspot in bitmap pixels
@@ -192,18 +282,27 @@ pub fn hcursor_svg_file(stem: &str, hx: f32, hy: f32) -> Option<isize> {
     let mut d = pm.data().to_vec();
     for px in d.chunks_mut(4) {
         let a = px[3] as u32;
-        if a > 0 && a < 255 { px[0] = ((px[0] as u32 * 255) / a) as u8; px[1] = ((px[1] as u32 * 255) / a) as u8; px[2] = ((px[2] as u32 * 255) / a) as u8; }
+        if a > 0 && a < 255 {
+            px[0] = ((px[0] as u32 * 255) / a) as u8;
+            px[1] = ((px[1] as u32 * 255) / a) as u8;
+            px[2] = ((px[2] as u32 * 255) / a) as u8;
+        }
     }
     let hs = CURSOR_PX as f32 / 32.0; // 1×-logical → bitmap pixels
-    Some(build_hcursor(&d, CURSOR_PX, CURSOR_PX, (hx * hs).round() as u16, (hy * hs).round() as u16))
+    match build_hcursor(&d, CURSOR_PX, CURSOR_PX, (hx * hs).round() as u16, (hy * hs).round() as u16) {
+        0 => None, // Win32 refused → let the caller fall back to the built-in SVG cursor
+        hc => Some(hc),
+    }
 }
 
-/// Build a Windows HCURSOR from straight-alpha RGBA. Returns the handle as isize.
+/// Build a Windows HCURSOR from straight-alpha RGBA. Returns the handle as isize, or 0 if Windows
+/// refuses (GDI handle exhaustion) — callers and the WM_SETCURSOR path treat 0 as "keep the OS arrow",
+/// so a failed cursor degrades instead of crashing (ENGINEERING_REVIEW §3.3).
 #[cfg(windows)]
 fn build_hcursor(rgba: &[u8], w: u32, h: u32, hx: u16, hy: u16) -> isize {
     use windows::Win32::Graphics::Gdi::{
-        CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC,
-        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+        CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS, HGDIOBJ,
     };
     use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, ICONINFO};
     unsafe {
@@ -221,23 +320,35 @@ fn build_hcursor(rgba: &[u8], w: u32, h: u32, hx: u16, hy: u16) -> isize {
             ..Default::default()
         };
         let hdc = GetDC(None);
-        let hbm = CreateDIBSection(Some(hdc), &bi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+        let hbm = CreateDIBSection(Some(hdc), &bi, DIB_RGB_COLORS, &mut bits, None, 0);
         ReleaseDC(None, hdc);
+        let Ok(hbm) = hbm else { return 0 };
+        if bits.is_null() {
+            let _ = DeleteObject(HGDIOBJ(hbm.0));
+            return 0;
+        }
         // RGBA(straight) -> BGRA(premultiplied) for the alpha cursor
         let n = (w as usize) * (h as usize);
         let dst = core::slice::from_raw_parts_mut(bits as *mut u8, n * 4);
         for i in 0..n {
-            let (r, g, b, a) = (rgba[i*4], rgba[i*4+1], rgba[i*4+2], rgba[i*4+3]);
+            let (r, g, b, a) = (rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2], rgba[i * 4 + 3]);
             let pm = |c: u8| ((c as u16 * a as u16) / 255) as u8;
-            dst[i*4] = pm(b); dst[i*4+1] = pm(g); dst[i*4+2] = pm(r); dst[i*4+3] = a;
+            dst[i * 4] = pm(b);
+            dst[i * 4 + 1] = pm(g);
+            dst[i * 4 + 2] = pm(r);
+            dst[i * 4 + 3] = a;
         }
-        let mask_bytes = vec![0u8; (((w as usize) + 15) / 16 * 2) * h as usize];
+        let mask_bytes = vec![0u8; ((w as usize).div_ceil(16) * 2) * h as usize];
         let mask = CreateBitmap(w as i32, h as i32, 1, 1, Some(mask_bytes.as_ptr() as *const _));
-        let ii = ICONINFO { fIcon: false.into(), xHotspot: hx as u32, yHotspot: hy as u32, hbmMask: mask, hbmColor: hbm };
-        let hicon = CreateIconIndirect(&ii).unwrap();
+        let ii =
+            ICONINFO { fIcon: false.into(), xHotspot: hx as u32, yHotspot: hy as u32, hbmMask: mask, hbmColor: hbm };
+        let hicon = CreateIconIndirect(&ii);
         let _ = DeleteObject(HGDIOBJ(hbm.0));
         let _ = DeleteObject(HGDIOBJ(mask.0));
-        hicon.0 as isize
+        match hicon {
+            Ok(hc) => hc.0 as isize,
+            Err(_) => 0,
+        }
     }
 }
 
@@ -253,11 +364,11 @@ mod win {
     use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
     use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowPlacement, GetWindowRect, SetClassLongPtrW, SetCursor, SetWindowPos,
-        GCLP_HCURSOR, HCURSOR, NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYSIZEFRAME,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWMAXIMIZED,
-        WINDOWPLACEMENT, WM_ACTIVATE, WM_DPICHANGED, WM_NCCALCSIZE, WM_NCHITTEST, WM_SETCURSOR, WM_SYSCOMMAND,
-        HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
+        GetWindowPlacement, GetWindowRect, SetClassLongPtrW, SetCursor, SetWindowPos, GCLP_HCURSOR, HCURSOR, HTBOTTOM,
+        HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
+        NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYSIZEFRAME, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWMAXIMIZED, WINDOWPLACEMENT, WM_ACTIVATE, WM_DPICHANGED,
+        WM_NCCALCSIZE, WM_NCHITTEST, WM_SETCURSOR, WM_SYSCOMMAND,
     };
 
     static CUR: AtomicIsize = AtomicIsize::new(0);
@@ -268,9 +379,21 @@ mod win {
     // The custom title-bar geometry, published each frame from the egui layout (physical px). The
     // wndproc reads it to decide where the window drags (HTCAPTION) vs where our controls live (HTCLIENT).
     #[derive(Clone, Copy, Default)]
-    struct PxRect { l: i32, t: i32, r: i32, b: i32 }
-    impl PxRect { fn has(&self, x: i32, y: i32) -> bool { x >= self.l && x < self.r && y >= self.t && y < self.b } }
-    struct Caption { h: i32, excl: Vec<PxRect> }
+    struct PxRect {
+        l: i32,
+        t: i32,
+        r: i32,
+        b: i32,
+    }
+    impl PxRect {
+        fn has(&self, x: i32, y: i32) -> bool {
+            x >= self.l && x < self.r && y >= self.t && y < self.b
+        }
+    }
+    struct Caption {
+        h: i32,
+        excl: Vec<PxRect>,
+    }
     static CAPTION: Mutex<Caption> = Mutex::new(Caption { h: 0, excl: Vec::new() });
 
     /// Publish the caption height + the interactive (non-drag) rects, in PHYSICAL px, for hit-testing.
@@ -290,11 +413,13 @@ mod win {
     // Strip the top caption (so the client area reaches y=0) while keeping the side/bottom resize frame,
     // shadow and rounded corners. Re-inset all sides when maximized so content doesn't overshoot the monitor.
     unsafe fn nccalcsize(h: HWND, wp: WPARAM, lp: LPARAM) -> LRESULT {
-        if wp.0 == 0 { return DefSubclassProc(h, WM_NCCALCSIZE, wp, lp); }
+        if wp.0 == 0 {
+            return DefSubclassProc(h, WM_NCCALCSIZE, wp, lp);
+        }
         let params = &mut *(lp.0 as *mut NCCALCSIZE_PARAMS);
         let requested = params.rgrc[0];
         let _ = DefSubclassProc(h, WM_NCCALCSIZE, wp, lp); // normal side/bottom frame
-        params.rgrc[0].top = requested.top;                // remove the top caption inset
+        params.rgrc[0].top = requested.top; // remove the top caption inset
         if maximized(h) {
             let dpi = GetDpiForWindow(h);
             let pad = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
@@ -320,10 +445,28 @@ mod win {
         if !maximized(h) {
             let (l, r) = (sx < rc.left + border, sx >= rc.right - border);
             let (t, b) = (sy < rc.top + border, sy >= rc.bottom - border);
-            let code: u32 = if t && l { HTTOPLEFT } else if t && r { HTTOPRIGHT }
-                else if b && l { HTBOTTOMLEFT } else if b && r { HTBOTTOMRIGHT }
-                else if t { HTTOP } else if b { HTBOTTOM } else if l { HTLEFT } else if r { HTRIGHT } else { 0 };
-            if code != 0 { return LRESULT(code as isize); }
+            let code: u32 = if t && l {
+                HTTOPLEFT
+            } else if t && r {
+                HTTOPRIGHT
+            } else if b && l {
+                HTBOTTOMLEFT
+            } else if b && r {
+                HTBOTTOMRIGHT
+            } else if t {
+                HTTOP
+            } else if b {
+                HTBOTTOM
+            } else if l {
+                HTLEFT
+            } else if r {
+                HTRIGHT
+            } else {
+                0
+            };
+            if code != 0 {
+                return LRESULT(code as isize);
+            }
         }
         let mut p = POINT { x: sx, y: sy };
         let _ = ScreenToClient(h, &mut p);
@@ -338,17 +481,31 @@ mod win {
     /// Keep the DWM drop shadow + rounded corners (extend the frame 1px) and force the recalc.
     pub fn custom_frame(hwnd: isize) {
         use core::ffi::c_void;
-        use windows::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
-            DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
+        use windows::Win32::Graphics::Dwm::{
+            DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        };
         use windows::Win32::UI::Controls::MARGINS;
         let h = HWND(hwnd as *mut _);
         unsafe {
             let m = MARGINS { cxLeftWidth: 0, cxRightWidth: 0, cyTopHeight: 1, cyBottomHeight: 0 };
             let _ = DwmExtendFrameIntoClientArea(h, &m);
             let pref = DWMWCP_ROUND;
-            let _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &pref as *const _ as *const c_void, std::mem::size_of::<i32>() as u32);
+            let _ = DwmSetWindowAttribute(
+                h,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                &pref as *const _ as *const c_void,
+                std::mem::size_of::<i32>() as u32,
+            );
             // force a frame recalc now so the caption is stripped immediately
-            let _ = SetWindowPos(h, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            let _ = SetWindowPos(
+                h,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
         }
     }
 
@@ -356,10 +513,11 @@ mod win {
     /// wrong with our custom (NCCALCSIZE-stripped) frame, so the saved geometry never recorded "maximized".
     pub fn is_maximized(hwnd: isize) -> bool {
         use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, WINDOWPLACEMENT, SW_SHOWMAXIMIZED};
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, SW_SHOWMAXIMIZED, WINDOWPLACEMENT};
         let h = HWND(hwnd as *mut _);
         unsafe {
-            let mut wp = WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+            let mut wp =
+                WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
             GetWindowPlacement(h, &mut wp).is_ok() && wp.showCmd == SW_SHOWMAXIMIZED.0 as u32
         }
     }
@@ -368,7 +526,9 @@ mod win {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MAXIMIZE};
         let h = HWND(hwnd as *mut _);
-        unsafe { let _ = ShowWindow(h, SW_MAXIMIZE); }
+        unsafe {
+            let _ = ShowWindow(h, SW_MAXIMIZE);
+        }
     }
 
     /// Hide/show the window via the DWM compositor (keeps focus/taskbar; lets us render frame 0 before
@@ -378,7 +538,9 @@ mod win {
         use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
         let h = HWND(hwnd as *mut _);
         let v: i32 = on as i32; // BOOL = 4-byte int
-        unsafe { let _ = DwmSetWindowAttribute(h, DWMWA_CLOAK, &v as *const _ as *const c_void, 4); }
+        unsafe {
+            let _ = DwmSetWindowAttribute(h, DWMWA_CLOAK, &v as *const _ as *const c_void, 4);
+        }
     }
 
     /// Paint any OS-driven background fill (startup, resize gutter) in #141313 instead of white.
@@ -390,7 +552,9 @@ mod win {
         unsafe {
             let brush = CreateSolidBrush(COLORREF(0x0013_1314)); // 0x00BBGGRR for #141313
             let old = SetClassLongPtrW(h, GCLP_HBRBACKGROUND, brush.0 as isize);
-            if old != 0 { let _ = DeleteObject(HGDIOBJ(old as *mut _)); }
+            if old != 0 {
+                let _ = DeleteObject(HGDIOBJ(old as *mut _));
+            }
         }
     }
 
@@ -399,14 +563,20 @@ mod win {
             WM_SETCURSOR if (lp.0 as u32 & 0xFFFF) == 1 => {
                 HITS.fetch_add(1, Ordering::Relaxed);
                 let c = CUR.load(Ordering::Relaxed);
-                if c != 0 { SetCursor(Some(HCURSOR(c as *mut _))); return LRESULT(1); }
+                if c != 0 {
+                    SetCursor(Some(HCURSOR(c as *mut _)));
+                    return LRESULT(1);
+                }
                 DefSubclassProc(h, msg, wp, lp)
             }
             // swallow the Alt/F10 window system menu (SC_KEYMENU) — Alt is an editor modifier here
             WM_SYSCOMMAND if (wp.0 & 0xFFF0) == 0xF100 => LRESULT(0),
             WM_NCCALCSIZE => nccalcsize(h, wp, lp),
             WM_NCHITTEST => nchittest(h, lp),
-            WM_ACTIVATE | WM_DPICHANGED => { custom_frame(h.0 as isize); DefSubclassProc(h, msg, wp, lp) }
+            WM_ACTIVATE | WM_DPICHANGED => {
+                custom_frame(h.0 as isize);
+                DefSubclassProc(h, msg, wp, lp)
+            }
             _ => DefSubclassProc(h, msg, wp, lp),
         }
     }
@@ -423,13 +593,20 @@ mod win {
         if hwnd != 0 && hcursor != 0 {
             unsafe {
                 SetClassLongPtrW(HWND(hwnd as *mut _), GCLP_HCURSOR, hcursor); // class default
-                SetCursor(Some(HCURSOR(hcursor as *mut _)));                   // apply now
+                SetCursor(Some(HCURSOR(hcursor as *mut _))); // apply now
             }
         }
     }
     pub fn dbg() -> (isize, isize, usize, isize) {
-        (HWND_.load(Ordering::Relaxed), INSTALLED.load(Ordering::Relaxed), HITS.load(Ordering::Relaxed), CUR.load(Ordering::Relaxed))
+        (
+            HWND_.load(Ordering::Relaxed),
+            INSTALLED.load(Ordering::Relaxed),
+            HITS.load(Ordering::Relaxed),
+            CUR.load(Ordering::Relaxed),
+        )
     }
 }
 #[cfg(windows)]
-pub use win::{install, set, dbg, custom_frame, set_caption, set_cloaked, set_dark_class_brush, is_maximized, maximize};
+pub use win::{
+    custom_frame, dbg, install, is_maximized, maximize, set, set_caption, set_cloaked, set_dark_class_brush,
+};

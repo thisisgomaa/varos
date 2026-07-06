@@ -1,0 +1,5 @@
+# Pin formatting so CI's `cargo fmt --check` is deterministic (ENGINEERING_REVIEW §3.2).
+# `Max` small-heuristics keeps this codebase's deliberate dense one-liners legal
+# instead of exploding them — the gate is about consistency, not style change.
+max_width = 120
+use_small_heuristics = "Max"

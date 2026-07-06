@@ -18,7 +18,14 @@ use serde::{Deserialize, Serialize};
 
 /// A measurement unit a user can type or pick. The internal/world unit is always [`Unit::Pt`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Unit { Px, Pt, Pica, Mm, Cm, In }
+pub enum Unit {
+    Px,
+    Pt,
+    Pica,
+    Mm,
+    Cm,
+    In,
+}
 
 impl Unit {
     /// How many POINTS one of this unit equals, given the document `ppi` (pixels-per-inch).
@@ -37,8 +44,12 @@ impl Unit {
     /// Short suffix as typed / shown.
     pub fn suffix(self) -> &'static str {
         match self {
-            Unit::Px => "px", Unit::Pt => "pt", Unit::Pica => "pc",
-            Unit::Mm => "mm", Unit::Cm => "cm", Unit::In => "in",
+            Unit::Px => "px",
+            Unit::Pt => "pt",
+            Unit::Pica => "pc",
+            Unit::Mm => "mm",
+            Unit::Cm => "cm",
+            Unit::In => "in",
         }
     }
 
@@ -61,9 +72,13 @@ pub fn convert(value: f32, from: Unit, to: Unit, ppi: f32) -> f32 {
     value * from.pt_per(ppi) / to.pt_per(ppi)
 }
 /// A value expressed in `unit` → world points.
-pub fn to_pt(value: f32, unit: Unit, ppi: f32) -> f32 { value * unit.pt_per(ppi) }
+pub fn to_pt(value: f32, unit: Unit, ppi: f32) -> f32 {
+    value * unit.pt_per(ppi)
+}
 /// World points → a value expressed in `unit`.
-pub fn from_pt(pt: f32, unit: Unit, ppi: f32) -> f32 { pt / unit.pt_per(ppi) }
+pub fn from_pt(pt: f32, unit: Unit, ppi: f32) -> f32 {
+    pt / unit.pt_per(ppi)
+}
 
 /// The document's measurement settings — what the Artboard/Document system (slot 1) owns and
 /// serializes. Defined here so the unit math and the document property stay a single source.
@@ -75,7 +90,9 @@ pub struct DocUnits {
     pub display: Unit,
 }
 impl Default for DocUnits {
-    fn default() -> Self { DocUnits { ppi: 72.0, display: Unit::Px } }
+    fn default() -> Self {
+        DocUnits { ppi: 72.0, display: Unit::Px }
+    }
 }
 
 /// Parse a typed field value into WORLD POINTS, honoring an optional explicit unit suffix and
@@ -85,11 +102,11 @@ impl Default for DocUnits {
 /// `"  72 px "` → 72pt · `"-3cm"` → −85.04pt.
 pub fn parse_to_pt(input: &str, units: DocUnits) -> Option<f32> {
     let s = input.trim();
-    if s.is_empty() { return None; }
+    if s.is_empty() {
+        return None;
+    }
     // Split the leading numeric part (sign / decimal / exponent) from a trailing unit suffix.
-    let split = s
-        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E')))
-        .unwrap_or(s.len());
+    let split = s.find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))).unwrap_or(s.len());
     let (num, rest) = s.split_at(split);
     let value: f32 = num.trim().parse().ok()?;
     let unit = if rest.trim().is_empty() { units.display } else { Unit::parse_suffix(rest)? };
@@ -107,17 +124,19 @@ pub fn format_pt(pt: f32, units: DocUnits, decimals: usize) -> String {
 mod tests {
     use super::*;
 
-    fn close(a: f32, b: f32) { assert!((a - b).abs() < 1e-2, "expected {b}, got {a}"); }
+    fn close(a: f32, b: f32) {
+        assert!((a - b).abs() < 1e-2, "expected {b}, got {a}");
+    }
 
     #[test]
     fn conversions_through_points() {
         close(Unit::In.pt_per(72.0), 72.0);
         close(Unit::Pica.pt_per(72.0), 12.0);
         close(Unit::Mm.pt_per(72.0) * 25.4, 72.0); // 25.4 mm == 1 inch == 72 pt
-        // px depends on ppi
+                                                   // px depends on ppi
         close(to_pt(72.0, Unit::Px, 72.0), 72.0); // 72px @72ppi = 72pt
         close(to_pt(72.0, Unit::Px, 144.0), 36.0); // 72px @144ppi = 36pt
-        // cross-unit + round-trip
+                                                   // cross-unit + round-trip
         close(convert(1.0, Unit::In, Unit::Mm, 72.0), 25.4);
         close(convert(convert(123.0, Unit::Pt, Unit::Cm, 96.0), Unit::Cm, Unit::Pt, 96.0), 123.0);
     }
