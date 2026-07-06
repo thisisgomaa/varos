@@ -99,7 +99,7 @@
   </div>
 
   <div id="status" class="note" style="margin:18px 0 0 0">
-    <b>Where we are (2026-07-02):</b> Foundations spine ✅ (serde + units) ·
+    <b>Where we are (2026-07-03):</b> Foundations spine ✅ (serde + units) ·
     <b>Artboard Stage-1 ✅</b> (06-30) · <b>Snap + Rulers + Guides ✅</b> (06-30: snap engine, magnet
     menu, measurement HUD, Ctrl+R rulers, drag-out guides) ·
     <b>Transform TOOLS ✅</b> (07-01: Rotate R / Scale S, snapped draggable pivot, Alt-copy, Transform
@@ -129,31 +129,44 @@
     animation_time = 0 (instant menus — a WORK tool), exact menu widths, hand-rolled dropdowns.
     <b>Layers Stage A ✅</b> (07-03): the REAL scene-graph in the model — node tree (Layer/Group/Path)
     + roots, z = pre-order, flat `paths` re-flattened by `sync_tree`; legacy files migrate; eye/lock
-    CASCADE; arrange scoped to siblings. Canvas identical. <b>Layers panel — Stage B0–B2 ✅</b> (07-03):
-    hand-painted panel docked UNDER Properties growing down; rows (eye/lock reveal-on-hover, identity-
-    colour bar, disclosure, vector thumbnail, name, target ○ + select ▢), search, inline rename, footer
-    +layer/+sublayer/delete, counter; two-way sync. <b>3 blocker bugs FIXED</b> (Ahmed's report): scroll
-    no longer leaks to the canvas (panel captures the wheel), lock is REAL (locked art can't be picked /
-    marquee'd / frame-moved — headless test), and the pro look pass (killed zebra, desaturated identity
-    ramp, tokens, reveal-on-hover). Guided by <b>docs/LAYERS_SPEC.md</b> (4-agent deep-research +
-    gap analysis). <b>Layers B3 — drag &amp; drop 🟡</b> (07-03, awaiting Ahmed's feel): grab any row and
-    drag to <b>reorder / nest / reparent</b> — 3-zone hit-test (top-third Before · middle Into containers ·
-    bottom-third After), indented ACCENT insertion line for sibling drops + nest-highlight box for Into,
-    lifted-row dim, grabbing cursor; content-drag-to-scroll disabled so the gesture never fights the list.
-    Model `move_node_to`(DropPos) cycle-guards a container into its own subtree, refuses Into-a-leaf and
-    Layer-into-Group (headless test). <b>+ thumbnail pass 🟡</b> (Ahmed 07-03): every Layer/Group now shows a
-    <b>real composite mini-preview</b> of all its art (z-ordered into one bbox, true colours) instead of the
-    fake folder chip — the thin identity bar carries "which layer"; footer reordered to Illustrator's
-    [sublayer · new · trash] with a smaller sublayer button so it stops reading as a second +.
-    <b>NEXT:</b> ① B4 — drag-the-select-square-to-move-art + target/select
-    split → ② Colour Stage-2 (Swatches + Paint enum → gradients).
+    CASCADE; arrange scoped to siblings. Canvas identical. An Illustrator-style panel was built on top
+    (B0–B3: docked rows, real drag-drop reorder/nest, real composite thumbnails) — then <b>PIVOTED</b>.
+    <b>THE PIVOT ✅</b> (Ahmed 07-03, verified "كله شغال تمام"): the Illustrator panel was <b>too complex</b>
+    (target-ring + coloured select-square only feed an Appearance system we don't have) — so Layers went
+    <b>Photoshop/Affinity-SIMPLE</b>. Row = <b>eye · lock · thumbnail · name</b>, and <b>no wrapper "Layer 1"
+    row</b> (07-06: the implicit root layer is a container in the model only — the panel shows its contents
+    at top level, like Photoshop; drop below the list = send to bottom); <b>click/Ctrl/Shift/dbl/
+    drag/Alt-drag act on the ROW</b> (click=select · Ctrl=add/remove · Shift=range · dbl=rename · drag=
+    reorder/nest · Alt+drag=duplicate); footer = Group · Delete. Deleted the target-ring, select-square,
+    identity-colour bar, +layer/+sublayer buttons, counter. This <b>fixed the Shift/Ctrl bug</b> (the row
+    click had ignored modifiers — they were only wired to the tiny select-square); canvas Alt-drag-copy
+    proven correct by a headless test. Design of record = <b>docs/LAYERS_VISION.md</b> (5-agent pass:
+    research → synthesis → adversarial critique). Locked decisions: <b>Masks</b> (both gestures — drag-into-
+    the-shape-below AND Ctrl+Alt+G — fold onto ONE stored clip form; UI word "Mask"); structural Top/Middle/
+    Background bands <b>dropped for now</b> (spec-kept, zero-rework to switch on); the <b>paint_list()</b>
+    indirection is <b>IN (✅ 07-06)</b> — scene build, PDF export and snap targets read it (golden test:
+    byte-identical to doc.paths today) so clip/mask/page each become one filter, never a 30-site rewrite.
+    <b>🔀 07-06 [D11] — SECTIONS BY ARTBOARD (Ahmed):</b> the panel splits by PAGE like Figma — a header
+    row per artboard, its art beneath it. Membership is <b>derived from geometry</b> (visible-overlap of
+    the top-level item's bbox — the spatial artboard model stays king, no containment flip): a straddler
+    appears under <b>both</b> pages ("mirror" — same object, same state); art on no page floats <b>loose at
+    the bottom, no header</b> = visibly outside export. <b>The clip UNIT is the whole top-level item</b>
+    (07-06 #2): a group's pages are decided once — nothing inside escapes the cut; a member on NO page
+    vanishes on canvas (Figma's out-of-frame child), a group fully off-page stays an uncut floater. Header: click = active board · double-click =
+    rename · collapsible. Page <b>clip is DEFAULT ON</b> for new boards (modern cut; per-board toggle for
+    bleed) and the render cuts a straddler once per member page. Drag-drop is same-section for now.
+    <b>MASKS DEFERRED</b> (Ahmed: "ممكن تتعمل في المستقبل أصلاً" — spec + paint_list insurance stay).
+    <b>NEXT:</b> ① panel piece C — drag a row onto another board's section = move the art there
+    (spatial translate) + header eye/lock (board-level hide via paint_list) → ② Colour Stage-2.
+    Also 07-06: the 2 known panel issues fixed + the engineering-review top-3 landed (CI · clippy/fmt
+    clean · respectful fatal dialogs + crash log).
   </div>
 
   <h2>Build order</h2>
   <div id="rail" class="rail"></div>
 
-  <h2>Build decisions — locked; override anything that conflicts (1–8: 06-29 · 9: 07-02)</h2>
-  <details open><summary><span class="sysname">The 9 locked decisions</span></summary>
+  <h2>Build decisions — locked; override anything that conflicts (1–8: 06-29 · 9: 07-02 · 10: 07-03)</h2>
+  <details open><summary><span class="sysname">The 10 locked decisions</span></summary>
     <div id="decisions" style="padding:4px 15px 14px"></div>
   </details>
 
@@ -173,12 +186,13 @@
 const ORDER = [
   {k:'0', nm:'Foundations', state:'done', sec:'spine ✅ 06-29'},
   {k:'1', nm:'Artboard', state:'done', sec:'Stage 1 ✅ 06-30'},
-  {k:'2', nm:'Transform + Snap', state:'part', sec:'snap+tools ✅ · panel open'},
-  {k:'4·S1', nm:'Colour — Stage 1', state:'active', sec:'picker ✅ 07-02 · polish'},
-  {milestone:'🔖 NEXT — Slice: draw → colour → save → reopen  ("make a logo & keep it")'},
-  {k:'⚙', nm:'Engine spike (wgpu)', state:'next', sec:'foundation hygiene [D7/D9]'},
-  {k:'3', nm:'Layers', sec:'the model system [D2]'},
-  {k:'4·S2', nm:'Colour — Stage 2', sec:'Swatches · Paint enum'},
+  {k:'2', nm:'Transform + Snap', state:'part', sec:'snap+rulers+guides+tools ✅ · numeric panel open'},
+  {k:'4·S1', nm:'Colour — Stage 1', state:'done', sec:'picker + wheel ✅ 07-02'},
+  {k:'🔖', nm:'Slice — draw→colour→save→reopen', state:'done', sec:'.vrs = PDF container ✅ 07-02'},
+  {k:'⚙', nm:'Engine spike (wgpu 0.19→29)', state:'done', sec:'✅ 07-03 "كله برفكت"'},
+  {k:'3', nm:'Layers', state:'active', sec:'SIMPLE panel ✅ · sections-by-ARTBOARD ✅ 07-06 "شغال مية مية"'},
+  {milestone:'✅ 07-06 — Layers = sections by ARTBOARD (Figma view) VERIFIED by Ahmed ("الله ينور شغال مية مية") + review fixes (legacy no-clip · section-aware Shift anchor) · ✅ 07-06 VERIFIED by Ahmed ("شغال كويس"): piece C (drag-row-to-ANOTHER-board = spatial move + header EYE/LOCK) + the 5-fix polish wave (multi-select rows DRAG TOGETHER · hidden board hides its name chrome · name label inert outside the Artboard tool · Alt+drag DUPLICATES a board (+art per toggle) · artboard move/resize/create SNAPS to other pages/art/guides) · MASKS DEFERRED (paint_list ✅ stays as the insurance) · ✅ 07-06 export gap CLOSED: the PDF/.vrs now drops hidden boards (no page) AND gates art on eff_hidden — hidden pages & hidden groups/layers no longer bleed into the export (lock is an edit constraint, never an export concern) · 07-06 deep-review fixes: a mirror row dropped on a board it already stands on = NO move (was flying out by the full inter-board offset) + the drop still activates the target page · a coincident-board drop (post Alt+dup) activates without an undo step · artboard name chrome fully inert outside the Artboard tool (whole egui Area, not just the label Sense)'},
+  {k:'4·S2', nm:'Colour — Stage 2', sec:'Paint enum model ✅ 07-06 · Swatches panel → box-system'},
   {k:'5', nm:'Stroke'},
   {k:'6', nm:'Save'},
   {k:'7', nm:'Geometric tools'},
@@ -198,6 +212,7 @@ const DECISIONS = [
   ['7','<b>Order tweaks:</b> Snapping with/before Transform; Artboard slot-1 = Stage-1 single board; wgpu 0.19→0.29 = its own spike w/ fallback (not a Phase-1 gate); Transform handle-coupling reconciled to the verified geometry-couple (Alt breaks).'],
   ['8','<b>v1 = Illustrator-class, not Figma-class.</b> Components/Symbols + Frames/Auto-Layout are post-v1 systems; extensibility/plugins/single-schema gets its true (deferred) weight.'],
   ['9','<b>Frosted glass CANCELED (2026-07-02, Ahmed — final).</b> Solid panels are the ONE material — no material toggle, one code path (the frost plumbing may be deleted). The wgpu bump stays planned as <b>foundation hygiene</b>, not looks: slot = right after the 🔖 slice, before more panels stack on egui 0.27.'],
+  ['10','<b>Layers = SIMPLE, Photoshop/Affinity (2026-07-03, Ahmed — "Layers are 100% the program").</b> The Illustrator panel (target-ring + coloured select-square) was too complex and only fed an Appearance system Varos doesn’t have — dropped for a stacked <b>eye·lock·thumb·name</b> panel where <b>click/Ctrl/Shift/drag/Alt-drag act on the ROW</b>. <b>Masks</b> = ONE stored clip form reached by two gestures (drag-into-the-shape-below <i>and</i> Ctrl+Alt+G); structural Top/Middle/Background bands <b>deferred</b> (spec-kept, zero-rework); a <b>paint_list()</b> indirection lands before masks so clip/mask/pages never force a 30-site rewrite. Design of record: <b>docs/LAYERS_VISION.md</b> (5-agent pass w/ adversarial critique). Supersedes the old "drag-onto-row clips" phrasing in D2/§Layers.'],
 ];
 
 // status: d=done(✅) p=partial(🟡) n=none(🔴) x=not built(❌) ''=planned
@@ -243,12 +258,13 @@ const FOUNDATION = [
 ];
 
 const SYSTEMS = [
-  {step:4, nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', note:'PULLED AHEAD of Layers (conscious deviation — see the rail). Stage 1 BUILT (2026-07-02): hand-painted picker popover (SV square + hue/alpha rails; hex 3/6/8-digit + RGB-255 + HSB fields; HSV as live source of truth so hue survives S=0) replacing both egui default swatches — see docs/COLOR_SPEC.md for the 7 locked decisions. RENDER FIX shipped with it: isolated-layer group opacity (a translucent fill+stroke object composites opaquely offscreen, then fades as ONE unit — Illustrator/SaveLayer semantics; foundation for blend modes + effects); per-object fill→stroke paint stacking (an object above now covers the stroke below); and translucent strokes stencil-mark+cover so the band paints ONCE (no self-overlap blur) and KNOCKS OUT the fill beneath it (PDF knockout — the band blends only against what is behind the object). Polish SHIPPED (07-02): recent + document swatch strips, ±1/±10 arrow nudges, Illustrator fill/stroke box on the rail (X/Shift+X/D). PRO PICKER SHIPPED (07-02, Ahmed-directed): a FLOATING palette (no scrim — canvas stays live, draggable) opened by double-clicking any swatch; Photoshop/Illustrator channel-radio views (H/S/B/R/G/B remap the field plane + spectrum slider), split new/current preview (click current to restore), °/% suffixes, alpha, hex-on-commit. WHEEL VIEW SHIPPED (07-02): `Picker | Wheel` tab → an H×S disc (exact-radial HSV fan mesh, brightness-tinted) + brightness/alpha rails + 8 harmony rules (comp/analog/split/triad/tetra/square/mono, hue-offset math from htmlcolorcodes/colordesigner) with linked ghost handles + clickable result chips. Colour Stage-1 COMPLETE. Direct-tool inspector bug FIXED (07-02): selected_pids now includes the Direct path-level selection and the inspector reads its real colours via repr_path. PICKER BACKLOG (Ahmed 07-03, noted for the picker’s next pass): (1) LIVE-apply — the colour should change on the artwork WHILE adjusting, not only on OK, because he keeps the palette open beside the canvas (think: a persistent/dockable colour palette; OK/Cancel become confirm/revert of a live session — needs one coalesced undo); (2) a visual glitch when switching Picker↔Wheel tabs (layout jump — pin the dialog height); (3) general look polish. NEXT: 🔖 slice → engine spike → Layers come FIRST; only then Stage 2 — Swatches (the Paint enum migration) → Gradients.', pts:[
+  {step:4, nm:'Color system', purpose:'Picker, color models, fill/stroke targets, swatches, gradients, harmony/recolor, eyedropper, opacity.', note:'PULLED AHEAD of Layers (conscious deviation — see the rail). Stage 1 BUILT (2026-07-02): hand-painted picker popover (SV square + hue/alpha rails; hex 3/6/8-digit + RGB-255 + HSB fields; HSV as live source of truth so hue survives S=0) replacing both egui default swatches — see docs/COLOR_SPEC.md for the 7 locked decisions. RENDER FIX shipped with it: isolated-layer group opacity (a translucent fill+stroke object composites opaquely offscreen, then fades as ONE unit — Illustrator/SaveLayer semantics; foundation for blend modes + effects); per-object fill→stroke paint stacking (an object above now covers the stroke below); and translucent strokes stencil-mark+cover so the band paints ONCE (no self-overlap blur) and KNOCKS OUT the fill beneath it (PDF knockout — the band blends only against what is behind the object). Polish SHIPPED (07-02): recent + document swatch strips, ±1/±10 arrow nudges, Illustrator fill/stroke box on the rail (X/Shift+X/D). PRO PICKER SHIPPED (07-02, Ahmed-directed): a FLOATING palette (no scrim — canvas stays live, draggable) opened by double-clicking any swatch; Photoshop/Illustrator channel-radio views (H/S/B/R/G/B remap the field plane + spectrum slider), split new/current preview (click current to restore), °/% suffixes, alpha, hex-on-commit. WHEEL VIEW SHIPPED (07-02): `Picker | Wheel` tab → an H×S disc (exact-radial HSV fan mesh, brightness-tinted) + brightness/alpha rails + 8 harmony rules (comp/analog/split/triad/tetra/square/mono, hue-offset math from htmlcolorcodes/colordesigner) with linked ghost handles + clickable result chips. Colour Stage-1 COMPLETE. Direct-tool inspector bug FIXED (07-02): selected_pids now includes the Direct path-level selection and the inspector reads its real colours via repr_path. PICKER BACKLOG (Ahmed 07-03, noted for the picker’s next pass): (1) LIVE-apply — the colour should change on the artwork WHILE adjusting, not only on OK, because he keeps the palette open beside the canvas (think: a persistent/dockable colour palette; OK/Cancel become confirm/revert of a live session — needs one coalesced undo); (2) a visual glitch when switching Picker↔Wheel tabs (layout jump — pin the dialog height); (3) general look polish. NEXT: 🔖 slice → engine spike → Layers come FIRST; only then Stage 2 — Swatches (the Paint enum migration) → Gradients. PAINT MODEL SHIPPED (07-06, core-only per Ahmed): Path.fill/stroke migrated Option&lt;Rgba&gt; → a Paint enum (None|Solid today; hand-written serde keeps the EXACT old JSON shape — bare [r,g,b,a] / null — so every pre-Paint .vrs loads unchanged and today’s files stay readable by the old shape). This is the single structural change that lets swatch-refs + gradients slot in ADDITIVELY (no second field migration). Threaded through scene+editor+pdf; only 2 mechanical lines in ui.rs (Snap/Thumb colour snapshots, Ahmed-approved) since the box-system session owns ui.rs next. The Swatches STORE + panel and the gradient payload land with the box-system UI.', pts:[
     ['1','Color targets & active-color control (Fill/Stroke/None)',1,'d'],
     ['2','Color models / color-space representations',1,'p'],
     ['3','Color Picker dialog (full)',1,'d'],
     ['4','Color panel (docked inspector)',1,'p'],
     ['5','Swatches panel',2,''],
+    ['5b','Paint enum model migration (Option&lt;Rgba&gt;→Paint · serde-compat · unlocks gradients+swatch-refs) ✅ 07-06',2,'d'],
     ['6','Gradients',2,''],
     ['7','Opacity / alpha (color-level)',1,'d'],
     ['8','Eyedropper / color sampling',1,'d'],
@@ -305,19 +321,21 @@ const SYSTEMS = [
     ['10','OS & shell integration',2,''],
     ['11','Panels & UI surfaces this system needs','ui',''],
   ]},
-  {step:3, nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, targeting, z-order, grouping, masks, compound paths.', note:'MODEL system, not panel assembly. Today the model is a flat Vec<Path> + group_of side-table. Stage 1 = build the real scene-graph (Layer/node tree) and migrate selection + render-order + every tool onto it. 🔒 UX locked (Ahmed 07-02, from Affinity): drag a row ONTO another row = clips/nests INSIDE it — our chosen mask interaction (complements the explicit Clipping Mask command); insertion-target (draw/paste inside · behind) joins the top bar.', warn:true, pts:[
-    ['1','Layers panel — shell & structure',1,'d'],
-    ['2','Layer & object naming',1,'p'],
-    ['3','Visibility (show/hide)',1,'d'],
-    ['4','Lock / unlock',1,'d'],
-    ['5','Targeting & appearance dot',2,'p'],
-    ['6','Selection-color indicator',2,'d'],
-    ['7','Thumbnails',2,'d'],
-    ['8','Reordering & restructuring (drag-drop)',1,'p'],
+  {step:3, nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, z-order, grouping, MASKS, compound paths. PIVOTED to Photoshop/Affinity-simple (07-03).', note:'MODEL system, not panel assembly. STAGE A ✅ (07-03): the real scene-graph — node tree (Layer/Group/Path) + roots, z = pre-order, flat paths re-flattened by sync_tree, legacy files migrate, eye/lock CASCADE, arrange scoped to siblings; canvas identical. THE PIVOT ✅ (Ahmed 07-03, verified "كله شغال تمام" — "Layers are 100% the program"): the Illustrator panel (target-ring + coloured select-square) was TOO COMPLEX and only fed an absent Appearance system → dropped for a SIMPLE stacked panel. Row = eye·lock·thumbnail·name; click/Ctrl/Shift/dbl/drag/Alt-drag act on the ROW (click=select · Ctrl=add/remove · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate); footer = Group·Delete. This FIXED the Shift/Ctrl bug (the row click had ignored modifiers). Real drag-drop reorder/nest + real composite thumbnails kept from the earlier build. Design of record = docs/LAYERS_VISION.md (5-agent pass: research → synthesis → adversarial critique). NEXT ▶ MASKS: one stored clip form (Group role=Clip + mask_child), reached by drag-into-the-shape-below AND Ctrl+Alt+G; UI word "Mask" + an Add-Mask button; lands on a paint_list() indirection FIRST (the critique’s anti-rewrite insurance). Structural Top/Middle/Background bands DEFERRED (spec-kept, zero-rework). Supersedes the old "drag-onto-row clips" note.', warn:true, pts:[
+    ['1','Layers panel — SIMPLE shell (eye·lock·thumb·name · no wrapper Layer-1 row 07-06)',1,'d'],
+    ['2','Layer & object naming (inline rename)',1,'d'],
+    ['3','Visibility (show/hide) + cascade',1,'d'],
+    ['4','Lock / unlock + cascade (real lock)',1,'d'],
+    ['5','Row selection — click/Ctrl/Shift on the row',1,'d'],
+    ['6','Two-way canvas↔panel selection sync',2,'d'],
+    ['7','Real composite thumbnails',2,'d'],
+    ['8','Reordering & restructuring (drag-drop + Alt-dup)',1,'d'],
     ['9','Z-order commands (arrange)',1,'d'],
     ['10','Groups & ungroup (nested)',1,'d'],
     ['11','Compound paths',2,''],
-    ['12','Clipping masks',2,''],
+    ['12','Masks / clipping — DEFERRED (Ahmed 07-06); paint_list() insurance ✅ stays',3,''],
+    ['12b','Sections by ARTBOARD (Figma view: headers · mirror · group-unit cut · floaters · clip ON) ✅ 07-06',1,'d'],
+    ['12c','Cross-board drag = spatial move + header eye/lock + 5-fix polish (multi-drag · Alt+dup · board snap) ✅ 07-06',1,'d'],
     ['13','Isolation mode',2,''],
     ['14','Opacity masks',3,''],
     ['15','Locate / find object',2,''],

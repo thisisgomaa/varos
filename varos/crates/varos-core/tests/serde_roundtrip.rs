@@ -69,16 +69,43 @@ fn sample_doc() -> Document {
         // a square white page with bleed + clip, and a transparent page (page_color = None).
         units: DocUnits { ppi: 96.0, display: Unit::Mm },
         artboards: vec![
-            Artboard { x: 0.0, y: 0.0, w: 800.0, h: 600.0, name: "Page".to_string(),
-                       bleed: 9.0, page_color: Some([1.0, 1.0, 1.0, 1.0]), clip: true },
-            Artboard { x: 900.0, y: 0.0, w: 1080.0, h: 1080.0, name: "Logo".to_string(),
-                       bleed: 0.0, page_color: None, clip: false },
+            Artboard {
+                x: 0.0,
+                y: 0.0,
+                w: 800.0,
+                h: 600.0,
+                name: "Page".to_string(),
+                bleed: 9.0,
+                page_color: Some([1.0, 1.0, 1.0, 1.0]),
+                clip: true,
+                hidden: true, // board eye/lock (piece C) — non-default so the round-trip proves them
+                locked: false,
+            },
+            Artboard {
+                x: 900.0,
+                y: 0.0,
+                w: 1080.0,
+                h: 1080.0,
+                name: "Logo".to_string(),
+                bleed: 0.0,
+                page_color: None,
+                clip: false,
+                hidden: false,
+                locked: true,
+            },
         ],
         active: 1,
         move_art_with_ab: false,
         // non-default snap config so the round-trip exercises the new fields
-        snap: SnapConfig { smart: false, radius_px: 6.0, candidate_max: 5, grid: true, path_intersections: false, ..SnapConfig::default() },
-        ruler_origin: [12.0, 34.0],   // non-default ruler zero-point exercises the new field
+        snap: SnapConfig {
+            smart: false,
+            radius_px: 6.0,
+            candidate_max: 5,
+            grid: true,
+            path_intersections: false,
+            ..SnapConfig::default()
+        },
+        ruler_origin: [12.0, 34.0], // non-default ruler zero-point exercises the new field
         guides: vec![Guide { vertical: true, pos: 100.0 }, Guide { vertical: false, pos: 250.0 }],
         guides_locked: true,
     }
@@ -116,4 +143,24 @@ fn float_fields_are_exact() {
     assert_eq!(a.opacity, b.opacity);
     assert_eq!(a.anchors[1].hout, b.anchors[1].hout);
     assert_eq!(a.fill, b.fill);
+}
+
+/// The load-bearing colour migration (COLOR_SPEC §1.5): `Path.fill/stroke` became a `Paint` enum, but
+/// its serde shape stays IDENTICAL to the old `Option<Rgba>` — a bare `[r,g,b,a]` array is `Solid`,
+/// `null` is `None`, both ways. So every pre-Paint `.vrs` loads unchanged, and files we write now are
+/// still read by anything that expects the old shape (the whole point of the hand-written serde).
+#[test]
+fn paint_reads_and_writes_the_legacy_option_rgba_shape() {
+    use varos_core::model::Paint;
+    // a path authored BEFORE Paint existed: fill = a bare colour array, stroke = null
+    let legacy = r#"{"id":1,"anchors":[],"closed":true,"fill":[0.2,0.7,0.3,1.0],"stroke":null,
+        "stroke_width":2.0,"holes":[],"opacity":1.0,"hidden":false,"locked":false,"name":null}"#;
+    let p: Path = serde_json::from_str(legacy).expect("a pre-Paint path still deserializes");
+    assert_eq!(p.fill, Paint::Solid([0.2, 0.7, 0.3, 1.0]), "a bare [r,g,b,a] array ⇒ Solid");
+    assert_eq!(p.stroke, Paint::None, "null ⇒ None");
+
+    // …and we write the SAME shape back (bare array / null), never a tagged enum object
+    let json = serde_json::to_string(&p).unwrap();
+    assert!(json.contains(r#""fill":[0.2,0.7,0.3,1.0]"#), "Solid ⇒ bare array, got {json}");
+    assert!(json.contains(r#""stroke":null"#), "None ⇒ null, got {json}");
 }

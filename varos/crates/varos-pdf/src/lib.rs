@@ -48,13 +48,26 @@ pub fn load_vrs(path: &FsPath) -> Result<Document, String> {
 /// Monotone Ref allocator (pdf-writer ids are ours to manage).
 struct Alloc(i32);
 impl Alloc {
-    fn next(&mut self) -> Ref { self.0 += 1; Ref::new(self.0) }
+    fn next(&mut self) -> Ref {
+        self.0 += 1;
+        Ref::new(self.0)
+    }
 }
 
 /// A pooled ExtGState (quantized alphas → one object per distinct pair per page).
-struct Gs { ca: f32, cap: f32, r: Ref }
+struct Gs {
+    ca: f32,
+    cap: f32,
+    r: Ref,
+}
 /// A knockout Form XObject queued for writing after its page.
-struct Knock { r: Ref, content: Vec<u8>, bbox: [f32; 4], gs_fill: (Ref, f32), gs_stroke: (Ref, f32) }
+struct Knock {
+    r: Ref,
+    content: Vec<u8>,
+    bbox: [f32; 4],
+    gs_fill: (Ref, f32),
+    gs_stroke: (Ref, f32),
+}
 
 pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
     let blob = doc_to_blob(doc)?;
@@ -64,8 +77,20 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
     let emb_id = ids.next();
     let fs_id = ids.next();
 
-    // ≥1 page always: an artboard-less doc still saves (default page frame)
-    let boards: Vec<Artboard> = if doc.artboards.is_empty() { vec![Artboard::default()] } else { doc.artboards.clone() };
+    // One page per VISIBLE board — a hidden board (board eye OFF) exports NO page, matching the canvas
+    // (Ahmed 07-06 export gap). An artboard-less doc still saves on its default frame; and if EVERY
+    // board is hidden we keep the first as a single frame so the container never degrades to a
+    // zero-page (invalid) PDF.
+    let boards: Vec<Artboard> = if doc.artboards.is_empty() {
+        vec![Artboard::default()]
+    } else {
+        let vis: Vec<Artboard> = doc.artboards.iter().filter(|a| !a.hidden).cloned().collect();
+        if vis.is_empty() {
+            vec![doc.artboards[0].clone()]
+        } else {
+            vis
+        }
+    };
 
     let mut pdf = Pdf::new();
     let mut page_ids = Vec::new();
@@ -82,29 +107,44 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
         // page background (transparent pages emit nothing — viewers show their own backdrop, like .ai)
         if let Some(bg) = ab.page_color {
             c.save_state();
-            if bg[3] < 0.999 { let n = gs_name(&mut gss, &mut ids, bg[3], bg[3]); c.set_parameters(Name(n.as_bytes())); }
+            if bg[3] < 0.999 {
+                let n = gs_name(&mut gss, &mut ids, bg[3], bg[3]);
+                c.set_parameters(Name(n.as_bytes()));
+            }
             c.set_fill_rgb(bg[0], bg[1], bg[2]);
             c.rect(0.0, 0.0, ab.w, ab.h);
             c.fill_even_odd();
             c.restore_state();
         }
 
-        // artwork: the single global list in document order; conservative bbox cull per page
-        for p in &doc.paths {
-            if p.hidden { continue; }
-            let fillable = p.closed && p.anchors.len() >= 3 && p.fill.is_some();
-            let strokable = p.stroke.is_some() && p.anchors.len() >= 2 && p.stroke_width > 0.0;
-            if !fillable && !strokable { continue; }
+        // artwork: the paintable content in document order (paint_list, LAYERS_VISION §5 — a mask
+        // source must never reach the page); conservative bbox cull per page
+        for (_, p) in doc.paint_list() {
+            // WYSIWYG with the canvas: skip anything EFFECTIVELY hidden — the path's own eye, a hidden
+            // parent group/layer (node cascade), OR art whose every member board is hidden (board eye).
+            // Raw `p.hidden` missed the last two, so hidden groups and hidden pages still bled out.
+            if doc.eff_hidden(p.id) {
+                continue;
+            }
+            // resolve each paint to its drawable solid ONCE (Paint::None — and future gradients — ⇒ None)
+            let (fill, stroke) = (p.fill.solid(), p.stroke.solid());
+            let fillable = p.closed && p.anchors.len() >= 3 && fill.is_some();
+            let strokable = stroke.is_some() && p.anchors.len() >= 2 && p.stroke_width > 0.0;
+            if !fillable && !strokable {
+                continue;
+            }
             let pad = if strokable { p.stroke_width * 0.5 } else { 0.0 };
-            if !bbox_hits(p, pad, ab) { continue; }
+            if !bbox_hits(p, pad, ab) {
+                continue;
+            }
 
-            let fa = p.fill.map_or(0.0, |f| f[3]) * p.opacity;
-            let sa = p.stroke.map_or(0.0, |s| s[3]) * p.opacity;
+            let fa = fill.map_or(0.0, |f| f[3]) * p.opacity;
+            let sa = stroke.map_or(0.0, |s| s[3]) * p.opacity;
 
             if fillable && strokable && sa < 0.999 {
                 // Varos knockout: fill+stroke composite as an isolated unit, the stroke band REPLACES
                 // the fill beneath it, then the unit fades once → /I /K transparency group.
-                let (fill, stroke) = (p.fill.unwrap(), p.stroke.unwrap());
+                let (fill, stroke) = (fill.unwrap(), stroke.unwrap());
                 let mut ic = Content::new();
                 ic.set_line_cap(LineCapStyle::RoundCap).set_line_join(LineJoinStyle::RoundJoin);
                 let gf = ids.next();
@@ -112,7 +152,10 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
                 ic.save_state().set_parameters(Name(b"Gf")).set_fill_rgb(fill[0], fill[1], fill[2]);
                 emit_rings(&mut ic, p, &t);
                 ic.fill_even_odd().restore_state();
-                ic.save_state().set_parameters(Name(b"Gk")).set_stroke_rgb(stroke[0], stroke[1], stroke[2]).set_line_width(p.stroke_width);
+                ic.save_state()
+                    .set_parameters(Name(b"Gk"))
+                    .set_stroke_rgb(stroke[0], stroke[1], stroke[2])
+                    .set_line_width(p.stroke_width);
                 emit_rings(&mut ic, p, &t);
                 ic.stroke().restore_state();
                 let xr = ids.next();
@@ -122,19 +165,35 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
                 c.save_state().set_parameters(Name(n.as_bytes()));
                 c.x_object(Name(format!("Fx{}", knocks.len()).as_bytes()));
                 c.restore_state();
-                knocks.push(Knock { r: xr, content: ic.finish().to_vec(), bbox: bb,
-                                    gs_fill: (gf, fill[3]), gs_stroke: (gk, stroke[3]) });
+                knocks.push(Knock {
+                    r: xr,
+                    content: ic.finish().to_vec(),
+                    bbox: bb,
+                    gs_fill: (gf, fill[3]),
+                    gs_stroke: (gk, stroke[3]),
+                });
             } else {
                 c.save_state();
                 let n = gs_name(&mut gss, &mut ids, fa, sa);
                 c.set_parameters(Name(n.as_bytes()));
-                if let (true, Some(f)) = (fillable, p.fill) { c.set_fill_rgb(f[0], f[1], f[2]); }
-                if let (true, Some(s)) = (strokable, p.stroke) { c.set_stroke_rgb(s[0], s[1], s[2]); c.set_line_width(p.stroke_width); }
+                if let (true, Some(f)) = (fillable, fill) {
+                    c.set_fill_rgb(f[0], f[1], f[2]);
+                }
+                if let (true, Some(s)) = (strokable, stroke) {
+                    c.set_stroke_rgb(s[0], s[1], s[2]);
+                    c.set_line_width(p.stroke_width);
+                }
                 emit_rings(&mut c, p, &t);
                 match (fillable, strokable) {
-                    (true, true) => { c.fill_even_odd_and_stroke(); }   // B* — one gs carries /ca + /CA
-                    (true, false) => { c.fill_even_odd(); }
-                    _ => { c.stroke(); }
+                    (true, true) => {
+                        c.fill_even_odd_and_stroke();
+                    } // B* — one gs carries /ca + /CA
+                    (true, false) => {
+                        c.fill_even_odd();
+                    }
+                    _ => {
+                        c.stroke();
+                    }
                 }
                 c.restore_state();
             }
@@ -150,15 +209,21 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
             let mut res = page.resources();
             if !gss.is_empty() {
                 let mut d = res.ext_g_states();
-                for (i, g) in gss.iter().enumerate() { d.pair(Name(format!("GS{i}").as_bytes()), g.r); }
+                for (i, g) in gss.iter().enumerate() {
+                    d.pair(Name(format!("GS{i}").as_bytes()), g.r);
+                }
             }
             if !knocks.is_empty() {
                 let mut d = res.x_objects();
-                for (i, k) in knocks.iter().enumerate() { d.pair(Name(format!("Fx{i}").as_bytes()), k.r); }
+                for (i, k) in knocks.iter().enumerate() {
+                    d.pair(Name(format!("Fx{i}").as_bytes()), k.r);
+                }
             }
         }
         page.finish();
-        for g in &gss { pdf.ext_graphics(g.r).non_stroking_alpha(g.ca).stroking_alpha(g.cap); }
+        for g in &gss {
+            pdf.ext_graphics(g.r).non_stroking_alpha(g.ca).stroking_alpha(g.cap);
+        }
         for k in &knocks {
             let mut x = pdf.form_xobject(k.r, &k.content);
             x.bbox(Rect::new(k.bbox[0], k.bbox[1], k.bbox[2], k.bbox[3]));
@@ -166,9 +231,7 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
                 let mut g = x.group();
                 g.transparency().isolated(true).knockout(true);
             }
-            x.resources().ext_g_states()
-                .pair(Name(b"Gf"), k.gs_fill.0)
-                .pair(Name(b"Gk"), k.gs_stroke.0);
+            x.resources().ext_g_states().pair(Name(b"Gf"), k.gs_fill.0).pair(Name(b"Gk"), k.gs_stroke.0);
             x.finish();
             pdf.ext_graphics(k.gs_fill.0).non_stroking_alpha(k.gs_fill.1);
             pdf.ext_graphics(k.gs_stroke.0).stroking_alpha(k.gs_stroke.1);
@@ -181,10 +244,11 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
     // the embedded editable model (.ai pattern): EmbeddedFile + FileSpec(/AF Source) + name tree + private keys
     pdf.embedded_file(emb_id, blob.as_bytes()).subtype(Name(b"application/json"));
     let mut fs = pdf.file_spec(fs_id);
-    fs.path(Str(MODEL_NAME)).unic_file(TextStr("model.varos.json"))
-      .embedded_file(emb_id)
-      .association_kind(AssociationKind::Source)
-      .description(TextStr("Varos editable model (source of truth)"));
+    fs.path(Str(MODEL_NAME))
+        .unic_file(TextStr("model.varos.json"))
+        .embedded_file(emb_id)
+        .association_kind(AssociationKind::Source)
+        .description(TextStr("Varos editable model (source of truth)"));
     fs.finish();
 
     let mut cat = pdf.catalog(cat_id);
@@ -214,11 +278,15 @@ fn gs_name(gss: &mut Vec<Gs>, ids: &mut Alloc, ca: f32, cap: f32) -> String {
 /// flatten the closing curve (the classic exporter bug).
 fn emit_rings(c: &mut Content, p: &Path, t: &impl Fn([f32; 2]) -> (f32, f32)) {
     emit_ring(c, &p.anchors, p.closed, t);
-    for hole in &p.holes { emit_ring(c, hole, true, t); }
+    for hole in &p.holes {
+        emit_ring(c, hole, true, t);
+    }
 }
 fn emit_ring(c: &mut Content, anchors: &[Anchor], closed: bool, t: &impl Fn([f32; 2]) -> (f32, f32)) {
     let n = anchors.len();
-    if n < 2 { return; }
+    if n < 2 {
+        return;
+    }
     let p0 = t(anchors[0].p);
     c.move_to(p0.0, p0.1);
     let segs = if closed { n } else { n - 1 };
@@ -230,7 +298,9 @@ fn emit_ring(c: &mut Content, anchors: &[Anchor], closed: bool, t: &impl Fn([f32
         let p3 = t(b.p);
         c.cubic_to(c1.0, c1.1, c2.0, c2.1, p3.0, p3.1);
     }
-    if closed { c.close_path(); }
+    if closed {
+        c.close_path();
+    }
 }
 
 /// Conservative world bbox (anchors + handles of all rings) inflated by `pad`; hits the artboard?
@@ -242,7 +312,10 @@ fn world_bbox(p: &Path, pad: f32) -> (f32, f32, f32, f32) {
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
         for q in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
-            x0 = x0.min(q[0]); y0 = y0.min(q[1]); x1 = x1.max(q[0]); y1 = y1.max(q[1]);
+            x0 = x0.min(q[0]);
+            y0 = y0.min(q[1]);
+            x1 = x1.max(q[0]);
+            y1 = y1.max(q[1]);
         }
     }
     (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
@@ -277,7 +350,11 @@ fn extract_model(bytes: &[u8]) -> Result<String, String> {
         if let Ok(pairs) = node.get(b"Names") {
             if let Ok((_, o)) = doc.dereference(pairs) {
                 if let Ok(arr) = o.as_array() {
-                    for kv in arr.chunks(2) { if let [_k, v] = kv { out.push(v.clone()); } }
+                    for kv in arr.chunks(2) {
+                        if let [_k, v] = kv {
+                            out.push(v.clone());
+                        }
+                    }
                 }
             }
         } else if let Ok(kids) = node.get(b"Kids") {
@@ -285,15 +362,23 @@ fn extract_model(bytes: &[u8]) -> Result<String, String> {
                 if let Ok(arr) = o.as_array() {
                     for kid in arr {
                         if let Ok((_, kd)) = doc.dereference(kid) {
-                            if let Ok(d) = kd.as_dict() { collect(doc, d, out); }
+                            if let Ok(d) = kd.as_dict() {
+                                collect(doc, d, out);
+                            }
                         }
                     }
                 }
             }
         }
     }
-    let names = catalog.get_deref(b"Names", &doc).and_then(|o| o.as_dict()).map_err(|_| "no embedded Varos model in this PDF".to_string())?;
-    let root = names.get_deref(b"EmbeddedFiles", &doc).and_then(|o| o.as_dict()).map_err(|_| "no embedded Varos model in this PDF".to_string())?;
+    let names = catalog
+        .get_deref(b"Names", &doc)
+        .and_then(|o| o.as_dict())
+        .map_err(|_| "no embedded Varos model in this PDF".to_string())?;
+    let root = names
+        .get_deref(b"EmbeddedFiles", &doc)
+        .and_then(|o| o.as_dict())
+        .map_err(|_| "no embedded Varos model in this PDF".to_string())?;
     let mut specs = Vec::new();
     collect(&doc, root, &mut specs);
     for spec in specs {
@@ -302,7 +387,9 @@ fn extract_model(bytes: &[u8]) -> Result<String, String> {
         let Ok(ef) = sd.get_deref(b"EF", &doc).and_then(|o| o.as_dict()) else { continue };
         if let Ok(f) = ef.get(b"F").or_else(|_| ef.get(b"UF")) {
             if let Ok(data) = stream_bytes(f) {
-                if let Ok(s) = String::from_utf8(data) { return Ok(s); }
+                if let Ok(s) = String::from_utf8(data) {
+                    return Ok(s);
+                }
             }
         }
     }

@@ -4,9 +4,9 @@
 //! container decision (PDF-native with the model embedded — docs/SAVE_EXPORT_PLAN.md §4) is
 //! untouched: this exact blob later rides inside that container, so nothing here is throwaway.
 
-use std::path::Path;
-use serde::{Deserialize, Serialize};
 use crate::model::Document;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Bump when the wrapper itself changes shape (model evolution is handled by serde defaults).
 pub const VRS_VERSION: u32 = 1;
@@ -26,14 +26,16 @@ pub fn doc_to_blob(doc: &Document) -> Result<String, String> {
 /// Parse a model blob back (version-checked header-first — see `load_vrs`).
 pub fn doc_from_blob(body: &str) -> Result<Document, String> {
     #[derive(Deserialize)]
-    struct VrsHead { varos: u32 }   // serde skips unknown fields, so this reads ANY .vrs generation
+    struct VrsHead {
+        varos: u32,
+    } // serde skips unknown fields, so this reads ANY .vrs generation
     let head: VrsHead = serde_json::from_str(body).map_err(|e| format!("not a valid .vrs model: {e}"))?;
     if head.varos > VRS_VERSION {
         return Err(format!("this file was saved by a newer Varos (v{}) — please update", head.varos));
     }
     let f: VrsFile = serde_json::from_str(body).map_err(|e| format!("not a valid .vrs model: {e}"))?;
     let mut doc = f.doc;
-    doc.sync_tree();   // legacy files: registry → tree + wrap tree-less paths into Layer 1 (z preserved)
+    doc.sync_tree(); // legacy files: registry → tree + wrap tree-less paths into Layer 1 (z preserved)
     Ok(doc)
 }
 

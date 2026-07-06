@@ -26,7 +26,11 @@ fn grab_curved_segment_selects_both_anchors() {
     let mut ed = curve_editor();
     ed.pointer_down([50.0, 30.0]); // on the curve, far from either anchor (>12)
     assert!(matches!(ed.drag, Drag::Segment { pid: 10, .. }), "grabbing the curve should start a Segment drag");
-    assert!(ed.selected.contains(&1) && ed.selected.contains(&2), "both bordering anchors must be selected so their handles show, got {:?}", ed.selected);
+    assert!(
+        ed.selected.contains(&1) && ed.selected.contains(&2),
+        "both bordering anchors must be selected so their handles show, got {:?}",
+        ed.selected
+    );
 }
 
 #[test]
@@ -43,7 +47,11 @@ fn grab_straight_segment_of_rect_selects_both_corners() {
     ed.set_tool(ToolKind::Direct);
     ed.pointer_down([50.0, 0.0]); // middle of the TOP edge, 50 from each corner (>12) → segment, not anchor
     assert!(matches!(ed.drag, Drag::Segment { pid: 10, .. }), "grabbing the top edge should start a Segment drag");
-    assert!(ed.selected.contains(&1) && ed.selected.contains(&2), "top-edge corners must be selected, got {:?}", ed.selected);
+    assert!(
+        ed.selected.contains(&1) && ed.selected.contains(&2),
+        "top-edge corners must be selected, got {:?}",
+        ed.selected
+    );
 }
 
 #[test]
@@ -54,12 +62,17 @@ fn marquee_across_a_segment_selects_its_endpoints() {
     let a = anc(1, 0.0, 0.0, None, Some([33.0, 60.0]));
     let b = anc(2, 100.0, 0.0, Some([66.0, 60.0]), None);
     ed.doc.paths.push(Path::new(10, vec![a, b], false, None, None, 1.0));
-    ed.doc.ids = 2; ed.ppu = 1.0;
+    ed.doc.ids = 2;
+    ed.ppu = 1.0;
     ed.set_tool(ToolKind::Direct);
-    ed.pointer_down([200.0, 200.0]);   // empty space → marquee
+    ed.pointer_down([200.0, 200.0]); // empty space → marquee
     assert!(matches!(ed.drag, Drag::Marquee { .. }), "empty-space drag should be a marquee");
-    ed.pointer_move([40.0, 40.0]);     // rect [40,40]-[200,200]: contains the curve mid, neither anchor
-    assert!(ed.selected.contains(&1) && ed.selected.contains(&2), "marquee crossing the curve must select both endpoints, got {:?}", ed.selected);
+    ed.pointer_move([40.0, 40.0]); // rect [40,40]-[200,200]: contains the curve mid, neither anchor
+    assert!(
+        ed.selected.contains(&1) && ed.selected.contains(&2),
+        "marquee crossing the curve must select both endpoints, got {:?}",
+        ed.selected
+    );
 }
 
 #[test]
@@ -72,13 +85,18 @@ fn tight_marquee_on_one_anchor_selects_only_it() {
     let c = anc(3, 100.0, 80.0, None, None);
     let d = anc(4, 0.0, 80.0, None, None);
     ed.doc.paths.push(Path::new(10, vec![a, b, c, d], true, Some([0.5, 0.5, 0.5, 1.0]), None, 1.0));
-    ed.doc.ids = 4; ed.ppu = 1.0;
+    ed.doc.ids = 4;
+    ed.ppu = 1.0;
     ed.set_tool(ToolKind::Direct);
-    ed.pointer_down([110.0, 10.0]);  // empty (14px from corner 2, >12) → marquee
+    ed.pointer_down([110.0, 10.0]); // empty (14px from corner 2, >12) → marquee
     assert!(matches!(ed.drag, Drag::Marquee { .. }), "should be a marquee");
-    ed.pointer_move([90.0, -10.0]);  // rect [90,-10]-[110,10]: contains ONLY corner 2
+    ed.pointer_move([90.0, -10.0]); // rect [90,-10]-[110,10]: contains ONLY corner 2
     assert!(ed.selected.contains(&2), "the captured corner must be selected");
-    assert!(!ed.selected.contains(&1) && !ed.selected.contains(&3), "neighbours must NOT be selected, got {:?}", ed.selected);
+    assert!(
+        !ed.selected.contains(&1) && !ed.selected.contains(&3),
+        "neighbours must NOT be selected, got {:?}",
+        ed.selected
+    );
 }
 
 #[test]
@@ -90,7 +108,8 @@ fn hover_alone_does_not_select_a_path() {
     let c = anc(3, 100.0, 80.0, None, None);
     let d = anc(4, 0.0, 80.0, None, None);
     ed.doc.paths.push(Path::new(10, vec![a, b, c, d], true, Some([0.5, 0.5, 0.5, 1.0]), None, 1.0));
-    ed.doc.ids = 4; ed.ppu = 1.0;
+    ed.doc.ids = 4;
+    ed.ppu = 1.0;
     ed.set_tool(ToolKind::Direct);
     ed.hover_path = Some(10);
     assert!(!ed.path_selected(10), "hover must not count as selection (no anchors on hover)");

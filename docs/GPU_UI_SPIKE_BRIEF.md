@@ -7,7 +7,7 @@
 
 **Goal of the spike (the GATE):** prove we can draw the Varos UI **ourselves on the GPU**, composited with
 the existing wgpu canvas in ONE surface/frame — replacing the web (wry/WebView2) panels — **without** losing
-the native pen feel and **with** the look Ahmed approved (frosted-glass floating panels, zero black).
+the native pen feel and **with** the look Ahmed approved (solid floating panels, zero black — frosted canceled 07-02).
 This is the "swap the panels to native, behind the seam" that the Constitution/PANELS_PRO_SPEC always planned.
 
 > **This is a SPIKE, not the product.** Build the minimum to answer the 4 gate questions (below). If it
@@ -49,19 +49,14 @@ This is the "swap the panels to native, behind the seam" that the Constitution/P
 1. **One floating inspector card** = the mini "Properties" we mocked: object header (`Rectangle`), a `TRANSFORM`
    section (X/Y/W/H mono fields), a `FILL` row (swatch + `#0C8CE9` + opacity). Palette from `UI_FIGMA_SPEC.md`:
    bg `#141313`, surface `#262627`, text `#e6e6e6`, muted `#8a8a8a`, accent `#0c8ce9`. Radius 12px, soft shadow.
-2. **Frosted glass material (DEFAULT)** — the panel background is translucent + blurs the canvas behind it.
-   egui has NO native blur, so **hand-paint it**: a `Shape::Callback` / custom wgpu pass that samples the canvas
-   region behind the panel and blurs it. **Keep it cheap:** blur only the panel's small region, **downsample**
-   before blurring, small radius, and **cache the blurred result while the canvas is idle** (recompute only while
-   drawing/panning). **MEASURE the frame cost while drawing** — this is part of gate #4.
-3. **A `Frosted ↔ Solid` toggle** (a setting). Default = frosted; Solid = opaque `#1c1b1b` panel. Ahmed wants the
-   option to turn frosting off. (This also de-risks perf: weak machines switch to solid.)
+2. ~~Frosted glass material (DEFAULT)~~ **CANCELED 2026-07-02** — solid panels are the one final material.
+3. ~~A `Frosted ↔ Solid` toggle~~ **CANCELED 2026-07-02** — no toggle; one material, one code path.
 4. **A SECOND overlapping panel** to test z-order: clicking a panel must bring it to front. egui::Window's native
    z-ordering is basic — use the `egui_tool_windows` crate for click-to-front. Verify two overlapping panels behave.
 5. Personality = **balanced** (clean, but the key controls visible) — don't over-minimize, don't clutter.
 
 ## The GATE — 4 pass/fail checks (Ahmed verifies in the real window)
-1. **BEAUTIFUL / CUSTOM (the gate):** the frosted-glass + soft-shadow card matches the approved look, achieved via
+1. **BEAUTIFUL / CUSTOM (the gate):** the solid + soft-shadow card matches the approved look, achieved via
    the hand-painted pass, AND the effort feels like a **reusable primitive** (not a one-off hack). FAIL if reaching
    the look means fighting egui's global Style, or it reads as flat dev-tool chrome you can't escape.
 2. **CLEAN COMPOSITING, NO SEAM:** one surface, one swapchain — canvas pass, then egui onto a pass we own, then present.
@@ -69,8 +64,8 @@ This is the "swap the panels to native, behind the seam" that the Constitution/P
 3. **NATIVE PEN FEEL UNTOUCHED:** dragging/drawing on the full-bleed canvas has **identical** latency/feel to today;
    panel hit-testing doesn't swallow canvas strokes. FAIL if input must route through egui first or feel regresses.
 4. **TOLERABLE DEV LOOP + PERF:** accept no Rust hot-reload; a new panel = a plain Rust fn + normal cargo rebuild,
-   fast enough to iterate happily; idle CPU fine in reactive (no-repaint-when-idle) mode; **frosted glass holds the
-   frame budget while drawing** (or the downsample/cache fixes it; else default to solid).
+   fast enough to iterate happily; idle CPU fine in reactive (no-repaint-when-idle) mode. *(The frosted-perf
+   clause is VOID — frosted canceled 2026-07-02.)*
 
 ## Scope guards (don't waste the spike)
 - **Text test = number-field entry + IME-caret-position only.** egui has no Arabic shaping and a weak text editor —
