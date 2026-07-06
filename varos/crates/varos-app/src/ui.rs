@@ -40,7 +40,7 @@ const IC_L_LOCK: &str =
     r#"<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>"#;
 const IC_L_UNLOCK: &str =
     r#"<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>"#;
-const IC_L_SUB: &str = r#"<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#;
+const IC_L_GROUP: &str = r#"<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#;
 const IC_L_TRASH: &str = r#"<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>"#;
 const IC_L_SEARCH: &str = r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>"#;
 
@@ -365,8 +365,19 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
             }
         }
     }
+    // Photoshop/Affinity-simple (the 07-03 pivot, completed): the implicit root Layer is the
+    // CONTAINER, never a row — the panel shows its contents directly at depth 0. It still exists in
+    // the model (sync_tree's adoption target; its eye/lock still cascade via eff_*). A non-Layer
+    // root (legacy oddity) still draws itself.
     for &r in &ed.doc.roots {
-        walk(ed, r, 0, None, collapsed, &mut rows, &mut parent);
+        match ed.doc.node(r) {
+            Some(n) if matches!(n.kind, NodeKind::Layer) => {
+                for &c in &n.children {
+                    walk(ed, c, 0, None, collapsed, &mut rows, &mut parent);
+                }
+            }
+            _ => walk(ed, r, 0, None, collapsed, &mut rows, &mut parent),
+        }
     }
 
     if q.is_empty() {
@@ -613,7 +624,7 @@ struct LayerIcons {
     eye_off: Option<egui::TextureHandle>,
     lock: Option<egui::TextureHandle>,
     unlock: Option<egui::TextureHandle>,
-    sub: Option<egui::TextureHandle>,
+    grp: Option<egui::TextureHandle>,
     trash: Option<egui::TextureHandle>,
     search: Option<egui::TextureHandle>,
 }
@@ -721,7 +732,7 @@ impl Ui {
             eye_off: load_icon(&ctx, "l-eyeoff", IC_L_EYEOFF),
             lock: load_icon(&ctx, "l-lock", IC_L_LOCK),
             unlock: load_icon(&ctx, "l-unlock", IC_L_UNLOCK),
-            sub: load_icon(&ctx, "l-sub", IC_L_SUB),
+            grp: load_icon(&ctx, "l-group", IC_L_GROUP),
             trash: load_icon(&ctx, "l-trash", IC_L_TRASH),
             search: load_icon(&ctx, "l-search", IC_L_SEARCH),
         };
@@ -3123,11 +3134,13 @@ fn build_layers(
                         ui.painter().text(
                             r.center(),
                             Align2::CENTER_CENTER,
-                            "No matching layers",
+                            if search.trim().is_empty() { "No layers yet" } else { "No matching layers" },
                             FontId::proportional(12.0),
                             FAINT,
                         );
                     }
+                    // last top-level row + last drawn rect — "drop below the list = send to the bottom"
+                    let (mut last_top, mut last_rect) = (None::<u32>, None::<egui::Rect>);
                     for (ri, row) in rows.iter().enumerate() {
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click_and_drag());
                         if resp.drag_started() {
@@ -3336,6 +3349,18 @@ fn build_layers(
                         if *drag == Some(row.id) {
                             p.rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(120));
                         }
+                        if row.depth == 0 {
+                            last_top = Some(row.id);
+                        }
+                        last_rect = Some(rect);
+                    }
+                    // below the last row = drop at the very bottom of the stack (the Photoshop feel)
+                    if drag.is_some() && drop_ind.is_none() {
+                        if let (Some(pp), Some(tid), Some(lr)) = (ptr, last_top, last_rect) {
+                            if !forbidden.contains(&tid) && pp.y > lr.bottom() && ui.clip_rect().contains(pp) {
+                                drop_ind = Some((tid, 2, lr, 0));
+                            }
+                        }
                     }
                     // ── drop indicator: a nest box for Into, an indented ACCENT line for Before/After ──
                     if drag.is_some() {
@@ -3395,7 +3420,7 @@ fn build_layers(
                     }
                     rp.on_hover_text(tip).clicked()
                 };
-                if fbtn(ui, &ic.sub, "Group (Ctrl+G)") {
+                if fbtn(ui, &ic.grp, "Group the selection (Ctrl+G)") {
                     ops.push(Op::LayerGroup);
                 }
                 if fbtn(ui, &ic.trash, "Delete") {
