@@ -3,7 +3,7 @@
 //! before with one implicit "Layer 1".
 
 use varos_core::editor::{Editor, ToolKind};
-use varos_core::model::{Anchor, Document, DropPos, Node, NodeKind, Path};
+use varos_core::model::{Anchor, Document, DropPos, Node, NodeKind, PaintRole, Path};
 
 fn anc(id: u32, x: f32, y: f32) -> Anchor {
     Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
@@ -249,6 +249,24 @@ fn a_locked_layer_is_truly_immovable() {
     ed.pointer_move([50.0, 50.0]);
     ed.pointer_up();
     assert_eq!(ed.doc.paths[0].anchors[0].p, before, "a locked object never moves");
+}
+
+#[test]
+fn paint_list_is_exactly_doc_paths_until_masks_land() {
+    // LAYERS_VISION §5: the indirection lands as a byte-for-byte no-op — same paths, same order,
+    // same Vec indices — so scene build / export / snap migrate onto it with ZERO behaviour change.
+    // (The mask-era test — "a MaskSource is excluded from paint but present for hit-test" — arrives
+    // with clip groups; this golden is what it will diff against.)
+    let mut d = Document::default();
+    d.paths.push(tri(1, 1, 0.0));
+    d.paths.push(tri(2, 4, 40.0));
+    d.paths.push(tri(3, 7, 80.0));
+    d.ids = 10;
+    d.sync_tree();
+    let via: Vec<(usize, u32)> = d.paint_list().map(|(pi, p)| (pi, p.id)).collect();
+    let raw: Vec<(usize, u32)> = d.paths.iter().enumerate().map(|(pi, p)| (pi, p.id)).collect();
+    assert_eq!(via, raw, "paint_list = doc.paths, index-preserving, while no mask exists");
+    assert!(d.paths.iter().all(|p| d.paint_role(p.id) == PaintRole::Normal), "all roles Normal before masks");
 }
 
 #[test]

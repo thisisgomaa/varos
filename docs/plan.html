@@ -141,10 +141,13 @@
     proven correct by a headless test. Design of record = <b>docs/LAYERS_VISION.md</b> (5-agent pass:
     research → synthesis → adversarial critique). Locked decisions: <b>Masks</b> (both gestures — drag-into-
     the-shape-below AND Ctrl+Alt+G — fold onto ONE stored clip form; UI word "Mask"); structural Top/Middle/
-    Background bands <b>dropped for now</b> (spec-kept, zero-rework to switch on); a <b>paint_list()</b>
-    indirection lands before masks so clip/mask/page each become one filter, never a 30-site rewrite.
-    <b>NEXT:</b> ① Masks/clipping (drag-into + Ctrl+Alt+G + Add-Mask button) → ② Colour Stage-2
-    (Swatches + Paint enum → gradients).
+    Background bands <b>dropped for now</b> (spec-kept, zero-rework to switch on); the <b>paint_list()</b>
+    indirection is <b>IN (✅ 07-06)</b> — scene build, PDF export and snap targets read it (golden test:
+    byte-identical to doc.paths today) so clip/mask/page each become one filter, never a 30-site rewrite.
+    <b>NEXT:</b> ① Masks/clipping steps ②–⑤ (Node fields → emit_node walk → Clip render → gestures)
+    → ② Colour Stage-2 (Swatches + Paint enum → gradients). Also 07-06: the 2 known panel issues fixed
+    (Ctrl+click mixed-lock deselect + the orphaned fns purged) and the engineering-review top-3 landed
+    (CI gate · clippy/fmt clean · respectful fatal dialogs + crash log).
   </div>
 
   <h2>Build order</h2>
@@ -175,8 +178,8 @@ const ORDER = [
   {k:'4·S1', nm:'Colour — Stage 1', state:'done', sec:'picker + wheel ✅ 07-02'},
   {k:'🔖', nm:'Slice — draw→colour→save→reopen', state:'done', sec:'.vrs = PDF container ✅ 07-02'},
   {k:'⚙', nm:'Engine spike (wgpu 0.19→29)', state:'done', sec:'✅ 07-03 "كله برفكت"'},
-  {k:'3', nm:'Layers', state:'active', sec:'Stage A + SIMPLE panel ✅ 07-03 · masks next'},
-  {milestone:'▶ NOW — Layers masks / clipping (Ctrl+Alt+G · drag-into · Add-Mask button)'},
+  {k:'3', nm:'Layers', state:'active', sec:'Stage A + SIMPLE panel ✅ 07-03 · masks step① paint_list ✅ 07-06'},
+  {milestone:'▶ NOW — Layers masks / clipping (Ctrl+Alt+G · drag-into · Add-Mask button) — ① paint_list ✅ → ② Node fields → ③ emit_node walk → ④ Clip render → ⑤ gestures'},
   {k:'4·S2', nm:'Colour — Stage 2', sec:'Swatches · Paint enum'},
   {k:'5', nm:'Stroke'},
   {k:'6', nm:'Save'},
@@ -317,7 +320,7 @@ const SYSTEMS = [
     ['9','Z-order commands (arrange)',1,'d'],
     ['10','Groups & ungroup (nested)',1,'d'],
     ['11','Compound paths',2,''],
-    ['12','Masks / clipping (drag-into + Ctrl+Alt+G) ▶ NEXT',1,''],
+    ['12','Masks / clipping (drag-into + Ctrl+Alt+G) ▶ NEXT — ① paint_list() indirection ✅ 07-06',1,''],
     ['13','Isolation mode',2,''],
     ['14','Opacity masks',3,''],
     ['15','Locate / find object',2,''],
