@@ -38,6 +38,9 @@ fn tmp(name: &str) -> std::path::PathBuf {
     let _ = std::fs::remove_file(&p);
     p
 }
+fn pages_of(bytes: &[u8]) -> usize {
+    lopdf::Document::load_mem(bytes).expect("lopdf parses our output").get_pages().len()
+}
 
 #[test]
 fn the_file_is_a_real_pdf_with_the_model_inside() {
@@ -70,6 +73,57 @@ fn one_page_per_artboard() {
     let bytes = write_pdf(&doc).expect("writes");
     let pdf = lopdf::Document::load_mem(&bytes).expect("lopdf parses our output");
     assert_eq!(pdf.get_pages().len(), 3, "3 artboards → 3 pages");
+}
+
+#[test]
+fn a_hidden_board_exports_no_page() {
+    // Ahmed 07-06 export gap: a hidden board (board eye OFF) must NOT appear in the exported PDF.
+    let mut doc = demo_doc();
+    doc.artboards.push(Artboard { x: 500.0, y: 0.0, w: 200.0, h: 200.0, ..Default::default() });
+    assert_eq!(pages_of(&write_pdf(&doc).unwrap()), 2, "two visible boards → two pages");
+    doc.artboards[1].hidden = true;
+    assert_eq!(pages_of(&write_pdf(&doc).unwrap()), 1, "hiding a board drops its page");
+}
+
+#[test]
+fn every_board_hidden_still_writes_one_valid_page() {
+    // Degenerate guard: hiding ALL boards must not yield a zero-page (invalid) PDF — keep one frame,
+    // while the embedded model still preserves the true all-hidden state.
+    let mut doc = demo_doc();
+    doc.artboards.push(Artboard { x: 500.0, y: 0.0, w: 200.0, h: 200.0, ..Default::default() });
+    for ab in &mut doc.artboards {
+        ab.hidden = true;
+    }
+    let bytes = write_pdf(&doc).expect("still writes");
+    assert_eq!(pages_of(&bytes), 1, "all-hidden falls back to one frame, never zero pages");
+    let p = tmp("allhidden.vrs");
+    save_vrs(&doc, &p).unwrap();
+    assert_eq!(load_vrs(&p).unwrap(), doc, "the real (all-hidden) model survives the save");
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn a_hidden_group_does_not_reach_the_page() {
+    // Hiding a LAYER/GROUP sets the NODE's eye (node cascade) — not each child's p.hidden. The export
+    // must honour eff_hidden like the canvas, or a hidden group still bleeds onto the page. Compare the
+    // page's own content stream with the group shown vs hidden — hidden must contribute no draw ops.
+    let mut d = demo_doc();
+    let g = d.group(&[1, 2]).expect("group both shapes");
+    let shown = write_pdf(&d).expect("writes");
+    d.toggle_node_hidden(g); // eye OFF on the group
+    let hidden = write_pdf(&d).expect("writes");
+
+    let page_content = |bytes: &[u8]| -> usize {
+        let pdf = lopdf::Document::load_mem(bytes).unwrap();
+        let (_, &pid) = pdf.get_pages().iter().next().unwrap();
+        pdf.get_page_content(pid).unwrap().len()
+    };
+    assert!(
+        page_content(&hidden) < page_content(&shown),
+        "the hidden group contributes no drawing ops to the page (was {} shown, {} hidden)",
+        page_content(&shown),
+        page_content(&hidden)
+    );
 }
 
 #[test]
