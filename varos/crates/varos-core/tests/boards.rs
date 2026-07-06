@@ -55,6 +55,17 @@ fn new_documents_clip_by_default() {
 }
 
 #[test]
+fn pre_artboard_files_get_a_non_clipping_page() {
+    // 07-06 review fix #1: a file saved before the `artboards` key existed AT ALL was authored with
+    // art bleeding freely — the serde-default page it receives must NOT cut, or loading the file
+    // silently vanishes everything drawn outside it. (Fresh docs still clip — the test above.)
+    let d: Document =
+        serde_json::from_str(r#"{"paths": [], "ids": 1}"#).expect("a minimal pre-artboard file deserializes");
+    assert_eq!(d.artboards.len(), 1, "the implicit page is guaranteed");
+    assert!(!d.artboards[0].clip, "…and it must NOT clip (legacy bleed behaviour preserved)");
+}
+
+#[test]
 fn membership_is_visible_overlap() {
     let mut ed = two_pages(true);
     ed.doc.paths.push(sq(1, 1, 10.0, 10.0, 30.0)); // fully on A

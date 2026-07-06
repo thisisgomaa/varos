@@ -658,7 +658,8 @@ pub struct Ui {
     lay_search: String,
     lay_rename: Option<(u32, String)>, // inline rename in progress (node id + buffer)
     lay_drag: Option<u32>,             // Layers row being dragged (reorder / nest); UI-only
-    lay_anchor: Option<u32>,           // last-clicked row — the Shift-range selection anchor
+    lay_anchor: Option<(u32, u32)>,    // Shift-range anchor: (node id, SECTION) — mirror rows share an
+                                       // id across sections, so the id alone picks the wrong appearance
 }
 
 /// The Layers-panel icon set (rasterized Lucide, white).
@@ -3071,7 +3072,7 @@ fn build_layers(
     rename: &mut Option<(u32, String)>,
     collapsed: &mut std::collections::HashSet<u32>,
     drag: &mut Option<u32>,
-    anchor: &mut Option<u32>,
+    anchor: &mut Option<(u32, u32)>,
     ops: &mut Vec<Op>,
     rects: &mut Vec<egui::Rect>,
 ) {
@@ -3418,16 +3419,26 @@ fn build_layers(
                                     ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
                                 if ctrl {
                                     ops.push(Op::LayerToggle(row.id));
-                                    *anchor = Some(row.id);
+                                    *anchor = Some((row.id, row.sec));
                                 } else if shift {
-                                    let a = anchor.and_then(|aid| rows.iter().position(|r| r.id == aid)).unwrap_or(ri);
+                                    // resolve the anchor to its OWN section's appearance — a mirror
+                                    // row's id exists in several sections and the first-by-id match
+                                    // ranges from the wrong one (07-06 review fix #2). Fallback: the
+                                    // first appearance (membership changed), else the clicked row.
+                                    let a = anchor
+                                        .and_then(|(aid, asec)| {
+                                            rows.iter()
+                                                .position(|r| r.id == aid && r.sec == asec)
+                                                .or_else(|| rows.iter().position(|r| r.id == aid))
+                                        })
+                                        .unwrap_or(ri);
                                     let (lo, hi) = if a <= ri { (a, ri) } else { (ri, a) };
                                     ops.push(Op::LayerSelectSet(
                                         rows[lo..=hi].iter().filter(|r| r.kind != LKind::Board).map(|r| r.id).collect(),
                                     ));
                                 } else {
                                     ops.push(Op::LayerSelectSet(vec![row.id]));
-                                    *anchor = Some(row.id);
+                                    *anchor = Some((row.id, row.sec));
                                 }
                             }
                         }
