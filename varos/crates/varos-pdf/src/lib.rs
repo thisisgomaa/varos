@@ -77,9 +77,20 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
     let emb_id = ids.next();
     let fs_id = ids.next();
 
-    // ≥1 page always: an artboard-less doc still saves (default page frame)
-    let boards: Vec<Artboard> =
-        if doc.artboards.is_empty() { vec![Artboard::default()] } else { doc.artboards.clone() };
+    // One page per VISIBLE board — a hidden board (board eye OFF) exports NO page, matching the canvas
+    // (Ahmed 07-06 export gap). An artboard-less doc still saves on its default frame; and if EVERY
+    // board is hidden we keep the first as a single frame so the container never degrades to a
+    // zero-page (invalid) PDF.
+    let boards: Vec<Artboard> = if doc.artboards.is_empty() {
+        vec![Artboard::default()]
+    } else {
+        let vis: Vec<Artboard> = doc.artboards.iter().filter(|a| !a.hidden).cloned().collect();
+        if vis.is_empty() {
+            vec![doc.artboards[0].clone()]
+        } else {
+            vis
+        }
+    };
 
     let mut pdf = Pdf::new();
     let mut page_ids = Vec::new();
@@ -109,7 +120,10 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
         // artwork: the paintable content in document order (paint_list, LAYERS_VISION §5 — a mask
         // source must never reach the page); conservative bbox cull per page
         for (_, p) in doc.paint_list() {
-            if p.hidden {
+            // WYSIWYG with the canvas: skip anything EFFECTIVELY hidden — the path's own eye, a hidden
+            // parent group/layer (node cascade), OR art whose every member board is hidden (board eye).
+            // Raw `p.hidden` missed the last two, so hidden groups and hidden pages still bled out.
+            if doc.eff_hidden(p.id) {
                 continue;
             }
             let fillable = p.closed && p.anchors.len() >= 3 && p.fill.is_some();
