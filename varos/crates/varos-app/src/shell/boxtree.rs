@@ -16,29 +16,43 @@ use egui_tiles::{
 };
 use std::collections::HashMap;
 
+/// The host's panel renderer: paints the REAL body of `PanelId` into the pane's `Ui`. Returns `true`
+/// if it handled the panel; `false` (without drawing) falls back to the registry's dummy body — so
+/// the sandbox keeps working unhosted and the real app only wires the panels it has migrated.
+pub type HostFn<'h> = dyn FnMut(PanelId, &mut egui::Ui) -> bool + 'h;
+
 pub struct ShellState {
     tree: Tree<PanelId>,
 }
 
 impl ShellState {
     pub fn standard() -> Self {
+        // The LAW tree (BOX_SYSTEM_PLAN §4.3): board ≈ .80 · right column = two TABBED boxes —
+        // [Align|Pathfinder] over [Properties|Layers] (the growing box).
         let mut tiles = Tiles::default();
         let board = tiles.insert_pane(PanelId::Board);
         let align = tiles.insert_pane(PanelId::Align);
+        let path = tiles.insert_pane(PanelId::Pathfinder);
+        let upper = tiles.insert_tab_tile(vec![align, path]);
         let props = tiles.insert_pane(PanelId::Properties);
         let layers = tiles.insert_pane(PanelId::Layers);
-        let right = tiles.insert_vertical_tile(vec![align, props, layers]);
+        let lower = tiles.insert_tab_tile(vec![props, layers]);
+        let right = tiles.insert_vertical_tile(vec![upper, lower]);
         let root = tiles.insert_horizontal_tile(vec![board, right]);
         let mut tree = Tree::new("varos_shell", root, tiles);
         set_share(&mut tree, root, board, 0.80);
         set_share(&mut tree, root, right, 0.20);
-        set_share(&mut tree, right, align, 0.26);
-        set_share(&mut tree, right, props, 0.42);
-        set_share(&mut tree, right, layers, 0.32);
+        set_share(&mut tree, right, upper, 0.24);
+        set_share(&mut tree, right, lower, 0.76);
         Self { tree }
     }
 
+    /// Unhosted (sandbox) entry: every panel body comes from the registry dummies.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        self.ui_hosted(ui, &mut |_, _| false);
+    }
+
+    pub fn ui_hosted(&mut self, ui: &mut egui::Ui, host: &mut HostFn<'_>) {
         // Merge any nested Tabs-in-Tabs a prior drop may have created, so every box reads as ONE flat tab
         // strip (dropping a multi-tab box onto a tab must give siblings, not a hidden nested box).
         flatten_nested_tabs(&mut self.tree);
@@ -62,7 +76,14 @@ impl ShellState {
             }
         }
 
-        let mut behavior = ShellBehavior { groups, tree_id: Some(self.tree.id()), ..Default::default() };
+        let mut behavior = ShellBehavior {
+            switch: None,
+            close: None,
+            set_active: None,
+            groups,
+            tree_id: Some(self.tree.id()),
+            host,
+        };
         self.tree.ui(&mut behavior, ui);
 
         if let Some((container, tile)) = behavior.set_active {
@@ -101,7 +122,7 @@ impl ShellState {
                     let mut gpos = ui.ctx().data(|d| d.get_temp::<Pos2>(ghost_id)).unwrap_or(cur);
                     gpos += (cur - gpos) * 0.55; // ease toward the cursor — snappier so it doesn't feel heavy
                     ui.ctx().data_mut(|d| d.insert_temp(ghost_id, gpos));
-                    render_drag_ghost(ui, panel, gpos);
+                    render_drag_ghost(ui, panel, gpos, &mut *behavior.host);
                     ui.ctx().request_repaint();
                 }
             }
@@ -185,7 +206,7 @@ fn detach(tree: &mut Tree<PanelId>, id: TileId) {
 }
 
 /// The lifted panel: a faithful floating copy on top, at `pos` (cursor at its top-centre).
-fn render_drag_ghost(ui: &egui::Ui, panel: PanelId, pos: Pos2) {
+fn render_drag_ghost(ui: &egui::Ui, panel: PanelId, pos: Pos2, host: &mut HostFn<'_>) {
     let w = 232.0;
     egui::Area::new(egui::Id::new("varos_drag_ghost"))
         .order(egui::Order::Foreground)
@@ -207,9 +228,11 @@ fn render_drag_ghost(ui: &egui::Ui, panel: PanelId, pos: Pos2) {
                     // faithful body, but disabled + id-scoped so it never fights the real panel
                     ui.push_id("ghost", |ui| {
                         ui.add_enabled_ui(false, |ui| {
-                            egui::Frame::NONE
-                                .inner_margin(Margin::same(10))
-                                .show(ui, |ui| registry::render_panel(panel, ui));
+                            egui::Frame::NONE.inner_margin(Margin::same(10)).show(ui, |ui| {
+                                if !host(panel, ui) {
+                                    registry::render_panel(panel, ui);
+                                }
+                            });
                         });
                     });
                 },
@@ -290,8 +313,17 @@ fn scroll_arrow(ui: &egui::Ui, center: Pos2, dir: f32, tile_id: TileId) -> bool 
 /// breathes the same (Ahmed 07-04: "مفيش مسافات مظبوطة"). Scrollbars are the thin floating overlay set
 /// globally in `tokens::apply`. The ScrollArea (and the whole body) is id-salted by `tile_id` so a
 /// tabbed box's body never collides with its pills strip — the "ScrollArea ID clash" (Ahmed 07-05).
-fn render_body(ui: &mut egui::Ui, rect: Rect, hh: f32, tile_id: TileId, pane: PanelId) {
+fn render_body(ui: &mut egui::Ui, rect: Rect, hh: f32, tile_id: TileId, pane: PanelId, host: &mut HostFn<'_>) {
     let body = Rect::from_min_max(pos2(rect.left(), rect.top() + hh), rect.max);
+    // a HOSTED panel owns its whole body (its own margins / scroll / footer — e.g. the Layers list);
+    // the dummy fallback keeps the one shared margin + scroll wrapper.
+    let mut handled = false;
+    ui.scope_builder(UiBuilder::new().max_rect(body).layout(Layout::top_down(Align::Min)), |ui| {
+        handled = host(pane, ui);
+    });
+    if handled {
+        return;
+    }
     ui.scope_builder(
         UiBuilder::new().max_rect(body.shrink2(vec2(12.0, 10.0))).layout(Layout::top_down(Align::Min)),
         |ui| {
@@ -314,17 +346,18 @@ struct TabGroup {
     active: TileId,
 }
 
-#[derive(Default)]
-struct ShellBehavior {
+struct ShellBehavior<'h> {
     switch: Option<(TileId, PanelId)>,
     close: Option<TileId>,
     set_active: Option<(TileId, TileId)>,
     groups: HashMap<TileId, TabGroup>,
     /// The tree's egui id, set each frame — lets a pill/grip drag start the drag on the RIGHT tile.
     tree_id: Option<egui::Id>,
+    /// The real app's panel renderer (the sandbox passes a no-op that always falls back).
+    host: &'h mut HostFn<'h>,
 }
 
-impl ShellBehavior {
+impl ShellBehavior<'_> {
     /// Draw the ☰ (change-type) + ✕ (close) controls at the header's right edge and wire their intents.
     /// Returns the left x of the controls block so the caller keeps the title / pills clear of them.
     fn header_controls(&mut self, ui: &mut egui::Ui, tile_id: TileId, mid: f32, right: f32) -> f32 {
@@ -362,7 +395,7 @@ impl ShellBehavior {
     }
 }
 
-impl Behavior<PanelId> for ShellBehavior {
+impl Behavior<PanelId> for ShellBehavior<'_> {
     fn tab_title_for_pane(&mut self, pane: &PanelId) -> egui::WidgetText {
         pane.title().into()
     }
@@ -370,7 +403,11 @@ impl Behavior<PanelId> for ShellBehavior {
     fn pane_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, pane: &mut PanelId) -> UiResponse {
         let rect = ui.max_rect();
         if pane.is_board() {
-            draw_board(ui, rect);
+            // hosted board = the REAL canvas hole (rulers + hands, wgpu scene showing through);
+            // unhosted (sandbox) = the dummy painted board.
+            if !(self.host)(PanelId::Board, ui) {
+                draw_board(ui, rect);
+            }
             return UiResponse::None;
         }
 
@@ -476,7 +513,7 @@ impl Behavior<PanelId> for ShellBehavior {
             }
 
             ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
-            render_body(ui, rect, hh, tile_id, *pane);
+            render_body(ui, rect, hh, tile_id, *pane, &mut *self.host);
 
             return UiResponse::None;
         }
@@ -499,7 +536,7 @@ impl Behavior<PanelId> for ShellBehavior {
         );
 
         ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
-        render_body(ui, rect, hh, tile_id, *pane);
+        render_body(ui, rect, hh, tile_id, *pane, &mut *self.host);
 
         if g.drag_started() || hdr.drag_started() {
             return UiResponse::DragStarted;
