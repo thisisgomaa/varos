@@ -17,8 +17,8 @@ use winit::window::Window;
 // successors so this 4k-line file needs no body edits; Stage 4's re-cut chrome uses the law names.
 use varos_app::shell::tokens::{
     ACCENT, ACCENT_HOVER, ACCENT_SEL, ACCENT_TINT, BG, CLOSE_RED, FAINT, HOVER, INPUT_WELL, LINE as BORDER,
-    LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, ROW_HOVER, SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL,
-    TEXT,
+    LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, RBOX, ROW_HOVER, SEAM, SURFACE as BG_SURFACE,
+    SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
 };
 
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
@@ -64,7 +64,6 @@ const IC_DIST_V: &str = r#"<rect x="6" y="3" width="12" height="3" rx="1"/><rect
 const IC_MENU: &str = r#"<path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/>"#;
 // top-bar content icons: search · layout · panels checklist · new-tab · tab-close · check
 const IC_SEARCH: &str = r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>"#;
-const IC_LAYOUT: &str = r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>"#;
 const IC_PANELS: &str = r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>"#;
 const IC_PLUS: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
 const IC_X: &str = r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#;
@@ -238,7 +237,6 @@ struct ColorModal {
 struct TopIcons {
     menu: Option<egui::TextureHandle>, // min/max/close are painted glyphs now (see `winctl`), not textures
     search: Option<egui::TextureHandle>,
-    layout: Option<egui::TextureHandle>,
     panels: Option<egui::TextureHandle>,
     plus: Option<egui::TextureHandle>,
     x: Option<egui::TextureHandle>,
@@ -765,7 +763,6 @@ impl Ui {
         let top = TopIcons {
             menu: load_icon(&ctx, "tb-menu", IC_MENU),
             search: load_icon(&ctx, "tb-search", IC_SEARCH),
-            layout: load_icon(&ctx, "tb-layout", IC_LAYOUT),
             panels: load_icon(&ctx, "tb-panels", IC_PANELS),
             plus: load_icon(&ctx, "tb-plus", IC_PLUS),
             x: load_icon(&ctx, "tb-x", IC_X),
@@ -913,6 +910,7 @@ impl Ui {
             fit: &self.ic_fit,
         };
         let ab_dots = &self.ab_dots;
+        let ic_fit = &self.ic_fit; // the status strip's Fit control shares the artboard panel's icon
         let top = &self.top;
         // layers snapshot (built before the closure — like Snap/AbSnap)
         let layer_rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search);
@@ -960,6 +958,7 @@ impl Ui {
                     &mut snap_cfg,
                     maximized,
                 );
+                build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request);
                 if show_rulers {
                     build_rulers(root, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops);
                 }
@@ -2508,17 +2507,70 @@ fn topbtn(
     active: bool,
 ) -> egui::Response {
     let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
-    let r6 = CornerRadius::same(6);
+    let rr = CornerRadius::same(3); // §3.5: control radius r
     if active {
-        p.rect_filled(rect, r6, BG_SURFACE);
+        p.rect_filled(rect, rr, BG_SURFACE);
     } else if resp.hovered() {
-        p.rect_filled(rect, r6, HOVER);
+        p.rect_filled(rect, rr, HOVER);
     }
     let col = if active || resp.hovered() { TEXT } else { MUTED };
     if let Some(t) = tex {
         p.image(t.id(), egui::Rect::from_center_size(rect.center(), egui::vec2(17.0, 17.0)), UV01(), col);
     }
     resp
+}
+
+/// §3.5 app-bar text button (pad 5 12, radius r): solid = surface fill + line2 border;
+/// ghost = bare muted text that lights on hover. Laid out from its RIGHT edge; returns its rect.
+fn bar_btn(ui: &mut egui::Ui, p: &egui::Painter, right: f32, cy: f32, label: &str, ghost: bool) -> egui::Rect {
+    let f = FontId::proportional(12.0);
+    let gw = p.layout_no_wrap(label.to_owned(), f.clone(), TEXT).size().x;
+    let rect = egui::Rect::from_min_max(egui::pos2(right - gw - 24.0, cy - 13.0), egui::pos2(right, cy + 13.0));
+    let resp = ui.interact(rect, ui.id().with(("bar-btn", label)), egui::Sense::click());
+    let rr = CornerRadius::same(3);
+    if ghost {
+        if resp.hovered() {
+            p.rect_filled(rect, rr, HOVER);
+        }
+    } else {
+        p.rect_filled(rect, rr, if resp.hovered() { HOVER } else { BG_SURFACE });
+        p.rect_stroke(rect, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+    }
+    let col = if ghost && !resp.hovered() { MUTED } else { TEXT };
+    p.text(rect.center(), Align2::CENTER_CENTER, label, f, col);
+    rect
+}
+
+/// §3.5 search pill: 🔍 Search · [Ctrl K] — a surface capsule sitting on the void.
+/// Laid out from its RIGHT edge; returns its rect. (Visual mirror — search lands with its home.)
+fn search_pill(
+    ui: &mut egui::Ui,
+    p: &egui::Painter,
+    right: f32,
+    cy: f32,
+    icon: &Option<egui::TextureHandle>,
+) -> egui::Rect {
+    let f = FontId::proportional(11.5);
+    let fk = FontId::monospace(10.0);
+    let sw = p.layout_no_wrap("Search".into(), f.clone(), FAINT).size().x;
+    let kw = p.layout_no_wrap("Ctrl K".into(), fk.clone(), MUTED).size().x + 8.0;
+    let w = 9.0 + 13.0 + 6.0 + sw + 8.0 + kw + 9.0;
+    let rect = egui::Rect::from_min_max(egui::pos2(right - w, cy - 12.0), egui::pos2(right, cy + 12.0));
+    let _ = ui.interact(rect, ui.id().with("tb-kpill"), egui::Sense::hover());
+    let rr = CornerRadius::same(3);
+    p.rect_filled(rect, rr, BG_SURFACE);
+    p.rect_stroke(rect, rr, Stroke::new(1.0, BORDER), StrokeKind::Middle);
+    let mut x = rect.left() + 9.0;
+    if let Some(t) = icon {
+        p.image(t.id(), egui::Rect::from_center_size(egui::pos2(x + 6.5, cy), egui::vec2(13.0, 13.0)), UV01(), FAINT);
+    }
+    x += 13.0 + 6.0;
+    let tr = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Search", f, FAINT);
+    x = tr.right() + 8.0;
+    let krect = egui::Rect::from_min_size(egui::pos2(x, cy - 8.0), egui::vec2(kw, 16.0));
+    p.rect_stroke(krect, CornerRadius::same(2), Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+    p.text(krect.center(), Align2::CENTER_CENTER, "Ctrl K", fk, MUTED);
+    rect
 }
 
 /// One document tab. Returns (activate_clicked, close_clicked).
@@ -2531,22 +2583,23 @@ fn tab_item(
     tex_x: &Option<egui::TextureHandle>,
     key: &str,
 ) -> (bool, bool) {
+    // Brave chip in the void (§3.5): active = filled panel block; inactive = bare muted text,
+    // hover = a whisper of white. No accent — azure is a scalpel, not a tab decoration.
     let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
+    let rr = CornerRadius::same(RBOX);
     if active {
-        p.rect_filled(rect, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, SOLID_PANEL);
-        p.hline(rect.left()..=rect.right(), rect.top() + 1.0, Stroke::new(2.0, ACCENT));
+        p.rect_filled(rect, rr, SOLID_PANEL);
     } else if resp.hovered() {
-        let inner = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() + 5.0), rect.max);
-        p.rect_filled(inner, CornerRadius::same(6), BG_SURFACE);
+        p.rect_filled(rect, rr, VOID_HOVER);
     }
     p.text(
         egui::pos2(rect.left() + 12.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(12.5),
+        FontId::proportional(12.0),
         if active { TEXT } else { MUTED },
     );
-    let x_r = egui::Rect::from_center_size(egui::pos2(rect.right() - 14.0, rect.center().y), egui::vec2(18.0, 18.0));
+    let x_r = egui::Rect::from_center_size(egui::pos2(rect.right() - 13.0, rect.center().y), egui::vec2(18.0, 18.0));
     let xr = ui.interact(x_r, ui.id().with((key, "x")), egui::Sense::click());
     if xr.hovered() {
         p.rect_filled(x_r, CornerRadius::same(4), HOVER);
@@ -2556,7 +2609,7 @@ fn tab_item(
             t.id(),
             egui::Rect::from_center_size(x_r.center(), egui::vec2(11.0, 11.0)),
             UV01(),
-            if xr.hovered() { TEXT } else { MUTED },
+            if xr.hovered() { TEXT } else { FAINT },
         );
     }
     (resp.clicked(), xr.clicked())
@@ -2632,16 +2685,17 @@ fn build_topbar(
     maximized: bool,
 ) {
     let h = 40.0;
-    let frame = egui::Frame { fill: BG, inner_margin: Margin::ZERO, ..Default::default() };
+    // Stage 1 (BOX_SYSTEM_PLAN §3.5): the app bar IS the void — seam fill, no hairline; the doc tabs
+    // are Brave-style chips floating in it and the window caps are flush 42px void cells.
+    let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
     egui::Panel::top("topbar").exact_size(h).frame(frame).show(root, |ui| {
         let bar = ui.max_rect();
         let p = ui.painter().clone();
         let cy = bar.center().y;
-        p.hline(bar.left()..=bar.right(), bar.bottom() - 0.5, Stroke::new(1.0, BORDER));
         let mut excl: Vec<egui::Rect> = Vec::new();
 
         // window controls (min · max · close)
-        let bw = 46.0;
+        let bw = 42.0;
         let close_r =
             egui::Rect::from_min_max(egui::pos2(bar.right() - bw, bar.top()), egui::pos2(bar.right(), bar.bottom()));
         let max_r = egui::Rect::from_min_max(
@@ -2652,10 +2706,10 @@ fn build_topbar(
             egui::pos2(bar.right() - 3.0 * bw, bar.top()),
             egui::pos2(bar.right() - 2.0 * bw, bar.bottom()),
         );
-        if winctl(ui, &p, min_r, Cap::Min, "wc-min", BG_SURFACE, false) {
+        if winctl(ui, &p, min_r, Cap::Min, "wc-min", HOVER, false) {
             *win_action = Some(WinAction::Minimize);
         }
-        if winctl(ui, &p, max_r, if maximized { Cap::Restore } else { Cap::Max }, "wc-max", BG_SURFACE, false) {
+        if winctl(ui, &p, max_r, if maximized { Cap::Restore } else { Cap::Max }, "wc-max", HOVER, false) {
             *win_action = Some(WinAction::ToggleMaximize);
         }
         if winctl(ui, &p, close_r, Cap::Close, "wc-close", CLOSE_RED, true) {
@@ -2663,51 +2717,59 @@ fn build_topbar(
         }
         excl.extend([min_r, max_r, close_r]);
 
-        // right tools (search · layout · panels), to the left of the window controls
-        let (tb, th) = (34.0, 30.0);
-        let cell =
-            |rx: f32| egui::Rect::from_min_max(egui::pos2(rx - tb, cy - th / 2.0), egui::pos2(rx, cy + th / 2.0));
+        // right cluster (§3.5), right→left: window caps · [panels] [snapping] · Share · Export · search pill
         let panels_id = ui.make_persistent_id("panels_menu");
         let menu_id = ui.make_persistent_id("app_menu");
-        let panels_r = cell(min_r.left() - 8.0);
+        let icon = |rx: f32| egui::Rect::from_center_size(egui::pos2(rx - 14.0, cy), egui::vec2(28.0, 28.0));
+        let panels_r = icon(min_r.left() - 6.0);
         let panels_active = menu_open(ui, panels_id) || !*show_rail || !*show_dock;
         let pr = topbtn(ui, &p, panels_r, &top.panels, "tb-panels", panels_active);
         if pr.clicked() {
             menu_toggle(ui, panels_id);
         }
-        let layout_r = cell(panels_r.left() - 2.0);
-        topbtn(ui, &p, layout_r, &top.layout, "tb-layout", false).on_hover_text("Layout");
-        let search_r = cell(layout_r.left() - 2.0);
-        topbtn(ui, &p, search_r, &top.search, "tb-search", false).on_hover_text("Search");
         // magnet = the Snapping quick-menu (Illustrator layout)
         let magnet_id = ui.make_persistent_id("snap_menu");
-        let magnet_r = cell(search_r.left() - 2.0);
+        let magnet_r = icon(panels_r.left() - 2.0);
         let magnet_active = menu_open(ui, magnet_id) || snap.smart || snap.grid;
         let magr = topbtn(ui, &p, magnet_r, &top.magnet, "tb-magnet", magnet_active);
         if magr.clicked() {
             menu_toggle(ui, magnet_id);
         }
-        excl.extend([panels_r, layout_r, search_r, magnet_r]);
+        // Share (solid) + Export (ghost) — the mockup pair; visual MIRRORS for now (like the burger's
+        // menu rows: the look lands in Stage 1, the wiring lands with its home)
+        let share_r = bar_btn(ui, &p, magnet_r.left() - 8.0, cy, "Share", false);
+        let export_r = bar_btn(ui, &p, share_r.left() - 8.0, cy, "Export", true);
+        // search pill: 🔍 Search · Ctrl K — a surface capsule on the void (visual mirror too)
+        let kpill_r = search_pill(ui, &p, export_r.left() - 8.0, cy, &top.search);
+        excl.extend([panels_r, magnet_r, share_r, export_r, kpill_r]);
 
-        // menu button (left)
-        let menu_r =
-            egui::Rect::from_min_max(egui::pos2(bar.left() + 6.0, cy - 15.0), egui::pos2(bar.left() + 40.0, cy + 15.0));
-        let mr = topbtn(ui, &p, menu_r, &top.menu, "tb-menu", menu_open(ui, menu_id));
+        // burger — a flush 36×40 void cell at the far left (§3.5)
+        let menu_r = egui::Rect::from_min_size(egui::pos2(bar.left() + 4.0, bar.top()), egui::vec2(36.0, h));
+        let mr = ui.interact(menu_r, ui.id().with("tb-menu"), egui::Sense::click());
+        let mopen = menu_open(ui, menu_id);
+        if mopen || mr.hovered() {
+            p.rect_filled(menu_r, CornerRadius::ZERO, HOVER);
+        }
+        if let Some(t) = &top.menu {
+            let col = if mopen || mr.hovered() { TEXT } else { MUTED };
+            p.image(t.id(), egui::Rect::from_center_size(menu_r.center(), egui::vec2(17.0, 17.0)), UV01(), col);
+        }
         if mr.clicked() {
             menu_toggle(ui, menu_id);
         }
         excl.push(menu_r);
 
-        // tabs + new-tab
-        let tabs_right = magnet_r.left() - 12.0;
+        // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5)
+        let tabs_right = kpill_r.left() - 12.0;
         let mut tx = menu_r.right() + 8.0;
-        let tw = 154.0;
         let (mut to_close, mut to_activate) = (None, None);
         for (i, tab) in tabs.iter().enumerate() {
+            let gw = p.layout_no_wrap(tab.clone(), FontId::proportional(12.0), TEXT).size().x;
+            let tw = (12.0 + gw + 8.0 + 18.0 + 4.0).clamp(76.0, 220.0);
             if tx + tw > tabs_right {
                 break;
             }
-            let trect = egui::Rect::from_min_max(egui::pos2(tx, bar.top()), egui::pos2(tx + tw, bar.bottom()));
+            let trect = egui::Rect::from_min_size(egui::pos2(tx, cy - 14.0), egui::vec2(tw, 28.0));
             let (click, close) = tab_item(ui, &p, trect, tab, i == *tab_active, &top.x, &format!("tab{i}"));
             if click {
                 to_activate = Some(i);
@@ -2716,10 +2778,10 @@ fn build_topbar(
                 to_close = Some(i);
             }
             excl.push(trect);
-            tx += tw + 2.0;
+            tx += tw + 4.0;
         }
-        let plus_r = egui::Rect::from_min_max(egui::pos2(tx, cy - 14.0), egui::pos2(tx + 28.0, cy + 14.0));
-        if tx + 28.0 <= tabs_right {
+        let plus_r = egui::Rect::from_center_size(egui::pos2(tx + 16.0, cy), egui::vec2(32.0, 28.0));
+        if tx + 32.0 <= tabs_right {
             if topbtn(ui, &p, plus_r, &top.plus, "tb-plus", false).clicked() {
                 tabs.push(format!("Untitled-{}", tabs.len() + 1));
                 *tab_active = tabs.len() - 1;
@@ -2792,6 +2854,73 @@ fn build_topbar(
             })
             .collect();
         crate::cursors::set_caption((h * ppp) as i32, &px);
+    });
+}
+
+/// Stage 1 (§3.5): the status strip — void chrome like the app bar (h 25, seam, 11px faint).
+/// Left = the beginner shortcut hints; right = artboard i/n · Fit (clickable) · zoom %.
+fn build_statusbar(
+    root: &mut egui::Ui,
+    ab_active: usize,
+    ab_count: usize,
+    zoom: f32,
+    fit_icon: &Option<egui::TextureHandle>,
+    fit_request: &mut Option<usize>,
+) {
+    let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
+    egui::Panel::bottom("statusbar").exact_size(25.0).frame(frame).show(root, |ui| {
+        let bar = ui.max_rect();
+        let p = ui.painter().clone();
+        let cy = bar.center().y;
+        let f11 = FontId::proportional(11.0);
+        let m11 = FontId::monospace(11.0);
+        // left: shortcut hints — keys muted, prose faint (the mockup's <b> pattern)
+        let mut x = bar.left() + 10.0;
+        for (s, muted) in [
+            ("V", true),
+            (" select    ·    ", false),
+            ("A", true),
+            (" direct    ·    ", false),
+            ("Alt", true),
+            ("+drag duplicates", false),
+        ] {
+            let r = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, s, f11.clone(), if muted { MUTED } else { FAINT });
+            x = r.right();
+        }
+        // right, laid right→left: zoom % · Fit · Artboard i/n (gap 14)
+        let zr = p.text(
+            egui::pos2(bar.right() - 10.0, cy),
+            Align2::RIGHT_CENTER,
+            format!("{:.0}%", zoom * 100.0),
+            m11.clone(),
+            MUTED,
+        );
+        let fw = 13.0 + 4.0 + p.layout_no_wrap("Fit".into(), f11.clone(), FAINT).size().x;
+        let fit_r = egui::Rect::from_min_size(egui::pos2(zr.left() - 14.0 - fw, cy - 9.0), egui::vec2(fw, 18.0));
+        let fresp = ui.interact(fit_r, ui.id().with("st-fit"), egui::Sense::click());
+        let fcol = if fresp.hovered() { TEXT } else { FAINT };
+        if let Some(t) = fit_icon {
+            p.image(
+                t.id(),
+                egui::Rect::from_center_size(egui::pos2(fit_r.left() + 6.5, cy), egui::vec2(13.0, 13.0)),
+                UV01(),
+                fcol,
+            );
+        }
+        p.text(egui::pos2(fit_r.left() + 17.0, cy), Align2::LEFT_CENTER, "Fit", f11.clone(), fcol);
+        if fresp.clicked() {
+            *fit_request = Some(ab_active);
+        }
+        if ab_count > 0 {
+            let nr = p.text(
+                egui::pos2(fit_r.left() - 14.0, cy),
+                Align2::RIGHT_CENTER,
+                format!("{} / {}", ab_active + 1, ab_count),
+                m11,
+                MUTED,
+            );
+            p.text(egui::pos2(nr.left() - 4.0, cy), Align2::RIGHT_CENTER, "Artboard", f11, FAINT);
+        }
     });
 }
 
