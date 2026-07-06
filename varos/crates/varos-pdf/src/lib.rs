@@ -106,8 +106,9 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
             c.restore_state();
         }
 
-        // artwork: the single global list in document order; conservative bbox cull per page
-        for p in &doc.paths {
+        // artwork: the paintable content in document order (paint_list, LAYERS_VISION §5 — a mask
+        // source must never reach the page); conservative bbox cull per page
+        for (_, p) in doc.paint_list() {
             if p.hidden {
                 continue;
             }

@@ -98,6 +98,17 @@ pub enum DropPos {
     After,
 }
 
+/// What a path IS to the paint pass (LAYERS_VISION §5) — the one indirection between the scene tree
+/// and every paint consumer. Runtime-only, never serialized. `MaskSource` = geometry that shapes a
+/// clip group and must not paint as itself (clipping stage); `Hidden` = filtered by a future axis
+/// (pages). A path keeps its role-agnostic presence in `paths` for hit-test/panel/rename.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaintRole {
+    Normal,
+    MaskSource,
+    Hidden,
+}
+
 /// One node of the REAL scene graph (the Layers system, D2). Structure lives here; geometry/appearance
 /// stay in the flat `Vec<Path>` (which is kept re-flattened to tree order, so everything that reads
 /// "vec order = z" keeps working untouched).
@@ -378,6 +389,22 @@ impl Document {
 
     pub fn pidx(&self, pid: u32) -> Option<usize> {
         self.paths.iter().position(|p| p.id == pid)
+    }
+    /// THE paint indirection (LAYERS_VISION §5). Every consumer that means "the z-ordered paintable
+    /// content" — scene build, export, snap targets — iterates THIS, never `paths` directly, so each
+    /// future capability (clip masks, pages) becomes ONE filter here instead of a thirty-call-site
+    /// rewrite. Yields `(paths-index, &Path)` because the geometry helpers (`outline_px`,
+    /// `outline_bbox`) are index-keyed; filtering happens AFTER enumerate so indices stay valid.
+    /// Today: exactly `paths` in order (every role is `Normal` until clipping lands).
+    /// NOT for hit-test / the Layers panel / editing overlays — a mask source stays a first-class,
+    /// clickable row there; those keep reading `paths`.
+    pub fn paint_list(&self) -> impl Iterator<Item = (usize, &Path)> {
+        self.paths.iter().enumerate().filter(|(_, p)| self.paint_role(p.id) != PaintRole::MaskSource)
+    }
+    /// What a path IS to the paint pass (LAYERS_VISION §5). Always `Normal` today; `MaskSource`
+    /// arrives when clip groups land (computed structurally in `sync_tree`), `Hidden` with pages.
+    pub fn paint_role(&self, _pid: u32) -> PaintRole {
+        PaintRole::Normal
     }
     pub fn aidx(&self, aid: u32) -> Option<(usize, usize)> {
         for (pi, p) in self.paths.iter().enumerate() {

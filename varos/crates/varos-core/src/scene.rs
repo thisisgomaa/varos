@@ -183,12 +183,14 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
         out
     };
-    for pi in 0..ed.doc.paths.len() {
-        if ed.doc.eff_hidden(ed.doc.paths[pi].id) {
+    // the CONTENT pass reads paint_list(), not doc.paths — the §5 indirection: a future mask/page
+    // filter lands there once, and this loop (plus export + snap) follows for free
+    for (pi, p) in ed.doc.paint_list() {
+        if ed.doc.eff_hidden(p.id) {
             continue;
         } // cascades from layer/group eyes
-        let o = ed.doc.paths[pi].opacity;
-        let s_alpha = ed.doc.paths[pi].stroke.map_or(1.0, |c| c[3]);
+        let o = p.opacity;
+        let s_alpha = p.stroke.map_or(1.0, |c| c[3]);
         let mut fp = fill_prims(pi);
         let mut sp = stroke_prims(pi);
         if o < 0.999 && !fp.is_empty() && !sp.is_empty() {

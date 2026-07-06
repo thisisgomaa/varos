@@ -1368,8 +1368,8 @@ impl Editor {
     fn snap_target_lines(&self) -> (Vec<SnapLine>, Vec<SnapLine>) {
         let cfg = &self.doc.snap;
         let (mut txl, mut tyl) = (vec![], vec![]);
-        for pi in 0..self.doc.paths.len() {
-            let p = &self.doc.paths[pi];
+        // snap targets = paintable content (paint_list, §5): you can't snap to a future mask source
+        for (pi, p) in self.doc.paint_list() {
             if p.hidden || self.objsel.contains(&p.id) {
                 continue;
             }
