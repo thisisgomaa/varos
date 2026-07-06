@@ -289,10 +289,15 @@ pub fn hcursor_svg_file(stem: &str, hx: f32, hy: f32) -> Option<isize> {
         }
     }
     let hs = CURSOR_PX as f32 / 32.0; // 1×-logical → bitmap pixels
-    Some(build_hcursor(&d, CURSOR_PX, CURSOR_PX, (hx * hs).round() as u16, (hy * hs).round() as u16))
+    match build_hcursor(&d, CURSOR_PX, CURSOR_PX, (hx * hs).round() as u16, (hy * hs).round() as u16) {
+        0 => None, // Win32 refused → let the caller fall back to the built-in SVG cursor
+        hc => Some(hc),
+    }
 }
 
-/// Build a Windows HCURSOR from straight-alpha RGBA. Returns the handle as isize.
+/// Build a Windows HCURSOR from straight-alpha RGBA. Returns the handle as isize, or 0 if Windows
+/// refuses (GDI handle exhaustion) — callers and the WM_SETCURSOR path treat 0 as "keep the OS arrow",
+/// so a failed cursor degrades instead of crashing (ENGINEERING_REVIEW §3.3).
 #[cfg(windows)]
 fn build_hcursor(rgba: &[u8], w: u32, h: u32, hx: u16, hy: u16) -> isize {
     use windows::Win32::Graphics::Gdi::{
@@ -315,8 +320,13 @@ fn build_hcursor(rgba: &[u8], w: u32, h: u32, hx: u16, hy: u16) -> isize {
             ..Default::default()
         };
         let hdc = GetDC(None);
-        let hbm = CreateDIBSection(Some(hdc), &bi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+        let hbm = CreateDIBSection(Some(hdc), &bi, DIB_RGB_COLORS, &mut bits, None, 0);
         ReleaseDC(None, hdc);
+        let Ok(hbm) = hbm else { return 0 };
+        if bits.is_null() {
+            let _ = DeleteObject(HGDIOBJ(hbm.0));
+            return 0;
+        }
         // RGBA(straight) -> BGRA(premultiplied) for the alpha cursor
         let n = (w as usize) * (h as usize);
         let dst = core::slice::from_raw_parts_mut(bits as *mut u8, n * 4);
@@ -332,10 +342,13 @@ fn build_hcursor(rgba: &[u8], w: u32, h: u32, hx: u16, hy: u16) -> isize {
         let mask = CreateBitmap(w as i32, h as i32, 1, 1, Some(mask_bytes.as_ptr() as *const _));
         let ii =
             ICONINFO { fIcon: false.into(), xHotspot: hx as u32, yHotspot: hy as u32, hbmMask: mask, hbmColor: hbm };
-        let hicon = CreateIconIndirect(&ii).unwrap();
+        let hicon = CreateIconIndirect(&ii);
         let _ = DeleteObject(HGDIOBJ(hbm.0));
         let _ = DeleteObject(HGDIOBJ(mask.0));
-        hicon.0 as isize
+        match hicon {
+            Ok(hc) => hc.0 as isize,
+            Err(_) => 0,
+        }
     }
 }
 

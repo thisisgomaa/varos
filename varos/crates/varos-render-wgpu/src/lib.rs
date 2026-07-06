@@ -296,12 +296,17 @@ fn make_pipe(
 }
 
 impl Renderer {
-    pub async fn new(target: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32) -> Self {
+    /// GPU init is the one edge that genuinely fails in the wild (no/old driver, remote desktop, broken
+    /// surface) — so it returns a human-readable Err instead of panicking; the app shows it in a dialog
+    /// (ENGINEERING_REVIEW §3.3: "GPU/Win32/external edges never panic; internal invariants may").
+    pub async fn new(target: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
-        let surface = instance.create_surface(target).unwrap();
+        let surface = instance
+            .create_surface(target)
+            .map_err(|e| format!("couldn't create a draw surface on the window: {e}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -309,7 +314,7 @@ impl Renderer {
                 force_fallback_adapter: false,
             })
             .await
-            .expect("no GPU adapter");
+            .map_err(|e| format!("no compatible graphics adapter (driver missing or too old): {e}"))?;
         log!("[varos] adapter: {:?} | backend: {:?}", adapter.get_info().name, adapter.get_info().backend);
         // unlock adapter-specific format caps (needed for 8x MSAA on Bgra8 etc.) when the GPU has them
         let extra = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES & adapter.features();
@@ -321,7 +326,7 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .expect("no device");
+            .map_err(|e| format!("the graphics device couldn't start: {e}"))?;
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
         // crisper edges: 8x MSAA only if the DEVICE truly supports it (needs the feature above), else 4x
@@ -637,7 +642,7 @@ impl Renderer {
                 ..Default::default()
             },
         );
-        Renderer {
+        Ok(Renderer {
             surface,
             device,
             queue,
@@ -674,7 +679,7 @@ impl Renderer {
             frost_bg,
             frost_uni,
             egui_rend,
-        }
+        })
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
