@@ -86,6 +86,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     {
         let ab_tool = ed.tool == ToolKind::Artboard;
         for (i, ab) in ed.doc.artboards.iter().enumerate() {
+            if ab.hidden {
+                continue; // board eye OFF → the page (paper + edge + handles) vanishes with its art
+            }
             let (x0, y0, x1, y1) = ab.rect();
             let ring = vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
             // page fill: a solid colour, or — when transparent — a faint translucent white so the page
@@ -139,11 +142,16 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                 .entry(unit)
                 .or_insert_with(|| {
                     let boards = ed.doc.node_boards(unit);
-                    if boards.is_empty() || boards.iter().any(|&i| !ed.doc.artboards[i].clip) {
-                        None
-                    } else {
-                        Some(boards.into_iter().map(|i| ed.doc.artboards[i].rect()).collect())
+                    if boards.is_empty() {
+                        return None; // a true floater — draws uncut
                     }
+                    // board eye: a hidden page's rect drops out of the cut, so a mirror loses only
+                    // its part on that page. All member pages hidden ⇒ Some(vec![]) ⇒ nothing draws.
+                    let vis: Vec<usize> = boards.into_iter().filter(|&i| !ed.doc.artboards[i].hidden).collect();
+                    if vis.iter().any(|&i| !ed.doc.artboards[i].clip) {
+                        return None; // a visible member page invites bleed — uncut
+                    }
+                    Some(vis.into_iter().map(|i| ed.doc.artboards[i].rect()).collect())
                 })
                 .clone();
             m.insert(p.id, rects);

@@ -78,6 +78,8 @@ fn sample_doc() -> Document {
                 bleed: 9.0,
                 page_color: Some([1.0, 1.0, 1.0, 1.0]),
                 clip: true,
+                hidden: true, // board eye/lock (piece C) — non-default so the round-trip proves them
+                locked: false,
             },
             Artboard {
                 x: 900.0,
@@ -88,6 +90,8 @@ fn sample_doc() -> Document {
                 bleed: 0.0,
                 page_color: None,
                 clip: false,
+                hidden: false,
+                locked: true,
             },
         ],
         active: 1,

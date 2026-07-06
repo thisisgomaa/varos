@@ -159,6 +159,15 @@ pub struct Artboard {
     /// Old files keep their stored value; pre-field files load false via the serde default.
     #[serde(default)]
     pub clip: bool,
+    /// Board-level eye/lock (the Layers-panel section header, piece C). `hidden` hides the board's
+    /// PARTS of its members on canvas (a mirror keeps its part on a visible board — an object is
+    /// eff_hidden only when ALL its boards hide); `locked` locks a member if ANY of its boards lock
+    /// (conservative: you can't move what any locked page holds). Canvas-only for now; export
+    /// untouched. Serde-defaulted — no format break.
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub locked: bool,
 }
 fn white_page() -> Option<Rgba> {
     Some([1.0, 1.0, 1.0, 1.0])
@@ -176,6 +185,8 @@ impl Default for Artboard {
             bleed: 0.0,
             page_color: white_page(),
             clip: true,
+            hidden: false,
+            locked: false,
         }
     }
 }
@@ -744,7 +755,8 @@ impl Document {
     }
     /// Effective visibility: the path's own flag OR any ancestor container's (the panel eye cascade).
     pub fn eff_hidden(&self, pid: u32) -> bool {
-        if self.pidx(pid).is_none_or(|i| self.paths[i].hidden) {
+        let Some(pi) = self.pidx(pid) else { return true };
+        if self.paths[pi].hidden {
             return true;
         }
         let mut cur = self.node_of_path(pid);
@@ -755,11 +767,15 @@ impl Document {
             }
             cur = n.parent;
         }
-        false
+        // board eye (piece C): hidden only when EVERY board it stands on hides — a mirror keeps
+        // its part on any visible board. Floaters (no board) are never board-hidden.
+        let bs = self.path_boards(pi);
+        !bs.is_empty() && bs.iter().all(|&b| self.artboards[b].hidden)
     }
     /// Effective lock: the path's own flag OR any ancestor container's (cascade).
     pub fn eff_locked(&self, pid: u32) -> bool {
-        if self.pidx(pid).is_some_and(|i| self.paths[i].locked) {
+        let Some(pi) = self.pidx(pid) else { return false };
+        if self.paths[pi].locked {
             return true;
         }
         let mut cur = self.node_of_path(pid);
@@ -770,7 +786,9 @@ impl Document {
             }
             cur = n.parent;
         }
-        false
+        // board padlock (piece C): locked if ANY board it stands on locks — you can't move what a
+        // locked page holds (moving it would move its part on the locked page too).
+        self.path_boards(pi).iter().any(|&b| self.artboards[b].locked)
     }
     /// Group these paths into a new Group node (returns its id). The group lands at the FRONT-most
     /// member's slot in ITS parent (Illustrator: pulled to the top-most member — cross-layer selections

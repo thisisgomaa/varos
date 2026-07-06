@@ -112,9 +112,10 @@ enum Op {
     LayerLock(u32),
     LayerRename(u32, String),
     LayerGroup,
-    LayerDeleteSel,             // footer: Group the selection · Delete the selection
-    LayerMove(u32, u32, u8),    // drag-drop: src, target, zone (0=before · 1=into · 2=after)
-    LayerDupMove(u32, u32, u8), // Alt+drag: duplicate the row's art into the target
+    LayerDeleteSel,                            // footer: Group the selection · Delete the selection
+    LayerMove(u32, u32, u8),                   // drag-drop: src, target, zone (0=before · 1=into · 2=after)
+    LayerDupMove(u32, u32, u8),                // Alt+drag: duplicate the row's art into the target
+    LayerMoveBoard(u32, Option<usize>, usize), // cross-section drop: src row, source board, target board
     Flip(bool),
     Align(AlignMode),
     Distribute(DistAxis),
@@ -124,6 +125,8 @@ enum Op {
     AbName(usize, String),
     AbColor(usize, Option<Rgba>), // None = transparent page
     AbClip(usize),                // toggle
+    AbEye(usize),                 // board eye — the Layers section header (piece C)
+    AbLock(usize),                // board padlock — the Layers section header (piece C)
     AbOrient(usize),              // swap w/h
     AbAdd,
     AbDup(usize),
@@ -311,6 +314,7 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         nid: u32,
         depth: u16,
         sec: u32,
+        sf: (bool, bool), // the SECTION's board (hidden, locked) — dims/forces this instance's rows
         par: Option<usize>,
         collapsed: &std::collections::HashSet<u32>,
         rows: &mut Vec<LRow>,
@@ -360,8 +364,8 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
             name,
             hidden: n.hidden,
             locked: n.locked,
-            eff_hidden: n.hidden || anc_hidden(),
-            eff_locked: n.locked || anc_locked(),
+            eff_hidden: n.hidden || anc_hidden() || sf.0,
+            eff_locked: n.locked || anc_locked() || sf.1,
             has_children: !n.children.is_empty(),
             collapsed: collapsed.contains(&nid),
             selected: paths.iter().any(|p| ed.objsel.contains(p)),
@@ -372,7 +376,7 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         let me = rows.len() - 1;
         if !collapsed.contains(&nid) {
             for &c in &n.children {
-                walk(ed, c, depth + 1, sec, Some(me), collapsed, rows, parent);
+                walk(ed, c, depth + 1, sec, sf, Some(me), collapsed, rows, parent);
             }
         }
     }
@@ -399,10 +403,10 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
             kind: LKind::Board,
             sec: bi as u32,
             name: ab.name.clone(),
-            hidden: false,
-            locked: false,
-            eff_hidden: false,
-            eff_locked: false,
+            hidden: ab.hidden,
+            locked: ab.locked,
+            eff_hidden: ab.hidden,
+            eff_locked: ab.locked,
             has_children: !members.is_empty(),
             collapsed: collapsed.contains(&hid),
             selected: false,
@@ -413,13 +417,13 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         let me = rows.len() - 1;
         if !collapsed.contains(&hid) {
             for nid in members {
-                walk(ed, nid, 1, bi as u32, Some(me), collapsed, &mut rows, &mut parent);
+                walk(ed, nid, 1, bi as u32, (ab.hidden, ab.locked), Some(me), collapsed, &mut rows, &mut parent);
             }
         }
     }
     for (nid, bs) in &memb {
         if bs.is_empty() {
-            walk(ed, *nid, 0, u32::MAX, None, collapsed, &mut rows, &mut parent);
+            walk(ed, *nid, 0, u32::MAX, (false, false), None, collapsed, &mut rows, &mut parent);
         }
     }
 
@@ -657,9 +661,10 @@ pub struct Ui {
     lay_collapsed: std::collections::HashSet<u32>, // collapsed container node ids (UI-only)
     lay_search: String,
     lay_rename: Option<(u32, String)>, // inline rename in progress (node id + buffer)
-    lay_drag: Option<u32>,             // Layers row being dragged (reorder / nest); UI-only
-    lay_anchor: Option<(u32, u32)>,    // Shift-range anchor: (node id, SECTION) — mirror rows share an
-                                       // id across sections, so the id alone picks the wrong appearance
+    lay_drag: Option<(u32, u32)>,      // Layers row being dragged: (node id, SOURCE section) — the
+    // section decides same-section reorder vs cross-board move
+    lay_anchor: Option<(u32, u32)>, // Shift-range anchor: (node id, SECTION) — mirror rows share an
+                                    // id across sections, so the id alone picks the wrong appearance
 }
 
 /// The Layers-panel icon set (rasterized Lucide, white).
@@ -3071,7 +3076,7 @@ fn build_layers(
     search: &mut String,
     rename: &mut Option<(u32, String)>,
     collapsed: &mut std::collections::HashSet<u32>,
-    drag: &mut Option<u32>,
+    drag: &mut Option<(u32, u32)>,
     anchor: &mut Option<(u32, u32)>,
     ops: &mut Vec<Op>,
     rects: &mut Vec<egui::Rect>,
@@ -3145,13 +3150,9 @@ fn build_layers(
             // (can't nest a container in its own descendant); the model re-guards. Alt at drop = duplicate.
             let ptr = ui.input(|i| i.pointer.interact_pos());
             let src_is_layer =
-                drag.and_then(|s| rows.iter().find(|r| r.id == s)).is_some_and(|r| r.kind == LKind::Layer);
-            // a drag may only drop within the source row's own section(s) for now (mirrors have
-            // several) — moving art ACROSS boards from the panel is the next piece (spatial move)
-            let src_secs: std::collections::HashSet<u32> =
-                drag.map(|s| rows.iter().filter(|r| r.id == s).map(|r| r.sec).collect()).unwrap_or_default();
+                drag.and_then(|(s, _)| rows.iter().find(|r| r.id == s)).is_some_and(|r| r.kind == LKind::Layer);
             let forbidden: std::collections::HashSet<u32> = drag
-                .map(|s| {
+                .map(|(s, _)| {
                     let mut set = std::collections::HashSet::new();
                     if let Some(si) = rows.iter().position(|r| r.id == s) {
                         set.insert(s);
@@ -3202,19 +3203,17 @@ fn build_layers(
                         prev_sec = row.sec;
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click_and_drag());
                         if resp.drag_started() && row.kind != LKind::Board {
-                            *drag = Some(row.id);
+                            *drag = Some((row.id, row.sec));
                         }
-                        // decide the drop zone: top third = Before, bottom third = After, middle = Into (into a
-                        // container only; a Layer can't nest into a Group). Leaves halve into Before/After.
-                        // Board headers take no drops (cross-board move = the next piece); same-section only.
-                        if drag.is_some()
-                            && *drag != Some(row.id)
-                            && !forbidden.contains(&row.id)
-                            && row.kind != LKind::Board
-                            && src_secs.contains(&row.sec)
-                        {
-                            if let Some(pp) = ptr {
-                                if rect.contains(pp) {
+                        // decide the drop zone. SAME section: top third = Before, bottom third = After,
+                        // middle = Into (containers only; a Layer can't nest into a Group); leaves halve.
+                        // ANOTHER board's section (its header or any row) = zone 3: move the art onto
+                        // that page spatially — drop_ind.0 then holds the TARGET SECTION, not a node id.
+                        if let (Some((sid, ssec)), Some(pp)) = (*drag, ptr) {
+                            if sid != row.id && rect.contains(pp) {
+                                if row.sec != ssec && row.sec != u32::MAX {
+                                    drop_ind = Some((row.sec, 3, rect, row.depth));
+                                } else if row.sec == ssec && row.kind != LKind::Board && !forbidden.contains(&row.id) {
                                     let f = ((pp.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
                                     let into_ok =
                                         row.kind != LKind::Path && !(src_is_layer && row.kind == LKind::Group);
@@ -3270,11 +3269,13 @@ fn build_layers(
                                 with_a(ACCENT, 0.5),
                             );
                         }
-                        // eye + lock (reveal on hover; hidden/locked persist) — not on Board headers (yet)
-                        if row.kind != LKind::Board {
+                        // eye + lock (reveal on hover; hidden/locked persist). On a Board header they
+                        // act on the whole PAGE (piece C): hide the board + its art / lock its art.
+                        {
                             let eye = egui::Rect::from_min_size(rect.min, egui::vec2(eye_w, row_h));
                             let lok =
                                 egui::Rect::from_min_size(rect.min + egui::vec2(eye_w, 0.0), egui::vec2(lock_w, row_h));
+                            let board = row.kind == LKind::Board;
                             if col_toggle(
                                 ui,
                                 eye,
@@ -3283,9 +3284,9 @@ fn build_layers(
                                 row.eff_hidden && !row.hidden,
                                 &ic.eye_off,
                                 &ic.eye,
-                                "Show/Hide",
+                                if board { "Show/Hide board" } else { "Show/Hide" },
                             ) {
-                                ops.push(Op::LayerEye(row.id));
+                                ops.push(if board { Op::AbEye(row.sec as usize) } else { Op::LayerEye(row.id) });
                             }
                             if col_toggle(
                                 ui,
@@ -3295,9 +3296,9 @@ fn build_layers(
                                 row.eff_locked && !row.locked,
                                 &ic.lock,
                                 &ic.unlock,
-                                "Lock/Unlock",
+                                if board { "Lock/Unlock board" } else { "Lock/Unlock" },
                             ) {
-                                ops.push(Op::LayerLock(row.id));
+                                ops.push(if board { Op::AbLock(row.sec as usize) } else { Op::LayerLock(row.id) });
                             }
                         }
                         // indent guides (~6% white) + disclosure
@@ -3446,14 +3447,15 @@ fn build_layers(
                             *rename = Some((row.id, row.name.clone()));
                         }
                         // the lifted row reads as "picked up" — dim it while it's being dragged
-                        if *drag == Some(row.id) {
+                        // (a mirror dims on BOTH appearances — it IS the same object)
+                        if drag.is_some_and(|(s, _)| s == row.id) {
                             p.rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(120));
                         }
                         // a droppable "top-level item": a member row directly under a header (depth 1)
                         // or a loose floater (depth 0) — same-section rule as everywhere else
                         let is_top_item = row.kind != LKind::Board
                             && ((row.sec == u32::MAX && row.depth == 0) || (row.sec != u32::MAX && row.depth == 1));
-                        if is_top_item && src_secs.contains(&row.sec) {
+                        if is_top_item && drag.is_some_and(|(_, ssec)| ssec == row.sec) {
                             last_top = Some(row.id);
                         }
                         last_rect = Some(rect);
@@ -3470,7 +3472,9 @@ fn build_layers(
                     if drag.is_some() {
                         if let Some((_, zone, trect, depth)) = drop_ind {
                             let dp = ui.painter();
-                            if zone == 1 {
+                            if zone == 1 || zone == 3 {
+                                // Into a container / onto ANOTHER board's section — the same "lands
+                                // inside this" ring (zone 3 rows read as "move to that page")
                                 dp.rect(
                                     trect.shrink(1.5),
                                     CornerRadius::same(3),
@@ -3488,11 +3492,15 @@ fn build_layers(
                     }
                 },
             );
-            // release: Alt = duplicate the row's art into the target; else reorder / nest the node
-            if let Some(src) = *drag {
+            // release: zone 3 = move the art onto the target BOARD (spatial; drop_ind.0 = section);
+            // otherwise Alt = duplicate into the target row, else reorder / nest the node
+            if let Some((src, src_sec)) = *drag {
                 if ui.input(|i| i.pointer.any_released()) {
                     if let Some((tid, zone, _, _)) = drop_ind {
-                        if ui.input(|i| i.modifiers.alt) {
+                        if zone == 3 {
+                            let src_board = (src_sec != u32::MAX).then_some(src_sec as usize);
+                            ops.push(Op::LayerMoveBoard(src, src_board, tid as usize));
+                        } else if ui.input(|i| i.modifiers.alt) {
                             ops.push(Op::LayerDupMove(src, tid, zone));
                         } else {
                             ops.push(Op::LayerMove(src, tid, zone));
@@ -4346,6 +4354,9 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
                 };
                 ed.layer_move(src, target, pos);
             }
+            Op::LayerMoveBoard(src, sb, tb) => ed.layer_move_to_board(src, sb, tb),
+            Op::AbEye(i) => ed.ab_toggle_hidden(i),
+            Op::AbLock(i) => ed.ab_toggle_locked(i),
             Op::LayerDupMove(src, target, zone) => {
                 let pos = match zone {
                     0 => varos_core::model::DropPos::Before,

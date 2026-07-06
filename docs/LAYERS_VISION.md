@@ -347,7 +347,20 @@ Resolved with Ahmed (his answers, 07-06):
 Built 07-06, **✅ Ahmed-verified same day** ("الله ينور شغال مية مية"): header rows (click = active board · dbl-click = rename ·
 collapsible · accent edge on the active board), mirror rows, floater strip after a hairline, clip-per-
 member-page render (`tests/boards.rs` locks membership + mirror + floater/bleed), drag-drop constrained
-to the source row's own section(s). **Next piece:** drag a row onto ANOTHER board's section/header =
-spatial move of the art onto that page (translate, Figma-style) + header eye/lock (board-level hide =
-the first real `paint_list()` filter). Mirror-row costs accepted for v1: rename opens on the first
+to the source row's own section(s). Mirror-row costs accepted for v1: rename opens on the first
 instance only; both instances dim while dragged (same object — honest).
+
+**Piece C — built 07-06 (🟡 Ahmed verifying):**
+- **Cross-board drag:** drop a row on ANOTHER board's section (its header or any row) = a **spatial
+  move** — pure translation, the panel re-sections from geometry. Keeps the item's offset relative to
+  its source page (Figma); a **floater lands page-centred**; refused whole if any member is locked
+  (no tearing); target page becomes active; the accent ring marks the target. Same-section drops keep
+  the full Before/Into/After reorder.
+- **Header eye/lock (page-level):** `Artboard.hidden/locked` (serde-defaulted, undoable via the doc
+  snapshot). Eye hides the PAGE — paper + edge + its parts of member art; a **mirror keeps its part
+  on any visible page** (`eff_hidden` = ALL member pages hidden; the hidden page's rect simply drops
+  out of the unit's clip). Padlock locks a member if **ANY** of its pages lock (you can't move what a
+  locked page holds). Section rows dim/force per-instance (the A-section instance dims, the B one
+  doesn't). Canvas-only for now — **export ignores board eye/lock** (flagged; revisit with export UI).
+- 07-06 review fixes folded in: pre-artboard files get a NON-clipping serde-default page (regression
+  test on the missing-key JSON); the Shift anchor stores (id, SECTION) so mirror rows range correctly.
