@@ -329,6 +329,11 @@ Resolved with Ahmed (his answers, 07-06):
 1. **Mirror rule** (his idea, adopted over my centre-rule): a straddler lists under **every** page it
    stands on — same object, same state on both rows; the render cuts **one copy per member page** (its
    part shows on each page, "زي ميرور"). With clip ON everywhere and no overlap → exactly one home.
+   **1b. The clip UNIT is the whole TOP-LEVEL item (Ahmed 07-06 #2):** a GROUP's pages are decided once
+   for the group (union of its members' pages) and **nothing inside escapes the cut** — a member standing
+   on NO page **vanishes on canvas** (exactly Figma's out-of-frame child: still a panel row, invisible),
+   a member's gap overhang is cut at the page edge. A group entirely off every page stays a floater
+   (uncut). Same units the panel classifies — panel and canvas can never disagree.
 2. **Floaters:** art on **no** page sits **loose at the bottom, under no header** — visibly outside every
    page and outside export ("بدون لير عايمين… مش هيطلعوا في الإكسبورت").
 3. **One board still shows its header** ("واحدة زي ٢٠ عادي") — unlike the dead "Layer 1" wrapper, a page

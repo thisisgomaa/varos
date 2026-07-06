@@ -85,6 +85,31 @@ fn straddler_renders_once_per_page_cut_to_each() {
 }
 
 #[test]
+fn a_clipped_groups_members_never_escape_the_cut() {
+    // Ahmed 07-06 #2: the clip unit is the whole TOP-LEVEL GROUP — a member standing on no page
+    // VANISHES (Figma's out-of-frame child: still a panel row, invisible on canvas), and a member's
+    // gap overhang is cut at the page edge. Nothing inside a clipped group escapes.
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 80.0, 10.0, 40.0)); // overhangs page A into the gap (x 80..120)
+    ed.doc.paths.push(sq(2, 10, 110.0, 60.0, 20.0)); // fully in the gap — on NO page
+    ed.doc.ids = 30;
+    ed.doc.sync_tree();
+    ed.doc.group(&[1, 2]).unwrap();
+    let fills = art_fills(&ed);
+    assert_eq!(fills.len(), 1, "the no-page member vanishes; the overhang draws once (cut)");
+    assert_eq!(xs(&fills[0]), (80.0, 100.0), "…cut at page A's edge");
+
+    // a group ENTIRELY off every page stays a floater — draws uncut
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 105.0, 10.0, 15.0));
+    ed.doc.paths.push(sq(2, 10, 110.0, 60.0, 20.0));
+    ed.doc.ids = 30;
+    ed.doc.sync_tree();
+    ed.doc.group(&[1, 2]).unwrap();
+    assert_eq!(art_fills(&ed).len(), 2, "an all-floater group draws uncut");
+}
+
+#[test]
 fn floaters_and_bleed_pages_draw_uncut() {
     // floater: on no page → uncut
     let mut ed = two_pages(true);

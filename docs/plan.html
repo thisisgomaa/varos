@@ -150,7 +150,9 @@
     row per artboard, its art beneath it. Membership is <b>derived from geometry</b> (visible-overlap of
     the top-level item's bbox — the spatial artboard model stays king, no containment flip): a straddler
     appears under <b>both</b> pages ("mirror" — same object, same state); art on no page floats <b>loose at
-    the bottom, no header</b> = visibly outside export. Header: click = active board · double-click =
+    the bottom, no header</b> = visibly outside export. <b>The clip UNIT is the whole top-level item</b>
+    (07-06 #2): a group's pages are decided once — nothing inside escapes the cut; a member on NO page
+    vanishes on canvas (Figma's out-of-frame child), a group fully off-page stays an uncut floater. Header: click = active board · double-click =
     rename · collapsible. Page <b>clip is DEFAULT ON</b> for new boards (modern cut; per-board toggle for
     bleed) and the render cuts a straddler once per member page. Drag-drop is same-section for now.
     <b>MASKS DEFERRED</b> (Ahmed: "ممكن تتعمل في المستقبل أصلاً" — spec + paint_list insurance stay).
