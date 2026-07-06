@@ -350,7 +350,7 @@ member-page render (`tests/boards.rs` locks membership + mirror + floater/bleed)
 to the source row's own section(s). Mirror-row costs accepted for v1: rename opens on the first
 instance only; both instances dim while dragged (same object — honest).
 
-**Piece C — built 07-06 (🟡 Ahmed verifying):**
+**Piece C — built 07-06, ✅ Ahmed-verified same day (with the polish wave — "شغال كويس"):**
 - **Cross-board drag:** drop a row on ANOTHER board's section (its header or any row) = a **spatial
   move** — pure translation, the panel re-sections from geometry. Keeps the item's offset relative to
   its source page (Figma); a **floater lands page-centred**; refused whole if any member is locked
@@ -365,7 +365,7 @@ instance only; both instances dim while dragged (same object — honest).
 - 07-06 review fixes folded in: pre-artboard files get a NON-clipping serde-default page (regression
   test on the missing-key JSON); the Shift anchor stores (id, SECTION) so mirror rows range correctly.
 
-**Polish wave — Ahmed's 5 (built 07-06, 🟡 verifying):**
+**Polish wave — Ahmed's 5 (built 07-06, ✅ verified same day):**
 1. **Multi-select rows drag TOGETHER** (Photoshop): grabbing a fully-selected row lifts the whole
    selection's top-most rows, panel order kept (Before walks forward, Into/After walk reversed), one
    undo step — for reorders, Alt-duplicates AND cross-board moves (each row keeps its own reference
