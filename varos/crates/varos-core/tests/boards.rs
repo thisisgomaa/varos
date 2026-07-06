@@ -170,7 +170,7 @@ fn panel_drop_moves_art_onto_the_other_board() {
     let near = |a: f32, b: f32| (a - b).abs() < 0.01; // outline sampling leaves float dust
 
     let row1 = ed.doc.node_of_path(1).unwrap();
-    ed.layer_move_to_board(row1, Some(0), 1); // A → B (B starts at x=150)
+    ed.layer_move_to_board(&[row1], Some(0), 1); // A → B (B starts at x=150)
     let pi = ed.doc.pidx(1).unwrap();
     let b = ed.doc.outline_bbox(pi);
     assert!(near(b.0, 160.0) && near(b.1, 10.0), "same offset relative to the target page, got {b:?}");
@@ -178,7 +178,7 @@ fn panel_drop_moves_art_onto_the_other_board() {
     assert_eq!(ed.doc.active, 1, "the target page becomes active");
 
     let row2 = ed.doc.node_of_path(2).unwrap();
-    ed.layer_move_to_board(row2, None, 0); // floater → centre of page A
+    ed.layer_move_to_board(&[row2], None, 0); // floater → centre of page A
     let pi2 = ed.doc.pidx(2).unwrap();
     let b2 = ed.doc.outline_bbox(pi2);
     assert!(
@@ -189,8 +189,38 @@ fn panel_drop_moves_art_onto_the_other_board() {
     // a locked member refuses the whole move (no tearing)
     ed.set_locked(2, true);
     let before = ed.doc.outline_bbox(ed.doc.pidx(2).unwrap());
-    ed.layer_move_to_board(row2, Some(0), 1);
+    ed.layer_move_to_board(&[row2], Some(0), 1);
     assert_eq!(ed.doc.outline_bbox(ed.doc.pidx(2).unwrap()), before, "locked art never moves");
+}
+
+#[test]
+fn multi_row_drag_travels_together_in_order() {
+    // Ahmed 07-06 polish #1: dragging a multi-selection moves ALL of it, keeping the rows' relative
+    // order — for reorders (Before/After) AND for a cross-board move.
+    use varos_core::model::DropPos;
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 10.0, 10.0, 10.0)); // back-most, on A
+    ed.doc.paths.push(sq(2, 10, 30.0, 10.0, 10.0));
+    ed.doc.paths.push(sq(3, 20, 50.0, 10.0, 10.0));
+    ed.doc.paths.push(sq(4, 30, 70.0, 10.0, 10.0)); // front-most, on A
+    ed.doc.ids = 50;
+    ed.doc.sync_tree();
+    let n = |ed: &Editor, pid: u32| ed.doc.node_of_path(pid).unwrap();
+
+    // rows are FRONT-first in the panel: payload [4, 2] dropped After row 1 (= below it, at the back)
+    let (n4, n2, n1) = (n(&ed, 4), n(&ed, 2), n(&ed, 1));
+    ed.layer_move(&[n4, n2], n1, DropPos::After);
+    let z: Vec<u32> = ed.doc.paths.iter().map(|p| p.id).collect();
+    assert_eq!(z, vec![2, 4, 1, 3], "both moved below 1; 4 stays in front of 2 (panel order kept)");
+
+    // cross-board multi-move: both land on B, each keeping its own page-relative offset
+    ed.layer_move_to_board(&[n4, n2], Some(0), 1);
+    let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+    let b4 = ed.doc.outline_bbox(ed.doc.pidx(4).unwrap());
+    let b2 = ed.doc.outline_bbox(ed.doc.pidx(2).unwrap());
+    assert!(near(b4.0, 220.0) && near(b2.0, 180.0), "each item kept its offset (+150), got {b4:?} {b2:?}");
+    assert_eq!(ed.doc.path_boards(ed.doc.pidx(4).unwrap()), vec![1]);
+    assert_eq!(ed.doc.path_boards(ed.doc.pidx(2).unwrap()), vec![1]);
 }
 
 #[test]

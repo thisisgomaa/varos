@@ -364,3 +364,17 @@ instance only; both instances dim while dragged (same object — honest).
   doesn't). Canvas-only for now — **export ignores board eye/lock** (flagged; revisit with export UI).
 - 07-06 review fixes folded in: pre-artboard files get a NON-clipping serde-default page (regression
   test on the missing-key JSON); the Shift anchor stores (id, SECTION) so mirror rows range correctly.
+
+**Polish wave — Ahmed's 5 (built 07-06, 🟡 verifying):**
+1. **Multi-select rows drag TOGETHER** (Photoshop): grabbing a fully-selected row lifts the whole
+   selection's top-most rows, panel order kept (Before walks forward, Into/After walk reversed), one
+   undo step — for reorders, Alt-duplicates AND cross-board moves (each row keeps its own reference
+   page). A partial/unselected row still drags alone. The whole payload dims while lifted.
+2. A **hidden board hides its on-canvas name chrome** too (label + ⋮).
+3. The **name label is inert outside the Artboard tool** — pure paint, no accidental select/rename;
+   in the Artboard tool click = select page, double-click = rename (Decision 8 unchanged; ⋮ ungated).
+4. **Alt+drag duplicates a board** (Illustrator): clone lands in place (+ its art when move-art is
+   on), you drag the copy, the original never moves; one undo step with the drag.
+5. **Artboard snapping**: move snaps the page rect, resize snaps the handle (per-axis), create snaps
+   both corners — targets = every other visible page + artwork + guides (its own traveling art
+   excluded). Same engine as objects (`snap_lines_ex`), same green feedback; no equal-gap pass.

@@ -111,7 +111,8 @@ pub enum TfAgain {
 /// with artboard" is on, so the page and the art on it translate together.
 pub enum AbDrag {
     None,
-    Move { grab: Pt, ox: f32, oy: f32, art: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
+    // `pids` = the traveling art's path ids (excluded from snap targets while the page moves)
+    Move { grab: Pt, ox: f32, oy: f32, art: Vec<(u32, Pt, Option<Pt>, Option<Pt>)>, pids: Vec<u32> },
     Resize { handle: u8, ox: f32, oy: f32, ow: f32, oh: f32 },
     Create { start: Pt },
 }
@@ -1151,18 +1152,38 @@ impl Editor {
                 }
             }
             Some(AbHit::Body(i)) => {
+                // Alt+drag = duplicate the page (Illustrator): clone it IN PLACE (+ its art when the
+                // move-art toggle is on) and drag the COPY — the original never moves. Same undo step
+                // as the drag (begin() already ran in pointer_down).
+                let (i, alt_pids) = if self.mods.alt {
+                    let copies = if self.doc.move_art_with_ab {
+                        let src = self.paths_on_ab(i);
+                        self.doc.dup_paths(&src)
+                    } else {
+                        vec![]
+                    };
+                    let mut c = self.doc.artboards[i].clone();
+                    c.name = format!("{} copy", c.name);
+                    self.doc.artboards.insert(i + 1, c);
+                    self.dirty = true;
+                    (i + 1, Some(copies))
+                } else {
+                    (i, None)
+                };
                 self.doc.active = i;
                 let (ox, oy) = (self.doc.artboards[i].x, self.doc.artboards[i].y);
-                let art = if self.doc.move_art_with_ab {
-                    let p = self.paths_on_ab(i);
-                    self.anchors_base(&p)
-                } else {
-                    vec![]
+                let pids = match alt_pids {
+                    Some(p) => p, // drag ONLY the fresh copies (the originals sit at the same spot)
+                    None if self.doc.move_art_with_ab => self.paths_on_ab(i),
+                    None => vec![],
                 };
-                self.ab_drag = AbDrag::Move { grab: pos, ox, oy, art };
+                let art = self.anchors_base(&pids);
+                self.ab_drag = AbDrag::Move { grab: pos, ox, oy, art, pids };
             }
             None => {
-                // empty board → start a NEW page by dragging (resizing its BR corner). Tiny ⇒ dropped on up.
+                // empty board → start a NEW page by dragging (resizing its BR corner). Tiny ⇒ dropped
+                // on up. The first corner lands SNAPPED (other pages' edges / guides / grid).
+                let (pos, _) = self.snap_ab_xy(usize::MAX, pos, true, true);
                 let n = self.doc.artboards.len();
                 self.doc.artboards.push(Artboard {
                     x: pos[0],
@@ -1180,11 +1201,18 @@ impl Editor {
 
     pub fn ab_move(&mut self, pos: Pt) {
         match std::mem::replace(&mut self.ab_drag, AbDrag::None) {
-            AbDrag::Move { grab, ox, oy, art } => {
+            AbDrag::Move { grab, ox, oy, art, pids } => {
                 let mut d = sub(pos, grab);
                 if self.mods.shift {
                     d = snap45(d);
                 }
+                // board snapping: the moving page's rect vs every OTHER page + artwork + guides
+                // (its own traveling art excluded — it moves with the page)
+                let (w, h) = self.doc.active_artboard().map(|a| (a.w, a.h)).unwrap_or((0.0, 0.0));
+                let skip: HashSet<u32> = pids.iter().copied().collect();
+                let (nd, guides) = self.snap_ab_move((ox, oy, ox + w, oy + h), d, &skip);
+                d = nd;
+                self.snap_guides = guides;
                 if let Some(ab) = self.doc.active_artboard_mut() {
                     ab.x = ox + d[0];
                     ab.y = oy + d[1];
@@ -1196,11 +1224,17 @@ impl Editor {
                         a.hout = hout0.map(|h| add(h, d));
                     }
                 }
-                self.ab_drag = AbDrag::Move { grab, ox, oy, art };
+                self.ab_drag = AbDrag::Move { grab, ox, oy, art, pids };
                 self.dirty = true;
             }
             AbDrag::Resize { handle, ox, oy, ow, oh } => {
-                let (x, y, w, h) = ab_resized(handle, ox, oy, ow, oh, pos, self.mods.shift);
+                // snap the dragged handle to other pages / artwork / guides — per-axis by handle
+                // (corners 0-3 = both; 5/7 = the left/right edges → X only; 4/6 = top/bottom → Y only)
+                let want_x = handle <= 3 || handle == 5 || handle == 7;
+                let want_y = handle <= 3 || handle == 4 || handle == 6;
+                let (sp, guides) = self.snap_ab_xy(self.doc.active, pos, want_x, want_y);
+                self.snap_guides = guides;
+                let (x, y, w, h) = ab_resized(handle, ox, oy, ow, oh, sp, self.mods.shift);
                 if let Some(ab) = self.doc.active_artboard_mut() {
                     ab.x = x;
                     ab.y = y;
@@ -1211,7 +1245,9 @@ impl Editor {
                 self.dirty = true;
             }
             AbDrag::Create { start } => {
-                let (x, y, w, h) = rect_from_corners(start, pos, self.mods.shift);
+                let (sp, guides) = self.snap_ab_xy(self.doc.active, pos, true, true);
+                self.snap_guides = guides;
+                let (x, y, w, h) = rect_from_corners(start, sp, self.mods.shift);
                 if let Some(ab) = self.doc.active_artboard_mut() {
                     ab.x = x;
                     ab.y = y;
@@ -1366,11 +1402,21 @@ impl Editor {
     /// All object + artboard X/Y target lines for snapping, each as `(coord, span_lo, span_hi)` (the span
     /// lets a guide reach both the moving and the target object). Excludes the current selection + hidden.
     fn snap_target_lines(&self) -> (Vec<SnapLine>, Vec<SnapLine>) {
+        self.snap_lines_ex(None, None)
+    }
+    /// The same target set with the extra exclusions a BOARD drag needs: `skip_ab = Some(i)` switches the
+    /// artboard lines from "the active page only" (object drags) to "EVERY visible page except i", and
+    /// `skip_pids` drops the art traveling with the moving page.
+    fn snap_lines_ex(
+        &self,
+        skip_ab: Option<usize>,
+        skip_pids: Option<&HashSet<u32>>,
+    ) -> (Vec<SnapLine>, Vec<SnapLine>) {
         let cfg = &self.doc.snap;
         let (mut txl, mut tyl) = (vec![], vec![]);
         // snap targets = paintable content (paint_list, §5): you can't snap to a future mask source
         for (pi, p) in self.doc.paint_list() {
-            if p.hidden || self.objsel.contains(&p.id) {
+            if p.hidden || self.objsel.contains(&p.id) || skip_pids.is_some_and(|s| s.contains(&p.id)) {
                 continue;
             }
             let b = self.doc.outline_bbox(pi);
@@ -1386,7 +1432,7 @@ impl Editor {
             }
         }
         if cfg.artboard {
-            if let Some(ab) = self.doc.active_artboard() {
+            let mut push_ab = |ab: &Artboard| {
                 let (ax0, ay0, ax1, ay1) = ab.rect();
                 txl.push((ax0, ay0, ay1));
                 txl.push((ax1, ay0, ay1));
@@ -1395,6 +1441,20 @@ impl Editor {
                 if cfg.artboard_mids {
                     txl.push(((ax0 + ax1) * 0.5, ay0, ay1));
                     tyl.push(((ay0 + ay1) * 0.5, ax0, ax1));
+                }
+            };
+            match skip_ab {
+                None => {
+                    if let Some(ab) = self.doc.active_artboard() {
+                        push_ab(ab);
+                    }
+                }
+                Some(i) => {
+                    for (j, ab) in self.doc.artboards.iter().enumerate() {
+                        if j != i && !ab.hidden {
+                            push_ab(ab);
+                        }
+                    }
                 }
             }
         }
@@ -1500,6 +1560,22 @@ impl Editor {
     /// return the adjusted delta + the alignment guides + a live HUD label. Pure (reads doc + ppu + cfg).
     /// Tolerance is SCREEN px (÷ ppu) so it feels identical at every zoom. No-op delta when snapping is off.
     pub fn snap_move(&self, bbox0: (f32, f32, f32, f32), d: Pt) -> (Pt, Vec<SnapGuide>, Option<(Pt, String)>) {
+        self.snap_move_lines(bbox0, d, self.snap_target_lines(), true)
+    }
+    /// Snap a moving BOARD's rect: targets = every other visible page + artwork (its traveling art
+    /// excluded) + guides. No equal-gap pass (that reads object rows); same feel otherwise.
+    fn snap_ab_move(&self, rect0: (f32, f32, f32, f32), d: Pt, travel: &HashSet<u32>) -> (Pt, Vec<SnapGuide>) {
+        let lines = self.snap_lines_ex(Some(self.doc.active), Some(travel));
+        let (nd, guides, _) = self.snap_move_lines(rect0, d, lines, false);
+        (nd, guides)
+    }
+    fn snap_move_lines(
+        &self,
+        bbox0: (f32, f32, f32, f32),
+        d: Pt,
+        lines: (Vec<SnapLine>, Vec<SnapLine>),
+        gaps: bool,
+    ) -> (Pt, Vec<SnapGuide>, Option<(Pt, String)>) {
         let cfg = &self.doc.snap;
         let hud_at = self.cursor;
         let hud = |nx: f32, ny: f32| Some((hud_at, format!("X {:.0}   Y {:.0}", nx, ny)));
@@ -1510,7 +1586,7 @@ impl Editor {
         let (mx0, my0, mx1, my1) = (bbox0.0 + d[0], bbox0.1 + d[1], bbox0.2 + d[0], bbox0.3 + d[1]);
         let mxs = [mx0, (mx0 + mx1) * 0.5, mx1]; // moving left / centre / right
         let mys = [my0, (my0 + my1) * 0.5, my1]; // moving top / middle / bottom
-        let (txl, tyl) = self.snap_target_lines();
+        let (txl, tyl) = lines;
         // best edge/centre snap per axis = smallest in-tolerance offset (axes are independent)
         let mut bx: Option<(f32, f32, f32, f32)> = None;
         let mut bx_center = false; // (diff, coord, span_lo, span_hi)
@@ -1561,7 +1637,7 @@ impl Editor {
             }
         }
         // equal-spacing ("snap to gaps") — only on an axis the edge/centre snap didn't already claim
-        if cfg.gaps_and_sizes && cfg.equal_spacing {
+        if gaps && cfg.gaps_and_sizes && cfg.equal_spacing {
             if !sx_done {
                 if let Some((diff, mut g)) = self.equal_gap(0, mx0, mx1, my0, my1, tol) {
                     nd[0] += diff;
@@ -1593,12 +1669,26 @@ impl Editor {
     /// Snap a single world point's X and/or Y to target lines (object/artboard edges & centres), with a
     /// grid / pixel fallback. Returns the snapped point + alignment guides. Drives the resize (Scale) handle.
     pub fn snap_xy(&self, w: Pt, want_x: bool, want_y: bool) -> (Pt, Vec<SnapGuide>) {
+        self.snap_xy_lines(w, want_x, want_y, self.snap_target_lines())
+    }
+    /// Point-snap for the ARTBOARD tool (resize handle / create corner): targets = every visible page
+    /// except `skip` (pass `usize::MAX` to keep them all) + artwork + guides.
+    fn snap_ab_xy(&self, skip: usize, w: Pt, want_x: bool, want_y: bool) -> (Pt, Vec<SnapGuide>) {
+        self.snap_xy_lines(w, want_x, want_y, self.snap_lines_ex(Some(skip), None))
+    }
+    fn snap_xy_lines(
+        &self,
+        w: Pt,
+        want_x: bool,
+        want_y: bool,
+        lines: (Vec<SnapLine>, Vec<SnapLine>),
+    ) -> (Pt, Vec<SnapGuide>) {
         let cfg = &self.doc.snap;
         if !cfg.enabled || !cfg.smart {
             return (w, vec![]);
         }
         let tol = cfg.radius_px / self.ppu.max(1e-4);
-        let (txl, tyl) = self.snap_target_lines();
+        let (txl, tyl) = lines;
         let (mut nx, mut ny) = (w[0], w[1]);
         let mut guides = vec![];
         if want_x {
@@ -3085,10 +3175,22 @@ impl Editor {
     }
     /// Drag & drop a row: move `src` relative to `target` (Before/Into/After). No-op + no undo entry if
     /// the drop is illegal (cycle / into a leaf / layer-into-group).
-    pub fn layer_move(&mut self, src: u32, target: u32, pos: crate::model::DropPos) {
+    pub fn layer_move(&mut self, srcs: &[u32], target: u32, pos: crate::model::DropPos) {
+        use crate::model::DropPos;
+        if srcs.is_empty() {
+            return;
+        }
         self.begin();
-        if self.doc.move_node_to(src, target, pos) {
-            self.dirty = true;
+        // multi-row drags keep the PANEL order of the set: Before inserts walk forward (each lands
+        // just before the target, stacking in order); Into/After walk REVERSED (each insertion at
+        // the head/right-after-target pushes the previous one down) — either way the relative order
+        // of the dragged rows survives. One undo step.
+        let ordered: Vec<u32> =
+            if pos == DropPos::Before { srcs.to_vec() } else { srcs.iter().rev().copied().collect() };
+        for &s in &ordered {
+            if self.doc.move_node_to(s, target, pos) {
+                self.dirty = true;
+            }
         }
         self.commit();
     }
@@ -3136,21 +3238,30 @@ impl Editor {
         self.doc.active_layer = self.doc.layer_ancestor(nid);
     }
     /// Alt+drag a row: duplicate its art into the drop target (original stays), reselect the copies.
-    pub fn layer_dup_move(&mut self, src: u32, target: u32, pos: crate::model::DropPos) {
-        let paths = self.doc.node_paths(src);
-        if paths.is_empty() {
+    pub fn layer_dup_move(&mut self, srcs: &[u32], target: u32, pos: crate::model::DropPos) {
+        use crate::model::DropPos;
+        if srcs.is_empty() {
             return;
         }
         self.begin();
-        let landed = self.doc.move_paths_to(&paths, target, pos, true);
-        if !landed.is_empty() {
+        let ordered: Vec<u32> =
+            if pos == DropPos::Before { srcs.to_vec() } else { srcs.iter().rev().copied().collect() };
+        let mut landed_all = vec![];
+        for &s in &ordered {
+            let paths = self.doc.node_paths(s);
+            if paths.is_empty() {
+                continue;
+            }
+            landed_all.extend(self.doc.move_paths_to(&paths, target, pos, true));
+        }
+        if !landed_all.is_empty() {
             self.dirty = true;
             self.tool = ToolKind::Object;
             self.objsel.clear();
             self.selected.clear();
             self.dsel_path = None;
             self.obj_angle = 0.0;
-            for pid in landed {
+            for pid in landed_all {
                 self.objsel.insert(pid);
             }
             self.doc.active_layer = self.doc.layer_ancestor(target);
@@ -3208,40 +3319,68 @@ impl Editor {
     /// Drop a panel row onto ANOTHER board's section: move the art there SPATIALLY — a pure
     /// translation; the panel re-sections itself from the geometry. Keeps the item's offset
     /// relative to its source page (Figma-style); a floater lands centred on the target page.
-    /// Refused whole if any member is locked (no tearing). Undoable; selection preserved.
-    pub fn layer_move_to_board(&mut self, src_row: u32, src_board: Option<usize>, target: usize) {
-        if target >= self.doc.artboards.len() {
+    /// Refused whole if any member of any row is locked (no tearing, no partial moves). Undoable;
+    /// selection preserved. Multi-row: each row keeps ITS OWN reference page (the drag's source
+    /// section if it stands on it, else its first member page, else centre-on-target).
+    pub fn layer_move_to_board(&mut self, srcs: &[u32], src_board: Option<usize>, target: usize) {
+        if srcs.is_empty() || target >= self.doc.artboards.len() {
             return;
         }
-        let paths = self.doc.node_paths(src_row);
-        if paths.is_empty() || paths.iter().any(|&p| self.doc.eff_locked(p)) {
+        let all_paths: Vec<Vec<u32>> = srcs.iter().map(|&s| self.doc.node_paths(s)).collect();
+        if all_paths.iter().all(|p| p.is_empty()) || all_paths.iter().flatten().any(|&p| self.doc.eff_locked(p)) {
             return;
         }
         let tb = self.doc.artboards[target].rect();
-        let d: Pt = match src_board.filter(|&b| b < self.doc.artboards.len() && b != target) {
-            Some(sb) => {
-                let sr = self.doc.artboards[sb].rect();
-                [tb.0 - sr.0, tb.1 - sr.1]
+        let mut moves: Vec<(usize, Pt)> = vec![]; // (path index, delta) — resolved before mutating
+        for paths in &all_paths {
+            if paths.is_empty() {
+                continue;
             }
-            None => {
-                let mut bb = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                for &pid in &paths {
+            // this row's reference page: the drag's source section if the row stands on it,
+            // else its first member page, else None (a floater → land centred on the target)
+            let on: Vec<usize> = {
+                let mut bs: Vec<usize> = vec![];
+                for &pid in paths {
                     if let Some(pi) = self.doc.pidx(pid) {
-                        let b = self.doc.outline_bbox(pi);
-                        bb = (bb.0.min(b.0), bb.1.min(b.1), bb.2.max(b.2), bb.3.max(b.3));
+                        bs.extend(self.doc.path_boards(pi));
                     }
                 }
-                [(tb.0 + tb.2 - bb.0 - bb.2) * 0.5, (tb.1 + tb.3 - bb.1 - bb.3) * 0.5]
+                bs.sort_unstable();
+                bs.dedup();
+                bs
+            };
+            let refb = src_board.filter(|b| on.contains(b)).or_else(|| on.first().copied());
+            let d: Pt = match refb.filter(|&b| b < self.doc.artboards.len() && b != target) {
+                Some(sb) => {
+                    let sr = self.doc.artboards[sb].rect();
+                    [tb.0 - sr.0, tb.1 - sr.1]
+                }
+                None if refb == Some(target) => [0.0, 0.0], // already home
+                _ => {
+                    let mut bb = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                    for &pid in paths {
+                        if let Some(pi) = self.doc.pidx(pid) {
+                            let b = self.doc.outline_bbox(pi);
+                            bb = (bb.0.min(b.0), bb.1.min(b.1), bb.2.max(b.2), bb.3.max(b.3));
+                        }
+                    }
+                    [(tb.0 + tb.2 - bb.0 - bb.2) * 0.5, (tb.1 + tb.3 - bb.1 - bb.3) * 0.5]
+                }
+            };
+            if d != [0.0, 0.0] {
+                for &pid in paths {
+                    if let Some(pi) = self.doc.pidx(pid) {
+                        moves.push((pi, d));
+                    }
+                }
             }
-        };
-        if d == [0.0, 0.0] {
+        }
+        if moves.is_empty() {
             return;
         }
         self.begin();
-        for &pid in &paths {
-            if let Some(pi) = self.doc.pidx(pid) {
-                self.translate_path(pi, d);
-            }
+        for (pi, d) in moves {
+            self.translate_path(pi, d);
         }
         self.doc.active = target;
         self.obj_angle = 0.0;
