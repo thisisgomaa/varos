@@ -287,10 +287,9 @@ change**. This is the promise that lets us build simple now without repainting o
   the SaveLayer seam (soft mask instead of hard stencil clip). The clip work already lays the rail.
 - **7.2 Template / dimmed / non-printing layers** (Illustrator template layers). `dimmed` + `non_printing`
   bools (reserved in §6.1); renderer draws faded, export skips. Orthogonal to `band`.
-- **7.3 Pages / artboards-as-pages.** Varos already has a multi-artboard axis with **spatial** page assignment
-  (bounds overlap at export). "Layers per page" is a *different* axis; if ever built, someone explicitly owns
-  reconciling spatial vs. containment membership (see §6.1 — this is why `page:` was dropped as a silent
-  field).
+- **7.3 Pages / artboards-as-pages.** ✅ **DECIDED & BUILT 2026-07-06 (Ahmed) — see §9.** The reconciliation
+  this item demanded an owner for is resolved: **spatial stays king; the panel is a DERIVED view.** No
+  containment flip, no `page:` field — membership is computed from geometry per frame.
 - **7.4 More structural bands / per-page masters** (InDesign = band axis × page axis).
 - **7.5 Re-expose per-object/-layer colour + a real target** once an Appearance/effects system exists to
   receive a "target" (the reason the ring/square existed).
@@ -315,3 +314,35 @@ insurance policy.
 
 **Build order (agreed):** simple panel first (it fixes the Shift/Alt bugs by making click/Ctrl/Shift/Alt act
 on the ROW — see §2 bug note), then masks, then (much later, optional) bands.
+
+---
+
+## 9. 🔀 2026-07-06 — SECTIONS BY ARTBOARD [D11] (Ahmed) — decided & built
+
+Ahmed: *"ينفع يكون التقسيم على حسب الأرت بورد… زي فيجما والحاجات المودرن"* — the panel splits by PAGE.
+**The §7.3 reconciliation, resolved: spatial stays king; the panel is a DERIVED view.** Artboards still
+never own artwork; export is untouched; there is no `page:` field. One membership source of truth in the
+model — `path_boards(pi)` / `node_boards(nid)` = the boards a bbox **visibly overlaps** — read by the
+panel, the render clip, and (next) board-level eye/lock.
+
+Resolved with Ahmed (his answers, 07-06):
+1. **Mirror rule** (his idea, adopted over my centre-rule): a straddler lists under **every** page it
+   stands on — same object, same state on both rows; the render cuts **one copy per member page** (its
+   part shows on each page, "زي ميرور"). With clip ON everywhere and no overlap → exactly one home.
+2. **Floaters:** art on **no** page sits **loose at the bottom, under no header** — visibly outside every
+   page and outside export ("بدون لير عايمين… مش هيطلعوا في الإكسبورت").
+3. **One board still shows its header** ("واحدة زي ٢٠ عادي") — unlike the dead "Layer 1" wrapper, a page
+   is a real named thing on canvas.
+4. **Ordering: this before masks.** **MASKS DEFERRED indefinitely** ("ممكن الماسكات تتعمل في المستقبل
+   أصلاً") — §3's spec and the ✅ `paint_list()` insurance stay ready for whenever they return.
+5. **Page clip DEFAULT ON** for new boards (modern cut, Figma-feel); the per-board toggle re-enables
+   Illustrator bleed, and a clip-off member page ⇒ the object draws **uncut** (bleed wins). Old files
+   keep their stored value.
+
+Built 07-06 (🟡 pending Ahmed's hand-verify): header rows (click = active board · dbl-click = rename ·
+collapsible · accent edge on the active board), mirror rows, floater strip after a hairline, clip-per-
+member-page render (`tests/boards.rs` locks membership + mirror + floater/bleed), drag-drop constrained
+to the source row's own section(s). **Next piece:** drag a row onto ANOTHER board's section/header =
+spatial move of the art onto that page (translate, Figma-style) + header eye/lock (board-level hide =
+the first real `paint_list()` filter). Mirror-row costs accepted for v1: rename opens on the first
+instance only; both instances dim while dragged (same object — honest).

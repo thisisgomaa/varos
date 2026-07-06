@@ -251,6 +251,7 @@ struct TopIcons {
 
 #[derive(Clone, Copy, PartialEq)]
 enum LKind {
+    Board, // an ARTBOARD section header (derived from doc.artboards, not a scene node)
     Layer,
     Group,
     Path,
@@ -265,11 +266,14 @@ struct ThumbShape {
     stroke: Option<Rgba>,
 }
 
-/// One rendered row of the Layers panel (a flattened, display-ordered view of the scene tree).
+/// One rendered row of the Layers panel (a flattened, display-ordered view of the scene tree,
+/// SECTIONED by artboard — Ahmed 07-06: the panel splits by page, like Figma; membership is derived
+/// from geometry via `node_boards`, mirror rows for straddlers, floaters loose at the bottom).
 struct LRow {
-    id: u32,
+    id: u32, // node id; Board headers use u32::MAX - board index (never collides with node ids)
     depth: u16,
     kind: LKind,
+    sec: u32, // section: the artboard index, u32::MAX = the floater strip (salts egui ids for mirrors)
     name: String,
     hidden: bool,
     locked: bool, // OWN flags (drive the toggle icons)
@@ -278,7 +282,7 @@ struct LRow {
     has_children: bool,
     collapsed: bool,
     selected: bool,         // any of the row's art is selected on canvas
-    active: bool,           // the active (target) layer
+    active: bool,           // the active (target) layer / the active artboard on Board headers
     thumb: Vec<ThumbShape>, // real mini-preview, back→front; empty = no art (blank box)
 }
 
@@ -291,16 +295,22 @@ fn path_auto_name(p: &varos_core::model::Path) -> String {
 
 /// Flatten the scene tree into display rows (roots front-first, pre-order; collapsed subtrees skipped).
 /// `search` (lowercased) keeps only matching rows + their ancestors. Thumbs are unit-square outlines.
+/// Board-header sentinel row id (u32::MAX - board index) — node ids are small sequential, never near MAX.
+fn board_row_id(bi: usize) -> u32 {
+    u32::MAX - bi as u32
+}
 fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, search: &str) -> Vec<LRow> {
     use varos_core::model::NodeKind;
     let q = search.trim().to_lowercase();
     let mut rows: Vec<LRow> = Vec::new();
     let mut parent: Vec<Option<usize>> = Vec::new(); // parallel: each row's parent ROW index
 
+    #[allow(clippy::too_many_arguments)] // recursive row emitter: tree cursor + section + two out-params
     fn walk(
         ed: &Editor,
         nid: u32,
         depth: u16,
+        sec: u32,
         par: Option<usize>,
         collapsed: &std::collections::HashSet<u32>,
         rows: &mut Vec<LRow>,
@@ -346,6 +356,7 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
             id: nid,
             depth,
             kind,
+            sec,
             name,
             hidden: n.hidden,
             locked: n.locked,
@@ -361,22 +372,54 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         let me = rows.len() - 1;
         if !collapsed.contains(&nid) {
             for &c in &n.children {
-                walk(ed, c, depth + 1, Some(me), collapsed, rows, parent);
+                walk(ed, c, depth + 1, sec, Some(me), collapsed, rows, parent);
             }
         }
     }
-    // Photoshop/Affinity-simple (the 07-03 pivot, completed): the implicit root Layer is the
-    // CONTAINER, never a row — the panel shows its contents directly at depth 0. It still exists in
-    // the model (sync_tree's adoption target; its eye/lock still cascade via eff_*). A non-Layer
-    // root (legacy oddity) still draws itself.
+    // The TOP-LEVEL items (the implicit root Layer stays a model-only container — 07-03 pivot; a
+    // non-Layer legacy root counts as an item itself).
+    let mut top: Vec<u32> = Vec::new();
     for &r in &ed.doc.roots {
         match ed.doc.node(r) {
-            Some(n) if matches!(n.kind, NodeKind::Layer) => {
-                for &c in &n.children {
-                    walk(ed, c, 0, None, collapsed, &mut rows, &mut parent);
-                }
+            Some(n) if matches!(n.kind, NodeKind::Layer) => top.extend(n.children.iter().copied()),
+            _ => top.push(r),
+        }
+    }
+    // SECTIONS BY ARTBOARD (Ahmed 07-06, Figma-style): one header per board; a top-level item lists
+    // under every board its subtree stands on (mirror rows for straddlers — same object, same state);
+    // items on no board float LOOSE at the bottom, under no header — visibly outside every page and
+    // outside export.
+    let memb: Vec<(u32, Vec<usize>)> = top.iter().map(|&nid| (nid, ed.doc.node_boards(nid))).collect();
+    for (bi, ab) in ed.doc.artboards.iter().enumerate() {
+        let hid = board_row_id(bi);
+        let members: Vec<u32> = memb.iter().filter(|(_, bs)| bs.contains(&bi)).map(|(n, _)| *n).collect();
+        rows.push(LRow {
+            id: hid,
+            depth: 0,
+            kind: LKind::Board,
+            sec: bi as u32,
+            name: ab.name.clone(),
+            hidden: false,
+            locked: false,
+            eff_hidden: false,
+            eff_locked: false,
+            has_children: !members.is_empty(),
+            collapsed: collapsed.contains(&hid),
+            selected: false,
+            active: bi == ed.doc.active,
+            thumb: vec![],
+        });
+        parent.push(None);
+        let me = rows.len() - 1;
+        if !collapsed.contains(&hid) {
+            for nid in members {
+                walk(ed, nid, 1, bi as u32, Some(me), collapsed, &mut rows, &mut parent);
             }
-            _ => walk(ed, r, 0, None, collapsed, &mut rows, &mut parent),
+        }
+    }
+    for (nid, bs) in &memb {
+        if bs.is_empty() {
+            walk(ed, *nid, 0, u32::MAX, None, collapsed, &mut rows, &mut parent);
         }
     }
 
@@ -3102,6 +3145,10 @@ fn build_layers(
             let ptr = ui.input(|i| i.pointer.interact_pos());
             let src_is_layer =
                 drag.and_then(|s| rows.iter().find(|r| r.id == s)).is_some_and(|r| r.kind == LKind::Layer);
+            // a drag may only drop within the source row's own section(s) for now (mirrors have
+            // several) — moving art ACROSS boards from the panel is the next piece (spatial move)
+            let src_secs: std::collections::HashSet<u32> =
+                drag.map(|s| rows.iter().filter(|r| r.id == s).map(|r| r.sec).collect()).unwrap_or_default();
             let forbidden: std::collections::HashSet<u32> = drag
                 .map(|s| {
                     let mut set = std::collections::HashSet::new();
@@ -3141,14 +3188,30 @@ fn build_layers(
                     }
                     // last top-level row + last drawn rect — "drop below the list = send to the bottom"
                     let (mut last_top, mut last_rect) = (None::<u32>, None::<egui::Rect>);
+                    let mut prev_sec = 0u32;
+                    let mut rename_shown = false; // mirror rows: only the first instance opens the editor
                     for (ri, row) in rows.iter().enumerate() {
+                        // the floater strip (art on NO board — outside export) separates with a hairline
+                        if ri > 0 && row.sec == u32::MAX && prev_sec != u32::MAX {
+                            ui.add_space(4.0);
+                            let (hr, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
+                            ui.painter().hline(hr.x_range(), hr.center().y, Stroke::new(1.0, BORDER));
+                            ui.add_space(4.0);
+                        }
+                        prev_sec = row.sec;
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click_and_drag());
-                        if resp.drag_started() {
+                        if resp.drag_started() && row.kind != LKind::Board {
                             *drag = Some(row.id);
                         }
                         // decide the drop zone: top third = Before, bottom third = After, middle = Into (into a
                         // container only; a Layer can't nest into a Group). Leaves halve into Before/After.
-                        if drag.is_some() && *drag != Some(row.id) && !forbidden.contains(&row.id) {
+                        // Board headers take no drops (cross-board move = the next piece); same-section only.
+                        if drag.is_some()
+                            && *drag != Some(row.id)
+                            && !forbidden.contains(&row.id)
+                            && row.kind != LKind::Board
+                            && src_secs.contains(&row.sec)
+                        {
                             if let Some(pp) = ptr {
                                 if rect.contains(pp) {
                                     let f = ((pp.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
@@ -3176,7 +3239,17 @@ fn build_layers(
                         let hov = resp.hovered();
                         // state: SELECTED (its art is in the canvas selection) is the strong highlight; the
                         // active layer keeps a subtle accent edge even when nothing on it is selected.
-                        if row.selected {
+                        // Board headers read as a SECTION strip; the active board keeps the accent edge.
+                        if row.kind == LKind::Board {
+                            p.rect_filled(rect, CornerRadius::ZERO, if hov { ROW_HOVER } else { BG_SURFACE });
+                            if row.active {
+                                p.rect_filled(
+                                    egui::Rect::from_min_size(rect.min, egui::vec2(2.0, row_h)),
+                                    CornerRadius::ZERO,
+                                    ACCENT,
+                                );
+                            }
+                        } else if row.selected {
                             p.rect_filled(
                                 rect,
                                 CornerRadius::ZERO,
@@ -3196,33 +3269,35 @@ fn build_layers(
                                 with_a(ACCENT, 0.5),
                             );
                         }
-                        // eye + lock (reveal on hover; hidden/locked persist)
-                        let eye = egui::Rect::from_min_size(rect.min, egui::vec2(eye_w, row_h));
-                        let lok =
-                            egui::Rect::from_min_size(rect.min + egui::vec2(eye_w, 0.0), egui::vec2(lock_w, row_h));
-                        if col_toggle(
-                            ui,
-                            eye,
-                            hov,
-                            row.hidden,
-                            row.eff_hidden && !row.hidden,
-                            &ic.eye_off,
-                            &ic.eye,
-                            "Show/Hide",
-                        ) {
-                            ops.push(Op::LayerEye(row.id));
-                        }
-                        if col_toggle(
-                            ui,
-                            lok,
-                            hov,
-                            row.locked,
-                            row.eff_locked && !row.locked,
-                            &ic.lock,
-                            &ic.unlock,
-                            "Lock/Unlock",
-                        ) {
-                            ops.push(Op::LayerLock(row.id));
+                        // eye + lock (reveal on hover; hidden/locked persist) — not on Board headers (yet)
+                        if row.kind != LKind::Board {
+                            let eye = egui::Rect::from_min_size(rect.min, egui::vec2(eye_w, row_h));
+                            let lok =
+                                egui::Rect::from_min_size(rect.min + egui::vec2(eye_w, 0.0), egui::vec2(lock_w, row_h));
+                            if col_toggle(
+                                ui,
+                                eye,
+                                hov,
+                                row.hidden,
+                                row.eff_hidden && !row.hidden,
+                                &ic.eye_off,
+                                &ic.eye,
+                                "Show/Hide",
+                            ) {
+                                ops.push(Op::LayerEye(row.id));
+                            }
+                            if col_toggle(
+                                ui,
+                                lok,
+                                hov,
+                                row.locked,
+                                row.eff_locked && !row.locked,
+                                &ic.lock,
+                                &ic.unlock,
+                                "Lock/Unlock",
+                            ) {
+                                ops.push(Op::LayerLock(row.id));
+                            }
                         }
                         // indent guides (~6% white) + disclosure
                         for lvl in 0..row.depth {
@@ -3289,14 +3364,15 @@ fn build_layers(
                                 }
                             }
                         }
-                        x += 24.0;
+                        x += if row.kind == LKind::Board { 6.0 } else { 24.0 };
                         // name (auto-names muted; user/layer names bright) — or inline rename
                         let name_rect = egui::Rect::from_min_max(
                             egui::pos2(x, rect.top()),
                             egui::pos2(rect.right() - 10.0, rect.bottom()),
                         );
-                        let renaming = rename.as_ref().is_some_and(|(id, _)| *id == row.id);
+                        let renaming = !rename_shown && rename.as_ref().is_some_and(|(id, _)| *id == row.id);
                         if renaming {
+                            rename_shown = true;
                             let buf = &mut rename.as_mut().unwrap().1;
                             let te = ui.put(
                                 name_rect.shrink2(egui::vec2(2.0, 4.0)),
@@ -3307,12 +3383,18 @@ fn build_layers(
                             );
                             te.request_focus();
                             if te.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                ops.push(Op::LayerRename(row.id, std::mem::take(buf)));
+                                let v = std::mem::take(buf);
+                                ops.push(if row.kind == LKind::Board {
+                                    Op::AbName(row.sec as usize, v)
+                                } else {
+                                    Op::LayerRename(row.id, v)
+                                });
                                 *rename = None;
                             }
                         } else {
                             let auto = row.name.starts_with('<');
                             let (size, base) = match row.kind {
+                                LKind::Board => (12.5, TEXT),
                                 LKind::Layer => (12.5, TEXT),
                                 _ if auto => (12.0, MUTED),
                                 _ => (12.0, Color32::from_gray(208)),
@@ -3326,20 +3408,27 @@ fn build_layers(
                                 with_a(base, dim),
                             );
                         }
-                        // selection — click / Ctrl-toggle / Shift-range act on the ROW (the 07-03 bug fix)
+                        // selection — click / Ctrl-toggle / Shift-range act on the ROW (the 07-03 bug fix).
+                        // A Board header click makes that board ACTIVE instead (new art lands there).
                         if resp.clicked() && !renaming {
-                            let (ctrl, shift) =
-                                ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
-                            if ctrl {
-                                ops.push(Op::LayerToggle(row.id));
-                                *anchor = Some(row.id);
-                            } else if shift {
-                                let a = anchor.and_then(|aid| rows.iter().position(|r| r.id == aid)).unwrap_or(ri);
-                                let (lo, hi) = if a <= ri { (a, ri) } else { (ri, a) };
-                                ops.push(Op::LayerSelectSet(rows[lo..=hi].iter().map(|r| r.id).collect()));
+                            if row.kind == LKind::Board {
+                                ops.push(Op::AbActive(row.sec as usize));
                             } else {
-                                ops.push(Op::LayerSelectSet(vec![row.id]));
-                                *anchor = Some(row.id);
+                                let (ctrl, shift) =
+                                    ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
+                                if ctrl {
+                                    ops.push(Op::LayerToggle(row.id));
+                                    *anchor = Some(row.id);
+                                } else if shift {
+                                    let a = anchor.and_then(|aid| rows.iter().position(|r| r.id == aid)).unwrap_or(ri);
+                                    let (lo, hi) = if a <= ri { (a, ri) } else { (ri, a) };
+                                    ops.push(Op::LayerSelectSet(
+                                        rows[lo..=hi].iter().filter(|r| r.kind != LKind::Board).map(|r| r.id).collect(),
+                                    ));
+                                } else {
+                                    ops.push(Op::LayerSelectSet(vec![row.id]));
+                                    *anchor = Some(row.id);
+                                }
                             }
                         }
                         if resp.double_clicked() {
@@ -3349,7 +3438,11 @@ fn build_layers(
                         if *drag == Some(row.id) {
                             p.rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(120));
                         }
-                        if row.depth == 0 {
+                        // a droppable "top-level item": a member row directly under a header (depth 1)
+                        // or a loose floater (depth 0) — same-section rule as everywhere else
+                        let is_top_item = row.kind != LKind::Board
+                            && ((row.sec == u32::MAX && row.depth == 0) || (row.sec != u32::MAX && row.depth == 1));
+                        if is_top_item && src_secs.contains(&row.sec) {
                             last_top = Some(row.id);
                         }
                         last_rect = Some(rect);
