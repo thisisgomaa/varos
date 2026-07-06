@@ -4037,7 +4037,10 @@ fn build_ab_chrome(
         egui::Area::new(egui::Id::new(("ab-chrome", ab.i)))
             .fixed_pos(pos)
             .order(egui::Order::Middle)
-            .interactable(true)
+            // OUTSIDE the Artboard tool the whole chrome is pure paint: a non-interactable Area lets
+            // clicks AND scroll near the page corner pass straight through to the canvas (Ahmed 07-06 —
+            // gating the label's Sense alone wasn't enough; the Area itself was still eating input).
+            .interactable(tool_ab)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
@@ -4059,8 +4062,8 @@ fn build_ab_chrome(
                         }
                     } else {
                         // the label is INTERACTIVE only in the Artboard tool (Decision 8) — in every
-                        // other tool it is pure paint, so clicks near a page corner never get eaten
-                        // and can't select/rename a page by accident. The ⋮ menu stays ungated.
+                        // other tool the whole chrome Area is non-interactable (see .interactable above),
+                        // so nothing here — label or ⋮ menu — can eat a click or select a page by accident.
                         let col = if is_active { TEXT } else { MUTED };
                         let sense = if tool_ab { egui::Sense::click() } else { egui::Sense::hover() };
                         let lbl = ui.add(egui::Label::new(RichText::new(&ab.name).color(col).size(12.5)).sense(sense));

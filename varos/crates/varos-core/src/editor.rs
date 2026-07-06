@@ -3336,8 +3336,7 @@ impl Editor {
             if paths.is_empty() {
                 continue;
             }
-            // this row's reference page: the drag's source section if the row stands on it,
-            // else its first member page, else None (a floater → land centred on the target)
+            // the boards this row visibly stands on (== its node_boards)
             let on: Vec<usize> = {
                 let mut bs: Vec<usize> = vec![];
                 for &pid in paths {
@@ -3349,22 +3348,30 @@ impl Editor {
                 bs.dedup();
                 bs
             };
-            let refb = src_board.filter(|b| on.contains(b)).or_else(|| on.first().copied());
-            let d: Pt = match refb.filter(|&b| b < self.doc.artboards.len() && b != target) {
-                Some(sb) => {
-                    let sr = self.doc.artboards[sb].rect();
-                    [tb.0 - sr.0, tb.1 - sr.1]
-                }
-                None if refb == Some(target) => [0.0, 0.0], // already home
-                _ => {
-                    let mut bb = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                    for &pid in paths {
-                        if let Some(pi) = self.doc.pidx(pid) {
-                            let b = self.doc.outline_bbox(pi);
-                            bb = (bb.0.min(b.0), bb.1.min(b.1), bb.2.max(b.2), bb.3.max(b.3));
-                        }
+            // Where this row lands. If it ALREADY stands on the target — a mirror member, or its own
+            // page — it's HOME: don't translate it (Ahmed 07-06: moving a mirror row by the full
+            // inter-board offset flew it clean out of both pages). Otherwise keep the page-relative
+            // position: reference = the drag's source section if the row stands on it, else its first
+            // member page, else a centred drop (a floater on no page at all).
+            let d: Pt = if on.contains(&target) {
+                [0.0, 0.0]
+            } else {
+                let refb = src_board.filter(|b| on.contains(b)).or_else(|| on.first().copied());
+                match refb.filter(|&b| b < self.doc.artboards.len()) {
+                    Some(sb) => {
+                        let sr = self.doc.artboards[sb].rect();
+                        [tb.0 - sr.0, tb.1 - sr.1]
                     }
-                    [(tb.0 + tb.2 - bb.0 - bb.2) * 0.5, (tb.1 + tb.3 - bb.1 - bb.3) * 0.5]
+                    None => {
+                        let mut bb = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                        for &pid in paths {
+                            if let Some(pi) = self.doc.pidx(pid) {
+                                let b = self.doc.outline_bbox(pi);
+                                bb = (bb.0.min(b.0), bb.1.min(b.1), bb.2.max(b.2), bb.3.max(b.3));
+                            }
+                        }
+                        [(tb.0 + tb.2 - bb.0 - bb.2) * 0.5, (tb.1 + tb.3 - bb.1 - bb.3) * 0.5]
+                    }
                 }
             };
             if d != [0.0, 0.0] {
@@ -3375,6 +3382,11 @@ impl Editor {
                 }
             }
         }
+        // Activate the target page even when nothing actually moves — a mirror row dropped on a board
+        // it already overlaps, or coincident boards after Alt+dup. The panel's blue loop and the
+        // active-page highlight must follow the drop; a bare activation is not itself an undo step
+        // (matches ab_set_active). Undo is recorded only when art really travels.
+        self.doc.active = target;
         if moves.is_empty() {
             return;
         }
@@ -3382,7 +3394,6 @@ impl Editor {
         for (pi, d) in moves {
             self.translate_path(pi, d);
         }
-        self.doc.active = target;
         self.obj_angle = 0.0;
         self.dirty = true;
         self.commit();
