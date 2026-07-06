@@ -46,6 +46,41 @@ pub fn hairline() -> Stroke {
     Stroke::new(1.0, LINE)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Stage 0a (BOX_SYSTEM_PLAN §6, ruling 4): the REAL app's palette, extracted from
+// `ui.rs` VERBATIM — every value is ui.rs's current one, so the app stays
+// pixel-identical. Stage 0b re-points ui.rs at the law ramp above and deletes
+// this module. Names match ui.rs's old consts 1:1 (plus names for what was inline).
+pub mod legacy {
+    use super::rgb;
+    use egui::Color32;
+
+    // the named consts that sat at the top of ui.rs (UI_FIGMA §1 — the COOL grays)
+    pub const SOLID_PANEL: Color32 = rgb(0x1f1f22); // panel body
+    pub const BG: Color32 = rgb(0x141313); // app background / top bar
+    pub const CLOSE_RED: Color32 = rgb(0xe81123); // window close hover
+    pub const BG_SURFACE: Color32 = rgb(0x262627); // fields
+    pub const BORDER: Color32 = rgb(0x2a2a2d); // hairline
+    pub const BORDER_2: Color32 = rgb(0x3a3b3d); // hover/focus border
+    pub const HOVER: Color32 = rgb(0x2e2e31); // hover bg
+    pub const ACCENT: Color32 = rgb(0x0c8ce9); // active tool
+    pub const TEXT: Color32 = rgb(0xe6e6e6); // primary text
+    pub const MUTED: Color32 = rgb(0x8a8a8a); // labels
+    pub const FAINT: Color32 = rgb(0x7c7c7c); // field labels / faint
+    pub const ROW_HOVER: Color32 = rgb(0x2a2a2c); // layers-row hover (calmer than HOVER)
+
+    // repeated INLINE literals in ui.rs, now named (values unchanged)
+    pub const NONE_RED: Color32 = rgb(0xd63a3a); // the "None"-swatch diagonal
+    pub const SWATCH_WELL: Color32 = Color32::from_gray(32); // empty fill/stroke swatch well
+    pub const ACCENT_HOVER: Color32 = rgb(0x2b9df4); // accent button, hovered (OK etc.)
+    pub const INPUT_WELL: Color32 = rgb(0x17171a); // dark hex-input well (colour modal)
+                                                   // `from_rgba_unmultiplied` is not const — these are its EXACT outputs for (0x0c,0x8c,0xe9)
+                                                   // at α 90 / 34 (proven bit-equal by the `legacy_premultiplied_exact` test below).
+    pub const ACCENT_SEL: Color32 = Color32::from_rgba_premultiplied(4, 49, 82, 90); // egui text-selection fill
+    pub const ACCENT_TINT: Color32 = Color32::from_rgba_premultiplied(2, 19, 31, 34);
+    // faint azure wash
+}
+
 /// Apply the constitution's base look to a context: warm-dark visuals + INSTANT (no animation).
 /// Idempotent — safe to call every frame.
 pub fn apply(ctx: &egui::Context) {
@@ -92,4 +127,17 @@ pub fn apply(ctx: &egui::Context) {
     // apply to BOTH theme slots → the same dark look regardless of the OS/active theme.
     ctx.set_style_of(egui::Theme::Dark, style.clone());
     ctx.set_style_of(egui::Theme::Light, style);
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::Color32;
+
+    /// Stage 0a's pixel-identical guarantee, compiler-checked: the two premultiplied legacy consts
+    /// are bit-equal to the `from_rgba_unmultiplied` calls ui.rs used to make at runtime.
+    #[test]
+    fn legacy_premultiplied_exact() {
+        assert_eq!(super::legacy::ACCENT_SEL, Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 90));
+        assert_eq!(super::legacy::ACCENT_TINT, Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 34));
+    }
 }

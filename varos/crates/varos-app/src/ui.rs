@@ -12,18 +12,13 @@ use varos_core::geom::{Pt, Rgba, View};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-// UI_FIGMA palette (§1)
-const SOLID_PANEL: Color32 = Color32::from_rgb(0x1f, 0x1f, 0x22);
-const BG: Color32 = Color32::from_rgb(0x14, 0x13, 0x13); // app background / top bar
-const CLOSE_RED: Color32 = Color32::from_rgb(0xe8, 0x11, 0x23); // window close hover // panel body
-const BG_SURFACE: Color32 = Color32::from_rgb(0x26, 0x26, 0x27); // fields
-const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2d); // hairline
-const BORDER_2: Color32 = Color32::from_rgb(0x3a, 0x3b, 0x3d); // hover/focus border
-const HOVER: Color32 = Color32::from_rgb(0x2e, 0x2e, 0x31); // hover bg
-const ACCENT: Color32 = Color32::from_rgb(0x0c, 0x8c, 0xe9); // active tool
-const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe6, 0xe6); // primary text
-const MUTED: Color32 = Color32::from_rgb(0x8a, 0x8a, 0x8a); // labels
-const FAINT: Color32 = Color32::from_rgb(0x7c, 0x7c, 0x7c); // field labels / faint
+// UI_FIGMA palette (§1) — Stage 0a: the values moved VERBATIM into the shell's token file
+// (`shell/tokens.rs::legacy`); same names, same colours, so this file is pixel-identical.
+// Stage 0b flips these imports to the law ramp (BOX_SYSTEM_PLAN §3) and retires `legacy`.
+use varos_app::shell::tokens::legacy::{
+    ACCENT, ACCENT_HOVER, ACCENT_SEL, ACCENT_TINT, BG, BG_SURFACE, BORDER, BORDER_2, CLOSE_RED, FAINT, HOVER,
+    INPUT_WELL, MUTED, NONE_RED, ROW_HOVER, SOLID_PANEL, SWATCH_WELL, TEXT,
+};
 
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 const IC_SELECT: &str = r#"<path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>"#;
@@ -290,8 +285,6 @@ struct LRow {
     active: bool,           // the active (target) layer / the active artboard on Board headers
     thumb: Vec<ThumbShape>, // real mini-preview, back→front; empty = no art (blank box)
 }
-
-const ROW_HOVER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2c); // row hover (calmer than the chip HOVER)
 
 /// Auto-name for a leaf path (Illustrator angle-bracket style) unless the user renamed it.
 fn path_auto_name(p: &varos_core::model::Path) -> String {
@@ -1124,7 +1117,7 @@ fn install_style(ctx: &egui::Context) {
     v.window_fill = SOLID_PANEL;
     v.window_stroke = Stroke::new(1.0, BORDER);
     v.window_corner_radius = CornerRadius::same(10);
-    v.selection.bg_fill = Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 90);
+    v.selection.bg_fill = ACCENT_SEL;
     v.selection.stroke = Stroke::new(1.0, ACCENT);
     s.visuals = v;
     ctx.set_style_of(egui::Theme::Dark, s);
@@ -1250,7 +1243,7 @@ fn num_field(
     let just = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
     let editing = just || ui.memory(|m| m.has_focus(id));
     if editing {
-        p.rect(bx, r5, Color32::from_rgb(0x17, 0x17, 0x1a), Stroke::new(1.0, ACCENT), StrokeKind::Middle); // dark "input well"
+        p.rect(bx, r5, INPUT_WELL, Stroke::new(1.0, ACCENT), StrokeKind::Middle); // dark "input well"
         let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| format!("{value:.decimals$}"));
         let te = ui.put(
             bx.shrink2(egui::vec2(8.0, 3.0)),
@@ -1575,10 +1568,10 @@ fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &
                 p.rect_filled(sw, round, rgba_c32a(c));
             }
             None => {
-                p.rect_filled(sw, round, Color32::from_gray(32));
+                p.rect_filled(sw, round, SWATCH_WELL);
                 p.line_segment(
                     [sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)],
-                    Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a)),
+                    Stroke::new(1.6, NONE_RED),
                 );
             } // None = red slash
         }
@@ -1834,7 +1827,7 @@ fn dlg_btn(ui: &mut egui::Ui, label: &str, primary: bool, w: f32) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
     let rr = CornerRadius::same(6);
     if primary {
-        ui.painter().rect_filled(r, rr, if resp.hovered() { Color32::from_rgb(0x2b, 0x9d, 0xf4) } else { ACCENT });
+        ui.painter().rect_filled(r, rr, if resp.hovered() { ACCENT_HOVER } else { ACCENT });
     } else {
         ui.painter().rect_filled(r, rr, if resp.hovered() { HOVER } else { BG_SURFACE });
         ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
@@ -2050,13 +2043,13 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                                         ui.painter().rect_filled(botr, CornerRadius::ZERO, rgba_c32a(oc));
                                     }
                                     None => {
-                                        ui.painter().rect_filled(botr, CornerRadius::ZERO, Color32::from_gray(32));
+                                        ui.painter().rect_filled(botr, CornerRadius::ZERO, SWATCH_WELL);
                                         ui.painter().line_segment(
                                             [
                                                 botr.left_bottom() + egui::vec2(2.0, -2.0),
                                                 botr.right_top() + egui::vec2(-2.0, 2.0),
                                             ],
-                                            Stroke::new(1.4, Color32::from_rgb(0xd6, 0x3a, 0x3a)),
+                                            Stroke::new(1.4, NONE_RED),
                                         );
                                     }
                                 }
@@ -2854,7 +2847,7 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
     let slash = |p: &egui::Painter, r: egui::Rect| {
         p.line_segment(
             [r.left_bottom() + egui::vec2(3.0, -3.0), r.right_top() + egui::vec2(-3.0, 3.0)],
-            Stroke::new(1.8, Color32::from_rgb(0xd6, 0x3a, 0x3a)),
+            Stroke::new(1.8, NONE_RED),
         )
     };
     let draw_fill = |p: &egui::Painter, active: bool| {
@@ -2867,7 +2860,7 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
                 p.rect_filled(fr, rr, rgba_c32a(c));
             }
             None => {
-                p.rect_filled(fr, rr, Color32::from_gray(32));
+                p.rect_filled(fr, rr, SWATCH_WELL);
                 slash(p, fr);
             }
         }
@@ -2890,7 +2883,7 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
                 p.rect_filled(hole, CornerRadius::same(2), SOLID_PANEL);
             }
             None => {
-                p.rect_filled(sr, rr, Color32::from_gray(32));
+                p.rect_filled(sr, rr, SWATCH_WELL);
                 p.rect_filled(hole, CornerRadius::same(2), SOLID_PANEL);
                 slash(p, sr);
             }
@@ -3272,11 +3265,7 @@ fn build_layers(
                                 );
                             }
                         } else if row.selected {
-                            p.rect_filled(
-                                rect,
-                                CornerRadius::ZERO,
-                                Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 34),
-                            );
+                            p.rect_filled(rect, CornerRadius::ZERO, ACCENT_TINT);
                             p.rect_filled(
                                 egui::Rect::from_min_size(rect.min, egui::vec2(2.0, row_h)),
                                 CornerRadius::ZERO,
@@ -3945,10 +3934,10 @@ fn build_ab_dock(
                         ui.painter().rect_filled(sw, round, rgba_c32a(c));
                     }
                     None => {
-                        ui.painter().rect_filled(sw, round, Color32::from_gray(32));
+                        ui.painter().rect_filled(sw, round, SWATCH_WELL);
                         ui.painter().line_segment(
                             [sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)],
-                            Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a)),
+                            Stroke::new(1.6, NONE_RED),
                         );
                     }
                 }
