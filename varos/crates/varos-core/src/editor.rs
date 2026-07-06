@@ -685,7 +685,7 @@ impl Editor {
             return;
         }
         let bot = &self.doc.paths[sel[0]];
-        let (fill, stroke, sw) = (bot.fill, bot.stroke, bot.stroke_width); // result inherits bottom-most paint
+        let (fill, stroke, sw) = (bot.fill.solid(), bot.stroke.solid(), bot.stroke_width); // result inherits bottom-most paint
         let shapes: Vec<Vec<Vec<Seg>>> =
             sel.iter().map(|&pi| self.path_to_segs(pi)).filter(|s| !s.is_empty()).collect();
         if shapes.len() < 2 {
@@ -2992,8 +2992,8 @@ impl Editor {
         for pid in pids {
             if let Some(pi) = self.doc.pidx(pid) {
                 match self.paint {
-                    PaintTarget::Fill => self.doc.paths[pi].fill = color,
-                    PaintTarget::Stroke => self.doc.paths[pi].stroke = color,
+                    PaintTarget::Fill => self.doc.paths[pi].fill = Paint::from_opt(color),
+                    PaintTarget::Stroke => self.doc.paths[pi].stroke = Paint::from_opt(color),
                 }
             }
         }
@@ -3013,7 +3013,7 @@ impl Editor {
         let same = |a: &Rgba, b: &Rgba| a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 1e-4);
         let mut out: Vec<Rgba> = Vec::new();
         for p in &self.doc.paths {
-            for c in [p.fill, p.stroke].into_iter().flatten() {
+            for c in [p.fill.solid(), p.stroke.solid()].into_iter().flatten() {
                 if !out.iter().any(|r| same(r, &c)) {
                     out.push(c);
                     if out.len() >= 12 {
@@ -3058,8 +3058,8 @@ impl Editor {
         self.begin();
         for q in pids {
             if let Some(pi) = self.doc.pidx(q) {
-                self.doc.paths[pi].fill = f;
-                self.doc.paths[pi].stroke = st;
+                self.doc.paths[pi].fill = Paint::from_opt(f);
+                self.doc.paths[pi].stroke = Paint::from_opt(st);
             }
         }
         self.dirty = true;
@@ -3401,7 +3401,7 @@ impl Editor {
     pub fn eyedrop(&mut self, pid: u32) {
         let (f, st, sw) = if let Some(pi) = self.doc.pidx(pid) {
             let p = &self.doc.paths[pi];
-            (p.fill, p.stroke, p.stroke_width)
+            (p.fill.solid(), p.stroke.solid(), p.stroke_width)
         } else {
             return;
         };
@@ -3415,8 +3415,8 @@ impl Editor {
         self.begin();
         for q in pids {
             if let Some(pi) = self.doc.pidx(q) {
-                self.doc.paths[pi].fill = f;
-                self.doc.paths[pi].stroke = st;
+                self.doc.paths[pi].fill = Paint::from_opt(f);
+                self.doc.paths[pi].stroke = Paint::from_opt(st);
                 self.doc.paths[pi].stroke_width = sw;
             }
         }

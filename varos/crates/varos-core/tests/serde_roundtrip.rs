@@ -144,3 +144,23 @@ fn float_fields_are_exact() {
     assert_eq!(a.anchors[1].hout, b.anchors[1].hout);
     assert_eq!(a.fill, b.fill);
 }
+
+/// The load-bearing colour migration (COLOR_SPEC §1.5): `Path.fill/stroke` became a `Paint` enum, but
+/// its serde shape stays IDENTICAL to the old `Option<Rgba>` — a bare `[r,g,b,a]` array is `Solid`,
+/// `null` is `None`, both ways. So every pre-Paint `.vrs` loads unchanged, and files we write now are
+/// still read by anything that expects the old shape (the whole point of the hand-written serde).
+#[test]
+fn paint_reads_and_writes_the_legacy_option_rgba_shape() {
+    use varos_core::model::Paint;
+    // a path authored BEFORE Paint existed: fill = a bare colour array, stroke = null
+    let legacy = r#"{"id":1,"anchors":[],"closed":true,"fill":[0.2,0.7,0.3,1.0],"stroke":null,
+        "stroke_width":2.0,"holes":[],"opacity":1.0,"hidden":false,"locked":false,"name":null}"#;
+    let p: Path = serde_json::from_str(legacy).expect("a pre-Paint path still deserializes");
+    assert_eq!(p.fill, Paint::Solid([0.2, 0.7, 0.3, 1.0]), "a bare [r,g,b,a] array ⇒ Solid");
+    assert_eq!(p.stroke, Paint::None, "null ⇒ None");
+
+    // …and we write the SAME shape back (bare array / null), never a tagged enum object
+    let json = serde_json::to_string(&p).unwrap();
+    assert!(json.contains(r#""fill":[0.2,0.7,0.3,1.0]"#), "Solid ⇒ bare array, got {json}");
+    assert!(json.contains(r#""stroke":null"#), "None ⇒ null, got {json}");
+}
