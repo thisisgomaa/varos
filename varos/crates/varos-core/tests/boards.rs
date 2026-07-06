@@ -194,6 +194,49 @@ fn panel_drop_moves_art_onto_the_other_board() {
 }
 
 #[test]
+fn a_mirror_row_dropped_where_it_already_lives_stays_put() {
+    // 07-06 deep-review fix #1: a mirror member (on BOTH pages) dragged from section A onto section B
+    // is ALREADY on B — it must NOT translate by the full A→B offset. The bug flew 80..180 clean out
+    // to 230..330, off both pages. It stays put; only the active page follows the drop, with no undo
+    // step (nothing actually moved).
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 80.0, 10.0, 100.0)); // 80..180 — straddles A and B (a mirror)
+    ed.doc.ids = 10;
+    ed.doc.sync_tree();
+    let row = ed.doc.node_of_path(1).unwrap();
+    assert_eq!(ed.doc.node_boards(row), vec![0, 1], "precondition: a mirror member of both pages");
+
+    let before = ed.doc.outline_bbox(ed.doc.pidx(1).unwrap());
+    let rev0 = ed.rev;
+    ed.layer_move_to_board(&[row], Some(0), 1); // drag its section-A row onto section B
+    assert_eq!(ed.doc.outline_bbox(ed.doc.pidx(1).unwrap()), before, "already on B → no move (not 230..330)");
+    assert_eq!(ed.doc.active, 1, "…but the target page still becomes active");
+    assert_eq!(ed.rev, rev0, "a no-op drop is not an undo step");
+}
+
+#[test]
+fn dropping_onto_a_coincident_board_still_activates_it() {
+    // 07-06 deep-review fix #2: two boards in the SAME spot (as after Alt+dup in place) → every offset
+    // is [0,0], so the move list is empty. The old code returned BEFORE activating, leaving the page
+    // highlight / blue loop behind. Activation must happen even with nothing to move — but still with
+    // no undo step (there was no actual movement).
+    let mut ed = two_pages(true);
+    ed.doc.artboards[1].x = 0.0; // B coincident with A
+    ed.doc.paths.push(sq(1, 1, 10.0, 10.0, 30.0)); // on A (and thus on the coincident copy too)
+    ed.doc.ids = 10;
+    ed.doc.sync_tree();
+    assert_eq!(ed.doc.active, 0);
+    let before = ed.doc.outline_bbox(ed.doc.pidx(1).unwrap());
+    let rev0 = ed.rev;
+
+    let row = ed.doc.node_of_path(1).unwrap();
+    ed.layer_move_to_board(&[row], Some(0), 1); // drop the section-A row onto the coincident copy
+    assert_eq!(ed.doc.outline_bbox(ed.doc.pidx(1).unwrap()), before, "nothing moves");
+    assert_eq!(ed.doc.active, 1, "…but the coincident target still becomes the active page");
+    assert_eq!(ed.rev, rev0, "a bare activation is not an undo step");
+}
+
+#[test]
 fn multi_row_drag_travels_together_in_order() {
     // Ahmed 07-06 polish #1: dragging a multi-selection moves ALL of it, keeping the rows' relative
     // order — for reorders (Before/After) AND for a cross-board move.
