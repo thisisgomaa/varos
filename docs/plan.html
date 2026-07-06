@@ -133,7 +133,9 @@
     (B0–B3: docked rows, real drag-drop reorder/nest, real composite thumbnails) — then <b>PIVOTED</b>.
     <b>THE PIVOT ✅</b> (Ahmed 07-03, verified "كله شغال تمام"): the Illustrator panel was <b>too complex</b>
     (target-ring + coloured select-square only feed an Appearance system we don't have) — so Layers went
-    <b>Photoshop/Affinity-SIMPLE</b>. Row = <b>eye · lock · thumbnail · name</b>; <b>click/Ctrl/Shift/dbl/
+    <b>Photoshop/Affinity-SIMPLE</b>. Row = <b>eye · lock · thumbnail · name</b>, and <b>no wrapper "Layer 1"
+    row</b> (07-06: the implicit root layer is a container in the model only — the panel shows its contents
+    at top level, like Photoshop; drop below the list = send to bottom); <b>click/Ctrl/Shift/dbl/
     drag/Alt-drag act on the ROW</b> (click=select · Ctrl=add/remove · Shift=range · dbl=rename · drag=
     reorder/nest · Alt+drag=duplicate); footer = Group · Delete. Deleted the target-ring, select-square,
     identity-colour bar, +layer/+sublayer buttons, counter. This <b>fixed the Shift/Ctrl bug</b> (the row
@@ -309,7 +311,7 @@ const SYSTEMS = [
     ['11','Panels & UI surfaces this system needs','ui',''],
   ]},
   {step:3, nm:'Layers / Structure system', purpose:'The hierarchical document tree — nested layers/sublayers/objects, visibility/lock, z-order, grouping, MASKS, compound paths. PIVOTED to Photoshop/Affinity-simple (07-03).', note:'MODEL system, not panel assembly. STAGE A ✅ (07-03): the real scene-graph — node tree (Layer/Group/Path) + roots, z = pre-order, flat paths re-flattened by sync_tree, legacy files migrate, eye/lock CASCADE, arrange scoped to siblings; canvas identical. THE PIVOT ✅ (Ahmed 07-03, verified "كله شغال تمام" — "Layers are 100% the program"): the Illustrator panel (target-ring + coloured select-square) was TOO COMPLEX and only fed an absent Appearance system → dropped for a SIMPLE stacked panel. Row = eye·lock·thumbnail·name; click/Ctrl/Shift/dbl/drag/Alt-drag act on the ROW (click=select · Ctrl=add/remove · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate); footer = Group·Delete. This FIXED the Shift/Ctrl bug (the row click had ignored modifiers). Real drag-drop reorder/nest + real composite thumbnails kept from the earlier build. Design of record = docs/LAYERS_VISION.md (5-agent pass: research → synthesis → adversarial critique). NEXT ▶ MASKS: one stored clip form (Group role=Clip + mask_child), reached by drag-into-the-shape-below AND Ctrl+Alt+G; UI word "Mask" + an Add-Mask button; lands on a paint_list() indirection FIRST (the critique’s anti-rewrite insurance). Structural Top/Middle/Background bands DEFERRED (spec-kept, zero-rework). Supersedes the old "drag-onto-row clips" note.', warn:true, pts:[
-    ['1','Layers panel — SIMPLE shell (eye·lock·thumb·name)',1,'d'],
+    ['1','Layers panel — SIMPLE shell (eye·lock·thumb·name · no wrapper Layer-1 row 07-06)',1,'d'],
     ['2','Layer & object naming (inline rename)',1,'d'],
     ['3','Visibility (show/hide) + cascade',1,'d'],
     ['4','Lock / unlock + cascade (real lock)',1,'d'],
