@@ -118,19 +118,20 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     // ONE unit then fade together (Illustrator group opacity), so a translucent fill+stroke object becomes
     // an isolated layer. With only a fill OR only a stroke there is no overlap to double-blend, so we just
     // fold the opacity into that single colour's alpha and keep it in the fast opaque run.
-    // CLIP: if any page has clip on, artwork overlapping it is cut to that page's rect. None ⇒ no clip.
+    // CLIP (Ahmed 07-06, the "mirror" rule): an object standing on pages renders once per member
+    // page, cut to each page's rect — the straddler shows its part on BOTH pages, like Figma. It
+    // draws UNCUT when it stands on no page (free floater) or when any member page has clip OFF
+    // (that board invited bleed — the old Illustrator behaviour, per-board toggle).
     let any_clip = ed.doc.artboards.iter().any(|a| a.clip);
-    let clip_rect = |pi: usize| -> Option<(f32, f32, f32, f32)> {
+    let clip_rects = |pi: usize| -> Option<Vec<(f32, f32, f32, f32)>> {
         if !any_clip {
             return None;
         }
-        let b = ed.doc.outline_bbox(pi);
-        ed.doc
-            .artboards
-            .iter()
-            .filter(|a| a.clip)
-            .map(|a| a.rect())
-            .find(|r| r.0 <= b.2 && r.2 >= b.0 && r.1 <= b.3 && r.3 >= b.1)
+        let boards = ed.doc.path_boards(pi);
+        if boards.is_empty() || boards.iter().any(|&i| !ed.doc.artboards[i].clip) {
+            return None;
+        }
+        Some(boards.into_iter().map(|i| ed.doc.artboards[i].rect()).collect())
     };
     let fill_prims = |pi: usize| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
@@ -141,12 +142,17 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                 for hole in &p.holes {
                     rings.push(Document::ring_px(hole, true, ppu));
                 }
-                match clip_rect(pi) {
-                    Some(r) => {
-                        let clipped: Vec<Vec<Pt>> =
-                            rings.iter().map(|ring| clip_poly_rect(ring, r)).filter(|ring| ring.len() >= 3).collect();
-                        if clipped.first().is_some_and(|o| o.len() >= 3) {
-                            out.push(Prim::Fill { rings: clipped, color: c });
+                match clip_rects(pi) {
+                    Some(rects) => {
+                        for r in rects {
+                            let clipped: Vec<Vec<Pt>> = rings
+                                .iter()
+                                .map(|ring| clip_poly_rect(ring, r))
+                                .filter(|ring| ring.len() >= 3)
+                                .collect();
+                            if clipped.first().is_some_and(|o| o.len() >= 3) {
+                                out.push(Prim::Fill { rings: clipped, color: c });
+                            }
                         }
                     }
                     None => out.push(Prim::Fill { rings, color: c }),
@@ -160,12 +166,14 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         let mut out = Vec::new();
         if p.anchors.len() >= 2 {
             if let Some(c) = p.stroke {
-                let clip = clip_rect(pi);
-                let mut push = |pts: Vec<Pt>| match clip {
-                    Some(r) => {
-                        for run in clip_polyline_rect(&pts, r) {
-                            if run.len() >= 2 {
-                                out.push(Prim::Stroke { pts: run, width: p.stroke_width, color: c });
+                let clip = clip_rects(pi);
+                let mut push = |pts: Vec<Pt>| match &clip {
+                    Some(rects) => {
+                        for &r in rects {
+                            for run in clip_polyline_rect(&pts, r) {
+                                if run.len() >= 2 {
+                                    out.push(Prim::Stroke { pts: run, width: p.stroke_width, color: c });
+                                }
                             }
                         }
                     }

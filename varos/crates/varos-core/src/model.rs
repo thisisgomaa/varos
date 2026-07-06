@@ -154,8 +154,9 @@ pub struct Artboard {
     /// no background; on-canvas it shows just its edge). Changeable per artboard.
     #[serde(default = "white_page")]
     pub page_color: Option<Rgba>,
-    /// clip artwork that overflows the page edge on-canvas (a per-artboard toggle). Default OFF
-    /// (Illustrator: art bleeds past the edge freely; clipping is an export-time choice).
+    /// clip artwork that overflows the page edge on-canvas (a per-artboard toggle). Default ON
+    /// (Ahmed 07-06: pages cut like modern tools/Figma; turn it off per board for Illustrator bleed).
+    /// Old files keep their stored value; pre-field files load false via the serde default.
     #[serde(default)]
     pub clip: bool,
 }
@@ -174,7 +175,7 @@ impl Default for Artboard {
             name: "Artboard 1".into(),
             bleed: 0.0,
             page_color: white_page(),
-            clip: false,
+            clip: true,
         }
     }
 }
@@ -405,6 +406,35 @@ impl Document {
     /// arrives when clip groups land (computed structurally in `sync_tree`), `Hidden` with pages.
     pub fn paint_role(&self, _pid: u32) -> PaintRole {
         PaintRole::Normal
+    }
+    /// ARTBOARD MEMBERSHIP (Ahmed 07-06, the "mirror" rule): the boards a path VISIBLY stands on =
+    /// every artboard whose page rect its outline bbox overlaps. One source of truth for the render
+    /// clip, the Layers-panel sections and (later) board-level eye/lock. Empty = a free floater on
+    /// the canvas — outside every page, and outside export.
+    pub fn path_boards(&self, pi: usize) -> Vec<usize> {
+        let b = self.outline_bbox(pi);
+        self.artboards
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| {
+                let r = a.rect();
+                r.0 <= b.2 && r.2 >= b.0 && r.1 <= b.3 && r.3 >= b.1
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+    /// Boards a whole subtree stands on (union of its paths' member boards, in artboard order) —
+    /// the Layers panel classifies TOP-LEVEL rows with this; nested rows follow their parent.
+    pub fn node_boards(&self, nid: u32) -> Vec<usize> {
+        let mut on = vec![false; self.artboards.len()];
+        for pid in self.node_paths(nid) {
+            if let Some(pi) = self.pidx(pid) {
+                for bi in self.path_boards(pi) {
+                    on[bi] = true;
+                }
+            }
+        }
+        on.iter().enumerate().filter(|(_, &v)| v).map(|(i, _)| i).collect()
     }
     pub fn aidx(&self, aid: u32) -> Option<(usize, usize)> {
         for (pi, p) in self.paths.iter().enumerate() {

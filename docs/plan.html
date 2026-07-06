@@ -146,10 +146,18 @@
     Background bands <b>dropped for now</b> (spec-kept, zero-rework to switch on); the <b>paint_list()</b>
     indirection is <b>IN (✅ 07-06)</b> — scene build, PDF export and snap targets read it (golden test:
     byte-identical to doc.paths today) so clip/mask/page each become one filter, never a 30-site rewrite.
-    <b>NEXT:</b> ① Masks/clipping steps ②–⑤ (Node fields → emit_node walk → Clip render → gestures)
-    → ② Colour Stage-2 (Swatches + Paint enum → gradients). Also 07-06: the 2 known panel issues fixed
-    (Ctrl+click mixed-lock deselect + the orphaned fns purged) and the engineering-review top-3 landed
-    (CI gate · clippy/fmt clean · respectful fatal dialogs + crash log).
+    <b>🔀 07-06 [D11] — SECTIONS BY ARTBOARD (Ahmed):</b> the panel splits by PAGE like Figma — a header
+    row per artboard, its art beneath it. Membership is <b>derived from geometry</b> (visible-overlap of
+    the top-level item's bbox — the spatial artboard model stays king, no containment flip): a straddler
+    appears under <b>both</b> pages ("mirror" — same object, same state); art on no page floats <b>loose at
+    the bottom, no header</b> = visibly outside export. Header: click = active board · double-click =
+    rename · collapsible. Page <b>clip is DEFAULT ON</b> for new boards (modern cut; per-board toggle for
+    bleed) and the render cuts a straddler once per member page. Drag-drop is same-section for now.
+    <b>MASKS DEFERRED</b> (Ahmed: "ممكن تتعمل في المستقبل أصلاً" — spec + paint_list insurance stay).
+    <b>NEXT:</b> ① panel piece C — drag a row onto another board's section = move the art there
+    (spatial translate) + header eye/lock (board-level hide via paint_list) → ② Colour Stage-2.
+    Also 07-06: the 2 known panel issues fixed + the engineering-review top-3 landed (CI · clippy/fmt
+    clean · respectful fatal dialogs + crash log).
   </div>
 
   <h2>Build order</h2>
@@ -180,8 +188,8 @@ const ORDER = [
   {k:'4·S1', nm:'Colour — Stage 1', state:'done', sec:'picker + wheel ✅ 07-02'},
   {k:'🔖', nm:'Slice — draw→colour→save→reopen', state:'done', sec:'.vrs = PDF container ✅ 07-02'},
   {k:'⚙', nm:'Engine spike (wgpu 0.19→29)', state:'done', sec:'✅ 07-03 "كله برفكت"'},
-  {k:'3', nm:'Layers', state:'active', sec:'Stage A + SIMPLE panel ✅ 07-03 · masks step① paint_list ✅ 07-06'},
-  {milestone:'▶ NOW — Layers masks / clipping (Ctrl+Alt+G · drag-into · Add-Mask button) — ① paint_list ✅ → ② Node fields → ③ emit_node walk → ④ Clip render → ⑤ gestures'},
+  {k:'3', nm:'Layers', state:'active', sec:'SIMPLE panel ✅ · sections-by-ARTBOARD 🟡 built 07-06'},
+  {milestone:'▶ NOW — Layers = sections by ARTBOARD (Figma view): headers per page · mirror straddlers · floaters loose · page clip DEFAULT ON — 🟡 built 07-06, Ahmed verifying · next piece: drag-row-to-board + header eye/lock · MASKS DEFERRED (Ahmed 07-06: "ممكن تتعمل في المستقبل"; paint_list ✅ stays as the insurance)'},
   {k:'4·S2', nm:'Colour — Stage 2', sec:'Swatches · Paint enum'},
   {k:'5', nm:'Stroke'},
   {k:'6', nm:'Save'},
@@ -322,7 +330,8 @@ const SYSTEMS = [
     ['9','Z-order commands (arrange)',1,'d'],
     ['10','Groups & ungroup (nested)',1,'d'],
     ['11','Compound paths',2,''],
-    ['12','Masks / clipping (drag-into + Ctrl+Alt+G) ▶ NEXT — ① paint_list() indirection ✅ 07-06',1,''],
+    ['12','Masks / clipping — DEFERRED (Ahmed 07-06); paint_list() insurance ✅ stays',3,''],
+    ['12b','Sections by ARTBOARD (Figma view: headers · mirror straddlers · floaters · clip default ON) 🟡 built 07-06',1,''],
     ['13','Isolation mode',2,''],
     ['14','Opacity masks',3,''],
     ['15','Locate / find object',2,''],
