@@ -15,7 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with: { components: clippy, rustfmt }
+        with:
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: varos } # REQUIRED — manifest is not at repo root, or the cache no-ops
       - run: cargo fmt --all --check           # the fmt commit landed with rustfmt.toml (f46d25f)
