@@ -3175,6 +3175,79 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
+    // ── Board-level ops (the section headers — piece C) ──
+    /// Header eye: hide/show a whole board (its page + its parts of member art). Undoable; newly
+    /// board-hidden art leaves the canvas selection.
+    pub fn ab_toggle_hidden(&mut self, bi: usize) {
+        if bi >= self.doc.artboards.len() {
+            return;
+        }
+        self.begin();
+        self.doc.artboards[bi].hidden = !self.doc.artboards[bi].hidden;
+        let gone: Vec<u32> = self.objsel.iter().copied().filter(|&p| self.doc.eff_hidden(p)).collect();
+        for p in gone {
+            self.objsel.remove(&p);
+        }
+        self.dirty = true;
+        self.commit();
+    }
+    /// Header padlock: lock/unlock everything a board holds. Undoable; newly locked art deselects.
+    pub fn ab_toggle_locked(&mut self, bi: usize) {
+        if bi >= self.doc.artboards.len() {
+            return;
+        }
+        self.begin();
+        self.doc.artboards[bi].locked = !self.doc.artboards[bi].locked;
+        let gone: Vec<u32> = self.objsel.iter().copied().filter(|&p| self.doc.eff_locked(p)).collect();
+        for p in gone {
+            self.objsel.remove(&p);
+        }
+        self.dirty = true;
+        self.commit();
+    }
+    /// Drop a panel row onto ANOTHER board's section: move the art there SPATIALLY — a pure
+    /// translation; the panel re-sections itself from the geometry. Keeps the item's offset
+    /// relative to its source page (Figma-style); a floater lands centred on the target page.
+    /// Refused whole if any member is locked (no tearing). Undoable; selection preserved.
+    pub fn layer_move_to_board(&mut self, src_row: u32, src_board: Option<usize>, target: usize) {
+        if target >= self.doc.artboards.len() {
+            return;
+        }
+        let paths = self.doc.node_paths(src_row);
+        if paths.is_empty() || paths.iter().any(|&p| self.doc.eff_locked(p)) {
+            return;
+        }
+        let tb = self.doc.artboards[target].rect();
+        let d: Pt = match src_board.filter(|&b| b < self.doc.artboards.len() && b != target) {
+            Some(sb) => {
+                let sr = self.doc.artboards[sb].rect();
+                [tb.0 - sr.0, tb.1 - sr.1]
+            }
+            None => {
+                let mut bb = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                for &pid in &paths {
+                    if let Some(pi) = self.doc.pidx(pid) {
+                        let b = self.doc.outline_bbox(pi);
+                        bb = (bb.0.min(b.0), bb.1.min(b.1), bb.2.max(b.2), bb.3.max(b.3));
+                    }
+                }
+                [(tb.0 + tb.2 - bb.0 - bb.2) * 0.5, (tb.1 + tb.3 - bb.1 - bb.3) * 0.5]
+            }
+        };
+        if d == [0.0, 0.0] {
+            return;
+        }
+        self.begin();
+        for &pid in &paths {
+            if let Some(pi) = self.doc.pidx(pid) {
+                self.translate_path(pi, d);
+            }
+        }
+        self.doc.active = target;
+        self.obj_angle = 0.0;
+        self.dirty = true;
+        self.commit();
+    }
     pub fn eyedrop(&mut self, pid: u32) {
         let (f, st, sw) = if let Some(pi) = self.doc.pidx(pid) {
             let p = &self.doc.paths[pi];

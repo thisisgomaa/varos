@@ -121,6 +121,79 @@ fn a_clipped_groups_members_never_escape_the_cut() {
 }
 
 #[test]
+fn board_eye_hides_only_that_pages_part() {
+    // Piece C: the header eye hides the PAGE — a mirror keeps its part on the visible page; art
+    // fully on the hidden page is eff_hidden (unclickable, unpainted); the page paper vanishes too.
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 10.0, 10.0, 30.0)); // fully on A
+    ed.doc.paths.push(sq(2, 10, 80.0, 10.0, 100.0)); // straddles A and B
+    ed.doc.ids = 30;
+    ed.doc.sync_tree();
+    ed.ab_toggle_hidden(0); // hide page A
+    assert!(ed.doc.artboards[0].hidden);
+    assert!(ed.doc.eff_hidden(1), "art fully on the hidden page is effectively hidden");
+    assert!(!ed.doc.eff_hidden(2), "the mirror stays visible — page B still shows it");
+    let fills = art_fills(&ed);
+    assert_eq!(fills.len(), 1, "only the B copy of the straddler draws (A's part + A's page are gone)");
+    assert!(xs(&fills[0]).0 >= 149.9, "…and it is the part on page B");
+    ed.undo();
+    assert!(!ed.doc.artboards[0].hidden, "the header eye is undoable");
+}
+
+#[test]
+fn board_lock_locks_anything_it_holds() {
+    // Piece C: the header padlock locks a member if ANY of its pages lock (you can't move what a
+    // locked page holds — moving the mirror would move its locked-page part too).
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 10.0, 10.0, 30.0)); // fully on A
+    ed.doc.paths.push(sq(2, 10, 80.0, 10.0, 100.0)); // straddles A and B
+    ed.doc.paths.push(sq(3, 20, 110.0, 60.0, 20.0)); // floater
+    ed.doc.ids = 40;
+    ed.doc.sync_tree();
+    ed.objsel.insert(1);
+    ed.ab_toggle_locked(0);
+    assert!(ed.doc.eff_locked(1) && ed.doc.eff_locked(2), "on-page art AND the straddler lock");
+    assert!(!ed.doc.eff_locked(3), "a floater belongs to no page — never board-locked");
+    assert!(!ed.objsel.contains(&1), "locking a board drops its art from the selection");
+}
+
+#[test]
+fn panel_drop_moves_art_onto_the_other_board() {
+    // Piece C: dropping a row on another board's section = a spatial move. From a page: keep the
+    // offset relative to the page (Figma). A floater: land centred on the target page. Locked: refused.
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 10.0, 10.0, 30.0)); // on A at offset (10,10)
+    ed.doc.paths.push(sq(2, 10, 110.0, 60.0, 20.0)); // floater in the gap
+    ed.doc.ids = 30;
+    ed.doc.sync_tree();
+
+    let near = |a: f32, b: f32| (a - b).abs() < 0.01; // outline sampling leaves float dust
+
+    let row1 = ed.doc.node_of_path(1).unwrap();
+    ed.layer_move_to_board(row1, Some(0), 1); // A → B (B starts at x=150)
+    let pi = ed.doc.pidx(1).unwrap();
+    let b = ed.doc.outline_bbox(pi);
+    assert!(near(b.0, 160.0) && near(b.1, 10.0), "same offset relative to the target page, got {b:?}");
+    assert_eq!(ed.doc.path_boards(pi), vec![1], "membership followed the geometry");
+    assert_eq!(ed.doc.active, 1, "the target page becomes active");
+
+    let row2 = ed.doc.node_of_path(2).unwrap();
+    ed.layer_move_to_board(row2, None, 0); // floater → centre of page A
+    let pi2 = ed.doc.pidx(2).unwrap();
+    let b2 = ed.doc.outline_bbox(pi2);
+    assert!(
+        near((b2.0 + b2.2) * 0.5, 50.0) && near((b2.1 + b2.3) * 0.5, 50.0),
+        "floater lands page-centred, got {b2:?}"
+    );
+
+    // a locked member refuses the whole move (no tearing)
+    ed.set_locked(2, true);
+    let before = ed.doc.outline_bbox(ed.doc.pidx(2).unwrap());
+    ed.layer_move_to_board(row2, Some(0), 1);
+    assert_eq!(ed.doc.outline_bbox(ed.doc.pidx(2).unwrap()), before, "locked art never moves");
+}
+
+#[test]
 fn floaters_and_bleed_pages_draw_uncut() {
     // floater: on no page → uncut
     let mut ed = two_pages(true);
