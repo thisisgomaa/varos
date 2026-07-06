@@ -4,17 +4,17 @@
 //! floats on TOP of everything, easing toward the cursor (light, smooth). egui_tiles owns the docking:
 //! it shows a clean azure preview of where it'll land and commits on release. We just paint the lifted
 //! ghost + style the look. No reflow-among-boxes.
-use egui::{
-    Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Pos2, Rect, RichText, Sense, Stroke,
-    StrokeKind, UiBuilder, Visuals, pos2, vec2,
-};
-use egui_tiles::{
-    Behavior, Container, DropPreview, DropSide, LinearDir, ResizeState, SimplificationOptions, Tile,
-    TileId, Tiles, Tree, UiResponse,
-};
-use std::collections::HashMap;
 use super::registry::{self, PanelId};
 use super::tokens as T;
+use egui::{
+    pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Pos2, Rect, RichText, Sense, Stroke,
+    StrokeKind, UiBuilder, Visuals,
+};
+use egui_tiles::{
+    Behavior, Container, DropPreview, DropSide, LinearDir, ResizeState, SimplificationOptions, Tile, TileId, Tiles,
+    Tree, UiResponse,
+};
+use std::collections::HashMap;
 
 pub struct ShellState {
     tree: Tree<PanelId>,
@@ -49,10 +49,14 @@ impl ShellState {
         for (id, tile) in self.tree.tiles.iter() {
             if let Tile::Container(Container::Tabs(t)) = tile {
                 if let Some(active) = t.active.or_else(|| t.children.first().copied()) {
-                    let tabs = t.children.iter().filter_map(|&c| match self.tree.tiles.get(c) {
-                        Some(Tile::Pane(p)) => Some((c, *p)),
-                        _ => None,
-                    }).collect();
+                    let tabs = t
+                        .children
+                        .iter()
+                        .filter_map(|&c| match self.tree.tiles.get(c) {
+                            Some(Tile::Pane(p)) => Some((c, *p)),
+                            _ => None,
+                        })
+                        .collect();
                     groups.insert(active, TabGroup { container: *id, tabs, active });
                 }
             }
@@ -84,13 +88,12 @@ impl ShellState {
             let panel = match self.tree.tiles.get(dragged) {
                 Some(Tile::Pane(p)) => Some(*p),
                 // dragging a whole tabbed box (grip) → ghost the active tab's panel as its stand-in
-                Some(Tile::Container(Container::Tabs(t))) => t
-                    .active
-                    .or_else(|| t.children.first().copied())
-                    .and_then(|c| match self.tree.tiles.get(c) {
+                Some(Tile::Container(Container::Tabs(t))) => {
+                    t.active.or_else(|| t.children.first().copied()).and_then(|c| match self.tree.tiles.get(c) {
                         Some(Tile::Pane(p)) => Some(*p),
                         _ => None,
-                    }),
+                    })
+                }
                 _ => None,
             };
             if let (Some(panel), Some(cur)) = (panel, cursor) {
@@ -189,11 +192,9 @@ fn render_drag_ghost(ui: &egui::Ui, panel: PanelId, pos: Pos2) {
         .fixed_pos(pos - vec2(w * 0.5, 6.0))
         .show(ui.ctx(), |ui| {
             ui.set_width(w);
-            egui::Frame::default()
-                .fill(T::PANEL)
-                .stroke(Stroke::new(1.0, T::ACCENT))
-                .corner_radius(T::r_box())
-                .show(ui, |ui| {
+            egui::Frame::default().fill(T::PANEL).stroke(Stroke::new(1.0, T::ACCENT)).corner_radius(T::r_box()).show(
+                ui,
+                |ui| {
                     ui.set_width(w);
                     ui.add_space(7.0);
                     ui.horizontal(|ui| {
@@ -211,7 +212,8 @@ fn render_drag_ghost(ui: &egui::Ui, panel: PanelId, pos: Pos2) {
                                 .show(ui, |ui| registry::render_panel(panel, ui));
                         });
                     });
-                });
+                },
+            );
         });
 }
 
@@ -230,13 +232,21 @@ fn draw_resize_handles(tree: &Tree<PanelId>, ui: &egui::Ui) {
                 LinearDir::Horizontal => {
                     let x = (ra.right() + rb.left()) * 0.5;
                     if (ptr.x - x).abs() <= 6.0 && ptr.y >= ra.top() && ptr.y <= ra.bottom() {
-                        ui.painter().rect_filled(Rect::from_center_size(pos2(x, ra.center().y), vec2(3.0, 22.0)), CornerRadius::same(2), T::FAINT);
+                        ui.painter().rect_filled(
+                            Rect::from_center_size(pos2(x, ra.center().y), vec2(3.0, 22.0)),
+                            CornerRadius::same(2),
+                            T::FAINT,
+                        );
                     }
                 }
                 LinearDir::Vertical => {
                     let y = (ra.bottom() + rb.top()) * 0.5;
                     if (ptr.y - y).abs() <= 6.0 && ptr.x >= ra.left() && ptr.x <= ra.right() {
-                        ui.painter().rect_filled(Rect::from_center_size(pos2(ra.center().x, y), vec2(22.0, 3.0)), CornerRadius::same(2), T::FAINT);
+                        ui.painter().rect_filled(
+                            Rect::from_center_size(pos2(ra.center().x, y), vec2(22.0, 3.0)),
+                            CornerRadius::same(2),
+                            T::FAINT,
+                        );
                     }
                 }
             }
@@ -321,9 +331,13 @@ impl ShellBehavior {
         let pad = 10.0;
         let x_rect = Rect::from_min_size(pos2(right - pad - 18.0, mid - 9.0), vec2(18.0, 18.0));
         let x = ui.interact(x_rect, ui.id().with(("close", tile_id)), Sense::click());
-        if x.hovered() { ui.painter().rect_filled(x_rect, T::r_ctrl(), T::HOVER); }
+        if x.hovered() {
+            ui.painter().rect_filled(x_rect, T::r_ctrl(), T::HOVER);
+        }
         paint_cross(ui, x_rect, if x.hovered() { T::CLOSE_RED } else { T::MUTED });
-        if x.clicked() { self.close = Some(tile_id); }
+        if x.clicked() {
+            self.close = Some(tile_id);
+        }
 
         let menu_rect = Rect::from_min_size(pos2(x_rect.left() - 6.0 - 22.0, mid - 12.0), vec2(22.0, 24.0));
         let mut menu_switch: Option<PanelId> = None;
@@ -334,11 +348,16 @@ impl ShellBehavior {
                 ui.label(RichText::new("CHANGE THIS PANEL TO").color(T::FAINT).size(9.5).strong());
                 ui.add_space(2.0);
                 for p in PanelId::DOCKABLE {
-                    if ui.button(p.title()).clicked() { menu_switch = Some(p); ui.close(); }
+                    if ui.button(p.title()).clicked() {
+                        menu_switch = Some(p);
+                        ui.close();
+                    }
                 }
             });
         });
-        if let Some(p) = menu_switch { self.switch = Some((tile_id, p)); }
+        if let Some(p) = menu_switch {
+            self.switch = Some((tile_id, p));
+        }
         menu_rect.left() - 8.0
     }
 }
@@ -381,27 +400,48 @@ impl Behavior<PanelId> for ShellBehavior {
             // one-shot forced offset set by an arrow click last frame; the wheel scrolls the rest of the time
             let scroll_key = egui::Id::new(("pills_scroll", tile_id));
             let forced = ui.ctx().data(|d| d.get_temp::<f32>(scroll_key));
-            if forced.is_some() { ui.ctx().data_mut(|d| d.remove::<f32>(scroll_key)); }
+            if forced.is_some() {
+                ui.ctx().data_mut(|d| d.remove::<f32>(scroll_key));
+            }
             let (mut offset_x, mut viewport_w, mut content_w) = (0.0_f32, 0.0_f32, 0.0_f32);
             ui.scope_builder(UiBuilder::new().max_rect(strip), |ui| {
                 let mut sa = egui::ScrollArea::horizontal()
                     .id_salt(("pills", tile_id))
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden) // chevrons replace the ugly slider (Ahmed)
                     .scroll_source(egui::scroll_area::ScrollSource::MOUSE_WHEEL); // wheel scrolls; drag LIFTS the pill
-                if let Some(x) = forced { sa = sa.horizontal_scroll_offset(x); }
+                if let Some(x) = forced {
+                    sa = sa.horizontal_scroll_offset(x);
+                }
                 let out = sa.show(ui, |ui| {
                     ui.horizontal_centered(|ui| {
                         ui.spacing_mut().item_spacing.x = 5.0;
                         for (tid, pid) in &group.tabs {
                             let active = *tid == group.active;
-                            let tw = ui.painter().layout_no_wrap(pid.title().to_owned(), font.clone(), T::TEXT).size().x;
+                            let tw =
+                                ui.painter().layout_no_wrap(pid.title().to_owned(), font.clone(), T::TEXT).size().x;
                             let (pill, r) = ui.allocate_exact_size(vec2(tw + 20.0, 22.0), Sense::click_and_drag());
-                            let bg = if active { T::SURFACE } else if r.hovered() { T::HOVER } else { Color32::TRANSPARENT };
+                            let bg = if active {
+                                T::SURFACE
+                            } else if r.hovered() {
+                                T::HOVER
+                            } else {
+                                Color32::TRANSPARENT
+                            };
                             ui.painter().rect_filled(pill, CornerRadius::same(11), bg); // capsule = a Claude bubble
-                            ui.painter().text(pill.center(), Align2::CENTER_CENTER, pid.title(), font.clone(), if active || r.hovered() { T::TEXT } else { T::MUTED });
-                            if r.clicked() { clicked = Some(*tid); }
+                            ui.painter().text(
+                                pill.center(),
+                                Align2::CENTER_CENTER,
+                                pid.title(),
+                                font.clone(),
+                                if active || r.hovered() { T::TEXT } else { T::MUTED },
+                            );
+                            if r.clicked() {
+                                clicked = Some(*tid);
+                            }
                             // ANY pill (active or inactive) can be lifted out as its own tab.
-                            if r.drag_started() { pill_drag = Some(*tid); }
+                            if r.drag_started() {
+                                pill_drag = Some(*tid);
+                            }
                         }
                     });
                 });
@@ -412,9 +452,7 @@ impl Behavior<PanelId> for ShellBehavior {
             // overflow chevrons: a round tab-shaped button at each end, shown ONLY when there's more that
             // way — ‹ if scrolled off the left, › if tabs run past the right (Ahmed 07-06).
             let step = (viewport_w * 0.7).max(40.0);
-            if offset_x > 1.0
-                && scroll_arrow(ui, pos2(strip.left() + 10.0, strip.center().y), -1.0, tile_id)
-            {
+            if offset_x > 1.0 && scroll_arrow(ui, pos2(strip.left() + 10.0, strip.center().y), -1.0, tile_id) {
                 ui.ctx().data_mut(|d| d.insert_temp(scroll_key, (offset_x - step).max(0.0)));
             }
             if offset_x + viewport_w < content_w - 1.0
@@ -422,7 +460,9 @@ impl Behavior<PanelId> for ShellBehavior {
             {
                 ui.ctx().data_mut(|d| d.insert_temp(scroll_key, offset_x + step));
             }
-            if let Some(t) = clicked { self.set_active = Some((group.container, t)); }
+            if let Some(t) = clicked {
+                self.set_active = Some((group.container, t));
+            }
 
             // Two grab targets (Ahmed 07-05): a PILL (active OR inactive) lifts THAT one tab; the GRIP
             // lifts the WHOLE box (its Tabs container — all tabs). We start the egui_tiles drag on the right
@@ -450,29 +490,51 @@ impl Behavior<PanelId> for ShellBehavior {
         // forgiving target so a box is never "impossible to grab" (Ahmed 07-04: "مستحيل تتحرك").
         let drag_rect = Rect::from_min_max(pos2(rect.left(), rect.top() + 14.0), pos2(controls_left, rect.top() + hh));
         let hdr = ui.interact(drag_rect, ui.id().with(("hdr", tile_id)), Sense::click_and_drag());
-        ui.painter().text(pos2(rect.left() + 12.0, mid), Align2::LEFT_CENTER, pane.title(), FontId::proportional(12.5), T::TEXT);
+        ui.painter().text(
+            pos2(rect.left() + 12.0, mid),
+            Align2::LEFT_CENTER,
+            pane.title(),
+            FontId::proportional(12.5),
+            T::TEXT,
+        );
 
         ui.painter().hline(rect.left() + 1.0..=rect.right() - 1.0, rect.top() + hh, T::hairline());
         render_body(ui, rect, hh, tile_id, *pane);
 
-        if g.drag_started() || hdr.drag_started() { return UiResponse::DragStarted; }
+        if g.drag_started() || hdr.drag_started() {
+            return UiResponse::DragStarted;
+        }
         UiResponse::None
     }
 
     // egui_tiles' own tab bar is 0-height — we draw the whole tabbed box in `pane_ui` instead. This is
     // the ONE tab-bar method we keep; the rest (tab_ui / tab colours / top_bar_right_ui) were dead code
     // that also painted a stray glyph into the 0-height strip — the "weird corner" (Ahmed 07-04).
-    fn tab_bar_height(&self, _s: &egui::Style) -> f32 { 0.0 }
+    fn tab_bar_height(&self, _s: &egui::Style) -> f32 {
+        0.0
+    }
 
-    fn gap_width(&self, _style: &egui::Style) -> f32 { T::SEAM_GAP }
-    fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke { Stroke::NONE } // pure void seam — no line
-    fn is_tile_draggable(&self, tiles: &Tiles<PanelId>, tile_id: TileId) -> bool { !is_board_tile(tiles, tile_id) }
-    fn pane_is_drop_target(&self, _pane: &PanelId) -> bool { true } // the board docks/tabs like any normal box (Ahmed 07-05)
-    fn min_size(&self) -> f32 { 170.0 } // panels stay usable; content scrolls (never breaks)
+    fn gap_width(&self, _style: &egui::Style) -> f32 {
+        T::SEAM_GAP
+    }
+    fn resize_stroke(&self, _style: &egui::Style, _state: ResizeState) -> Stroke {
+        Stroke::NONE
+    } // pure void seam — no line
+    fn is_tile_draggable(&self, tiles: &Tiles<PanelId>, tile_id: TileId) -> bool {
+        !is_board_tile(tiles, tile_id)
+    }
+    fn pane_is_drop_target(&self, _pane: &PanelId) -> bool {
+        true
+    } // the board docks/tabs like any normal box (Ahmed 07-05)
+    fn min_size(&self) -> f32 {
+        170.0
+    } // panels stay usable; content scrolls (never breaks)
 
     // ── drag look: no distorted double-render (we paint our own lifted ghost); egui_tiles shows a
     //    clean azure preview of the drop slot; the vacated spot reads as empty void ──
-    fn preview_dragged_panes(&self) -> bool { false }
+    fn preview_dragged_panes(&self) -> bool {
+        false
+    }
     /// The drop highlight, exactly Ahmed's 07-05 model (three cases, one fixed 20% band):
     ///   • tab (middle)        → the box glows evenly, no direction, no bar.
     ///   • edge, no neighbour  → the box glows toward that edge + one bar on the edge (cases 3/4/5).
@@ -519,7 +581,9 @@ fn frameless_buttons(ui: &mut egui::Ui) {
 }
 
 /// Azure alpha `a` at the given normalised position — one place for the gradient's colour ramp.
-fn azure(a: u8) -> Color32 { Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, a) }
+fn azure(a: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, a)
+}
 
 /// Fill `rect` with a linear azure gradient: alpha `a_strong` at the edge `dir` points to, fading to
 /// `a_faint` at the opposite edge — the drop-direction hint on the phantom slot (Ahmed 07-05).
@@ -590,10 +654,18 @@ fn edge_bar(painter: &egui::Painter, rect: Rect, side: DropSide) {
     let rect = rect.shrink(1.0);
     let (w, inset) = (3.0, 10.0);
     let (a, b) = match side {
-        DropSide::Bottom => (pos2(rect.left() + inset, rect.bottom() - w * 0.5), pos2(rect.right() - inset, rect.bottom() - w * 0.5)),
-        DropSide::Top => (pos2(rect.left() + inset, rect.top() + w * 0.5), pos2(rect.right() - inset, rect.top() + w * 0.5)),
-        DropSide::Right => (pos2(rect.right() - w * 0.5, rect.top() + inset), pos2(rect.right() - w * 0.5, rect.bottom() - inset)),
-        DropSide::Left => (pos2(rect.left() + w * 0.5, rect.top() + inset), pos2(rect.left() + w * 0.5, rect.bottom() - inset)),
+        DropSide::Bottom => {
+            (pos2(rect.left() + inset, rect.bottom() - w * 0.5), pos2(rect.right() - inset, rect.bottom() - w * 0.5))
+        }
+        DropSide::Top => {
+            (pos2(rect.left() + inset, rect.top() + w * 0.5), pos2(rect.right() - inset, rect.top() + w * 0.5))
+        }
+        DropSide::Right => {
+            (pos2(rect.right() - w * 0.5, rect.top() + inset), pos2(rect.right() - w * 0.5, rect.bottom() - inset))
+        }
+        DropSide::Left => {
+            (pos2(rect.left() + w * 0.5, rect.top() + inset), pos2(rect.left() + w * 0.5, rect.bottom() - inset))
+        }
     };
     painter.line_segment([a, b], Stroke::new(w, azure(255)));
 }
@@ -646,7 +718,13 @@ fn draw_board(ui: &mut egui::Ui, rect: egui::Rect) {
         let ah = (rect.height() * 0.62).min(380.0);
         if aw > 90.0 && ah > 90.0 {
             let ab = Rect::from_center_size(rect.center(), vec2(aw, ah));
-            p.rect(ab, CornerRadius::ZERO, Color32::from_gray(245), Stroke::new(1.0, Color32::from_black_alpha(70)), StrokeKind::Middle);
+            p.rect(
+                ab,
+                CornerRadius::ZERO,
+                Color32::from_gray(245),
+                Stroke::new(1.0, Color32::from_black_alpha(70)),
+                StrokeKind::Middle,
+            );
             p.text(ab.center(), Align2::CENTER_CENTER, "VAROS", FontId::proportional((ah * 0.13).min(46.0)), T::NAVY);
         }
     }
@@ -666,7 +744,9 @@ fn draw_hands(ui: &egui::Ui, board: egui::Rect) {
         x += 36.0;
         for (l, v) in [("X", "266"), ("Y", "118"), ("W", "126"), ("H", "64"), ("∠", "0°")] {
             let fw = 46.0;
-            if x + fw > bar.right() - 30.0 { break; }
+            if x + fw > bar.right() - 30.0 {
+                break;
+            }
             let f = Rect::from_min_size(pos2(x, cy - 12.0), vec2(fw, 24.0));
             p.rect(f, T::r_ctrl(), T::SURFACE, T::hairline(), StrokeKind::Middle);
             p.text(pos2(f.left() + 6.0, cy), Align2::LEFT_CENTER, l, FontId::proportional(9.0), T::FAINT);
@@ -684,7 +764,9 @@ fn draw_hands(ui: &egui::Ui, board: egui::Rect) {
             let tools = ["V", "A", "P", "M", "L", "T", "H", "Z", "I"];
             let mut ty = rail.top() + 18.0;
             for (i, g) in tools.iter().enumerate() {
-                if ty > rail.bottom() - 40.0 { break; }
+                if ty > rail.bottom() - 40.0 {
+                    break;
+                }
                 let c = pos2(rail.center().x, ty);
                 if i == 0 {
                     p.rect_filled(Rect::from_center_size(c, vec2(32.0, 32.0)), T::r_ctrl(), T::ACCENT);
@@ -695,8 +777,20 @@ fn draw_hands(ui: &egui::Ui, board: egui::Rect) {
                 ty += 34.0;
             }
             let sc = pos2(rail.center().x, rail.bottom() - 22.0);
-            p.rect(Rect::from_min_size(sc + vec2(-3.0, -3.0), vec2(15.0, 15.0)), CornerRadius::same(2), T::PANEL, Stroke::new(1.5, T::NAVY), StrokeKind::Middle);
-            p.rect(Rect::from_min_size(sc + vec2(-11.0, -11.0), vec2(15.0, 15.0)), CornerRadius::same(2), T::AMBER, Stroke::new(1.5, T::LINE2), StrokeKind::Middle);
+            p.rect(
+                Rect::from_min_size(sc + vec2(-3.0, -3.0), vec2(15.0, 15.0)),
+                CornerRadius::same(2),
+                T::PANEL,
+                Stroke::new(1.5, T::NAVY),
+                StrokeKind::Middle,
+            );
+            p.rect(
+                Rect::from_min_size(sc + vec2(-11.0, -11.0), vec2(15.0, 15.0)),
+                CornerRadius::same(2),
+                T::AMBER,
+                Stroke::new(1.5, T::LINE2),
+                StrokeKind::Middle,
+            );
         }
     }
 }

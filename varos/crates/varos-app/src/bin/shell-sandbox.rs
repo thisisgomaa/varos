@@ -23,7 +23,7 @@ impl eframe::App for Sandbox {
             return;
         }
         tokens::apply(ui.ctx()); // warm-dark visuals + INSTANT (animation_time = 0); idempotent
-        // the whole surface IS the void: seam-coloured, with an outer seam matching the inner ones.
+                                 // the whole surface IS the void: seam-coloured, with an outer seam matching the inner ones.
         egui::Frame::default()
             .fill(tokens::SEAM)
             .inner_margin(egui::Margin::same(tokens::SEAM_GAP as i8))
