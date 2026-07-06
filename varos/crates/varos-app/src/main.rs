@@ -310,6 +310,33 @@ fn preview_svgs(dir: &str) {
 fn win_state_path() -> Option<std::path::PathBuf> {
     std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("Varos").join("window.txt"))
 }
+/// Crash-log home (`%APPDATA%\Varos\crash.txt`) — same folder as window.txt.
+fn crash_log_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("Varos").join("crash.txt"))
+}
+fn write_crash_log(msg: &str) -> Option<std::path::PathBuf> {
+    let p = crash_log_path()?;
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    std::fs::write(&p, msg).ok()?;
+    Some(p)
+}
+/// The respectful fatal path (ENGINEERING_REVIEW §3.3): unrecoverable startup/OS failures get a readable
+/// dialog + a crash log — never a bare panic (the app has no console, so a panic is an invisible death).
+fn fatal(context: &str, detail: &str) -> ! {
+    let logged = write_crash_log(&format!("VAROS FATAL\n{context}\n{detail}\n"));
+    let mut body = format!("{context}\n\n{detail}");
+    if let Some(p) = logged {
+        body.push_str(&format!("\n\nDetails were saved to:\n{}", p.display()));
+    }
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("Varos couldn't start")
+        .set_description(body)
+        .show();
+    std::process::exit(1);
+}
 /// Restore the last window geometry: `(maximized, outer_x, outer_y, inner_w, inner_h)` in physical px.
 fn load_win_state() -> Option<(bool, i32, i32, u32, u32)> {
     let s = std::fs::read_to_string(win_state_path()?).ok()?;
@@ -332,10 +359,23 @@ fn save_win_state(maxed: bool, x: i32, y: i32, w: u32, h: u32) {
 }
 
 fn main() {
-    // crash breadcrumb: any panic is written to target/panic.txt (the app has no console window).
+    // The user-facing safety net (ENGINEERING_REVIEW §3.3 #4): ANY panic — including paths no table
+    // ever enumerates — writes a crash log and shows a readable dialog instead of dying silently.
+    // target/panic.txt stays as the dev breadcrumb.
     std::panic::set_hook(Box::new(|info| {
+        let msg = format!("VAROS PANIC\n{info}\n");
         let _ = std::fs::create_dir_all("target");
-        let _ = std::fs::write("target/panic.txt", format!("VAROS PANIC\n{info}\n"));
+        let _ = std::fs::write("target/panic.txt", &msg);
+        let logged = write_crash_log(&msg);
+        let mut body = String::from("Something went wrong and Varos has to close.\nYour last saved file is untouched.");
+        if let Some(p) = logged {
+            body.push_str(&format!("\n\nA crash log was saved to:\n{}", p.display()));
+        }
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title("Varos crashed")
+            .set_description(body)
+            .show();
     }));
     if std::env::args().any(|a| a == "--dump-cursors") {
         dump_cursors();
@@ -357,7 +397,10 @@ fn main() {
             return;
         }
     }
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = match EventLoop::new() {
+        Ok(el) => el,
+        Err(e) => fatal("Varos couldn't connect to the Windows desktop.", &e.to_string()),
+    };
     let saved = load_win_state(); // remembered geometry from last session (None on first run)
                                   // winit 0.30 removed WindowBuilder — WindowAttributes carries the identical with_* methods
     let mut attrs = Window::default_attributes()
@@ -372,7 +415,10 @@ fn main() {
         None => attrs.with_inner_size(winit::dpi::LogicalSize::new(1460.0, 860.0)),
     };
     #[allow(deprecated)]
-    let window = Arc::new(event_loop.create_window(attrs).unwrap());
+    let window = match event_loop.create_window(attrs) {
+        Ok(w) => Arc::new(w),
+        Err(e) => fatal("Varos couldn't create its window.", &e.to_string()),
+    };
     match saved {
         // re-open exactly where it was last time …
         Some((_, x, y, _, _)) => window.set_outer_position(PhysicalPosition::new(x, y)),
@@ -400,7 +446,12 @@ fn main() {
     };
     cursors::set_cloaked(hwnd, true);
     window.set_visible(true); // now "shown" but cloaked → not composited (no flash), surface is presentable
-    let mut renderer = pollster::block_on(Renderer::new(window.clone(), size.width, size.height));
+    let mut renderer = match pollster::block_on(Renderer::new(window.clone(), size.width, size.height)) {
+        Ok(r) => r,
+        Err(e) => {
+            fatal("Varos couldn't start its graphics engine.\nUpdating your graphics driver usually fixes this.", &e)
+        }
+    };
 
     let scale = window.scale_factor();
 
@@ -846,5 +897,5 @@ fn main() {
                 }
             }
         })
-        .unwrap();
+        .unwrap_or_else(|e| fatal("The Windows event loop stopped unexpectedly.", &e.to_string()));
 }
