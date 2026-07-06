@@ -126,8 +126,10 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
             if doc.eff_hidden(p.id) {
                 continue;
             }
-            let fillable = p.closed && p.anchors.len() >= 3 && p.fill.is_some();
-            let strokable = p.stroke.is_some() && p.anchors.len() >= 2 && p.stroke_width > 0.0;
+            // resolve each paint to its drawable solid ONCE (Paint::None — and future gradients — ⇒ None)
+            let (fill, stroke) = (p.fill.solid(), p.stroke.solid());
+            let fillable = p.closed && p.anchors.len() >= 3 && fill.is_some();
+            let strokable = stroke.is_some() && p.anchors.len() >= 2 && p.stroke_width > 0.0;
             if !fillable && !strokable {
                 continue;
             }
@@ -136,13 +138,13 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
                 continue;
             }
 
-            let fa = p.fill.map_or(0.0, |f| f[3]) * p.opacity;
-            let sa = p.stroke.map_or(0.0, |s| s[3]) * p.opacity;
+            let fa = fill.map_or(0.0, |f| f[3]) * p.opacity;
+            let sa = stroke.map_or(0.0, |s| s[3]) * p.opacity;
 
             if fillable && strokable && sa < 0.999 {
                 // Varos knockout: fill+stroke composite as an isolated unit, the stroke band REPLACES
                 // the fill beneath it, then the unit fades once → /I /K transparency group.
-                let (fill, stroke) = (p.fill.unwrap(), p.stroke.unwrap());
+                let (fill, stroke) = (fill.unwrap(), stroke.unwrap());
                 let mut ic = Content::new();
                 ic.set_line_cap(LineCapStyle::RoundCap).set_line_join(LineJoinStyle::RoundJoin);
                 let gf = ids.next();
@@ -174,10 +176,10 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
                 c.save_state();
                 let n = gs_name(&mut gss, &mut ids, fa, sa);
                 c.set_parameters(Name(n.as_bytes()));
-                if let (true, Some(f)) = (fillable, p.fill) {
+                if let (true, Some(f)) = (fillable, fill) {
                     c.set_fill_rgb(f[0], f[1], f[2]);
                 }
-                if let (true, Some(s)) = (strokable, p.stroke) {
+                if let (true, Some(s)) = (strokable, stroke) {
                     c.set_stroke_rgb(s[0], s[1], s[2]);
                     c.set_line_width(p.stroke_width);
                 }

@@ -476,7 +476,7 @@ fn thumb_shapes(ed: &Editor, pids_zorder: &[u32]) -> Vec<ThumbShape> {
                 y1 = y1.max(q[1]);
             }
         }
-        raw.push((rings, p.fill, p.stroke));
+        raw.push((rings, p.fill.solid(), p.stroke.solid())); // Paint → the UI snapshot's Option<Rgba>
     }
     if raw.is_empty() {
         return vec![];
@@ -527,7 +527,7 @@ impl Snap {
         let (fill, stroke, sw, opacity) = match repr {
             Some(pi) => {
                 let p = &ed.doc.paths[pi];
-                (p.fill, p.stroke, p.stroke_width, p.opacity)
+                (p.fill.solid(), p.stroke.solid(), p.stroke_width, p.opacity)
             }
             None => (ed.cur_fill, ed.cur_stroke, ed.cur_sw, 1.0),
         };

@@ -19,13 +19,84 @@ pub struct Anchor {
     pub smooth: bool,
 }
 
+/// A path's paint — fill or stroke. The load-bearing colour representation (COLOR_SPEC §1.5): today
+/// only `None` (no paint) and `Solid(rgba)` exist, but making paint an ENUM is the single structural
+/// change that lets swatch-refs and gradients slot in ADDITIVELY later — with no second field
+/// migration. Object-level opacity still multiplies the resolved alpha at render (unchanged).
+///
+/// Serde is hand-written to stay byte-identical to the OLD `Option<Rgba>` encoding: `Paint::None` ⇒
+/// JSON `null`, `Paint::Solid([r,g,b,a])` ⇒ the bare `[r,g,b,a]` array. So every pre-Paint `.vrs`
+/// loads unchanged, and files we write now are still read by anything expecting the old shape. When
+/// gradient / swatch-ref variants arrive they serialise as tagged OBJECTS — add a `visit_map` arm
+/// then and old solids keep parsing.
+///
+/// `Copy` holds only while every variant is `Copy` (`Rgba` is). A future `Gradient(Vec<..>)` variant
+/// will drop `Copy`; the handful of `p.fill` copy sites get revisited then.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum Paint {
+    #[default]
+    None,
+    Solid(Rgba),
+}
+impl Paint {
+    /// From the legacy optional-colour shape: `None ⇒ Paint::None`, `Some(c) ⇒ Paint::Solid(c)`.
+    pub fn from_opt(c: Option<Rgba>) -> Self {
+        match c {
+            Some(c) => Paint::Solid(c),
+            None => Paint::None,
+        }
+    }
+    /// The drawable solid colour if this paint resolves to one today — `None` for `Paint::None` (and,
+    /// once they exist, for gradients / unresolved swatch-refs: callers treat those as "nothing solid
+    /// to draw" until the render path grows a branch for them).
+    pub fn solid(self) -> Option<Rgba> {
+        match self {
+            Paint::Solid(c) => Some(c),
+            Paint::None => None,
+        }
+    }
+}
+impl Serialize for Paint {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Paint::None => s.serialize_none(),   // ⇒ JSON null  (old Option::None)
+            Paint::Solid(c) => c.serialize(s),   // ⇒ [r,g,b,a]  (old Option::Some)
+        }
+    }
+}
+impl<'de> Deserialize<'de> for Paint {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::{Error, SeqAccess, Visitor};
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Paint;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("null or an [r,g,b,a] colour array")
+            }
+            fn visit_unit<E: Error>(self) -> Result<Paint, E> {
+                Ok(Paint::None) // JSON null
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Paint, A::Error> {
+                let mut c = [0.0f32; 4];
+                for (i, ch) in c.iter_mut().enumerate() {
+                    *ch = seq.next_element()?.ok_or_else(|| A::Error::invalid_length(i, &self))?;
+                }
+                Ok(Paint::Solid(c))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Path {
     pub id: u32,
     pub anchors: Vec<Anchor>,
     pub closed: bool,
-    pub fill: Option<Rgba>,
-    pub stroke: Option<Rgba>,
+    #[serde(default)]
+    pub fill: Paint,
+    #[serde(default)]
+    pub stroke: Paint,
     pub stroke_width: f32,
     /// extra hole contours (editable bezier anchors) — e.g. from boolean ops. A compound path: the
     /// outer `anchors` plus these inner rings, filled even-odd so holes cut through. Normally empty.
@@ -53,8 +124,8 @@ impl Path {
             id,
             anchors,
             closed,
-            fill,
-            stroke,
+            fill: Paint::from_opt(fill),
+            stroke: Paint::from_opt(stroke),
             stroke_width,
             holes: vec![],
             opacity: 1.0,
@@ -685,11 +756,13 @@ impl Document {
             .collect();
         Path {
             holes,
+            fill: src.fill,     // preserve the paint EXACTLY (future gradients too), not a solid snapshot
+            stroke: src.stroke,
             opacity: src.opacity,
             hidden: src.hidden,
             locked: src.locked,
             name: src.name.clone(),
-            ..Path::new(id, anchors, src.closed, src.fill, src.stroke, src.stroke_width)
+            ..Path::new(id, anchors, src.closed, None, None, src.stroke_width)
         }
     }
 

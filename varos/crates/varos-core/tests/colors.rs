@@ -3,7 +3,7 @@
 
 use varos_core::editor::{Editor, PaintTarget, ToolKind};
 use varos_core::geom::Rgba;
-use varos_core::model::{Anchor, Path};
+use varos_core::model::{Anchor, Paint, Path};
 
 fn anc(id: u32, x: f32, y: f32) -> Anchor {
     Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
@@ -49,10 +49,10 @@ fn direct_path_level_selection_receives_paint() {
     ed.dsel_path = Some(1); // clicking a path with the Direct tool = path-level select
     ed.paint = PaintTarget::Fill;
     ed.apply_paint(Some(GREEN));
-    assert_eq!(ed.doc.paths[0].fill, Some(GREEN), "Direct path-level select must receive the fill change");
+    assert_eq!(ed.doc.paths[0].fill, Paint::Solid(GREEN), "Direct path-level select must receive the fill change");
     ed.paint = PaintTarget::Stroke;
     ed.apply_paint(None);
-    assert_eq!(ed.doc.paths[0].stroke, None, "removing the stroke must work in Direct path-level mode");
+    assert_eq!(ed.doc.paths[0].stroke, Paint::None, "removing the stroke must work in Direct path-level mode");
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn inspector_reads_the_direct_selection_colour() {
     ed.doc.paths.push(tri(7, 1, Some(RED), Some(BLUE)));
     ed.dsel_path = Some(7);
     let pi = ed.repr_path().expect("a Direct path-level selection is a selection");
-    assert_eq!(ed.doc.paths[pi].fill, Some(RED), "the inspector reads the selected path's real colour");
+    assert_eq!(ed.doc.paths[pi].fill, Paint::Solid(RED), "the inspector reads the selected path's real colour");
 }
 
 #[test]

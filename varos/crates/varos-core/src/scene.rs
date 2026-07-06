@@ -170,7 +170,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         if p.closed && p.anchors.len() >= 3 {
-            if let Some(c) = p.fill {
+            if let Some(c) = p.fill.solid() {
                 let mut rings = vec![ed.doc.outline_px(pi, ppu)];
                 for hole in &p.holes {
                     rings.push(Document::ring_px(hole, true, ppu));
@@ -198,7 +198,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         if p.anchors.len() >= 2 {
-            if let Some(c) = p.stroke {
+            if let Some(c) = p.stroke.solid() {
                 let clip = clip_rects(pi);
                 let mut push = |pts: Vec<Pt>| match &clip {
                     Some(rects) => {
@@ -231,7 +231,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             continue;
         } // cascades from layer/group eyes
         let o = p.opacity;
-        let s_alpha = p.stroke.map_or(1.0, |c| c[3]);
+        let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
         let mut fp = fill_prims(pi);
         let mut sp = stroke_prims(pi);
         if o < 0.999 && !fp.is_empty() && !sp.is_empty() {
