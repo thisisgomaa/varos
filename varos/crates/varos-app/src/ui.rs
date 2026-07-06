@@ -12,12 +12,13 @@ use varos_core::geom::{Pt, Rgba, View};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-// UI_FIGMA palette (§1) — Stage 0a: the values moved VERBATIM into the shell's token file
-// (`shell/tokens.rs::legacy`); same names, same colours, so this file is pixel-identical.
-// Stage 0b flips these imports to the law ramp (BOX_SYSTEM_PLAN §3) and retires `legacy`.
-use varos_app::shell::tokens::legacy::{
-    ACCENT, ACCENT_HOVER, ACCENT_SEL, ACCENT_TINT, BG, BG_SURFACE, BORDER, BORDER_2, CLOSE_RED, FAINT, HOVER,
-    INPUT_WELL, MUTED, NONE_RED, ROW_HOVER, SOLID_PANEL, SWATCH_WELL, TEXT,
+// Stage 0b (BOX_SYSTEM_PLAN §6, ruling 4): the palette now comes from the LAW ramp — the warm black
+// (R ≥ G ≥ B, tokens.rs = UI_VISION_MOCKUP's :root). The old cool-gray names alias their warm
+// successors so this 4k-line file needs no body edits; Stage 4's re-cut chrome uses the law names.
+use varos_app::shell::tokens::{
+    ACCENT, ACCENT_HOVER, ACCENT_SEL, ACCENT_TINT, BG, CLOSE_RED, FAINT, HOVER, INPUT_WELL, LINE as BORDER,
+    LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, ROW_HOVER, SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL,
+    TEXT,
 };
 
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
