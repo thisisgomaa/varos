@@ -344,7 +344,7 @@ Resolved with Ahmed (his answers, 07-06):
    Illustrator bleed, and a clip-off member page ⇒ the object draws **uncut** (bleed wins). Old files
    keep their stored value.
 
-Built 07-06 (🟡 pending Ahmed's hand-verify): header rows (click = active board · dbl-click = rename ·
+Built 07-06, **✅ Ahmed-verified same day** ("الله ينور شغال مية مية"): header rows (click = active board · dbl-click = rename ·
 collapsible · accent edge on the active board), mirror rows, floater strip after a hairline, clip-per-
 member-page render (`tests/boards.rs` locks membership + mirror + floater/bleed), drag-drop constrained
 to the source row's own section(s). **Next piece:** drag a row onto ANOTHER board's section/header =
