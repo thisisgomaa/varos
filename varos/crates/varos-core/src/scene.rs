@@ -122,16 +122,41 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     // page, cut to each page's rect — the straddler shows its part on BOTH pages, like Figma. It
     // draws UNCUT when it stands on no page (free floater) or when any member page has clip OFF
     // (that board invited bleed — the old Illustrator behaviour, per-board toggle).
+    // The clip UNIT is the whole TOP-LEVEL item (Ahmed 07-06 #2): a GROUP's pages are decided once
+    // for the group — nothing inside escapes its cut, so a member standing on NO page vanishes
+    // (exactly Figma's out-of-frame child: still a panel row, invisible on canvas).
     let any_clip = ed.doc.artboards.iter().any(|a| a.clip);
-    let clip_rects = |pi: usize| -> Option<Vec<(f32, f32, f32, f32)>> {
+    type R4 = (f32, f32, f32, f32);
+    let clip_map: std::collections::HashMap<u32, Option<Vec<R4>>> = if any_clip {
+        let mut units: std::collections::HashMap<u32, Option<Vec<R4>>> = std::collections::HashMap::new();
+        let mut m = std::collections::HashMap::new();
+        for (_, p) in ed.doc.paint_list() {
+            let Some(unit) = ed.doc.top_group_of_path(p.id).or_else(|| ed.doc.node_of_path(p.id)) else {
+                m.insert(p.id, None);
+                continue;
+            };
+            let rects = units
+                .entry(unit)
+                .or_insert_with(|| {
+                    let boards = ed.doc.node_boards(unit);
+                    if boards.is_empty() || boards.iter().any(|&i| !ed.doc.artboards[i].clip) {
+                        None
+                    } else {
+                        Some(boards.into_iter().map(|i| ed.doc.artboards[i].rect()).collect())
+                    }
+                })
+                .clone();
+            m.insert(p.id, rects);
+        }
+        m
+    } else {
+        std::collections::HashMap::new()
+    };
+    let clip_rects = |pi: usize| -> Option<Vec<R4>> {
         if !any_clip {
             return None;
         }
-        let boards = ed.doc.path_boards(pi);
-        if boards.is_empty() || boards.iter().any(|&i| !ed.doc.artboards[i].clip) {
-            return None;
-        }
-        Some(boards.into_iter().map(|i| ed.doc.artboards[i].rect()).collect())
+        clip_map.get(&ed.doc.paths[pi].id).cloned().flatten()
     };
     let fill_prims = |pi: usize| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
