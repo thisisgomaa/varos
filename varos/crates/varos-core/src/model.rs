@@ -189,8 +189,15 @@ impl Artboard {
     }
 }
 
+/// A FRESH document's page (clip ON — the 07-06 default). Only `Document::default` uses this.
 fn one_artboard() -> Vec<Artboard> {
     vec![Artboard::default()]
+}
+/// serde default for a file saved BEFORE the `artboards` key existed at all: those docs were
+/// authored with art bleeding freely, so the implicit page must NOT cut — otherwise loading the
+/// file would silently vanish everything drawn outside it (07-06 review fix #1).
+fn legacy_artboards() -> Vec<Artboard> {
+    vec![Artboard { clip: false, ..Artboard::default() }]
 }
 fn yes() -> bool {
     true
@@ -311,7 +318,8 @@ pub struct Document {
     #[serde(default)]
     pub units: DocUnits,
     /// The artboards (pages). Always ≥1 — the model guarantees you can't delete the last one.
-    #[serde(default = "one_artboard")]
+    /// Missing key (pre-artboard file) ⇒ a NON-clipping page; fresh docs get a clipping one.
+    #[serde(default = "legacy_artboards")]
     pub artboards: Vec<Artboard>,
     /// Index of the active artboard within `artboards` (the one the panel edits / new objects land on).
     #[serde(default)]
