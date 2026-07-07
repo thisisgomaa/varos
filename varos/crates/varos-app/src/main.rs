@@ -421,8 +421,9 @@ fn main() {
         .with_window_icon(load_icon())
         .with_visible(false) // created hidden — no visible flash at all
         .with_transparent(true) // lets the startup splash card float over the desktop
-        .with_decorations(false); // borderless during the splash → no window shadow; the
-                                  // editor frame (decorations + shadow + snap) is applied once the splash finishes, below.
+        .with_decorations(false) // borderless during the splash → no window shadow; the
+        // editor frame (decorations + shadow + snap) is applied once the splash finishes, below.
+        .with_min_inner_size(winit::dpi::LogicalSize::new(800.0, 560.0)); // floor: never a degenerate layout
     attrs = match saved {
         Some((_, _, _, w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
         None => attrs.with_inner_size(winit::dpi::LogicalSize::new(1460.0, 860.0)),
@@ -564,6 +565,9 @@ fn main() {
                         elwt.exit();
                     }
                     WindowEvent::Resized(size) => {
+                        if size.width == 0 || size.height == 0 {
+                            return; // minimized / degenerate — don't reconfigure the surface or record garbage bounds
+                        }
                         renderer.resize(size.width, size.height);
                         if !cursors::is_maximized(hwnd) {
                             // remember the normal bounds (so un-maximize/next-open restores them)
@@ -579,9 +583,13 @@ fn main() {
                         window.request_redraw();
                     }
                     WindowEvent::Moved(pos) => {
+                        // Windows parks a MINIMIZED window at (−32000,−32000) with a 0×0 client area —
+                        // never persist that as the "normal" bounds, or it reopens the window invisible.
                         if !cursors::is_maximized(hwnd) {
                             let sz = window.inner_size();
-                            win_norm = (pos.x, pos.y, sz.width, sz.height);
+                            if sz.width > 0 && sz.height > 0 {
+                                win_norm = (pos.x, pos.y, sz.width, sz.height);
+                            }
                         }
                     }
                     WindowEvent::CursorMoved { position, .. } => {
