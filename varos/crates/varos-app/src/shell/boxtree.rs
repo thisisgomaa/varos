@@ -76,14 +76,8 @@ impl ShellState {
             }
         }
 
-        let mut behavior = ShellBehavior {
-            switch: None,
-            close: None,
-            set_active: None,
-            groups,
-            tree_id: Some(self.tree.id()),
-            host,
-        };
+        let mut behavior =
+            ShellBehavior { switch: None, close: None, set_active: None, groups, tree_id: Some(self.tree.id()), host };
         self.tree.ui(&mut behavior, ui);
 
         if let Some((container, tile)) = behavior.set_active {
