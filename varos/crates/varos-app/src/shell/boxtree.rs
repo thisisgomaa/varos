@@ -717,7 +717,8 @@ fn frameless_buttons(ui: &mut egui::Ui) {
 
 /// Azure alpha `a` at the given normalised position — one place for the gradient's colour ramp.
 fn azure(a: u8) -> Color32 {
-    Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, a)
+    let c = T::ACCENT; // single source: the azure scalpel token, never a re-hardcoded hex
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
 /// Fill `rect` with a linear azure gradient: alpha `a_strong` at the edge `dir` points to, fading to
