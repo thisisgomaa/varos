@@ -508,6 +508,9 @@ fn main() {
     let mut panning = false;
     let mut pan_last: Pt = [0.0, 0.0];
     let mut space_down = false;
+    // a drag / marquee / pen gesture that STARTED on the canvas — keep feeding it moves even if the
+    // cursor strays over a panel (C5), so it never freezes under chrome; cleared on button release.
+    let mut canvas_gesture = false;
     // window-geometry persistence: track the NORMAL (un-maximized) bounds so we can save them on close,
     // and refit the view ONCE if we restored a maximized window (so the page isn't tiny in the corner).
     let mut win_norm: (i32, i32, u32, u32) = {
@@ -601,7 +604,8 @@ fn main() {
                                 view.pan[1] + screen_cursor[1] - pan_last[1],
                             ];
                             pan_last = screen_cursor;
-                        } else if !over_panel {
+                        } else if !over_panel || canvas_gesture {
+                            // a gesture that began on the canvas keeps tracking even under a panel (C5)
                             ed.ppu = view.zoom;
                             ed.pointer_move(view.s2w(screen_cursor));
                         }
@@ -653,8 +657,10 @@ fn main() {
                                     } else {
                                         ed.pointer_down(wp);
                                     }
+                                    canvas_gesture = true; // started on the canvas — track it through panels until release
                                 }
                                 ElementState::Released => {
+                                    canvas_gesture = false;
                                     if panning {
                                         panning = false;
                                     } else if over_panel && ed.delete_dragged_guide() {
