@@ -431,13 +431,16 @@ When a wave merges to `main`, update (in the **same** merge):
     full-tree render + every-panel render). Run: `cargo run -p varos-app --bin shell-sandbox`.
   - **Stopped at end of Stage 3 as instructed.** Could NOT verify the *look/feel* (no display) — that is
     Ahmed's hands-on gate. Receipt (تشغيل · تجربة · صادق) delivered in the session hand-off.
+- 2026-07-07 — **NOTE: the repo history was rewritten upstream** (the OSS-publication prep on `main`) —
+  every hash below this line and in older entries refers to the PRE-rewrite ids and no longer resolves;
+  the commits exist 1:1 under new ids (e.g. the fork crash-fix `9fd3d4e` → `54b141c`).
 - 2026-07-07 — **WAVE 2 BUILT** (Ahmed's go 07-07; ui.rs exclusively this session's; varos-core untouched):
   - merged `main` (23 commits: artboard sections, Paint enum, fmt/clippy/CI) into `shell/box-system`
-    (`034395b`) + brought the shell files under the new gates (`167e9a2`, `4947586`).
-  - **Stage 0a** `808101d` — ui.rs palette extracted VERBATIM into `tokens::legacy` (bit-equal proven by
-    test). **Stage 0b** `b03cb6a` — flip to the LAW ramp; legacy retired; new law tokens (ROW_HOVER,
+    (`5162dea`) + brought the shell files under the new gates (`01e46fe`, `c9af2c6`).
+  - **Stage 0a** `e6e2ee9` — ui.rs palette extracted VERBATIM into `tokens::legacy` (bit-equal proven by
+    test). **Stage 0b** `6ab1989` — flip to the LAW ramp; legacy retired; new law tokens (ROW_HOVER,
     INPUT_WELL, ACCENT_HOVER/SEL/TINT). Gate: Ahmed approved the warm look by eye ("ايوة كمل").
-  - **Stage 1** `c9f860a` — the void frame: seam app bar + Brave doc chips (accent line removed) + §3.5
+  - **Stage 1** `ef691c6` — the void frame: seam app bar + Brave doc chips (accent line removed) + §3.5
     right cluster (search pill · Export · Share mirrors) + flush 42px caps + NEW status strip (hints ·
     artboard i/n · working Fit · zoom). Window drag preserved (set_caption). Gate: Ahmed approved.
   - **Stage 4** `c7e70e2`+`01836dc`+`4f756e9` — the real app INSIDE the box tree via a host hook
