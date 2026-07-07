@@ -44,8 +44,7 @@ pub struct Renderer {
     fill_cap: u64,
     fg_buf: wgpu::Buffer,
     fg_cap: u64,
-    // offscreen scene target (the canvas is rendered here, then blitted to the surface). It is the
-    // SAMPLE SOURCE for the frosted-glass panels (we blur this behind each panel).
+    // offscreen scene target (the canvas is rendered here, then blitted to the surface).
     scene_tex: wgpu::Texture,
     scene_view: wgpu::TextureView,
     sampler: wgpu::Sampler,
@@ -60,30 +59,8 @@ pub struct Renderer {
     blit_pipe: wgpu::RenderPipeline,
     blit_bgl: wgpu::BindGroupLayout,
     blit_bg: wgpu::BindGroup,
-    frost_pipe: wgpu::RenderPipeline,
-    frost_bgl: wgpu::BindGroupLayout,
-    frost_bg: wgpu::BindGroup,
-    frost_uni: wgpu::Buffer,
     // native GPU UI (egui paints onto OUR frame, sharing OUR device/queue)
     egui_rend: egui_wgpu::Renderer,
-}
-
-fn make_frost_bg(
-    d: &wgpu::Device,
-    l: &wgpu::BindGroupLayout,
-    view: &wgpu::TextureView,
-    samp: &wgpu::Sampler,
-    uni: &wgpu::Buffer,
-) -> wgpu::BindGroup {
-    d.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("frost"),
-        layout: l,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(samp) },
-            wgpu::BindGroupEntry { binding: 2, resource: uni.as_entire_binding() },
-        ],
-    })
 }
 
 const BLIT_SHADER: &str = r#"
@@ -151,84 +128,6 @@ fn make_blit_bg(
         ],
     })
 }
-
-// ---- frosted-glass panels (the hand-painted GPU UI primitive) ----
-// For each panel rect we draw 2 instances onto the surface: a soft drop-shadow, then the frosted
-// body (samples the offscreen scene behind the panel, blurs it, tints it dark, rounded-rect mask).
-pub const MAX_PANELS: usize = 8;
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct FrostP {
-    rect: [f32; 4],
-    col: [f32; 4],
-    prm: [f32; 4],
-} // rect=x,y,w,h px · col=tint+mix · prm=radius,blur,shadow,solid
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct FrostU {
-    fb: [f32; 2],
-    _pad: [f32; 2],
-    panels: [FrostP; MAX_PANELS],
-}
-
-const FROST_SHADER: &str = r#"
-struct P { rect: vec4<f32>, col: vec4<f32>, prm: vec4<f32> };
-struct U { fb: vec2<f32>, pad: vec2<f32>, panels: array<P, 8> };
-@group(0) @binding(0) var tex: texture_2d<f32>;
-@group(0) @binding(1) var samp: sampler;
-@group(0) @binding(2) var<uniform> u: U;
-struct VO { @builtin(position) pos: vec4<f32>, @location(0) px: vec2<f32>,
-            @location(1) @interpolate(flat) pi: u32, @location(2) @interpolate(flat) mode: u32 };
-@vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
-    var o: VO;
-    let pi = ii / 2u; let mode = ii % 2u;
-    let p = u.panels[pi];
-    var rect = p.rect;
-    if (mode == 0u) { let m = p.prm.z; rect = vec4<f32>(rect.x - m, rect.y - m + 4.0, rect.z + 2.0*m, rect.w + 2.0*m); }
-    var cx = array<f32,6>(0.0,1.0,0.0, 0.0,1.0,1.0);
-    var cy = array<f32,6>(0.0,0.0,1.0, 1.0,0.0,1.0);
-    let c = vec2<f32>(cx[vi], cy[vi]);
-    let px = rect.xy + c * rect.zw;
-    o.px = px; o.pi = pi; o.mode = mode;
-    o.pos = vec4<f32>(px.x / u.fb.x * 2.0 - 1.0, 1.0 - px.y / u.fb.y * 2.0, 0.0, 1.0);
-    return o;
-}
-fn sdRound(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
-    let q = abs(p) - b + vec2<f32>(r);
-    return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - r;
-}
-@fragment fn fs(in: VO) -> @location(0) vec4<f32> {
-    let p = u.panels[in.pi];
-    let center = p.rect.xy + p.rect.zw * 0.5;
-    let half = p.rect.zw * 0.5;
-    let r = p.prm.x;
-    if (in.mode == 0u) {
-        let d = sdRound(in.px - center, half, r);
-        let a = (1.0 - smoothstep(0.0, p.prm.z, max(d, 0.0))) * 0.13;
-        return vec4<f32>(0.0, 0.0, 0.0, clamp(a, 0.0, 1.0));
-    }
-    let d = sdRound(in.px - center, half, r);
-    let aa = 1.0 - smoothstep(-1.0, 1.0, d);
-    if (aa <= 0.001) { discard; }
-    var rgb: vec3<f32>;
-    if (p.prm.w > 0.5) {
-        rgb = p.col.rgb;
-    } else {
-        let uv = in.px / u.fb;
-        let s = vec2<f32>(p.prm.y) / u.fb;
-        var ox = array<f32,13>(0.0, 1.0,-1.0, 0.0, 0.0, 1.0,-1.0, 1.0,-1.0, 2.0,-2.0, 0.0, 0.0);
-        var oy = array<f32,13>(0.0, 0.0, 0.0, 1.0,-1.0, 1.0, 1.0,-1.0,-1.0, 0.0, 0.0, 2.0,-2.0);
-        var wt = array<f32,13>(4.0, 2.0,2.0,2.0,2.0, 1.0,1.0,1.0,1.0, 0.8,0.8,0.8,0.8);
-        var acc = vec3<f32>(0.0); var wsum = 0.0;
-        for (var i = 0; i < 13; i = i + 1) {
-            acc = acc + textureSampleLevel(tex, samp, uv + vec2<f32>(ox[i], oy[i]) * s, 0.0).rgb * wt[i];
-            wsum = wsum + wt[i];
-        }
-        rgb = mix(acc / wsum, p.col.rgb, p.col.a);
-    }
-    return vec4<f32>(rgb, aa);
-}
-"#;
 
 fn make_attach(
     d: &wgpu::Device,
@@ -558,79 +457,6 @@ impl Renderer {
         let comp_bg = make_blit_bg(&device, &blit_bgl, &layer_view, &sampler);
         let op_cap = 1u64 << 16;
         let op_buf = mk(op_cap);
-        // frosted-glass pipeline (samples scene_view; blends onto the surface)
-        let frost_sh = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("frost"),
-            source: wgpu::ShaderSource::Wgsl(FROST_SHADER.into()),
-        });
-        let frost_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("frost"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let frost_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("frost"),
-            bind_group_layouts: &[Some(&frost_bgl)],
-            immediate_size: 0,
-        });
-        let frost_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("frost"),
-            layout: Some(&frost_layout),
-            vertex: wgpu::VertexState {
-                module: &frost_sh,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &frost_sh,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        let frost_uni = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("frostU"),
-            size: std::mem::size_of::<FrostU>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let frost_bg = make_frost_bg(&device, &frost_bgl, &scene_view, &sampler, &frost_uni);
         // egui paints onto the (single-sample) surface in its own pass we own
         let egui_rend = egui_wgpu::Renderer::new(
             &device,
@@ -674,10 +500,6 @@ impl Renderer {
             blit_pipe,
             blit_bgl,
             blit_bg,
-            frost_pipe,
-            frost_bgl,
-            frost_bg,
-            frost_uni,
             egui_rend,
         })
     }
@@ -697,8 +519,6 @@ impl Renderer {
             self.layer_view = lv;
             self.comp_bg = make_blit_bg(&self.device, &self.blit_bgl, &self.layer_view, &self.sampler);
             self.blit_bg = make_blit_bg(&self.device, &self.blit_bgl, &self.scene_view, &self.sampler);
-            self.frost_bg =
-                make_frost_bg(&self.device, &self.frost_bgl, &self.scene_view, &self.sampler, &self.frost_uni);
         }
     }
     /// Shared GPU handles so the UI layer (egui) can render into OUR frame (mandatory: same device/queue).
@@ -1039,8 +859,6 @@ impl Renderer {
         paint_jobs: &[egui::ClippedPrimitive],
         tdelta: &egui::TexturesDelta,
         screen: &egui_wgpu::ScreenDescriptor,
-        panels: &[[f32; 4]],
-        frosted: bool,
     ) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
@@ -1064,34 +882,15 @@ impl Renderer {
         for (id, delta) in &tdelta.set {
             self.egui_rend.update_texture(&self.device, &self.queue, *id, delta);
         }
-        // frosted-glass uniform: one entry per panel. Tint = panel body #1f1f22 mixed 0.62 over the
-        // blurred scene (dark enough for text, glassy enough to read shapes behind it). Radius/blur/
-        // shadow are in physical px (scale logical sizes by ppp so corners line up with egui at any DPI).
-        let np = panels.len().min(MAX_PANELS);
-        let s = screen.pixels_per_point;
-        const TINT: [f32; 3] = [0.1216, 0.1216, 0.1333]; // #1f1f22
-        let mut fu = FrostU {
-            fb: [fw, fh],
-            _pad: [0.0, 0.0],
-            panels: [FrostP { rect: [0.0; 4], col: [0.0; 4], prm: [0.0; 4] }; MAX_PANELS],
-        };
-        for (fp, &rect) in fu.panels.iter_mut().zip(panels) {
-            *fp = FrostP {
-                rect,
-                col: [TINT[0], TINT[1], TINT[2], 0.62],
-                prm: [14.0 * s, 16.0 * s, 16.0 * s, if frosted { 0.0 } else { 1.0 }],
-            }; // [rounding(14), blur, shadow-spread(16)] — light shadow
-        }
-        self.queue.write_buffer(&self.frost_uni, 0, bytemuck::bytes_of(&fu));
         let mut enc = self.device.create_command_encoder(&Default::default());
         let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
         // scene → offscreen (opaque groups + isolated translucent layers, MSAA resolve to scene_view)
         self.record_scene(&mut enc, nbg, &metas, overlay);
-        // blit offscreen → surface, then the frosted-glass panel backings on top of the canvas
+        // blit the offscreen scene → surface (egui chrome is drawn over it in the next pass)
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 multiview_mask: None,
-                label: Some("blit+frost"),
+                label: Some("blit"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     depth_slice: None,
                     view: &tview,
@@ -1108,11 +907,6 @@ impl Renderer {
             rp.set_pipeline(&self.blit_pipe);
             rp.set_bind_group(0, &self.blit_bg, &[]);
             rp.draw(0..3, 0..1);
-            if np > 0 {
-                rp.set_pipeline(&self.frost_pipe);
-                rp.set_bind_group(0, &self.frost_bg, &[]);
-                rp.draw(0..6, 0..(np as u32 * 2));
-            }
         }
         // egui chrome → surface (load — drawn over the canvas)
         {

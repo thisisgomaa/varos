@@ -623,8 +623,6 @@ struct ToolBtn {
 pub struct Ui {
     ctx: egui::Context,
     state: egui_winit::State,
-    pub frosted: bool,          // kept for the renderer signature; false (no glass)
-    pub rects: Vec<egui::Rect>, // panel rects in physical px (for the GPU shadow pass)
     pub repaint: bool,
     tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
     shapes: Vec<ToolBtn>,   // the shape tools, collapsed into one rail slot (right-click → flyout)
@@ -781,8 +779,6 @@ impl Ui {
         Ui {
             ctx,
             state,
-            frosted: false,
-            rects: vec![],
             repaint: false,
             tools,
             shapes,
@@ -939,7 +935,6 @@ impl Ui {
         let mut lay_drag = self.lay_drag;
         let mut lay_anchor = self.lay_anchor;
         let mut ops: Vec<Op> = Vec::new();
-        let rects: Vec<egui::Rect> = Vec::new(); // no floating windows left → no GPU shadow rects (rule 2)
         let mut refpt = self.refpt;
         let mut lock = self.lock;
         let mut ab_lock = self.ab_lock;
@@ -1148,10 +1143,6 @@ impl Ui {
                 (r.max.to_vec2() * out.pixels_per_point).to_pos2(),
             )
         });
-        self.rects = rects
-            .into_iter()
-            .map(|r| egui::Rect::from_min_max((r.min.to_vec2() * ppp).to_pos2(), (r.max.to_vec2() * ppp).to_pos2()))
-            .collect();
         self.repaint = out.viewport_output.get(&egui::ViewportId::ROOT).is_some_and(|v| v.repaint_delay.is_zero())
             || splash.is_some_and(|e| e < SPLASH_DUR); // keep animating the splash
         let jobs = self.ctx.tessellate(out.shapes, out.pixels_per_point);

@@ -541,8 +541,7 @@ fn main() {
             renderer.render_splash(&jobs, &tdelta, &screen);
         } else {
             let world = build_scene(&ed, view.zoom);
-            let panels: Vec<[f32; 4]> = gui.rects.iter().map(|r| [r.min.x, r.min.y, r.width(), r.height()]).collect();
-            renderer.render_ui(&world, view, &jobs, &tdelta, &screen, &panels, gui.frosted);
+            renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
         }
     }
     cursors::set_cloaked(hwnd, false);
@@ -892,10 +891,7 @@ fn main() {
                         // floating card on a transparent surface
                         } else {
                             let world = build_scene(&ed, view.zoom);
-                            // Solid panel (no glass) + one light GPU drop shadow per panel rect.
-                            let panels: Vec<[f32; 4]> =
-                                gui.rects.iter().map(|r| [r.min.x, r.min.y, r.width(), r.height()]).collect();
-                            renderer.render_ui(&world, view, &jobs, &tdelta, &screen, &panels, gui.frosted);
+                            renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
                         }
                         // AFTER rendering this frame (so no mid-frame size change), switch the borderless splash
                         // window into the framed editor; the resulting Resized event syncs the surface next frame.
