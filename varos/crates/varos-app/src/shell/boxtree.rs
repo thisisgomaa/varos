@@ -130,6 +130,100 @@ impl ShellState {
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(&self.tree)
     }
+
+    /// Is a pane of this panel anywhere in the tree?
+    pub fn is_open(&self, panel: PanelId) -> bool {
+        find_pane(&self.tree, panel).is_some()
+    }
+
+    /// The Window-menu action (Ahmed 07-07): CLOSED → open in an AUTOMATIC spot (a tab beside its
+    /// family, else beside Properties/Layers, else a fresh box on the root split). OPEN but hidden
+    /// behind a sibling tab → bring it forward. OPEN and visible → close it (a toggle).
+    pub fn toggle_panel(&mut self, panel: PanelId) {
+        if panel.is_board() {
+            return;
+        }
+        if let Some(id) = find_pane(&self.tree, panel) {
+            let parent_tabs = self.tree.tiles.parent_of(id).and_then(|p| match self.tree.tiles.get(p) {
+                Some(Tile::Container(Container::Tabs(t))) => Some((p, t.active)),
+                _ => None,
+            });
+            match parent_tabs {
+                Some((pid, active)) if active != Some(id) => {
+                    if let Some(Tile::Container(Container::Tabs(t))) = self.tree.tiles.get_mut(pid) {
+                        t.active = Some(id); // it was buried behind a sibling — surface it
+                    }
+                }
+                _ => {
+                    detach(&mut self.tree, id);
+                    self.tree.tiles.remove(id);
+                }
+            }
+            return;
+        }
+        // open: prefer a family sibling's box, then the Properties/Layers box, else a fresh box
+        let anchor = family(panel)
+            .iter()
+            .chain([PanelId::Properties, PanelId::Layers].iter())
+            .filter(|p| **p != panel)
+            .find_map(|p| find_pane(&self.tree, *p));
+        let new = self.tree.tiles.insert_pane(panel);
+        match anchor {
+            Some(a) => add_tab_beside(&mut self.tree, a, new),
+            None => {
+                let root = self.tree.root();
+                if let Some(Tile::Container(Container::Linear(lin))) = root.and_then(|r| self.tree.tiles.get_mut(r)) {
+                    lin.children.push(new);
+                    lin.shares.set_share(new, 0.2);
+                }
+            }
+        }
+    }
+}
+
+/// Panels that belong together — the Window menu drops a newcomer beside its family first.
+fn family(panel: PanelId) -> &'static [PanelId] {
+    match panel {
+        PanelId::Align | PanelId::Pathfinder => &[PanelId::Align, PanelId::Pathfinder],
+        PanelId::Properties | PanelId::Layers => &[PanelId::Properties, PanelId::Layers],
+        PanelId::Swatches => &[PanelId::Properties],
+        PanelId::History | PanelId::Assets => &[PanelId::Layers],
+        _ => &[],
+    }
+}
+
+fn find_pane(tree: &Tree<PanelId>, panel: PanelId) -> Option<TileId> {
+    tree.tiles.iter().find_map(|(id, t)| match t {
+        Tile::Pane(p) if *p == panel => Some(*id),
+        _ => None,
+    })
+}
+
+/// Put `new` in as a TAB beside `anchor`: into the anchor's existing Tabs parent, else wrap the
+/// anchor's slot in a fresh Tabs container holding [anchor, new]. The newcomer becomes active.
+fn add_tab_beside(tree: &mut Tree<PanelId>, anchor: TileId, new: TileId) {
+    let parent = tree.tiles.parent_of(anchor);
+    if let Some(pid) = parent {
+        if let Some(Tile::Container(Container::Tabs(t))) = tree.tiles.get_mut(pid) {
+            let at = t.children.iter().position(|&c| c == anchor).map(|i| i + 1).unwrap_or(t.children.len());
+            t.children.insert(at, new);
+            t.active = Some(new);
+            return;
+        }
+    }
+    // wrap: a new Tabs tile takes the anchor's slot in its Linear parent (share carried over)
+    let tabs_id = tree.tiles.insert_tab_tile(vec![anchor, new]);
+    if let Some(Tile::Container(Container::Tabs(t))) = tree.tiles.get_mut(tabs_id) {
+        t.active = Some(new);
+    }
+    if let Some(pid) = parent {
+        if let Some(Tile::Container(Container::Linear(lin))) = tree.tiles.get_mut(pid) {
+            if let Some(slot) = lin.children.iter().position(|&c| c == anchor) {
+                lin.children[slot] = tabs_id;
+                lin.shares.replace_with(anchor, tabs_id);
+            }
+        }
+    }
 }
 
 fn set_share(tree: &mut Tree<PanelId>, container: TileId, child: TileId, share: f32) {
@@ -309,11 +403,21 @@ fn scroll_arrow(ui: &egui::Ui, center: Pos2, dir: f32, tile_id: TileId) -> bool 
 /// tabbed box's body never collides with its pills strip — the "ScrollArea ID clash" (Ahmed 07-05).
 fn render_body(ui: &mut egui::Ui, rect: Rect, hh: f32, tile_id: TileId, pane: PanelId, host: &mut HostFn<'_>) {
     let body = Rect::from_min_max(pos2(rect.left(), rect.top() + hh), rect.max);
-    // a HOSTED panel owns its whole body (its own margins / scroll / footer — e.g. the Layers list);
-    // the dummy fallback keeps the one shared margin + scroll wrapper.
+    // a HOSTED panel owns its margins/footers, but the BOX owns overflow: unless the panel manages
+    // its own list scroll (Layers), the body SCROLLS instead of slicing the bottom row mid-glyph
+    // (Ahmed 07-07: "الحرف اللي تحت مقصوص"). The dummy fallback keeps its shared margin + scroll.
     let mut handled = false;
     ui.scope_builder(UiBuilder::new().max_rect(body).layout(Layout::top_down(Align::Min)), |ui| {
-        handled = host(pane, ui);
+        if pane.self_scrolling() {
+            handled = host(pane, ui);
+        } else {
+            egui::ScrollArea::vertical().id_salt(("hostbody", tile_id)).auto_shrink([false, false]).show(ui, |ui| {
+                handled = host(pane, ui);
+                if handled {
+                    ui.add_space(10.0); // breathing room — the last row never kisses the border
+                }
+            });
+        }
     });
     if handled {
         return;
@@ -558,8 +662,8 @@ impl Behavior<PanelId> for ShellBehavior<'_> {
         true
     } // the board docks/tabs like any normal box (Ahmed 07-05)
     fn min_size(&self) -> f32 {
-        170.0
-    } // panels stay usable; content scrolls (never breaks)
+        224.0
+    } // panels never crush below a usable width (Ahmed 07-07); content scrolls, never breaks
 
     // ── drag look: no distorted double-render (we paint our own lifted ghost); egui_tiles shows a
     //    clean azure preview of the drop slot; the vacated spot reads as empty void ──

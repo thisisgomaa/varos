@@ -47,6 +47,12 @@ impl PanelId {
         matches!(self, PanelId::Board)
     }
 
+    /// Panels that manage their OWN vertical scrolling (a pinned footer / an internal list) — the
+    /// box must not wrap them in a second ScrollArea (nested scrolls fight over the wheel).
+    pub fn self_scrolling(self) -> bool {
+        matches!(self, PanelId::Board | PanelId::Layers)
+    }
+
     /// Minimum content size hint (points). Used by the tree for min-size clamps (BOX_SYSTEM_PLAN §3.5).
     pub fn min_size(self) -> Vec2 {
         if self.is_board() {
