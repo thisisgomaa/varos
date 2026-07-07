@@ -1,6 +1,6 @@
 # Varos
 
-**A free, open-source vector editor that opens instantly, saves files that are already PDFs, and is being built to treat Arabic type as a first-class citizen.**
+**An Arabic-first, free and open-source vector editor — built in public. It opens instantly, and its working files are already PDFs.**
 
 Built in Rust, drawn directly on the GPU (wgpu + egui, no Electron, no web view). Windows-first. Built in public by a designer and AI pair-programming sessions — every decision documented, every stage hand-tested.
 
@@ -24,7 +24,7 @@ Built in Rust, drawn directly on the GPU (wgpu + egui, no Electron, no web view)
 | Layers with per-artboard sections, cross-board drag | Gradients & swatches | AI that manipulates the document via the schema — no hallucinated coordinates |
 | Smart snapping & guides | Text system | Community template library |
 | `.vrs` save (= valid PDF), SVG/PNG export | SVG import | |
-| 101 headless tests, CI green on every push | | |
+| 101 headless tests — fmt + clippy `-D warnings` + the full suite run on every commit (the GitHub Actions mirror of this gate is temporarily manual-only pending a new-account verification hold; see the note in `ci.yml`) | | |
 
 ## Build
 
