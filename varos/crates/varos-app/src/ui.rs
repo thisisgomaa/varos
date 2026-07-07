@@ -16,9 +16,9 @@ use winit::window::Window;
 // (R ≥ G ≥ B, tokens.rs = UI_VISION_MOCKUP's :root). The old cool-gray names alias their warm
 // successors so this 4k-line file needs no body edits; Stage 4's re-cut chrome uses the law names.
 use varos_app::shell::tokens::{
-    ACCENT, ACCENT_HOVER, ACCENT_SEL, ACCENT_TINT, BG, CLOSE_RED, FAINT, HOVER, INPUT_WELL, LINE as BORDER,
-    LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, RBOX, ROW_HOVER, SEAM, SURFACE as BG_SURFACE,
-    SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
+    ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, INPUT_WELL, LINE as BORDER, LINE2 as BORDER_2, MUTED,
+    NONE_RED, PANEL as SOLID_PANEL, RBOX, ROW_HOVER, RULER_BG, SEAM, SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL,
+    TEXT, VOID_HOVER,
 };
 
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
@@ -114,6 +114,7 @@ enum Op {
     Flip(bool),
     Align(AlignMode),
     Distribute(DistAxis),
+    Bool(varos_core::boolean::BoolOp), // Pathfinder home + the Properties "Shape" mirror
     // ---- artboard ops (i = artboard index) ----
     AbActive(usize),
     AbRect(usize, Option<f32>, Option<f32>, Option<f32>, Option<f32>), // x,y,w,h (each optional)
@@ -667,7 +668,11 @@ pub struct Ui {
     lay_drag: Option<(u32, u32)>,      // Layers row being dragged: (node id, SOURCE section) — the
     // section decides same-section reorder vs cross-board move
     lay_anchor: Option<(u32, u32)>, // Shift-range anchor: (node id, SECTION) — mirror rows share an
-                                    // id across sections, so the id alone picks the wrong appearance
+    // id across sections, so the id alone picks the wrong appearance
+    // ── Stage 4: the BOX TREE hosts the whole workspace (BOX_SYSTEM_PLAN §4) ──
+    shell: varos_app::shell::ShellState, // the box tree; panel bodies render through the host hook
+    board_hole: Option<egui::Rect>,      // the Board pane's interior (logical pts) — the wgpu canvas hole
+    pub board_px: Option<egui::Rect>,    // same, in PHYSICAL px — main.rs fits the view to it
 }
 
 /// The Layers-panel icon set (rasterized Lucide, white).
@@ -830,6 +835,9 @@ impl Ui {
             lay_rename: None,
             lay_drag: None,
             lay_anchor: None,
+            shell: varos_app::shell::ShellState::standard(),
+            board_hole: None,
+            board_px: None,
         }
     }
 
@@ -837,9 +845,22 @@ impl Ui {
     pub fn on_event(&mut self, window: &Window, ev: &WindowEvent) -> bool {
         self.state.on_window_event(window, ev).consumed
     }
-    /// Is the pointer over a panel / popup? (canvas strokes must NOT be swallowed by the panels)
+    /// Is the pointer over chrome (a box, ruler, bar, hand, menu)? The canvas owns everything else.
+    /// Stage 4: the box tree paints the whole workspace on the BACKGROUND layer, so the old
+    /// `is_pointer_over_egui` (panels-only) is wrong — instead: any floating layer wins; on the
+    /// background, everything is chrome EXCEPT the Board pane's interior (the wgpu canvas hole).
     pub fn wants_pointer(&self) -> bool {
-        self.ctx.is_pointer_over_egui() || self.ctx.egui_wants_pointer_input()
+        if self.ctx.egui_is_using_pointer() {
+            return true; // a live widget interaction (field scrub, splitter drag, open menu)
+        }
+        let Some(pos) = self.ctx.input(|i| i.pointer.interact_pos()) else {
+            return false;
+        };
+        match self.ctx.layer_id_at(pos) {
+            None => false,
+            Some(l) if l.order == egui::Order::Background => !self.board_hole.is_some_and(|b| b.contains(pos)),
+            Some(_) => true, // hands / menus / modal / splash float above the tree
+        }
     }
     /// Is a text field actually focused? Only THEN should keys go to egui instead of canvas shortcuts.
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
@@ -911,6 +932,9 @@ impl Ui {
         };
         let ab_dots = &self.ab_dots;
         let ic_fit = &self.ic_fit; // the status strip's Fit control shares the artboard panel's icon
+        let shell = &mut self.shell; // Stage 4: the box tree hosting the whole workspace
+        let prev_hole = self.board_hole; // last frame's canvas hole (the seam underlay paints around it)
+        let mut new_hole: Option<egui::Rect> = None;
         let top = &self.top;
         // layers snapshot (built before the closure — like Snap/AbSnap)
         let layer_rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search);
@@ -921,7 +945,7 @@ impl Ui {
         let mut lay_drag = self.lay_drag;
         let mut lay_anchor = self.lay_anchor;
         let mut ops: Vec<Op> = Vec::new();
-        let mut rects: Vec<egui::Rect> = Vec::new();
+        let rects: Vec<egui::Rect> = Vec::new(); // no floating windows left → no GPU shadow rects (rule 2)
         let mut refpt = self.refpt;
         let mut lock = self.lock;
         let mut ab_lock = self.ab_lock;
@@ -959,34 +983,75 @@ impl Ui {
                     maximized,
                 );
                 build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request);
-                if show_rulers {
-                    build_rulers(root, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops);
-                }
-                if show_rail {
-                    build_rail(ctx, tools, shapes, &mut shape_active, &snap, &mut ops, &mut rects);
-                }
-                if show_dock {
-                    if snap.tool == ToolKind::Artboard {
-                        build_ab_dock(ctx, &absnap, &ab_icons, &mut ab_lock, &mut ops, &mut rects, &mut fit_request);
-                    } else {
-                        build_dock(ctx, &snap, &icons, &mut refpt, &mut lock, &mut ops, &mut rects);
-                    }
-                    // the Layers panel docks UNDER the inspector and grows downward (Ahmed) — pass the
-                    // inspector's rect (just pushed) so it pins to its bottom edge.
-                    let inspector = rects.last().copied();
-                    build_layers(
-                        ctx,
-                        &layer_rows,
-                        layer_icons,
-                        inspector,
-                        &mut lay_search,
-                        &mut lay_rename,
-                        &mut lay_collapsed,
-                        &mut lay_drag,
-                        &mut lay_anchor,
-                        &mut ops,
-                        &mut rects,
-                    );
+                // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
+                // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
+                // frame's hole (one-frame lag on resize, healed by the request_repaint below). ──
+                {
+                    let mid = root.available_rect_before_wrap();
+                    paint_void_underlay(root.painter(), mid, prev_hole);
+                    let mut host = |panel: varos_app::shell::PanelId, ui: &mut egui::Ui| -> bool {
+                        use varos_app::shell::PanelId as P;
+                        match panel {
+                            P::Board => {
+                                let rect = ui.max_rect();
+                                let p = ui.painter().clone();
+                                // a normal box on the void: hairline border, rounded corners patched
+                                // with seam so the scene never pokes past the radius
+                                corner_voids(&p, rect);
+                                p.rect_stroke(
+                                    rect,
+                                    CornerRadius::same(RBOX),
+                                    Stroke::new(1.0, BORDER),
+                                    StrokeKind::Inside,
+                                );
+                                let mut inner = rect.shrink(1.0);
+                                if show_rulers {
+                                    board_rulers(ui, inner, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops);
+                                    inner = egui::Rect::from_min_max(inner.min + egui::vec2(RULER, RULER), inner.max);
+                                }
+                                if show_rail {
+                                    board_rail(ui.ctx(), inner, tools, shapes, &mut shape_active, &snap, &mut ops);
+                                }
+                                if show_dock {
+                                    board_ctlbar(ui.ctx(), inner, &snap, &icons, &mut ops);
+                                }
+                                new_hole = Some(inner);
+                                true
+                            }
+                            P::Properties => {
+                                if snap.tool == ToolKind::Artboard {
+                                    panel_artboard(ui, &absnap, &ab_icons, &mut ab_lock, &mut ops, &mut fit_request);
+                                } else {
+                                    panel_properties(ui, &snap, &icons, &mut refpt, &mut lock, &mut ops);
+                                }
+                                true
+                            }
+                            P::Layers => {
+                                panel_layers(
+                                    ui,
+                                    &layer_rows,
+                                    layer_icons,
+                                    &mut lay_search,
+                                    &mut lay_rename,
+                                    &mut lay_collapsed,
+                                    &mut lay_drag,
+                                    &mut lay_anchor,
+                                    &mut ops,
+                                );
+                                true
+                            }
+                            P::Align => {
+                                panel_align(ui, &icons, &mut ops);
+                                true
+                            }
+                            P::Pathfinder => {
+                                panel_pathfinder(ui, &mut ops);
+                                true
+                            }
+                            _ => false,
+                        }
+                    };
+                    root.scope_builder(egui::UiBuilder::new().max_rect(mid), |ui| shell.ui_hosted(ui, &mut host));
                 }
                 // on-canvas page chrome: a name label + ⋮ menu pinned over each artboard (any tool)
                 build_ab_chrome(
@@ -1059,6 +1124,18 @@ impl Ui {
         apply_ops(ed, ops);
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
         self.state.handle_platform_output(window, out.platform_output);
+        // Stage 4: publish the canvas hole. Logical for the pointer test, physical for main.rs's view
+        // fits. A changed hole (box resized/dragged) repaints once more so the underlay catches up.
+        if new_hole != self.board_hole {
+            self.ctx.request_repaint();
+        }
+        self.board_hole = new_hole;
+        self.board_px = new_hole.map(|r| {
+            egui::Rect::from_min_max(
+                (r.min.to_vec2() * out.pixels_per_point).to_pos2(),
+                (r.max.to_vec2() * out.pixels_per_point).to_pos2(),
+            )
+        });
         self.rects = rects
             .into_iter()
             .map(|r| egui::Rect::from_min_max((r.min.to_vec2() * ppp).to_pos2(), (r.max.to_vec2() * ppp).to_pos2()))
@@ -1085,12 +1162,14 @@ fn lucide(inner: &str) -> String {
 }
 
 fn install_fonts(ctx: &egui::Context) {
+    // §3.4: ui = Segoe UI Variable Text (Win11) → Segoe UI; mono = Cascadia Code → Consolas.
     let mut f = egui::FontDefinitions::default();
-    if let Ok(b) = std::fs::read("C:/Windows/Fonts/segoeui.ttf") {
+    let first = |names: &[&str]| names.iter().find_map(|n| std::fs::read(format!("C:/Windows/Fonts/{n}")).ok());
+    if let Some(b) = first(&["SegUIVar.ttf", "segoeuivf.ttf", "segoeui.ttf"]) {
         f.font_data.insert("ui".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(b)));
         f.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "ui".to_owned());
     }
-    if let Ok(b) = std::fs::read("C:/Windows/Fonts/consola.ttf") {
+    if let Some(b) = first(&["CascadiaCode.ttf", "CASCADIA.TTF", "consola.ttf"]) {
         f.font_data.insert("mono".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(b)));
         f.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "mono".to_owned());
     }
@@ -1100,6 +1179,9 @@ fn install_fonts(ctx: &egui::Context) {
 fn install_style(ctx: &egui::Context) {
     use egui::{FontFamily, TextStyle};
     ctx.set_theme(egui::Theme::Dark);
+    // Stage 4: the shell law is the base (warm visuals + INSTANT + thin overlay scrollbars +
+    // tight seam grab) — the app only adds its text ramp on top.
+    varos_app::shell::tokens::apply(ctx);
     let mut s = (*ctx.style_of(egui::Theme::Dark)).clone();
     s.text_styles = [
         (TextStyle::Heading, FontId::new(13.5, FontFamily::Proportional)),
@@ -1109,18 +1191,8 @@ fn install_style(ctx: &egui::Context) {
         (TextStyle::Monospace, FontId::new(12.5, FontFamily::Monospace)),
     ]
     .into();
-    s.animation_time = 0.0; // a WORK tool: menus/popups appear INSTANTLY, no fade-in (Ahmed, 07-03)
-    let mut v = egui::Visuals::dark();
-    v.override_text_color = Some(TEXT);
-    v.window_shadow = egui::epaint::Shadow::NONE; // GPU pass owns the panel shadow
-    v.popup_shadow = egui::epaint::Shadow::NONE;
-    v.window_fill = SOLID_PANEL;
-    v.window_stroke = Stroke::new(1.0, BORDER);
-    v.window_corner_radius = CornerRadius::same(10);
-    v.selection.bg_fill = ACCENT_SEL;
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
-    s.visuals = v;
-    ctx.set_style_of(egui::Theme::Dark, s);
+    ctx.set_style_of(egui::Theme::Dark, s.clone());
+    ctx.set_style_of(egui::Theme::Light, s);
 }
 
 // ───────────────────────────── hand-rolled dropdown menus ─────────────────────────────
@@ -2817,7 +2889,7 @@ fn build_topbar(
             if check_row(ui, "Tool rail", *show_rail, &top.check) {
                 *show_rail = !*show_rail;
             }
-            if check_row(ui, "Inspector", *show_dock, &top.check) {
+            if check_row(ui, "Control bar", *show_dock, &top.check) {
                 *show_dock = !*show_dock;
             }
         });
@@ -2855,6 +2927,55 @@ fn build_topbar(
             .collect();
         crate::cursors::set_caption((h * ppp) as i32, &px);
     });
+}
+
+/// Seam-fill the `.mid` region EXCEPT the canvas hole (the Board pane's interior, where the wgpu
+/// scene shows through). The void between boxes is exactly this underlay showing in the gaps.
+fn paint_void_underlay(p: &egui::Painter, mid: egui::Rect, hole: Option<egui::Rect>) {
+    match hole.map(|h| h.intersect(mid)).filter(|h| h.is_positive()) {
+        None => {
+            p.rect_filled(mid, CornerRadius::ZERO, SEAM);
+        }
+        Some(h) => {
+            let (l, r) = (mid.left(), mid.right());
+            p.rect_filled(egui::Rect::from_min_max(mid.min, egui::pos2(r, h.top())), CornerRadius::ZERO, SEAM);
+            p.rect_filled(egui::Rect::from_min_max(egui::pos2(l, h.bottom()), mid.max), CornerRadius::ZERO, SEAM);
+            p.rect_filled(
+                egui::Rect::from_min_max(egui::pos2(l, h.top()), egui::pos2(h.left(), h.bottom())),
+                CornerRadius::ZERO,
+                SEAM,
+            );
+            p.rect_filled(
+                egui::Rect::from_min_max(egui::pos2(h.right(), h.top()), egui::pos2(r, h.bottom())),
+                CornerRadius::ZERO,
+                SEAM,
+            );
+        }
+    }
+}
+
+/// Patch the four corners of the Board box with seam-coloured "square minus quarter-arc" wedges, so
+/// the raw wgpu scene never pokes past the box's rounded silhouette.
+fn corner_voids(p: &egui::Painter, rect: egui::Rect) {
+    let r = RBOX as f32;
+    let n = 8; // arc samples — plenty at 8px
+    let corners = [
+        (rect.left_top(), egui::vec2(1.0, 1.0)),
+        (rect.right_top(), egui::vec2(-1.0, 1.0)),
+        (rect.right_bottom(), egui::vec2(-1.0, -1.0)),
+        (rect.left_bottom(), egui::vec2(1.0, -1.0)),
+    ];
+    for (c, dir) in corners {
+        let centre = c + egui::vec2(r * dir.x, r * dir.y);
+        let mut pts = vec![c];
+        for i in 0..=n {
+            let a = std::f32::consts::FRAC_PI_2 * i as f32 / n as f32;
+            let (s, co) = a.sin_cos();
+            // sweep the quarter arc between the two edge tangent points
+            pts.push(centre - egui::vec2(co * r * dir.x, s * r * dir.y));
+        }
+        p.add(egui::Shape::convex_polygon(pts, SEAM, Stroke::NONE));
+    }
 }
 
 /// Stage 1 (§3.5): the status strip — void chrome like the app bar (h 25, seam, 11px faint).
@@ -2924,45 +3045,153 @@ fn build_statusbar(
     });
 }
 
-fn build_rail(
+/// HAND 2 — the floating tool rail (§4.4), pinned INSIDE the board box: a normal box look (panel
+/// fill + hairline + rounded, NO shadow) floating over the canvas hole. Never a tile.
+fn board_rail(
     ctx: &egui::Context,
+    board: egui::Rect,
     tools: &[ToolBtn],
     shapes: &[ToolBtn],
     shape_active: &mut ToolKind,
     s: &Snap,
     ops: &mut Vec<Op>,
-    rects: &mut Vec<egui::Rect>,
 ) {
     // the shapes slot mirrors whichever shape tool is actually active (so the M/L keys update it too)
     if shapes.iter().any(|t| t.kind == s.tool) {
         *shape_active = s.tool;
     }
-    let r = egui::Window::new("tools")
-        .title_bar(false)
-        .resizable(false)
-        .anchor(Align2::LEFT_CENTER, egui::vec2(16.0, 0.0))
-        .frame(panel_frame(7))
+    egui::Area::new(egui::Id::new("hand2-rail"))
+        .order(egui::Order::Middle)
+        .fixed_pos(board.left_top() + egui::vec2(16.0, 86.0))
         .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            for t in tools {
-                if icon_button(ui, &t.tex, s.tool == t.kind).on_hover_text(t.tip).clicked() {
-                    ops.push(Op::Tool(t.kind));
-                }
-                if t.group_end {
-                    divider(ui);
-                }
-                if t.kind == ToolKind::Pen {
-                    // the SHAPES slot sits right after Pen
-                    shape_slot(ui, shapes, shape_active, s, ops);
-                    divider(ui);
-                }
+            egui::Frame {
+                fill: SOLID_PANEL,
+                stroke: Stroke::new(1.0, BORDER),
+                corner_radius: CornerRadius::same(RBOX),
+                inner_margin: Margin::same(7),
+                ..Default::default()
             }
-            divider(ui);
-            fill_stroke_control(ui, s, ops); // Illustrator's fill/stroke box at the rail foot
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for t in tools {
+                    if icon_button(ui, &t.tex, s.tool == t.kind).on_hover_text(t.tip).clicked() {
+                        ops.push(Op::Tool(t.kind));
+                    }
+                    if t.group_end {
+                        divider(ui);
+                    }
+                    if t.kind == ToolKind::Pen {
+                        // the SHAPES slot sits right after Pen
+                        shape_slot(ui, shapes, shape_active, s, ops);
+                        divider(ui);
+                    }
+                }
+                divider(ui);
+                fill_stroke_control(ui, s, ops); // Illustrator's fill/stroke box at the rail foot
+            });
         });
-    if let Some(r) = r {
-        rects.push(r.response.rect);
+}
+
+/// HAND 1 — the floating control bar (§4.4/§3.5), BORN in Stage 4: a box anchored top-centre of the
+/// board, MIRRORING the selection's Transform/Appearance/Align homes (mirrors-only rule). Hidden when
+/// nothing is selected or while the Artboard tool owns the moment.
+fn board_ctlbar(ctx: &egui::Context, board: egui::Rect, s: &Snap, ic: &DockIcons, ops: &mut Vec<Op>) {
+    if !s.sel || s.tool == ToolKind::Artboard {
+        return;
     }
+    let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
+    egui::Area::new(egui::Id::new("hand1-ctlbar"))
+        .order(egui::Order::Middle)
+        .pivot(Align2::CENTER_TOP)
+        .fixed_pos(egui::pos2(board.center().x, board.top() + 22.0))
+        .show(ctx, |ui| {
+            egui::Frame {
+                fill: SOLID_PANEL,
+                stroke: Stroke::new(1.0, BORDER),
+                corner_radius: CornerRadius::same(RBOX),
+                inner_margin: Margin::symmetric(10, 5),
+                ..Default::default()
+            }
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.label(RichText::new(&s.name).color(MUTED).size(11.5));
+                    let fw = 64.0;
+                    if let Some(v) = num_field(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, 1.0, full.clone()) {
+                        ops.push(Op::SetBBox(Some(v), None, None, None, 0.0, 0.0));
+                    }
+                    if let Some(v) = num_field(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, 1.0, full.clone()) {
+                        ops.push(Op::SetBBox(None, Some(v), None, None, 0.0, 0.0));
+                    }
+                    if let Some(v) = num_field(ui, fw, Lab::Letter("W"), "Width", s.w, 0, 1.0, 1.0, 0.0..=1.0e6) {
+                        ops.push(Op::SetBBox(None, None, Some(v), None, 0.0, 0.0));
+                    }
+                    if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 1.0, 0.0..=1.0e6) {
+                        ops.push(Op::SetBBox(None, None, None, Some(v), 0.0, 0.0));
+                    }
+                    if let Some(v) =
+                        num_field(ui, 62.0, Lab::Letter("\u{2220}"), "Rotation", s.rot, 1, 1.0, 0.5, full.clone())
+                    {
+                        ops.push(Op::SetRot(v));
+                    }
+                    bar_sep(ui);
+                    ctl_chip(ui, s.fill, PaintTarget::Fill, ops);
+                    ctl_chip(ui, s.stroke, PaintTarget::Stroke, ops);
+                    if let Some(v) =
+                        num_field(ui, 74.0, Lab::Letter("Op"), "Opacity %", s.opacity * 100.0, 0, 1.0, 0.5, 0.0..=100.0)
+                    {
+                        ops.push(Op::SetOpacity(v / 100.0));
+                    }
+                    bar_sep(ui);
+                    let al = [
+                        (0usize, AlignMode::Left, "Align left"),
+                        (1, AlignMode::CenterH, "Align centre"),
+                        (2, AlignMode::Right, "Align right"),
+                        (4, AlignMode::Middle, "Align middle"),
+                    ];
+                    for (i, m, tip) in al {
+                        if icon_btn(ui, &ic.align[i], tip) {
+                            ops.push(Op::Align(m));
+                        }
+                    }
+                });
+            });
+        });
+}
+
+/// 1×16 vertical hairline separator inside the control bar (§3.5 vsep).
+fn bar_sep(ui: &mut egui::Ui) {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(1.0, 16.0), egui::Sense::hover());
+    ui.painter().vline(r.center().x, r.y_range(), Stroke::new(1.0, BORDER));
+}
+
+/// A 17×17 colour chip (§3.5): click = open the Color Picker for that target (a MIRROR of Appearance).
+fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarget, ops: &mut Vec<Op>) {
+    let (sw, resp) = ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::click());
+    let round = CornerRadius::same(2);
+    match color {
+        Some(c) => {
+            if c[3] < 0.999 {
+                checker(&ui.painter_at(sw), sw, 4.0);
+            }
+            ui.painter().rect_filled(sw, round, rgba_c32a(c));
+        }
+        None => {
+            ui.painter().rect_filled(sw, round, SWATCH_WELL);
+            ui.painter().line_segment(
+                [sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)],
+                Stroke::new(1.4, NONE_RED),
+            );
+        }
+    }
+    ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+    if resp.clicked() {
+        ops.push(Op::OpenPicker(MTarget::Paint(target)));
+    }
+    resp.on_hover_text(match target {
+        PaintTarget::Fill => "Fill",
+        PaintTarget::Stroke => "Stroke",
+    });
 }
 
 /// Illustrator's fill/stroke control: overlapping FILL square (top-left) + STROKE ring (bottom-right);
@@ -3202,53 +3431,31 @@ fn col_toggle(
 /// Click=select · Ctrl=toggle · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate.
 /// Header: title + search. Footer: Group · Delete.
 #[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state, split deferred with ui.rs
-fn build_layers(
-    ctx: &egui::Context,
+fn panel_layers(
+    ui: &mut egui::Ui,
     rows: &[LRow],
     ic: &LayerIcons,
-    dock_below: Option<egui::Rect>,
     search: &mut String,
     rename: &mut Option<(u32, String)>,
     collapsed: &mut std::collections::HashSet<u32>,
     drag: &mut Option<(u32, u32)>,
     anchor: &mut Option<(u32, u32)>,
     ops: &mut Vec<Op>,
-    rects: &mut Vec<egui::Rect>,
 ) {
-    let scr = ctx.content_rect();
-    // pin under the inspector, share its x + width; grow down to the workspace floor
-    let w = dock_below.map(|r| r.width()).unwrap_or(258.0);
-    let left = dock_below.map(|r| r.left()).unwrap_or(scr.right() - w - 16.0);
-    let top = dock_below.map(|r| r.bottom() + 8.0).unwrap_or(scr.top() + 120.0);
-    let list_h = (scr.bottom() - 16.0 - top - 104.0).clamp(90.0, 520.0); // header 70 + footer 34
-                                                                         // columns: eye · lock · [disclosure · thumb · name]. No identity bar, no target/select gutter.
+    let pane = ui.max_rect();
+    let w = pane.width();
+    // search row ≈ 42 + footer 34 — the list gets everything in between (the box grows, the list grows)
+    let list_h = (pane.height() - 42.0 - 34.0).max(60.0);
+    // columns: eye · lock · [disclosure · thumb · name]. No identity bar, no target/select gutter.
     let (eye_w, lock_w) = (26.0, 22.0);
     let body_x0 = eye_w + lock_w + 8.0;
-    let frame = egui::Frame {
-        fill: BG,
-        corner_radius: CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 },
-        stroke: Stroke::new(1.0, BORDER),
-        inner_margin: Margin::same(0),
-        ..Default::default()
-    };
-    let r = egui::Window::new("layers")
-        .title_bar(false)
-        .resizable(false)
-        .fixed_pos(egui::pos2(left, top))
-        .fixed_size(egui::vec2(w, list_h + 104.0))
-        .frame(frame)
-        .show(&ctx.clone(), |ui| {
-            ui.set_width(w);
+    {
+        {
             let hairline = |ui: &mut egui::Ui| {
                 let (r, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
                 ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, BORDER));
             };
-            // ── header: title + search ──
-            ui.add_space(9.0);
-            ui.horizontal(|ui| {
-                ui.add_space(13.0);
-                ui.label(RichText::new("Layers").color(TEXT).strong().size(12.5));
-            });
+            // ── header: search only (the box header already carries the "Layers" title) ──
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add_space(11.0);
@@ -3681,9 +3888,7 @@ fn build_layers(
                     ops.push(Op::LayerDeleteSel);
                 }
             });
-        });
-    if let Some(r) = r {
-        rects.push(r.response.rect);
+        }
     }
 }
 
@@ -3699,24 +3904,21 @@ fn elide(name: &str, avail: f32, size: f32) -> String {
     s
 }
 
-fn build_dock(
-    ctx: &egui::Context,
+/// The Properties pane body (Stage 4): the old inspector dock re-housed inside the
+/// [Properties|Layers] box — Transform · Appearance · Shape (a Pathfinder MIRROR).
+/// Align moved out to its own panel (ONE-HOME rule).
+fn panel_properties(
+    ui: &mut egui::Ui,
     s: &Snap,
     ic: &DockIcons,
     refpt: &mut (f32, f32),
     lock: &mut bool,
     ops: &mut Vec<Op>,
-    rects: &mut Vec<egui::Rect>,
 ) {
-    let inner = 214.0;
     let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
-    let r = egui::Window::new("dock")
-        .title_bar(false)
-        .resizable(false)
-        .anchor(Align2::RIGHT_CENTER, egui::vec2(-16.0, 0.0))
-        .frame(panel_frame(13))
-        .show(ctx, |ui| {
-            ui.set_width(inner);
+    egui::ScrollArea::vertical().id_salt("props-body").auto_shrink([false, false]).show(ui, |ui| {
+        egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+            let inner = ui.available_width();
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
             ui.label(RichText::new(&s.name).color(if s.sel { TEXT } else { MUTED }).size(12.5).strong());
             ui.add_space(2.0);
@@ -3809,40 +4011,123 @@ fn build_dock(
             }
 
             hsep(ui, inner);
-            ui.label(RichText::new("ALIGN").color(MUTED).size(10.0).strong());
+            ui.label(RichText::new("SHAPE").color(MUTED).size(10.0).strong());
             ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                if icon_btn(ui, &ic.align[0], "Align left") {
-                    ops.push(Op::Align(AlignMode::Left));
-                }
-                if icon_btn(ui, &ic.align[1], "Align centre") {
-                    ops.push(Op::Align(AlignMode::CenterH));
-                }
-                if icon_btn(ui, &ic.align[2], "Align right") {
-                    ops.push(Op::Align(AlignMode::Right));
-                }
-                if icon_btn(ui, &ic.align[3], "Align top") {
-                    ops.push(Op::Align(AlignMode::Top));
-                }
-                if icon_btn(ui, &ic.align[4], "Align middle") {
-                    ops.push(Op::Align(AlignMode::Middle));
-                }
-                if icon_btn(ui, &ic.align[5], "Align bottom") {
-                    ops.push(Op::Align(AlignMode::Bottom));
-                }
-            });
-            ui.horizontal(|ui| {
-                if icon_btn(ui, &ic.align[6], "Distribute horizontal centres") {
-                    ops.push(Op::Distribute(DistAxis::Horizontal));
-                }
-                if icon_btn(ui, &ic.align[7], "Distribute vertical centres") {
-                    ops.push(Op::Distribute(DistAxis::Vertical));
-                }
-            });
+            pathfinder_row(ui, ops); // a MIRROR of the Pathfinder home (the mockup's Shape section)
         });
-    if let Some(r) = r {
-        rects.push(r.response.rect);
+    });
+}
+
+/// The Align pane body — THE home of align/distribute (ONE-HOME rule; the control bar mirrors it).
+fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, ops: &mut Vec<Op>) {
+    egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+        ui.label(RichText::new("ALIGN OBJECTS").color(MUTED).size(10.0).strong());
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            if icon_btn(ui, &ic.align[0], "Align left") {
+                ops.push(Op::Align(AlignMode::Left));
+            }
+            if icon_btn(ui, &ic.align[1], "Align centre") {
+                ops.push(Op::Align(AlignMode::CenterH));
+            }
+            if icon_btn(ui, &ic.align[2], "Align right") {
+                ops.push(Op::Align(AlignMode::Right));
+            }
+            if icon_btn(ui, &ic.align[3], "Align top") {
+                ops.push(Op::Align(AlignMode::Top));
+            }
+            if icon_btn(ui, &ic.align[4], "Align middle") {
+                ops.push(Op::Align(AlignMode::Middle));
+            }
+            if icon_btn(ui, &ic.align[5], "Align bottom") {
+                ops.push(Op::Align(AlignMode::Bottom));
+            }
+        });
+        ui.add_space(4.0);
+        ui.label(RichText::new("DISTRIBUTE").color(MUTED).size(10.0).strong());
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            if icon_btn(ui, &ic.align[6], "Distribute horizontal centres") {
+                ops.push(Op::Distribute(DistAxis::Horizontal));
+            }
+            if icon_btn(ui, &ic.align[7], "Distribute vertical centres") {
+                ops.push(Op::Distribute(DistAxis::Vertical));
+            }
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Align to").color(MUTED).size(11.5));
+            ui.label(RichText::new("Selection").color(FAINT).size(11.5)); // honest: the engine aligns within the selection
+        });
+    });
+}
+
+/// The Pathfinder pane body — THE home of the boolean ops (the i_overlay engine via `Editor::pathfinder`).
+fn panel_pathfinder(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
+    egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+        ui.label(RichText::new("SHAPE MODES").color(MUTED).size(10.0).strong());
+        ui.add_space(2.0);
+        pathfinder_row(ui, ops);
+        ui.add_space(4.0);
+        ui.label(RichText::new("Unite \u{b7} Minus Front \u{b7} Intersect \u{b7} Exclude").color(FAINT).size(10.5));
+    });
+}
+
+/// The four boolean buttons (Unite / Minus Front / Intersect / Exclude) — hand-painted glyphs:
+/// two overlapping squares with the op's region filled. Shared by the Pathfinder home + Shape mirror.
+fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
+    use varos_core::boolean::BoolOp;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        for (op, tip) in [
+            (BoolOp::Unite, "Unite"),
+            (BoolOp::MinusFront, "Minus Front"),
+            (BoolOp::Intersect, "Intersect"),
+            (BoolOp::Exclude, "Exclude"),
+        ] {
+            if pf_btn(ui, op, tip) {
+                ops.push(Op::Bool(op));
+            }
+        }
+    });
+}
+
+/// One pathfinder button: 34×28 hover chip; the glyph = two 12px squares overlapped by 4.
+fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str) -> bool {
+    use varos_core::boolean::BoolOp;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(34.0, 28.0), egui::Sense::click());
+    let p = ui.painter();
+    if resp.hovered() {
+        p.rect_filled(rect, CornerRadius::same(3), HOVER);
     }
+    let col = if resp.hovered() { TEXT } else { MUTED };
+    let a = egui::Rect::from_min_size(rect.center() - egui::vec2(10.0, 8.0), egui::vec2(12.0, 12.0));
+    let b = egui::Rect::from_min_size(rect.center() - egui::vec2(2.0, 4.0), egui::vec2(12.0, 12.0));
+    let rr = CornerRadius::same(2);
+    match op {
+        BoolOp::Unite => {
+            p.rect_filled(a, rr, col);
+            p.rect_filled(b, rr, col);
+        }
+        BoolOp::MinusFront => {
+            p.rect_filled(a, rr, col);
+            p.rect_filled(b, rr, SOLID_PANEL);
+            p.rect_stroke(b, rr, Stroke::new(1.0, col), StrokeKind::Middle);
+        }
+        BoolOp::Intersect => {
+            p.rect_stroke(a, rr, Stroke::new(1.0, col), StrokeKind::Middle);
+            p.rect_stroke(b, rr, Stroke::new(1.0, col), StrokeKind::Middle);
+            p.rect_filled(a.intersect(b), CornerRadius::ZERO, col);
+        }
+        BoolOp::Exclude => {
+            p.rect_filled(a, rr, col);
+            p.rect_filled(b, rr, col);
+            p.rect_filled(a.intersect(b), CornerRadius::ZERO, SOLID_PANEL);
+        }
+    }
+    resp.on_hover_text(tip).clicked()
 }
 
 // ───────────────────────────── artboard inspector ─────────────────────────────
@@ -3934,26 +4219,20 @@ fn pill_btn(ui: &mut egui::Ui, label: &str, disabled: bool) -> bool {
     resp.clicked() && !disabled
 }
 
-/// The Artboard inspector dock (shown in place of the object inspector when the Artboard tool is active).
-fn build_ab_dock(
-    ctx: &egui::Context,
+/// The Artboard inspector (Stage 4: the Properties pane's body while the Artboard tool is active).
+fn panel_artboard(
+    ui: &mut egui::Ui,
     s: &AbSnap,
     ic: &AbIcons,
     ab_lock: &mut bool,
     ops: &mut Vec<Op>,
-    rects: &mut Vec<egui::Rect>,
     fit_request: &mut Option<usize>,
 ) {
-    let inner = 214.0;
     let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
     let i = s.active;
-    let r = egui::Window::new("ab-dock")
-        .title_bar(false)
-        .resizable(false)
-        .anchor(Align2::RIGHT_CENTER, egui::vec2(-16.0, 0.0))
-        .frame(panel_frame(13))
-        .show(ctx, |ui| {
-            ui.set_width(inner);
+    egui::ScrollArea::vertical().id_salt("ab-body").auto_shrink([false, false]).show(ui, |ui| {
+        egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+            let inner = ui.available_width();
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Artboard").color(TEXT).size(13.0).strong());
@@ -4118,9 +4397,7 @@ fn build_ab_dock(
                 }
             });
         });
-    if let Some(r) = r {
-        rects.push(r.response.rect);
-    }
+    });
 }
 
 /// On-canvas page chrome: a name label (top-left of each page) + a ⋮ button opening the edit menu. The
@@ -4264,12 +4541,14 @@ fn fmt_ruler(v: f32, grid: f32, dec: usize) -> String {
     format!("{:.*}", dec, v)
 }
 
-/// Top + left rulers (Ctrl+R). Ticks sit on the SAME base-5 lattice as the dot grid (`grid` = the finest
-/// visible dot spacing) so they line up exactly; every 5th tick is labeled. Numbers read relative to
-/// `origin` (top-left, Y-down). A live cyan tick tracks the pointer; the corner box drag-sets the origin
-/// (snapped to page corners / grid) and double-click resets it. egui panels, so canvas input is gated.
-fn build_rulers(
-    root: &mut egui::Ui,
+/// Top + left rulers (Ctrl+R), drawn INSIDE the Board box (Stage 4): two 18px strips hugging its top
+/// and left edges (§3.5: bg = ruler_bg). Ticks sit on the SAME base-5 lattice as the dot grid; every
+/// big tick is labeled. Numbers read relative to `origin`; a live tick tracks the pointer; the corner
+/// box drag-sets the origin (snapped) and double-click resets it.
+#[allow(clippy::too_many_arguments)]
+fn board_rulers(
+    ui: &mut egui::Ui,
+    board: egui::Rect,
     view: View,
     ppp: f32,
     grid: f32,
@@ -4277,7 +4556,6 @@ fn build_rulers(
     reset: [f32; 2],
     ops: &mut Vec<Op>,
 ) {
-    let frame = egui::Frame { fill: BG, inner_margin: Margin::ZERO, ..Default::default() };
     let num_font = FontId::proportional(9.5);
     let dec = ruler_dec(grid);
     // label every Nth grid-tick so numbers stay ~70 pts apart at ANY zoom (dense, never a vast gap). N is a
@@ -4285,12 +4563,13 @@ fn build_rulers(
     let ms_pts = grid * view.zoom / ppp.max(1e-6); // one grid-tick in screen points
     let label_every =
         [1i64, 2, 5, 10, 20, 50, 100, 200].into_iter().find(|&n| n as f32 * ms_pts >= 70.0).unwrap_or(200);
-    let pointer = root.ctx().pointer_latest_pos();
+    let pointer = ui.ctx().pointer_latest_pos();
 
     // top (horizontal) ruler — ticks at WORLD multiples of `grid` (land on the dots), label every 5th
-    egui::Panel::top("ruler-h").exact_size(RULER).frame(frame).show(root, |ui| {
-        let r = ui.max_rect();
+    {
+        let r = egui::Rect::from_min_max(board.left_top(), egui::pos2(board.right(), board.top() + RULER));
         let p = ui.painter_at(r);
+        p.rect_filled(r, CornerRadius::ZERO, RULER_BG);
         p.hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, BORDER));
         let x_lo = r.left() + RULER; // ticks start after the corner box
         let v_lo = view.s2w([x_lo * ppp, 0.0])[0] - origin[0];
@@ -4353,7 +4632,7 @@ fn build_rulers(
         // corner box: drag sets the origin (snapped), double-click resets it
         let corner = egui::Rect::from_min_size(r.left_top(), egui::vec2(RULER, RULER));
         let resp = ui.interact(corner, ui.id().with("ruler-corner"), egui::Sense::click_and_drag());
-        p.rect_filled(corner, CornerRadius::ZERO, BG);
+        p.rect_filled(corner, CornerRadius::ZERO, RULER_BG);
         p.vline(corner.right() - 0.5, r.y_range(), Stroke::new(1.0, BORDER));
         let c = corner.center();
         p.line_segment([egui::pos2(c.x - 3.0, c.y), egui::pos2(c.x + 3.0, c.y)], Stroke::new(1.0, MUTED));
@@ -4369,12 +4648,16 @@ fn build_rulers(
         if resp.drag_stopped() {
             ops.push(Op::RulerOrigin(None));
         }
-    });
+    }
 
     // left (vertical) ruler — numbers rotated 90° (read upward), like Illustrator
-    egui::Panel::left("ruler-v").exact_size(RULER).resizable(false).frame(frame).show(root, |ui| {
-        let r = ui.max_rect();
+    {
+        let r = egui::Rect::from_min_max(
+            egui::pos2(board.left(), board.top() + RULER),
+            egui::pos2(board.left() + RULER, board.bottom()),
+        );
         let p = ui.painter_at(r);
+        p.rect_filled(r, CornerRadius::ZERO, RULER_BG);
         p.vline(r.right() - 0.5, r.y_range(), Stroke::new(1.0, BORDER));
         let v_lo = view.s2w([0.0, r.top() * ppp])[1] - origin[1];
         let v_hi = view.s2w([0.0, r.bottom() * ppp])[1] - origin[1];
@@ -4431,7 +4714,7 @@ fn build_rulers(
         if dr.drag_stopped() {
             ops.push(Op::GuideCommit);
         }
-    });
+    }
 }
 
 /// While the ruler zero-point is being dragged, a full-canvas DASHED crosshair (vertical = X, horizontal
@@ -4520,6 +4803,7 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::Flip(h) => ed.flip(h),
             Op::Align(m) => ed.align(m),
             Op::Distribute(a) => ed.distribute(a),
+            Op::Bool(op) => ed.pathfinder(op),
             Op::AbActive(i) => ed.ab_set_active(i),
             Op::AbRect(i, x, y, w, h) => ed.ab_set_rect(i, x, y, w, h),
             Op::AbName(i, s) => ed.ab_rename(i, s),
