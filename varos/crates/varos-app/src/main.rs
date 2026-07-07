@@ -851,18 +851,16 @@ fn main() {
                                 }
                             }
                         }
-                        // Cursor: over a panel show a UI cursor (↔ on a number field, arrow elsewhere) — NOT
-                        // the tool/pen cursor; over the canvas show the tool's cursor.
+                        // Cursor: over chrome show the UI's OWN cursor (egui's icon mapped to the
+                        // Win32 set — seam-resize arrows on box splitters, ↔ on a scrubbed field,
+                        // arrow elsewhere); over the canvas show the tool's cursor. It was hardwired
+                        // to Select here, which broke the new box seams' arrows (Ahmed 07-07).
                         let ck = if panning {
                             CK::Grab
                         } else if space_down {
                             CK::Hand
                         } else if gui.wants_pointer() {
-                            if gui.scrub_hover() {
-                                CK::ResizeH
-                            } else {
-                                CK::Select
-                            }
+                            gui.chrome_ck()
                         } else {
                             desired_ck(&ed, view.s2w(screen_cursor))
                         };
