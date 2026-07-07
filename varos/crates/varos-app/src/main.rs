@@ -217,6 +217,19 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
     }
 }
 
+/// Fit an artboard into the CANVAS area — the Board box's interior when the shell reports one
+/// (Stage 4; physical px), else the whole window. Pan shifts so the page centres in the BOX.
+fn fit_to_board(gui: &ui::Ui, window: &Window, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
+    let sz = window.inner_size();
+    let b = gui
+        .board_px
+        .unwrap_or(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(sz.width as f32, sz.height as f32)));
+    let mut v = View::fit(x, y, w, h, b.width(), b.height(), k);
+    v.pan[0] += b.left();
+    v.pan[1] += b.top();
+    v
+}
+
 /// Snapshot of the current selection for the native egui Properties panel (spike, read-only).
 fn load_icon() -> Option<winit::window::Icon> {
     let img = image::load_from_memory(include_bytes!("../icon.png")).ok()?.into_rgba8();
@@ -502,6 +515,9 @@ fn main() {
         saved.map(|(_, x, y, w, h)| (x, y, w, h)).unwrap_or((p.x, p.y, sz.width, sz.height))
     };
     let mut refit_pending = saved.is_some_and(|(m, ..)| m);
+    // Stage 4: refit into the Board box on the first real frame (the factor = how tight); the
+    // pre-shell fits centre on the whole window, so one box-aware pass corrects them.
+    let mut board_fit_pending: Option<f32> = Some(0.45);
 
     // ---- the 🔖 slice: the open .vrs + unsaved-changes tracking (drives the title/tab "*") ----
     let mut cur_file: Option<std::path::PathBuf> = None;
@@ -557,7 +573,7 @@ fn main() {
                         } else if refit_pending {
                             // restored a maximized window → fit the page to the (now large) view ONCE
                             let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                            view = View::fit(a.x, a.y, a.w, a.h, size.width as f32, size.height as f32, 0.9);
+                            view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
                             refit_pending = false;
                         }
                         window.request_redraw();
@@ -701,10 +717,9 @@ fn main() {
                                 let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
                                 let cs = format!("{:?}", code);
                                 if mc && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {
-                                    // Ctrl+0 = Fit Artboard in Window
+                                    // Ctrl+0 = Fit Artboard in the Board box
                                     let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                    let sz = window.inner_size();
-                                    view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                                    view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
                                 } else if mc && code == KeyCode::KeyS {
                                     // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
                                     let dest = if ms { None } else { cur_file.clone() }.or_else(|| {
@@ -758,16 +773,7 @@ fn main() {
                                                     cur_file = Some(p);
                                                     saved_rev = ed.rev;
                                                     let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                                    let sz = window.inner_size();
-                                                    view = View::fit(
-                                                        a.x,
-                                                        a.y,
-                                                        a.w,
-                                                        a.h,
-                                                        sz.width as f32,
-                                                        sz.height as f32,
-                                                        0.9,
-                                                    );
+                                                    view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
                                                 }
                                                 Err(e) => {
                                                     rfd::MessageDialog::new()
@@ -812,11 +818,20 @@ fn main() {
                             last_title = title;
                             window.request_redraw(); // repaint once more so the tab text shows this change
                         }
-                        // a "Fit in window" request from the artboard panel / ⋮ menu (this frame's view update)
+                        // a "Fit in window" request from the artboard panel / status Fit / ⋮ menu
                         if let Some(i) = gui.fit_request.take() {
-                            if let Some(a) = ed.doc.artboards.get(i) {
-                                let sz = window.inner_size();
-                                view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                            if let Some(a) = ed.doc.artboards.get(i).cloned() {
+                                view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
+                            }
+                        }
+                        // Stage 4: the first non-splash frame knows the Board box — refit the startup
+                        // view INTO it once (the pre-shell fit centred on the whole window).
+                        if let Some(k) = board_fit_pending {
+                            if !gui.splashing() && gui.board_px.is_some() {
+                                let a = ed.doc.active_artboard().cloned().unwrap_or_default();
+                                view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, k);
+                                board_fit_pending = None;
+                                window.request_redraw();
                             }
                         }
                         // custom title-bar window controls
@@ -836,18 +851,16 @@ fn main() {
                                 }
                             }
                         }
-                        // Cursor: over a panel show a UI cursor (↔ on a number field, arrow elsewhere) — NOT
-                        // the tool/pen cursor; over the canvas show the tool's cursor.
+                        // Cursor: over chrome show the UI's OWN cursor (egui's icon mapped to the
+                        // Win32 set — seam-resize arrows on box splitters, ↔ on a scrubbed field,
+                        // arrow elsewhere); over the canvas show the tool's cursor. It was hardwired
+                        // to Select here, which broke the new box seams' arrows (Ahmed 07-07).
                         let ck = if panning {
                             CK::Grab
                         } else if space_down {
                             CK::Hand
                         } else if gui.wants_pointer() {
-                            if gui.scrub_hover() {
-                                CK::ResizeH
-                            } else {
-                                CK::Select
-                            }
+                            gui.chrome_ck()
                         } else {
                             desired_ck(&ed, view.s2w(screen_cursor))
                         };
@@ -884,6 +897,7 @@ fn main() {
                                 renderer.resize(sz.width, sz.height);
                                 let a = ed.doc.active_artboard().cloned().unwrap_or_default();
                                 view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                                board_fit_pending = Some(0.9); // the box re-lays-out at the new size — refit into it
                                 refit_pending = false;
                             }
                             editor_framed = true;
