@@ -63,7 +63,7 @@ const IC_DIST_V: &str = r#"<rect x="6" y="3" width="12" height="3" rx="1"/><rect
 // top-bar icons: menu (☰). Window min/max/close are painted directly in `winctl` (crisp Win11 glyphs).
 const IC_MENU: &str = r#"<path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/>"#;
 // top-bar content icons: search · layout · panels checklist · new-tab · tab-close · check
-const IC_SEARCH: &str = r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>"#;
+const IC_SEARCH: &str = IC_L_SEARCH; // identical glyph to the Layers search — one source, no dup literal
 const IC_PLUS: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
 const IC_X: &str = r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#;
 const IC_MAGNET: &str = r#"<path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15"/><path d="m5 8 4 4"/><path d="m12 15 4 4"/>"#;
@@ -1281,7 +1281,8 @@ fn menu_below(
 fn panel_frame(margin: i8) -> egui::Frame {
     egui::Frame {
         fill: SOLID_PANEL,
-        corner_radius: CornerRadius::same(14),
+        corner_radius: CornerRadius::same(RBOX), // boxes = 8 (law); 14 was the dead floating-shell look
+
         stroke: Stroke::new(1.0, BORDER),
         // egui 0.31+ counts the 1px stroke as padding — compensate so content sits EXACTLY where it
         // did on 0.27 (the zero-perceptible-difference bar).
@@ -2395,19 +2396,7 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
     let scr = ctx.content_rect();
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("splash")));
     let card = egui::Rect::from_center_size(scr.center() + egui::vec2(0.0, 2.0), egui::vec2(520.0, 300.0));
-    // soft drop shadow — many faint layers (smooth, light), spread wide with a quadratic fade-out
-    let n = 16;
-    for i in 0..n {
-        let f = i as f32 / (n - 1) as f32;
-        let grow = 1.0 + f * 40.0;
-        let off = 3.0 + f * 9.0;
-        let a = (1.0 - f).powi(2) * (6.0 / 255.0) * ca;
-        p.rect_filled(
-            card.translate(egui::vec2(0.0, off)).expand(grow),
-            CornerRadius::same((16.0 + grow) as u8),
-            rgba_a(0, 0, 0, a),
-        );
-    }
+    // rule 2 — NOT ONE SHADOW: the 1px hairline below is the only separation ("الفصل بخط شعرة، مش ضل")
     p.rect_filled(card, CornerRadius::same(16), with_a(SOLID_PANEL, ca));
     p.rect_stroke(card, CornerRadius::same(16), Stroke::new(1.0, with_a(BORDER, ca)), StrokeKind::Middle);
     p.line_segment(
