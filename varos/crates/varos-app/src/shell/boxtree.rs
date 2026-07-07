@@ -394,7 +394,7 @@ fn draw_grip(ui: &egui::Ui, rect: Rect, tile_id: TileId) -> egui::Response {
 /// `dir`: -1.0 draws ‹ (scroll left), +1.0 draws › (scroll right). Same capsule look as a tab. Returns
 /// true on click. Only the caller decides WHEN to show it (left only if scrolled off left, etc.).
 fn scroll_arrow(ui: &egui::Ui, center: Pos2, dir: f32, tile_id: TileId) -> bool {
-    let rad = 11.0;
+    let rad = T::RCAP as f32; // same capsule radius as the tab pills (one token)
     let hit = Rect::from_center_size(center, vec2(2.0 * rad, 2.0 * rad));
     let r = ui.interact(hit, ui.id().with(("tabarrow", tile_id, dir as i32)), Sense::click());
     let p = ui.painter();
@@ -572,7 +572,7 @@ impl Behavior<PanelId> for ShellBehavior<'_> {
                             } else {
                                 Color32::TRANSPARENT
                             };
-                            ui.painter().rect_filled(pill, CornerRadius::same(11), bg); // capsule = a Claude bubble
+                            ui.painter().rect_filled(pill, CornerRadius::same(T::RCAP), bg); // capsule = a Claude bubble
                             ui.painter().text(
                                 pill.center(),
                                 Align2::CENTER_CENTER,

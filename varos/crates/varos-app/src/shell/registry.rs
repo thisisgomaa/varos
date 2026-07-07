@@ -19,16 +19,10 @@ pub enum PanelId {
 }
 
 impl PanelId {
-    /// The panels a box can be told to host via the ⌄ menu (Board is not a dockable dummy).
-    pub const DOCKABLE: [PanelId; 7] = [
-        PanelId::Align,
-        PanelId::Pathfinder,
-        PanelId::Properties,
-        PanelId::Layers,
-        PanelId::Swatches,
-        PanelId::History,
-        PanelId::Assets,
-    ];
+    /// The panels the Window / box ⌄ menu can dock. Swatches/History/Assets are NOT here yet — they are
+    /// unbuilt (sandbox dummies), so they must not appear as choices until they have real bodies (Ahmed
+    /// 07-08). The enum variants stay, ready to re-list the moment each is built for real.
+    pub const DOCKABLE: [PanelId; 4] = [PanelId::Align, PanelId::Pathfinder, PanelId::Properties, PanelId::Layers];
 
     pub fn title(self) -> &'static str {
         match self {
