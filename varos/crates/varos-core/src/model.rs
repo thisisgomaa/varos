@@ -59,8 +59,8 @@ impl Paint {
 impl Serialize for Paint {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
-            Paint::None => s.serialize_none(),   // ⇒ JSON null  (old Option::None)
-            Paint::Solid(c) => c.serialize(s),   // ⇒ [r,g,b,a]  (old Option::Some)
+            Paint::None => s.serialize_none(), // ⇒ JSON null  (old Option::None)
+            Paint::Solid(c) => c.serialize(s), // ⇒ [r,g,b,a]  (old Option::Some)
         }
     }
 }
@@ -756,7 +756,7 @@ impl Document {
             .collect();
         Path {
             holes,
-            fill: src.fill,     // preserve the paint EXACTLY (future gradients too), not a solid snapshot
+            fill: src.fill, // preserve the paint EXACTLY (future gradients too), not a solid snapshot
             stroke: src.stroke,
             opacity: src.opacity,
             hidden: src.hidden,
