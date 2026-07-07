@@ -431,8 +431,23 @@ When a wave merges to `main`, update (in the **same** merge):
     full-tree render + every-panel render). Run: `cargo run -p varos-app --bin shell-sandbox`.
   - **Stopped at end of Stage 3 as instructed.** Could NOT verify the *look/feel* (no display) — that is
     Ahmed's hands-on gate. Receipt (تشغيل · تجربة · صادق) delivered in the session hand-off.
-- _(next, on Ahmed's go: Wave 2 — Stage 0 tokens (0a→0b) → Stage 1 void frame → Stage 4 migration, once the
-  Layers wave frees `ui.rs`.)_
+- 2026-07-07 — **WAVE 2 BUILT** (Ahmed's go 07-07; ui.rs exclusively this session's; varos-core untouched):
+  - merged `main` (23 commits: artboard sections, Paint enum, fmt/clippy/CI) into `shell/box-system`
+    (`034395b`) + brought the shell files under the new gates (`167e9a2`, `4947586`).
+  - **Stage 0a** `808101d` — ui.rs palette extracted VERBATIM into `tokens::legacy` (bit-equal proven by
+    test). **Stage 0b** `b03cb6a` — flip to the LAW ramp; legacy retired; new law tokens (ROW_HOVER,
+    INPUT_WELL, ACCENT_HOVER/SEL/TINT). Gate: Ahmed approved the warm look by eye ("ايوة كمل").
+  - **Stage 1** `c9f860a` — the void frame: seam app bar + Brave doc chips (accent line removed) + §3.5
+    right cluster (search pill · Export · Share mirrors) + flush 42px caps + NEW status strip (hints ·
+    artboard i/n · working Fit · zoom). Window drag preserved (set_caption). Gate: Ahmed approved.
+  - **Stage 4** `c7e70e2`+`01836dc`+`4f756e9` — the real app INSIDE the box tree via a host hook
+    (sandbox untouched): Board = a canvas HOLE box (seam underlay + corner wedges + in-box rulers);
+    HAND 1 control bar BORN (mirrors-only); HAND 2 rail re-anchored; Properties/Artboard/Layers
+    re-housed; Align home split out; **Pathfinder home is REAL** (Editor::pathfinder). Layer-aware
+    `wants_pointer`; GPU shadows retired (rule 2); §3.4 fonts (Segoe UI Variable / Cascadia Code);
+    view fits target the Board box (`fit_to_board`).
+  - Verified: workspace builds, clippy `-D warnings` clean, all headless tests green. Ahmed's hands-on
+    gate on the full picture = PENDING (this hand-off).
 
 ---
 
