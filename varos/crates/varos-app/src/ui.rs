@@ -17,8 +17,8 @@ use winit::window::Window;
 // successors so this 4k-line file needs no body edits; Stage 4's re-cut chrome uses the law names.
 use varos_app::shell::tokens::{
     ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, INPUT_WELL, LINE as BORDER, LINE2 as BORDER_2, MUTED,
-    NONE_RED, PANEL as SOLID_PANEL, RBOX, ROW_HOVER, RULER_BG, SEAM, SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL,
-    TEXT, VOID_HOVER,
+    NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM, SURFACE as BG_SURFACE,
+    SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
 };
 
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
@@ -1338,7 +1338,7 @@ fn num_field(
     }
     let bx = egui::Rect::from_min_max(egui::pos2(row.left() + labw + 2.0, row.top()), row.max);
     let id = ui.make_persistent_id(("numf", tip));
-    let r5 = CornerRadius::same(5);
+    let r5 = CornerRadius::same(R);
     // 'just entered' flag (set on click) survives the one frame until the TextEdit claims focus.
     let just = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
     let editing = just || ui.memory(|m| m.has_focus(id));
@@ -1442,7 +1442,7 @@ fn num_field(
 fn mini_btn(ui: &mut egui::Ui, glyph: &str, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(5), HOVER);
+        ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
     }
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(14.0), MUTED);
     resp.on_hover_text(tip).clicked()
@@ -1481,9 +1481,9 @@ fn refpoint(ui: &mut egui::Ui, sz: f32, refpt: &mut (f32, f32)) {
 fn icon_toggle(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, on: bool, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
     if on {
-        ui.painter().rect_filled(rect, CornerRadius::same(5), ACCENT);
+        ui.painter().rect_filled(rect, CornerRadius::same(R), ACCENT);
     } else if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(5), HOVER);
+        ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
     }
     if let Some(t) = tex {
         ui.painter().image(
@@ -1500,7 +1500,7 @@ fn icon_toggle(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, on: bool, t
 fn icon_btn(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 24.0), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(5), HOVER);
+        ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
     }
     if let Some(t) = tex {
         ui.painter().image(
@@ -1876,7 +1876,7 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
         for (rule, label) in Harmony::ALL {
             let on = m.harmony == rule;
             let (r, resp) = ui.allocate_exact_size(egui::vec2(52.0, 22.0), egui::Sense::click());
-            let rr = CornerRadius::same(5);
+            let rr = CornerRadius::same(R);
             if on {
                 ui.painter().rect_filled(r, rr, ACCENT);
             } else if resp.hovered() {
@@ -1925,7 +1925,7 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
 /// A hand-painted dialog button. `primary` = accent OK.
 fn dlg_btn(ui: &mut egui::Ui, label: &str, primary: bool, w: f32) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
-    let rr = CornerRadius::same(6);
+    let rr = CornerRadius::same(R);
     if primary {
         ui.painter().rect_filled(r, rr, if resp.hovered() { ACCENT_HOVER } else { ACCENT });
     } else {
@@ -1974,7 +1974,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                         for (tab, label) in [(MTab::Picker, "Picker"), (MTab::Wheel, "Wheel")] {
                             let on = m.tab == tab;
                             let (r, resp) = ui.allocate_exact_size(egui::vec2(56.0, 22.0), egui::Sense::click());
-                            let rr = CornerRadius::same(5);
+                            let rr = CornerRadius::same(R);
                             if on {
                                 ui.painter().rect_filled(r, rr, BG_SURFACE);
                                 ui.painter().rect_stroke(r, rr, Stroke::new(1.0, ACCENT), StrokeKind::Middle);
@@ -2336,7 +2336,7 @@ fn icon_button(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, active: boo
     // (Ahmed 07-07: "التول بار ضخم عن باقي البرنامج")
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
     let painter = ui.painter();
-    let rounding = CornerRadius::same(7);
+    let rounding = CornerRadius::same(R);
     if active {
         painter.rect_filled(rect, rounding, ACCENT);
     } else if resp.hovered() {
@@ -3271,7 +3271,7 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
         )
     };
     let draw_fill = |p: &egui::Painter, active: bool| {
-        p.rect_filled(fr.expand(2.0), CornerRadius::same(5), SOLID_PANEL); // separation halo
+        p.rect_filled(fr.expand(2.0), CornerRadius::same(5), SOLID_PANEL); // swatch separation halo (sized to the swatch, not a control token)
         match s.fill {
             Some(c) => {
                 if c[3] < 0.999 {
@@ -3292,7 +3292,7 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
         );
     };
     let draw_stroke = |p: &egui::Painter, active: bool| {
-        p.rect_filled(sr.expand(2.0), CornerRadius::same(5), SOLID_PANEL);
+        p.rect_filled(sr.expand(2.0), CornerRadius::same(5), SOLID_PANEL); // swatch separation halo
         let hole = sr.shrink(6.0);
         match s.stroke {
             Some(c) => {
@@ -3399,7 +3399,7 @@ fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind
     let cur = shapes.iter().find(|t| t.kind == *shape_active).unwrap_or(&shapes[0]);
     let is_active = shapes.iter().any(|t| t.kind == s.tool);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
-    let rounding = CornerRadius::same(7);
+    let rounding = CornerRadius::same(R);
     if is_active {
         ui.painter().rect_filled(rect, rounding, ACCENT);
     } else if resp.hovered() {
@@ -3523,7 +3523,7 @@ fn panel_layers(
             ui.horizontal(|ui| {
                 ui.add_space(11.0);
                 let (sr, _) = ui.allocate_exact_size(egui::vec2(w - 22.0, 26.0), egui::Sense::hover());
-                ui.painter().rect(sr, CornerRadius::same(6), BG_SURFACE, Stroke::new(1.0, BORDER), StrokeKind::Middle);
+                ui.painter().rect(sr, CornerRadius::same(R), BG_SURFACE, Stroke::new(1.0, BORDER), StrokeKind::Middle);
                 if let Some(t) = &ic.search {
                     ui.painter().image(
                         t.id(),
@@ -3932,7 +3932,7 @@ fn panel_layers(
                 let fbtn = |ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str| -> bool {
                     let (rr, rp) = ui.allocate_exact_size(egui::vec2(30.0, 24.0), egui::Sense::click());
                     if rp.hovered() {
-                        ui.painter().rect_filled(rr, CornerRadius::same(5), HOVER);
+                        ui.painter().rect_filled(rr, CornerRadius::same(R), HOVER);
                     }
                     if let Some(t) = tex {
                         ui.painter().image(
@@ -4215,7 +4215,7 @@ fn name_field(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str) -> Option<St
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::hover());
     ui.painter().rect(
         rect,
-        CornerRadius::same(6),
+        CornerRadius::same(R),
         BG_SURFACE,
         Stroke::new(1.0, if editing { ACCENT } else { BORDER }),
         StrokeKind::Middle,
@@ -4243,7 +4243,7 @@ fn name_field(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str) -> Option<St
 fn toggle_row(ui: &mut egui::Ui, w: f32, label: &str, on: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(6), HOVER);
+        ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
     }
     ui.painter().text(
         egui::pos2(rect.left() + 4.0, rect.center().y),
@@ -4254,7 +4254,7 @@ fn toggle_row(ui: &mut egui::Ui, w: f32, label: &str, on: bool) -> bool {
     );
     let pill =
         egui::Rect::from_min_size(egui::pos2(rect.right() - 36.0, rect.center().y - 9.0), egui::vec2(32.0, 18.0));
-    ui.painter().rect_filled(pill, CornerRadius::same(9), if on { ACCENT } else { BG_SURFACE });
+    ui.painter().rect_filled(pill, CornerRadius::same(RCAP), if on { ACCENT } else { BG_SURFACE }); // capsule = one token (tabs + toggles)
     let knob = egui::pos2(if on { pill.right() - 9.0 } else { pill.left() + 9.0 }, pill.center().y);
     ui.painter().circle_filled(knob, 6.5, Color32::WHITE);
     resp.clicked()
@@ -4267,7 +4267,7 @@ fn pill_btn(ui: &mut egui::Ui, label: &str, disabled: bool) -> bool {
     let hot = resp.hovered() && !disabled;
     ui.painter().rect(
         rect,
-        CornerRadius::same(6),
+        CornerRadius::same(R),
         if hot { HOVER } else { BG_SURFACE },
         Stroke::new(1.0, BORDER),
         StrokeKind::Middle,
@@ -4314,7 +4314,7 @@ fn panel_artboard(
             let (prect, presp) = ui.allocate_exact_size(egui::vec2(inner, 26.0), egui::Sense::click());
             ui.painter().rect(
                 prect,
-                CornerRadius::same(6),
+                CornerRadius::same(R),
                 BG_SURFACE,
                 Stroke::new(1.0, if presp.hovered() { BORDER_2 } else { BORDER }),
                 StrokeKind::Middle,
@@ -4840,8 +4840,8 @@ fn build_snap_hud(
     let font = FontId::proportional(12.0);
     let galley = p.layout_no_wrap(text.clone(), font.clone(), TEXT);
     let rect = egui::Rect::from_min_size(anchor, galley.size() + egui::vec2(14.0, 7.0));
-    p.rect_filled(rect, CornerRadius::same(6), SOLID_PANEL);
-    p.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0, BORDER), StrokeKind::Middle);
+    p.rect_filled(rect, CornerRadius::same(R), SOLID_PANEL);
+    p.rect_stroke(rect, CornerRadius::same(R), Stroke::new(1.0, BORDER), StrokeKind::Middle);
     p.text(rect.center(), Align2::CENTER_CENTER, text, font, TEXT);
 }
 
