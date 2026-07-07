@@ -2367,10 +2367,7 @@ fn divider(ui: &mut egui::Ui) {
 
 // ───────────────────────────── startup splash ─────────────────────────────
 
-const SPLASH_DUR: f32 = 1.55; // total seconds on screen
-const SPLASH_HOLD: f32 = 1.20; // fully-opaque hold before the cross-fade
-const SPLASH_FADE: f32 = 0.35; // scrim + card fade out
-const SPLASH_IN: f32 = 0.18; // card ease-in at the very start
+const SPLASH_DUR: f32 = 1.55; // total seconds on screen (STATIC — no fade in/out, no animation; Ahmed 07-08)
 
 fn with_a(c: Color32, a: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a * 255.0).clamp(0.0, 255.0) as u8)
@@ -2381,16 +2378,10 @@ fn rgba_a(r: u8, g: u8, b: u8, a: f32) -> Color32 {
 
 /// Photoshop-style startup splash: a centered card (logo + wordmark + version + tagline + progress +
 /// an abstract "vector" art panel) on a dark scrim, drawn on a Foreground layer. Fades into the editor.
-fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>) {
-    let ease_in = {
-        let t = (e / SPLASH_IN).clamp(0.0, 1.0);
-        1.0 - (1.0 - t).powi(2)
-    };
-    let fade = ((e - SPLASH_HOLD) / SPLASH_FADE).clamp(0.0, 1.0);
-    let ca = (ease_in * (1.0 - fade)).clamp(0.0, 1.0); // card alpha
-    if ca <= 0.001 {
-        return;
-    }
+fn build_splash(ctx: &egui::Context, _e: f32, logo: &Option<egui::TextureHandle>) {
+    // STATIC splash (Ahmed 07-08): full opacity the whole time, gone instantly at SPLASH_DUR — no
+    // fade, no ease, no animation. `ca` stays only so the shared alpha helpers read cleanly; it is 1.0.
+    let ca = 1.0f32;
 
     // The card floats on the window's transparent surface (no dark scrim) → it sits over the desktop.
     let scr = ctx.content_rect();
@@ -2430,23 +2421,6 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
         with_a(TEXT, 0.82 * ca),
     );
     p.hline((l + 28.0)..=(l + 282.0), t + 150.0, Stroke::new(1.0, with_a(BORDER, ca)));
-    // progress bar (fills 0→1 over the hold, ease-out)
-    let bar = egui::Rect::from_min_size(egui::pos2(l + 28.0, t + 174.0), egui::vec2(196.0, 4.0));
-    p.rect_filled(bar, CornerRadius::same(2), with_a(BG_SURFACE, ca));
-    let prog = {
-        let tt = (e / SPLASH_HOLD).clamp(0.0, 1.0);
-        1.0 - (1.0 - tt).powi(2)
-    };
-    let fw = (bar.width() * prog).max(8.0);
-    p.rect_filled(egui::Rect::from_min_size(bar.min, egui::vec2(fw, 4.0)), CornerRadius::same(2), with_a(ACCENT, ca));
-    p.circle_filled(egui::pos2(bar.left() + fw, bar.center().y), 3.0, rgba_a(0x0c, 0x8c, 0xe9, 0.59 * ca));
-    p.text(
-        egui::pos2(l + 236.0, t + 176.0),
-        Align2::LEFT_CENTER,
-        "loading\u{2026}",
-        FontId::proportional(11.0),
-        with_a(MUTED, ca),
-    );
     p.text(
         egui::pos2(l + 28.0, card.bottom() - 22.0),
         Align2::LEFT_BOTTOM,
@@ -2463,15 +2437,7 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
     p.rect_filled(a, CornerRadius::same(10), with_a(BG_SURFACE, ca));
     p.rect_stroke(a, CornerRadius::same(10), Stroke::new(1.0, with_a(BORDER, ca)), StrokeKind::Middle);
     let pa = p.with_clip_rect(a);
-    // diagonal accent corner-glow (faint, top-left of the panel)
-    for i in 0..3 {
-        pa.circle_filled(
-            a.min + egui::vec2(6.0, 6.0),
-            70.0 - i as f32 * 18.0,
-            rgba_a(0x0c, 0x8c, 0xe9, (0.05 + i as f32 * 0.025) * ca),
-        );
-    }
-    // two ghosted "artboards"
+    // two ghosted "artboards" (warm-white ghosts — azure is a scalpel, never splash decoration)
     let ab = |x: f32, y: f32| egui::Rect::from_min_size(egui::pos2(a.left() + x, a.top() + y), egui::vec2(116.0, 92.0));
     pa.rect_filled(ab(30.0, 44.0), CornerRadius::same(8), rgba_a(255, 255, 255, 0.03 * ca));
     pa.rect_stroke(
@@ -2480,11 +2446,11 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
         Stroke::new(1.0, rgba_a(255, 255, 255, 0.07 * ca)),
         StrokeKind::Middle,
     );
-    pa.rect_filled(ab(56.0, 84.0), CornerRadius::same(8), rgba_a(0x0c, 0x8c, 0xe9, 0.055 * ca));
+    pa.rect_filled(ab(56.0, 84.0), CornerRadius::same(8), rgba_a(255, 255, 255, 0.045 * ca));
     pa.rect_stroke(
         ab(56.0, 84.0),
         CornerRadius::same(8),
-        Stroke::new(1.0, with_a(ACCENT, 0.45 * ca)),
+        Stroke::new(1.0, rgba_a(255, 255, 255, 0.1 * ca)),
         StrokeKind::Middle,
     );
     // ghost "V" monogram
@@ -2512,17 +2478,17 @@ fn build_splash(ctx: &egui::Context, e: f32, logo: &Option<egui::TextureHandle>)
         )
     };
     let curve: Vec<egui::Pos2> = (0..=24).map(|i| cub(i as f32 / 24.0)).collect();
-    pa.add(egui::Shape::line(curve, Stroke::new(2.0, with_a(ACCENT, ca))));
-    pa.line_segment([p0, p1], Stroke::new(1.0, rgba_a(0x0c, 0x8c, 0xe9, 0.47 * ca)));
-    pa.line_segment([p3, p2], Stroke::new(1.0, rgba_a(0x0c, 0x8c, 0xe9, 0.47 * ca)));
+    pa.add(egui::Shape::line(curve, Stroke::new(2.0, rgba_a(255, 255, 255, 0.34 * ca))));
+    pa.line_segment([p0, p1], Stroke::new(1.0, rgba_a(255, 255, 255, 0.16 * ca)));
+    pa.line_segment([p3, p2], Stroke::new(1.0, rgba_a(255, 255, 255, 0.16 * ca)));
     for cp in [p1, p2] {
-        pa.circle_stroke(cp, 2.5, Stroke::new(1.0, with_a(ACCENT, ca)));
+        pa.circle_stroke(cp, 2.5, Stroke::new(1.0, rgba_a(255, 255, 255, 0.34 * ca)));
     }
     for an in [p0, p3] {
         pa.rect_filled(
             egui::Rect::from_center_size(an, egui::vec2(6.0, 6.0)),
             CornerRadius::same(1),
-            with_a(ACCENT, ca),
+            rgba_a(255, 255, 255, 0.34 * ca),
         );
         pa.rect_stroke(
             egui::Rect::from_center_size(an, egui::vec2(6.0, 6.0)),
