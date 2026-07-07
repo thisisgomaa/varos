@@ -407,7 +407,14 @@ impl DropContext {
         let (side, insertion) = if nearest.0 < 1.0 {
             (Some(nearest.1), nearest.2) // in a dock edge → split beside / above / below
         } else {
-            (None, ContainerInsertion::Tabs(usize::MAX)) // the middle → tab
+            // the middle → tab; but a pane may REFUSE tab-drops (the board docks its edges, never tabs
+            // — a tab-wrap turned the canvas hole into a Tabs box; Ahmed 07-08)
+            if let Tile::Pane(pane) = tile
+                && !behavior.pane_is_tab_drop_target(pane)
+            {
+                return;
+            }
+            (None, ContainerInsertion::Tabs(usize::MAX))
         };
         self.best_insertion = Some(InsertionPoint::new(box_id, insertion));
         self.dock_side = side;

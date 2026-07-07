@@ -175,6 +175,16 @@ impl ShellState {
                 if let Some(Tile::Container(Container::Linear(lin))) = root.and_then(|r| self.tree.tiles.get_mut(r)) {
                     lin.children.push(new);
                     lin.shares.set_share(new, 0.2);
+                } else if let Some(r) = root {
+                    // the root is a bare pane — the Board ALONE, after every panel was closed. Closing all
+                    // panels is a legit "clean canvas" mode (Ahmed 07-08): wrap the board in a fresh
+                    // horizontal Linear so the newcomer docks BESIDE it (never tabbed INTO it), and the
+                    // Window menu can always bring panels back.
+                    let new_root = self.tree.tiles.insert_horizontal_tile(vec![r, new]);
+                    self.tree.root = Some(new_root);
+                    if let Some(Tile::Container(Container::Linear(lin))) = self.tree.tiles.get_mut(new_root) {
+                        lin.shares.set_share(new, 0.2);
+                    }
                 }
             }
         }
@@ -660,7 +670,10 @@ impl Behavior<PanelId> for ShellBehavior<'_> {
     }
     fn pane_is_drop_target(&self, _pane: &PanelId) -> bool {
         true
-    } // the board docks/tabs like any normal box (Ahmed 07-05)
+    } // the board docks on its EDGES like any box (Ahmed 07-05)
+    fn pane_is_tab_drop_target(&self, pane: &PanelId) -> bool {
+        !pane.is_board() // …but is NEVER tabbed into — a tab-wrap swallowed the canvas hole (Ahmed 07-08)
+    }
     fn min_size(&self) -> f32 {
         224.0
     } // panels never crush below a usable width (Ahmed 07-07); content scrolls, never breaks
@@ -971,6 +984,40 @@ mod tests {
         for _ in 0..3 {
             let _ = ctx.run_ui(egui::RawInput::default(), |ui| shell.ui(ui));
         }
+    }
+
+    /// Closing EVERY panel leaves the board alone as the root (a legit "clean canvas" mode); the Window
+    /// menu must still bring a panel back — toggle_panel wraps the bare board in a fresh container instead
+    /// of silently orphaning the newcomer (Ahmed 07-08 regression: it used to no-op on a bare-board root).
+    #[test]
+    fn window_menu_readds_a_panel_after_closing_all() {
+        let ctx = egui::Context::default();
+        super::T::apply(&ctx);
+        let mut shell = ShellState::standard();
+        let run = |shell: &mut ShellState| {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| shell.ui(ui));
+        };
+        // close the four panels the standard layout ships with; a render pass lets the emptied
+        // containers simplify away until the root IS the bare board pane.
+        for p in [PanelId::Align, PanelId::Pathfinder, PanelId::Properties, PanelId::Layers] {
+            shell.toggle_panel(p);
+        }
+        run(&mut shell);
+        let root = shell.tree.root().expect("a root tile");
+        assert!(
+            matches!(shell.tree.tiles.get(root), Some(Tile::Pane(p)) if p.is_board()),
+            "closing all panels collapses the tree to the bare board"
+        );
+        // bring Layers back → the bare board must get wrapped so the newcomer docks BESIDE it
+        shell.toggle_panel(PanelId::Layers);
+        assert!(find_pane(&shell.tree, PanelId::Layers).is_some(), "the panel returned to the tree");
+        assert!(find_pane(&shell.tree, PanelId::Board).is_some(), "the board survives, docked beside it");
+        let root2 = shell.tree.root().expect("a root tile");
+        assert!(
+            matches!(shell.tree.tiles.get(root2), Some(Tile::Container(_))),
+            "the root is a container now (board + panel) — not the orphaning bare-board no-op"
+        );
+        run(&mut shell); // re-populated tree still renders without panic
     }
 
     #[test]

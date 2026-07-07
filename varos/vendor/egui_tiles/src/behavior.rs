@@ -444,6 +444,14 @@ pub trait Behavior<Pane> {
         true
     }
 
+    /// Can another tile be dropped ONTO this pane as a TAB (the middle / centre drop)? Finer-grained
+    /// than `pane_is_drop_target`: a pane may accept EDGE docking (split beside/above/below) yet refuse
+    /// to be tabbed into. LOCAL FORK (Varos, Ahmed 07-08): the board docks on its edges but is NEVER
+    /// wrapped in a Tabs container — that broke the canvas hole. Default: `true`.
+    fn pane_is_tab_drop_target(&self, _pane: &Pane) -> bool {
+        true
+    }
+
     // Callbacks:
 
     /// Called if the user edits the tree somehow, e.g. changes the size of some container,
