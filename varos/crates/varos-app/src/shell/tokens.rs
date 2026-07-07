@@ -25,7 +25,7 @@ pub const ACCENT_HOVER: Color32 = rgb(0x2b9df4); // hovered accent button — on
                                                  // (proven bit-equal by `premultiplied_exact` below).
 pub const ACCENT_SEL: Color32 = Color32::from_rgba_premultiplied(3, 33, 55, 60); // text-selection fill
 pub const ACCENT_TINT: Color32 = Color32::from_rgba_premultiplied(2, 19, 31, 34); // faint azure wash (selected row)
-pub const GUIDE: Color32 = rgb(0xff54a8); // smart guides
+pub const GUIDE: Color32 = rgb(0xff54a8); // reserved for smart guides (not yet wired — keep, Ahmed 07-08)
 pub const SEAM: Color32 = rgb(0x0e0d0d); // the VOID — seams, app bar, status (darker than BG)
 
 // ── secondary palette (content / samples, NOT chrome) ──
@@ -36,11 +36,11 @@ pub const CLOSE_RED: Color32 = rgb(0xc42b1c);
 pub const NONE_RED: Color32 = rgb(0xe05c5c);
 pub const DOT_GRID: Color32 = Color32::from_rgba_premultiplied(11, 11, 11, 11); // rgba(255,255,255,.045)
 pub const VOID_HOVER: Color32 = Color32::from_rgba_premultiplied(10, 10, 10, 10); // rgba(255,255,255,.04)
-pub const GRIP: Color32 = rgb(0x9d9893); // the move-handle pill — soft light grey (Ahmed's reference)
 
 // ── radii & rhythm ──
 pub const R: u8 = 3; // controls: fields, chips, buttons, tabs
 pub const RBOX: u8 = 8; // boxes / panels (rounder / fancier — Ahmed 07-04)
+pub const RCAP: u8 = 11; // pill / capsule radius — tab pills + scroll chevrons, one "Claude bubble" look (Ahmed 07-08)
 pub const SEAM_GAP: f32 = 12.0; // equal void between all boxes (wider +20% so boxes breathe — Ahmed 07-04)
 
 pub fn r_ctrl() -> CornerRadius {
