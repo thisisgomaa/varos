@@ -12,18 +12,14 @@ use varos_core::geom::{Pt, Rgba, View};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-// UI_FIGMA palette (§1)
-const SOLID_PANEL: Color32 = Color32::from_rgb(0x1f, 0x1f, 0x22);
-const BG: Color32 = Color32::from_rgb(0x14, 0x13, 0x13); // app background / top bar
-const CLOSE_RED: Color32 = Color32::from_rgb(0xe8, 0x11, 0x23); // window close hover // panel body
-const BG_SURFACE: Color32 = Color32::from_rgb(0x26, 0x26, 0x27); // fields
-const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2d); // hairline
-const BORDER_2: Color32 = Color32::from_rgb(0x3a, 0x3b, 0x3d); // hover/focus border
-const HOVER: Color32 = Color32::from_rgb(0x2e, 0x2e, 0x31); // hover bg
-const ACCENT: Color32 = Color32::from_rgb(0x0c, 0x8c, 0xe9); // active tool
-const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe6, 0xe6); // primary text
-const MUTED: Color32 = Color32::from_rgb(0x8a, 0x8a, 0x8a); // labels
-const FAINT: Color32 = Color32::from_rgb(0x7c, 0x7c, 0x7c); // field labels / faint
+// Stage 0b (BOX_SYSTEM_PLAN §6, ruling 4): the palette now comes from the LAW ramp — the warm black
+// (R ≥ G ≥ B, tokens.rs = UI_VISION_MOCKUP's :root). The old cool-gray names alias their warm
+// successors so this 4k-line file needs no body edits; Stage 4's re-cut chrome uses the law names.
+use varos_app::shell::tokens::{
+    ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, INPUT_WELL, LINE as BORDER, LINE2 as BORDER_2, MUTED,
+    NONE_RED, PANEL as SOLID_PANEL, RBOX, ROW_HOVER, RULER_BG, SEAM, SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL,
+    TEXT, VOID_HOVER,
+};
 
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 const IC_SELECT: &str = r#"<path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>"#;
@@ -68,11 +64,8 @@ const IC_DIST_V: &str = r#"<rect x="6" y="3" width="12" height="3" rx="1"/><rect
 const IC_MENU: &str = r#"<path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/>"#;
 // top-bar content icons: search · layout · panels checklist · new-tab · tab-close · check
 const IC_SEARCH: &str = r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>"#;
-const IC_LAYOUT: &str = r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>"#;
-const IC_PANELS: &str = r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>"#;
 const IC_PLUS: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
 const IC_X: &str = r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#;
-const IC_CHECK: &str = r#"<path d="M20 6 9 17l-5-5"/>"#;
 const IC_MAGNET: &str = r#"<path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15"/><path d="m5 8 4 4"/><path d="m12 15 4 4"/>"#;
 // Artboard tool (Lucide "frame" — a bold # that reads clearly at 20px) · hexagon (polygon shape) ·
 // portrait/landscape page · "fit in window" frame
@@ -82,7 +75,6 @@ const IC_PORTRAIT: &str = r#"<rect x="7" y="3" width="10" height="18" rx="1"/>"#
 const IC_LANDSCAPE: &str = r#"<rect x="3" y="7" width="18" height="10" rx="1"/>"#;
 const IC_FIT: &str = r#"<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>"#;
 // ⋮ on-canvas artboard menu — FILLED dots (own svg; lucide() forces stroke-only)
-const IC_DOTS_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#ffffff"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>"##;
 /// Page-size presets shown in the artboard panel: (label, w, h) in world points (px == pt @72ppi).
 const AB_PRESETS: [(&str, f32, f32); 5] = [
     ("Square \u{2014} 1080", 1080.0, 1080.0),
@@ -119,6 +111,7 @@ enum Op {
     Flip(bool),
     Align(AlignMode),
     Distribute(DistAxis),
+    Bool(varos_core::boolean::BoolOp), // Pathfinder home + the Properties "Shape" mirror
     // ---- artboard ops (i = artboard index) ----
     AbActive(usize),
     AbRect(usize, Option<f32>, Option<f32>, Option<f32>, Option<f32>), // x,y,w,h (each optional)
@@ -242,11 +235,8 @@ struct ColorModal {
 struct TopIcons {
     menu: Option<egui::TextureHandle>, // min/max/close are painted glyphs now (see `winctl`), not textures
     search: Option<egui::TextureHandle>,
-    layout: Option<egui::TextureHandle>,
-    panels: Option<egui::TextureHandle>,
     plus: Option<egui::TextureHandle>,
     x: Option<egui::TextureHandle>,
-    check: Option<egui::TextureHandle>,
     magnet: Option<egui::TextureHandle>,
 }
 
@@ -290,8 +280,6 @@ struct LRow {
     active: bool,           // the active (target) layer / the active artboard on Board headers
     thumb: Vec<ThumbShape>, // real mini-preview, back→front; empty = no art (blank box)
 }
-
-const ROW_HOVER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2c); // row hover (calmer than the chip HOVER)
 
 /// Auto-name for a leaf path (Illustrator angle-bracket style) unless the user renamed it.
 fn path_auto_name(p: &varos_core::model::Path) -> String {
@@ -650,7 +638,6 @@ pub struct Ui {
     ic_portrait: Option<egui::TextureHandle>,
     ic_landscape: Option<egui::TextureHandle>,
     ic_fit: Option<egui::TextureHandle>,
-    ab_dots: Option<egui::TextureHandle>,
     align_icons: [Option<egui::TextureHandle>; 8], // align L/CH/R · T/M/B · distribute H/V
     cursor: egui::CursorIcon, // this frame's egui cursor (read from FullOutput, not post-frame state)
     refpt: (f32, f32),        // transform reference point (ax, ay each in {0, .5, 1})
@@ -675,7 +662,11 @@ pub struct Ui {
     lay_drag: Option<(u32, u32)>,      // Layers row being dragged: (node id, SOURCE section) — the
     // section decides same-section reorder vs cross-board move
     lay_anchor: Option<(u32, u32)>, // Shift-range anchor: (node id, SECTION) — mirror rows share an
-                                    // id across sections, so the id alone picks the wrong appearance
+    // id across sections, so the id alone picks the wrong appearance
+    // ── Stage 4: the BOX TREE hosts the whole workspace (BOX_SYSTEM_PLAN §4) ──
+    shell: varos_app::shell::ShellState, // the box tree; panel bodies render through the host hook
+    board_hole: Option<egui::Rect>,      // the Board pane's interior (logical pts) — the wgpu canvas hole
+    pub board_px: Option<egui::Rect>,    // same, in PHYSICAL px — main.rs fits the view to it
 }
 
 /// The Layers-panel icon set (rasterized Lucide, white).
@@ -751,13 +742,6 @@ impl Ui {
         let ic_portrait = load_icon(&ctx, "lbl-portrait", IC_PORTRAIT);
         let ic_landscape = load_icon(&ctx, "lbl-landscape", IC_LANDSCAPE);
         let ic_fit = load_icon(&ctx, "lbl-fit", IC_FIT);
-        let ab_dots = crate::cursors::render_svg(IC_DOTS_SVG, 96, false).map(|(rgba, w, h)| {
-            ctx.load_texture(
-                "ab-dots",
-                egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
-                egui::TextureOptions::LINEAR,
-            )
-        });
         let align_icons = [
             load_icon(&ctx, "al-l", IC_AL_L),
             load_icon(&ctx, "al-ch", IC_AL_CH),
@@ -771,11 +755,8 @@ impl Ui {
         let top = TopIcons {
             menu: load_icon(&ctx, "tb-menu", IC_MENU),
             search: load_icon(&ctx, "tb-search", IC_SEARCH),
-            layout: load_icon(&ctx, "tb-layout", IC_LAYOUT),
-            panels: load_icon(&ctx, "tb-panels", IC_PANELS),
             plus: load_icon(&ctx, "tb-plus", IC_PLUS),
             x: load_icon(&ctx, "tb-x", IC_X),
-            check: load_icon(&ctx, "tb-check", IC_CHECK),
             magnet: load_icon(&ctx, "tb-magnet", IC_MAGNET),
         };
         let logo = image::load_from_memory(include_bytes!("../icon.png")).ok().map(|im| {
@@ -815,7 +796,6 @@ impl Ui {
             ic_portrait,
             ic_landscape,
             ic_fit,
-            ab_dots,
             align_icons,
             cursor: egui::CursorIcon::Default,
             refpt: (0.0, 0.0),
@@ -839,6 +819,9 @@ impl Ui {
             lay_rename: None,
             lay_drag: None,
             lay_anchor: None,
+            shell: varos_app::shell::ShellState::standard(),
+            board_hole: None,
+            board_px: None,
         }
     }
 
@@ -846,9 +829,22 @@ impl Ui {
     pub fn on_event(&mut self, window: &Window, ev: &WindowEvent) -> bool {
         self.state.on_window_event(window, ev).consumed
     }
-    /// Is the pointer over a panel / popup? (canvas strokes must NOT be swallowed by the panels)
+    /// Is the pointer over chrome (a box, ruler, bar, hand, menu)? The canvas owns everything else.
+    /// Stage 4: the box tree paints the whole workspace on the BACKGROUND layer, so the old
+    /// `is_pointer_over_egui` (panels-only) is wrong — instead: any floating layer wins; on the
+    /// background, everything is chrome EXCEPT the Board pane's interior (the wgpu canvas hole).
     pub fn wants_pointer(&self) -> bool {
-        self.ctx.is_pointer_over_egui() || self.ctx.egui_wants_pointer_input()
+        if self.ctx.egui_is_using_pointer() {
+            return true; // a live widget interaction (field scrub, splitter drag, open menu)
+        }
+        let Some(pos) = self.ctx.input(|i| i.pointer.interact_pos()) else {
+            return false;
+        };
+        match self.ctx.layer_id_at(pos) {
+            None => false,
+            Some(l) if l.order == egui::Order::Background => !self.board_hole.is_some_and(|b| b.contains(pos)),
+            Some(_) => true, // hands / menus / modal / splash float above the tree
+        }
     }
     /// Is a text field actually focused? Only THEN should keys go to egui instead of canvas shortcuts.
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
@@ -868,9 +864,20 @@ impl Ui {
             self.tabs[0] = name;
         }
     }
-    /// Is the pointer over a scrubbable number field? (so the host shows the ↔ resize cursor)
-    pub fn scrub_hover(&self) -> bool {
-        self.cursor == egui::CursorIcon::ResizeHorizontal
+    /// The native cursor the UI chrome wants this frame — egui's icon mapped onto our Win32 set.
+    /// Box-seam resizes (egui_tiles splitters) and number-field scrubs get their arrows; everything
+    /// else on chrome is the plain arrow (Illustrator shows an arrow over buttons, not a hand).
+    pub fn chrome_ck(&self) -> crate::cursors::CK {
+        use crate::cursors::CK;
+        use egui::CursorIcon as C;
+        match self.cursor {
+            C::ResizeHorizontal | C::ResizeColumn | C::ResizeEast | C::ResizeWest => CK::ResizeH,
+            C::ResizeVertical | C::ResizeRow | C::ResizeNorth | C::ResizeSouth => CK::ResizeV,
+            C::ResizeNeSw | C::ResizeNorthEast | C::ResizeSouthWest => CK::ResizeNE,
+            C::ResizeNwSe | C::ResizeNorthWest | C::ResizeSouthEast => CK::ResizeNW,
+            C::Grabbing => CK::Grab,
+            _ => CK::Select,
+        }
     }
     /// (Re)start the startup splash timer — call right before revealing the window.
     pub fn start_splash(&mut self) {
@@ -918,7 +925,10 @@ impl Ui {
             landscape: &self.ic_landscape,
             fit: &self.ic_fit,
         };
-        let ab_dots = &self.ab_dots;
+        let ic_fit = &self.ic_fit; // the status strip's Fit control shares the artboard panel's icon
+        let shell = &mut self.shell; // Stage 4: the box tree hosting the whole workspace
+        let prev_hole = self.board_hole; // last frame's canvas hole (the seam underlay paints around it)
+        let mut new_hole: Option<egui::Rect> = None;
         let top = &self.top;
         // layers snapshot (built before the closure — like Snap/AbSnap)
         let layer_rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search);
@@ -929,7 +939,7 @@ impl Ui {
         let mut lay_drag = self.lay_drag;
         let mut lay_anchor = self.lay_anchor;
         let mut ops: Vec<Op> = Vec::new();
-        let mut rects: Vec<egui::Rect> = Vec::new();
+        let rects: Vec<egui::Rect> = Vec::new(); // no floating windows left → no GPU shadow rects (rule 2)
         let mut refpt = self.refpt;
         let mut lock = self.lock;
         let mut ab_lock = self.ab_lock;
@@ -958,6 +968,7 @@ impl Ui {
                 build_topbar(
                     root,
                     top,
+                    &mut *shell,
                     &mut win_action,
                     &mut tabs,
                     &mut tab_active,
@@ -966,51 +977,110 @@ impl Ui {
                     &mut snap_cfg,
                     maximized,
                 );
-                if show_rulers {
-                    build_rulers(root, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops);
+                build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request);
+                // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
+                // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
+                // frame's hole (one-frame lag on resize, healed by the request_repaint below). ──
+                {
+                    let mid = root.available_rect_before_wrap();
+                    paint_void_underlay(root.painter(), mid, prev_hole);
+                    let mut host = |panel: varos_app::shell::PanelId, ui: &mut egui::Ui| -> bool {
+                        use varos_app::shell::PanelId as P;
+                        match panel {
+                            P::Board => {
+                                let rect = ui.max_rect();
+                                let p = ui.painter().clone();
+                                // a normal box on the void: hairline border, rounded corners patched
+                                // with seam so the scene never pokes past the radius
+                                corner_voids(&p, rect);
+                                p.rect_stroke(
+                                    rect,
+                                    CornerRadius::same(RBOX),
+                                    Stroke::new(1.0, BORDER),
+                                    StrokeKind::Inside,
+                                );
+                                let mut inner = rect.shrink(1.0);
+                                if show_rulers {
+                                    board_rulers(ui, inner, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops);
+                                    inner = egui::Rect::from_min_max(inner.min + egui::vec2(RULER, RULER), inner.max);
+                                }
+                                if show_rail {
+                                    board_rail(ui.ctx(), inner, tools, shapes, &mut shape_active, &snap, &mut ops);
+                                }
+                                if show_dock {
+                                    board_ctlbar(
+                                        ui.ctx(),
+                                        inner,
+                                        &snap,
+                                        &absnap,
+                                        &icons,
+                                        ic_fit,
+                                        &mut ops,
+                                        &mut fit_request,
+                                    );
+                                }
+                                new_hole = Some(inner);
+                                true
+                            }
+                            P::Properties => {
+                                if snap.tool == ToolKind::Artboard {
+                                    panel_artboard(ui, &absnap, &ab_icons, &mut ab_lock, &mut ops, &mut fit_request);
+                                } else {
+                                    panel_properties(ui, &snap, &icons, &mut refpt, &mut lock, &mut ops);
+                                }
+                                true
+                            }
+                            P::Layers => {
+                                panel_layers(
+                                    ui,
+                                    &layer_rows,
+                                    layer_icons,
+                                    &mut lay_search,
+                                    &mut lay_rename,
+                                    &mut lay_collapsed,
+                                    &mut lay_drag,
+                                    &mut lay_anchor,
+                                    &mut ops,
+                                );
+                                true
+                            }
+                            P::Align => {
+                                panel_align(ui, &icons, &mut ops);
+                                true
+                            }
+                            P::Pathfinder => {
+                                panel_pathfinder(ui, &mut ops);
+                                true
+                            }
+                            _ => false,
+                        }
+                    };
+                    // the boxes FLOAT in the void (Ahmed 07-07): an outer breath of HALF the
+                    // box-to-box seam on the sides/top; the bottom breath lives INSIDE the taller
+                    // statusbar so its text centres in the visual strip
+                    let g = varos_app::shell::tokens::SEAM_GAP * 0.5;
+                    let tree_rect =
+                        egui::Rect::from_min_max(mid.min + egui::vec2(g, g), egui::pos2(mid.right() - g, mid.bottom()));
+                    root.scope_builder(egui::UiBuilder::new().max_rect(tree_rect), |ui| shell.ui_hosted(ui, &mut host));
                 }
-                if show_rail {
-                    build_rail(ctx, tools, shapes, &mut shape_active, &snap, &mut ops, &mut rects);
-                }
-                if show_dock {
-                    if snap.tool == ToolKind::Artboard {
-                        build_ab_dock(ctx, &absnap, &ab_icons, &mut ab_lock, &mut ops, &mut rects, &mut fit_request);
-                    } else {
-                        build_dock(ctx, &snap, &icons, &mut refpt, &mut lock, &mut ops, &mut rects);
-                    }
-                    // the Layers panel docks UNDER the inspector and grows downward (Ahmed) — pass the
-                    // inspector's rect (just pushed) so it pins to its bottom edge.
-                    let inspector = rects.last().copied();
-                    build_layers(
-                        ctx,
-                        &layer_rows,
-                        layer_icons,
-                        inspector,
-                        &mut lay_search,
-                        &mut lay_rename,
-                        &mut lay_collapsed,
-                        &mut lay_drag,
-                        &mut lay_anchor,
-                        &mut ops,
-                        &mut rects,
-                    );
-                }
-                // on-canvas page chrome: a name label + ⋮ menu pinned over each artboard (any tool)
+                // on-canvas overlays are CONFINED to the Board hole (Ahmed 07-07): page chrome, snap
+                // HUD and origin crosshair clip/cull at its edges instead of roaming the window
+                let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
                 build_ab_chrome(
                     ctx,
                     view,
                     ppp,
+                    hole,
                     &abs,
                     absnap.active,
                     snap.tool == ToolKind::Artboard,
                     absnap.count,
-                    ab_dots,
                     &mut ops,
                     &mut ab_name_edit,
                     &mut fit_request,
                 );
-                build_snap_hud(ctx, view, ppp, &snap_hud);
-                build_origin_crosshair(ctx, view, ppp, origin_preview);
+                build_snap_hud(ctx, view, ppp, hole, &snap_hud);
+                build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
                 build_color_modal(ctx, &mut color_modal, &snap, &mut ops); // over everything
             }
         });
@@ -1066,6 +1136,18 @@ impl Ui {
         apply_ops(ed, ops);
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
         self.state.handle_platform_output(window, out.platform_output);
+        // Stage 4: publish the canvas hole. Logical for the pointer test, physical for main.rs's view
+        // fits. A changed hole (box resized/dragged) repaints once more so the underlay catches up.
+        if new_hole != self.board_hole {
+            self.ctx.request_repaint();
+        }
+        self.board_hole = new_hole;
+        self.board_px = new_hole.map(|r| {
+            egui::Rect::from_min_max(
+                (r.min.to_vec2() * out.pixels_per_point).to_pos2(),
+                (r.max.to_vec2() * out.pixels_per_point).to_pos2(),
+            )
+        });
         self.rects = rects
             .into_iter()
             .map(|r| egui::Rect::from_min_max((r.min.to_vec2() * ppp).to_pos2(), (r.max.to_vec2() * ppp).to_pos2()))
@@ -1092,12 +1174,14 @@ fn lucide(inner: &str) -> String {
 }
 
 fn install_fonts(ctx: &egui::Context) {
+    // §3.4: ui = Segoe UI Variable Text (Win11) → Segoe UI; mono = Cascadia Code → Consolas.
     let mut f = egui::FontDefinitions::default();
-    if let Ok(b) = std::fs::read("C:/Windows/Fonts/segoeui.ttf") {
+    let first = |names: &[&str]| names.iter().find_map(|n| std::fs::read(format!("C:/Windows/Fonts/{n}")).ok());
+    if let Some(b) = first(&["SegUIVar.ttf", "segoeuivf.ttf", "segoeui.ttf"]) {
         f.font_data.insert("ui".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(b)));
         f.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "ui".to_owned());
     }
-    if let Ok(b) = std::fs::read("C:/Windows/Fonts/consola.ttf") {
+    if let Some(b) = first(&["CascadiaCode.ttf", "CASCADIA.TTF", "consola.ttf"]) {
         f.font_data.insert("mono".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(b)));
         f.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "mono".to_owned());
     }
@@ -1107,6 +1191,9 @@ fn install_fonts(ctx: &egui::Context) {
 fn install_style(ctx: &egui::Context) {
     use egui::{FontFamily, TextStyle};
     ctx.set_theme(egui::Theme::Dark);
+    // Stage 4: the shell law is the base (warm visuals + INSTANT + thin overlay scrollbars +
+    // tight seam grab) — the app only adds its text ramp on top.
+    varos_app::shell::tokens::apply(ctx);
     let mut s = (*ctx.style_of(egui::Theme::Dark)).clone();
     s.text_styles = [
         (TextStyle::Heading, FontId::new(13.5, FontFamily::Proportional)),
@@ -1116,18 +1203,8 @@ fn install_style(ctx: &egui::Context) {
         (TextStyle::Monospace, FontId::new(12.5, FontFamily::Monospace)),
     ]
     .into();
-    s.animation_time = 0.0; // a WORK tool: menus/popups appear INSTANTLY, no fade-in (Ahmed, 07-03)
-    let mut v = egui::Visuals::dark();
-    v.override_text_color = Some(TEXT);
-    v.window_shadow = egui::epaint::Shadow::NONE; // GPU pass owns the panel shadow
-    v.popup_shadow = egui::epaint::Shadow::NONE;
-    v.window_fill = SOLID_PANEL;
-    v.window_stroke = Stroke::new(1.0, BORDER);
-    v.window_corner_radius = CornerRadius::same(10);
-    v.selection.bg_fill = Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 90);
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
-    s.visuals = v;
-    ctx.set_style_of(egui::Theme::Dark, s);
+    ctx.set_style_of(egui::Theme::Dark, s.clone());
+    ctx.set_style_of(egui::Theme::Light, s);
 }
 
 // ───────────────────────────── hand-rolled dropdown menus ─────────────────────────────
@@ -1146,26 +1223,50 @@ fn menu_toggle(ui: &egui::Ui, id: egui::Id) {
     menu_set(ui, id, v);
 }
 
-/// The dropdown body anchored below `anchor` (only when open).
-fn menu_below(ui: &egui::Ui, id: egui::Id, anchor: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
+/// The dropdown body anchored below `anchor` (only when open). `flush = Some(bar_bottom)` renders
+/// it as an EXTENSION of the app bar (Ahmed 07-07): seam fill, square top corners hanging straight
+/// off the bar's bottom edge, and the shared edge erased — bar and menu read as ONE dark surface.
+fn menu_below(
+    ui: &egui::Ui,
+    id: egui::Id,
+    anchor: &egui::Response,
+    flush: Option<f32>,
+    add: impl FnOnce(&mut egui::Ui),
+) {
     if !menu_open(ui, id) {
         return;
     }
     let ctx = ui.ctx().clone();
-    // the exact frame the 0.27 popups got from our Visuals: panel fill + border, radius 10, margin 6
-    // (5 here — egui 0.31+ counts the 1px stroke as padding, so 5+1 = the old 6).
+    // Illustrator-crisp chrome (Ahmed 07-07): sharp MENU_R corners, vertical padding only — the
+    // rows run edge-to-edge so their hover strips touch the border. Flush menus keep the seam
+    // fill + square top so they read as extensions of the app bar.
     let frame = egui::Frame {
-        fill: SOLID_PANEL,
+        fill: if flush.is_some() { SEAM } else { SOLID_PANEL },
         stroke: Stroke::new(1.0, BORDER),
-        corner_radius: CornerRadius::same(10),
-        inner_margin: Margin::same(5),
+        corner_radius: if flush.is_some() {
+            CornerRadius { nw: 0, ne: 0, sw: MENU_R, se: MENU_R }
+        } else {
+            CornerRadius::same(MENU_R)
+        },
+        inner_margin: Margin::symmetric(0, MENU_PAD_V),
         ..Default::default()
     };
-    let out = egui::Area::new(id.with("menu"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(anchor.rect.left_bottom() + egui::vec2(0.0, 4.0))
-        .constrain(true)
-        .show(&ctx, |ui| frame.show(ui, |ui| add(ui)).response.rect);
+    let pos = match flush {
+        Some(y) => egui::pos2(anchor.rect.left(), y),
+        None => anchor.rect.left_bottom() + egui::vec2(0.0, 4.0),
+    };
+    let out = egui::Area::new(id.with("menu")).order(egui::Order::Foreground).fixed_pos(pos).constrain(true).show(
+        &ctx,
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0; // contiguous rows — separators bring their own air
+            let r = frame.show(ui, |ui| add(ui)).response.rect;
+            if flush.is_some() {
+                // erase the top border segment — the menu melts into the bar, 100% one colour
+                ui.painter().hline(r.left() + 1.0..=r.right() - 1.0, r.top() + 0.5, Stroke::new(1.5, SEAM));
+            }
+            r
+        },
+    );
     let rect = out.inner;
     let close = ctx.input(|i| i.key_pressed(egui::Key::Escape))
         || ctx.input(|i| {
@@ -1250,7 +1351,7 @@ fn num_field(
     let just = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
     let editing = just || ui.memory(|m| m.has_focus(id));
     if editing {
-        p.rect(bx, r5, Color32::from_rgb(0x17, 0x17, 0x1a), Stroke::new(1.0, ACCENT), StrokeKind::Middle); // dark "input well"
+        p.rect(bx, r5, INPUT_WELL, Stroke::new(1.0, ACCENT), StrokeKind::Middle); // dark "input well"
         let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| format!("{value:.decimals$}"));
         let te = ui.put(
             bx.shrink2(egui::vec2(8.0, 3.0)),
@@ -1575,10 +1676,10 @@ fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &
                 p.rect_filled(sw, round, rgba_c32a(c));
             }
             None => {
-                p.rect_filled(sw, round, Color32::from_gray(32));
+                p.rect_filled(sw, round, SWATCH_WELL);
                 p.line_segment(
                     [sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)],
-                    Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a)),
+                    Stroke::new(1.6, NONE_RED),
                 );
             } // None = red slash
         }
@@ -1834,7 +1935,7 @@ fn dlg_btn(ui: &mut egui::Ui, label: &str, primary: bool, w: f32) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
     let rr = CornerRadius::same(6);
     if primary {
-        ui.painter().rect_filled(r, rr, if resp.hovered() { Color32::from_rgb(0x2b, 0x9d, 0xf4) } else { ACCENT });
+        ui.painter().rect_filled(r, rr, if resp.hovered() { ACCENT_HOVER } else { ACCENT });
     } else {
         ui.painter().rect_filled(r, rr, if resp.hovered() { HOVER } else { BG_SURFACE });
         ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
@@ -2050,13 +2151,13 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                                         ui.painter().rect_filled(botr, CornerRadius::ZERO, rgba_c32a(oc));
                                     }
                                     None => {
-                                        ui.painter().rect_filled(botr, CornerRadius::ZERO, Color32::from_gray(32));
+                                        ui.painter().rect_filled(botr, CornerRadius::ZERO, SWATCH_WELL);
                                         ui.painter().line_segment(
                                             [
                                                 botr.left_bottom() + egui::vec2(2.0, -2.0),
                                                 botr.right_top() + egui::vec2(-2.0, 2.0),
                                             ],
-                                            Stroke::new(1.4, Color32::from_rgb(0xd6, 0x3a, 0x3a)),
+                                            Stroke::new(1.4, NONE_RED),
                                         );
                                     }
                                 }
@@ -2239,16 +2340,18 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
 // ───────────────────────────── tool rail ─────────────────────────────
 
 fn icon_button(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, active: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
+    // 30px cells / 16px glyphs — the rail sits in the same size family as the top-bar buttons
+    // (Ahmed 07-07: "التول بار ضخم عن باقي البرنامج")
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
     let painter = ui.painter();
-    let rounding = CornerRadius::same(9);
+    let rounding = CornerRadius::same(7);
     if active {
         painter.rect_filled(rect, rounding, ACCENT);
     } else if resp.hovered() {
         painter.rect_filled(rect, rounding, HOVER);
     }
     if let Some(t) = tex {
-        let ir = egui::Rect::from_center_size(rect.center(), egui::vec2(20.0, 20.0));
+        let ir = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0));
         painter.image(t.id(), ir, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
     }
     resp
@@ -2256,8 +2359,8 @@ fn icon_button(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, active: boo
 
 fn divider(ui: &mut egui::Ui) {
     ui.add_space(3.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(40.0, 1.0), egui::Sense::hover());
-    ui.painter().hline((rect.left() + 7.0)..=(rect.right() - 7.0), rect.center().y, Stroke::new(1.0, BORDER));
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 1.0), egui::Sense::hover());
+    ui.painter().hline((rect.left() + 5.0)..=(rect.right() - 5.0), rect.center().y, Stroke::new(1.0, BORDER));
     ui.add_space(3.0);
 }
 
@@ -2514,17 +2617,70 @@ fn topbtn(
     active: bool,
 ) -> egui::Response {
     let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
-    let r6 = CornerRadius::same(6);
+    let rr = CornerRadius::same(3); // §3.5: control radius r
     if active {
-        p.rect_filled(rect, r6, BG_SURFACE);
+        p.rect_filled(rect, rr, BG_SURFACE);
     } else if resp.hovered() {
-        p.rect_filled(rect, r6, HOVER);
+        p.rect_filled(rect, rr, HOVER);
     }
     let col = if active || resp.hovered() { TEXT } else { MUTED };
     if let Some(t) = tex {
         p.image(t.id(), egui::Rect::from_center_size(rect.center(), egui::vec2(17.0, 17.0)), UV01(), col);
     }
     resp
+}
+
+/// §3.5 app-bar text button (pad 5 12, radius r): solid = surface fill + line2 border;
+/// ghost = bare muted text that lights on hover. Laid out from its RIGHT edge; returns its Response.
+fn bar_btn(ui: &mut egui::Ui, p: &egui::Painter, right: f32, cy: f32, label: &str, ghost: bool) -> egui::Response {
+    let f = FontId::proportional(12.0);
+    let gw = p.layout_no_wrap(label.to_owned(), f.clone(), TEXT).size().x;
+    let rect = egui::Rect::from_min_max(egui::pos2(right - gw - 24.0, cy - 13.0), egui::pos2(right, cy + 13.0));
+    let resp = ui.interact(rect, ui.id().with(("bar-btn", label)), egui::Sense::click());
+    let rr = CornerRadius::same(3);
+    if ghost {
+        if resp.hovered() {
+            p.rect_filled(rect, rr, HOVER);
+        }
+    } else {
+        p.rect_filled(rect, rr, if resp.hovered() { HOVER } else { BG_SURFACE });
+        p.rect_stroke(rect, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+    }
+    let col = if ghost && !resp.hovered() { MUTED } else { TEXT };
+    p.text(rect.center(), Align2::CENTER_CENTER, label, f, col);
+    resp
+}
+
+/// §3.5 search pill: 🔍 Search · [Ctrl K] — a surface capsule sitting on the void.
+/// Laid out from its RIGHT edge; returns its rect. (Visual mirror — search lands with its home.)
+fn search_pill(
+    ui: &mut egui::Ui,
+    p: &egui::Painter,
+    right: f32,
+    cy: f32,
+    icon: &Option<egui::TextureHandle>,
+) -> egui::Rect {
+    let f = FontId::proportional(11.5);
+    let fk = FontId::monospace(10.0);
+    let sw = p.layout_no_wrap("Search".into(), f.clone(), FAINT).size().x;
+    let kw = p.layout_no_wrap("Ctrl K".into(), fk.clone(), MUTED).size().x + 8.0;
+    let w = 9.0 + 13.0 + 6.0 + sw + 8.0 + kw + 9.0;
+    let rect = egui::Rect::from_min_max(egui::pos2(right - w, cy - 12.0), egui::pos2(right, cy + 12.0));
+    let _ = ui.interact(rect, ui.id().with("tb-kpill"), egui::Sense::hover());
+    let rr = CornerRadius::same(3);
+    p.rect_filled(rect, rr, BG_SURFACE);
+    p.rect_stroke(rect, rr, Stroke::new(1.0, BORDER), StrokeKind::Middle);
+    let mut x = rect.left() + 9.0;
+    if let Some(t) = icon {
+        p.image(t.id(), egui::Rect::from_center_size(egui::pos2(x + 6.5, cy), egui::vec2(13.0, 13.0)), UV01(), FAINT);
+    }
+    x += 13.0 + 6.0;
+    let tr = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Search", f, FAINT);
+    x = tr.right() + 8.0;
+    let krect = egui::Rect::from_min_size(egui::pos2(x, cy - 8.0), egui::vec2(kw, 16.0));
+    p.rect_stroke(krect, CornerRadius::same(2), Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+    p.text(krect.center(), Align2::CENTER_CENTER, "Ctrl K", fk, MUTED);
+    rect
 }
 
 /// One document tab. Returns (activate_clicked, close_clicked).
@@ -2537,22 +2693,23 @@ fn tab_item(
     tex_x: &Option<egui::TextureHandle>,
     key: &str,
 ) -> (bool, bool) {
+    // Brave chip in the void (§3.5): active = filled panel block; inactive = bare muted text,
+    // hover = a whisper of white. No accent — azure is a scalpel, not a tab decoration.
     let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
+    let rr = CornerRadius::same(RBOX);
     if active {
-        p.rect_filled(rect, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, SOLID_PANEL);
-        p.hline(rect.left()..=rect.right(), rect.top() + 1.0, Stroke::new(2.0, ACCENT));
+        p.rect_filled(rect, rr, SOLID_PANEL);
     } else if resp.hovered() {
-        let inner = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() + 5.0), rect.max);
-        p.rect_filled(inner, CornerRadius::same(6), BG_SURFACE);
+        p.rect_filled(rect, rr, VOID_HOVER);
     }
     p.text(
         egui::pos2(rect.left() + 12.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(12.5),
+        FontId::proportional(12.0),
         if active { TEXT } else { MUTED },
     );
-    let x_r = egui::Rect::from_center_size(egui::pos2(rect.right() - 14.0, rect.center().y), egui::vec2(18.0, 18.0));
+    let x_r = egui::Rect::from_center_size(egui::pos2(rect.right() - 13.0, rect.center().y), egui::vec2(18.0, 18.0));
     let xr = ui.interact(x_r, ui.id().with((key, "x")), egui::Sense::click());
     if xr.hovered() {
         p.rect_filled(x_r, CornerRadius::same(4), HOVER);
@@ -2562,64 +2719,74 @@ fn tab_item(
             t.id(),
             egui::Rect::from_center_size(x_r.center(), egui::vec2(11.0, 11.0)),
             UV01(),
-            if xr.hovered() { TEXT } else { MUTED },
+            if xr.hovered() { TEXT } else { FAINT },
         );
     }
     (resp.clicked(), xr.clicked())
 }
 
+// ── menu metrics (Ahmed 07-07: "مساحات محسوبة بالمللي") — ONE place, Illustrator-crisp ──
+// Rows are contiguous (no inter-row gap), the hover strip bleeds edge-to-edge and is SQUARE, text
+// always starts after a fixed ✓-gutter so every menu lines up, shortcuts hang right in mono.
+const MENU_ROW_H: f32 = 26.0; // row height
+const MENU_GUTTER: f32 = 28.0; // left column reserved for ✓ marks — text aligns after it, always
+const MENU_PAD_V: i8 = 5; // frame's vertical padding (rows themselves are full-bleed)
+const MENU_R: u8 = 4; // outer radius — sharp, a work tool (was 10: "ناعمة ومايعة")
+
+/// One menu row: label left (after the gutter), shortcut right. Returns true on click.
 fn menu_row(ui: &mut egui::Ui, label: &str, shortcut: &str) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), MENU_ROW_H), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(6), BG_SURFACE);
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, HOVER); // full-bleed, square — AI-crisp
     }
     ui.painter().text(
-        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::pos2(rect.left() + MENU_GUTTER, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(12.5),
+        FontId::proportional(12.0),
         TEXT,
     );
     if !shortcut.is_empty() {
         ui.painter().text(
-            egui::pos2(rect.right() - 10.0, rect.center().y),
+            egui::pos2(rect.right() - 12.0, rect.center().y),
             Align2::RIGHT_CENTER,
             shortcut,
-            FontId::monospace(11.0),
+            FontId::monospace(10.5),
             MUTED,
         );
     }
     resp.clicked()
 }
 
-/// A checklist row (panels show/hide). Returns true on click.
-fn check_row(ui: &mut egui::Ui, label: &str, checked: bool, tex_check: &Option<egui::TextureHandle>) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::click());
+/// A toggle row: same skeleton as `menu_row`, with a hand-drawn ✓ in the gutter when on —
+/// Illustrator's Window-menu look (NOT a checkbox; Ahmed 07-07).
+fn check_row(ui: &mut egui::Ui, label: &str, checked: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), MENU_ROW_H), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(6), BG_SURFACE);
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, HOVER);
     }
-    let box_r = egui::Rect::from_center_size(egui::pos2(rect.left() + 16.0, rect.center().y), egui::vec2(16.0, 16.0));
     if checked {
-        ui.painter().rect_filled(box_r, CornerRadius::same(4), ACCENT);
-        if let Some(t) = tex_check {
-            ui.painter().image(
-                t.id(),
-                egui::Rect::from_center_size(box_r.center(), egui::vec2(12.0, 12.0)),
-                UV01(),
-                Color32::WHITE,
-            );
-        }
-    } else {
-        ui.painter().rect_stroke(box_r, CornerRadius::same(4), Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+        let c = egui::pos2(rect.left() + 14.0, rect.center().y);
+        let knee = c + egui::vec2(-1.2, 2.8);
+        ui.painter().line_segment([c + egui::vec2(-4.0, -0.2), knee], Stroke::new(1.6, TEXT));
+        ui.painter().line_segment([knee, c + egui::vec2(4.2, -3.4)], Stroke::new(1.6, TEXT));
     }
     ui.painter().text(
-        egui::pos2(rect.left() + 32.0, rect.center().y),
+        egui::pos2(rect.left() + MENU_GUTTER, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(12.5),
+        FontId::proportional(12.0),
         TEXT,
     );
     resp.clicked()
+}
+
+/// Full-width menu separator with even breath above/below.
+fn menu_sep(ui: &mut egui::Ui) {
+    ui.add_space(4.0);
+    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().hline(r.left()..=r.right(), r.center().y, Stroke::new(1.0, BORDER));
+    ui.add_space(4.0);
 }
 
 /// Custom top bar (the native caption is stripped in WM_NCCALCSIZE): menu · tabs · drag · right tools ·
@@ -2629,6 +2796,7 @@ fn check_row(ui: &mut egui::Ui, label: &str, checked: bool, tex_check: &Option<e
 fn build_topbar(
     root: &mut egui::Ui,
     top: &TopIcons,
+    shell: &mut varos_app::shell::ShellState,
     win_action: &mut Option<WinAction>,
     tabs: &mut Vec<String>,
     tab_active: &mut usize,
@@ -2637,17 +2805,19 @@ fn build_topbar(
     snap: &mut varos_core::model::SnapConfig,
     maximized: bool,
 ) {
-    let h = 40.0;
-    let frame = egui::Frame { fill: BG, inner_margin: Margin::ZERO, ..Default::default() };
-    egui::Panel::top("topbar").exact_size(h).frame(frame).show(root, |ui| {
+    let h = 46.0; // a touch taller so the bar and its flush dropdowns breathe (Ahmed 07-07)
+                  // Stage 1 (BOX_SYSTEM_PLAN §3.5): the app bar IS the void — seam fill, no hairline; the doc tabs
+                  // are Brave-style chips floating in it and the window caps are flush 42px void cells.
+    let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
+    // no separator line — the bar melts into the void below it (Ahmed 07-07 "في خط لسا موجود")
+    egui::Panel::top("topbar").exact_size(h).frame(frame).show_separator_line(false).show(root, |ui| {
         let bar = ui.max_rect();
         let p = ui.painter().clone();
         let cy = bar.center().y;
-        p.hline(bar.left()..=bar.right(), bar.bottom() - 0.5, Stroke::new(1.0, BORDER));
         let mut excl: Vec<egui::Rect> = Vec::new();
 
         // window controls (min · max · close)
-        let bw = 46.0;
+        let bw = 42.0;
         let close_r =
             egui::Rect::from_min_max(egui::pos2(bar.right() - bw, bar.top()), egui::pos2(bar.right(), bar.bottom()));
         let max_r = egui::Rect::from_min_max(
@@ -2658,10 +2828,10 @@ fn build_topbar(
             egui::pos2(bar.right() - 3.0 * bw, bar.top()),
             egui::pos2(bar.right() - 2.0 * bw, bar.bottom()),
         );
-        if winctl(ui, &p, min_r, Cap::Min, "wc-min", BG_SURFACE, false) {
+        if winctl(ui, &p, min_r, Cap::Min, "wc-min", HOVER, false) {
             *win_action = Some(WinAction::Minimize);
         }
-        if winctl(ui, &p, max_r, if maximized { Cap::Restore } else { Cap::Max }, "wc-max", BG_SURFACE, false) {
+        if winctl(ui, &p, max_r, if maximized { Cap::Restore } else { Cap::Max }, "wc-max", HOVER, false) {
             *win_action = Some(WinAction::ToggleMaximize);
         }
         if winctl(ui, &p, close_r, Cap::Close, "wc-close", CLOSE_RED, true) {
@@ -2669,51 +2839,58 @@ fn build_topbar(
         }
         excl.extend([min_r, max_r, close_r]);
 
-        // right tools (search · layout · panels), to the left of the window controls
-        let (tb, th) = (34.0, 30.0);
-        let cell =
-            |rx: f32| egui::Rect::from_min_max(egui::pos2(rx - tb, cy - th / 2.0), egui::pos2(rx, cy + th / 2.0));
-        let panels_id = ui.make_persistent_id("panels_menu");
+        // right cluster (§3.5), right→left: window caps · [snapping] · Window · Share · Export · search pill
+        let window_id = ui.make_persistent_id("window_menu");
         let menu_id = ui.make_persistent_id("app_menu");
-        let panels_r = cell(min_r.left() - 8.0);
-        let panels_active = menu_open(ui, panels_id) || !*show_rail || !*show_dock;
-        let pr = topbtn(ui, &p, panels_r, &top.panels, "tb-panels", panels_active);
-        if pr.clicked() {
-            menu_toggle(ui, panels_id);
-        }
-        let layout_r = cell(panels_r.left() - 2.0);
-        topbtn(ui, &p, layout_r, &top.layout, "tb-layout", false).on_hover_text("Layout");
-        let search_r = cell(layout_r.left() - 2.0);
-        topbtn(ui, &p, search_r, &top.search, "tb-search", false).on_hover_text("Search");
         // magnet = the Snapping quick-menu (Illustrator layout)
         let magnet_id = ui.make_persistent_id("snap_menu");
-        let magnet_r = cell(search_r.left() - 2.0);
+        let magnet_r = egui::Rect::from_center_size(egui::pos2(min_r.left() - 6.0 - 14.0, cy), egui::vec2(28.0, 28.0));
         let magnet_active = menu_open(ui, magnet_id) || snap.smart || snap.grid;
         let magr = topbtn(ui, &p, magnet_r, &top.magnet, "tb-magnet", magnet_active);
         if magr.clicked() {
             menu_toggle(ui, magnet_id);
         }
-        excl.extend([panels_r, layout_r, search_r, magnet_r]);
+        // Window — every panel one click away, landing in an AUTOMATIC spot (Ahmed 07-07; replaces
+        // the old layout/panels buttons)
+        let winb = bar_btn(ui, &p, magnet_r.left() - 8.0, cy, "Window", true);
+        if winb.clicked() {
+            menu_toggle(ui, window_id);
+        }
+        // Share (solid) + Export (ghost) — the mockup pair; visual MIRRORS for now (like the burger's
+        // menu rows: the look lands in Stage 1, the wiring lands with its home)
+        let share = bar_btn(ui, &p, winb.rect.left() - 8.0, cy, "Share", false);
+        let export = bar_btn(ui, &p, share.rect.left() - 8.0, cy, "Export", true);
+        // search pill: 🔍 Search · Ctrl K — a surface capsule on the void (visual mirror too)
+        let kpill_r = search_pill(ui, &p, export.rect.left() - 8.0, cy, &top.search);
+        excl.extend([magnet_r, winb.rect, share.rect, export.rect, kpill_r]);
 
-        // menu button (left)
-        let menu_r =
-            egui::Rect::from_min_max(egui::pos2(bar.left() + 6.0, cy - 15.0), egui::pos2(bar.left() + 40.0, cy + 15.0));
-        let mr = topbtn(ui, &p, menu_r, &top.menu, "tb-menu", menu_open(ui, menu_id));
+        // burger — a flush 36×40 void cell at the far left (§3.5)
+        let menu_r = egui::Rect::from_min_size(egui::pos2(bar.left() + 4.0, bar.top()), egui::vec2(36.0, h));
+        let mr = ui.interact(menu_r, ui.id().with("tb-menu"), egui::Sense::click());
+        let mopen = menu_open(ui, menu_id);
+        if mopen || mr.hovered() {
+            p.rect_filled(menu_r, CornerRadius::ZERO, HOVER);
+        }
+        if let Some(t) = &top.menu {
+            let col = if mopen || mr.hovered() { TEXT } else { MUTED };
+            p.image(t.id(), egui::Rect::from_center_size(menu_r.center(), egui::vec2(17.0, 17.0)), UV01(), col);
+        }
         if mr.clicked() {
             menu_toggle(ui, menu_id);
         }
         excl.push(menu_r);
 
-        // tabs + new-tab
-        let tabs_right = magnet_r.left() - 12.0;
+        // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5)
+        let tabs_right = kpill_r.left() - 12.0;
         let mut tx = menu_r.right() + 8.0;
-        let tw = 154.0;
         let (mut to_close, mut to_activate) = (None, None);
         for (i, tab) in tabs.iter().enumerate() {
+            let gw = p.layout_no_wrap(tab.clone(), FontId::proportional(12.0), TEXT).size().x;
+            let tw = (12.0 + gw + 8.0 + 18.0 + 4.0).clamp(76.0, 220.0);
             if tx + tw > tabs_right {
                 break;
             }
-            let trect = egui::Rect::from_min_max(egui::pos2(tx, bar.top()), egui::pos2(tx + tw, bar.bottom()));
+            let trect = egui::Rect::from_min_size(egui::pos2(tx, cy - 14.0), egui::vec2(tw, 28.0));
             let (click, close) = tab_item(ui, &p, trect, tab, i == *tab_active, &top.x, &format!("tab{i}"));
             if click {
                 to_activate = Some(i);
@@ -2722,10 +2899,10 @@ fn build_topbar(
                 to_close = Some(i);
             }
             excl.push(trect);
-            tx += tw + 2.0;
+            tx += tw + 4.0;
         }
-        let plus_r = egui::Rect::from_min_max(egui::pos2(tx, cy - 14.0), egui::pos2(tx + 28.0, cy + 14.0));
-        if tx + 28.0 <= tabs_right {
+        let plus_r = egui::Rect::from_center_size(egui::pos2(tx + 16.0, cy), egui::vec2(32.0, 28.0));
+        if tx + 32.0 <= tabs_right {
             if topbtn(ui, &p, plus_r, &top.plus, "tb-plus", false).clicked() {
                 tabs.push(format!("Untitled-{}", tabs.len() + 1));
                 *tab_active = tabs.len() - 1;
@@ -2744,47 +2921,52 @@ fn build_topbar(
             }
         }
 
-        // dropdowns
-        menu_below(ui, menu_id, &mr, |ui| {
-            ui.set_width(196.0);
+        // dropdowns — the app-bar menus are FLUSH seam extensions of the bar (Ahmed 07-07): same
+        // colour, no separating line, hanging straight off its bottom edge. FIXED widths — measured,
+        // never elastic (the intrinsic-width try read the whole screen and blew the menus wide open).
+        let flush = Some(bar.bottom());
+        menu_below(ui, menu_id, &mr, flush, |ui| {
+            ui.set_width(210.0);
             menu_row(ui, "New", "Ctrl+N");
             menu_row(ui, "Open\u{2026}", "Ctrl+O");
             menu_row(ui, "Save", "Ctrl+S");
-            ui.add_space(4.0);
-            let (sr, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-            ui.painter().hline(sr.left() + 4.0..=sr.right() - 4.0, sr.center().y, Stroke::new(1.0, BORDER));
-            ui.add_space(4.0);
+            menu_sep(ui);
             menu_row(ui, "Export\u{2026}", "");
         });
-        menu_below(ui, panels_id, &pr, |ui| {
-            ui.set_width(186.0);
-            if check_row(ui, "Tool rail", *show_rail, &top.check) {
+        // the Window menu: chrome toggles up top, then EVERY dockable panel — ✓ = it's in the
+        // layout; click = open in an automatic spot / surface its tab / close (boxtree::toggle_panel)
+        menu_below(ui, window_id, &winb, flush, |ui| {
+            ui.set_width(200.0);
+            if check_row(ui, "Tool rail", *show_rail) {
                 *show_rail = !*show_rail;
             }
-            if check_row(ui, "Inspector", *show_dock, &top.check) {
+            if check_row(ui, "Control bar", *show_dock) {
                 *show_dock = !*show_dock;
+            }
+            menu_sep(ui);
+            for pnl in varos_app::shell::PanelId::DOCKABLE {
+                if check_row(ui, pnl.title(), shell.is_open(pnl)) {
+                    shell.toggle_panel(pnl);
+                }
             }
         });
         // Snapping quick-menu (Illustrator "Snapping" popover)
-        menu_below(ui, magnet_id, &magr, |ui| {
-            ui.set_width(204.0);
-            if check_row(ui, "Snap to Grid", snap.grid, &top.check) {
+        menu_below(ui, magnet_id, &magr, flush, |ui| {
+            ui.set_width(216.0);
+            if check_row(ui, "Snap to Grid", snap.grid) {
                 snap.grid = !snap.grid;
             }
-            if check_row(ui, "Snap to Point", snap.key_points, &top.check) {
+            if check_row(ui, "Snap to Point", snap.key_points) {
                 snap.key_points = !snap.key_points;
             }
-            ui.add_space(4.0);
-            let (sr, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-            ui.painter().hline(sr.left() + 4.0..=sr.right() - 4.0, sr.center().y, Stroke::new(1.0, BORDER));
-            ui.add_space(4.0);
-            if check_row(ui, "Smart Guides  (Ctrl+U)", snap.smart, &top.check) {
+            menu_sep(ui);
+            if check_row(ui, "Smart Guides  (Ctrl+U)", snap.smart) {
                 snap.smart = !snap.smart;
             }
-            if check_row(ui, "    Alignment Guides", snap.alignment_guides, &top.check) {
+            if check_row(ui, "    Alignment Guides", snap.alignment_guides) {
                 snap.alignment_guides = !snap.alignment_guides;
             }
-            if check_row(ui, "    Geometric Guides", snap.object_geometry, &top.check) {
+            if check_row(ui, "    Geometric Guides", snap.object_geometry) {
                 snap.object_geometry = !snap.object_geometry;
             }
         });
@@ -2801,60 +2983,345 @@ fn build_topbar(
     });
 }
 
-fn build_rail(
+/// Seam-fill the `.mid` region EXCEPT the canvas hole (the Board pane's interior, where the wgpu
+/// scene shows through). The void between boxes is exactly this underlay showing in the gaps.
+fn paint_void_underlay(p: &egui::Painter, mid: egui::Rect, hole: Option<egui::Rect>) {
+    match hole.map(|h| h.intersect(mid)).filter(|h| h.is_positive()) {
+        None => {
+            p.rect_filled(mid, CornerRadius::ZERO, SEAM);
+        }
+        Some(h) => {
+            let (l, r) = (mid.left(), mid.right());
+            p.rect_filled(egui::Rect::from_min_max(mid.min, egui::pos2(r, h.top())), CornerRadius::ZERO, SEAM);
+            p.rect_filled(egui::Rect::from_min_max(egui::pos2(l, h.bottom()), mid.max), CornerRadius::ZERO, SEAM);
+            p.rect_filled(
+                egui::Rect::from_min_max(egui::pos2(l, h.top()), egui::pos2(h.left(), h.bottom())),
+                CornerRadius::ZERO,
+                SEAM,
+            );
+            p.rect_filled(
+                egui::Rect::from_min_max(egui::pos2(h.right(), h.top()), egui::pos2(r, h.bottom())),
+                CornerRadius::ZERO,
+                SEAM,
+            );
+        }
+    }
+}
+
+/// Patch the four corners of the Board box with seam-coloured "square minus quarter-arc" wedges, so
+/// the raw wgpu scene never pokes past the box's rounded silhouette.
+fn corner_voids(p: &egui::Painter, rect: egui::Rect) {
+    let r = RBOX as f32;
+    let n = 8; // arc samples — plenty at 8px
+    let corners = [
+        (rect.left_top(), egui::vec2(1.0, 1.0)),
+        (rect.right_top(), egui::vec2(-1.0, 1.0)),
+        (rect.right_bottom(), egui::vec2(-1.0, -1.0)),
+        (rect.left_bottom(), egui::vec2(1.0, -1.0)),
+    ];
+    for (c, dir) in corners {
+        let centre = c + egui::vec2(r * dir.x, r * dir.y);
+        let mut pts = vec![c];
+        for i in 0..=n {
+            let a = std::f32::consts::FRAC_PI_2 * i as f32 / n as f32;
+            let (s, co) = a.sin_cos();
+            // sweep the quarter arc between the two edge tangent points
+            pts.push(centre - egui::vec2(co * r * dir.x, s * r * dir.y));
+        }
+        p.add(egui::Shape::convex_polygon(pts, SEAM, Stroke::NONE));
+    }
+}
+
+/// Stage 1 (§3.5): the status strip — void chrome like the app bar (h 25, seam, 11px faint).
+/// Left = the beginner shortcut hints; right = artboard i/n · Fit (clickable) · zoom %.
+fn build_statusbar(
+    root: &mut egui::Ui,
+    ab_active: usize,
+    ab_count: usize,
+    zoom: f32,
+    fit_icon: &Option<egui::TextureHandle>,
+    fit_request: &mut Option<usize>,
+) {
+    let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
+    // 31 = 25 of bar + the 6pt float-gap under the boxes, folded IN so the text centres in the
+    // strip the eye actually sees (Ahmed 07-07: "مش متوسطنة في الارتفاع")
+    egui::Panel::bottom("statusbar").exact_size(31.0).frame(frame).show_separator_line(false).show(root, |ui| {
+        let bar = ui.max_rect();
+        let p = ui.painter().clone();
+        let cy = bar.center().y;
+        let f11 = FontId::proportional(11.0);
+        let m11 = FontId::monospace(11.0);
+        // left: shortcut hints — keys muted, prose faint (the mockup's <b> pattern)
+        let mut x = bar.left() + 10.0;
+        for (s, muted) in [
+            ("V", true),
+            (" select    ·    ", false),
+            ("A", true),
+            (" direct    ·    ", false),
+            ("Alt", true),
+            ("+drag duplicates", false),
+        ] {
+            let r = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, s, f11.clone(), if muted { MUTED } else { FAINT });
+            x = r.right();
+        }
+        // right, laid right→left: zoom % · Fit · Artboard i/n (gap 14)
+        let zr = p.text(
+            egui::pos2(bar.right() - 10.0, cy),
+            Align2::RIGHT_CENTER,
+            format!("{:.0}%", zoom * 100.0),
+            m11.clone(),
+            MUTED,
+        );
+        let fw = 13.0 + 4.0 + p.layout_no_wrap("Fit".into(), f11.clone(), FAINT).size().x;
+        let fit_r = egui::Rect::from_min_size(egui::pos2(zr.left() - 14.0 - fw, cy - 9.0), egui::vec2(fw, 18.0));
+        let fresp = ui.interact(fit_r, ui.id().with("st-fit"), egui::Sense::click());
+        let fcol = if fresp.hovered() { TEXT } else { FAINT };
+        if let Some(t) = fit_icon {
+            p.image(
+                t.id(),
+                egui::Rect::from_center_size(egui::pos2(fit_r.left() + 6.5, cy), egui::vec2(13.0, 13.0)),
+                UV01(),
+                fcol,
+            );
+        }
+        p.text(egui::pos2(fit_r.left() + 17.0, cy), Align2::LEFT_CENTER, "Fit", f11.clone(), fcol);
+        if fresp.clicked() {
+            *fit_request = Some(ab_active);
+        }
+        if ab_count > 0 {
+            let nr = p.text(
+                egui::pos2(fit_r.left() - 14.0, cy),
+                Align2::RIGHT_CENTER,
+                format!("{} / {}", ab_active + 1, ab_count),
+                m11,
+                MUTED,
+            );
+            p.text(egui::pos2(nr.left() - 4.0, cy), Align2::RIGHT_CENTER, "Artboard", f11, FAINT);
+        }
+    });
+}
+
+/// HAND 2 — the floating tool rail (§4.4), pinned INSIDE the board box: a normal box look (panel
+/// fill + hairline + rounded, NO shadow) floating over the canvas hole. Never a tile.
+fn board_rail(
     ctx: &egui::Context,
+    board: egui::Rect,
     tools: &[ToolBtn],
     shapes: &[ToolBtn],
     shape_active: &mut ToolKind,
     s: &Snap,
     ops: &mut Vec<Op>,
-    rects: &mut Vec<egui::Rect>,
 ) {
     // the shapes slot mirrors whichever shape tool is actually active (so the M/L keys update it too)
     if shapes.iter().any(|t| t.kind == s.tool) {
         *shape_active = s.tool;
     }
-    let r = egui::Window::new("tools")
-        .title_bar(false)
-        .resizable(false)
-        .anchor(Align2::LEFT_CENTER, egui::vec2(16.0, 0.0))
-        .frame(panel_frame(7))
+    egui::Area::new(egui::Id::new("hand2-rail"))
+        .order(egui::Order::Middle)
+        .pivot(Align2::LEFT_CENTER)
+        .fixed_pos(egui::pos2(board.left() + 16.0, board.center().y)) // ALWAYS vertically centred (Ahmed 07-07)
         .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            for t in tools {
-                if icon_button(ui, &t.tex, s.tool == t.kind).on_hover_text(t.tip).clicked() {
-                    ops.push(Op::Tool(t.kind));
-                }
-                if t.group_end {
-                    divider(ui);
-                }
-                if t.kind == ToolKind::Pen {
-                    // the SHAPES slot sits right after Pen
-                    shape_slot(ui, shapes, shape_active, s, ops);
-                    divider(ui);
-                }
+            egui::Frame {
+                fill: SOLID_PANEL,
+                stroke: Stroke::new(1.0, BORDER),
+                corner_radius: CornerRadius::same(RBOX),
+                inner_margin: Margin::same(6),
+                ..Default::default()
             }
-            divider(ui);
-            fill_stroke_control(ui, s, ops); // Illustrator's fill/stroke box at the rail foot
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for t in tools {
+                    if icon_button(ui, &t.tex, s.tool == t.kind).on_hover_text(t.tip).clicked() {
+                        ops.push(Op::Tool(t.kind));
+                    }
+                    if t.group_end {
+                        divider(ui);
+                    }
+                    if t.kind == ToolKind::Pen {
+                        // the SHAPES slot sits right after Pen
+                        shape_slot(ui, shapes, shape_active, s, ops);
+                        divider(ui);
+                    }
+                }
+                divider(ui);
+                fill_stroke_control(ui, s, ops); // Illustrator's fill/stroke box at the rail foot
+            });
         });
-    if let Some(r) = r {
-        rects.push(r.response.rect);
+}
+
+/// HAND 1 — the floating control bar (§4.4/§3.5), BORN in Stage 4. FIXED presence (Ahmed 07-07):
+/// the bar never vanishes — its CONTENT follows the moment. Selection → transform/appearance/align
+/// + pathfinder mirrors · Artboard tool → page mirrors · otherwise the tool name and a quiet hint.
+#[allow(clippy::too_many_arguments)] // hand-painted bar: each arg is live UI state
+fn board_ctlbar(
+    ctx: &egui::Context,
+    board: egui::Rect,
+    s: &Snap,
+    ab: &AbSnap,
+    ic: &DockIcons,
+    fit_icon: &Option<egui::TextureHandle>,
+    ops: &mut Vec<Op>,
+    fit_request: &mut Option<usize>,
+) {
+    let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
+    egui::Area::new(egui::Id::new("hand1-ctlbar"))
+        .order(egui::Order::Middle)
+        .pivot(Align2::CENTER_TOP)
+        .fixed_pos(egui::pos2(board.center().x, board.top() + 22.0))
+        .show(ctx, |ui| {
+            egui::Frame {
+                fill: SOLID_PANEL,
+                stroke: Stroke::new(1.0, BORDER),
+                corner_radius: CornerRadius::same(RBOX),
+                inner_margin: Margin::symmetric(10, 5),
+                ..Default::default()
+            }
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if s.tool == ToolKind::Artboard {
+                        // page mirrors: name · X/Y/W/H · count · Fit
+                        let i = ab.active;
+                        ui.label(RichText::new("Artboard").color(MUTED).size(11.5));
+                        ui.label(RichText::new(&ab.name).color(TEXT).size(11.5));
+                        bar_sep(ui);
+                        let fw = 64.0;
+                        if let Some(v) =
+                            num_field(ui, fw, Lab::Letter("X"), "X position", ab.x, 0, 1.0, 1.0, full.clone())
+                        {
+                            ops.push(Op::AbRect(i, Some(v), None, None, None));
+                        }
+                        if let Some(v) =
+                            num_field(ui, fw, Lab::Letter("Y"), "Y position", ab.y, 0, 1.0, 1.0, full.clone())
+                        {
+                            ops.push(Op::AbRect(i, None, Some(v), None, None));
+                        }
+                        if let Some(v) = num_field(ui, fw, Lab::Letter("W"), "Width", ab.w, 0, 1.0, 1.0, 1.0..=1.0e6) {
+                            ops.push(Op::AbRect(i, None, None, Some(v), None));
+                        }
+                        if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", ab.h, 0, 1.0, 1.0, 1.0..=1.0e6) {
+                            ops.push(Op::AbRect(i, None, None, None, Some(v)));
+                        }
+                        bar_sep(ui);
+                        ui.label(
+                            RichText::new(format!("{} / {}", i + 1, ab.count)).color(MUTED).monospace().size(11.0),
+                        );
+                        if icon_btn(ui, fit_icon, "Fit in window") {
+                            *fit_request = Some(i);
+                        }
+                    } else if s.sel {
+                        ui.label(RichText::new(&s.name).color(MUTED).size(11.5));
+                        let fw = 64.0;
+                        if let Some(v) =
+                            num_field(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, 1.0, full.clone())
+                        {
+                            ops.push(Op::SetBBox(Some(v), None, None, None, 0.0, 0.0));
+                        }
+                        if let Some(v) =
+                            num_field(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, 1.0, full.clone())
+                        {
+                            ops.push(Op::SetBBox(None, Some(v), None, None, 0.0, 0.0));
+                        }
+                        if let Some(v) = num_field(ui, fw, Lab::Letter("W"), "Width", s.w, 0, 1.0, 1.0, 0.0..=1.0e6) {
+                            ops.push(Op::SetBBox(None, None, Some(v), None, 0.0, 0.0));
+                        }
+                        if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 1.0, 0.0..=1.0e6) {
+                            ops.push(Op::SetBBox(None, None, None, Some(v), 0.0, 0.0));
+                        }
+                        if let Some(v) =
+                            num_field(ui, 62.0, Lab::Letter("\u{2220}"), "Rotation", s.rot, 1, 1.0, 0.5, full.clone())
+                        {
+                            ops.push(Op::SetRot(v));
+                        }
+                        bar_sep(ui);
+                        ctl_chip(ui, s.fill, PaintTarget::Fill, ops);
+                        ctl_chip(ui, s.stroke, PaintTarget::Stroke, ops);
+                        if let Some(v) = num_field(
+                            ui,
+                            74.0,
+                            Lab::Letter("Op"),
+                            "Opacity %",
+                            s.opacity * 100.0,
+                            0,
+                            1.0,
+                            0.5,
+                            0.0..=100.0,
+                        ) {
+                            ops.push(Op::SetOpacity(v / 100.0));
+                        }
+                        bar_sep(ui);
+                        let al = [
+                            (0usize, AlignMode::Left, "Align left"),
+                            (1, AlignMode::CenterH, "Align centre"),
+                            (2, AlignMode::Right, "Align right"),
+                            (4, AlignMode::Middle, "Align middle"),
+                        ];
+                        for (i, m, tip) in al {
+                            if icon_btn(ui, &ic.align[i], tip) {
+                                ops.push(Op::Align(m));
+                            }
+                        }
+                        bar_sep(ui);
+                        pathfinder_row(ui, ops); // the essential shape modes, in reach (Ahmed 07-07)
+                    } else {
+                        // idle: the current tool + a quiet hint — the bar keeps its place
+                        ui.label(RichText::new(crate::tool_name(s.tool)).color(TEXT).size(11.5));
+                        ui.label(RichText::new("No selection").color(FAINT).size(11.5));
+                    }
+                });
+            });
+        });
+}
+
+/// 1×16 vertical hairline separator inside the control bar (§3.5 vsep).
+fn bar_sep(ui: &mut egui::Ui) {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(1.0, 16.0), egui::Sense::hover());
+    ui.painter().vline(r.center().x, r.y_range(), Stroke::new(1.0, BORDER));
+}
+
+/// A 17×17 colour chip (§3.5): click = open the Color Picker for that target (a MIRROR of Appearance).
+fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarget, ops: &mut Vec<Op>) {
+    let (sw, resp) = ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::click());
+    let round = CornerRadius::same(2);
+    match color {
+        Some(c) => {
+            if c[3] < 0.999 {
+                checker(&ui.painter_at(sw), sw, 4.0);
+            }
+            ui.painter().rect_filled(sw, round, rgba_c32a(c));
+        }
+        None => {
+            ui.painter().rect_filled(sw, round, SWATCH_WELL);
+            ui.painter().line_segment(
+                [sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)],
+                Stroke::new(1.4, NONE_RED),
+            );
+        }
     }
+    ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+    if resp.clicked() {
+        ops.push(Op::OpenPicker(MTarget::Paint(target)));
+    }
+    resp.on_hover_text(match target {
+        PaintTarget::Fill => "Fill",
+        PaintTarget::Stroke => "Stroke",
+    });
 }
 
 /// Illustrator's fill/stroke control: overlapping FILL square (top-left) + STROKE ring (bottom-right);
 /// the focused target draws ON TOP with an accent edge. Click a swatch to focus it (X toggles) ·
 /// the ⤡ arrows swap the colours (Shift+X) · the mini pair resets to white/black (D). None = red slash.
 fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
-    let (area, _) = ui.allocate_exact_size(egui::vec2(40.0, 46.0), egui::Sense::hover());
+    // 30-cell rail scale (Ahmed 07-07): 20px swatches overlapping inside a 30×40 slot
+    let (area, _) = ui.allocate_exact_size(egui::vec2(30.0, 40.0), egui::Sense::hover());
     let p = ui.painter().clone();
-    let fr = egui::Rect::from_min_size(area.min + egui::vec2(1.0, 3.0), egui::vec2(24.0, 24.0)); // fill
-    let sr = egui::Rect::from_min_size(area.min + egui::vec2(15.0, 17.0), egui::vec2(24.0, 24.0)); // stroke
+    let fr = egui::Rect::from_min_size(area.min + egui::vec2(0.0, 3.0), egui::vec2(20.0, 20.0)); // fill
+    let sr = egui::Rect::from_min_size(area.min + egui::vec2(10.0, 15.0), egui::vec2(20.0, 20.0)); // stroke
     let rr = CornerRadius::same(4);
     let slash = |p: &egui::Painter, r: egui::Rect| {
         p.line_segment(
-            [r.left_bottom() + egui::vec2(3.0, -3.0), r.right_top() + egui::vec2(-3.0, 3.0)],
-            Stroke::new(1.8, Color32::from_rgb(0xd6, 0x3a, 0x3a)),
+            [r.left_bottom() + egui::vec2(2.5, -2.5), r.right_top() + egui::vec2(-2.5, 2.5)],
+            Stroke::new(1.6, NONE_RED),
         )
     };
     let draw_fill = |p: &egui::Painter, active: bool| {
@@ -2867,7 +3334,7 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
                 p.rect_filled(fr, rr, rgba_c32a(c));
             }
             None => {
-                p.rect_filled(fr, rr, Color32::from_gray(32));
+                p.rect_filled(fr, rr, SWATCH_WELL);
                 slash(p, fr);
             }
         }
@@ -2880,7 +3347,7 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
     };
     let draw_stroke = |p: &egui::Painter, active: bool| {
         p.rect_filled(sr.expand(2.0), CornerRadius::same(5), SOLID_PANEL);
-        let hole = sr.shrink(7.5);
+        let hole = sr.shrink(6.0);
         match s.stroke {
             Some(c) => {
                 if c[3] < 0.999 {
@@ -2890,7 +3357,7 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
                 p.rect_filled(hole, CornerRadius::same(2), SOLID_PANEL);
             }
             None => {
-                p.rect_filled(sr, rr, Color32::from_gray(32));
+                p.rect_filled(sr, rr, SWATCH_WELL);
                 p.rect_filled(hole, CornerRadius::same(2), SOLID_PANEL);
                 slash(p, sr);
             }
@@ -2940,10 +3407,10 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
     }
     resp.on_hover_text("Fill / Stroke — click to focus (X) · double-click to edit");
     // swap (Shift+X): a tiny hand-painted double-headed arrow, top-right
-    let swr = egui::Rect::from_min_size(area.min + egui::vec2(28.0, 0.0), egui::vec2(12.0, 12.0));
+    let swr = egui::Rect::from_min_size(area.min + egui::vec2(20.0, 0.0), egui::vec2(10.0, 10.0));
     let rsw = ui.interact(swr, ui.id().with("fs-swap"), egui::Sense::click());
     let sc = if rsw.hovered() { Color32::WHITE } else { MUTED };
-    let (a, b) = (swr.center() + egui::vec2(-4.5, 2.5), swr.center() + egui::vec2(4.5, -2.5));
+    let (a, b) = (swr.center() + egui::vec2(-4.0, 2.2), swr.center() + egui::vec2(4.0, -2.2));
     p.line_segment([a, b], Stroke::new(1.3, sc));
     p.add(egui::Shape::convex_polygon(
         vec![b + egui::vec2(-3.5, -0.5), b + egui::vec2(-0.5, 3.0), b],
@@ -2956,10 +3423,10 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
     }
     rsw.on_hover_text("Swap fill & stroke (Shift+X)");
     // default (D): the mini white/black pair, bottom-left
-    let dfr = egui::Rect::from_min_size(area.min + egui::vec2(0.0, 33.0), egui::vec2(13.0, 13.0));
+    let dfr = egui::Rect::from_min_size(area.min + egui::vec2(0.0, 28.0), egui::vec2(12.0, 12.0));
     let rdf = ui.interact(dfr, ui.id().with("fs-def"), egui::Sense::click());
-    let m1 = egui::Rect::from_min_size(dfr.min, egui::vec2(8.0, 8.0));
-    let m2 = egui::Rect::from_min_size(dfr.min + egui::vec2(5.0, 5.0), egui::vec2(8.0, 8.0));
+    let m1 = egui::Rect::from_min_size(dfr.min, egui::vec2(7.0, 7.0));
+    let m2 = egui::Rect::from_min_size(dfr.min + egui::vec2(4.5, 4.5), egui::vec2(7.0, 7.0));
     p.rect_filled(m2, CornerRadius::same(2), Color32::from_gray(30));
     p.rect_stroke(
         m2,
@@ -2985,8 +3452,8 @@ fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
 fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind, s: &Snap, ops: &mut Vec<Op>) {
     let cur = shapes.iter().find(|t| t.kind == *shape_active).unwrap_or(&shapes[0]);
     let is_active = shapes.iter().any(|t| t.kind == s.tool);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
-    let rounding = CornerRadius::same(9);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
+    let rounding = CornerRadius::same(7);
     if is_active {
         ui.painter().rect_filled(rect, rounding, ACCENT);
     } else if resp.hovered() {
@@ -2995,15 +3462,15 @@ fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind
     if let Some(t) = &cur.tex {
         ui.painter().image(
             t.id(),
-            egui::Rect::from_center_size(rect.center(), egui::vec2(20.0, 20.0)),
+            egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
             UV01(),
             Color32::WHITE,
         );
     }
     // tiny flyout marker — a corner triangle bottom-right, like Illustrator's grouped tools
-    let c = rect.right_bottom() + egui::vec2(-4.0, -4.0);
+    let c = rect.right_bottom() + egui::vec2(-3.5, -3.5);
     ui.painter().add(egui::Shape::convex_polygon(
-        vec![c, c + egui::vec2(-5.0, 0.0), c + egui::vec2(0.0, -5.0)],
+        vec![c, c + egui::vec2(-4.5, 0.0), c + egui::vec2(0.0, -4.5)],
         if is_active { Color32::WHITE } else { MUTED },
         Stroke::NONE,
     ));
@@ -3015,9 +3482,10 @@ fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind
     if resp.secondary_clicked() {
         menu_toggle(ui, pop);
     }
-    menu_below(ui, pop, &resp, |ui| {
+    menu_below(ui, pop, &resp, None, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(5.0); // the menu frame has no horizontal padding — give the icons air
             for t in shapes {
                 if icon_button(ui, &t.tex, s.tool == t.kind).on_hover_text(t.tip).clicked() {
                     *shape_active = t.kind;
@@ -3025,6 +3493,7 @@ fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind
                     menu_set(ui, pop, false);
                 }
             }
+            ui.add_space(5.0);
         });
     });
 }
@@ -3079,53 +3548,31 @@ fn col_toggle(
 /// Click=select · Ctrl=toggle · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate.
 /// Header: title + search. Footer: Group · Delete.
 #[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state, split deferred with ui.rs
-fn build_layers(
-    ctx: &egui::Context,
+fn panel_layers(
+    ui: &mut egui::Ui,
     rows: &[LRow],
     ic: &LayerIcons,
-    dock_below: Option<egui::Rect>,
     search: &mut String,
     rename: &mut Option<(u32, String)>,
     collapsed: &mut std::collections::HashSet<u32>,
     drag: &mut Option<(u32, u32)>,
     anchor: &mut Option<(u32, u32)>,
     ops: &mut Vec<Op>,
-    rects: &mut Vec<egui::Rect>,
 ) {
-    let scr = ctx.content_rect();
-    // pin under the inspector, share its x + width; grow down to the workspace floor
-    let w = dock_below.map(|r| r.width()).unwrap_or(258.0);
-    let left = dock_below.map(|r| r.left()).unwrap_or(scr.right() - w - 16.0);
-    let top = dock_below.map(|r| r.bottom() + 8.0).unwrap_or(scr.top() + 120.0);
-    let list_h = (scr.bottom() - 16.0 - top - 104.0).clamp(90.0, 520.0); // header 70 + footer 34
-                                                                         // columns: eye · lock · [disclosure · thumb · name]. No identity bar, no target/select gutter.
+    let pane = ui.max_rect();
+    let w = pane.width();
+    // search row ≈ 42 + footer 34 — the list gets everything in between (the box grows, the list grows)
+    let list_h = (pane.height() - 42.0 - 34.0).max(60.0);
+    // columns: eye · lock · [disclosure · thumb · name]. No identity bar, no target/select gutter.
     let (eye_w, lock_w) = (26.0, 22.0);
     let body_x0 = eye_w + lock_w + 8.0;
-    let frame = egui::Frame {
-        fill: BG,
-        corner_radius: CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 },
-        stroke: Stroke::new(1.0, BORDER),
-        inner_margin: Margin::same(0),
-        ..Default::default()
-    };
-    let r = egui::Window::new("layers")
-        .title_bar(false)
-        .resizable(false)
-        .fixed_pos(egui::pos2(left, top))
-        .fixed_size(egui::vec2(w, list_h + 104.0))
-        .frame(frame)
-        .show(&ctx.clone(), |ui| {
-            ui.set_width(w);
+    {
+        {
             let hairline = |ui: &mut egui::Ui| {
                 let (r, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
                 ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, BORDER));
             };
-            // ── header: title + search ──
-            ui.add_space(9.0);
-            ui.horizontal(|ui| {
-                ui.add_space(13.0);
-                ui.label(RichText::new("Layers").color(TEXT).strong().size(12.5));
-            });
+            // ── header: search only (the box header already carries the "Layers" title) ──
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add_space(11.0);
@@ -3272,11 +3719,7 @@ fn build_layers(
                                 );
                             }
                         } else if row.selected {
-                            p.rect_filled(
-                                rect,
-                                CornerRadius::ZERO,
-                                Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 34),
-                            );
+                            p.rect_filled(rect, CornerRadius::ZERO, ACCENT_TINT);
                             p.rect_filled(
                                 egui::Rect::from_min_size(rect.min, egui::vec2(2.0, row_h)),
                                 CornerRadius::ZERO,
@@ -3562,9 +4005,7 @@ fn build_layers(
                     ops.push(Op::LayerDeleteSel);
                 }
             });
-        });
-    if let Some(r) = r {
-        rects.push(r.response.rect);
+        }
     }
 }
 
@@ -3580,24 +4021,21 @@ fn elide(name: &str, avail: f32, size: f32) -> String {
     s
 }
 
-fn build_dock(
-    ctx: &egui::Context,
+/// The Properties pane body (Stage 4): the old inspector dock re-housed inside the
+/// [Properties|Layers] box — Transform · Appearance · Shape (a Pathfinder MIRROR).
+/// Align moved out to its own panel (ONE-HOME rule).
+fn panel_properties(
+    ui: &mut egui::Ui,
     s: &Snap,
     ic: &DockIcons,
     refpt: &mut (f32, f32),
     lock: &mut bool,
     ops: &mut Vec<Op>,
-    rects: &mut Vec<egui::Rect>,
 ) {
-    let inner = 214.0;
     let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
-    let r = egui::Window::new("dock")
-        .title_bar(false)
-        .resizable(false)
-        .anchor(Align2::RIGHT_CENTER, egui::vec2(-16.0, 0.0))
-        .frame(panel_frame(13))
-        .show(ctx, |ui| {
-            ui.set_width(inner);
+    egui::ScrollArea::vertical().id_salt("props-body").auto_shrink([false, false]).show(ui, |ui| {
+        egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+            let inner = ui.available_width();
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
             ui.label(RichText::new(&s.name).color(if s.sel { TEXT } else { MUTED }).size(12.5).strong());
             ui.add_space(2.0);
@@ -3690,40 +4128,123 @@ fn build_dock(
             }
 
             hsep(ui, inner);
-            ui.label(RichText::new("ALIGN").color(MUTED).size(10.0).strong());
+            ui.label(RichText::new("SHAPE").color(MUTED).size(10.0).strong());
             ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                if icon_btn(ui, &ic.align[0], "Align left") {
-                    ops.push(Op::Align(AlignMode::Left));
-                }
-                if icon_btn(ui, &ic.align[1], "Align centre") {
-                    ops.push(Op::Align(AlignMode::CenterH));
-                }
-                if icon_btn(ui, &ic.align[2], "Align right") {
-                    ops.push(Op::Align(AlignMode::Right));
-                }
-                if icon_btn(ui, &ic.align[3], "Align top") {
-                    ops.push(Op::Align(AlignMode::Top));
-                }
-                if icon_btn(ui, &ic.align[4], "Align middle") {
-                    ops.push(Op::Align(AlignMode::Middle));
-                }
-                if icon_btn(ui, &ic.align[5], "Align bottom") {
-                    ops.push(Op::Align(AlignMode::Bottom));
-                }
-            });
-            ui.horizontal(|ui| {
-                if icon_btn(ui, &ic.align[6], "Distribute horizontal centres") {
-                    ops.push(Op::Distribute(DistAxis::Horizontal));
-                }
-                if icon_btn(ui, &ic.align[7], "Distribute vertical centres") {
-                    ops.push(Op::Distribute(DistAxis::Vertical));
-                }
-            });
+            pathfinder_row(ui, ops); // a MIRROR of the Pathfinder home (the mockup's Shape section)
         });
-    if let Some(r) = r {
-        rects.push(r.response.rect);
+    });
+}
+
+/// The Align pane body — THE home of align/distribute (ONE-HOME rule; the control bar mirrors it).
+fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, ops: &mut Vec<Op>) {
+    egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+        ui.label(RichText::new("ALIGN OBJECTS").color(MUTED).size(10.0).strong());
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            if icon_btn(ui, &ic.align[0], "Align left") {
+                ops.push(Op::Align(AlignMode::Left));
+            }
+            if icon_btn(ui, &ic.align[1], "Align centre") {
+                ops.push(Op::Align(AlignMode::CenterH));
+            }
+            if icon_btn(ui, &ic.align[2], "Align right") {
+                ops.push(Op::Align(AlignMode::Right));
+            }
+            if icon_btn(ui, &ic.align[3], "Align top") {
+                ops.push(Op::Align(AlignMode::Top));
+            }
+            if icon_btn(ui, &ic.align[4], "Align middle") {
+                ops.push(Op::Align(AlignMode::Middle));
+            }
+            if icon_btn(ui, &ic.align[5], "Align bottom") {
+                ops.push(Op::Align(AlignMode::Bottom));
+            }
+        });
+        ui.add_space(4.0);
+        ui.label(RichText::new("DISTRIBUTE").color(MUTED).size(10.0).strong());
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            if icon_btn(ui, &ic.align[6], "Distribute horizontal centres") {
+                ops.push(Op::Distribute(DistAxis::Horizontal));
+            }
+            if icon_btn(ui, &ic.align[7], "Distribute vertical centres") {
+                ops.push(Op::Distribute(DistAxis::Vertical));
+            }
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Align to").color(MUTED).size(11.5));
+            ui.label(RichText::new("Selection").color(FAINT).size(11.5)); // honest: the engine aligns within the selection
+        });
+    });
+}
+
+/// The Pathfinder pane body — THE home of the boolean ops (the i_overlay engine via `Editor::pathfinder`).
+fn panel_pathfinder(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
+    egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+        ui.label(RichText::new("SHAPE MODES").color(MUTED).size(10.0).strong());
+        ui.add_space(2.0);
+        pathfinder_row(ui, ops);
+        ui.add_space(4.0);
+        ui.label(RichText::new("Unite \u{b7} Minus Front \u{b7} Intersect \u{b7} Exclude").color(FAINT).size(10.5));
+    });
+}
+
+/// The four boolean buttons (Unite / Minus Front / Intersect / Exclude) — hand-painted glyphs:
+/// two overlapping squares with the op's region filled. Shared by the Pathfinder home + Shape mirror.
+fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
+    use varos_core::boolean::BoolOp;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        for (op, tip) in [
+            (BoolOp::Unite, "Unite"),
+            (BoolOp::MinusFront, "Minus Front"),
+            (BoolOp::Intersect, "Intersect"),
+            (BoolOp::Exclude, "Exclude"),
+        ] {
+            if pf_btn(ui, op, tip) {
+                ops.push(Op::Bool(op));
+            }
+        }
+    });
+}
+
+/// One pathfinder button: 34×28 hover chip; the glyph = two 12px squares overlapped by 4.
+fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str) -> bool {
+    use varos_core::boolean::BoolOp;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(34.0, 28.0), egui::Sense::click());
+    let p = ui.painter();
+    if resp.hovered() {
+        p.rect_filled(rect, CornerRadius::same(3), HOVER);
     }
+    let col = if resp.hovered() { TEXT } else { MUTED };
+    let a = egui::Rect::from_min_size(rect.center() - egui::vec2(10.0, 8.0), egui::vec2(12.0, 12.0));
+    let b = egui::Rect::from_min_size(rect.center() - egui::vec2(2.0, 4.0), egui::vec2(12.0, 12.0));
+    let rr = CornerRadius::same(2);
+    match op {
+        BoolOp::Unite => {
+            p.rect_filled(a, rr, col);
+            p.rect_filled(b, rr, col);
+        }
+        BoolOp::MinusFront => {
+            p.rect_filled(a, rr, col);
+            p.rect_filled(b, rr, SOLID_PANEL);
+            p.rect_stroke(b, rr, Stroke::new(1.0, col), StrokeKind::Middle);
+        }
+        BoolOp::Intersect => {
+            p.rect_stroke(a, rr, Stroke::new(1.0, col), StrokeKind::Middle);
+            p.rect_stroke(b, rr, Stroke::new(1.0, col), StrokeKind::Middle);
+            p.rect_filled(a.intersect(b), CornerRadius::ZERO, col);
+        }
+        BoolOp::Exclude => {
+            p.rect_filled(a, rr, col);
+            p.rect_filled(b, rr, col);
+            p.rect_filled(a.intersect(b), CornerRadius::ZERO, SOLID_PANEL);
+        }
+    }
+    resp.on_hover_text(tip).clicked()
 }
 
 // ───────────────────────────── artboard inspector ─────────────────────────────
@@ -3815,26 +4336,20 @@ fn pill_btn(ui: &mut egui::Ui, label: &str, disabled: bool) -> bool {
     resp.clicked() && !disabled
 }
 
-/// The Artboard inspector dock (shown in place of the object inspector when the Artboard tool is active).
-fn build_ab_dock(
-    ctx: &egui::Context,
+/// The Artboard inspector (Stage 4: the Properties pane's body while the Artboard tool is active).
+fn panel_artboard(
+    ui: &mut egui::Ui,
     s: &AbSnap,
     ic: &AbIcons,
     ab_lock: &mut bool,
     ops: &mut Vec<Op>,
-    rects: &mut Vec<egui::Rect>,
     fit_request: &mut Option<usize>,
 ) {
-    let inner = 214.0;
     let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
     let i = s.active;
-    let r = egui::Window::new("ab-dock")
-        .title_bar(false)
-        .resizable(false)
-        .anchor(Align2::RIGHT_CENTER, egui::vec2(-16.0, 0.0))
-        .frame(panel_frame(13))
-        .show(ctx, |ui| {
-            ui.set_width(inner);
+    egui::ScrollArea::vertical().id_salt("ab-body").auto_shrink([false, false]).show(ui, |ui| {
+        egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+            let inner = ui.available_width();
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Artboard").color(TEXT).size(13.0).strong());
@@ -3875,7 +4390,7 @@ fn build_ab_dock(
             if presp.clicked() {
                 menu_toggle(ui, preset_id);
             }
-            menu_below(ui, preset_id, &presp, |ui| {
+            menu_below(ui, preset_id, &presp, None, |ui| {
                 ui.set_width(inner);
                 for (label, w, h) in AB_PRESETS {
                     if menu_row(ui, label, "") {
@@ -3945,10 +4460,10 @@ fn build_ab_dock(
                         ui.painter().rect_filled(sw, round, rgba_c32a(c));
                     }
                     None => {
-                        ui.painter().rect_filled(sw, round, Color32::from_gray(32));
+                        ui.painter().rect_filled(sw, round, SWATCH_WELL);
                         ui.painter().line_segment(
                             [sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)],
-                            Stroke::new(1.6, Color32::from_rgb(0xd6, 0x3a, 0x3a)),
+                            Stroke::new(1.6, NONE_RED),
                         );
                     }
                 }
@@ -3999,9 +4514,7 @@ fn build_ab_dock(
                 }
             });
         });
-    if let Some(r) = r {
-        rects.push(r.response.rect);
-    }
+    });
 }
 
 /// On-canvas page chrome: a name label (top-left of each page) + a ⋮ button opening the edit menu. The
@@ -4012,88 +4525,99 @@ fn build_ab_chrome(
     ctx: &egui::Context,
     view: View,
     ppp: f32,
+    hole: egui::Rect,
     abs: &[AbInfo],
     active: usize,
     tool_ab: bool,
     count: usize,
-    dots: &Option<egui::TextureHandle>,
     ops: &mut Vec<Op>,
     name_edit: &mut Option<(usize, String)>,
     fit_request: &mut Option<usize>,
 ) {
-    let scr = ctx.content_rect();
     let mut clear_edit = false;
     for ab in abs {
         if ab.hidden {
             continue; // board eye OFF → the name chrome vanishes with the page
         }
-        // top-left of the page in screen POINTS (view maps world→physical px; egui works in points)
+        // Page corners in screen POINTS (view maps world→physical px; egui works in points). The
+        // chrome is PINNED to its page — no clamping, no following the viewport (Ahmed 07-07:
+        // "عاوزه ثابت زيه زي الأرت بورد") — and CLIPS at the hole so it never paints over rulers,
+        // seams or panels. Name + size sit top-LEFT; the ⋯ settings sit top-RIGHT.
         let tl = view.w2s([ab.x, ab.y]);
-        let pos = egui::pos2((tl[0] / ppp).max(2.0), (tl[1] / ppp - 24.0).max(2.0));
-        if pos.x > scr.right() - 8.0 || pos.y > scr.bottom() - 8.0 {
-            continue;
-        } // page is off to the side
+        let tr = view.w2s([ab.x + ab.w, ab.y]);
+        let y = tl[1] / ppp - 24.0;
         let is_active = ab.i == active;
-        egui::Area::new(egui::Id::new(("ab-chrome", ab.i)))
-            .fixed_pos(pos)
-            .order(egui::Order::Middle)
-            // OUTSIDE the Artboard tool the whole chrome is pure paint: a non-interactable Area lets
-            // clicks AND scroll near the page corner pass straight through to the canvas (Ahmed 07-06 —
-            // gating the label's Sense alone wasn't enough; the Area itself was still eating input).
-            .interactable(tool_ab)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let renaming = matches!(&*name_edit, Some((j, _)) if *j == ab.i);
-                    if renaming {
-                        if let Some((_, buf)) = name_edit.as_mut() {
-                            let te = ui.add(
-                                egui::TextEdit::singleline(buf)
-                                    .desired_width(120.0)
-                                    .font(FontId::proportional(12.5))
-                                    .text_color(TEXT),
-                            );
-                            if te.lost_focus() {
-                                ops.push(Op::AbName(ab.i, buf.clone()));
-                                clear_edit = true;
-                            } else {
-                                te.request_focus();
+        let out_v = y + 20.0 < hole.top() || y > hole.bottom() - 8.0;
+
+        // ── name + size (top-left): pure INFO — never a click target, never selects (Ahmed 07-07) ──
+        let pos = egui::pos2(tl[0] / ppp, y);
+        let renaming = matches!(&*name_edit, Some((j, _)) if *j == ab.i);
+        if !(out_v || pos.x + 30.0 < hole.left() || pos.x > hole.right() - 8.0) {
+            egui::Area::new(egui::Id::new(("ab-chrome", ab.i)))
+                .fixed_pos(pos)
+                .order(egui::Order::Middle)
+                .constrain(false)
+                // interactable only while the rename field is up — otherwise pure paint that lets
+                // clicks AND scroll pass straight through to the canvas (Ahmed 07-06)
+                .interactable(tool_ab && renaming)
+                .show(ctx, |ui| {
+                    ui.set_clip_rect(hole); // hard edge: nothing bleeds past the board box
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        if renaming {
+                            if let Some((_, buf)) = name_edit.as_mut() {
+                                let te = ui.add(
+                                    egui::TextEdit::singleline(buf)
+                                        .desired_width(110.0)
+                                        .font(FontId::proportional(11.5))
+                                        .text_color(TEXT),
+                                );
+                                if te.lost_focus() {
+                                    ops.push(Op::AbName(ab.i, buf.clone()));
+                                    clear_edit = true;
+                                } else {
+                                    te.request_focus();
+                                }
                             }
+                        } else {
+                            let col = if is_active { TEXT } else { MUTED };
+                            ui.label(RichText::new(&ab.name).color(col).size(11.0));
                         }
-                    } else {
-                        // the label is INTERACTIVE only in the Artboard tool (Decision 8) — in every
-                        // other tool the whole chrome Area is non-interactable (see .interactable above),
-                        // so nothing here — label or ⋮ menu — can eat a click or select a page by accident.
-                        let col = if is_active { TEXT } else { MUTED };
-                        let sense = if tool_ab { egui::Sense::click() } else { egui::Sense::hover() };
-                        let lbl = ui.add(egui::Label::new(RichText::new(&ab.name).color(col).size(12.5)).sense(sense));
-                        if tool_ab {
-                            if lbl.clicked() {
-                                ops.push(Op::AbActive(ab.i));
-                            }
-                            if lbl.double_clicked() {
-                                *name_edit = Some((ab.i, ab.name.clone()));
-                            }
-                        }
-                    }
-                    let (dr, dresp) = ui.allocate_exact_size(egui::vec2(15.0, 18.0), egui::Sense::click());
+                        // the page size, quietly beside the name (Ahmed 07-07 "المقاس مكتوب جمبه")
+                        ui.label(
+                            RichText::new(format!("{:.0} \u{00d7} {:.0}", ab.w, ab.h))
+                                .color(FAINT)
+                                .monospace()
+                                .size(10.0),
+                        );
+                    });
+                });
+        }
+
+        // ── ⋯ settings (top-right): three HORIZONTAL dots, a touch bigger (Ahmed 07-07) ──
+        let dpos = egui::pos2(tr[0] / ppp - 26.0, y);
+        if !(out_v || dpos.x + 26.0 < hole.left() || dpos.x > hole.right() - 8.0) {
+            egui::Area::new(egui::Id::new(("ab-dots", ab.i)))
+                .fixed_pos(dpos)
+                .order(egui::Order::Middle)
+                .constrain(false)
+                .interactable(tool_ab)
+                .show(ctx, |ui| {
+                    ui.set_clip_rect(hole);
+                    let (dr, dresp) = ui.allocate_exact_size(egui::vec2(26.0, 18.0), egui::Sense::click());
                     if dresp.hovered() {
                         ui.painter().rect_filled(dr, CornerRadius::same(4), HOVER);
                     }
-                    if let Some(t) = dots {
-                        ui.painter().image(
-                            t.id(),
-                            egui::Rect::from_center_size(dr.center(), egui::vec2(12.0, 12.0)),
-                            UV01(),
-                            if dresp.hovered() || is_active { TEXT } else { MUTED },
-                        );
+                    let col = if dresp.hovered() || is_active { TEXT } else { MUTED };
+                    for k in [-1.0f32, 0.0, 1.0] {
+                        ui.painter().circle_filled(egui::pos2(dr.center().x + k * 6.5, dr.center().y), 1.8, col);
                     }
                     let menu_id = ui.make_persistent_id(("ab-menu", ab.i));
                     if dresp.clicked() {
                         menu_toggle(ui, menu_id);
                     }
-                    menu_below(ui, menu_id, &dresp, |ui| {
-                        ui.set_width(170.0);
+                    menu_below(ui, menu_id, &dresp, None, |ui| {
+                        ui.set_width(190.0);
                         if menu_row(ui, "Rename", "") {
                             *name_edit = Some((ab.i, ab.name.clone()));
                             menu_set(ui, menu_id, false);
@@ -4124,7 +4648,7 @@ fn build_ab_chrome(
                         }
                     });
                 });
-            });
+        }
     }
     if clear_edit {
         *name_edit = None;
@@ -4145,12 +4669,14 @@ fn fmt_ruler(v: f32, grid: f32, dec: usize) -> String {
     format!("{:.*}", dec, v)
 }
 
-/// Top + left rulers (Ctrl+R). Ticks sit on the SAME base-5 lattice as the dot grid (`grid` = the finest
-/// visible dot spacing) so they line up exactly; every 5th tick is labeled. Numbers read relative to
-/// `origin` (top-left, Y-down). A live cyan tick tracks the pointer; the corner box drag-sets the origin
-/// (snapped to page corners / grid) and double-click resets it. egui panels, so canvas input is gated.
-fn build_rulers(
-    root: &mut egui::Ui,
+/// Top + left rulers (Ctrl+R), drawn INSIDE the Board box (Stage 4): two 18px strips hugging its top
+/// and left edges (§3.5: bg = ruler_bg). Ticks sit on the SAME base-5 lattice as the dot grid; every
+/// big tick is labeled. Numbers read relative to `origin`; a live tick tracks the pointer; the corner
+/// box drag-sets the origin (snapped) and double-click resets it.
+#[allow(clippy::too_many_arguments)]
+fn board_rulers(
+    ui: &mut egui::Ui,
+    board: egui::Rect,
     view: View,
     ppp: f32,
     grid: f32,
@@ -4158,7 +4684,6 @@ fn build_rulers(
     reset: [f32; 2],
     ops: &mut Vec<Op>,
 ) {
-    let frame = egui::Frame { fill: BG, inner_margin: Margin::ZERO, ..Default::default() };
     let num_font = FontId::proportional(9.5);
     let dec = ruler_dec(grid);
     // label every Nth grid-tick so numbers stay ~70 pts apart at ANY zoom (dense, never a vast gap). N is a
@@ -4166,12 +4691,13 @@ fn build_rulers(
     let ms_pts = grid * view.zoom / ppp.max(1e-6); // one grid-tick in screen points
     let label_every =
         [1i64, 2, 5, 10, 20, 50, 100, 200].into_iter().find(|&n| n as f32 * ms_pts >= 70.0).unwrap_or(200);
-    let pointer = root.ctx().pointer_latest_pos();
+    let pointer = ui.ctx().pointer_latest_pos();
 
     // top (horizontal) ruler — ticks at WORLD multiples of `grid` (land on the dots), label every 5th
-    egui::Panel::top("ruler-h").exact_size(RULER).frame(frame).show(root, |ui| {
-        let r = ui.max_rect();
+    {
+        let r = egui::Rect::from_min_max(board.left_top(), egui::pos2(board.right(), board.top() + RULER));
         let p = ui.painter_at(r);
+        p.rect_filled(r, CornerRadius::ZERO, RULER_BG);
         p.hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, BORDER));
         let x_lo = r.left() + RULER; // ticks start after the corner box
         let v_lo = view.s2w([x_lo * ppp, 0.0])[0] - origin[0];
@@ -4234,7 +4760,7 @@ fn build_rulers(
         // corner box: drag sets the origin (snapped), double-click resets it
         let corner = egui::Rect::from_min_size(r.left_top(), egui::vec2(RULER, RULER));
         let resp = ui.interact(corner, ui.id().with("ruler-corner"), egui::Sense::click_and_drag());
-        p.rect_filled(corner, CornerRadius::ZERO, BG);
+        p.rect_filled(corner, CornerRadius::ZERO, RULER_BG);
         p.vline(corner.right() - 0.5, r.y_range(), Stroke::new(1.0, BORDER));
         let c = corner.center();
         p.line_segment([egui::pos2(c.x - 3.0, c.y), egui::pos2(c.x + 3.0, c.y)], Stroke::new(1.0, MUTED));
@@ -4250,12 +4776,16 @@ fn build_rulers(
         if resp.drag_stopped() {
             ops.push(Op::RulerOrigin(None));
         }
-    });
+    }
 
     // left (vertical) ruler — numbers rotated 90° (read upward), like Illustrator
-    egui::Panel::left("ruler-v").exact_size(RULER).resizable(false).frame(frame).show(root, |ui| {
-        let r = ui.max_rect();
+    {
+        let r = egui::Rect::from_min_max(
+            egui::pos2(board.left(), board.top() + RULER),
+            egui::pos2(board.left() + RULER, board.bottom()),
+        );
         let p = ui.painter_at(r);
+        p.rect_filled(r, CornerRadius::ZERO, RULER_BG);
         p.vline(r.right() - 0.5, r.y_range(), Stroke::new(1.0, BORDER));
         let v_lo = view.s2w([0.0, r.top() * ppp])[1] - origin[1];
         let v_hi = view.s2w([0.0, r.bottom() * ppp])[1] - origin[1];
@@ -4312,20 +4842,28 @@ fn build_rulers(
         if dr.drag_stopped() {
             ops.push(Op::GuideCommit);
         }
-    });
+    }
 }
 
 /// While the ruler zero-point is being dragged, a full-canvas DASHED crosshair (vertical = X, horizontal
 /// = Y) marks where the new origin will land — drawn at the SNAPPED position, so the snap to a corner /
 /// anchor / grid dot is visible and you can see exactly where (0,0) is going.
-fn build_origin_crosshair(ctx: &egui::Context, view: View, ppp: f32, preview: Option<varos_core::geom::Pt>) {
+fn build_origin_crosshair(
+    ctx: &egui::Context,
+    view: View,
+    ppp: f32,
+    hole: egui::Rect,
+    preview: Option<varos_core::geom::Pt>,
+) {
     let Some(w) = preview else {
         return;
     };
     let s = view.w2s(w);
     let (sx, sy) = (s[0] / ppp, s[1] / ppp);
-    let scr = ctx.content_rect();
-    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("origin-cross")));
+    let scr = hole; // Stage 4: the crosshair belongs to the canvas — never over the boxes
+    let p = ctx
+        .layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("origin-cross")))
+        .with_clip_rect(hole);
     let stroke = Stroke::new(1.0, ACCENT);
     for seg in egui::Shape::dashed_line(&[egui::pos2(sx, scr.top()), egui::pos2(sx, scr.bottom())], stroke, 5.0, 4.0) {
         p.add(seg);
@@ -4337,14 +4875,22 @@ fn build_origin_crosshair(ctx: &egui::Context, view: View, ppp: f32, preview: Op
 
 /// The live measurement HUD — a small pill near the cursor showing the drag readout (X/Y position now;
 /// W×H / angle later). Pure feedback on a foreground layer; no interaction, never blocks the canvas.
-fn build_snap_hud(ctx: &egui::Context, view: View, ppp: f32, hud: &Option<(varos_core::geom::Pt, String)>) {
+fn build_snap_hud(
+    ctx: &egui::Context,
+    view: View,
+    ppp: f32,
+    hole: egui::Rect,
+    hud: &Option<(varos_core::geom::Pt, String)>,
+) {
     let (wp, text) = match hud {
         Some(h) => h,
         None => return,
     };
     let sp = view.w2s(*wp);
     let anchor = egui::pos2(sp[0] / ppp + 15.0, sp[1] / ppp - 26.0);
-    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("snap-hud")));
+    // Stage 4: the HUD rides the canvas — clip so it never floats over the boxes
+    let p =
+        ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("snap-hud"))).with_clip_rect(hole);
     let font = FontId::proportional(12.0);
     let galley = p.layout_no_wrap(text.clone(), font.clone(), TEXT);
     let rect = egui::Rect::from_min_size(anchor, galley.size() + egui::vec2(14.0, 7.0));
@@ -4401,6 +4947,7 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::Flip(h) => ed.flip(h),
             Op::Align(m) => ed.align(m),
             Op::Distribute(a) => ed.distribute(a),
+            Op::Bool(op) => ed.pathfinder(op),
             Op::AbActive(i) => ed.ab_set_active(i),
             Op::AbRect(i, x, y, w, h) => ed.ab_set_rect(i, x, y, w, h),
             Op::AbName(i, s) => ed.ab_rename(i, s),

@@ -417,7 +417,40 @@ When a wave merges to `main`, update (in the **same** merge):
 - 2026-07-03 — Ruling 9 added (egui_tiles wrapped in `shell/boxtree.rs` only). Ahmed handed the build to THIS
   session (no separate shell session). Starting the autonomous Wave 1 sprint: Step −1 → Stage 2 → Stage 3, stop
   at end of Stage 3. Boot = `eframe` (version-aligned with egui 0.35); shell modules stay context-agnostic.
-- _(next: Stage 2 — box tree + registry + tokens.rs + 3 dummies + dummy board + chip tabs + `⌄` swap menu…)_
+- 2026-07-03 — **Wave 1 COMPLETE** (autonomous sprint; worktree `D:\VAROS-shell` @ `shell/box-system`;
+  ui.rs / varos-core / main-docs untouched; no merge):
+  - `cf9f496` **Stage 2** — `shell` lib module (tokens · registry · boxtree) + eframe `shell-sandbox` bin.
+    Box tree on egui_tiles (confined to `boxtree.rs`, ruling 9); `BoxState{panels,active}` is the pane so the
+    tree serialises via serde. Standard layout `Split(H)[Board, Split(V)[[Align|Pathfinder],[Properties|Layers]]]`
+    biased 80/20. 7 hand-painted dummy panels + dummy board. Auto chip-tabs, drag-resize (6px seams), and the
+    **⌄ host-menu** (swap / add / close a tab) — the gate interaction.
+  - `d4e4d09` **Stage 3** — the two floating hands over the board (clamped, shrink/vanish on a tiny board) +
+    collapsible Properties sections (instant, no fade) + `min_size` clamp.
+  - `fc2d303` **polish** — dummy artboard on the board; a test that renders every panel body headlessly.
+  - Verified: builds clean (both bins + lib, no warnings); **4 headless tests green** (serde roundtrip +
+    full-tree render + every-panel render). Run: `cargo run -p varos-app --bin shell-sandbox`.
+  - **Stopped at end of Stage 3 as instructed.** Could NOT verify the *look/feel* (no display) — that is
+    Ahmed's hands-on gate. Receipt (تشغيل · تجربة · صادق) delivered in the session hand-off.
+- 2026-07-07 — **NOTE: the repo history was rewritten upstream** (the OSS-publication prep on `main`) —
+  every hash below this line and in older entries refers to the PRE-rewrite ids and no longer resolves;
+  the commits exist 1:1 under new ids (e.g. the fork crash-fix `9fd3d4e` → `54b141c`).
+- 2026-07-07 — **WAVE 2 BUILT** (Ahmed's go 07-07; ui.rs exclusively this session's; varos-core untouched):
+  - merged `main` (23 commits: artboard sections, Paint enum, fmt/clippy/CI) into `shell/box-system`
+    (`5162dea`) + brought the shell files under the new gates (`01e46fe`, `c9af2c6`).
+  - **Stage 0a** `e6e2ee9` — ui.rs palette extracted VERBATIM into `tokens::legacy` (bit-equal proven by
+    test). **Stage 0b** `6ab1989` — flip to the LAW ramp; legacy retired; new law tokens (ROW_HOVER,
+    INPUT_WELL, ACCENT_HOVER/SEL/TINT). Gate: Ahmed approved the warm look by eye ("ايوة كمل").
+  - **Stage 1** `ef691c6` — the void frame: seam app bar + Brave doc chips (accent line removed) + §3.5
+    right cluster (search pill · Export · Share mirrors) + flush 42px caps + NEW status strip (hints ·
+    artboard i/n · working Fit · zoom). Window drag preserved (set_caption). Gate: Ahmed approved.
+  - **Stage 4** `c7e70e2`+`01836dc`+`4f756e9` — the real app INSIDE the box tree via a host hook
+    (sandbox untouched): Board = a canvas HOLE box (seam underlay + corner wedges + in-box rulers);
+    HAND 1 control bar BORN (mirrors-only); HAND 2 rail re-anchored; Properties/Artboard/Layers
+    re-housed; Align home split out; **Pathfinder home is REAL** (Editor::pathfinder). Layer-aware
+    `wants_pointer`; GPU shadows retired (rule 2); §3.4 fonts (Segoe UI Variable / Cascadia Code);
+    view fits target the Board box (`fit_to_board`).
+  - Verified: workspace builds, clippy `-D warnings` clean, all headless tests green. Ahmed's hands-on
+    gate on the full picture = PENDING (this hand-off).
 
 ---
 

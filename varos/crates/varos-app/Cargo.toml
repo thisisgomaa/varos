@@ -7,6 +7,11 @@ edition = "2021"
 name = "varos"
 path = "src/main.rs"
 
+# The box-system sandbox (BOX_SYSTEM_PLAN Wave 1). Shares the `shell` lib module; eframe-hosted.
+[[bin]]
+name = "shell-sandbox"
+path = "src/bin/shell-sandbox.rs"
+
 # The desktop shell (winit) + glue. Later: Tauri drops in here behind the same seam.
 [dependencies]
 varos-core = { path = "../varos-core" }
@@ -22,3 +27,9 @@ egui = "0.35"
 egui-wgpu = "0.35"
 egui-winit = "0.35"
 rfd = "0.15"   # native Save/Open/message dialogs (the 🔖 slice: .vrs on disk)
+
+# ── UI-shell box-system (BOX_SYSTEM_PLAN). egui_tiles is confined to shell/boxtree.rs (ruling 9). ──
+egui_tiles = "0.16"                                  # split-tree layout + drag-resize + serde (egui 0.35)
+eframe = "0.35"                                      # sandbox window host only (shell stays context-agnostic)
+serde = { version = "1", features = ["derive"] }     # BoxState / PanelId serde — workspaces from day one
+serde_json = "1"
