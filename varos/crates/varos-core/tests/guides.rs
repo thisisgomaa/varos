@@ -2,7 +2,7 @@
 //! silently break: objects snapping onto guides, grabbing a guide, and a dragged-out guide snapping.
 
 use varos_core::editor::Editor;
-use varos_core::model::{Anchor, Guide, Path};
+use varos_core::model::{Anchor, Artboard, Guide, Path};
 
 fn anc(id: u32, x: f32, y: f32) -> Anchor {
     Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
@@ -45,7 +45,8 @@ fn guide_hit_test() {
 
 #[test]
 fn dragged_out_guide_snaps_to_the_page_edge() {
-    let mut ed = Editor::new(); // default doc has a 1080² artboard at the origin (left edge x=0)
+    let mut ed = Editor::new();
+    ed.doc.artboards = vec![Artboard::default()]; // a 1080² page at the origin (left edge x=0) to snap to
     ed.ppu = 1.0;
     ed.set_guide_preview(true, [5.0, 0.0]); // vertical guide pulled to x=5, 5 from the page edge → snaps to 0
     assert!((ed.guide_preview.unwrap().pos - 0.0).abs() < 0.01, "a guide near the page edge should snap to it");

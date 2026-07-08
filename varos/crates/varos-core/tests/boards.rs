@@ -51,10 +51,50 @@ fn ab_selection(ed: &Editor) -> Vec<usize> {
 }
 
 #[test]
-fn new_documents_clip_by_default() {
-    // Ahmed 07-06 decision #5: pages cut like modern tools — the default board clips.
-    assert!(Artboard::default().clip, "Artboard::default is clip=ON");
-    assert!(Document::default().artboards[0].clip, "a fresh document's page clips");
+fn new_documents_open_with_no_artboard() {
+    // A8a: a fresh document opens onto a FREE canvas — ZERO artboards; the user creates a page with
+    // the Artboard tool when they want one. A board the user then makes still clips by default
+    // (Ahmed 07-06 decision #5: pages cut like modern tools).
+    assert!(Document::default().artboards.is_empty(), "a new document has no artboard (free canvas)");
+    assert!(Artboard::default().clip, "…and a board the user creates clips by default");
+}
+
+#[test]
+fn deleting_the_last_board_leaves_a_free_canvas() {
+    // A8a: the "never delete the last page" guard is gone — the document can be emptied back to a free
+    // canvas (zero boards). `doc.active` stays valid (0, never indexes the empty vec) and it's one undo.
+    let mut ed = Editor::new();
+    ed.doc.artboards = vec![board(0.0, "Only", true)];
+
+    ed.ab_delete(0);
+    assert!(ed.doc.artboards.is_empty(), "the last board can now be deleted → zero artboards");
+    assert_eq!(ed.doc.active, 0, "active stays valid (never indexes an empty vec)");
+    assert!(ed.absel.is_empty(), "no artboard selection remains on a free canvas");
+
+    ed.undo();
+    assert_eq!(ed.doc.artboards.len(), 1, "delete-to-zero is a single undo step");
+
+    // and the Delete key path (Artboard tool) reaches the same place
+    ed.set_tool(ToolKind::Artboard);
+    ed.pointer_down([10.0, 10.0]);
+    ed.pointer_up();
+    ed.delete_selected();
+    assert!(ed.doc.artboards.is_empty(), "Delete on the Artboard tool removes the last board too");
+}
+
+#[test]
+fn a_zero_artboard_document_round_trips() {
+    // A8a: a boardless document survives save+load (the on-disk `.vrs` blob) unchanged. The empty
+    // `artboards: []` is written explicitly, so it reloads empty — NOT via the legacy 1-board default,
+    // which only fills in for a file that never carried the key at all.
+    use varos_core::file::{doc_from_blob, doc_to_blob};
+    let mut doc = Document::default();
+    assert!(doc.artboards.is_empty(), "precondition: a fresh doc is boardless");
+    doc.sync_tree();
+    let blob = doc_to_blob(&doc).expect("serialize");
+    let back = doc_from_blob(&blob).expect("deserialize");
+    assert!(back.artboards.is_empty(), "no phantom board appears on reload");
+    assert_eq!(back, doc, "the boardless document round-trips field-for-field");
 }
 
 #[test]
