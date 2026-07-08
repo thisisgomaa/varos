@@ -81,8 +81,8 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
 
     // ---- ARTBOARDS (the pages) ---- DEFINED rectangles sitting on the infinite dotted board. Each is a
     // page-colour Fill (pushed first → over the grid, behind artwork) unless TRANSPARENT, plus a boundary
-    // hairline in the overlay (constant screen width, never scales). In the Artboard tool the ACTIVE page
-    // gets an accent border + 8 resize handles. No drop shadow for now (kept light).
+    // hairline in the overlay (constant screen width, never scales). In the Artboard tool SELECTED pages
+    // get an accent border; the ACTIVE page also gets 8 resize handles. No drop shadow for now (kept light).
     {
         let ab_tool = ed.tool == ToolKind::Artboard;
         for (i, ab) in ed.doc.artboards.iter().enumerate() {
@@ -96,7 +96,8 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             let paper = ab.page_color.unwrap_or(AB_GHOST);
             open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
             let active = ab_tool && i == ed.doc.active;
-            let edge_col = if active {
+            let selected = ab_tool && ed.ab_is_selected(i);
+            let edge_col = if selected {
                 ACCENT
             } else if ab.page_color.is_none() {
                 AB_EDGE_T
@@ -106,7 +107,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             let mut edge = ring;
             edge.push([x0, y0]);
             // the page you're standing on gets a clearly heavier frame (~2× the others) + handles.
-            s.overlay.push(Prim::Stroke { pts: edge, width: if active { 2.4 } else { 1.2 }, color: edge_col });
+            s.overlay.push(Prim::Stroke { pts: edge, width: if selected { 2.4 } else { 1.2 }, color: edge_col });
             if active {
                 for h in Editor::bbox_handles((x0, y0, x1, y1)) {
                     s.overlay.push(Prim::Square { c: h, half: 5.0, color: ACCENT });
