@@ -1,0 +1,115 @@
+{
+  "varos": 1,
+  "doc": {
+    "paths": [
+      {
+        "id": 1,
+        "anchors": [
+          { "id": 2, "p": [0.0, 0.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 3, "p": [80.0, 0.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 4, "p": [0.0, 80.0], "hin": null, "hout": null, "smooth": false }
+        ],
+        "closed": true,
+        "fill": [0.125, 0.125, 0.125, 1.0],
+        "stroke": [1.0, 1.0, 1.0, 1.0],
+        "stroke_width": 1.5,
+        "holes": [],
+        "opacity": 1.0,
+        "hidden": false,
+        "locked": false,
+        "name": "Back ungrouped"
+      },
+      {
+        "id": 5,
+        "anchors": [
+          { "id": 6, "p": [120.0, 10.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 7, "p": [190.0, 10.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 8, "p": [155.0, 75.0], "hin": null, "hout": null, "smooth": false }
+        ],
+        "closed": true,
+        "fill": [0.75, 0.25, 0.25, 1.0],
+        "stroke": [0.0, 0.0, 0.0, 1.0],
+        "stroke_width": 2.0,
+        "holes": [],
+        "opacity": 1.0,
+        "hidden": false,
+        "locked": false,
+        "name": "Grouped base"
+      },
+      {
+        "id": 9,
+        "anchors": [
+          { "id": 10, "p": [140.0, 25.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 11, "p": [175.0, 25.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 12, "p": [157.5, 58.0], "hin": null, "hout": null, "smooth": false }
+        ],
+        "closed": true,
+        "fill": [0.25, 0.75, 0.5, 1.0],
+        "stroke": null,
+        "stroke_width": 1.0,
+        "holes": [],
+        "opacity": 0.75,
+        "hidden": false,
+        "locked": false,
+        "name": "Nested accent"
+      }
+    ],
+    "groups": [
+      { "id": 13, "name": "Legacy pair", "parent": null },
+      { "id": 14, "name": "Nested accent group", "parent": 13 }
+    ],
+    "group_of": {
+      "5": 13,
+      "9": 14
+    },
+    "ids": 14,
+    "units": { "ppi": 72.0, "display": "Px" },
+    "artboards": [
+      {
+        "x": 0.0,
+        "y": 0.0,
+        "w": 1080.0,
+        "h": 1080.0,
+        "name": "Artboard 1",
+        "bleed": 0.0,
+        "page_color": [1.0, 1.0, 1.0, 1.0],
+        "clip": false
+      }
+    ],
+    "active": 0,
+    "move_art_with_ab": true,
+    "snap": {
+      "enabled": true,
+      "smart": true,
+      "radius_px": 8.0,
+      "candidate_max": 8,
+      "show_candidates": true,
+      "force_pixel_align": false,
+      "move_whole_px": false,
+      "grid": false,
+      "grid_lines": true,
+      "baseline_grid": false,
+      "guides": true,
+      "artboard": true,
+      "artboard_mids": true,
+      "margins": false,
+      "margin_mids": false,
+      "visible_only": true,
+      "object_bounds": true,
+      "bbox_mids": true,
+      "gaps_and_sizes": true,
+      "key_points": true,
+      "object_geometry": true,
+      "segment_mids": true,
+      "path_intersections": true,
+      "pixel_bounds": false,
+      "alignment_guides": true,
+      "equal_spacing": true,
+      "equal_size": true,
+      "grid_spacing": 72.0
+    },
+    "ruler_origin": [0.0, 0.0],
+    "guides": [],
+    "guides_locked": false
+  }
+}
