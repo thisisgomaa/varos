@@ -5,7 +5,7 @@ use crate::boolean::{run_boolean_curves, BoolOp, ResultShape, Seg};
 use crate::geom::*;
 use crate::model::*;
 use crate::tools;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 pub const DRAG_THRESH: f32 = 4.0;
 pub const CLOSE_R: f32 = 11.0;
@@ -112,9 +112,26 @@ pub enum TfAgain {
 pub enum AbDrag {
     None,
     // `pids` = the traveling art's path ids (excluded from snap targets while the page moves)
-    Move { grab: Pt, ox: f32, oy: f32, art: Vec<(u32, Pt, Option<Pt>, Option<Pt>)>, pids: Vec<u32> },
-    Resize { handle: u8, ox: f32, oy: f32, ow: f32, oh: f32 },
-    Create { start: Pt },
+    Move {
+        grab: Pt,
+        ox: f32,
+        oy: f32,
+        moved: bool,
+        reset_on_click: Option<usize>,
+        boards: Vec<(usize, f32, f32)>,
+        art: Vec<(u32, Pt, Option<Pt>, Option<Pt>)>,
+        pids: Vec<u32>,
+    },
+    Resize {
+        handle: u8,
+        ox: f32,
+        oy: f32,
+        ow: f32,
+        oh: f32,
+    },
+    Create {
+        start: Pt,
+    },
 }
 
 /// What a press in the Artboard tool landed on: a resize handle of the ACTIVE page, the body of some
@@ -292,6 +309,7 @@ pub struct Editor {
     pub active: Option<u32>,
     pub selected: HashSet<u32>,
     pub objsel: HashSet<u32>,
+    pub absel: BTreeSet<usize>, // transient artboard multi-selection; doc.active stays the primary
     pub dsel_path: Option<u32>, // direct-mode path-level selection: anchors shown hollow, whole-path moves
 
     pub drag: Drag,
@@ -341,6 +359,7 @@ impl Editor {
             active: None,
             selected: HashSet::new(),
             objsel: HashSet::new(),
+            absel: BTreeSet::new(),
             dsel_path: None,
             drag: Drag::None,
             ab_drag: AbDrag::None,
@@ -1133,6 +1152,60 @@ impl Editor {
     }
 
     // ---------- artboards (the Artboard tool, Shift+O) ----------
+    fn normalize_absel(&mut self) {
+        let n = self.doc.artboards.len();
+        if n == 0 {
+            self.absel.clear();
+            self.doc.active = 0;
+            return;
+        }
+        self.doc.active = self.doc.active.min(n - 1);
+        self.absel.retain(|&i| i < n);
+        if self.absel.is_empty() {
+            self.absel.insert(self.doc.active);
+        }
+    }
+    pub fn ab_is_selected(&self, i: usize) -> bool {
+        if self.absel.is_empty() {
+            i == self.doc.active
+        } else {
+            self.absel.contains(&i)
+        }
+    }
+    fn ab_selection_indices(&self) -> Vec<usize> {
+        if self.absel.is_empty() {
+            if self.doc.active < self.doc.artboards.len() {
+                vec![self.doc.active]
+            } else {
+                vec![]
+            }
+        } else {
+            self.absel.iter().copied().filter(|&i| i < self.doc.artboards.len()).collect()
+        }
+    }
+    pub fn ab_select(&mut self, i: usize, additive: bool) {
+        if i >= self.doc.artboards.len() {
+            return;
+        }
+        if additive {
+            if self.absel.is_empty() && self.doc.active < self.doc.artboards.len() {
+                self.absel.insert(self.doc.active);
+            }
+            if self.absel.contains(&i) && self.absel.len() > 1 {
+                self.absel.remove(&i);
+                if self.doc.active == i {
+                    self.doc.active = self.absel.iter().next_back().copied().unwrap_or(0);
+                }
+            } else {
+                self.absel.insert(i);
+                self.doc.active = i;
+            }
+        } else {
+            self.absel.clear();
+            self.absel.insert(i);
+            self.doc.active = i;
+        }
+    }
     /// The 8 resize handles of an artboard rect (corners 0-3, edge mids 4-7) in world space.
     pub fn ab_handles(ab: &Artboard) -> [Pt; 8] {
         Self::bbox_handles(ab.rect())
@@ -1174,6 +1247,12 @@ impl Editor {
             .map(|pi| self.doc.paths[pi].id)
             .collect()
     }
+    fn paths_on_abs(&self, boards: &[usize]) -> Vec<u32> {
+        let mut pids: Vec<u32> = boards.iter().flat_map(|&i| self.paths_on_ab(i)).collect();
+        pids.sort_unstable();
+        pids.dedup();
+        pids
+    }
     fn anchors_base(&self, pids: &[u32]) -> Vec<(u32, Pt, Option<Pt>, Option<Pt>)> {
         let mut base = vec![];
         for &pid in pids {
@@ -1212,15 +1291,27 @@ impl Editor {
                 } else {
                     (i, None)
                 };
-                self.doc.active = i;
-                let (ox, oy) = (self.doc.artboards[i].x, self.doc.artboards[i].y);
+                let reset_on_click =
+                    (!self.mods.shift && !self.mods.alt && self.absel.len() > 1 && self.ab_is_selected(i)).then_some(i);
+                if self.mods.shift {
+                    self.ab_select(i, true);
+                } else if !self.ab_is_selected(i) {
+                    self.ab_select(i, false);
+                } else {
+                    self.doc.active = i;
+                }
+                self.normalize_absel();
+                let boards_i = self.ab_selection_indices();
+                let primary = self.doc.active.min(self.doc.artboards.len() - 1);
+                let boards = boards_i.iter().map(|&j| (j, self.doc.artboards[j].x, self.doc.artboards[j].y)).collect();
+                let (ox, oy) = (self.doc.artboards[primary].x, self.doc.artboards[primary].y);
                 let pids = match alt_pids {
                     Some(p) => p, // drag ONLY the fresh copies (the originals sit at the same spot)
-                    None if self.doc.move_art_with_ab => self.paths_on_ab(i),
+                    None if self.doc.move_art_with_ab => self.paths_on_abs(&boards_i),
                     None => vec![],
                 };
                 let art = self.anchors_base(&pids);
-                self.ab_drag = AbDrag::Move { grab: pos, ox, oy, art, pids };
+                self.ab_drag = AbDrag::Move { grab: pos, ox, oy, moved: false, reset_on_click, boards, art, pids };
             }
             None => {
                 // empty board → start a NEW page by dragging (resizing its BR corner). Tiny ⇒ dropped
@@ -1236,6 +1327,8 @@ impl Editor {
                     ..Artboard::default()
                 });
                 self.doc.active = self.doc.artboards.len() - 1;
+                self.absel.clear();
+                self.absel.insert(self.doc.active);
                 self.ab_drag = AbDrag::Create { start: pos };
             }
         }
@@ -1243,21 +1336,25 @@ impl Editor {
 
     pub fn ab_move(&mut self, pos: Pt) {
         match std::mem::replace(&mut self.ab_drag, AbDrag::None) {
-            AbDrag::Move { grab, ox, oy, art, pids } => {
+            AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids } => {
                 let mut d = sub(pos, grab);
+                let moved = moved || d[0].abs() > 0.001 || d[1].abs() > 0.001;
                 if self.mods.shift {
                     d = snap45(d);
                 }
                 // board snapping: the moving page's rect vs every OTHER page + artwork + guides
                 // (its own traveling art excluded — it moves with the page)
                 let (w, h) = self.doc.active_artboard().map(|a| (a.w, a.h)).unwrap_or((0.0, 0.0));
+                let skip_abs: BTreeSet<usize> = boards.iter().map(|(i, _, _)| *i).collect();
                 let skip: HashSet<u32> = pids.iter().copied().collect();
-                let (nd, guides) = self.snap_ab_move((ox, oy, ox + w, oy + h), d, &skip);
+                let (nd, guides) = self.snap_ab_move((ox, oy, ox + w, oy + h), d, &skip_abs, &skip);
                 d = nd;
                 self.snap_guides = guides;
-                if let Some(ab) = self.doc.active_artboard_mut() {
-                    ab.x = ox + d[0];
-                    ab.y = oy + d[1];
+                for (i, bx, by) in &boards {
+                    if let Some(ab) = self.doc.artboards.get_mut(*i) {
+                        ab.x = bx + d[0];
+                        ab.y = by + d[1];
+                    }
                 }
                 for (aid, p0, hin0, hout0) in &art {
                     if let Some(a) = self.doc.anchor_mut(*aid) {
@@ -1266,7 +1363,7 @@ impl Editor {
                         a.hout = hout0.map(|h| add(h, d));
                     }
                 }
-                self.ab_drag = AbDrag::Move { grab, ox, oy, art, pids };
+                self.ab_drag = AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids };
                 self.dirty = true;
             }
             AbDrag::Resize { handle, ox, oy, ow, oh } => {
@@ -1304,16 +1401,24 @@ impl Editor {
     }
 
     pub fn ab_up(&mut self) {
-        if let AbDrag::Create { .. } = self.ab_drag {
-            // a click or tiny drag didn't make a real page — drop it
-            if let Some(ab) = self.doc.active_artboard() {
-                if ab.w < 4.0 || ab.h < 4.0 {
-                    let i = self.doc.active;
-                    self.doc.artboards.remove(i);
-                    self.doc.active = self.doc.active.min(self.doc.artboards.len().saturating_sub(1));
-                    self.dirty = false;
+        match self.ab_drag {
+            AbDrag::Move { moved: false, reset_on_click: Some(i), .. } => self.ab_select(i, false),
+            AbDrag::Create { .. } => {
+                // a click or tiny drag didn't make a real page — drop it
+                if let Some(ab) = self.doc.active_artboard() {
+                    if ab.w < 4.0 || ab.h < 4.0 {
+                        let i = self.doc.active;
+                        self.doc.artboards.remove(i);
+                        self.doc.active = self.doc.active.min(self.doc.artboards.len().saturating_sub(1));
+                        self.absel.clear();
+                        if !self.doc.artboards.is_empty() {
+                            self.absel.insert(self.doc.active);
+                        }
+                        self.dirty = false;
+                    }
                 }
             }
+            _ => {}
         }
         self.ab_drag = AbDrag::None;
     }
@@ -1321,7 +1426,7 @@ impl Editor {
     // ---- artboard edits driven by the panel / the on-canvas ⋮ menu (each one undo step) ----
     pub fn ab_set_active(&mut self, i: usize) {
         if i < self.doc.artboards.len() {
-            self.doc.active = i;
+            self.ab_select(i, false);
         }
     }
     pub fn ab_set_rect(&mut self, i: usize, nx: Option<f32>, ny: Option<f32>, nw: Option<f32>, nh: Option<f32>) {
@@ -1379,14 +1484,22 @@ impl Editor {
         self.commit();
     }
     pub fn ab_set_move_art(&mut self, on: bool) {
+        if self.doc.move_art_with_ab == on {
+            return;
+        }
+        self.begin();
         self.doc.move_art_with_ab = on;
-    } // a mode flag, not undoable
+        self.dirty = true;
+        self.commit();
+    }
     /// Place a fresh page to the RIGHT of the right-most one (with a gap), copying the active page's size.
     pub fn ab_add(&mut self) {
         self.begin();
         let (x, y, w, h, n) = self.ab_next_slot();
         self.doc.artboards.push(Artboard { x, y, w, h, name: format!("Artboard {}", n), ..Artboard::default() });
         self.doc.active = self.doc.artboards.len() - 1;
+        self.absel.clear();
+        self.absel.insert(self.doc.active);
         self.dirty = true;
         self.commit();
     }
@@ -1398,6 +1511,8 @@ impl Editor {
             c.name = format!("{} copy", src.name);
             self.doc.artboards.insert(i + 1, c);
             self.doc.active = i + 1;
+            self.absel.clear();
+            self.absel.insert(self.doc.active);
             self.dirty = true;
         }
         self.commit();
@@ -1406,11 +1521,27 @@ impl Editor {
         if self.doc.artboards.len() <= 1 {
             return;
         } // never delete the last page
+        let mut targets =
+            if !self.absel.is_empty() && self.absel.contains(&i) { self.ab_selection_indices() } else { vec![i] };
+        targets.sort_unstable();
+        targets.dedup();
+        targets.retain(|&j| j < self.doc.artboards.len());
+        if targets.is_empty() {
+            return;
+        }
+        while targets.len() >= self.doc.artboards.len() {
+            targets.pop();
+        }
+        if targets.is_empty() {
+            return;
+        }
         self.begin();
-        if i < self.doc.artboards.len() {
-            self.doc.artboards.remove(i);
+        for j in targets.into_iter().rev() {
+            self.doc.artboards.remove(j);
         }
         self.doc.active = self.doc.active.min(self.doc.artboards.len() - 1);
+        self.absel.clear();
+        self.absel.insert(self.doc.active);
         self.dirty = true;
         self.commit();
     }
@@ -1429,6 +1560,10 @@ impl Editor {
             self.doc.artboards.pop();
         }
         self.doc.active = self.doc.active.min(self.doc.artboards.len() - 1);
+        self.absel.retain(|&i| i < self.doc.artboards.len());
+        if self.absel.is_empty() {
+            self.absel.insert(self.doc.active);
+        }
         self.dirty = true;
         self.commit();
     }
@@ -1446,12 +1581,12 @@ impl Editor {
     fn snap_target_lines(&self) -> (Vec<SnapLine>, Vec<SnapLine>) {
         self.snap_lines_ex(None, None)
     }
-    /// The same target set with the extra exclusions a BOARD drag needs: `skip_ab = Some(i)` switches the
-    /// artboard lines from "the active page only" (object drags) to "EVERY visible page except i", and
+    /// The same target set with the extra exclusions a BOARD drag needs: `skip_abs = Some(..)` switches the
+    /// artboard lines from "the active page only" (object drags) to "EVERY visible page except those", and
     /// `skip_pids` drops the art traveling with the moving page.
     fn snap_lines_ex(
         &self,
-        skip_ab: Option<usize>,
+        skip_abs: Option<&BTreeSet<usize>>,
         skip_pids: Option<&HashSet<u32>>,
     ) -> (Vec<SnapLine>, Vec<SnapLine>) {
         let cfg = &self.doc.snap;
@@ -1485,15 +1620,15 @@ impl Editor {
                     tyl.push(((ay0 + ay1) * 0.5, ax0, ax1));
                 }
             };
-            match skip_ab {
+            match skip_abs {
                 None => {
                     if let Some(ab) = self.doc.active_artboard() {
                         push_ab(ab);
                     }
                 }
-                Some(i) => {
+                Some(skip) => {
                     for (j, ab) in self.doc.artboards.iter().enumerate() {
-                        if j != i && !ab.hidden {
+                        if !skip.contains(&j) && !ab.hidden {
                             push_ab(ab);
                         }
                     }
@@ -1606,8 +1741,14 @@ impl Editor {
     }
     /// Snap a moving BOARD's rect: targets = every other visible page + artwork (its traveling art
     /// excluded) + guides. No equal-gap pass (that reads object rows); same feel otherwise.
-    fn snap_ab_move(&self, rect0: (f32, f32, f32, f32), d: Pt, travel: &HashSet<u32>) -> (Pt, Vec<SnapGuide>) {
-        let lines = self.snap_lines_ex(Some(self.doc.active), Some(travel));
+    fn snap_ab_move(
+        &self,
+        rect0: (f32, f32, f32, f32),
+        d: Pt,
+        skip_abs: &BTreeSet<usize>,
+        travel: &HashSet<u32>,
+    ) -> (Pt, Vec<SnapGuide>) {
+        let lines = self.snap_lines_ex(Some(skip_abs), Some(travel));
         let (nd, guides, _) = self.snap_move_lines(rect0, d, lines, false);
         (nd, guides)
     }
@@ -1716,7 +1857,11 @@ impl Editor {
     /// Point-snap for the ARTBOARD tool (resize handle / create corner): targets = every visible page
     /// except `skip` (pass `usize::MAX` to keep them all) + artwork + guides.
     fn snap_ab_xy(&self, skip: usize, w: Pt, want_x: bool, want_y: bool) -> (Pt, Vec<SnapGuide>) {
-        self.snap_xy_lines(w, want_x, want_y, self.snap_lines_ex(Some(skip), None))
+        let mut skips = BTreeSet::new();
+        if skip != usize::MAX {
+            skips.insert(skip);
+        }
+        self.snap_xy_lines(w, want_x, want_y, self.snap_lines_ex(Some(&skips), None))
     }
     fn snap_xy_lines(
         &self,
@@ -2205,9 +2350,11 @@ impl Editor {
     fn clear_transient(&mut self) {
         self.selected.clear();
         self.objsel.clear();
+        self.absel.clear();
         self.dsel_path = None;
         self.active = None;
         self.drag = Drag::None;
+        self.ab_drag = AbDrag::None;
     }
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
@@ -2957,6 +3104,9 @@ impl Editor {
             self.dsel_path = None;
             self.obj_angle = 0.0;
             self.hover_path = None;
+            self.normalize_absel();
+        } else {
+            self.absel.clear();
         }
         if matches!(t, ToolKind::Rotate | ToolKind::Scale) && self.objsel.is_empty() {
             // the transform tools act on whole objects — promote any anchor selection (coming from Direct)
@@ -2985,9 +3135,11 @@ impl Editor {
         self.active = None;
         self.selected.clear();
         self.objsel.clear();
+        self.absel.clear();
         self.dsel_path = None;
         self.obj_angle = 0.0;
         self.drag = Drag::None;
+        self.ab_drag = AbDrag::None;
     }
     pub fn nudge(&mut self, dx: f32, dy: f32) {
         if self.selected.is_empty() {
@@ -3006,6 +3158,10 @@ impl Editor {
         self.commit();
     }
     pub fn delete_selected(&mut self) {
+        if self.tool == ToolKind::Artboard {
+            self.ab_delete(self.doc.active);
+            return;
+        }
         self.begin();
         if !self.selected.is_empty() {
             let ids: Vec<u32> = self.selected.iter().copied().collect();

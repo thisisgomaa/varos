@@ -3215,6 +3215,14 @@ fn board_ctlbar(
                             ops.push(Op::AbRect(i, None, None, None, Some(v)));
                         }
                         bar_sep(ui);
+                        ctl_ab_color(ui, ab.color, i, ops);
+                        if toggle_row(ui, 114.0, "Clip to page", ab.clip) {
+                            ops.push(Op::AbClip(i));
+                        }
+                        if toggle_row(ui, 142.0, "Move artwork", ab.move_art) {
+                            ops.push(Op::AbMoveArt(!ab.move_art));
+                        }
+                        bar_sep(ui);
                         ui.label(
                             RichText::new(format!("{} / {}", i + 1, ab.count)).color(MUTED).monospace().size(11.0),
                         );
@@ -3331,6 +3339,36 @@ fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarget, ops: &m
         PaintTarget::Fill => "Fill",
         PaintTarget::Stroke => "Stroke",
     });
+}
+
+/// Control-bar page colour field. Click opens the existing Color Picker for the active artboard.
+fn ctl_ab_color(ui: &mut egui::Ui, color: Option<Rgba>, i: usize, ops: &mut Vec<Op>) {
+    ui.label(RichText::new("Page").color(MUTED).size(11.0));
+    let (sw, resp) = ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::click());
+    let round = CornerRadius::same(2);
+    match color {
+        Some(c) => {
+            if c[3] < 0.999 {
+                checker(&ui.painter_at(sw), sw, 4.0);
+            }
+            ui.painter().rect_filled(sw, round, rgba_c32a(c));
+        }
+        None => {
+            ui.painter().rect_filled(sw, round, SWATCH_WELL);
+            ui.painter().line_segment(
+                [sw.left_bottom() + egui::vec2(2.0, -2.0), sw.right_top() + egui::vec2(-2.0, 2.0)],
+                Stroke::new(1.4, NONE_RED),
+            );
+        }
+    }
+    ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+    if resp.clicked() {
+        ops.push(Op::OpenPicker(MTarget::Ab(i)));
+    }
+    resp.on_hover_text("Page colour");
+    ui.label(
+        RichText::new(color.map(hex_of).unwrap_or_else(|| "Transparent".into())).color(TEXT).monospace().size(11.0),
+    );
 }
 
 /// Illustrator's fill/stroke control: overlapping FILL square (top-left) + STROKE ring (bottom-right);

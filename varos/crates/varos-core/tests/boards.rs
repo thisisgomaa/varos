@@ -3,7 +3,7 @@
 //! straddlers show a part on BOTH pages (mirror), floaters and bleed-pages draw uncut. The Layers
 //! panel sections read the same membership fns, so these tests guard both surfaces.
 
-use varos_core::editor::Editor;
+use varos_core::editor::{Editor, ToolKind};
 use varos_core::model::{Anchor, Artboard, Document, Path};
 use varos_core::scene::{build_scene, Prim};
 
@@ -46,6 +46,9 @@ fn art_fills(ed: &Editor) -> Vec<Vec<varos_core::geom::Pt>> {
 fn xs(ring: &[varos_core::geom::Pt]) -> (f32, f32) {
     ring.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])))
 }
+fn ab_selection(ed: &Editor) -> Vec<usize> {
+    ed.absel.iter().copied().collect()
+}
 
 #[test]
 fn new_documents_clip_by_default() {
@@ -63,6 +66,92 @@ fn pre_artboard_files_get_a_non_clipping_page() {
         serde_json::from_str(r#"{"paths": [], "ids": 1}"#).expect("a minimal pre-artboard file deserializes");
     assert_eq!(d.artboards.len(), 1, "the implicit page is guaranteed");
     assert!(!d.artboards[0].clip, "…and it must NOT clip (legacy bleed behaviour preserved)");
+}
+
+#[test]
+fn artboard_clip_and_move_art_flags_are_undoable() {
+    let mut ed = two_pages(true);
+
+    assert!(ed.doc.artboards[0].clip);
+    ed.ab_toggle_clip(0);
+    assert!(!ed.doc.artboards[0].clip, "clip toggles off");
+    ed.undo();
+    assert!(ed.doc.artboards[0].clip, "clip toggle is undoable");
+
+    assert!(ed.doc.move_art_with_ab);
+    ed.ab_set_move_art(false);
+    assert!(!ed.doc.move_art_with_ab, "move-art toggles off");
+    ed.undo();
+    assert!(ed.doc.move_art_with_ab, "move-art toggle is undoable");
+}
+
+#[test]
+fn shift_click_builds_artboard_multi_selection() {
+    let mut ed = two_pages(true);
+    ed.set_tool(ToolKind::Artboard);
+
+    ed.pointer_down([10.0, 10.0]);
+    ed.pointer_up();
+    assert_eq!(ed.doc.active, 0);
+    assert_eq!(ab_selection(&ed), vec![0], "plain click selects one board");
+
+    ed.mods.shift = true;
+    ed.pointer_down([160.0, 10.0]);
+    ed.pointer_up();
+    ed.mods.shift = false;
+    assert_eq!(ed.doc.active, 1, "the shift-clicked board becomes primary");
+    assert_eq!(ab_selection(&ed), vec![0, 1], "shift-click adds to the artboard selection");
+
+    ed.pointer_down([10.0, 10.0]);
+    ed.pointer_up();
+    assert_eq!(ed.doc.active, 0);
+    assert_eq!(ab_selection(&ed), vec![0], "plain click on another board resets to single selection");
+}
+
+#[test]
+fn artboard_delete_removes_the_selected_set() {
+    let mut ed = two_pages(true);
+    ed.doc.artboards.push(board(300.0, "C", true));
+    ed.set_tool(ToolKind::Artboard);
+
+    ed.pointer_down([10.0, 10.0]);
+    ed.pointer_up();
+    ed.mods.shift = true;
+    ed.pointer_down([160.0, 10.0]);
+    ed.pointer_up();
+    ed.mods.shift = false;
+    assert_eq!(ab_selection(&ed), vec![0, 1]);
+
+    ed.delete_selected();
+    assert_eq!(ed.doc.artboards.len(), 1, "both selected boards were deleted");
+    assert_eq!(ed.doc.artboards[0].name, "C", "the unselected board remains");
+    assert_eq!(ed.doc.active, 0);
+    assert_eq!(ab_selection(&ed), vec![0]);
+
+    ed.undo();
+    assert_eq!(ed.doc.artboards.len(), 3, "multi-board delete is one undo step");
+}
+
+#[test]
+fn dragging_a_selected_artboard_moves_the_selected_set() {
+    let mut ed = two_pages(true);
+    ed.doc.snap.enabled = false;
+    ed.set_tool(ToolKind::Artboard);
+
+    ed.pointer_down([10.0, 10.0]);
+    ed.pointer_up();
+    ed.mods.shift = true;
+    ed.pointer_down([160.0, 10.0]);
+    ed.pointer_up();
+    ed.mods.shift = false;
+    assert_eq!(ab_selection(&ed), vec![0, 1]);
+
+    ed.pointer_down([160.0, 10.0]);
+    ed.pointer_move([170.0, 20.0]);
+    ed.pointer_up();
+
+    assert_eq!((ed.doc.artboards[0].x, ed.doc.artboards[0].y), (10.0, 10.0));
+    assert_eq!((ed.doc.artboards[1].x, ed.doc.artboards[1].y), (160.0, 10.0));
 }
 
 #[test]
