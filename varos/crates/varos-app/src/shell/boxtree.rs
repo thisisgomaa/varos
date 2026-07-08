@@ -306,6 +306,7 @@ fn detach(tree: &mut Tree<PanelId>, id: TileId) {
 /// The lifted panel: a faithful floating copy on top, at `pos` (cursor at its top-centre).
 fn render_drag_ghost(ui: &egui::Ui, panel: PanelId, pos: Pos2, host: &mut HostFn<'_>) {
     let w = 232.0;
+    const GHOST_BODY_MAX: f32 = 240.0; // preview body cap — long panels stay a compact ghost (A1)
     egui::Area::new(egui::Id::new("varos_drag_ghost"))
         .order(egui::Order::Foreground)
         .fixed_pos(pos - vec2(w * 0.5, 6.0))
@@ -323,14 +324,22 @@ fn render_drag_ghost(ui: &egui::Ui, panel: PanelId, pos: Pos2, host: &mut HostFn
                     ui.add_space(6.0);
                     let y = ui.min_rect().bottom();
                     ui.painter().hline(ui.min_rect().left()..=ui.min_rect().right(), y, T::hairline());
-                    // faithful body, but disabled + id-scoped so it never fights the real panel
+                    // faithful body, but disabled + id-scoped so it never fights the real panel. The
+                    // preview is HEIGHT-CAPPED (A1): a naturally long panel (Layers) stays a compact ghost
+                    // instead of a full-screen sheet — a hidden-scrollbar viewport clips the overflow.
                     ui.push_id("ghost", |ui| {
                         ui.add_enabled_ui(false, |ui| {
-                            egui::Frame::NONE.inner_margin(Margin::same(10)).show(ui, |ui| {
-                                if !host(panel, ui) {
-                                    registry::render_panel(panel, ui);
-                                }
-                            });
+                            egui::ScrollArea::vertical()
+                                .max_height(GHOST_BODY_MAX)
+                                .auto_shrink([false, true])
+                                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                                .show(ui, |ui| {
+                                    egui::Frame::NONE.inner_margin(Margin::same(10)).show(ui, |ui| {
+                                        if !host(panel, ui) {
+                                            registry::render_panel(panel, ui);
+                                        }
+                                    });
+                                });
                         });
                     });
                 },
