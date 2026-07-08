@@ -578,10 +578,22 @@ impl Renderer {
                     rp.set_pipeline(&self.pipe_cover);
                     rp.draw(cover.0..cover.0 + cover.1, 0..1);
                 }
-                Draw::Fg { range } => {
+                Draw::Fg { range, scissor } => {
                     rp.set_vertex_buffer(0, self.fg_buf.slice(..));
                     rp.set_pipeline(&self.pipe_main);
-                    rp.draw(range.0..range.0 + range.1, 0..1);
+                    // A2: an artboard-clipped stroke draws under a GPU scissor set to its page rect, so the
+                    // band is trimmed to the page edge. Reset to the FULL framebuffer immediately after, so
+                    // no later draw in this pass can inherit the scissor (a leaked scissor could hide other
+                    // content). `None` ⇒ draw across the whole framebuffer as usual (fail-open: a missed or
+                    // degenerate clip overflows the page, it never vanishes).
+                    match scissor {
+                        Some(s) => {
+                            rp.set_scissor_rect(s[0], s[1], s[2], s[3]);
+                            rp.draw(range.0..range.0 + range.1, 0..1);
+                            rp.set_scissor_rect(0, 0, self.config.width, self.config.height);
+                        }
+                        None => rp.draw(range.0..range.0 + range.1, 0..1),
+                    }
                 }
                 // translucent stroke (no fill): mark the band bit on every covered pixel, then cover ONCE
                 // at the stroke colour (paints where marked, clears the bit after)
