@@ -168,6 +168,17 @@ pub enum AlignMode {
     Middle,
     Bottom,
 }
+/// A4 — what an align acts RELATIVE to. `Auto` is the smart default: it aligns objects to each
+/// other when >1 top-level item is selected, else to the active artboard (single object/group).
+/// `Selection` / `Artboard` force one reference regardless. Artboard with no active board falls
+/// back to Selection (never panics).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum AlignTarget {
+    #[default]
+    Auto,
+    Selection,
+    Artboard,
+}
 #[derive(Clone, Copy)]
 pub enum DistAxis {
     Horizontal,
@@ -175,6 +186,20 @@ pub enum DistAxis {
 }
 /// A snap target line: `(coord, span_lo, span_hi)` on one axis.
 type SnapLine = (f32, f32, f32);
+
+/// The translation that lands box `b = (x0,y0,x1,y1)` on reference `r`'s matching edge/centre for
+/// `mode`. Shared by Selection- and Artboard-target alignment so both compute deltas identically.
+fn align_delta(mode: AlignMode, r: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> Pt {
+    let (rx0, ry0, rx1, ry1) = r;
+    match mode {
+        AlignMode::Left => [rx0 - b.0, 0.0],
+        AlignMode::Right => [rx1 - b.2, 0.0],
+        AlignMode::CenterH => [(rx0 + rx1) * 0.5 - (b.0 + b.2) * 0.5, 0.0],
+        AlignMode::Top => [0.0, ry0 - b.1],
+        AlignMode::Bottom => [0.0, ry1 - b.3],
+        AlignMode::Middle => [0.0, (ry0 + ry1) * 0.5 - (b.1 + b.3) * 0.5],
+    }
+}
 
 /// Build an anchor from a boolean-result endpoint + its two raw handle points.
 /// Handles coincident with the point → None (straight). Smooth when both handles are collinear & opposite.
@@ -893,15 +918,47 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
-    pub fn align(&mut self, mode: AlignMode) {
+    /// How many distinct TOP-LEVEL items the object selection spans — an ungrouped path counts as
+    /// one, a whole group (all its member paths) counts as one. The number the smart `Auto` keys on.
+    fn selected_unit_count(&self) -> usize {
+        let units: HashSet<u32> = self.objsel.iter().filter_map(|&pid| self.doc.unit_of(pid)).collect();
+        units.len()
+    }
+    /// Resolve an [`AlignTarget`] to the concrete reference to use THIS apply — never returns `Auto`.
+    /// `Auto`: >1 top-level unit → `Selection` (align to each other); a single object/group → the
+    /// active artboard. Any `Artboard` (explicit or resolved) with NO active board degrades to
+    /// `Selection` so alignment stays graceful instead of panicking.
+    fn resolve_align_target(&self, target: AlignTarget) -> AlignTarget {
+        let has_board = self.doc.active_artboard().is_some();
+        match target {
+            AlignTarget::Selection => AlignTarget::Selection,
+            AlignTarget::Artboard if has_board => AlignTarget::Artboard,
+            AlignTarget::Artboard => AlignTarget::Selection,
+            AlignTarget::Auto if self.selected_unit_count() > 1 || !has_board => AlignTarget::Selection,
+            AlignTarget::Auto => AlignTarget::Artboard,
+        }
+    }
+    pub fn align(&mut self, mode: AlignMode, target: AlignTarget) {
         if !self.selected.is_empty() {
             self.align_anchors(mode);
             return;
         } // Direct Selection: align the points
+        if self.objsel.is_empty() {
+            return;
+        }
+        match self.resolve_align_target(target) {
+            AlignTarget::Artboard => self.align_objects_to_artboard(mode),
+            // Selection (incl. any Auto/Artboard that degraded to it): the historic behaviour.
+            _ => self.align_objects_to_selection(mode),
+        }
+    }
+    /// Selection mode: every selected object shifts onto the shared edge/centre of the COMBINED
+    /// selection bbox — the historic align behaviour. A no-op below 2 objects.
+    fn align_objects_to_selection(&mut self, mode: AlignMode) {
         if self.objsel.len() < 2 {
             return;
         }
-        let (bx0, by0, bx1, by1) = match self.obj_bbox() {
+        let rect = match self.obj_bbox() {
             Some(b) => b,
             None => return,
         };
@@ -910,15 +967,52 @@ impl Editor {
         for pid in pids {
             if let Some(pi) = self.doc.pidx(pid) {
                 let b = self.doc.outline_bbox(pi);
-                let d = match mode {
-                    AlignMode::Left => [bx0 - b.0, 0.0],
-                    AlignMode::Right => [bx1 - b.2, 0.0],
-                    AlignMode::CenterH => [(bx0 + bx1) * 0.5 - (b.0 + b.2) * 0.5, 0.0],
-                    AlignMode::Top => [0.0, by0 - b.1],
-                    AlignMode::Bottom => [0.0, by1 - b.3],
-                    AlignMode::Middle => [0.0, (by0 + by1) * 0.5 - (b.1 + b.3) * 0.5],
-                };
-                self.translate_path(pi, d);
+                self.translate_path(pi, align_delta(mode, rect, b));
+            }
+        }
+        self.obj_angle = 0.0;
+        self.dirty = true;
+        self.commit();
+    }
+    /// Artboard mode: each selected TOP-LEVEL item (an ungrouped object, or a whole group moved as
+    /// one rigid unit) shifts so ITS bbox lands on the active artboard's matching edge/centre.
+    /// Works for a single object (unlike Selection). Silently no-ops if there is no active board.
+    fn align_objects_to_artboard(&mut self, mode: AlignMode) {
+        let Some(rect) = self.doc.active_artboard().map(|a| a.rect()) else {
+            return;
+        };
+        // bucket the selected paths by their top-level unit so a group travels together
+        let mut units: Vec<(u32, Vec<u32>)> = Vec::new();
+        for &pid in &self.objsel {
+            let Some(u) = self.doc.unit_of(pid) else { continue };
+            match units.iter_mut().find(|(uid, _)| *uid == u) {
+                Some((_, ps)) => ps.push(pid),
+                None => units.push((u, vec![pid])),
+            }
+        }
+        if units.is_empty() {
+            return;
+        }
+        self.begin();
+        for (_u, pids) in &units {
+            let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+            for &pid in pids {
+                if let Some(pi) = self.doc.pidx(pid) {
+                    let b = self.doc.outline_bbox(pi);
+                    x0 = x0.min(b.0);
+                    y0 = y0.min(b.1);
+                    x1 = x1.max(b.2);
+                    y1 = y1.max(b.3);
+                }
+            }
+            if x0 > x1 {
+                continue;
+            }
+            let d = align_delta(mode, rect, (x0, y0, x1, y1));
+            for &pid in pids {
+                if let Some(pi) = self.doc.pidx(pid) {
+                    self.translate_path(pi, d);
+                }
             }
         }
         self.obj_angle = 0.0;

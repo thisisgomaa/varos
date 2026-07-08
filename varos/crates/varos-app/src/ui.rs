@@ -7,7 +7,7 @@
 
 use egui::{Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, RichText, Stroke, StrokeKind};
 use std::time::Instant;
-use varos_core::editor::{AlignMode, DistAxis, Editor, PaintTarget, ToolKind};
+use varos_core::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, ToolKind};
 use varos_core::geom::{Pt, Rgba, View};
 use winit::event::WindowEvent;
 use winit::window::Window;
@@ -113,7 +113,7 @@ enum Op {
     LayerDupMove(Vec<u32>, u32, u8), // Alt+drag: duplicate the rows' art into the target
     LayerMoveBoard(Vec<u32>, Option<usize>, usize), // cross-section drop: srcs, source board, target board
     Flip(bool),
-    Align(AlignMode),
+    Align(AlignMode, AlignTarget), // A4: carries the target the align resolves against
     Distribute(DistAxis),
     Bool(varos_core::boolean::BoolOp), // Pathfinder home + the Properties "Shape" mirror
     // ---- artboard ops (i = artboard index) ----
@@ -675,6 +675,7 @@ pub struct Ui {
     refpt: (f32, f32),        // transform reference point (ax, ay each in {0, .5, 1})
     lock: bool,               // constrain W/H proportions
     ab_lock: bool,            // constrain artboard W/H proportions
+    align_target: AlignTarget, // A4: Auto (smart) | Selection | Artboard — the align reference pref
     ab_name_edit: Option<(usize, String)>, // inline rename in progress (artboard index + buffer)
     pub fit_request: Option<usize>, // an artboard asked to be fit in the window (host applies it)
     top: TopIcons,
@@ -831,6 +832,7 @@ impl Ui {
             refpt: (0.0, 0.0),
             lock: false,
             ab_lock: false,
+            align_target: AlignTarget::default(),
             ab_name_edit: None,
             fit_request: None,
             top,
@@ -977,6 +979,7 @@ impl Ui {
         let mut refpt = self.refpt;
         let mut lock = self.lock;
         let mut ab_lock = self.ab_lock;
+        let mut align_target = self.align_target;
         let mut ab_name_edit = std::mem::take(&mut self.ab_name_edit);
         let mut fit_request: Option<usize> = None;
         let mut shape_active = self.shape_active;
@@ -1049,6 +1052,7 @@ impl Ui {
                                         &absnap,
                                         &icons,
                                         ic_fit,
+                                        align_target,
                                         &mut ops,
                                         &mut fit_request,
                                     );
@@ -1079,7 +1083,7 @@ impl Ui {
                                 true
                             }
                             P::Align => {
-                                panel_align(ui, &icons, &mut ops);
+                                panel_align(ui, &icons, &mut align_target, &mut ops);
                                 true
                             }
                             P::Pathfinder => {
@@ -1128,6 +1132,7 @@ impl Ui {
         self.refpt = refpt;
         self.lock = lock;
         self.ab_lock = ab_lock;
+        self.align_target = align_target;
         self.ab_name_edit = ab_name_edit;
         self.lay_search = lay_search;
         self.lay_rename = lay_rename;
@@ -3352,6 +3357,7 @@ fn board_ctlbar(
     ab: &AbSnap,
     ic: &DockIcons,
     fit_icon: &Option<egui::TextureHandle>,
+    align_target: AlignTarget,
     ops: &mut Vec<Op>,
     fit_request: &mut Option<usize>,
 ) {
@@ -3469,7 +3475,7 @@ fn board_ctlbar(
                         ];
                         for (i, m, tip) in al {
                             if icon_btn(ui, &ic.align[i], tip) {
-                                ops.push(Op::Align(m));
+                                ops.push(Op::Align(m, align_target)); // mirrors the dock's target pref (A4)
                             }
                         }
                         bar_sep(ui);
@@ -4467,30 +4473,75 @@ fn action_row(ui: &mut egui::Ui, w: f32, label: &str, value: &str) -> bool {
     resp.clicked()
 }
 
+/// One segment of the compact "ALIGN TO" switch (A4). Selected → azure fill + white text; else the
+/// inset-field fill, MUTED, HOVER on hover — the same active/rest read as `icon_toggle`.
+fn seg_btn(ui: &mut egui::Ui, w: f32, label: &str, on: bool, tip: &str) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 22.0), egui::Sense::click());
+    let bg = if on {
+        ACCENT
+    } else if resp.hovered() {
+        HOVER
+    } else {
+        BG_SURFACE
+    };
+    ui.painter().rect_filled(rect, CornerRadius::same(R), bg);
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(11.0),
+        if on { Color32::WHITE } else { MUTED },
+    );
+    resp.on_hover_text(tip).clicked()
+}
+
 /// The Align pane body — THE home of align/distribute (ONE-HOME rule; the control bar mirrors it).
-fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, ops: &mut Vec<Op>) {
+/// `align_target` is the A4 reference pref (Auto/Selection/Artboard); the switch below owns it and
+/// every align op carries the current choice.
+fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut AlignTarget, ops: &mut Vec<Op>) {
     egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+        // A4: the reference switch sits ABOVE the buttons — you pick what "align" means, then act.
+        ui.label(RichText::new("ALIGN TO").color(MUTED).size(10.0).strong());
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let segs = [
+                (
+                    AlignTarget::Auto,
+                    "Auto",
+                    "Smart default: many objects align to each other; a single object or group aligns to the artboard",
+                ),
+                (AlignTarget::Selection, "Selection", "Align objects within the selection's combined bounds"),
+                (AlignTarget::Artboard, "Artboard", "Align each object to the active artboard's edges"),
+            ];
+            for (t, label, tip) in segs {
+                if seg_btn(ui, 60.0, label, *align_target == t, tip) {
+                    *align_target = t;
+                }
+            }
+        });
+        ui.add_space(6.0);
         ui.label(RichText::new("ALIGN OBJECTS").color(MUTED).size(10.0).strong());
         ui.add_space(2.0);
         ui.horizontal(|ui| {
             if icon_btn(ui, &ic.align[0], "Align left") {
-                ops.push(Op::Align(AlignMode::Left));
+                ops.push(Op::Align(AlignMode::Left, *align_target));
             }
             if icon_btn(ui, &ic.align[1], "Align centre") {
-                ops.push(Op::Align(AlignMode::CenterH));
+                ops.push(Op::Align(AlignMode::CenterH, *align_target));
             }
             if icon_btn(ui, &ic.align[2], "Align right") {
-                ops.push(Op::Align(AlignMode::Right));
+                ops.push(Op::Align(AlignMode::Right, *align_target));
             }
             if icon_btn(ui, &ic.align[3], "Align top") {
-                ops.push(Op::Align(AlignMode::Top));
+                ops.push(Op::Align(AlignMode::Top, *align_target));
             }
             if icon_btn(ui, &ic.align[4], "Align middle") {
-                ops.push(Op::Align(AlignMode::Middle));
+                ops.push(Op::Align(AlignMode::Middle, *align_target));
             }
             if icon_btn(ui, &ic.align[5], "Align bottom") {
-                ops.push(Op::Align(AlignMode::Bottom));
+                ops.push(Op::Align(AlignMode::Bottom, *align_target));
             }
         });
         ui.add_space(4.0);
@@ -4503,11 +4554,6 @@ fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, ops: &mut Vec<Op>) {
             if icon_btn(ui, &ic.align[7], "Distribute vertical centres") {
                 ops.push(Op::Distribute(DistAxis::Vertical));
             }
-        });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Align to").color(MUTED).size(11.5));
-            ui.label(RichText::new("Selection").color(FAINT).size(11.5)); // honest: the engine aligns within the selection
         });
     });
 }
@@ -5287,7 +5333,7 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
                 ed.layer_dup_move(&srcs, target, pos);
             }
             Op::Flip(h) => ed.flip(h),
-            Op::Align(m) => ed.align(m),
+            Op::Align(m, t) => ed.align(m, t),
             Op::Distribute(a) => ed.distribute(a),
             Op::Bool(op) => ed.pathfinder(op),
             Op::AbActive(i) => ed.ab_set_active(i),
