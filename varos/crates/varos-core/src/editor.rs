@@ -2264,15 +2264,11 @@ impl Editor {
             // follow the fragment whose implied-closed area actually contains it, else it floats over a
             // fragment it no longer overlaps while the OTHER fragment fills straight across the gap (FB2).
             let holes = std::mem::take(&mut self.doc.paths[pi].holes);
-            let head_ring = Document::ring(&self.doc.paths[pi].anchors, true, 8);
             let sib_ring = Document::ring(&sib.anchors, true, 8);
             let (mut head_holes, mut sib_holes) = (Vec::new(), Vec::new());
             for h in holes {
-                // representative interior point (vertex average — fine for the typical near-convex hole)
-                let n = h.len().max(1) as f32;
-                let s = h.iter().fold([0.0, 0.0], |a, k| [a[0] + k.p[0], a[1] + k.p[1]]);
-                let c = [s[0] / n, s[1] / n];
-                if point_in_poly(&sib_ring, c) && !point_in_poly(&head_ring, c) {
+                // Safe partition: only move a hole when every vertex is inside the new sibling fragment.
+                if !h.is_empty() && h.iter().all(|a| point_in_poly(&sib_ring, a.p)) {
                     sib_holes.push(h);
                 } else {
                     head_holes.push(h); // head keeps it on overlap/neither (a hole outside a fill is inert)

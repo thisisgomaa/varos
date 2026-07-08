@@ -4,7 +4,7 @@
 //! Two buckets:  `content` = the artwork (fills + real strokes) → scales with zoom.
 //!               `overlay` = editing chrome (anchors/handles/skeleton/marquee) → CONSTANT screen size.
 
-use crate::editor::{Drag, Editor, SnapGuide, ToolKind};
+use crate::editor::{Drag, Editor, SnapGuide, ToolKind, ANCHOR_R};
 use crate::geom::{add, cubic, dist, snap45, sub, Pt, Rgba};
 use crate::model::Document;
 use std::collections::HashSet;
@@ -339,13 +339,24 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                 if let Some(pi) = ed.doc.pidx(ap) {
                     if let Some(last) = ed.doc.paths[pi].anchors.last() {
                         let c1 = last.hout.unwrap_or(last.p);
-                        // A8b/FB5: preview the landing EXACTLY as placement computes it. pointer_down snaps
-                        // the click onto nearby points/grid FIRST (snap_anchor), then pen.rs locks 45°/H/V.
-                        // Mirror both here off the SAME snapped cursor, so the ghost never drifts from where
-                        // the point drops — least of all right beside a snap target.
-                        let (adj, _, _) = ed.snap_anchor(&[ed.cursor], [0.0, 0.0]);
-                        let snapped = add(ed.cursor, adj);
-                        let target = if ed.mods.shift { add(last.p, snap45(sub(snapped, last.p))) } else { snapped };
+                        // A8b/FB5/FB8: preview the landing EXACTLY as placement computes it. pointer_down
+                        // checks a close/join anchor FIRST and lands on it verbatim (pen.rs returns before
+                        // any 45° lock), so the ghost must do the same; only the free fallback gets 45°/H/V.
+                        let target = match ed
+                            .nearest_anchor(ed.cursor, ANCHOR_R, true)
+                            .and_then(|aid| ed.doc.anchor(aid).map(|a| a.p))
+                        {
+                            Some(ap) => ap,
+                            None => {
+                                let (adj, _, _) = ed.snap_anchor(&[ed.cursor], [0.0, 0.0]);
+                                let snapped = add(ed.cursor, adj);
+                                if ed.mods.shift {
+                                    add(last.p, snap45(sub(snapped, last.p)))
+                                } else {
+                                    snapped
+                                }
+                            }
+                        };
                         let mut pts = Vec::with_capacity(49);
                         for k in 0..=48 {
                             pts.push(cubic(last.p, c1, target, target, k as f32 / 48.0));
