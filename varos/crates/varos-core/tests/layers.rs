@@ -172,6 +172,7 @@ fn selection_square_moves_and_copies_art_across_layers() {
             hidden: false,
             locked: false,
             color: None,
+            clip_exempt: false,
         });
         d.roots.insert(0, id);
         id
@@ -316,6 +317,7 @@ fn a_second_layer_receives_new_drawings() {
             hidden: false,
             locked: false,
             color: None,
+            clip_exempt: false,
         });
         d.roots.insert(0, id); // above Layer 1
         id

@@ -356,6 +356,65 @@ fn multi_row_drag_travels_together_in_order() {
 }
 
 #[test]
+fn a_clip_exempt_item_draws_uncut_while_a_sibling_stays_clipped() {
+    // A30: "release from artboard clip" is a PER-ELEMENT cancel of the board clip. Two squares both
+    // overhang page A into the gap; with clip ON both are cut at the page edge (x ≤ 100). Releasing
+    // ONE lets it bleed to its full extent (x → 120) while the sibling stays cut. The exemption is
+    // undoable and only touches the released item.
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 80.0, 10.0, 40.0)); // x 80..120, y 10..50 — overhangs page A
+    ed.doc.paths.push(sq(2, 10, 80.0, 60.0, 40.0)); // x 80..120, y 60..100 — overhangs page A
+    ed.doc.ids = 30;
+    ed.doc.sync_tree();
+
+    // baseline: both clipped to page A's edge
+    let fills = art_fills(&ed);
+    assert_eq!(fills.len(), 2, "both items draw, each cut to the page");
+    assert!(fills.iter().all(|f| xs(f).1 <= 100.1), "both cut at x ≤ 100 before any release");
+
+    // release item 1 from the clip
+    ed.objsel.insert(1);
+    ed.set_clip_exempt(true);
+    assert!(ed.doc.node_clip_exempt(ed.doc.unit_of(1).unwrap()), "item 1's unit is now exempt");
+
+    let fills = art_fills(&ed);
+    assert_eq!(fills.len(), 2, "still two items");
+    let reaches = fills.iter().filter(|f| xs(f).1 > 100.1).count();
+    let cut = fills.iter().filter(|f| xs(f).1 <= 100.1).count();
+    assert_eq!(reaches, 1, "exactly one item now bleeds past the page edge (the released one → x 120)");
+    assert_eq!(cut, 1, "…and the sibling is still cut at the page edge");
+    assert!(fills.iter().any(|f| xs(f) == (80.0, 120.0)), "the released item draws its FULL extent uncut");
+
+    // undoable
+    ed.undo();
+    assert!(!ed.doc.node_clip_exempt(ed.doc.unit_of(1).unwrap()), "release is undoable");
+    assert!(art_fills(&ed).iter().all(|f| xs(f).1 <= 100.1), "…both cut again after undo");
+}
+
+#[test]
+fn clip_exemption_releases_the_whole_top_level_group_as_one() {
+    // "Clip unit = top-level item": releasing a member of a clipped GROUP exempts the WHOLE group
+    // (the exemption lives on the top group node), so the group's overhang bleeds instead of cutting.
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 80.0, 10.0, 40.0)); // overhangs page A (x 80..120)
+    ed.doc.paths.push(sq(2, 10, 60.0, 60.0, 20.0)); // fully on page A (x 60..80)
+    ed.doc.ids = 30;
+    ed.doc.sync_tree();
+    ed.doc.group(&[1, 2]).unwrap();
+
+    // clipped: the overhang is cut at x = 100
+    assert!(art_fills(&ed).iter().any(|f| (xs(f).1 - 100.0).abs() < 0.1), "group overhang cut at the page edge");
+
+    // release via a single member — the whole group's unit becomes exempt
+    ed.objsel.insert(1);
+    ed.set_clip_exempt(true);
+    let unit = ed.doc.unit_of(1).unwrap();
+    assert_eq!(unit, ed.doc.unit_of(2).unwrap(), "both members share ONE clip unit (the top group)");
+    assert!(ed.doc.node_clip_exempt(unit));
+    assert!(art_fills(&ed).iter().any(|f| xs(f) == (80.0, 120.0)), "the group now bleeds its full extent");
+}
+
+#[test]
 fn floaters_and_bleed_pages_draw_uncut() {
     // floater: on no page → uncut
     let mut ed = two_pages(true);
