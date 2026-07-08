@@ -1,0 +1,44 @@
+{
+  "varos": 1,
+  "doc": {
+    "paths": [
+      {
+        "id": 1,
+        "anchors": [
+          { "id": 2, "p": [10.0, 10.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 3, "p": [90.0, 10.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 4, "p": [50.0, 80.0], "hin": null, "hout": null, "smooth": false }
+        ],
+        "closed": true,
+        "fill": [0.25, 0.5, 0.75, 1.0],
+        "stroke": [0.0, 0.0, 0.0, 1.0],
+        "stroke_width": 3.0,
+        "holes": [],
+        "opacity": 0.875,
+        "hidden": false,
+        "locked": false,
+        "name": "Ancient triangle"
+      },
+      {
+        "id": 5,
+        "anchors": [
+          { "id": 6, "p": [120.0, 20.0], "hin": null, "hout": [145.0, 5.0], "smooth": true },
+          { "id": 7, "p": [175.0, 45.0], "hin": [150.0, 35.0], "hout": [200.0, 55.0], "smooth": true },
+          { "id": 8, "p": [140.0, 95.0], "hin": [170.0, 90.0], "hout": null, "smooth": false }
+        ],
+        "closed": false,
+        "fill": null,
+        "stroke": [1.0, 0.25, 0.0, 1.0],
+        "stroke_width": 2.0,
+        "holes": [],
+        "opacity": 1.0,
+        "hidden": false,
+        "locked": false,
+        "name": null
+      }
+    ],
+    "groups": [],
+    "group_of": {},
+    "ids": 8
+  }
+}

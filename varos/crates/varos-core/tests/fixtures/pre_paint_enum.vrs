@@ -1,0 +1,128 @@
+{
+  "varos": 1,
+  "doc": {
+    "paths": [
+      {
+        "id": 1,
+        "anchors": [
+          { "id": 2, "p": [20.0, 20.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 3, "p": [100.0, 20.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 4, "p": [60.0, 100.0], "hin": null, "hout": null, "smooth": false }
+        ],
+        "closed": true,
+        "fill": [0.25, 0.5, 0.75, 1.0],
+        "stroke": [1.0, 0.125, 0.0, 0.625],
+        "stroke_width": 4.0,
+        "holes": [],
+        "opacity": 1.0,
+        "hidden": false,
+        "locked": false,
+        "name": "Raw paint triangle"
+      },
+      {
+        "id": 5,
+        "anchors": [
+          { "id": 6, "p": [140.0, 40.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 7, "p": [220.0, 40.0], "hin": null, "hout": null, "smooth": false },
+          { "id": 8, "p": [180.0, 120.0], "hin": null, "hout": null, "smooth": false }
+        ],
+        "closed": true,
+        "fill": null,
+        "stroke": null,
+        "stroke_width": 1.0,
+        "holes": [],
+        "opacity": 0.5,
+        "hidden": false,
+        "locked": false,
+        "name": "Null paint triangle"
+      }
+    ],
+    "groups": [],
+    "group_of": {},
+    "nodes": [
+      {
+        "id": 9,
+        "kind": "Layer",
+        "name": "Layer 1",
+        "parent": null,
+        "children": [11, 10],
+        "hidden": false,
+        "locked": false,
+        "color": null
+      },
+      {
+        "id": 10,
+        "kind": { "Path": 1 },
+        "name": "",
+        "parent": 9,
+        "children": [],
+        "hidden": false,
+        "locked": false,
+        "color": null
+      },
+      {
+        "id": 11,
+        "kind": { "Path": 5 },
+        "name": "",
+        "parent": 9,
+        "children": [],
+        "hidden": false,
+        "locked": false,
+        "color": null
+      }
+    ],
+    "roots": [9],
+    "active_layer": 9,
+    "ids": 11,
+    "units": { "ppi": 72.0, "display": "Px" },
+    "artboards": [
+      {
+        "x": 0.0,
+        "y": 0.0,
+        "w": 1080.0,
+        "h": 1080.0,
+        "name": "Artboard 1",
+        "bleed": 0.0,
+        "page_color": [1.0, 1.0, 1.0, 1.0],
+        "clip": true,
+        "hidden": false,
+        "locked": false
+      }
+    ],
+    "active": 0,
+    "move_art_with_ab": true,
+    "snap": {
+      "enabled": true,
+      "smart": true,
+      "radius_px": 8.0,
+      "candidate_max": 8,
+      "show_candidates": true,
+      "force_pixel_align": false,
+      "move_whole_px": false,
+      "grid": false,
+      "grid_lines": true,
+      "baseline_grid": false,
+      "guides": true,
+      "artboard": true,
+      "artboard_mids": true,
+      "margins": false,
+      "margin_mids": false,
+      "visible_only": true,
+      "object_bounds": true,
+      "bbox_mids": true,
+      "gaps_and_sizes": true,
+      "key_points": true,
+      "object_geometry": true,
+      "segment_mids": true,
+      "path_intersections": true,
+      "pixel_bounds": false,
+      "alignment_guides": true,
+      "equal_spacing": true,
+      "equal_size": true,
+      "grid_spacing": 72.0
+    },
+    "ruler_origin": [0.0, 0.0],
+    "guides": [],
+    "guides_locked": false
+  }
+}
