@@ -129,6 +129,11 @@ enum Op {
     RulerOrigin(Option<varos_core::geom::Pt>), // Some = set zero-point (snapped) + show crosshair; None = end drag
     GuidePreview(bool, varos_core::geom::Pt),  // ruler drag-out: (vertical, world) → live snapped guide preview
     GuideCommit,                               // drop the previewed guide into the document
+    // ---- document settings (Pain A15: Properties dock when nothing is selected) ----
+    CycleUnits,     // step the document display unit (undoable — mutates the serialized doc.units)
+    ToggleSnapping, // doc.snap.enabled master switch (a non-undoable mode flag, like the magnet menu)
+    ToggleGuides,   // show/hide ruler guides — the guides-visibility view pref (mirrors Ctrl+;)
+    ToggleRulers,   // show/hide rulers — the rulers view pref (mirrors Ctrl+R)
 }
 
 /// A window action the custom title bar asks the host (winit) to perform.
@@ -502,6 +507,13 @@ struct Snap {
     paint: PaintTarget, // which target has focus (the rail control + X)
     recent: Vec<Rgba>,
     doc_colors: Vec<Rgba>, // the picker's swatch strips (MRU + derived document scan)
+    has_paint: bool, // a representative path exists (object OR Direct/anchor selection) → show paint, not Document
+    // ── Document settings (shown when there is truly nothing to inspect — Pain A15) ──
+    units_label: &'static str,
+    artboards: usize,
+    snap_enabled: bool,
+    guides_on: bool, // ruler guides visible (= !guides_hidden)
+    rulers_on: bool,
 }
 impl Snap {
     fn read(ed: &Editor) -> Self {
@@ -547,6 +559,12 @@ impl Snap {
             paint: ed.paint,
             recent: ed.recent_colors.clone(),
             doc_colors: ed.document_colors(),
+            has_paint: repr.is_some(),
+            units_label: ed.doc.units.display.label(),
+            artboards: ed.doc.artboards.len(),
+            snap_enabled: ed.doc.snap.enabled,
+            guides_on: !ed.guides_hidden,
+            rulers_on: ed.show_rulers,
         }
     }
 }
@@ -4100,6 +4118,14 @@ fn panel_properties(
         egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
             let inner = ui.available_width();
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+
+            // Pain A15: nothing to inspect (no object, no Direct/anchor path, not mid-draft) → the compact
+            // Document settings home instead of a transform panel full of zeros. Returns from THIS closure.
+            if !s.sel && !s.drawing && !s.has_paint {
+                document_section(ui, s, inner, ops);
+                return;
+            }
+
             ui.label(RichText::new(&s.name).color(if s.sel { TEXT } else { MUTED }).size(12.5).strong());
             ui.add_space(2.0);
             ui.label(RichText::new("TRANSFORM").color(MUTED).size(10.0).strong());
@@ -4196,6 +4222,74 @@ fn panel_properties(
             pathfinder_row(ui, ops); // a MIRROR of the Pathfinder home (the mockup's Shape section)
         });
     });
+}
+
+/// The Document settings body (Pain A15) — shown in the Properties dock when nothing is selected, in
+/// place of a zeroed transform panel. A "DOCUMENT" micro-label (like "TRANSFORM") then compact rows:
+/// Units (click to cycle), Artboards count, Snapping/Guides/Rulers toggles, and static Grid/Colour info.
+fn document_section(ui: &mut egui::Ui, s: &Snap, w: f32, ops: &mut Vec<Op>) {
+    ui.label(RichText::new("DOCUMENT").color(MUTED).size(10.0).strong());
+    ui.add_space(2.0);
+    if action_row(ui, w, "Units", s.units_label) {
+        ops.push(Op::CycleUnits);
+    }
+    info_row(ui, w, "Artboards", &s.artboards.to_string());
+    if toggle_row(ui, w, "Snapping", s.snap_enabled) {
+        ops.push(Op::ToggleSnapping);
+    }
+    if toggle_row(ui, w, "Guides", s.guides_on) {
+        ops.push(Op::ToggleGuides);
+    }
+    if toggle_row(ui, w, "Rulers", s.rulers_on) {
+        ops.push(Op::ToggleRulers);
+    }
+    // Grid dots are drawn unconditionally by the renderer (tess.rs build_bg) with no app-side toggle,
+    // and there is no colour-mode system — so these two stay honest read-only info, not fake toggles.
+    info_row(ui, w, "Grid dots", "On");
+    info_row(ui, w, "Colour", "RGB");
+}
+
+/// A read-only "label … value" settings row (Document panel): label left (MUTED), value right (FAINT).
+fn info_row(ui: &mut egui::Ui, w: f32, label: &str, value: &str) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::hover());
+    ui.painter().text(
+        egui::pos2(rect.left() + 4.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(12.5),
+        MUTED,
+    );
+    ui.painter().text(
+        egui::pos2(rect.right() - 4.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        value,
+        FontId::proportional(12.5),
+        FAINT,
+    );
+}
+
+/// A clickable "label … value" row (the Units cycler): hover-highlights and returns true on click.
+fn action_row(ui: &mut egui::Ui, w: f32, label: &str, value: &str) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
+    }
+    let col = if resp.hovered() { TEXT } else { MUTED };
+    ui.painter().text(
+        egui::pos2(rect.left() + 4.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(12.5),
+        col,
+    );
+    ui.painter().text(
+        egui::pos2(rect.right() - 4.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        value,
+        FontId::proportional(12.5),
+        col,
+    );
+    resp.clicked()
 }
 
 /// The Align pane body — THE home of align/distribute (ONE-HOME rule; the control bar mirrors it).
@@ -5029,6 +5123,12 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::RulerOrigin(None) => ed.origin_preview = None,
             Op::GuidePreview(vertical, p) => ed.set_guide_preview(vertical, p),
             Op::GuideCommit => ed.commit_guide(),
+            Op::CycleUnits => ed.cycle_units(),
+            // snap.enabled mirrors the magnet menu's non-undoable mode-flag convention; applied AFTER the
+            // frame's `ed.doc.snap = snap_cfg` write-back so it is not clobbered.
+            Op::ToggleSnapping => ed.doc.snap.enabled = !ed.doc.snap.enabled,
+            Op::ToggleGuides => ed.guides_hidden = !ed.guides_hidden, // view pref (mirrors Ctrl+;)
+            Op::ToggleRulers => ed.show_rulers = !ed.show_rulers,     // view pref (mirrors Ctrl+R)
         }
     }
 }

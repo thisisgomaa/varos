@@ -53,6 +53,31 @@ impl Unit {
         }
     }
 
+    /// Human-readable name for the Document settings panel (Pain A15).
+    pub fn label(self) -> &'static str {
+        match self {
+            Unit::Px => "Pixels",
+            Unit::Pt => "Points",
+            Unit::Pica => "Picas",
+            Unit::Mm => "Millimeters",
+            Unit::Cm => "Centimeters",
+            Unit::In => "Inches",
+        }
+    }
+
+    /// Next display unit in a fixed ring (px → pt → pica → mm → cm → in → px). Drives the
+    /// click-to-cycle Units row in the Document settings panel.
+    pub fn cycle(self) -> Unit {
+        match self {
+            Unit::Px => Unit::Pt,
+            Unit::Pt => Unit::Pica,
+            Unit::Pica => Unit::Mm,
+            Unit::Mm => Unit::Cm,
+            Unit::Cm => Unit::In,
+            Unit::In => Unit::Px,
+        }
+    }
+
     /// Parse a unit suffix (case-insensitive); accepts common long forms and `"` for inches.
     pub fn parse_suffix(s: &str) -> Option<Unit> {
         match s.trim().to_ascii_lowercase().as_str() {
@@ -169,6 +194,21 @@ mod tests {
         assert_eq!(Unit::parse_suffix("pc"), Some(Unit::Pica));
         assert_eq!(Unit::parse_suffix("px"), Some(Unit::Px));
         assert_eq!(Unit::parse_suffix("furlong"), None);
+    }
+
+    #[test]
+    fn cycle_visits_every_unit_and_returns_home() {
+        // Six steps from Px cycle back to Px, touching each unit exactly once.
+        let order = [Unit::Px, Unit::Pt, Unit::Pica, Unit::Mm, Unit::Cm, Unit::In];
+        let mut u = Unit::Px;
+        for expected in order.iter().skip(1).chain(std::iter::once(&Unit::Px)) {
+            u = u.cycle();
+            assert_eq!(u, *expected);
+        }
+        // Every unit has a non-empty display label.
+        for unit in order {
+            assert!(!unit.label().is_empty());
+        }
     }
 
     #[test]
