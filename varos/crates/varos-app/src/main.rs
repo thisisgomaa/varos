@@ -217,6 +217,38 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
     }
 }
 
+/// A8a fallback region when there is nothing to frame (an empty free canvas): a default page-sized
+/// square at the origin, so a brand-new boardless document still opens onto something sensible.
+const FIT_FALLBACK: (f32, f32, f32, f32) = (0.0, 0.0, 1080.0, 1080.0);
+
+/// The world rect a "Fit in window" should frame: the ACTIVE page if the document has one, else the
+/// artwork's bounds (a free canvas that has content but no board — A8a fits to content), else the
+/// default fallback region so an empty document opens onto a sensible view. Never assumes a board.
+fn fit_rect(ed: &Editor) -> (f32, f32, f32, f32) {
+    if let Some(a) = ed.doc.active_artboard() {
+        return (a.x, a.y, a.w, a.h);
+    }
+    // union outline bbox of all real paths = the artwork extent (fit-to-content on a free canvas)
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    let mut any = false;
+    for pi in 0..ed.doc.paths.len() {
+        if ed.doc.paths[pi].anchors.is_empty() {
+            continue;
+        }
+        let (bx0, by0, bx1, by1) = ed.doc.outline_bbox(pi);
+        x0 = x0.min(bx0);
+        y0 = y0.min(by0);
+        x1 = x1.max(bx1);
+        y1 = y1.max(by1);
+        any = true;
+    }
+    if any {
+        (x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0))
+    } else {
+        FIT_FALLBACK
+    }
+}
+
 /// Fit an artboard into the CANVAS area — the Board box's interior when the shell reports one
 /// (Stage 4; physical px), else the whole window. Pan shifts so the page centres in the BOX.
 fn fit_to_board(gui: &ui::Ui, window: &Window, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
@@ -500,9 +532,10 @@ fn main() {
     let mut view = {
         // open zoomed-out so the artboard reads as a DEFINED page sitting on the larger board
         // (lots of dotted board visible around it). Ctrl+0 later does a tight Fit-in-Window.
-        let a = ed.doc.active_artboard().cloned().unwrap_or_default();
+        // A8a: a boardless new doc has no page — frame its content, else the default region.
+        let (x, y, w, h) = fit_rect(&ed);
         let sz = window.inner_size();
-        View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.45)
+        View::fit(x, y, w, h, sz.width as f32, sz.height as f32, 0.45)
     };
     // A13 — frame-based zoom easing. `zoom_target` is the desired zoom; `view.zoom` glides toward it
     // one frame at a time (see the easer in RedrawRequested). Wheel / click-zoom set `zoom_target`
@@ -585,9 +618,9 @@ fn main() {
                                 win_norm = (pos.x, pos.y, size.width, size.height);
                             }
                         } else if refit_pending {
-                            // restored a maximized window → fit the page to the (now large) view ONCE
-                            let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                            view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
+                            // restored a maximized window → fit the page (or content, A8a) to the view ONCE
+                            let (x, y, w, h) = fit_rect(&ed);
+                            view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
                             zoom_target = view.zoom; // instant fit — keep the easer idle (no phantom glide)
                             refit_pending = false;
                         }
@@ -748,9 +781,10 @@ fn main() {
                                 let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
                                 let cs = format!("{:?}", code);
                                 if mc && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {
-                                    // Ctrl+0 = Fit Artboard in the Board box
-                                    let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                    view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
+                                    // Ctrl+0 = Fit in the Board box — the active page, or content on a
+                                    // free canvas (A8a), or the default region when there's nothing.
+                                    let (x, y, w, h) = fit_rect(&ed);
+                                    view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
                                     zoom_target = view.zoom; // instant fit cancels any in-flight zoom glide
                                 } else if mc && code == KeyCode::KeyS {
                                     // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
@@ -804,8 +838,8 @@ fn main() {
                                                     ed.replace_doc(doc);
                                                     cur_file = Some(p);
                                                     saved_rev = ed.rev;
-                                                    let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                                    view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
+                                                    let (x, y, w, h) = fit_rect(&ed);
+                                                    view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
                                                     zoom_target = view.zoom; // instant fit on open
                                                 }
                                                 Err(e) => {
@@ -884,8 +918,8 @@ fn main() {
                         // view INTO it once (the pre-shell fit centred on the whole window).
                         if let Some(k) = board_fit_pending {
                             if !gui.splashing() && gui.board_px.is_some() {
-                                let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, k);
+                                let (x, y, w, h) = fit_rect(&ed);
+                                view = fit_to_board(&gui, &window, x, y, w, h, k);
                                 zoom_target = view.zoom; // instant startup fit — no glide
                                 board_fit_pending = None;
                                 window.request_redraw();
@@ -949,8 +983,8 @@ fn main() {
                                 // otherwise a frame draws a maximized viewport into the still-small target (wgpu panic).
                                 let sz = window.inner_size();
                                 renderer.resize(sz.width, sz.height);
-                                let a = ed.doc.active_artboard().cloned().unwrap_or_default();
-                                view = View::fit(a.x, a.y, a.w, a.h, sz.width as f32, sz.height as f32, 0.9);
+                                let (x, y, w, h) = fit_rect(&ed);
+                                view = View::fit(x, y, w, h, sz.width as f32, sz.height as f32, 0.9);
                                 zoom_target = view.zoom; // instant fit — keep the easer idle
                                 board_fit_pending = Some(0.9); // the box re-lays-out at the new size — refit into it
                                 refit_pending = false;
