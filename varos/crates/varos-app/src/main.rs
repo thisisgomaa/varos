@@ -627,6 +627,13 @@ fn main() {
                         };
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
+                        // A5 — while the picker's system eyedropper is armed, the sample click is read
+                        // globally (GetAsyncKeyState); swallow the in-window event so it doesn't also
+                        // poke the canvas (select/deselect) under the floating picker.
+                        if gui.picking_screen() {
+                            window.request_redraw();
+                            return;
+                        }
                         match button {
                             MouseButton::Left => match state {
                                 ElementState::Pressed => {
