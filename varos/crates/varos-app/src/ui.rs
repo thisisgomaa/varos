@@ -489,6 +489,7 @@ struct Snap {
     tool: ToolKind,
     name: String,
     sel: bool,
+    drawing: bool, // Pen mid-draft (an open path is active) — drives the "Drawing path…" status (P9)
     x: f32,
     y: f32,
     w: f32,
@@ -533,6 +534,7 @@ impl Snap {
             tool: ed.tool,
             name,
             sel,
+            drawing: ed.tool == ToolKind::Pen && ed.active.is_some(),
             x,
             y,
             w,
@@ -1657,6 +1659,19 @@ fn swatch_strip(ui: &mut egui::Ui, label: &str, colors: &[Rgba]) -> Option<Rgba>
 /// Fill / Stroke row: a hand-painted swatch (double-click → the Color Picker modal), + hex + clear ×.
 fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &mut Vec<Op>) {
     ui.horizontal(|ui| {
+        // A18: name the target so the two rows read as Fill / Stroke at a glance (fixed column → swatches align)
+        let label = match target {
+            PaintTarget::Fill => "Fill",
+            PaintTarget::Stroke => "Stroke",
+        };
+        let (lr, _) = ui.allocate_exact_size(egui::vec2(44.0, 18.0), egui::Sense::hover());
+        ui.painter().text(
+            egui::pos2(lr.left(), lr.center().y),
+            Align2::LEFT_CENTER,
+            label,
+            FontId::proportional(11.5),
+            MUTED,
+        );
         let (sw, resp) = ui.allocate_exact_size(egui::vec2(26.0, 18.0), egui::Sense::click());
         let round = CornerRadius::same(4);
         let p = ui.painter();
@@ -2883,37 +2898,53 @@ fn build_topbar(
         // layout; click = open in an automatic spot / surface its tab / close (boxtree::toggle_panel)
         menu_below(ui, window_id, &winb, flush, |ui| {
             ui.set_width(200.0);
+            let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
             if check_row(ui, "Tool rail", *show_rail) {
                 *show_rail = !*show_rail;
+                hit = true;
             }
             if check_row(ui, "Control bar", *show_dock) {
                 *show_dock = !*show_dock;
+                hit = true;
             }
             menu_sep(ui);
             for pnl in varos_app::shell::PanelId::DOCKABLE {
                 if check_row(ui, pnl.title(), shell.is_open(pnl)) {
                     shell.toggle_panel(pnl);
+                    hit = true;
                 }
+            }
+            if hit {
+                menu_set(ui, window_id, false);
             }
         });
         // Snapping quick-menu (Illustrator "Snapping" popover)
         menu_below(ui, magnet_id, &magr, flush, |ui| {
             ui.set_width(216.0);
+            let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
             if check_row(ui, "Snap to Grid", snap.grid) {
                 snap.grid = !snap.grid;
+                hit = true;
             }
             if check_row(ui, "Snap to Point", snap.key_points) {
                 snap.key_points = !snap.key_points;
+                hit = true;
             }
             menu_sep(ui);
             if check_row(ui, "Smart Guides  (Ctrl+U)", snap.smart) {
                 snap.smart = !snap.smart;
+                hit = true;
             }
             if check_row(ui, "    Alignment Guides", snap.alignment_guides) {
                 snap.alignment_guides = !snap.alignment_guides;
+                hit = true;
             }
             if check_row(ui, "    Geometric Guides", snap.object_geometry) {
                 snap.object_geometry = !snap.object_geometry;
+                hit = true;
+            }
+            if hit {
+                menu_set(ui, magnet_id, false);
             }
         });
 
@@ -3174,9 +3205,17 @@ fn board_ctlbar(
                         if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 1.0, 0.0..=1.0e6) {
                             ops.push(Op::SetBBox(None, None, None, Some(v), 0.0, 0.0));
                         }
-                        if let Some(v) =
-                            num_field(ui, 62.0, Lab::Letter("\u{2220}"), "Rotation", s.rot, 1, 1.0, 0.5, full.clone())
-                        {
+                        if let Some(v) = num_field(
+                            ui,
+                            62.0,
+                            Lab::Icon(ic.rotate.as_ref()), // real rotation icon, matching the Properties dock (A14c)
+                            "Rotation",
+                            s.rot,
+                            1,
+                            1.0,
+                            0.5,
+                            full.clone(),
+                        ) {
                             ops.push(Op::SetRot(v));
                         }
                         bar_sep(ui);
@@ -3210,9 +3249,11 @@ fn board_ctlbar(
                         bar_sep(ui);
                         pathfinder_row(ui, ops); // the essential shape modes, in reach (Ahmed 07-07)
                     } else {
-                        // idle: the current tool + a quiet hint — the bar keeps its place
+                        // idle: the current tool + a quiet hint — the bar keeps its place. While the Pen is
+                        // mid-draft the hint reflects the ACT, not the (still-empty) selection (P9).
                         ui.label(RichText::new(crate::tool_name(s.tool)).color(TEXT).size(11.5));
-                        ui.label(RichText::new("No selection").color(FAINT).size(11.5));
+                        let hint = if s.drawing { "Drawing path\u{2026}" } else { "No selection" };
+                        ui.label(RichText::new(hint).color(FAINT).size(11.5));
                     }
                 });
             });
