@@ -33,6 +33,19 @@ impl View {
     }
 }
 
+/// One frame of exponential easing: nudge `current` a fraction `k` (0..1) toward `target`.
+/// Used by the view's frame-based zoom glide (A13). Pure so it can be unit-tested without a GPU.
+pub fn eased_step(current: f32, target: f32, k: f32) -> f32 {
+    current + (target - current) * k
+}
+
+/// The `pan` that keeps world point `anchor` pinned under screen point `screen` at a given `zoom`
+/// (screen = anchor·zoom + pan  ⇒  pan = screen − anchor·zoom). This is the zoom-to-cursor math,
+/// factored out so the eased zoom re-pins the anchor exactly each frame.
+pub fn pan_for_anchor(anchor: Pt, screen: Pt, zoom: f32) -> Pt {
+    [screen[0] - anchor[0] * zoom, screen[1] - anchor[1] * zoom]
+}
+
 pub fn sub(a: Pt, b: Pt) -> Pt {
     [a[0] - b[0], a[1] - b[1]]
 }
@@ -116,5 +129,28 @@ mod tests {
     #[test]
     fn fit_degenerate_is_identity() {
         assert_eq!(View::fit(0.0, 0.0, 0.0, 100.0, 800.0, 600.0, 0.9).zoom, 1.0);
+    }
+    #[test]
+    fn eased_step_converges_without_overshoot() {
+        // a single step stays strictly between current and target (never overshoots)
+        let z1 = eased_step(1.0, 2.0, 0.25);
+        assert!(z1 > 1.0 && z1 < 2.0, "z1 {z1}");
+        // repeated steps close the gap to well under the settle epsilon
+        let mut z = 1.0f32;
+        let target = 2.0f32;
+        for _ in 0..64 {
+            z = eased_step(z, target, 0.25);
+        }
+        assert!((z - target).abs() < target * 0.001, "z {z}");
+    }
+    #[test]
+    fn pan_for_anchor_pins_world_under_screen() {
+        // the anchor world point must land exactly on its screen position at the new zoom
+        let anchor = [123.0, -45.0];
+        let screen = [640.0, 360.0];
+        let zoom = 2.5;
+        let v = View { pan: pan_for_anchor(anchor, screen, zoom), zoom };
+        let s = v.w2s(anchor);
+        assert!((s[0] - screen[0]).abs() < 1e-3 && (s[1] - screen[1]).abs() < 1e-3, "s {s:?}");
     }
 }
