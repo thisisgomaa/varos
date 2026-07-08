@@ -24,7 +24,12 @@ pub const GUIDE: Rgba = [0.0, 0.72, 0.92, 0.9]; // ruler guide line — cyan (Il
 
 pub enum Prim {
     Fill { rings: Vec<Vec<Pt>>, color: Rgba }, // outer ring + hole rings — filled even-odd (holes cut through)
-    Stroke { pts: Vec<Pt>, width: f32, color: Rgba },
+    // `clip` (A2): the artboard rect [x0,y0,x1,y1] (world) this stroke is clipped to, if any. The centerline
+    // is ALREADY cut to the rect (clip_polyline_rect), but the extruded BAND still overhangs the edge by up
+    // to half the width — a renderer may honour this rect (e.g. a GPU scissor) to trim that overhang. `None`
+    // = draw uncut (a floater or a page that invited bleed). A missed/degenerate rect MUST draw the stroke
+    // uncut (overflowing), never clipped-to-nothing — fail-open.
+    Stroke { pts: Vec<Pt>, width: f32, color: Rgba, clip: Option<[f32; 4]> },
     Dashed { pts: Vec<Pt>, width: f32, color: Rgba },
     Square { c: Pt, half: f32, color: Rgba },
     Disc { c: Pt, r: f32, color: Rgba },
@@ -107,7 +112,12 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             let mut edge = ring;
             edge.push([x0, y0]);
             // the page you're standing on gets a clearly heavier frame (~2× the others) + handles.
-            s.overlay.push(Prim::Stroke { pts: edge, width: if selected { 2.4 } else { 1.2 }, color: edge_col });
+            s.overlay.push(Prim::Stroke {
+                pts: edge,
+                width: if selected { 2.4 } else { 1.2 },
+                color: edge_col,
+                clip: None,
+            });
             if active {
                 for h in Editor::bbox_handles((x0, y0, x1, y1)) {
                     s.overlay.push(Prim::Square { c: h, half: 5.0, color: ACCENT });
@@ -212,14 +222,23 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                 let mut push = |pts: Vec<Pt>| match &clip {
                     Some(rects) => {
                         for &r in rects {
+                            // Each cut run carries its page rect so the renderer can also trim the BAND
+                            // (not just this centerline) to the page edge — A2. One run ⇒ one rect, so an
+                            // opaque stroke maps 1:1 to a single scissor with no ambiguity.
+                            let rect = [r.0, r.1, r.2, r.3];
                             for run in clip_polyline_rect(&pts, r) {
                                 if run.len() >= 2 {
-                                    out.push(Prim::Stroke { pts: run, width: p.stroke_width, color: c });
+                                    out.push(Prim::Stroke {
+                                        pts: run,
+                                        width: p.stroke_width,
+                                        color: c,
+                                        clip: Some(rect),
+                                    });
                                 }
                             }
                         }
                     }
-                    None => out.push(Prim::Stroke { pts, width: p.stroke_width, color: c }),
+                    None => out.push(Prim::Stroke { pts, width: p.stroke_width, color: c, clip: None }),
                 };
                 push(ed.doc.outline_px(pi, ppu));
                 for hole in &p.holes {
@@ -286,7 +305,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         const BIG: f32 = 1.0e5;
         for g in ed.doc.guides.iter().chain(ed.guide_preview.iter()) {
             let (a, b) = if g.vertical { ([g.pos, -BIG], [g.pos, BIG]) } else { ([-BIG, g.pos], [BIG, g.pos]) };
-            s.overlay.push(Prim::Stroke { pts: vec![a, b], width: 1.0, color: GUIDE });
+            s.overlay.push(Prim::Stroke { pts: vec![a, b], width: 1.0, color: GUIDE, clip: None });
         }
     }
     // editing skeleton: a thin accent outline for any path being hovered/selected/drawn
@@ -295,13 +314,13 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             continue;
         } // cascades from layer/group eyes
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
-            s.overlay.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: 1.7, color: ACCENT });
+            s.overlay.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: 1.7, color: ACCENT, clip: None });
             for hole in &ed.doc.paths[pi].holes {
                 let mut r = Document::ring_px(hole, true, ppu);
                 if let Some(&f) = r.first() {
                     r.push(f);
                 }
-                s.overlay.push(Prim::Stroke { pts: r, width: 1.7, color: ACCENT });
+                s.overlay.push(Prim::Stroke { pts: r, width: 1.7, color: ACCENT, clip: None });
             }
         }
     }
@@ -316,14 +335,19 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                 let b = &p.anchors[(i + 1) % n];
                 let (p0, p1, p2, p3) = (a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p);
                 let pts: Vec<Pt> = (0..=24).map(|k| cubic(p0, p1, p2, p3, k as f32 / 24.0)).collect();
-                s.overlay.push(Prim::Stroke { pts, width: 3.0, color: SEG_HI });
+                s.overlay.push(Prim::Stroke { pts, width: 3.0, color: SEG_HI, clip: None });
             }
         }
     }
     // object-selection transform frame (oriented — rotates with the selection) + 8 handles
     if ed.tool == ToolKind::Object && !matches!(ed.drag, Drag::ObjMarquee { .. }) {
         if let (Some(c), Some(hs)) = (ed.frame_corners(), ed.frame_handles()) {
-            s.overlay.push(Prim::Stroke { pts: vec![c[0], c[1], c[2], c[3], c[0]], width: 1.0, color: ACCENT });
+            s.overlay.push(Prim::Stroke {
+                pts: vec![c[0], c[1], c[2], c[3], c[0]],
+                width: 1.0,
+                color: ACCENT,
+                clip: None,
+            });
             for h in hs {
                 s.overlay.push(Prim::Square { c: h, half: 4.0, color: ACCENT });
                 s.overlay.push(Prim::Square { c: h, half: 2.6, color: WHITE });
@@ -382,6 +406,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             pts: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]],
             width: 1.0,
             color: ACCENT,
+            clip: None,
         });
     }
     // object marquee (dragging the black arrow over empty space)
@@ -393,6 +418,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             pts: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]],
             width: 1.0,
             color: ACCENT,
+            clip: None,
         });
     }
     // handles: every SELECTED anchor shows its own direction handles (Illustrator). A whole-path / hover
@@ -411,7 +437,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             if show.contains(&a.id) {
                 for h in [a.hin, a.hout].into_iter().flatten() {
-                    s.overlay.push(Prim::Stroke { pts: vec![a.p, h], width: 1.0, color: HANDLE_COL });
+                    s.overlay.push(Prim::Stroke { pts: vec![a.p, h], width: 1.0, color: HANDLE_COL, clip: None });
                 }
             }
         }
@@ -452,10 +478,10 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     for g in &ed.snap_guides {
         match g {
             SnapGuide::Line { a, b } => {
-                s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.6, color: SNAP_GUIDE })
+                s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.6, color: SNAP_GUIDE, clip: None })
             }
             SnapGuide::Gap { a, b } => {
-                s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.6, color: SNAP_GUIDE });
+                s.overlay.push(Prim::Stroke { pts: vec![*a, *b], width: 1.6, color: SNAP_GUIDE, clip: None });
                 // perpendicular end-ticks so the gap reads as a distance bar
                 let d = [b[0] - a[0], b[1] - a[1]];
                 let l = (d[0] * d[0] + d[1] * d[1]).sqrt().max(1e-3);
@@ -465,6 +491,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                         pts: vec![[p[0] - n[0], p[1] - n[1]], [p[0] + n[0], p[1] + n[1]]],
                         width: 1.6,
                         color: SNAP_GUIDE,
+                        clip: None,
                     });
                 }
             }
@@ -476,7 +503,12 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             // a whole snapped PATH lights up (Illustrator's "path" highlight)
             SnapGuide::PathHi { pid } => {
                 if let Some(pi) = ed.doc.pidx(*pid) {
-                    s.overlay.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: 2.0, color: SNAP_GUIDE });
+                    s.overlay.push(Prim::Stroke {
+                        pts: ed.doc.outline_px(pi, ppu),
+                        width: 2.0,
+                        color: SNAP_GUIDE,
+                        clip: None,
+                    });
                 }
             }
         }
