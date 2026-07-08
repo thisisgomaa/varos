@@ -169,7 +169,10 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     let fill_prims = |pi: usize| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
-        if p.closed && p.anchors.len() >= 3 {
+        // An open path still FILLS (Illustrator: the fill closes visually with an implied straight line
+        // between the endpoints) — so deleting an anchor to open a shape keeps its fill (A32). Only paths
+        // that actually carry a fill colour reach here; a bare stroke line (fill None) never fills.
+        if p.anchors.len() >= 3 {
             if let Some(c) = p.fill.solid() {
                 let mut rings = vec![ed.doc.outline_px(pi, ppu)];
                 for hole in &p.holes {

@@ -660,9 +660,12 @@ impl Document {
         }
     }
 
+    /// Is `pt` inside the region this path FILLS? An OPEN path counts as implied-closed (a straight line
+    /// joins its endpoints) — the SAME rule `scene::fill_prims` uses to draw the fill, so what you see
+    /// filled is what you can hit (A31/A32 must agree). Holes cut out even-odd.
     pub fn point_in_path(&self, pi: usize, pt: Pt) -> bool {
         let p = &self.paths[pi];
-        if !p.closed || p.anchors.len() < 3 {
+        if p.anchors.len() < 3 {
             return false;
         }
         if !point_in_poly(&self.outline(pi, 8), pt) {
