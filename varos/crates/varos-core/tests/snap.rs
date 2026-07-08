@@ -1,7 +1,7 @@
 //! SnapEngine logic tests — pure math, no UI (allowed per the math-test rule). Proves point/geometry
 //! snapping actually fires, so a "snap not working" report can be localised to logic vs UI/feedback.
 
-use varos_core::editor::{AlignMode, Editor};
+use varos_core::editor::{AlignMode, AlignTarget, Editor};
 use varos_core::model::{Anchor, Artboard, Path};
 
 fn anc(id: u32, x: f32, y: f32) -> Anchor {
@@ -64,7 +64,7 @@ fn align_panel_aligns_selected_anchors() {
     ed.selected.insert(1); // A top-left  [0,0]
     ed.selected.insert(2); // A top-right [100,0]
     ed.selected.insert(5); // B top-left  [200,0]
-    ed.align(AlignMode::Left); // all x → min (0)
+    ed.align(AlignMode::Left, AlignTarget::Auto); // anchor align ignores the target; all x → min (0)
     for id in [1u32, 2, 5] {
         assert!((ed.doc.anchor(id).unwrap().p[0]).abs() < 0.01, "anchor {} x should be 0", id);
     }
