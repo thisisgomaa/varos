@@ -4543,7 +4543,8 @@ fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
     });
 }
 
-/// One pathfinder button: 34×28 hover chip; the glyph = two 12px squares overlapped by 4.
+/// One pathfinder button: 34×28 hover chip; the glyph = two 14px rounded squares overlapped by 6 (A16:
+/// bigger + bolder + WHITE-on-hover so the boolean icons read as clearly as the SVG align/rail icons).
 fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str) -> bool {
     use varos_core::boolean::BoolOp;
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(34.0, 28.0), egui::Sense::click());
@@ -4551,10 +4552,13 @@ fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str) -> bool
     if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(3), HOVER);
     }
-    let col = if resp.hovered() { TEXT } else { MUTED };
-    let a = egui::Rect::from_min_size(rect.center() - egui::vec2(10.0, 8.0), egui::vec2(12.0, 12.0));
-    let b = egui::Rect::from_min_size(rect.center() - egui::vec2(2.0, 4.0), egui::vec2(12.0, 12.0));
+    // match the align/rail icon contrast exactly: pure white on hover, MUTED at rest (not the dimmer TEXT)
+    let col = if resp.hovered() { Color32::WHITE } else { MUTED };
+    // bigger squares (14) with a clearer overlap read stronger than the old thin 12px pair
+    let a = egui::Rect::from_min_size(rect.center() - egui::vec2(11.0, 9.0), egui::vec2(14.0, 14.0));
+    let b = egui::Rect::from_min_size(rect.center() - egui::vec2(3.0, 5.0), egui::vec2(14.0, 14.0));
     let rr = CornerRadius::same(2);
+    let sw = 1.4; // bolder outline than the old 1.0 hairline
     match op {
         BoolOp::Unite => {
             p.rect_filled(a, rr, col);
@@ -4563,11 +4567,11 @@ fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str) -> bool
         BoolOp::MinusFront => {
             p.rect_filled(a, rr, col);
             p.rect_filled(b, rr, SOLID_PANEL);
-            p.rect_stroke(b, rr, Stroke::new(1.0, col), StrokeKind::Middle);
+            p.rect_stroke(b, rr, Stroke::new(sw, col), StrokeKind::Middle);
         }
         BoolOp::Intersect => {
-            p.rect_stroke(a, rr, Stroke::new(1.0, col), StrokeKind::Middle);
-            p.rect_stroke(b, rr, Stroke::new(1.0, col), StrokeKind::Middle);
+            p.rect_stroke(a, rr, Stroke::new(sw, col), StrokeKind::Middle);
+            p.rect_stroke(b, rr, Stroke::new(sw, col), StrokeKind::Middle);
             p.rect_filled(a.intersect(b), CornerRadius::ZERO, col);
         }
         BoolOp::Exclude => {
