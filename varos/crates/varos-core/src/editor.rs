@@ -1483,6 +1483,14 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
+    /// Cycle the document's display unit (Pain A15 Document settings). Undoable — the display unit is a
+    /// serialized document property, so a units change joins the undo stack like any other doc mutation.
+    pub fn cycle_units(&mut self) {
+        self.begin();
+        self.doc.units.display = self.doc.units.display.cycle();
+        self.dirty = true;
+        self.commit();
+    }
     pub fn ab_set_move_art(&mut self, on: bool) {
         if self.doc.move_art_with_ab == on {
             return;
