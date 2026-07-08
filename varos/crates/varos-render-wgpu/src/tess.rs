@@ -211,7 +211,9 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
     for prim in prims {
         match prim {
             Prim::Fill { .. } => {}
-            Prim::Stroke { pts, width, color } => {
+            // `clip` is honoured at DRAW time (a GPU scissor set around this stroke's Fg range) — the band
+            // is tessellated here in full and trimmed to the page edge by the scissor. See build_content.
+            Prim::Stroke { pts, width, color, .. } => {
                 let sp: Vec<Pt> = pts.iter().map(|p| view.w2s(*p)).collect();
                 stroke_poly(&mut v, &sp, width * z, *color, w, h);
             }
@@ -239,9 +241,35 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
 /// once — so the stroke blends against what's BEHIND the object, never against its own fill.
 pub enum Draw {
     Fill { fan: (u32, u32), cover: (u32, u32) },
-    Fg { range: (u32, u32) },
+    // `scissor` = a pixel-space rect [x, y, w, h] to confine this run to (A2: an artboard-clipped OPAQUE
+    // stroke, so its extruded band is trimmed to the page edge, not just its centerline). `None` = draw
+    // across the whole framebuffer (the usual case). A degenerate/off-screen clip resolves to `None` in
+    // `scissor_px`, so a missed clip draws UNCLIPPED (overflowing) — never clipped-to-nothing. Fail-open.
+    Fg { range: (u32, u32), scissor: Option<[u32; 4]> },
     StrokeCov { tris: (u32, u32), cover: (u32, u32) },
     Knockout { band: (u32, u32), fan: (u32, u32), fcover: (u32, u32), bcover: (u32, u32) },
+}
+
+/// Map a world-space clip rect `[x0,y0,x1,y1]` to an integer pixel scissor `[x, y, w, h]` on a `w`×`h`
+/// framebuffer, via the canvas `view` (pure translate+scale → axis-aligned). Rounds OUTWARD (floor the
+/// min, ceil the max) so the scissor is never tighter than the page — it only trims the band OVERHANG,
+/// never in-page pixels. Clamped to the framebuffer so wgpu always gets a valid rect. Returns `None` when
+/// the visible rect is empty/sub-pixel/off-screen: the caller then draws UNCLIPPED (fail-open — a missed
+/// clip overflows, it never vanishes). Pure (no GPU) → unit-tested headlessly.
+pub fn scissor_px(rect: [f32; 4], view: View, w: f32, h: f32) -> Option<[u32; 4]> {
+    let a = view.w2s([rect[0], rect[1]]);
+    let b = view.w2s([rect[2], rect[3]]);
+    let (sx0, sx1) = (a[0].min(b[0]), a[0].max(b[0]));
+    let (sy0, sy1) = (a[1].min(b[1]), a[1].max(b[1]));
+    let x0 = sx0.floor().clamp(0.0, w);
+    let y0 = sy0.floor().clamp(0.0, h);
+    let x1 = sx1.ceil().clamp(0.0, w);
+    let y1 = sy1.ceil().clamp(0.0, h);
+    // sub-pixel or empty after clamping ⇒ no scissor (never a zero-size rect that would clip to nothing)
+    if x1 - x0 < 1.0 || y1 - y0 < 1.0 {
+        return None;
+    }
+    Some([x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32])
 }
 
 /// How to draw one content Group on the GPU. `Layer` is an isolated translucent object: render its draws
@@ -267,7 +295,7 @@ fn knock_draws(
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     let mut bcol = [0.0f32; 4];
     for p in prims {
-        if let Prim::Stroke { pts, width, color } = p {
+        if let Prim::Stroke { pts, width, color, .. } = p {
             bcol = *color;
             let sp: Vec<Pt> = pts.iter().map(|q| view.w2s(*q)).collect();
             let r = width * zoom * 0.5 + 1.5;
@@ -371,15 +399,35 @@ pub fn build_content(
                             continue;
                         }
                     }
-                    // opaque strokes / dashes etc. — coalesce until the next translucent stroke
+                    // A2: an artboard-clipped OPAQUE stroke draws ALONE under a GPU scissor set to its page
+                    // rect, so the extruded band is trimmed to the page edge (not just its centerline). One
+                    // clipped stroke ⇒ one page rect (scene.rs emits one Stroke per rect), so one scissor is
+                    // unambiguous. Translucent bands stay on the centerline clip (the stencil StrokeCov path,
+                    // above) — a sub-half-width, semi-transparent overhang, left untouched to keep that path
+                    // stable. A degenerate clip ⇒ scissor None ⇒ drawn uncut (fail-open).
+                    if let Prim::Stroke { clip: Some(rect), .. } = &prims[i] {
+                        let scissor = scissor_px(*rect, view, w, h);
+                        let start = fgv.len() as u32;
+                        fgv.extend(build_fg(&prims[i..=i], view, zoom, w, h));
+                        let n = fgv.len() as u32 - start;
+                        if n > 0 {
+                            draws.push(Draw::Fg { range: (start, n), scissor });
+                        }
+                        i += 1;
+                        continue;
+                    }
+                    // opaque strokes / dashes etc. — coalesce until the next translucent OR clipped stroke
+                    // (a clipped stroke needs its own scissored draw, so it can't share a coalesced range)
                     let e = (i + 1..j)
-                        .find(|&k| matches!(&prims[k], Prim::Stroke { color, .. } if color[3] < 0.999))
+                        .find(|&k| {
+                            matches!(&prims[k], Prim::Stroke { color, clip, .. } if color[3] < 0.999 || clip.is_some())
+                        })
                         .unwrap_or(j);
                     let start = fgv.len() as u32;
                     fgv.extend(build_fg(&prims[i..e], view, zoom, w, h));
                     let n = fgv.len() as u32 - start;
                     if n > 0 {
-                        draws.push(Draw::Fg { range: (start, n) });
+                        draws.push(Draw::Fg { range: (start, n), scissor: None });
                     }
                     i = e;
                 }
@@ -427,7 +475,12 @@ mod tests {
     use varos_core::scene::Group;
 
     fn stroke(alpha: f32) -> Prim {
-        Prim::Stroke { pts: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], width: 4.0, color: [0.0, 0.0, 0.0, alpha] }
+        Prim::Stroke {
+            pts: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+            width: 4.0,
+            color: [0.0, 0.0, 0.0, alpha],
+            clip: None,
+        }
     }
 
     #[test]
@@ -454,7 +507,81 @@ mod tests {
             GroupDraw::Opaque { draws } => draws,
             _ => panic!("opaque group expected"),
         };
-        assert!(matches!(draws[0], Draw::Fg { .. }), "an opaque stroke needs no stencil pass");
+        match draws[0] {
+            Draw::Fg { scissor, .. } => assert!(scissor.is_none(), "an unclipped stroke carries no scissor"),
+            _ => panic!("an opaque stroke needs no stencil pass"),
+        }
+    }
+
+    fn clipped_stroke(rect: [f32; 4]) -> Prim {
+        Prim::Stroke {
+            pts: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+            width: 4.0,
+            color: [0.0, 0.0, 0.0, 1.0],
+            clip: Some(rect),
+        }
+    }
+
+    #[test]
+    fn clipped_opaque_stroke_draws_alone_under_a_scissor() {
+        // an opaque stroke carrying a page rect must draw ON ITS OWN with a scissor set to that rect,
+        // so the extruded band (not just the centerline) is trimmed to the page edge.
+        let g = [Group::Opaque(vec![clipped_stroke([2.0, 3.0, 40.0, 50.0])])];
+        let (_f, _fg, _o, metas) = build_content(&g, View::identity(), 1.0, 100.0, 100.0);
+        let draws = match &metas[0] {
+            GroupDraw::Opaque { draws } => draws,
+            _ => panic!("opaque group expected"),
+        };
+        match draws[0] {
+            Draw::Fg { scissor: Some(s), .. } => assert_eq!(s, [2, 3, 38, 47], "scissor = the page rect in px"),
+            _ => panic!("a clipped opaque stroke must carry a scissor"),
+        }
+    }
+
+    #[test]
+    fn clipped_stroke_does_not_coalesce_with_its_neighbour() {
+        // a plain stroke followed by a clipped one → TWO Fg draws (the clipped one can't share the
+        // coalesced range because it needs its own scissor). The first stays unclipped.
+        let g = [Group::Opaque(vec![stroke(1.0), clipped_stroke([0.0, 0.0, 20.0, 20.0])])];
+        let (_f, _fg, _o, metas) = build_content(&g, View::identity(), 1.0, 100.0, 100.0);
+        let draws = match &metas[0] {
+            GroupDraw::Opaque { draws } => draws,
+            _ => panic!("opaque group expected"),
+        };
+        assert_eq!(draws.len(), 2, "clipped stroke splits off into its own draw");
+        assert!(matches!(draws[0], Draw::Fg { scissor: None, .. }), "the plain stroke stays unclipped");
+        assert!(matches!(draws[1], Draw::Fg { scissor: Some(_), .. }), "the clipped stroke is scissored");
+    }
+
+    #[test]
+    fn scissor_px_maps_and_rounds_outward() {
+        // identity view: world rect → the same pixel rect, rounded outward (fractional edges grow the box)
+        assert_eq!(scissor_px([10.0, 20.0, 110.0, 120.0], View::identity(), 200.0, 200.0), Some([10, 20, 100, 100]));
+        assert_eq!(scissor_px([10.4, 20.6, 30.2, 40.9], View::identity(), 200.0, 200.0), Some([10, 20, 21, 21]));
+    }
+
+    #[test]
+    fn scissor_px_honours_the_view_transform() {
+        // screen = world*zoom + pan; a 2× zoom with a pan shifts+scales the rect
+        let v = View { pan: [5.0, 7.0], zoom: 2.0 };
+        // x: 10..60 → 25..125, y: 0..10 → 7..27
+        assert_eq!(scissor_px([10.0, 0.0, 60.0, 10.0], v, 300.0, 300.0), Some([25, 7, 100, 20]));
+    }
+
+    #[test]
+    fn scissor_px_degenerate_or_offscreen_is_none() {
+        // an empty (zero-width) rect and fully off-screen rects (left/above and right/below the window)
+        // all disable the scissor → the stroke draws UNCLIPPED (fail-open: a missed clip overflows the
+        // page, it never clips the stroke to nothing).
+        assert_eq!(scissor_px([10.0, 20.0, 10.0, 120.0], View::identity(), 200.0, 200.0), None);
+        assert_eq!(scissor_px([-100.0, -100.0, -50.0, -50.0], View::identity(), 200.0, 200.0), None);
+        assert_eq!(scissor_px([300.0, 300.0, 400.0, 400.0], View::identity(), 200.0, 200.0), None);
+    }
+
+    #[test]
+    fn scissor_px_clamps_to_the_framebuffer() {
+        // a page bigger than the window → clamped to [0,w]×[0,h] so wgpu always gets a valid rect
+        assert_eq!(scissor_px([-50.0, -50.0, 500.0, 500.0], View::identity(), 200.0, 150.0), Some([0, 0, 200, 150]));
     }
 
     #[test]
