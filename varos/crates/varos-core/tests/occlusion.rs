@@ -6,7 +6,7 @@
 
 use varos_core::editor::Editor;
 use varos_core::geom::Rgba;
-use varos_core::model::{Anchor, Path};
+use varos_core::model::{Anchor, Paint, Path};
 
 fn corner(id: u32, x: f32, y: f32) -> Anchor {
     Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
@@ -67,6 +67,23 @@ fn an_open_but_filled_shape_still_occludes_by_its_fill() {
         Some(2),
         "the visibly-filled OPEN top shape must catch its own fill, not pass the click to A behind it"
     );
+}
+
+#[test]
+fn a_marquee_inside_a_hollow_open_polyline_does_not_grab_it() {
+    // Session-lock regression: point_in_path now treats open paths as implied-closed. The marquee
+    // centre-test must NOT select a hollow (unfilled) open path just because the marquee sits inside its
+    // implied interior without touching the stroke — but an open FILLED shape stays selectable by area.
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    // an open "V"/triangle outline, stroke only (no fill): (0,0)-(100,0)-(50,80), open
+    let anchors = vec![corner(1, 0.0, 0.0), corner(2, 100.0, 0.0), corner(3, 50.0, 80.0)];
+    ed.doc.paths.push(Path::new(100, anchors, false, None, Some([0.0, 0.0, 0.0, 1.0]), 1.0));
+    ed.ppu = 1.0;
+    // a tiny marquee near the centroid (~50,27), inside the hull, touching no edge
+    assert!(!ed.path_in_rect(0, 48.0, 25.0, 52.0, 29.0), "a hollow open polyline must be TOUCHED, not enclosed");
+    ed.doc.paths[0].fill = Paint::Solid([0.5, 0.5, 0.5, 1.0]);
+    assert!(ed.path_in_rect(0, 48.0, 25.0, 52.0, 29.0), "an open FILLED shape is marquee-selectable by area");
 }
 
 #[test]

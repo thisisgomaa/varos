@@ -586,7 +586,11 @@ impl Editor {
         }
         base
     }
-    /// Does a path touch / fall inside a marquee rect? (vertex inside, or rect-centre inside a closed path)
+    /// Does a path touch / fall inside a marquee rect? (a vertex inside, or the rect-centre inside a
+    /// FILLED region). The centre-inside fallback counts only for a real filled area — a closed shape
+    /// (as before) or an open-but-filled one — so a hollow open polyline must be TOUCHED, not merely
+    /// enclosed (point_in_path now treats open paths as implied-closed; this keeps that from leaking
+    /// into marquee over-selection — session-lock correctness fix).
     pub fn path_in_rect(&self, pi: usize, x0: f32, y0: f32, x1: f32, y1: f32) -> bool {
         let poly = self.doc.outline(pi, 16);
         if poly.is_empty() {
@@ -595,7 +599,8 @@ impl Editor {
         if poly.iter().any(|p| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1) {
             return true;
         }
-        self.doc.point_in_path(pi, [(x0 + x1) * 0.5, (y0 + y1) * 0.5])
+        let p = &self.doc.paths[pi];
+        (p.closed || p.fill.solid().is_some()) && self.doc.point_in_path(pi, [(x0 + x1) * 0.5, (y0 + y1) * 0.5])
     }
     /// Did a press land on a transform handle (scale) or a corner's rotate ring (just outside)?
     pub fn transform_hit(&self, pos: Pt) -> Option<TfHit> {
