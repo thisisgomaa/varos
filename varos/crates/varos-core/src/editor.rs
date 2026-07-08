@@ -2451,7 +2451,7 @@ impl Editor {
         if let Some(s) = self.undo.pop() {
             self.redo.push(self.doc.clone());
             self.doc = s;
-            self.clear_transient();
+            self.clear_transient_keep_selection();
             self.rev += 1;
         }
     }
@@ -2459,7 +2459,7 @@ impl Editor {
         if let Some(s) = self.redo.pop() {
             self.undo.push(self.doc.clone());
             self.doc = s;
-            self.clear_transient();
+            self.clear_transient_keep_selection();
             self.rev += 1;
         }
     }
@@ -2469,6 +2469,23 @@ impl Editor {
         self.absel.clear();
         self.dsel_path = None;
         self.active = None;
+        self.drag = Drag::None;
+        self.ab_drag = AbDrag::None;
+    }
+    /// Like `clear_transient` but KEEPS the object/anchor selection across undo/redo (P10: undo shouldn't
+    /// wipe what you had selected). Only the in-flight GESTURE state is reset; the selection is PRUNED to
+    /// what still exists in the restored document (a selected path/anchor that the undo removed is dropped,
+    /// never left dangling).
+    fn clear_transient_keep_selection(&mut self) {
+        self.objsel.retain(|&p| self.doc.pidx(p).is_some());
+        self.selected.retain(|&a| self.doc.aidx(a).is_some());
+        self.absel.retain(|&i| i < self.doc.artboards.len());
+        if self.dsel_path.is_some_and(|p| self.doc.pidx(p).is_none()) {
+            self.dsel_path = None;
+        }
+        if self.active.is_some_and(|a| self.doc.pidx(a).is_none()) {
+            self.active = None;
+        }
         self.drag = Drag::None;
         self.ab_drag = AbDrag::None;
     }
