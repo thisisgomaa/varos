@@ -17,7 +17,7 @@ pollster = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 resvg = "0.45"  # render Lucide SVG cursors to bitmaps
 raw-window-handle = "0.6"  # get the HWND for native cursor
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_UI_Controls", "Win32_UI_HiDpi"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse"] }
 egui = "0.35"
 egui-wgpu = "0.35"
 egui-winit = "0.35"

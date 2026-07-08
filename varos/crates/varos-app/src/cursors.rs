@@ -352,6 +352,66 @@ fn build_hcursor(rgba: &[u8], w: u32, h: u32, hx: u16, hy: u16) -> isize {
     }
 }
 
+// ───────────────────────────── system-wide eyedropper (A5) ─────────────────────────────
+// Sampling a pixel from ANYWHERE on the desktop (not just our canvas) is a plain Win32 screen-DC
+// read: GetCursorPos → GetDC(NULL) → GetPixel. Committing the pick with a click over any window is
+// a hook-less global read of the left button via GetAsyncKeyState (polled each frame while the
+// eyedropper is armed). Nothing here installs a hook or captures input from other apps.
+
+/// COLORREF (`0x00BBGGRR`, the Win32 GDI packing) → straight RGBA in 0..1. Pure; unit-tested.
+pub fn colorref_to_rgba(c: u32) -> [f32; 4] {
+    let r = (c & 0xFF) as f32 / 255.0;
+    let g = ((c >> 8) & 0xFF) as f32 / 255.0;
+    let b = ((c >> 16) & 0xFF) as f32 / 255.0;
+    [r, g, b, 1.0]
+}
+
+/// Sample the screen pixel currently under the OS cursor — works over ANY window on the desktop
+/// (system-wide eyedropper). Returns straight RGBA in 0..1, or `None` if the read failed (GetPixel
+/// yields `CLR_INVALID` over some hardware-accelerated / protected surfaces).
+#[cfg(windows)]
+pub fn screen_color_at_cursor() -> Option<[f32; 4]> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC};
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    // SAFETY: GetCursorPos writes into a POINT we own. GetDC(None) returns the screen DC, which we
+    // ReleaseDC before returning (no leak, no handle outlives this call). GetPixel only reads.
+    unsafe {
+        let mut pt = POINT::default();
+        if GetCursorPos(&mut pt).is_err() {
+            return None;
+        }
+        let hdc = GetDC(None);
+        if hdc.0.is_null() {
+            return None;
+        }
+        let px = GetPixel(hdc, pt.x, pt.y);
+        ReleaseDC(None, hdc);
+        // CLR_INVALID == 0xFFFF_FFFF (GetPixel's failure sentinel).
+        if px.0 == 0xFFFF_FFFF {
+            return None;
+        }
+        Some(colorref_to_rgba(px.0))
+    }
+}
+#[cfg(not(windows))]
+pub fn screen_color_at_cursor() -> Option<[f32; 4]> {
+    None
+}
+
+/// True while the physical left mouse button is down — polled globally (no hook), so the eyedropper
+/// can commit a pick with a click over ANY window, not just ours.
+#[cfg(windows)]
+pub fn left_button_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    // SAFETY: GetAsyncKeyState is a pure read of global key state; the high bit = currently down.
+    unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0 }
+}
+#[cfg(not(windows))]
+pub fn left_button_down() -> bool {
+    false
+}
+
 // winit owns WM_SETCURSOR (it resets the cursor on every move), so we subclass the canvas window
 // to intercept WM_SETCURSOR over the client area and set OUR current cursor instead. We ALSO set
 // the window-class cursor + call SetCursor immediately as belt-and-suspenders.
@@ -610,3 +670,26 @@ mod win {
 pub use win::{
     custom_frame, dbg, install, is_maximized, maximize, set, set_caption, set_cloaked, set_dark_class_brush,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::colorref_to_rgba;
+
+    // A5 — GDI COLORREF is 0x00BBGGRR; decode must swap B and R back into straight RGBA.
+    #[test]
+    fn colorref_decodes_bgr_order() {
+        // pure red pixel: COLORREF 0x000000FF → R=1, G=0, B=0
+        assert_eq!(colorref_to_rgba(0x0000_00FF), [1.0, 0.0, 0.0, 1.0]);
+        // pure blue pixel: COLORREF 0x00FF0000 → R=0, G=0, B=1
+        assert_eq!(colorref_to_rgba(0x00FF_0000), [0.0, 0.0, 1.0, 1.0]);
+        // white and black
+        assert_eq!(colorref_to_rgba(0x00FF_FFFF), [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(colorref_to_rgba(0x0000_0000), [0.0, 0.0, 0.0, 1.0]);
+        // a mixed value 0x00204060 → B=0x20, G=0x40, R=0x60
+        let c = colorref_to_rgba(0x0020_4060);
+        assert!((c[0] - 0x60 as f32 / 255.0).abs() < 1e-6);
+        assert!((c[1] - 0x40 as f32 / 255.0).abs() < 1e-6);
+        assert!((c[2] - 0x20 as f32 / 255.0).abs() < 1e-6);
+        assert_eq!(c[3], 1.0);
+    }
+}

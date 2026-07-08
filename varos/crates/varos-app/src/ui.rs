@@ -93,11 +93,14 @@ enum Op {
     SetStrokeW(f32),
     SetClipExempt(bool), // A30: release the selection from artboard clip (true) / re-clip it (false)
     Paint(PaintTarget, Option<Rgba>),
-    Recent(Rgba),            // remember a committed colour in the picker MRU strip
     PaintFocus(PaintTarget), // rail fill/stroke control: focus the target (X toggles)
     SwapColors,              // Shift+X
     DefaultPaint,            // D — white fill / black stroke
     OpenPicker(MTarget),     // double-click a swatch → open the Color Picker modal for it
+    // ---- Color Picker live session (A6): one undo step per whole picker interaction ----
+    PickerLive(MTarget, Rgba), // per-frame preview: apply the current colour, NO new history
+    PickerCommit(Option<PaintTarget>, Rgba), // OK: fold the drag into ONE step + set current paint + MRU
+    PickerCancel,              // Cancel/Esc: revert to the value captured on open
     // ---- layers panel (node ids) — the SIMPLE panel (07-03 pivot) ----
     LayerSelectSet(Vec<u32>), // plain click / Shift-range: select these rows' art (replace)
     LayerToggle(u32),         // Ctrl+click a row: toggle its art in/out of the selection
@@ -147,7 +150,7 @@ pub enum WinAction {
 // ───────────────────────────── colour-picker modal state ─────────────────────────────
 
 /// Where the modal's colour lands on OK.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum MTarget {
     Paint(PaintTarget),
     Ab(usize),
@@ -228,7 +231,9 @@ fn harmony_set(h: Harmony, base: [f32; 3]) -> Vec<[f32; 3]> {
 }
 
 /// The professional Color Picker modal (opened by double-clicking any colour swatch).
-/// Live HSVA is the single source of truth while open; OK commits once, Cancel discards.
+/// Live HSVA is the single source of truth while open; OK commits once, Cancel discards. The whole
+/// interaction is ONE undo step (A6): `ed.picker_begin()` on open, live paint each frame, and a
+/// single `picker_commit` / `picker_cancel` on close.
 struct ColorModal {
     target: MTarget,
     orig: Option<Rgba>,
@@ -236,6 +241,10 @@ struct ColorModal {
     chan: Chan,
     tab: MTab,
     harmony: Harmony,
+    // A5 — system eyedropper: armed while sampling a pixel from anywhere on screen.
+    eyedropping: bool,
+    eyedrop_prev_down: bool,  // previous global-LMB state (edge-detect the commit click)
+    eyedrop_return: [f32; 4], // hsva to restore if the eyedrop is aborted (Esc)
 }
 
 struct TopIcons {
@@ -877,6 +886,11 @@ impl Ui {
     pub fn modal_open(&self) -> bool {
         self.color_modal.is_some()
     }
+    /// Is the picker's system eyedropper armed? While it is, in-window clicks are swallowed by the host
+    /// so the sampled click doesn't also poke the canvas (A5 samples via a global pixel read instead).
+    pub fn picking_screen(&self) -> bool {
+        self.color_modal.as_ref().is_some_and(|m| m.eyedropping)
+    }
     /// The 🔖 slice: the host names tab 0 after the open document ("name" / "name *").
     pub fn set_doc_tab(&mut self, name: String) {
         if self.tabs.is_empty() {
@@ -1141,6 +1155,9 @@ impl Ui {
                 };
                 let base = seed.unwrap_or([0.85, 0.85, 0.87, 1.0]);
                 let h = rgb_to_hsv(base);
+                // A6: open ONE undo step for the whole picker session; live edits mutate the doc in
+                // place each frame and OK/Cancel closes the single step.
+                ed.picker_begin();
                 self.color_modal = Some(ColorModal {
                     target: *t,
                     orig: seed,
@@ -1148,6 +1165,9 @@ impl Ui {
                     chan: Chan::H,
                     tab: MTab::Picker,
                     harmony: Harmony::None,
+                    eyedropping: false,
+                    eyedrop_prev_down: false,
+                    eyedrop_return: [h[0], h[1], h[2], base[3]],
                 });
                 false
             } else {
@@ -2016,12 +2036,119 @@ fn dlg_btn(ui: &mut egui::Ui, label: &str, primary: bool, w: f32) -> bool {
     resp.clicked()
 }
 
+/// Adopt an RGBA colour into the modal's live HSVA. Greys (no chroma) keep the current hue so the
+/// wheel/plane handle doesn't snap to red. Shared by the RECENT/DOCUMENT strips, the current-half
+/// restore, and the eyedropper.
+fn modal_adopt(m: &mut ColorModal, c: Rgba) {
+    let h = rgb_to_hsv(c);
+    if h[1] > 0.001 {
+        m.hsva[0] = h[0];
+    }
+    m.hsva[1] = h[1];
+    m.hsva[2] = h[2];
+    m.hsva[3] = c[3];
+}
+
+/// The picker header's eyedropper button — a hand-painted pipette (A17). Accent while armed (A5).
+fn eyedropper_btn(ui: &mut egui::Ui, armed: bool) -> bool {
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::click());
+    let rr = CornerRadius::same(R);
+    if armed {
+        ui.painter().rect_filled(r, rr, ACCENT);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, rr, HOVER);
+    }
+    let col = if armed { Color32::WHITE } else { MUTED };
+    let c = r.center();
+    let p = ui.painter();
+    // a small pipette: barrel from a lower-left tip up to an upper-right bulb, a squeeze cap, a drop
+    let tip = egui::pos2(c.x - 5.0, c.y + 5.0);
+    let bulb = egui::pos2(c.x + 5.0, c.y - 5.0);
+    p.line_segment([tip, egui::pos2(c.x + 2.0, c.y - 2.0)], Stroke::new(1.6, col));
+    p.line_segment([egui::pos2(c.x + 0.5, c.y - 3.5), egui::pos2(c.x + 4.0, c.y)], Stroke::new(2.6, col));
+    p.circle_filled(bulb, 1.9, col);
+    p.circle_filled(egui::pos2(tip.x - 0.5, tip.y + 1.5), 1.2, col);
+    resp.on_hover_text("Eyedropper \u{2014} sample a colour from anywhere on screen").clicked()
+}
+
+/// A19 — the Fill / Stroke (or Page-colour) target indicator + switch. For a paint target it renders a
+/// two-segment toggle: the ACTIVE segment carries the accent (the selected-state), and clicking the
+/// other one switches which paint the picker edits (reseeded from that target's current colour). For an
+/// artboard target it's a plain "Page Color" label. Mutates `m.target`/`m.orig`/`hsva` on a switch.
+fn target_indicator(ui: &mut egui::Ui, m: &mut ColorModal, snap: &Snap) {
+    match m.target {
+        MTarget::Paint(active) => {
+            for (t, label) in [(PaintTarget::Fill, "Fill"), (PaintTarget::Stroke, "Stroke")] {
+                let on = active == t;
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(52.0, 22.0), egui::Sense::click());
+                let rr = CornerRadius::same(R);
+                if on {
+                    ui.painter().rect_filled(r, rr, ACCENT);
+                } else if resp.hovered() {
+                    ui.painter().rect_filled(r, rr, HOVER);
+                } else {
+                    ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+                }
+                // a colour dot on the active segment so it reads as "this is the swatch you're editing"
+                let tx = if on {
+                    let dot = egui::pos2(r.left() + 11.0, r.center().y);
+                    match snap_target_color(snap, t) {
+                        Some(cc) => {
+                            ui.painter().circle_filled(dot, 4.0, rgba_c32a(cc));
+                        }
+                        None => {
+                            ui.painter().circle_stroke(dot, 4.0, Stroke::new(1.0, Color32::WHITE));
+                            ui.painter().line_segment(
+                                [dot + egui::vec2(-2.8, 2.8), dot + egui::vec2(2.8, -2.8)],
+                                Stroke::new(1.2, NONE_RED),
+                            );
+                        }
+                    }
+                    r.center().x + 6.0
+                } else {
+                    r.center().x
+                };
+                ui.painter().text(
+                    egui::pos2(tx, r.center().y),
+                    Align2::CENTER_CENTER,
+                    label,
+                    FontId::proportional(11.5),
+                    if on { Color32::WHITE } else { MUTED },
+                );
+                if resp.clicked() && !on {
+                    // switch the target within the SAME undo session; reseed from its current colour
+                    m.target = MTarget::Paint(t);
+                    let seed = snap_target_color(snap, t);
+                    m.orig = seed;
+                    if let Some(c) = seed {
+                        modal_adopt(m, c);
+                    }
+                }
+            }
+        }
+        MTarget::Ab(_) => {
+            let (r, _) = ui.allocate_exact_size(egui::vec2(96.0, 22.0), egui::Sense::hover());
+            ui.painter().rect_stroke(r, CornerRadius::same(R), Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, "Page Color", FontId::proportional(11.5), TEXT);
+        }
+    }
+}
+
+/// The current colour of a paint target from this frame's snapshot (Fill / Stroke).
+fn snap_target_color(snap: &Snap, t: PaintTarget) -> Option<Rgba> {
+    match t {
+        PaintTarget::Fill => snap.fill,
+        PaintTarget::Stroke => snap.stroke,
+    }
+}
+
 /// The professional Color Picker dialog — a FLOATING palette (Ahmed, 07-02: no scrim, the canvas stays
 /// fully usable beside it; drag any empty spot to move it, and it remembers its position). The field
 /// plane + spectrum slider are channel-radio driven (the Photoshop/Illustrator mechanic); alpha rail;
 /// split new/current preview (click the current half to restore); hex (Enter/blur) + A% + HSB/RGB fields;
-/// RECENT/DOCUMENT strips. OK commits ONE op + the MRU push · Cancel/Esc discards · Enter = OK when no
-/// field is focused (the host reserves Esc/Enter for the dialog while it is open).
+/// RECENT/DOCUMENT strips. A6: the target updates LIVE as you drag, the whole interaction is ONE undo
+/// step (OK commits it, Cancel/Esc reverts to the value at open). A19: a Fill/Stroke indicator + switch.
+/// A17: an in-picker eyedropper that samples anywhere on screen (A5). Enter = OK when no field focused.
 fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: &Snap, ops: &mut Vec<Op>) {
     if modal.is_none() {
         return;
@@ -2040,14 +2167,16 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
             .show(ctx, |ui| {
                 panel_frame(14).show(ui, |ui| {
                     ui.set_width(dw);
-                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-                    // ── header: title + Picker|Wheel tabs + close ──
+                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                    // ── header: A19 Fill/Stroke (or Page) target indicator · Picker|Wheel tabs ·
+                    //    A17 eyedropper · close. The target indicator IS the title — it names, and lets
+                    //    you switch, what the picker edits. ──
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Color Picker").color(TEXT).strong().size(13.5));
-                        ui.add_space(10.0);
+                        target_indicator(ui, m, snap);
+                        ui.add_space(12.0);
                         for (tab, label) in [(MTab::Picker, "Picker"), (MTab::Wheel, "Wheel")] {
                             let on = m.tab == tab;
-                            let (r, resp) = ui.allocate_exact_size(egui::vec2(56.0, 22.0), egui::Sense::click());
+                            let (r, resp) = ui.allocate_exact_size(egui::vec2(54.0, 22.0), egui::Sense::click());
                             let rr = CornerRadius::same(R);
                             if on {
                                 ui.painter().rect_filled(r, rr, BG_SURFACE);
@@ -2070,9 +2199,16 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                             if mini_btn(ui, "×", "Close (Esc)") {
                                 cancel = true;
                             }
+                            if eyedropper_btn(ui, m.eyedropping) {
+                                // arm the system eyedropper; the initiating click is still down, so
+                                // remember that and commit on the NEXT fresh global press (A5).
+                                m.eyedropping = true;
+                                m.eyedrop_prev_down = true;
+                                m.eyedrop_return = m.hsva;
+                            }
                         });
                     });
-                    ui.add_space(2.0);
+                    ui.add_space(4.0);
                     let (px, py, sl) = pick_get(m.chan, m.hsva);
                     ui.horizontal_top(|ui| {
                         ui.vertical(|ui| {
@@ -2371,31 +2507,51 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                         adopt = Some(c);
                     }
                     if let Some(c) = adopt {
-                        let h = rgb_to_hsv(c);
-                        if h[1] > 0.001 {
-                            m.hsva[0] = h[0];
-                        } // greys keep the current hue (no snap-to-red)
-                        m.hsva[1] = h[1];
-                        m.hsva[2] = h[2];
-                        m.hsva[3] = c[3];
+                        modal_adopt(m, c); // greys keep the current hue (no snap-to-red)
                     }
                 });
             });
-        // keyboard: Esc = Cancel · Enter = OK (only when no field is focused)
+        // A5 — system eyedropper: while armed, sample the pixel under the OS cursor each frame (works
+        // over ANY window) and preview it live; a fresh global left-click (edge-detected) commits it.
+        if m.eyedropping {
+            ctx.request_repaint(); // keep polling the global cursor + button while armed
+            if let Some(c) = crate::cursors::screen_color_at_cursor() {
+                modal_adopt(m, c);
+            }
+            let down = crate::cursors::left_button_down();
+            if down && !m.eyedrop_prev_down {
+                m.eyedropping = false; // committed — the sampled colour is already live in hsva
+            }
+            m.eyedrop_prev_down = down;
+        }
+        // keyboard: Esc = Cancel (or abort the eyedropper) · Enter = OK (only when no field is focused)
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
+            if m.eyedropping {
+                m.eyedropping = false;
+                m.hsva = m.eyedrop_return; // abort the pick: restore the colour before the eyedropper
+            } else {
+                cancel = true;
+            }
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && ctx.memory(|mem| mem.focused().is_none()) {
             ok = true;
         }
-        if ok {
-            let c = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
-            let col = [c[0], c[1], c[2], m.hsva[3]];
-            match m.target {
-                MTarget::Paint(t) => ops.push(Op::Paint(t, Some(col))),
-                MTarget::Ab(i) => ops.push(Op::AbColor(i, Some(col))),
+        // A6 — LIVE preview: apply the current colour to the target EVERY frame (no new undo step; the
+        // session opened with ed.picker_begin()). OK folds the whole drag into ONE step + remembers it;
+        // Cancel/Esc reverts to the value at open.
+        let c = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
+        let col = [c[0], c[1], c[2], m.hsva[3]];
+        if cancel {
+            ops.push(Op::PickerCancel);
+        } else {
+            ops.push(Op::PickerLive(m.target, col));
+            if ok {
+                let cur = match m.target {
+                    MTarget::Paint(t) => Some(t),
+                    MTarget::Ab(_) => None,
+                };
+                ops.push(Op::PickerCommit(cur, col));
             }
-            ops.push(Op::Recent(col));
         }
     }
     if ok || cancel {
@@ -5090,11 +5246,16 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
                 ed.paint = tg;
                 ed.apply_paint(c);
             }
-            Op::Recent(c) => ed.push_recent(c),
             Op::PaintFocus(t) => ed.paint = t,
             Op::SwapColors => ed.swap_colors(),
             Op::DefaultPaint => ed.default_paint(),
             Op::OpenPicker(_) => {} // UI-only: intercepted in run() (opens the modal); never reaches here
+            Op::PickerLive(t, c) => match t {
+                MTarget::Paint(pt) => ed.paint_live(pt, Some(c)),
+                MTarget::Ab(i) => ed.ab_color_live(i, Some(c)),
+            },
+            Op::PickerCommit(cur, c) => ed.picker_commit(cur, c),
+            Op::PickerCancel => ed.picker_cancel(),
             Op::LayerSelectSet(nids) => ed.layer_select_set(&nids),
             Op::LayerToggle(n) => ed.layer_toggle(n),
             Op::LayerEye(n) => ed.layer_toggle_hidden(n),
@@ -5228,5 +5389,39 @@ pub fn dump_tool_icons(path: &str) {
     }
     if let Some(im) = image::RgbaImage::from_raw(w, h, img) {
         let _ = im.save(path);
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::{hsv_to_rgb, rgb_to_hsv};
+
+    // The picker keeps live HSV as its source of truth — round-tripping a saturated colour through
+    // rgb→hsv→rgb must return the original (within float epsilon).
+    #[test]
+    fn hsv_rgb_roundtrips() {
+        for c in [
+            [1.0f32, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 1.0],
+            [0.12, 0.46, 0.83, 1.0],
+            [0.9, 0.7, 0.2, 1.0],
+            [0.35, 0.35, 0.35, 1.0], // grey: hue undefined but v/s round-trip
+        ] {
+            let h = rgb_to_hsv(c);
+            let back = hsv_to_rgb(h[0], h[1], h[2]);
+            for k in 0..3 {
+                assert!((back[k] - c[k]).abs() < 1e-4, "channel {k}: {} vs {}", back[k], c[k]);
+            }
+        }
+    }
+
+    // Known anchors: red is hue 0, sat 1, val 1; a mid-grey is sat 0.
+    #[test]
+    fn hsv_known_values() {
+        let red = rgb_to_hsv([1.0, 0.0, 0.0, 1.0]);
+        assert!((red[0]).abs() < 1e-4 && (red[1] - 1.0).abs() < 1e-4 && (red[2] - 1.0).abs() < 1e-4);
+        let grey = rgb_to_hsv([0.5, 0.5, 0.5, 1.0]);
+        assert!(grey[1].abs() < 1e-4 && (grey[2] - 0.5).abs() < 1e-4);
     }
 }
