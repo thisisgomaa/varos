@@ -128,7 +128,10 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
             }
             // resolve each paint to its drawable solid ONCE (Paint::None — and future gradients — ⇒ None)
             let (fill, stroke) = (p.fill.solid(), p.stroke.solid());
-            let fillable = p.closed && p.anchors.len() >= 3 && fill.is_some();
+            // WYSIWYG with the canvas: an OPEN path still FILLS (implied straight close between endpoints,
+            // A32) — the exact rule `scene::fill_prims` draws by. The old `p.closed` guard dropped the fill
+            // of any shape a deleted anchor had opened, so it filled on screen but vanished in the PDF (FB1).
+            let fillable = p.anchors.len() >= 3 && fill.is_some();
             let strokable = stroke.is_some() && p.anchors.len() >= 2 && p.stroke_width > 0.0;
             if !fillable && !strokable {
                 continue;

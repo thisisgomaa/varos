@@ -95,3 +95,24 @@ fn an_unfilled_cover_is_click_through_but_its_outline_is_grabbable() {
     assert_eq!(ed.path_under([90.0, 20.0]), Some(3), "hollow top shape is click-through → still hits C");
     assert_eq!(ed.path_under([0.0, 20.0]), Some(4), "…but clicking the unfilled shape's own edge selects it");
 }
+
+#[test]
+fn a_donuts_inner_rim_is_grabbable_but_its_hole_stays_click_through() {
+    // FB3: a donut's INNER edge is drawn, so it must be clickable — the old hit-test only walked the
+    // OUTER outline, so a click on the inner rim fell through. The hole's hollow INTERIOR stays empty
+    // (even-odd), and the solid ring between outer and hole still hits by fill.
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    let mut donut = rect(1, 1, 0.0, 0.0, 100.0, 100.0, Some(GREY));
+    donut.holes =
+        vec![vec![corner(10, 40.0, 40.0), corner(11, 60.0, 40.0), corner(12, 60.0, 60.0), corner(13, 40.0, 60.0)]];
+    ed.doc.paths.push(donut);
+    ed.doc.ids = 100;
+    ed.ppu = 1.0;
+    // 5px inside the hole's left rim (≤ edge_r 8) → the donut is grabbed (was a click-through miss before FB3)
+    assert_eq!(ed.path_under([45.0, 50.0]), Some(1), "the inner rim is clickable");
+    // dead centre of the hole (10px from every rim, > edge_r) → the hollow passes the click through
+    assert_eq!(ed.path_under([50.0, 50.0]), None, "the hole's hollow stays click-through");
+    // the solid ring between outer and hole still hits by its fill
+    assert_eq!(ed.path_under([20.0, 50.0]), Some(1), "the solid ring fills and hits as usual");
+}

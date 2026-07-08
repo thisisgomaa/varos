@@ -590,6 +590,32 @@ impl Document {
         best
     }
 
+    /// Shortest distance from `pos` to ANY drawn edge of a path — its outer outline OR a hole's rim.
+    /// Hit-testing uses this so a donut's inner edge is grabbable, not click-through (FB3). Distinct from
+    /// `nearest_seg` (outer-ring only — that one feeds add-anchor a valid OUTER segment index).
+    pub fn edge_dist(&self, pi: usize, pos: Pt) -> Option<f32> {
+        let mut best = self.nearest_seg(pi, pos).map(|(_, _, d)| d);
+        for h in &self.paths[pi].holes {
+            let n = h.len();
+            if n < 2 {
+                continue;
+            }
+            for i in 0..n {
+                // a hole ring is always closed
+                let a = &h[i];
+                let b = &h[(i + 1) % n];
+                let (p0, p1, p2, p3) = (a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p);
+                for k in 0..=24 {
+                    let d = dist(cubic(p0, p1, p2, p3, k as f32 / 24.0), pos);
+                    if best.is_none_or(|bd| d < bd) {
+                        best = Some(d);
+                    }
+                }
+            }
+        }
+        best
+    }
+
     /// Flatten any anchor ring into a polyline (steps points per segment). Shared by outer + holes.
     pub fn ring(anchors: &[Anchor], closed: bool, steps: usize) -> Vec<Pt> {
         let n = anchors.len();
