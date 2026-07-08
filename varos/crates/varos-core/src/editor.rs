@@ -3378,6 +3378,29 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
+    /// A30 — release the current selection from artboard clip (`exempt=true`) or re-clip it
+    /// (`exempt=false`). The flag lives on each selected path's clip UNIT (its top-level group, else
+    /// its own leaf) — the exact node the scene clip map keys on — so a whole group releases as one,
+    /// honouring "clip unit = top-level item". Undoable via begin/commit.
+    pub fn set_clip_exempt(&mut self, exempt: bool) {
+        let units: HashSet<u32> = self.selected_pids().iter().filter_map(|&p| self.doc.unit_of(p)).collect();
+        if units.is_empty() {
+            return;
+        }
+        self.begin();
+        for u in units {
+            self.doc.set_node_clip_exempt(u, exempt);
+        }
+        self.dirty = true;
+        self.commit();
+    }
+    /// A30: is the representative selection's clip unit currently released from clip? Drives the
+    /// Properties toggle's shown state (first selected path's unit, matching `repr_path`).
+    pub fn sel_clip_exempt(&self) -> bool {
+        self.repr_path()
+            .and_then(|pi| self.doc.unit_of(self.doc.paths[pi].id))
+            .is_some_and(|u| self.doc.node_clip_exempt(u))
+    }
     /// Layers: inline rename. Empty/blank name clears back to the default label.
     pub fn rename_path(&mut self, pid: u32, name: String) {
         self.begin();

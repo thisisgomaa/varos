@@ -145,6 +145,24 @@ fn float_fields_are_exact() {
     assert_eq!(a.fill, b.fill);
 }
 
+/// A30 — the new `Node.clip_exempt` flag: a pre-A30 node JSON (no such key) loads with it defaulting
+/// FALSE, so old `.vrs` files are read unchanged (clipped as before), and an explicitly-exempt node
+/// survives a round-trip. This is the "clip unit = the node" flag the scene clip map reads.
+#[test]
+fn node_clip_exempt_defaults_false_and_round_trips() {
+    use varos_core::model::Node;
+    // pre-A30 shape: only id + kind present (every other Node field is serde-defaulted)
+    let legacy = r#"{"id":7,"kind":{"Path":3}}"#;
+    let n: Node = serde_json::from_str(legacy).expect("a pre-clip_exempt node still deserializes");
+    assert!(!n.clip_exempt, "missing key ⇒ false (old files load unchanged, still clipped)");
+
+    let mut ex = n.clone();
+    ex.clip_exempt = true;
+    let back: Node = serde_json::from_str(&serde_json::to_string(&ex).unwrap()).unwrap();
+    assert_eq!(ex, back, "an exempt node round-trips byte-for-byte");
+    assert!(back.clip_exempt);
+}
+
 /// The load-bearing colour migration (COLOR_SPEC §1.5): `Path.fill/stroke` became a `Paint` enum, but
 /// its serde shape stays IDENTICAL to the old `Option<Rgba>` — a bare `[r,g,b,a]` array is `Solid`,
 /// `null` is `None`, both ways. So every pre-Paint `.vrs` loads unchanged, and files we write now are

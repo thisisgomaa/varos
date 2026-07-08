@@ -142,6 +142,11 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             let rects = units
                 .entry(unit)
                 .or_insert_with(|| {
+                    // A30 "release from clip": this top-level item is exempt → draws UNCUT whatever
+                    // its boards say, so one element can bleed outside the page on purpose.
+                    if ed.doc.node_clip_exempt(unit) {
+                        return None;
+                    }
                     let boards = ed.doc.node_boards(unit);
                     if boards.is_empty() {
                         return None; // a true floater — draws uncut
