@@ -91,6 +91,7 @@ enum Op {
     SetRot(f32),
     SetOpacity(f32),
     SetStrokeW(f32),
+    SetClipExempt(bool), // A30: release the selection from artboard clip (true) / re-clip it (false)
     Paint(PaintTarget, Option<Rgba>),
     Recent(Rgba),            // remember a committed colour in the picker MRU strip
     PaintFocus(PaintTarget), // rail fill/stroke control: focus the target (X toggles)
@@ -504,6 +505,8 @@ struct Snap {
     stroke: Option<Rgba>,
     sw: f32,
     opacity: f32,
+    clip_exempt: bool,  // A30: the selection's clip unit is released from artboard clip
+    any_clip: bool,     // any board clips → the "Clip to artboard" toggle is relevant to show
     paint: PaintTarget, // which target has focus (the rail control + X)
     recent: Vec<Rgba>,
     doc_colors: Vec<Rgba>, // the picker's swatch strips (MRU + derived document scan)
@@ -556,6 +559,8 @@ impl Snap {
             stroke,
             sw,
             opacity,
+            clip_exempt: ed.sel_clip_exempt(),
+            any_clip: ed.doc.artboards.iter().any(|a| a.clip),
             paint: ed.paint,
             recent: ed.recent_colors.clone(),
             doc_colors: ed.document_colors(),
@@ -4220,6 +4225,19 @@ fn panel_properties(
             ui.label(RichText::new("SHAPE").color(MUTED).size(10.0).strong());
             ui.add_space(2.0);
             pathfinder_row(ui, ops); // a MIRROR of the Pathfinder home (the mockup's Shape section)
+
+            // A30 — per-element release from artboard clip. Shown only when an object is selected AND
+            // some board clips (otherwise the toggle would do nothing visible). ON = clipped to the
+            // board (the normal state); OFF = released, so this one element bleeds outside like Illustrator.
+            // No canvas right-click menu exists yet, so the Properties dock is where this lives.
+            if s.sel && s.any_clip {
+                hsep(ui, inner);
+                ui.label(RichText::new("ARTBOARD CLIP").color(MUTED).size(10.0).strong());
+                ui.add_space(2.0);
+                if toggle_row(ui, inner, "Clip to artboard", !s.clip_exempt) {
+                    ops.push(Op::SetClipExempt(!s.clip_exempt));
+                }
+            }
         });
     });
 }
@@ -5065,6 +5083,7 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::SetBBox(nx, ny, nw, nh, ax, ay) => ed.set_obj_bbox(nx, ny, nw, nh, ax, ay),
             Op::SetRot(d) => ed.set_obj_rotation(d),
             Op::SetOpacity(o) => ed.set_opacity(o.clamp(0.0, 1.0)),
+            Op::SetClipExempt(v) => ed.set_clip_exempt(v),
             Op::SetStrokeW(w) => set_stroke_width(ed, w),
             Op::Paint(tg, c) => {
                 ed.paint = tg;
