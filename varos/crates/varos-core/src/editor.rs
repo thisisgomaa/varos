@@ -1537,9 +1537,11 @@ impl Editor {
         self.commit();
     }
     pub fn ab_delete(&mut self, i: usize) {
-        if self.doc.artboards.len() <= 1 {
+        // A8a: artboards are optional — deleting the last page is allowed and leaves a free canvas
+        // (zero boards). Nothing is guaranteed to survive except that we never index an empty vec.
+        if self.doc.artboards.is_empty() {
             return;
-        } // never delete the last page
+        }
         let mut targets =
             if !self.absel.is_empty() && self.absel.contains(&i) { self.ab_selection_indices() } else { vec![i] };
         targets.sort_unstable();
@@ -1548,19 +1550,17 @@ impl Editor {
         if targets.is_empty() {
             return;
         }
-        while targets.len() >= self.doc.artboards.len() {
-            targets.pop();
-        }
-        if targets.is_empty() {
-            return;
-        }
         self.begin();
         for j in targets.into_iter().rev() {
             self.doc.artboards.remove(j);
         }
-        self.doc.active = self.doc.active.min(self.doc.artboards.len() - 1);
         self.absel.clear();
-        self.absel.insert(self.doc.active);
+        if self.doc.artboards.is_empty() {
+            self.doc.active = 0; // free canvas — no primary; `active` is never indexed while empty
+        } else {
+            self.doc.active = self.doc.active.min(self.doc.artboards.len() - 1);
+            self.absel.insert(self.doc.active);
+        }
         self.dirty = true;
         self.commit();
     }
@@ -3836,6 +3836,7 @@ mod picker_tests {
     #[test]
     fn picker_session_is_one_undo_step() {
         let mut ed = Editor::new();
+        ed.doc.artboards = vec![Artboard::default()]; // A8a: new docs are boardless — add a page to colour
         let before = ed.doc.artboards[0].page_color;
         ed.picker_begin();
         // simulate dragging in the wheel: several live frames, none of them a history entry
@@ -3856,6 +3857,7 @@ mod picker_tests {
     #[test]
     fn picker_cancel_reverts_with_no_history() {
         let mut ed = Editor::new();
+        ed.doc.artboards = vec![Artboard::default()]; // A8a: new docs are boardless — add a page to colour
         let before = ed.doc.artboards[0].page_color;
         ed.picker_begin();
         ed.ab_color_live(0, Some([1.0, 0.0, 0.0, 1.0]));

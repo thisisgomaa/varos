@@ -278,10 +278,6 @@ impl Artboard {
     }
 }
 
-/// A FRESH document's page (clip ON — the 07-06 default). Only `Document::default` uses this.
-fn one_artboard() -> Vec<Artboard> {
-    vec![Artboard::default()]
-}
 /// serde default for a file saved BEFORE the `artboards` key existed at all: those docs were
 /// authored with art bleeding freely, so the implicit page must NOT cut — otherwise loading the
 /// file would silently vanish everything drawn outside it (07-06 review fix #1).
@@ -406,11 +402,14 @@ pub struct Document {
     /// files written before this field still load.
     #[serde(default)]
     pub units: DocUnits,
-    /// The artboards (pages). Always ≥1 — the model guarantees you can't delete the last one.
-    /// Missing key (pre-artboard file) ⇒ a NON-clipping page; fresh docs get a clipping one.
+    /// The artboards (pages). A NEW document opens with ZERO — a free canvas (A8a); the user creates
+    /// pages with the Artboard tool. Every board-assuming path treats the empty vec gracefully
+    /// (`active_artboard()` → None ⇒ no page drawn, no clip, no fit). Missing key (pre-artboard file)
+    /// ⇒ a single NON-clipping page via `legacy_artboards` — OLD files keep their 1 board (back-compat).
     #[serde(default = "legacy_artboards")]
     pub artboards: Vec<Artboard>,
     /// Index of the active artboard within `artboards` (the one the panel edits / new objects land on).
+    /// Meaningless (and never indexed) when `artboards` is empty — read only through `active_artboard()`.
     #[serde(default)]
     pub active: usize,
     /// When moving an artboard with the Artboard tool, also move the artwork sitting on it. A toggle,
@@ -434,7 +433,8 @@ pub struct Document {
 }
 impl Default for Document {
     fn default() -> Self {
-        // a fresh document opens with one empty "Layer 1" (the roadmap's empty state)
+        // a fresh document opens with one empty "Layer 1" and NO artboards — a free canvas (A8a);
+        // the user creates a page with the Artboard tool when they want one.
         Document {
             paths: vec![],
             groups: vec![],
@@ -454,7 +454,7 @@ impl Default for Document {
             active_layer: 1,
             ids: 1,
             units: DocUnits::default(),
-            artboards: one_artboard(),
+            artboards: vec![],
             active: 0,
             move_art_with_ab: true,
             snap: SnapConfig::default(),
@@ -471,7 +471,7 @@ impl Document {
         self.ids
     }
 
-    /// The active artboard (index clamped). None only if there are somehow zero — the model avoids that.
+    /// The active artboard (index clamped), or None on a free canvas with no artboards (A8a).
     pub fn active_artboard(&self) -> Option<&Artboard> {
         if self.artboards.is_empty() {
             return None;
