@@ -204,6 +204,13 @@ pub struct Node {
     /// The layer colour strip (panel); None = default.
     #[serde(default)]
     pub color: Option<Rgba>,
+    /// A30 — "release from artboard clip": this TOP-LEVEL item (a top-level group node, else a
+    /// path's own leaf) bleeds outside its board even when the board clips. The exemption lives on
+    /// the clip UNIT node — exactly what `unit_of`/the scene clip map key on — so a whole group
+    /// releases as one, keeping the "clip unit = top-level item" law. Ignored on non-unit inner
+    /// nodes. `#[serde(default)]` ⇒ old `.vrs` files load unchanged (false = clipped as before).
+    #[serde(default)]
+    pub clip_exempt: bool,
 }
 
 /// A single artboard (a defined PAGE) on the infinite board, in world points (1pt = 1/72in). The
@@ -441,6 +448,7 @@ impl Default for Document {
                 hidden: false,
                 locked: false,
                 color: None,
+                clip_exempt: false,
             }],
             roots: vec![1],
             active_layer: 1,
@@ -852,8 +860,20 @@ impl Document {
         }
     }
     /// The selection UNIT a path belongs to: its top-level group node, else its own leaf node.
-    fn unit_of(&self, pid: u32) -> Option<u32> {
+    /// This IS the clip unit the scene keys on (A30) — pub so the editor's release-from-clip op can
+    /// target exactly that node.
+    pub fn unit_of(&self, pid: u32) -> Option<u32> {
         self.top_group_of_path(pid).or_else(|| self.node_of_path(pid))
+    }
+    /// A30: is this unit node released from artboard clip (its top-level item bleeds outside)?
+    pub fn node_clip_exempt(&self, nid: u32) -> bool {
+        self.node(nid).is_some_and(|n| n.clip_exempt)
+    }
+    /// A30: set the release-from-clip flag on a unit node (the editor op mutates through this).
+    pub fn set_node_clip_exempt(&mut self, nid: u32, exempt: bool) {
+        if let Some(n) = self.node_mut(nid) {
+            n.clip_exempt = exempt;
+        }
     }
     /// Effective visibility: the path's own flag OR any ancestor container's (the panel eye cascade).
     pub fn eff_hidden(&self, pid: u32) -> bool {
@@ -936,6 +956,7 @@ impl Document {
             hidden: false,
             locked: false,
             color: None,
+            clip_exempt: false,
         });
         for &u in &units {
             if let Some(par) = self.node(u).and_then(|n| n.parent) {
@@ -1027,6 +1048,7 @@ impl Document {
                 hidden: false,
                 locked: false,
                 color: None,
+                clip_exempt: false,
             });
             gmap.insert(og, ng);
         }
@@ -1043,6 +1065,7 @@ impl Document {
                     hidden: false,
                     locked: false,
                     color: None,
+                    clip_exempt: false,
                 });
                 leafmap.insert(old_leaf, nl);
             }
@@ -1171,6 +1194,7 @@ impl Document {
                 hidden: false,
                 locked: false,
                 color: None,
+                clip_exempt: false,
             });
             self.roots.push(id);
         }
@@ -1189,6 +1213,7 @@ impl Document {
                 hidden: false,
                 locked: false,
                 color: None,
+                clip_exempt: false,
             });
             gmap.insert(g.id, id);
         }
@@ -1212,6 +1237,7 @@ impl Document {
                 hidden: false,
                 locked: false,
                 color: None,
+                clip_exempt: false,
             });
             self.attach_front(id);
         }
@@ -1277,6 +1303,7 @@ impl Document {
                 hidden: false,
                 locked: false,
                 color: None,
+                clip_exempt: false,
             });
             self.roots.insert(0, id);
         }
@@ -1304,6 +1331,7 @@ impl Document {
                 hidden: false,
                 locked: false,
                 color: None,
+                clip_exempt: false,
             });
             if let Some(h) = self.node_mut(host) {
                 h.children.insert(0, id);
@@ -1463,6 +1491,7 @@ impl Document {
                         hidden: false,
                         locked: false,
                         color: None,
+                        clip_exempt: false,
                     });
                     cid
                 })
