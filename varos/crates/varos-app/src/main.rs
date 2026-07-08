@@ -732,6 +732,7 @@ fn main() {
                                 /* the dialog owns these */
                             } else if code == KeyCode::Space {
                                 space_down = event.state == ElementState::Pressed;
+                                ed.space = space_down; // A9: lets a live placement drag reposition on Space
                                 if !space_down {
                                     panning = false;
                                 }
