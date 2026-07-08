@@ -2,7 +2,7 @@
 //! snapping actually fires, so a "snap not working" report can be localised to logic vs UI/feedback.
 
 use varos_core::editor::{AlignMode, Editor};
-use varos_core::model::{Anchor, Path};
+use varos_core::model::{Anchor, Artboard, Path};
 
 fn anc(id: u32, x: f32, y: f32) -> Anchor {
     Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
@@ -82,4 +82,23 @@ fn anchor_aligns_to_same_shape_corner() {
     let (nd, guides, _) = ed.snap_anchor(&[[100.0, 0.0]], [3.0, 60.0]);
     assert!((nd[0] - 0.0).abs() < 0.01, "x should align back to 100 (same-shape corner), got delta {}", nd[0]);
     assert!(!guides.is_empty(), "an alignment guide should be drawn");
+}
+
+#[test]
+fn object_drag_snaps_to_a_non_active_artboard_edge() {
+    // A29: object drags must snap to EVERY visible page's edges, not only the active one — else a
+    // board's edge shared with a non-active neighbour never snaps.
+    let mut ed = Editor::new();
+    ed.ppu = 1.0;
+    ed.doc.artboards.clear();
+    ed.doc.artboards.push(Artboard { x: 0.0, y: 0.0, w: 100.0, h: 100.0, name: "A".into(), ..Default::default() });
+    ed.doc.artboards.push(Artboard { x: 200.0, y: 0.0, w: 100.0, h: 100.0, name: "B".into(), ..Default::default() });
+    ed.doc.active = 0; // board A active; B is the NON-active neighbour
+                       // object bbox (0..100) proposed +202 → its left edge lands at 202, 2 world from B's left (200)
+    let (nd, _guides, _) = ed.snap_move((0.0, 0.0, 100.0, 100.0), [202.0, 0.0]);
+    assert!(
+        (nd[0] - 200.0).abs() < 0.01,
+        "left edge should snap onto the non-active board B's edge (200), got delta {}",
+        nd[0]
+    );
 }

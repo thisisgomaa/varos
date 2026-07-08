@@ -1621,8 +1621,11 @@ impl Editor {
                 }
             };
             match skip_abs {
+                // object drags (A29): EVERY visible page's edges are snap targets, not just the
+                // active one — otherwise a board's edge shared with a non-active neighbour never
+                // snaps (and colouring a board only "fixed" it by making it active).
                 None => {
-                    if let Some(ab) = self.doc.active_artboard() {
+                    for ab in self.doc.artboards.iter().filter(|a| !a.hidden) {
                         push_ab(ab);
                     }
                 }
