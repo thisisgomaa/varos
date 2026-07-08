@@ -1363,12 +1363,12 @@ fn num_field(
         // arrow nudge while focused: ↑/↓ = ±1 · Shift+↑/↓ = ±10 (Illustrator) — applies live
         let dv = ui.input_mut(|i| {
             let mut d = 0.0;
-            // A20: Shift = ×5 leap · Ctrl = fine (0.1) · plain = 1 — a clear keyboard step ladder
+            // A20: Shift = 10 leap · Ctrl = fine (0.1) · plain = 1 - a clear keyboard step ladder
             if i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowUp) {
-                d += 5.0;
+                d += 10.0;
             }
             if i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowDown) {
-                d -= 5.0;
+                d -= 10.0;
             }
             if i.consume_key(egui::Modifiers::CTRL, egui::Key::ArrowUp) {
                 d += 0.1;

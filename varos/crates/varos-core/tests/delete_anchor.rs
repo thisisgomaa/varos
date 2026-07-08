@@ -163,6 +163,39 @@ fn a_split_keeps_a_left_lobe_hole_on_the_left() {
 }
 
 #[test]
+fn a_split_keeps_uneven_left_hole_on_the_head_fragment() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    let outer = vec![
+        corner(1, 0.0, 0.0),
+        corner(2, 40.0, 0.0),
+        corner(3, 20.0, 40.0),   // left lobe
+        corner(4, 100.0, -60.0), // interior anchor we delete
+        corner(5, 160.0, 0.0),
+        corner(6, 240.0, 0.0),
+        corner(7, 200.0, 40.0), // right lobe
+    ];
+    let mut p = Path::new(100, outer, false, Some([0.5, 0.5, 0.5, 1.0]), None, 1.0);
+    let mut hole = vec![corner(20, 14.0, 8.0), corner(21, 26.0, 8.0), corner(22, 26.0, 16.0), corner(23, 14.0, 16.0)];
+    for i in 0..24 {
+        let dx = (i % 6) as f32 * 0.02;
+        let dy = (i / 6) as f32 * 0.02;
+        hole.push(corner(24 + i, 200.0 + dx, 12.0 + dy));
+    }
+    p.holes = vec![hole];
+    ed.doc.paths.push(p);
+    ed.doc.ids = 500;
+
+    ed.delete_anchor(4);
+
+    assert_eq!(ed.doc.paths.len(), 2, "the interior delete splits the outer into two fragments");
+    let right = ed.doc.paths.iter().find(|p| p.anchors.iter().any(|a| a.id == 5)).unwrap();
+    let left = ed.doc.paths.iter().find(|p| p.anchors.iter().any(|a| a.id == 1)).unwrap();
+    assert_eq!(left.holes.len(), 1, "the uneven hole must stay with the left/head fragment");
+    assert!(right.holes.is_empty(), "the right sibling must not get a hole with left-lobe vertices");
+}
+
+#[test]
 fn an_opened_shape_keeps_its_fill() {
     // Illustrator: an open path still fills (endpoints joined by an implied line). Opening a filled
     // square by deleting a corner must NOT drop the fill — the scene still emits a Fill prim.
