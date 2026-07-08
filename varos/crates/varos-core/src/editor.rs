@@ -3255,6 +3255,61 @@ impl Editor {
         self.recent_colors.insert(0, c);
         self.recent_colors.truncate(12);
     }
+
+    // ---------- colour-picker live session (A6) ----------
+    // The picker folds a WHOLE drag into ONE undo step: `picker_begin` snapshots the document on
+    // open, `paint_live` / `ab_color_live` mutate it in place each frame with NO new history, and the
+    // session closes with `picker_commit` (fold into one step) or `picker_cancel` (revert to open).
+
+    /// Open a picker session: snapshot the document so the whole interaction is a single undo step and
+    /// Escape can revert to exactly the state at open.
+    pub fn picker_begin(&mut self) {
+        self.begin();
+    }
+    /// Live-apply a paint colour to the current selection during a picker session — mutates the doc in
+    /// place with NO new history step (the step was opened by `picker_begin`). An empty selection is a
+    /// document no-op; the colour lands as the current paint only on `picker_commit`.
+    pub fn paint_live(&mut self, target: PaintTarget, color: Option<Rgba>) {
+        let pids = self.selected_pids();
+        if pids.is_empty() {
+            return;
+        }
+        for pid in pids {
+            if let Some(pi) = self.doc.pidx(pid) {
+                match target {
+                    PaintTarget::Fill => self.doc.paths[pi].fill = Paint::from_opt(color),
+                    PaintTarget::Stroke => self.doc.paths[pi].stroke = Paint::from_opt(color),
+                }
+            }
+        }
+        self.dirty = true;
+    }
+    /// Live-apply an artboard page colour during a picker session (no new history step).
+    pub fn ab_color_live(&mut self, i: usize, c: Option<Rgba>) {
+        if let Some(ab) = self.doc.artboards.get_mut(i) {
+            ab.page_color = c;
+            self.dirty = true;
+        }
+    }
+    /// Close the picker session with OK: fold the whole live drag into ONE undo step, set the target's
+    /// current paint (so the next new shape uses it) and remember the colour in the MRU strip.
+    pub fn picker_commit(&mut self, cur: Option<PaintTarget>, color: Rgba) {
+        match cur {
+            Some(PaintTarget::Fill) => self.cur_fill = Some(color),
+            Some(PaintTarget::Stroke) => self.cur_stroke = Some(color),
+            None => {}
+        }
+        self.commit();
+        self.push_recent(color);
+    }
+    /// Close the picker session with Cancel/Esc: restore the document captured at open — the live
+    /// preview leaves NO history entry.
+    pub fn picker_cancel(&mut self) {
+        if let Some(doc) = self.pending.take() {
+            self.doc = doc;
+        }
+        self.dirty = false;
+    }
     /// The distinct colours the artwork uses RIGHT NOW (fills + strokes, first-appearance order, cap 12).
     /// Derived on demand — never stored (COLOR_SPEC Stage 1).
     pub fn document_colors(&self) -> Vec<Rgba> {
@@ -3693,5 +3748,63 @@ impl Editor {
         }
         self.dirty = true;
         self.commit();
+    }
+}
+
+#[cfg(test)]
+mod picker_tests {
+    use super::*;
+
+    // A6 — a whole picker drag (many live frames) folds into ONE undo step, and one undo reverts it.
+    #[test]
+    fn picker_session_is_one_undo_step() {
+        let mut ed = Editor::new();
+        let before = ed.doc.artboards[0].page_color;
+        ed.picker_begin();
+        // simulate dragging in the wheel: several live frames, none of them a history entry
+        ed.ab_color_live(0, Some([1.0, 0.0, 0.0, 1.0]));
+        ed.ab_color_live(0, Some([0.0, 1.0, 0.0, 1.0]));
+        ed.ab_color_live(0, Some([0.0, 0.0, 1.0, 1.0]));
+        assert_eq!(ed.undo.len(), 0, "no undo steps while dragging");
+        ed.picker_commit(None, [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(ed.doc.artboards[0].page_color, Some([0.0, 0.0, 1.0, 1.0]));
+        assert_eq!(ed.undo.len(), 1, "the whole drag is ONE undo step");
+        assert_eq!(ed.recent_colors.first().copied(), Some([0.0, 0.0, 1.0, 1.0]));
+        ed.undo();
+        assert_eq!(ed.doc.artboards[0].page_color, before, "one undo reverts the whole drag");
+        assert_eq!(ed.undo.len(), 0);
+    }
+
+    // A6 — Cancel/Esc restores the value at open and leaves NO history entry.
+    #[test]
+    fn picker_cancel_reverts_with_no_history() {
+        let mut ed = Editor::new();
+        let before = ed.doc.artboards[0].page_color;
+        ed.picker_begin();
+        ed.ab_color_live(0, Some([1.0, 0.0, 0.0, 1.0]));
+        ed.ab_color_live(0, Some([0.2, 0.4, 0.9, 1.0]));
+        ed.picker_cancel();
+        assert_eq!(ed.doc.artboards[0].page_color, before, "cancel reverts to the value at open");
+        assert_eq!(ed.undo.len(), 0, "cancel leaves no undo step");
+        assert!(ed.pending.is_none(), "the session snapshot is cleared");
+    }
+
+    // A6 — the live paint drives the selected path's fill, and the whole session is one undo step.
+    #[test]
+    fn paint_live_drives_selection_and_undo() {
+        let mut ed = Editor::new();
+        ed.doc.paths.push(crate::model::Path::new(7, vec![], true, Some([0.5, 0.5, 0.5, 1.0]), None, 2.0));
+        ed.objsel.insert(7);
+        ed.picker_begin();
+        ed.paint_live(PaintTarget::Fill, Some([1.0, 0.0, 0.0, 1.0]));
+        ed.paint_live(PaintTarget::Fill, Some([0.0, 0.0, 1.0, 1.0]));
+        let pi = ed.doc.pidx(7).unwrap();
+        assert_eq!(ed.doc.paths[pi].fill.solid(), Some([0.0, 0.0, 1.0, 1.0]), "live paint hits the path");
+        ed.picker_commit(Some(PaintTarget::Fill), [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(ed.cur_fill, Some([0.0, 0.0, 1.0, 1.0]), "commit sets the current fill");
+        assert_eq!(ed.undo.len(), 1, "one undo step for the whole drag");
+        ed.undo();
+        let pi = ed.doc.pidx(7).unwrap();
+        assert_eq!(ed.doc.paths[pi].fill.solid(), Some([0.5, 0.5, 0.5, 1.0]), "undo restores the pre-open fill");
     }
 }
