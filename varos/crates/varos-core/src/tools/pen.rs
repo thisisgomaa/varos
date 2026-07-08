@@ -1,6 +1,6 @@
 use super::Tool;
 use crate::editor::{Drag, Editor, ANCHOR_R, EDGE_R};
-use crate::geom::Pt;
+use crate::geom::{add, snap45, sub, Pt};
 use crate::model::{Anchor, Path};
 
 pub struct Pen;
@@ -69,8 +69,14 @@ impl Tool for Pen {
                 id
             }
         };
-        let aid = ed.doc.nid();
         let pi = ed.doc.pidx(pid).unwrap();
+        // A8b: Shift locks the new point to 45°/H/V from the previous anchor — the SAME constraint the
+        // rubber-band preview shows, so where you see the ghost land is where the point lands.
+        let pos = match ed.doc.paths[pi].anchors.last() {
+            Some(last) if ed.mods.shift => add(last.p, snap45(sub(pos, last.p))),
+            _ => pos,
+        };
+        let aid = ed.doc.nid();
         ed.doc.paths[pi].anchors.push(Anchor { id: aid, p: pos, hin: None, hout: None, smooth: false });
         ed.selected.insert(aid);
         ed.dirty = true;
