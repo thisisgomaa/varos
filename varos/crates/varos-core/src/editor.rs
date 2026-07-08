@@ -330,6 +330,15 @@ pub struct Editor {
     pub origin_preview: Option<Pt>, // while dragging the ruler corner: the live (snapped) zero-point → dashed crosshair
     pub guide_preview: Option<Guide>, // while dragging a NEW guide out of a ruler: the live (snapped) guide
     pub mods: Mods,
+    /// A12: the Properties "Constrain W/H proportions" lock, mirrored from the panel each frame. When on,
+    /// a canvas scale drag holds the aspect ratio exactly as Shift does — so the lock the user sees on the
+    /// numeric W/H fields also governs dragging the handles. (Shift keeps working on its own.)
+    pub constrain_wh: bool,
+    /// A9: Space held with the mouse still down mid-placement → drag the WHOLE in-progress shape / new pen
+    /// anchor to reposition it before releasing (Illustrator's spacebar-nudge). The app sets this from the
+    /// Space key; it only bites when a placement drag is live, so it never fights Space-pan (which arms on a
+    /// fresh press, and no fresh press happens during a drag).
+    pub space: bool,
     pub cur_fill: Option<Rgba>,
     pub cur_stroke: Option<Rgba>,
     pub cur_sw: f32,
@@ -379,6 +388,8 @@ impl Editor {
             origin_preview: None,
             guide_preview: None,
             mods: Mods::default(),
+            constrain_wh: false,
+            space: false,
             cur_fill: Some([0.95, 0.95, 0.96, 1.0]),
             cur_stroke: Some([0.12, 0.12, 0.13, 1.0]),
             cur_sw: 2.0,
@@ -2614,6 +2625,30 @@ impl Editor {
             PenHint::New
         }
     }
+    /// A10: while HOVERING (no drag) with a drawing tool BEFORE the first point exists, preview the exact
+    /// snap the first click will use — the phantom target point + smart guides — so you see where the point
+    /// lands, like every pro tool. Only Pen-before-its-path and the shape tools; an active pen path already
+    /// shows the rubber-band ghost. Idle-hover clears any stale feedback for every other case.
+    fn hover_snap(&mut self, pos: Pt) {
+        let first_point = match self.eff_tool() {
+            ToolKind::Pen => self.active.is_none(),
+            t if t.is_shape() => true,
+            _ => false,
+        };
+        if first_point {
+            let (_, guides, hud) = self.snap_anchor(&[pos], [0.0, 0.0]);
+            if guides.is_empty() {
+                self.snap_guides.clear();
+                self.snap_hud = None; // nothing near → no phantom, no label (clean empty space)
+            } else {
+                self.snap_guides = guides;
+                self.snap_hud = hud;
+            }
+        } else {
+            self.snap_guides.clear();
+            self.snap_hud = None;
+        }
+    }
     pub fn pointer_down(&mut self, pos: Pt) {
         self.cursor = pos;
         self.begin();
@@ -2635,8 +2670,10 @@ impl Editor {
                 return;
             }
         }
-        // Pen: snap the new anchor onto nearby points / path / grid before placing it
-        let pos = if self.gesture == ToolKind::Pen {
+        // A10: a drawing tool snaps its point onto nearby anchors / edges / mids / page before placing it.
+        // Pen already did this for every anchor; the shape tools now snap their FIRST corner the same way,
+        // so the start of a rectangle/ellipse lands on a target exactly like the hover phantom promised.
+        let pos = if self.gesture == ToolKind::Pen || self.gesture.is_shape() {
             let (adj, _, _) = self.snap_anchor(&[pos], [0.0, 0.0]);
             add(pos, adj)
         } else {
@@ -2681,7 +2718,39 @@ impl Editor {
         self.commit();
     }
 
+    /// A9: while Space is held during a live placement drag, translate the whole in-progress geometry by
+    /// the pointer delta instead of resizing/extending it — so a shape or a just-placed pen anchor can be
+    /// nudged into position before release. Returns true when it consumed the move (a supported drag);
+    /// unsupported drags fall through to normal handling. On Space-release the normal arm resumes from the
+    /// repositioned origin (the shape keeps growing from where you dropped it).
+    fn reposition_active(&mut self, d: Pt) -> bool {
+        match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::Shape { start, pid, kind } => {
+                let start = add(start, d); // move the fixed corner; the cursor moved too → size is preserved
+                let anchors = self.shape_anchors(kind, start, self.cursor);
+                if let Some(pi) = self.doc.pidx(pid) {
+                    self.doc.paths[pi].anchors = anchors;
+                }
+                self.drag = Drag::Shape { start, pid, kind };
+                true
+            }
+            Drag::PenNew { aid, down, broken } => {
+                if let Some(a) = self.doc.anchor_mut(aid) {
+                    a.p = add(a.p, d);
+                    a.hin = a.hin.map(|h| add(h, d));
+                    a.hout = a.hout.map(|h| add(h, d));
+                }
+                self.drag = Drag::PenNew { aid, down: add(down, d), broken };
+                true
+            }
+            other => {
+                self.drag = other;
+                false
+            }
+        }
+    }
     pub fn pointer_move(&mut self, pos: Pt) {
+        let prev = self.cursor;
         self.cursor = pos;
         if self.tool == ToolKind::Artboard {
             if !matches!(self.ab_drag, AbDrag::None) {
@@ -2689,8 +2758,14 @@ impl Editor {
             }
             return;
         }
+        // A9: Space repositions the in-progress placement (never a plain hover → Space-pan is untouched)
+        if self.space && !matches!(self.drag, Drag::None) && self.reposition_active(sub(pos, prev)) {
+            self.dirty = true;
+            return;
+        }
         if matches!(self.drag, Drag::None) {
             self.hover_path = self.path_under(pos);
+            self.hover_snap(pos); // A10: phantom snap point before the first click of a drawing tool
         }
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::PenNew { aid, down, mut broken } => {
@@ -2963,7 +3038,8 @@ impl Editor {
                 let (dx0, dy0) = (h0_l[0] - pivot[0], h0_l[1] - pivot[1]);
                 let mut sx = if cx && dx0.abs() > 1e-3 { (lp[0] - pivot[0]) / dx0 } else { 1.0 };
                 let mut sy = if cy && dy0.abs() > 1e-3 { (lp[1] - pivot[1]) / dy0 } else { 1.0 };
-                if self.mods.shift {
+                // A12: the Properties constrain-lock holds the aspect ratio just like Shift (either engages it).
+                if self.mods.shift || self.constrain_wh {
                     if cx && cy {
                         let m = sx.abs().max(sy.abs()); // corner → lock to the larger axis
                         sx = m.copysign(sx);
@@ -3052,8 +3128,9 @@ impl Editor {
                     if dx0.abs() > 1e-3 { (pos[0] - pivot[0]) / dx0 } else { 1.0 },
                     if dy0.abs() > 1e-3 { (pos[1] - pivot[1]) / dy0 } else { 1.0 },
                 );
-                if self.mods.shift {
-                    // uniform: project the drag onto the grab direction (signed)
+                if self.mods.shift || self.constrain_wh {
+                    // uniform: project the drag onto the grab direction (signed). A12: the constrain-lock
+                    // engages the same uniform scale as Shift, so the Scale tool honours the panel lock too.
                     let den = dx0 * dx0 + dy0 * dy0;
                     let s =
                         if den > 1e-6 { ((pos[0] - pivot[0]) * dx0 + (pos[1] - pivot[1]) * dy0) / den } else { 1.0 };

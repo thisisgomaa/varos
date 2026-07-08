@@ -1130,6 +1130,7 @@ impl Ui {
         self.tabs = tabs;
         self.tab_active = tab_active;
         ed.doc.snap = snap_cfg; // commit the magnet-menu toggles (a non-undoable mode flag)
+        ed.constrain_wh = lock; // A12: mirror the Properties W/H lock so canvas scale drags honour it too
                                 // OpenPicker is a UI op (it opens the modal, seeded from the target's colour) — intercept it here
         ops.retain(|op| {
             if let Op::OpenPicker(t) = op {
