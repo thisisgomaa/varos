@@ -113,6 +113,55 @@ fn deleting_an_open_endpoint_just_trims_it() {
     assert_eq!(p.anchors.iter().map(|a| a.id).collect::<Vec<_>>(), vec![1, 2], "only C was trimmed");
 }
 
+/// FB2 — an OPEN compound path (outer + hole, e.g. a donut A32 already opened) whose outer is split by
+/// deleting an interior anchor: each hole must travel to the fragment whose area actually holds it.
+/// Left lobe = triangle (1,2,3); right lobe = triangle (5,6,7); anchor 4 bridges them and is deleted.
+fn open_compound_with_hole_in(lobe_right: bool) -> Editor {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    let outer = vec![
+        corner(1, 0.0, 0.0),
+        corner(2, 40.0, 0.0),
+        corner(3, 20.0, 40.0),   // left lobe 1,2,3  (centre ~20,13)
+        corner(4, 100.0, -60.0), // interior anchor we delete (bridges the lobes)
+        corner(5, 160.0, 0.0),
+        corner(6, 240.0, 0.0),
+        corner(7, 200.0, 40.0), // right lobe 5,6,7 (centre ~200,13)
+    ];
+    let mut p = Path::new(100, outer, false, Some([0.5, 0.5, 0.5, 1.0]), None, 1.0);
+    // a small square hole inside whichever lobe the caller chose
+    let cx = if lobe_right { 200.0 } else { 20.0 };
+    p.holes = vec![vec![
+        corner(20, cx - 6.0, 5.0),
+        corner(21, cx + 6.0, 5.0),
+        corner(22, cx + 6.0, 15.0),
+        corner(23, cx - 6.0, 15.0),
+    ]];
+    ed.doc.paths.push(p);
+    ed.doc.ids = 500;
+    ed.delete_anchor(4); // split the outer at the bridging anchor
+    ed
+}
+
+#[test]
+fn a_split_sends_the_hole_to_the_fragment_that_contains_it() {
+    let ed = open_compound_with_hole_in(true); // hole in the RIGHT lobe
+    assert_eq!(ed.doc.paths.len(), 2, "the interior delete splits the outer into two fragments");
+    let right = ed.doc.paths.iter().find(|p| p.anchors.iter().any(|a| a.id == 5)).unwrap();
+    let left = ed.doc.paths.iter().find(|p| p.anchors.iter().any(|a| a.id == 1)).unwrap();
+    assert_eq!(right.holes.len(), 1, "the hole follows the RIGHT fragment that actually contains it");
+    assert!(left.holes.is_empty(), "the LEFT fragment must not inherit a hole it doesn't overlap (FB2)");
+}
+
+#[test]
+fn a_split_keeps_a_left_lobe_hole_on_the_left() {
+    let ed = open_compound_with_hole_in(false); // hole in the LEFT lobe
+    let right = ed.doc.paths.iter().find(|p| p.anchors.iter().any(|a| a.id == 5)).unwrap();
+    let left = ed.doc.paths.iter().find(|p| p.anchors.iter().any(|a| a.id == 1)).unwrap();
+    assert_eq!(left.holes.len(), 1, "a hole in the left lobe stays on the left fragment");
+    assert!(right.holes.is_empty(), "…and does not leak to the right");
+}
+
 #[test]
 fn an_opened_shape_keeps_its_fill() {
     // Illustrator: an open path still fills (endpoints joined by an implied line). Opening a filled

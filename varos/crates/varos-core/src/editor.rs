@@ -425,7 +425,7 @@ impl Editor {
             if self.doc.eff_hidden(id) || self.doc.eff_locked(id) {
                 continue; // not clickable (cascades)
             }
-            let on_edge = self.doc.nearest_seg(pi, pos).is_some_and(|(_, _, d)| d <= edge_r);
+            let on_edge = self.doc.edge_dist(pi, pos).is_some_and(|d| d <= edge_r); // outer + hole rims (FB3)
             let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, pos);
             if on_edge || in_fill {
                 return Some(id);
@@ -2260,7 +2260,26 @@ impl Editor {
             sib.id = self.doc.nid();
             sib.anchors = tail;
             sib.closed = false;
-            sib.holes = vec![]; // holes stay with the head; a mid-split of a compound path is rare
+            // Splitting an OPEN compound path (outer + holes — e.g. a donut A32 already opened): a hole must
+            // follow the fragment whose implied-closed area actually contains it, else it floats over a
+            // fragment it no longer overlaps while the OTHER fragment fills straight across the gap (FB2).
+            let holes = std::mem::take(&mut self.doc.paths[pi].holes);
+            let head_ring = Document::ring(&self.doc.paths[pi].anchors, true, 8);
+            let sib_ring = Document::ring(&sib.anchors, true, 8);
+            let (mut head_holes, mut sib_holes) = (Vec::new(), Vec::new());
+            for h in holes {
+                // representative interior point (vertex average — fine for the typical near-convex hole)
+                let n = h.len().max(1) as f32;
+                let s = h.iter().fold([0.0, 0.0], |a, k| [a[0] + k.p[0], a[1] + k.p[1]]);
+                let c = [s[0] / n, s[1] / n];
+                if point_in_poly(&sib_ring, c) && !point_in_poly(&head_ring, c) {
+                    sib_holes.push(h);
+                } else {
+                    head_holes.push(h); // head keeps it on overlap/neither (a hole outside a fill is inert)
+                }
+            }
+            self.doc.paths[pi].holes = head_holes;
+            sib.holes = sib_holes;
             self.doc.paths.insert(pi + 1, sib);
         }
         let gone: Vec<u32> = self.doc.paths.iter().filter(|p| p.anchors.is_empty()).map(|p| p.id).collect();

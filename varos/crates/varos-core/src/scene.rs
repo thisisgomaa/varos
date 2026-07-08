@@ -339,10 +339,13 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                 if let Some(pi) = ed.doc.pidx(ap) {
                     if let Some(last) = ed.doc.paths[pi].anchors.last() {
                         let c1 = last.hout.unwrap_or(last.p);
-                        // A8b: while Shift is held the ghost previews the CONSTRAINED landing (45°/H/V from
-                        // the last anchor) — so the preview matches where pen.rs will actually place the point
-                        let target =
-                            if ed.mods.shift { add(last.p, snap45(sub(ed.cursor, last.p))) } else { ed.cursor };
+                        // A8b/FB5: preview the landing EXACTLY as placement computes it. pointer_down snaps
+                        // the click onto nearby points/grid FIRST (snap_anchor), then pen.rs locks 45°/H/V.
+                        // Mirror both here off the SAME snapped cursor, so the ghost never drifts from where
+                        // the point drops — least of all right beside a snap target.
+                        let (adj, _, _) = ed.snap_anchor(&[ed.cursor], [0.0, 0.0]);
+                        let snapped = add(ed.cursor, adj);
+                        let target = if ed.mods.shift { add(last.p, snap45(sub(snapped, last.p))) } else { snapped };
                         let mut pts = Vec::with_capacity(49);
                         for k in 0..=48 {
                             pts.push(cubic(last.p, c1, target, target, k as f32 / 48.0));

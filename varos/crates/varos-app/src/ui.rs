@@ -1385,8 +1385,18 @@ fn num_field(
             d
         });
         if dv != 0.0 {
-            let nv = (buf.trim().parse::<f32>().unwrap_or(value) + dv).clamp(lo, hi);
+            // FB4: accumulate the nudge on a PRECISE stored value, not on the (rounded) field text. On a
+            // 0-decimal field "42" + Ctrl(±0.1) formats straight back to "42", so the fine step vanished
+            // every press. Keep an f32 accumulator that's trusted as long as it still renders to what's shown
+            // (else the user just typed something new, and the text wins).
+            let acc_id = id.with("acc");
+            let base = ui
+                .data(|d| d.get_temp::<f32>(acc_id))
+                .filter(|a| format!("{a:.decimals$}") == buf)
+                .unwrap_or_else(|| buf.trim().parse::<f32>().unwrap_or(value));
+            let nv = (base + dv).clamp(lo, hi);
             let s = format!("{nv:.decimals$}");
+            ui.data_mut(|d| d.insert_temp(acc_id, nv));
             // keep the text selected so the next keystroke still replaces (same as click-to-type)
             let mut st = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
             st.cursor.set_char_range(Some(egui::text::CCursorRange::two(
@@ -1398,12 +1408,19 @@ fn num_field(
             out = Some(nv);
         }
         if te.lost_focus() {
-            if let Ok(v) = buf.trim().parse::<f32>() {
+            if let Ok(typed) = buf.trim().parse::<f32>() {
+                // commit the precise accumulator if it still matches what's shown, so fine nudges (FB4)
+                // survive the blur instead of snapping back to the rounded display value.
+                let v = ui
+                    .data(|d| d.get_temp::<f32>(id.with("acc")))
+                    .filter(|a| format!("{a:.decimals$}") == buf)
+                    .unwrap_or(typed);
                 out = Some(v.clamp(lo, hi));
             }
             ui.data_mut(|d| {
                 d.remove::<String>(id);
                 d.remove::<bool>(id);
+                d.remove::<f32>(id.with("acc"));
             });
         }
     } else {
@@ -1447,6 +1464,7 @@ fn num_field(
             ui.data_mut(|d| {
                 d.insert_temp(id, s);
                 d.insert_temp(id, true);
+                d.remove::<f32>(id.with("acc")); // fresh entry starts from the shown text, never a leaked acc (FB4)
             });
             ui.memory_mut(|m| m.request_focus(id));
         }
@@ -3203,7 +3221,10 @@ fn board_ctlbar(
                         if icon_btn(ui, fit_icon, "Fit in window") {
                             *fit_request = Some(i);
                         }
-                    } else if s.sel {
+                    } else if s.sel && !s.drawing {
+                        // …unless the Pen is mid-draft: an active path OWNS the bar even if the old
+                        // selection lingered (select an object → press P → draw). Without `!s.drawing`
+                        // the stale object's props hid the "Drawing path…" status (FB6).
                         ui.label(RichText::new(&s.name).color(MUTED).size(11.5));
                         let fw = 64.0;
                         if let Some(v) =
