@@ -173,6 +173,21 @@ fn make_anchor(id: u32, p: Pt, hin_raw: Pt, hout_raw: Pt) -> Anchor {
         && (din[0]*dout[0] + din[1]*dout[1]) < 0.0; // pointing apart (mirror handles)
     Anchor { id, p, hin, hout, smooth }
 }
+/// Is this cubic segment geometrically STRAIGHT — both control points on the endpoint line? Boolean
+/// engines emit a straight edge as a cubic with controls at ⅓/⅔ of the line; those aren't real
+/// curvature, so we must not turn them into handles (A26: a sharp corner stays a corner point).
+fn seg_is_straight(s: &Seg) -> bool {
+    let (a, c1, c2, b) = (s.0, s.1, s.2, s.3);
+    let d = sub(b, a);
+    let len = length(d);
+    if len < 1e-6 {
+        return true; // zero-length edge → no curvature to keep
+    }
+    // perpendicular distance of a control point from the a→b line = |cross(d, q-a)| / |d|
+    let perp = |q: Pt| (d[0] * (q[1] - a[1]) - d[1] * (q[0] - a[0])).abs() / len;
+    let tol = 1e-3 * len.max(1.0);
+    perp(c1) <= tol && perp(c2) <= tol
+}
 /// A closed anchor contour → its cubic segments (start, c1, c2, end) for the boolean engine.
 fn contour_segs(anchors: &[Anchor]) -> Vec<Seg> {
     let n = anchors.len();
@@ -373,28 +388,23 @@ impl Editor {
         }
         best.map(|(id, _)| id)
     }
+    /// The clickable path under `pos`, respecting z-order OCCLUSION (A31). Walk TOP → bottom (the paths
+    /// vec is bottom→top in z): the first path the point actually touches wins, and everything beneath it
+    /// at that point is occluded. A path is touched by a click on its OUTLINE (within edge_r) or inside
+    /// its FILL — an unfilled shape catches only its outline, so its hollow interior is click-through to
+    /// the art below (Illustrator). Visible parts of lower shapes stay reachable because the covering
+    /// shape fails both tests there.
     pub fn path_under(&self, pos: Pt) -> Option<u32> {
         let edge_r = EDGE_R / self.ppu;
-        let mut best: Option<(u32, f32)> = None;
-        for pi in 0..self.doc.paths.len() {
-            if self.doc.eff_hidden(self.doc.paths[pi].id) || self.doc.eff_locked(self.doc.paths[pi].id) {
-                continue;
-            } // not clickable (cascades)
-            if let Some((_, _, d)) = self.doc.nearest_seg(pi, pos) {
-                if d <= edge_r && best.is_none_or(|(_, bd)| d < bd) {
-                    best = Some((self.doc.paths[pi].id, d));
-                }
+        for pi in (0..self.doc.paths.len()).rev() {
+            let id = self.doc.paths[pi].id;
+            if self.doc.eff_hidden(id) || self.doc.eff_locked(id) {
+                continue; // not clickable (cascades)
             }
-        }
-        if let Some((id, _)) = best {
-            return Some(id);
-        }
-        for pi in 0..self.doc.paths.len() {
-            if self.doc.eff_hidden(self.doc.paths[pi].id) || self.doc.eff_locked(self.doc.paths[pi].id) {
-                continue;
-            }
-            if self.doc.point_in_path(pi, pos) {
-                return Some(self.doc.paths[pi].id);
+            let on_edge = self.doc.nearest_seg(pi, pos).is_some_and(|(_, _, d)| d <= edge_r);
+            let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, pos);
+            if on_edge || in_fill {
+                return Some(id);
             }
         }
         None
@@ -662,8 +672,11 @@ impl Editor {
         let mut out = Vec::with_capacity(m);
         for i in 0..m {
             let p = segs[i].3; // anchor = this segment's endpoint
-            let hin_raw = segs[i].2; // hin  = this segment's 2nd control point
-            let hout_raw = segs[(i + 1) % m].1; // hout = next segment's 1st control point
+            let next = &segs[(i + 1) % m];
+            // collapse the handle of a STRAIGHT edge to the anchor so make_anchor drops it — the corner
+            // between two straight edges stays a clean corner point, no phantom handles (A26).
+            let hin_raw = if seg_is_straight(&segs[i]) { p } else { segs[i].2 }; // this seg's 2nd control
+            let hout_raw = if seg_is_straight(next) { p } else { next.1 }; // next seg's 1st control
             let id = self.doc.nid();
             out.push(make_anchor(id, p, hin_raw, hout_raw));
         }
@@ -2193,20 +2206,38 @@ impl Editor {
             std::mem::swap(&mut a.hin, &mut a.hout);
         }
     }
+    /// Delete an anchor the Illustrator way: the path OPENS at the hole — the deleted point's two
+    /// neighbours are never re-joined by a phantom segment (A32).
+    /// · closed ring → open path re-rooted just past the hole (no segment bridges the gap);
+    /// · open endpoint → trimmed, still one open path;
+    /// · open interior → the contour splits into two open paths at the hole.
+    /// Emptied contours vanish; a lone surviving point stays (Illustrator keeps isolated anchors).
     pub fn delete_anchor(&mut self, aid: u32) {
-        if let Some((pi, ai)) = self.doc.aidx(aid) {
+        let Some((pi, ai)) = self.doc.aidx(aid) else { return };
+        self.selected.remove(&aid);
+        let n = self.doc.paths[pi].anchors.len();
+        if self.doc.paths[pi].closed {
+            let mut rest = self.doc.paths[pi].anchors.split_off(ai + 1); // [ai+1 ..]
+            self.doc.paths[pi].anchors.pop(); // drop the deleted anchor (tail of [..=ai])
+            rest.append(&mut self.doc.paths[pi].anchors); // rest = [ai+1..] ++ [..ai]
+            self.doc.paths[pi].anchors = rest;
+            self.doc.paths[pi].closed = false;
+        } else if ai == 0 || ai == n - 1 {
             self.doc.paths[pi].anchors.remove(ai);
-            self.selected.remove(&aid);
-            if self.doc.paths[pi].anchors.len() < 2 {
-                self.doc.paths[pi].closed = false;
-            }
-            if self.doc.paths[pi].anchors.is_empty() {
-                let pid = self.doc.paths[pi].id;
-                self.doc.paths.remove(pi);
-                if self.active == Some(pid) {
-                    self.active = None;
-                }
-            }
+        } else {
+            let tail = self.doc.paths[pi].anchors.split_off(ai + 1); // [ai+1 ..]
+            self.doc.paths[pi].anchors.pop(); // drop the deleted anchor → head is [..ai]
+            let mut sib = self.doc.paths[pi].clone();
+            sib.id = self.doc.nid();
+            sib.anchors = tail;
+            sib.closed = false;
+            sib.holes = vec![]; // holes stay with the head; a mid-split of a compound path is rare
+            self.doc.paths.insert(pi + 1, sib);
+        }
+        let gone: Vec<u32> = self.doc.paths.iter().filter(|p| p.anchors.is_empty()).map(|p| p.id).collect();
+        self.doc.paths.retain(|p| !p.anchors.is_empty());
+        if self.active.is_some_and(|ap| gone.contains(&ap)) {
+            self.active = None;
         }
     }
     pub fn add_anchor(&mut self, pi: usize, i: usize, t: f32) -> u32 {
