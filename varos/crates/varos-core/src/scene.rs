@@ -5,7 +5,7 @@
 //!               `overlay` = editing chrome (anchors/handles/skeleton/marquee) → CONSTANT screen size.
 
 use crate::editor::{Drag, Editor, SnapGuide, ToolKind};
-use crate::geom::{cubic, dist, Pt, Rgba};
+use crate::geom::{add, cubic, dist, snap45, sub, Pt, Rgba};
 use crate::model::Document;
 use std::collections::HashSet;
 
@@ -339,9 +339,13 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                 if let Some(pi) = ed.doc.pidx(ap) {
                     if let Some(last) = ed.doc.paths[pi].anchors.last() {
                         let c1 = last.hout.unwrap_or(last.p);
+                        // A8b: while Shift is held the ghost previews the CONSTRAINED landing (45°/H/V from
+                        // the last anchor) — so the preview matches where pen.rs will actually place the point
+                        let target =
+                            if ed.mods.shift { add(last.p, snap45(sub(ed.cursor, last.p))) } else { ed.cursor };
                         let mut pts = Vec::with_capacity(49);
                         for k in 0..=48 {
-                            pts.push(cubic(last.p, c1, ed.cursor, ed.cursor, k as f32 / 48.0));
+                            pts.push(cubic(last.p, c1, target, target, k as f32 / 48.0));
                         }
                         s.overlay.push(Prim::Dashed { pts, width: 1.5, color: ACCENT });
                     }

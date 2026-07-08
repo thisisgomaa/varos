@@ -1363,11 +1363,18 @@ fn num_field(
         // arrow nudge while focused: ↑/↓ = ±1 · Shift+↑/↓ = ±10 (Illustrator) — applies live
         let dv = ui.input_mut(|i| {
             let mut d = 0.0;
+            // A20: Shift = ×5 leap · Ctrl = fine (0.1) · plain = 1 — a clear keyboard step ladder
             if i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowUp) {
-                d += 10.0;
+                d += 5.0;
             }
             if i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowDown) {
-                d -= 10.0;
+                d -= 5.0;
+            }
+            if i.consume_key(egui::Modifiers::CTRL, egui::Key::ArrowUp) {
+                d += 0.1;
+            }
+            if i.consume_key(egui::Modifiers::CTRL, egui::Key::ArrowDown) {
+                d -= 0.1;
             }
             if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
                 d += 1.0;
@@ -1414,7 +1421,17 @@ fn num_field(
         if resp.dragged() {
             let dx = resp.drag_delta().x;
             if dx != 0.0 {
-                out = Some((value + dx * speed).clamp(lo, hi));
+                // A20: give the MOUSE its own modifier feel — Shift scrubs coarse (×5), Ctrl fine (÷5),
+                // so mouse and keyboard read differently and precise values are reachable by drag.
+                let mods = ui.input(|i| i.modifiers);
+                let mult = if mods.shift {
+                    5.0
+                } else if mods.ctrl {
+                    0.2
+                } else {
+                    1.0
+                };
+                out = Some((value + dx * speed * mult).clamp(lo, hi));
             }
         }
         if resp.clicked() {

@@ -203,13 +203,16 @@ fn contour_segs(anchors: &[Anchor]) -> Vec<Seg> {
         .collect()
 }
 
-/// Resize an artboard rect by dragging handle `h` (corners 0-3, edge mids 4-7) to `pos`, keeping the
-/// opposite edge(s) fixed. `shift` constrains a CORNER drag to the original aspect ratio. Returns the
-/// normalised (x, y, w, h) with a 1pt minimum so the page never collapses.
-fn ab_resized(h: u8, ox: f32, oy: f32, ow: f32, oh: f32, pos: Pt, shift: bool) -> (f32, f32, f32, f32) {
+/// Resize an artboard rect by dragging handle `h` (corners 0-3, edge mids 4-7) to `pos`. Normally the
+/// opposite edge(s) stay fixed; `shift` locks a CORNER drag to the original aspect ratio; `alt` resizes
+/// from the CENTRE (the opposite edge mirrors, so the page grows/shrinks symmetrically). Returns the
+/// normalised (x, y, w, h) with a 1pt minimum so the page never collapses. (A11)
+#[allow(clippy::too_many_arguments)] // geometry knobs: handle + orig rect + pos + two modifiers
+fn ab_resized(h: u8, ox: f32, oy: f32, ow: f32, oh: f32, pos: Pt, shift: bool, alt: bool) -> (f32, f32, f32, f32) {
     let (mut x0, mut y0, mut x1, mut y1) = (ox, oy, ox + ow, oy + oh);
     let (ml, mr) = (matches!(h, 0 | 3 | 7), matches!(h, 1 | 2 | 5));
     let (mt, mb) = (matches!(h, 0 | 1 | 4), matches!(h, 2 | 3 | 6));
+    let (cx, cy) = (ox + ow * 0.5, oy + oh * 0.5); // the fixed centre when Alt mirrors
     if ml {
         x0 = pos[0];
     }
@@ -222,14 +225,35 @@ fn ab_resized(h: u8, ox: f32, oy: f32, ow: f32, oh: f32, pos: Pt, shift: bool) -
     if mb {
         y1 = pos[1];
     }
+    if alt {
+        // from-centre: the opposite edge mirrors the dragged one about the original centre
+        if ml {
+            x1 = 2.0 * cx - x0;
+        }
+        if mr {
+            x0 = 2.0 * cx - x1;
+        }
+        if mt {
+            y1 = 2.0 * cy - y0;
+        }
+        if mb {
+            y0 = 2.0 * cy - y1;
+        }
+    }
     if shift && matches!(h, 0..=3) && ow > 1e-3 && oh > 1e-3 {
-        let (fx, fy) = (if ml { x1 } else { x0 }, if mt { y1 } else { y0 }); // the fixed (opposite) corner
         let s = ((x1 - x0).abs() / ow).max((y1 - y0).abs() / oh);
         let (w, ht) = (ow * s, oh * s);
-        x0 = if ml { fx - w } else { fx };
-        x1 = if ml { fx } else { fx + w };
-        y0 = if mt { fy - ht } else { fy };
-        y1 = if mt { fy } else { fy + ht };
+        if alt {
+            // aspect-locked AND centred: symmetric box about the centre
+            (x0, x1) = (cx - w * 0.5, cx + w * 0.5);
+            (y0, y1) = (cy - ht * 0.5, cy + ht * 0.5);
+        } else {
+            let (fx, fy) = (if ml { x1 } else { x0 }, if mt { y1 } else { y0 }); // fixed opposite corner
+            x0 = if ml { fx - w } else { fx };
+            x1 = if ml { fx } else { fx + w };
+            y0 = if mt { fy - ht } else { fy };
+            y1 = if mt { fy } else { fy + ht };
+        }
     }
     (x0.min(x1), y0.min(y1), (x1 - x0).abs().max(1.0), (y1 - y0).abs().max(1.0))
 }
@@ -1247,7 +1271,7 @@ impl Editor {
                 let want_y = handle <= 3 || handle == 4 || handle == 6;
                 let (sp, guides) = self.snap_ab_xy(self.doc.active, pos, want_x, want_y);
                 self.snap_guides = guides;
-                let (x, y, w, h) = ab_resized(handle, ox, oy, ow, oh, sp, self.mods.shift);
+                let (x, y, w, h) = ab_resized(handle, ox, oy, ow, oh, sp, self.mods.shift, self.mods.alt);
                 if let Some(ab) = self.doc.active_artboard_mut() {
                     ab.x = x;
                     ab.y = y;
@@ -2761,10 +2785,16 @@ impl Editor {
                 let (dx0, dy0) = (h0_l[0] - pivot[0], h0_l[1] - pivot[1]);
                 let mut sx = if cx && dx0.abs() > 1e-3 { (lp[0] - pivot[0]) / dx0 } else { 1.0 };
                 let mut sy = if cy && dy0.abs() > 1e-3 { (lp[1] - pivot[1]) / dy0 } else { 1.0 };
-                if self.mods.shift && cx && cy {
-                    let m = sx.abs().max(sy.abs());
-                    sx = m.copysign(sx);
-                    sy = m.copysign(sy);
+                if self.mods.shift {
+                    if cx && cy {
+                        let m = sx.abs().max(sy.abs()); // corner → lock to the larger axis
+                        sx = m.copysign(sx);
+                        sy = m.copysign(sy);
+                    } else if cx {
+                        sy = sx.abs(); // A12: a mid-edge (width) handle keeps the ratio — height follows
+                    } else if cy {
+                        sx = sy.abs(); // a mid-edge (height) handle → width follows
+                    }
                 }
                 // live W×H readout (local bbox of the base × the scale)
                 let (mut lx0, mut ly0, mut lx1, mut ly1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
