@@ -480,8 +480,11 @@ impl Editor {
             if self.doc.eff_hidden(id) || self.doc.eff_locked(id) {
                 continue; // not clickable (cascades)
             }
-            let on_edge = self.doc.edge_dist(pi, pos).is_some_and(|d| d <= edge_r); // outer + hole rims (FB3)
-            let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, pos);
+            // A7 seam: map the cursor into the path's UNIT-local frame, then run the existing local-space
+            // tests. `edge_r` is rotation-invariant (distance). Identity ⇒ `lp == pos` (byte-for-byte).
+            let lp = self.doc.unit_xform(id).inverse_apply(pos);
+            let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= edge_r); // outer + hole rims (FB3)
+            let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
             if on_edge || in_fill {
                 return Some(id);
             }
@@ -552,7 +555,10 @@ impl Editor {
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &pid in &self.objsel {
             if let Some(pi) = self.doc.pidx(pid) {
+                // A7 seam: transform each unit's outline to WORLD before the AABB. Identity ⇒ today's box.
+                let xf = self.doc.unit_xform(pid);
                 for q in self.doc.outline(pi, 8) {
+                    let q = xf.apply(q);
                     x0 = x0.min(q[0]);
                     y0 = y0.min(q[1]);
                     x1 = x1.max(q[0]);

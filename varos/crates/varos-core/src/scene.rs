@@ -6,7 +6,6 @@
 
 use crate::editor::{Drag, Editor, SnapGuide, ToolKind, ANCHOR_R};
 use crate::geom::{add, cubic, dist, snap45, sub, Pt, Rgba};
-use crate::model::Document;
 use std::collections::HashSet;
 
 pub const ACCENT: Rgba = [0.047, 0.549, 0.914, 1.0];
@@ -190,9 +189,10 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         // that actually carry a fill colour reach here; a bare stroke line (fill None) never fills.
         if p.anchors.len() >= 3 {
             if let Some(c) = p.fill.solid() {
-                let mut rings = vec![ed.doc.outline_px(pi, ppu)];
+                // A7 seam: WORLD-space rings (unit transform composed). Identity ⇒ today's geometry.
+                let mut rings = vec![ed.doc.world_outline_px(pi, ppu)];
                 for hole in &p.holes {
-                    rings.push(Document::ring_px(hole, true, ppu));
+                    rings.push(ed.doc.world_ring_px(hole, pi, ppu));
                 }
                 match clip_rects(pi) {
                     Some(rects) => {
@@ -240,9 +240,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                     }
                     None => out.push(Prim::Stroke { pts, width: p.stroke_width, color: c, clip: None }),
                 };
-                push(ed.doc.outline_px(pi, ppu));
+                push(ed.doc.world_outline_px(pi, ppu)); // A7 seam: WORLD outline (identity ⇒ today)
                 for hole in &p.holes {
-                    let mut r = Document::ring_px(hole, true, ppu);
+                    let mut r = ed.doc.world_ring_px(hole, pi, ppu);
                     if let Some(&f) = r.first() {
                         r.push(f);
                     }
@@ -314,9 +314,15 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             continue;
         } // cascades from layer/group eyes
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
-            s.overlay.push(Prim::Stroke { pts: ed.doc.outline_px(pi, ppu), width: 1.7, color: ACCENT, clip: None });
+            // A7 seam: WORLD outline + hole rings (identity ⇒ today's geometry).
+            s.overlay.push(Prim::Stroke {
+                pts: ed.doc.world_outline_px(pi, ppu),
+                width: 1.7,
+                color: ACCENT,
+                clip: None,
+            });
             for hole in &ed.doc.paths[pi].holes {
-                let mut r = Document::ring_px(hole, true, ppu);
+                let mut r = ed.doc.world_ring_px(hole, pi, ppu);
                 if let Some(&f) = r.first() {
                     r.push(f);
                 }
@@ -333,7 +339,10 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             if n >= 2 {
                 let a = &p.anchors[i];
                 let b = &p.anchors[(i + 1) % n];
-                let (p0, p1, p2, p3) = (a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p);
+                // A7 seam: draw the segment at its WORLD position (identity ⇒ today's local points).
+                let xf = ed.doc.unit_xform(pid);
+                let (p0, p1, p2, p3) =
+                    (xf.apply(a.p), xf.apply(a.hout.unwrap_or(a.p)), xf.apply(b.hin.unwrap_or(b.p)), xf.apply(b.p));
                 let pts: Vec<Pt> = (0..=24).map(|k| cubic(p0, p1, p2, p3, k as f32 / 24.0)).collect();
                 s.overlay.push(Prim::Stroke { pts, width: 3.0, color: SEG_HI, clip: None });
             }
@@ -434,19 +443,26 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
     }
     for p in &ed.doc.paths {
+        let xf = ed.doc.unit_xform(p.id); // A7 seam: handles drawn at WORLD positions (identity ⇒ today)
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             if show.contains(&a.id) {
                 for h in [a.hin, a.hout].into_iter().flatten() {
-                    s.overlay.push(Prim::Stroke { pts: vec![a.p, h], width: 1.0, color: HANDLE_COL, clip: None });
+                    s.overlay.push(Prim::Stroke {
+                        pts: vec![xf.apply(a.p), xf.apply(h)],
+                        width: 1.0,
+                        color: HANDLE_COL,
+                        clip: None,
+                    });
                 }
             }
         }
     }
     for p in &ed.doc.paths {
+        let xf = ed.doc.unit_xform(p.id); // A7 seam
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             if show.contains(&a.id) {
                 for h in [a.hin, a.hout].into_iter().flatten() {
-                    s.overlay.push(Prim::Disc { c: h, r: 4.0, color: HANDLE_COL });
+                    s.overlay.push(Prim::Disc { c: xf.apply(h), r: 4.0, color: HANDLE_COL });
                 }
             }
         }
@@ -456,20 +472,22 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         if ed.doc.eff_hidden(p.id) || !ed.path_selected(p.id) || ed.tool == ToolKind::Object {
             continue;
         }
+        let xf = ed.doc.unit_xform(p.id); // A7 seam: markers at WORLD anchor positions (identity ⇒ today)
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             let sel = ed.selected.contains(&a.id);
+            let ap = xf.apply(a.p);
             if a.smooth {
                 if sel {
-                    s.overlay.push(Prim::Disc { c: a.p, r: 5.0, color: ACCENT });
+                    s.overlay.push(Prim::Disc { c: ap, r: 5.0, color: ACCENT });
                 } else {
-                    s.overlay.push(Prim::Disc { c: a.p, r: 5.5, color: ACCENT });
-                    s.overlay.push(Prim::Disc { c: a.p, r: 4.0, color: WHITE });
+                    s.overlay.push(Prim::Disc { c: ap, r: 5.5, color: ACCENT });
+                    s.overlay.push(Prim::Disc { c: ap, r: 4.0, color: WHITE });
                 }
             } else if sel {
-                s.overlay.push(Prim::Square { c: a.p, half: 4.5, color: ACCENT });
+                s.overlay.push(Prim::Square { c: ap, half: 4.5, color: ACCENT });
             } else {
-                s.overlay.push(Prim::Square { c: a.p, half: 5.0, color: ACCENT });
-                s.overlay.push(Prim::Square { c: a.p, half: 3.6, color: WHITE });
+                s.overlay.push(Prim::Square { c: ap, half: 5.0, color: ACCENT });
+                s.overlay.push(Prim::Square { c: ap, half: 3.6, color: WHITE });
             }
         }
     }
@@ -504,7 +522,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             SnapGuide::PathHi { pid } => {
                 if let Some(pi) = ed.doc.pidx(*pid) {
                     s.overlay.push(Prim::Stroke {
-                        pts: ed.doc.outline_px(pi, ppu),
+                        pts: ed.doc.world_outline_px(pi, ppu), // A7 seam (identity ⇒ today)
                         width: 2.0,
                         color: SNAP_GUIDE,
                         clip: None,
