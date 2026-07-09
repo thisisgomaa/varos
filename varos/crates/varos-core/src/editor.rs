@@ -117,6 +117,8 @@ pub enum TfAgain {
 pub enum AbDrag {
     None,
     // `pids` = the traveling art's path ids (excluded from snap targets while the page moves)
+    // A7: `piv` = the traveling rotated units' base xforms whose pivots the move carries (keeps θ live,
+    // mirrors `Drag::Object::piv_base`); empty for an all-identity selection ⇒ the plain-translate path.
     Move {
         grab: Pt,
         ox: f32,
@@ -126,6 +128,7 @@ pub enum AbDrag {
         boards: Vec<(usize, f32, f32)>,
         art: Vec<(u32, Pt, Option<Pt>, Option<Pt>)>,
         pids: Vec<u32>,
+        piv: Vec<(u32, Xform)>,
     },
     Resize {
         handle: u8,
@@ -1777,7 +1780,22 @@ impl Editor {
                     None => vec![],
                 };
                 let art = self.anchors_base(&pids);
-                self.ab_drag = AbDrag::Move { grab: pos, ox, oy, moved: false, reset_on_click, boards, art, pids };
+                // A7: rotated traveling units carry their pivot by the SAME delta as the page (translation
+                // commutes with rotation), so the art stays glued to its page and keeps its live rotation.
+                // Snapshot each distinct non-identity unit xform; identity units ⇒ empty ⇒ the plain
+                // local-anchor translate (un-rotated art stays byte-identical).
+                let mut piv: Vec<(u32, Xform)> = vec![];
+                for &pid in &pids {
+                    if let Some(u) = self.doc.unit_of(pid) {
+                        if !piv.iter().any(|(uid, _)| *uid == u) {
+                            let xf = self.doc.node_xform(u);
+                            if !xf.is_identity() {
+                                piv.push((u, xf));
+                            }
+                        }
+                    }
+                }
+                self.ab_drag = AbDrag::Move { grab: pos, ox, oy, moved: false, reset_on_click, boards, art, pids, piv };
             }
             None => {
                 // empty board → start a NEW page by dragging (resizing its BR corner). Tiny ⇒ dropped
@@ -1802,7 +1820,7 @@ impl Editor {
 
     pub fn ab_move(&mut self, pos: Pt) {
         match std::mem::replace(&mut self.ab_drag, AbDrag::None) {
-            AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids } => {
+            AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids, piv } => {
                 let mut d = sub(pos, grab);
                 let moved = moved || d[0].abs() > 0.001 || d[1].abs() > 0.001;
                 if self.mods.shift {
@@ -1829,7 +1847,13 @@ impl Editor {
                         a.hout = hout0.map(|h| add(h, d));
                     }
                 }
-                self.ab_drag = AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids };
+                // … and carry each rotated traveling unit's pivot by the SAME d (mirrors `Drag::Object`):
+                // translating both the local anchors and the pivot by d leaves θ untouched and the world
+                // result exact, so a rotated object tracks its page 1:1 instead of moving by R·d.
+                for (unit, base_xf) in &piv {
+                    self.doc.set_node_xform(*unit, base_xf.translated(d));
+                }
+                self.ab_drag = AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids, piv };
                 self.dirty = true;
             }
             AbDrag::Resize { handle, ox, oy, ow, oh } => {
@@ -3748,6 +3772,21 @@ impl Editor {
             return;
         }
         self.begin();
+        // A7: a Direct-tool marquee can select anchors across rotated units WITHOUT baking
+        // (`Drag::Marquee`), so writing a WORLD [dx,dy] into LOCAL storage slides the anchor along the
+        // rotated axis. Bake every spanned unit first (exactly as `begin_anchor_drag`) so [dx,dy] is a true
+        // world nudge. `bake_unit` early-returns on identity ⇒ un-rotated selections stay byte-identical.
+        let mut units: Vec<u32> = vec![];
+        for &aid in &self.selected {
+            if let Some(u) = self.doc.pid_of_anchor(aid).and_then(|pid| self.doc.unit_of(pid)) {
+                if !units.contains(&u) {
+                    units.push(u);
+                }
+            }
+        }
+        for u in units {
+            self.dirty |= self.bake_unit(u);
+        }
         let ids: Vec<u32> = self.selected.iter().copied().collect();
         for aid in ids {
             if let Some(a) = self.doc.anchor_mut(aid) {

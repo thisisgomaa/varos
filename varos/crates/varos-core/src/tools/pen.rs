@@ -46,7 +46,12 @@ impl Tool for Pen {
         if let Some(pid) = ed.path_under(pos) {
             if ed.is_editable(pid) {
                 if let Some(pi) = ed.doc.pidx(pid) {
-                    if let Some((i, t, d)) = ed.doc.nearest_seg(pi, pos) {
+                    // A7: `nearest_seg` matches the cursor against LOCAL geometry — map the WORLD cursor into
+                    // the unit's local frame first (a rigid, distance-preserving rotation, so `EDGE_R` still
+                    // holds) so clicking a rotated path's segment inserts under the cursor. Identity unit ⇒
+                    // `lpos == pos` (byte-for-byte); the path keeps its live rotation (no bake).
+                    let lpos = ed.doc.unit_xform(pid).inverse_apply(pos);
+                    if let Some((i, t, d)) = ed.doc.nearest_seg(pi, lpos) {
                         if d <= EDGE_R {
                             let nid = ed.add_anchor(pi, i, t);
                             ed.selected.insert(nid);
