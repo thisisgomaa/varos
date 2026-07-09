@@ -19,6 +19,51 @@ pub struct Anchor {
     pub smooth: bool,
 }
 
+/// A7 live per-object transform (A7_LIVE_TRANSFORM_PLAN §1): a rigid rotation `rot` (radians) about a
+/// pivot `piv`. **Identity == `rot 0`** (pivot irrelevant then), where `world == local` so an un-rotated
+/// unit is byte-for-byte today's baked geometry. This is the seam's VALUE TYPE — the internal
+/// representation stays behind `apply`/`inverse_apply` (+ `Document::unit_xform`), so it can later become
+/// a 2×3 affine with a one-file change (the same HARD-SEAM discipline `paint_list`/`unit_of` use). Plain
+/// floats ⇒ derive serde. **Until Stage 4 nothing writes a non-identity value, so it changes nothing.**
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Xform {
+    /// rotation in radians; identity == 0.0
+    pub rot: f32,
+    /// the pivot the rotation is about (world and local coincide at identity)
+    pub piv: Pt,
+}
+impl Default for Xform {
+    fn default() -> Self {
+        Xform { rot: 0.0, piv: [0.0, 0.0] }
+    }
+}
+impl Xform {
+    /// Identity ⇒ `apply`/`inverse_apply` return the point untouched (byte-for-byte), so an un-rotated
+    /// unit renders/hits exactly as today. Threshold ≈ a rotation of 1e-7 rad (visually zero). Doubles as
+    /// the `skip_serializing_if` predicate so un-rotated units serialize without the field.
+    pub fn is_identity(&self) -> bool {
+        self.rot.abs() < 1e-7
+    }
+    /// local → world: rotate `p` about the pivot by `rot` (reuses `geom::rotate_about`). Identity
+    /// returns `p` unchanged.
+    pub fn apply(&self, p: Pt) -> Pt {
+        if self.is_identity() {
+            p
+        } else {
+            rotate_about(p, self.piv, self.rot)
+        }
+    }
+    /// world → local: the inverse rotation — used to map a cursor into a unit's local frame for hit-test.
+    /// Identity returns `p` unchanged.
+    pub fn inverse_apply(&self, p: Pt) -> Pt {
+        if self.is_identity() {
+            p
+        } else {
+            rotate_about(p, self.piv, -self.rot)
+        }
+    }
+}
+
 /// A path's paint — fill or stroke. The load-bearing colour representation (COLOR_SPEC §1.5): today
 /// only `None` (no paint) and `Solid(rgba)` exist, but making paint an ENUM is the single structural
 /// change that lets swatch-refs and gradients slot in ADDITIVELY later — with no second field
@@ -211,6 +256,14 @@ pub struct Node {
     /// nodes. `#[serde(default)]` ⇒ old `.vrs` files load unchanged (false = clipped as before).
     #[serde(default)]
     pub clip_exempt: bool,
+    /// A7 live per-object transform (A7_LIVE_TRANSFORM_PLAN §1). Stored on the UNIT node (top-level group,
+    /// else the path's own leaf) — the SAME key the scene clip map / `unit_of` use, so a whole group
+    /// rotates as ONE rigid unit and members stay identity. **Identity (`rot 0`) until Stage 4 wires
+    /// rotate to write it**, so today it changes nothing. Read ONLY through `Document::unit_xform` (the
+    /// seam). `#[serde(default, skip_serializing_if)]` ⇒ old `.vrs` files load unchanged (absent ⇒
+    /// identity) and un-rotated new files stay byte-clean.
+    #[serde(default, skip_serializing_if = "Xform::is_identity")]
+    pub xform: Xform,
 }
 
 /// A single artboard (a defined PAGE) on the infinite board, in world points (1pt = 1/72in). The
@@ -449,6 +502,7 @@ impl Default for Document {
                 locked: false,
                 color: None,
                 clip_exempt: false,
+                xform: Xform::default(),
             }],
             roots: vec![1],
             active_layer: 1,
@@ -677,11 +731,34 @@ impl Document {
     pub fn outline_px(&self, pi: usize, ppu: f32) -> Vec<Pt> {
         Self::ring_px(&self.paths[pi].anchors, self.paths[pi].closed, ppu)
     }
+    /// WORLD-space outer outline (the A7 render seam): `outline_px` mapped through the path's unit
+    /// transform. Identity ⇒ returns the local polyline UNTOUCHED (byte-for-byte today's geometry).
+    pub fn world_outline_px(&self, pi: usize, ppu: f32) -> Vec<Pt> {
+        let out = self.outline_px(pi, ppu);
+        let xf = self.unit_xform(self.paths[pi].id);
+        if xf.is_identity() {
+            return out;
+        }
+        out.into_iter().map(|p| xf.apply(p)).collect()
+    }
+    /// WORLD-space hole ring (always closed): `ring_px` mapped through the OWNING path's unit transform.
+    /// Identity ⇒ the local ring untouched. `pi` is the owning path (its unit supplies the transform).
+    pub fn world_ring_px(&self, hole: &[Anchor], pi: usize, ppu: f32) -> Vec<Pt> {
+        let ring = Self::ring_px(hole, true, ppu);
+        let xf = self.unit_xform(self.paths[pi].id);
+        if xf.is_identity() {
+            return ring;
+        }
+        ring.into_iter().map(|p| xf.apply(p)).collect()
+    }
 
-    /// Visual (outline) bounding box of one path — used for align / distribute.
+    /// Visual (outline) bounding box of one path — used for align / distribute. WORLD-space: composes the
+    /// path's unit transform (the A7 seam) so the box tracks the true rotated extent. Identity ⇒ today.
     pub fn outline_bbox(&self, pi: usize) -> (f32, f32, f32, f32) {
+        let xf = self.unit_xform(self.paths[pi].id);
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for q in self.outline(pi, 12) {
+            let q = xf.apply(q);
             x0 = x0.min(q[0]);
             y0 = y0.min(q[1]);
             x1 = x1.max(q[0]);
@@ -865,6 +942,13 @@ impl Document {
     pub fn unit_of(&self, pid: u32) -> Option<u32> {
         self.top_group_of_path(pid).or_else(|| self.node_of_path(pid))
     }
+    /// THE A7 TRANSFORM SEAM (A7_LIVE_TRANSFORM_PLAN §1): the live rigid transform for a path's UNIT
+    /// (its top-level group node, else its own leaf) — identity if none. Every consumer that needs a
+    /// path's WORLD geometry funnels through this ONE indirection (mirrors `paint_list`/`unit_of`), so
+    /// Stage 4 can flip the representation in exactly one place with no call-site churn. Identity today.
+    pub fn unit_xform(&self, pid: u32) -> Xform {
+        self.unit_of(pid).and_then(|n| self.node(n)).map(|n| n.xform).unwrap_or_default()
+    }
     /// A30: is this unit node released from artboard clip (its top-level item bleeds outside)?
     pub fn node_clip_exempt(&self, nid: u32) -> bool {
         self.node(nid).is_some_and(|n| n.clip_exempt)
@@ -957,6 +1041,7 @@ impl Document {
             locked: false,
             color: None,
             clip_exempt: false,
+            xform: Xform::default(),
         });
         for &u in &units {
             if let Some(par) = self.node(u).and_then(|n| n.parent) {
@@ -1049,6 +1134,7 @@ impl Document {
                 locked: false,
                 color: None,
                 clip_exempt: false,
+                xform: Xform::default(),
             });
             gmap.insert(og, ng);
         }
@@ -1066,6 +1152,7 @@ impl Document {
                     locked: false,
                     color: None,
                     clip_exempt: false,
+                    xform: Xform::default(),
                 });
                 leafmap.insert(old_leaf, nl);
             }
@@ -1195,6 +1282,7 @@ impl Document {
                 locked: false,
                 color: None,
                 clip_exempt: false,
+                xform: Xform::default(),
             });
             self.roots.push(id);
         }
@@ -1214,6 +1302,7 @@ impl Document {
                 locked: false,
                 color: None,
                 clip_exempt: false,
+                xform: Xform::default(),
             });
             gmap.insert(g.id, id);
         }
@@ -1238,6 +1327,7 @@ impl Document {
                 locked: false,
                 color: None,
                 clip_exempt: false,
+                xform: Xform::default(),
             });
             self.attach_front(id);
         }
@@ -1304,6 +1394,7 @@ impl Document {
                 locked: false,
                 color: None,
                 clip_exempt: false,
+                xform: Xform::default(),
             });
             self.roots.insert(0, id);
         }
@@ -1332,6 +1423,7 @@ impl Document {
                 locked: false,
                 color: None,
                 clip_exempt: false,
+                xform: Xform::default(),
             });
             if let Some(h) = self.node_mut(host) {
                 h.children.insert(0, id);
@@ -1492,6 +1584,7 @@ impl Document {
                         locked: false,
                         color: None,
                         clip_exempt: false,
+                        xform: Xform::default(),
                     });
                     cid
                 })

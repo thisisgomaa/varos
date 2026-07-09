@@ -3,7 +3,7 @@
 //! before with one implicit "Layer 1".
 
 use varos_core::editor::{Editor, ToolKind};
-use varos_core::model::{Anchor, Document, DropPos, Node, NodeKind, PaintRole, Path};
+use varos_core::model::{Anchor, Document, DropPos, Node, NodeKind, PaintRole, Path, Xform};
 
 fn anc(id: u32, x: f32, y: f32) -> Anchor {
     Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
@@ -173,6 +173,7 @@ fn selection_square_moves_and_copies_art_across_layers() {
             locked: false,
             color: None,
             clip_exempt: false,
+            xform: Xform::default(),
         });
         d.roots.insert(0, id);
         id
@@ -318,6 +319,7 @@ fn a_second_layer_receives_new_drawings() {
             locked: false,
             color: None,
             clip_exempt: false,
+            xform: Xform::default(),
         });
         d.roots.insert(0, id); // above Layer 1
         id
