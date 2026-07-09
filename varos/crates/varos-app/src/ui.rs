@@ -51,15 +51,18 @@ const IC_STROKEW: &str = r#"<path d="M3 7h18" stroke-width="1.3"/><path d="M3 12
 const IC_LINK: &str = r#"<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>"#;
 const IC_FLIPH: &str = r#"<path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/>"#;
 const IC_FLIPV: &str = r#"<path d="M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/>"#;
-// object-alignment icons: align L / centre-H / R · T / middle / B, then distribute H / V
-const IC_AL_L: &str = r#"<line x1="3" y1="4" x2="3" y2="20"/><rect x="3" y="6" width="14" height="4" rx="1"/><rect x="3" y="14" width="9" height="4" rx="1"/>"#;
-const IC_AL_CH: &str = r#"<line x1="12" y1="4" x2="12" y2="20"/><rect x="5" y="6" width="14" height="4" rx="1"/><rect x="7.5" y="14" width="9" height="4" rx="1"/>"#;
-const IC_AL_R: &str = r#"<line x1="21" y1="4" x2="21" y2="20"/><rect x="7" y="6" width="14" height="4" rx="1"/><rect x="12" y="14" width="9" height="4" rx="1"/>"#;
-const IC_AL_T: &str = r#"<line x1="4" y1="3" x2="20" y2="3"/><rect x="6" y="3" width="4" height="14" rx="1"/><rect x="14" y="3" width="4" height="9" rx="1"/>"#;
-const IC_AL_M: &str = r#"<line x1="4" y1="12" x2="20" y2="12"/><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="7.5" width="4" height="9" rx="1"/>"#;
-const IC_AL_B: &str = r#"<line x1="4" y1="21" x2="20" y2="21"/><rect x="6" y="7" width="4" height="14" rx="1"/><rect x="14" y="12" width="4" height="9" rx="1"/>"#;
-const IC_DIST_H: &str = r#"<rect x="3" y="6" width="3" height="12" rx="1"/><rect x="10.5" y="6" width="3" height="12" rx="1"/><rect x="18" y="6" width="3" height="12" rx="1"/>"#;
-const IC_DIST_V: &str = r#"<rect x="6" y="3" width="12" height="3" rx="1"/><rect x="6" y="10.5" width="12" height="3" rx="1"/><rect x="6" y="18" width="12" height="3" rx="1"/>"#;
+// object-alignment icons: align L / centre-H / R · T / middle / B, then distribute H / V.
+// FILLED glyphs — law-verbatim from UI_VISION_MOCKUP.html:176–181 (a solid guide bar + two solid bars);
+// loaded through `load_icon_filled` (white fill, no stroke) so they read bold at 16px like the mockup.
+const IC_AL_L: &str = r#"<path d="M4 3.5h1.6v17H4z"/><rect x="7.5" y="6.5" width="9" height="4"/><rect x="7.5" y="13.5" width="13" height="4"/>"#;
+const IC_AL_CH: &str = r#"<path d="M11.2 3.5h1.6v17h-1.6z"/><rect x="7" y="6.5" width="10" height="4"/><rect x="4.5" y="13.5" width="15" height="4"/>"#;
+const IC_AL_R: &str = r#"<path d="M18.4 3.5H20v17h-1.6z"/><rect x="7.5" y="6.5" width="9" height="4"/><rect x="3.5" y="13.5" width="13" height="4"/>"#;
+const IC_AL_T: &str = r#"<path d="M3.5 4h17v1.6h-17z"/><rect x="6.5" y="7.5" width="4" height="9"/><rect x="13.5" y="7.5" width="4" height="13"/>"#;
+const IC_AL_M: &str = r#"<path d="M3.5 11.2h17v1.6h-17z"/><rect x="6.5" y="7" width="4" height="10"/><rect x="13.5" y="4.5" width="4" height="15"/>"#;
+const IC_AL_B: &str = r#"<path d="M3.5 18.4h17V20h-17z"/><rect x="6.5" y="7.5" width="4" height="9"/><rect x="13.5" y="3.5" width="4" height="13"/>"#;
+// FILLED distribute glyphs — same language (three solid bars; no rx so they read as bars, not pills)
+const IC_DIST_H: &str = r#"<rect x="3" y="6" width="3" height="12"/><rect x="10.5" y="6" width="3" height="12"/><rect x="18" y="6" width="3" height="12"/>"#;
+const IC_DIST_V: &str = r#"<rect x="6" y="3" width="12" height="3"/><rect x="6" y="10.5" width="12" height="3"/><rect x="6" y="18" width="12" height="3"/>"#;
 // top-bar icons: menu (☰). Window min/max/close are painted directly in `winctl` (crisp Win11 glyphs).
 const IC_MENU: &str = r#"<path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/>"#;
 // top-bar content icons: search · layout · panels checklist · new-tab · tab-close · check
@@ -676,14 +679,15 @@ pub struct Ui {
     ic_portrait: Option<egui::TextureHandle>,
     ic_landscape: Option<egui::TextureHandle>,
     ic_fit: Option<egui::TextureHandle>,
+    ic_pipette: Option<egui::TextureHandle>, // real Lucide pipette (IC_EYE) for the picker eyedropper (A16.2)
     align_icons: [Option<egui::TextureHandle>; 8], // align L/CH/R · T/M/B · distribute H/V
-    cursor: egui::CursorIcon, // this frame's egui cursor (read from FullOutput, not post-frame state)
-    refpt: (f32, f32),        // transform reference point (ax, ay each in {0, .5, 1})
-    lock: bool,               // constrain W/H proportions
-    ab_lock: bool,            // constrain artboard W/H proportions
-    align_target: AlignTarget, // A4: Auto (smart) | Selection | Artboard — the align reference pref
-    ab_name_edit: Option<(usize, String)>, // inline rename in progress (artboard index + buffer)
-    pub fit_request: Option<usize>, // an artboard asked to be fit in the window (host applies it)
+    cursor: egui::CursorIcon,                // this frame's egui cursor (read from FullOutput, not post-frame state)
+    refpt: (f32, f32),                       // transform reference point (ax, ay each in {0, .5, 1})
+    lock: bool,                              // constrain W/H proportions
+    ab_lock: bool,                           // constrain artboard W/H proportions
+    align_target: AlignTarget,               // A4: Auto (smart) | Selection | Artboard — the align reference pref
+    ab_name_edit: Option<(usize, String)>,   // inline rename in progress (artboard index + buffer)
+    pub fit_request: Option<usize>,          // an artboard asked to be fit in the window (host applies it)
     top: TopIcons,
     pub win_action: Option<WinAction>, // a window control was clicked this frame (host acts on it)
     show_rail: bool,
@@ -722,6 +726,18 @@ struct LayerIcons {
 /// Rasterize a Lucide icon (white) to an egui texture once.
 fn load_icon(ctx: &egui::Context, name: &str, svg_inner: &str) -> Option<egui::TextureHandle> {
     crate::cursors::render_svg(&lucide(svg_inner), 96, false).map(|(rgba, w, h)| {
+        ctx.load_texture(
+            name,
+            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
+            egui::TextureOptions::LINEAR,
+        )
+    })
+}
+
+/// Rasterize a FILLED glyph (white fill, no stroke) to an egui texture once — mirror of `load_icon` for
+/// icons the law draws solid (the align/distribute bars, UI_VISION_MOCKUP.html:176–181).
+fn load_icon_filled(ctx: &egui::Context, name: &str, svg_inner: &str) -> Option<egui::TextureHandle> {
+    crate::cursors::render_svg(&lucide_filled(svg_inner), 96, false).map(|(rgba, w, h)| {
         ctx.load_texture(
             name,
             egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
@@ -781,15 +797,18 @@ impl Ui {
         let ic_portrait = load_icon(&ctx, "lbl-portrait", IC_PORTRAIT);
         let ic_landscape = load_icon(&ctx, "lbl-landscape", IC_LANDSCAPE);
         let ic_fit = load_icon(&ctx, "lbl-fit", IC_FIT);
+        // A16.2: reuse the real Lucide pipette (IC_EYE) for the picker's in-picker eyedropper.
+        let ic_pipette = load_icon(&ctx, "lbl-pipette", IC_EYE);
+        // A16.1: FILLED (law-verbatim solid bars) loaded via load_icon_filled so they read bold at 16px.
         let align_icons = [
-            load_icon(&ctx, "al-l", IC_AL_L),
-            load_icon(&ctx, "al-ch", IC_AL_CH),
-            load_icon(&ctx, "al-r", IC_AL_R),
-            load_icon(&ctx, "al-t", IC_AL_T),
-            load_icon(&ctx, "al-m", IC_AL_M),
-            load_icon(&ctx, "al-b", IC_AL_B),
-            load_icon(&ctx, "dist-h", IC_DIST_H),
-            load_icon(&ctx, "dist-v", IC_DIST_V),
+            load_icon_filled(&ctx, "al-l", IC_AL_L),
+            load_icon_filled(&ctx, "al-ch", IC_AL_CH),
+            load_icon_filled(&ctx, "al-r", IC_AL_R),
+            load_icon_filled(&ctx, "al-t", IC_AL_T),
+            load_icon_filled(&ctx, "al-m", IC_AL_M),
+            load_icon_filled(&ctx, "al-b", IC_AL_B),
+            load_icon_filled(&ctx, "dist-h", IC_DIST_H),
+            load_icon_filled(&ctx, "dist-v", IC_DIST_V),
         ];
         let top = TopIcons {
             menu: load_icon(&ctx, "tb-menu", IC_MENU),
@@ -833,6 +852,7 @@ impl Ui {
             ic_portrait,
             ic_landscape,
             ic_fit,
+            ic_pipette,
             align_icons,
             cursor: egui::CursorIcon::Default,
             refpt: (0.0, 0.0),
@@ -969,6 +989,7 @@ impl Ui {
             fit: &self.ic_fit,
         };
         let ic_fit = &self.ic_fit; // the status strip's Fit control shares the artboard panel's icon
+        let ic_pipette = &self.ic_pipette; // A16.2: the real pipette for the picker's in-picker eyedropper
         let shell = &mut self.shell; // Stage 4: the box tree hosting the whole workspace
         let prev_hole = self.board_hole; // last frame's canvas hole (the seam underlay paints around it)
         let mut new_hole: Option<egui::Rect> = None;
@@ -1125,7 +1146,8 @@ impl Ui {
                 );
                 build_snap_hud(ctx, view, ppp, hole, &snap_hud);
                 build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
-                build_color_modal(ctx, &mut color_modal, &snap, &mut ops); // over everything
+                build_color_modal(ctx, &mut color_modal, &snap, ic_pipette, &mut ops);
+                // over everything
             }
         });
         self.color_modal = color_modal;
@@ -1218,6 +1240,15 @@ fn lucide(inner: &str) -> String {
     format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" \
              stroke=\"#ffffff\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">{inner}</svg>"
+    )
+}
+
+/// Same as `lucide()` but SOLID (white fill, no stroke) — for glyphs the law draws filled, matching the
+/// pathfinder set Ahmed approved. Fixes the align/distribute icons reading weak as thin double outlines.
+fn lucide_filled(inner: &str) -> String {
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" \
+             fill=\"#ffffff\" stroke=\"none\">{inner}</svg>"
     )
 }
 
@@ -1899,7 +1930,8 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
     let v = m.hsva[2];
     ui.horizontal_top(|ui| {
         // ── the H×S disc (a fan mesh from a grey centre to full-sat rim; radial interp is EXACT for HSV) ──
-        let d = 236.0;
+        // 240 (not 236) so the Wheel colour area matches the Picker plane exactly — no ~4px tab-switch jump (A17 P1).
+        let d = 240.0;
         let (dr, dresp) = ui.allocate_exact_size(egui::vec2(d, d), egui::Sense::click_and_drag());
         let c = dr.center();
         let rad = d * 0.5 - 1.0;
@@ -2008,10 +2040,11 @@ fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
             ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
             for gc in harmony_set(m.harmony, [m.hsva[0], m.hsva[1], m.hsva[2]]) {
                 let (r, resp) = ui.allocate_exact_size(egui::vec2(30.0, 22.0), egui::Sense::click());
-                ui.painter().rect_filled(r, CornerRadius::same(4), rgb_c32(hsv_to_rgb(gc[0], gc[1], gc[2])));
+                // radius R (not the stray r=4) so every control in the dialog shares one radius (A17 P4)
+                ui.painter().rect_filled(r, CornerRadius::same(R), rgb_c32(hsv_to_rgb(gc[0], gc[1], gc[2])));
                 ui.painter().rect_stroke(
                     r,
-                    CornerRadius::same(4),
+                    CornerRadius::same(R),
                     Stroke::new(1.0, if resp.hovered() { Color32::WHITE } else { BORDER_2 }),
                     StrokeKind::Middle,
                 );
@@ -2060,8 +2093,9 @@ fn modal_adopt(m: &mut ColorModal, c: Rgba) {
     m.hsva[3] = c[3];
 }
 
-/// The picker header's eyedropper button — a hand-painted pipette (A17). Accent while armed (A5).
-fn eyedropper_btn(ui: &mut egui::Ui, armed: bool) -> bool {
+/// The picker header's eyedropper button — the REAL Lucide pipette texture (A16.2, `IC_EYE`), the same
+/// glyph as the Eyedropper tool, so the app shows ONE pipette everywhere. Accent while armed (A5).
+fn eyedropper_btn(ui: &mut egui::Ui, pipette: &Option<egui::TextureHandle>, armed: bool) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::click());
     let rr = CornerRadius::same(R);
     if armed {
@@ -2069,16 +2103,14 @@ fn eyedropper_btn(ui: &mut egui::Ui, armed: bool) -> bool {
     } else if resp.hovered() {
         ui.painter().rect_filled(r, rr, HOVER);
     }
-    let col = if armed { Color32::WHITE } else { MUTED };
-    let c = r.center();
-    let p = ui.painter();
-    // a small pipette: barrel from a lower-left tip up to an upper-right bulb, a squeeze cap, a drop
-    let tip = egui::pos2(c.x - 5.0, c.y + 5.0);
-    let bulb = egui::pos2(c.x + 5.0, c.y - 5.0);
-    p.line_segment([tip, egui::pos2(c.x + 2.0, c.y - 2.0)], Stroke::new(1.6, col));
-    p.line_segment([egui::pos2(c.x + 0.5, c.y - 3.5), egui::pos2(c.x + 4.0, c.y)], Stroke::new(2.6, col));
-    p.circle_filled(bulb, 1.9, col);
-    p.circle_filled(egui::pos2(tip.x - 0.5, tip.y + 1.5), 1.2, col);
+    if let Some(t) = pipette {
+        ui.painter().image(
+            t.id(),
+            egui::Rect::from_center_size(r.center(), egui::vec2(14.0, 14.0)),
+            UV01(),
+            if armed { Color32::WHITE } else { MUTED },
+        );
+    }
     resp.on_hover_text("Eyedropper \u{2014} sample a colour from anywhere on screen").clicked()
 }
 
@@ -2160,7 +2192,13 @@ fn snap_target_color(snap: &Snap, t: PaintTarget) -> Option<Rgba> {
 /// RECENT/DOCUMENT strips. A6: the target updates LIVE as you drag, the whole interaction is ONE undo
 /// step (OK commits it, Cancel/Esc reverts to the value at open). A19: a Fill/Stroke indicator + switch.
 /// A17: an in-picker eyedropper that samples anywhere on screen (A5). Enter = OK when no field focused.
-fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: &Snap, ops: &mut Vec<Op>) {
+fn build_color_modal(
+    ctx: &egui::Context,
+    modal: &mut Option<ColorModal>,
+    snap: &Snap,
+    pipette: &Option<egui::TextureHandle>,
+    ops: &mut Vec<Op>,
+) {
     if modal.is_none() {
         return;
     }
@@ -2189,9 +2227,10 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                             let on = m.tab == tab;
                             let (r, resp) = ui.allocate_exact_size(egui::vec2(54.0, 22.0), egui::Sense::click());
                             let rr = CornerRadius::same(R);
+                            // ONE active language across the dialog: accent FILL + white text (like Fill/Stroke
+                            // & the harmony pills), not the old accent-outline variant (A17 P3).
                             if on {
-                                ui.painter().rect_filled(r, rr, BG_SURFACE);
-                                ui.painter().rect_stroke(r, rr, Stroke::new(1.0, ACCENT), StrokeKind::Middle);
+                                ui.painter().rect_filled(r, rr, ACCENT);
                             } else if resp.hovered() {
                                 ui.painter().rect_filled(r, rr, HOVER);
                             }
@@ -2200,7 +2239,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                                 Align2::CENTER_CENTER,
                                 label,
                                 FontId::proportional(12.0),
-                                if on { TEXT } else { MUTED },
+                                if on { Color32::WHITE } else { MUTED },
                             );
                             if resp.clicked() {
                                 m.tab = tab;
@@ -2210,7 +2249,7 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                             if mini_btn(ui, "×", "Close (Esc)") {
                                 cancel = true;
                             }
-                            if eyedropper_btn(ui, m.eyedropping) {
+                            if eyedropper_btn(ui, pipette, m.eyedropping) {
                                 // arm the system eyedropper; the initiating click is still down, so
                                 // remember that and commit on the NEXT fresh global press (A5).
                                 m.eyedropping = true;
@@ -2341,7 +2380,9 @@ fn build_color_modal(ctx: &egui::Context, modal: &mut Option<ColorModal>, snap: 
                                 }); // close the Picker plane+slider+alpha row
                             } // close: else (the Picker tab)
                         }); // close the left-region vertical (Picker plane OR Wheel)
-                            // ── right column (shared by both tabs) ──
+                        ui.add_space(16.0);
+                        // ── right column (shared by both tabs); the 16px gap above sets the colour
+                        //    "art" zone apart from the numeric "controls" zone (A17 P6) ──
                         ui.vertical(|ui| {
                             ui.set_width(176.0);
                             // new / current split preview + OK / Cancel
@@ -3383,6 +3424,10 @@ fn board_ctlbar(
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
+                    // Pin the bar to the law's fixed 36px height (UI_VISION_MOCKUP.html:67 `.ctlbar{height:36px}`):
+                    // the frame's 5+5 vertical margin + a 26px content row = 36, regardless of which context
+                    // (Artboard / selection / idle) fills the bar, so its height never shifts (A14.2).
+                    ui.set_min_height(26.0);
                     if s.tool == ToolKind::Artboard {
                         // page mirrors: name · X/Y/W/H · count · Fit
                         let i = ab.active;
@@ -3485,7 +3530,7 @@ fn board_ctlbar(
                             }
                         }
                         bar_sep(ui);
-                        pathfinder_row(ui, ops); // the essential shape modes, in reach (Ahmed 07-07)
+                        pathfinder_row(ui, ops, true); // compact bar mirror — the essential shape modes, in reach (Ahmed 07-07)
                     } else {
                         // idle: the current tool + a quiet hint — the bar keeps its place. While the Pen is
                         // mid-draft the hint reflects the ACT, not the (still-empty) selection (P9).
@@ -4396,7 +4441,7 @@ fn panel_properties(
             hsep(ui, inner);
             ui.label(RichText::new("SHAPE").color(MUTED).size(10.0).strong());
             ui.add_space(2.0);
-            pathfinder_row(ui, ops); // a MIRROR of the Pathfinder home (the mockup's Shape section)
+            pathfinder_row(ui, ops, false); // a MIRROR of the Pathfinder home (the mockup's Shape section) — roomy dock size
 
             // A30 — per-element release from artboard clip. Shown only when an object is selected AND
             // some board clips (otherwise the toggle would do nothing visible). ON = clipped to the
@@ -4573,7 +4618,7 @@ fn panel_pathfinder(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
         ui.label(RichText::new("SHAPE MODES").color(MUTED).size(10.0).strong());
         ui.add_space(2.0);
-        pathfinder_row(ui, ops);
+        pathfinder_row(ui, ops, false); // the roomier dock home
         ui.add_space(4.0);
         ui.label(RichText::new("Unite \u{b7} Minus Front \u{b7} Intersect \u{b7} Exclude").color(FAINT).size(10.5));
     });
@@ -4581,7 +4626,8 @@ fn panel_pathfinder(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
 
 /// The four boolean buttons (Unite / Minus Front / Intersect / Exclude) — hand-painted glyphs:
 /// two overlapping squares with the op's region filled. Shared by the Pathfinder home + Shape mirror.
-fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
+/// `compact` = the control-bar mirror (26×26, sized to the other bar controls); false = the roomier dock.
+fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>, compact: bool) {
     use varos_core::boolean::BoolOp;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -4591,29 +4637,33 @@ fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
             (BoolOp::Intersect, "Intersect"),
             (BoolOp::Exclude, "Exclude"),
         ] {
-            if pf_btn(ui, op, tip) {
+            if pf_btn(ui, op, tip, compact) {
                 ops.push(Op::Bool(op));
             }
         }
     });
 }
 
-/// One pathfinder button: 34×28 hover chip; the glyph = two 14px rounded squares overlapped by 6 (A16:
-/// bigger + bolder + WHITE-on-hover so the boolean icons read as clearly as the SVG align/rail icons).
-fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str) -> bool {
+/// One pathfinder button. Dock: 34×28 chip, 14px squares. Bar mirror (`compact`): 26×26 chip, 12px
+/// squares — so it no longer towers over the 24–26px bar controls (A14.1). WHITE-on-hover / MUTED at rest
+/// so the boolean icons read as clearly as the SVG align/rail icons.
+fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str, compact: bool) -> bool {
     use varos_core::boolean::BoolOp;
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(34.0, 28.0), egui::Sense::click());
+    let chip = if compact { egui::vec2(26.0, 26.0) } else { egui::vec2(34.0, 28.0) };
+    let (rect, resp) = ui.allocate_exact_size(chip, egui::Sense::click());
     let p = ui.painter();
     if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(3), HOVER);
     }
     // match the align/rail icon contrast exactly: pure white on hover, MUTED at rest (not the dimmer TEXT)
     let col = if resp.hovered() { Color32::WHITE } else { MUTED };
-    // bigger squares (14) with a clearer overlap read stronger than the old thin 12px pair
-    let a = egui::Rect::from_min_size(rect.center() - egui::vec2(11.0, 9.0), egui::vec2(14.0, 14.0));
-    let b = egui::Rect::from_min_size(rect.center() - egui::vec2(3.0, 5.0), egui::vec2(14.0, 14.0));
+    // two overlapping squares; `oa`/`ob` are symmetric about the centre so the pair stays centred in the chip
+    let sq = if compact { 12.0 } else { 14.0 };
+    let (oax, oay) = if compact { (9.5, 7.75) } else { (11.0, 9.0) };
+    let a = egui::Rect::from_min_size(rect.center() - egui::vec2(oax, oay), egui::vec2(sq, sq));
+    let b = egui::Rect::from_min_size(rect.center() - egui::vec2(sq - oax, sq - oay), egui::vec2(sq, sq));
     let rr = CornerRadius::same(2);
-    let sw = 1.4; // bolder outline than the old 1.0 hairline
+    let sw = if compact { 1.3 } else { 1.4 }; // bolder outline than the old 1.0 hairline
     match op {
         BoolOp::Unite => {
             p.rect_filled(a, rr, col);
