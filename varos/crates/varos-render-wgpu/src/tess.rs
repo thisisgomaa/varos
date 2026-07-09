@@ -274,10 +274,14 @@ pub fn scissor_px(rect: [f32; 4], view: View, w: f32, h: f32) -> Option<[u32; 4]
 
 /// How to draw one content Group on the GPU. `Layer` is an isolated translucent object: render its draws
 /// opaquely into an offscreen buffer, then composite `quad` (a fullscreen quad carrying its opacity) onto
-/// the scene.
+/// the scene. `Clip` is a CLIPPING MASK (MASKS_PLAN §3.1): fan `mask_fan` into the dedicated clip stencil
+/// bit `0x02`, replay `members` with the clip test, then `mask_clear` zeros `0x02` — all in ONE render
+/// pass so the clip bit persists across the member draws (each scene pass clears the stencil at entry).
+/// `mask_fan`/`mask_clear` are ranges into the shared FILL buffer (the ring fan + its bbox cover quad).
 pub enum GroupDraw {
     Opaque { draws: Vec<Draw> },
     Layer { draws: Vec<Draw>, quad: (u32, u32) },
+    Clip { mask_fan: (u32, u32), mask_clear: (u32, u32), members: Vec<Draw> },
 }
 
 /// One object's knockout steps: band triangles + band bbox cover from its stroke prims, and the fill's
@@ -327,6 +331,134 @@ fn needs_knockout(prims: &[Prim]) -> bool {
         && prims.iter().any(|p| matches!(p, Prim::Stroke { color, .. } if color[3] < 0.999))
 }
 
+/// Build ONE group's ordered draw steps (fill fan+cover, stroke fg, translucent-stroke mark+cover,
+/// knockout) into the shared fill/fg buffers. Extracted so a clip's members reuse the EXACT same routing
+/// (MASKS_PLAN §2.4). A `Clip` member has no direct draws (its paint is its own members) → empty here;
+/// nested clips are a later stage.
+fn group_draws(
+    g: &Group,
+    view: View,
+    zoom: f32,
+    w: f32,
+    h: f32,
+    fillv: &mut Vec<Vertex>,
+    fgv: &mut Vec<Vertex>,
+) -> Vec<Draw> {
+    if matches!(g, Group::Clip { .. }) {
+        return Vec::new();
+    }
+    // knockout objects (and isolated layers that contain a translucent stroke) take the dedicated path
+    if matches!(g, Group::Knockout(_)) || matches!(g, Group::Isolated { prims, .. } if needs_knockout(prims)) {
+        return knock_draws(g.prims(), view, zoom, w, h, fillv, fgv);
+    }
+    let prims = g.prims();
+    let mut draws = Vec::new();
+    let mut i = 0;
+    while i < prims.len() {
+        if matches!(prims[i], Prim::Fill { .. }) {
+            // one fill → its own stencil+cover step (offset into the shared fill buffer)
+            let (fv, fr) = build_fills(&prims[i..i + 1], view, w, h);
+            let off = fillv.len() as u32;
+            fillv.extend(fv);
+            for ((fs, fl), (cs, cl)) in fr {
+                draws.push(Draw::Fill { fan: (fs + off, fl), cover: (cs + off, cl) });
+            }
+            i += 1;
+        } else {
+            // a run of consecutive non-fill prims. Opaque ones coalesce into plain fg steps. A
+            // TRANSLUCENT stroke (colour alpha < 1 — from the colour itself or folded object opacity)
+            // must paint its overlapping quads + join discs EXACTLY ONCE → stencil-mark + cover step
+            // (otherwise every overlap re-blends and the band turns into the blotchy "blur").
+            let j = (i..prims.len()).find(|&k| matches!(prims[k], Prim::Fill { .. })).unwrap_or(prims.len());
+            while i < j {
+                if let Prim::Stroke { color, .. } = &prims[i] {
+                    if color[3] < 0.999 {
+                        let col = *color;
+                        // an object's outer + hole rings share one colour → mark them together so
+                        // even ring-vs-ring overlap of one object's stroke still paints once
+                        let e = (i..j)
+                            .find(|&k| !matches!(&prims[k], Prim::Stroke { color: c2, .. } if *c2 == col))
+                            .unwrap_or(j);
+                        let t0 = fgv.len() as u32;
+                        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                        for p in &prims[i..e] {
+                            if let Prim::Stroke { pts, width, .. } = p {
+                                let sp: Vec<Pt> = pts.iter().map(|q| view.w2s(*q)).collect();
+                                let r = width * zoom * 0.5 + 1.5;
+                                for q in &sp {
+                                    x0 = x0.min(q[0] - r);
+                                    y0 = y0.min(q[1] - r);
+                                    x1 = x1.max(q[0] + r);
+                                    y1 = y1.max(q[1] + r);
+                                }
+                                stroke_poly(fgv, &sp, width * zoom, col, w, h);
+                            }
+                        }
+                        let tris = (t0, fgv.len() as u32 - t0);
+                        let c0 = fgv.len() as u32;
+                        quad(fgv, [x0, y0], [x1, y0], [x1, y1], [x0, y1], col, w, h);
+                        draws.push(Draw::StrokeCov { tris, cover: (c0, fgv.len() as u32 - c0) });
+                        i = e;
+                        continue;
+                    }
+                }
+                // A2: an artboard-clipped OPAQUE stroke draws ALONE under a GPU scissor set to its page
+                // rect, so the extruded band is trimmed to the page edge (not just its centerline). One
+                // clipped stroke ⇒ one page rect (scene.rs emits one Stroke per rect), so one scissor is
+                // unambiguous. Translucent bands stay on the centerline clip (the stencil StrokeCov path,
+                // above) — a sub-half-width, semi-transparent overhang, left untouched to keep that path
+                // stable. A degenerate clip ⇒ scissor None ⇒ drawn uncut (fail-open).
+                if let Prim::Stroke { clip: Some(rect), .. } = &prims[i] {
+                    let scissor = scissor_px(*rect, view, w, h);
+                    let start = fgv.len() as u32;
+                    fgv.extend(build_fg(&prims[i..=i], view, zoom, w, h));
+                    let n = fgv.len() as u32 - start;
+                    if n > 0 {
+                        draws.push(Draw::Fg { range: (start, n), scissor });
+                    }
+                    i += 1;
+                    continue;
+                }
+                // opaque strokes / dashes etc. — coalesce until the next translucent OR clipped stroke
+                // (a clipped stroke needs its own scissored draw, so it can't share a coalesced range)
+                let e = (i + 1..j)
+                    .find(|&k| {
+                        matches!(&prims[k], Prim::Stroke { color, clip, .. } if color[3] < 0.999 || clip.is_some())
+                    })
+                    .unwrap_or(j);
+                let start = fgv.len() as u32;
+                fgv.extend(build_fg(&prims[i..e], view, zoom, w, h));
+                let n = fgv.len() as u32 - start;
+                if n > 0 {
+                    draws.push(Draw::Fg { range: (start, n), scissor: None });
+                }
+                i = e;
+            }
+        }
+    }
+    draws
+}
+
+/// The mask silhouette's stencil geometry: fan triangles (even-odd into clip bit `0x02`) + a bbox cover
+/// quad (to zero `0x02` afterward), both appended to the shared FILL buffer. Reuses `build_fills`, whose
+/// first range is exactly (fan, cover). Colour is irrelevant — these draw with colour writes OFF.
+fn mask_ranges(
+    mask_rings: &[Vec<Pt>],
+    view: View,
+    w: f32,
+    h: f32,
+    fillv: &mut Vec<Vertex>,
+) -> ((u32, u32), (u32, u32)) {
+    let prim = [Prim::Fill { rings: mask_rings.to_vec(), color: [0.0, 0.0, 0.0, 0.0] }];
+    let (mv, mr) = build_fills(&prim, view, w, h);
+    let off = fillv.len() as u32;
+    fillv.extend(mv);
+    match mr.first() {
+        Some(&((fs, fl), (cs, cl))) => ((fs + off, fl), (cs + off, cl)),
+        None => ((0, 0), (0, 0)),
+    }
+}
+
 /// Tessellate every content Group into three shared vertex buffers — fills (fan+cover), strokes (fg), and
 /// composite quads (op) — plus per-group draw steps that preserve the group's internal paint order.
 /// Consecutive on-canvas groups (Opaque/Knockout) merge into one GroupDraw::Opaque → one render pass.
@@ -342,97 +474,18 @@ pub fn build_content(
     let mut opv = Vec::new();
     let mut metas: Vec<GroupDraw> = Vec::new();
     for g in groups {
-        // knockout objects (and isolated layers that contain a translucent stroke) take the dedicated path
-        if matches!(g, Group::Knockout(_)) || matches!(g, Group::Isolated { prims, .. } if needs_knockout(prims)) {
-            let draws = knock_draws(g.prims(), view, zoom, w, h, &mut fillv, &mut fgv);
-            push_group(&mut metas, &mut opv, g, draws);
+        // a CLIPPING MASK is its own self-contained render pass (mask fan → clip-tested members → clear):
+        // it never coalesces with the opaque run, so its clip bit can't leak into neighbours.
+        if let Group::Clip { mask_rings, members } = g {
+            let (mask_fan, mask_clear) = mask_ranges(mask_rings, view, w, h, &mut fillv);
+            let mut member_draws = Vec::new();
+            for m in members {
+                member_draws.extend(group_draws(m, view, zoom, w, h, &mut fillv, &mut fgv));
+            }
+            metas.push(GroupDraw::Clip { mask_fan, mask_clear, members: member_draws });
             continue;
         }
-        let prims = g.prims();
-        let mut draws = Vec::new();
-        let mut i = 0;
-        while i < prims.len() {
-            if matches!(prims[i], Prim::Fill { .. }) {
-                // one fill → its own stencil+cover step (offset into the shared fill buffer)
-                let (fv, fr) = build_fills(&prims[i..i + 1], view, w, h);
-                let off = fillv.len() as u32;
-                fillv.extend(fv);
-                for ((fs, fl), (cs, cl)) in fr {
-                    draws.push(Draw::Fill { fan: (fs + off, fl), cover: (cs + off, cl) });
-                }
-                i += 1;
-            } else {
-                // a run of consecutive non-fill prims. Opaque ones coalesce into plain fg steps. A
-                // TRANSLUCENT stroke (colour alpha < 1 — from the colour itself or folded object opacity)
-                // must paint its overlapping quads + join discs EXACTLY ONCE → stencil-mark + cover step
-                // (otherwise every overlap re-blends and the band turns into the blotchy "blur").
-                let j = (i..prims.len()).find(|&k| matches!(prims[k], Prim::Fill { .. })).unwrap_or(prims.len());
-                while i < j {
-                    if let Prim::Stroke { color, .. } = &prims[i] {
-                        if color[3] < 0.999 {
-                            let col = *color;
-                            // an object's outer + hole rings share one colour → mark them together so
-                            // even ring-vs-ring overlap of one object's stroke still paints once
-                            let e = (i..j)
-                                .find(|&k| !matches!(&prims[k], Prim::Stroke { color: c2, .. } if *c2 == col))
-                                .unwrap_or(j);
-                            let t0 = fgv.len() as u32;
-                            let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                            for p in &prims[i..e] {
-                                if let Prim::Stroke { pts, width, .. } = p {
-                                    let sp: Vec<Pt> = pts.iter().map(|q| view.w2s(*q)).collect();
-                                    let r = width * zoom * 0.5 + 1.5;
-                                    for q in &sp {
-                                        x0 = x0.min(q[0] - r);
-                                        y0 = y0.min(q[1] - r);
-                                        x1 = x1.max(q[0] + r);
-                                        y1 = y1.max(q[1] + r);
-                                    }
-                                    stroke_poly(&mut fgv, &sp, width * zoom, col, w, h);
-                                }
-                            }
-                            let tris = (t0, fgv.len() as u32 - t0);
-                            let c0 = fgv.len() as u32;
-                            quad(&mut fgv, [x0, y0], [x1, y0], [x1, y1], [x0, y1], col, w, h);
-                            draws.push(Draw::StrokeCov { tris, cover: (c0, fgv.len() as u32 - c0) });
-                            i = e;
-                            continue;
-                        }
-                    }
-                    // A2: an artboard-clipped OPAQUE stroke draws ALONE under a GPU scissor set to its page
-                    // rect, so the extruded band is trimmed to the page edge (not just its centerline). One
-                    // clipped stroke ⇒ one page rect (scene.rs emits one Stroke per rect), so one scissor is
-                    // unambiguous. Translucent bands stay on the centerline clip (the stencil StrokeCov path,
-                    // above) — a sub-half-width, semi-transparent overhang, left untouched to keep that path
-                    // stable. A degenerate clip ⇒ scissor None ⇒ drawn uncut (fail-open).
-                    if let Prim::Stroke { clip: Some(rect), .. } = &prims[i] {
-                        let scissor = scissor_px(*rect, view, w, h);
-                        let start = fgv.len() as u32;
-                        fgv.extend(build_fg(&prims[i..=i], view, zoom, w, h));
-                        let n = fgv.len() as u32 - start;
-                        if n > 0 {
-                            draws.push(Draw::Fg { range: (start, n), scissor });
-                        }
-                        i += 1;
-                        continue;
-                    }
-                    // opaque strokes / dashes etc. — coalesce until the next translucent OR clipped stroke
-                    // (a clipped stroke needs its own scissored draw, so it can't share a coalesced range)
-                    let e = (i + 1..j)
-                        .find(|&k| {
-                            matches!(&prims[k], Prim::Stroke { color, clip, .. } if color[3] < 0.999 || clip.is_some())
-                        })
-                        .unwrap_or(j);
-                    let start = fgv.len() as u32;
-                    fgv.extend(build_fg(&prims[i..e], view, zoom, w, h));
-                    let n = fgv.len() as u32 - start;
-                    if n > 0 {
-                        draws.push(Draw::Fg { range: (start, n), scissor: None });
-                    }
-                    i = e;
-                }
-            }
-        }
+        let draws = group_draws(g, view, zoom, w, h, &mut fillv, &mut fgv);
         push_group(&mut metas, &mut opv, g, draws);
     }
     (fillv, fgv, opv, metas)
@@ -602,6 +655,27 @@ mod tests {
         };
         assert!(band.1 > 0 && fan.1 > 0 && fcover.1 == 6 && bcover.1 == 6, "band tris + fill fan + both covers");
         assert!((fgv[bcover.0 as usize].color[3] - 0.5).abs() < 1e-6, "the band cover carries the stroke's alpha");
+    }
+
+    #[test]
+    fn clip_group_emits_mask_fan_members_and_clear() {
+        // MASKS_PLAN §3.1 / Stage 2: a clip group tessellates to a GroupDraw::Clip carrying a mask fan
+        // (into clip bit 0x02), the clipped member draw steps, and a mask-bbox clear. A doc with no clip
+        // never produces this variant (proven by every other test staying Opaque/Layer).
+        let mask = vec![vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]];
+        let fill = Prim::Fill {
+            rings: vec![vec![[2.0, 2.0], [8.0, 2.0], [8.0, 8.0], [2.0, 8.0]]],
+            color: [1.0, 0.0, 0.0, 1.0],
+        };
+        let g = [Group::Clip { mask_rings: mask, members: vec![Group::Opaque(vec![fill])] }];
+        let (_f, _fg, _o, metas) = build_content(&g, View::identity(), 1.0, 100.0, 100.0);
+        let (mask_fan, mask_clear, members) = match &metas[0] {
+            GroupDraw::Clip { mask_fan, mask_clear, members } => (mask_fan, mask_clear, members),
+            _ => panic!("a clip group must emit GroupDraw::Clip"),
+        };
+        assert!(mask_fan.1 > 0, "the mask silhouette is fanned into the clip stencil bit");
+        assert!(mask_clear.1 == 6, "the mask bbox clear is one quad (6 verts)");
+        assert!(matches!(members.first(), Some(Draw::Fill { .. })), "the clipped member's fill is a Draw::Fill");
     }
 
     #[test]

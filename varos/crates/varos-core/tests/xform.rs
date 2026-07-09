@@ -8,7 +8,7 @@
 //!
 //! Rotation is deliberately NOT wired to anything here (that's Stage 4). Pure data + one seam lookup.
 
-use varos_core::model::{Document, Node, NodeKind, Path, Xform};
+use varos_core::model::{Document, GroupRole, Node, NodeKind, Path, Xform};
 
 #[test]
 fn xform_field_round_trips_and_unit_xform_defaults_to_identity() {
@@ -24,6 +24,8 @@ fn xform_field_round_trips_and_unit_xform_defaults_to_identity() {
         color: None,
         clip_exempt: false,
         xform: Xform::default(),
+        role: GroupRole::Normal,
+        mask_child: None,
     };
     n.xform = Xform { rot: 0.6, piv: [12.0, -3.5] };
     assert!(!n.xform.is_identity(), "a 0.6 rad rotation is not identity");

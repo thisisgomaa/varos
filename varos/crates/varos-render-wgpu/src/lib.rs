@@ -35,6 +35,12 @@ pub struct Renderer {
     pipe_smark: wgpu::RenderPipeline, // stencil-MARK the band bit 0x80 (Replace, colour off)
     pipe_cover_knock: wgpu::RenderPipeline, // fill cover for knockout: inside AND not under the band
     pipe_cover_band: wgpu::RenderPipeline, // band cover: paint the stroke once where marked, clear the bit
+    // clip-mask (MASKS_PLAN §3.1) — the dedicated bit 0x02 pipelines:
+    pipe_mask_fan: wgpu::RenderPipeline, // fan the mask silhouette into 0x02 (even-odd, colour off)
+    pipe_mask_clear: wgpu::RenderPipeline, // zero 0x02 over the mask bbox after members draw (colour off)
+    pipe_cover_clip: wgpu::RenderPipeline, // clipped fill cover: paint where parity∧clip, clear parity
+    pipe_fill_clear: wgpu::RenderPipeline, // clear leftover parity outside the mask (colour off)
+    pipe_main_clip: wgpu::RenderPipeline, // clipped opaque draw: paint only where 0x02 is set
     msaa: wgpu::TextureView,
     ds: wgpu::TextureView,
     samples: u32,
@@ -315,6 +321,39 @@ impl Renderer {
         // fill-cover can't zero parity under the band (its Equal test fails there), so the band cover
         // sweeps that leftover parity too; otherwise it would leak into the next fill's even-odd.
         let st_band = wgpu::StencilState { front: cov, back: cov, read_mask: 0x80, write_mask: 0x81 };
+        // ── CLIP MASK (MASKS_PLAN §3.1): a THIRD, dedicated stencil bit 0x02, orthogonal to 0x01 (fill
+        // parity) and 0x80 (knockout band). The mask silhouette is fanned even-odd into 0x02 (persists
+        // across all member draws — none of 0x01/0x80/0x81 write it, so it SURVIVES for free), members
+        // paint only where 0x02 is set, then 0x02 is zeroed for the next group. ──
+        // mask fan: even-odd toggle 0x02 wherever the silhouette covers → 0x02 = 1 inside the mask.
+        let st_mask_fan = wgpu::StencilState { front: inv, back: inv, read_mask: 0x02, write_mask: 0x02 };
+        // mask clear: unconditionally zero 0x02 over the mask bbox (Replace-to-0 via `cov`? no — `cov`
+        // only zeros where NotEqual; use a dedicated Always→Zero so the whole bbox is wiped clean).
+        let clear2 = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Always,
+            fail_op: wgpu::StencilOperation::Keep,
+            depth_fail_op: wgpu::StencilOperation::Keep,
+            pass_op: wgpu::StencilOperation::Zero,
+        };
+        let st_mask_clear = wgpu::StencilState { front: clear2, back: clear2, read_mask: 0x02, write_mask: 0x02 };
+        // clipped fill cover: paint where (parity 0x01 AND clip 0x02) == both set, i.e. (stencil & 0x03)
+        // == 0x03; pass_op Zero with write_mask 0x01 clears ONLY the parity bit there (clip bit kept).
+        let clip_cov = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Equal,
+            fail_op: wgpu::StencilOperation::Keep,
+            depth_fail_op: wgpu::StencilOperation::Keep,
+            pass_op: wgpu::StencilOperation::Zero,
+        };
+        let st_cover_clip = wgpu::StencilState { front: clip_cov, back: clip_cov, read_mask: 0x03, write_mask: 0x01 };
+        // clipped opaque draw (strokes/dashes): paint where clip 0x02 set; touch NO stencil bit (the fill
+        // even-odd of a later member must stay intact). compare Equal ref 0x02 read 0x02, all-Keep.
+        let clip_test = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Equal,
+            fail_op: wgpu::StencilOperation::Keep,
+            depth_fail_op: wgpu::StencilOperation::Keep,
+            pass_op: wgpu::StencilOperation::Keep,
+        };
+        let st_main_clip = wgpu::StencilState { front: clip_test, back: clip_test, read_mask: 0x02, write_mask: 0x00 };
         let pipe_main =
             make_pipe(&device, &layout, &shader, config.format, samples, true, wgpu::StencilState::default());
         let pipe_stencil = make_pipe(&device, &layout, &shader, config.format, samples, false, st_fan);
@@ -322,6 +361,17 @@ impl Renderer {
         let pipe_smark = make_pipe(&device, &layout, &shader, config.format, samples, false, st_mark);
         let pipe_cover_knock = make_pipe(&device, &layout, &shader, config.format, samples, true, st_knock);
         let pipe_cover_band = make_pipe(&device, &layout, &shader, config.format, samples, true, st_band);
+        // clip pipelines: fan/clear write bit 0x02 with colour OFF; the clipped cover paints colour where
+        // parity∧clip and clears parity; `pipe_fill_clear` (colour OFF) sweeps the parity the clipped
+        // cover left set OUTSIDE the mask, so a later member's even-odd starts clean; `pipe_main_clip`
+        // paints opaque strokes only inside the mask.
+        let pipe_mask_fan = make_pipe(&device, &layout, &shader, config.format, samples, false, st_mask_fan);
+        let pipe_mask_clear = make_pipe(&device, &layout, &shader, config.format, samples, false, st_mask_clear);
+        let pipe_cover_clip = make_pipe(&device, &layout, &shader, config.format, samples, true, st_cover_clip);
+        // same state as `st_cov` (NotEqual 0 on parity → Zero), but colour OFF: a pure parity wipe.
+        let st_fill_clear = wgpu::StencilState { front: cov, back: cov, read_mask: 0x01, write_mask: 0x01 };
+        let pipe_fill_clear = make_pipe(&device, &layout, &shader, config.format, samples, false, st_fill_clear);
+        let pipe_main_clip = make_pipe(&device, &layout, &shader, config.format, samples, true, st_main_clip);
         let msaa = make_attach(&device, &config, samples, config.format, "msaa");
         let ds = make_attach(&device, &config, samples, DS_FORMAT, "ds");
         let mk = |cap: u64| {
@@ -479,6 +529,11 @@ impl Renderer {
             pipe_smark,
             pipe_cover_knock,
             pipe_cover_band,
+            pipe_mask_fan,
+            pipe_mask_clear,
+            pipe_cover_clip,
+            pipe_fill_clear,
+            pipe_main_clip,
             msaa,
             ds,
             samples,
@@ -568,19 +623,40 @@ impl Renderer {
     /// Play a group's draw steps in paint order: each object's fill (stencil fan → cover) immediately
     /// followed by its own stroke — so an object above covers the stroke of the one below (Illustrator
     /// stacking). Works inside any pass (scene or isolated layer); stroke drawing never touches stencil.
-    fn draw_steps<'a>(&'a self, rp: &mut wgpu::RenderPass<'a>, draws: &[Draw]) {
+    fn draw_steps<'a>(&'a self, rp: &mut wgpu::RenderPass<'a>, draws: &[Draw], clip: bool) {
         for d in draws {
             match d {
                 Draw::Fill { fan, cover } => {
                     rp.set_vertex_buffer(0, self.fill_buf.slice(..));
                     rp.set_pipeline(&self.pipe_stencil);
                     rp.draw(fan.0..fan.0 + fan.1, 0..1);
-                    rp.set_pipeline(&self.pipe_cover);
-                    rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                    if clip {
+                        // clipped fill (MASKS_PLAN §3.1): the fan set parity 0x01 across the whole shape,
+                        // even OUTSIDE the mask. (1) cover paints where parity∧clip (ref 0x03) and clears
+                        // parity THERE; (2) `pipe_fill_clear` (colour off) sweeps the parity still set
+                        // outside the mask, so the next member's even-odd starts clean. The clip bit 0x02
+                        // is never written by either step, so it survives for the rest of the members.
+                        rp.set_stencil_reference(0x03);
+                        rp.set_pipeline(&self.pipe_cover_clip);
+                        rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                        rp.set_stencil_reference(0);
+                        rp.set_pipeline(&self.pipe_fill_clear);
+                        rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                    } else {
+                        rp.set_pipeline(&self.pipe_cover);
+                        rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                    }
                 }
                 Draw::Fg { range, scissor } => {
                     rp.set_vertex_buffer(0, self.fg_buf.slice(..));
-                    rp.set_pipeline(&self.pipe_main);
+                    // inside a clip, opaque strokes paint only where the mask bit 0x02 is set (ref 0x02);
+                    // the pipeline writes no stencil, so parity/clip bits are untouched.
+                    if clip {
+                        rp.set_stencil_reference(0x02);
+                        rp.set_pipeline(&self.pipe_main_clip);
+                    } else {
+                        rp.set_pipeline(&self.pipe_main);
+                    }
                     // A2: an artboard-clipped stroke draws under a GPU scissor set to its page rect, so the
                     // band is trimmed to the page edge. Reset to the FULL framebuffer immediately after, so
                     // no later draw in this pass can inherit the scissor (a leaked scissor could hide other
@@ -593,6 +669,9 @@ impl Renderer {
                             rp.set_scissor_rect(0, 0, self.config.width, self.config.height);
                         }
                         None => rp.draw(range.0..range.0 + range.1, 0..1),
+                    }
+                    if clip {
+                        rp.set_stencil_reference(0);
                     }
                 }
                 // translucent stroke (no fill): mark the band bit on every covered pixel, then cover ONCE
@@ -687,7 +766,42 @@ impl Renderer {
                         occlusion_query_set: None,
                     });
                     rp.set_stencil_reference(0);
-                    self.draw_steps(&mut rp, draws);
+                    self.draw_steps(&mut rp, draws, false);
+                }
+                // CLIPPING MASK (MASKS_PLAN §3.1) — ONE self-contained pass so the clip bit 0x02 persists
+                // across every member draw (each pass clears the stencil at entry via `ds_clear`). Fan the
+                // mask silhouette into 0x02, replay the members clip-tested, then zero 0x02. The pass LOADs
+                // the accumulating scene colour, so the clipped art composites over what is already drawn.
+                GroupDraw::Clip { mask_fan, mask_clear, members } => {
+                    let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        multiview_mask: None,
+                        label: Some("scene-clip"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            depth_slice: None,
+                            view: &self.msaa,
+                            resolve_target: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                        })],
+                        depth_stencil_attachment: Some(self.ds_clear()),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    // 1) stamp the mask silhouette into clip bit 0x02 (even-odd, colour off)
+                    rp.set_stencil_reference(0);
+                    rp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                    rp.set_pipeline(&self.pipe_mask_fan);
+                    if mask_fan.1 > 0 {
+                        rp.draw(mask_fan.0..mask_fan.0 + mask_fan.1, 0..1);
+                    }
+                    // 2) the members, each tested against the mask bit
+                    self.draw_steps(&mut rp, members, true);
+                    // 3) wipe the clip bit so the next group starts clean
+                    rp.set_stencil_reference(0);
+                    rp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                    rp.set_pipeline(&self.pipe_mask_clear);
+                    if mask_clear.1 > 0 {
+                        rp.draw(mask_clear.0..mask_clear.0 + mask_clear.1, 0..1);
+                    }
                 }
                 GroupDraw::Layer { draws, quad } => {
                     // render the object OPAQUELY into the isolated layer (cleared transparent, MSAA-resolved)
@@ -709,7 +823,7 @@ impl Renderer {
                             occlusion_query_set: None,
                         });
                         lp.set_stencil_reference(0);
-                        self.draw_steps(&mut lp, draws);
+                        self.draw_steps(&mut lp, draws, false);
                     }
                     // composite the resolved layer onto the scene at the object's opacity
                     {
