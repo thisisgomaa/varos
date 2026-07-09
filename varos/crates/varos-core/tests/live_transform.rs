@@ -232,3 +232,219 @@ fn old_vrs_without_xform_loads_as_identity() {
     let n: varos_core::model::Node = serde_json::from_str(json).expect("legacy node loads");
     assert!(n.xform.is_identity(), "missing xform ⇒ identity (old files unchanged)");
 }
+
+// ───────────────────────── split-brain regressions (bake rotated units before world-space edits) ─────────────────────────
+
+/// An OPEN 3-point path (id 10, anchors 1..3) — needed for the Pen resume/extend case.
+fn sel_open_path() -> Editor {
+    let mut ed = Editor::new();
+    ed.doc.paths.push(Path::new(
+        10,
+        vec![anc(1, 0.0, 0.0), anc(2, 100.0, 0.0), anc(3, 100.0, 60.0)],
+        false, // open
+        None,
+        Some([0.0, 0.0, 0.0, 1.0]),
+        2.0,
+    ));
+    ed.doc.ids = 3;
+    ed.ppu = 1.0;
+    ed.doc.snap.enabled = false;
+    ed.doc.sync_tree();
+    ed.objsel.insert(10);
+    ed.set_tool(ToolKind::Object);
+    ed
+}
+
+/// Two separate rects → two independent units (ids 10 & 20, anchors 1..4 and 5..8).
+fn two_rects() -> Editor {
+    let mut ed = Editor::new();
+    let fill = Some([0.5, 0.5, 0.5, 1.0]);
+    ed.doc.paths.push(Path::new(
+        10,
+        vec![anc(1, 0.0, 0.0), anc(2, 80.0, 0.0), anc(3, 80.0, 40.0), anc(4, 0.0, 40.0)],
+        true,
+        fill,
+        None,
+        1.0,
+    ));
+    ed.doc.paths.push(Path::new(
+        20,
+        vec![anc(5, 150.0, 0.0), anc(6, 230.0, 0.0), anc(7, 230.0, 40.0), anc(8, 150.0, 40.0)],
+        true,
+        fill,
+        None,
+        1.0,
+    ));
+    ed.doc.ids = 8;
+    ed.ppu = 1.0;
+    ed.doc.snap.enabled = false;
+    ed.doc.sync_tree();
+    ed.set_tool(ToolKind::Object);
+    ed
+}
+
+#[test]
+fn convert_handle_on_a_rotated_object_is_one_to_one() {
+    // Bug 1: the Convert tool pulls a handle to the WORLD cursor. On a rotated unit the write must land the
+    // handle exactly under the cursor (bake first) — not double-transformed.
+    let mut ed = sel_rect();
+    ed.set_obj_rotation(45.0);
+    let a0_world = ed.doc.unit_xform(10).apply([0.0, 0.0]); // corner anchor id 1, in world
+    ed.set_tool(ToolKind::Convert);
+    ed.pointer_down(a0_world); // grabs the corner → Drag::ConvPull (after baking the unit)
+    let target = [a0_world[0] + 25.0, a0_world[1] - 12.0];
+    ed.pointer_move(target); // pull the out-handle to `target`
+    ed.pointer_up();
+    let hout = ed.doc.anchor(1).and_then(|a| a.hout).expect("convert pulled an out handle");
+    let hout_world = ed.doc.unit_xform(10).apply(hout);
+    assert!(
+        (hout_world[0] - target[0]).abs() < 0.5 && (hout_world[1] - target[1]).abs() < 0.5,
+        "the pulled handle sits under the cursor (1:1): world {hout_world:?} vs cursor {target:?}"
+    );
+}
+
+#[test]
+fn pen_resume_on_a_rotated_object_places_the_anchor_at_the_cursor() {
+    // Bug 2: resuming a rotated open path and clicking a new point must place that anchor AT the cursor —
+    // the raw world click must not be stored as a rotated-local coordinate.
+    let mut ed = sel_open_path();
+    ed.set_obj_rotation(30.0);
+    // drop the object selection and enter the Pen with nothing active (so the endpoint click RESUMES).
+    ed.objsel.clear();
+    ed.selected.clear();
+    ed.active = None;
+    ed.refresh_obj_angle();
+    ed.set_tool(ToolKind::Pen);
+    let end_world = ed.doc.unit_xform(10).apply([100.0, 60.0]); // the open path's endpoint (anchor 3)
+    ed.pointer_move(end_world); // hover the endpoint so the Pen "sees" it (path_shown gate), as in the app
+    ed.pointer_down(end_world);
+    ed.pointer_up(); // resume(10, 3) — bakes the unit, makes it active
+    let click = [200.0, 150.0]; // a fresh world point, clear of the shape
+    ed.pointer_down(click);
+    ed.pointer_up(); // extend: push a new anchor
+    let newp = ed.doc.paths[0].anchors.last().unwrap().p;
+    let world = ed.doc.unit_xform(10).apply(newp);
+    assert!(
+        (world[0] - click[0]).abs() < 0.5 && (world[1] - click[1]).abs() < 0.5,
+        "the extended anchor lands under the cursor: world {world:?} vs click {click:?}"
+    );
+}
+
+#[test]
+fn multi_unit_rotated_marquee_drag_moves_every_anchor_correctly() {
+    // Bug 3: a Direct-tool marquee can select anchors across SEVERAL rotated units. Dragging one must move
+    // every selected anchor by the same WORLD delta — the follow-up drag must bake ALL spanned units, not
+    // just the grabbed one (else the other units' anchors move by a rotated delta = split-brain).
+    let mut ed = two_rects();
+    ed.objsel.clear();
+    ed.objsel.insert(10);
+    ed.refresh_obj_angle();
+    ed.set_obj_rotation(30.0); // rotate unit 10
+    ed.objsel.clear();
+    ed.objsel.insert(20);
+    ed.refresh_obj_angle();
+    ed.set_obj_rotation(60.0); // rotate unit 20 by a DIFFERENT angle
+
+    // marquee-select every anchor of both rotated rects.
+    ed.objsel.clear();
+    ed.selected.clear();
+    ed.set_tool(ToolKind::Direct);
+    ed.pointer_down([-200.0, -200.0]);
+    ed.pointer_move([400.0, 400.0]);
+    ed.pointer_up();
+    let units_in_sel: std::collections::HashSet<u32> =
+        ed.selected.iter().filter_map(|&a| ed.doc.pid_of_anchor(a).and_then(|p| ed.doc.unit_of(p))).collect();
+    assert!(units_in_sel.len() >= 2, "the marquee spans multiple units (the split-brain condition)");
+
+    // record every selected anchor's WORLD position, then drag one grabbed anchor by a delta.
+    let world_before: Vec<(u32, Pt)> = ed
+        .selected
+        .iter()
+        .map(|&aid| {
+            let pid = ed.doc.pid_of_anchor(aid).unwrap();
+            (aid, ed.doc.unit_xform(pid).apply(ed.doc.anchor(aid).unwrap().p))
+        })
+        .collect();
+    let grab = ed.doc.unit_xform(10).apply(ed.doc.anchor(1).unwrap().p); // anchor 1 of unit 10, in world
+    let delta = [17.0, -23.0];
+    ed.pointer_down(grab);
+    ed.pointer_move([grab[0] + delta[0], grab[1] + delta[1]]);
+    ed.pointer_up();
+
+    for (aid, wb) in &world_before {
+        let pid = ed.doc.pid_of_anchor(*aid).unwrap();
+        let wa = ed.doc.unit_xform(pid).apply(ed.doc.anchor(*aid).unwrap().p);
+        assert!(
+            (wa[0] - wb[0] - delta[0]).abs() < 0.5 && (wa[1] - wb[1] - delta[1]).abs() < 0.5,
+            "anchor {aid} world moved {wb:?}→{wa:?}, want +{delta:?} (split-brain across units?)"
+        );
+    }
+}
+
+#[test]
+fn panel_xy_with_a_nontop_left_refpoint_on_a_rotated_object_reads_and_writes() {
+    // Bug 4: the panel X/Y reference-point offset must use the WORLD AABB dims (not the local W/H). Read and
+    // write must agree: typing back the displayed value is a no-op, and a delta moves the object by it.
+    let mut ed = sel_rect(); // 100×40
+    ed.set_obj_rotation(45.0);
+    let (ax, ay) = (1.0, 1.0); // bottom-right reference point
+
+    let (x0, y0, x1, y1) = ed.obj_bbox().unwrap();
+    let (lw, lh) = ed.obj_local_dims().unwrap();
+    // the world AABB dims differ from the local W/H when rotated (so `s.x + ax*local_w` would be wrong).
+    assert!(((x1 - x0) - lw).abs() > 1.0 && ((y1 - y0) - lh).abs() > 1.0, "world dims differ from local W/H");
+    // READ: the reference point = world AABB bottom-right (offset by the WORLD dims).
+    let refp = ed.obj_ref_xy(ax, ay).unwrap();
+    assert!((refp[0] - x1).abs() < 1e-3 && (refp[1] - y1).abs() < 1e-3, "refpoint reads the world BR corner");
+
+    // WRITE round-trip: re-entering the shown value must NOT move the object (read & write agree).
+    ed.set_obj_bbox(Some(refp[0]), Some(refp[1]), None, None, ax, ay);
+    let b2 = ed.obj_bbox().unwrap();
+    assert!(
+        (b2.0 - x0).abs() < 0.2 && (b2.1 - y0).abs() < 0.2 && (b2.2 - x1).abs() < 0.2 && (b2.3 - y1).abs() < 0.2,
+        "typing the shown X/Y back is a no-op: {:?} vs {b2:?}",
+        (x0, y0, x1, y1)
+    );
+    assert!((ed.doc.node_xform(unit(&ed)).rot - 45f32.to_radians()).abs() < 1e-4, "X/Y edit keeps the live rotation");
+
+    // WRITE move: nudging the BR reference point by (+10,+6) shifts the whole world AABB by that.
+    ed.set_obj_bbox(Some(refp[0] + 10.0), Some(refp[1] + 6.0), None, None, ax, ay);
+    let b3 = ed.obj_bbox().unwrap();
+    assert!(
+        (b3.0 - (x0 + 10.0)).abs() < 0.3 && (b3.1 - (y0 + 6.0)).abs() < 0.3,
+        "editing the BR reference point translates the object by the delta: {b3:?}"
+    );
+}
+
+#[test]
+fn rotate_drag_through_zero_keeps_rotating() {
+    // Bug 5: during ONE rotate drag, an intermediate frame that hits total-angle ≡ 0 must NOT bake the
+    // residual (which permanently loses the live rotation). Pre-rotate 90° about the centre, then drag about
+    // a DIFFERENT pivot so the total angle passes through 0 mid-gesture and continues to −45°.
+    let mut ed = sel_rect(); // 100×40, centre [50,20]
+    ed.set_obj_rotation(90.0);
+    ed.set_tool(ToolKind::Rotate);
+    ed.pivot = Some([0.0, 0.0]); // rotate about the corner (≠ the 90° pre-rotation centre)
+    ed.pointer_down([100.0, 0.0]); // start angle 0 about [0,0]
+    ed.pointer_move([0.0, -100.0]); // d = −90° → TOTAL = 0 (the degenerate crossing, mid-drag)
+    ed.pointer_move([-70.71, -70.71]); // d = −135° → TOTAL = −45° (kept rotating past zero)
+    ed.pointer_up();
+
+    // the geometry was NOT baked mid-drag (anchors are still the original local rect)…
+    assert_eq!(
+        local_anchors(&ed),
+        vec![[0.0, 0.0], [100.0, 0.0], [100.0, 40.0], [0.0, 40.0]],
+        "anchors stay the original local rect — no mid-drag bake"
+    );
+    // …and the live world image equals the exact composition base(90°@centre) ∘ (−135°@corner).
+    let xf = ed.doc.node_xform(unit(&ed));
+    assert!(!xf.is_identity(), "still live-rotated after crossing 0°");
+    for lp in [[0.0, 0.0], [100.0, 0.0], [100.0, 40.0], [0.0, 40.0]] {
+        let want = rotate_about(rotate_about(lp, [50.0, 20.0], 90f32.to_radians()), [0.0, 0.0], -135f32.to_radians());
+        let got = xf.apply(lp);
+        assert!(
+            (got[0] - want[0]).abs() < 0.3 && (got[1] - want[1]).abs() < 0.3,
+            "corner {lp:?}: live world {got:?} vs composed {want:?} (rotation lost at the zero-cross?)"
+        );
+    }
+}

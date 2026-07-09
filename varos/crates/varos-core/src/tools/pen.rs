@@ -69,6 +69,10 @@ impl Tool for Pen {
                 id
             }
         };
+        // A7: extending an existing (possibly resumed & rotated) path pushes the raw WORLD click into LOCAL
+        // anchor storage — bake the active unit to identity first so the new point lands under the cursor.
+        // (A freshly-created path is identity ⇒ a no-op; `resume`/`join` also bake, so this is defensive.)
+        ed.dirty |= ed.bake_unit_of(pid);
         let pi = ed.doc.pidx(pid).unwrap();
         // A8b: Shift locks the new point to 45°/H/V from the previous anchor — the SAME constraint the
         // rubber-band preview shows, so where you see the ghost land is where the point lands.

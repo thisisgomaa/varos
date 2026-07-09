@@ -567,6 +567,12 @@ impl Editor {
             None
         }
     }
+    /// The WORLD position of the transform reference point (ax, ay each in {0, .5, 1}) within the selection's
+    /// WORLD AABB — exactly what the panel X/Y fields display and edit. A7: the offset uses the world AABB
+    /// dimensions (NOT the local W/H), so it is correct on a rotated object. `None` when nothing is selected.
+    pub fn obj_ref_xy(&self, ax: f32, ay: f32) -> Option<Pt> {
+        self.obj_bbox().map(|(x0, y0, x1, y1)| [x0 + (x1 - x0) * ax, y0 + (y1 - y0) * ay])
+    }
     /// Selection bbox in the frame's LOCAL space: the WORLD outline (A7 seam — each unit's transform
     /// composed) un-rotated by `obj_angle` about the origin. The round-trip un-rotate→(bbox)→re-rotate in
     /// `frame_corners`/`frame_handles` lands the oriented frame exactly on the drawn (rotated) shape,
@@ -847,6 +853,33 @@ impl Editor {
             }
         } else {
             self.doc.set_node_xform(unit, base_xf.then_rotate(dtheta, about));
+        }
+    }
+    /// Live-drag rotation: COMPOSE only, NEVER bake. Every frame recomputes the unit's xform from the
+    /// snapshot `base_xf` (anchors stay put), so the drag is idempotent and passing through the degenerate
+    /// total-angle-≡-0 mid-gesture is harmless (`then_rotate` returns identity at the exact crossing — a
+    /// single transient frame, recovered the next). The clean degenerate bake is applied ONCE at gesture
+    /// END (`pointer_up` → `finish_rotate_drag`), not mid-drag — otherwise a mid-drag zero-cross would bake
+    /// the residual translation and permanently corrupt the rest of the gesture.
+    fn rotate_unit_live(&mut self, unit: u32, base_xf: Xform, dtheta: f32, about: Pt) {
+        self.doc.set_node_xform(unit, base_xf.then_rotate(dtheta, about));
+    }
+    /// End a rotate drag: replay each unit from its base with the FINAL delta through `rotate_unit` (which
+    /// bakes cleanly if the gesture happens to END exactly at total-angle-≡-0). A no-op change in the common
+    /// (non-degenerate) case — it recomputes the same live xform. Anchors were untouched during the drag
+    /// (live compose only), so the degenerate bake operates on the correct base geometry.
+    fn finish_rotate_drag(&mut self) {
+        let end = if let Drag::Rotate { center, a0, units, .. } = &self.drag {
+            Some((*center, *a0, units.clone()))
+        } else {
+            None
+        };
+        if let Some((center, a0, units)) = end {
+            let d = self.obj_angle - a0;
+            for (unit, base_xf) in units {
+                self.rotate_unit(unit, base_xf, d, center);
+            }
+            self.refresh_obj_angle();
         }
     }
     /// Write a WORLD-space anchor back into local storage through its unit transform (`inverse_apply`), so
@@ -1387,10 +1420,11 @@ impl Editor {
         let sx = if w.abs() > 1e-3 { nw.map(|v| (v / w).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
         let sy = if h.abs() > 1e-3 { nh.map(|v| (v / h).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
         let (fx, fy) = (x0 + w * ax, y0 + h * ay); // reference point kept fixed under scale
-        let nx0 = fx + (x0 - fx) * sx; // where the left edge lands after scaling
-        let ny0 = fy + (y0 - fy) * sy;
-        let tx = nx.map(|v| v - nx0).unwrap_or(0.0); // then shift so the top-left equals x/y
-        let ty = ny.map(|v| v - ny0).unwrap_or(0.0);
+                                                   // A7: X/Y address the WORLD reference point (fx,fy) — the SAME point the panel displays
+                                                   // (`s.x + ax*world_w`). It is the scale fixed-point, so after any W/H scale it is still at (fx,fy);
+                                                   // shift it to the requested x/y. (ax=ay=0 ⇒ fx=x0, fy=y0 — the historic top-left case, unchanged.)
+        let tx = nx.map(|v| v - fx).unwrap_or(0.0);
+        let ty = ny.map(|v| v - fy).unwrap_or(0.0);
         if (sx - 1.0).abs() < 1e-5 && (sy - 1.0).abs() < 1e-5 && tx.abs() < 1e-4 && ty.abs() < 1e-4 {
             self.commit();
             return;
@@ -1427,13 +1461,16 @@ impl Editor {
         let sx = if lw.abs() > 1e-3 { nw.map(|v| (v / lw).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
         let sy = if lh.abs() > 1e-3 { nh.map(|v| (v / lh).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
         let (fx, fy) = (lx0 + lw * ax, ly0 + lh * ay); // LOCAL reference (its world image stays fixed)
-                                                       // world AABB top-left BEFORE the edit → translation so X/Y hit the requested world position
-        let (wx0, wy0, _, _) = self.obj_bbox().unwrap_or((0.0, 0.0, 0.0, 0.0));
+                                                       // A7: X/Y address the WORLD reference point within the world AABB (matches the panel display
+                                                       // `s.x + ax*world_w`) — NOT the world-AABB top-left. On a rotated unit the two differ for any
+                                                       // reference point other than top-left; targeting the world top-left mis-placed the object. Translate
+                                                       // the whole unit so the world reference point lands at the requested x/y.
+        let (wx0, wy0, wx1, wy1) = self.obj_bbox().unwrap_or((0.0, 0.0, 0.0, 0.0));
+        let (wrefx, wrefy) = (wx0 + (wx1 - wx0) * ax, wy0 + (wy1 - wy0) * ay);
         let scale_local = |p: Pt| [fx + (p[0] - fx) * sx, fy + (p[1] - fy) * sy];
         let no_scale = (sx - 1.0).abs() < 1e-5 && (sy - 1.0).abs() < 1e-5;
-        // translation is applied to the WORLD AABB, which after a local scale about `f` sits at:
-        let tx = nx.map(|v| v - (wx0)).unwrap_or(0.0);
-        let ty = ny.map(|v| v - (wy0)).unwrap_or(0.0);
+        let tx = nx.map(|v| v - wrefx).unwrap_or(0.0);
+        let ty = ny.map(|v| v - wrefy).unwrap_or(0.0);
         if no_scale && tx.abs() < 1e-4 && ty.abs() < 1e-4 {
             return;
         }
@@ -2940,6 +2977,9 @@ impl Editor {
         }
     }
     pub fn resume(&mut self, pid: u32, end_aid: u32) {
+        // A7: extending this path edits its anchors in WORLD (new points are raw clicks) — bake a rotated
+        // unit to identity first so local == world and the added anchors land under the cursor.
+        self.dirty |= self.bake_unit_of(pid);
         let pi = self.doc.pidx(pid).unwrap();
         let last = self.doc.paths[pi].anchors.last().map(|a| a.id);
         if last != Some(end_aid) {
@@ -2952,6 +2992,11 @@ impl Editor {
         }
     }
     pub fn join(&mut self, act: u32, other: u32, end_aid: u32, pos: Pt) {
+        // A7: both paths' anchors are about to live in ONE identity path — bake each unit's live rotation
+        // into world geometry first, else `other`'s LOCAL anchors are moved verbatim into `act` (no remap)
+        // and double-transform at render.
+        self.dirty |= self.bake_unit_of(act);
+        self.dirty |= self.bake_unit_of(other);
         let oi = self.doc.pidx(other).unwrap();
         if self.doc.paths[oi].anchors.first().map(|a| a.id) != Some(end_aid) {
             self.reverse(oi);
@@ -2969,6 +3014,21 @@ impl Editor {
         self.drag = Drag::PenNew { aid: end_aid, down: pos, broken: false };
     }
     pub fn begin_anchor_drag(&mut self, pos: Pt) {
+        // A7: the anchor selection can span MULTIPLE rotated units (e.g. a Direct-tool marquee that swept
+        // several objects). The drag edits stored anchors in world/identity space, so EVERY spanned unit
+        // must be baked first — not just the grabbed one — else the other units' anchors are edited
+        // split-brain (their local anchors get a world delta and double-transform at render).
+        let mut units: Vec<u32> = vec![];
+        for &aid in &self.selected {
+            if let Some(u) = self.doc.pid_of_anchor(aid).and_then(|pid| self.doc.unit_of(pid)) {
+                if !units.contains(&u) {
+                    units.push(u);
+                }
+            }
+        }
+        for u in units {
+            self.dirty |= self.bake_unit(u);
+        }
         let items =
             self.selected.iter().filter_map(|&aid| self.doc.anchor(aid).map(|a| (aid, a.p, a.hin, a.hout))).collect();
         self.drag = Drag::Anchors { start: pos, items };
@@ -3153,6 +3213,9 @@ impl Editor {
         if let Some(tf) = self.gesture_tf.take() {
             self.last_tf = Some((tf, self.gesture_copy));
         } // rotate/scale/reflect
+          // A7: apply the rotate drag's clean end-state — bakes cleanly ONLY if the gesture ended exactly at
+          // total-angle-≡-0 (mid-drag zero-crossings stayed live). Must run before `drag = None`.
+        self.finish_rotate_drag();
         if let Drag::TfPending { down, .. } = self.drag {
             // a click (no drag) relocates the pivot — snapped
             self.pivot = Some(self.snap_pivot(down)); // lands on an anchor / corner / centre / edge / grid
@@ -3538,9 +3601,12 @@ impl Editor {
                     d = (d / step).round() * step;
                 }
                 // A7 Stage 4 — the crux: COMPOSE d into each unit's stored transform. Anchors are UNTOUCHED
-                // (recomposed from the pre-drag base each frame), so the rotation is live and persists.
+                // (recomposed from the pre-drag base each frame), so the rotation is live and persists. This
+                // uses the LIVE compose (never bakes): a mid-drag pass through 0° must not bake the residual
+                // (that permanently loses the live rotation) — the clean zero-cross bake happens at
+                // `pointer_up` (`finish_rotate_drag`) instead.
                 for (unit, base_xf) in &units {
-                    self.rotate_unit(*unit, *base_xf, d, center);
+                    self.rotate_unit_live(*unit, *base_xf, d, center);
                 }
                 self.obj_angle = a0 + d; // frame rotates with the selection
                 self.snap_hud = Some((pos, format!("{:.1}\u{b0}", -d.to_degrees()))); // CCW-positive (Illustrator)

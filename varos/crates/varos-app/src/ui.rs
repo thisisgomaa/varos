@@ -509,6 +509,8 @@ struct Snap {
     y: f32,
     w: f32,
     h: f32,
+    world_w: f32, // A7: the WORLD AABB dims — the 9-pt refpoint X/Y offsets from these (NOT the local W/H,
+    world_h: f32, // which are what W/H display), so X/Y is correct for a non-top-left refpoint on a rotated object
     rot: f32,
     fill: Option<Rgba>,
     stroke: Option<Rgba>,
@@ -532,9 +534,9 @@ impl Snap {
         let n = ed.objsel.len();
         // A7 Stage 5: X/Y = the WORLD AABB top-left (matches `obj_bbox`); W/H = the TRUE un-rotated size
         // (the LOCAL bbox), so a rotated object reports its own dimensions, not its axis-aligned envelope.
-        let (sel, x, y, w, h) = match (ed.obj_bbox(), ed.obj_local_dims()) {
-            (Some((x0, y0, _, _)), Some((lw, lh))) if n > 0 => (true, x0, y0, lw, lh),
-            _ => (false, 0.0, 0.0, 0.0, 0.0),
+        let (sel, x, y, w, h, world_w, world_h) = match (ed.obj_bbox(), ed.obj_local_dims()) {
+            (Some((x0, y0, x1, y1)), Some((lw, lh))) if n > 0 => (true, x0, y0, lw, lh, x1 - x0, y1 - y0),
+            _ => (false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
         };
         // fill/stroke/weight/opacity follow the EFFECTIVE paint selection (object sel, a Direct path-level
         // selection, or a selected anchor's path) — not objsel alone, so the Direct tool shows real colours.
@@ -565,6 +567,8 @@ impl Snap {
             y,
             w,
             h,
+            world_w,
+            world_h,
             rot: ed.obj_angle.to_degrees(),
             fill,
             stroke,
@@ -4308,7 +4312,10 @@ fn panel_properties(
                 let fw = 66.0;
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        let dx = s.x + ax * s.w;
+                        // A7: the refpoint X offset uses the WORLD AABB width (s.world_w), not the local W
+                        // (s.w) — on a rotated object those differ and only the world dim gives the true
+                        // on-screen reference-point position. `set_obj_bbox` reads/writes the same point.
+                        let dx = s.x + ax * s.world_w;
                         if let Some(v) =
                             num_field(ui, fw, Lab::Letter("X"), "X position", dx, 0, 1.0, 1.0, full.clone())
                         {
@@ -4323,7 +4330,7 @@ fn panel_properties(
                         }
                     });
                     ui.horizontal(|ui| {
-                        let dy = s.y + ay * s.h;
+                        let dy = s.y + ay * s.world_h; // A7: world AABB height, matching the X field above
                         if let Some(v) =
                             num_field(ui, fw, Lab::Letter("Y"), "Y position", dy, 0, 1.0, 1.0, full.clone())
                         {
