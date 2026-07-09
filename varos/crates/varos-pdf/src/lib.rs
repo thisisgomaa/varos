@@ -20,7 +20,7 @@ use std::path::Path as FsPath;
 use pdf_writer::types::{AssociationKind, LineCapStyle, LineJoinStyle};
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 use varos_core::file::{doc_from_blob, doc_to_blob, write_atomic, VRS_VERSION};
-use varos_core::model::{Anchor, Artboard, Document, Path};
+use varos_core::model::{Anchor, Artboard, Document, Path, Xform};
 
 const MODEL_NAME: &[u8] = b"model.varos.json";
 
@@ -126,6 +126,10 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
             if doc.eff_hidden(p.id) {
                 continue;
             }
+            // A7 (Stage 6): the path's live per-object transform — rotation is applied to every control
+            // point before the world→page map, so the exported PDF matches the rotated canvas exactly
+            // (cubics are affine-invariant → mapping control points is exact). Identity ⇒ today's output.
+            let xf = doc.unit_xform(p.id);
             // resolve each paint to its drawable solid ONCE (Paint::None — and future gradients — ⇒ None)
             let (fill, stroke) = (p.fill.solid(), p.stroke.solid());
             // WYSIWYG with the canvas: an OPEN path still FILLS (implied straight close between endpoints,
@@ -137,7 +141,7 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
                 continue;
             }
             let pad = if strokable { p.stroke_width * 0.5 } else { 0.0 };
-            if !bbox_hits(p, pad, ab) {
+            if !bbox_hits(p, &xf, pad, ab) {
                 continue;
             }
 
@@ -153,16 +157,16 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
                 let gf = ids.next();
                 let gk = ids.next();
                 ic.save_state().set_parameters(Name(b"Gf")).set_fill_rgb(fill[0], fill[1], fill[2]);
-                emit_rings(&mut ic, p, &t);
+                emit_rings(&mut ic, p, &xf, &t);
                 ic.fill_even_odd().restore_state();
                 ic.save_state()
                     .set_parameters(Name(b"Gk"))
                     .set_stroke_rgb(stroke[0], stroke[1], stroke[2])
                     .set_line_width(p.stroke_width);
-                emit_rings(&mut ic, p, &t);
+                emit_rings(&mut ic, p, &xf, &t);
                 ic.stroke().restore_state();
                 let xr = ids.next();
-                let bb = page_bbox(p, pad, &t);
+                let bb = page_bbox(p, &xf, pad, &t);
                 // paint site: object opacity applied ONCE to the whole unit
                 let n = gs_name(&mut gss, &mut ids, p.opacity, p.opacity);
                 c.save_state().set_parameters(Name(n.as_bytes()));
@@ -186,7 +190,7 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
                     c.set_stroke_rgb(s[0], s[1], s[2]);
                     c.set_line_width(p.stroke_width);
                 }
-                emit_rings(&mut c, p, &t);
+                emit_rings(&mut c, p, &xf, &t);
                 match (fillable, strokable) {
                     (true, true) => {
                         c.fill_even_odd_and_stroke();
@@ -279,26 +283,28 @@ fn gs_name(gss: &mut Vec<Gs>, ids: &mut Alloc, ca: f32, cap: f32) -> String {
 /// Emit the path's outer ring + hole rings as subpaths of ONE path object. Closed rings emit the
 /// wrap-around cubic EXPLICITLY before `h` — `h` alone closes with a straight line and would silently
 /// flatten the closing curve (the classic exporter bug).
-fn emit_rings(c: &mut Content, p: &Path, t: &impl Fn([f32; 2]) -> (f32, f32)) {
-    emit_ring(c, &p.anchors, p.closed, t);
+fn emit_rings(c: &mut Content, p: &Path, xf: &Xform, t: &impl Fn([f32; 2]) -> (f32, f32)) {
+    emit_ring(c, &p.anchors, p.closed, xf, t);
     for hole in &p.holes {
-        emit_ring(c, hole, true, t);
+        emit_ring(c, hole, true, xf, t);
     }
 }
-fn emit_ring(c: &mut Content, anchors: &[Anchor], closed: bool, t: &impl Fn([f32; 2]) -> (f32, f32)) {
+fn emit_ring(c: &mut Content, anchors: &[Anchor], closed: bool, xf: &Xform, t: &impl Fn([f32; 2]) -> (f32, f32)) {
     let n = anchors.len();
     if n < 2 {
         return;
     }
-    let p0 = t(anchors[0].p);
+    // A7: local anchor → WORLD (unit transform) → page. Rotation is affine ⇒ mapping control points is exact.
+    let tw = |q: [f32; 2]| t(xf.apply(q));
+    let p0 = tw(anchors[0].p);
     c.move_to(p0.0, p0.1);
     let segs = if closed { n } else { n - 1 };
     for i in 0..segs {
         let a = &anchors[i];
         let b = &anchors[(i + 1) % n];
-        let c1 = t(a.hout.unwrap_or(a.p));
-        let c2 = t(b.hin.unwrap_or(b.p));
-        let p3 = t(b.p);
+        let c1 = tw(a.hout.unwrap_or(a.p));
+        let c2 = tw(b.hin.unwrap_or(b.p));
+        let p3 = tw(b.p);
         c.cubic_to(c1.0, c1.1, c2.0, c2.1, p3.0, p3.1);
     }
     if closed {
@@ -307,14 +313,15 @@ fn emit_ring(c: &mut Content, anchors: &[Anchor], closed: bool, t: &impl Fn([f32
 }
 
 /// Conservative world bbox (anchors + handles of all rings) inflated by `pad`; hits the artboard?
-fn bbox_hits(p: &Path, pad: f32, ab: &Artboard) -> bool {
-    let (x0, y0, x1, y1) = world_bbox(p, pad);
+fn bbox_hits(p: &Path, xf: &Xform, pad: f32, ab: &Artboard) -> bool {
+    let (x0, y0, x1, y1) = world_bbox(p, xf, pad);
     x0 <= ab.x + ab.w && x1 >= ab.x && y0 <= ab.y + ab.h && y1 >= ab.y
 }
-fn world_bbox(p: &Path, pad: f32) -> (f32, f32, f32, f32) {
+fn world_bbox(p: &Path, xf: &Xform, pad: f32) -> (f32, f32, f32, f32) {
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
         for q in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
+            let q = xf.apply(q); // A7: the cull box is the WORLD (rotated) extent, so nothing clips away
             x0 = x0.min(q[0]);
             y0 = y0.min(q[1]);
             x1 = x1.max(q[0]);
@@ -324,8 +331,8 @@ fn world_bbox(p: &Path, pad: f32) -> (f32, f32, f32, f32) {
     (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
 }
 /// The same bbox in page space (for the Form XObject /BBox), corners ordered lower-left/upper-right.
-fn page_bbox(p: &Path, pad: f32, t: &impl Fn([f32; 2]) -> (f32, f32)) -> [f32; 4] {
-    let (x0, y0, x1, y1) = world_bbox(p, pad);
+fn page_bbox(p: &Path, xf: &Xform, pad: f32, t: &impl Fn([f32; 2]) -> (f32, f32)) -> [f32; 4] {
+    let (x0, y0, x1, y1) = world_bbox(p, xf, pad);
     let (ax0, ay0) = t([x0, y0]);
     let (ax1, ay1) = t([x1, y1]);
     [ax0.min(ax1), ay0.min(ay1), ax0.max(ax1), ay0.max(ay1)]

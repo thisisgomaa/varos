@@ -62,6 +62,44 @@ impl Xform {
             rotate_about(p, self.piv, -self.rot)
         }
     }
+    /// Compose ANOTHER rotation (`dtheta` about world point `about`) ON TOP of this one (A7 Stage 4). Two
+    /// rotations always compose to a SINGLE rotation by `rot + dtheta` about a derived fixed point — so the
+    /// unit's geometry never has to be baked to keep rotating. `new.apply(p) == rotate_about(self.apply(p),
+    /// about, dtheta)` for all `p` (unit-tested). **Degenerate case** `rot + dtheta ≡ 0 (mod 2π)`: the
+    /// composition is a pure TRANSLATION, not representable as a rotation — the caller must detect this
+    /// (via [`compose_is_degenerate`]) and bake the residual (see `Editor::rotate_unit`). Here we return an
+    /// identity-rot xform as a safe placeholder; do NOT rely on it in the degenerate case.
+    pub fn then_rotate(&self, dtheta: f32, about: Pt) -> Xform {
+        let phi = self.rot + dtheta;
+        // new_map is a rigid motion of rotation phi; its fixed point c solves (I − Rot(phi))·c = new_map(0).
+        let k = rotate_about(rotate_about([0.0, 0.0], self.piv, self.rot), about, dtheta);
+        let (s, co) = phi.sin_cos();
+        let det = (1.0 - co) * (1.0 - co) + s * s; // = 2(1 − cos phi); → 0 only when phi ≡ 0 (mod 2π)
+        if det.abs() < 1e-9 {
+            return Xform { rot: 0.0, piv: [0.0, 0.0] }; // degenerate — caller bakes the translation
+        }
+        // c = (I − Rot(phi))⁻¹ · k, with (I − Rot(phi))⁻¹ = 1/det · [[1−co, −s],[s, 1−co]]
+        let c = [((1.0 - co) * k[0] - s * k[1]) / det, (s * k[0] + (1.0 - co) * k[1]) / det];
+        Xform { rot: phi, piv: c }
+    }
+    /// The pure-translation vector the degenerate composition (`rot + dtheta ≡ 0`) reduces to — i.e. where
+    /// the origin lands. The caller bakes this into the unit's anchors and resets the xform to identity.
+    pub fn compose_translation(&self, dtheta: f32, about: Pt) -> Pt {
+        rotate_about(rotate_about([0.0, 0.0], self.piv, self.rot), about, dtheta)
+    }
+    /// A move carries the pivot with the geometry (translation commutes with rotation), so translating the
+    /// local anchors by `d` AND the pivot by `d` leaves `rot` untouched and the world result correct.
+    pub fn translated(&self, d: Pt) -> Xform {
+        Xform { rot: self.rot, piv: [self.piv[0] + d[0], self.piv[1] + d[1]] }
+    }
+}
+
+/// Is composing `+dtheta` onto a unit currently at `rot` a DEGENERATE (pure-translation) rotation — i.e.
+/// does the total angle land on a multiple of 2π? Then [`Xform::then_rotate`] can't represent it and the
+/// caller must bake (`Editor::rotate_unit`). Threshold matches `is_identity` (a visually-zero residual).
+pub fn compose_is_degenerate(rot: f32, dtheta: f32) -> bool {
+    let m = (rot + dtheta).rem_euclid(std::f32::consts::TAU);
+    m < 1e-4 || (std::f32::consts::TAU - m) < 1e-4
 }
 
 /// A path's paint — fill or stroke. The load-bearing colour representation (COLOR_SPEC §1.5): today
@@ -791,10 +829,15 @@ impl Document {
         true
     }
 
+    /// Anchor+handle bounding box in WORLD space (A7 seam — composes the path's unit transform). Identity
+    /// ⇒ today's box byte-for-byte. Used by shape-cleanup on `pointer_up` and (via the PDF crate's own
+    /// world_bbox) export cull.
     pub fn bbox(&self, pi: usize) -> (f32, f32, f32, f32) {
+        let xf = self.unit_xform(self.paths[pi].id);
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for a in &self.paths[pi].anchors {
             for q in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
+                let q = xf.apply(q);
                 x0 = x0.min(q[0]);
                 y0 = y0.min(q[1]);
                 x1 = x1.max(q[0]);
@@ -948,6 +991,17 @@ impl Document {
     /// Stage 4 can flip the representation in exactly one place with no call-site churn. Identity today.
     pub fn unit_xform(&self, pid: u32) -> Xform {
         self.unit_of(pid).and_then(|n| self.node(n)).map(|n| n.xform).unwrap_or_default()
+    }
+    /// The stored transform of a node directly (identity if absent). Used by the editor when it already
+    /// holds the UNIT node id (rotate writes here; bake reads here).
+    pub fn node_xform(&self, nid: u32) -> Xform {
+        self.node(nid).map(|n| n.xform).unwrap_or_default()
+    }
+    /// Set a node's live transform (A7 Stage 4 — rotate composes into this instead of baking geometry).
+    pub fn set_node_xform(&mut self, nid: u32, xf: Xform) {
+        if let Some(n) = self.node_mut(nid) {
+            n.xform = xf;
+        }
     }
     /// A30: is this unit node released from artboard clip (its top-level item bleeds outside)?
     pub fn node_clip_exempt(&self, nid: u32) -> bool {
@@ -1124,6 +1178,7 @@ impl Document {
         for &og in &gset {
             let ng = self.nid();
             let name = self.node(og).map(|n| n.name.clone()).unwrap_or_default();
+            let xform = self.node_xform(og); // A7: the copy inherits the group unit's live rotation
             self.nodes.push(Node {
                 id: ng,
                 kind: NodeKind::Group,
@@ -1134,7 +1189,7 @@ impl Document {
                 locked: false,
                 color: None,
                 clip_exempt: false,
-                xform: Xform::default(),
+                xform,
             });
             gmap.insert(og, ng);
         }
@@ -1142,6 +1197,7 @@ impl Document {
         for (&old_p, &new_p) in &pmap {
             if let Some(old_leaf) = self.node_of_path(old_p) {
                 let nl = self.nid();
+                let xform = self.node_xform(old_leaf); // A7: an ungrouped rotated path's copy keeps its rotation
                 self.nodes.push(Node {
                     id: nl,
                     kind: NodeKind::Path(new_p),
@@ -1152,7 +1208,7 @@ impl Document {
                     locked: false,
                     color: None,
                     clip_exempt: false,
-                    xform: Xform::default(),
+                    xform,
                 });
                 leafmap.insert(old_leaf, nl);
             }
@@ -1570,6 +1626,9 @@ impl Document {
         let pids: Vec<u32> = if copy {
             pids.iter()
                 .map(|&s| {
+                    // A7: the flat copy becomes its OWN unit → inherit the source's effective unit xform so
+                    // a rotated original (grouped or not) copies to a visually-identical, independent rotation.
+                    let xform = self.unit_xform(s);
                     let c = self.clone_path(s);
                     let cid = c.id;
                     self.paths.push(c);
@@ -1584,7 +1643,7 @@ impl Document {
                         locked: false,
                         color: None,
                         clip_exempt: false,
-                        xform: Xform::default(),
+                        xform,
                     });
                     cid
                 })

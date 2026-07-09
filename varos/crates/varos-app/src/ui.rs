@@ -530,8 +530,10 @@ struct Snap {
 impl Snap {
     fn read(ed: &Editor) -> Self {
         let n = ed.objsel.len();
-        let (sel, x, y, w, h) = match ed.obj_bbox() {
-            Some((x0, y0, x1, y1)) if n > 0 => (true, x0, y0, x1 - x0, y1 - y0),
+        // A7 Stage 5: X/Y = the WORLD AABB top-left (matches `obj_bbox`); W/H = the TRUE un-rotated size
+        // (the LOCAL bbox), so a rotated object reports its own dimensions, not its axis-aligned envelope.
+        let (sel, x, y, w, h) = match (ed.obj_bbox(), ed.obj_local_dims()) {
+            (Some((x0, y0, _, _)), Some((lw, lh))) if n > 0 => (true, x0, y0, lw, lh),
             _ => (false, 0.0, 0.0, 0.0, 0.0),
         };
         // fill/stroke/weight/opacity follow the EFFECTIVE paint selection (object sel, a Direct path-level

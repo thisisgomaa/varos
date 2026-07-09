@@ -41,10 +41,13 @@ fn rotate_tool_rotates_around_the_clicked_pivot() {
     assert_eq!(ed.pivot, Some([0.0, 0.0]), "a click should move the pivot");
     ed.pointer_down([100.0, 0.0]); // grab at 0deg from the pivot
     ed.pointer_move([0.0, 100.0]); // drag to 90deg -> rotate the selection about [0,0]
-    let p2 = ed.doc.anchor(2).unwrap().p; // corner that started at [100,0]
+                                   // A7 Stage 4: rotation is now a LIVE transform — the stored anchor stays in LOCAL space and the WORLD
+                                   // position comes through the unit transform. (Old code baked p directly; the geometry is identical.)
+    let a2 = ed.doc.anchor(2).unwrap();
+    let p2 = ed.doc.unit_xform(10).apply(a2.p); // corner that started at [100,0], now in world
     assert!(
         (p2[0]).abs() < 0.5 && (p2[1] - 100.0).abs() < 0.5,
-        "corner [100,0] should rotate to ~[0,100], got {:?}",
+        "corner [100,0] should rotate to ~[0,100] in world, got {:?}",
         p2
     );
     ed.pointer_up();
