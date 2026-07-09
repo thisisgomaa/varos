@@ -46,7 +46,12 @@ impl Tool for Pen {
         if let Some(pid) = ed.path_under(pos) {
             if ed.is_editable(pid) {
                 if let Some(pi) = ed.doc.pidx(pid) {
-                    if let Some((i, t, d)) = ed.doc.nearest_seg(pi, pos) {
+                    // A7: `nearest_seg` matches the cursor against LOCAL geometry — map the WORLD cursor into
+                    // the unit's local frame first (a rigid, distance-preserving rotation, so `EDGE_R` still
+                    // holds) so clicking a rotated path's segment inserts under the cursor. Identity unit ⇒
+                    // `lpos == pos` (byte-for-byte); the path keeps its live rotation (no bake).
+                    let lpos = ed.doc.unit_xform(pid).inverse_apply(pos);
+                    if let Some((i, t, d)) = ed.doc.nearest_seg(pi, lpos) {
                         if d <= EDGE_R {
                             let nid = ed.add_anchor(pi, i, t);
                             ed.selected.insert(nid);
@@ -69,6 +74,10 @@ impl Tool for Pen {
                 id
             }
         };
+        // A7: extending an existing (possibly resumed & rotated) path pushes the raw WORLD click into LOCAL
+        // anchor storage — bake the active unit to identity first so the new point lands under the cursor.
+        // (A freshly-created path is identity ⇒ a no-op; `resume`/`join` also bake, so this is defensive.)
+        ed.dirty |= ed.bake_unit_of(pid);
         let pi = ed.doc.pidx(pid).unwrap();
         // A8b: Shift locks the new point to 45°/H/V from the previous anchor — the SAME constraint the
         // rubber-band preview shows, so where you see the ghost land is where the point lands.
