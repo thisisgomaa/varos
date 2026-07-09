@@ -82,10 +82,15 @@ pub enum Drag {
     Marquee { start: Pt, base: Vec<u32> },
     ObjMarquee { start: Pt, base: Vec<u32> },
     DupPending { srcs: Vec<u32>, down: Pt, object: bool },
-    Object { down: Pt, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
-    // scale works in the frame's LOCAL (un-rotated) space; opp_l/cen_l/h0_l are local handle coords
+    // A7: `base` = LOCAL anchors (translated by the move), `base_world` = their world positions (for
+    // snapping), `piv_base` = rotated units' base xforms whose pivots the move carries (keeps θ).
+    Object { down: Pt, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)>, base_world: Vec<Pt>, piv_base: Vec<(u32, Xform)> },
+    // scale works in the frame's LOCAL (un-rotated) space; opp_l/cen_l/h0_l are local handle coords. `base`
+    // is WORLD anchors (A7): the world-space scale math writes back through each unit's transform (keeps θ).
     Scale { handle: u8, angle: f32, opp_l: Pt, cen_l: Pt, h0_l: Pt, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
-    Rotate { center: Pt, start: f32, a0: f32, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
+    // A7 Stage 4: rotate COMPOSES into each unit's stored transform (no geometry bake). `units` = the
+    // selection's unit nodes with their base (pre-drag) xform, so each frame recomposes from the snapshot.
+    Rotate { center: Pt, start: f32, a0: f32, units: Vec<(u32, Xform)> },
     ScaleLive { pivot: Pt, down: Pt, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> }, // Scale tool: about `pivot`, ratio from `down`
     TfPending { pivot: Pt, down: Pt }, // Rotate/Scale pressed: a plain click relocates the pivot, a drag transforms
     ConvPull { aid: u32, down: Pt },
@@ -311,22 +316,6 @@ fn rect_from_corners(a: Pt, b: Pt, square: bool) -> (f32, f32, f32, f32) {
     (a[0].min(a[0] + dx), a[1].min(a[1] + dy), dx.abs().max(1.0), dy.abs().max(1.0))
 }
 
-/// Axis-aligned bbox of a drag's base anchor set (the pre-drag selection extent), for snapping.
-fn base_bbox(base: &[(u32, Pt, Option<Pt>, Option<Pt>)]) -> (f32, f32, f32, f32) {
-    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for (_, p, _, _) in base {
-        x0 = x0.min(p[0]);
-        y0 = y0.min(p[1]);
-        x1 = x1.max(p[0]);
-        y1 = y1.max(p[1]);
-    }
-    if x0 <= x1 {
-        (x0, y0, x1, y1)
-    } else {
-        (0.0, 0.0, 0.0, 0.0)
-    }
-}
-
 pub struct Editor {
     pub doc: Document,
     pub tool: ToolKind,
@@ -457,9 +446,11 @@ impl Editor {
             if shown_only && !self.path_shown(p.id) {
                 continue;
             }
+            // A7 seam: anchors are drawn at their WORLD positions → hit them in world.
+            let xf = self.doc.unit_xform(p.id);
             for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
                 // outer + hole anchors
-                let d = dist(pos, a.p);
+                let d = dist(pos, xf.apply(a.p));
                 if d <= r && best.is_none_or(|(_, bd)| d < bd) {
                     best = Some((a.id, d));
                 }
@@ -493,10 +484,12 @@ impl Editor {
     }
     pub fn handle_hit(&self, pos: Pt) -> Option<u32> {
         let hr = HANDLE_R / self.ppu;
+        // A7 seam: handles are drawn at WORLD positions → hit them in world.
         for &aid in &self.selected {
             if let Some(a) = self.doc.anchor(aid) {
+                let xf = self.doc.pid_of_anchor(aid).map(|pid| self.doc.unit_xform(pid)).unwrap_or_default();
                 for h in [a.hin, a.hout].into_iter().flatten() {
-                    if dist(pos, h) <= hr {
+                    if dist(pos, xf.apply(h)) <= hr {
                         return Some(aid);
                     }
                 }
@@ -504,9 +497,10 @@ impl Editor {
         }
         if let Some(ap) = self.active {
             if let Some(pi) = self.doc.pidx(ap) {
+                let xf = self.doc.unit_xform(ap);
                 for a in &self.doc.paths[pi].anchors {
                     for h in [a.hin, a.hout].into_iter().flatten() {
-                        if dist(pos, h) <= hr {
+                        if dist(pos, xf.apply(h)) <= hr {
                             return Some(a.id);
                         }
                     }
@@ -517,8 +511,9 @@ impl Editor {
     }
     pub fn which_handle(&self, aid: u32, pos: Pt) -> bool {
         let a = self.doc.anchor(aid).unwrap();
-        let dout = a.hout.map_or(f32::MAX, |h| dist(pos, h));
-        let din = a.hin.map_or(f32::MAX, |h| dist(pos, h));
+        let xf = self.doc.pid_of_anchor(aid).map(|pid| self.doc.unit_xform(pid)).unwrap_or_default();
+        let dout = a.hout.map_or(f32::MAX, |h| dist(pos, xf.apply(h)));
+        let din = a.hin.map_or(f32::MAX, |h| dist(pos, xf.apply(h)));
         dout <= din
     }
     pub fn tangent(&self, pi: usize, ai: usize) -> Pt {
@@ -572,7 +567,10 @@ impl Editor {
             None
         }
     }
-    /// Selection bbox in the frame's LOCAL space (outline un-rotated by obj_angle about origin).
+    /// Selection bbox in the frame's LOCAL space: the WORLD outline (A7 seam — each unit's transform
+    /// composed) un-rotated by `obj_angle` about the origin. The round-trip un-rotate→(bbox)→re-rotate in
+    /// `frame_corners`/`frame_handles` lands the oriented frame exactly on the drawn (rotated) shape,
+    /// independent of each unit's pivot. Identity ⇒ today's local box byte-for-byte.
     pub fn obj_local_bbox(&self) -> Option<(f32, f32, f32, f32)> {
         if self.objsel.is_empty() {
             return None;
@@ -581,8 +579,9 @@ impl Editor {
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &pid in &self.objsel {
             if let Some(pi) = self.doc.pidx(pid) {
+                let xf = self.doc.unit_xform(pid);
                 for q in self.doc.outline(pi, 8) {
-                    let r = rotate_about(q, [0.0, 0.0], th);
+                    let r = rotate_about(xf.apply(q), [0.0, 0.0], th);
                     x0 = x0.min(r[0]);
                     y0 = y0.min(r[1]);
                     x1 = x1.max(r[0]);
@@ -653,15 +652,23 @@ impl Editor {
     /// enclosed (point_in_path now treats open paths as implied-closed; this keeps that from leaking
     /// into marquee over-selection — session-lock correctness fix).
     pub fn path_in_rect(&self, pi: usize, x0: f32, y0: f32, x1: f32, y1: f32) -> bool {
+        // A7 seam: marquee-test the WORLD outline (unit transform composed) so a rotated object is caught
+        // by its VISUAL bounds. Identity ⇒ today's local test byte-for-byte.
+        let xf = self.doc.unit_xform(self.doc.paths[pi].id);
         let poly = self.doc.outline(pi, 16);
         if poly.is_empty() {
             return false;
         }
-        if poly.iter().any(|p| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1) {
+        if poly.iter().any(|q| {
+            let q = xf.apply(*q);
+            q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1
+        }) {
             return true;
         }
         let p = &self.doc.paths[pi];
-        (p.closed || p.fill.solid().is_some()) && self.doc.point_in_path(pi, [(x0 + x1) * 0.5, (y0 + y1) * 0.5])
+        // centre-inside test in the path's LOCAL frame (map the rect centre back through the transform)
+        let c = xf.inverse_apply([(x0 + x1) * 0.5, (y0 + y1) * 0.5]);
+        (p.closed || p.fill.solid().is_some()) && self.doc.point_in_path(pi, c)
     }
     /// Did a press land on a transform handle (scale) or a corner's rotate ring (just outside)?
     pub fn transform_hit(&self, pos: Pt) -> Option<TfHit> {
@@ -705,7 +712,6 @@ impl Editor {
             None => return,
         };
         let cen_l = [(bb.0 + bb.2) * 0.5, (bb.1 + bb.3) * 0.5];
-        let base = self.objsel_base();
         match hit {
             TfHit::Scale(i) => {
                 let l = Self::bbox_handles(bb);
@@ -715,13 +721,13 @@ impl Editor {
                     opp_l: l[Self::opposite(i) as usize],
                     cen_l,
                     h0_l: l[i as usize],
-                    base,
+                    base: self.objsel_base_world(), // A7: world base; write-back keeps each unit's θ
                 };
             }
             TfHit::Rotate(_) => {
                 let center = rotate_about(cen_l, [0.0, 0.0], self.obj_angle);
                 let start = (pos[1] - center[1]).atan2(pos[0] - center[0]);
-                self.drag = Drag::Rotate { center, start, a0: self.obj_angle, base };
+                self.drag = Drag::Rotate { center, start, a0: self.obj_angle, units: self.objsel_units_xform() };
             }
         }
     }
@@ -740,17 +746,219 @@ impl Editor {
         }
     }
 
+    // ---------- A7 live-transform helpers (Stage 4) ----------
+    /// The frame angle DERIVED from the stored transform: a SINGLE selected unit shows its live rotation;
+    /// a multi-unit selection has no common local frame → axis-aligned (0). This is the ONE reconciliation
+    /// of the transient `obj_angle` with the persisted `Node.xform.rot` — every selection-change site sets
+    /// `obj_angle = self.sel_stored_angle()`, so reselecting a rotated object restores its angle.
+    pub fn sel_stored_angle(&self) -> f32 {
+        let mut units = self.objsel.iter().filter_map(|&p| self.doc.unit_of(p));
+        match units.next() {
+            Some(u0) if units.all(|u| u == u0) => self.doc.node_xform(u0).rot,
+            _ => 0.0,
+        }
+    }
+    /// Recompute the frame angle from the current object selection (call after any selection change).
+    pub fn refresh_obj_angle(&mut self) {
+        self.obj_angle = self.sel_stored_angle();
+    }
+    /// The distinct UNIT nodes the object selection spans (each holds one transform).
+    fn objsel_units(&self) -> Vec<u32> {
+        let mut units: Vec<u32> = vec![];
+        for &p in &self.objsel {
+            if let Some(u) = self.doc.unit_of(p) {
+                if !units.contains(&u) {
+                    units.push(u);
+                }
+            }
+        }
+        units
+    }
+    /// The selection's units paired with their CURRENT stored transform (snapshot for a drag's base).
+    fn objsel_units_xform(&self) -> Vec<(u32, Xform)> {
+        self.objsel_units().into_iter().map(|u| (u, self.doc.node_xform(u))).collect()
+    }
+    /// Bake a unit's live transform into its geometry (§4): apply the xform to every anchor/handle of every
+    /// path in the unit's subtree, then reset the xform to identity. This IS the old `Drag::Rotate` bake,
+    /// reused. World geometry is unchanged; only the split between stored-anchors and stored-transform moves.
+    fn bake_unit(&mut self, unit: u32) -> bool {
+        let xf = self.doc.node_xform(unit);
+        if xf.is_identity() {
+            return false;
+        }
+        for pid in self.doc.node_paths(unit) {
+            if let Some(pi) = self.doc.pidx(pid) {
+                for a in &mut self.doc.paths[pi].anchors {
+                    a.p = xf.apply(a.p);
+                    a.hin = a.hin.map(|h| xf.apply(h));
+                    a.hout = a.hout.map(|h| xf.apply(h));
+                }
+                for h in &mut self.doc.paths[pi].holes {
+                    for a in h {
+                        a.p = xf.apply(a.p);
+                        a.hin = a.hin.map(|x| xf.apply(x));
+                        a.hout = a.hout.map(|x| xf.apply(x));
+                    }
+                }
+            }
+        }
+        self.doc.set_node_xform(unit, Xform::default());
+        true
+    }
+    /// Bake every unit in the object selection (used by ops that must operate on raw world geometry —
+    /// flip / align / distribute / group / boolean / Expand). A no-op for un-rotated selections.
+    fn bake_selected_units(&mut self) {
+        for u in self.objsel_units() {
+            self.bake_unit(u);
+        }
+    }
+    /// Expand / Apply Transform (Stage 7): bake the object selection's live transforms into geometry and
+    /// reset them to identity — the explicit, user-facing counterpart of the implicit bakes. World geometry
+    /// is unchanged; afterwards `xform.rot == 0` and the stored anchors ARE the (formerly rotated) world
+    /// coordinates. One undo step; a no-op (no undo) if nothing is rotated.
+    pub fn expand_transform(&mut self) {
+        if self.objsel.is_empty() || self.objsel_units().iter().all(|&u| self.doc.node_xform(u).is_identity()) {
+            return;
+        }
+        self.begin();
+        self.bake_selected_units();
+        self.refresh_obj_angle();
+        self.dirty = true;
+        self.commit();
+    }
+    /// Bake the unit that owns `pid` (Direct-Selection anchor edits bake first, then edit in world — the
+    /// simplest consistent behaviour for reshaping a rotated object; see §3 / Stage 7). Returns true if a
+    /// live rotation was actually baked (so the caller records an undo step only then).
+    pub fn bake_unit_of(&mut self, pid: u32) -> bool {
+        self.doc.unit_of(pid).map(|u| self.bake_unit(u)).unwrap_or(false)
+    }
+    /// Rotate ONE unit by `dtheta` about world point `about`, from a snapshot `base_xf` — composing into the
+    /// stored transform (NO geometry bake), except at the degenerate total-angle-≡-0 case, which bakes the
+    /// residual translation. Anchors stay in local space in the common case (the crux of A7).
+    fn rotate_unit(&mut self, unit: u32, base_xf: Xform, dtheta: f32, about: Pt) {
+        if compose_is_degenerate(base_xf.rot, dtheta) {
+            // pure translation: bake it into the anchors (which are still base geometry) + identity
+            let t = base_xf.compose_translation(dtheta, about);
+            self.doc.set_node_xform(unit, Xform::default());
+            for pid in self.doc.node_paths(unit) {
+                if let Some(pi) = self.doc.pidx(pid) {
+                    self.translate_path(pi, t);
+                }
+            }
+        } else {
+            self.doc.set_node_xform(unit, base_xf.then_rotate(dtheta, about));
+        }
+    }
+    /// Write a WORLD-space anchor back into local storage through its unit transform (`inverse_apply`), so
+    /// world-space transform math (scale / reflect) keeps the unit's live rotation. Identity unit ⇒ a plain
+    /// world write (byte-for-byte today).
+    fn write_anchor_world(&mut self, aid: u32, wp: Pt, whin: Option<Pt>, whout: Option<Pt>) {
+        let xf = self.doc.pid_of_anchor(aid).map(|pid| self.doc.unit_xform(pid)).unwrap_or_default();
+        if let Some(a) = self.doc.anchor_mut(aid) {
+            a.p = xf.inverse_apply(wp);
+            a.hin = whin.map(|h| xf.inverse_apply(h));
+            a.hout = whout.map(|h| xf.inverse_apply(h));
+        }
+    }
+    /// WORLD anchors of the object selection (each mapped through its unit transform) — the base for
+    /// world-space transform gestures (Scale). Paired with `write_anchor_world` for the write-back.
+    fn objsel_base_world(&self) -> Vec<(u32, Pt, Option<Pt>, Option<Pt>)> {
+        let mut base = vec![];
+        for &pid in &self.objsel {
+            if let Some(pi) = self.doc.pidx(pid) {
+                let xf = self.doc.unit_xform(pid);
+                for a in self.doc.paths[pi].anchors.iter().chain(self.doc.paths[pi].holes.iter().flatten()) {
+                    base.push((a.id, xf.apply(a.p), a.hin.map(|h| xf.apply(h)), a.hout.map(|h| xf.apply(h))));
+                }
+            }
+        }
+        base
+    }
+    /// The object-move base: (local anchors to translate, their WORLD positions for snapping, the rotated
+    /// units' base xforms whose pivots must be carried). A move translates the local anchors AND carries
+    /// each rotated unit's pivot by the same delta (translation commutes with rotation), so `rot` is
+    /// untouched and the world result is exact.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn object_move_base(&self) -> (Vec<(u32, Pt, Option<Pt>, Option<Pt>)>, Vec<Pt>, Vec<(u32, Xform)>) {
+        let mut base = vec![];
+        let mut base_world = vec![];
+        for &pid in &self.objsel {
+            if let Some(pi) = self.doc.pidx(pid) {
+                let xf = self.doc.unit_xform(pid);
+                for a in self.doc.paths[pi].anchors.iter().chain(self.doc.paths[pi].holes.iter().flatten()) {
+                    base.push((a.id, a.p, a.hin, a.hout));
+                    base_world.push(xf.apply(a.p));
+                }
+            }
+        }
+        let piv_base = self.objsel_units_xform().into_iter().filter(|(_, xf)| !xf.is_identity()).collect();
+        (base, base_world, piv_base)
+    }
+    /// Axis-aligned bbox of a set of world points (for object-move snapping).
+    fn pts_bbox(pts: &[Pt]) -> (f32, f32, f32, f32) {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for p in pts {
+            x0 = x0.min(p[0]);
+            y0 = y0.min(p[1]);
+            x1 = x1.max(p[0]);
+            y1 = y1.max(p[1]);
+        }
+        if x0 <= x1 {
+            (x0, y0, x1, y1)
+        } else {
+            (0.0, 0.0, 0.0, 0.0)
+        }
+    }
+    /// True un-rotated dimensions (W, H) of the object selection — the panel's TRUE W/H (Stage 5), i.e. the
+    /// LOCAL bbox, not the world AABB of a rotated shape.
+    pub fn obj_local_dims(&self) -> Option<(f32, f32)> {
+        self.obj_local_bbox().map(|(x0, y0, x1, y1)| (x1 - x0, y1 - y0))
+    }
+    /// Bbox of a unit's own LOCAL anchor geometry (the coordinates as stored, pre-transform). Used by the
+    /// numeric W/H edit to scale a rotated unit in its own frame.
+    fn unit_local_bbox(&self, unit: u32) -> Option<(f32, f32, f32, f32)> {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for pid in self.doc.node_paths(unit) {
+            if let Some(pi) = self.doc.pidx(pid) {
+                for q in self.doc.outline(pi, 8) {
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
+        }
+        (x0 <= x1).then_some((x0, y0, x1, y1))
+    }
+
     // ---------- Pathfinder (boolean ops) ----------
-    /// Build one path as cubic contours (outer + hole contours) for the boolean engine.
+    /// Build one path as cubic contours (outer + hole contours) for the boolean engine. A7: the contours are
+    /// emitted in WORLD space (unit transform composed), so a rotated participant is fed to the engine at
+    /// its true position — the boolean IMPLICITLY bakes rotation and the result is fresh identity geometry.
     fn path_to_segs(&self, pi: usize) -> Vec<Vec<Seg>> {
         let p = &self.doc.paths[pi];
+        let xf = self.doc.unit_xform(p.id);
+        let world = |ring: &[Anchor]| -> Vec<Anchor> {
+            if xf.is_identity() {
+                return ring.to_vec();
+            }
+            ring.iter()
+                .map(|a| Anchor {
+                    id: a.id,
+                    p: xf.apply(a.p),
+                    hin: a.hin.map(|h| xf.apply(h)),
+                    hout: a.hout.map(|h| xf.apply(h)),
+                    smooth: a.smooth,
+                })
+                .collect()
+        };
         let mut shape: Vec<Vec<Seg>> = vec![];
-        let outer = contour_segs(&p.anchors);
+        let outer = contour_segs(&world(&p.anchors));
         if !outer.is_empty() {
             shape.push(outer);
         }
         for hole in &p.holes {
-            let c = contour_segs(hole);
+            let c = contour_segs(&world(hole));
             if !c.is_empty() {
                 shape.push(c);
             }
@@ -823,7 +1031,7 @@ impl Editor {
         self.selected.clear();
         self.active = None;
         self.dsel_path = None;
-        self.obj_angle = 0.0;
+        self.refresh_obj_angle(); // fresh identity result → 0
         self.dirty = true;
         self.commit();
     }
@@ -970,13 +1178,14 @@ impl Editor {
         };
         let pids: Vec<u32> = self.objsel.iter().copied().collect();
         self.begin();
+        self.bake_selected_units(); // A7: align translates raw geometry — bake any live rotation first
         for pid in pids {
             if let Some(pi) = self.doc.pidx(pid) {
                 let b = self.doc.outline_bbox(pi);
                 self.translate_path(pi, align_delta(mode, rect, b));
             }
         }
-        self.obj_angle = 0.0;
+        self.refresh_obj_angle();
         self.dirty = true;
         self.commit();
     }
@@ -1000,6 +1209,7 @@ impl Editor {
             return;
         }
         self.begin();
+        self.bake_selected_units(); // A7: bake any live rotation before translating raw geometry
         for (_u, pids) in &units {
             let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
             for &pid in pids {
@@ -1021,7 +1231,7 @@ impl Editor {
                 }
             }
         }
-        self.obj_angle = 0.0;
+        self.refresh_obj_angle();
         self.dirty = true;
         self.commit();
     }
@@ -1054,6 +1264,7 @@ impl Editor {
         let (c0, c1) = (items[0].1, items[n - 1].1);
         let step = (c1 - c0) / (n as f32 - 1.0);
         self.begin();
+        self.bake_selected_units(); // A7: distribute translates raw geometry — bake live rotation first
         for (k, &(pid, c)) in items.iter().enumerate().skip(1).take(n - 2) {
             let d = c0 + step * k as f32 - c;
             if let Some(pi) = self.doc.pidx(pid) {
@@ -1066,7 +1277,7 @@ impl Editor {
                 );
             }
         }
-        self.obj_angle = 0.0;
+        self.refresh_obj_angle();
         self.dirty = true;
         self.commit();
     }
@@ -1091,6 +1302,7 @@ impl Editor {
             .collect();
         items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         self.begin();
+        self.bake_selected_units(); // A7: distribute-spacing translates raw geometry — bake rotation first
         let mut cur = items[0].1 + items[0].2 + gap; // edge just after the first object
         for &(pid, lo, len) in items.iter().skip(1) {
             let d = cur - lo;
@@ -1105,19 +1317,29 @@ impl Editor {
             }
             cur += len + gap;
         }
-        self.obj_angle = 0.0;
+        self.refresh_obj_angle();
         self.dirty = true;
         self.commit();
     }
-    /// Mirror the object selection across its bbox centre (horizontal = flip left↔right).
+    /// Mirror the object selection across its bbox centre (horizontal = flip left↔right). A7: reflection
+    /// changes handedness, so a live rotation would need its sign flipped AND its frame re-oriented — we
+    /// instead BAKE the selection to identity first, then reflect the raw world geometry (simplest correct;
+    /// the reflected result is exact and the frame re-derives from geometry).
     pub fn flip(&mut self, horizontal: bool) {
+        if self.objsel.is_empty() {
+            return;
+        }
+        self.begin();
+        self.bake_selected_units(); // world geometry, identity transforms
         let (x0, y0, x1, y1) = match self.obj_bbox() {
             Some(b) => b,
-            None => return,
+            None => {
+                self.commit();
+                return;
+            }
         };
         let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
         let base = self.objsel_base();
-        self.begin();
         let tf = |p: Pt| if horizontal { [2.0 * cx - p[0], p[1]] } else { [p[0], 2.0 * cy - p[1]] };
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
@@ -1126,7 +1348,7 @@ impl Editor {
                 a.hout = hout0.map(tf);
             }
         }
-        self.obj_angle = 0.0;
+        self.refresh_obj_angle();
         self.dirty = true;
         self.commit();
     }
@@ -1142,9 +1364,24 @@ impl Editor {
         ax: f32,
         ay: f32,
     ) {
+        // A7 Stage 5: a SINGLE unit scales in its OWN LOCAL frame — W/H is the true un-rotated size and θ is
+        // preserved. X/Y still address the WORLD AABB top-left (simplest, matches `obj_bbox`). A multi-unit
+        // selection has no common local frame → bake to identity first, then the historic world-AABB scale.
+        let units = self.objsel_units();
+        if units.len() == 1 && !self.doc.node_xform(units[0]).is_identity() {
+            self.set_obj_bbox_local(units[0], nx, ny, nw, nh, ax, ay);
+            return;
+        }
+        self.begin();
+        if units.iter().any(|&u| !self.doc.node_xform(u).is_identity()) {
+            self.bake_selected_units(); // multi-unit rotated: bake, then operate on raw world geometry
+        }
         let (x0, y0, x1, y1) = match self.obj_bbox() {
             Some(b) => b,
-            None => return,
+            None => {
+                self.commit();
+                return;
+            }
         };
         let (w, h) = (x1 - x0, y1 - y0);
         let sx = if w.abs() > 1e-3 { nw.map(|v| (v / w).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
@@ -1155,10 +1392,10 @@ impl Editor {
         let tx = nx.map(|v| v - nx0).unwrap_or(0.0); // then shift so the top-left equals x/y
         let ty = ny.map(|v| v - ny0).unwrap_or(0.0);
         if (sx - 1.0).abs() < 1e-5 && (sy - 1.0).abs() < 1e-5 && tx.abs() < 1e-4 && ty.abs() < 1e-4 {
+            self.commit();
             return;
         }
         let base = self.objsel_base();
-        self.begin();
         let tf = |p: Pt| [fx + (p[0] - fx) * sx + tx, fy + (p[1] - fy) * sy + ty];
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
@@ -1167,31 +1404,92 @@ impl Editor {
                 a.hout = hout0.map(tf);
             }
         }
-        self.obj_angle = 0.0;
+        self.refresh_obj_angle();
+        self.dirty = true;
+        self.commit();
+    }
+    /// Numeric W/H/X/Y for a SINGLE unit, worked in its LOCAL frame so the live rotation is preserved:
+    /// W/H scale the local anchors about the local reference point (keeping the corresponding WORLD point
+    /// fixed); X/Y then translate the whole unit in WORLD (carrying the pivot). See `set_obj_bbox`.
+    #[allow(clippy::too_many_arguments)]
+    fn set_obj_bbox_local(
+        &mut self,
+        unit: u32,
+        nx: Option<f32>,
+        ny: Option<f32>,
+        nw: Option<f32>,
+        nh: Option<f32>,
+        ax: f32,
+        ay: f32,
+    ) {
+        let Some((lx0, ly0, lx1, ly1)) = self.unit_local_bbox(unit) else { return };
+        let (lw, lh) = (lx1 - lx0, ly1 - ly0);
+        let sx = if lw.abs() > 1e-3 { nw.map(|v| (v / lw).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
+        let sy = if lh.abs() > 1e-3 { nh.map(|v| (v / lh).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
+        let (fx, fy) = (lx0 + lw * ax, ly0 + lh * ay); // LOCAL reference (its world image stays fixed)
+                                                       // world AABB top-left BEFORE the edit → translation so X/Y hit the requested world position
+        let (wx0, wy0, _, _) = self.obj_bbox().unwrap_or((0.0, 0.0, 0.0, 0.0));
+        let scale_local = |p: Pt| [fx + (p[0] - fx) * sx, fy + (p[1] - fy) * sy];
+        let no_scale = (sx - 1.0).abs() < 1e-5 && (sy - 1.0).abs() < 1e-5;
+        // translation is applied to the WORLD AABB, which after a local scale about `f` sits at:
+        let tx = nx.map(|v| v - (wx0)).unwrap_or(0.0);
+        let ty = ny.map(|v| v - (wy0)).unwrap_or(0.0);
+        if no_scale && tx.abs() < 1e-4 && ty.abs() < 1e-4 {
+            return;
+        }
+        self.begin();
+        if !no_scale {
+            for pid in self.doc.node_paths(unit) {
+                if let Some(pi) = self.doc.pidx(pid) {
+                    let apply = |a: &mut Anchor| {
+                        a.p = scale_local(a.p);
+                        a.hin = a.hin.map(scale_local);
+                        a.hout = a.hout.map(scale_local);
+                    };
+                    for a in &mut self.doc.paths[pi].anchors {
+                        apply(a);
+                    }
+                    for h in &mut self.doc.paths[pi].holes {
+                        for a in h {
+                            apply(a);
+                        }
+                    }
+                }
+            }
+        }
+        if tx != 0.0 || ty != 0.0 {
+            // world translate = translate local anchors + carry the pivot (Move identity)
+            let d = [tx, ty];
+            for pid in self.doc.node_paths(unit) {
+                if let Some(pi) = self.doc.pidx(pid) {
+                    self.translate_path(pi, d);
+                }
+            }
+            let xf = self.doc.node_xform(unit);
+            self.doc.set_node_xform(unit, xf.translated(d));
+        }
         self.dirty = true;
         self.commit();
     }
     /// Rotate the object selection so its transform frame sits at `deg` degrees (about the frame centre).
+    /// A7 Stage 4/5: this COMPOSES into each unit's stored transform (no bake) — so the panel ∠ field is a
+    /// live, persistent rotation. Rotating back to 0° hits `rotate_unit`'s degenerate path (bakes cleanly).
     pub fn set_obj_rotation(&mut self, deg: f32) {
         let bb = match self.obj_local_bbox() {
             Some(b) => b,
             None => return,
         };
         let cen_l = [(bb.0 + bb.2) * 0.5, (bb.1 + bb.3) * 0.5];
-        let center = rotate_about(cen_l, [0.0, 0.0], self.obj_angle);
+        let center = rotate_about(cen_l, [0.0, 0.0], self.obj_angle); // world frame centre
         let target = deg.to_radians();
         let d = target - self.obj_angle;
         if d.abs() < 1e-4 {
             return;
         }
-        let base = self.objsel_base();
+        let units = self.objsel_units_xform();
         self.begin();
-        for (aid, p0, hin0, hout0) in &base {
-            if let Some(a) = self.doc.anchor_mut(*aid) {
-                a.p = rotate_about(*p0, center, d);
-                a.hin = hin0.map(|h| rotate_about(h, center, d));
-                a.hout = hout0.map(|h| rotate_about(h, center, d));
-            }
+        for (unit, base_xf) in units {
+            self.rotate_unit(unit, base_xf, d, center);
         }
         self.obj_angle = target;
         self.dirty = true;
@@ -1204,9 +1502,10 @@ impl Editor {
             return;
         }
         self.begin();
+        self.bake_selected_units(); // A7: bake each member's live rotation; the new group starts identity
         let pids: Vec<u32> = self.objsel.iter().copied().collect();
         if self.doc.group(&pids).is_some() {
-            self.obj_angle = 0.0;
+            self.refresh_obj_angle();
             self.dirty = true;
         }
         self.commit();
@@ -1216,9 +1515,10 @@ impl Editor {
             return;
         }
         self.begin();
+        self.bake_selected_units(); // A7: bake the group's rotation into members before dissolving it
         let pids: Vec<u32> = self.objsel.iter().copied().collect();
         self.doc.ungroup(&pids);
-        self.obj_angle = 0.0;
+        self.refresh_obj_angle();
         self.dirty = true;
         self.commit();
     }
@@ -1237,27 +1537,45 @@ impl Editor {
         self.begin();
         if was_copy {
             let srcs: Vec<u32> = self.objsel.iter().copied().collect();
-            let cids = self.doc.dup_paths(&srcs);
+            let cids = self.doc.dup_paths(&srcs); // copies inherit each unit's live rotation (A7)
             self.objsel = cids.into_iter().collect();
         }
-        // the point map for the remembered transform — Ctrl+D repeats rotate/scale/reflect, not just moves
-        // (so rotate-a-copy then Ctrl+D+D… builds a radial pattern).
-        let f: Box<dyn Fn(Pt) -> Pt> = match tf {
-            TfAgain::Move(d) => Box::new(move |p| add(p, d)),
-            TfAgain::Rotate { pivot, ang } => Box::new(move |p| rotate_about(p, pivot, ang)),
-            TfAgain::Scale { pivot, sx, sy } => {
-                Box::new(move |p| [pivot[0] + (p[0] - pivot[0]) * sx, pivot[1] + (p[1] - pivot[1]) * sy])
+        // A7: replay in the SAME representation each op uses live — Move carries pivots, Rotate COMPOSES
+        // into the units' transforms (so rotate-a-copy + Ctrl+D… builds a radial pattern that stays live),
+        // Scale bakes then scales the world geometry.
+        match tf {
+            TfAgain::Move(d) => {
+                for unit in self.objsel_units() {
+                    for pid in self.doc.node_paths(unit) {
+                        if let Some(pi) = self.doc.pidx(pid) {
+                            self.translate_path(pi, d);
+                        }
+                    }
+                    let xf = self.doc.node_xform(unit);
+                    if !xf.is_identity() {
+                        self.doc.set_node_xform(unit, xf.translated(d));
+                    }
+                }
             }
-        };
-        let base = self.objsel_base();
-        for (aid, p0, hin0, hout0) in &base {
-            if let Some(a) = self.doc.anchor_mut(*aid) {
-                a.p = f(*p0);
-                a.hin = hin0.map(&f);
-                a.hout = hout0.map(&f);
+            TfAgain::Rotate { pivot, ang } => {
+                for (unit, base_xf) in self.objsel_units_xform() {
+                    self.rotate_unit(unit, base_xf, ang, pivot);
+                }
+            }
+            TfAgain::Scale { pivot, sx, sy } => {
+                self.bake_selected_units();
+                let base = self.objsel_base();
+                let f = |p: Pt| [pivot[0] + (p[0] - pivot[0]) * sx, pivot[1] + (p[1] - pivot[1]) * sy];
+                for (aid, p0, hin0, hout0) in &base {
+                    if let Some(a) = self.doc.anchor_mut(*aid) {
+                        a.p = f(*p0);
+                        a.hin = hin0.map(f);
+                        a.hout = hout0.map(f);
+                    }
+                }
             }
         }
-        self.obj_angle = if let TfAgain::Rotate { ang, .. } = tf { self.obj_angle + ang } else { 0.0 };
+        self.refresh_obj_angle();
         self.dirty = true;
         self.commit();
     }
@@ -2114,8 +2432,9 @@ impl Editor {
             }
             let b = self.doc.outline_bbox(pi);
             pts.extend([[b.0, b.1], [b.2, b.1], [b.2, b.3], [b.0, b.3], [(b.0 + b.2) * 0.5, (b.1 + b.3) * 0.5]]);
+            let xf = self.doc.unit_xform(pp.id); // A7 seam: snap the pivot to WORLD anchor positions
             for a in pp.anchors.iter().chain(pp.holes.iter().flatten()) {
-                pts.push(a.p);
+                pts.push(xf.apply(a.p));
             }
         }
         let mut best: Option<(f32, Pt)> = None;
@@ -2231,11 +2550,15 @@ impl Editor {
                 if p.anchors.iter().chain(p.holes.iter().flatten()).any(|a| self.selected.contains(&a.id)) {
                     continue;
                 }
+                // A7 seam: candidate points are the target's WORLD geometry (unit transform composed), so a
+                // rotated object is snapped-to where it's drawn. `moved` is world; distances are invariant.
+                let xf = self.doc.unit_xform(p.id);
                 if cfg.key_points {
                     for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
-                        let dd = dist(moved, a.p);
+                        let wp = xf.apply(a.p);
+                        let dd = dist(moved, wp);
                         if dd <= tol && best.is_none_or(|(bd, _, _)| dd < bd) {
-                            best = Some((dd, a.p, moved));
+                            best = Some((dd, wp, moved));
                         }
                     }
                 }
@@ -2243,7 +2566,7 @@ impl Editor {
                     let n = p.anchors.len();
                     let segs = if p.closed { n } else { n.saturating_sub(1) };
                     for i in 0..segs {
-                        let (q, r) = (p.anchors[i].p, p.anchors[(i + 1) % n].p);
+                        let (q, r) = (xf.apply(p.anchors[i].p), xf.apply(p.anchors[(i + 1) % n].p));
                         let mid = [(q[0] + r[0]) * 0.5, (q[1] + r[1]) * 0.5];
                         let dd = dist(moved, mid);
                         if dd <= tol && best.is_none_or(|(bd, _, _)| dd < bd) {
@@ -2252,13 +2575,14 @@ impl Editor {
                     }
                 }
                 if cfg.object_geometry {
-                    if let Some((si, t, dd)) = self.doc.nearest_seg(pi, moved) {
+                    let lmoved = xf.inverse_apply(moved); // test in the target's local frame
+                    if let Some((si, t, dd)) = self.doc.nearest_seg(pi, lmoved) {
                         if dd <= tol && best.is_none_or(|(bd, _, _)| dd < bd) {
                             let n = p.anchors.len();
                             let a = &p.anchors[si];
                             let b = &p.anchors[(si + 1) % n];
                             let pt = cubic(a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p, t);
-                            best = Some((dd, pt, moved));
+                            best = Some((dd, xf.apply(pt), moved));
                         }
                     }
                 }
@@ -2330,19 +2654,20 @@ impl Editor {
             if p.hidden {
                 continue;
             }
+            let xf = self.doc.unit_xform(p.id); // A7 seam: snap to WORLD anchor / mid positions
             if cfg.key_points {
                 for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
                     if self.selected.contains(&a.id) {
                         continue;
                     }
-                    pts.push(a.p);
+                    pts.push(xf.apply(a.p));
                 }
             }
             if cfg.segment_mids && !p.anchors.iter().any(|a| self.selected.contains(&a.id)) {
                 let n = p.anchors.len();
                 let segs = if p.closed { n } else { n.saturating_sub(1) };
                 for i in 0..segs {
-                    let (q, r) = (p.anchors[i].p, p.anchors[(i + 1) % n].p);
+                    let (q, r) = (xf.apply(p.anchors[i].p), xf.apply(p.anchors[(i + 1) % n].p));
                     pts.push([(q[0] + r[0]) * 0.5, (q[1] + r[1]) * 0.5]);
                 }
             }
@@ -2371,9 +2696,11 @@ impl Editor {
                 if self.doc.paths[pi].hidden {
                     continue;
                 }
-                if let Some((pt, dd)) = self.nearest_edge(pi, moved) {
+                // A7 seam: test in the target's local frame, map the hit back to world.
+                let xf = self.doc.unit_xform(self.doc.paths[pi].id);
+                if let Some((pt, dd)) = self.nearest_edge(pi, xf.inverse_apply(moved)) {
                     if dd <= tol && best.is_none_or(|(bd, _)| dd < bd) {
-                        best = Some((dd, pt));
+                        best = Some((dd, xf.apply(pt)));
                         best_pid = Some(self.doc.paths[pi].id);
                     }
                 }
@@ -3030,9 +3357,10 @@ impl Editor {
                     if self.doc.eff_hidden(p.id) || self.doc.eff_locked(p.id) {
                         continue;
                     } // locked/hidden = not marquee-able
-                      // anchors whose POINT lands inside the marquee
+                    let xf = self.doc.unit_xform(p.id); // A7 seam: test WORLD anchor positions
+                                                        // anchors whose POINT lands inside the marquee
                     for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
-                        if inside(a.p) {
+                        if inside(xf.apply(a.p)) {
                             sel.insert(a.id);
                         }
                     }
@@ -3051,10 +3379,15 @@ impl Editor {
                         for i in 0..segs {
                             let a = &ring[i];
                             let b = &ring[(i + 1) % n];
-                            if inside(a.p) || inside(b.p) {
+                            if inside(xf.apply(a.p)) || inside(xf.apply(b.p)) {
                                 continue;
                             } // an endpoint is captured → anchor wins
-                            let (q0, q1, q2, q3) = (a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p);
+                            let (q0, q1, q2, q3) = (
+                                xf.apply(a.p),
+                                xf.apply(a.hout.unwrap_or(a.p)),
+                                xf.apply(b.hin.unwrap_or(b.p)),
+                                xf.apply(b.p),
+                            );
                             if (0..=16).any(|k| inside(cubic(q0, q1, q2, q3, k as f32 / 16.0))) {
                                 sel.insert(a.id);
                                 sel.insert(b.id);
@@ -3091,19 +3424,18 @@ impl Editor {
                     self.gesture_copy = true; // remember this gesture left a copy (Transform Again)
                     if object {
                         self.objsel.clear();
-                        let mut base = vec![];
                         for &cid in &cids {
                             self.objsel.insert(cid);
-                            if let Some(pi) = self.doc.pidx(cid) {
-                                for a in
-                                    self.doc.paths[pi].anchors.iter().chain(self.doc.paths[pi].holes.iter().flatten())
-                                {
-                                    base.push((a.id, a.p, a.hin, a.hout));
-                                }
-                            }
                         }
-                        self.drag = Drag::Object { down, base };
+                        self.refresh_obj_angle(); // the copies inherit the source rotation → frame follows
+                        let (base, base_world, piv_base) = self.object_move_base();
+                        self.drag = Drag::Object { down, base, base_world, piv_base };
                     } else {
+                        // Direct-anchor duplicate: the copy edits its anchors in world → bake its (inherited)
+                        // rotation into geometry so the anchor drag is 1:1 on screen (A7).
+                        for &cid in &cids {
+                            self.bake_unit_of(cid);
+                        }
                         self.selected.clear();
                         for &cid in &cids {
                             if let Some(pi) = self.doc.pidx(cid) {
@@ -3118,22 +3450,23 @@ impl Editor {
                     self.pointer_move(pos);
                 }
             }
-            Drag::Object { down, base } => {
+            Drag::Object { down, base, base_world, piv_base } => {
                 let mut d = sub(pos, down);
                 if self.mods.shift {
                     d = snap45(d);
                 }
                 // snap priority: the object's own anchors → vector geometry (most specific), else the bbox
-                // edges/centres/spacing/grid. Always active per the magnet toggles (Ctrl only morphs the tool).
-                let base_pts: Vec<Pt> = base.iter().map(|(_, p0, _, _)| *p0).collect();
-                let (d, guides, hud) = if let Some((adj, g, t)) = self.snap_to_points(&base_pts, d) {
+                // edges/centres/spacing/grid. Snap on the WORLD positions (A7) so a rotated object snaps by
+                // what's drawn. Always active per the magnet toggles (Ctrl only morphs the tool).
+                let (d, guides, hud) = if let Some((adj, g, t)) = self.snap_to_points(&base_world, d) {
                     (add(d, adj), g, Some((self.cursor, format!("X {:.0}   Y {:.0}", t[0], t[1]))))
                 } else {
-                    self.snap_move(base_bbox(&base), d)
+                    self.snap_move(Self::pts_bbox(&base_world), d)
                 };
                 self.snap_guides = guides;
                 self.snap_hud = hud;
                 self.gesture_delta = d;
+                // translate the LOCAL anchors by d …
                 for (aid, p0, hin0, hout0) in &base {
                     if let Some(a) = self.doc.anchor_mut(*aid) {
                         a.p = add(*p0, d);
@@ -3141,7 +3474,12 @@ impl Editor {
                         a.hout = hout0.map(|h| add(h, d));
                     }
                 }
-                self.drag = Drag::Object { down, base };
+                // … and carry each rotated unit's pivot by the SAME d (translation commutes with rotation,
+                // so the world result is exact and θ is untouched — the object keeps its live rotation).
+                for (unit, base_xf) in &piv_base {
+                    self.doc.set_node_xform(*unit, base_xf.translated(d));
+                }
+                self.drag = Drag::Object { down, base, base_world, piv_base };
                 self.dirty = true;
             }
             Drag::Scale { handle, angle, opp_l, cen_l, h0_l, base } => {
@@ -3179,39 +3517,35 @@ impl Editor {
                 self.snap_hud =
                     Some((self.cursor, format!("W {:.0}   H {:.0}", (lx1 - lx0) * sx.abs(), (ly1 - ly0) * sy.abs())));
                 let tf = |w: Pt| {
-                    // un-rotate → scale on local axes → re-rotate
+                    // un-rotate → scale on local axes → re-rotate (all in WORLD space)
                     let q = rotate_about(w, [0.0, 0.0], -angle);
                     let q2 = [pivot[0] + (q[0] - pivot[0]) * sx, pivot[1] + (q[1] - pivot[1]) * sy];
                     rotate_about(q2, [0.0, 0.0], angle)
                 };
+                // A7: base is WORLD; write the scaled world point back THROUGH each unit's transform so a
+                // rotated object stays rotated (θ preserved) and the panel W/H tracks the true local dims.
                 for (aid, p0, hin0, hout0) in &base {
-                    if let Some(a) = self.doc.anchor_mut(*aid) {
-                        a.p = tf(*p0);
-                        a.hin = hin0.map(tf);
-                        a.hout = hout0.map(tf);
-                    }
+                    self.write_anchor_world(*aid, tf(*p0), hin0.map(tf), hout0.map(tf));
                 }
                 self.drag = Drag::Scale { handle, angle, opp_l, cen_l, h0_l, base };
                 self.dirty = true;
             }
-            Drag::Rotate { center, start, a0, base } => {
+            Drag::Rotate { center, start, a0, units } => {
                 let cur = (pos[1] - center[1]).atan2(pos[0] - center[0]);
                 let mut d = cur - start;
                 if self.mods.shift {
                     let step = std::f32::consts::FRAC_PI_4;
                     d = (d / step).round() * step;
                 }
-                for (aid, p0, hin0, hout0) in &base {
-                    if let Some(a) = self.doc.anchor_mut(*aid) {
-                        a.p = rotate_about(*p0, center, d);
-                        a.hin = hin0.map(|h| rotate_about(h, center, d));
-                        a.hout = hout0.map(|h| rotate_about(h, center, d));
-                    }
+                // A7 Stage 4 — the crux: COMPOSE d into each unit's stored transform. Anchors are UNTOUCHED
+                // (recomposed from the pre-drag base each frame), so the rotation is live and persists.
+                for (unit, base_xf) in &units {
+                    self.rotate_unit(*unit, *base_xf, d, center);
                 }
                 self.obj_angle = a0 + d; // frame rotates with the selection
                 self.snap_hud = Some((pos, format!("{:.1}\u{b0}", -d.to_degrees()))); // CCW-positive (Illustrator)
                 self.gesture_tf = Some(TfAgain::Rotate { pivot: center, ang: d });
-                self.drag = Drag::Rotate { center, start, a0, base };
+                self.drag = Drag::Rotate { center, start, a0, units };
                 self.dirty = true;
             }
             Drag::TfPending { pivot, down } => {
@@ -3226,12 +3560,13 @@ impl Editor {
                             self.objsel.insert(cid);
                         }
                     }
-                    let base = self.objsel_base();
                     self.drag = match self.tool {
-                        ToolKind::Scale => Drag::ScaleLive { pivot, down, base },
+                        // A7: ScaleLive works in WORLD; write-back keeps each unit's θ.
+                        ToolKind::Scale => Drag::ScaleLive { pivot, down, base: self.objsel_base_world() },
                         _ => {
                             let start = (down[1] - pivot[1]).atan2(down[0] - pivot[0]);
-                            Drag::Rotate { center: pivot, start, a0: self.obj_angle, base }
+                            // A7: rotate composes into the units' stored transforms (no bake).
+                            Drag::Rotate { center: pivot, start, a0: self.obj_angle, units: self.objsel_units_xform() }
                         }
                     };
                     self.pointer_move(pos); // apply this frame's transform immediately
@@ -3255,12 +3590,9 @@ impl Editor {
                     sy = s;
                 }
                 let sc = |p: Pt| [pivot[0] + (p[0] - pivot[0]) * sx, pivot[1] + (p[1] - pivot[1]) * sy];
+                // A7: base is WORLD; write back through each unit's transform so θ is preserved.
                 for (aid, p0, hin0, hout0) in &base {
-                    if let Some(a) = self.doc.anchor_mut(*aid) {
-                        a.p = sc(*p0);
-                        a.hin = hin0.map(sc);
-                        a.hout = hout0.map(sc);
-                    }
+                    self.write_anchor_world(*aid, sc(*p0), hin0.map(sc), hout0.map(sc));
                 }
                 self.snap_hud = Some((pos, format!("{:.0}%   {:.0}%", sx * 100.0, sy * 100.0)));
                 self.gesture_tf = Some(TfAgain::Scale { pivot, sx, sy });
@@ -3300,14 +3632,12 @@ impl Editor {
                 }
             } // promote whole groups
             self.selected.clear();
-            self.obj_angle = 0.0;
         }
         if t == ToolKind::Artboard {
             // entering the Artboard tool drops artwork selection so the page chrome stands alone
             self.selected.clear();
             self.objsel.clear();
             self.dsel_path = None;
-            self.obj_angle = 0.0;
             self.hover_path = None;
             self.normalize_absel();
         } else {
@@ -3327,6 +3657,7 @@ impl Editor {
             }
             self.selected.clear();
         }
+        self.refresh_obj_angle(); // A7: after any selection promotion, restore the frame angle from xform
         self.tool = t;
         self.pivot = None; // each tool entry re-homes the transform origin to the selection centre
         if t != ToolKind::Pen {
@@ -3342,7 +3673,7 @@ impl Editor {
         self.objsel.clear();
         self.absel.clear();
         self.dsel_path = None;
-        self.obj_angle = 0.0;
+        self.obj_angle = 0.0; // nothing selected → axis-aligned
         self.drag = Drag::None;
         self.ab_drag = AbDrag::None;
     }
@@ -3721,7 +4052,6 @@ impl Editor {
         self.objsel.clear();
         self.selected.clear();
         self.dsel_path = None;
-        self.obj_angle = 0.0;
         for &nid in nids {
             for p in self.doc.node_paths(nid) {
                 if !self.doc.eff_locked(p) && !self.doc.eff_hidden(p) {
@@ -3729,6 +4059,7 @@ impl Editor {
                 }
             }
         }
+        self.refresh_obj_angle(); // A7: selecting a rotated object via the panel restores its stored angle
         if let Some(&last) = nids.last() {
             self.doc.active_layer = self.doc.layer_ancestor(last);
         }
@@ -3738,7 +4069,6 @@ impl Editor {
     /// objsel, so requiring them too made deselect unreachable for mixed-lock rows (07-04 review bug #1).
     pub fn layer_toggle(&mut self, nid: u32) {
         self.tool = ToolKind::Object;
-        self.obj_angle = 0.0;
         let paths: Vec<u32> = self
             .doc
             .node_paths(nid)
@@ -3755,6 +4085,7 @@ impl Editor {
                 self.objsel.insert(p);
             }
         }
+        self.refresh_obj_angle(); // selection set changed → single unit shows θ, multi axis-aligns
         self.doc.active_layer = self.doc.layer_ancestor(nid);
     }
     /// Alt+drag a row: duplicate its art into the drop target (original stays), reselect the copies.
@@ -3780,10 +4111,10 @@ impl Editor {
             self.objsel.clear();
             self.selected.clear();
             self.dsel_path = None;
-            self.obj_angle = 0.0;
             for pid in landed_all {
                 self.objsel.insert(pid);
             }
+            self.refresh_obj_angle(); // copies inherit their source rotation → frame follows (A7)
             self.doc.active_layer = self.doc.layer_ancestor(target);
         }
         self.commit();
@@ -3911,10 +4242,25 @@ impl Editor {
             return;
         }
         self.begin();
+        // A7: bake any live rotation on the moved units first, so `translate_path` (raw local translate)
+        // moves them correctly in world (indices stay valid — baking never reorders `paths`).
+        let mut units: Vec<u32> = vec![];
+        for (pi, _) in &moves {
+            if let Some(pid) = self.doc.paths.get(*pi).map(|p| p.id) {
+                if let Some(u) = self.doc.unit_of(pid) {
+                    if !units.contains(&u) {
+                        units.push(u);
+                    }
+                }
+            }
+        }
+        for u in units {
+            self.bake_unit(u);
+        }
         for (pi, d) in moves {
             self.translate_path(pi, d);
         }
-        self.obj_angle = 0.0;
+        self.refresh_obj_angle();
         self.dirty = true;
         self.commit();
     }

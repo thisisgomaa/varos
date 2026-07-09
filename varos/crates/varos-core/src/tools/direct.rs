@@ -7,6 +7,11 @@ impl Tool for Direct {
     fn down(&self, ed: &mut Editor, pos: Pt) {
         // handle FIRST — so Alt over a handle BREAKS it (must beat the Alt-duplicate below)
         if let Some(aid) = ed.handle_hit(pos) {
+            // A7: reshaping a rotated unit bakes its rotation into geometry first, then edits in world
+            // (the simplest consistent Direct-Selection behaviour). `which_handle`/`anchor` read world.
+            if let Some(pid) = ed.doc.pid_of_anchor(aid) {
+                ed.dirty |= ed.bake_unit_of(pid);
+            }
             let out = ed.which_handle(aid, pos);
             let a = ed.doc.anchor(aid).unwrap().clone();
             let hp = if out { a.hout } else { a.hin }.unwrap();
@@ -51,6 +56,9 @@ impl Tool for Direct {
         // an anchor — the white arrow grabs ANY anchor directly (Illustrator), even on an unselected path.
         // Grabbing an already-selected anchor moves the whole selection; an unselected one selects just it.
         if let Some(aid) = ed.nearest_anchor(pos, ANCHOR_R, false) {
+            if let Some(pid) = ed.doc.pid_of_anchor(aid) {
+                ed.dirty |= ed.bake_unit_of(pid); // A7: bake before editing anchors of a rotated unit
+            }
             ed.dsel_path = None;
             if ed.mods.shift {
                 if ed.selected.contains(&aid) {
@@ -67,6 +75,9 @@ impl Tool for Direct {
         }
         // the path body: edge = reshape that segment; fill = PATH-LEVEL select (anchors hollow) + whole-path move
         if let Some(pid) = ed.path_under(pos) {
+            // A7: bake the unit BEFORE `nearest_seg`/item capture — those work in local coords, so a rotated
+            // unit must first become identity for the segment index + whole-path move to be in world.
+            ed.dirty |= ed.bake_unit_of(pid);
             if let Some(pi) = ed.doc.pidx(pid) {
                 if let Some((i, _, d)) = ed.doc.nearest_seg(pi, pos) {
                     if d <= EDGE_R / ed.ppu {
