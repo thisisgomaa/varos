@@ -263,6 +263,20 @@ pub enum PaintRole {
     Hidden,
 }
 
+/// What a GROUP node IS to clipping (MASKS_PLAN §1 / LAYERS_VISION §3.1). `Normal` = an ordinary group.
+/// `Clip` = a clipping-mask group: its `mask_child`'s silhouette clips every OTHER child (Illustrator
+/// `<Clip Group>`, the PDF-native form). `MaskAlpha` / `MaskLuma` are RESERVED for FUTURE soft masks
+/// (§7.1) — parsed today but treated as `Normal` until soft masks ship. Name-keyed serde ⇒ additive, no
+/// `.vrs` format bump; an old file with no `role` key loads as `Normal`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GroupRole {
+    #[default]
+    Normal,
+    Clip,
+    MaskAlpha,
+    MaskLuma,
+}
+
 /// One node of the REAL scene graph (the Layers system, D2). Structure lives here; geometry/appearance
 /// stay in the flat `Vec<Path>` (which is kept re-flattened to tree order, so everything that reads
 /// "vec order = z" keeps working untouched).
@@ -302,6 +316,17 @@ pub struct Node {
     /// identity) and un-rotated new files stay byte-clean.
     #[serde(default, skip_serializing_if = "Xform::is_identity")]
     pub xform: Xform,
+    /// Clipping (MASKS_PLAN §1). `role = Clip` marks this GROUP node a clipping mask; `mask_child` is the
+    /// AUTHORITATIVE node id (a DIRECT child of this group) whose silhouette clips the group's OTHER
+    /// children. The id is truth — reordering children never silently reassigns the mask (`sync_tree`
+    /// demotes a clip whose `mask_child` was re-parented away). Both `#[serde(default)]` (mirroring
+    /// `clip_exempt`/`xform`) so old `.vrs` load unchanged (`Normal` / `None`); `mask_child` is skipped
+    /// when `None` so un-clipped new files stay byte-clean. `paint_role` reads these to flip the mask
+    /// subtree to `MaskSource` (excluded from paint), and the scene reads them to emit the clip form.
+    #[serde(default)]
+    pub role: GroupRole,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask_child: Option<u32>,
 }
 
 /// A single artboard (a defined PAGE) on the infinite board, in world points (1pt = 1/72in). The
@@ -541,6 +566,8 @@ impl Default for Document {
                 color: None,
                 clip_exempt: false,
                 xform: Xform::default(),
+                role: GroupRole::Normal,
+                mask_child: None,
             }],
             roots: vec![1],
             active_layer: 1,
@@ -592,10 +619,56 @@ impl Document {
     pub fn paint_list(&self) -> impl Iterator<Item = (usize, &Path)> {
         self.paths.iter().enumerate().filter(|(_, p)| self.paint_role(p.id) != PaintRole::MaskSource)
     }
-    /// What a path IS to the paint pass (LAYERS_VISION §5). Always `Normal` today; `MaskSource`
-    /// arrives when clip groups land (computed structurally in `sync_tree`), `Hidden` with pages.
-    pub fn paint_role(&self, _pid: u32) -> PaintRole {
-        PaintRole::Normal
+    /// What a path IS to the paint pass (LAYERS_VISION §5). `MaskSource` for any path inside some clip
+    /// group's `mask_child` subtree — that geometry SHAPES the clip and must not paint as itself, so
+    /// `paint_list` (and its consumers: scene content, PDF export, snap targets) drop it for FREE. Every
+    /// other path is `Normal`. `Hidden` (pages) is future. Computed structurally on the fly (cheap; the
+    /// mask-source walk short-circuits when no clip group exists — the byte-identical no-clip case).
+    pub fn paint_role(&self, pid: u32) -> PaintRole {
+        if self.is_mask_source(pid) {
+            PaintRole::MaskSource
+        } else {
+            PaintRole::Normal
+        }
+    }
+    /// Is `pid`'s leaf inside some clip group's `mask_child` subtree (i.e. it is mask geometry, not
+    /// clipped content)? Walk the leaf's ancestry; if any node on the chain is the `mask_child` of its
+    /// parent `Clip` group, the path shapes that clip. Short-circuits to `false` when the document has no
+    /// clip group at all, so the common (no-mask) document pays only one arena scan.
+    pub fn is_mask_source(&self, pid: u32) -> bool {
+        if !self.nodes.iter().any(|n| n.role == GroupRole::Clip && n.mask_child.is_some()) {
+            return false;
+        }
+        let mut cur = self.node_of_path(pid);
+        while let Some(nid) = cur {
+            let Some(n) = self.node(nid) else { break };
+            if let Some(par) = n.parent {
+                if self.node(par).is_some_and(|p| p.role == GroupRole::Clip && p.mask_child == Some(nid)) {
+                    return true;
+                }
+            }
+            cur = n.parent;
+        }
+        false
+    }
+    /// The nearest ancestor `Clip` group of a path's leaf (its clip UNIT), or `None`. The scene keys the
+    /// clip render on this; `paint_list` has already excluded the mask itself, so the remaining members of
+    /// a clip form a contiguous run under this same id.
+    pub fn clip_group_of(&self, pid: u32) -> Option<u32> {
+        let mut cur = self.node_of_path(pid);
+        while let Some(nid) = cur {
+            let n = self.node(nid)?;
+            if matches!(n.kind, NodeKind::Group) && n.role == GroupRole::Clip {
+                return Some(nid);
+            }
+            cur = n.parent;
+        }
+        None
+    }
+    /// The stored `mask_child` node id of a clip group (None if the node isn't a clip). The scene reads
+    /// this to build the mask silhouette rings.
+    pub fn node_mask_child(&self, nid: u32) -> Option<u32> {
+        self.node(nid).filter(|n| n.role == GroupRole::Clip).and_then(|n| n.mask_child)
     }
     /// ARTBOARD MEMBERSHIP (Ahmed 07-06, the "mirror" rule): the boards a path VISIBLY stands on =
     /// every artboard whose page rect its outline bbox overlaps. One source of truth for the render
@@ -1096,6 +1169,8 @@ impl Document {
             color: None,
             clip_exempt: false,
             xform: Xform::default(),
+            role: GroupRole::Normal,
+            mask_child: None,
         });
         for &u in &units {
             if let Some(par) = self.node(u).and_then(|n| n.parent) {
@@ -1115,6 +1190,34 @@ impl Document {
         }
         self.flatten();
         Some(gid)
+    }
+    /// Make a CLIPPING MASK from a selection (MASKS_PLAN §1.3 / LAYERS_VISION §3). Reuses `group()`
+    /// VERBATIM — one grouping model, forever (§3.4) — then flips the new group to `role = Clip` and
+    /// records `mask_child` = the DIRECT child whose subtree holds `mask_pid` (the Illustrator rule: the
+    /// front-most/top selected unit is the mask; the ones below clip to it). The mask stays a real,
+    /// selectable, renamable child row — it just stops painting as itself (`paint_role` → `MaskSource`).
+    /// Returns the clip group's id, or `None` if the selection can't group (< 2 units) or `mask_pid` is
+    /// not among it. NOTE (Stage 1): no gesture is wired to this — only a caller/test constructs a clip.
+    pub fn clip_group(&mut self, pids: &[u32], mask_pid: u32) -> Option<u32> {
+        let gid = self.group(pids)?;
+        // the direct child of the new group whose subtree contains the mask path = the mask unit. Robust
+        // against group()'s internal ordering (find, not "children.last()"), and it IS a direct child so
+        // `sync_tree`'s validation holds from birth.
+        let mask_child = self.node(gid)?.children.iter().copied().find(|&c| self.node_paths(c).contains(&mask_pid))?;
+        if let Some(n) = self.node_mut(gid) {
+            n.role = GroupRole::Clip;
+            n.mask_child = Some(mask_child);
+        }
+        Some(gid)
+    }
+    /// Release a clipping mask (MASKS_PLAN §4.3 / LAYERS_VISION §3.2, §8.3): the group stays, but stops
+    /// clipping — `role` back to `Normal`, `mask_child` cleared, so every child (the old mask included)
+    /// paints normally again. Nothing is deleted; you can re-clip anytime. No-op on a non-clip node.
+    pub fn release_clip(&mut self, clip_nid: u32) {
+        if let Some(n) = self.node_mut(clip_nid) {
+            n.role = GroupRole::Normal;
+            n.mask_child = None;
+        }
     }
     /// Ungroup: peel exactly ONE level off the top-level group(s) the selection belongs to. The
     /// dissolved group's children rise into its parent AT ITS SLOT (z preserved); inner groups survive.
@@ -1179,6 +1282,7 @@ impl Document {
             let ng = self.nid();
             let name = self.node(og).map(|n| n.name.clone()).unwrap_or_default();
             let xform = self.node_xform(og); // A7: the copy inherits the group unit's live rotation
+            let role = self.node(og).map(|n| n.role).unwrap_or_default(); // clip-ness carries to the copy
             self.nodes.push(Node {
                 id: ng,
                 kind: NodeKind::Group,
@@ -1190,6 +1294,8 @@ impl Document {
                 color: None,
                 clip_exempt: false,
                 xform,
+                role,
+                mask_child: None, // remapped through gmap/leafmap in step 3b (both maps must exist first)
             });
             gmap.insert(og, ng);
         }
@@ -1209,8 +1315,22 @@ impl Document {
                     color: None,
                     clip_exempt: false,
                     xform,
+                    role: GroupRole::Normal, // a leaf is never a clip group
+                    mask_child: None,
                 });
                 leafmap.insert(old_leaf, nl);
+            }
+        }
+        // 3b) remap each copied clip group's `mask_child` through the id maps — the mask is either a
+        // mirrored group (gmap) or a copied leaf (leafmap) — so the DUPLICATE clips to its OWN mask, not
+        // the original's. (Mirrors how dup_paths already remaps subtree ids; audit item, MASKS_PLAN §7.)
+        for &og in &gset {
+            if let Some(mc) = self.node(og).and_then(|n| n.mask_child) {
+                let new_mc = gmap.get(&mc).copied().or_else(|| leafmap.get(&mc).copied());
+                let ng = gmap[&og];
+                if let Some(n) = self.node_mut(ng) {
+                    n.mask_child = new_mc;
+                }
             }
         }
         // 4) mirror children lists (originals' order restricted to copied nodes) + parent links
@@ -1339,6 +1459,8 @@ impl Document {
                 color: None,
                 clip_exempt: false,
                 xform: Xform::default(),
+                role: GroupRole::Normal,
+                mask_child: None,
             });
             self.roots.push(id);
         }
@@ -1359,6 +1481,8 @@ impl Document {
                 color: None,
                 clip_exempt: false,
                 xform: Xform::default(),
+                role: GroupRole::Normal,
+                mask_child: None,
             });
             gmap.insert(g.id, id);
         }
@@ -1384,6 +1508,8 @@ impl Document {
                 color: None,
                 clip_exempt: false,
                 xform: Xform::default(),
+                role: GroupRole::Normal,
+                mask_child: None,
             });
             self.attach_front(id);
         }
@@ -1451,6 +1577,8 @@ impl Document {
                 color: None,
                 clip_exempt: false,
                 xform: Xform::default(),
+                role: GroupRole::Normal,
+                mask_child: None,
             });
             self.roots.insert(0, id);
         }
@@ -1480,9 +1608,30 @@ impl Document {
                 color: None,
                 clip_exempt: false,
                 xform: Xform::default(),
+                role: GroupRole::Normal,
+                mask_child: None,
             });
             if let Some(h) = self.node_mut(host) {
                 h.children.insert(0, id);
+            }
+        }
+        // clip-mask validation (MASKS_PLAN §1 / LAYERS_VISION §6.3, critique BLOCKER-5): `mask_child` is
+        // authoritative by ID, so a reorder/ungroup/move that re-parents the mask out of its clip group —
+        // or deletes it — must not leave the group clipping to a ghost. Demote any Clip whose `mask_child`
+        // is no longer a DIRECT child of it (missing OR re-homed) back to a plain group.
+        let bad_clips: Vec<u32> = self
+            .nodes
+            .iter()
+            .filter(|n| {
+                n.role == GroupRole::Clip
+                    && !n.mask_child.is_some_and(|mc| n.children.contains(&mc) && self.node(mc).is_some())
+            })
+            .map(|n| n.id)
+            .collect();
+        for c in bad_clips {
+            if let Some(n) = self.node_mut(c) {
+                n.role = GroupRole::Normal;
+                n.mask_child = None;
             }
         }
         self.flatten();
@@ -1644,6 +1793,8 @@ impl Document {
                         color: None,
                         clip_exempt: false,
                         xform,
+                        role: GroupRole::Normal, // a flat copy is its own plain leaf
+                        mask_child: None,
                     });
                     cid
                 })

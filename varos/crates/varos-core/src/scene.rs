@@ -6,6 +6,7 @@
 
 use crate::editor::{Drag, Editor, SnapGuide, ToolKind, ANCHOR_R};
 use crate::geom::{add, cubic, dist, snap45, sub, Pt, Rgba};
+use crate::model::Path;
 use std::collections::HashSet;
 
 pub const ACCENT: Rgba = [0.047, 0.549, 0.914, 1.0];
@@ -40,16 +41,25 @@ pub enum Prim {
 /// opacity, so an object's fill+stroke fade as ONE unit instead of double-blending each other.
 /// `Knockout` = ONE object whose translucent stroke must KNOCK OUT the fill beneath it (Illustrator/PDF
 /// knockout): the band blends against what's BEHIND the object — never against the object's own fill.
+/// `Clip` = a CLIPPING MASK (MASKS_PLAN §2.3 / LAYERS_VISION §3.3): every member is drawn cut to the
+/// `mask_rings` silhouette (outer + holes, WORLD space, even-odd). `members` are ordinary member Groups
+/// (Opaque/Knockout/Isolated), so a translucent or knocked-out object inside a clip keeps its treatment —
+/// the clip just wraps them. Renderer-agnostic: the core emits this shape; how a backend clips (GPU
+/// stencil vs offscreen-multiply) is its own decision. `members: Vec<Group>` already admits nested clips.
 pub enum Group {
     Opaque(Vec<Prim>),
     Knockout(Vec<Prim>),
     Isolated { opacity: f32, prims: Vec<Prim> },
+    Clip { mask_rings: Vec<Vec<Pt>>, members: Vec<Group> },
 }
 impl Group {
+    /// The group's own paint primitives. A `Clip` holds no direct prims (its paint lives in `members`),
+    /// so it yields an empty slice — callers that need to draw a clip match on the variant instead.
     pub fn prims(&self) -> &[Prim] {
         match self {
             Group::Opaque(p) | Group::Knockout(p) => p,
             Group::Isolated { prims, .. } => prims,
+            Group::Clip { .. } => &[],
         }
     }
 }
@@ -252,12 +262,29 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
         out
     };
-    // the CONTENT pass reads paint_list(), not doc.paths — the §5 indirection: a future mask/page
-    // filter lands there once, and this loop (plus export + snap) follows for free
-    for (pi, p) in ed.doc.paint_list() {
-        if ed.doc.eff_hidden(p.id) {
-            continue;
-        } // cascades from layer/group eyes
+    // The mask silhouette of a clip group: the WORLD outline rings (outer + holes) of every path in its
+    // `mask_child` subtree. Built from `world_outline_px`/`world_ring_px` (the A7 seam) so a rotated clip
+    // composes for FREE — NEVER the local outline (that is the A7 split-brain class, MASKS_PLAN §7).
+    let mask_rings_of = |clip_nid: u32| -> Vec<Vec<Pt>> {
+        let mut rings: Vec<Vec<Pt>> = Vec::new();
+        if let Some(mc) = ed.doc.node_mask_child(clip_nid) {
+            for pid in ed.doc.node_paths(mc) {
+                if let Some(pi) = ed.doc.pidx(pid) {
+                    rings.push(ed.doc.world_outline_px(pi, ppu));
+                    for hole in &ed.doc.paths[pi].holes {
+                        rings.push(ed.doc.world_ring_px(hole, pi, ppu));
+                    }
+                }
+            }
+        }
+        rings
+    };
+    // ONE object → its Group treatment, accumulated into the given run (top-level or a clip's members).
+    // This is the EXACT per-object routing the flat loop always used (opacity → Isolated, translucent
+    // stroke → Knockout, single translucent → folded into the opaque run, else opaque) — so a document
+    // with no clip group produces byte-identical `groups`. A clip just feeds it a different pair of
+    // accumulators (MASKS_PLAN §2.4: members reuse every branch, they only land in a different vec).
+    let emit_object = |pi: usize, p: &Path, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
         let o = p.opacity;
         let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
         let mut fp = fill_prims(pi);
@@ -265,7 +292,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         if o < 0.999 && !fp.is_empty() && !sp.is_empty() {
             // isolated layer: flush the current opaque run, then emit the object as one unit (fill(s) then stroke(s))
             if !open.is_empty() {
-                groups.push(Group::Opaque(std::mem::take(&mut open)));
+                groups.push(Group::Opaque(std::mem::take(open)));
             }
             let mut lp = fp;
             lp.append(&mut sp);
@@ -274,7 +301,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             // translucent stroke on a filled object → knockout: the band must blend against what's BEHIND
             // the object, never against the object's own fill (the fill is cut away under the band)
             if !open.is_empty() {
-                groups.push(Group::Opaque(std::mem::take(&mut open)));
+                groups.push(Group::Opaque(std::mem::take(open)));
             }
             let mut lp = fp;
             lp.append(&mut sp);
@@ -293,6 +320,48 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             open.append(&mut fp);
             open.append(&mut sp);
         }
+    };
+
+    // the CONTENT pass reads paint_list(), not doc.paths — the §5 indirection: the mask source is already
+    // filtered out here (paint_role → MaskSource), so a clip group's remaining members form a CONTIGUOUS
+    // run (subtrees are contiguous after flatten). Track the current clip: when `clip_group_of` changes,
+    // flush the accumulated members into ONE `Group::Clip { mask_rings, members }` (MASKS_PLAN §2.4).
+    // NOW = single-level clips (both gestures produce that); nested clips are fenced to a later stage and
+    // the `members: Vec<Group>` shape already admits them.
+    let mut cur_clip: Option<u32> = None;
+    let mut clip_members: Vec<Group> = Vec::new();
+    let mut clip_open: Vec<Prim> = Vec::new();
+    for (pi, p) in ed.doc.paint_list() {
+        if ed.doc.eff_hidden(p.id) {
+            continue;
+        } // cascades from layer/group eyes
+        let unit_clip = ed.doc.clip_group_of(p.id);
+        if unit_clip != cur_clip {
+            // leaving a clip: flush its members into a self-contained Clip group
+            if let Some(c) = cur_clip.take() {
+                if !clip_open.is_empty() {
+                    clip_members.push(Group::Opaque(std::mem::take(&mut clip_open)));
+                }
+                groups.push(Group::Clip { mask_rings: mask_rings_of(c), members: std::mem::take(&mut clip_members) });
+            }
+            // entering a clip: close the current top-level opaque run so the clip is a clean z boundary
+            if unit_clip.is_some() && !open.is_empty() {
+                groups.push(Group::Opaque(std::mem::take(&mut open)));
+            }
+            cur_clip = unit_clip;
+        }
+        if cur_clip.is_some() {
+            emit_object(pi, p, &mut clip_members, &mut clip_open);
+        } else {
+            emit_object(pi, p, &mut groups, &mut open);
+        }
+    }
+    // trailing flush: a clip (or opaque run) that reaches the end of the list
+    if let Some(c) = cur_clip.take() {
+        if !clip_open.is_empty() {
+            clip_members.push(Group::Opaque(std::mem::take(&mut clip_open)));
+        }
+        groups.push(Group::Clip { mask_rings: mask_rings_of(c), members: std::mem::take(&mut clip_members) });
     }
     if !open.is_empty() {
         groups.push(Group::Opaque(open));
