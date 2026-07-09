@@ -7,7 +7,7 @@
 
 use varos_core::editor::{Editor, ToolKind};
 use varos_core::geom::{rotate_about, Pt};
-use varos_core::model::{Anchor, Path, Xform};
+use varos_core::model::{Anchor, Artboard, Path, Xform};
 
 fn anc(id: u32, x: f32, y: f32) -> Anchor {
     Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
@@ -447,4 +447,120 @@ fn rotate_drag_through_zero_keeps_rotating() {
             "corner {lp:?}: live world {got:?} vs composed {want:?} (rotation lost at the zero-cross?)"
         );
     }
+}
+
+// ───────────────────── final split-brain closure — artboard-move · nudge · pen-segment-insert ─────────────────────
+
+#[test]
+fn moving_an_artboard_carries_its_rotated_art_one_to_one() {
+    // Bug 6: with "move artwork with artboard" on, traveling art is captured as LOCAL anchors and translated
+    // by the world delta. On a ROTATED unit that separates the art from its page (it moves by R·d, not d).
+    // The page-move must carry the rotated unit's pivot by the SAME d (as `Drag::Object` does) so the art
+    // tracks the page exactly and keeps its live rotation.
+    let mut ed = Editor::new();
+    ed.ppu = 1.0;
+    ed.doc.snap.enabled = false;
+    ed.doc.artboards = vec![Artboard { x: 0.0, y: 0.0, w: 100.0, h: 100.0, name: "A".into(), ..Artboard::default() }];
+    assert!(ed.doc.move_art_with_ab, "precondition: move-art-with-artboard is on by default");
+    // a 40×20 rect fully inside page A, at (30,30)
+    ed.doc.paths.push(Path::new(
+        10,
+        vec![anc(1, 30.0, 30.0), anc(2, 70.0, 30.0), anc(3, 70.0, 50.0), anc(4, 30.0, 50.0)],
+        true,
+        Some([0.5, 0.5, 0.5, 1.0]),
+        None,
+        1.0,
+    ));
+    ed.doc.ids = 4;
+    ed.doc.sync_tree();
+    // rotate the object 90° about its own centre (a LIVE transform)
+    ed.objsel.insert(10);
+    ed.set_tool(ToolKind::Object);
+    ed.set_obj_rotation(90.0);
+    let u = ed.doc.unit_of(10).unwrap();
+    let rot0 = ed.doc.node_xform(u).rot;
+    assert!(!ed.doc.node_xform(u).is_identity(), "the object is live-rotated before the page move");
+    let world_before: Vec<Pt> = (1..=4).map(|aid| ed.doc.unit_xform(10).apply(ed.doc.anchor(aid).unwrap().p)).collect();
+
+    // switch to the Artboard tool and drag page A by (100,0)
+    ed.objsel.clear();
+    ed.set_tool(ToolKind::Artboard);
+    ed.pointer_down([50.0, 50.0]); // inside page A's body → selects it and begins the move (captures the art)
+    ed.pointer_move([150.0, 50.0]); // drag +100 in x
+    ed.pointer_up();
+
+    assert!((ed.doc.artboards[0].x - 100.0).abs() < 1e-3, "the page moved by (100,0)");
+    // every anchor's WORLD position moved by EXACTLY (100,0) — not (0,-100) = R·d
+    for (aid, wb) in (1..=4).zip(&world_before) {
+        let wa = ed.doc.unit_xform(10).apply(ed.doc.anchor(aid).unwrap().p);
+        assert!(
+            (wa[0] - wb[0] - 100.0).abs() < 0.5 && (wa[1] - wb[1]).abs() < 0.5,
+            "anchor {aid} world {wb:?}→{wa:?}, want +[100,0] (art dropped off its page?)"
+        );
+    }
+    let rot1 = ed.doc.node_xform(ed.doc.unit_of(10).unwrap()).rot;
+    assert!((rot1 - rot0).abs() < 1e-5, "the page move keeps the object's live rotation ({rot0} → {rot1})");
+}
+
+#[test]
+fn nudge_moves_rotated_marquee_anchors_along_the_world_axis() {
+    // Bug 7: a Direct-tool marquee selects anchors WITHOUT baking, so `nudge` writing a WORLD delta into
+    // LOCAL storage slides a rotated unit's anchors along the rotated axis. `nudge` must bake every spanned
+    // unit first (as `begin_anchor_drag` does) so the nudge is a true world translation.
+    let mut ed = sel_rect(); // 100×40
+    ed.set_obj_rotation(45.0);
+    // Direct-tool marquee over the whole shape → selects the anchors, leaving the unit LIVE-rotated
+    ed.objsel.clear();
+    ed.selected.clear();
+    ed.set_tool(ToolKind::Direct);
+    ed.pointer_down([-200.0, -200.0]);
+    ed.pointer_move([400.0, 400.0]);
+    ed.pointer_up();
+    assert!(!ed.selected.is_empty(), "the marquee selected anchors");
+    assert!(
+        !ed.doc.node_xform(unit(&ed)).is_identity(),
+        "the marquee left the rotation live (unbaked) — the bug condition"
+    );
+
+    let world_before: Vec<(u32, Pt)> = ed
+        .selected
+        .iter()
+        .map(|&aid| {
+            let pid = ed.doc.pid_of_anchor(aid).unwrap();
+            (aid, ed.doc.unit_xform(pid).apply(ed.doc.anchor(aid).unwrap().p))
+        })
+        .collect();
+    ed.nudge(0.0, -1.0); // nudge up by one world unit
+    for (aid, wb) in &world_before {
+        let pid = ed.doc.pid_of_anchor(*aid).unwrap();
+        let wa = ed.doc.unit_xform(pid).apply(ed.doc.anchor(*aid).unwrap().p);
+        assert!(
+            (wa[0] - wb[0]).abs() < 1e-3 && (wa[1] - wb[1] + 1.0).abs() < 1e-3,
+            "anchor {aid} world {wb:?}→{wa:?}, want +[0,-1] (slid along the rotated axis?)"
+        );
+    }
+}
+
+#[test]
+fn pen_click_on_a_rotated_segment_inserts_an_anchor_at_the_cursor() {
+    // Bug 8: the Pen add-anchor-on-segment branch ran `nearest_seg` with a WORLD cursor against LOCAL
+    // geometry, so clicking a rotated path's segment silently missed. Mapping the cursor into the unit's
+    // local frame first makes the insert land under the click (keeps the path's live rotation).
+    let mut ed = sel_rect(); // closed 100×40, anchors 1..4, objsel = {10} ⇒ editable
+    ed.set_obj_rotation(45.0);
+    ed.set_tool(ToolKind::Pen);
+    let n_before = ed.doc.paths[0].anchors.len();
+    // midpoint of the top edge (anchor 1 [0,0] → anchor 2 [100,0]) in LOCAL is [50,0]; click its WORLD image
+    let click = ed.doc.unit_xform(10).apply([50.0, 0.0]);
+    ed.pointer_down(click);
+    ed.pointer_up();
+    assert_eq!(ed.doc.paths[0].anchors.len(), n_before + 1, "clicking a rotated segment inserts an anchor");
+    // the inserted anchor (the freshly-selected one) sits at the click in WORLD, near the edge midpoint
+    let nid = *ed.selected.iter().next().expect("the inserted anchor is selected");
+    let world = ed.doc.unit_xform(10).apply(ed.doc.anchor(nid).unwrap().p);
+    assert!(
+        (world[0] - click[0]).abs() < 0.5 && (world[1] - click[1]).abs() < 0.5,
+        "the new anchor lands under the cursor: world {world:?} vs click {click:?}"
+    );
+    assert!(!ed.doc.node_xform(unit(&ed)).is_identity(), "the insert kept the path's live rotation (no bake)");
 }
