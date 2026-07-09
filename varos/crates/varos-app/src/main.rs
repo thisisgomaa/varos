@@ -13,6 +13,8 @@ use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, Tool
 use varos_core::geom::{self, Pt, View};
 use varos_core::scene::build_scene;
 use varos_render_wgpu::Renderer;
+#[cfg(windows)]
+use winit::platform::windows::WindowAttributesExtWindows;
 use winit::{
     dpi::PhysicalPosition,
     event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
@@ -22,6 +24,7 @@ use winit::{
 };
 
 mod cursors;
+mod single_instance;
 mod ui;
 use cursors::CK;
 
@@ -382,6 +385,55 @@ fn fatal(context: &str, detail: &str) -> ! {
         .show();
     std::process::exit(1);
 }
+
+fn confirm_discard_unsaved(ed: &Editor, saved_rev: u64) -> bool {
+    ed.rev == saved_rev
+        || rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Warning)
+            .set_title("Varos")
+            .set_description("You have unsaved changes.\nDiscard them and open another file?")
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show()
+            == rfd::MessageDialogResult::Yes
+}
+
+struct OpenDocContext<'a> {
+    ed: &'a mut Editor,
+    gui: &'a ui::Ui,
+    window: &'a Window,
+    view: &'a mut View,
+    zoom_target: &'a mut f32,
+    cur_file: &'a mut Option<std::path::PathBuf>,
+    saved_rev: &'a mut u64,
+}
+
+impl OpenDocContext<'_> {
+    fn open_path(&mut self, p: std::path::PathBuf) {
+        if confirm_discard_unsaved(self.ed, *self.saved_rev) {
+            self.load_path(p);
+        }
+    }
+
+    fn load_path(&mut self, p: std::path::PathBuf) {
+        match varos_pdf::load_vrs(&p) {
+            Ok(doc) => {
+                self.ed.replace_doc(doc);
+                *self.cur_file = Some(p);
+                *self.saved_rev = self.ed.rev;
+                let (x, y, w, h) = fit_rect(self.ed);
+                *self.view = fit_to_board(self.gui, self.window, x, y, w, h, 0.9);
+                *self.zoom_target = self.view.zoom; // instant fit on open
+            }
+            Err(e) => {
+                rfd::MessageDialog::new()
+                    .set_level(rfd::MessageLevel::Error)
+                    .set_title("Varos")
+                    .set_description(format!("Open failed: {e}"))
+                    .show();
+            }
+        }
+    }
+}
 /// Restore the last window geometry: `(maximized, outer_x, outer_y, inner_w, inner_h)` in physical px.
 fn load_win_state() -> Option<(bool, i32, i32, u32, u32)> {
     let s = std::fs::read_to_string(win_state_path()?).ok()?;
@@ -442,6 +494,11 @@ fn main() {
             return;
         }
     }
+    let file_arg = single_instance::file_arg_from_env();
+    let _single_instance = match single_instance::acquire_or_forward(file_arg.as_deref()) {
+        Some(guard) => guard,
+        None => return,
+    };
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
         Err(e) => fatal("Varos couldn't connect to the Windows desktop.", &e.to_string()),
@@ -456,6 +513,10 @@ fn main() {
         .with_decorations(false) // borderless during the splash → no window shadow; the
         // editor frame (decorations + shadow + snap) is applied once the splash finishes, below.
         .with_min_inner_size(winit::dpi::LogicalSize::new(800.0, 560.0)); // floor: never a degenerate layout
+    #[cfg(windows)]
+    {
+        attrs = attrs.with_class_name(single_instance::WINDOW_CLASS_NAME);
+    }
     attrs = match saved {
         Some((_, _, _, w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
         None => attrs.with_inner_size(winit::dpi::LogicalSize::new(1460.0, 860.0)),
@@ -490,6 +551,7 @@ fn main() {
             _ => 0,
         }
     };
+    single_instance::install_file_open_handler(hwnd);
     cursors::set_cloaked(hwnd, true);
     window.set_visible(true); // now "shown" but cloaked → not composited (no flash), surface is presentable
     let mut renderer = match pollster::block_on(Renderer::new(window.clone(), size.width, size.height)) {
@@ -591,6 +653,21 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
+            if matches!(&event, Event::AboutToWait) {
+                for p in single_instance::take_pending_file_paths() {
+                    OpenDocContext {
+                        ed: &mut ed,
+                        gui: &gui,
+                        window: &window,
+                        view: &mut view,
+                        zoom_target: &mut zoom_target,
+                        cur_file: &mut cur_file,
+                        saved_rev: &mut saved_rev,
+                    }
+                    .open_path(p);
+                    window.request_redraw();
+                }
+            }
             if let Event::WindowEvent { event, window_id } = event {
                 if window_id != window.id() {
                     return;
@@ -818,38 +895,21 @@ fn main() {
                                     ed.mods = Default::default(); // the native dialog eats the key releases
                                 } else if mc && code == KeyCode::KeyO {
                                     // Ctrl+O = Open — guard unsaved changes first
-                                    let proceed = ed.rev == saved_rev
-                                        || rfd::MessageDialog::new()
-                                            .set_level(rfd::MessageLevel::Warning)
-                                            .set_title("Varos")
-                                            .set_description(
-                                                "You have unsaved changes.\nDiscard them and open another file?",
-                                            )
-                                            .set_buttons(rfd::MessageButtons::YesNo)
-                                            .show()
-                                            == rfd::MessageDialogResult::Yes;
-                                    if proceed {
+                                    if confirm_discard_unsaved(&ed, saved_rev) {
                                         if let Some(p) = rfd::FileDialog::new()
                                             .add_filter("Varos document", &["vrs", "pdf"])
                                             .pick_file()
                                         {
-                                            match varos_pdf::load_vrs(&p) {
-                                                Ok(doc) => {
-                                                    ed.replace_doc(doc);
-                                                    cur_file = Some(p);
-                                                    saved_rev = ed.rev;
-                                                    let (x, y, w, h) = fit_rect(&ed);
-                                                    view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
-                                                    zoom_target = view.zoom; // instant fit on open
-                                                }
-                                                Err(e) => {
-                                                    rfd::MessageDialog::new()
-                                                        .set_level(rfd::MessageLevel::Error)
-                                                        .set_title("Varos")
-                                                        .set_description(format!("Open failed: {e}"))
-                                                        .show();
-                                                }
+                                            OpenDocContext {
+                                                ed: &mut ed,
+                                                gui: &gui,
+                                                window: &window,
+                                                view: &mut view,
+                                                zoom_target: &mut zoom_target,
+                                                cur_file: &mut cur_file,
+                                                saved_rev: &mut saved_rev,
                                             }
+                                            .load_path(p);
                                         }
                                     }
                                     ed.mods = Default::default();
