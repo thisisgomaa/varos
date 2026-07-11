@@ -7,10 +7,10 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 
 - **Program:** Architecture & Repository Foundation — charter ACCEPTED 2026-07-11 (`docs/foundation/FOUNDATION_CHARTER.md`).
 - **F2a COMPLETE:** F2a.1 ✅ `673b5df` · F2a.2 ✅ `d0664d4` · F2a.3 ✅ `a10772e` (doc-truth P0s closed) · F2a.4 ✅ `76640fe` (vendor contract + machine check).
-- **Active work order:** F2c (dependency-direction CI test) — issued 2026-07-11. F2b follows F2c.
+- **Active work order:** F2b (physical doc layout) — order issued; layout per the decision below. F2c ✅ `3a0ad3b` (ADR-0005 edges machine-enforced locally + in CI).
 - **F2b layout DECIDED 2026-07-11:** product owner delegated the choice ("اختار انت الصح"); planner selected **`docs/history/` + `docs/reference/`**, root `docs/` keeps current docs only; `design-reference/` stays in place.
 - **ADRs:** ADR-0001..0007 **Accepted** by the product owner 2026-07-11 — highest authority per charter §3. F2a.3's Constitution/CLAUDE.md corrections and F2c are unblocked.
-- **Last gate:** F2a.4 — PASS (zero defects) — merged `76640fe` (GATE_LOG §F2a.4).
+- **Last gate:** F2c — PASS (zero defects) — merged `3a0ad3b` (GATE_LOG §F2c).
 - **Risk register:** `docs/audits/2026-07-11-CODEX-FULL-PROJECT-AUDIT.md` + `docs/audits/2026-07-11-CLAUDE-COUNTER-REVIEW.md`.
 
 ## Trigger flags (flipped only by Ahmed, with a date — charter §8)

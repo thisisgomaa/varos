@@ -86,3 +86,15 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Defects:** none — fourth consecutive zero-defect gate. **F2a is complete.**
 - **Verdict:** PASS. **Merged:** `76640fe` to `main`.
 - Sign-off: planner — PASS — 2026-07-11
+
+## F2c — Dependency-direction gate
+
+- **Date:** 2026-07-11. **Branch:** `codex/f2c-dep-check` (range `820f173..0bade77`, commits `40f90c7`, `0bade77`). **Reviewer:** planner.
+- **Checks run:**
+  - Scope: `tools/check_dep_directions.ps1` (new) + one named `ci.yml` step; zero `.rs`/`.toml`/`.lock`; `git diff --check` clean; CI step path `../tools/...` verified against the job's `working-directory: varos`.
+  - Script read in full: derives truth from `cargo metadata` (not text-matching manifests), strips Rust comments before the `egui_tiles` source scan, exact-set assertions for all ADR-0005 edges incl. core's forbidden wgpu/winit/egui/windows families and renderer's no-winit rule.
+  - Independently executed: PASS with the expected edge summary. Negative test by the reviewer: `use egui_tiles::Tree;` appended to `shell/mod.rs` → FAIL naming `[shell/boxtree.rs, shell/mod.rs]` vs expected, exit 1; restored.
+  - Implementer ran fmt/clippy/test (223/223) at `-j 4`.
+- **Defects:** none — fifth consecutive zero-defect gate.
+- **Verdict:** PASS. **Merged:** `3a0ad3b` to `main`.
+- Sign-off: planner — PASS — 2026-07-11
