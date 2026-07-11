@@ -1542,9 +1542,30 @@ impl Editor {
             return;
         }
         self.begin();
-        self.bake_selected_units(); // A7: bake each member's live rotation; the new group starts identity
+        // A7 (Ahmed 2026-07-11 "لما بعمل جروب مش بيتطبق عليه الفكرة"): units rotated TOGETHER (one
+        // multi-selection gesture) end up with IDENTICAL transforms — hand that shared transform UP to
+        // the new group so its ∠ stays live, instead of baking it away. Mixed/odd transforms still bake
+        // (a group can't represent several different member rotations). Mirrors ungroup's push-down.
+        let units = self.objsel_units_xform();
+        let common = units.first().map(|(_, x0)| *x0).filter(|x0| !x0.is_identity()).filter(|x0| {
+            units.iter().all(|(_, x)| {
+                (x.rot - x0.rot).abs() < 1e-6
+                    && (x.piv[0] - x0.piv[0]).abs() < 1e-3
+                    && (x.piv[1] - x0.piv[1]).abs() < 1e-3
+            })
+        });
+        if common.is_none() {
+            self.bake_selected_units();
+        }
         let pids: Vec<u32> = self.objsel.iter().copied().collect();
-        if self.doc.group(&pids).is_some() {
+        if let Some(gid) = self.doc.group(&pids) {
+            if let Some(x0) = common {
+                // world image unchanged: every member read x0 before; now the group applies it instead.
+                for (u, _) in &units {
+                    self.doc.set_node_xform(*u, Xform::default());
+                }
+                self.doc.set_node_xform(gid, x0);
+            }
             self.refresh_obj_angle();
             self.dirty = true;
         }
@@ -1555,9 +1576,33 @@ impl Editor {
             return;
         }
         self.begin();
-        self.bake_selected_units(); // A7: bake the group's rotation into members before dissolving it
+        // A7 (Ahmed 2026-07-11 "فك الجروب بينسى الترانسفورميشن"): a dissolving group's live rotation is
+        // PUSHED DOWN onto its direct children — g∘child composed via `rotate_unit` (which also handles
+        // the degenerate total-angle-≡-0 case) — instead of baked into anchors. The world image is
+        // unchanged AND every member keeps a live ∠ + tilted frame, like Illustrator.
+        // ORDER MATTERS: capture (xform, children) first, dissolve, THEN compose onto the risen
+        // children — `ungroup` runs `sync_tree`, whose A7 hygiene strips any live xform still sitting
+        // on a NESTED node, so the push-down must happen only once the children are top-level.
+        let tops: std::collections::HashSet<u32> =
+            self.objsel.iter().filter_map(|&p| self.doc.top_group_of_path(p)).collect();
+        let pushes: Vec<(Xform, Vec<u32>)> = tops
+            .into_iter()
+            .filter_map(|t| {
+                let xf = self.doc.node_xform(t);
+                (!xf.is_identity()).then(|| (xf, self.doc.node(t).map(|n| n.children.clone()).unwrap_or_default()))
+            })
+            .collect();
         let pids: Vec<u32> = self.objsel.iter().copied().collect();
         self.doc.ungroup(&pids);
+        for (g_xf, children) in pushes {
+            for c in children {
+                if self.doc.node(c).is_none() {
+                    continue; // pruned by the dissolve (emptied container etc.)
+                }
+                let c_xf = self.doc.node_xform(c);
+                self.rotate_unit(c, c_xf, g_xf.rot, g_xf.piv);
+            }
+        }
         self.refresh_obj_angle();
         self.dirty = true;
         self.commit();
@@ -4144,10 +4189,41 @@ impl Editor {
         let ordered: Vec<u32> =
             if pos == DropPos::Before { srcs.to_vec() } else { srcs.iter().rev().copied().collect() };
         for &s in &ordered {
+            // A7 split-brain guard (2026-07-11): a drop that crosses a rotated unit's boundary would
+            // silently re-frame the subtree (the old group's rotation stops applying / the new group's
+            // starts) and the art JUMPS. When the move changes which top group owns `s`, bake the
+            // rotation of the OLD unit, the NEW unit — and `s` itself only when it IS its own unit
+            // (a nested node's xform is render-ignored; baking it would CORRUPT geometry, review
+            // 2026-07-11) — each a world-preserving no-op when identity. A reorder INSIDE one unit
+            // crosses nothing and keeps ∠ live. Legality is checked FIRST so a refused drop stays a
+            // true no-op (no bake, no undo entry — the documented contract).
+            if !self.doc.move_is_legal(s, target, pos) {
+                continue;
+            }
+            let old_top = self.doc.top_group_at_or_above(s);
+            let dest_top = match pos {
+                DropPos::Into => self.doc.top_group_at_or_above(target),
+                DropPos::Before | DropPos::After => {
+                    self.doc.node(target).and_then(|n| n.parent).and_then(|p| self.doc.top_group_at_or_above(p))
+                }
+            };
+            // a GROUP dropped at layer level stays its own top unit — that's not a crossing (its ∠
+            // travels with it live); any other destination re-homes the subtree under `dest_top`.
+            let s_is_group = matches!(self.doc.node(s).map(|n| &n.kind), Some(crate::model::NodeKind::Group));
+            let new_top = if s_is_group && dest_top.is_none() { Some(s) } else { dest_top };
+            if old_top != new_top {
+                let s_own = if old_top.is_none() { Some(s) } else { None }; // top-level leaf: its xform IS live
+                for u in [old_top, new_top, s_own].into_iter().flatten() {
+                    if self.bake_unit(u) {
+                        self.dirty = true;
+                    }
+                }
+            }
             if self.doc.move_node_to(s, target, pos) {
                 self.dirty = true;
             }
         }
+        self.refresh_obj_angle(); // a bake above may have re-based a selected unit's stored ∠ (review fix)
         self.commit();
     }
     // ── the SIMPLE panel: click / Ctrl-toggle / Shift-range act on the ROW (07-03 pivot) ──
