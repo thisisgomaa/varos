@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # UI Mockups — Editor Shell Variants
 
 3 visual references for what the Pivot editor proper could look like — _shells only, not functional_. Each is standalone HTML, open directly in browser.

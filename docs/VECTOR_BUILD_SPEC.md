@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 I'll write the full reference and build-spec document directly, since this is a documentation/architecture task and all the source material is provided. No codebase investigation is needed — the Penpot internals are already specified.
 
 Here is the complete document.

@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos
 
 **An Arabic-first, free and open-source vector editor — built in public. It opens instantly, and its working files are already PDFs.**

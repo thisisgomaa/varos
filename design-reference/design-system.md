@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # BStudio Design System
 
 > **Locked principle: Figma is the single source of truth.** Every visual decision

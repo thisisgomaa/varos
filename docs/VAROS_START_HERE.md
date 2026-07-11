@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Execution Brief (START HERE)
 
 You are the **BUILDER** for "Varos". A separate advisor session designed the architecture and wrote this handoff. **Read this whole file before writing any code.** It is detailed on purpose — you have none of the prior conversation, so nothing here is assumed.

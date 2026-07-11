@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # ADR-0004: V1 schema policy
 
 - **Date:** 2026-07-11

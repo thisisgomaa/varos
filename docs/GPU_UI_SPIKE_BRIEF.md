@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Native GPU UI: Phase 0 Spike Brief (for Production)
 
 > **⚠ UPDATE 2026-07-02 (Ahmed): FROSTED GLASS IS CANCELED — permanently.** SOLID panels are the one final

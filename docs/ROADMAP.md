@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Roadmap & Backlog (⚠ SUPERSEDED — historical)
 
 > **⚠ SUPERSEDED (2026-06-29):** priority + live status moved to **`docs/plan.html`** + **`docs/DETAILED_ROADMAP.md`**.

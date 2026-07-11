@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — UI Direction & Visual Constitution (LOCKED with Ahmed, 2026-07-03)
 
 > ✅ **APPROVED by Ahmed 2026-07-03 ("برفكتو").** The living visual reference =

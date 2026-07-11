@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — خطة الواجهة الكاملة (الخطة الواضحة)
 
 > **⚠ تحديث 2026-07-02 (قرار أحمد النهائي): الزجاج المغبّش اتلغى خالص.** اللوحات الصلبة الحالية هي

@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # ADR-0006: Vendored egui_tiles patch contract
 
 - **Date:** 2026-07-11

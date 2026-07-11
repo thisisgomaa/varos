@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos Layers — Vision & Spec
 
 > The design of record for the Layers system after the **2026-07-03 pivot**. Supersedes the Illustrator-

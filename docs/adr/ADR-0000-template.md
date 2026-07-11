@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # ADR-0000: Decision title
 
 - **Date:** YYYY-MM-DD

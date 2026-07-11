@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Master Elements Catalog (the complete gathering)
 
 > Exhaustive list of every tool/panel/system a pro vector tool (Illustrator + Affinity) has — so nothing is forgotten.

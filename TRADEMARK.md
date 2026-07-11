@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos Trademark Policy
 
 The Varos source code is free software under GPL-3.0. The **Varos name, wordmark, and logo** are trademarks of Ahmed Gomaa and are *not* licensed by the GPL.
