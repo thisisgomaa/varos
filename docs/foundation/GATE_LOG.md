@@ -72,3 +72,17 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Defects:** none — third consecutive zero-defect gate.
 - **Verdict:** PASS. **Merged:** `a10772e` to `main`.
 - Sign-off: planner — PASS — 2026-07-11
+
+## F2a.4 — Vendor contract
+
+- **Date:** 2026-07-11. **Branch:** `codex/f2a4-vendor` (range `0abc3da..e158e9e`, commits `fa2c278`, `dbd863b`, `e158e9e`). **Reviewer:** planner.
+- **Checks run:**
+  - Scope: `docs/VENDOR_PATCHES.md` (new, stamped current) + `tools/check_vendor_patches.ps1` (new) + `varos/Cargo.toml` — manifest diff verified **comments-only**; vendor sources and `Cargo.lock` untouched; `git diff --check` clean.
+  - Checker independently executed: `PASS — egui_tiles 0.16.0 (62ac747…), archive SHA-256 9EB8FE…A174, comparable files 17, modified files 5` — identical to the implementer's report and to the F1-verified ledger.
+  - Negative test performed by the reviewer: appended a comment to `src/container/grid.rs` (a 6th modified file) → checker FAILED naming the file, exit 1; file restored via `git checkout`.
+  - VENDOR_PATCHES.md content matches the DEPENDENCY_MAP §4 ledger row-for-row, adds upstream identity with hash evidence, an isolation contract, and a 6-step rebase procedure gated on a superseding ADR.
+  - Link check independently re-run: `PASS (71 docs, 81 links, 58 anchors)` — the new doc is counted and clean.
+  - Implementer ran fmt/clippy/test (223/223) at `-j 4` — required since `.toml` was touched (comments-only).
+- **Defects:** none — fourth consecutive zero-defect gate. **F2a is complete.**
+- **Verdict:** PASS. **Merged:** `76640fe` to `main`.
+- Sign-off: planner — PASS — 2026-07-11
