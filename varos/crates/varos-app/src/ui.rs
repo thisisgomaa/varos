@@ -3207,7 +3207,7 @@ fn build_topbar(
             }
             menu_sep(ui);
             if check_row(ui, "Smart Guides  (Ctrl+U)", snap.smart) {
-                snap.smart = !snap.smart;
+                toggle_smart_guides(snap);
                 hit = true;
             }
             if check_row(ui, "    Alignment Guides", snap.alignment_guides) {
@@ -3233,6 +3233,10 @@ fn build_topbar(
             .collect();
         crate::cursors::set_caption((h * ppp) as i32, &px);
     });
+}
+
+fn toggle_smart_guides(snap: &mut varos_core::model::SnapConfig) {
+    snap.smart = !snap.smart;
 }
 
 /// Seam-fill the `.mid` region EXCEPT the canvas hole (the Board pane's interior, where the wgpu
@@ -5559,5 +5563,92 @@ mod color_tests {
         assert!((red[0]).abs() < 1e-4 && (red[1] - 1.0).abs() < 1e-4 && (red[2] - 1.0).abs() < 1e-4);
         let grey = rgb_to_hsv([0.5, 0.5, 0.5, 1.0]);
         assert!(grey[1].abs() < 1e-4 && (grey[2] - 0.5).abs() < 1e-4);
+    }
+}
+
+#[cfg(test)]
+mod characterization_tests {
+    use super::{apply_ops, toggle_smart_guides, Op};
+    use varos_core::editor::{Editor, PaintTarget, ToolKind};
+    use varos_core::geom::View;
+    use varos_core::model::{Anchor, Path};
+
+    fn anchor(id: u32, x: f32, y: f32) -> Anchor {
+        Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
+    }
+
+    fn selected_square() -> Editor {
+        let mut ed = Editor::new();
+        ed.doc.artboards.clear();
+        ed.ppu = 1.0;
+        ed.doc.paths.push(Path::new(
+            1,
+            vec![anchor(1, 0.0, 0.0), anchor(2, 20.0, 0.0), anchor(3, 20.0, 20.0), anchor(4, 0.0, 20.0)],
+            true,
+            Some([1.0, 0.0, 0.0, 1.0]),
+            Some([0.0, 0.0, 0.0, 1.0]),
+            3.0,
+        ));
+        ed.doc.paths[0].opacity = 0.25;
+        ed.doc.ids = 4;
+        ed.doc.sync_tree();
+        ed.objsel.insert(1);
+        ed
+    }
+
+    #[test]
+    fn apply_ops_delegates_selection_edits_and_preserves_clamps() {
+        let mut ed = selected_square();
+
+        apply_ops(
+            &mut ed,
+            vec![
+                Op::Tool(ToolKind::Direct),
+                Op::SetOpacity(2.0),
+                Op::SetStrokeW(-4.0),
+                Op::PaintFocus(PaintTarget::Stroke),
+            ],
+        );
+
+        assert!(ed.tool == ToolKind::Direct);
+        assert_eq!(ed.doc.paths[0].opacity, 1.0);
+        assert_eq!(ed.doc.paths[0].stroke_width, 0.0);
+        assert!(ed.paint == PaintTarget::Stroke);
+        assert_eq!(ed.rev, 2, "opacity and stroke width remain separate committed edits");
+    }
+
+    #[test]
+    fn apply_ops_preserves_direct_document_and_view_writes() {
+        let mut ed = selected_square();
+        ed.doc.snap.enabled = false;
+        let guides_hidden = ed.guides_hidden;
+        let rulers_shown = ed.show_rulers;
+
+        apply_ops(
+            &mut ed,
+            vec![Op::RulerOrigin(Some([13.0, 17.0])), Op::ToggleSnapping, Op::ToggleGuides, Op::ToggleRulers],
+        );
+
+        assert_eq!(ed.doc.ruler_origin, [13.0, 17.0]);
+        assert_eq!(ed.origin_preview, Some([13.0, 17.0]));
+        assert!(ed.doc.snap.enabled);
+        assert_eq!(ed.guides_hidden, !guides_hidden);
+        assert_eq!(ed.show_rulers, !rulers_shown);
+
+        apply_ops(&mut ed, vec![Op::RulerOrigin(None)]);
+        assert_eq!(ed.origin_preview, None);
+    }
+
+    #[test]
+    fn smart_guides_menu_and_shortcut_have_the_same_state_transition() {
+        let mut from_menu = Editor::new();
+        let mut from_shortcut = Editor::new();
+        let mut view = View::identity();
+
+        toggle_smart_guides(&mut from_menu.doc.snap);
+        crate::apply_key(&mut from_shortcut, &mut view, "KeyU", true, false, false);
+
+        assert_eq!(from_menu.doc.snap.smart, from_shortcut.doc.snap.smart);
+        assert_eq!(from_menu.doc.snap, from_shortcut.doc.snap);
     }
 }
