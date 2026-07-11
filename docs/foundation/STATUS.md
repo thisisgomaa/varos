@@ -6,9 +6,9 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 ## Now
 
 - **Program:** Architecture & Repository Foundation — charter ACCEPTED 2026-07-11 (`docs/foundation/FOUNDATION_CHARTER.md`).
-- **Active work orders:** F2a.2 (stamping) → F2a.3 (current-doc corrections) → F2a.4 (vendor contract) — issued 2026-07-11, sequential, one branch and one gate each.
+- **Active work orders:** F2a.3 (current-doc corrections) → F2a.4 (vendor contract) — sequential, one branch and one gate each. F2a.2 ✅ merged `d0664d4`.
 - **ADRs:** ADR-0001..0007 **Accepted** by the product owner 2026-07-11 — highest authority per charter §3. F2a.3's Constitution/CLAUDE.md corrections and F2c are unblocked.
-- **Last gate:** F2a.1 — PASS (zero defects) — merged `673b5df` (GATE_LOG §F2a.1).
+- **Last gate:** F2a.2 — PASS (zero defects) — merged `d0664d4` (GATE_LOG §F2a.2).
 - **Risk register:** `docs/audits/2026-07-11-CODEX-FULL-PROJECT-AUDIT.md` + `docs/audits/2026-07-11-CLAUDE-COUNTER-REVIEW.md`.
 
 ## Trigger flags (flipped only by Ahmed, with a date — charter §8)
@@ -31,7 +31,7 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 | Direct external deps | 23 |
 | `cargo audit` | 3 vulns + 3 unmaintained (untriaged) |
 | `.varos` refs in current docs | 0 |
-| First-party docs stamped | 0 / 70 (F2a.2 pending) |
+| First-party docs stamped | 70 / 70 — current 27 · historical 18 · reference 25 |
 | Link check | PASS — 70 docs, 71 relative links, 58 heading anchors |
 
 ## External action items (outside the repo)
