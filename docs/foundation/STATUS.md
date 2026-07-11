@@ -5,7 +5,8 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 ## Now
 
 - **Program:** Architecture & Repository Foundation — charter ACCEPTED 2026-07-11 (`docs/foundation/FOUNDATION_CHARTER.md`).
-- **Active work order:** F2a.1 (policy scaffolding) — issued to implementer 2026-07-11.
+- **Active work order:** F2a.1 (policy scaffolding) — implementation complete on `codex/f2a1-policy`; awaiting planner gate review.
+- **F2a.1 deliverables:** ADR-0001..0007 are 7/7 complete and `Proposed`; first-party link check is implemented and clean.
 - **Last gate:** F1 — PASS — merged `05b6dc7` (GATE_LOG §F1).
 - **Risk register:** `docs/audits/2026-07-11-CODEX-FULL-PROJECT-AUDIT.md` + `docs/audits/2026-07-11-CLAUDE-COUNTER-REVIEW.md`.
 
@@ -29,8 +30,8 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 | Direct external deps | 23 |
 | `cargo audit` | 3 vulns + 3 unmaintained (untriaged) |
 | `.varos` refs in current docs | 0 |
-| First-party docs stamped | 0% |
-| Link check | script pending (F2a.1) |
+| First-party docs stamped | 0 / 70 (F2a.2 pending) |
+| Link check | PASS — 70 docs, 71 relative links, 58 heading anchors |
 
 ## External action items (outside the repo)
 
