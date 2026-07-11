@@ -52,7 +52,44 @@ flowchart LR
 | `pdf` | `core::file` blob functions and `core::model` types; no UI/renderer code. | `pdf/src/lib.rs:18-22`. |
 | `shell/boxtree.rs` | `egui_tiles` and a host callback supplied from `ui.rs`. | `boxtree.rs:1-22,51-55`; `ui.rs:1056-1131`. |
 
-## 4. `ui.rs` responsibility map (5,563 lines)
+## 4. Leaf-module register
+
+This register makes the previous crate summary exhaustive for first-party workspace source. “Caller” names the immediate owner or known integration caller, not every test call site.
+
+| Crate | Module/file | Owns now | Surface / caller |
+|---|---|---|---|
+| core | `lib.rs` | Module declarations and curated re-exports. | All other Varos crates enter through `varos_core`. |
+| core | `boolean.rs` | Curve-preserving boolean path operations with polygon fallback. | `Editor::pathfinder` (`editor.rs:970-1074`). |
+| core | `editor.rs` | Behavior facade, transient interaction, history, and cross-domain edit orchestration. | App UI/main, scene builder, integration tests. |
+| core | `file.rs` | Versioned raw-model blob and atomic file helper. | PDF container and core file tests. |
+| core | `geom.rs` | `Pt`, `Rgba`, `View`, geometric primitives and zoom helpers. | All core domains; app and renderer consume `View`/types. |
+| core | `model.rs` | Persistent `Document`, nodes, paths, artboards, structural mutations. | Editor, scene, file, PDF, UI direct reads/writes, tests. |
+| core | `scene.rs` | `Scene`/`Prim`/`Group` construction. | App calls `build_scene`; renderer consumes output. |
+| core | `tools/mod.rs` | Stateless-tool trait and `ToolKind` dispatch. | `Editor::pointer_down`. |
+| core | `tools/object.rs` | Object selection press behavior. | `tools::get(ToolKind::Object)`. |
+| core | `tools/direct.rs` | Direct selection press behavior. | `tools::get(ToolKind::Direct)`. |
+| core | `tools/pen.rs` | Pen press behavior. | `tools::get(ToolKind::Pen)`. |
+| core | `tools/shapes.rs` | Shape placement press behavior. | `tools::get` for Rect/Ellipse/Triangle/Polygon. |
+| core | `tools/rotate.rs` | Rotate and scale press behavior. | `tools::get` for Rotate/Scale. |
+| core | `tools/convert.rs` | Anchor/handle conversion press behavior. | `tools::get(ToolKind::Convert)`. |
+| core | `tools/eyedropper.rs` | Canvas eyedropper press behavior. | `tools::get(ToolKind::Eyedropper)`. |
+| core | `units.rs` | Document unit conversion and formatting. | Document settings, UI properties, tests. |
+| renderer | `lib.rs` | Public WGPU renderer, surface lifecycle, pipelines, composition and Egui draw bridge. | App main only. |
+| renderer | `tess.rs` | CPU tessellation, draw batches, scissor calculation. | Private `lib.rs` module (`lib.rs:4-6`). |
+| pdf | `lib.rs` | PDF write, model embed/extract, `.vrs` load/save API. | App main and PDF integration tests. |
+| app | `main.rs` | Binary composition root, Winit loop, platform/session/file command lifecycle. | OS process entry. |
+| app | `ui.rs` | Full native Egui workbench and UI-to-editor operation bridge. | Private module of main (`main.rs:28`). |
+| app | `cursors.rs` | Win32 cursor, custom titlebar, screen-pixel sampling implementation. | Main and UI. |
+| app | `single_instance.rs` | Mutex/IPC/open-forwarding platform service. | Main. |
+| app library | `lib.rs` | Re-exports only the shell package for reuse. | Main's private UI module imports `varos_app::shell`. |
+| app shell | `shell/mod.rs` | Shell module boundary and public `ShellState`/`PanelId`. | UI. |
+| app shell | `shell/boxtree.rs` | Egui tile wrapper, docking behavior, panel host abstraction, drag presentation. | UI's hosted shell. |
+| app shell | `shell/registry.rs` | `PanelId` enum and sample panel rendering. | `boxtree.rs` / UI shell integration. |
+| app shell | `shell/tokens.rs` | Visual tokens and Egui style setup. | UI and shell painting. |
+
+The integration-test files and compatibility fixtures are inventory items, not runtime modules; their ownership is recorded in `INVENTORY.md` as the core/PDF test corpus.
+
+## 5. `ui.rs` responsibility map (5,563 lines)
 
 The ranges below are contiguous implementation regions, not proposed future modules. A function may rely on state defined earlier; the purpose is to make future extraction scope explicit before anyone touches code.
 
@@ -81,7 +118,7 @@ The ranges below are contiguous implementation regions, not proposed future modu
 - It reads and writes `Editor` public fields directly as well as calling methods; `apply_ops` writes `ed.doc` at `ui.rs:5436-5448` and `set_stroke_width` mutates paths at `ui.rs:5453-5468`.
 - Its `Op` enum is private (`ui.rs:91`), so menus, shortcuts, automation, and future plugins do not currently share an application command contract.
 
-## 5. `editor.rs` responsibility map (4,533 lines)
+## 6. `editor.rs` responsibility map (4,533 lines)
 
 | Lines | Current responsibility | Evidence / main symbols |
 |---:|---|---|
@@ -108,7 +145,7 @@ The ranges below are contiguous implementation regions, not proposed future modu
 - `ui.rs` directly accesses these public fields. That is a documented **as-is** condition, not a judgment that public fields are wrong or authorization to privatize them in F1.
 - The tools folder reduces tool-specific code inside `editor.rs`, but `Editor` remains the dispatcher and owner of cross-cutting gesture/history policy.
 
-## 6. Extraction preconditions recorded, not executed
+## 7. Extraction preconditions recorded, not executed
 
 1. A reviewed ADR must define the command boundary before replacing private `ui::Op`.
 2. Characterization tests must cover a responsibility before it moves out of `ui.rs` or `editor.rs`.
