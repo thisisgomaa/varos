@@ -35,4 +35,4 @@ Inside `varos-app`, direct `egui_tiles` use remains confined to `shell/boxtree.r
 
 ## Status
 
-Proposed.
+Accepted — product owner, 2026-07-11.

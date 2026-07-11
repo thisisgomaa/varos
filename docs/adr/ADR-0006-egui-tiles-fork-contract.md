@@ -32,4 +32,4 @@ F2a.4 will promote that ledger into `VENDOR_PATCHES.md`, document the rebase pro
 
 ## Status
 
-Proposed.
+Accepted — product owner, 2026-07-11.

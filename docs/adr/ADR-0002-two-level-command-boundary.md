@@ -32,4 +32,4 @@ These closed command enums are internal boundaries, not the plugin or AI API. Pl
 
 ## Status
 
-Proposed.
+Accepted — product owner, 2026-07-11.

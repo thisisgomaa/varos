@@ -28,4 +28,4 @@ A discoverable plugin/AI schema, stable property identifiers, migrations, valida
 
 ## Status
 
-Proposed.
+Accepted — product owner, 2026-07-11.
