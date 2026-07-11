@@ -24,7 +24,7 @@ graph BT
 | `varos-core` | Pure Rust geometry/serialization/boolean crates only | `crates/varos-core/Cargo.toml:7-18`; no `wgpu`, `winit`, `egui`, or `windows` manifest entry. |
 | `varos-render-wgpu` | `varos-core`, WGPU, egui rendering crates | `crates/varos-render-wgpu/Cargo.toml:7-13`; `src/lib.rs:1-8`. |
 | `varos-pdf` | `varos-core`, PDF read/write crates | `crates/varos-pdf/Cargo.toml:7-11`; `src/lib.rs:18-22`. |
-| `varos-app` | All three Varos lower crates plus native UI/platform crates | `crates/varos-app/Cargo.toml:10-31`; `src/main.rs:1-31`. |
+| `varos-app` | All three Varos lower crates plus native UI/platform crates | `crates/varos-app/Cargo.toml:10-29`; `src/main.rs:1-31`. |
 | `varos-app::shell` | `egui_tiles` only through `shell/boxtree.rs` | `crates/varos-app/src/lib.rs:1-7`; `shell/boxtree.rs:1-22`. |
 
 ### Forbidden directions to preserve in later work
@@ -56,7 +56,7 @@ Every direct external dependency declared by the four workspace crates had at le
 
 | Dependency | Why it is present | Direct-use evidence | Cargo-tree note |
 |---|---|---|---|
-| `wgpu` | Device, surface, pipelines, textures, and draw submission. | `src/lib.rs:14-70,207-281`; `src/tess.rs:256,636`. | Largest rendering/backend subtree. |
+| `wgpu` | Device, surface, pipelines, textures, and draw submission. | `src/lib.rs:14-70,207-281`. | Largest rendering/backend subtree. |
 | `bytemuck` | POD vertex transfer types. | `src/tess.rs:7`. | Derive macro only beyond runtime trait use. |
 | `egui` | UI primitive types passed to renderer. | `src/lib.rs:932-933,985-986`. | Shared version 0.35 throughout UI stack. |
 | `egui-wgpu` | Renders egui onto Varos' WGPU frame. | `src/lib.rs:69,511-514,934,987`. | Depends on the same WGPU family. |
@@ -82,7 +82,7 @@ Every direct external dependency declared by the four workspace crates had at le
 | `egui-wgpu` | Shares `ScreenDescriptor` types with renderer. | `src/ui.rs:968,1234`. | Same 0.35 version as renderer. |
 | `egui-winit` | Routes Winit input into Egui state. | `src/ui.rs:668,843`. | Couples UI input to Winit only in app crate. |
 | `rfd` | Native open/save and error/confirmation dialogs. | `src/main.rs:381-397,428-429,471-472,869,887-899`. | Windows dialog service. |
-| `egui_tiles` | Docking shell tree, intentionally wrapped. | `src/shell/boxtree.rs:1-22`; root patch at `Cargo.toml:12-15`. | Local vendored 0.16.0, not registry source. |
+| `egui_tiles` | Docking shell tree, intentionally wrapped. | `src/shell/boxtree.rs:1-22`; root patch at `varos/Cargo.toml:10-15`. | Local vendored 0.16.0, not registry source. |
 | `serde` | Serializable panel identifiers and shell layout. | `src/shell/registry.rs:9`; `shell/boxtree.rs:130`. | Shared model serialization family. |
 | `serde_json` | Persists/round-trips shell tree JSON. | `src/shell/boxtree.rs:130-131,967`. | Direct shell use. |
 
@@ -111,7 +111,7 @@ Every direct external dependency declared by the four workspace crates had at le
 
 ### Fork constraints discovered in F1
 
-- The root comment in `varos/Cargo.toml:10-14` says the “only edit” is a narrow hook. That statement is stale: the behavioral delta spans five files and includes a deleted function plus animation/docking policy.
+- The root comment in `varos/Cargo.toml:10-13` says the “only edit” is a narrow hook. That statement is stale: the behavioral delta spans five files and includes a deleted function plus animation/docking policy.
 - The local fork is deliberately isolated to `varos-app/src/shell/boxtree.rs`; preserve that isolation during F2+.
 - F1 does **not** rebase, prune, or change the fork. A later `VENDOR_PATCHES.md` should promote this ledger into an ongoing upstream/rebase contract.
 
