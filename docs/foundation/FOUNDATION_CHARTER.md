@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos Foundation Charter — Architecture & Repository Foundation Program
 
 **Status: ACCEPTED by Ahmed (product owner), 2026-07-11.** This charter is program authority per §3.2. History: v1 planner draft → planner self-review (7 defects fixed) → Codex counter-review (8 points, all incorporated) → v2 accepted.

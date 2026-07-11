@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Visual Polish Plan (A16 icons · A17 colour picker · A14 control bar)
 
 > **Status:** DESIGN PROPOSAL (read-only session, 2026-07-09). No code changed. A future session

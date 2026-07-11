@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos Repository Inventory (F1)
 
 **Baseline:** `1aff281` on 2026-07-11, before F1 adds its own documents.
