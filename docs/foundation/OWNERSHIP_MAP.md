@@ -35,7 +35,7 @@ flowchart LR
 | `varos-render-wgpu` | WGPU device/surface lifecycle, tessellation, stencil/compositing pipelines, and egui paint upload/draw. | `Renderer::{new,resize,render,render_splash,render_ui}` at `src/lib.rs:27,207,562,875,930,981`; called only from app main. | Clean one-way dependency on scene/view; no Winit dependency in its manifest. |
 | `varos-pdf` | Valid-PDF serialization, embedded editable model, PDF extraction, legacy raw JSON detection. | `save_vrs`, `load_vrs`, `write_pdf` at `src/lib.rs:30-72`; called by app main and PDF tests. | Clean one-way dependency on core, but it currently owns parser exposure and PDF durability concerns. |
 | `varos-app::main` | Process startup, window/event loop, native dialogs, input shortcuts, view state, save/open, crash dialog, rendering schedule. | Binary entry point; imports all lower Varos crates. | Integration is highly concentrated here, but its role is appropriately application-specific. |
-| `varos-app::ui` | Egui context/state, UI composition, snapshots, icons, panels, shell hosting, private UI operations, direct Editor application. | `Ui::{new,on_event,wants_*,run}` at `ui.rs:755-1243`; constructed/called only by `main.rs`. | UI emits `Op` then directly mutates `Editor` in the same file; this is the future command-boundary pressure point. |
+| `varos-app::ui` | Egui context/state, UI composition, snapshots, icons, panels, shell hosting, private UI operations, direct Editor application. | `Ui::{new,on_event,wants_*,run}` at `ui.rs:755-1243`; constructed/called only by `main.rs`. | UI emits `Op` then directly mutates `Editor` in the same file; this is the current coupling point between UI and Editor. |
 | `varos-app::shell` | Docking box tree wrapper, panel IDs/placeholder registry, visual tokens. | `varos-app/src/lib.rs:1-7` re-exports `ShellState`/`PanelId`; used by `ui.rs:18,710,885,1056`. | `egui_tiles` is contained here, though real panel bodies are hosted by `ui.rs`. |
 | `varos-app::cursors` | SVG cursor rasterization, Win32 cursor/titlebar/DPI/GDI support, system eyedropper. | Called by `main.rs` and `ui.rs`; Win32 functions concentrated in this module. | Platform code is mostly isolated, but broad in responsibility. |
 | `varos-app::single_instance` | Windows mutex, window activation, `WM_COPYDATA` file forwarding. | Called by `main.rs`; uses Win32 APIs only. | A small explicit platform service boundary. |
@@ -109,7 +109,7 @@ The ranges below are contiguous implementation regions, not proposed future modu
 | 4354-4719 | Properties, document settings, alignment, and pathfinder panels. | `panel_properties`, `document_section`, `panel_align`, `panel_pathfinder`. |
 | 4720-5318 | Artboard panel and on-canvas artboard chrome/rulers. | `AbIcons`, `panel_artboard`, `build_ab_chrome`, `board_rulers`. |
 | 5319-5371 | Origin crosshair and snapping HUD. | `build_origin_crosshair`, `build_snap_hud`. |
-| 5372-5468 | UI-private `Op` to direct `Editor` mutation dispatch, including local stroke-width mutation. | `apply_ops`, `set_stroke_width`. |
+| 5372-5469 | UI-private `Op` to direct `Editor` mutation dispatch, including local stroke-width mutation. | `apply_ops`, `set_stroke_width`. |
 | 5470-5563 | Developer icon PNG dump plus local color unit tests. | `dump_tool_icons`, `color_tests`. |
 
 ### What `ui.rs` owns indirectly
@@ -129,7 +129,7 @@ The ranges below are contiguous implementation regions, not proposed future modu
 | 970-1538 | Pathfinder, arrange, align/distribute, flip, numeric object transform setters. | `pathfinder`, `arrange`, `align`, `distribute*`, `set_obj_bbox`, `set_obj_rotation`. |
 | 1539-1667 | Group/ungroup and transform-again. | `group_selection`, `ungroup_selection`, `transform_again`. |
 | 1668-2120 | Artboard selection, drag/move/resize/create, and panel/on-canvas artboard edits. | `ab_*` methods. |
-| 2121-2759 | Snapping engine, grid, equal-gap detection, origin/pivot snap, and guides. | `snap_*`, `guide_*`. |
+| 2121-2868 | Snapping engine, grid fallback, smart guides, equal-gap detection, origin/pivot snap, and guides. | `snap_*`, `guide_*`. |
 | 2869-2949 | Snapshot history, undo/redo, transient reset, document replacement. | `begin`, `commit`, `undo`, `redo`, `replace_doc`. |
 | 2950-3140 | Shared mutable path/anchor operations and shape-anchor creation. | `reverse`, `delete_anchor`, `add_anchor`, `shape_anchors`. |
 | 3141-3754 | Tool selection/hints and central pointer down/move/up dispatch. | `eff_tool`, `pointer_down`, `pointer_move`, `pointer_up`. |
