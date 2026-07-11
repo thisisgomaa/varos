@@ -1279,6 +1279,9 @@ fn install_style(ctx: &egui::Context) {
     // tight seam grab) — the app only adds its text ramp on top.
     varos_app::shell::tokens::apply(ctx);
     let mut s = (*ctx.style_of(egui::Theme::Dark)).clone();
+    // labels are UI chrome, not documents — double-clicking the artboard name / size chip must never
+    // paint a text-selection highlight over it (Ahmed 2026-07-11 "حاجة رخمة"). TextEdits keep selection.
+    s.interaction.selectable_labels = false;
     s.text_styles = [
         (TextStyle::Heading, FontId::new(13.5, FontFamily::Proportional)),
         (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
@@ -3864,10 +3867,11 @@ fn panel_layers(
     anchor: &mut Option<(u32, u32)>,
     ops: &mut Vec<Op>,
 ) {
-    let pane = ui.max_rect();
+    // intersect with the clip rect: the shell box may hand us a ui taller than what is actually
+    // VISIBLE — sizing the list from max_rect alone pushed the footer below the box edge and the
+    // Group/Delete icons drew clipped (Ahmed 2026-07-11, twice).
+    let pane = ui.max_rect().intersect(ui.clip_rect());
     let w = pane.width();
-    // search row ≈ 42 + footer 34 — the list gets everything in between (the box grows, the list grows)
-    let list_h = (pane.height() - 42.0 - 34.0).max(60.0);
     // columns: eye · lock · [disclosure · thumb · name]. No identity bar, no target/select gutter.
     let (eye_w, lock_w) = (26.0, 22.0);
     let body_x0 = eye_w + lock_w + 8.0;
@@ -3908,6 +3912,9 @@ fn panel_layers(
             hairline(ui);
 
             // ── the row list ──
+            // measure the space that ACTUALLY remains below the header (never assume its height),
+            // and reserve the footer from the VISIBLE bottom: hairline 1 + space 3 + row 24 + breath 6.
+            let list_h = (pane.bottom() - ui.cursor().top() - 34.0).max(60.0);
             let row_h = 26.0;
             // drag bookkeeping — ROW drag only (reorder / nest). Grabbing a row that is part of the
             // (fully-selected) multi-selection lifts the WHOLE selection: its top-most fully-selected
