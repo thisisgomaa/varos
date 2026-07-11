@@ -5,7 +5,7 @@
 > executes this; Ahmed reviews visually.
 > **Scope:** the three pains Ahmed flagged as "weak/unprofessional" — **A16** (icons across the app),
 > **A17** (colour picker + wheel look messy), **A14** (control bar design off / not centred).
-> **Law obeyed:** `docs/UI_DIRECTION.md` (7 rules + one-home), `docs/UI_VISION_MOCKUP.html` (the visual
+> **Law obeyed:** `docs/UI_DIRECTION.md` (7 rules + one-home), `docs/reference/UI_VISION_MOCKUP.html` (the visual
 > law — every number below is checked against its `:root` + component CSS), tokens in
 > `varos/crates/varos-app/src/shell/tokens.rs` (the ONLY place raw colours/sizes may live).
 > All file:line refs are `varos/crates/varos-app/src/ui.rs` unless noted.

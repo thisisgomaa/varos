@@ -61,7 +61,7 @@ options against Varos's exact constraints. Findings, as **guidance**:
   and **hand-paint the beautiful chrome** (rounded panels, soft shadow) in our own wgpu
   pass. That hand-painted layer is also what keeps the seam clean (egui can be swapped out later).
 
-Full technical detail: **`D:/VAROS/docs/GPU_UI_SPIKE_BRIEF.md`**. Palette/look: **`D:/VAROS/docs/UI_FIGMA_SPEC.md`**.
+Full technical detail: **`D:/VAROS/docs/history/GPU_UI_SPIKE_BRIEF.md`**. Palette/look: **`D:/VAROS/docs/reference/UI_FIGMA_SPEC.md`**.
 
 ## 4. Your Decision Freedom (read this carefully)
 
@@ -136,6 +136,6 @@ around it; the pen feels unchanged. PASS → continue to Step 2. FAIL → fix be
   analogies, no engineering jargon.
 
 ## References
-- `D:/VAROS/docs/GPU_UI_SPIKE_BRIEF.md` — technical detail (egui manual path, the gates, risks).
-- `D:/VAROS/docs/UI_FIGMA_SPEC.md` — palette + look tokens.
-- `D:/VAROS/docs/UI_MASTER_PLAN.md` — the same plan in Arabic (Ahmed's reference).
+- `D:/VAROS/docs/history/GPU_UI_SPIKE_BRIEF.md` — technical detail (egui manual path, the gates, risks).
+- `D:/VAROS/docs/reference/UI_FIGMA_SPEC.md` — palette + look tokens.
+- `D:/VAROS/docs/history/UI_MASTER_PLAN.md` — the same plan in Arabic (Ahmed's reference).

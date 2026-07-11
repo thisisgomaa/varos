@@ -32,7 +32,7 @@
 
 ## 2. Design-reference archive (9-34)
 
-All 26 files in this section were last changed together in `326d99a` (2026-06-27). They are not compiled by the Rust workspace; `docs/DESIGN_BRIEF.md` and `docs/UI_FIGMA_SPEC.md` identify the directory as visual reference material. They must remain available, but cannot independently define current implementation requirements.
+All 26 files in this section were last changed together in `326d99a` (2026-06-27). They are not compiled by the Rust workspace; `docs/history/DESIGN_BRIEF.md` and `docs/reference/UI_FIGMA_SPEC.md` identify the directory as visual reference material. They must remain available, but cannot independently define current implementation requirements.
 
 | # | Path | Class | Last | Ref/role |
 |---:|---|---|---|---|
@@ -67,45 +67,45 @@ All 26 files in this section were last changed together in `326d99a` (2026-06-27
 
 | # | Path | Class | Last | Ref/role |
 |---:|---|---|---|---|
-| 35 | `docs/A7_LIVE_TRANSFORM_PLAN.md` | historical | `0baf9af` (2026-07-09) | A7 stages are merged; code comments still point here as implementation history. |
-| 36 | `docs/ARTBOARD_SPEC.md` | reference | `e07c37b` (2026-06-30) | Artboard behavior reference; code owns actual behavior. |
-| 37 | `docs/BOX_SYSTEM_PLAN.md` | reference | `8afebb4` (2026-07-07) | Design and vendor-fork context for `shell/boxtree.rs`. |
-| 38 | `docs/COLOR_SPEC.md` | reference | `005c009` (2026-07-02) | Color-picker design reference. |
-| 39 | `docs/DESIGN_BRIEF.md` | historical | `fdab75c` (2026-06-27) | Early design brief; explicitly names archived `design-reference/`. |
-| 40 | `docs/DETAILED_ROADMAP.md` | historical | `c40d5fc` (2026-07-06) | Large former roadmap; audit found it conflicts with current code and plans. |
-| 41 | `docs/ELEMENTS_CATALOG.md` | reference | `c5e5edb` (2026-06-29) | Product capability catalog, not executable authority. |
-| 42 | `docs/ENGINEERING_REVIEW.md` | reference | `6f380f4` (2026-07-06) | Engineering-practice comparison and recommendations. |
-| 43 | `docs/FILL_STROKE_NOTES.md` | reference | `fdab75c` (2026-06-27) | Feature notes. |
-| 44 | `docs/GPU_UI_SPIKE_BRIEF.md` | historical | `9f5d500` (2026-07-04) | Completed native-GPU UI spike record. |
-| 45 | `docs/ILLUSTRATOR_TOOLS_CATALOG.md` | reference | `fdab75c` (2026-06-27) | External capability reference. |
-| 46 | `docs/LAYERS_SPEC.md` | reference | `241a278` (2026-07-03) | Layers design/implementation reference. |
+| 35 | `docs/history/A7_LIVE_TRANSFORM_PLAN.md` | historical | `0baf9af` (2026-07-09) | A7 stages are merged; code comments still point here as implementation history. |
+| 36 | `docs/reference/ARTBOARD_SPEC.md` | reference | `e07c37b` (2026-06-30) | Artboard behavior reference; code owns actual behavior. |
+| 37 | `docs/reference/BOX_SYSTEM_PLAN.md` | reference | `8afebb4` (2026-07-07) | Design and vendor-fork context for `shell/boxtree.rs`. |
+| 38 | `docs/reference/COLOR_SPEC.md` | reference | `005c009` (2026-07-02) | Color-picker design reference. |
+| 39 | `docs/history/DESIGN_BRIEF.md` | historical | `fdab75c` (2026-06-27) | Early design brief; explicitly names archived `design-reference/`. |
+| 40 | `docs/history/DETAILED_ROADMAP.md` | historical | `c40d5fc` (2026-07-06) | Large former roadmap; audit found it conflicts with current code and plans. |
+| 41 | `docs/reference/ELEMENTS_CATALOG.md` | reference | `c5e5edb` (2026-06-29) | Product capability catalog, not executable authority. |
+| 42 | `docs/reference/ENGINEERING_REVIEW.md` | reference | `6f380f4` (2026-07-06) | Engineering-practice comparison and recommendations. |
+| 43 | `docs/reference/FILL_STROKE_NOTES.md` | reference | `fdab75c` (2026-06-27) | Feature notes. |
+| 44 | `docs/history/GPU_UI_SPIKE_BRIEF.md` | historical | `9f5d500` (2026-07-04) | Completed native-GPU UI spike record. |
+| 45 | `docs/reference/ILLUSTRATOR_TOOLS_CATALOG.md` | reference | `fdab75c` (2026-06-27) | External capability reference. |
+| 46 | `docs/reference/LAYERS_SPEC.md` | reference | `241a278` (2026-07-03) | Layers design/implementation reference. |
 | 47 | `docs/LAYERS_VISION.md` | current | `3b76552` (2026-07-06) | Current layers/masks intent referenced by `CLAUDE.md` and core mask comments. |
 | 48 | `docs/MASKS_PLAN.md` | current | `447bf81` (2026-07-09) | Active staged masks plan referenced in core/renderer comments and pain log. |
-| 49 | `docs/MASTER_PLAN_V1_LAUNCH.md` | historical | `4b5e6c0` (2026-07-08) | Broad launch plan; contains superseded/competing decisions. |
+| 49 | `docs/history/MASTER_PLAN_V1_LAUNCH.md` | historical | `4b5e6c0` (2026-07-08) | Broad launch plan; contains superseded/competing decisions. |
 | 50 | `docs/PAINS_LOG.md` | current | `1aff281` (2026-07-11) | Live raw pain history; current top section but not a sole source of truth. |
-| 51 | `docs/PAINS_WORK_ORDER.md` | historical | `c1f68b0` (2026-07-08) | Completed first execution order. |
-| 52 | `docs/PAINS_WORK_ORDER_2.md` | historical | `60e40a3` (2026-07-08) | Completed/partially pending second execution order. |
-| 53 | `docs/PANELS_PRO_SPEC.md` | historical | `56021e2` (2026-06-30) | Earlier panels build record. |
-| 54 | `docs/ROADMAP.md` | historical | `9f5d500` (2026-07-04) | It self-labels superseded. |
-| 55 | `docs/RUST_PORT_SPIKE_NOTES.md` | historical | `fdab75c` (2026-06-27) | Port/spike record. |
-| 56 | `docs/SAVE_EXPORT_PLAN.md` | reference | `bea3dc5` (2026-06-30) | Save/export rationale; differs from implemented JSON-in-PDF details. |
-| 57 | `docs/SHAPES_NOTES.md` | reference | `fdab75c` (2026-06-27) | Shape feature notes. |
-| 58 | `docs/SNAP_TRANSFORM_FEATURES.md` | reference | `238d8ad` (2026-06-30) | Snap/transform feature matrix. |
-| 59 | `docs/SNAP_TRANSFORM_REFERENCE.md` | reference | `238d8ad` (2026-06-30) | External snap/transform reference. |
-| 60 | `docs/SNAP_TRANSFORM_SPEC.md` | reference | `238d8ad` (2026-06-30) | Snap/transform design reference; `editor.rs` labels its snap engine with it. |
+| 51 | `docs/history/PAINS_WORK_ORDER.md` | historical | `c1f68b0` (2026-07-08) | Completed first execution order. |
+| 52 | `docs/history/PAINS_WORK_ORDER_2.md` | historical | `60e40a3` (2026-07-08) | Completed/partially pending second execution order. |
+| 53 | `docs/history/PANELS_PRO_SPEC.md` | historical | `56021e2` (2026-06-30) | Earlier panels build record. |
+| 54 | `docs/history/ROADMAP.md` | historical | `9f5d500` (2026-07-04) | It self-labels superseded. |
+| 55 | `docs/history/RUST_PORT_SPIKE_NOTES.md` | historical | `fdab75c` (2026-06-27) | Port/spike record. |
+| 56 | `docs/reference/SAVE_EXPORT_PLAN.md` | reference | `bea3dc5` (2026-06-30) | Save/export rationale; differs from implemented JSON-in-PDF details. |
+| 57 | `docs/reference/SHAPES_NOTES.md` | reference | `fdab75c` (2026-06-27) | Shape feature notes. |
+| 58 | `docs/reference/SNAP_TRANSFORM_FEATURES.md` | reference | `238d8ad` (2026-06-30) | Snap/transform feature matrix. |
+| 59 | `docs/reference/SNAP_TRANSFORM_REFERENCE.md` | reference | `238d8ad` (2026-06-30) | External snap/transform reference. |
+| 60 | `docs/reference/SNAP_TRANSFORM_SPEC.md` | reference | `238d8ad` (2026-06-30) | Snap/transform design reference; `editor.rs` labels its snap engine with it. |
 | 61 | `docs/UI_DIRECTION.md` | current | `4db2bec` (2026-07-03) | Visual law named by `CLAUDE.md`, `CONTRIBUTING.md`, and active UI plans. |
-| 62 | `docs/UI_FIGMA_SPEC.md` | reference | `9f5d500` (2026-07-04) | Explicitly defers visual law to `UI_DIRECTION.md`. |
-| 63 | `docs/UI_MASTER_PLAN.md` | historical | `9f5d500` (2026-07-04) | Earlier UI plan. |
-| 64 | `docs/UI_PLAN_EN.md` | historical | `9f5d500` (2026-07-04) | Earlier UI plan in English. |
-| 65 | `docs/UI_VISION_MOCKUP.html` | reference | `4db2bec` (2026-07-03) | Visual reference called by active UI plans. |
+| 62 | `docs/reference/UI_FIGMA_SPEC.md` | reference | `9f5d500` (2026-07-04) | Explicitly defers visual law to `UI_DIRECTION.md`. |
+| 63 | `docs/history/UI_MASTER_PLAN.md` | historical | `9f5d500` (2026-07-04) | Earlier UI plan. |
+| 64 | `docs/history/UI_PLAN_EN.md` | historical | `9f5d500` (2026-07-04) | Earlier UI plan in English. |
+| 65 | `docs/reference/UI_VISION_MOCKUP.html` | reference | `4db2bec` (2026-07-03) | Visual reference called by active UI plans. |
 | 66 | `docs/VAROS_CONSTITUTION.md` | current | `fdab75c` (2026-06-27) | Declared constitutional policy; needs later amendment where it conflicts with reality. |
-| 67 | `docs/VAROS_PLAN.md` | historical | `fdab75c` (2026-06-27) | Early broad plan. |
-| 68 | `docs/VAROS_START_HERE.md` | historical | `fdab75c` (2026-06-27) | Old onboarding record with personal-path debt. |
-| 69 | `docs/VECTOR_BUILD_SPEC.md` | reference | `56021e2` (2026-06-30) | Vector build reference. |
+| 67 | `docs/history/VAROS_PLAN.md` | historical | `fdab75c` (2026-06-27) | Early broad plan. |
+| 68 | `docs/history/VAROS_START_HERE.md` | historical | `fdab75c` (2026-06-27) | Old onboarding record with personal-path debt. |
+| 69 | `docs/reference/VECTOR_BUILD_SPEC.md` | reference | `56021e2` (2026-06-30) | Vector build reference. |
 | 70 | `docs/VISUAL_POLISH_PLAN.md` | current | `b1acf2a` (2026-07-09) | Active visual-polish plan with mechanical versus Ahmed-review split. |
-| 71 | `docs/plan.html` | historical | `d556acf` (2026-07-06) | Former dashboard; audit records stale phase, extension, and source-of-truth claims. |
-| 72 | `docs/prototypes/pen-spike.html` | historical | `54cb864` (2026-06-27) | Archived pen-tool prototype. |
-| 73 | `docs/prototypes/varos-pen-spike.html` | historical | `54cb864` (2026-06-27) | Archived pen-tool prototype. |
+| 71 | `docs/history/plan.html` | historical | `d556acf` (2026-07-06) | Former dashboard; audit records stale phase, extension, and source-of-truth claims. |
+| 72 | `docs/history/prototypes/pen-spike.html` | historical | `54cb864` (2026-06-27) | Archived pen-tool prototype. |
+| 73 | `docs/history/prototypes/varos-pen-spike.html` | historical | `54cb864` (2026-06-27) | Archived pen-tool prototype. |
 
 ## 4. Legacy spike and root visual asset (74-77)
 

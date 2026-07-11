@@ -2,14 +2,14 @@
 # Varos — UI Direction & Visual Constitution (LOCKED with Ahmed, 2026-07-03)
 
 > ✅ **APPROVED by Ahmed 2026-07-03 ("برفكتو").** The living visual reference =
-> **`docs/UI_VISION_MOCKUP.html`** (open it in a browser — it demonstrates every rule below:
+> **`docs/reference/UI_VISION_MOCKUP.html`** (open it in a browser — it demonstrates every rule below:
 > void frame, box workspace with equal 6px seams, chip tabs, floating hands, warm-black ramp).
 
 > **This file is the visual law.** Any new panel/bar/control is measured against it.
 > Supersedes the *floating-shell* look in `UI_FIGMA_SPEC.md` / `PANELS_PRO_SPEC.md` (their **palette stays valid**).
 > Architecture unchanged: we still draw the whole UI ourselves on the GPU (egui on our wgpu surface).
 > Execution timing: the wgpu spike is **DONE** (`451ca2a` — wgpu 29 / egui 0.35). The build order lives in
-> **`docs/BOX_SYSTEM_PLAN.md`** — the Control Bar is born in its Stage 4 (not first).
+> **`docs/reference/BOX_SYSTEM_PLAN.md`** — the Control Bar is born in its Stage 4 (not first).
 
 ## Identity — "Son of Illustrator, raised by Claude"
 **ابن اليستريتور، متربّي عند كلود.**
@@ -89,7 +89,7 @@ BOARD:  Everything else. Rulers on.
 - **Workspaces:** saved layouts per task; the "standard" above is Workspace #1.
 
 ## Build hook (so this stays real, not poetry)
-- **The build order lives in `docs/BOX_SYSTEM_PLAN.md`** (2026-07-03): tokens → void frame → box-system
+- **The build order lives in `docs/reference/BOX_SYSTEM_PLAN.md`** (2026-07-03): tokens → void frame → box-system
   sandbox with dummy panels → behaviors → migrate the real app in. The **Control Bar** (= Transform §2)
   is born in its Stage 4 as the second floating hand, built as *mirrors of sections*. (The wgpu spike is
   DONE — `451ca2a`: wgpu 29 / egui 0.35.)
