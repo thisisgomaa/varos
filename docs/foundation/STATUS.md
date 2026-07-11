@@ -5,9 +5,9 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 ## Now
 
 - **Program:** Architecture & Repository Foundation — charter ACCEPTED 2026-07-11 (`docs/foundation/FOUNDATION_CHARTER.md`).
-- **Active work order:** F2a.1 (policy scaffolding) — implementation complete on `codex/f2a1-policy`; awaiting planner gate review.
-- **F2a.1 deliverables:** ADR-0001..0007 are 7/7 complete and `Proposed`; first-party link check is implemented and clean.
-- **Last gate:** F1 — PASS — merged `05b6dc7` (GATE_LOG §F1).
+- **Active work orders:** F2a.2 (stamping) → F2a.3 (current-doc corrections) → F2a.4 (vendor contract) — issued 2026-07-11, sequential, one branch and one gate each.
+- **Blocking decision:** ADR-0001..0007 are `Proposed` — awaiting product-owner acceptance. F2a.3's Constitution/CLAUDE.md corrections and all of F2c depend on it.
+- **Last gate:** F2a.1 — PASS (zero defects) — merged `673b5df` (GATE_LOG §F2a.1).
 - **Risk register:** `docs/audits/2026-07-11-CODEX-FULL-PROJECT-AUDIT.md` + `docs/audits/2026-07-11-CLAUDE-COUNTER-REVIEW.md`.
 
 ## Trigger flags (flipped only by Ahmed, with a date — charter §8)
