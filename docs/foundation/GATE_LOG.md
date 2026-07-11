@@ -98,3 +98,16 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Defects:** none — fifth consecutive zero-defect gate.
 - **Verdict:** PASS. **Merged:** `3a0ad3b` to `main`.
 - Sign-off: planner — PASS — 2026-07-11
+
+## F2b — Physical doc layout
+
+- **Date:** 2026-07-11. **Branch:** `codex/f2b-doc-layout` (range `71ba062..6346bec`, commits `da3c924`, `6386814`, `6346bec`). **Reviewer:** planner.
+- **Checks run:**
+  - 33 renames stamp-derived (17 historical → `docs/history/`, 16 reference → `docs/reference/`): 28 at R100, 5 at R093-R099 whose deltas are their own internal link fixes; docs root now exactly the 7 current docs; foundation/adr/audits/design-reference untouched; NOTES_FOR_CHARTER kept in place as ordered.
+  - 6 modified docs verified at word level: every changed token is a path string (including inside the tracked audit — evidentiary content untouched); 56 insertions vs 56 deletions.
+  - Stamps unchanged (71 stamped docs). Both checkers independently re-run: `check_links PASS (71/81/58)`, `check_dep_directions PASS`. `git log --follow` traces `plan.html` to its creation commit `720c2b4`; implementer demonstrated two more.
+  - Implementer ran fmt/clippy/test (223/223) at `-j 4`.
+- **Non-blocking note:** `INVENTORY.md` path cells were updated in place to post-move locations, which slightly strains its "as returned at baseline" header sentence. Rider on the next order: add one clarifying line to INVENTORY's header ("path cells reflect post-F2b locations; baseline identity lives in the `Last` column"). Not a defect — the update keeps the classification register usable, which is how F2a.2/F2b consumed it.
+- **Defects:** none — sixth consecutive zero-defect gate. **F2 (a+b+c) is COMPLETE.**
+- **Verdict:** PASS. **Merged:** `b6e3863` to `main`.
+- Sign-off: planner — PASS — 2026-07-11
