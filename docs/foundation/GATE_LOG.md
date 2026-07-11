@@ -39,3 +39,8 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Verdict:** PASS. **Merged:** `673b5df` to `main`.
 - **Pending:** the 7 ADRs remain `Proposed` until the product owner accepts them (blocker for F2c and for F2a.3's Constitution/CLAUDE.md corrections).
 - Sign-off: planner — PASS — 2026-07-11
+
+## ADR acceptance
+
+- **Date:** 2026-07-11. ADR-0001..0007 flipped `Proposed` → `Accepted` on the product owner's assent (relayed while dispatching F2a.2-4; the ADRs contain only decisions Ahmed had already made — recorded in charter §9 and the mutual-review record §10). Reversible by product-owner word before any dependent work merges.
+- Sign-off: product owner (Ahmed, via planner) — ACCEPTED — 2026-07-11

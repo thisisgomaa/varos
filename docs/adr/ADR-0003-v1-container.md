@@ -26,4 +26,4 @@ This is a V1 decision, not an eternal container promise. The detailed compatibil
 
 ## Status
 
-Proposed.
+Accepted — product owner, 2026-07-11.

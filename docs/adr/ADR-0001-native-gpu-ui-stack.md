@@ -26,4 +26,4 @@ GPU rendering is the V1 requirement. A CPU renderer is a possible future option,
 
 ## Status
 
-Proposed.
+Accepted — product owner, 2026-07-11.

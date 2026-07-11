@@ -24,4 +24,4 @@ This ADR selects policy only. It does not select an update service, transport, i
 
 ## Status
 
-Proposed.
+Accepted — product owner, 2026-07-11.
