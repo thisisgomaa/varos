@@ -7,8 +7,9 @@ Varos: a free, open-source, Windows-first vector editor (Illustrator alternative
 ## Hard architecture laws
 - `varos-core` = pure logic. Zero GPU/window/UI deps. The compiler enforces this seam — never weaken it.
 - No test may construct a GPU `Renderer` or an `EventLoop` (CI runs headless).
-- UI is drawn by us on the GPU. No DOM, no web views, no Electron thinking.
-- One schema is the single source of truth (file + inspector + future plugins/AI all read it).
+- The product UI is native Winit + Egui on WGPU. No Tauri, DOM, web views, or Electron thinking. GPU rendering is required for V1; a CPU renderer is a future option, not a promise, and GPU startup failure must stay readable ([ADR-0001](docs/adr/ADR-0001-native-gpu-ui-stack.md)).
+- The V1 persisted schema is the versioned JSON representation of `varos-core`'s Serde model. There is no introspectable inspector/plugin/AI schema yet; do not promise or infer one ([ADR-0004](docs/adr/ADR-0004-v1-schema-policy.md)).
+- Updates, if implemented, must be visible and user-controlled; silent background installation is rejected ([ADR-0007](docs/adr/ADR-0007-visible-update-policy.md)).
 
 ## Visual constitution (docs/UI_DIRECTION.md is law)
 - Warm-black ramp (`#141313` signature); azure `#0c8ce9` is a scalpel — active/selection/focus ONLY.
@@ -25,6 +26,6 @@ Varos: a free, open-source, Windows-first vector editor (Illustrator alternative
 - **Never commit proprietary reference material** (e.g. any extracted third-party assets kept locally for functional reference). `.gitignore` entries for these are load-bearing.
 
 ## Key docs
-- `docs/UI_DIRECTION.md` — visual law · `docs/BOX_SYSTEM_PLAN.md` — shell build plan
-- `docs/LAYERS_VISION.md` — layers/masks design of record · `docs/DETAILED_ROADMAP.md` + `docs/plan.html` — roadmap
-- `docs/ENGINEERING_REVIEW.md` — engineering-practices audit · `docs/MASTER_PLAN_V1_LAUNCH.md` — launch master plan
+- `docs/foundation/STATUS.md` — current program state · `docs/adr/` — accepted architecture decisions
+- `docs/UI_DIRECTION.md` — current visual direction · `docs/BOX_SYSTEM_PLAN.md` — shell reference
+- `docs/LAYERS_VISION.md` — current layers/masks intent · `docs/audits/` — tracked risk register

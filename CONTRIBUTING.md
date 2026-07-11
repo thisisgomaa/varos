@@ -13,7 +13,7 @@ cargo clippy --workspace --all-targets -- -D warnings   # CI gates on this
 cargo fmt --all --check
 ```
 
-All four must pass — CI enforces them on every PR.
+All four must pass locally before review. The workflow is configured for every PR, but GitHub-hosted runners are currently blocked by account verification; until that clears, local gate evidence is authoritative (see [STATUS](docs/foundation/STATUS.md)).
 
 ## Ground rules
 
