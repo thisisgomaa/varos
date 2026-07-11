@@ -2,7 +2,7 @@
 # Varos — Snapping & Transform: Verified External Reference
 
 > Compiled from verified research on Adobe Illustrator, Affinity Designer 2, Figma, Sketch, CorelDRAW, and Inkscape.
-> Purpose: feed `D:/VAROS/docs/SNAP_TRANSFORM_SPEC.md`.
+> Purpose: feed `D:/VAROS/docs/reference/SNAP_TRANSFORM_SPEC.md`.
 > **UNCERTAIN** facts are flagged inline — verify them live in-app before hard-coding into the spec. **Never quote a flagged number/shortcut as fact.**
 
 ---

@@ -13,7 +13,7 @@
 You have zero prior context. Before writing one line of code, read these three, in order:
 
 1. **`docs/UI_DIRECTION.md`** — the visual **law** (✅ approved by Ahmed, "برفكتو", 2026-07-03). Non-negotiable.
-2. **`docs/UI_VISION_MOCKUP.html`** — open it in a browser. It is the **target picture** — every token and
+2. **`docs/reference/UI_VISION_MOCKUP.html`** — open it in a browser. It is the **target picture** — every token and
    measurement in §3 below is lifted verbatim from its source. When in doubt, this file wins.
 3. **This brief** — the architecture (§4), the tool decision (§5), the stages (§6), the build order (§7),
    the rules of engagement (§8).
@@ -458,8 +458,8 @@ When a wave merges to `main`, update (in the **same** merge):
 ## 11. Kickoff message for the fresh session (Ahmed pastes this to open it)
 
 > **مهمتك: بناء قشرة الواجهة (البوكس-سيستم) لڤاروس، على مراحل.**
-> اقرأ بالترتيب قبل أي كود: (١) `docs/UI_DIRECTION.md` — ده القانون. (٢) افتح `docs/UI_VISION_MOCKUP.html`
-> في المتصفح — دي الصورة الهدف. (٣) `docs/BOX_SYSTEM_PLAN.md` — ده البريف الكامل (المعمارية + القرار التقني +
+> اقرأ بالترتيب قبل أي كود: (١) `docs/UI_DIRECTION.md` — ده القانون. (٢) افتح `docs/reference/UI_VISION_MOCKUP.html`
+> في المتصفح — دي الصورة الهدف. (٣) `docs/reference/BOX_SYSTEM_PLAN.md` — ده البريف الكامل (المعمارية + القرار التقني +
 > المراحل + الترتيب).
 >
 > **إحنا في Wave 1 / Stage 2 (الساندبوكس).** اشتغل في وركتري منفصل خالص:
