@@ -9,6 +9,7 @@ use egui::{Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, RichTex
 use std::time::Instant;
 use varos_core::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, ToolKind};
 use varos_core::geom::{Pt, Rgba, View};
+use varos_core::EditCommand;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
@@ -235,7 +236,7 @@ fn harmony_set(h: Harmony, base: [f32; 3]) -> Vec<[f32; 3]> {
 
 /// The professional Color Picker modal (opened by double-clicking any colour swatch).
 /// Live HSVA is the single source of truth while open; OK commits once, Cancel discards. The whole
-/// interaction is ONE undo step (A6): `ed.picker_begin()` on open, live paint each frame, and a
+/// interaction is ONE undo step (A6): `EditCommand::PickerBegin` on open, live paint each frame, and a
 /// single `picker_commit` / `picker_cancel` on close.
 struct ColorModal {
     target: MTarget,
@@ -1181,9 +1182,9 @@ impl Ui {
         self.show_dock = show_dock;
         self.tabs = tabs;
         self.tab_active = tab_active;
-        ed.doc.snap = snap_cfg; // commit the magnet-menu toggles (a non-undoable mode flag)
-        ed.constrain_wh = lock; // A12: mirror the Properties W/H lock so canvas scale drags honour it too
-                                // OpenPicker is a UI op (it opens the modal, seeded from the target's colour) — intercept it here
+        ed.execute(EditCommand::SetSnapConfig(snap_cfg)); // non-undoable mode flag, now core-owned
+        ed.set_constrain_wh(lock); // A12: mirror the Properties W/H lock so canvas scale drags honour it too
+                                   // OpenPicker is a UI op (it opens the modal, seeded from the target's colour) — intercept it here
         ops.retain(|op| {
             if let Op::OpenPicker(t) = op {
                 let seed = match *t {
@@ -1195,7 +1196,7 @@ impl Ui {
                 let h = rgb_to_hsv(base);
                 // A6: open ONE undo step for the whole picker session; live edits mutate the doc in
                 // place each frame and OK/Cancel closes the single step.
-                ed.picker_begin();
+                ed.execute(EditCommand::PickerBegin);
                 self.color_modal = Some(ColorModal {
                     target: *t,
                     orig: seed,
@@ -2597,7 +2598,7 @@ fn build_color_modal(
             ok = true;
         }
         // A6 — LIVE preview: apply the current colour to the target EVERY frame (no new undo step; the
-        // session opened with ed.picker_begin()). OK folds the whole drag into ONE step + remembers it;
+        // session opened with EditCommand::PickerBegin). OK folds the whole drag into ONE step + remembers it;
         // Cancel/Esc reverts to the value at open.
         let c = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
         let col = [c[0], c[1], c[2], m.hsva[3]];
@@ -5377,98 +5378,80 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
     for op in ops {
         match op {
             Op::Tool(t) => ed.set_tool(t),
-            Op::SetBBox(nx, ny, nw, nh, ax, ay) => ed.set_obj_bbox(nx, ny, nw, nh, ax, ay),
-            Op::SetRot(d) => ed.set_obj_rotation(d),
-            Op::SetOpacity(o) => ed.set_opacity(o.clamp(0.0, 1.0)),
-            Op::SetClipExempt(v) => ed.set_clip_exempt(v),
-            Op::SetStrokeW(w) => set_stroke_width(ed, w),
-            Op::Paint(tg, c) => {
-                ed.paint = tg;
-                ed.apply_paint(c);
+            Op::SetBBox(x, y, width, height, anchor_x, anchor_y) => {
+                ed.execute(EditCommand::SetObjectBounds { x, y, width, height, anchor_x, anchor_y })
             }
-            Op::PaintFocus(t) => ed.paint = t,
-            Op::SwapColors => ed.swap_colors(),
-            Op::DefaultPaint => ed.default_paint(),
+            Op::SetRot(degrees) => ed.execute(EditCommand::SetObjectRotation(degrees)),
+            Op::SetOpacity(opacity) => ed.execute(EditCommand::SetOpacity(opacity)),
+            Op::SetClipExempt(exempt) => ed.execute(EditCommand::SetClipExempt(exempt)),
+            Op::SetStrokeW(width) => ed.execute(EditCommand::SetStrokeWidth(width)),
+            Op::Paint(target, color) => ed.execute(EditCommand::ApplyPaint { target, color }),
+            Op::PaintFocus(target) => ed.set_paint_target(target),
+            Op::SwapColors => ed.execute(EditCommand::SwapColors),
+            Op::DefaultPaint => ed.execute(EditCommand::DefaultPaint),
             Op::OpenPicker(_) => {} // UI-only: intercepted in run() (opens the modal); never reaches here
-            Op::PickerLive(t, c) => match t {
-                MTarget::Paint(pt) => ed.paint_live(pt, Some(c)),
-                MTarget::Ab(i) => ed.ab_color_live(i, Some(c)),
+            Op::PickerLive(target, color) => match target {
+                MTarget::Paint(target) => ed.execute(EditCommand::PickerLivePaint { target, color }),
+                MTarget::Ab(index) => ed.execute(EditCommand::PickerLiveArtboard { index, color }),
             },
-            Op::PickerCommit(cur, c) => ed.picker_commit(cur, c),
-            Op::PickerCancel => ed.picker_cancel(),
+            Op::PickerCommit(current, color) => ed.execute(EditCommand::PickerCommit { current, color }),
+            Op::PickerCancel => ed.execute(EditCommand::PickerCancel),
             Op::LayerSelectSet(nids) => ed.layer_select_set(&nids),
             Op::LayerToggle(n) => ed.layer_toggle(n),
-            Op::LayerEye(n) => ed.layer_toggle_hidden(n),
-            Op::LayerLock(n) => ed.layer_toggle_locked(n),
-            Op::LayerRename(n, s) => ed.layer_rename(n, s),
-            Op::LayerGroup => ed.group_selection(),
-            Op::LayerDeleteSel => ed.layer_delete_selection(),
+            Op::LayerEye(node) => ed.execute(EditCommand::ToggleNodeHidden(node)),
+            Op::LayerLock(node) => ed.execute(EditCommand::ToggleNodeLocked(node)),
+            Op::LayerRename(node, name) => ed.execute(EditCommand::RenameNode { node, name }),
+            Op::LayerGroup => ed.execute(EditCommand::GroupSelection),
+            Op::LayerDeleteSel => ed.execute(EditCommand::DeleteLayerSelection),
             Op::LayerMove(srcs, target, zone) => {
-                let pos = match zone {
+                let position = match zone {
                     0 => varos_core::model::DropPos::Before,
                     1 => varos_core::model::DropPos::Into,
                     _ => varos_core::model::DropPos::After,
                 };
-                ed.layer_move(&srcs, target, pos);
+                ed.execute(EditCommand::MoveLayer { sources: srcs, target, position });
             }
-            Op::LayerMoveBoard(srcs, sb, tb) => ed.layer_move_to_board(&srcs, sb, tb),
-            Op::AbEye(i) => ed.ab_toggle_hidden(i),
-            Op::AbLock(i) => ed.ab_toggle_locked(i),
+            Op::LayerMoveBoard(sources, source_board, target_board) => {
+                ed.execute(EditCommand::MoveLayerToBoard { sources, source_board, target_board })
+            }
+            Op::AbEye(index) => ed.execute(EditCommand::ToggleArtboardHidden(index)),
+            Op::AbLock(index) => ed.execute(EditCommand::ToggleArtboardLocked(index)),
             Op::LayerDupMove(srcs, target, zone) => {
-                let pos = match zone {
+                let position = match zone {
                     0 => varos_core::model::DropPos::Before,
                     1 => varos_core::model::DropPos::Into,
                     _ => varos_core::model::DropPos::After,
                 };
-                ed.layer_dup_move(&srcs, target, pos);
+                ed.execute(EditCommand::DuplicateMoveLayer { sources: srcs, target, position });
             }
-            Op::Flip(h) => ed.flip(h),
-            Op::Align(m, t) => ed.align(m, t),
-            Op::Distribute(a) => ed.distribute(a),
-            Op::Bool(op) => ed.pathfinder(op),
-            Op::AbActive(i) => ed.ab_set_active(i),
-            Op::AbRect(i, x, y, w, h) => ed.ab_set_rect(i, x, y, w, h),
-            Op::AbName(i, s) => ed.ab_rename(i, s),
-            Op::AbColor(i, c) => ed.ab_set_color(i, c),
-            Op::AbClip(i) => ed.ab_toggle_clip(i),
-            Op::AbOrient(i) => ed.ab_orient(i),
-            Op::AbAdd => ed.ab_add(),
-            Op::AbDup(i) => ed.ab_duplicate(i),
-            Op::AbDel(i) => ed.ab_delete(i),
-            Op::AbCount(n) => ed.ab_set_count(n),
-            Op::AbMoveArt(on) => ed.ab_set_move_art(on),
-            Op::RulerOrigin(Some(p)) => {
-                ed.doc.ruler_origin = ed.snap_origin(p);
-                ed.origin_preview = Some(ed.doc.ruler_origin);
+            Op::Flip(horizontal) => ed.execute(EditCommand::Flip(horizontal)),
+            Op::Align(mode, target) => ed.execute(EditCommand::Align { mode, target }),
+            Op::Distribute(axis) => ed.execute(EditCommand::Distribute(axis)),
+            Op::Bool(operation) => ed.execute(EditCommand::Boolean(operation)),
+            Op::AbActive(index) => ed.execute(EditCommand::SetActiveArtboard(index)),
+            Op::AbRect(index, x, y, width, height) => {
+                ed.execute(EditCommand::SetArtboardRect { index, x, y, width, height })
             }
-            Op::RulerOrigin(None) => ed.origin_preview = None,
+            Op::AbName(index, name) => ed.execute(EditCommand::RenameArtboard { index, name }),
+            Op::AbColor(index, color) => ed.execute(EditCommand::SetArtboardColor { index, color }),
+            Op::AbClip(index) => ed.execute(EditCommand::ToggleArtboardClip(index)),
+            Op::AbOrient(index) => ed.execute(EditCommand::OrientArtboard(index)),
+            Op::AbAdd => ed.execute(EditCommand::AddArtboard),
+            Op::AbDup(index) => ed.execute(EditCommand::DuplicateArtboard(index)),
+            Op::AbDel(index) => ed.execute(EditCommand::DeleteArtboard(index)),
+            Op::AbCount(count) => ed.execute(EditCommand::SetArtboardCount(count)),
+            Op::AbMoveArt(enabled) => ed.execute(EditCommand::SetMoveArtWithArtboard(enabled)),
+            Op::RulerOrigin(Some(point)) => ed.execute(EditCommand::SetRulerOrigin(point)),
+            Op::RulerOrigin(None) => ed.clear_ruler_origin_preview(),
             Op::GuidePreview(vertical, p) => ed.set_guide_preview(vertical, p),
-            Op::GuideCommit => ed.commit_guide(),
-            Op::CycleUnits => ed.cycle_units(),
-            // snap.enabled mirrors the magnet menu's non-undoable mode-flag convention; applied AFTER the
-            // frame's `ed.doc.snap = snap_cfg` write-back so it is not clobbered.
-            Op::ToggleSnapping => ed.doc.snap.enabled = !ed.doc.snap.enabled,
-            Op::ToggleGuides => ed.guides_hidden = !ed.guides_hidden, // view pref (mirrors Ctrl+;)
-            Op::ToggleRulers => ed.show_rulers = !ed.show_rulers,     // view pref (mirrors Ctrl+R)
+            Op::GuideCommit => ed.execute(EditCommand::CommitGuide),
+            Op::CycleUnits => ed.execute(EditCommand::CycleUnits),
+            // Applied after SetSnapConfig so the panel toggle is not clobbered by the frame snapshot.
+            Op::ToggleSnapping => ed.execute(EditCommand::ToggleSnapping),
+            Op::ToggleGuides => ed.toggle_guides_visibility(),
+            Op::ToggleRulers => ed.toggle_rulers_visibility(),
         }
     }
-}
-
-/// stroke width across the object selection — pub fields only (varos-core untouched).
-fn set_stroke_width(ed: &mut Editor, w: f32) {
-    let pids: Vec<u32> = ed.objsel.iter().copied().collect();
-    if pids.is_empty() {
-        ed.cur_sw = w.max(0.0);
-        return;
-    }
-    ed.begin();
-    for pid in pids {
-        if let Some(pi) = ed.doc.pidx(pid) {
-            ed.doc.paths[pi].stroke_width = w.max(0.0);
-        }
-    }
-    ed.dirty = true;
-    ed.commit();
 }
 
 /// Dev-only: composite the rail to a PNG so the icon rasterization can be eyeballed without the
