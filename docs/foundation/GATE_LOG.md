@@ -58,3 +58,17 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Defects:** none.
 - **Verdict:** PASS. **Merged:** `d0664d4` to `main`.
 - Sign-off: planner — PASS — 2026-07-11
+
+## F2a.3 — Current-doc corrections
+
+- **Date:** 2026-07-11. **Branch:** `codex/f2a3-current-docs` (range `ab75a35..9faa162`, commits `5182cf2`, `57b25b6`, `9faa162`). **Reviewer:** planner.
+- **Checks run:**
+  - Scope: exactly 4 current docs (README, CONTRIBUTING, CLAUDE.md, VAROS_CONSTITUTION.md); zero `.rs`/`.toml`/`.lock`; `git diff --check` clean.
+  - Full diff read line-by-line by the reviewer: every change traces to an accepted ADR (0001/0004/0007) or an audit-flagged falsehood — no invented decisions. Constitution amended the right way: original 2026-06-23 lock date preserved, amendment dated and linked to its ADRs; item 18's web-fallback clause removed as an ADR-0001 contradiction.
+  - Audit closures: P0.3 (SVG/PNG export no longer claimed as working — moved to Coming next), P0.4 (test count now 223 dated to the audited baseline; README/CONTRIBUTING state hosted-CI reality with STATUS links), P0.5 over-claim absent.
+  - Link check independently re-run: `PASS (70 docs, 79 links, 58 anchors)` — the +8 links are exactly the 8 new ADR/STATUS references (CLAUDE 3, Constitution 3, README 1, CONTRIBUTING 1).
+  - `.varos` and personal/temp paths in the edited docs: zero.
+  - Implementer ran fmt/clippy/test (223/223) at `-j 4` — docs-only diff, belt-and-suspenders.
+- **Defects:** none — third consecutive zero-defect gate.
+- **Verdict:** PASS. **Merged:** `a10772e` to `main`.
+- Sign-off: planner — PASS — 2026-07-11
