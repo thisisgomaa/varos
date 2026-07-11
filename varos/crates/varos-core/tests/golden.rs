@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use varos_core::file::load_vrs;
+use varos_core::file::{doc_from_blob, doc_to_blob, load_vrs};
 use varos_core::model::{Document, NodeKind, Paint, Path as ModelPath};
 
 fn fixture(name: &str) -> PathBuf {
@@ -20,6 +20,21 @@ fn path_ids(doc: &Document) -> Vec<u32> {
 
 fn model_path(doc: &Document, id: u32) -> &ModelPath {
     doc.paths.iter().find(|p| p.id == id).unwrap_or_else(|| panic!("missing path {id}"))
+}
+
+#[test]
+fn every_golden_fixture_obeys_the_full_round_trip_law() {
+    for name in ["ancient_pre_artboards.vrs", "legacy_groups.vrs", "pre_paint_enum.vrs"] {
+        let loaded = load_fixture(name);
+        let bytes_a = doc_to_blob(&loaded).unwrap_or_else(|e| panic!("{name}: first save failed: {e}")).into_bytes();
+        let reloaded = doc_from_blob(std::str::from_utf8(&bytes_a).expect("serializer emits UTF-8"))
+            .unwrap_or_else(|e| panic!("{name}: reload of bytes A failed: {e}"));
+
+        assert_eq!(reloaded, loaded, "{name}: reloading bytes A must preserve the Document");
+
+        let bytes_b = doc_to_blob(&reloaded).unwrap_or_else(|e| panic!("{name}: second save failed: {e}")).into_bytes();
+        assert_eq!(bytes_a, bytes_b, "{name}: consecutive current-format saves must be byte-stable");
+    }
 }
 
 #[test]

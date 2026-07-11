@@ -2,6 +2,7 @@
 # Varos Repository Inventory (F1)
 
 **Baseline:** `1aff281` on 2026-07-11, before F1 adds its own documents.
+**Path note:** path cells reflect post-F2b locations; baseline identity remains in the `Last` column.
 **Scope:** every one of the 160 files returned by `git ls-files` at that baseline. F1 deliverables are deliberately excluded from this table because they did not exist in the baseline.
 **Method:** `git ls-files | Measure-Object -Line` returned `160`; `git log -1 --format='%h|%ad|%s' --date=short -- <path>` supplied every `Last` value below; direct repository search supplied the stated reference/role. No file was moved, renamed, or deleted.
 
