@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — "Professionalize the Panels" stage (from Ahmed's Illustrator references)
 
 > **Goal: NO new tools.** Finish + professionalize the panels that already exist, to Illustrator's

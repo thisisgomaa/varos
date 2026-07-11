@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # أمر شغل ٢ — تصفية باقي دفتر الأوجاع (تشغيل مستقل بكوديكس + مراجعة تخطيط)
 **التاريخ:** 2026-07-08 · المصدر: `PAINS_LOG.md` + توضيحات أحمد 07-08 · **المنفّذ:** كوديكس تاسك-تاسك، التخطيط يراجع كل تاسك (بوابات + مراجعة عدائية للخطر) قبل الدمج والانتقال.
 

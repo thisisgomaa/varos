@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # A7 — Illustrator-style LIVE per-object transform (STAGED implementation plan)
 
 > **Pain A7** (PAINS_LOG): *"Transform/rotation values reset the moment I leave the object — they should stay remembered until merge / Expand / Apply."*
