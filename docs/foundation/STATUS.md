@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos STATUS — single current-state page
 
 Authority level 3 (charter §3). Anything that contradicts this page is stale. Updated at every gate.

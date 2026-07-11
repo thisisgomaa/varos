@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Detailed System Roadmap (build order, exhaustive)
 
 > Depth-first: each system reaches at least **Stage 1** before the next, then we circle back to deepen (see Decision 4).

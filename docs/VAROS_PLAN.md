@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Plan (الخطوط العريضة)
 
 Locked direction from the Constitution (`VAROS_CONSTITUTION.md`). Detailed tool list + build order in `ILLUSTRATOR_TOOLS_CATALOG.md`.

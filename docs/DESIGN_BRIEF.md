@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 > ⚠️ **SUPERSEDED for colors + top-bar/layout by `UI_FIGMA_SPEC.md` (read that FIRST).**
 > This brief's color hex values and its "Illustrator menu bar" top layout were WRONG vs Ahmed's
 > actual Figma (`8aJmebD05sAg48Jk3obngb`, node `97:273`). Ahmed's design is Figma-style floating

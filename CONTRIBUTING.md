@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Contributing to Varos
 
 Thank you for even opening this file. Varos is built by a tiny team (one designer-founder + AI pair-programming sessions), so every real contribution moves the needle.

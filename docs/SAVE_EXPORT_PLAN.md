@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — SAVE (#6) & EXPORT (#10): Staged Plan
 
 > The container-format decision (PDF-native, Illustrator `.ai` dual-data model) is **already made** — this plan grounds it, stages it, and names exact crates/APIs. Synthesized from the 7 research angles.

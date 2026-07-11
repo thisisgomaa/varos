@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Constitution (الدستور)
 
 Final decisions, locked **2026-06-23**. These are the foundation — change only deliberately, never by accident.
