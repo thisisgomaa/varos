@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # أمر شغل: تصليح دفتر الأوجاع — جلسة مستقلة ٢-٣ ساعات
 **التاريخ:** 2026-07-08 · **المصدر:** `PAINS_LOG.md` (شرح كل بند الكامل هناك — اقراه بالكامل قبل أي كود) · **المرجع:** قرارات أحمد
 

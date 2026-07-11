@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Notes for the Foundation Charter
 
 **Status:** forward-looking input for the foundation charter being prepared by planning. This file is deliberately separate from the F1 as-is inventory and ownership maps. It is not an accepted ADR or authorization to change code.

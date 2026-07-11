@@ -1,3 +1,4 @@
+> **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Rust Port Spike (next task)
 
 Decision (2026-06-23, see `VAROS_CONSTITUTION.md`): Varos is a **desktop** app — **Hybrid: Rust core + web panels + Tauri shell**. Before building the whole thing in Rust, **prove it on a small piece first.** Read `VAROS_CONSTITUTION.md` and `VAROS_PLAN.md` first.
