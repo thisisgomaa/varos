@@ -3,14 +3,9 @@
 # construct a GPU `Renderer` or an `EventLoop` — the suite is CPU-pure by design; a GPU
 # integration test would hang headless CI. Gate such tests behind `#[ignore]` if ever added.
 name: ci
-# TEMPORARILY manual-only: GitHub won't lend runners until the account's billing
-# verification clears (new-account anti-abuse hold). The full suite runs locally on
-# every commit meanwhile. Restore the push/pull_request triggers once billing clears:
-#   on:
-#     push: { branches: [main] }
-#     pull_request:
-on:
-  workflow_dispatch:
+# Automatic on every push and pull request; manual dispatch remains available for reruns.
+# GitHub account billing verification and required-check branch protection remain external settings.
+on: [push, pull_request, workflow_dispatch]
 jobs:
   check:
     runs-on: windows-latest        # matches the real target (Win32/WebView2/wgpu)
