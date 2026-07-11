@@ -111,3 +111,16 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Defects:** none — sixth consecutive zero-defect gate. **F2 (a+b+c) is COMPLETE.**
 - **Verdict:** PASS. **Merged:** `b6e3863` to `main`.
 - Sign-off: planner — PASS — 2026-07-11
+
+## F3 — Characterization tests
+
+- **Date:** 2026-07-11. **Branch:** `codex/f3-characterization` (range `50e2e7f..a36ef8a`, commits `1753e9d`, `41579de`, `988f338`, `a36ef8a`). **Reviewer:** planner.
+- **Checks run:**
+  - All 6 tests read line-by-line: golden round-trip implements the §4 law verbatim for all three fixtures (blob-level A/B byte stability; original fixture bytes never compared); healthy drag→commit→undo→redo pinned; the known mid-drag undo defect FROZEN as-is with a risk-register pointer (counter-review §4.6) — characterization, not repair; Op dispatch pins clamps + revision counting; direct-write Ops pinned; menu/shortcut parity via the extracted callback vs `apply_key("KeyU")`.
+  - Sole production change verified mechanical: `snap.smart = !snap.smart` moved verbatim into private `toggle_smart_guides`, menu calls it. Scaffolding declared in `F3_CHARACTERIZATION.md` (in-file `#[cfg(test)]` per the color_tests precedent; no visibility widened; no deps added).
+  - Red/green evidence: per-test mutation table with concrete failure values recorded by the implementer (e.g. "ids 13 vs 12", "revision 3 vs 2"); reviewer verified the table's plausibility against the test code rather than re-running mutations — basis: specific failure outputs + independent full-suite run + line-by-line reading.
+  - Honest coverage boundary documented (File menu rows = would-be false coverage until F4; Ctrl+S/O = native dialogs, not headless-testable; parity test scope limits).
+  - Reviewer ran the gates independently: `cargo test --workspace -j 4` = **229/229**, `fmt --check` clean, `clippy --all-targets -D warnings` clean. INVENTORY rider line landed.
+- **Defects:** none — seventh consecutive zero-defect gate.
+- **Verdict:** PASS. **Merged:** `b8c9ba6` to `main`.
+- Sign-off: planner — PASS — 2026-07-11
