@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # VAROS LAYERS PANEL — DEFINITIVE SPEC & GAP ANALYSIS
 
 > Synthesised 2026-07-03 from a 4-agent deep-research pass (Illustrator anatomy · Photoshop/Figma/Affinity ·

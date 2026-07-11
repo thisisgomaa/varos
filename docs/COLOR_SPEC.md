@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Colour System SPEC
 
 Render-agnostic core (no wgpu in the model), hand-painted UI, Illustrator-exact behaviour & shortcuts.

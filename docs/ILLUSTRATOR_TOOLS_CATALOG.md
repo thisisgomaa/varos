@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Illustrator Tools Catalog (reference)
 
 Full analysis of Adobe Illustrator's tools + essential panels, grouped, with Varos build-priority.

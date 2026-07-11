@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Fill & Stroke (build notes)
 
 The next step after shapes. Right now every path renders in ONE hardcoded accent colour (the CSS `.pathline` class). This task gives each object its own **Fill** and **Stroke** so drawings can actually be coloured. First read `ILLUSTRATOR_TOOLS_CATALOG.md` for the full picture and the build order — Fill/Stroke is step 2.

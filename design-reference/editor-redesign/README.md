@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # BStudio — Editor Redesign (interactive prototype)
 
 > Chosen direction: **Focus / Pro skin** — neutral Figma-style chrome, floating
