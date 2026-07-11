@@ -724,8 +724,13 @@ struct LayerIcons {
 }
 
 /// Rasterize a Lucide icon (white) to an egui texture once.
+/// UI icons rasterize at 32px — close to their 13–18px draw size. egui-wgpu builds every texture with
+/// `mip_level_count: 1` (NO mipmaps), so a 96px raster shown at 15px is a 6× bilinear downscale that
+/// EATS thin strokes — the trash lid / folder lip vanished and icons read "clipped" (Ahmed 2026-07-11).
+const ICON_RASTER: u32 = 32;
+
 fn load_icon(ctx: &egui::Context, name: &str, svg_inner: &str) -> Option<egui::TextureHandle> {
-    crate::cursors::render_svg(&lucide(svg_inner), 96, false).map(|(rgba, w, h)| {
+    crate::cursors::render_svg(&lucide(svg_inner), ICON_RASTER, false).map(|(rgba, w, h)| {
         ctx.load_texture(
             name,
             egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
@@ -737,7 +742,7 @@ fn load_icon(ctx: &egui::Context, name: &str, svg_inner: &str) -> Option<egui::T
 /// Rasterize a FILLED glyph (white fill, no stroke) to an egui texture once — mirror of `load_icon` for
 /// icons the law draws solid (the align/distribute bars, UI_VISION_MOCKUP.html:176–181).
 fn load_icon_filled(ctx: &egui::Context, name: &str, svg_inner: &str) -> Option<egui::TextureHandle> {
-    crate::cursors::render_svg(&lucide_filled(svg_inner), 96, false).map(|(rgba, w, h)| {
+    crate::cursors::render_svg(&lucide_filled(svg_inner), ICON_RASTER, false).map(|(rgba, w, h)| {
         ctx.load_texture(
             name,
             egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba),
@@ -3973,6 +3978,9 @@ fn panel_layers(
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click_and_drag());
                         if resp.drag_started() && row.kind != LKind::Board {
                             *drag = Some((row.id, row.sec));
+                            // a drag is not a click — drop any half-built manual double-click
+                            let dc_id = ui.make_persistent_id("lay-last-click");
+                            ui.data_mut(|d| d.remove::<(u32, u32, f64)>(dc_id));
                         }
                         // decide the drop zone. SAME section: top third = Before, bottom third = After,
                         // middle = Into (containers only; a Layer can't nest into a Group); leaves halve.
@@ -4208,7 +4216,19 @@ fn panel_layers(
                                 }
                             }
                         }
-                        if resp.double_clicked() {
+                        // dbl = rename. egui's own double_clicked() can miss on click_and_drag rows
+                        // (the first press may classify as a drag start) — so we ALSO detect it by
+                        // hand: two clicks on the SAME row within 0.4s (P4, Ahmed 2026-07-11).
+                        // keyed on (id, SEC): a straddler's mirror rows share the id across board
+                        // sections — two single clicks on two mirrors must not read as a double-click.
+                        let manual_dbl = resp.clicked() && !renaming && {
+                            let dc_id = ui.make_persistent_id("lay-last-click");
+                            let now = ui.input(|i| i.time);
+                            let last: Option<(u32, u32, f64)> = ui.data(|d| d.get_temp(dc_id));
+                            ui.data_mut(|d| d.insert_temp(dc_id, (row.id, row.sec, now)));
+                            last.is_some_and(|(id, sec, t)| id == row.id && sec == row.sec && now - t < 0.4)
+                        };
+                        if (resp.double_clicked() && !renaming) || manual_dbl {
                             *rename = Some((row.id, row.name.clone()));
                         }
                         // the lifted rows read as "picked up" — the whole payload dims while dragged

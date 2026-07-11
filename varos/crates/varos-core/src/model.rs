@@ -1029,6 +1029,22 @@ impl Document {
         }
         top
     }
+    /// The TOPMOST Group at-or-above node `nid` — the transform-unit boundary a re-parent can cross.
+    /// `nid` itself when it is a top-level Group; `None` when it sits at layer level outside any group.
+    /// (A7: `layer_move` bakes across this boundary so a panel drag never changes the world image.)
+    pub fn top_group_at_or_above(&self, nid: u32) -> Option<u32> {
+        let mut cur = Some(nid);
+        let mut top = None;
+        for _ in 0..4096 {
+            let Some(c) = cur else { break };
+            let Some(n) = self.node(c) else { break };
+            if matches!(n.kind, NodeKind::Group) {
+                top = Some(c);
+            }
+            cur = n.parent;
+        }
+        top
+    }
     /// All path ids in `nid`'s subtree, front-first (traversal order).
     fn collect_paths(&self, nid: u32, out: &mut Vec<u32>) {
         if let Some(n) = self.node(nid) {
@@ -1634,6 +1650,20 @@ impl Document {
                 n.mask_child = None;
             }
         }
+        // A7 hygiene (review fix 2026-07-11): a node NESTED inside a group must never carry a live
+        // xform — `unit_xform` reads only the TOP group, so a nested transform is invisible at render
+        // but corrupts geometry the moment any bake applies it. Dropping it is world-preserving by
+        // definition (it was never drawn). Also heals files saved by builds that left such state.
+        let nested_live: Vec<u32> = self
+            .nodes
+            .iter()
+            .filter(|n| !n.xform.is_identity())
+            .map(|n| n.id)
+            .filter(|&id| self.top_group_at_or_above(id).is_some_and(|t| t != id))
+            .collect();
+        for id in nested_live {
+            self.set_node_xform(id, Xform::default());
+        }
         self.flatten();
     }
 
@@ -1686,21 +1716,47 @@ impl Document {
             None => self.roots.retain(|&r| r != id),
         }
     }
+    /// Would `move_node_to(src, target, pos)` succeed? The same refusal rules, side-effect-free —
+    /// for callers that must prepare state BEFORE the move (layer_move's A7 bake guard) without
+    /// mutating anything on a drop that will be refused. `move_node_to` funnels through this, so
+    /// the rules can never drift apart.
+    pub fn move_is_legal(&self, src: u32, target: u32, pos: DropPos) -> bool {
+        if src == target || self.node(src).is_none() || self.node(target).is_none() {
+            return false;
+        }
+        let parent = match pos {
+            DropPos::Into => {
+                // only containers accept Into
+                if !matches!(self.node(target).unwrap().kind, NodeKind::Layer | NodeKind::Group) {
+                    return false;
+                }
+                Some(target)
+            }
+            DropPos::Before | DropPos::After => self.node(target).unwrap().parent,
+        };
+        if let Some(p) = parent {
+            // cycle guard: src can't become a child of itself or its own descendant
+            if p == src || self.is_descendant(p, src) {
+                return false;
+            }
+            // a Layer can nest in a Layer (sublayer) but never inside a Group
+            if matches!(self.node(src).unwrap().kind, NodeKind::Layer)
+                && matches!(self.node(p).unwrap().kind, NodeKind::Group)
+            {
+                return false;
+            }
+        }
+        true
+    }
     /// Drag & drop: move `src` (+ its subtree) relative to `target`. Returns false (no-op) for illegal
     /// drops — cycle (into self/own descendant), Into a leaf Path, or a Layer into a Group. Undoable via
     /// the caller's begin/commit; re-flattens z on success.
     pub fn move_node_to(&mut self, src: u32, target: u32, pos: DropPos) -> bool {
-        if src == target || self.node(src).is_none() || self.node(target).is_none() {
+        if !self.move_is_legal(src, target, pos) {
             return false;
         }
-        let src_is_layer = matches!(self.node(src).unwrap().kind, NodeKind::Layer);
         let (parent, mut index) = match pos {
-            DropPos::Into => {
-                if !matches!(self.node(target).unwrap().kind, NodeKind::Layer | NodeKind::Group) {
-                    return false;
-                }
-                (Some(target), 0usize) // Illustrator drops at the FRONT (top) of the container
-            }
+            DropPos::Into => (Some(target), 0usize), // Illustrator drops at the FRONT (top) of the container
             DropPos::Before | DropPos::After => {
                 let par = self.node(target).unwrap().parent;
                 let sib = self.children_of(par);
@@ -1708,20 +1764,6 @@ impl Document {
                 (par, if matches!(pos, DropPos::After) { ti + 1 } else { ti })
             }
         };
-        // cycle guard: src can't become a child of itself or its own descendant
-        if let Some(p) = parent {
-            if p == src || self.is_descendant(p, src) {
-                return false;
-            }
-        }
-        // a Layer can nest in a Layer (sublayer) but never inside a Group
-        if src_is_layer {
-            if let Some(p) = parent {
-                if matches!(self.node(p).unwrap().kind, NodeKind::Group) {
-                    return false;
-                }
-            }
-        }
         // same-parent reorder: removing src first shifts the insertion index down by one if src was above it
         let old_parent = self.node(src).unwrap().parent;
         if old_parent == parent {
@@ -1843,6 +1885,38 @@ impl Document {
             }
         }
         self.flatten();
+        // A7 (review fix 2026-07-11): a COPY that landed INSIDE a group must not keep a live xform on
+        // its nested leaf — `unit_xform` reads only the TOP group, so the stored rotation would be
+        // silently ignored at render and then corrupt geometry the moment anything bakes it. Re-express
+        // the copy's intended world image (leaf_xf ∘ local) in the destination unit's frame (top_xf⁻¹ ∘ …)
+        // and store identity — the copy draws exactly where its source drew, under any destination.
+        if copy {
+            for &pid in &pids {
+                let Some(nl) = self.node_of_path(pid) else { continue };
+                let Some(top) = self.top_group_at_or_above(nl) else { continue };
+                let leaf_xf = self.node_xform(nl);
+                let top_xf = self.node_xform(top);
+                if leaf_xf.is_identity() && top_xf.is_identity() {
+                    continue;
+                }
+                if let Some(pi) = self.pidx(pid) {
+                    let m = |p: Pt| top_xf.inverse_apply(leaf_xf.apply(p));
+                    for a in &mut self.paths[pi].anchors {
+                        a.p = m(a.p);
+                        a.hin = a.hin.map(m);
+                        a.hout = a.hout.map(m);
+                    }
+                    for h in &mut self.paths[pi].holes {
+                        for a in h {
+                            a.p = m(a.p);
+                            a.hin = a.hin.map(m);
+                            a.hout = a.hout.map(m);
+                        }
+                    }
+                }
+                self.set_node_xform(nl, Xform::default());
+            }
+        }
         pids
     }
     pub fn set_node_name(&mut self, nid: u32, name: String) {

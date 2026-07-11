@@ -541,6 +541,433 @@ fn nudge_moves_rotated_marquee_anchors_along_the_world_axis() {
     }
 }
 
+// ───────────────────── groups × live rotation (Ahmed's report 2026-07-11) ─────────────────────
+
+/// World positions of anchors 1..=n through each one's unit transform.
+fn world_anchors(ed: &Editor, n: u32) -> Vec<Pt> {
+    (1..=n)
+        .map(|aid| {
+            let pid = ed.doc.pid_of_anchor(aid).unwrap();
+            ed.doc.unit_xform(pid).apply(ed.doc.anchor(aid).unwrap().p)
+        })
+        .collect()
+}
+
+/// two_rects → select both → Ctrl+G. Returns the group's node id.
+fn grouped_two_rects() -> (Editor, u32) {
+    let mut ed = two_rects();
+    ed.objsel.insert(10);
+    ed.objsel.insert(20);
+    ed.refresh_obj_angle();
+    ed.group_selection();
+    let g = ed.doc.top_group_of_path(10).expect("Ctrl+G formed a group");
+    (ed, g)
+}
+
+#[test]
+fn rotating_a_group_stores_a_live_transform_on_the_group_node() {
+    let (mut ed, g) = grouped_two_rects();
+    let world_before = world_anchors(&ed, 8);
+    ed.set_obj_rotation(45.0);
+    let xf = ed.doc.node_xform(g);
+    assert!(!xf.is_identity(), "the GROUP node holds the live rotation");
+    assert!((xf.rot - 45f32.to_radians()).abs() < 1e-4, "group rotated 45°, got {}", xf.rot);
+    // every member's world image is the 45° rotation of its old position about the selection centre
+    let bb = {
+        let mut it = world_before.iter();
+        let f = it.next().unwrap();
+        world_before
+            .iter()
+            .fold((f[0], f[1], f[0], f[1]), |b, p| (b.0.min(p[0]), b.1.min(p[1]), b.2.max(p[0]), b.3.max(p[1])))
+    };
+    let cen = [(bb.0 + bb.2) * 0.5, (bb.1 + bb.3) * 0.5];
+    for (wb, wa) in world_before.iter().zip(world_anchors(&ed, 8)) {
+        let want = rotate_about(*wb, cen, 45f32.to_radians());
+        assert!(
+            (wa[0] - want[0]).abs() < 0.5 && (wa[1] - want[1]).abs() < 0.5,
+            "member anchor rotated with the group: {wa:?} vs {want:?}"
+        );
+    }
+}
+
+#[test]
+fn rotate_drag_on_a_group_applies_and_sticks() {
+    // the real gesture path: Rotate tool drag on a grouped selection must leave a live transform.
+    let (mut ed, g) = grouped_two_rects();
+    ed.set_tool(ToolKind::Rotate);
+    ed.pivot = Some([0.0, 0.0]);
+    ed.pointer_down([100.0, 0.0]);
+    ed.pointer_move([0.0, 100.0]); // 0° → 90° about [0,0]
+    ed.pointer_up();
+    let xf = ed.doc.node_xform(g);
+    assert!(!xf.is_identity(), "the drag left a live rotation on the group");
+    let w = xf.apply([80.0, 0.0]); // unit 10's corner (anchor 2) local [80,0] → world ≈ [0,80]
+    assert!(w[0].abs() < 0.5 && (w[1] - 80.0).abs() < 0.5, "group member rotated 90° about [0,0]: {w:?}");
+}
+
+#[test]
+fn ungroup_keeps_the_rotated_world_geometry() {
+    // rotate a group, then Ctrl+Shift+G: the members must KEEP their rotated world positions —
+    // not snap back to the un-rotated layout.
+    let (mut ed, _g) = grouped_two_rects();
+    ed.set_obj_rotation(45.0);
+    let world_before = world_anchors(&ed, 8);
+    ed.ungroup_selection();
+    assert!(ed.doc.top_group_of_path(10).is_none(), "the group is dissolved");
+    for (aid, (wb, wa)) in (1..=8).zip(world_before.iter().zip(world_anchors(&ed, 8))) {
+        assert!(
+            (wa[0] - wb[0]).abs() < 0.5 && (wa[1] - wb[1]).abs() < 0.5,
+            "anchor {aid} keeps its world position through ungroup: {wb:?} → {wa:?}"
+        );
+    }
+}
+
+#[test]
+fn grouping_comoving_units_hands_the_shared_rotation_to_the_group() {
+    // Ahmed 2026-07-11 "لما بعمل جروب مش بيتطبق عليه الفكرة": rotate a multi-selection (both units get
+    // ONE identical transform), then Ctrl+G — the new group must INHERIT that transform live (∠ stays),
+    // not bake it away. World image byte-identical.
+    let mut ed = two_rects();
+    ed.objsel.insert(10);
+    ed.objsel.insert(20);
+    ed.refresh_obj_angle();
+    ed.set_obj_rotation(30.0);
+    let world_before = world_anchors(&ed, 8);
+    ed.group_selection();
+    let g = ed.doc.top_group_of_path(10).expect("grouped");
+    let gxf = ed.doc.node_xform(g);
+    assert!(!gxf.is_identity(), "the group inherited the members' shared rotation (live)");
+    assert!((gxf.rot - 30f32.to_radians()).abs() < 1e-4, "group ∠ = the shared 30° (got {})", gxf.rot);
+    assert!((ed.obj_angle - 30f32.to_radians()).abs() < 1e-4, "the frame stays tilted after Ctrl+G");
+    for (i, (wb, wa)) in world_before.iter().zip(world_anchors(&ed, 8)).enumerate() {
+        assert!(
+            (wa[0] - wb[0]).abs() < 0.5 && (wa[1] - wb[1]).abs() < 0.5,
+            "anchor {i} unchanged through Ctrl+G: {wb:?} → {wa:?}"
+        );
+    }
+    // and the round trip: ungroup pushes it back down — still live on each member, world unchanged.
+    ed.ungroup_selection();
+    for pid in [10u32, 20u32] {
+        assert!(
+            (ed.doc.unit_xform(pid).rot - 30f32.to_radians()).abs() < 1e-3,
+            "member {pid} got the ∠ back live after ungroup"
+        );
+    }
+    for (i, (wb, wa)) in world_before.iter().zip(world_anchors(&ed, 8)).enumerate() {
+        assert!(
+            (wa[0] - wb[0]).abs() < 0.5 && (wa[1] - wb[1]).abs() < 0.5,
+            "anchor {i} unchanged through the full group⇄ungroup round trip: {wb:?} → {wa:?}"
+        );
+    }
+}
+
+#[test]
+fn ungroup_leaves_the_rotation_live_on_each_member() {
+    // Ahmed 2026-07-11 "لو فكيت الجروب بينسى الترانسفورميشن": the group's ∠ must be INHERITED by the
+    // members as a LIVE transform (tilted frame + ∠ on reselect), not baked flat into their anchors.
+    let (mut ed, _g) = grouped_two_rects();
+    ed.set_obj_rotation(45.0);
+    ed.ungroup_selection();
+    for pid in [10u32, 20u32] {
+        let xf = ed.doc.unit_xform(pid);
+        assert!(!xf.is_identity(), "member {pid} keeps a LIVE rotation after ungroup");
+        assert!((xf.rot - 45f32.to_radians()).abs() < 1e-3, "member {pid} inherited the group's 45° (got {})", xf.rot);
+    }
+    // reselecting ONE member shows its ∠ (the "الفكرة" Ahmed expects everywhere)
+    ed.objsel.clear();
+    ed.objsel.insert(10);
+    ed.refresh_obj_angle();
+    assert!((ed.sel_stored_angle() - 45f32.to_radians()).abs() < 1e-3, "a reselected ex-member reads the inherited ∠");
+}
+
+#[test]
+fn layer_panel_drag_across_a_rotated_group_never_moves_the_art() {
+    use varos_core::model::DropPos;
+    // A7 split-brain guard: dragging a row OUT of a rotated group (and INTO one) via the Layers panel
+    // re-homes the subtree across a transform boundary — the world image must not jump.
+    let (mut ed, g) = grouped_two_rects();
+    ed.set_obj_rotation(30.0);
+    let world_before = world_anchors(&ed, 8);
+    // node ids: the leaf node of path 10 + the enclosing layer (the drop target)
+    let n10 = ed.doc.node_of_path(10).expect("leaf node of path 10");
+    let layer = ed.doc.layer_ancestor(g);
+    // drag path 10's row OUT of the group, into the layer root
+    ed.layer_move(&[n10], layer, DropPos::Into);
+    assert_ne!(ed.doc.top_group_of_path(10), Some(g), "path 10 left the group");
+    for (i, (wb, wa)) in world_before.iter().zip(world_anchors(&ed, 8)).enumerate() {
+        assert!(
+            (wa[0] - wb[0]).abs() < 0.5 && (wa[1] - wb[1]).abs() < 0.5,
+            "anchor {i} jumped when its row left the rotated group: {wb:?} → {wa:?}"
+        );
+    }
+    // and back IN (the group may have been baked by the exit — re-rotate to make it live again)
+    ed.objsel.clear();
+    ed.objsel.insert(20);
+    ed.refresh_obj_angle();
+    ed.set_obj_rotation(50.0);
+    let world_mid = world_anchors(&ed, 8);
+    let g2 = ed.doc.top_group_of_path(20).expect("path 20 still grouped");
+    ed.layer_move(&[n10], g2, DropPos::Into);
+    assert_eq!(ed.doc.top_group_of_path(10), Some(g2), "path 10 re-entered the group");
+    for (i, (wb, wa)) in world_mid.iter().zip(world_anchors(&ed, 8)).enumerate() {
+        assert!(
+            (wa[0] - wb[0]).abs() < 0.5 && (wa[1] - wb[1]).abs() < 0.5,
+            "anchor {i} jumped when its row entered the rotated group: {wb:?} → {wa:?}"
+        );
+    }
+}
+
+#[test]
+fn refused_layer_drop_is_a_true_noop_no_bake_no_undo() {
+    use varos_core::model::DropPos;
+    // review fix 2026-07-11: an ILLEGAL drop (Into a leaf) must not bake the live rotation and must
+    // not push an undo entry — layer_move's documented "No-op + no undo entry" contract.
+    let (mut ed, g) = grouped_two_rects();
+    ed.set_obj_rotation(30.0);
+    let rev0 = ed.rev;
+    let (n10, n20) = (ed.doc.node_of_path(10).unwrap(), ed.doc.node_of_path(20).unwrap());
+    ed.layer_move(&[n10], n20, DropPos::Into); // Into a LEAF — refused by the model
+    assert_eq!(ed.doc.top_group_of_path(10), Some(g), "structure unchanged");
+    assert!(
+        (ed.doc.node_xform(g).rot - 30f32.to_radians()).abs() < 1e-3,
+        "a refused drop keeps the live ∠ (got {})",
+        ed.doc.node_xform(g).rot
+    );
+    assert_eq!(ed.rev, rev0, "a refused drop pushes NO undo entry");
+}
+
+#[test]
+fn layer_move_bake_updates_the_frame_angle() {
+    use varos_core::model::DropPos;
+    // review fix 2026-07-11: when a panel drop bakes a SELECTED unit, obj_angle must follow —
+    // otherwise the next typed ∠ rotates from a stale base and the art visibly jumps.
+    let (mut ed, g) = grouped_two_rects();
+    ed.set_obj_rotation(30.0);
+    assert!((ed.obj_angle - 30f32.to_radians()).abs() < 1e-4);
+    // drag the member of the selected rotated group OUT to the layer → the crossing bakes g
+    let n10 = ed.doc.node_of_path(10).unwrap();
+    let layer = ed.doc.layer_ancestor(g);
+    ed.layer_move(&[n10], layer, DropPos::Into);
+    assert_eq!(ed.obj_angle, ed.sel_stored_angle(), "obj_angle re-reads the stored ∠ after the bake (no stale frame)");
+    // typing an absolute ∠ now lands exactly there (no double-rotation from a stale base)
+    ed.set_obj_rotation(0.0);
+    for pid in [10u32, 20u32] {
+        assert!(
+            ed.doc.unit_xform(pid).rot.abs() < 1e-3,
+            "typed 0° means 0° — unit {pid} at {}",
+            ed.doc.unit_xform(pid).rot
+        );
+    }
+}
+
+#[test]
+fn alt_copy_into_a_rotated_group_lands_exactly_on_its_source() {
+    use varos_core::model::DropPos;
+    // review fix 2026-07-11: an Alt-drag COPY dropped INTO a group must draw exactly where its source
+    // draws — the inherited rotation is re-expressed in the destination unit's frame (identity xform
+    // on the nested leaf), never left as a live-but-ignored transform that later bakes into a jump.
+    let mut ed = two_rects();
+    ed.objsel.insert(10);
+    ed.refresh_obj_angle();
+    ed.set_obj_rotation(30.0); // rotate the loose rect (the copy source)
+                               // build a rotated destination group from two fresh rects
+    let fill = Some([0.5, 0.5, 0.5, 1.0]);
+    ed.doc.paths.push(Path::new(
+        30,
+        vec![anc(9, 0.0, 100.0), anc(11, 60.0, 100.0), anc(12, 60.0, 140.0), anc(13, 0.0, 140.0)],
+        true,
+        fill,
+        None,
+        1.0,
+    ));
+    ed.doc.paths.push(Path::new(
+        40,
+        vec![anc(14, 80.0, 100.0), anc(15, 140.0, 100.0), anc(16, 140.0, 140.0), anc(17, 80.0, 140.0)],
+        true,
+        fill,
+        None,
+        1.0,
+    ));
+    ed.doc.ids = 40;
+    ed.doc.sync_tree();
+    ed.objsel.clear();
+    ed.objsel.insert(30);
+    ed.objsel.insert(40);
+    ed.refresh_obj_angle();
+    ed.group_selection();
+    ed.set_obj_rotation(50.0);
+    let g = ed.doc.top_group_of_path(30).expect("destination group");
+
+    // Alt-drag the rotated rect's row INTO the rotated group (the copy path)
+    let src_world: Vec<Pt> = ed
+        .doc
+        .paths
+        .iter()
+        .find(|p| p.id == 10)
+        .unwrap()
+        .anchors
+        .iter()
+        .map(|a| ed.doc.unit_xform(10).apply(a.p))
+        .collect();
+    let cids = ed.doc.move_paths_to(&[10], g, DropPos::Into, true);
+    assert_eq!(cids.len(), 1, "one copy made");
+    let cid = cids[0];
+    assert_eq!(ed.doc.top_group_of_path(cid), Some(g), "the copy is nested in the group");
+    let cnode = ed.doc.node_of_path(cid).unwrap();
+    assert!(ed.doc.node_xform(cnode).is_identity(), "the nested copy carries NO live xform");
+    let ci = ed.doc.pidx(cid).unwrap();
+    for (a, sw) in ed.doc.paths[ci].anchors.iter().zip(&src_world) {
+        let w = ed.doc.unit_xform(cid).apply(a.p);
+        assert!(
+            (w[0] - sw[0]).abs() < 0.5 && (w[1] - sw[1]).abs() < 0.5,
+            "the copy draws exactly on its source: {w:?} vs {sw:?}"
+        );
+    }
+}
+
+#[test]
+fn sync_tree_strips_stale_nested_xforms_without_moving_art() {
+    // review fix 2026-07-11 (hygiene): a live xform on a NESTED node is render-ignored garbage (only
+    // the top group's xform applies) — sync_tree drops it so no later bake can corrupt geometry.
+    // Also heals .vrs files saved by builds that left such state.
+    let (mut ed, g) = grouped_two_rects();
+    let n10 = ed.doc.node_of_path(10).unwrap();
+    ed.doc.set_node_xform(n10, Xform { rot: 0.7, piv: [5.0, 5.0] }); // simulate the stale state
+    let world_before = world_anchors(&ed, 8);
+    ed.doc.sync_tree();
+    assert!(ed.doc.node_xform(n10).is_identity(), "the nested stale xform is stripped");
+    assert_eq!(ed.doc.top_group_of_path(10), Some(g), "structure untouched");
+    for (i, (wb, wa)) in world_before.iter().zip(world_anchors(&ed, 8)).enumerate() {
+        assert!(
+            (wa[0] - wb[0]).abs() < 1e-3 && (wa[1] - wb[1]).abs() < 1e-3,
+            "anchor {i} unmoved by the hygiene pass: {wb:?} → {wa:?}"
+        );
+    }
+}
+
+#[test]
+fn layer_panel_reorder_inside_a_rotated_group_keeps_the_angle_live() {
+    use varos_core::model::DropPos;
+    // a reorder WITHIN one rotated group crosses no transform boundary — the group's ∠ must stay live.
+    let (mut ed, g) = grouped_two_rects();
+    ed.set_obj_rotation(30.0);
+    let (n10, n20) = (ed.doc.node_of_path(10).unwrap(), ed.doc.node_of_path(20).unwrap());
+    ed.layer_move(&[n10], n20, DropPos::After);
+    assert_eq!(ed.doc.top_group_of_path(10), Some(g), "still in the group");
+    assert!(
+        (ed.doc.node_xform(g).rot - 30f32.to_radians()).abs() < 1e-3,
+        "an in-group reorder keeps the group's live ∠ (got {})",
+        ed.doc.node_xform(g).rot
+    );
+}
+
+#[test]
+fn grouping_rotated_members_keeps_their_world_geometry() {
+    // rotate two objects separately, then Ctrl+G: the new group must show them exactly where they were
+    // (member rotations bake in), not snap back to axis-aligned.
+    let mut ed = two_rects();
+    ed.objsel.insert(10);
+    ed.refresh_obj_angle();
+    ed.set_obj_rotation(30.0);
+    ed.objsel.clear();
+    ed.objsel.insert(20);
+    ed.refresh_obj_angle();
+    ed.set_obj_rotation(60.0);
+    ed.objsel.insert(10);
+    ed.refresh_obj_angle();
+    let world_before = world_anchors(&ed, 8);
+    ed.group_selection();
+    for (aid, (wb, wa)) in (1..=8).zip(world_before.iter().zip(world_anchors(&ed, 8))) {
+        assert!(
+            (wa[0] - wb[0]).abs() < 0.5 && (wa[1] - wb[1]).abs() < 0.5,
+            "anchor {aid} keeps its world position through Ctrl+G: {wb:?} → {wa:?}"
+        );
+    }
+}
+
+#[test]
+fn full_user_flow_draw_group_rotate_reselect_ungroup() {
+    // Ahmed's EXACT hands (2026-07-11): draw two rects with the Rect tool, marquee-select, Ctrl+G,
+    // rotate from the frame-corner hotzone, deselect, re-click the group (∠ must come back),
+    // then Ctrl+Shift+G (the world image must not move). Defaults kept REAL: snap ON, an artboard present.
+    let mut ed = Editor::new();
+    ed.ppu = 1.0;
+    ed.doc.artboards = vec![Artboard { x: 0.0, y: 0.0, w: 800.0, h: 600.0, name: "A".into(), ..Artboard::default() }];
+    // every anchor of every path, in WORLD space (drawn-rect anchor ids are not 1..=n)
+    fn all_world(ed: &Editor) -> Vec<Pt> {
+        ed.doc
+            .paths
+            .iter()
+            .flat_map(|p| {
+                let xf = ed.doc.unit_xform(p.id);
+                p.anchors.iter().map(move |a| xf.apply(a.p)).collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    // 1) draw two rects with the REAL Rect tool
+    ed.set_tool(ToolKind::Rect);
+    ed.pointer_down([100.0, 100.0]);
+    ed.pointer_move([260.0, 200.0]);
+    ed.pointer_up();
+    ed.pointer_down([300.0, 100.0]);
+    ed.pointer_move([460.0, 200.0]);
+    ed.pointer_up();
+    assert_eq!(ed.doc.paths.len(), 2, "two rects drawn");
+
+    // 2) V + marquee both → Ctrl+G
+    ed.set_tool(ToolKind::Object);
+    ed.pointer_down([50.0, 50.0]);
+    ed.pointer_move([500.0, 250.0]);
+    ed.pointer_up();
+    assert_eq!(ed.objsel.len(), 2, "marquee caught both rects");
+    ed.group_selection();
+    let pid0 = ed.doc.paths[0].id;
+    let g = ed.doc.top_group_of_path(pid0).expect("Ctrl+G formed a group");
+
+    // 3) rotate from the frame-corner hotzone (the real Object-tool gesture)
+    let hs = ed.frame_handles().expect("selection frame visible");
+    let tr = hs[1]; // top-right corner
+    let down = [tr[0] + 10.0, tr[1] - 10.0]; // outside the frame, inside the 22px rotate ring, empty space
+    assert!(ed.path_under(down).is_none(), "the rotate grab point is over empty space");
+    let (bx0, by0, bx1, by1) = ed.obj_bbox().unwrap();
+    let cen = [(bx0 + bx1) * 0.5, (by0 + by1) * 0.5];
+    ed.pointer_down(down);
+    let target = rotate_about(down, cen, 30f32.to_radians());
+    ed.pointer_move(target);
+    ed.pointer_up();
+    let rot = ed.doc.node_xform(g).rot;
+    assert!(rot.abs() > 5f32.to_radians(), "the corner drag actually rotated the group (rot = {rot})");
+    assert!((ed.obj_angle - rot).abs() < 1e-4, "the frame angle mirrors the group's stored rotation");
+
+    // 4) deselect (click empty space), re-click the group: whole group selected + ∠ restored
+    let world_rotated = all_world(&ed);
+    ed.pointer_down([700.0, 500.0]);
+    ed.pointer_up();
+    assert!(ed.objsel.is_empty(), "empty-space click deselects");
+    assert_eq!(ed.obj_angle, 0.0, "no selection → axis-aligned frame");
+    let member_world = ed.doc.unit_xform(pid0).apply(ed.doc.paths[0].anchors[0].p);
+    let inside = ed.doc.unit_xform(pid0).apply([
+        (ed.doc.paths[0].anchors[0].p[0] + ed.doc.paths[0].anchors[2].p[0]) * 0.5,
+        (ed.doc.paths[0].anchors[0].p[1] + ed.doc.paths[0].anchors[2].p[1]) * 0.5,
+    ]);
+    let _ = member_world;
+    ed.pointer_down(inside);
+    ed.pointer_up();
+    assert_eq!(ed.objsel.len(), 2, "clicking one member selects the WHOLE group");
+    assert!((ed.obj_angle - rot).abs() < 1e-4, "re-selecting the group restores its ∠ (got {})", ed.obj_angle);
+
+    // 5) Ctrl+Shift+G — the drawn image must NOT move
+    ed.ungroup_selection();
+    assert!(ed.doc.top_group_of_path(pid0).is_none(), "group dissolved");
+    for (i, (wb, wa)) in world_rotated.iter().zip(all_world(&ed)).enumerate() {
+        assert!(
+            (wa[0] - wb[0]).abs() < 0.5 && (wa[1] - wb[1]).abs() < 0.5,
+            "anchor {i} moved through ungroup: {wb:?} → {wa:?}"
+        );
+    }
+}
+
 #[test]
 fn pen_click_on_a_rotated_segment_inserts_an_anchor_at_the_cursor() {
     // Bug 8: the Pen add-anchor-on-segment branch ran `nearest_seg` with a WORLD cursor against LOCAL
