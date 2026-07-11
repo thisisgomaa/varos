@@ -24,8 +24,8 @@ Built in Rust, drawn directly on the GPU (wgpu + egui, no Electron, no web view)
 | Pathfinder (boolean ops) | Masks & clipping | Sandboxed WASM plugins over one schema |
 | Layers with per-artboard sections, cross-board drag | Gradients & swatches | AI that manipulates the document via the schema — no hallucinated coordinates |
 | Smart snapping & guides | Text system | Community template library |
-| `.vrs` save (= valid PDF), SVG/PNG export | SVG import | |
-| 101 headless tests — fmt + clippy `-D warnings` + the full suite run on every commit (the GitHub Actions mirror of this gate is temporarily manual-only pending a new-account verification hold; see the note in `ci.yml`) | | |
+| `.vrs` save (= valid PDF) | PNG/SVG export; SVG import | |
+| 223 headless tests at the audited 2026-07-11 baseline; local fmt + clippy `-D warnings` + full-suite gates are green (GitHub triggers are enabled, but hosted runners remain blocked by account verification; see [STATUS](docs/foundation/STATUS.md)) | | |
 
 ## Build
 
@@ -36,7 +36,7 @@ cd varos/varos
 cargo run --release -p varos-app
 ```
 
-The Cargo workspace lives in `varos/`. Architecture in one line: `varos-core` (pure logic, zero GPU/window deps — where the 101 tests live) → `varos-render-wgpu` (GPU tessellation & painting) → `varos-app` (window, input, UI). The compiler enforces the seam.
+The Cargo workspace lives in `varos/`. Architecture in one line: `varos-core` (pure logic, zero GPU/window deps — where most headless behavior tests live) → `varos-render-wgpu` (GPU tessellation & painting) → `varos-app` (window, input, UI). The compiler enforces the seam.
 
 ## Contributing
 
