@@ -27,5 +27,5 @@ Varos: a free, open-source, Windows-first vector editor (Illustrator alternative
 
 ## Key docs
 - `docs/foundation/STATUS.md` — current program state · `docs/adr/` — accepted architecture decisions
-- `docs/UI_DIRECTION.md` — current visual direction · `docs/BOX_SYSTEM_PLAN.md` — shell reference
+- `docs/UI_DIRECTION.md` — current visual direction · `docs/reference/BOX_SYSTEM_PLAN.md` — shell reference
 - `docs/LAYERS_VISION.md` — current layers/masks intent · `docs/audits/` — tracked risk register

@@ -60,7 +60,7 @@ The audit covered:
 - the running Windows application and a real shape/artboard workflow;
 - custom egui accessibility exposure;
 - README, contribution, legal, architecture, UI, roadmap, pain-log, mask, transform, and launch documents;
-- `docs/plan.html`, including its embedded data and render logic;
+- `docs/history/plan.html`, including its embedded data and render logic;
 - historical HTML prototypes and BStudio/Pivot design references;
 - visual reference PNGs;
 - Git history, tags, branches, contributors, remotes, and GitHub repository metadata;
@@ -244,7 +244,7 @@ Varos has more documentation than many mature projects, but no enforceable autho
 
 ### 7.2 `plan.html` findings
 
-`docs/plan.html` is not a passive illustration. It declares itself “the whole roadmap” and names `DETAILED_ROADMAP.md` as source of truth.
+`docs/history/plan.html` is not a passive illustration. It declares itself “the whole roadmap” and names `docs/history/DETAILED_ROADMAP.md` as source of truth.
 
 Problems:
 
@@ -656,7 +656,7 @@ Required response format:
 Claude must:
 
 1. Read this report completely.
-2. Inspect `README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `docs/plan.html`, `DETAILED_ROADMAP.md`, `MASTER_PLAN_V1_LAUNCH.md`, `PAINS_LOG.md`, `PAINS_WORK_ORDER.md`, `PAINS_WORK_ORDER_2.md`, `MASKS_PLAN.md`, `UI_DIRECTION.md`, and the current Rust ownership files.
+2. Inspect `README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `docs/history/plan.html`, `docs/history/DETAILED_ROADMAP.md`, `docs/history/MASTER_PLAN_V1_LAUNCH.md`, `docs/PAINS_LOG.md`, `docs/history/PAINS_WORK_ORDER.md`, `docs/history/PAINS_WORK_ORDER_2.md`, `docs/MASKS_PLAN.md`, `docs/UI_DIRECTION.md`, and the current Rust ownership files.
 3. Re-run quality and dependency commands against a stable tree.
 4. Identify every factual error in this report before discussing style or priority.
 5. Explicitly verify or refute the dead-command, fake-tab, and absent SVG/PNG-export findings.
@@ -689,7 +689,7 @@ Claude should finish with one of these verdicts:
 - Branch-protection and account-recovery settings were not directly available.
 - No installer or signed release artifact existed to test.
 - No low-end GPU, Intel iGPU, high-DPI matrix, screen reader, or non-Windows machine was available.
-- The local browser could not render `file://docs/plan.html`; source was read completely instead.
+- The local browser could not render `file://docs/history/plan.html`; source was read completely instead.
 - No destructive, publishing, legal, settings, or implementation changes were made.
 - Legal observations are continuity risks, not legal advice.
 
