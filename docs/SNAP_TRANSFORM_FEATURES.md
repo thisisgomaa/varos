@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Snap/Transform: web-grounded feature matrix (sourced)
 > Companion to SNAP_TRANSFORM_SPEC.md — verified against official docs (Adobe/Serif/Figma) + a survey (Sketch/CorelDRAW/Inkscape/Penpot).
 

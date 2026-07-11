@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Shape Tools (build notes)
 
 Shapes are the next tool after the pen. **Core principle: a shape IS a path** — the exact same anchor model as pen-drawn paths — so every shape is immediately editable with the white arrow (Direct Selection), Illustrator-style. There is no special "shape object"; a shape is just a pre-made path.

@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — EXACT UI Spec (pulled from Ahmed's Figma)
 
 > **⚠ DIRECTION UPDATE (2026-07-03):** the look law now lives in **`UI_DIRECTION.md`** — DOCKED workbench

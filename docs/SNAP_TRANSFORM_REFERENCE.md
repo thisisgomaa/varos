@@ -1,3 +1,4 @@
+> **Status:** reference — Reference material only; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Snapping & Transform: Verified External Reference
 
 > Compiled from verified research on Adobe Illustrator, Affinity Designer 2, Figma, Sketch, CorelDRAW, and Inkscape.
