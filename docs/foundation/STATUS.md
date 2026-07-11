@@ -6,9 +6,9 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 ## Now
 
 - **Program:** Architecture & Repository Foundation — charter ACCEPTED 2026-07-11 (`docs/foundation/FOUNDATION_CHARTER.md`).
-- **Active work orders:** F2a.3 (current-doc corrections) → F2a.4 (vendor contract) — sequential, one branch and one gate each. F2a.2 ✅ merged `d0664d4`.
+- **Active work order:** F2a.4 (vendor contract) — awaiting implementer. F2a.2 ✅ `d0664d4` · F2a.3 ✅ `a10772e` (audit doc-truth items P0.3/P0.4/P0.5 closed).
 - **ADRs:** ADR-0001..0007 **Accepted** by the product owner 2026-07-11 — highest authority per charter §3. F2a.3's Constitution/CLAUDE.md corrections and F2c are unblocked.
-- **Last gate:** F2a.2 — PASS (zero defects) — merged `d0664d4` (GATE_LOG §F2a.2).
+- **Last gate:** F2a.3 — PASS (zero defects) — merged `a10772e` (GATE_LOG §F2a.3).
 - **Risk register:** `docs/audits/2026-07-11-CODEX-FULL-PROJECT-AUDIT.md` + `docs/audits/2026-07-11-CLAUDE-COUNTER-REVIEW.md`.
 
 ## Trigger flags (flipped only by Ahmed, with a date — charter §8)
