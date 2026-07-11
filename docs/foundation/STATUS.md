@@ -8,11 +8,12 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 - **Program:** Architecture & Repository Foundation — charter ACCEPTED 2026-07-11 (`docs/foundation/FOUNDATION_CHARTER.md`).
 - **F2a COMPLETE:** F2a.1 ✅ `673b5df` · F2a.2 ✅ `d0664d4` · F2a.3 ✅ `a10772e` (doc-truth P0s closed) · F2a.4 ✅ `76640fe` (vendor contract + machine check).
 - **F2 COMPLETE 🎉** — F2a.1..4 ✅ · F2b ✅ `b6e3863` (docs root = 7 current docs; history/ 17 + reference/ 16) · F2c ✅ `3a0ad3b` (ADR-0005 edges machine-enforced).
-- **Active work order:** F3 (characterization tests + golden round-trip law) — issued 2026-07-11. Rider: one clarifying header line in INVENTORY.md (GATE_LOG §F2b note).
+- **F3 ✅** `b8c9ba6` — 6 behavior pins incl. the frozen mid-drag undo defect; **golden round-trip law is now a standing invariant** (charter §4). Workspace tests: 229.
+- **Active work order:** F4.1 (core `EditCommand` — first half of the ADR-0002 boundary) — issued 2026-07-11.
 - **Upcoming decision for the product owner:** fate of `codex/p6-header` — must be decided before F5 (charter precondition).
 - **F2b layout DECIDED 2026-07-11:** product owner delegated the choice ("اختار انت الصح"); planner selected **`docs/history/` + `docs/reference/`**, root `docs/` keeps current docs only; `design-reference/` stays in place.
 - **ADRs:** ADR-0001..0007 **Accepted** by the product owner 2026-07-11 — highest authority per charter §3. F2a.3's Constitution/CLAUDE.md corrections and F2c are unblocked.
-- **Last gate:** F2b — PASS (zero defects, sixth consecutive) — merged `b6e3863` (GATE_LOG §F2b).
+- **Last gate:** F3 — PASS (zero defects, seventh consecutive) — merged `b8c9ba6` (GATE_LOG §F3).
 - **Risk register:** `docs/audits/2026-07-11-CODEX-FULL-PROJECT-AUDIT.md` + `docs/audits/2026-07-11-CLAUDE-COUNTER-REVIEW.md`.
 
 ## Trigger flags (flipped only by Ahmed, with a date — charter §8)
@@ -30,7 +31,7 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 |---|---:|
 | `ui.rs` lines | 5,563 |
 | `editor.rs` lines | 4,533 |
-| Workspace tests | 223 |
+| Workspace tests | 229 (223 baseline + 6 F3 pins) |
 | `unsafe` sites (app crates) | 27 |
 | Direct external deps | 23 |
 | `cargo audit` | 3 vulns + 3 unmaintained (untriaged) |
