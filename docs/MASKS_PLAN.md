@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Masks / Clipping — STAGED implementation plan
 
 > **Feature:** clipping masks (Ahmed's word: **"Mask"**). The next major feature after the pain sweep + A7.

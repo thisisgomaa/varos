@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # دفتر الأوجاع — Varos Pain Log
 
 سجل حيّ لكل حاجة بتضايق في الاستخدام. أحمد بيلعب في البرنامج ويكتب الوجع خام؛ التخطيط بيفرز ويحوّل لموجات للبروداكشن. الترتيب هنا مش أولوية — الأولوية بتتحدد وقت الفرز.

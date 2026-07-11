@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos Dependency Map (F1, as-is)
 
 **Baseline:** `1aff281` on 2026-07-11.

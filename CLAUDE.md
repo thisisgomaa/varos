@@ -1,3 +1,4 @@
+> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # CLAUDE.md — standing rules for AI sessions on Varos
 
 ## What this project is
