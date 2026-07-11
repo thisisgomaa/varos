@@ -65,7 +65,7 @@ function Remove-MarkdownCode([string] $Text) {
     return ($kept -join "`n")
 }
 
-function ConvertTo-GitHubAnchor([string] $Heading) {
+function ConvertTo-HeadingAnchor([string] $Heading) {
     $value = [System.Net.WebUtility]::HtmlDecode($Heading)
     $value = [regex]::Replace($value, '<[^>]+>', '')
     $value = $value.Trim().ToLowerInvariant()
@@ -89,7 +89,7 @@ function Get-DocumentAnchors([string] $Path) {
                 continue
             }
 
-            $base = ConvertTo-GitHubAnchor $Matches.heading
+            $base = ConvertTo-HeadingAnchor $Matches.heading
             if (-not $base) {
                 continue
             }
@@ -150,6 +150,7 @@ function Test-IsRelativeLink([string] $Target) {
 }
 
 $repoRoot = Get-RepositoryRoot
+$repoPrefix = $repoRoot.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
 $documents = @(Get-FirstPartyDocuments $repoRoot)
 $anchorCache = @{}
 $failures = New-Object System.Collections.Generic.List[string]
@@ -180,6 +181,11 @@ foreach ($document in $documents) {
             $document
         } else {
             [System.IO.Path]::GetFullPath((Join-Path ([System.IO.Path]::GetDirectoryName($document)) ($decodedPath -replace '/', [System.IO.Path]::DirectorySeparatorChar)))
+        }
+
+        if ($targetPath -ne $repoRoot -and -not $targetPath.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $failures.Add("${sourceRelative}: target escapes the repository in '$rawTarget'")
+            continue
         }
 
         if (-not (Test-Path -LiteralPath $targetPath)) {
