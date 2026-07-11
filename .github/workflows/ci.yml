@@ -19,6 +19,8 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: varos } # REQUIRED — manifest is not at repo root, or the cache no-ops
+      - name: Enforce dependency directions
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File ../tools/check_dep_directions.ps1
       - run: cargo fmt --all --check           # the fmt commit landed with rustfmt.toml (f46d25f)
       - run: cargo clippy --workspace --all-targets -- -D warnings   # cleaned to 0 in 609e4af → real gate from day one
       - run: cargo test --workspace            # safe while no test builds a Renderer/EventLoop (§3.1)
