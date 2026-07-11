@@ -49,9 +49,9 @@ fn nonundoable_document_settings_keep_their_current_revision_policy() {
     ed.execute(EditCommand::SetRulerOrigin([13.0, 17.0]));
     ed.execute(EditCommand::ToggleSnapping);
     assert!(ed.doc.snap.enabled);
-    let mut config = ed.doc.snap.clone();
+    let mut config = ed.doc.snap;
     config.smart = false;
-    ed.execute(EditCommand::SetSnapConfig(config.clone()));
+    ed.execute(EditCommand::SetSnapConfig(config));
 
     assert_eq!(ed.doc.ruler_origin, [13.0, 17.0]);
     assert_eq!(ed.origin_preview, Some([13.0, 17.0]));
