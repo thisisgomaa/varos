@@ -1,7 +1,7 @@
 > **Status:** historical — Preserved project history; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Roadmap & Backlog (⚠ SUPERSEDED — historical)
 
-> **⚠ SUPERSEDED (2026-06-29):** priority + live status moved to **`docs/plan.html`** + **`docs/DETAILED_ROADMAP.md`**.
+> **⚠ SUPERSEDED (2026-06-29):** priority + live status moved to **`docs/history/plan.html`** + **`docs/history/DETAILED_ROADMAP.md`**.
 > Do not work from this file — kept for history only. (2026-07-02: frosted glass CANCELED — solid is the one
 > final material; ignore any frosted mention below.)
 
