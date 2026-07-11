@@ -34,6 +34,6 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 
 ## External action items (outside the repo)
 
-- GitHub account billing verification — blocks CI runners (run `29162831354` died in 2s, zero steps). Owner: Ahmed.
-- Branch protection + required checks — after verification. Owner: Ahmed.
-- GitHub organization + second admin — parallel governance track (charter §9.5). Owner: Ahmed.
+- GitHub account billing verification — **deferred indefinitely by Ahmed, 2026-07-11.** Hosted CI stays unavailable (runs die with zero steps); the red ✗ on pushes is cosmetic. The program's real gates run locally (charter §4). Triggers stay enabled so CI self-activates if the hold ever clears. Repo visibility unchanged (going private would not lift the account-level hold).
+- Branch protection + required checks — parked behind the item above.
+- GitHub organization + second admin — parallel governance track (charter §9.5), no deadline. Owner: Ahmed.
