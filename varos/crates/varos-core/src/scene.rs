@@ -191,7 +191,24 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
         clip_map.get(&ed.doc.paths[pi].id).cloned().flatten()
     };
-    let fill_prims = |pi: usize| -> Vec<Prim> {
+    // P11.1: adaptive curve subdivision is the expensive part. Build each path's transformed outer
+    // outline and hole rings once for this frame, then let fill, stroke, masks, and overlays clone the
+    // resulting points they own. This is intentionally frame-local; cross-frame geometry caching is P11.2.
+    struct PathGeometry {
+        outline: Vec<Pt>,
+        holes: Vec<Vec<Pt>>,
+    }
+    let geometry: Vec<PathGeometry> = ed
+        .doc
+        .paths
+        .iter()
+        .enumerate()
+        .map(|(pi, path)| PathGeometry {
+            outline: ed.doc.world_outline_px(pi, ppu),
+            holes: path.holes.iter().map(|hole| ed.doc.world_ring_px(hole, pi, ppu)).collect(),
+        })
+        .collect();
+    let fill_prims = |pi: usize, geom: &PathGeometry| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         // An open path still FILLS (Illustrator: the fill closes visually with an implied straight line
@@ -200,10 +217,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         if p.anchors.len() >= 3 {
             if let Some(c) = p.fill.solid() {
                 // A7 seam: WORLD-space rings (unit transform composed). Identity ⇒ today's geometry.
-                let mut rings = vec![ed.doc.world_outline_px(pi, ppu)];
-                for hole in &p.holes {
-                    rings.push(ed.doc.world_ring_px(hole, pi, ppu));
-                }
+                let mut rings = Vec::with_capacity(1 + geom.holes.len());
+                rings.push(geom.outline.clone());
+                rings.extend(geom.holes.iter().cloned());
                 match clip_rects(pi) {
                     Some(rects) => {
                         for r in rects {
@@ -223,7 +239,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
         out
     };
-    let stroke_prims = |pi: usize| -> Vec<Prim> {
+    let stroke_prims = |pi: usize, geom: &PathGeometry| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         if p.anchors.len() >= 2 {
@@ -250,9 +266,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                     }
                     None => out.push(Prim::Stroke { pts, width: p.stroke_width, color: c, clip: None }),
                 };
-                push(ed.doc.world_outline_px(pi, ppu)); // A7 seam: WORLD outline (identity ⇒ today)
-                for hole in &p.holes {
-                    let mut r = ed.doc.world_ring_px(hole, pi, ppu);
+                push(geom.outline.clone()); // A7 seam: WORLD outline (identity ⇒ today)
+                for hole in &geom.holes {
+                    let mut r = hole.clone();
                     if let Some(&f) = r.first() {
                         r.push(f);
                     }
@@ -270,10 +286,8 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         if let Some(mc) = ed.doc.node_mask_child(clip_nid) {
             for pid in ed.doc.node_paths(mc) {
                 if let Some(pi) = ed.doc.pidx(pid) {
-                    rings.push(ed.doc.world_outline_px(pi, ppu));
-                    for hole in &ed.doc.paths[pi].holes {
-                        rings.push(ed.doc.world_ring_px(hole, pi, ppu));
-                    }
+                    rings.push(geometry[pi].outline.clone());
+                    rings.extend(geometry[pi].holes.iter().cloned());
                 }
             }
         }
@@ -284,11 +298,11 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     // stroke → Knockout, single translucent → folded into the opaque run, else opaque) — so a document
     // with no clip group produces byte-identical `groups`. A clip just feeds it a different pair of
     // accumulators (MASKS_PLAN §2.4: members reuse every branch, they only land in a different vec).
-    let emit_object = |pi: usize, p: &Path, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
+    let emit_object = |pi: usize, p: &Path, geom: &PathGeometry, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
         let o = p.opacity;
         let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
-        let mut fp = fill_prims(pi);
-        let mut sp = stroke_prims(pi);
+        let mut fp = fill_prims(pi, geom);
+        let mut sp = stroke_prims(pi, geom);
         if o < 0.999 && !fp.is_empty() && !sp.is_empty() {
             // isolated layer: flush the current opaque run, then emit the object as one unit (fill(s) then stroke(s))
             if !open.is_empty() {
@@ -351,9 +365,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             cur_clip = unit_clip;
         }
         if cur_clip.is_some() {
-            emit_object(pi, p, &mut clip_members, &mut clip_open);
+            emit_object(pi, p, &geometry[pi], &mut clip_members, &mut clip_open);
         } else {
-            emit_object(pi, p, &mut groups, &mut open);
+            emit_object(pi, p, &geometry[pi], &mut groups, &mut open);
         }
     }
     // trailing flush: a clip (or opaque run) that reaches the end of the list
@@ -384,14 +398,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         } // cascades from layer/group eyes
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
             // A7 seam: WORLD outline + hole rings (identity ⇒ today's geometry).
-            s.overlay.push(Prim::Stroke {
-                pts: ed.doc.world_outline_px(pi, ppu),
-                width: 1.7,
-                color: ACCENT,
-                clip: None,
-            });
-            for hole in &ed.doc.paths[pi].holes {
-                let mut r = ed.doc.world_ring_px(hole, pi, ppu);
+            s.overlay.push(Prim::Stroke { pts: geometry[pi].outline.clone(), width: 1.7, color: ACCENT, clip: None });
+            for hole in &geometry[pi].holes {
+                let mut r = hole.clone();
                 if let Some(&f) = r.first() {
                     r.push(f);
                 }
@@ -591,7 +600,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             SnapGuide::PathHi { pid } => {
                 if let Some(pi) = ed.doc.pidx(*pid) {
                     s.overlay.push(Prim::Stroke {
-                        pts: ed.doc.world_outline_px(pi, ppu), // A7 seam (identity ⇒ today)
+                        pts: geometry[pi].outline.clone(), // A7 seam (identity ⇒ today)
                         width: 2.0,
                         color: SNAP_GUIDE,
                         clip: None,
