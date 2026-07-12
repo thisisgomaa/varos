@@ -392,14 +392,14 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
     }
     // editing skeleton: a thin accent outline for any path being hovered/selected/drawn
-    for pi in 0..ed.doc.paths.len() {
+    for (pi, geom) in geometry.iter().enumerate() {
         if ed.doc.eff_hidden(ed.doc.paths[pi].id) {
             continue;
         } // cascades from layer/group eyes
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
             // A7 seam: WORLD outline + hole rings (identity ⇒ today's geometry).
-            s.overlay.push(Prim::Stroke { pts: geometry[pi].outline.clone(), width: 1.7, color: ACCENT, clip: None });
-            for hole in &geometry[pi].holes {
+            s.overlay.push(Prim::Stroke { pts: geom.outline.clone(), width: 1.7, color: ACCENT, clip: None });
+            for hole in &geom.holes {
                 let mut r = hole.clone();
                 if let Some(&f) = r.first() {
                     r.push(f);

@@ -7,10 +7,11 @@
 //! (#141313 / #1f1f22 / #262627 / #0c8ce9).
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
-use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
+use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, SnapGuide, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{self, Pt, View};
 use varos_core::scene::build_scene;
 use varos_core::EditCommand;
@@ -148,6 +149,110 @@ fn doc_stem(file: Option<&std::path::Path>) -> String {
 /// Window title: "name* · Varos α — Tool" (the * = unsaved changes, like every desktop editor).
 fn full_title(t: ToolKind, file: Option<&std::path::Path>, unsaved: bool) -> String {
     format!("{}{} \u{b7} Varos \u{3b1} \u{2014} {}", doc_stem(file), if unsaved { "*" } else { "" }, tool_name(t))
+}
+
+fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
+    fn f32_hash(value: f32, state: &mut impl Hasher) {
+        value.to_bits().hash(state);
+    }
+    fn point_hash(point: Pt, state: &mut impl Hasher) {
+        f32_hash(point[0], state);
+        f32_hash(point[1], state);
+    }
+
+    let mut state = std::collections::hash_map::DefaultHasher::new();
+    ed.rev.hash(&mut state);
+    frame.hash(&mut state);
+    point_hash(view.pan, &mut state);
+    f32_hash(view.zoom, &mut state);
+    std::mem::discriminant(&ed.tool).hash(&mut state);
+    std::mem::discriminant(&ed.gesture).hash(&mut state);
+    std::mem::discriminant(&ed.drag).hash(&mut state);
+    std::mem::discriminant(&ed.ab_drag).hash(&mut state);
+    ed.active.hash(&mut state);
+    ed.dsel_path.hash(&mut state);
+    ed.hover_path.hash(&mut state);
+    ed.dirty.hash(&mut state);
+    ed.show_rulers.hash(&mut state);
+    ed.guides_hidden.hash(&mut state);
+    ed.constrain_wh.hash(&mut state);
+    ed.space.hash(&mut state);
+    f32_hash(ed.obj_angle, &mut state);
+    ed.pivot.is_some().hash(&mut state);
+    if let Some(pivot) = ed.pivot {
+        point_hash(pivot, &mut state);
+    }
+
+    let mut ids: Vec<u32> = ed.selected.iter().copied().collect();
+    ids.sort_unstable();
+    ids.hash(&mut state);
+    ids.clear();
+    ids.extend(ed.objsel.iter().copied());
+    ids.sort_unstable();
+    ids.hash(&mut state);
+    ed.absel.iter().for_each(|index| index.hash(&mut state));
+
+    // Preview edits can mutate selected/active path paint or geometry before `rev` commits. Hash only
+    // those live paths, keeping the common idle signature O(selection) rather than O(document).
+    let mut live_paths: Vec<u32> = ed.objsel.iter().copied().collect();
+    live_paths.extend([ed.active, ed.dsel_path, ed.hover_path].into_iter().flatten());
+    live_paths.sort_unstable();
+    live_paths.dedup();
+    for pid in live_paths {
+        let Some(path) = ed.doc.paths.iter().find(|path| path.id == pid) else { continue };
+        path.id.hash(&mut state);
+        path.closed.hash(&mut state);
+        for paint in [path.fill.solid(), path.stroke.solid()] {
+            paint.is_some().hash(&mut state);
+            if let Some(color) = paint {
+                color.into_iter().for_each(|channel| f32_hash(channel, &mut state));
+            }
+        }
+        f32_hash(path.stroke_width, &mut state);
+        f32_hash(path.opacity, &mut state);
+        for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
+            anchor.id.hash(&mut state);
+            point_hash(anchor.p, &mut state);
+            for handle in [anchor.hin, anchor.hout] {
+                handle.is_some().hash(&mut state);
+                if let Some(handle) = handle {
+                    point_hash(handle, &mut state);
+                }
+            }
+        }
+    }
+
+    for guide in &ed.snap_guides {
+        std::mem::discriminant(guide).hash(&mut state);
+        match guide {
+            SnapGuide::Line { a, b } | SnapGuide::Gap { a, b } => {
+                point_hash(*a, &mut state);
+                point_hash(*b, &mut state);
+            }
+            SnapGuide::Point { p } => point_hash(*p, &mut state),
+            SnapGuide::PathHi { pid } => pid.hash(&mut state),
+        }
+    }
+    if let Some((point, text)) = &ed.snap_hud {
+        point_hash(*point, &mut state);
+        text.hash(&mut state);
+    }
+    for preview in [ed.origin_preview, ed.guide_preview.map(|guide| [guide.pos, guide.vertical as u8 as f32])] {
+        preview.is_some().hash(&mut state);
+        if let Some(point) = preview {
+            point_hash(point, &mut state);
+        }
+    }
+
+    let cursor_drives_scene = !matches!(ed.drag, Drag::None)
+        || !matches!(ed.ab_drag, AbDrag::None)
+        || (ed.tool == ToolKind::Pen && ed.active.is_some())
+        || ed.origin_preview.is_some()
+        || ed.guide_preview.is_some();
+    if cursor_drives_scene {
+        point_hash(ed.cursor, &mut state);
+    }
+    state.finish()
 }
 
 /// Apply a keyboard shortcut. `code` is a W3C key code; shared by canvas focus + forwarded keys.
@@ -652,6 +757,7 @@ fn main() {
     cursors::set_cloaked(hwnd, false);
 
     let mut editor_framed = false; // becomes true when we switch the splash → the framed editor window
+    let mut last_scene_signature: Option<u64> = None;
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
@@ -1031,14 +1137,22 @@ fn main() {
                             renderer.render_splash(&jobs, &tdelta, &screen);
                         // floating card on a transparent surface
                         } else {
+                            let signature = scene_signature(&ed, view, [psz.width, psz.height]);
                             let scene_start = Instant::now();
-                            let world = build_scene(&ed, view.zoom);
+                            let cache_hit = last_scene_signature == Some(signature);
+                            let rendered = if cache_hit {
+                                renderer.render_ui_cached(&jobs, &tdelta, &screen)
+                            } else {
+                                let world = build_scene(&ed, view.zoom);
+                                renderer.render_ui(&world, view, &jobs, &tdelta, &screen)
+                            };
+                            last_scene_signature = rendered.then_some(signature);
                             let scene_elapsed = scene_start.elapsed();
-                            renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
                             if std::env::var_os("VAROS_PERF").is_some() {
                                 let _ = writeln!(
                                     std::io::stderr(),
-                                    "[varos-perf] build_scene={:.3}ms full_frame={:.3}ms",
+                                    "[varos-perf] scene_cache={} scene_path={:.3}ms full_frame={:.3}ms",
+                                    if cache_hit { "hit" } else { "miss" },
                                     scene_elapsed.as_secs_f64() * 1_000.0,
                                     perf_start.elapsed().as_secs_f64() * 1_000.0
                                 );
@@ -1076,4 +1190,50 @@ fn main() {
             }
         })
         .unwrap_or_else(|e| fatal("The Windows event loop stopped unexpectedly.", &e.to_string()));
+}
+
+#[cfg(test)]
+mod scene_signature_tests {
+    use super::*;
+    use varos_core::model::{Anchor, Paint, Path};
+
+    #[test]
+    fn idle_pointer_motion_reuses_the_scene_but_hover_does_not() {
+        let mut ed = Editor::new();
+        let before = scene_signature(&ed, View::identity(), [800, 600]);
+        ed.cursor = [320.0, 240.0];
+        assert_eq!(before, scene_signature(&ed, View::identity(), [800, 600]));
+        ed.hover_path = Some(7);
+        assert_ne!(before, scene_signature(&ed, View::identity(), [800, 600]));
+    }
+
+    #[test]
+    fn drag_cursor_motion_invalidates_the_scene() {
+        let mut ed = Editor::new();
+        ed.drag = Drag::Marquee { start: [0.0, 0.0], base: vec![] };
+        let before = scene_signature(&ed, View::identity(), [800, 600]);
+        ed.cursor = [12.0, 18.0];
+        assert_ne!(before, scene_signature(&ed, View::identity(), [800, 600]));
+    }
+
+    #[test]
+    fn live_selected_path_paint_invalidates_before_commit() {
+        let mut ed = Editor::new();
+        ed.doc.paths.push(Path::new(
+            7,
+            vec![
+                Anchor { id: 8, p: [0.0, 0.0], hin: None, hout: None, smooth: false },
+                Anchor { id: 9, p: [10.0, 0.0], hin: None, hout: None, smooth: false },
+            ],
+            false,
+            Some([1.0, 0.0, 0.0, 1.0]),
+            None,
+            1.0,
+        ));
+        ed.doc.sync_tree();
+        ed.objsel.insert(7);
+        let before = scene_signature(&ed, View::identity(), [800, 600]);
+        ed.doc.paths[0].fill = Paint::Solid([0.0, 1.0, 0.0, 1.0]);
+        assert_ne!(before, scene_signature(&ed, View::identity(), [800, 600]));
+    }
 }
