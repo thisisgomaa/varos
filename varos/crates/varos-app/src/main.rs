@@ -7,6 +7,7 @@
 //! (#141313 / #1f1f22 / #262627 / #0c8ce9).
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
@@ -933,6 +934,7 @@ fn main() {
                         if psz.width == 0 || psz.height == 0 {
                             return;
                         }
+                        let perf_start = Instant::now();
                         // A13 — one eased zoom frame. This runs ONLY while a glide is in flight: if
                         // `view.zoom` already sits on `zoom_target` (every instant path keeps them
                         // equal) the predicate is false and nothing here executes. While it IS active
@@ -1029,8 +1031,18 @@ fn main() {
                             renderer.render_splash(&jobs, &tdelta, &screen);
                         // floating card on a transparent surface
                         } else {
+                            let scene_start = Instant::now();
                             let world = build_scene(&ed, view.zoom);
+                            let scene_elapsed = scene_start.elapsed();
                             renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
+                            if std::env::var_os("VAROS_PERF").is_some() {
+                                let _ = writeln!(
+                                    std::io::stderr(),
+                                    "[varos-perf] build_scene={:.3}ms full_frame={:.3}ms",
+                                    scene_elapsed.as_secs_f64() * 1_000.0,
+                                    perf_start.elapsed().as_secs_f64() * 1_000.0
+                                );
+                            }
                         }
                         // AFTER rendering this frame (so no mid-frame size change), switch the borderless splash
                         // window into the framed editor; the resulting Resized event syncs the surface next frame.

@@ -1,6 +1,7 @@
 //! wgpu renderer: a GPU canvas that draws a varos-core `Scene`. Stencil-then-cover fills,
 //! MSAA, non-sRGB surface, Mailbox present (low latency). Knows nothing about winit/tauri.
 
+pub mod perf;
 mod tess;
 use std::io::Write;
 use tess::{build_bg, build_content, build_fg, Draw, GroupDraw, Vertex};
@@ -986,6 +987,7 @@ impl Renderer {
         tdelta: &egui::TexturesDelta,
         screen: &egui_wgpu::ScreenDescriptor,
     ) {
+        let perf_start = std::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
@@ -997,7 +999,9 @@ impl Renderer {
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
         let bg = build_bg(view, fw, fh);
+        let content_start = std::time::Instant::now();
         let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+        let content_elapsed = content_start.elapsed();
         let ov_start = fgv.len() as u32;
         fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh));
         let overlay = (ov_start, fgv.len() as u32 - ov_start);
@@ -1058,6 +1062,16 @@ impl Renderer {
         frame.present();
         for id in &tdelta.free {
             self.egui_rend.free_texture(id);
+        }
+        if std::env::var_os("VAROS_PERF").is_some() {
+            log!(
+                "[varos-perf] build_content={:.3}ms render_ui={:.3}ms fill_v={} fg_v={} op_v={}",
+                content_elapsed.as_secs_f64() * 1_000.0,
+                perf_start.elapsed().as_secs_f64() * 1_000.0,
+                fillv.len(),
+                fgv.len(),
+                opv.len()
+            );
         }
     }
 }
