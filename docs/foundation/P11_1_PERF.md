@@ -75,4 +75,17 @@ P11.1 does not add viewport culling, a cross-frame subdivision cache, undo-stora
 changes, or snap-engine changes. The 232 pre-existing tests were not edited. Seven focused tests were
 added for join retention/elision, scene-signature invalidation, and layer/thumbnail cache keys.
 
-Final gates and the release-build hash are recorded after the branch verification run.
+Final branch-tip verification:
+
+| Gate | Result |
+|---|---|
+| `tools/check_links.ps1` | PASS: 74 first-party docs, 81 relative links, 58 heading anchors |
+| `tools/check_dep_directions.ps1` | PASS |
+| `cargo fmt --all -- --check` | PASS |
+| `cargo test --workspace -j 4` | PASS: 239 tests, 0 failed |
+| `cargo clippy --workspace --all-targets -j 4 -- -D warnings` | PASS |
+| `cargo build --release -p varos-app -j 4` | PASS |
+| `git diff --check main..HEAD` | PASS |
+
+Manual-test binary: `varos/target/release/varos.exe`, 18,638,336 bytes, SHA-256
+`AD877F216B8429BECB25821D8C69C905865B591636F3425D321B5405E7F93D44`.
