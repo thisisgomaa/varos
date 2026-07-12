@@ -12,6 +12,7 @@ use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{self, Pt, View};
 use varos_core::scene::build_scene;
+use varos_core::EditCommand;
 use varos_render_wgpu::Renderer;
 #[cfg(windows)]
 use winit::platform::windows::WindowAttributesExtWindows;
@@ -154,34 +155,34 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
         match code {
             "Semicolon" => {
                 if alt {
-                    ed.doc.guides_locked = !ed.doc.guides_locked
+                    ed.execute(EditCommand::ToggleGuidesLocked)
                 }
                 // Lock Guides (Alt+Ctrl+;)
                 else {
-                    ed.guides_hidden = !ed.guides_hidden
+                    ed.toggle_guides_visibility()
                 }
             } // Hide/Show Guides (Ctrl+;)
             "Digit1" => view.zoom = 1.0,
             "KeyZ" => {
                 if shift {
-                    ed.redo()
+                    ed.execute(EditCommand::Redo)
                 } else {
-                    ed.undo()
+                    ed.execute(EditCommand::Undo)
                 }
             }
-            "KeyY" => ed.redo(),
-            "BracketRight" => ed.arrange(if shift { ZOrder::Front } else { ZOrder::Forward }),
-            "BracketLeft" => ed.arrange(if shift { ZOrder::Back } else { ZOrder::Backward }),
+            "KeyY" => ed.execute(EditCommand::Redo),
+            "BracketRight" => ed.execute(EditCommand::Arrange(if shift { ZOrder::Front } else { ZOrder::Forward })),
+            "BracketLeft" => ed.execute(EditCommand::Arrange(if shift { ZOrder::Back } else { ZOrder::Backward })),
             "KeyG" => {
                 if shift {
-                    ed.ungroup_selection()
+                    ed.execute(EditCommand::UngroupSelection)
                 } else {
-                    ed.group_selection()
+                    ed.execute(EditCommand::GroupSelection)
                 }
             }
-            "KeyU" => ed.doc.snap.smart = !ed.doc.snap.smart, // Smart Guides toggle (Illustrator Ctrl+U)
-            "KeyD" => ed.transform_again(),                   // Transform Again / step-and-repeat (Illustrator Ctrl+D)
-            "KeyR" => ed.show_rulers = !ed.show_rulers,       // Show/Hide Rulers (Illustrator Ctrl+R)
+            "KeyU" => ed.execute(EditCommand::ToggleSmartGuides), // Smart Guides toggle (Illustrator Ctrl+U)
+            "KeyD" => ed.execute(EditCommand::TransformAgain), // Transform Again / step-and-repeat (Illustrator Ctrl+D)
+            "KeyR" => ed.toggle_rulers_visibility(),           // Show/Hide Rulers (Illustrator Ctrl+R)
             _ => {}
         }
         return;
@@ -203,19 +204,19 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
         }
         "KeyX" => {
             if shift {
-                ed.swap_colors()
+                ed.execute(EditCommand::SwapColors)
             } else {
                 ed.swap_paint()
             }
         }
-        "KeyD" => ed.default_paint(),
-        "Slash" => ed.apply_paint(None),
+        "KeyD" => ed.execute(EditCommand::DefaultPaint),
+        "Slash" => ed.execute(EditCommand::ApplyPaint { target: ed.paint, color: None }),
         "Escape" | "Enter" => ed.escape(),
-        "Delete" | "Backspace" => ed.delete_selected(),
-        "ArrowLeft" => ed.nudge(-s, 0.0),
-        "ArrowRight" => ed.nudge(s, 0.0),
-        "ArrowUp" => ed.nudge(0.0, -s),
-        "ArrowDown" => ed.nudge(0.0, s),
+        "Delete" | "Backspace" => ed.execute(EditCommand::DeleteSelected),
+        "ArrowLeft" => ed.execute(EditCommand::Nudge { x: -s, y: 0.0 }),
+        "ArrowRight" => ed.execute(EditCommand::Nudge { x: s, y: 0.0 }),
+        "ArrowUp" => ed.execute(EditCommand::Nudge { x: 0.0, y: -s }),
+        "ArrowDown" => ed.execute(EditCommand::Nudge { x: 0.0, y: s }),
         _ => {}
     }
 }
