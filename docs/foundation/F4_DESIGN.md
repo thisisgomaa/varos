@@ -150,3 +150,30 @@ Source inventory: `varos/crates/varos-app/src/ui.rs:91-144` contains 48 variants
 3. `apply_ops` contains translation only: `EditCommand` construction/execution or declared transient `Editor` calls.
 4. Headless core tests execute representative commands and verify existing revision/undo behavior.
 5. The closed enum is documented only as an internal boundary, never as a plugin protocol.
+
+## Implementation evidence
+
+- The implemented enum starts at `varos/crates/varos-core/src/command.rs:12`; `Editor::execute` is at `command.rs:191`, and the migrated stroke-width/history behavior is at `command.rs:216`.
+- The frame-level snap write-back now executes `SetSnapConfig` at `varos/crates/varos-app/src/ui.rs:1185`; picker history begins through `PickerBegin` at `ui.rs:1199`; `apply_ops` is the translator at `ui.rs:5377`.
+- Keyboard edit dispatch enters the same boundary from `varos/crates/varos-app/src/main.rs:153`.
+- A production-only scan of `ui.rs` lines 1-5517 (everything before the first `#[cfg(test)]`) found 0 direct `ed.doc` assignments or collection mutations. The same direct-assignment scan found 0 in `main.rs`.
+- The F3 core files `golden.rs` and `history_lifecycle.rs` have no diff from `main`. The normalized SHA-256 of the F3 `ui.rs::characterization_tests` module is identical before and after F4.1: `D11ADD82FF976BA31694B5FE8385BF07DB502973A6D714AF1FCE3FD2FF9F5FE7`.
+
+### New headless tests and red proof
+
+| Test | Evidence | Temporary semantic mutation | Observed red result |
+|---|---|---|---|
+| Stroke/history/undo/redo | `varos/crates/varos-core/tests/edit_command.rs:28` | Change the migrated clamp from `max(0)` to `max(1)`. | Stroke assertion failed: 1 vs 0. |
+| Non-undoable serialized settings | `varos/crates/varos-core/tests/edit_command.rs:45` | Make `ToggleSnapping` a no-op. | `snap.enabled` assertion failed. |
+| Paint target + selected path | `varos/crates/varos-core/tests/edit_command.rs:63` | Ignore the command's target before applying paint. | `PaintTarget::Stroke` assertion failed. |
+
+Every mutation was restored immediately; `rg 'F4 red-proof mutation' varos --glob '!target/**'` returns no matches.
+
+### Branch-tip gates
+
+- `tools/check_links.ps1`: PASS (73 first-party docs, 81 relative links, 58 heading anchors).
+- `tools/check_dep_directions.ps1`: PASS.
+- `cargo fmt --all -- --check`: PASS.
+- `cargo test --workspace -j 4`: PASS (232 tests, 0 failed).
+- `cargo clippy --workspace --all-targets -j 4 -- -D warnings`: PASS.
+- `git diff --check main..HEAD`: PASS.
