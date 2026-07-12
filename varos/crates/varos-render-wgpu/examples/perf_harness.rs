@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use varos_core::editor::{Editor, ToolKind};
 use varos_core::geom::View;
 use varos_core::model::{Anchor, Path};
-use varos_core::scene::build_scene;
+use varos_core::scene::{build_scene, scene_signature};
 use varos_render_wgpu::perf::profile_content;
 
 const WIDTH: f32 = 1920.0;
@@ -123,7 +123,9 @@ fn main() {
         let mut scene_times = Vec::with_capacity(RUNS);
         let mut content_times = Vec::with_capacity(RUNS);
         let mut frame_times = Vec::with_capacity(RUNS);
+        let mut cache_hit_times = Vec::with_capacity(RUNS);
         let mut counts = (0, 0, 0, 0);
+        let expected_signature = scene_signature(&case.editor, case.view, [WIDTH as u32, HEIGHT as u32]);
         for _ in 0..RUNS {
             let frame_start = Instant::now();
             let scene_start = Instant::now();
@@ -135,13 +137,20 @@ fn main() {
                 (profile.fill_vertices, profile.foreground_vertices, profile.opacity_vertices, profile.draw_groups);
             black_box(&scene);
             frame_times.push(frame_start.elapsed());
+
+            let hit_start = Instant::now();
+            let signature =
+                black_box(scene_signature(black_box(&case.editor), case.view, [WIDTH as u32, HEIGHT as u32]));
+            assert_eq!(signature, expected_signature);
+            cache_hit_times.push(hit_start.elapsed());
         }
         println!(
-            "{:<34} scene={:>8.3}ms content={:>8.3}ms cpu_frame={:>8.3}ms vertices={}/{}/{} groups={}",
+            "{:<34} scene={:>8.3}ms content={:>8.3}ms cold={:>8.3}ms hit={:>8.3}ms vertices={}/{}/{} groups={}",
             case.name,
             median(&mut scene_times).as_secs_f64() * 1_000.0,
             median(&mut content_times).as_secs_f64() * 1_000.0,
             median(&mut frame_times).as_secs_f64() * 1_000.0,
+            median(&mut cache_hit_times).as_secs_f64() * 1_000.0,
             counts.0,
             counts.1,
             counts.2,

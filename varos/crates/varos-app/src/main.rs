@@ -7,13 +7,12 @@
 //! (#141313 / #1f1f22 / #262627 / #0c8ce9).
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
-use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, SnapGuide, TfHit, ToolKind, ZOrder};
+use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{self, Pt, View};
-use varos_core::scene::build_scene;
+use varos_core::scene::{build_scene, scene_signature};
 use varos_core::EditCommand;
 use varos_render_wgpu::Renderer;
 #[cfg(windows)]
@@ -149,110 +148,6 @@ fn doc_stem(file: Option<&std::path::Path>) -> String {
 /// Window title: "name* · Varos α — Tool" (the * = unsaved changes, like every desktop editor).
 fn full_title(t: ToolKind, file: Option<&std::path::Path>, unsaved: bool) -> String {
     format!("{}{} \u{b7} Varos \u{3b1} \u{2014} {}", doc_stem(file), if unsaved { "*" } else { "" }, tool_name(t))
-}
-
-fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
-    fn f32_hash(value: f32, state: &mut impl Hasher) {
-        value.to_bits().hash(state);
-    }
-    fn point_hash(point: Pt, state: &mut impl Hasher) {
-        f32_hash(point[0], state);
-        f32_hash(point[1], state);
-    }
-
-    let mut state = std::collections::hash_map::DefaultHasher::new();
-    ed.rev.hash(&mut state);
-    frame.hash(&mut state);
-    point_hash(view.pan, &mut state);
-    f32_hash(view.zoom, &mut state);
-    std::mem::discriminant(&ed.tool).hash(&mut state);
-    std::mem::discriminant(&ed.gesture).hash(&mut state);
-    std::mem::discriminant(&ed.drag).hash(&mut state);
-    std::mem::discriminant(&ed.ab_drag).hash(&mut state);
-    ed.active.hash(&mut state);
-    ed.dsel_path.hash(&mut state);
-    ed.hover_path.hash(&mut state);
-    ed.dirty.hash(&mut state);
-    ed.show_rulers.hash(&mut state);
-    ed.guides_hidden.hash(&mut state);
-    ed.constrain_wh.hash(&mut state);
-    ed.space.hash(&mut state);
-    f32_hash(ed.obj_angle, &mut state);
-    ed.pivot.is_some().hash(&mut state);
-    if let Some(pivot) = ed.pivot {
-        point_hash(pivot, &mut state);
-    }
-
-    let mut ids: Vec<u32> = ed.selected.iter().copied().collect();
-    ids.sort_unstable();
-    ids.hash(&mut state);
-    ids.clear();
-    ids.extend(ed.objsel.iter().copied());
-    ids.sort_unstable();
-    ids.hash(&mut state);
-    ed.absel.iter().for_each(|index| index.hash(&mut state));
-
-    // Preview edits can mutate selected/active path paint or geometry before `rev` commits. Hash only
-    // those live paths, keeping the common idle signature O(selection) rather than O(document).
-    let mut live_paths: Vec<u32> = ed.objsel.iter().copied().collect();
-    live_paths.extend([ed.active, ed.dsel_path, ed.hover_path].into_iter().flatten());
-    live_paths.sort_unstable();
-    live_paths.dedup();
-    for pid in live_paths {
-        let Some(path) = ed.doc.paths.iter().find(|path| path.id == pid) else { continue };
-        path.id.hash(&mut state);
-        path.closed.hash(&mut state);
-        for paint in [path.fill.solid(), path.stroke.solid()] {
-            paint.is_some().hash(&mut state);
-            if let Some(color) = paint {
-                color.into_iter().for_each(|channel| f32_hash(channel, &mut state));
-            }
-        }
-        f32_hash(path.stroke_width, &mut state);
-        f32_hash(path.opacity, &mut state);
-        for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
-            anchor.id.hash(&mut state);
-            point_hash(anchor.p, &mut state);
-            for handle in [anchor.hin, anchor.hout] {
-                handle.is_some().hash(&mut state);
-                if let Some(handle) = handle {
-                    point_hash(handle, &mut state);
-                }
-            }
-        }
-    }
-
-    for guide in &ed.snap_guides {
-        std::mem::discriminant(guide).hash(&mut state);
-        match guide {
-            SnapGuide::Line { a, b } | SnapGuide::Gap { a, b } => {
-                point_hash(*a, &mut state);
-                point_hash(*b, &mut state);
-            }
-            SnapGuide::Point { p } => point_hash(*p, &mut state),
-            SnapGuide::PathHi { pid } => pid.hash(&mut state),
-        }
-    }
-    if let Some((point, text)) = &ed.snap_hud {
-        point_hash(*point, &mut state);
-        text.hash(&mut state);
-    }
-    for preview in [ed.origin_preview, ed.guide_preview.map(|guide| [guide.pos, guide.vertical as u8 as f32])] {
-        preview.is_some().hash(&mut state);
-        if let Some(point) = preview {
-            point_hash(point, &mut state);
-        }
-    }
-
-    let cursor_drives_scene = !matches!(ed.drag, Drag::None)
-        || !matches!(ed.ab_drag, AbDrag::None)
-        || (ed.tool == ToolKind::Pen && ed.active.is_some())
-        || ed.origin_preview.is_some()
-        || ed.guide_preview.is_some();
-    if cursor_drives_scene {
-        point_hash(ed.cursor, &mut state);
-    }
-    state.finish()
 }
 
 /// Apply a keyboard shortcut. `code` is a W3C key code; shared by canvas focus + forwarded keys.
