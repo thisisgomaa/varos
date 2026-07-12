@@ -8,12 +8,13 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 - **Program:** Architecture & Repository Foundation — charter ACCEPTED 2026-07-11 (`docs/foundation/FOUNDATION_CHARTER.md`).
 - **F2a COMPLETE:** F2a.1 ✅ `673b5df` · F2a.2 ✅ `d0664d4` · F2a.3 ✅ `a10772e` (doc-truth P0s closed) · F2a.4 ✅ `76640fe` (vendor contract + machine check).
 - **F2 COMPLETE 🎉** — F2a.1..4 ✅ · F2b ✅ `b6e3863` (docs root = 7 current docs; history/ 17 + reference/ 16) · F2c ✅ `3a0ad3b` (ADR-0005 edges machine-enforced).
-- **F3 ✅** `b8c9ba6` — 6 behavior pins incl. the frozen mid-drag undo defect; **golden round-trip law is now a standing invariant** (charter §4). Workspace tests: 229.
-- **Active work order:** F4.1 (core `EditCommand` — first half of the ADR-0002 boundary) — issued 2026-07-11.
+- **F3 ✅** `b8c9ba6` · **F4.1 ✅** `bd8bc1f` — `EditCommand` lives in core; **zero direct document writes from the UI** (measured); hand-verified by the product owner on a branch release build.
+- **Active work order:** F4.2 (app-level `AppCommand` — second half of ADR-0002) — issued 2026-07-12.
+- **New pain logged:** P11 selected-state performance drag on complex art (`PAINS_LOG.md`) — pre-existing, parked to the program's performance slot; escalation trigger: blocks the product owner's hand testing.
 - **Upcoming decision for the product owner:** fate of `codex/p6-header` — must be decided before F5 (charter precondition).
 - **F2b layout DECIDED 2026-07-11:** product owner delegated the choice ("اختار انت الصح"); planner selected **`docs/history/` + `docs/reference/`**, root `docs/` keeps current docs only; `design-reference/` stays in place.
 - **ADRs:** ADR-0001..0007 **Accepted** by the product owner 2026-07-11 — highest authority per charter §3. F2a.3's Constitution/CLAUDE.md corrections and F2c are unblocked.
-- **Last gate:** F3 — PASS (zero defects, seventh consecutive) — merged `b8c9ba6` (GATE_LOG §F3).
+- **Last gate:** F4.1 — PASS (zero implementer defects; one planner process defect recorded honestly in GATE_LOG §F4.1) — merged `bd8bc1f`.
 - **Risk register:** `docs/audits/2026-07-11-CODEX-FULL-PROJECT-AUDIT.md` + `docs/audits/2026-07-11-CLAUDE-COUNTER-REVIEW.md`.
 
 ## Trigger flags (flipped only by Ahmed, with a date — charter §8)
@@ -31,7 +32,7 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 |---|---:|
 | `ui.rs` lines | 5,563 |
 | `editor.rs` lines | 4,533 |
-| Workspace tests | 229 (223 baseline + 6 F3 pins) |
+| Workspace tests | 232 (223 baseline + 6 F3 pins + 3 F4.1 boundary tests) |
 | `unsafe` sites (app crates) | 27 |
 | Direct external deps | 23 |
 | `cargo audit` | 3 vulns + 3 unmaintained (untriaged) |

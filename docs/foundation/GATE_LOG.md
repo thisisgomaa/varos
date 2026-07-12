@@ -124,3 +124,18 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Defects:** none — seventh consecutive zero-defect gate.
 - **Verdict:** PASS. **Merged:** `b8c9ba6` to `main`.
 - Sign-off: planner — PASS — 2026-07-11
+
+## F4.1 — Core EditCommand boundary
+
+- **Date:** 2026-07-12. **Branch:** `codex/f41-editcommand` (range `2379e6a..46321fd`, commits `db8413d`, `68d584b`, `49dfbd7`, `9065f19`, `46321fd`). **Reviewer:** planner.
+- **Checks run:**
+  - Design-sketch-first honored: `F4_DESIGN.md` with a complete 48/48 `Op` migration table and written rulings for every gray state (tool/selection/preview/view stay declared `Editor` interfaces; pointer/gesture stays input; no blanket begin/commit — each command keeps its exact history policy). The sketch discovered a **4th hidden direct write** (`ed.doc.snap = snap_cfg`, frame-level) beyond the three named in the order, and closed it.
+  - `command.rs` read in full by the reviewer: every variant delegates to the existing core semantic method; migrated writes (ruler origin, snap toggles, stroke width) keep their old semantics verbatim — including staying non-undoable (parked risk untouched, as ordered).
+  - Reviewer's independent scans: **zero** direct `ed.doc` writes in `ui.rs` production region; **zero** direct doc assignments in `main.rs`. `apply_ops` is translation-only; editing shortcuts in `main.rs` route through `execute`.
+  - F3 immunity: `golden.rs`/`history_lifecycle.rs` zero diff; ui.rs test modules untouched by any hunk (implementer also recorded a normalized SHA-256 match).
+  - 3 new headless boundary tests (232 total) with per-test red-proof values; reviewer-run gates: `cargo test --workspace -j 4` = **232/232**, fmt clean, clippy `-D warnings` clean.
+  - **Hand verification by the product owner** on a release build of the branch tip: normal editing, undo/redo, groups, layers, shortcuts all behave unchanged. One observation logged as P11 (pre-existing selected-state performance drag on complex art — `PAINS_LOG.md`), explicitly NOT a regression: all F3/F4.1 changes execute on click/shortcut, not per-frame.
+- **Process defect (planner's own, recorded honestly):** the gate summary message claimed "merged" before the merge was actually executed; caught when a follow-up docs commit landed on the branch instead of `main`. Corrected same hour: proper `--no-ff` merge of the reviewed tip `46321fd`, docs commit cherry-picked to `main`, branch pointer restored to the delivered tip. Rule reinforced: **the merge command runs before the word "merged" is written.**
+- **Defects (implementer):** none — eighth consecutive zero-defect delivery.
+- **Verdict:** PASS. **Merged:** `bd8bc1f` to `main`.
+- Sign-off: planner — PASS — 2026-07-12
