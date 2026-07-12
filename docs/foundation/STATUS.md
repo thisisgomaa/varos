@@ -10,7 +10,7 @@ Authority level 3 (charter §3). Anything that contradicts this page is stale. U
 - **F2 COMPLETE 🎉** — F2a.1..4 ✅ · F2b ✅ `b6e3863` (docs root = 7 current docs; history/ 17 + reference/ 16) · F2c ✅ `3a0ad3b` (ADR-0005 edges machine-enforced).
 - **F3 ✅** `b8c9ba6` · **F4.1 ✅** `bd8bc1f` — `EditCommand` lives in core; **zero direct document writes from the UI** (measured); hand-verified by the product owner on a branch release build.
 - **P11.1 ✅** `1931c80` — 10.4× on the 300%-zoom scene, 9.6× on curves-100 (reviewer-reproduced), owner hand-verified. Tests: 239.
-- **Active work order:** **P11.2** — (0) instant real-time zoom (glide easing removed — owner-authorized feel change, 2026-07-12); (1) viewport culling (the scene-B/many-objects fix); (2) cross-frame flatten cache with zoom buckets. F4.2 queued right after.
+- **Active work order:** **P11.2** — (0) instant real-time zoom (glide easing removed — owner-authorized feel change, 2026-07-12); (1) viewport culling at path level (the scene-B/many-objects fix) **plus ring/edge-level clipping to the view rect** (the 4000%-zoom overdraw fix — owner-reported symptom (د); reuse the existing artboard clippers `scene.rs:617-736`); (2) cross-frame flatten cache with zoom buckets. F4.2 queued right after.
 - **P11 remaining after P11.2:** hover/snap interaction costs (P11.3, only if still felt), undo-clone storage (measure first).
 - **Upcoming decision for the product owner:** fate of `codex/p6-header` — must be decided before F5 (charter precondition).
 - **F2b layout DECIDED 2026-07-11:** product owner delegated the choice ("اختار انت الصح"); planner selected **`docs/history/` + `docs/reference/`**, root `docs/` keeps current docs only; `design-reference/` stays in place.
