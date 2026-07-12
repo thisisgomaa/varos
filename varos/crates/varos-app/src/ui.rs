@@ -6,6 +6,7 @@
 //! `&mut Editor` after layout (no IPC, no borrow fights). varos-core itself is untouched.
 
 use egui::{Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, RichText, Stroke, StrokeKind};
+use std::hash::{Hash, Hasher};
 use std::time::Instant;
 use varos_core::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, ToolKind};
 use varos_core::geom::{Pt, Rgba, View};
@@ -272,6 +273,7 @@ enum LKind {
 /// One drawable shape in a row's thumbnail — its outline rings (normalised into the row's COMBINED
 /// bbox, 0..1, Y down) plus its own paint. A leaf has one; a Layer/Group stacks all its art (Ahmed:
 /// the container thumbnail is a real mini-preview of everything inside, like Illustrator).
+#[derive(Clone)]
 struct ThumbShape {
     rings: Vec<Vec<Pt>>,
     fill: Option<Rgba>,
@@ -281,6 +283,7 @@ struct ThumbShape {
 /// One rendered row of the Layers panel (a flattened, display-ordered view of the scene tree,
 /// SECTIONED by artboard — Ahmed 07-06: the panel splits by page, like Figma; membership is derived
 /// from geometry via `node_boards`, mirror rows for straddlers, floaters loose at the bottom).
+#[derive(Clone)]
 struct LRow {
     id: u32, // node id; Board headers use u32::MAX - board index (never collides with node ids)
     depth: u16,
@@ -300,6 +303,92 @@ struct LRow {
     thumb: Vec<ThumbShape>, // real mini-preview, back→front; empty = no art (blank box)
 }
 
+struct LayerRowsCache {
+    key: u64,
+    rows: Vec<LRow>,
+}
+
+struct ThumbCacheEntry {
+    key: u64,
+    shapes: Vec<ThumbShape>,
+}
+
+fn hash_f32(value: f32, state: &mut impl Hasher) {
+    value.to_bits().hash(state);
+}
+
+fn layer_rows_key(ed: &Editor, collapsed: &std::collections::HashSet<u32>, search: &str) -> u64 {
+    let mut state = std::collections::hash_map::DefaultHasher::new();
+    ed.rev.hash(&mut state);
+    ed.dirty.hash(&mut state);
+    ed.doc.active.hash(&mut state);
+    ed.doc.active_layer.hash(&mut state);
+    for node in &ed.doc.nodes {
+        node.id.hash(&mut state);
+        std::mem::discriminant(&node.kind).hash(&mut state);
+        node.name.hash(&mut state);
+        node.parent.hash(&mut state);
+        node.children.hash(&mut state);
+        node.hidden.hash(&mut state);
+        node.locked.hash(&mut state);
+    }
+    for board in &ed.doc.artboards {
+        board.name.hash(&mut state);
+        for value in [board.x, board.y, board.w, board.h] {
+            hash_f32(value, &mut state);
+        }
+        board.hidden.hash(&mut state);
+        board.locked.hash(&mut state);
+    }
+    let mut ids: Vec<u32> = ed.objsel.iter().copied().collect();
+    ids.sort_unstable();
+    ids.hash(&mut state);
+    ids.clear();
+    ids.extend(ed.selected.iter().copied());
+    ids.sort_unstable();
+    ids.hash(&mut state);
+    let mut folded: Vec<u32> = collapsed.iter().copied().collect();
+    folded.sort_unstable();
+    folded.hash(&mut state);
+    search.hash(&mut state);
+    if ed.dirty {
+        hash_f32(ed.cursor[0], &mut state);
+        hash_f32(ed.cursor[1], &mut state);
+    }
+    state.finish()
+}
+
+fn thumb_key(ed: &Editor, pids_zorder: &[u32]) -> u64 {
+    let mut state = std::collections::hash_map::DefaultHasher::new();
+    for &pid in pids_zorder {
+        pid.hash(&mut state);
+        let Some(pi) = ed.doc.pidx(pid) else { continue };
+        let path = &ed.doc.paths[pi];
+        path.closed.hash(&mut state);
+        for paint in [path.fill.solid(), path.stroke.solid()] {
+            paint.is_some().hash(&mut state);
+            if let Some(color) = paint {
+                color.into_iter().for_each(|channel| hash_f32(channel, &mut state));
+            }
+        }
+        hash_f32(path.stroke_width, &mut state);
+        hash_f32(path.opacity, &mut state);
+        for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
+            anchor.id.hash(&mut state);
+            hash_f32(anchor.p[0], &mut state);
+            hash_f32(anchor.p[1], &mut state);
+            for handle in [anchor.hin, anchor.hout] {
+                handle.is_some().hash(&mut state);
+                if let Some(handle) = handle {
+                    hash_f32(handle[0], &mut state);
+                    hash_f32(handle[1], &mut state);
+                }
+            }
+        }
+    }
+    state.finish()
+}
+
 /// Auto-name for a leaf path (Illustrator angle-bracket style) unless the user renamed it.
 fn path_auto_name(p: &varos_core::model::Path) -> String {
     p.name.clone().unwrap_or_else(|| "<Path>".into())
@@ -311,7 +400,12 @@ fn path_auto_name(p: &varos_core::model::Path) -> String {
 fn board_row_id(bi: usize) -> u32 {
     u32::MAX - bi as u32
 }
-fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, search: &str) -> Vec<LRow> {
+fn build_layer_rows(
+    ed: &Editor,
+    collapsed: &std::collections::HashSet<u32>,
+    search: &str,
+    thumb_cache: &mut std::collections::HashMap<u32, ThumbCacheEntry>,
+) -> Vec<LRow> {
     use varos_core::model::NodeKind;
     let q = search.trim().to_lowercase();
     let mut rows: Vec<LRow> = Vec::new();
@@ -326,6 +420,7 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         sf: (bool, bool), // the SECTION's board (hidden, locked) — dims/forces this instance's rows
         par: Option<usize>,
         collapsed: &std::collections::HashSet<u32>,
+        thumb_cache: &mut std::collections::HashMap<u32, ThumbCacheEntry>,
         rows: &mut Vec<LRow>,
         parent: &mut Vec<Option<usize>>,
     ) {
@@ -364,7 +459,15 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         // a leaf shows itself; a Layer/Group shows a true preview of its contents.
         let mut paths = ed.doc.node_paths(nid);
         paths.sort_by_key(|pid| ed.doc.pidx(*pid).unwrap_or(usize::MAX)); // back→front z
-        let thumb = thumb_shapes(ed, &paths);
+        let key = thumb_key(ed, &paths);
+        let thumb = match thumb_cache.get(&nid) {
+            Some(entry) if entry.key == key => entry.shapes.clone(),
+            _ => {
+                let shapes = thumb_shapes(ed, &paths);
+                thumb_cache.insert(nid, ThumbCacheEntry { key, shapes: shapes.clone() });
+                shapes
+            }
+        };
         let full_sel = !paths.is_empty() && paths.iter().all(|p| ed.objsel.contains(p));
         // the top-most fully-selected row is the multi-drag unit (its parent isn't fully selected)
         let drag_sel = full_sel && !par.map(|pi| rows[pi].full_sel).unwrap_or(false);
@@ -390,7 +493,7 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         let me = rows.len() - 1;
         if !collapsed.contains(&nid) {
             for &c in &n.children {
-                walk(ed, c, depth + 1, sec, sf, Some(me), collapsed, rows, parent);
+                walk(ed, c, depth + 1, sec, sf, Some(me), collapsed, thumb_cache, rows, parent);
             }
         }
     }
@@ -433,15 +536,28 @@ fn build_layer_rows(ed: &Editor, collapsed: &std::collections::HashSet<u32>, sea
         let me = rows.len() - 1;
         if !collapsed.contains(&hid) {
             for nid in members {
-                walk(ed, nid, 1, bi as u32, (ab.hidden, ab.locked), Some(me), collapsed, &mut rows, &mut parent);
+                walk(
+                    ed,
+                    nid,
+                    1,
+                    bi as u32,
+                    (ab.hidden, ab.locked),
+                    Some(me),
+                    collapsed,
+                    thumb_cache,
+                    &mut rows,
+                    &mut parent,
+                );
             }
         }
     }
     for (nid, bs) in &memb {
         if bs.is_empty() {
-            walk(ed, *nid, 0, u32::MAX, (false, false), None, collapsed, &mut rows, &mut parent);
+            walk(ed, *nid, 0, u32::MAX, (false, false), None, collapsed, thumb_cache, &mut rows, &mut parent);
         }
     }
+
+    thumb_cache.retain(|nid, _| ed.doc.node(*nid).is_some());
 
     if q.is_empty() {
         return rows;
@@ -707,6 +823,8 @@ pub struct Ui {
     // section decides same-section reorder vs cross-board move
     lay_anchor: Option<(u32, u32)>, // Shift-range anchor: (node id, SECTION) — mirror rows share an
     // id across sections, so the id alone picks the wrong appearance
+    layer_rows_cache: Option<LayerRowsCache>,
+    layer_thumb_cache: std::collections::HashMap<u32, ThumbCacheEntry>,
     // ── Stage 4: the BOX TREE hosts the whole workspace (BOX_SYSTEM_PLAN §4) ──
     shell: varos_app::shell::ShellState, // the box tree; panel bodies render through the host hook
     board_hole: Option<egui::Rect>,      // the Board pane's interior (logical pts) — the wgpu canvas hole
@@ -883,6 +1001,8 @@ impl Ui {
             lay_rename: None,
             lay_drag: None,
             lay_anchor: None,
+            layer_rows_cache: None,
+            layer_thumb_cache: std::collections::HashMap::new(),
             shell: varos_app::shell::ShellState::standard(),
             board_hole: None,
             board_px: None,
@@ -1000,8 +1120,15 @@ impl Ui {
         let prev_hole = self.board_hole; // last frame's canvas hole (the seam underlay paints around it)
         let mut new_hole: Option<egui::Rect> = None;
         let top = &self.top;
-        // layers snapshot (built before the closure — like Snap/AbSnap)
-        let layer_rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search);
+        // Pointer-only frames reuse the rows wholesale. Selection/tree/search changes rebuild row state;
+        // the independent thumbnail cache still avoids curve subdivision when geometry is unchanged.
+        let rows_key = layer_rows_key(ed, &self.lay_collapsed, &self.lay_search);
+        let mut layer_rows_cache = self.layer_rows_cache.take();
+        if layer_rows_cache.as_ref().is_none_or(|cache| cache.key != rows_key) {
+            let rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search, &mut self.layer_thumb_cache);
+            layer_rows_cache = Some(LayerRowsCache { key: rows_key, rows });
+        }
+        let layer_rows = &layer_rows_cache.as_ref().expect("layers cache is populated above").rows;
         let layer_icons = &self.layer_icons;
         let mut lay_search = std::mem::take(&mut self.lay_search);
         let mut lay_rename = std::mem::take(&mut self.lay_rename);
@@ -1104,7 +1231,7 @@ impl Ui {
                             P::Layers => {
                                 panel_layers(
                                     ui,
-                                    &layer_rows,
+                                    layer_rows,
                                     layer_icons,
                                     &mut lay_search,
                                     &mut lay_rename,
@@ -1173,6 +1300,7 @@ impl Ui {
         self.lay_collapsed = lay_collapsed;
         self.lay_drag = lay_drag;
         self.lay_anchor = lay_anchor;
+        self.layer_rows_cache = layer_rows_cache;
         self.shape_active = shape_active;
         if fit_request.is_some() {
             self.fit_request = fit_request;
@@ -5546,6 +5674,52 @@ mod color_tests {
         assert!((red[0]).abs() < 1e-4 && (red[1] - 1.0).abs() < 1e-4 && (red[2] - 1.0).abs() < 1e-4);
         let grey = rgb_to_hsv([0.5, 0.5, 0.5, 1.0]);
         assert!(grey[1].abs() < 1e-4 && (grey[2] - 0.5).abs() < 1e-4);
+    }
+}
+
+#[cfg(test)]
+mod layer_cache_tests {
+    use super::{layer_rows_key, thumb_key};
+    use std::collections::HashSet;
+    use varos_core::editor::Editor;
+    use varos_core::model::{Anchor, Path};
+
+    fn editor_with_path() -> Editor {
+        let mut ed = Editor::new();
+        ed.doc.paths.push(Path::new(
+            7,
+            vec![
+                Anchor { id: 8, p: [0.0, 0.0], hin: None, hout: None, smooth: false },
+                Anchor { id: 9, p: [10.0, 0.0], hin: None, hout: None, smooth: false },
+            ],
+            false,
+            None,
+            Some([0.0, 0.0, 0.0, 1.0]),
+            2.0,
+        ));
+        ed.doc.sync_tree();
+        ed
+    }
+
+    #[test]
+    fn pointer_only_frames_keep_the_layer_rows_key() {
+        let mut ed = editor_with_path();
+        let collapsed = HashSet::new();
+        let before = layer_rows_key(&ed, &collapsed, "");
+        ed.cursor = [400.0, 300.0];
+        assert_eq!(before, layer_rows_key(&ed, &collapsed, ""));
+        ed.objsel.insert(7);
+        assert_ne!(before, layer_rows_key(&ed, &collapsed, ""));
+    }
+
+    #[test]
+    fn thumbnail_key_ignores_selection_but_tracks_geometry() {
+        let mut ed = editor_with_path();
+        let before = thumb_key(&ed, &[7]);
+        ed.objsel.insert(7);
+        assert_eq!(before, thumb_key(&ed, &[7]));
+        ed.doc.paths[0].anchors[0].p[0] = 4.0;
+        assert_ne!(before, thumb_key(&ed, &[7]));
     }
 }
 
