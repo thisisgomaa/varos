@@ -54,14 +54,35 @@ fn sq(v: &mut Vec<Vertex>, c: Pt, half: f32, col: [f32; 4], w: f32, h: f32) {
     );
 }
 fn disc(v: &mut Vec<Vertex>, c: Pt, r: f32, col: [f32; 4], w: f32, h: f32) {
-    let segs = 24;
-    for i in 0..segs {
-        let a0 = i as f32 / segs as f32 * std::f32::consts::TAU;
-        let a1 = (i + 1) as f32 / segs as f32 * std::f32::consts::TAU;
-        tri(v, c, [c[0] + a0.cos() * r, c[1] + a0.sin() * r], [c[0] + a1.cos() * r, c[1] + a1.sin() * r], col, w, h);
+    static UNIT_RING: std::sync::OnceLock<Vec<Pt>> = std::sync::OnceLock::new();
+    let ring = UNIT_RING.get_or_init(|| {
+        (0..=24)
+            .map(|i| {
+                let angle = i as f32 / 24.0 * std::f32::consts::TAU;
+                [angle.cos(), angle.sin()]
+            })
+            .collect()
+    });
+    v.reserve(24 * 3);
+    for edge in ring.windows(2) {
+        tri(
+            v,
+            c,
+            [c[0] + edge[0][0] * r, c[1] + edge[0][1] * r],
+            [c[0] + edge[1][0] * r, c[1] + edge[1][1] * r],
+            col,
+            w,
+            h,
+        );
     }
 }
 fn stroke_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32; 4], w: f32, h: f32) {
+    let join_count = if width >= 1.6 && pts.len() >= 2 {
+        (1..pts.len() - 1).filter(|&i| round_join_needed(pts[i - 1], pts[i], pts[i + 1])).count() + 2
+    } else {
+        0
+    };
+    v.reserve(pts.len().saturating_sub(1) * 6 + join_count * 24 * 3);
     for i in 0..pts.len().saturating_sub(1) {
         line(v, pts[i], pts[i + 1], width, col, w, h);
     }
