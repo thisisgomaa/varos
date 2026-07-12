@@ -139,3 +139,17 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Defects (implementer):** none — eighth consecutive zero-defect delivery.
 - **Verdict:** PASS. **Merged:** `bd8bc1f` to `main`.
 - Sign-off: planner — PASS — 2026-07-12
+
+## P11.1 — Performance surgery, stage 1
+
+- **Date:** 2026-07-12. **Branch:** `codex/p111-perf` (range `8da2d8c..893a0b9`, 9 commits). **Reviewer:** planner + product owner (hand test).
+- **Checks run:**
+  - Scope compliance: snap engine, undo storage, PresentMode, and all F3/F4.1 test files untouched (verified by diff); out-of-scope items deferred exactly as ordered.
+  - Corner-join elision (`tess.rs:80-116`) read line-by-line: 5° threshold with documented rationale, caps always kept, unit ring built once; the vertex columns expose the win honestly (A foreground 93,672→7,344; C 756,000→72,000 — ~90% of stroke geometry was redundant discs).
+  - Conservative scene signature (`scene.rs:71-172`) read in full: doc rev, view, frame, tool/gesture/drag discriminants, selections, hover, live selected-path geometry incl. handles, snap guides/HUD, previews, modifiers, pivot — plus the `cursor_drives_scene` rule that feeds raw cursor into the hash during ANY active drag/preview, so marquee/pen/guide overlays can never freeze on a stale cache.
+  - Reviewer reproduced the harness independently: identical vertex counts, A cold **0.272ms** (baseline 2.696ms), C cold 2.034ms (baseline 23.931ms); reviewer-run gates 239/239, fmt, clippy clean; exe SHA-256 matched the report byte-for-byte.
+  - **Product-owner hand test: PASS** — "حلو وأحسن كتير فعلا"; zoom/drag on the 300%-zoom complex scene now smooth; corner rendering visually clean.
+- **Product feedback carried forward:** the A13 zoom-glide easing now *feels* like lag to the owner — he wants real-time immediate zoom. Authorized as a deliberate behavior change; scheduled as item 0 of P11.2.
+- **Verdict:** PASS. **Merged:** `1931c80` to `main`.
+- Sign-off: planner — PASS — 2026-07-12
+- Sign-off: product owner (Ahmed, hand test) — PASS — 2026-07-12
