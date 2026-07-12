@@ -89,11 +89,15 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     ed.active.hash(&mut state);
     ed.dsel_path.hash(&mut state);
     ed.hover_path.hash(&mut state);
+    ed.doc.active.hash(&mut state);
     ed.dirty.hash(&mut state);
     ed.show_rulers.hash(&mut state);
     ed.guides_hidden.hash(&mut state);
     ed.constrain_wh.hash(&mut state);
     ed.space.hash(&mut state);
+    ed.mods.shift.hash(&mut state);
+    ed.mods.alt.hash(&mut state);
+    ed.mods.ctrl.hash(&mut state);
     f32_hash(ed.obj_angle, &mut state);
     ed.pivot.is_some().hash(&mut state);
     if let Some(pivot) = ed.pivot {
