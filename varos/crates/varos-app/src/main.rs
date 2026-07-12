@@ -7,11 +7,12 @@
 //! (#141313 / #1f1f22 / #262627 / #0c8ce9).
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{self, Pt, View};
-use varos_core::scene::build_scene;
+use varos_core::scene::{build_scene, scene_signature};
 use varos_core::EditCommand;
 use varos_render_wgpu::Renderer;
 #[cfg(windows)]
@@ -651,6 +652,7 @@ fn main() {
     cursors::set_cloaked(hwnd, false);
 
     let mut editor_framed = false; // becomes true when we switch the splash → the framed editor window
+    let mut last_scene_signature: Option<u64> = None;
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
@@ -933,6 +935,7 @@ fn main() {
                         if psz.width == 0 || psz.height == 0 {
                             return;
                         }
+                        let perf_start = Instant::now();
                         // A13 — one eased zoom frame. This runs ONLY while a glide is in flight: if
                         // `view.zoom` already sits on `zoom_target` (every instant path keeps them
                         // equal) the predicate is false and nothing here executes. While it IS active
@@ -1029,8 +1032,26 @@ fn main() {
                             renderer.render_splash(&jobs, &tdelta, &screen);
                         // floating card on a transparent surface
                         } else {
-                            let world = build_scene(&ed, view.zoom);
-                            renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
+                            let signature = scene_signature(&ed, view, [psz.width, psz.height]);
+                            let scene_start = Instant::now();
+                            let cache_hit = last_scene_signature == Some(signature);
+                            let rendered = if cache_hit {
+                                renderer.render_ui_cached(&jobs, &tdelta, &screen)
+                            } else {
+                                let world = build_scene(&ed, view.zoom);
+                                renderer.render_ui(&world, view, &jobs, &tdelta, &screen)
+                            };
+                            last_scene_signature = rendered.then_some(signature);
+                            let scene_elapsed = scene_start.elapsed();
+                            if std::env::var_os("VAROS_PERF").is_some() {
+                                let _ = writeln!(
+                                    std::io::stderr(),
+                                    "[varos-perf] scene_cache={} scene_path={:.3}ms full_frame={:.3}ms",
+                                    if cache_hit { "hit" } else { "miss" },
+                                    scene_elapsed.as_secs_f64() * 1_000.0,
+                                    perf_start.elapsed().as_secs_f64() * 1_000.0
+                                );
+                            }
                         }
                         // AFTER rendering this frame (so no mid-frame size change), switch the borderless splash
                         // window into the framed editor; the resulting Resized event syncs the surface next frame.
@@ -1064,4 +1085,50 @@ fn main() {
             }
         })
         .unwrap_or_else(|e| fatal("The Windows event loop stopped unexpectedly.", &e.to_string()));
+}
+
+#[cfg(test)]
+mod scene_signature_tests {
+    use super::*;
+    use varos_core::model::{Anchor, Paint, Path};
+
+    #[test]
+    fn idle_pointer_motion_reuses_the_scene_but_hover_does_not() {
+        let mut ed = Editor::new();
+        let before = scene_signature(&ed, View::identity(), [800, 600]);
+        ed.cursor = [320.0, 240.0];
+        assert_eq!(before, scene_signature(&ed, View::identity(), [800, 600]));
+        ed.hover_path = Some(7);
+        assert_ne!(before, scene_signature(&ed, View::identity(), [800, 600]));
+    }
+
+    #[test]
+    fn drag_cursor_motion_invalidates_the_scene() {
+        let mut ed = Editor::new();
+        ed.drag = Drag::Marquee { start: [0.0, 0.0], base: vec![] };
+        let before = scene_signature(&ed, View::identity(), [800, 600]);
+        ed.cursor = [12.0, 18.0];
+        assert_ne!(before, scene_signature(&ed, View::identity(), [800, 600]));
+    }
+
+    #[test]
+    fn live_selected_path_paint_invalidates_before_commit() {
+        let mut ed = Editor::new();
+        ed.doc.paths.push(Path::new(
+            7,
+            vec![
+                Anchor { id: 8, p: [0.0, 0.0], hin: None, hout: None, smooth: false },
+                Anchor { id: 9, p: [10.0, 0.0], hin: None, hout: None, smooth: false },
+            ],
+            false,
+            Some([1.0, 0.0, 0.0, 1.0]),
+            None,
+            1.0,
+        ));
+        ed.doc.sync_tree();
+        ed.objsel.insert(7);
+        let before = scene_signature(&ed, View::identity(), [800, 600]);
+        ed.doc.paths[0].fill = Paint::Solid([0.0, 1.0, 0.0, 1.0]);
+        assert_ne!(before, scene_signature(&ed, View::identity(), [800, 600]));
+    }
 }

@@ -54,25 +54,65 @@ fn sq(v: &mut Vec<Vertex>, c: Pt, half: f32, col: [f32; 4], w: f32, h: f32) {
     );
 }
 fn disc(v: &mut Vec<Vertex>, c: Pt, r: f32, col: [f32; 4], w: f32, h: f32) {
-    let segs = 24;
-    for i in 0..segs {
-        let a0 = i as f32 / segs as f32 * std::f32::consts::TAU;
-        let a1 = (i + 1) as f32 / segs as f32 * std::f32::consts::TAU;
-        tri(v, c, [c[0] + a0.cos() * r, c[1] + a0.sin() * r], [c[0] + a1.cos() * r, c[1] + a1.sin() * r], col, w, h);
+    static UNIT_RING: std::sync::OnceLock<Vec<Pt>> = std::sync::OnceLock::new();
+    let ring = UNIT_RING.get_or_init(|| {
+        (0..=24)
+            .map(|i| {
+                let angle = i as f32 / 24.0 * std::f32::consts::TAU;
+                [angle.cos(), angle.sin()]
+            })
+            .collect()
+    });
+    v.reserve(24 * 3);
+    for edge in ring.windows(2) {
+        tri(
+            v,
+            c,
+            [c[0] + edge[0][0] * r, c[1] + edge[0][1] * r],
+            [c[0] + edge[1][0] * r, c[1] + edge[1][1] * r],
+            col,
+            w,
+            h,
+        );
     }
 }
 fn stroke_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32; 4], w: f32, h: f32) {
+    let join_count = if width >= 1.6 && pts.len() >= 2 {
+        (1..pts.len() - 1).filter(|&i| round_join_needed(pts[i - 1], pts[i], pts[i + 1])).count() + 2
+    } else {
+        0
+    };
+    v.reserve(pts.len().saturating_sub(1) * 6 + join_count * 24 * 3);
     for i in 0..pts.len().saturating_sub(1) {
         line(v, pts[i], pts[i + 1], width, col, w, h);
     }
-    // round joins/caps: a disc at each vertex fills the gaps between butt-cap segment quads,
-    // so thick strokes don't crack apart at corners. Only worth it once the stroke is thick enough.
+    // Round caps plus joins at actual direction changes. Adaptive curve subdivision emits many nearly
+    // collinear points; a 24-triangle disc at every one was P11's high-zoom vertex explosion. Segment
+    // quads already overlap cleanly below this threshold, while real corners retain the round join.
     if width >= 1.6 && pts.len() >= 2 {
         let r = width * 0.5;
-        for p in pts {
-            disc(v, *p, r, col, w, h);
+        disc(v, pts[0], r, col, w, h);
+        for i in 1..pts.len() - 1 {
+            if round_join_needed(pts[i - 1], pts[i], pts[i + 1]) {
+                disc(v, pts[i], r, col, w, h);
+            }
         }
+        disc(v, pts[pts.len() - 1], r, col, w, h);
     }
+}
+
+/// Five degrees is below a visually meaningful corner but above floating-point/tessellation drift.
+fn round_join_needed(a: Pt, b: Pt, c: Pt) -> bool {
+    const COS_5_DEG: f32 = 0.996_194_7;
+    let incoming = [b[0] - a[0], b[1] - a[1]];
+    let outgoing = [c[0] - b[0], c[1] - b[1]];
+    let lengths = (incoming[0] * incoming[0] + incoming[1] * incoming[1])
+        * (outgoing[0] * outgoing[0] + outgoing[1] * outgoing[1]);
+    if lengths <= 1e-12 {
+        return false;
+    }
+    let cosine = (incoming[0] * outgoing[0] + incoming[1] * outgoing[1]) / lengths.sqrt();
+    cosine < COS_5_DEG
 }
 fn dashed_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32; 4], w: f32, h: f32) {
     let (dash, gap) = (5.0f32, 4.0f32);
@@ -534,6 +574,29 @@ mod tests {
             color: [0.0, 0.0, 0.0, alpha],
             clip: None,
         }
+    }
+
+    #[test]
+    fn adaptive_subdivision_points_do_not_create_round_join_discs() {
+        let mut vertices = Vec::new();
+        stroke_poly(
+            &mut vertices,
+            &[[0.0, 0.0], [10.0, 0.1], [20.0, 0.3], [30.0, 0.6]],
+            4.0,
+            [0.0, 0.0, 0.0, 1.0],
+            100.0,
+            100.0,
+        );
+        // Three segment quads (18 vertices) plus two 24-triangle round caps (144 vertices).
+        assert_eq!(vertices.len(), 162);
+    }
+
+    #[test]
+    fn a_real_corner_keeps_its_round_join_disc() {
+        let mut vertices = Vec::new();
+        stroke_poly(&mut vertices, &[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 4.0, [0.0, 0.0, 0.0, 1.0], 100.0, 100.0);
+        // Two segment quads (12) plus two caps and the 90-degree join (3 * 72).
+        assert_eq!(vertices.len(), 228);
     }
 
     #[test]

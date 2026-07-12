@@ -1,6 +1,7 @@
 //! wgpu renderer: a GPU canvas that draws a varos-core `Scene`. Stencil-then-cover fills,
 //! MSAA, non-sRGB surface, Mailbox present (low latency). Knows nothing about winit/tauri.
 
+pub mod perf;
 mod tess;
 use std::io::Write;
 use tess::{build_bg, build_content, build_fg, Draw, GroupDraw, Vertex};
@@ -976,8 +977,6 @@ impl Renderer {
         }
     }
 
-    // one frame in, one call — the whole frame's inputs really are 8 distinct things
-    #[allow(clippy::too_many_arguments)]
     pub fn render_ui(
         &mut self,
         world: &Scene,
@@ -985,33 +984,64 @@ impl Renderer {
         paint_jobs: &[egui::ClippedPrimitive],
         tdelta: &egui::TexturesDelta,
         screen: &egui_wgpu::ScreenDescriptor,
-    ) {
+    ) -> bool {
+        self.render_ui_impl(Some((world, view)), paint_jobs, tdelta, screen)
+    }
+
+    /// Present the previous offscreen canvas under a fresh egui frame. The app calls this only when
+    /// its conservative scene signature matches, so no scene CPU work, upload, or GPU passes repeat.
+    pub fn render_ui_cached(
+        &mut self,
+        paint_jobs: &[egui::ClippedPrimitive],
+        tdelta: &egui::TexturesDelta,
+        screen: &egui_wgpu::ScreenDescriptor,
+    ) -> bool {
+        self.render_ui_impl(None, paint_jobs, tdelta, screen)
+    }
+
+    fn render_ui_impl(
+        &mut self,
+        scene: Option<(&Scene, View)>,
+        paint_jobs: &[egui::ClippedPrimitive],
+        tdelta: &egui::TexturesDelta,
+        screen: &egui_wgpu::ScreenDescriptor,
+    ) -> bool {
+        let perf_start = std::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.config);
-                return;
+                return false;
             }
-            _ => return,
+            _ => return false,
         };
         let tview = frame.texture.create_view(&Default::default());
-        let (fw, fh) = (self.config.width as f32, self.config.height as f32);
-        let bg = build_bg(view, fw, fh);
-        let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
-        let ov_start = fgv.len() as u32;
-        fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh));
-        let overlay = (ov_start, fgv.len() as u32 - ov_start);
-        let nbg = Self::upload(&self.device, &self.queue, &mut self.bg_buf, &mut self.bg_cap, &bg);
-        let _ = Self::upload(&self.device, &self.queue, &mut self.fill_buf, &mut self.fill_cap, &fillv);
-        let _ = Self::upload(&self.device, &self.queue, &mut self.fg_buf, &mut self.fg_cap, &fgv);
-        let _ = Self::upload(&self.device, &self.queue, &mut self.op_buf, &mut self.op_cap, &opv);
+        let prepared = scene.map(|(world, view)| {
+            let (fw, fh) = (self.config.width as f32, self.config.height as f32);
+            let bg = build_bg(view, fw, fh);
+            let content_start = std::time::Instant::now();
+            let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+            let content_elapsed = content_start.elapsed();
+            let ov_start = fgv.len() as u32;
+            fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh));
+            let overlay = (ov_start, fgv.len() as u32 - ov_start);
+            let counts = (fillv.len(), fgv.len(), opv.len());
+            let nbg = Self::upload(&self.device, &self.queue, &mut self.bg_buf, &mut self.bg_cap, &bg);
+            let _ = Self::upload(&self.device, &self.queue, &mut self.fill_buf, &mut self.fill_cap, &fillv);
+            let _ = Self::upload(&self.device, &self.queue, &mut self.fg_buf, &mut self.fg_cap, &fgv);
+            let _ = Self::upload(&self.device, &self.queue, &mut self.op_buf, &mut self.op_cap, &opv);
+            (nbg, metas, overlay, content_elapsed, counts)
+        });
         for (id, delta) in &tdelta.set {
             self.egui_rend.update_texture(&self.device, &self.queue, *id, delta);
         }
         let mut enc = self.device.create_command_encoder(&Default::default());
         let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
-        // scene → offscreen (opaque groups + isolated translucent layers, MSAA resolve to scene_view)
-        self.record_scene(&mut enc, nbg, &metas, overlay);
+        // A signature miss rebuilds the offscreen scene. A hit keeps its last resolved texture and only
+        // blits it below the fresh egui pass.
+        if let Some((nbg, metas, overlay, _, _)) = &prepared {
+            self.record_scene(&mut enc, *nbg, metas, *overlay);
+        }
         // blit the offscreen scene → surface (egui chrome is drawn over it in the next pass)
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1059,5 +1089,26 @@ impl Renderer {
         for id in &tdelta.free {
             self.egui_rend.free_texture(id);
         }
+        if std::env::var_os("VAROS_PERF").is_some() {
+            match prepared {
+                Some((_, _, _, content_elapsed, counts)) => {
+                    log!(
+                        "[varos-perf] scene_cache=miss build_content={:.3}ms render_ui={:.3}ms fill_v={} fg_v={} op_v={}",
+                        content_elapsed.as_secs_f64() * 1_000.0,
+                        perf_start.elapsed().as_secs_f64() * 1_000.0,
+                        counts.0,
+                        counts.1,
+                        counts.2
+                    );
+                }
+                None => {
+                    log!(
+                        "[varos-perf] scene_cache=hit build_content=0.000ms render_ui={:.3}ms",
+                        perf_start.elapsed().as_secs_f64() * 1_000.0
+                    );
+                }
+            }
+        }
+        true
     }
 }

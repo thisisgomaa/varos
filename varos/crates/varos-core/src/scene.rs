@@ -5,9 +5,10 @@
 //!               `overlay` = editing chrome (anchors/handles/skeleton/marquee) → CONSTANT screen size.
 
 use crate::editor::{Drag, Editor, SnapGuide, ToolKind, ANCHOR_R};
-use crate::geom::{add, cubic, dist, snap45, sub, Pt, Rgba};
+use crate::geom::{add, cubic, dist, snap45, sub, Pt, Rgba, View};
 use crate::model::Path;
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 
 pub const ACCENT: Rgba = [0.047, 0.549, 0.914, 1.0];
 pub const ACCENT_FILL: Rgba = [0.047, 0.549, 0.914, 0.14];
@@ -62,6 +63,115 @@ impl Group {
             Group::Clip { .. } => &[],
         }
     }
+}
+
+/// Cheap, conservative identity for every input that can change `build_scene` output. Document
+/// commits are represented by `rev`; live selected paths are hashed explicitly because previews and
+/// gestures can mutate them before commit. Raw idle pointer motion is intentionally excluded.
+pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
+    fn f32_hash(value: f32, state: &mut impl Hasher) {
+        value.to_bits().hash(state);
+    }
+    fn point_hash(point: Pt, state: &mut impl Hasher) {
+        f32_hash(point[0], state);
+        f32_hash(point[1], state);
+    }
+
+    let mut state = std::collections::hash_map::DefaultHasher::new();
+    ed.rev.hash(&mut state);
+    frame.hash(&mut state);
+    point_hash(view.pan, &mut state);
+    f32_hash(view.zoom, &mut state);
+    std::mem::discriminant(&ed.tool).hash(&mut state);
+    std::mem::discriminant(&ed.gesture).hash(&mut state);
+    std::mem::discriminant(&ed.drag).hash(&mut state);
+    std::mem::discriminant(&ed.ab_drag).hash(&mut state);
+    ed.active.hash(&mut state);
+    ed.dsel_path.hash(&mut state);
+    ed.hover_path.hash(&mut state);
+    ed.doc.active.hash(&mut state);
+    ed.dirty.hash(&mut state);
+    ed.show_rulers.hash(&mut state);
+    ed.guides_hidden.hash(&mut state);
+    ed.constrain_wh.hash(&mut state);
+    ed.space.hash(&mut state);
+    ed.mods.shift.hash(&mut state);
+    ed.mods.alt.hash(&mut state);
+    ed.mods.ctrl.hash(&mut state);
+    f32_hash(ed.obj_angle, &mut state);
+    ed.pivot.is_some().hash(&mut state);
+    if let Some(pivot) = ed.pivot {
+        point_hash(pivot, &mut state);
+    }
+
+    let mut ids: Vec<u32> = ed.selected.iter().copied().collect();
+    ids.sort_unstable();
+    ids.hash(&mut state);
+    ids.clear();
+    ids.extend(ed.objsel.iter().copied());
+    ids.sort_unstable();
+    ids.hash(&mut state);
+    ed.absel.iter().for_each(|index| index.hash(&mut state));
+
+    let mut live_paths: Vec<u32> = ed.objsel.iter().copied().collect();
+    live_paths.extend([ed.active, ed.dsel_path, ed.hover_path].into_iter().flatten());
+    live_paths.sort_unstable();
+    live_paths.dedup();
+    for pid in live_paths {
+        let Some(path) = ed.doc.paths.iter().find(|path| path.id == pid) else { continue };
+        path.id.hash(&mut state);
+        path.closed.hash(&mut state);
+        for paint in [path.fill.solid(), path.stroke.solid()] {
+            paint.is_some().hash(&mut state);
+            if let Some(color) = paint {
+                color.into_iter().for_each(|channel| f32_hash(channel, &mut state));
+            }
+        }
+        f32_hash(path.stroke_width, &mut state);
+        f32_hash(path.opacity, &mut state);
+        for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
+            anchor.id.hash(&mut state);
+            point_hash(anchor.p, &mut state);
+            for handle in [anchor.hin, anchor.hout] {
+                handle.is_some().hash(&mut state);
+                if let Some(handle) = handle {
+                    point_hash(handle, &mut state);
+                }
+            }
+        }
+    }
+
+    for guide in &ed.snap_guides {
+        std::mem::discriminant(guide).hash(&mut state);
+        match guide {
+            SnapGuide::Line { a, b } | SnapGuide::Gap { a, b } => {
+                point_hash(*a, &mut state);
+                point_hash(*b, &mut state);
+            }
+            SnapGuide::Point { p } => point_hash(*p, &mut state),
+            SnapGuide::PathHi { pid } => pid.hash(&mut state),
+        }
+    }
+    if let Some((point, text)) = &ed.snap_hud {
+        point_hash(*point, &mut state);
+        text.hash(&mut state);
+    }
+    for preview in [ed.origin_preview, ed.guide_preview.map(|guide| [guide.pos, guide.vertical as u8 as f32])] {
+        preview.is_some().hash(&mut state);
+        if let Some(point) = preview {
+            point_hash(point, &mut state);
+        }
+    }
+
+    let cursor_drives_scene = !matches!(ed.drag, Drag::None)
+        || !matches!(ed.ab_drag, crate::editor::AbDrag::None)
+        || (ed.tool == ToolKind::Pen && ed.active.is_some())
+        || ed.origin_preview.is_some()
+        || ed.guide_preview.is_some();
+    if cursor_drives_scene {
+        point_hash(ed.cursor, &mut state);
+    }
+    state.finish()
 }
 
 #[derive(Default)]
@@ -191,7 +301,24 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
         clip_map.get(&ed.doc.paths[pi].id).cloned().flatten()
     };
-    let fill_prims = |pi: usize| -> Vec<Prim> {
+    // P11.1: adaptive curve subdivision is the expensive part. Build each path's transformed outer
+    // outline and hole rings once for this frame, then let fill, stroke, masks, and overlays clone the
+    // resulting points they own. This is intentionally frame-local; cross-frame geometry caching is P11.2.
+    struct PathGeometry {
+        outline: Vec<Pt>,
+        holes: Vec<Vec<Pt>>,
+    }
+    let geometry: Vec<PathGeometry> = ed
+        .doc
+        .paths
+        .iter()
+        .enumerate()
+        .map(|(pi, path)| PathGeometry {
+            outline: ed.doc.world_outline_px(pi, ppu),
+            holes: path.holes.iter().map(|hole| ed.doc.world_ring_px(hole, pi, ppu)).collect(),
+        })
+        .collect();
+    let fill_prims = |pi: usize, geom: &PathGeometry| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         // An open path still FILLS (Illustrator: the fill closes visually with an implied straight line
@@ -200,10 +327,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         if p.anchors.len() >= 3 {
             if let Some(c) = p.fill.solid() {
                 // A7 seam: WORLD-space rings (unit transform composed). Identity ⇒ today's geometry.
-                let mut rings = vec![ed.doc.world_outline_px(pi, ppu)];
-                for hole in &p.holes {
-                    rings.push(ed.doc.world_ring_px(hole, pi, ppu));
-                }
+                let mut rings = Vec::with_capacity(1 + geom.holes.len());
+                rings.push(geom.outline.clone());
+                rings.extend(geom.holes.iter().cloned());
                 match clip_rects(pi) {
                     Some(rects) => {
                         for r in rects {
@@ -223,7 +349,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
         out
     };
-    let stroke_prims = |pi: usize| -> Vec<Prim> {
+    let stroke_prims = |pi: usize, geom: &PathGeometry| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         if p.anchors.len() >= 2 {
@@ -250,9 +376,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                     }
                     None => out.push(Prim::Stroke { pts, width: p.stroke_width, color: c, clip: None }),
                 };
-                push(ed.doc.world_outline_px(pi, ppu)); // A7 seam: WORLD outline (identity ⇒ today)
-                for hole in &p.holes {
-                    let mut r = ed.doc.world_ring_px(hole, pi, ppu);
+                push(geom.outline.clone()); // A7 seam: WORLD outline (identity ⇒ today)
+                for hole in &geom.holes {
+                    let mut r = hole.clone();
                     if let Some(&f) = r.first() {
                         r.push(f);
                     }
@@ -270,10 +396,8 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         if let Some(mc) = ed.doc.node_mask_child(clip_nid) {
             for pid in ed.doc.node_paths(mc) {
                 if let Some(pi) = ed.doc.pidx(pid) {
-                    rings.push(ed.doc.world_outline_px(pi, ppu));
-                    for hole in &ed.doc.paths[pi].holes {
-                        rings.push(ed.doc.world_ring_px(hole, pi, ppu));
-                    }
+                    rings.push(geometry[pi].outline.clone());
+                    rings.extend(geometry[pi].holes.iter().cloned());
                 }
             }
         }
@@ -284,11 +408,11 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     // stroke → Knockout, single translucent → folded into the opaque run, else opaque) — so a document
     // with no clip group produces byte-identical `groups`. A clip just feeds it a different pair of
     // accumulators (MASKS_PLAN §2.4: members reuse every branch, they only land in a different vec).
-    let emit_object = |pi: usize, p: &Path, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
+    let emit_object = |pi: usize, p: &Path, geom: &PathGeometry, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
         let o = p.opacity;
         let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
-        let mut fp = fill_prims(pi);
-        let mut sp = stroke_prims(pi);
+        let mut fp = fill_prims(pi, geom);
+        let mut sp = stroke_prims(pi, geom);
         if o < 0.999 && !fp.is_empty() && !sp.is_empty() {
             // isolated layer: flush the current opaque run, then emit the object as one unit (fill(s) then stroke(s))
             if !open.is_empty() {
@@ -351,9 +475,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             cur_clip = unit_clip;
         }
         if cur_clip.is_some() {
-            emit_object(pi, p, &mut clip_members, &mut clip_open);
+            emit_object(pi, p, &geometry[pi], &mut clip_members, &mut clip_open);
         } else {
-            emit_object(pi, p, &mut groups, &mut open);
+            emit_object(pi, p, &geometry[pi], &mut groups, &mut open);
         }
     }
     // trailing flush: a clip (or opaque run) that reaches the end of the list
@@ -378,20 +502,15 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
     }
     // editing skeleton: a thin accent outline for any path being hovered/selected/drawn
-    for pi in 0..ed.doc.paths.len() {
+    for (pi, geom) in geometry.iter().enumerate() {
         if ed.doc.eff_hidden(ed.doc.paths[pi].id) {
             continue;
         } // cascades from layer/group eyes
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
             // A7 seam: WORLD outline + hole rings (identity ⇒ today's geometry).
-            s.overlay.push(Prim::Stroke {
-                pts: ed.doc.world_outline_px(pi, ppu),
-                width: 1.7,
-                color: ACCENT,
-                clip: None,
-            });
-            for hole in &ed.doc.paths[pi].holes {
-                let mut r = ed.doc.world_ring_px(hole, pi, ppu);
+            s.overlay.push(Prim::Stroke { pts: geom.outline.clone(), width: 1.7, color: ACCENT, clip: None });
+            for hole in &geom.holes {
+                let mut r = hole.clone();
                 if let Some(&f) = r.first() {
                     r.push(f);
                 }
@@ -591,7 +710,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             SnapGuide::PathHi { pid } => {
                 if let Some(pi) = ed.doc.pidx(*pid) {
                     s.overlay.push(Prim::Stroke {
-                        pts: ed.doc.world_outline_px(pi, ppu), // A7 seam (identity ⇒ today)
+                        pts: geometry[pi].outline.clone(), // A7 seam (identity ⇒ today)
                         width: 2.0,
                         color: SNAP_GUIDE,
                         clip: None,
