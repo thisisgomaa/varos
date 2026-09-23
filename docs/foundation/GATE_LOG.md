@@ -267,3 +267,33 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Hand test:** visual approval given on the review page; in-app hand test comes with the wiring piece.
 - **Verdict:** PASS. **Merged:** `d30365c` to `main`.
 - Sign-off: moderator — PASS — 2026-09-23
+
+## Stroke-join wedge fix — close the outer wedges left by P11.1's join elision
+
+- **Date:** 2026-09-23. **Branch:** `fix/stroke-fan-artifact` (worktree `agent-a297d1d6b4f0838ea`, range `7f3d883..ccd92ea`, commits `045c956` — close every join, `ccd92ea` — round outer sector within 0.25 px). **Reviewer:** Codex (independent, two rounds) + moderator gates.
+- **Symptom:** thick strokes at high zoom rendered as radial "spokes" (Ahmed saw it live in the installed macOS app: an 80.4-wide closed curvy path at 327%).
+- **Root cause:** P11.1 (`1931c80`, July) skipped round joins at turns < 5°, on the premise that segment quads overlap there. They overlap only on the inner side of a turn; on the outer side every flattened curve vertex left an open wedge about r·θ wide (≈ 7 px in the owner's case).
+- **Bisect** (headless CPU tessellation, uncovered band pixels at 327%, whole path in view): `8da2d8c` (before P11.1) 15 → `1931c80` (P11.1) **47,677**; `61786a0`, `9f8ec1d` and `main` equal to P11.1. P11.1 caused it; P11.2's view clipping and the macOS port did not.
+- **Fix** (`varos-render-wgpu/src/tess.rs` `stroke_poly` / `stroke_join`): every turn is closed on its outer side by a round fan anchored on the exact corners of the incoming and outgoing quads (no crack). Steps: chord sagitta ≤ 0.25 screen px, at least 1 step per 45°, at most 128 steps; a single triangle (bevel) for gentle turns; a small-angle-exact angle formula. Corners no longer use the 24-gon disc. Design and numbers of record: `P11_1_PERF.md` ("Correction") and `P11_2_PERF.md` ("After the stroke-join fix").
+- **Codex review, round 1:** REQUEST CHANGES — the first version fell back to the full 24-triangle disc at sharper turns; that disc is inscribed and sits up to r·(1 − cos 7.5°) ≈ 13.7 px inside the band at 4000%, leaving gaps. Fixed in `ccd92ea` (the outer sector replaced the disc fallback).
+- **Codex review, round 2:** APPROVE WITH NITS — one P3 doc nit: both perf docs promised ≤ 0.25 px without the 128-step cap (a 180° join passes the tolerance above r ≈ 3,320 screen px; r = 10,000 px → 0.753 px). Fixed after the merge in `35443b8` (docs only; the code comment at `JOIN_MAX_STEPS` already said so). Moderator re-derived both numbers: 0.25 / (1 − cos(π/256)) = 3,320.1; 10,000 · (1 − cos(π/256)) = 0.753.
+- **Implementer's gates (on the branch):** 272/272 tests, clippy (macOS + Windows target) and fmt clean, 8 s launch. Harness: D stroke vertices 2,388 → 3,363 (time about equal); E 51,624 → 27,996 and 1.21 → 1.18 ms; C +40% vertices, +11% time.
+- **Conflicts:** none. `ort` merge, 3 files (`tess.rs`, `P11_1_PERF.md`, `P11_2_PERF.md`); `main` had not touched any of the three since the branch base `7f3d883` (the earlier P11.2 Codex-nit edits, `4ea9dcd`, were already in that base), so there was nothing to reconcile.
+- **Checks run (moderator, on the merged `main` at `35443b8`, macOS/Apple M5/Metal, Rust `~/.cargo/bin`):**
+  - `cargo test --workspace -j 4` → 37 result lines, **276 passed, 0 failed, 0 ignored** (core 216 · pdf 13 · render-wgpu 21 · app 26 = 6 lib + 20 bin). 271 before + 5 new GPU-free tests in `tess.rs`.
+  - `cargo clippy --workspace --all-targets -- -D warnings` → clean (exit 0).
+  - `cargo fmt --all --check` → clean (exit 0, no output).
+  - `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings` → clean (exit 0).
+  - **Perf harness** (`cargo run -p varos-render-wgpu --release --example perf_harness -j 4`, one run, 15 measured runs each, median, load average 5.1 — timings noisy; vertex counts match the implementer's):
+    - `A curved-150 selected ppu=3.0  scene_cold=0.100ms scene_warm=0.094ms cold=0.283ms warm=0.275ms vertices=3078/9480/0 overlay_vertices=38520`
+    - `B rectangles-500 ppu=0.3  scene_cold=2.222ms scene_warm=2.170ms cold=2.391ms warm=2.336ms vertices=10500/12000/0`
+    - `C curves-100 ppu=1.0  scene_cold=0.248ms scene_warm=0.212ms cold=0.551ms warm=0.517ms vertices=29700/100500/0`
+    - `D curved-150 selected ppu=40  scene_cold=0.094ms scene_warm=0.070ms cold=0.109ms warm=0.085ms vertices=1068/3363/0 overlay_vertices=4170`
+    - `E rectangles-500 ppu=4.0 partial  scene_cold=1.070ms scene_warm=1.057ms cold=1.164ms warm=1.152ms vertices=2835/27996/0`
+  - `tools/mac/bundle.sh` → release build OK, ad-hoc signed (`com.varos.editor`, `Signature=adhoc`), installed `/Applications/Varos.app` (binary 23:25). `open /Applications/Varos.app` → `pgrep` showed `/Applications/Varos.app/Contents/MacOS/varos` running after 3 s; killed.
+  - **Launch smoke test:** release binary `varos/target/release/varos` run 8 s, still alive, then killed (no process left). stderr (complete): `[varos] cursors: 28 custom (28 from cursors-ai, 0 built-in) + 0 system fallbacks of 28` / `[varos] adapter: "Apple M5" | backend: Metal` / `[varos] present: Immediate | format: Bgra8Unorm | msaa: 8`. stdout empty, no "panic" or "error".
+- **Process note:** the first 8 s launch run returned an odd shell exit (144) before printing its result; its stderr file was complete (same three lines). It was re-run into uniquely named logs and the result above comes from that re-run. A concurrent session sharing the scratchpad had its own `varos` binary running; it was not touched.
+- **Not verified:** the look in the real window (no screenshot at 327% / 4000%); GPU time (harness is CPU-only). Known leftover: round **caps** at open path ends are still 24-gons — visible faceting (~14 px) at 4000% with width 80 (`PAINS_LOG.md` P13, follow-up).
+- **Hand test:** not yet — batch 1 list in `STATUS.md`.
+- **Verdict:** PASS. **Merged:** `b37f78b` to `main`.
+- Sign-off: moderator — PASS — 2026-09-23
