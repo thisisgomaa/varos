@@ -99,10 +99,10 @@ fn stroke_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32; 4], w: f3
     // the turn, of angle θ and radius r; its mouth is about r·θ wide. P11.1 skipped every join under 5°,
     // but for a thick stroke that wedge is many pixels wide (80 px stroke at 327%: r ≈ 131 px, θ ≈ 3°
     // ⇒ ~7 px) and a curve has one at EVERY flattened point: the outer half of the band became radial
-    // spokes. So every turn is closed: one BEVEL triangle fills the wedge up to its chord, and the full
-    // round disc is kept only where the round shape is visible — a real corner (P11.1's 5° rule,
-    // unchanged) or where the arc bulges past the chord by more than JOIN_TOL_PX. One triangle per curve
-    // point, not P11's 24-triangle disc, so the P11.1 vertex saving stays.
+    // spokes. So every turn is closed with a ROUND SECTOR on the outer side, anchored on the two quads'
+    // exact outer corners and split just finely enough that no chord sits more than JOIN_TOL_PX inside
+    // the true circle. On a gently curving path that is one triangle per point (a bevel); a real corner
+    // gets a few. Not P11's 24-triangle disc at every point, so the P11.1 vertex saving stays.
     let mut prev: Option<(Pt, Pt)> = None; // incoming segment's (unit direction, half-width normal)
     for i in 0..pts.len() - 1 {
         let (a, b) = (pts[i], pts[i + 1]);
@@ -121,12 +121,19 @@ fn stroke_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32; 4], w: f3
     disc(v, pts[pts.len() - 1], r, col, w, h);
 }
 
-/// Largest visible gap (screen px) between a bevel chord and the true round arc before the join is drawn
-/// as a full disc. A quarter pixel is below what the MSAA edge can resolve.
+/// Largest gap (screen px) allowed between a round join's chord and the true circle. A quarter pixel is
+/// below what the MSAA edge can resolve.
 const JOIN_TOL_PX: f32 = 0.25;
+/// Upper bound on one join's fan. A U-turn first needs it at r ≈ 3 300 px (a stroke 80 wide at 8 300%);
+/// past that its chords sit further inside the circle than JOIN_TOL_PX.
+const JOIN_MAX_STEPS: usize = 128;
 
 /// Close the turn at `b` between an incoming segment (unit `din`, normal `nin`) and an outgoing one
-/// (`dout`, `nout`); normals are `seg_normal`'s, so the wedge corners coincide with the quad corners.
+/// (`dout`, `nout`) with a round sector on the outer side of the turn: a fan around `b` from the incoming
+/// quad's outer corner to the outgoing quad's. Normals are `seg_normal`'s, and the fan's first and last
+/// vertices ARE those corners, so the fan meets both quads with no crack. Steps are chosen so every chord
+/// sits within JOIN_TOL_PX of the circle of radius `r` (one step = a plain bevel on a gentle curve), and
+/// at least one per 45° so a sharp turn never collapses to a flat triangle.
 #[allow(clippy::too_many_arguments)] // two segment frames + radius + paint + framebuffer
 fn stroke_join(
     v: &mut Vec<Vertex>,
@@ -140,25 +147,49 @@ fn stroke_join(
     w: f32,
     h: f32,
 ) {
-    // Five degrees is below a visually meaningful corner but above floating-point/tessellation drift.
-    const COS_5_DEG: f32 = 0.996_194_7;
     let cos = (din[0] * dout[0] + din[1] * dout[1]).clamp(-1.0, 1.0);
     let cross = din[0] * dout[1] - din[1] * dout[0];
-    // bulge of the round arc past the bevel chord: r·(1 − cos(θ/2)), with cos(θ/2) = √((1 + cos θ)/2)
-    let sagitta = r * (1.0 - ((1.0 + cos) * 0.5).sqrt());
-    if cos < COS_5_DEG || sagitta > JOIN_TOL_PX {
-        disc(v, b, r, col, w, h);
-        return;
-    }
-    // the wedge's area is ½·r²·sin θ; under 1e-4 px² there is nothing to cover (and no collapsed
-    // triangle to emit — floating-point drift on a straight run lands here)
-    if 0.5 * r * r * cross.abs() < 1e-4 {
-        return;
-    }
     // the gap opens on the side AWAY from the turn: `seg_normal` points to +90° of the direction, and
     // the turn is toward +90° when cross > 0 — so the outer side is −normal then, +normal otherwise.
     let s = if cross > 0.0 { -1.0 } else { 1.0 };
-    tri(v, b, [b[0] + nin[0] * s, b[1] + nin[1] * s], [b[0] + nout[0] * s, b[1] + nout[1] * s], col, w, h);
+    let (c_in, c_out) = ([nin[0] * s, nin[1] * s], [nout[0] * s, nout[1] * s]);
+    // Fast path — almost every point of a flattened curve: a turn under 45° whose single chord already
+    // sits within tolerance, r·(1 − cos(θ/2)) with cos(θ/2) = √((1 + cos θ)/2), is one bevel triangle.
+    if cos >= std::f32::consts::FRAC_1_SQRT_2 {
+        // the wedge's area is ≈ ½·r²·sin θ; under 1e-4 px² there is nothing to cover (and no collapsed
+        // triangle to emit — floating-point drift on a straight run lands here)
+        if 0.5 * r * r * cross.abs() < 1e-4 {
+            return;
+        }
+        if r * (1.0 - ((1.0 + cos) * 0.5).sqrt()) <= JOIN_TOL_PX {
+            tri(v, b, [b[0] + c_in[0], b[1] + c_in[1]], [b[0] + c_out[0], b[1] + c_out[1]], col, w, h);
+            return;
+        }
+    }
+    // turn angle, 0..=π — via atan2, since acos(cos) rounds turns under ~3e-4 rad to zero in f32
+    let theta = cross.abs().atan2(cos);
+    if 0.5 * r * r * theta < 1e-4 {
+        return;
+    }
+    // the outer corner rotates with the direction: by +θ when turning toward +90° (s = −1), else by −θ.
+    // (At an exact U-turn this still sweeps round the FRONT of the joint, through `din`.)
+    let phi = -s * theta;
+    // a chord spanning angle α sits r·(1 − cos(α/2)) inside the circle; keep that ≤ JOIN_TOL_PX
+    let max_step = if r > JOIN_TOL_PX { 2.0 * (1.0 - JOIN_TOL_PX / r).acos() } else { std::f32::consts::PI };
+    let steps = (theta / max_step).ceil().max((theta / std::f32::consts::FRAC_PI_4).ceil()).max(1.0) as usize;
+    let steps = steps.min(JOIN_MAX_STEPS);
+    v.reserve(steps * 3);
+    let mut prev = c_in;
+    for k in 1..=steps {
+        let next = if k == steps {
+            c_out // land exactly on the outgoing quad's corner
+        } else {
+            let (sn, cs) = (phi * k as f32 / steps as f32).sin_cos();
+            [c_in[0] * cs - c_in[1] * sn, c_in[0] * sn + c_in[1] * cs]
+        };
+        tri(v, b, [b[0] + prev[0], b[1] + prev[1]], [b[0] + next[0], b[1] + next[1]], col, w, h);
+        prev = next;
+    }
 }
 fn dashed_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32; 4], w: f32, h: f32) {
     let (dash, gap) = (5.0f32, 4.0f32);
@@ -639,11 +670,12 @@ mod tests {
     }
 
     #[test]
-    fn a_real_corner_keeps_its_round_join_disc() {
+    fn a_real_corner_gets_a_round_outer_join() {
         let mut vertices = Vec::new();
         stroke_poly(&mut vertices, &[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 4.0, [0.0, 0.0, 0.0, 1.0], 100.0, 100.0);
-        // Two segment quads (12) plus two caps and the 90-degree join (3 * 72).
-        assert_eq!(vertices.len(), 228);
+        // Two segment quads (12), two 24-triangle caps (144) and the 90° join as a two-triangle outer
+        // round sector (6): at r = 2 px a 45° chord already sits within 0.25 px of the circle.
+        assert_eq!(vertices.len(), 162);
     }
 
     #[test]
@@ -953,6 +985,132 @@ mod tests {
             assert!(samples > 300, "{label}: the check must actually sample the band ({samples})");
             // still no per-point disc explosion: 45 quads + 44 bevel wedges + 2 caps
             assert_eq!(v.len(), 45 * 6 + 44 * 3 + 2 * 72, "{label}: one bevel per gentle turn, no join discs");
+        }
+    }
+
+    fn unit_deg(deg: f32) -> Pt {
+        let a = deg.to_radians();
+        [a.cos(), a.sin()]
+    }
+
+    /// Stroke a single turn `a → b → c` (heading `deg_in`, then `deg_out`) with half width `r` px. The
+    /// ends sit 3r from the joint so the round end caps cannot reach it: only quads + join close the
+    /// wedge. Returns the triangles in px and the joint.
+    fn turn_tris(deg_in: f32, deg_out: f32, r: f32) -> (Vec<[Pt; 3]>, Pt) {
+        let (din, dout) = (unit_deg(deg_in), unit_deg(deg_out));
+        let l = 3.0 * r;
+        let side = 2.0 * (l + r) + 10.0;
+        let b = [side * 0.5, side * 0.5];
+        let a = [b[0] - din[0] * l, b[1] - din[1] * l];
+        let c = [b[0] + dout[0] * l, b[1] + dout[1] * l];
+        let mut v = Vec::new();
+        stroke_poly(&mut v, &[a, b, c], 2.0 * r, [0.0, 0.0, 0.0, 1.0], side, side);
+        let tris = v
+            .chunks(3)
+            .map(|t| [to_px(t[0].pos, side, side), to_px(t[1].pos, side, side), to_px(t[2].pos, side, side)]);
+        (tris.collect(), b)
+    }
+
+    /// Points of the outer join wedge at `b` that no triangle covers. The wedge is derived from the turn
+    /// alone (not from the tessellator): centred on the outward direction `din − dout`, spanning the turn
+    /// angle, sampled at 1, 2 and 3 px inside the band edge and at half depth, at nine angles across it.
+    fn uncovered_wedge_points(tris: &[[Pt; 3]], b: Pt, deg_in: f32, deg_out: f32, r: f32) -> Vec<Pt> {
+        let (din, dout) = (unit_deg(deg_in), unit_deg(deg_out));
+        let theta = (din[0] * dout[0] + din[1] * dout[1]).clamp(-1.0, 1.0).acos();
+        let out = [din[0] - dout[0], din[1] - dout[1]];
+        let ol = (out[0] * out[0] + out[1] * out[1]).sqrt();
+        if ol < 1e-6 {
+            return Vec::new(); // straight: no wedge
+        }
+        let mid = [out[0] / ol, out[1] / ol];
+        let mut bad = Vec::new();
+        for t in [-0.97f32, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 0.97] {
+            let (s, c) = (t * theta * 0.5).sin_cos();
+            let dir = [mid[0] * c - mid[1] * s, mid[0] * s + mid[1] * c];
+            for depth in [1.0f32, 2.0, 3.0, r * 0.5] {
+                let q = [b[0] + dir[0] * (r - depth), b[1] + dir[1] * (r - depth)];
+                if !tris.iter().any(|tr| in_tri(q, tr)) {
+                    bad.push(q);
+                }
+            }
+        }
+        bad
+    }
+
+    /// Codex review of 045c956 (P2): width 80 at 4000%, heading 6° → 9°. The bevel's bulge exceeds the
+    /// tolerance, and the old fallback swapped it for the inscribed 24-gon disc, which sits ~13.7 px
+    /// inside the band midway between its vertices — leaving points 1–3 px inside the band uncovered.
+    #[test]
+    fn high_zoom_rotated_turn_is_covered_across_the_whole_wedge() {
+        let r = 80.0 * 40.0 * 0.5;
+        let (tris, b) = turn_tris(6.0, 9.0, r);
+        let bad = uncovered_wedge_points(&tris, b, 6.0, 9.0, r);
+        assert!(bad.is_empty(), "{} wedge points uncovered, e.g. {:?}", bad.len(), bad.first());
+    }
+
+    /// Sweep through the zoom range where a turn switches from a single bevel to a subdivided round
+    /// join (width 80 at 10×…60× ⇒ r = 400…2400 px, plus 100% and 327%), for gentle to U-turns, turning
+    /// both ways: the whole outer wedge must stay covered at every step.
+    #[test]
+    fn join_coverage_holds_across_the_round_join_threshold() {
+        let turns = [(6.0f32, 9.0f32), (0.0, 1.0), (0.0, 5.0), (20.0, 50.0), (10.0, 100.0), (0.0, 179.0), (0.0, 180.0)];
+        let mut zooms = vec![1.0f32, 3.27];
+        zooms.extend((0..=20).map(|i| 10.0 + 2.5 * i as f32));
+        for &zoom in &zooms {
+            let r = 80.0 * zoom * 0.5;
+            for &(a, b_deg) in &turns {
+                for (din, dout) in [(a, b_deg), (a, a - (b_deg - a))] {
+                    let (tris, b) = turn_tris(din, dout, r);
+                    let bad = uncovered_wedge_points(&tris, b, din, dout, r);
+                    assert!(
+                        bad.is_empty(),
+                        "zoom {zoom}, turn {din}° → {dout}°: {} wedge points uncovered, e.g. {:?}",
+                        bad.len(),
+                        bad.first()
+                    );
+                }
+            }
+        }
+    }
+
+    /// The round join is a fan anchored on the two quads' exact outer corners, and its outer edge (every
+    /// chord) stays within JOIN_TOL_PX of the true circle — for thin to huge radii and small to U-turns.
+    #[test]
+    fn round_join_outer_edge_hugs_the_true_circle() {
+        for r in [0.8f32, 2.0, 40.0, 131.0, 1600.0, 2400.0] {
+            for (deg_in, deg_out) in [(6.0f32, 9.0f32), (0.0, 30.0), (0.0, -90.0), (15.0, 170.0), (0.0, 180.0)] {
+                let (din, dout) = (unit_deg(deg_in), unit_deg(deg_out));
+                let b = [5_000.0f32, 5_000.0];
+                let nin = seg_normal([b[0] - din[0] * 10.0, b[1] - din[1] * 10.0], b, 2.0 * r);
+                let nout = seg_normal(b, [b[0] + dout[0] * 10.0, b[1] + dout[1] * 10.0], 2.0 * r);
+                let (w, h) = (10_000.0, 10_000.0);
+                let mut v = Vec::new();
+                stroke_join(&mut v, b, din, nin, dout, nout, r, [0.0, 0.0, 0.0, 1.0], w, h);
+                let label = format!("r {r}, turn {deg_in}° → {deg_out}°");
+                assert!(!v.is_empty(), "{label}: a turn gets a join");
+                let tris: Vec<[Pt; 3]> = v
+                    .chunks(3)
+                    .map(|t| [to_px(t[0].pos, w, h), to_px(t[1].pos, w, h), to_px(t[2].pos, w, h)])
+                    .collect();
+                let slack = 0.01; // NDC round trip at 5 000 px coordinates
+                for t in &tris {
+                    assert!(dist(t[0], b) <= slack, "{label}: every fan triangle starts at the joint");
+                    for q in [t[1], t[2]] {
+                        assert!((dist(q, b) - r).abs() <= slack + r * 1e-6, "{label}: fan vertex off the circle");
+                    }
+                    let m = [(t[1][0] + t[2][0]) * 0.5, (t[1][1] + t[2][1]) * 0.5];
+                    let bulge = r - dist(m, b);
+                    assert!(bulge <= JOIN_TOL_PX + slack, "{label}: chord sits {bulge:.3} px inside the circle");
+                }
+                // the fan's first and last outer vertices are the quads' own outer corners (no crack)
+                let cross = din[0] * dout[1] - din[1] * dout[0];
+                let s = if cross > 0.0 { -1.0 } else { 1.0 };
+                let (cin, cout) = ([b[0] + nin[0] * s, b[1] + nin[1] * s], [b[0] + nout[0] * s, b[1] + nout[1] * s]);
+                let first = v[1].pos;
+                let last = v[v.len() - 1].pos;
+                assert_eq!(first, ndc(cin, w, h), "{label}: fan starts on the incoming quad's corner");
+                assert_eq!(last, ndc(cout, w, h), "{label}: fan ends on the outgoing quad's corner");
+            }
         }
     }
 
