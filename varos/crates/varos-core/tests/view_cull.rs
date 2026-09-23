@@ -413,3 +413,158 @@ fn the_editor_cache_reuses_geometry_across_frames_and_evicts_deleted_paths() {
     let _ = build_scene_in_view(&ed, View { pan: [-5_000.0, 0.0], zoom: 1.0 }, FRAME);
     assert_eq!(ed.flatten_cache.lock().stats(), (0, 0), "an off-screen path costs no flatten");
 }
+
+// ─────────────────────────── review fixes (Codex P1-1, P1-2) ───────────────────────────
+
+/// The review's P1-1 scene: two crossing, unfilled, 50%-red strokes separated in z by an opaque filled
+/// rectangle that lies wholly off screen. Public so the renderer test can build the same document.
+fn crossing_translucent_strokes() -> Editor {
+    let red = Some([1.0, 0.0, 0.0, 0.5]);
+    let a = Path::new(1, vec![anc(100, 100.0, 100.0), anc(101, 500.0, 400.0)], false, None, red, 6.0);
+    let rect = Path::new(
+        2,
+        vec![anc(200, 3_000.0, 0.0), anc(201, 3_100.0, 0.0), anc(202, 3_100.0, 100.0), anc(203, 3_000.0, 100.0)],
+        true,
+        Some([0.2, 0.2, 0.2, 1.0]),
+        None,
+        1.0,
+    );
+    let b = Path::new(3, vec![anc(300, 100.0, 400.0), anc(301, 500.0, 100.0)], false, None, red, 6.0);
+    editor(vec![a, rect, b])
+}
+
+/// How many single-stencil coverage batches the renderer will form: within each group's prims, a
+/// maximal run of consecutive translucent strokes of ONE colour is marked and covered once (tess.rs).
+fn coverage_batches(scene: &Scene) -> usize {
+    fn count(prims: &[Prim]) -> usize {
+        let mut n = 0;
+        let mut prev: Option<[f32; 4]> = None;
+        for p in prims {
+            match p {
+                Prim::Stroke { color, .. } if color[3] < 0.999 => {
+                    if prev != Some(*color) {
+                        n += 1;
+                    }
+                    prev = Some(*color);
+                }
+                _ => prev = None,
+            }
+        }
+        n
+    }
+    fn walk(groups: &[Group]) -> usize {
+        groups
+            .iter()
+            .map(|g| match g {
+                Group::Clip { members, .. } => walk(members),
+                g => count(g.prims()),
+            })
+            .sum()
+    }
+    walk(&scene.content)
+}
+
+#[test]
+fn culling_an_object_never_merges_the_translucent_strokes_on_either_side_of_it() {
+    let ed = crossing_translucent_strokes();
+    let full = build_scene(&ed, 1.0);
+    let cut = build_scene_in_view(&ed, View::identity(), FRAME);
+    assert_eq!(fills(&cut).len(), 0, "the separating rectangle is culled");
+    assert_eq!(coverage_batches(&full), 2, "uncut: one coverage per stroke (the crossing paints twice)");
+    assert_eq!(coverage_batches(&cut), 2, "culled: still one coverage per stroke — never merged");
+}
+
+#[test]
+fn two_adjacent_translucent_strokes_of_one_colour_stay_separate_objects() {
+    // no separator at all: object boundaries still split the coverage (the crossing is 75%, not 50%)
+    let mut ed = crossing_translucent_strokes();
+    ed.doc.paths.remove(1);
+    assert_eq!(coverage_batches(&build_scene(&ed, 1.0)), 2);
+    // …while ONE object's outer + hole rings keep sharing a single coverage (paints once)
+    let mut ring = circle(1, 100, [300.0, 300.0], 100.0, 8);
+    ring.fill = Default::default();
+    ring.stroke = varos_core::model::Paint::from_opt(Some([0.0, 0.0, 1.0, 0.5]));
+    ring.holes.push(circle(2, 200, [300.0, 300.0], 40.0, 8).anchors);
+    let one = editor(vec![ring]);
+    assert_eq!(coverage_batches(&build_scene(&one, 1.0)), 1);
+}
+
+/// Treatment of each painted object: I = isolated, K = knockout, O = anything in an opaque run.
+fn treatments(groups: &[Group]) -> Vec<char> {
+    groups
+        .iter()
+        .flat_map(|g| match g {
+            Group::Clip { members, .. } => treatments(members),
+            Group::Isolated { .. } => vec!['I'],
+            Group::Knockout(_) => vec!['K'],
+            Group::Opaque(_) => vec!['O'],
+        })
+        .collect()
+}
+
+/// The review's P1-2 scene: a 50%-opacity rectangle (opaque fill + 2-unit opaque stroke) larger than the
+/// 800×600 frame, inside a larger clipping mask.
+fn masked_translucent_overflowing_rect() -> Editor {
+    let mut rect = square(10, 100, -100.0, -100.0, 1.0);
+    for (a, p) in rect.anchors.iter_mut().zip([[-100.0, -100.0], [900.0, -100.0], [900.0, 700.0], [-100.0, 700.0]]) {
+        a.p = p;
+    }
+    rect.stroke_width = 2.0;
+    rect.opacity = 0.5;
+    let mask = square(11, 110, -500.0, -500.0, 2_000.0);
+    let mut ed = editor(vec![rect, mask]);
+    ed.doc.clip_group(&[10, 11], 11).unwrap();
+    ed
+}
+
+#[test]
+fn an_off_screen_stroke_never_changes_an_objects_opacity_treatment() {
+    let ed = masked_translucent_overflowing_rect();
+    let full = treatments(&build_scene(&ed, 1.0).content);
+    assert_eq!(full, vec!['I'], "uncut: fill + stroke at 50% = one isolated layer");
+    // pan 0: every stroke run is off screen AND outside the padding → cut away entirely
+    let at0 = build_scene_in_view(&ed, View::identity(), FRAME);
+    assert!(strokes(&content_prims_owned(&at0)).is_empty(), "pan 0: no stroke run survives the view cut");
+    // pan 70: the left edge enters the padding (still off screen) → one run survives
+    let at70 = build_scene_in_view(&ed, View { pan: [70.0, 0.0], zoom: 1.0 }, FRAME);
+    assert!(!strokes(&content_prims_owned(&at70)).is_empty(), "pan 70: the left edge's run is in the pad");
+    assert_eq!(treatments(&at0.content), full, "pan 0 keeps the isolated treatment");
+    assert_eq!(treatments(&at70.content), full, "pan 70 keeps the isolated treatment");
+}
+
+#[test]
+fn an_off_screen_stroke_never_changes_the_treatment_without_a_mask_either() {
+    let mut ed = masked_translucent_overflowing_rect();
+    ed.doc = {
+        let mut d = Document::default();
+        d.paths.push(ed.doc.paths[ed.doc.pidx(10).unwrap()].clone());
+        d.ids = 10_000;
+        d.sync_tree();
+        d
+    };
+    let full = treatments(&build_scene(&ed, 1.0).content);
+    assert_eq!(full, vec!['I']);
+    for pan in [0.0, 35.0, 70.0] {
+        let cut = build_scene_in_view(&ed, View { pan: [pan, 0.0], zoom: 1.0 }, FRAME);
+        assert_eq!(treatments(&cut.content), full, "pan {pan}: same treatment as uncut");
+    }
+    // translucent STROKE on an opaque fill: knockout stays knockout when the band is cut away
+    ed.doc.paths[0].opacity = 1.0;
+    ed.doc.paths[0].stroke = varos_core::model::Paint::from_opt(Some([0.0, 0.0, 0.0, 0.5]));
+    assert_eq!(treatments(&build_scene(&ed, 1.0).content), vec!['K']);
+    assert_eq!(treatments(&build_scene_in_view(&ed, View::identity(), FRAME).content), vec!['K']);
+}
+
+fn content_prims_owned(scene: &Scene) -> Vec<Prim> {
+    fn walk(groups: &[Group], out: &mut Vec<Prim>) {
+        for g in groups {
+            match g {
+                Group::Clip { members, .. } => walk(members, out),
+                g => out.extend(g.prims().iter().cloned()),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&scene.content, &mut out);
+    out
+}

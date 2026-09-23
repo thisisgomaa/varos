@@ -253,6 +253,13 @@ fn rects_intersect(a: R4, b: R4) -> bool {
 fn rect_contains(outer: R4, inner: R4) -> bool {
     inner.0 >= outer.0 && inner.1 >= outer.1 && inner.2 <= outer.2 && inner.3 <= outer.3
 }
+/// Cut a polyline to `clip` → its inside runs; with no rect, the polyline itself, untouched.
+fn cut_runs(pts: Vec<Pt>, clip: Option<R4>) -> Vec<Vec<Pt>> {
+    match clip {
+        Some(r) => clip_polyline_rect(&pts, r).into_iter().filter(|run| run.len() >= 2).collect(),
+        None => vec![pts],
+    }
+}
 fn rect_intersection(a: R4, b: R4) -> Option<R4> {
     let r = (a.0.max(b.0), a.1.max(b.1), a.2.min(b.2), a.3.min(b.3));
     (r.0 <= r.2 && r.1 <= r.3).then_some(r)
@@ -412,13 +419,8 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         }
     };
     // Cut one polyline to the path's view rect → the inside runs (one run, unchanged, when no rect).
-    let view_runs = |pi: usize, pts: Vec<Pt>| -> Vec<Vec<Pt>> {
-        match view_clip[pi] {
-            Some(r) => clip_polyline_rect(&pts, r).into_iter().filter(|run| run.len() >= 2).collect(),
-            None => vec![pts],
-        }
-    };
-    let fill_prims = |pi: usize, geom: &PathGeometry| -> Vec<Prim> {
+    let view_runs = |pi: usize, pts: Vec<Pt>| -> Vec<Vec<Pt>> { cut_runs(pts, view_clip[pi]) };
+    let fill_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         // An open path still FILLS (Illustrator: the fill closes visually with an implied straight line
@@ -434,7 +436,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
                     Some(rects) => {
                         for r in rects {
                             // P11.2: a partly visible path cuts to page ∩ view in ONE pass.
-                            let r = match view_clip[pi] {
+                            let r = match vclip {
                                 Some(v) => match rect_intersection(r, v) {
                                     Some(both) => both,
                                     None => continue, // this page's part is off screen
@@ -451,20 +453,25 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
                             }
                         }
                     }
-                    None if view_clip[pi].is_some() => {
-                        let clipped: Vec<Vec<Pt>> =
-                            rings.iter().map(|ring| view_ring(pi, ring)).filter(|ring| ring.len() >= 3).collect();
-                        if clipped.first().is_some_and(|o| o.len() >= 3) {
-                            out.push(Prim::Fill { rings: clipped, color: c });
+                    None => match vclip {
+                        Some(v) => {
+                            let clipped: Vec<Vec<Pt>> = rings
+                                .iter()
+                                .map(|ring| clip_poly_rect(ring, v))
+                                .filter(|ring| ring.len() >= 3)
+                                .collect();
+                            if clipped.first().is_some_and(|o| o.len() >= 3) {
+                                out.push(Prim::Fill { rings: clipped, color: c });
+                            }
                         }
-                    }
-                    None => out.push(Prim::Fill { rings, color: c }),
+                        None => out.push(Prim::Fill { rings, color: c }),
+                    },
                 }
             }
         }
         out
     };
-    let stroke_prims = |pi: usize, geom: &PathGeometry| -> Vec<Prim> {
+    let stroke_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         if p.anchors.len() >= 2 {
@@ -478,7 +485,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
                             // opaque stroke maps 1:1 to a single scissor with no ambiguity.
                             let rect = [r.0, r.1, r.2, r.3];
                             // P11.2: the centerline is cut to page ∩ view; the scissor stays the page.
-                            let cut = match view_clip[pi] {
+                            let cut = match vclip {
                                 Some(v) => match rect_intersection(r, v) {
                                     Some(both) => both,
                                     None => continue,
@@ -498,7 +505,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
                         }
                     }
                     None => {
-                        for run in view_runs(pi, pts) {
+                        for run in cut_runs(pts, vclip) {
                             out.push(Prim::Stroke { pts: run, width: p.stroke_width, color: c, clip: None });
                         }
                     }
@@ -548,9 +555,25 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
     let emit_object = |pi: usize, p: &Path, geom: &PathGeometry, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
         let o = p.opacity;
         let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
-        let mut fp = fill_prims(pi, geom);
-        let mut sp = stroke_prims(pi, geom);
-        if o < 0.999 && !fp.is_empty() && !sp.is_empty() {
+        let vclip = view_clip[pi];
+        let mut fp = fill_prims(pi, geom, vclip);
+        let mut sp = stroke_prims(pi, geom, vclip);
+        // P11.2 (review P1-2): the object's TREATMENT (isolated / knockout / folded / opaque) is decided from
+        // its UNCUT prims, so view clipping never changes it — a stroke that only exists off screen must
+        // not flip an isolated object into a folded one as the view pans. View clipping only removes, so a
+        // non-empty cut side is non-empty uncut; only an empty cut side needs the uncut recheck (rare: a
+        // partly visible path whose fill or whole stroke lies off screen).
+        let (has_fill, has_stroke) = match vclip {
+            Some(_) if fp.is_empty() || sp.is_empty() => (
+                !fp.is_empty() || !fill_prims(pi, geom, None).is_empty(),
+                !sp.is_empty() || !stroke_prims(pi, geom, None).is_empty(),
+            ),
+            _ => (!fp.is_empty(), !sp.is_empty()),
+        };
+        if fp.is_empty() && sp.is_empty() {
+            return; // everything this object paints lies off screen — nothing to draw, no treatment needed
+        }
+        if o < 0.999 && has_fill && has_stroke {
             // isolated layer: flush the current opaque run, then emit the object as one unit (fill(s) then stroke(s))
             if !open.is_empty() {
                 groups.push(Group::Opaque(std::mem::take(open)));
@@ -558,7 +581,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
             let mut lp = fp;
             lp.append(&mut sp);
             groups.push(Group::Isolated { opacity: o, prims: lp });
-        } else if !fp.is_empty() && !sp.is_empty() && s_alpha < 0.999 {
+        } else if has_fill && has_stroke && s_alpha < 0.999 {
             // translucent stroke on a filled object → knockout: the band must blend against what's BEHIND
             // the object, never against the object's own fill (the fill is cut away under the band)
             if !open.is_empty() {
@@ -567,19 +590,28 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
             let mut lp = fp;
             lp.append(&mut sp);
             groups.push(Group::Knockout(lp));
-        } else if o < 0.999 {
-            // single-primitive translucent → fold opacity into the colour's own alpha, stay in the run
-            for mut pr in fp.drain(..) {
-                scale_alpha(&mut pr, o);
-                open.push(pr);
-            }
-            for mut pr in sp.drain(..) {
-                scale_alpha(&mut pr, o);
-                open.push(pr);
-            }
         } else {
-            open.append(&mut fp);
-            open.append(&mut sp);
+            // single-primitive translucent → fold opacity into the colour's own alpha, stay in the run
+            let mut own: Vec<Prim> = fp.drain(..).chain(sp.drain(..)).collect();
+            if o < 0.999 {
+                own.iter_mut().for_each(|pr| scale_alpha(pr, o));
+            }
+            // P11.2 (review P1-1): the renderer marks CONSECUTIVE translucent strokes of one colour with a
+            // single stencil coverage (so one object's rings paint once). That batching is meant to stay
+            // inside ONE object, but a run holds many objects: two separate translucent strokes of the same
+            // colour that end up adjacent — because the object between them is culled (or hidden, or
+            // simply absent) — would merge and their overlap would paint once instead of twice. Close the
+            // run at that object boundary so coverage batching never crosses objects.
+            let merges = |a: &Prim, b: &Prim| {
+                matches!((a, b), (Prim::Stroke { color: ca, .. }, Prim::Stroke { color: cb, .. })
+                    if ca[3] < 0.999 && ca == cb)
+            };
+            if let (Some(last), Some(first)) = (open.last(), own.first()) {
+                if merges(last, first) {
+                    groups.push(Group::Opaque(std::mem::take(open)));
+                }
+            }
+            open.append(&mut own);
         }
     };
 
