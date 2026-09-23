@@ -4,6 +4,7 @@
 pub mod boolean;
 pub mod command;
 pub mod editor;
+pub mod flatten;
 pub mod geom;
 pub mod model;
 pub mod scene;
@@ -14,6 +15,6 @@ pub use boolean::BoolOp;
 pub use command::EditCommand;
 pub use editor::{AlignMode, DistAxis, Editor, Mods, ToolKind, ZOrder};
 pub use geom::{Pt, Rgba, View};
-pub use scene::{build_scene, Group, Prim, Scene};
+pub use scene::{build_scene, build_scene_in_view, Group, Prim, Scene};
 pub mod file;
 pub use units::{DocUnits, Unit};

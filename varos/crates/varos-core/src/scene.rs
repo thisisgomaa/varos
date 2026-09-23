@@ -5,10 +5,12 @@
 //!               `overlay` = editing chrome (anchors/handles/skeleton/marquee) → CONSTANT screen size.
 
 use crate::editor::{Drag, Editor, SnapGuide, ToolKind, ANCHOR_R};
+use crate::flatten::PathGeometry;
 use crate::geom::{add, cubic, dist, snap45, sub, Pt, Rgba, View};
 use crate::model::Path;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 pub const ACCENT: Rgba = [0.047, 0.549, 0.914, 1.0];
 pub const ACCENT_FILL: Rgba = [0.047, 0.549, 0.914, 0.14];
@@ -23,6 +25,7 @@ pub const SNAP_GUIDE: Rgba = [0.05, 0.92, 0.55, 1.0]; // smart-guide green (vivi
 pub const SEG_HI: Rgba = [0.35, 0.80, 1.0, 1.0]; // grabbed/selected path segment — bright cyan (Illustrator feel)
 pub const GUIDE: Rgba = [0.0, 0.72, 0.92, 0.9]; // ruler guide line — cyan (Illustrator default)
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum Prim {
     Fill { rings: Vec<Vec<Pt>>, color: Rgba }, // outer ring + hole rings — filled even-odd (holes cut through)
     // `clip` (A2): the artboard rect [x0,y0,x1,y1] (world) this stroke is clipped to, if any. The centerline
@@ -47,6 +50,7 @@ pub enum Prim {
 /// (Opaque/Knockout/Isolated), so a translucent or knocked-out object inside a clip keeps its treatment —
 /// the clip just wraps them. Renderer-agnostic: the core emits this shape; how a backend clips (GPU
 /// stencil vs offscreen-multiply) is its own decision. `members: Vec<Group>` already admits nested clips.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Group {
     Opaque(Vec<Prim>),
     Knockout(Vec<Prim>),
@@ -194,7 +198,88 @@ fn scale_alpha(p: &mut Prim, o: f32) {
     c[3] *= o;
 }
 
+/// Screen pixels of slack around the visible frame (P11.2 culling/clipping). Must exceed the largest
+/// constant-screen-size overlay mark (a 6 px pivot disc, 5.5 px anchor marker, 2.4 px page frame) plus
+/// anti-aliasing, so nothing that reaches into the frame is ever culled or visibly cut.
+pub const VIEW_PAD_PX: f32 = 32.0;
+
+/// P11.2 view culling: the world rect a `frame`-sized viewport shows through `view`, plus `pad` (world
+/// units of `VIEW_PAD_PX`). Content is culled per path against this rect and ring/edge-clipped to it.
+#[derive(Clone, Copy, Debug)]
+pub struct ViewCull {
+    rect: R4,
+    pad: f32,
+}
+type R4 = (f32, f32, f32, f32);
+
+impl ViewCull {
+    /// `None` (no culling — draw everything, fail-open) for an empty frame or a degenerate zoom.
+    pub fn new(view: View, frame: [u32; 2]) -> Option<ViewCull> {
+        if frame[0] == 0 || frame[1] == 0 || !(view.zoom.is_finite() && view.zoom > 0.0) {
+            return None;
+        }
+        let a = view.s2w([0.0, 0.0]);
+        let b = view.s2w([frame[0] as f32, frame[1] as f32]);
+        let rect = (a[0].min(b[0]), a[1].min(b[1]), a[0].max(b[0]), a[1].max(b[1]));
+        if ![rect.0, rect.1, rect.2, rect.3].iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        Some(ViewCull { rect, pad: VIEW_PAD_PX / view.zoom })
+    }
+    /// The visible world rect grown by the pad plus `extra` world units.
+    fn grown(&self, extra: f32) -> R4 {
+        let g = self.pad + extra.max(0.0);
+        (self.rect.0 - g, self.rect.1 - g, self.rect.2 + g, self.rect.3 + g)
+    }
+    /// The clip rect for one path: its stroke band (half the width, extruded both ways) is always
+    /// covered, so a centerline cut at this rect ends — caps included — outside the frame.
+    fn path_rect(&self, stroke_width: f32) -> R4 {
+        self.grown(stroke_width * 0.5)
+    }
+    fn point_visible(&self, p: Pt) -> bool {
+        rect_contains_pt(self.grown(0.0), p)
+    }
+    fn segment_visible(&self, a: Pt, b: Pt) -> bool {
+        clip_seg_rect(a, b, self.grown(0.0)).is_some()
+    }
+}
+
+fn rect_contains_pt(r: R4, p: Pt) -> bool {
+    p[0] >= r.0 && p[0] <= r.2 && p[1] >= r.1 && p[1] <= r.3
+}
+fn rects_intersect(a: R4, b: R4) -> bool {
+    a.0 <= b.2 && b.0 <= a.2 && a.1 <= b.3 && b.1 <= a.3
+}
+fn rect_contains(outer: R4, inner: R4) -> bool {
+    inner.0 >= outer.0 && inner.1 >= outer.1 && inner.2 <= outer.2 && inner.3 <= outer.3
+}
+/// Cut a polyline to `clip` → its inside runs; with no rect, the polyline itself, untouched.
+fn cut_runs(pts: Vec<Pt>, clip: Option<R4>) -> Vec<Vec<Pt>> {
+    match clip {
+        Some(r) => clip_polyline_rect(&pts, r).into_iter().filter(|run| run.len() >= 2).collect(),
+        None => vec![pts],
+    }
+}
+fn rect_intersection(a: R4, b: R4) -> Option<R4> {
+    let r = (a.0.max(b.0), a.1.max(b.1), a.2.min(b.2), a.3.min(b.3));
+    (r.0 <= r.2 && r.1 <= r.3).then_some(r)
+}
+
+/// The whole scene, uncut (no view culling). Used where the entire document must be described —
+/// tests, exports, thumbnails. Shares the cross-frame flatten cache with `build_scene_in_view`.
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
+    build_scene_impl(ed, ppu, None)
+}
+
+/// P11.2: the canvas scene for a `frame`-sized viewport seen through `view`. Paths whose world bbox
+/// (control points, grown by half their stroke width + `VIEW_PAD_PX`) misses the frame are skipped
+/// entirely; partially visible paths have their rings and stroke runs clipped to that grown rect, reusing
+/// the artboard clippers. Everything inside the frame renders exactly as `build_scene` would.
+pub fn build_scene_in_view(ed: &Editor, view: View, frame: [u32; 2]) -> Scene {
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame))
+}
+
+fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
     let mut s = Scene::default();
     // content = z-ordered Groups. Opaque prims accumulate into the current run in PER-OBJECT paint order
     // (each object's fill immediately followed by its own stroke — Illustrator stacking: an object above
@@ -259,7 +344,6 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     // for the group — nothing inside escapes its cut, so a member standing on NO page vanishes
     // (exactly Figma's out-of-frame child: still a panel row, invisible on canvas).
     let any_clip = ed.doc.artboards.iter().any(|a| a.clip);
-    type R4 = (f32, f32, f32, f32);
     let clip_map: std::collections::HashMap<u32, Option<Vec<R4>>> = if any_clip {
         let mut units: std::collections::HashMap<u32, Option<Vec<R4>>> = std::collections::HashMap::new();
         let mut m = std::collections::HashMap::new();
@@ -301,24 +385,42 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
         clip_map.get(&ed.doc.paths[pi].id).cloned().flatten()
     };
-    // P11.1: adaptive curve subdivision is the expensive part. Build each path's transformed outer
-    // outline and hole rings once for this frame, then let fill, stroke, masks, and overlays clone the
-    // resulting points they own. This is intentionally frame-local; cross-frame geometry caching is P11.2.
-    struct PathGeometry {
-        outline: Vec<Pt>,
-        holes: Vec<Vec<Pt>>,
-    }
-    let geometry: Vec<PathGeometry> = ed
-        .doc
-        .paths
-        .iter()
-        .enumerate()
-        .map(|(pi, path)| PathGeometry {
-            outline: ed.doc.world_outline_px(pi, ppu),
-            holes: path.holes.iter().map(|hole| ed.doc.world_ring_px(hole, pi, ppu)).collect(),
-        })
-        .collect();
-    let fill_prims = |pi: usize, geom: &PathGeometry| -> Vec<Prim> {
+    // Adaptive curve subdivision is the expensive part. P11.1 made it once per frame; P11.2 makes it
+    // once per EDIT: each path's flattened WORLD outline + hole rings come from the cross-frame flatten
+    // cache (keyed by path id + exact geometry inputs + zoom bucket — `flatten.rs`), and fill, stroke,
+    // masks and overlays clone the points they own from that shared copy.
+    // P11.2 view culling: with a view, a path whose control bbox misses its grown view rect gets NO
+    // geometry (`None`) and is skipped by every consumer below; a path that is only partly inside gets
+    // `view_clip = Some(rect)` and its rings/runs are cut to that rect with the SAME clippers the artboard
+    // clip uses. A path wholly inside keeps `None` there and its prims are byte-identical to no culling.
+    let (geometry, view_clip): (Vec<Option<Arc<PathGeometry>>>, Vec<Option<R4>>) = {
+        let mut cache = ed.flatten_cache.lock();
+        let mut geometry = Vec::with_capacity(ed.doc.paths.len());
+        let mut view_clip = Vec::with_capacity(ed.doc.paths.len());
+        for (pi, path) in ed.doc.paths.iter().enumerate() {
+            let rect = cull.map(|c| c.path_rect(path.stroke_width));
+            let (bbox, geom) = cache.lookup(&ed.doc, pi, ppu, |bbox| rect.is_none_or(|r| rects_intersect(bbox, r)));
+            view_clip.push(match (rect, &geom) {
+                (Some(r), Some(_)) if !rect_contains(r, bbox) => Some(r),
+                _ => None,
+            });
+            geometry.push(geom);
+        }
+        cache.retain_live(&ed.doc);
+        (geometry, view_clip)
+    };
+    // Cut one ring (polygon) to the path's view rect, if it has one. Sutherland–Hodgman against a convex
+    // rect preserves every inside point's winding number, so even-odd fills and masks are unchanged
+    // inside the rect — and the rect is larger than the frame.
+    let view_ring = |pi: usize, ring: &[Pt]| -> Vec<Pt> {
+        match view_clip[pi] {
+            Some(r) => clip_poly_rect(ring, r),
+            None => ring.to_vec(),
+        }
+    };
+    // Cut one polyline to the path's view rect → the inside runs (one run, unchanged, when no rect).
+    let view_runs = |pi: usize, pts: Vec<Pt>| -> Vec<Vec<Pt>> { cut_runs(pts, view_clip[pi]) };
+    let fill_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         // An open path still FILLS (Illustrator: the fill closes visually with an implied straight line
@@ -333,6 +435,14 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                 match clip_rects(pi) {
                     Some(rects) => {
                         for r in rects {
+                            // P11.2: a partly visible path cuts to page ∩ view in ONE pass.
+                            let r = match vclip {
+                                Some(v) => match rect_intersection(r, v) {
+                                    Some(both) => both,
+                                    None => continue, // this page's part is off screen
+                                },
+                                None => r,
+                            };
                             let clipped: Vec<Vec<Pt>> = rings
                                 .iter()
                                 .map(|ring| clip_poly_rect(ring, r))
@@ -343,13 +453,25 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                             }
                         }
                     }
-                    None => out.push(Prim::Fill { rings, color: c }),
+                    None => match vclip {
+                        Some(v) => {
+                            let clipped: Vec<Vec<Pt>> = rings
+                                .iter()
+                                .map(|ring| clip_poly_rect(ring, v))
+                                .filter(|ring| ring.len() >= 3)
+                                .collect();
+                            if clipped.first().is_some_and(|o| o.len() >= 3) {
+                                out.push(Prim::Fill { rings: clipped, color: c });
+                            }
+                        }
+                        None => out.push(Prim::Fill { rings, color: c }),
+                    },
                 }
             }
         }
         out
     };
-    let stroke_prims = |pi: usize, geom: &PathGeometry| -> Vec<Prim> {
+    let stroke_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         if p.anchors.len() >= 2 {
@@ -362,7 +484,15 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                             // (not just this centerline) to the page edge — A2. One run ⇒ one rect, so an
                             // opaque stroke maps 1:1 to a single scissor with no ambiguity.
                             let rect = [r.0, r.1, r.2, r.3];
-                            for run in clip_polyline_rect(&pts, r) {
+                            // P11.2: the centerline is cut to page ∩ view; the scissor stays the page.
+                            let cut = match vclip {
+                                Some(v) => match rect_intersection(r, v) {
+                                    Some(both) => both,
+                                    None => continue,
+                                },
+                                None => r,
+                            };
+                            for run in clip_polyline_rect(&pts, cut) {
                                 if run.len() >= 2 {
                                     out.push(Prim::Stroke {
                                         pts: run,
@@ -374,7 +504,11 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
                             }
                         }
                     }
-                    None => out.push(Prim::Stroke { pts, width: p.stroke_width, color: c, clip: None }),
+                    None => {
+                        for run in cut_runs(pts, vclip) {
+                            out.push(Prim::Stroke { pts: run, width: p.stroke_width, color: c, clip: None });
+                        }
+                    }
                 };
                 push(geom.outline.clone()); // A7 seam: WORLD outline (identity ⇒ today)
                 for hole in &geom.holes {
@@ -395,9 +529,19 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         let mut rings: Vec<Vec<Pt>> = Vec::new();
         if let Some(mc) = ed.doc.node_mask_child(clip_nid) {
             for pid in ed.doc.node_paths(mc) {
+                // P11.2: a culled mask path covers nothing on screen → contributes no ring; a partly
+                // visible one is cut to its view rect (winding preserved inside it, see `view_ring`). A
+                // mask with no ring left clips its members to NOTHING (renderer: empty fan ⇒ no 0x02 bit)
+                // — correct, because the mask does not reach the frame.
                 if let Some(pi) = ed.doc.pidx(pid) {
-                    rings.push(geometry[pi].outline.clone());
-                    rings.extend(geometry[pi].holes.iter().cloned());
+                    if let Some(geom) = geometry[pi].as_deref() {
+                        rings.extend(
+                            std::iter::once(&geom.outline)
+                                .chain(geom.holes.iter())
+                                .map(|ring| view_ring(pi, ring))
+                                .filter(|ring| ring.len() >= 3 || view_clip[pi].is_none()),
+                        );
+                    }
                 }
             }
         }
@@ -411,9 +555,25 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     let emit_object = |pi: usize, p: &Path, geom: &PathGeometry, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
         let o = p.opacity;
         let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
-        let mut fp = fill_prims(pi, geom);
-        let mut sp = stroke_prims(pi, geom);
-        if o < 0.999 && !fp.is_empty() && !sp.is_empty() {
+        let vclip = view_clip[pi];
+        let mut fp = fill_prims(pi, geom, vclip);
+        let mut sp = stroke_prims(pi, geom, vclip);
+        // P11.2 (review P1-2): the object's TREATMENT (isolated / knockout / folded / opaque) is decided from
+        // its UNCUT prims, so view clipping never changes it — a stroke that only exists off screen must
+        // not flip an isolated object into a folded one as the view pans. View clipping only removes, so a
+        // non-empty cut side is non-empty uncut; only an empty cut side needs the uncut recheck (rare: a
+        // partly visible path whose fill or whole stroke lies off screen).
+        let (has_fill, has_stroke) = match vclip {
+            Some(_) if fp.is_empty() || sp.is_empty() => (
+                !fp.is_empty() || !fill_prims(pi, geom, None).is_empty(),
+                !sp.is_empty() || !stroke_prims(pi, geom, None).is_empty(),
+            ),
+            _ => (!fp.is_empty(), !sp.is_empty()),
+        };
+        if fp.is_empty() && sp.is_empty() {
+            return; // everything this object paints lies off screen — nothing to draw, no treatment needed
+        }
+        if o < 0.999 && has_fill && has_stroke {
             // isolated layer: flush the current opaque run, then emit the object as one unit (fill(s) then stroke(s))
             if !open.is_empty() {
                 groups.push(Group::Opaque(std::mem::take(open)));
@@ -421,7 +581,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             let mut lp = fp;
             lp.append(&mut sp);
             groups.push(Group::Isolated { opacity: o, prims: lp });
-        } else if !fp.is_empty() && !sp.is_empty() && s_alpha < 0.999 {
+        } else if has_fill && has_stroke && s_alpha < 0.999 {
             // translucent stroke on a filled object → knockout: the band must blend against what's BEHIND
             // the object, never against the object's own fill (the fill is cut away under the band)
             if !open.is_empty() {
@@ -430,19 +590,28 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             let mut lp = fp;
             lp.append(&mut sp);
             groups.push(Group::Knockout(lp));
-        } else if o < 0.999 {
-            // single-primitive translucent → fold opacity into the colour's own alpha, stay in the run
-            for mut pr in fp.drain(..) {
-                scale_alpha(&mut pr, o);
-                open.push(pr);
-            }
-            for mut pr in sp.drain(..) {
-                scale_alpha(&mut pr, o);
-                open.push(pr);
-            }
         } else {
-            open.append(&mut fp);
-            open.append(&mut sp);
+            // single-primitive translucent → fold opacity into the colour's own alpha, stay in the run
+            let mut own: Vec<Prim> = fp.drain(..).chain(sp.drain(..)).collect();
+            if o < 0.999 {
+                own.iter_mut().for_each(|pr| scale_alpha(pr, o));
+            }
+            // P11.2 (review P1-1): the renderer marks CONSECUTIVE translucent strokes of one colour with a
+            // single stencil coverage (so one object's rings paint once). That batching is meant to stay
+            // inside ONE object, but a run holds many objects: two separate translucent strokes of the same
+            // colour that end up adjacent — because the object between them is culled (or hidden, or
+            // simply absent) — would merge and their overlap would paint once instead of twice. Close the
+            // run at that object boundary so coverage batching never crosses objects.
+            let merges = |a: &Prim, b: &Prim| {
+                matches!((a, b), (Prim::Stroke { color: ca, .. }, Prim::Stroke { color: cb, .. })
+                    if ca[3] < 0.999 && ca == cb)
+            };
+            if let (Some(last), Some(first)) = (open.last(), own.first()) {
+                if merges(last, first) {
+                    groups.push(Group::Opaque(std::mem::take(open)));
+                }
+            }
+            open.append(&mut own);
         }
     };
 
@@ -456,6 +625,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     let mut clip_members: Vec<Group> = Vec::new();
     let mut clip_open: Vec<Prim> = Vec::new();
     for (pi, p) in ed.doc.paint_list() {
+        // P11.2: a culled path is skipped exactly like a hidden one — BEFORE the clip-run tracking, so a
+        // clip's remaining visible members stay one contiguous run.
+        let Some(geom) = geometry[pi].as_deref() else { continue };
         if ed.doc.eff_hidden(p.id) {
             continue;
         } // cascades from layer/group eyes
@@ -475,9 +647,9 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             cur_clip = unit_clip;
         }
         if cur_clip.is_some() {
-            emit_object(pi, p, &geometry[pi], &mut clip_members, &mut clip_open);
+            emit_object(pi, p, geom, &mut clip_members, &mut clip_open);
         } else {
-            emit_object(pi, p, &geometry[pi], &mut groups, &mut open);
+            emit_object(pi, p, geom, &mut groups, &mut open);
         }
     }
     // trailing flush: a clip (or opaque run) that reaches the end of the list
@@ -503,18 +675,23 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
     }
     // editing skeleton: a thin accent outline for any path being hovered/selected/drawn
     for (pi, geom) in geometry.iter().enumerate() {
+        let Some(geom) = geom.as_deref() else { continue }; // P11.2: culled — wholly off screen
         if ed.doc.eff_hidden(ed.doc.paths[pi].id) {
             continue;
         } // cascades from layer/group eyes
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
             // A7 seam: WORLD outline + hole rings (identity ⇒ today's geometry).
-            s.overlay.push(Prim::Stroke { pts: geom.outline.clone(), width: 1.7, color: ACCENT, clip: None });
+            for run in view_runs(pi, geom.outline.clone()) {
+                s.overlay.push(Prim::Stroke { pts: run, width: 1.7, color: ACCENT, clip: None });
+            }
             for hole in &geom.holes {
                 let mut r = hole.clone();
                 if let Some(&f) = r.first() {
                     r.push(f);
                 }
-                s.overlay.push(Prim::Stroke { pts: r, width: 1.7, color: ACCENT, clip: None });
+                for run in view_runs(pi, r) {
+                    s.overlay.push(Prim::Stroke { pts: run, width: 1.7, color: ACCENT, clip: None });
+                }
             }
         }
     }
@@ -630,17 +807,20 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             }
         }
     }
+    // P11.2: with a view, a handle line is kept when any part of it reaches the padded frame and a
+    // handle disc / anchor marker when its centre does (every mark is ≤ 6 px < VIEW_PAD_PX), so a mark
+    // that is even partly on screen always survives. Culling never touches WHICH anchors show handles.
+    let seg_visible = |a: Pt, b: Pt| cull.is_none_or(|c| c.segment_visible(a, b));
+    let pt_visible = |p: Pt| cull.is_none_or(|c| c.point_visible(p));
     for p in &ed.doc.paths {
         let xf = ed.doc.unit_xform(p.id); // A7 seam: handles drawn at WORLD positions (identity ⇒ today)
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             if show.contains(&a.id) {
                 for h in [a.hin, a.hout].into_iter().flatten() {
-                    s.overlay.push(Prim::Stroke {
-                        pts: vec![xf.apply(a.p), xf.apply(h)],
-                        width: 1.0,
-                        color: HANDLE_COL,
-                        clip: None,
-                    });
+                    let (ap, hp) = (xf.apply(a.p), xf.apply(h));
+                    if seg_visible(ap, hp) {
+                        s.overlay.push(Prim::Stroke { pts: vec![ap, hp], width: 1.0, color: HANDLE_COL, clip: None });
+                    }
                 }
             }
         }
@@ -650,7 +830,10 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             if show.contains(&a.id) {
                 for h in [a.hin, a.hout].into_iter().flatten() {
-                    s.overlay.push(Prim::Disc { c: xf.apply(h), r: 4.0, color: HANDLE_COL });
+                    let hp = xf.apply(h);
+                    if pt_visible(hp) {
+                        s.overlay.push(Prim::Disc { c: hp, r: 4.0, color: HANDLE_COL });
+                    }
                 }
             }
         }
@@ -662,8 +845,11 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
         }
         let xf = ed.doc.unit_xform(p.id); // A7 seam: markers at WORLD anchor positions (identity ⇒ today)
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
-            let sel = ed.selected.contains(&a.id);
             let ap = xf.apply(a.p);
+            if !pt_visible(ap) {
+                continue; // P11.2: marker wholly off screen
+            }
+            let sel = ed.selected.contains(&a.id);
             if a.smooth {
                 if sel {
                     s.overlay.push(Prim::Disc { c: ap, r: 5.0, color: ACCENT });
@@ -709,12 +895,12 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
             // a whole snapped PATH lights up (Illustrator's "path" highlight)
             SnapGuide::PathHi { pid } => {
                 if let Some(pi) = ed.doc.pidx(*pid) {
-                    s.overlay.push(Prim::Stroke {
-                        pts: geometry[pi].outline.clone(), // A7 seam (identity ⇒ today)
-                        width: 2.0,
-                        color: SNAP_GUIDE,
-                        clip: None,
-                    });
+                    // A7 seam (identity ⇒ today). P11.2: culled ⇒ off screen; partial ⇒ cut to view.
+                    if let Some(geom) = geometry[pi].as_deref() {
+                        for run in view_runs(pi, geom.outline.clone()) {
+                            s.overlay.push(Prim::Stroke { pts: run, width: 2.0, color: SNAP_GUIDE, clip: None });
+                        }
+                    }
                 }
             }
         }
