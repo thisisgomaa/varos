@@ -365,6 +365,9 @@ pub struct Editor {
     /// the app) = unsaved changes. (`dirty` below is a PER-GESTURE flag for begin/commit, not this.)
     pub rev: u64,
     pub dirty: bool,
+    /// P11.2 cross-frame flatten cache (render-side memo, never serialized, never part of undo). Keyed by
+    /// each path's exact geometry inputs, so it can never serve stale geometry — see `flatten.rs`.
+    pub flatten_cache: crate::flatten::SharedFlattenCache,
     undo: Vec<Document>,
     redo: Vec<Document>,
     pending: Option<Document>,
@@ -414,6 +417,7 @@ impl Editor {
             recent_colors: vec![],
             rev: 0,
             dirty: false,
+            flatten_cache: Default::default(),
             undo: vec![],
             redo: vec![],
             pending: None,

@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use varos_core::editor::{Editor, ToolKind};
 use varos_core::geom::View;
 use varos_core::model::{Anchor, Path};
-use varos_core::scene::{build_scene, scene_signature};
-use varos_render_wgpu::perf::profile_content;
+use varos_core::scene::{build_scene_in_view, scene_signature};
+use varos_render_wgpu::perf::{profile_content, profile_overlay};
 
 const WIDTH: f32 = 1920.0;
 const HEIGHT: f32 = 1080.0;
@@ -69,6 +69,13 @@ fn cases() -> Vec<Case> {
     single.tool = ToolKind::Direct;
     single.doc.paths.push(path);
 
+    let mut extreme = Editor::new();
+    let path = curved_path(10, 100, [320.0, 220.0], 170.0, 150);
+    extreme.objsel.insert(path.id);
+    extreme.selected.extend(path.anchors.iter().map(|anchor| anchor.id));
+    extreme.tool = ToolKind::Direct;
+    extreme.doc.paths.push(path);
+
     let mut rectangles = Editor::new();
     for i in 0..500u32 {
         let col = i % 25;
@@ -96,6 +103,9 @@ fn cases() -> Vec<Case> {
         ));
     }
 
+    let mut rect_partial = Editor::new();
+    rect_partial.doc.paths = rectangles.doc.paths.clone();
+
     vec![
         Case {
             name: "A curved-150 selected ppu=3.0",
@@ -108,6 +118,19 @@ fn cases() -> Vec<Case> {
             view: View { pan: [0.0, 0.0], zoom: 0.3 },
         },
         Case { name: "C curves-100 ppu=1.0", editor: finish(curves), view: View::identity() },
+        // P11.2 symptom (d): 4000% zoom on the selected 150-anchor path, the view centred on its right
+        // edge so only a sliver of the outline (and a couple of handles) is on screen.
+        Case {
+            name: "D curved-150 selected ppu=40",
+            editor: finish(extreme),
+            view: View { pan: [WIDTH * 0.5 - 490.0 * 40.0, HEIGHT * 0.5 - 220.0 * 40.0], zoom: 40.0 },
+        },
+        // P11.2 many-objects culling: scene B's 500 rectangles at 400%, so only one corner is on screen.
+        Case {
+            name: "E rectangles-500 ppu=4.0 partial",
+            editor: finish(rect_partial),
+            view: View { pan: [0.0, 0.0], zoom: 4.0 },
+        },
     ]
 }
 
@@ -116,27 +139,66 @@ fn median(values: &mut [Duration]) -> Duration {
     values[values.len() / 2]
 }
 
+struct Frame {
+    scene: Duration,
+    content: Duration,
+    overlay: Duration,
+    total: Duration,
+    counts: (usize, usize, usize, usize),
+    overlay_vertices: usize,
+}
+
+/// One full CPU canvas frame, exactly as the app builds it (P11.2: view-culled scene).
+fn frame(case: &Case) -> Frame {
+    let frame_start = Instant::now();
+    let scene_start = Instant::now();
+    let scene = black_box(build_scene_in_view(black_box(&case.editor), case.view, [WIDTH as u32, HEIGHT as u32]));
+    let scene_elapsed = scene_start.elapsed();
+    let profile = profile_content(&scene, case.view, WIDTH, HEIGHT);
+    let (overlay, overlay_vertices) = profile_overlay(&scene.overlay, case.view, WIDTH, HEIGHT);
+    black_box(&scene);
+    Frame {
+        scene: scene_elapsed,
+        content: profile.elapsed,
+        overlay,
+        total: frame_start.elapsed(),
+        counts: (profile.fill_vertices, profile.foreground_vertices, profile.opacity_vertices, profile.draw_groups),
+        overlay_vertices,
+    }
+}
+
+fn ms(values: &mut [Duration]) -> f64 {
+    median(values).as_secs_f64() * 1_000.0
+}
+
 fn main() {
     println!("P11 headless CPU harness: {RUNS} measured runs, median, 1920x1080");
     for case in cases() {
-        let _ = profile_content(&build_scene(&case.editor, case.view.zoom), case.view, WIDTH, HEIGHT);
-        let mut scene_times = Vec::with_capacity(RUNS);
-        let mut content_times = Vec::with_capacity(RUNS);
-        let mut frame_times = Vec::with_capacity(RUNS);
+        let _ = frame(&case); // warm-up
+        let (mut scene_cold, mut scene_warm) = (Vec::with_capacity(RUNS), Vec::with_capacity(RUNS));
+        let (mut content_times, mut overlay_times) = (Vec::with_capacity(RUNS), Vec::with_capacity(RUNS));
+        let (mut cold_times, mut warm_times) = (Vec::with_capacity(RUNS), Vec::with_capacity(RUNS));
         let mut cache_hit_times = Vec::with_capacity(RUNS);
         let mut counts = (0, 0, 0, 0);
+        let mut overlay_vertices = 0;
         let expected_signature = scene_signature(&case.editor, case.view, [WIDTH as u32, HEIGHT as u32]);
         for _ in 0..RUNS {
-            let frame_start = Instant::now();
-            let scene_start = Instant::now();
-            let scene = black_box(build_scene(black_box(&case.editor), case.view.zoom));
-            scene_times.push(scene_start.elapsed());
-            let profile = profile_content(&scene, case.view, WIDTH, HEIGHT);
-            content_times.push(profile.elapsed);
-            counts =
-                (profile.fill_vertices, profile.foreground_vertices, profile.opacity_vertices, profile.draw_groups);
-            black_box(&scene);
-            frame_times.push(frame_start.elapsed());
+            // cold: the flatten cache is empty (first frame after open / a zoom-bucket change)
+            case.editor.flatten_cache.lock().clear();
+            let cold = frame(&case);
+            scene_cold.push(cold.scene);
+            content_times.push(cold.content);
+            overlay_times.push(cold.overlay);
+            cold_times.push(cold.total);
+            counts = cold.counts;
+            overlay_vertices = cold.overlay_vertices;
+
+            // warm: the scene signature missed (pan, hover, selection, an edit elsewhere) but every
+            // unchanged path's flatten is reused from the cache
+            let warm = frame(&case);
+            assert_eq!(warm.counts, cold.counts, "warm frame must emit exactly the cold geometry");
+            scene_warm.push(warm.scene);
+            warm_times.push(warm.total);
 
             let hit_start = Instant::now();
             let signature =
@@ -145,15 +207,20 @@ fn main() {
             cache_hit_times.push(hit_start.elapsed());
         }
         println!(
-            "{:<34} scene={:>8.3}ms content={:>8.3}ms cold={:>8.3}ms hit={:>8.3}ms vertices={}/{}/{} groups={}",
+            "{:<34} scene_cold={:>7.3}ms scene_warm={:>7.3}ms content={:>7.3}ms overlay={:>7.3}ms \
+             cold={:>7.3}ms warm={:>7.3}ms hit={:>7.3}ms vertices={}/{}/{} overlay_vertices={} groups={}",
             case.name,
-            median(&mut scene_times).as_secs_f64() * 1_000.0,
-            median(&mut content_times).as_secs_f64() * 1_000.0,
-            median(&mut frame_times).as_secs_f64() * 1_000.0,
-            median(&mut cache_hit_times).as_secs_f64() * 1_000.0,
+            ms(&mut scene_cold),
+            ms(&mut scene_warm),
+            ms(&mut content_times),
+            ms(&mut overlay_times),
+            ms(&mut cold_times),
+            ms(&mut warm_times),
+            ms(&mut cache_hit_times),
             counts.0,
             counts.1,
             counts.2,
+            overlay_vertices,
             counts.3,
         );
     }

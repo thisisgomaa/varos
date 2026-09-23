@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{self, Pt, View};
-use varos_core::scene::{build_scene, scene_signature};
+use varos_core::scene::{build_scene_in_view, scene_signature};
 use varos_core::EditCommand;
 use varos_render_wgpu::Renderer;
 #[cfg(windows)]
@@ -673,7 +673,7 @@ fn main() {
         if gui.splashing() {
             renderer.render_splash(&jobs, &tdelta, &screen);
         } else {
-            let world = build_scene(&ed, view.zoom);
+            let world = build_scene_in_view(&ed, view, [sz0.width, sz0.height]);
             renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
         }
     }
@@ -1064,7 +1064,7 @@ fn main() {
                             let rendered = if cache_hit {
                                 renderer.render_ui_cached(&jobs, &tdelta, &screen)
                             } else {
-                                let world = build_scene(&ed, view.zoom);
+                                let world = build_scene_in_view(&ed, view, [psz.width, psz.height]);
                                 renderer.render_ui(&world, view, &jobs, &tdelta, &screen)
                             };
                             last_scene_signature = rendered.then_some(signature);

@@ -755,4 +755,52 @@ mod tests {
         };
         assert!(matches!(draws[0], Draw::Knockout { .. }), "knockout also applies inside an isolated layer");
     }
+
+    /// Review P1-1, end to end on the CPU: two crossing 50%-red strokes separated in z by an opaque
+    /// rectangle that is wholly off screen. Uncut, the rectangle's fill splits them into two coverage
+    /// draws (the crossing paints twice). Culling the rectangle must NOT merge them into one.
+    #[test]
+    fn culling_keeps_one_coverage_draw_per_translucent_object() {
+        use varos_core::editor::Editor;
+        use varos_core::model::{Anchor, Path};
+        use varos_core::scene::{build_scene, build_scene_in_view};
+        let anc = |id: u32, x: f32, y: f32| Anchor { id, p: [x, y], hin: None, hout: None, smooth: false };
+        let red = Some([1.0, 0.0, 0.0, 0.5]);
+        let mut ed = Editor::new();
+        ed.doc.paths = vec![
+            Path::new(1, vec![anc(100, 100.0, 100.0), anc(101, 500.0, 400.0)], false, None, red, 6.0),
+            Path::new(
+                2,
+                vec![
+                    anc(200, 3_000.0, 0.0),
+                    anc(201, 3_100.0, 0.0),
+                    anc(202, 3_100.0, 100.0),
+                    anc(203, 3_000.0, 100.0),
+                ],
+                true,
+                Some([0.2, 0.2, 0.2, 1.0]),
+                None,
+                1.0,
+            ),
+            Path::new(3, vec![anc(300, 100.0, 400.0), anc(301, 500.0, 100.0)], false, None, red, 6.0),
+        ];
+        ed.doc.ids = 10_000;
+        ed.doc.sync_tree();
+        let view = View::identity();
+        let coverage_draws = |groups: &[Group]| -> usize {
+            let (_, _, _, metas) = build_content(groups, view, 1.0, 800.0, 600.0);
+            metas
+                .iter()
+                .flat_map(|m| match m {
+                    GroupDraw::Opaque { draws } | GroupDraw::Layer { draws, .. } => draws.iter(),
+                    GroupDraw::Clip { members, .. } => members.iter(),
+                })
+                .filter(|d| matches!(d, Draw::StrokeCov { .. }))
+                .count()
+        };
+        let full = build_scene(&ed, 1.0);
+        let cut = build_scene_in_view(&ed, view, [800, 600]);
+        assert_eq!(coverage_draws(&full.content), 2, "uncut: one coverage draw per stroke");
+        assert_eq!(coverage_draws(&cut.content), 2, "culled: the strokes must not merge into one coverage");
+    }
 }

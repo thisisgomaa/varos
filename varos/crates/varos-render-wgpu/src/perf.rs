@@ -3,11 +3,11 @@
 //! This deliberately exposes counts and elapsed time, not renderer internals. It needs no adapter,
 //! surface, or window, so the same synthetic workload runs on developer machines and in CI.
 
-use crate::tess::build_content;
+use crate::tess::{build_content, build_fg};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 use varos_core::geom::View;
-use varos_core::scene::Scene;
+use varos_core::scene::{Prim, Scene};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CpuContentProfile {
@@ -30,4 +30,12 @@ pub fn profile_content(scene: &Scene, view: View, width: f32, height: f32) -> Cp
         opacity_vertices: opacity.len(),
         draw_groups: groups.len(),
     }
+}
+
+/// Tessellate one scene's constant-screen-size editing overlay (skeleton, handles, anchor markers)
+/// without touching GPU state. P11.2: selected paths at extreme zoom are dominated by this bucket.
+pub fn profile_overlay(overlay: &[Prim], view: View, width: f32, height: f32) -> (Duration, usize) {
+    let start = Instant::now();
+    let vertices = black_box(build_fg(black_box(overlay), view, 1.0, width, height));
+    (start.elapsed(), vertices.len())
 }
