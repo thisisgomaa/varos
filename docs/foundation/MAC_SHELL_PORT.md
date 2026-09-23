@@ -77,3 +77,25 @@ Rotate* → `Crosshair`. Honest limit: macOS does not show our pen-nib / add / d
    same SVG bitmaps, with Retina scaling.
 3. **Screen eyedropper disabled** (needs macOS Screen Recording permission + CoreGraphics capture).
 4. **No single-instance / "open with" forwarding** and **no remembered window geometry**.
+
+## Run on macOS (Varos.app bundle, added 2026-09-23)
+
+**Reason:** Ahmed opens Varos like any Mac app (Spotlight / Launchpad / Finder), not from a terminal.
+
+- **Build + install:** from the repo root run `tools/mac/bundle.sh`. It runs
+  `cargo build --release -p varos-app` (a no-op when the build is fresh; `SKIP_BUILD=1` skips it),
+  assembles `varos/target/mac/Varos.app` (ignored via `target/`), turns `icon.png` into `Varos.icns`,
+  writes `Info.plist` (bundle id `com.varos.editor`, version from `varos-app`'s `Cargo.toml`,
+  macOS 13+, Retina on, `.vrs` document type), ad-hoc signs it, and copies it to
+  `/Applications/Varos.app` (or `~/Applications/Varos.app` when `/Applications` is not writable).
+  No sudo. Re-run it after every pull to replace the installed copy.
+- **Not notarized.** The bundle is **ad-hoc signed for local use on this Mac only** — not for
+  sharing. A copy built here carries no quarantine flag, so Gatekeeper lets it open normally
+  (`spctl --assess` still says "rejected", which is expected for ad-hoc). If a copy ever arrives
+  from another Mac/download and macOS blocks it, right-click → **Open** once, or allow it in
+  System Settings → Privacy & Security.
+- **`.vrs` double-click:** Finder now lists Varos as the `.vrs` app and launches it, but the file is
+  **not loaded yet** — macOS hands files over as an "open document" event, not a command-line
+  argument, and the app does not handle that event (gap 4 above).
+- **Icon:** `icon.png` is 279×279, so the 512/1024 icon sizes are upscaled and slightly soft; a
+  1024×1024 master would fix that.
