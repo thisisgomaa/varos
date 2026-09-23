@@ -150,7 +150,9 @@ What the numbers say:
 The P11.1 join elision left open wedges in thick curved strokes (the "spokes" artifact; see
 `P11_1_PERF.md`, "Correction"). The fix adds one bevel triangle at each point of a curve, and replaces
 the 24-triangle disc at a real corner with a round sector on the outer side only, split finely enough
-that it stays within 0.25 px of the true circle. This changes vertex counts. Measured with the same
+that it stays within 0.25 px of the true circle (up to the 128-triangle cap per join: a 180° turn
+reaches it at a radius of about 3,320 screen px, and past that the gap grows, e.g. 0.753 px at
+r = 10,000 px). This changes vertex counts. Measured with the same
 alternating method (9 rounds, load average about 2.6), `main` at `7f3d883` against the fix, two runs:
 
 | Scene | main cold | fix cold | fix warm | fill / fg / overlay vertices, main | fix |
