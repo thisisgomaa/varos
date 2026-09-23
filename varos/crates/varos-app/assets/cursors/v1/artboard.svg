@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <title>Varos — Rectangle / shape crosshair</title>
-  <desc>Varos cursor v1 — shape-rect. Hotspot 11,11 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
+  <title>Varos — Artboard tool (crosshair + frame)</title>
+  <desc>Varos cursor v1 — artboard. Hotspot 11,11 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
   <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
     <g fill="#ffffff" stroke="none">
       <rect x="9.25" y="1.25" width="3.5" height="8" rx="1"/>
@@ -18,11 +18,17 @@
     <g fill="#141313" stroke="none">
       <rect x="10.25" y="10.25" width="1.5" height="1.5"/>
     </g>
-    <g fill="#ffffff" stroke="#ffffff" stroke-width="3.5">
-      <rect x="18" y="18" width="6" height="6" rx="1.25"/>
+    <g fill="#ffffff" stroke="none">
+      <rect x="17.75" y="16.25" width="3.5" height="9.5" rx="1"/>
+      <rect x="20.75" y="16.25" width="3.5" height="9.5" rx="1"/>
+      <rect x="16.25" y="17.75" width="9.5" height="3.5" rx="1"/>
+      <rect x="16.25" y="20.75" width="9.5" height="3.5" rx="1"/>
     </g>
-    <g fill="#ffffff" stroke="#141313" stroke-width="1.5">
-      <rect x="18" y="18" width="6" height="6" rx="1.25"/>
+    <g fill="none" stroke="#141313" stroke-width="1.5" stroke-linecap="butt">
+      <path d="M19.5 17.25V24.75"/>
+      <path d="M22.5 17.25V24.75"/>
+      <path d="M17.25 19.5H24.75"/>
+      <path d="M17.25 22.5H24.75"/>
     </g>
   </g>
 </svg>

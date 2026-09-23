@@ -1,33 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <title>Varos — Hand (pan)</title>
-  <desc>Varos cursor v1 — hand. Hotspot 11,12 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
+  <title>Varos — Grab (panning)</title>
+  <desc>Varos cursor v1 — grab. Hotspot 11,12 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
   <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
     <g fill="none" stroke="#ffffff" stroke-width="7">
-      <path d="M7.5 6V16"/>
-      <path d="M11 4.5V16"/>
-      <path d="M14.5 5.25V16"/>
-      <path d="M18 7.25V16"/>
-      <path d="M8.5 17.5L4.25 12.75"/>
+      <path d="M7.5 10.25V16"/>
+      <path d="M11 9.5V16"/>
+      <path d="M14.5 9.75V16"/>
+      <path d="M18 10.5V16"/>
+      <path d="M9 17.25L6.5 14.75"/>
     </g>
     <g fill="#ffffff" stroke="#ffffff" stroke-width="5">
       <rect x="6.5" y="11.5" width="12.5" height="9.5" rx="4"/>
     </g>
     <g fill="none" stroke="#141313" stroke-width="5">
-      <path d="M7.5 6V16"/>
-      <path d="M11 4.5V16"/>
-      <path d="M14.5 5.25V16"/>
-      <path d="M18 7.25V16"/>
-      <path d="M8.5 17.5L4.25 12.75"/>
+      <path d="M7.5 10.25V16"/>
+      <path d="M11 9.5V16"/>
+      <path d="M14.5 9.75V16"/>
+      <path d="M18 10.5V16"/>
+      <path d="M9 17.25L6.5 14.75"/>
     </g>
     <g fill="#141313" stroke="#141313" stroke-width="3">
       <rect x="6.5" y="11.5" width="12.5" height="9.5" rx="4"/>
     </g>
     <g fill="none" stroke="#ffffff" stroke-width="2">
-      <path d="M7.5 6V16"/>
-      <path d="M11 4.5V16"/>
-      <path d="M14.5 5.25V16"/>
-      <path d="M18 7.25V16"/>
-      <path d="M8.5 17.5L4.25 12.75"/>
+      <path d="M7.5 10.25V16"/>
+      <path d="M11 9.5V16"/>
+      <path d="M14.5 9.75V16"/>
+      <path d="M18 10.5V16"/>
+      <path d="M9 17.25L6.5 14.75"/>
     </g>
     <g fill="#ffffff" stroke="none">
       <rect x="6.5" y="11.5" width="12.5" height="9.5" rx="4"/>

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
   <title>Varos — Rotate (top-right corner)</title>
-  <desc>Varos cursor v1 — rotate. Hotspot 11,11 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data. Base glyph for CK::RotateNE; other 7 directions = rotate this about the hotspot in 45° steps.</desc>
+  <desc>Varos cursor v1 — rotate-ne. Hotspot 11,11 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data. Base glyph for the 8 rotate cursors (rotate-*.svg are this turned about the hotspot in 45° steps).</desc>
   <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
     <g fill="none" stroke="#ffffff" stroke-width="3.5">
       <path d="M4 6H6A10 10 0 0 1 16 16V18"/>

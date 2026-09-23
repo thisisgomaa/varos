@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <title>Varos — Zoom in</title>
-  <desc>Varos cursor v1 — zoom-in. Hotspot 9,9 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
+  <title>Varos — Zoom out</title>
+  <desc>Varos cursor v1 — zoom-out. Hotspot 9,9 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
   <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
     <g fill="none" stroke="#ffffff" stroke-width="3.5">
       <path d="M14 14L20 20"/>
@@ -16,7 +16,6 @@
     </g>
     <g fill="none" stroke="#141313" stroke-width="1.5" stroke-linecap="butt">
       <path d="M6.25 9H11.75"/>
-      <path d="M9 6.25V11.75"/>
     </g>
   </g>
 </svg>

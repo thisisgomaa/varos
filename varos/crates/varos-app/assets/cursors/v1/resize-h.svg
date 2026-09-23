@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Varos — Resize horizontal</title>
+  <desc>Varos cursor v1 — resize-h. Hotspot 10,10 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
+  <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none" stroke="#ffffff" stroke-width="3.5">
+      <path d="M2.75 10H17.25"/>
+      <path d="M5.5 7.25L2.75 10L5.5 12.75"/>
+      <path d="M14.5 7.25L17.25 10L14.5 12.75"/>
+    </g>
+    <g fill="none" stroke="#141313" stroke-width="1.5">
+      <path d="M2.75 10H17.25"/>
+      <path d="M5.5 7.25L2.75 10L5.5 12.75"/>
+      <path d="M14.5 7.25L17.25 10L14.5 12.75"/>
+    </g>
+  </g>
+</svg>

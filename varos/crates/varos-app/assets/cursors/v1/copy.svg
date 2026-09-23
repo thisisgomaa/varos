@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Varos — Copy (Alt-drag)</title>
+  <desc>Varos cursor v1 — copy. Hotspot 2,2 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
+  <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="#ffffff" stroke="#ffffff" stroke-width="3.5">
+      <path d="M2 2V19L6.5 12.75L14 14Z"/>
+    </g>
+    <g fill="#141313" stroke="#141313" stroke-width="1.5">
+      <path d="M2 2V19L6.5 12.75L14 14Z"/>
+    </g>
+    <g fill="#ffffff" stroke="none">
+      <rect x="19.25" y="16.25" width="3.5" height="9.5" rx="1"/>
+      <rect x="16.25" y="19.25" width="9.5" height="3.5" rx="1"/>
+    </g>
+    <g fill="none" stroke="#141313" stroke-width="1.5" stroke-linecap="butt">
+      <path d="M21 17.25V24.75"/>
+      <path d="M17.25 21H24.75"/>
+    </g>
+  </g>
+</svg>
