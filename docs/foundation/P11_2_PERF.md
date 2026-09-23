@@ -160,9 +160,11 @@ The new tests pin the following:
   at the grown rect. For a 4000%-style compound shape with a hole, the even-odd fill coverage and the
   stroke-band distance of every in-frame sample point are identical before and after clipping. A view
   that shows everything gives exactly the scene `build_scene` gives. A page clip and the view clip
-  compose correctly, and strokes keep the page scissor. An off-screen clip mask contributes no ring, so
-  its members draw nowhere. This is the **only** mask case pinned; a partly visible mask's ring cut is
-  covered by the winding argument, not by a test.
+  compose correctly, and strokes keep the page scissor. An off-screen clip mask contributes no ring: the
+  scene emits empty `mask_rings`. That is all the test asserts. It does **not** mean every member draws
+  nowhere: a visible translucent-stroke or knockout member can still draw, because those renderer
+  branches ignore the clip flag (pre-existing, see Known limits 2). This is the **only** mask case
+  pinned; a partly visible mask's ring cut is covered by the winding argument, not by a test.
 - **Review P1-1.** Two crossing 50%-red strokes with an off-screen opaque rectangle between them form
   two coverage batches both uncut and culled. This is pinned twice: in the core by the batching rule,
   and in `tess.rs` by counting real `Draw::StrokeCov` steps from `build_content`, CPU-only. Two adjacent
@@ -186,8 +188,9 @@ The new tests pin the following:
 ## Known limits
 
 - **Pre-existing renderer gaps inside clipping masks (found in review, NOT fixed here, logged
-  2026-09-23).** These are not caused by P11.2, which now only guarantees that the *scene* it hands the
-  renderer does not change with the view.
+  2026-09-23).** These are not caused by P11.2, which now only guarantees that each object's
+  **treatment** (isolated, knockout, folded alpha or plain opaque) does not change with the view. The
+  scene geometry itself necessarily changes with the view, since culling and clipping are the point.
   1. **Group opacity is lost inside a mask.** `tess.rs` `build_content` builds a `Group::Clip`'s members
      with `group_draws`, which never applies an `Isolated` member's opacity. A 50%-opacity filled and
      stroked object inside a mask therefore renders fully opaque. Fixing it needs a masked offscreen
@@ -195,6 +198,11 @@ The new tests pin the following:
   2. **Some draws ignore the mask entirely.** In `lib.rs` `draw_steps`, only `Draw::Fill` and `Draw::Fg`
      honour the `clip` flag. `Draw::StrokeCov` (translucent strokes) and `Draw::Knockout` (fill with a
      translucent stroke) ignore it, so inside a mask they are not cut to the silhouette.
+- **Known cost of the P1-1 fix (structural, not yet measured).** Because coverage batching no longer
+  crosses object boundaries, 500 consecutive unfilled same-colour translucent rectangles now produce 500
+  `StrokeCov` batches (1,000 draw calls) instead of 1. The harness has no such scene yet. Follow-up
+  measurement item: **scene F — many same-colour translucent strokes**, before and after, CPU and draw
+  count.
 - **GPU cost is not measured.** Headless numbers cover CPU time and vertex counts only; the 4000% win on
   fill-rate is an inference that still needs the owner's hand test.
 - **The frame size comes from `window.inner_size()`**, the same value the scene signature uses. If the
