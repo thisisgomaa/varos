@@ -68,6 +68,41 @@ pub struct Renderer {
     blit_bg: wgpu::BindGroup,
     // native GPU UI (egui paints onto OUR frame, sharing OUR device/queue)
     egui_rend: egui_wgpu::Renderer,
+    // egui frees that arrived on a frame the OS didn't give us — processed after the next real submit
+    free_q: FreeQueue,
+    clamp_logged: bool, // the "window larger than the GPU texture cap" note is logged once
+}
+
+/// The largest surface this device can take: each side clamped to `1..=max` (the GPU's 2D texture cap).
+/// Pure; unit-tested. A window beyond the cap is drawn at the cap instead of panicking in configure.
+pub fn fit_to_limit(w: u32, h: u32, max: u32) -> (u32, u32) {
+    (w.clamp(1, max.max(1)), h.clamp(1, max.max(1)))
+}
+
+/// egui texture frees that must not be lost. egui hands each free exactly once; if that frame is
+/// skipped (no surface texture) the ids are parked here and released after the next real submit, so
+/// a texture created and freed inside skipped frames is never retained forever. Pure; unit-tested.
+#[derive(Default)]
+pub struct FreeQueue {
+    pending: Vec<egui::TextureId>,
+}
+impl FreeQueue {
+    /// Park this frame's frees (the frame was skipped).
+    pub fn defer(&mut self, ids: &[egui::TextureId]) {
+        self.pending.extend_from_slice(ids);
+    }
+    /// After a successful submit: everything parked plus this frame's frees, in order; empties the queue.
+    pub fn take_with(&mut self, now: &[egui::TextureId]) -> Vec<egui::TextureId> {
+        let mut out = std::mem::take(&mut self.pending);
+        out.extend_from_slice(now);
+        out
+    }
+    pub fn len(&self) -> usize {
+        self.pending.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
 }
 
 const BLIT_SHADER: &str = r#"
@@ -228,11 +263,22 @@ impl Renderer {
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: extra,
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                // downlevel limits, but the texture-size ceiling is the ADAPTER's real one: the bare
+                // downlevel 2048px cap panicked in Surface::configure on any window wider/taller than
+                // 2048 physical px (Retina Mac at default size; maximized 2560/4K screens).
+                required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
                 ..Default::default()
             })
             .await
             .map_err(|e| format!("the graphics device couldn't start: {e}"))?;
+        // A window bigger than the device's texture cap would panic inside Surface::configure — say so
+        // readably instead (ADR-0001: GPU startup failure stays readable).
+        let max = device.limits().max_texture_dimension_2d;
+        if width > max || height > max {
+            return Err(format!(
+                "the window ({width}\u{d7}{height} px) is larger than this graphics device can draw ({max} px per side)"
+            ));
+        }
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
         // crisper edges: 8x MSAA only if the DEVICE truly supports it (needs the feature above), else 4x
@@ -557,11 +603,23 @@ impl Renderer {
             blit_bgl,
             blit_bg,
             egui_rend,
+            free_q: FreeQueue::default(),
+            clamp_logged: false,
         })
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
         if w > 0 && h > 0 {
+            // Never hand configure a size above the GPU cap (wgpu validation panic): clamp, note it once.
+            let (w, h) = {
+                let max = self.device.limits().max_texture_dimension_2d;
+                let fit = fit_to_limit(w, h, max);
+                if fit != (w, h) && !self.clamp_logged {
+                    log!("[varos] window {w}x{h} exceeds the GPU texture cap {max}; drawing at {}x{}", fit.0, fit.1);
+                    self.clamp_logged = true;
+                }
+                fit
+            };
             self.config.width = w;
             self.config.height = h;
             self.surface.configure(&self.device, &self.config);
@@ -924,6 +982,32 @@ impl Renderer {
     }
 
     /// Render the canvas Scene AND the native egui UI into one frame (the spike path):
+    /// Get this frame's surface texture, or None when the OS gives none (lost/outdated → reconfigure;
+    /// occluded/timeout → just skip). Callers park egui frees on None (see `FreeQueue`).
+    fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
+        match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => Some(f),
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                None
+            }
+            _ => None,
+        }
+    }
+    /// egui's screen size, never larger than the (possibly clamped) surface — keeps scissor rects inside it.
+    fn fit_screen(&self, s: &egui_wgpu::ScreenDescriptor) -> egui_wgpu::ScreenDescriptor {
+        egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [s.size_in_pixels[0].min(self.config.width), s.size_in_pixels[1].min(self.config.height)],
+            pixels_per_point: s.pixels_per_point,
+        }
+    }
+    /// Release egui textures after a successful submit: parked frees from skipped frames + this frame's.
+    fn release_textures(&mut self, now: &[egui::TextureId]) {
+        for id in self.free_q.take_with(now) {
+            self.egui_rend.free_texture(&id);
+        }
+    }
+
     /// scene → offscreen → blit to surface → egui onto a pass WE own → present. egui shares our
     /// Device/Queue. `paint_jobs`/`tdelta` come from the app's egui Context; no second surface/window.
     /// Startup splash: clear the surface fully transparent and render ONLY egui (the floating card),
@@ -934,18 +1018,18 @@ impl Renderer {
         tdelta: &egui::TexturesDelta,
         screen: &egui_wgpu::ScreenDescriptor,
     ) {
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                self.surface.configure(&self.device, &self.config);
-                return;
-            }
-            _ => return,
-        };
-        let tview = frame.texture.create_view(&Default::default());
+        // Upload egui texture changes BEFORE acquiring the frame: if the OS gives no frame (occluded /
+        // timeout, common on macOS) we return early, and a dropped full upload makes the next partial
+        // font-atlas update panic in egui-wgpu ("texture that has not been allocated yet").
         for (id, delta) in &tdelta.set {
             self.egui_rend.update_texture(&self.device, &self.queue, *id, delta);
         }
+        let Some(frame) = self.acquire() else {
+            self.free_q.defer(&tdelta.free); // skipped frame: keep the frees for the next real submit
+            return;
+        };
+        let screen = &self.fit_screen(screen);
+        let tview = frame.texture.create_view(&Default::default());
         let mut enc = self.device.create_command_encoder(&Default::default());
         let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
         {
@@ -972,9 +1056,7 @@ impl Renderer {
         }
         self.queue.submit(user_cmds.into_iter().chain(std::iter::once(enc.finish())));
         frame.present();
-        for id in &tdelta.free {
-            self.egui_rend.free_texture(id);
-        }
+        self.release_textures(&tdelta.free);
     }
 
     pub fn render_ui(
@@ -1007,14 +1089,17 @@ impl Renderer {
         screen: &egui_wgpu::ScreenDescriptor,
     ) -> bool {
         let perf_start = std::time::Instant::now();
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                self.surface.configure(&self.device, &self.config);
-                return false;
-            }
-            _ => return false,
+        // Upload egui texture changes BEFORE acquiring the frame: if the OS gives no frame (occluded /
+        // timeout, common on macOS) we return early, and a dropped full upload makes the next partial
+        // font-atlas update panic in egui-wgpu ("texture that has not been allocated yet").
+        for (id, delta) in &tdelta.set {
+            self.egui_rend.update_texture(&self.device, &self.queue, *id, delta);
+        }
+        let Some(frame) = self.acquire() else {
+            self.free_q.defer(&tdelta.free); // skipped frame: keep the frees for the next real submit
+            return false;
         };
+        let screen = &self.fit_screen(screen);
         let tview = frame.texture.create_view(&Default::default());
         let prepared = scene.map(|(world, view)| {
             let (fw, fh) = (self.config.width as f32, self.config.height as f32);
@@ -1032,9 +1117,6 @@ impl Renderer {
             let _ = Self::upload(&self.device, &self.queue, &mut self.op_buf, &mut self.op_cap, &opv);
             (nbg, metas, overlay, content_elapsed, counts)
         });
-        for (id, delta) in &tdelta.set {
-            self.egui_rend.update_texture(&self.device, &self.queue, *id, delta);
-        }
         let mut enc = self.device.create_command_encoder(&Default::default());
         let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
         // A signature miss rebuilds the offscreen scene. A hit keeps its last resolved texture and only
@@ -1086,9 +1168,7 @@ impl Renderer {
         }
         self.queue.submit(user_cmds.into_iter().chain(std::iter::once(enc.finish())));
         frame.present();
-        for id in &tdelta.free {
-            self.egui_rend.free_texture(id);
-        }
+        self.release_textures(&tdelta.free);
         if std::env::var_os("VAROS_PERF").is_some() {
             match prepared {
                 Some((_, _, _, content_elapsed, counts)) => {
@@ -1110,5 +1190,33 @@ impl Renderer {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod gpu_free_tests {
+    use super::{fit_to_limit, FreeQueue};
+    use egui::TextureId;
+
+    // A window beyond the GPU cap is clamped per side (never 0, never above the cap); within it, untouched.
+    #[test]
+    fn fit_to_limit_clamps_only_what_exceeds_the_cap() {
+        assert_eq!(fit_to_limit(2920, 1720, 2048), (2048, 1720));
+        assert_eq!(fit_to_limit(1460, 860, 2048), (1460, 860));
+        assert_eq!(fit_to_limit(9000, 9000, 8192), (8192, 8192));
+        assert_eq!(fit_to_limit(0, 0, 2048), (1, 1));
+    }
+
+    // Frees from skipped frames survive until the next real submit, then go out exactly once.
+    #[test]
+    fn skipped_frame_frees_are_released_after_the_next_submit() {
+        let mut q = FreeQueue::default();
+        q.defer(&[TextureId::Managed(3)]); // frame skipped
+        q.defer(&[TextureId::Managed(4)]); // another skipped frame
+        assert_eq!(q.len(), 2);
+        let out = q.take_with(&[TextureId::Managed(5)]); // successful frame
+        assert_eq!(out, vec![TextureId::Managed(3), TextureId::Managed(4), TextureId::Managed(5)]);
+        assert!(q.is_empty());
+        assert_eq!(q.take_with(&[]), Vec::<TextureId>::new()); // nothing released twice
     }
 }

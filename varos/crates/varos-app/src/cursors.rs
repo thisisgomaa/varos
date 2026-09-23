@@ -125,6 +125,7 @@ pub fn ai_svg(ck: CK) -> Option<(&'static str, f32, f32)> {
 }
 
 const SZ: u32 = 32; // cursor bitmap size (standard Windows cursor) for our built-in SVG cursors
+#[cfg_attr(not(windows), allow(dead_code))] // used only by the Win32 paths
 const CURSOR_PX: u32 = 32; // rendered size for the Illustrator vector cursors — bump for bigger/hi-DPI
 
 // ---- glyph geometry (24×24 viewBox; kept compact, upper-left, like Illustrator) ----
@@ -359,6 +360,7 @@ fn build_hcursor(rgba: &[u8], w: u32, h: u32, hx: u16, hy: u16) -> isize {
 // eyedropper is armed). Nothing here installs a hook or captures input from other apps.
 
 /// COLORREF (`0x00BBGGRR`, the Win32 GDI packing) → straight RGBA in 0..1. Pure; unit-tested.
+#[cfg_attr(not(windows), allow(dead_code))] // used only by the Win32 paths
 pub fn colorref_to_rgba(c: u32) -> [f32; 4] {
     let r = (c & 0xFF) as f32 / 255.0;
     let g = ((c >> 8) & 0xFF) as f32 / 255.0;
@@ -671,9 +673,126 @@ pub use win::{
     custom_frame, dbg, install, is_maximized, maximize, set, set_caption, set_cloaked, set_dark_class_brush,
 };
 
+// Non-Windows twins of the Win32 shell functions above — SAME signatures, so main.rs / ui.rs call
+// sites are identical on every platform (docs/foundation/MAC_SHELL_PORT.md). Nothing here pretends:
+// features with no native equivalent yet are plain no-ops, and the cursor set maps to winit's
+// built-in `CursorIcon`s. The winit window is handed over once via `bind_window`.
+#[cfg(not(windows))]
+mod portable {
+    use super::{ALL_CURSORS, CK};
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::{Arc, OnceLock};
+    use winit::window::{CursorIcon, Window};
+
+    static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
+    static CUR: AtomicIsize = AtomicIsize::new(0);
+
+    /// Give the cursor/window helpers the live winit window (call once, right after creation).
+    pub fn bind_window(w: Arc<Window>) {
+        let _ = WINDOW.set(w);
+    }
+
+    /// Stand-in "cursor handle": a non-zero token (index into `ALL_CURSORS` + 1), decoded by `set`.
+    pub fn hcursor(ck: CK) -> isize {
+        ALL_CURSORS.iter().position(|c| *c == ck).map_or(0, |i| i as isize + 1)
+    }
+    /// The Illustrator reference cursors are a Win32-only path; the caller falls back to `hcursor`.
+    pub fn hcursor_svg_file(_stem: &str, _hx: f32, _hy: f32) -> Option<isize> {
+        None
+    }
+
+    /// The closest winit built-in cursor for each tool/interaction state.
+    pub fn icon(ck: CK) -> CursorIcon {
+        match ck {
+            CK::Select | CK::Direct => CursorIcon::Default,
+            CK::Pen
+            | CK::PenNew
+            | CK::PenAdd
+            | CK::PenDel
+            | CK::PenClose
+            | CK::PenConnect
+            | CK::Convert
+            | CK::Cross
+            | CK::Eye => CursorIcon::Crosshair,
+            CK::ResizeH => CursorIcon::EwResize,
+            CK::ResizeV => CursorIcon::NsResize,
+            CK::ResizeNE => CursorIcon::NeswResize,
+            CK::ResizeNW => CursorIcon::NwseResize,
+            CK::Move => CursorIcon::Move,
+            CK::Hand => CursorIcon::Grab,
+            CK::Grab => CursorIcon::Grabbing,
+            CK::Copy => CursorIcon::Copy,
+            CK::NoDrop => CursorIcon::NotAllowed,
+            CK::RotateE
+            | CK::RotateSE
+            | CK::RotateS
+            | CK::RotateSW
+            | CK::RotateW
+            | CK::RotateNW
+            | CK::RotateN
+            | CK::RotateNE => CursorIcon::Crosshair,
+        }
+    }
+
+    pub fn set(hcursor: isize) {
+        CUR.store(hcursor, Ordering::Relaxed);
+        let Some(ck) = usize::try_from(hcursor - 1).ok().and_then(|i| ALL_CURSORS.get(i).copied()) else {
+            return; // 0 / unknown token → keep the OS arrow
+        };
+        if let Some(w) = WINDOW.get() {
+            w.set_cursor(icon(ck));
+        }
+    }
+    /// No window subclass on this platform — reports "not installed".
+    pub fn install(_hwnd: isize) -> bool {
+        false
+    }
+    pub fn dbg() -> (isize, isize, usize, isize) {
+        (0, 0, 0, CUR.load(Ordering::Relaxed))
+    }
+    pub fn is_maximized(_hwnd: isize) -> bool {
+        WINDOW.get().is_some_and(|w| w.is_maximized())
+    }
+    pub fn maximize(_hwnd: isize) {
+        if let Some(w) = WINDOW.get() {
+            w.set_maximized(true);
+        }
+    }
+    /// The native title bar stays on this platform (no caption stripping) — nothing to do.
+    pub fn custom_frame(_hwnd: isize) {}
+    /// The native title bar drags the window here — no hit-test band to publish.
+    pub fn set_caption(_h: i32, _excl: &[[i32; 4]]) {}
+    /// No DWM cloak equivalent wired yet — the window is simply shown.
+    pub fn set_cloaked(_hwnd: isize, _on: bool) {}
+    /// No OS class brush to recolour here.
+    pub fn set_dark_class_brush(_hwnd: isize) {}
+}
+#[cfg(not(windows))]
+pub use portable::{
+    bind_window, custom_frame, dbg, hcursor, hcursor_svg_file, install, is_maximized, maximize, set, set_caption,
+    set_cloaked, set_dark_class_brush,
+};
+
+/// True when the system-wide (outside-the-window) eyedropper can actually sample the screen. On other
+/// platforms the picker shows the eyedropper disabled rather than arming a pick that can never land.
+pub const SCREEN_EYEDROPPER: bool = cfg!(windows);
+
 #[cfg(test)]
 mod tests {
     use super::colorref_to_rgba;
+
+    // macOS port — every cursor gets a distinct non-zero token that decodes back to itself, so
+    // `set` never falls through to "keep the OS arrow" for a real cursor.
+    #[cfg(not(windows))]
+    #[test]
+    fn portable_cursor_tokens_round_trip() {
+        use super::{hcursor, ALL_CURSORS};
+        for (i, ck) in ALL_CURSORS.iter().enumerate() {
+            let t = hcursor(*ck);
+            assert_eq!(t, i as isize + 1);
+            assert!(ALL_CURSORS[(t - 1) as usize] == *ck);
+        }
+    }
 
     // A5 — GDI COLORREF is 0x00BBGGRR; decode must swap B and R back into straight RGBA.
     #[test]
