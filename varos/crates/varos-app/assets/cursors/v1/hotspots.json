@@ -1,0 +1,13 @@
+{
+  "_about": "Varos cursor set v1 (proposal, 2026-09-23). Hotspots in 32px-logical space, same convention as cursors.rs ai_svg()/hcursor_svg_file(): scale by CURSOR_PX/32 then round. Geometric point = (hx+0.25, hy+0.25) = centre of the hotspot device pixel at 2x. 'ck' = the existing CK variant(s) this file would back; null = no CK exists yet.",
+  "select": {"hotspot": [2, 2], "ck": ["Select"]},
+  "direct": {"hotspot": [2, 2], "ck": ["Direct"]},
+  "pen": {"hotspot": [2, 2], "ck": ["Pen"]},
+  "pen-add": {"hotspot": [2, 2], "ck": ["PenAdd"]},
+  "pen-delete": {"hotspot": [2, 2], "ck": ["PenDel"]},
+  "pen-close": {"hotspot": [2, 2], "ck": ["PenClose"]},
+  "shape-rect": {"hotspot": [11, 11], "ck": ["Cross"]},
+  "rotate": {"hotspot": [11, 11], "ck": ["RotateNE"], "derive": "RotateE/SE/S/SW/W/NW/N = this glyph rotated about the hotspot by +45/+90/.../+315 deg"},
+  "hand": {"hotspot": [11, 12], "ck": ["Hand"]},
+  "zoom-in": {"hotspot": [9, 9], "ck": null, "note": "needs a new CK::ZoomIn (no zoom tool/cursor kind exists yet)"}
+}
