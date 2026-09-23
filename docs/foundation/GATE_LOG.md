@@ -248,3 +248,22 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Hand test:** not yet — batch 1 list in `STATUS.md`.
 - **Verdict:** PASS. **Merged:** `0a6974d` to `main`.
 - Sign-off: moderator — PASS — 2026-09-23
+
+## Varos original cursor set v1 — design assets + study (no code)
+
+- **Date:** 2026-09-23. **Branch:** `design/cursors-v1` (worktree `agent-a0f43430ff2f6bc02`, range `4bf0adc..e7a471e`, commits `fcc235f` — 10 cursors + comparison study, `e7a471e` — 20 more, completing the 28-state set; ink weights unified). **Reviewer:** Codex (independent legal/originality review, two rounds) + moderator gates.
+- **Scope:** 30 original SVG cursors in `varos/crates/varos-app/assets/cursors/v1/` (28 `CK` states — `Move` reuses `select.svg` — plus proposed zoom-in, zoom-out and artboard), `hotspots.json` (`ck` 28 · `proposed_ck` 3 · `files` 30), and the study `docs/studies/2026-09-23-CURSOR_SET_V1.md` (stamped `reference`). No Rust code changed; nothing is wired yet — the app still uses the local Illustrator reference set / built-in glyphs.
+- **Codex originality review, round 1:** the 10 round-1 files compared against all 326 Adobe reference SVGs (2,039 paths, normalised) → no identical or near-identical path data; all 10 **Original**. One nit (inconsistent ink weights: pen slit 1.25, zoom handle 2.5) → fixed in `e7a471e` (every ink stroke 1.5).
+- **Codex originality review, round 2:** the 20 round-2 files compared against the same 326 SVGs → all 20 **Original**. **APPROVE WITH NITS**, two doc-only nits in the study, fixed after the merge in `b8bc2ec`: (a) "every badge is 7.5px" → one shared anchor at (21.25, 21.25), optical size 7.5–9 px, measured ink boxes listed (7.5×7.5 · 7.5×1.5 · 7.56×8.5 · 8×8 · 9×5.25); (b) "round caps everywhere" and "authored on integers" → round joins/caps on free ends with the butt-cap exception listed (bars on a white field: `pen-add`, `copy`, `pen-delete`, `shape-rect`, `artboard` ×2, `zoom-in`, `zoom-out`), and the real 0.25 px grid described. Moderator re-checked (b) with a script: 121 horizontal/vertical path segments, all un-rotated ones centred on whole or half coordinates (the only 4 exceptions are in the 45°-rotated `eyedropper`). The same commit records the round-2 result in the study (it still said "recommended before merge").
+- **Owner visual approval:** Ahmed approved the whole set on the review page ("تحف فنية", "ركبهم كلهم").
+- **Conflicts:** none. `ort` merge, 32 files, 894 insertions, all new files.
+- **Checks run (moderator, on the merged `main`, macOS/Apple M5/Metal, Rust `~/.cargo/bin`):**
+  - `cargo test --workspace -j 4` → **271 passed, 0 failed** (unchanged, as expected for assets + docs).
+  - `cargo clippy --workspace --all-targets -- -D warnings` → clean (exit 0). `cargo fmt --all --check` → clean (exit 0).
+  - `xmllint --noout` on all 30 SVGs → 30 parse, 0 BAD.
+  - `hotspots.json` → valid JSON; 4 top-level keys (`_about`, `ck`, `proposed_ck`, `files`); `files` has 30 entries and matches the 30 SVG filenames exactly.
+  - **Legal hygiene:** `git ls-files | grep -c cursors-ai` → **0**; `git ls-files | grep -ic 'cursors-ai\|illustrator\|adobe'` → 0. The comparison gallery (holds Adobe files) lives only under gitignored `varos/target/`.
+- **Not verified:** the cursors on screen — they are not wired into `cursors.rs` yet (next piece). 1× crispness on non-Retina screens (the set is tuned for 2×; study §7).
+- **Hand test:** visual approval given on the review page; in-app hand test comes with the wiring piece.
+- **Verdict:** PASS. **Merged:** `d30365c` to `main`.
+- Sign-off: moderator — PASS — 2026-09-23
