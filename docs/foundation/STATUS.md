@@ -27,7 +27,8 @@ Landed later on 2026-09-23:
 - **cargo-audit triage landed** `a5e437c` — `docs/audits/2026-09-23-CARGO_AUDIT_TRIAGE.md`: 4 vulns + 6 warnings, 8/10 clear with seven lockfile bumps; bumps await owner approval.
 - **Mac port of `varos-app` merged** `9f8ec1d` (branch `worktree-agent-a8668165735dd9308`, pushed as `feat/mac-shell-port`; Codex REQUEST CHANGES → 4 fixes in `c3093dd` → APPROVE WITH NITS; nits fixed in `b0972e7`). The **whole workspace now builds and tests on macOS: 250/250**, clippy and fmt clean, Windows-target clippy clean, release build launches on Metal (8 s smoke test, no panic). Details: `GATE_LOG.md`.
 - **Owner decision (2026-09-23, later): the official build is Mac-only for now** ("بلاش نتعب في الويندوز دلوقتي"). Windows is kept compiling through the cheap gate `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`, so it is not silently broken. No Windows hand-testing and no Windows-specific work until this is revisited. Mac polish comes first.
-- **Under Codex review (not merged):** P11.2 culling / view clipping / flatten cache (`worktree-agent-a20eb2401bf6ec4b2`).
+- **P11.2 items (1)+(2) merged** `b15d2bf` — viewport culling, view-rect clipping and a cross-frame flatten cache (branch `worktree-agent-a20eb2401bf6ec4b2`, pushed as `perf/p11-2-culling-cache`; Codex REQUEST CHANGES → 2 P1s fixed in `ba6e5e0` → APPROVE WITH NITS; nits fixed in `4ea9dcd`). Whole workspace **267/267** on macOS, clippy/fmt clean, Windows-target clippy clean, release build launches. 4000% scene: ~30× fewer vertices (harness D: 1,068 / 2,388 / 3,384). Details: `GATE_LOG.md`, `P11_2_PERF.md`.
+- **Next small piece: P11.2 item (0), instant zoom** — remove the A13 glide easing in `varos-app/src/main.rs` (owner-authorized, 2026-07-12). Now unblocked: the Mac port has landed, so `main.rs` builds and runs here. Follow-up measurement: harness scene F (many same-colour translucent strokes — structural cost of the P1-1 fix, not yet measured).
 
 **For Ahmed to try (batch 1)** — on the Mac, from the release build `varos/target/release/varos`:
 
@@ -38,6 +39,9 @@ Landed later on 2026-09-23:
 5. Resize the window to full screen.
 6. Open and save a `.vrs` file.
 7. (from A26/A32) Boolean shapes keep sharp corners; deleting an anchor opens the path.
+8. (from P11.2) On a complex file, zoom to 4000% and pan and zoom around — it should stay smooth, with nothing missing at the window edges.
+9. (from P11.2) Overlapping translucent strokes (e.g. two 50% red lines crossing) look the same as before — the crossing is darker.
+10. (from P11.2) Masked objects look right while you pan them partly off screen and back.
 
 **Known Mac gaps (expected, not bugs of this piece):** two title bars (the Mac one + ours); standard Mac cursors instead of our tool cursors (custom-cursors piece in progress); screen eyedropper disabled; window position/size not remembered; the title-bar strip is see-through.
 
@@ -51,7 +55,7 @@ Landed later on 2026-09-23:
 - **F2 COMPLETE 🎉** — F2a.1..4 ✅ · F2b ✅ `b6e3863` (docs root = 7 current docs; history/ 17 + reference/ 16) · F2c ✅ `3a0ad3b` (ADR-0005 edges machine-enforced).
 - **F3 ✅** `b8c9ba6` · **F4.1 ✅** `bd8bc1f` — `EditCommand` lives in core; **zero direct document writes from the UI** (measured); hand-verified by the product owner on a branch release build.
 - **P11.1 ✅** `1931c80` — 10.4× on the 300%-zoom scene, 9.6× on curves-100 (reviewer-reproduced), owner hand-verified. Tests: 239.
-- **Active work order:** **P11.2** — (0) instant real-time zoom (glide easing removed — owner-authorized feel change, 2026-07-12); (1) viewport culling at path level (the scene-B/many-objects fix) **plus ring/edge-level clipping to the view rect** (the 4000%-zoom overdraw fix — owner-reported symptom (د); reuse the existing artboard clippers `scene.rs:617-736`); (2) cross-frame flatten cache with zoom buckets. F4.2 queued right after.
+- **Active work order:** **P11.2** — items (1)+(2) ✅ `b15d2bf` (2026-09-23); item (0) is next. Original order: (0) instant real-time zoom (glide easing removed — owner-authorized feel change, 2026-07-12); (1) viewport culling at path level (the scene-B/many-objects fix) **plus ring/edge-level clipping to the view rect** (the 4000%-zoom overdraw fix — owner-reported symptom (د); reuse the existing artboard clippers `scene.rs:617-736`); (2) cross-frame flatten cache with zoom buckets. F4.2 queued right after.
 - **P11 remaining after P11.2:** hover/snap interaction costs (P11.3, only if still felt), undo-clone storage (measure first).
 - **Upcoming decision for the product owner:** fate of `codex/p6-header` — must be decided before F5 (charter precondition).
 - **F2b layout DECIDED 2026-07-11:** product owner delegated the choice ("اختار انت الصح"); planner selected **`docs/history/` + `docs/reference/`**, root `docs/` keeps current docs only; `design-reference/` stays in place.
@@ -73,9 +77,9 @@ Landed later on 2026-09-23:
 | Metric | Value |
 |---|---:|
 | `ui.rs` lines | 5,826 (re-measured `wc -l` 2026-09-23, after `9f8ec1d`) |
-| `editor.rs` lines | 4,533 (re-measured `wc -l` 2026-09-23, after `9f8ec1d`) |
-| Workspace tests | 250 — whole workspace, run on macOS 2026-09-23 after `9f8ec1d` (core 200 · pdf 13 · render 15 · app 22) |
-| Tests on macOS | 250 / 250 — whole workspace incl. `varos-app` (2026-09-23, after `9f8ec1d`) |
+| `editor.rs` lines | 4,537 (re-measured `wc -l` 2026-09-23, after `b15d2bf`) |
+| Workspace tests | 267 — whole workspace, run on macOS 2026-09-23 after `b15d2bf` (core 216 · pdf 13 · render 16 · app 22) |
+| Tests on macOS | 267 / 267 — whole workspace incl. `varos-app` (2026-09-23, after `b15d2bf`) |
 | `unsafe` sites (app crates) | 27 |
 | Direct external deps | 23 |
 | `cargo audit` | 4 vulns + 6 warnings (triaged 2026-09-23, `docs/audits/2026-09-23-CARGO_AUDIT_TRIAGE.md`; fixes await owner approval) |
