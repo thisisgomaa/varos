@@ -198,3 +198,28 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Hand test:** not yet — batch 1 list in `STATUS.md`.
 - **Verdict:** PASS. **Merged:** `9f8ec1d` to `main`.
 - Sign-off: moderator — PASS — 2026-09-23
+
+## P11.2 (1)+(2) — viewport culling, view-rect clipping, flatten cache
+
+- **Date:** 2026-09-23. **Branch:** `worktree-agent-a20eb2401bf6ec4b2` (range `61786a0..bcb7cb8`, commits `3acbeaf`, `86244fa`, `40c96ee`, `b5a13b0`, `90dc794`, `ba6e5e0`, `bcb7cb8`; pushed as `perf/p11-2-culling-cache`). **Reviewer:** Codex (independent, two rounds) + moderator gates.
+- **Scope:** `scene::build_scene_in_view` culls whole paths outside the window (control-point bbox test) and cuts partly visible fill rings, stroke runs, mask rings, skeleton and snap outline to the view rect grown by 32 px, reusing the existing artboard clippers. A cross-frame flatten cache (`varos-core/src/flatten.rs`) keyed by path id + by-value geometry inputs + quarter-octave zoom bucket. `varos-app` changed only at its two scene call sites (`b5a13b0`), which now pass the physical window size (`window.inner_size()`). Design and evidence of record: `docs/foundation/P11_2_PERF.md`.
+- **Codex review, round 1:** REQUEST CHANGES — 2 P1s, both fixed in `ba6e5e0` with red-proof tests (all 4 new core tests and the new `tess.rs` test fail on the pre-fix `scene.rs`):
+  1. **P1-1 — coverage batching crossed objects.** When the object between two same-colour translucent strokes was culled, the two strokes merged into one `StrokeCov` batch and their crossing painted once (50%) instead of twice (75%). Fix: the scene closes the opaque run at an object boundary whenever the next object's first prim would merge with the previous object's last one.
+  2. **P1-2 — object treatment depended on the view.** A 50%-opacity filled and stroked object whose stroke lay in the off-screen margin flipped from isolated to folded alpha, and back as a small pan brought the stroke into the pad. Fix: treatment is decided from the uncut fill and stroke.
+- **Codex review, round 2:** APPROVE WITH NITS — two P3 doc nits, fixed after the merge in `4ea9dcd` (docs only): the off-screen-mask test claim narrowed to what it asserts (empty `mask_rings`; translucent-stroke and knockout members can still draw, pre-existing renderer gap), and "view-independent" narrowed to object **treatment**. The same commit adds a "Known cost" note: 500 consecutive unfilled same-colour translucent rectangles now give 500 `StrokeCov` batches (1,000 draw calls) instead of 1 — structural, not measured; follow-up harness **scene F** (many same-colour translucent strokes).
+- **Conflicts:** none. `ort` merge, 10 files; `main.rs` auto-merged cleanly with the Mac-port changes (the import and the two `build_scene` → `build_scene_in_view` call sites, lines 676 and 1067, are the only P11.2 hunks).
+- **Checks run (moderator, on the merged `main`, macOS/Apple M5/Metal, Rust `~/.cargo/bin`):**
+  - `cargo test --workspace -j 4` → 37 result lines, **267 passed, 0 failed, 0 ignored** (core 216 · pdf 13 · render-wgpu 16 · app 22 = 6 lib + 16 bin). 250 before + 17 new (16 in `varos-core/tests/view_cull.rs`, 1 CPU test in `tess.rs`).
+  - `cargo clippy --workspace --all-targets -- -D warnings` → clean (exit 0, 0 warnings).
+  - `cargo fmt --all --check` → clean (exit 0, no output).
+  - `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings` → clean (exit 0).
+  - `cargo build --release -p varos-app` → OK; cargo reported every crate `Fresh` (the release binary had been rebuilt from the merged sources at 22:28 by a concurrent `tools/mac/bundle.sh` run). `varos/target/release/varos` 17.9 MB.
+  - **Launch smoke test:** release binary run 8 s, still alive, then killed. stderr (complete): `[varos] adapter: "Apple M5" | backend: Metal` / `[varos] present: Immediate | format: Bgra8Unorm | msaa: 8`. stdout empty, no "panic", no new macOS crash report, no process left.
+  - **Perf harness** (`cargo run -p varos-render-wgpu --release --example perf_harness -j 4`, one run, load average 3.0; vertex counts identical to `P11_2_PERF.md`):
+    - `D curved-150 selected ppu=40  scene_cold=0.119ms scene_warm=0.089ms cold=0.136ms warm=0.106ms vertices=1068/2388/0 overlay_vertices=3384`
+    - `E rectangles-500 ppu=4.0 partial  scene_cold=1.440ms scene_warm=1.428ms cold=1.600ms warm=1.588ms vertices=2835/51624/0`
+- **Process note:** a concurrent agent committed `7f3d883` (`tools/mac/bundle.sh`, script + doc only) on top of this merge in the shared checkout and pushed `main` at 22:29, before this gate run finished. All gates above came back green, and `7f3d883` touches no Rust code, so nothing unverified reached `origin`; recorded for honesty.
+- **Not verified:** GPU fill-rate gain at 4000% (inferred from vertex counts only); the scene-F draw-call cost; the look of translucent overlapping strokes and masked objects in the real window.
+- **Hand test:** not yet — batch 1 list in `STATUS.md`.
+- **Verdict:** PASS. **Merged:** `b15d2bf` to `main`.
+- Sign-off: moderator — PASS — 2026-09-23
