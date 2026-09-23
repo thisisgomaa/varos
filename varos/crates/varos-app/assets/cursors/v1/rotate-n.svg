@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Varos — Rotate (N)</title>
+  <desc>Varos cursor v1 — rotate-n. Hotspot 11,11 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data. = rotate-ne turned 315° about the hotspot.</desc>
+  <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="rotate(315 11 11)">
+      <g fill="none" stroke="#ffffff" stroke-width="3.5">
+        <path d="M4 6H6A10 10 0 0 1 16 16V18"/>
+        <path d="M6.75 3.25L4 6L6.75 8.75"/>
+        <path d="M13.25 15.25L16 18L18.75 15.25"/>
+      </g>
+      <g fill="none" stroke="#141313" stroke-width="1.5">
+        <path d="M4 6H6A10 10 0 0 1 16 16V18"/>
+        <path d="M6.75 3.25L4 6L6.75 8.75"/>
+        <path d="M13.25 15.25L16 18L18.75 15.25"/>
+      </g>
+    </g>
+  </g>
+</svg>
