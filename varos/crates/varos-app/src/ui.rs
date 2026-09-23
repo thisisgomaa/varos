@@ -1065,6 +1065,20 @@ impl Ui {
             Some(_) => true, // hands / menus / modal / splash float above the tree
         }
     }
+    /// Empty background bar space can drag the macOS window; floating UI always owns its area.
+    #[cfg(target_os = "macos")]
+    pub fn caption_drag_position(&self, physical: [f32; 2]) -> Option<[f32; 2]> {
+        let pos = egui::pos2(physical[0], physical[1]) / self.ctx.pixels_per_point();
+        // Use the current native position, not egui's pointer position from the last frame.
+        let egui_hit = self.ctx.egui_is_using_pointer()
+            || self.ctx.layer_id_at(pos).is_some_and(|layer| layer.order != egui::Order::Background);
+        crate::mac_caption::caption_drag_allowed(
+            crate::cursors::caption_drag_hit(physical[0], physical[1]),
+            egui_hit,
+            self.ctx.dragged_id().is_some(),
+        )
+        .then_some([pos.x, pos.y])
+    }
     /// Is a text field actually focused? Only THEN should keys go to egui instead of canvas shortcuts.
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
