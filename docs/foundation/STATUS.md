@@ -28,6 +28,8 @@ Landed later on 2026-09-23:
 - **Mac port of `varos-app` merged** `9f8ec1d` (branch `worktree-agent-a8668165735dd9308`, pushed as `feat/mac-shell-port`; Codex REQUEST CHANGES → 4 fixes in `c3093dd` → APPROVE WITH NITS; nits fixed in `b0972e7`). The **whole workspace now builds and tests on macOS: 250/250**, clippy and fmt clean, Windows-target clippy clean, release build launches on Metal (8 s smoke test, no panic). Details: `GATE_LOG.md`.
 - **Owner decision (2026-09-23, later): the official build is Mac-only for now** ("بلاش نتعب في الويندوز دلوقتي"). Windows is kept compiling through the cheap gate `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`, so it is not silently broken. No Windows hand-testing and no Windows-specific work until this is revisited. Mac polish comes first.
 - **P11.2 items (1)+(2) merged** `b15d2bf` — viewport culling, view-rect clipping and a cross-frame flatten cache (branch `worktree-agent-a20eb2401bf6ec4b2`, pushed as `perf/p11-2-culling-cache`; Codex REQUEST CHANGES → 2 P1s fixed in `ba6e5e0` → APPROVE WITH NITS; nits fixed in `4ea9dcd`). Whole workspace **267/267** on macOS, clippy/fmt clean, Windows-target clippy clean, release build launches. 4000% scene: ~30× fewer vertices (harness D: 1,068 / 2,388 / 3,384). Details: `GATE_LOG.md`, `P11_2_PERF.md`.
+- **Mac custom tool cursors merged** `0a6974d` (branch `feat/mac-cursors`, commits `ba71ae3` + `378c808`; Codex REQUEST CHANGES → 3 fixes (P2: 17 states collapsed to the arrow without the local set; P3 doc honesty; P3 broken-file test) → APPROVE). Each of the 28 cursor states is a winit `CustomCursor` built from the same bitmaps as Windows. Source per state: the local Illustrator reference set (gitignored, never committed) when present → our 11 legal built-in glyphs → the system cursor. Whole workspace **271/271** on macOS, clippy/fmt clean, Windows-target clippy clean. Startup log with the local set: `[varos] cursors: 28 custom (28 from cursors-ai, 0 built-in) + 0 system fallbacks of 28`. `/Applications/Varos.app` rebuilt and reinstalled. Details: `GATE_LOG.md`.
+- **In design: the original Varos cursor set v1** (branch `design/cursors-v1`) — our own cursors, to replace the Illustrator reference set.
 - **Next small piece: P11.2 item (0), instant zoom** — remove the A13 glide easing in `varos-app/src/main.rs` (owner-authorized, 2026-07-12). Now unblocked: the Mac port has landed, so `main.rs` builds and runs here. Follow-up measurement: harness scene F (many same-colour translucent strokes — structural cost of the P1-1 fix, not yet measured).
 
 **For Ahmed to try (batch 1)** — on the Mac, from the release build `varos/target/release/varos`:
@@ -42,8 +44,12 @@ Landed later on 2026-09-23:
 8. (from P11.2) On a complex file, zoom to 4000% and pan and zoom around — it should stay smooth, with nothing missing at the window edges.
 9. (from P11.2) Overlapping translucent strokes (e.g. two 50% red lines crossing) look the same as before — the crossing is darker.
 10. (from P11.2) Masked objects look right while you pan them partly off screen and back.
+11. (from Mac cursors) Hover each tool over the canvas and check the cursor changes: the pen nib (and its + / − states over a segment / an anchor), the selection arrows, the hand while Space is held. You can also open the installed `/Applications/Varos.app`.
+    - Expect the cursors to look a little soft on the Retina screen (32-pixel bitmaps shown at 32 points) — known, not a bug of this piece.
+    - On your Mac the local Illustrator reference set is present, so all 28 states are custom. Without that folder (a fresh clone), 17 states (resize ×4, move, hand, grab, copy, no-drop, rotate ×8) use the standard Mac cursors — by design until our own set lands.
+    - The original Varos cursor set v1 is being designed (branch `design/cursors-v1`) to replace the Illustrator reference set.
 
-**Known Mac gaps (expected, not bugs of this piece):** two title bars (the Mac one + ours); standard Mac cursors instead of our tool cursors (custom-cursors piece in progress); screen eyedropper disabled; window position/size not remembered; the title-bar strip is see-through.
+**Known Mac gaps (expected, not bugs of this piece):** two title bars (the Mac one + ours); screen eyedropper disabled; window position/size not remembered; the title-bar strip is see-through.
 
 **Why `docs/studies/`:** the charter never lists allowed folders. It asks that every level-5 doc carry a stamp (§0, §3.5). F2b only decided that the `docs/` root holds current docs, and a subfolder keeps that true. `docs/audits/` is already a topic folder beside `history/` and `reference/`. So a new `docs/studies/` folder for dated level-5 proposals is allowed and moves nothing. Each study is stamped `reference` (an allowed value) instead of the non-charter `draft`. Once Ahmed decides on a study, the decision goes into an ADR or a work order, and the study stays as reference.
 **INVENTORY.md left unchanged:** it is the frozen F1 baseline register (160 files at `1aff281`, and post-baseline docs such as ADRs and `P11_1_PERF.md` are deliberately not listed), so the studies are not added there. **Dashboard note:** the "First-party docs stamped" and "Link check" rows below were not re-measured for the three studies. All three carry a stamp, and none contains a relative Markdown link. `tools/check_links.ps1` cannot run on this Mac (no `pwsh`).
@@ -78,8 +84,8 @@ Landed later on 2026-09-23:
 |---|---:|
 | `ui.rs` lines | 5,826 (re-measured `wc -l` 2026-09-23, after `9f8ec1d`) |
 | `editor.rs` lines | 4,537 (re-measured `wc -l` 2026-09-23, after `b15d2bf`) |
-| Workspace tests | 267 — whole workspace, run on macOS 2026-09-23 after `b15d2bf` (core 216 · pdf 13 · render 16 · app 22) |
-| Tests on macOS | 267 / 267 — whole workspace incl. `varos-app` (2026-09-23, after `b15d2bf`) |
+| Workspace tests | 271 — whole workspace, run on macOS 2026-09-23 after `0a6974d` (core 216 · pdf 13 · render 16 · app 26) |
+| Tests on macOS | 271 / 271 — whole workspace incl. `varos-app` (2026-09-23, after `0a6974d`) |
 | `unsafe` sites (app crates) | 27 |
 | Direct external deps | 23 |
 | `cargo audit` | 4 vulns + 6 warnings (triaged 2026-09-23, `docs/audits/2026-09-23-CARGO_AUDIT_TRIAGE.md`; fixes await owner approval) |
