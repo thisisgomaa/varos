@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Varos — Eyedropper</title>
+  <desc>Varos cursor v1 — eyedropper. Hotspot 3,20 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
+  <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(3 20) rotate(45)" fill="#ffffff" stroke="#ffffff" stroke-width="3.5">
+      <path d="M0 0L-1.25 -2.5V-10.5H1.25V-2.5Z"/>
+      <rect x="-3" y="-15" width="6" height="2" rx=".75"/>
+      <rect x="-2" y="-23" width="4" height="5.5" rx="2"/>
+    </g>
+    <g transform="translate(3 20) rotate(45)" fill="#ffffff" stroke="#141313" stroke-width="1.5">
+      <path d="M0 0L-1.25 -2.5V-10.5H1.25V-2.5Z"/>
+      <rect x="-3" y="-15" width="6" height="2" rx=".75" fill="#141313"/>
+      <rect x="-2" y="-23" width="4" height="5.5" rx="2" fill="#141313"/>
+    </g>
+  </g>
+</svg>
