@@ -25,7 +25,9 @@ runs a path that already exists; no new editor behaviour.
 - **Drag:** Windows drags through the OS hit-test (`HTCAPTION` on the empty bar). macOS mirrors it:
   the same caption height + exclusion rects the bar already publishes (`cursors::set_caption`) are
   stored, and a left press on an empty bar spot calls `window.drag_window()`; a double-click there
-  toggles zoom (what the native title bar did).
+  toggles zoom (what the native title bar did). Floating egui layers and active widget drags take
+  priority over the caption geometry. Zoom requires two presses within 350 ms and 4 logical px,
+  with no intervening window drag; dragging or zooming clears the pending click.
 
 ## B. Opaque
 - `with_transparent(true)` (for the floating splash) is **off on macOS**; the NSWindow background is
@@ -78,8 +80,9 @@ touches many strings — keep it its own reviewed piece. Physical Ctrl should ke
 1. Traffic lights stay at macOS's native height (centre ≈ 14 pt from the top) while our 46 pt bar
    centres its controls at 23 pt. Centring them means moving AppKit's buttons on every resize /
    full-screen change (what Electron's `trafficLightPosition` does) — fragile; a later piece if wanted.
-2. Double-click on the bar always zooms; it ignores the System Settings "double-click title bar"
-   choice (minimize / do nothing).
+2. A nearby, timely double-click on empty bar space zooms; it still ignores the System Settings
+   "double-click title bar" choice (minimize / do nothing). Floating UI and intervening window drags
+   now block caption zoom (GPU-free regression tests); these fixes still need a real-window hand-test.
 3. Close Window / Quit have no unsaved-changes prompt — same as the ✕ button on Windows today.
 4. The splash no longer floats over the desktop on macOS (see B).
 5. An opaque window that is covered gets no redraws, so a splash started behind another window

@@ -28,6 +28,8 @@ use winit::{
 mod chrome;
 mod cursors;
 #[cfg(target_os = "macos")]
+mod mac_caption;
+#[cfg(target_os = "macos")]
 mod mac_menu;
 mod single_instance;
 mod ui;
@@ -752,7 +754,7 @@ fn main() {
     let mut last_ck: Option<CK> = None;
     let mut last_click: Option<(Instant, Pt)> = None;
     #[cfg(target_os = "macos")]
-    let mut last_caption_click: Option<Instant> = None; // double-click on the empty bar = zoom
+    let mut caption_clicks = mac_caption::CaptionClicks::default();
     let mut view = {
         // open zoomed-out so the artboard reads as a DEFINED page sitting on the larger board
         // (lots of dotted board visible around it). Ctrl+0 later does a tight Fit-in-Window.
@@ -914,6 +916,10 @@ fn main() {
                     #[cfg(target_os = "macos")]
                     WindowEvent::Occluded(false) => window.request_redraw(),
                     WindowEvent::Moved(pos) => {
+                        // AppKit can consume mouse motion/releases during its native drag loop.
+                        // Native move events also catch a drag that returns to its starting point.
+                        #[cfg(target_os = "macos")]
+                        caption_clicks.reset_after_drag();
                         // Windows parks a MINIMIZED window at (−32000,−32000) with a 0×0 client area —
                         // never persist that as the "normal" bounds, or it reopens the window invisible.
                         if !cursors::is_maximized(hwnd) {
@@ -958,6 +964,8 @@ fn main() {
                             MouseButton::Left => match state {
                                 ElementState::Pressed => {
                                     if space_down {
+                                        #[cfg(target_os = "macos")]
+                                        caption_clicks.reset_after_drag();
                                         if ed.mods.ctrl {
                                             // A13: click-zoom eases too — set the target + anchor at the
                                             // click point and let the RedrawRequested easer glide there.
@@ -976,20 +984,24 @@ fn main() {
                                     // the OS hit-test, HTCAPTION): press = move the window, double-click =
                                     // zoom, like the native title bar did (MAC_CHROME.md §A).
                                     #[cfg(target_os = "macos")]
-                                    if cursors::caption_drag_hit(screen_cursor[0], screen_cursor[1]) {
-                                        let now = Instant::now();
-                                        let dbl =
-                                            last_caption_click.is_some_and(|t| now.duration_since(t).as_millis() < 350);
-                                        if dbl {
-                                            last_caption_click = None;
+                                    if let Some(pos) = gui.caption_drag_position(screen_cursor) {
+                                        if caption_clicks.press(pos, Instant::now()) {
                                             window.set_maximized(!window.is_maximized());
                                         } else {
-                                            last_caption_click = Some(now);
-                                            let _ = window.drag_window();
+                                            let before = window.outer_position().ok();
+                                            let dragged = window.drag_window();
+                                            // The native drag call returns after mouse-up; clear immediately
+                                            // as well as on Moved, before another press can trigger zoom.
+                                            if dragged.is_err() || before != window.outer_position().ok() {
+                                                caption_clicks.reset_after_drag();
+                                            }
                                         }
                                         window.request_redraw();
                                         return;
                                     }
+                                    // A press belonging to a widget/canvas breaks the caption sequence too.
+                                    #[cfg(target_os = "macos")]
+                                    caption_clicks.reset_after_drag();
                                     if over_panel {
                                         window.request_redraw();
                                         return;
