@@ -107,6 +107,9 @@ P11.1 Windows table.
 | **D selected curved-150, ppu 40 (4000%)** | 0.367 ms | **0.109 ms** | **0.085 ms** | 32,409 / 64,944 / 99,144 | **1,068 / 2,388 / 3,384** |
 | **E rectangles-500, ppu 4 (partial)** | 2.435 ms | **1.213 ms** | 1.196 ms | 10,500 / 192,000 / 0 | **2,835 / 51,624 / 0** |
 
+These are the counts at the P11.2 merge. The later stroke-join fix changes the stroke (fg) and overlay
+counts of A, C, D and E; see "After the stroke-join fix" below for the current numbers.
+
 Scene-build time only (the core's share):
 
 | Scene | before | after cold | after warm |
@@ -141,6 +144,30 @@ What the numbers say:
 - **Small cold costs, reported honestly:** A's cold frame rose 0.008 ms (+10%), and D's scene build rose
   from 0.042 to 0.095 ms while its whole frame fell 3.4×. Cold now also pays for the bbox, a copy of the
   anchors, clipping, and a flatten up to 19% finer (bucket upper edge).
+
+### After the stroke-join fix (2026-09-23, branch `fix/stroke-fan-artifact`)
+
+The P11.1 join elision left open wedges in thick curved strokes (the "spokes" artifact; see
+`P11_1_PERF.md`, "Correction"). The fix adds one bevel triangle at each point of a curve, and replaces
+the 24-triangle disc at a real corner with a round sector on the outer side only, split finely enough
+that it stays within 0.25 px of the true circle. This changes vertex counts. Measured with the same
+alternating method (9 rounds, load average about 2.6), `main` at `7f3d883` against the fix, two runs:
+
+| Scene | main cold | fix cold | fix warm | fill / fg / overlay vertices, main | fix |
+|---|---:|---:|---:|---:|---:|
+| A selected curved-150, ppu 3 | 0.090 ms | 0.097–0.098 ms | 0.093–0.095 ms | 3,078 / 6,420 / 35,460 | 3,078 / 9,480 / 38,520 |
+| B rectangles-500, ppu 0.3 | 1.996–2.027 ms | 2.045–2.050 ms | 1.999–2.005 ms | 10,500 / 12,000 / 0 | 10,500 / 12,000 / 0 |
+| C curves-100, ppu 1 | 0.519–0.521 ms | 0.577–0.581 ms | 0.536–0.541 ms | 29,700 / 72,000 / 0 | 29,700 / 100,500 / 0 |
+| D selected curved-150, ppu 40 | 0.112 ms | 0.113–0.114 ms | 0.089 ms | 1,068 / 2,388 / 3,384 | 1,068 / 3,363 / 4,170 |
+| E rectangles-500, ppu 4 (partial) | 1.206–1.214 ms | 1.176–1.191 ms | 1.165–1.172 ms | 2,835 / 51,624 / 0 | 2,835 / 27,996 / 0 |
+
+- **The P11.2 win survives:** D is unchanged within noise (0.112 → 0.113 ms against 0.367 ms before
+  P11.2), and E is slightly faster (its rectangle corners now take a 2-triangle sector instead of a
+  24-triangle disc: stroke vertices 51,624 → 27,996).
+- **The cost is on curved strokes, and is the price of a closed band:** C cold +11% (about +0.06 ms,
+  stroke vertices +40%), A cold +8% (+0.007 ms), D stroke vertices +41% (2,388 → 3,363). That is 3
+  vertices per curve point. Skipping bevels whose gap is under 1/16 px was considered and **rejected**
+  (review agreed): at r = 1 600 px a 1/16 px-wide wedge is about 50 px² and would speckle under MSAA.
 
 ## Verification
 

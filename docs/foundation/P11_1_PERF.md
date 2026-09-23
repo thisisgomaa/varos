@@ -69,6 +69,42 @@ the baseline excluded it. `VAROS_PERF=1` reports the actual live full-frame and 
   render-ui, and full-frame timing at `varos-app/src/main.rs:1046` and
   `varos-render-wgpu/src/lib.rs:1092`. The headless harness was the first commit (`1b55f22`).
 
+## Correction: the 5° join elision opened wedges in thick strokes (fixed 2026-09-23)
+
+The join elision above was wrong for thick strokes. Its premise was that segment quads "overlap cleanly"
+below 5°. They overlap only on the **inner** side of a turn. On the outer side, two consecutive quads
+leave an open wedge of angle θ and radius r (half the stroke width in screen px), whose mouth is about
+r·θ wide. A curve has one at every flattened point. For the owner's case, an 80.4-wide closed smooth
+path at 327% (r ≈ 131 px, θ ≈ 3°), each wedge is about 7 px wide, and the outer half of the stroke band
+rendered as hundreds of radial "spokes". On inward-curving stretches the fill showed through the stroke.
+Wider strokes and higher zoom made it worse.
+
+- **Found by:** Ahmed's screenshot of the installed macOS app, 2026-09-23.
+- **Bisected headlessly** (CPU tessellation, no GPU). Uncovered band pixels at 327% with the whole path
+  in view: `8da2d8c` (before P11.1) 15, `1931c80` (P11.1) **47,677**; `61786a0`, `9f8ec1d` and `main`
+  are the same as P11.1. So P11.1 caused it. P11.2's view clipping and the macOS port did not.
+- **Fix** (`tess.rs` `stroke_poly` / `stroke_join`, branch `fix/stroke-fan-artifact`): every turn is
+  closed on its outer side by a round sector. The sector is a fan around the joint, from the incoming
+  quad's outer corner to the outgoing quad's. Its first and last vertices are those exact corners, so
+  there is no crack. It is split just finely enough that every chord stays within 0.25 screen px of the
+  true circle. On a gentle curve that is one bevel triangle per point. At a real corner it is a few
+  triangles, instead of P11.1's 24-triangle disc. An earlier version of the fix fell back to the full
+  24-triangle disc at sharper turns. Review (Codex) showed that disc is *inscribed*: at 4000% it sits up
+  to r·(1 − cos 7.5°) ≈ 13.7 px inside the band between its vertices, and it left holes there. The
+  sector replaced it.
+- **Tests** (GPU-free, `tess.rs`): band coverage at every join and containment for the owner's case at
+  100%, 327% and 4000%, with the path in view and cut by the view; arcs turning both ways; the review's
+  6° → 9° turn at width 80 and 4000%, sampled 1–3 px inside the band at nine angles across the wedge; a
+  zoom sweep from 10× to 60× (plus 100% and 327%) across gentle turns and U-turns; and a check that every
+  sector chord stays within 0.25 px of the true circle. All of these fail on the old join rules and pass
+  now.
+- **Cost:** about 3 extra vertices per curve point. The numbers are in `P11_2_PERF.md`, "After the
+  stroke-join fix".
+- **Follow-up, not fixed:** round **caps** at open path ends still use the 24-triangle inscribed disc.
+  At very high zoom with a thick stroke, such a cap is visibly faceted: at 4000% with width 80, r ≈
+  1 600 px, and the polygon sits up to about 14 px inside the true circle. Caps should get the same
+  tolerance-driven subdivision as joins.
+
 ## Scope and verification
 
 P11.1 does not add viewport culling, a cross-frame subdivision cache, undo-storage changes, PresentMode
