@@ -4,9 +4,11 @@
 //!
 //! Run with:  cargo test -p varos-core --test delete_anchor
 
+use std::collections::HashSet;
 use varos_core::editor::{Editor, ToolKind};
-use varos_core::model::{Anchor, Path};
+use varos_core::model::{Anchor, Path, ShapeKind};
 use varos_core::scene::{build_scene, Prim};
+use varos_core::EditCommand;
 
 fn corner(id: u32, x: f32, y: f32) -> Anchor {
     Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
@@ -213,4 +215,141 @@ fn an_opened_shape_keeps_its_fill() {
     let scene = build_scene(&ed, 1.0);
     let fills = scene.content.iter().flat_map(|g| g.prims()).filter(|p| matches!(p, Prim::Fill { .. })).count();
     assert!(fills >= 1, "the opened shape must still fill (implied close), got {fills} Fill prims");
+}
+
+// ---------- 2026-09-23 re-verification of A32 against the full acceptance list ----------
+// These go through `EditCommand::DeleteSelected` — the exact path the Delete/Backspace key takes in the
+// app — and use real 4-anchor ellipses from the Ellipse tool's geometry (smooth points with handles).
+
+/// A closed 4-anchor ellipse exactly as the Ellipse tool builds it; returns (path id, anchor ids in order).
+fn ellipse(ed: &mut Editor, x0: f32, y0: f32, x1: f32, y1: f32) -> (u32, Vec<u32>) {
+    let anchors = ed.doc.build_shape(ShapeKind::Ellipse, [x0, y0], [x1, y1]);
+    let ids = anchors.iter().map(|a| a.id).collect();
+    let pid = ed.doc.nid();
+    ed.doc.paths.push(Path::new(pid, anchors, true, Some([0.5, 0.5, 0.5, 1.0]), Some([0.0, 0.0, 0.0, 1.0]), 1.0));
+    (pid, ids)
+}
+
+fn direct_editor() -> Editor {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    ed.doc.ids = 500;
+    ed.set_tool(ToolKind::Direct);
+    ed
+}
+
+/// Every drawn segment after the delete must be a segment that existed BEFORE it (either direction).
+/// A re-linked pair of former non-neighbours is exactly the A32 bug.
+fn assert_no_invented_segment(before: &[Path], after: &[Path]) {
+    let mut original: HashSet<(u32, u32)> = HashSet::new();
+    for p in before {
+        let n = p.anchors.len();
+        let segs = if p.closed { n } else { n.saturating_sub(1) };
+        for i in 0..segs {
+            let (a, b) = (p.anchors[i].id, p.anchors[(i + 1) % n].id);
+            original.insert((a, b));
+            original.insert((b, a));
+        }
+    }
+    for p in after {
+        let n = p.anchors.len();
+        let segs = if p.closed { n } else { n.saturating_sub(1) };
+        for i in 0..segs {
+            let (a, b) = (p.anchors[i].id, p.anchors[(i + 1) % n].id);
+            assert!(original.contains(&(a, b)), "delete invented a segment {a}→{b} that never existed (path {p:?})");
+        }
+    }
+}
+
+#[test]
+fn deleting_one_anchor_of_a_closed_circle_leaves_an_open_three_anchor_arc() {
+    let mut ed = direct_editor();
+    let (_, ids) = ellipse(&mut ed, 0.0, 0.0, 100.0, 100.0); // top, right, bottom, left
+    let before = ed.doc.paths.clone();
+    ed.selected.insert(ids[0]); // delete TOP — its neighbours are LEFT (ids[3]) and RIGHT (ids[1])
+    ed.execute(EditCommand::DeleteSelected);
+
+    assert_eq!(ed.doc.paths.len(), 1);
+    let p = &ed.doc.paths[0];
+    assert!(!p.closed, "the circle must OPEN, not re-close over the gap");
+    assert_eq!(p.anchors.len(), 3, "4 − 1 = 3 anchors");
+    let order: Vec<u32> = p.anchors.iter().map(|a| a.id).collect();
+    assert_eq!(order, vec![ids[1], ids[2], ids[3]], "open arc runs right → bottom → left; the gap is at the top");
+    // The three surviving arcs are untouched — every remaining anchor keeps its exact handles.
+    for a in &p.anchors {
+        let orig = before[0].anchors.iter().find(|o| o.id == a.id).unwrap();
+        assert_eq!(a, orig, "a surviving anchor must not be altered by the delete");
+    }
+    assert_no_invented_segment(&before, &ed.doc.paths);
+
+    // What the user SEES: the stroke is an open polyline from RIGHT to LEFT — nothing drawn across the top.
+    ed.doc.artboards.clear();
+    let scene = build_scene(&ed, 1.0);
+    let strokes: Vec<&Vec<[f32; 2]>> = scene
+        .content
+        .iter()
+        .flat_map(|g| g.prims())
+        .filter_map(|p| if let Prim::Stroke { pts, .. } = p { Some(pts) } else { None })
+        .collect();
+    assert_eq!(strokes.len(), 1, "one stroke for the one path");
+    let (first, last) = (strokes[0][0], *strokes[0].last().unwrap());
+    let d = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+    assert!(
+        d(first, [100.0, 50.0]) < 0.01 && d(last, [0.0, 50.0]) < 0.01,
+        "stroke must run right→left: {first:?}..{last:?}"
+    );
+    assert!(strokes[0].iter().all(|q| q[1] >= 50.0 - 0.01), "no stroke point may cross the deleted top arc");
+}
+
+#[test]
+fn one_delete_across_two_circles_opens_both_and_one_undo_restores_both() {
+    let mut ed = direct_editor();
+    let (_, a) = ellipse(&mut ed, 0.0, 0.0, 100.0, 100.0);
+    let (_, b) = ellipse(&mut ed, 60.0, 20.0, 160.0, 120.0); // overlapping the first
+    let before = ed.doc.paths.clone();
+    ed.selected.insert(a[1]);
+    ed.selected.insert(b[3]);
+    ed.execute(EditCommand::DeleteSelected);
+
+    assert_eq!(ed.doc.paths.len(), 2);
+    for p in &ed.doc.paths {
+        assert!(!p.closed, "each circle opens where its anchor was deleted");
+        assert_eq!(p.anchors.len(), 3);
+    }
+    assert_no_invented_segment(&before, &ed.doc.paths);
+    let after = ed.doc.paths.clone();
+
+    ed.execute(EditCommand::Undo);
+    assert_eq!(ed.doc.paths, before, "ONE undo restores BOTH circles exactly (closed, 4 anchors, same handles)");
+    ed.execute(EditCommand::Undo); // nothing earlier on the stack → still the original (the delete was ONE step)
+    assert_eq!(ed.doc.paths, before);
+    ed.execute(EditCommand::Redo);
+    assert_eq!(ed.doc.paths, after, "redo re-applies the whole multi-object delete");
+}
+
+#[test]
+fn deleting_several_anchors_on_three_overlapping_ellipses_never_relinks() {
+    // The reported repro: 3 overlapping ellipses, several anchors picked across all of them, one Delete.
+    let mut ed = direct_editor();
+    let (_, e1) = ellipse(&mut ed, 0.0, 0.0, 120.0, 80.0);
+    let (_, e2) = ellipse(&mut ed, 60.0, 30.0, 180.0, 110.0);
+    let (_, e3) = ellipse(&mut ed, 30.0, 60.0, 150.0, 140.0);
+    let before = ed.doc.paths.clone();
+    // e1: two ADJACENT anchors; e2: one anchor; e3: two OPPOSITE anchors.
+    for id in [e1[0], e1[1], e2[2], e3[0], e3[2]] {
+        ed.selected.insert(id);
+    }
+    ed.execute(EditCommand::DeleteSelected);
+
+    assert!(ed.doc.paths.iter().all(|p| !p.closed), "no path may stay/come back closed after losing anchors");
+    assert_no_invented_segment(&before, &ed.doc.paths);
+    let with = |id: u32| ed.doc.paths.iter().find(|p| p.anchors.iter().any(|a| a.id == id)).unwrap();
+    // e1 lost top+right → the single surviving arc bottom→left (one segment).
+    assert_eq!(with(e1[2]).anchors.iter().map(|a| a.id).collect::<Vec<_>>(), vec![e1[2], e1[3]]);
+    // e2 lost bottom → open arc left → top → right.
+    assert_eq!(with(e2[0]).anchors.len(), 3);
+    // e3 lost top+bottom → every segment touched a deleted anchor: only lone points remain, no segment.
+    assert!(with(e3[1]).anchors.len() == 1 && with(e3[3]).anchors.len() == 1);
+    ed.execute(EditCommand::Undo);
+    assert_eq!(ed.doc.paths, before, "one undo restores all three ellipses");
 }
