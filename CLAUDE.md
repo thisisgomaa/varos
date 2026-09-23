@@ -2,7 +2,7 @@
 # CLAUDE.md — standing rules for AI sessions on Varos
 
 ## What this project is
-Varos: a free, open-source, Windows-first vector editor (Illustrator alternative) in Rust — wgpu + winit + egui (manual path, **never eframe** in the real app). Arabic-first typography is the long-term moat. Built by Ahmed (designer, not a coder — talk simple, no jargon, Arabic preferred) with AI sessions.
+Varos: a free, open-source, Mac-first for now (official build Mac-only as of 2026-09-23; Windows kept compiling via the target check, revisited later) vector editor (Illustrator alternative) in Rust — wgpu + winit + egui (manual path, **never eframe** in the real app). Arabic-first typography is the long-term moat. Built by Ahmed (designer, not a coder — talk simple, no jargon, Arabic preferred) with AI sessions.
 
 ## Hard architecture laws
 - `varos-core` = pure logic. Zero GPU/window/UI deps. The compiler enforces this seam — never weaken it.
