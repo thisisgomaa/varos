@@ -7,7 +7,7 @@ use varos_core::editor::{Editor, ToolKind};
 use varos_core::geom::View;
 use varos_core::model::{Anchor, Path};
 use varos_core::scene::{build_scene, scene_signature};
-use varos_render_wgpu::perf::profile_content;
+use varos_render_wgpu::perf::{profile_content, profile_overlay};
 
 const WIDTH: f32 = 1920.0;
 const HEIGHT: f32 = 1080.0;
@@ -69,6 +69,13 @@ fn cases() -> Vec<Case> {
     single.tool = ToolKind::Direct;
     single.doc.paths.push(path);
 
+    let mut extreme = Editor::new();
+    let path = curved_path(10, 100, [320.0, 220.0], 170.0, 150);
+    extreme.objsel.insert(path.id);
+    extreme.selected.extend(path.anchors.iter().map(|anchor| anchor.id));
+    extreme.tool = ToolKind::Direct;
+    extreme.doc.paths.push(path);
+
     let mut rectangles = Editor::new();
     for i in 0..500u32 {
         let col = i % 25;
@@ -96,6 +103,9 @@ fn cases() -> Vec<Case> {
         ));
     }
 
+    let mut rect_partial = Editor::new();
+    rect_partial.doc.paths = rectangles.doc.paths.clone();
+
     vec![
         Case {
             name: "A curved-150 selected ppu=3.0",
@@ -108,6 +118,19 @@ fn cases() -> Vec<Case> {
             view: View { pan: [0.0, 0.0], zoom: 0.3 },
         },
         Case { name: "C curves-100 ppu=1.0", editor: finish(curves), view: View::identity() },
+        // P11.2 symptom (d): 4000% zoom on the selected 150-anchor path, the view centred on its right
+        // edge so only a sliver of the outline (and a couple of handles) is on screen.
+        Case {
+            name: "D curved-150 selected ppu=40",
+            editor: finish(extreme),
+            view: View { pan: [WIDTH * 0.5 - 490.0 * 40.0, HEIGHT * 0.5 - 220.0 * 40.0], zoom: 40.0 },
+        },
+        // P11.2 many-objects culling: scene B's 500 rectangles at 400%, so only one corner is on screen.
+        Case {
+            name: "E rectangles-500 ppu=4.0 partial",
+            editor: finish(rect_partial),
+            view: View { pan: [0.0, 0.0], zoom: 4.0 },
+        },
     ]
 }
 
@@ -124,6 +147,8 @@ fn main() {
         let mut content_times = Vec::with_capacity(RUNS);
         let mut frame_times = Vec::with_capacity(RUNS);
         let mut cache_hit_times = Vec::with_capacity(RUNS);
+        let mut overlay_times = Vec::with_capacity(RUNS);
+        let mut overlay_vertices = 0;
         let mut counts = (0, 0, 0, 0);
         let expected_signature = scene_signature(&case.editor, case.view, [WIDTH as u32, HEIGHT as u32]);
         for _ in 0..RUNS {
@@ -135,6 +160,9 @@ fn main() {
             content_times.push(profile.elapsed);
             counts =
                 (profile.fill_vertices, profile.foreground_vertices, profile.opacity_vertices, profile.draw_groups);
+            let (overlay_elapsed, overlay_count) = profile_overlay(&scene.overlay, case.view, WIDTH, HEIGHT);
+            overlay_times.push(overlay_elapsed);
+            overlay_vertices = overlay_count;
             black_box(&scene);
             frame_times.push(frame_start.elapsed());
 
@@ -145,15 +173,18 @@ fn main() {
             cache_hit_times.push(hit_start.elapsed());
         }
         println!(
-            "{:<34} scene={:>8.3}ms content={:>8.3}ms cold={:>8.3}ms hit={:>8.3}ms vertices={}/{}/{} groups={}",
+            "{:<34} scene={:>8.3}ms content={:>8.3}ms overlay={:>8.3}ms cold={:>8.3}ms hit={:>8.3}ms \
+             vertices={}/{}/{} overlay_vertices={} groups={}",
             case.name,
             median(&mut scene_times).as_secs_f64() * 1_000.0,
             median(&mut content_times).as_secs_f64() * 1_000.0,
+            median(&mut overlay_times).as_secs_f64() * 1_000.0,
             median(&mut frame_times).as_secs_f64() * 1_000.0,
             median(&mut cache_hit_times).as_secs_f64() * 1_000.0,
             counts.0,
             counts.1,
             counts.2,
+            overlay_vertices,
             counts.3,
         );
     }
