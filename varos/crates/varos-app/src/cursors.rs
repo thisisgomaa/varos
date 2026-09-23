@@ -125,8 +125,25 @@ pub fn ai_svg(ck: CK) -> Option<(&'static str, f32, f32)> {
 }
 
 const SZ: u32 = 32; // cursor bitmap size (standard Windows cursor) for our built-in SVG cursors
-#[cfg_attr(not(windows), allow(dead_code))] // used only by the Win32 paths
-const CURSOR_PX: u32 = 32; // rendered size for the Illustrator vector cursors — bump for bigger/hi-DPI
+
+/// Rendered size for the Illustrator vector cursors. On macOS winit makes the NSCursor image
+/// `width × height` POINTS (not pixels), so this is also the cursor's logical size there — keep 32.
+const CURSOR_PX: u32 = 32;
+/// Where the TEMP local Illustrator cursor SVGs live (gitignored — never shipped, see .gitignore).
+const AI_SVG_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cursors-ai/svg/");
+
+/// tiny-skia renders premultiplied RGBA; every cursor consumer (the Win32 DIB builder, winit
+/// `CustomCursor`) takes straight alpha. In place.
+fn unpremultiply(d: &mut [u8]) {
+    for px in d.chunks_mut(4) {
+        let a = px[3] as u32;
+        if a > 0 && a < 255 {
+            px[0] = ((px[0] as u32 * 255) / a) as u8;
+            px[1] = ((px[1] as u32 * 255) / a) as u8;
+            px[2] = ((px[2] as u32 * 255) / a) as u8;
+        }
+    }
+}
 
 // ---- glyph geometry (24×24 viewBox; kept compact, upper-left, like Illustrator) ----
 // Selection arrow: tip (hotspot) at (3,3), short tail. ~10×15 in viewBox.
@@ -216,14 +233,7 @@ pub fn render_svg(svg: &str, size: u32, force_black: bool) -> Option<(Vec<u8>, u
     let mut pm = tiny_skia::Pixmap::new(w, h)?;
     resvg::render(&tree, tiny_skia::Transform::from_scale(sc, sc), &mut pm.as_mut());
     let mut d = pm.data().to_vec();
-    for px in d.chunks_mut(4) {
-        let a = px[3] as u32;
-        if a > 0 && a < 255 {
-            px[0] = ((px[0] as u32 * 255) / a) as u8;
-            px[1] = ((px[1] as u32 * 255) / a) as u8;
-            px[2] = ((px[2] as u32 * 255) / a) as u8;
-        }
-    }
+    unpremultiply(&mut d);
     Some((d, w, h))
 }
 fn viewbox_of(svg: &str) -> String {
@@ -251,14 +261,7 @@ pub fn rgba(ck: CK) -> (Vec<u8>, u16, u16, u16, u16) {
     let sc = SZ as f32 / 24.0;
     resvg::render(&tree, tiny_skia::Transform::from_scale(sc, sc), &mut pm.as_mut());
     let mut d = pm.data().to_vec(); // premultiplied RGBA
-    for px in d.chunks_mut(4) {
-        let a = px[3] as u32;
-        if a > 0 && a < 255 {
-            px[0] = ((px[0] as u32 * 255) / a) as u8;
-            px[1] = ((px[1] as u32 * 255) / a) as u8;
-            px[2] = ((px[2] as u32 * 255) / a) as u8;
-        }
-    }
+    unpremultiply(&mut d);
     (d, SZ as u16, SZ as u16, (hx * sc).round() as u16, (hy * sc).round() as u16)
 }
 
@@ -269,30 +272,44 @@ pub fn hcursor(ck: CK) -> isize {
     build_hcursor(&rgba, w as u32, h as u32, hx, hy)
 }
 
-/// Build a Windows HCURSOR from an Illustrator vector cursor SVG, rendered at CURSOR_PX. The hotspot
-/// is given in 1× (32px-logical) space and scaled to the rendered bitmap. None if the file is missing.
-#[cfg(windows)]
-pub fn hcursor_svg_file(stem: &str, hx: f32, hy: f32) -> Option<isize> {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cursors-ai/svg/");
-    let svg = std::fs::read_to_string(format!("{dir}{stem}.svg")).ok()?;
+/// Render an Illustrator vector cursor SVG (`AI_SVG_DIR/<stem>.svg`) to straight-alpha RGBA at
+/// CURSOR_PX — same tuple shape as `rgba`. The hotspot is given in 1× (32px-logical) space and scaled
+/// to the rendered bitmap. None if the file is missing or unreadable. Shared by Windows (HCURSOR) and
+/// macOS (winit `CustomCursor`), so both platforms show the identical bitmap.
+pub fn svg_file_rgba(stem: &str, hx: f32, hy: f32) -> Option<(Vec<u8>, u16, u16, u16, u16)> {
+    let svg = std::fs::read_to_string(format!("{AI_SVG_DIR}{stem}.svg")).ok()?;
     let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).ok()?;
     let vb = tree.size().width().max(tree.size().height()).max(1.0); // 64 for these @2x assets
     let scale = CURSOR_PX as f32 / vb;
     let mut pm = tiny_skia::Pixmap::new(CURSOR_PX, CURSOR_PX)?;
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
     let mut d = pm.data().to_vec();
-    for px in d.chunks_mut(4) {
-        let a = px[3] as u32;
-        if a > 0 && a < 255 {
-            px[0] = ((px[0] as u32 * 255) / a) as u8;
-            px[1] = ((px[1] as u32 * 255) / a) as u8;
-            px[2] = ((px[2] as u32 * 255) / a) as u8;
-        }
-    }
+    unpremultiply(&mut d);
     let hs = CURSOR_PX as f32 / 32.0; // 1×-logical → bitmap pixels
-    match build_hcursor(&d, CURSOR_PX, CURSOR_PX, (hx * hs).round() as u16, (hy * hs).round() as u16) {
+    let px = CURSOR_PX as u16;
+    Some((d, px, px, (hx * hs).round() as u16, (hy * hs).round() as u16))
+}
+
+/// Build a Windows HCURSOR from an Illustrator vector cursor SVG (see `svg_file_rgba`). None if the
+/// file is missing or Win32 refuses the handle.
+#[cfg(windows)]
+pub fn hcursor_svg_file(stem: &str, hx: f32, hy: f32) -> Option<isize> {
+    let (d, w, h, hx, hy) = svg_file_rgba(stem, hx, hy)?;
+    match build_hcursor(&d, w as u32, h as u32, hx, hy) {
         0 => None, // Win32 refused → let the caller fall back to the built-in SVG cursor
         hc => Some(hc),
+    }
+}
+
+/// The bitmap a CK's non-Windows cursor is built from — the same choice `main.rs` makes on Windows:
+/// the local Illustrator SVG when present (`.1 == true`), else our own built-in SVG. `use_ai = false`
+/// forces the built-in (shippable) set.
+#[cfg_attr(windows, allow(dead_code))] // Windows picks per CK in main.rs (hcursor_svg_file → hcursor)
+pub fn cursor_rgba(ck: CK, use_ai: bool) -> ((Vec<u8>, u16, u16, u16, u16), bool) {
+    let ai = if use_ai { ai_svg(ck).and_then(|(stem, hx, hy)| svg_file_rgba(stem, hx, hy)) } else { None };
+    match ai {
+        Some(b) => (b, true),
+        None => (rgba(ck), false),
     }
 }
 
@@ -675,33 +692,77 @@ pub use win::{
 
 // Non-Windows twins of the Win32 shell functions above — SAME signatures, so main.rs / ui.rs call
 // sites are identical on every platform (docs/foundation/MAC_SHELL_PORT.md). Nothing here pretends:
-// features with no native equivalent yet are plain no-ops, and the cursor set maps to winit's
-// built-in `CursorIcon`s. The winit window is handed over once via `bind_window`.
+// features with no native equivalent yet are plain no-ops. Cursors are real winit `CustomCursor`s
+// built from the SAME bitmaps + hotspots as the Windows HCURSORs (`cursor_rgba`), created once by
+// `create_custom_cursors` and cached per CK; winit's built-in `CursorIcon`s are only the fallback if
+// a custom cursor could not be built. The winit window is handed over once via `bind_window`.
 #[cfg(not(windows))]
 mod portable {
-    use super::{ALL_CURSORS, CK};
+    use super::{ai_svg, cursor_rgba, ALL_CURSORS, CK};
     use std::sync::atomic::{AtomicIsize, Ordering};
     use std::sync::{Arc, OnceLock};
-    use winit::window::{CursorIcon, Window};
+    use winit::event_loop::EventLoop;
+    use winit::window::{CursorIcon, CustomCursor, Window};
 
     static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
     static CUR: AtomicIsize = AtomicIsize::new(0);
+
+    /// One ready cursor per `ALL_CURSORS` slot (slot = token − 1) and whether it came from the local
+    /// Illustrator set. `None` in a slot = winit refused the bitmap → `set` uses the `icon` fallback.
+    struct Built {
+        cursor: CustomCursor,
+        from_ai: bool,
+    }
+    static CUSTOM: OnceLock<Vec<Option<Built>>> = OnceLock::new();
 
     /// Give the cursor/window helpers the live winit window (call once, right after creation).
     pub fn bind_window(w: Arc<Window>) {
         let _ = WINDOW.set(w);
     }
 
+    /// Build every tool cursor once (creating an NSCursor is not free) and cache it per CK. Call once,
+    /// after the event loop + window exist and BEFORE `hcursor` / `hcursor_svg_file` are queried.
+    /// Bitmaps are CURSOR_PX/SZ = 32 px, which winit on macOS turns into a 32×32-POINT cursor — the
+    /// right on-screen size on Retina (a 64 px bitmap would be a double-size cursor). Logs one line.
+    /// Returns (custom cursors built, of which from the Illustrator set).
+    pub fn create_custom_cursors<T: 'static>(el: &EventLoop<T>) -> (usize, usize) {
+        let built: Vec<Option<Built>> = ALL_CURSORS
+            .iter()
+            .map(|&ck| {
+                let make = |use_ai: bool| {
+                    let ((d, w, h, hx, hy), from_ai) = cursor_rgba(ck, use_ai);
+                    CustomCursor::from_rgba(d, w, h, hx, hy)
+                        .ok()
+                        .map(|src| Built { cursor: el.create_custom_cursor(src), from_ai })
+                };
+                // an Illustrator bitmap winit rejects falls back to the built-in one, like Windows does
+                make(true).or_else(|| make(false))
+            })
+            .collect();
+        let n = built.iter().flatten().count();
+        let m = built.iter().flatten().filter(|b| b.from_ai).count();
+        let _ = CUSTOM.set(built);
+        eprintln!("[varos] cursors: {n} custom ({m} from cursors-ai) of {}", ALL_CURSORS.len());
+        (n, m)
+    }
+
+    fn built(slot: usize) -> Option<&'static Built> {
+        CUSTOM.get().and_then(|v| v.get(slot)).and_then(|b| b.as_ref())
+    }
+
     /// Stand-in "cursor handle": a non-zero token (index into `ALL_CURSORS` + 1), decoded by `set`.
     pub fn hcursor(ck: CK) -> isize {
         ALL_CURSORS.iter().position(|c| *c == ck).map_or(0, |i| i as isize + 1)
     }
-    /// The Illustrator reference cursors are a Win32-only path; the caller falls back to `hcursor`.
-    pub fn hcursor_svg_file(_stem: &str, _hx: f32, _hy: f32) -> Option<isize> {
-        None
+    /// Some(token) when the cached cursor for the CK that uses this Illustrator `stem` really was built
+    /// from the local cursors-ai SVG; None otherwise (the caller then falls back to `hcursor`, which
+    /// resolves to the built-in bitmap for that CK). Hotspots come from `ai_svg`, as on Windows.
+    pub fn hcursor_svg_file(stem: &str, _hx: f32, _hy: f32) -> Option<isize> {
+        let i = ALL_CURSORS.iter().position(|&ck| ai_svg(ck).is_some_and(|(s, _, _)| s == stem))?;
+        built(i).filter(|b| b.from_ai).map(|_| i as isize + 1)
     }
 
-    /// The closest winit built-in cursor for each tool/interaction state.
+    /// Fallback only: the closest winit built-in cursor for each tool/interaction state.
     pub fn icon(ck: CK) -> CursorIcon {
         match ck {
             CK::Select | CK::Direct => CursorIcon::Default,
@@ -736,11 +797,16 @@ mod portable {
 
     pub fn set(hcursor: isize) {
         CUR.store(hcursor, Ordering::Relaxed);
-        let Some(ck) = usize::try_from(hcursor - 1).ok().and_then(|i| ALL_CURSORS.get(i).copied()) else {
+        let Some(i) = usize::try_from(hcursor - 1).ok().filter(|&i| i < ALL_CURSORS.len()) else {
             return; // 0 / unknown token → keep the OS arrow
         };
         if let Some(w) = WINDOW.get() {
-            w.set_cursor(icon(ck));
+            // Re-asserted every frame by main.rs; cheap — the clone is a refcount bump and winit's
+            // macOS `set_cursor` returns early when the view already shows this NSCursor.
+            match built(i) {
+                Some(b) => w.set_cursor(b.cursor.clone()),
+                None => w.set_cursor(icon(ALL_CURSORS[i])),
+            }
         }
     }
     /// No window subclass on this platform — reports "not installed".
@@ -769,8 +835,8 @@ mod portable {
 }
 #[cfg(not(windows))]
 pub use portable::{
-    bind_window, custom_frame, dbg, hcursor, hcursor_svg_file, install, is_maximized, maximize, set, set_caption,
-    set_cloaked, set_dark_class_brush,
+    bind_window, create_custom_cursors, custom_frame, dbg, hcursor, hcursor_svg_file, install, is_maximized, maximize,
+    set, set_caption, set_cloaked, set_dark_class_brush,
 };
 
 /// True when the system-wide (outside-the-window) eyedropper can actually sample the screen. On other
@@ -791,6 +857,42 @@ mod tests {
             let t = hcursor(*ck);
             assert_eq!(t, i as isize + 1);
             assert!(ALL_CURSORS[(t - 1) as usize] == *ck);
+        }
+    }
+
+    // Mac cursors — every CK's built-in bitmap is 32×32 straight RGBA with its hotspot inside, is not
+    // blank, and passes winit's own `CustomCursor::from_rgba` validation (pure: no EventLoop, no GPU).
+    #[test]
+    fn every_cursor_bitmap_is_32px_with_hotspot_inside_and_winit_accepts_it() {
+        use super::{cursor_rgba, ALL_CURSORS};
+        for ck in ALL_CURSORS {
+            let ((d, w, h, hx, hy), from_ai) = cursor_rgba(ck, false);
+            assert!(!from_ai, "use_ai=false must force the built-in set");
+            assert_eq!((w, h), (32, 32));
+            assert_eq!(d.len(), w as usize * h as usize * 4);
+            assert!(hx < w && hy < h, "hotspot ({hx},{hy}) outside {w}x{h}");
+            assert!(d.chunks(4).any(|p| p[3] > 0), "blank cursor bitmap");
+            assert!(winit::window::CustomCursor::from_rgba(d, w, h, hx, hy).is_ok());
+        }
+    }
+
+    // The Illustrator (local, gitignored) set: hotspots scale inside the CURSOR_PX bitmap, and when the
+    // SVGs are present locally they render to the same shape + pass winit. Absent files are skipped
+    // (that set is never shipped); the built-in set above is what CI always checks.
+    #[test]
+    fn illustrator_cursor_hotspots_fit_and_present_files_render() {
+        use super::{ai_svg, cursor_rgba, svg_file_rgba, ALL_CURSORS, CURSOR_PX};
+        for ck in ALL_CURSORS {
+            let (stem, hx, hy) = ai_svg(ck).expect("every CK maps to an Illustrator stem");
+            let s = CURSOR_PX as f32 / 32.0;
+            assert!((hx * s).round() < CURSOR_PX as f32 && (hy * s).round() < CURSOR_PX as f32, "{stem}");
+            if let Some((d, w, h, bx, by)) = svg_file_rgba(stem, hx, hy) {
+                assert_eq!((w as u32, h as u32), (CURSOR_PX, CURSOR_PX), "{stem}");
+                assert_eq!(d.len(), w as usize * h as usize * 4, "{stem}");
+                assert!(bx < w && by < h, "{stem}");
+                assert!(cursor_rgba(ck, true).1, "{stem} present but not preferred");
+                assert!(winit::window::CustomCursor::from_rgba(d, w, h, bx, by).is_ok(), "{stem}");
+            }
         }
     }
 

@@ -27,8 +27,8 @@ renderer fixes below (texture-size limit + egui texture upload/free ordering), w
 | `main.rs:557, 652` → `cursors.rs:596` `set_cloaked` | DWM cloak to hide the startup flash | no-op (window may show one plain frame at start) |
 | `main.rs:571` → `cursors.rs:644` `install` | subclass wndproc (WM_SETCURSOR, custom caption, hit-test) | returns `false` (nothing installed) |
 | `main.rs:572` → `cursors.rs:607` `set_dark_class_brush` | dark class background brush | no-op |
-| `main.rs:573-583` → `cursors.rs:265, 273` `hcursor`, `hcursor_svg_file` | Win32 HCURSOR from our SVGs | `hcursor` returns a non-zero **token** (index into `ALL_CURSORS` + 1); `hcursor_svg_file` returns `None` |
-| `main.rs:583, 1023` → `cursors.rs:650` `set` | set the HCURSOR on the window | token → `CK` → winit built-in `CursorIcon` via `window.set_cursor` |
+| `main.rs:573-583` → `cursors.rs` `hcursor`, `hcursor_svg_file` | Win32 HCURSOR from our SVGs | `hcursor` returns a non-zero **token** (index into `ALL_CURSORS` + 1); `hcursor_svg_file` returns that token only when the cached cursor really came from the local Illustrator SVG, else `None` (updated 2026-09-23, see "Tool cursors on macOS") |
+| `main.rs:583, 1023` → `cursors.rs` `set` | set the HCURSOR on the window | token → cached winit `CustomCursor` via `window.set_cursor`; winit built-in `CursorIcon` only if that custom cursor could not be built |
 | `main.rs:1025` → `cursors.rs:659` `dbg` | cursor debug counters | same tuple, HWND/hits = 0 |
 | `main.rs:644, 687, 695, 712, 960, 996, 999` → `cursors.rs:574` `is_maximized` | `GetWindowPlacement` | winit `Window::is_maximized()` |
 | `main.rs:1060` → `cursors.rs:542` `custom_frame` | strip caption, DWM round corners | no-op — the **native macOS title bar stays** (see gaps) |
@@ -48,12 +48,50 @@ reach it without changing their Windows signatures.
 `main.rs` re-asserts the resolved tool cursor every frame *after* `gui.run` (pure `resolve_ck` +
 `cursor_apply_needed`, unit-tested). Windows keeps "set only on change" (its subclass owns the cursor).
 
-## Cursor mapping (macOS, winit `CursorIcon`)
+## Tool cursors on macOS (winit `CustomCursor`) — 2026-09-23
 
-Select/Direct → `Default` · Pen family, Convert, Cross → `Crosshair` · Eye → `Crosshair` ·
-ResizeH → `EwResize` · ResizeV → `NsResize` · ResizeNE → `NeswResize` · ResizeNW → `NwseResize` ·
-Move → `Move` · Hand → `Grab` · Grab → `Grabbing` · Copy → `Copy` · NoDrop → `NotAllowed` ·
-Rotate* → `Crosshair`. Honest limit: macOS does not show our pen-nib / add / delete glyphs yet.
+**Reason:** Ahmed on his Mac: "the cursors are all missing" — the first port used generic winit
+`CursorIcon`s (arrow / crosshair), so the pen nib and its + / − / ○ states never showed.
+
+**How:** macOS now shows the **same bitmaps and hotspots as Windows**.
+- `cursors::cursor_rgba(ck, use_ai)` picks the bitmap for a `CK` on every platform: the local
+  Illustrator SVG (`assets/cursors-ai/svg/<stem>.svg`, rendered by `svg_file_rgba`) when that file is
+  present, else our own built-in SVG (`rgba(ck)`). `svg_file_rgba` is the rendering that used to live
+  inside the Win32 `hcursor_svg_file`; Windows now calls the same function (refactor by extraction —
+  same pixels, same hotspots, same HCURSOR). The premultiplied → straight alpha loop is one helper.
+- `cursors::create_custom_cursors(&event_loop)` (`#[cfg(not(windows))]`, called once in `main.rs` right
+  after `bind_window`, before the `hcur` table) builds one `CustomCursor::from_rgba` →
+  `EventLoop::create_custom_cursor` per `CK` (28) and caches them. It logs one line, e.g.
+  `[varos] cursors: 28 custom (28 from cursors-ai) of 28`. If winit rejects an Illustrator bitmap it
+  retries with the built-in one; if both fail, `set` falls back to the old `CursorIcon` mapping.
+- The per-frame re-assert (`resolve_ck` / `cursor_apply_needed`) is unchanged. It is cheap: `set`
+  clones a cached cursor (a reference-count bump) and winit's macOS `set_cursor` returns early when the
+  view already shows that cursor (`winit-0.30.13/src/platform_impl/macos/window_delegate.rs:1106-1116`).
+
+**Retina decision: 32 px bitmaps, hotspots in the 32-px-logical space (unchanged from Windows).**
+Evidence: winit 0.30.13 builds the macOS cursor as `NSImage::initWithSize(NSSize::new(width, height))`
+with a bitmap of the same pixel size (`src/platform_impl/macos/cursor.rs:36-60`) — the image size is
+in **points**, and the hotspot is in points too. So a 32×32 bitmap is a 32×32-point cursor: the right
+on-screen size on both Retina and non-Retina screens. Rendering at 64 px would make a double-size
+cursor. Honest limit: on a Retina screen macOS scales the 32-px bitmap up 2×, so edges are slightly
+softer than the native system cursors. Getting crisp @2x cursors needs an NSImage with a 64-px
+representation at 32-pt size, which winit 0.30 does not expose (would need direct AppKit calls) —
+a later piece if Ahmed finds it too soft.
+
+**Illustrator set (local only):** `assets/cursors-ai/` is gitignored (`.gitignore` `assets/cursors-ai/`
+and `**/cursors-ai/`) — proprietary, never committed, never shipped. Copy
+`Cursors/tool-cursors-svg/*.svg` into `varos/crates/varos-app/assets/cursors-ai/svg/` on each
+machine that should use it; without it the built-in (shippable) set is used. The 28 hotspots in
+`ai_svg` match `Cursors/_hotspot_map.txt` (checked 2026-09-23).
+
+**Tests (no GPU, no EventLoop):** every `CK`'s built-in bitmap is 32×32 RGBA, not blank, hotspot
+inside, and accepted by `CustomCursor::from_rgba`; every Illustrator hotspot fits in `CURSOR_PX`, and
+any Illustrator SVG present locally renders to the same shape and is preferred.
+
+**Fallback mapping** (only if a custom cursor cannot be built): Select/Direct → `Default` · Pen family,
+Convert, Cross, Eye, Rotate* → `Crosshair` · ResizeH → `EwResize` · ResizeV → `NsResize` · ResizeNE →
+`NeswResize` · ResizeNW → `NwseResize` · Move → `Move` · Hand → `Grab` · Grab → `Grabbing` · Copy →
+`Copy` · NoDrop → `NotAllowed`.
 
 ## Two renderer bugs the macOS launch exposed (fixed in `varos-render-wgpu`, not Mac-only)
 
@@ -71,7 +109,7 @@ Rotate* → `Crosshair`. Honest limit: macOS does not show our pen-nib / add / d
 
 1. **Two title bars:** the native macOS bar plus our own egui title bar under it. Merging them
    (transparent full-size content view + traffic lights) is a separate design piece.
-2. **Tool cursors are generic** (table above). Upgrade path: winit `CustomCursor::from_rgba` from the
-   same SVG bitmaps, with Retina scaling.
+2. ~~Tool cursors are generic~~ — **done 2026-09-23** (see "Tool cursors on macOS"). Remaining: the
+   cursors are 1× bitmaps scaled up on Retina (slightly soft).
 3. **Screen eyedropper disabled** (needs macOS Screen Recording permission + CoreGraphics capture).
 4. **No single-instance / "open with" forwarding** and **no remembered window geometry**.
