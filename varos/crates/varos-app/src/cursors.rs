@@ -301,15 +301,58 @@ pub fn hcursor_svg_file(stem: &str, hx: f32, hy: f32) -> Option<isize> {
     }
 }
 
-/// The bitmap a CK's non-Windows cursor is built from — the same choice `main.rs` makes on Windows:
-/// the local Illustrator SVG when present (`.1 == true`), else our own built-in SVG. `use_ai = false`
-/// forces the built-in (shippable) set.
+/// A cursor bitmap: (straight-alpha RGBA, width, height, hotspot_x, hotspot_y) — the `rgba` shape.
+pub type CursorBitmap = (Vec<u8>, u16, u16, u16, u16);
+
+/// True when `svg(ck)` draws a REAL, distinct built-in cursor for this state. False = `svg` only
+/// returns the generic selection-arrow placeholder (the interaction / rotate states have no shippable
+/// glyph of their own yet). Explicit and exhaustive on purpose — a new CK must choose.
+#[cfg_attr(windows, allow(dead_code))] // only the non-Windows CustomCursor path (and tests) ask
+pub const fn has_builtin(ck: CK) -> bool {
+    match ck {
+        CK::Select
+        | CK::Direct
+        | CK::Pen
+        | CK::PenNew
+        | CK::PenAdd
+        | CK::PenDel
+        | CK::PenClose
+        | CK::PenConnect
+        | CK::Convert
+        | CK::Cross
+        | CK::Eye => true,
+        CK::ResizeH
+        | CK::ResizeV
+        | CK::ResizeNE
+        | CK::ResizeNW
+        | CK::Move
+        | CK::Hand
+        | CK::Grab
+        | CK::Copy
+        | CK::NoDrop
+        | CK::RotateE
+        | CK::RotateSE
+        | CK::RotateS
+        | CK::RotateSW
+        | CK::RotateW
+        | CK::RotateNW
+        | CK::RotateN
+        | CK::RotateNE => false,
+    }
+}
+
+/// The bitmap a CK's non-Windows cursor is built from: the local Illustrator SVG when present
+/// (`.1 == true`), else our own built-in SVG — but ONLY if that built-in is a real distinct glyph
+/// (`has_builtin`). `None` = no distinct bitmap exists → the caller keeps the system `CursorIcon`, so
+/// e.g. the resize / hand / no-drop cues never collapse into the plain arrow. `use_ai = false` forces
+/// the built-in (shippable) set.
 #[cfg_attr(windows, allow(dead_code))] // Windows picks per CK in main.rs (hcursor_svg_file → hcursor)
-pub fn cursor_rgba(ck: CK, use_ai: bool) -> ((Vec<u8>, u16, u16, u16, u16), bool) {
+pub fn cursor_rgba(ck: CK, use_ai: bool) -> Option<(CursorBitmap, bool)> {
     let ai = if use_ai { ai_svg(ck).and_then(|(stem, hx, hy)| svg_file_rgba(stem, hx, hy)) } else { None };
     match ai {
-        Some(b) => (b, true),
-        None => (rgba(ck), false),
+        Some(b) => Some((b, true)),
+        None if has_builtin(ck) => Some((rgba(ck), false)),
+        None => None,
     }
 }
 
@@ -694,8 +737,10 @@ pub use win::{
 // sites are identical on every platform (docs/foundation/MAC_SHELL_PORT.md). Nothing here pretends:
 // features with no native equivalent yet are plain no-ops. Cursors are real winit `CustomCursor`s
 // built from the SAME bitmaps + hotspots as the Windows HCURSORs (`cursor_rgba`), created once by
-// `create_custom_cursors` and cached per CK; winit's built-in `CursorIcon`s are only the fallback if
-// a custom cursor could not be built. The winit window is handed over once via `bind_window`.
+// `create_custom_cursors` and cached per CK — but only where a DISTINCT bitmap exists (a cursors-ai
+// file, or a real built-in glyph per `has_builtin`). Every other state (e.g. resize / hand / no-drop
+// in a fresh clone) keeps winit's system `CursorIcon`, so no cue collapses into the plain arrow. The
+// winit window is handed over once via `bind_window`.
 #[cfg(not(windows))]
 mod portable {
     use super::{ai_svg, cursor_rgba, ALL_CURSORS, CK};
@@ -708,7 +753,8 @@ mod portable {
     static CUR: AtomicIsize = AtomicIsize::new(0);
 
     /// One ready cursor per `ALL_CURSORS` slot (slot = token − 1) and whether it came from the local
-    /// Illustrator set. `None` in a slot = winit refused the bitmap → `set` uses the `icon` fallback.
+    /// Illustrator set. `None` in a slot = no distinct bitmap for that state (or winit refused it) →
+    /// `set` uses the system `icon` fallback.
     struct Built {
         cursor: CustomCursor,
         from_ai: bool,
@@ -720,7 +766,8 @@ mod portable {
         let _ = WINDOW.set(w);
     }
 
-    /// Build every tool cursor once (creating an NSCursor is not free) and cache it per CK. Call once,
+    /// Build each tool cursor that has a distinct bitmap once (creating an NSCursor is not free) and
+    /// cache it per CK; the rest stay on the system `CursorIcon` (counted as "system fallbacks"). Call once,
     /// after the event loop + window exist and BEFORE `hcursor` / `hcursor_svg_file` are queried.
     /// Bitmaps are CURSOR_PX/SZ = 32 px, which winit on macOS turns into a 32×32-POINT cursor — the
     /// right on-screen size on Retina (a 64 px bitmap would be a double-size cursor). Logs one line.
@@ -730,19 +777,25 @@ mod portable {
             .iter()
             .map(|&ck| {
                 let make = |use_ai: bool| {
-                    let ((d, w, h, hx, hy), from_ai) = cursor_rgba(ck, use_ai);
+                    let ((d, w, h, hx, hy), from_ai) = cursor_rgba(ck, use_ai)?;
                     CustomCursor::from_rgba(d, w, h, hx, hy)
                         .ok()
                         .map(|src| Built { cursor: el.create_custom_cursor(src), from_ai })
                 };
-                // an Illustrator bitmap winit rejects falls back to the built-in one, like Windows does
+                // an Illustrator bitmap winit rejects falls back to the built-in one, like Windows does;
+                // no distinct bitmap at all → None → `set` keeps the system CursorIcon for this state
                 make(true).or_else(|| make(false))
             })
             .collect();
         let n = built.iter().flatten().count();
         let m = built.iter().flatten().filter(|b| b.from_ai).count();
+        let s = built.iter().filter(|b| b.is_none()).count();
         let _ = CUSTOM.set(built);
-        eprintln!("[varos] cursors: {n} custom ({m} from cursors-ai) of {}", ALL_CURSORS.len());
+        eprintln!(
+            "[varos] cursors: {n} custom ({m} from cursors-ai, {} built-in) + {s} system fallbacks of {}",
+            n - m,
+            ALL_CURSORS.len()
+        );
         (n, m)
     }
 
@@ -762,7 +815,8 @@ mod portable {
         built(i).filter(|b| b.from_ai).map(|_| i as isize + 1)
     }
 
-    /// Fallback only: the closest winit built-in cursor for each tool/interaction state.
+    /// System cursor for a state with no distinct custom bitmap (or one winit refused): the closest
+    /// winit built-in cursor for each tool/interaction state.
     pub fn icon(ck: CK) -> CursorIcon {
         match ck {
             CK::Select | CK::Direct => CursorIcon::Default,
@@ -860,14 +914,14 @@ mod tests {
         }
     }
 
-    // Mac cursors — every CK's built-in bitmap is 32×32 straight RGBA with its hotspot inside, is not
-    // blank, and passes winit's own `CustomCursor::from_rgba` validation (pure: no EventLoop, no GPU).
+    // Every CK's built-in bitmap (`rgba` — what the Win32 HCURSOR fallback uses for all 28) is 32×32
+    // straight RGBA with its hotspot inside, is not blank, and passes winit's own
+    // `CustomCursor::from_rgba` validation (pure: no EventLoop, no GPU).
     #[test]
     fn every_cursor_bitmap_is_32px_with_hotspot_inside_and_winit_accepts_it() {
-        use super::{cursor_rgba, ALL_CURSORS};
+        use super::{rgba, ALL_CURSORS};
         for ck in ALL_CURSORS {
-            let ((d, w, h, hx, hy), from_ai) = cursor_rgba(ck, false);
-            assert!(!from_ai, "use_ai=false must force the built-in set");
+            let (d, w, h, hx, hy) = rgba(ck);
             assert_eq!((w, h), (32, 32));
             assert_eq!(d.len(), w as usize * h as usize * 4);
             assert!(hx < w && hy < h, "hotspot ({hx},{hy}) outside {w}x{h}");
@@ -876,23 +930,60 @@ mod tests {
         }
     }
 
-    // The Illustrator (local, gitignored) set: hotspots scale inside the CURSOR_PX bitmap, and when the
-    // SVGs are present locally they render to the same shape + pass winit. Absent files are skipped
-    // (that set is never shipped); the built-in set above is what CI always checks.
+    // `has_builtin` is the explicit list of real glyphs: it matches `ALL` (the SVG-backed set), and each
+    // of those glyphs is a different bitmap from the Select arrow placeholder (except Select itself).
+    // With use_ai=false, `cursor_rgba` offers exactly those and nothing else.
+    #[test]
+    fn has_builtin_is_exactly_the_distinct_svg_glyphs() {
+        use super::{cursor_rgba, has_builtin, rgba, ALL, ALL_CURSORS, CK};
+        let arrow = rgba(CK::Select).0;
+        for ck in ALL_CURSORS {
+            assert_eq!(has_builtin(ck), ALL.contains(&ck));
+            if has_builtin(ck) && ck != CK::Select {
+                assert!(rgba(ck).0 != arrow, "a 'distinct' built-in is really the arrow placeholder");
+            }
+            match cursor_rgba(ck, false) {
+                Some((_, from_ai)) => assert!(has_builtin(ck) && !from_ai),
+                None => assert!(!has_builtin(ck)),
+            }
+        }
+    }
+
+    // Review P2 — in a fresh clone (no cursors-ai), no state may silently collapse into the plain arrow:
+    // each CK has a distinct built-in bitmap OR keeps a non-default system CursorIcon on this platform.
+    #[cfg(not(windows))]
+    #[test]
+    fn without_cursors_ai_no_state_collapses_to_the_arrow() {
+        use super::portable::icon;
+        use super::{cursor_rgba, ALL_CURSORS};
+        use winit::window::CursorIcon;
+        for (slot, ck) in ALL_CURSORS.into_iter().enumerate() {
+            let distinct = cursor_rgba(ck, false).is_some();
+            assert!(distinct || icon(ck) != CursorIcon::Default, "ALL_CURSORS[{slot}] collapses to the arrow");
+        }
+    }
+
+    // The Illustrator (local, gitignored) set: hotspots scale inside the CURSOR_PX bitmap. A file that
+    // is ABSENT is skipped (that set is never shipped; the built-in set above is what CI always checks),
+    // but a file that is PRESENT must render at CURSOR_PX, be preferred, and pass winit — a present but
+    // broken file fails the test with its name instead of being silently skipped.
     #[test]
     fn illustrator_cursor_hotspots_fit_and_present_files_render() {
-        use super::{ai_svg, cursor_rgba, svg_file_rgba, ALL_CURSORS, CURSOR_PX};
+        use super::{ai_svg, cursor_rgba, svg_file_rgba, AI_SVG_DIR, ALL_CURSORS, CURSOR_PX};
         for ck in ALL_CURSORS {
             let (stem, hx, hy) = ai_svg(ck).expect("every CK maps to an Illustrator stem");
             let s = CURSOR_PX as f32 / 32.0;
             assert!((hx * s).round() < CURSOR_PX as f32 && (hy * s).round() < CURSOR_PX as f32, "{stem}");
-            if let Some((d, w, h, bx, by)) = svg_file_rgba(stem, hx, hy) {
-                assert_eq!((w as u32, h as u32), (CURSOR_PX, CURSOR_PX), "{stem}");
-                assert_eq!(d.len(), w as usize * h as usize * 4, "{stem}");
-                assert!(bx < w && by < h, "{stem}");
-                assert!(cursor_rgba(ck, true).1, "{stem} present but not preferred");
-                assert!(winit::window::CustomCursor::from_rgba(d, w, h, bx, by).is_ok(), "{stem}");
+            if !std::path::Path::new(&format!("{AI_SVG_DIR}{stem}.svg")).exists() {
+                continue;
             }
+            let (d, w, h, bx, by) =
+                svg_file_rgba(stem, hx, hy).unwrap_or_else(|| panic!("{stem}.svg is present but failed to render"));
+            assert_eq!((w as u32, h as u32), (CURSOR_PX, CURSOR_PX), "{stem}");
+            assert_eq!(d.len(), w as usize * h as usize * 4, "{stem}");
+            assert!(bx < w && by < h, "{stem}");
+            assert!(cursor_rgba(ck, true).is_some_and(|(_, ai)| ai), "{stem} present but not preferred");
+            assert!(winit::window::CustomCursor::from_rgba(d, w, h, bx, by).is_ok(), "{stem}");
         }
     }
 
