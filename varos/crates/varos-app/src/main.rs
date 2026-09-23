@@ -581,6 +581,10 @@ fn main() {
     // Non-Windows: there is no HWND, so the cursor/maximize fallbacks talk to the winit window directly.
     #[cfg(not(windows))]
     cursors::bind_window(window.clone());
+    // Non-Windows: build the real tool cursors (winit CustomCursor, same bitmaps as the Win32
+    // HCURSORs) once, before the `hcur` table below asks for them.
+    #[cfg(not(windows))]
+    cursors::create_custom_cursors(&event_loop);
     single_instance::install_file_open_handler(hwnd);
     cursors::set_cloaked(hwnd, true);
     window.set_visible(true); // now "shown" but cloaked → not composited (no flash), surface is presentable
