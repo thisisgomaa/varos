@@ -55,15 +55,23 @@
   - the crosshair centre dot (1.5×1.5 square);
   - the solid pen band, eyedropper collar and eyedropper bulb. These are filled rounded rects that also carry the 1.5 edge.
 - **Corners:**
-  - Round joins and caps everywhere (0.75 radius at the ink edge).
+  - Round joins everywhere, and round caps on every free line end (0.75 radius at the ink edge).
+  - **Cap exception — butt caps on bars that sit on a white field.** Straight bars drawn over a white rounded-rect keyline, or inside the white lens, use `stroke-linecap="butt"`, so the bar ends stop square: the `+` badge in `pen-add` and `copy`; the `−` badge in `pen-delete`; the crosshair arms in `shape-rect` and `artboard`; the `#` badge bars in `artboard`; and the `+` / `−` inside the lens of `zoom-in` / `zoom-out`.
   - Keylines on straight bars use 1px corners. The rect badge uses 1.25, and bands use 0.75.
   - These are the 3px-control / 8px-box law scaled down to a 32px glyph.
 - **Grid:**
-  - Everything is authored on integers and then shifted by +0.25. That puts every horizontal/vertical edge on a whole device pixel at 2×.
+  - Coordinates are authored on a **0.25px grid** (quarter and half values are common, e.g. `resize-h` uses 2.75 / 5.5 / 7.25 / 12.75 / 14.5 / 17.25), and every file is then shifted by +0.25.
+  - Straight horizontal/vertical ink bars (in the un-rotated files) are centred on whole or half coordinates. With the 1.5 ink, the 3.5 keyline and the +0.25 shift, their edges land on whole device pixels at 2×. Quarter values are used for line ends, diagonals, arcs and keyline rects, where that rule does not apply.
   - The hotspot's geometric point sits at (hx+.25, hy+.25), the centre of the hotspot device pixel at 2×.
   - **Trade-off:** at 1× (a 32px bitmap) those edges fall on half pixels, so straight bars are about 1px soft. See §7.
 - **One badge slot:**
-  - Every badge is a 7.5px glyph centred at (21.25, 21.25). That is bottom-right, on the tool's diagonal, with its ink at least 5px clear of the main glyph.
+  - Every badge shares one anchor: centred at (21.25, 21.25), bottom-right, on the tool's diagonal, with its ink at least 5px clear of the main glyph.
+  - Optical size is 7.5–9px per glyph, not one fixed size. Measured ink boxes:
+    - 7.5×7.5 — `+` (pen-add, copy), ring (pen-close), rect (shape-rect), `#` (artboard);
+    - 7.5×1.5 — `−` (pen-delete);
+    - 7.56×8.5 — asterisk (pen-new);
+    - 8×8 — slash (pen-connect) and ⊘ (no-drop);
+    - 9×5.25 — caret (convert).
   - The same slot is used on the pen, the arrow and the crosshair: `+ − ○ ✱ / ^ ⊘ □ #`.
   - Tips and centres stay the hotspot.
 - **Derived glyphs are exact turns of one drawing.**
@@ -133,7 +141,9 @@ They also used **only measurements**: canvas size, hotspot, badge position and w
 
 The comparison gallery holds Adobe's files, so it lives only under the gitignored `varos/target/`. That was checked with `git check-ignore -v varos/target/cursors-review/gallery.html` (→ `.gitignore:2:target/`) before each commit.
 
-**Independent check (round 1):** as relayed by the coordinator, Codex compared the 10 round-1 files against all 326 Adobe SVGs (2,039 paths, normalised). It found no identical or near-identical path data and judged every file Original. Its one nit, inconsistent ink weights, is fixed in round 2 (§3). Round 2 was built with the same method; an independent check of the round-2 files is recommended before merge.
+**Independent check (round 1):** as relayed by the coordinator, Codex compared the 10 round-1 files against all 326 Adobe SVGs (2,039 paths, normalised). It found no identical or near-identical path data and judged every file Original. Its one nit, inconsistent ink weights, is fixed in round 2 (§3). Round 2 was built with the same method.
+
+**Independent check (round 2):** Codex compared the 20 round-2 files against the same 326 Adobe SVGs and judged all 20 Original — **APPROVE WITH NITS**. Both nits were doc-only (badge sizes and caps/grid described inaccurately in §3) and are fixed in §3 above. The set merged to `main` on 2026-09-23.
 
 ## 6. How to wire the set (after sign-off; nothing here is done yet)
 
