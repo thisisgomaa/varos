@@ -45,6 +45,90 @@ fn uniting_two_rectangles_yields_only_corner_points() {
         }
     }
     assert!(n >= 6, "the L-shaped union has at least 6 corners — the op must have produced a path, got {n}");
+    // Proof the op RAN (an untouched pair of rectangles would also be "all corners"): the inputs are
+    // consumed, ONE new path replaces them, it is the 8-corner L outline, and its area is the union's.
+    assert_op_ran(&ed, &[100, 200], 1000, 1, 0);
+    assert_eq!(ed.doc.paths[0].anchors.len(), 8, "the L-shaped union has exactly 8 corners");
+    assert_area(&ed, 2400.0 + 2400.0 - 600.0, "rect ∪ rect");
+}
+
+// ---------- evidence helpers: prove a Pathfinder op actually executed ----------
+
+/// The op consumed its inputs and produced exactly `paths` NEW paths (ids minted after `ids_before`)
+/// with `holes` hole contours in total. A no-op Pathfinder leaves the input ids in place → fails here.
+fn assert_op_ran(ed: &Editor, inputs: &[u32], ids_before: u32, paths: usize, holes: usize) {
+    for p in &ed.doc.paths {
+        assert!(!inputs.contains(&p.id), "input path {} survived — the op did not run", p.id);
+        assert!(p.id > ids_before, "result path {} is not a freshly minted id", p.id);
+    }
+    assert_eq!(ed.doc.paths.len(), paths, "result path count");
+    assert_eq!(ed.doc.paths.iter().map(|p| p.holes.len()).sum::<usize>(), holes, "result hole count");
+}
+
+fn shoelace(pts: &[[f32; 2]]) -> f64 {
+    let n = pts.len();
+    (0..n)
+        .map(|i| {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            a[0] as f64 * b[1] as f64 - b[0] as f64 * a[1] as f64
+        })
+        .sum::<f64>()
+        .abs()
+        / 2.0
+}
+
+/// Filled area of the result (even-odd: outer minus holes). Straight-edged inputs only.
+fn result_area(ed: &Editor) -> f64 {
+    ed.doc
+        .paths
+        .iter()
+        .map(|p| {
+            let outer = shoelace(&p.anchors.iter().map(|a| a.p).collect::<Vec<_>>());
+            let holes: f64 = p.holes.iter().map(|h| shoelace(&h.iter().map(|a| a.p).collect::<Vec<_>>())).sum();
+            outer - holes
+        })
+        .sum()
+}
+
+fn assert_area(ed: &Editor, expected: f64, what: &str) {
+    let got = result_area(ed);
+    assert!(
+        (got - expected).abs() <= 1e-3 * expected.max(1.0),
+        "{what}: result area {got} ≠ expected {expected} — wrong or missing boolean"
+    );
+}
+
+/// Independent reference: area of `subject ∩ clip` (clip CONVEX) via Sutherland–Hodgman — no Varos code.
+fn clipped_area(subject: &[[f32; 2]], clip: &[[f32; 2]]) -> f64 {
+    let pt = |p: [f32; 2]| [p[0] as f64, p[1] as f64];
+    let cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    let clip: Vec<[f64; 2]> = clip.iter().map(|&p| pt(p)).collect();
+    let orient = cross(clip[0], clip[1], clip[2]).signum();
+    let mut out: Vec<[f64; 2]> = subject.iter().map(|&p| pt(p)).collect();
+    for i in 0..clip.len() {
+        let (e0, e1) = (clip[i], clip[(i + 1) % clip.len()]);
+        let inside = |p: [f64; 2]| cross(e0, e1, p) * orient >= 0.0;
+        let input = std::mem::take(&mut out);
+        for j in 0..input.len() {
+            let (cur, prev) = (input[j], input[(j + input.len() - 1) % input.len()]);
+            let hit = || {
+                let (d1, d2) = (cross(e0, e1, prev), cross(e0, e1, cur));
+                let t = d1 / (d1 - d2);
+                [prev[0] + t * (cur[0] - prev[0]), prev[1] + t * (cur[1] - prev[1])]
+            };
+            match (inside(prev), inside(cur)) {
+                (true, true) => out.push(cur),
+                (true, false) => out.push(hit()),
+                (false, true) => {
+                    out.push(hit());
+                    out.push(cur);
+                }
+                (false, false) => {}
+            }
+        }
+    }
+    let n = out.len();
+    (0..n).map(|i| out[i][0] * out[(i + 1) % n][1] - out[(i + 1) % n][0] * out[i][1]).sum::<f64>().abs() / 2.0
 }
 
 // ---------- 2026-09-23 re-verification of A26 against the full acceptance list ----------
@@ -97,19 +181,28 @@ fn assert_all_corners(ed: &Editor, what: &str) {
 fn every_pathfinder_op_on_slanted_rectangles_keeps_clean_corners() {
     // The reported case: slanted/zigzag shapes, not axis-aligned — the straight-edge detection must hold
     // for any direction and for coordinates far from the origin (f32 precision after the engine's splits).
-    for (name, op) in [
-        ("Unite", BoolOp::Unite),
-        ("MinusFront", BoolOp::MinusFront),
-        ("Intersect", BoolOp::Intersect),
-        ("Exclude", BoolOp::Exclude),
+    let (ra, rb) = (slanted_rect(1240.0, 860.0, 300.0, 120.0, 27.0), slanted_rect(1330.0, 905.0, 260.0, 90.0, -41.0));
+    // The two bars CROSS: each one cuts the other clean through (so A−B and B−A are two pieces each).
+    let (area_a, area_b, both) = (300.0 * 120.0, 260.0 * 90.0, clipped_area(&ra, &rb));
+    assert!(both > 1000.0, "fixture sanity: the rectangles really overlap (∩ = {both})");
+    // (op, expected result paths, expected area) — topology and area are derived from the geometry,
+    // independently of Varos (Sutherland–Hodgman for the overlap).
+    for (name, op, paths, area) in [
+        ("Unite", BoolOp::Unite, 1, area_a + area_b - both),
+        ("MinusFront", BoolOp::MinusFront, 2, area_a - both),
+        ("Intersect", BoolOp::Intersect, 1, both),
+        ("Exclude", BoolOp::Exclude, 4, area_a + area_b - 2.0 * both),
     ] {
         let mut ed = fresh();
-        let a = poly(&mut ed, &slanted_rect(1240.0, 860.0, 300.0, 120.0, 27.0));
-        let b = poly(&mut ed, &slanted_rect(1330.0, 905.0, 260.0, 90.0, -41.0));
+        let a = poly(&mut ed, &ra);
+        let b = poly(&mut ed, &rb);
         ed.objsel.insert(a);
         ed.objsel.insert(b);
+        let ids_before = ed.doc.ids;
         ed.pathfinder(op);
         assert_all_corners(&ed, name);
+        assert_op_ran(&ed, &[a, b], ids_before, paths, 0);
+        assert_area(&ed, area, name);
     }
 }
 
@@ -117,28 +210,38 @@ fn every_pathfinder_op_on_slanted_rectangles_keeps_clean_corners() {
 fn uniting_a_zigzag_with_a_bar_keeps_every_zig_a_corner() {
     // The screenshot case: a yellow zigzag (acute sharp corners) united with a bar crossing it.
     let mut ed = fresh();
-    let zig = poly(
-        &mut ed,
-        &[
-            [100.0, 300.0],
-            [160.0, 180.0],
-            [220.0, 300.0],
-            [280.0, 180.0],
-            [340.0, 300.0],
-            [400.0, 180.0],
-            [400.0, 230.0],
-            [340.0, 350.0],
-            [280.0, 230.0],
-            [220.0, 350.0],
-            [160.0, 230.0],
-            [100.0, 350.0],
-        ],
-    );
-    let bar = poly(&mut ed, &slanted_rect(250.0, 260.0, 380.0, 30.0, 8.0));
+    let zig_pts = [
+        [100.0, 300.0],
+        [160.0, 180.0],
+        [220.0, 300.0],
+        [280.0, 180.0],
+        [340.0, 300.0],
+        [400.0, 180.0],
+        [400.0, 230.0],
+        [340.0, 350.0],
+        [280.0, 230.0],
+        [220.0, 350.0],
+        [160.0, 230.0],
+        [100.0, 350.0],
+    ];
+    let bar_pts = slanted_rect(250.0, 260.0, 380.0, 30.0, 8.0);
+    let zig = poly(&mut ed, &zig_pts);
+    let bar = poly(&mut ed, &bar_pts);
     ed.objsel.insert(zig);
     ed.objsel.insert(bar);
+    let ids_before = ed.doc.ids;
     ed.pathfinder(BoolOp::Unite);
     assert_all_corners(&ed, "zigzag ∪ bar");
+    // Proof the op ran: inputs consumed; ONE compound result. The bar closes off the four pockets
+    // between itself and the zigzag's inner edge (under the two peaks, over the two valleys) → 4 holes.
+    assert_op_ran(&ed, &[zig, bar], ids_before, 1, 4);
+    let outer = ed.doc.paths[0].anchors.len();
+    assert!(
+        (20..=28).contains(&outer),
+        "the zigzag's 12 corners + the bar's crossings form one outline of ~24 corners, got {outer}"
+    );
+    let expected = shoelace(&zig_pts) + 380.0 * 30.0 - clipped_area(&zig_pts, &bar_pts);
+    assert_area(&ed, expected, "zigzag ∪ bar");
 }
 
 #[test]
