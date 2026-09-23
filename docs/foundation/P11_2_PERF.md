@@ -22,8 +22,10 @@ frame shows and grows it by `VIEW_PAD_PX` = 32 screen px (converted to world uni
 - **Ring and edge clipping:** a path that is only partly inside the rect has its fill rings, stroke runs,
   mask rings, skeleton and snap-highlight outline cut to that rect. The cut uses the artboard clippers
   that were already there (`clip_poly_rect` and `clip_polyline_rect`); no new geometry code was written.
-  Sutherland–Hodgman against a convex rect keeps the winding number of every point inside the rect. So
-  even-odd fills, holes and masks look exactly the same inside it, and the rect is bigger than the frame.
+  Sutherland–Hodgman against a convex rect keeps the winding number of every point inside the rect, and
+  the rect is bigger than the frame. So the *geometry* of even-odd fills, holes and mask silhouettes is
+  unchanged on screen. (Tests pin this for fills, holes and strokes; for masks, only the empty-ring case
+  is pinned. See Known limits for how the renderer draws inside masks.)
   Stroke runs are cut at least half a stroke width plus 32 px beyond the frame, so the new end caps
   never show on screen.
 - **Artboard clip together with the view:** the geometry is cut once, to the page rect intersected with
@@ -35,6 +37,24 @@ frame shows and grows it by `VIEW_PAD_PX` = 32 screen px (converted to world uni
 - **A path wholly inside the frame** is not clipped at all, so its primitives are byte-identical to
   `build_scene`. A test pins this.
 - **Fail-open:** an empty frame or an invalid zoom turns culling off, and everything is drawn.
+
+- **The treatment never depends on the view (review fix P1-2, 2026-09-23).** Whether an object becomes
+  an isolated layer, a knockout, a folded-alpha prim or plain opaque is decided from its **uncut** fill
+  and stroke. View clipping only ever removes geometry, so when a cut side comes out empty, the scene
+  re-checks whether the uncut side exists. Before this fix, a 50%-opacity filled and stroked object whose
+  stroke lay entirely in the off-screen margin flipped from isolated to folded, and back again when a pan
+  of a few pixels brought the stroke into the pad. An object whose cut fill and cut stroke are both empty
+  emits nothing.
+- **Object boundaries survive culling (review fix P1-1, 2026-09-23).** The renderer paints consecutive
+  translucent strokes of one colour with a single stencil coverage, so one object's outer and hole rings
+  paint once. A run holds many objects, though. When the object between two same-colour translucent
+  strokes was culled, the two strokes became adjacent and merged, and their crossing painted once (50%)
+  instead of twice (75%). The scene now closes the opaque run at an object boundary whenever the next
+  object's first prim would merge with the previous object's last one. Coverage batching therefore never
+  crosses objects, whether the separator was culled, hidden or never there. **This also changes one
+  pre-existing case:** two *adjacent* same-colour translucent strokes of different objects used to merge
+  even without culling. They now overlap as two objects, which is the per-object behaviour the renderer
+  comment always described.
 
 Why a bbox check plus the existing clippers, rather than something smarter? The bbox check is
 conservative, costs O(anchors) per path, and is cached along with the geometry. The clippers already
@@ -112,6 +132,12 @@ What the numbers say:
 - **The cache's gain is small on these scenes**, because P11.1 already made flattening cheap: warm
   saves 4–25% of scene build. Its value grows with curve count and zoom, since steps per segment scale
   with ppu up to 256.
+- **After the review fixes** (re-measured 2026-09-23 with the same alternating method, 9 rounds × 2 runs).
+  The machine was under heavy load from other agents (load average about 10 against about 3 above), so
+  every absolute time is roughly 2.5–3× the table above and only the ratios are meaningful. D cold went
+  1.020 → 0.305 ms (3.3×) and 1.277 → 0.358 ms (3.6×). E cold went 6.384 → 3.150 ms and 7.990 → 3.990 ms
+  (2.0× both). Vertex counts are **identical** to the table: D 1,068 / 2,388 / 3,384 and E 2,835 / 51,624.
+  So the fixes did not give back any of the win.
 - **Small cold costs, reported honestly:** A's cold frame rose 0.008 ms (+10%), and D's scene build rose
   from 0.042 to 0.095 ms while its whole frame fell 3.4×. Cold now also pays for the bbox, a copy of the
   anchors, clipping, and a flatten up to 19% finer (bucket upper edge).
@@ -120,7 +146,7 @@ What the numbers say:
 
 | Gate | Result |
 |---|---|
-| `cargo test -p varos-core -p varos-pdf -p varos-render-wgpu -j 4` (macOS) | PASS: 34 suites, 232 passed, 0 failed (includes the 12 new tests in `varos-core/tests/view_cull.rs`) |
+| `cargo test -p varos-core -p varos-pdf -p varos-render-wgpu -j 4` (macOS) | PASS: 34 suites, 237 passed, 0 failed (includes the 16 new tests in `varos-core/tests/view_cull.rs` and 1 new CPU test in `tess.rs`) |
 | `cargo clippy -p varos-core -p varos-pdf -p varos-render-wgpu --all-targets -j 4 -- -D warnings` (macOS) | PASS |
 | `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -j 4 -- -D warnings` | PASS (type-checks and lints `varos-app` and its tests; nothing executed) |
 | `cargo fmt --all -- --check` | PASS |
@@ -134,8 +160,20 @@ The new tests pin the following:
   at the grown rect. For a 4000%-style compound shape with a hole, the even-odd fill coverage and the
   stroke-band distance of every in-frame sample point are identical before and after clipping. A view
   that shows everything gives exactly the scene `build_scene` gives. A page clip and the view clip
-  compose correctly, and strokes keep the page scissor. An off-screen clip mask clips its members to
-  nothing.
+  compose correctly, and strokes keep the page scissor. An off-screen clip mask contributes no ring, so
+  its members draw nowhere. This is the **only** mask case pinned; a partly visible mask's ring cut is
+  covered by the winding argument, not by a test.
+- **Review P1-1.** Two crossing 50%-red strokes with an off-screen opaque rectangle between them form
+  two coverage batches both uncut and culled. This is pinned twice: in the core by the batching rule,
+  and in `tess.rs` by counting real `Draw::StrokeCov` steps from `build_content`, CPU-only. Two adjacent
+  same-colour strokes of different objects stay two batches, and one object's outer and hole rings stay
+  one.
+- **Review P1-2.** The review's masked 50%-opacity rectangle has its whole stroke cut away at pan 0 and
+  one stroke run inside the pad at pan 70. It is `Isolated` in both, exactly as uncut. The same is
+  checked without a mask at pans 0, 35 and 70, and a knockout object stays a knockout when its band is
+  cut away.
+- **These tests detect the bugs.** Run against the pre-fix `scene.rs`, all 4 new core tests and the new
+  `tess.rs` test fail; with the fix they pass.
 - **(b) Handles and markers.** Every handle disc, anchor marker and handle line of a selected path that
   lies in the frame survives culling. A handle that reaches into view from an off-screen anchor is kept.
 - **(c) Flatten cache.** The cache equals a fresh `world_outline_px` flatten. It hits on the same zoom
@@ -147,6 +185,16 @@ The new tests pin the following:
 
 ## Known limits
 
+- **Pre-existing renderer gaps inside clipping masks (found in review, NOT fixed here, logged
+  2026-09-23).** These are not caused by P11.2, which now only guarantees that the *scene* it hands the
+  renderer does not change with the view.
+  1. **Group opacity is lost inside a mask.** `tess.rs` `build_content` builds a `Group::Clip`'s members
+     with `group_draws`, which never applies an `Isolated` member's opacity. A 50%-opacity filled and
+     stroked object inside a mask therefore renders fully opaque. Fixing it needs a masked offscreen
+     layer: new GPU passes that must be hand-tested in the real window.
+  2. **Some draws ignore the mask entirely.** In `lib.rs` `draw_steps`, only `Draw::Fill` and `Draw::Fg`
+     honour the `clip` flag. `Draw::StrokeCov` (translucent strokes) and `Draw::Knockout` (fill with a
+     translucent stroke) ignore it, so inside a mask they are not cut to the silhouette.
 - **GPU cost is not measured.** Headless numbers cover CPU time and vertex counts only; the 4000% win on
   fill-rate is an inference that still needs the owner's hand test.
 - **The frame size comes from `window.inner_size()`**, the same value the scene signature uses. If the
