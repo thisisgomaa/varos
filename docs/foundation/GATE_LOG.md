@@ -223,3 +223,28 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Hand test:** not yet — batch 1 list in `STATUS.md`.
 - **Verdict:** PASS. **Merged:** `b15d2bf` to `main`.
 - Sign-off: moderator — PASS — 2026-09-23
+
+## Mac custom tool cursors — winit `CustomCursor`
+
+- **Date:** 2026-09-23. **Branch:** `feat/mac-cursors` (worktree `agent-abde3c60632d6ed46`, range `c3093dd..378c808`, commits `ba71ae3`, `378c808`). **Reviewer:** Codex (independent, two rounds) + moderator gates.
+- **Scope:** on macOS each of the 28 cursor states (CK) gets a winit `CustomCursor` built once at startup (`cursors::create_custom_cursors`), using the same 32 px straight-alpha bitmaps and hotspots as the Win32 HCURSORs (`svg_file_rgba` is now shared with Windows). Source per state: the local Illustrator reference SVG in `assets/cursors-ai/svg/` when present (gitignored, never committed or shipped), otherwise one of the 11 legal built-in glyphs, otherwise the system `CursorIcon`. `main.rs` gained only 4 Mac-only lines. Design of record: `docs/foundation/MAC_SHELL_PORT.md` § "Tool cursors on macOS".
+- **Codex review, round 1:** REQUEST CHANGES — 3 findings, all fixed in `378c808`:
+  1. **P2 — 17 states collapsed to the arrow in a fresh clone.** Without `cursors-ai`, the built-in `svg()` is only the arrow placeholder for the 17 interaction/rotate states, so resize, hand, grab, copy, no-drop and rotate all showed the arrow. Fix: an explicit, exhaustive `has_builtin(ck)` table (the 11 real glyphs); `cursor_rgba` returns `None` when there is neither a `cursors-ai` file nor a distinct built-in, and those states keep the system `CursorIcon`. Two GPU-free tests: `has_builtin` equals the SVG set and each glyph differs from the arrow; with `use_ai=false` every CK has a distinct bitmap or a non-default system icon.
+  2. **P3 — doc honesty.** `MAC_SHELL_PORT.md` now says implemented + startup-verified, not yet hand-tested on screen; Retina softness unverified.
+  3. **P3 — broken-file test.** The Illustrator test no longer skips a file that is present but fails to render: absent → skip, present → must render at 32×32.
+- **Codex review, round 2:** APPROVE.
+- **Implementer's gates (on the branch):** 248/248 tests; clippy (macOS + Windows target) and fmt clean; startup log `28 custom (28 from cursors-ai, 0 built-in) + 0 system fallbacks of 28` with the local set, `11 custom (0 from cursors-ai, 11 built-in) + 17 system fallbacks of 28` without it.
+- **Conflicts:** none. `ort` merge, 3 files. `main.rs` auto-merged: the P11.2 `build_scene_in_view` call sites (3 occurrences) and the 4 new Mac-only cursor lines (`#[cfg(not(windows))] cursors::create_custom_cursors(&event_loop);` after `cursors::bind_window`) both present. `MAC_SHELL_PORT.md` auto-merged: the cursors section (line 53) and the bundle.sh "Run on macOS" section (line 136) both present.
+- **Local reference set:** copied into the main checkout (`rsync` of the worktree's `varos/crates/varos-app/assets/cursors-ai/`, 326 SVGs). `git check-ignore -v …/cursors-ai/svg/CUR_PEN.svg` → `.gitignore:22:**/cursors-ai/`; `git status --short` stayed empty. Not committed.
+- **Checks run (moderator, on the merged `main` at `0a6974d`, macOS/Apple M5/Metal, Rust `~/.cargo/bin`):**
+  - `cargo test --workspace -j 4` → 37 result lines, **271 passed, 0 failed, 0 ignored** (core 216 · pdf 13 · render-wgpu 16 · app 26 = 6 lib + 20 bin). 267 before + 4 new cursor tests in `cursors.rs` (the brief's "+2" estimate was low; the branch adds 4 `#[test]` functions, all 4 ran).
+  - `cargo clippy --workspace --all-targets -- -D warnings` → clean (exit 0).
+  - `cargo fmt --all --check` → clean (exit 0, no output).
+  - `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings` → clean (exit 0).
+  - `tools/mac/bundle.sh` → release build OK, ad-hoc signed (`com.varos.editor`), installed `/Applications/Varos.app` (binary 22:45, contains the new `system fallbacks of` log string). `open /Applications/Varos.app` → `pgrep` showed `/Applications/Varos.app/Contents/MacOS/varos` running after 3 s.
+  - **Launch smoke test:** release binary `varos/target/release/varos` run 8 s, still alive, then killed (both it and the bundle; no process left). stderr (complete): `[varos] cursors: 28 custom (28 from cursors-ai, 0 built-in) + 0 system fallbacks of 28` / `[varos] adapter: "Apple M5" | backend: Metal` / `[varos] present: Immediate | format: Bgra8Unorm | msaa: 8`. No "panic" or "error".
+- **Process note:** the first test log was overwritten in the shared scratchpad by a concurrent agent's run (it showed 267, no cursor tests, timestamp after this run). The tests were re-run into a uniquely named log; the numbers above come from that re-run.
+- **Not verified:** the cursors on screen (shape, hotspot, Retina sharpness — winit sizes the NSImage in points = bitmap pixels, so 32 px bitmaps give a 32 pt cursor that is expected to look soft on Retina); the fresh-clone path (11 built-in + 17 system) was checked by the implementer and by the `use_ai=false` test, not by the moderator's launch.
+- **Hand test:** not yet — batch 1 list in `STATUS.md`.
+- **Verdict:** PASS. **Merged:** `0a6974d` to `main`.
+- Sign-off: moderator — PASS — 2026-09-23
