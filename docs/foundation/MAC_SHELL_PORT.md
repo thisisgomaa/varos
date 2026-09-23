@@ -44,9 +44,11 @@ The winit window is handed to the macOS cursor module once, right after it is cr
 (`cursors::bind_window`, `#[cfg(not(windows))]` only), so `set` / `is_maximized` / `maximize` can
 reach it without changing their Windows signatures.
 
-**Cursor ownership (review P2):** off Windows, egui-winit also writes the OS cursor each frame, so
-`main.rs` re-asserts the resolved tool cursor every frame *after* `gui.run` (pure `resolve_ck` +
-`cursor_apply_needed`, unit-tested). Windows keeps "set only on change" (its subclass owns the cursor).
+**Cursor ownership (review P2):** off Windows, egui-winit processes egui's cursor output every frame
+(it deduplicates unchanged icons, so it does not write the OS cursor every frame, but it does write it
+whenever egui's wanted icon changes — e.g. crossing a panel splitter), so `main.rs` re-asserts the
+resolved tool cursor every frame *after* `gui.run` (pure `resolve_ck` + `cursor_apply_needed`,
+unit-tested). Windows keeps "set only on change" (its subclass owns the cursor).
 
 ## Cursor mapping (macOS, winit `CursorIcon`)
 
@@ -55,7 +57,7 @@ ResizeH → `EwResize` · ResizeV → `NsResize` · ResizeNE → `NeswResize` ·
 Move → `Move` · Hand → `Grab` · Grab → `Grabbing` · Copy → `Copy` · NoDrop → `NotAllowed` ·
 Rotate* → `Crosshair`. Honest limit: macOS does not show our pen-nib / add / delete glyphs yet.
 
-## Two renderer bugs the macOS launch exposed (fixed in `varos-render-wgpu`, not Mac-only)
+## Three renderer bugs the macOS launch and review exposed (fixed in `varos-render-wgpu`, not Mac-only)
 
 1. `Renderer::new` requested `Limits::downlevel_defaults()` (2048px texture cap). A Retina window
    (2920×1720 physical) panicked in `Surface::configure`. Fix: `.using_resolution(adapter.limits())`

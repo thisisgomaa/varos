@@ -81,7 +81,8 @@ pub fn fit_to_limit(w: u32, h: u32, max: u32) -> (u32, u32) {
 
 /// egui texture frees that must not be lost. egui hands each free exactly once; if that frame is
 /// skipped (no surface texture) the ids are parked here and released after the next real submit, so
-/// a texture created and freed inside skipped frames is never retained forever. Pure; unit-tested.
+/// a texture created and freed inside skipped frames is never retained forever once acquisition
+/// succeeds again. Pure; unit-tested.
 #[derive(Default)]
 pub struct FreeQueue {
     pending: Vec<egui::TextureId>,
