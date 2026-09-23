@@ -87,7 +87,8 @@ Wider strokes and higher zoom made it worse.
   closed on its outer side by a round sector. The sector is a fan around the joint, from the incoming
   quad's outer corner to the outgoing quad's. Its first and last vertices are those exact corners, so
   there is no crack. It is split just finely enough that every chord stays within 0.25 screen px of the
-  true circle. On a gentle curve that is one bevel triangle per point. At a real corner it is a few
+  true circle, up to a cap of 128 triangles per join; a 180° turn hits that cap at a radius of about
+  3,320 screen px, and past it the gap grows (r = 10,000 px → 0.753 px). On a gentle curve that is one bevel triangle per point. At a real corner it is a few
   triangles, instead of P11.1's 24-triangle disc. An earlier version of the fix fell back to the full
   24-triangle disc at sharper turns. Review (Codex) showed that disc is *inscribed*: at 4000% it sits up
   to r·(1 − cos 7.5°) ≈ 13.7 px inside the band between its vertices, and it left holes there. The
