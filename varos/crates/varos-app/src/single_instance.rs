@@ -3,7 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg_attr(not(windows), allow(dead_code))] // used only by the Win32 paths
 pub const MUTEX_NAME: &str = "Varos_SingleInstance_Mutex";
+#[cfg_attr(not(windows), allow(dead_code))] // used only by the Win32 paths
 pub const WINDOW_CLASS_NAME: &str = "Varos_Main_Window";
 
 pub fn file_arg_from_env() -> Option<PathBuf> {

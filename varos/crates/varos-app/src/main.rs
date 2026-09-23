@@ -553,6 +553,9 @@ fn main() {
             _ => 0,
         }
     };
+    // Non-Windows: there is no HWND, so the cursor/maximize fallbacks talk to the winit window directly.
+    #[cfg(not(windows))]
+    cursors::bind_window(window.clone());
     single_instance::install_file_open_handler(hwnd);
     cursors::set_cloaked(hwnd, true);
     window.set_visible(true); // now "shown" but cloaked → not composited (no flash), surface is presentable

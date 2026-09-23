@@ -228,7 +228,10 @@ impl Renderer {
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: extra,
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                // downlevel limits, but the texture-size ceiling is the ADAPTER's real one: the bare
+                // downlevel 2048px cap panicked in Surface::configure on any window wider/taller than
+                // 2048 physical px (Retina Mac at default size; maximized 2560/4K screens).
+                required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
                 ..Default::default()
             })
             .await
@@ -934,6 +937,12 @@ impl Renderer {
         tdelta: &egui::TexturesDelta,
         screen: &egui_wgpu::ScreenDescriptor,
     ) {
+        // Upload egui texture changes BEFORE acquiring the frame: if the OS gives no frame (occluded /
+        // timeout, common on macOS) we return early, and a dropped full upload makes the next partial
+        // font-atlas update panic in egui-wgpu ("texture that has not been allocated yet").
+        for (id, delta) in &tdelta.set {
+            self.egui_rend.update_texture(&self.device, &self.queue, *id, delta);
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
@@ -943,9 +952,6 @@ impl Renderer {
             _ => return,
         };
         let tview = frame.texture.create_view(&Default::default());
-        for (id, delta) in &tdelta.set {
-            self.egui_rend.update_texture(&self.device, &self.queue, *id, delta);
-        }
         let mut enc = self.device.create_command_encoder(&Default::default());
         let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
         {
@@ -1007,6 +1013,12 @@ impl Renderer {
         screen: &egui_wgpu::ScreenDescriptor,
     ) -> bool {
         let perf_start = std::time::Instant::now();
+        // Upload egui texture changes BEFORE acquiring the frame: if the OS gives no frame (occluded /
+        // timeout, common on macOS) we return early, and a dropped full upload makes the next partial
+        // font-atlas update panic in egui-wgpu ("texture that has not been allocated yet").
+        for (id, delta) in &tdelta.set {
+            self.egui_rend.update_texture(&self.device, &self.queue, *id, delta);
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
@@ -1032,9 +1044,6 @@ impl Renderer {
             let _ = Self::upload(&self.device, &self.queue, &mut self.op_buf, &mut self.op_cap, &opv);
             (nbg, metas, overlay, content_elapsed, counts)
         });
-        for (id, delta) in &tdelta.set {
-            self.egui_rend.update_texture(&self.device, &self.queue, *id, delta);
-        }
         let mut enc = self.device.create_command_encoder(&Default::default());
         let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
         // A signature miss rebuilds the offscreen scene. A hit keeps its last resolved texture and only
