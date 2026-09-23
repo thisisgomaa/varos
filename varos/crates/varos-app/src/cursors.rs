@@ -880,13 +880,29 @@ mod portable {
     }
     /// The native title bar stays on this platform (no caption stripping) — nothing to do.
     pub fn custom_frame(_hwnd: isize) {}
-    /// The native title bar drags the window here — no hit-test band to publish.
-    pub fn set_caption(_h: i32, _excl: &[[i32; 4]]) {}
+    /// The bar's caption band (physical px height) + its interactive rects, published each frame by
+    /// the top bar exactly as on Windows. macOS reads it back through `caption_drag_hit` to drag the
+    /// window from an empty bar spot (docs/foundation/MAC_CHROME.md §A); elsewhere it is unused.
+    static CAPTION: std::sync::Mutex<(i32, Vec<[i32; 4]>)> = std::sync::Mutex::new((0, Vec::new()));
+    pub fn set_caption(h: i32, excl: &[[i32; 4]]) {
+        if let Ok(mut g) = CAPTION.lock() {
+            g.0 = h;
+            g.1.clear();
+            g.1.extend_from_slice(excl);
+        }
+    }
+    /// Is this physical-px window point on the EMPTY part of the top bar (a drag spot)?
+    #[cfg(target_os = "macos")]
+    pub fn caption_drag_hit(x: f32, y: f32) -> bool {
+        CAPTION.lock().is_ok_and(|g| crate::chrome::caption_hit(g.0, &g.1, x as i32, y as i32))
+    }
     /// No DWM cloak equivalent wired yet — the window is simply shown.
     pub fn set_cloaked(_hwnd: isize, _on: bool) {}
     /// No OS class brush to recolour here.
     pub fn set_dark_class_brush(_hwnd: isize) {}
 }
+#[cfg(target_os = "macos")]
+pub use portable::caption_drag_hit;
 #[cfg(not(windows))]
 pub use portable::{
     bind_window, create_custom_cursors, custom_frame, dbg, hcursor, hcursor_svg_file, install, is_maximized, maximize,
