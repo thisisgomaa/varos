@@ -2233,6 +2233,21 @@ fn modal_adopt(m: &mut ColorModal, c: Rgba) {
 /// The picker header's eyedropper button — the REAL Lucide pipette texture (A16.2, `IC_EYE`), the same
 /// glyph as the Eyedropper tool, so the app shows ONE pipette everywhere. Accent while armed (A5).
 fn eyedropper_btn(ui: &mut egui::Ui, pipette: &Option<egui::TextureHandle>, armed: bool) -> bool {
+    if !crate::cursors::SCREEN_EYEDROPPER {
+        // No screen sampling on this platform yet (MAC_SHELL_PORT.md): show the tool, dimmed and
+        // inert, instead of arming a pick that could never land.
+        let (r, resp) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::hover());
+        if let Some(t) = pipette {
+            ui.painter().image(
+                t.id(),
+                egui::Rect::from_center_size(r.center(), egui::vec2(14.0, 14.0)),
+                UV01(),
+                MUTED.gamma_multiply(0.4),
+            );
+        }
+        resp.on_hover_text("Screen eyedropper is Windows-only for now");
+        return false;
+    }
     let (r, resp) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::click());
     let rr = CornerRadius::same(R);
     if armed {
