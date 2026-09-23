@@ -20,7 +20,7 @@ Varos: a free, open-source, Windows-first vector editor (Illustrator alternative
 ## Process laws
 - Work in gated pieces; Ahmed hand-tests every stage in the real window before the next.
 - 100% honesty: claims need evidence (tests run, numbers measured). Never report "works" without proof.
-- Conventional commits, staged **by name** — never `git add -A`. No push unless told.
+- Conventional commits, staged **by name** — never `git add -A`. Push `main` and work branches to GitHub after every good commit (owner decision 2026-09-23); merges to `main` need green gates + an independent Codex review; Ahmed hand-tests in batches afterwards.
 - `cargo test --workspace` + `cargo clippy --workspace --all-targets -- -D warnings` must be green before any commit claim.
 - Design decisions get written to `docs/` with date + reason before big code.
 - **Never commit proprietary reference material** (e.g. any extracted third-party assets kept locally for functional reference). `.gitignore` entries for these are load-bearing.

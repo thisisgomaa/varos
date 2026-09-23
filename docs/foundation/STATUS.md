@@ -21,6 +21,12 @@ Studies landed (level-5 proposals, stamped `reference`; none is an accepted deci
 - `docs/studies/2026-09-23-COMPOSITOR_UI_STUDY.md` — UI behaviours worth borrowing from Compositor, conflicts with `UI_DIRECTION.md`, and which pixel features fit v1.
 - `docs/studies/2026-09-23-ONLINE_AND_MAC_STUDY.md` — feasibility and cost of native Mac, in-browser (WASM/WebGPU), and Figma-style cloud Varos; browser work needs an ADR-0001 amendment.
 
+Landed later on 2026-09-23:
+
+- **A26/A32 acceptance tests merged** `a468a8b` (tests only; both pains were already fixed in `1bc4f3c`). Gates green on macOS (core+pdf+render **226/226**, clippy, fmt) and Windows-target clippy of the whole workspace; Codex APPROVE WITH NITS, nit fixed. Side finding logged as `PAINS_LOG.md` P12 (Pen anchor-delete opens the path) — needs Ahmed's decision. Details: `GATE_LOG.md`.
+- **cargo-audit triage landed** `a5e437c` — `docs/audits/2026-09-23-CARGO_AUDIT_TRIAGE.md`: 4 vulns + 6 warnings, 8/10 clear with seven lockfile bumps; bumps await owner approval.
+- **Under Codex review (not merged):** Mac port of `varos-app` (`worktree-agent-a8668165735dd9308`) and P11.2 culling / view clipping / flatten cache (`worktree-agent-a20eb2401bf6ec4b2`).
+
 **Why `docs/studies/`:** the charter never lists allowed folders. It asks that every level-5 doc carry a stamp (§0, §3.5). F2b only decided that the `docs/` root holds current docs, and a subfolder keeps that true. `docs/audits/` is already a topic folder beside `history/` and `reference/`. So a new `docs/studies/` folder for dated level-5 proposals is allowed and moves nothing. Each study is stamped `reference` (an allowed value) instead of the non-charter `draft`. Once Ahmed decides on a study, the decision goes into an ADR or a work order, and the study stays as reference.
 **INVENTORY.md left unchanged:** it is the frozen F1 baseline register (160 files at `1aff281`, and post-baseline docs such as ADRs and `P11_1_PERF.md` are deliberately not listed), so the studies are not added there. **Dashboard note:** the "First-party docs stamped" and "Link check" rows below were not re-measured for the three studies. All three carry a stamp, and none contains a relative Markdown link. `tools/check_links.ps1` cannot run on this Mac (no `pwsh`).
 
@@ -55,10 +61,10 @@ Studies landed (level-5 proposals, stamped `reference`; none is an accepted deci
 | `ui.rs` lines | 5,563 |
 | `editor.rs` lines | 4,533 |
 | Workspace tests | 232 (223 baseline + 6 F3 pins + 3 F4.1 boundary tests) |
-| Tests on macOS (core+pdf+render) | 220 / 220 (2026-09-23) |
+| Tests on macOS (core+pdf+render) | 226 / 226 (2026-09-23, after `a468a8b`) |
 | `unsafe` sites (app crates) | 27 |
 | Direct external deps | 23 |
-| `cargo audit` | 3 vulns + 3 unmaintained (untriaged) |
+| `cargo audit` | 4 vulns + 6 warnings (triaged 2026-09-23, `docs/audits/2026-09-23-CARGO_AUDIT_TRIAGE.md`; fixes await owner approval) |
 | `.varos` refs in current docs | 0 |
 | First-party docs stamped | 71 / 71 — current 28 · historical 18 · reference 25 |
 | Link check | PASS — 70 docs, 71 relative links, 58 heading anchors |

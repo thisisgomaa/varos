@@ -153,3 +153,26 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Verdict:** PASS. **Merged:** `1931c80` to `main`.
 - Sign-off: planner — PASS — 2026-07-12
 - Sign-off: product owner (Ahmed, hand test) — PASS — 2026-07-12
+
+## A26/A32 — Acceptance tests for two already-fixed pains
+
+- **Date:** 2026-09-23. **Branch:** `worktree-agent-ad798213814c7febc` (range `61786a0..775bbb3`, commits `e21702d`, `8118894`, `775bbb3`). **Reviewer:** Codex (gpt-6-astra, read-only) + moderator gates.
+- **Scope:** tests + docs only — `varos-core/tests/boolean_corners.rs` (A26, boolean keeps sharp corners), `varos-core/tests/delete_anchor.rs` (A32, deleting an anchor opens the path), and the two `PAINS_LOG.md` rows annotated. Zero production code: both pains were already fixed on `main` in `1bc4f3c` (July); these tests pin the fix. Implementer's red-proof: with the old code temporarily restored, 4/4 A26 and 10/11 A32 tests failed; all pass on the current code.
+- **Codex review:** APPROVE WITH NITS. The nit (A26 tests must prove the Pathfinder op actually ran, not pass vacuously on an empty result) was fixed in `775bbb3`. Codex also confirmed a side observation, now logged as `PAINS_LOG.md` P12 (Pen click on a middle anchor opens the path; Illustrator's Pen joins the neighbours). It needs an owner decision and is not a defect of this branch.
+- **Checks run (moderator, on the merged `main`, macOS, Rust toolchain `~/.cargo/bin`):**
+  - `cargo test -p varos-core -p varos-pdf -p varos-render-wgpu -j 4` → 33 result lines, **226 passed, 0 failed, 0 ignored** (was 220; +6 new tests).
+  - `cargo clippy -p varos-core -p varos-pdf -p varos-render-wgpu --all-targets -- -D warnings` → clean (0 warnings, exit 0).
+  - `cargo fmt --all --check` → clean (exit 0, no output).
+  - `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings` → clean (0 warnings, exit 0) — the whole workspace, `varos-app` included, type-checked for Windows.
+  - **Not run:** `varos-app` tests. The app crate does not build on macOS until the Mac port lands (`cargo check -p varos-app` fails in the `windows-future` crate, 16 errors). The full `cargo test --workspace` must run on Windows or after the port.
+- **Conflicts:** none (`ort` merge, 3 files).
+- **Hand test:** not yet — per the owner decision of 2026-09-23, Ahmed tests in batches after merge. For his list: boolean shapes keep sharp corners; deleting an anchor opens the path.
+- **Verdict:** PASS. **Merged:** `a468a8b` to `main`.
+- Sign-off: moderator — PASS — 2026-09-23
+
+## cargo-audit triage report
+
+- **Date:** 2026-09-23. **Commit:** `a5e437c` on `main` — `docs/audits/2026-09-23-CARGO_AUDIT_TRIAGE.md`, written from a real `cargo audit` run (it corrects an earlier Codex draft).
+- **Findings:** 4 vulnerabilities + 6 warnings (4 unmaintained, 1 unsound, 1 yanked); 8 of 10 clear with seven lockfile bumps (candidate audit on a throw-away copy → only the two font warnings `0192`/`0206` remain). Windows reach of the 4 vulnerabilities: quick-xml `0194`/`0195` — not in the Windows build; webbrowser `0257` — crate compiled, vulnerable Unix code not; crossbeam-epoch `0204` — **in the Windows build** (PDF loading via lopdf → rayon), no trigger demonstrated, patch recommended.
+- **Action:** no dependency was changed. The bumps wait for owner approval.
+- Sign-off: moderator — report landed — 2026-09-23
