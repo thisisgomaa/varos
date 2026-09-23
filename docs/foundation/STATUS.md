@@ -25,7 +25,21 @@ Landed later on 2026-09-23:
 
 - **A26/A32 acceptance tests merged** `a468a8b` (tests only; both pains were already fixed in `1bc4f3c`). Gates green on macOS (core+pdf+render **226/226**, clippy, fmt) and Windows-target clippy of the whole workspace; Codex APPROVE WITH NITS, nit fixed. Side finding logged as `PAINS_LOG.md` P12 (Pen anchor-delete opens the path) — needs Ahmed's decision. Details: `GATE_LOG.md`.
 - **cargo-audit triage landed** `a5e437c` — `docs/audits/2026-09-23-CARGO_AUDIT_TRIAGE.md`: 4 vulns + 6 warnings, 8/10 clear with seven lockfile bumps; bumps await owner approval.
-- **Under Codex review (not merged):** Mac port of `varos-app` (`worktree-agent-a8668165735dd9308`) and P11.2 culling / view clipping / flatten cache (`worktree-agent-a20eb2401bf6ec4b2`).
+- **Mac port of `varos-app` merged** `9f8ec1d` (branch `worktree-agent-a8668165735dd9308`, pushed as `feat/mac-shell-port`; Codex REQUEST CHANGES → 4 fixes in `c3093dd` → APPROVE WITH NITS; nits fixed in `b0972e7`). The **whole workspace now builds and tests on macOS: 250/250**, clippy and fmt clean, Windows-target clippy clean, release build launches on Metal (8 s smoke test, no panic). Details: `GATE_LOG.md`.
+- **Owner decision (2026-09-23, later): the official build is Mac-only for now** ("بلاش نتعب في الويندوز دلوقتي"). Windows is kept compiling through the cheap gate `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`, so it is not silently broken. No Windows hand-testing and no Windows-specific work until this is revisited. Mac polish comes first.
+- **Under Codex review (not merged):** P11.2 culling / view clipping / flatten cache (`worktree-agent-a20eb2401bf6ec4b2`).
+
+**For Ahmed to try (batch 1)** — on the Mac, from the release build `varos/target/release/varos`:
+
+1. Open the app from the release binary.
+2. Draw with the Pen and with the shape tools.
+3. Hold Space and move across a panel splitter — the cursor must stay a hand.
+4. Zoom to 4000%.
+5. Resize the window to full screen.
+6. Open and save a `.vrs` file.
+7. (from A26/A32) Boolean shapes keep sharp corners; deleting an anchor opens the path.
+
+**Known Mac gaps (expected, not bugs of this piece):** two title bars (the Mac one + ours); standard Mac cursors instead of our tool cursors (custom-cursors piece in progress); screen eyedropper disabled; window position/size not remembered; the title-bar strip is see-through.
 
 **Why `docs/studies/`:** the charter never lists allowed folders. It asks that every level-5 doc carry a stamp (§0, §3.5). F2b only decided that the `docs/` root holds current docs, and a subfolder keeps that true. `docs/audits/` is already a topic folder beside `history/` and `reference/`. So a new `docs/studies/` folder for dated level-5 proposals is allowed and moves nothing. Each study is stamped `reference` (an allowed value) instead of the non-charter `draft`. Once Ahmed decides on a study, the decision goes into an ADR or a work order, and the study stays as reference.
 **INVENTORY.md left unchanged:** it is the frozen F1 baseline register (160 files at `1aff281`, and post-baseline docs such as ADRs and `P11_1_PERF.md` are deliberately not listed), so the studies are not added there. **Dashboard note:** the "First-party docs stamped" and "Link check" rows below were not re-measured for the three studies. All three carry a stamp, and none contains a relative Markdown link. `tools/check_links.ps1` cannot run on this Mac (no `pwsh`).
@@ -58,10 +72,10 @@ Landed later on 2026-09-23:
 
 | Metric | Value |
 |---|---:|
-| `ui.rs` lines | 5,563 |
-| `editor.rs` lines | 4,533 |
-| Workspace tests | 232 (223 baseline + 6 F3 pins + 3 F4.1 boundary tests) |
-| Tests on macOS (core+pdf+render) | 226 / 226 (2026-09-23, after `a468a8b`) |
+| `ui.rs` lines | 5,826 (re-measured `wc -l` 2026-09-23, after `9f8ec1d`) |
+| `editor.rs` lines | 4,533 (re-measured `wc -l` 2026-09-23, after `9f8ec1d`) |
+| Workspace tests | 250 — whole workspace, run on macOS 2026-09-23 after `9f8ec1d` (core 200 · pdf 13 · render 15 · app 22) |
+| Tests on macOS | 250 / 250 — whole workspace incl. `varos-app` (2026-09-23, after `9f8ec1d`) |
 | `unsafe` sites (app crates) | 27 |
 | Direct external deps | 23 |
 | `cargo audit` | 4 vulns + 6 warnings (triaged 2026-09-23, `docs/audits/2026-09-23-CARGO_AUDIT_TRIAGE.md`; fixes await owner approval) |

@@ -176,3 +176,25 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Findings:** 4 vulnerabilities + 6 warnings (4 unmaintained, 1 unsound, 1 yanked); 8 of 10 clear with seven lockfile bumps (candidate audit on a throw-away copy → only the two font warnings `0192`/`0206` remain). Windows reach of the 4 vulnerabilities: quick-xml `0194`/`0195` — not in the Windows build; webbrowser `0257` — crate compiled, vulnerable Unix code not; crossbeam-epoch `0204` — **in the Windows build** (PDF loading via lopdf → rayon), no trigger demonstrated, patch recommended.
 - **Action:** no dependency was changed. The bumps wait for owner approval.
 - Sign-off: moderator — report landed — 2026-09-23
+
+## Mac port — `varos-app` builds and runs on macOS
+
+- **Date:** 2026-09-23. **Branch:** `worktree-agent-a8668165735dd9308` (range `61786a0..c3093dd`, commits `34391ab`, `c3093dd`; pushed as `feat/mac-shell-port`). **Reviewer:** Codex (independent, two rounds) + moderator gates.
+- **Scope:** `varos-app` builds and launches on macOS. Every Win32 call stays as it was, behind `#[cfg(windows)]`; each Windows-only shell function got a `#[cfg(not(windows))]` twin with the same signature (`cursors.rs`); the `windows` crate moved to `[target.'cfg(windows)'.dependencies]`. Two shared renderer fixes in `varos-render-wgpu` also run on Windows: the real adapter texture-size limit (the 2048px downlevel cap panicked on a Retina window) and egui texture upload before frame acquisition (a skipped frame dropped the font atlas, then the next frame panicked). Design of record: `docs/foundation/MAC_SHELL_PORT.md`.
+- **Codex review, round 1:** REQUEST CHANGES — 4 findings, all fixed in `c3093dd`:
+  1. Cursor ownership (P2): off Windows, egui-winit also sets the OS cursor, so e.g. Space-hand across a panel splitter lost the tool cursor. Fix: pure `resolve_ck` + `cursor_apply_needed`; the tool cursor is re-asserted every frame after `gui.run` on macOS (Windows keeps set-on-change). 2 GPU-free tests.
+  2. Texture frees lost on a skipped frame (leak). Fix: `FreeQueue` parks them and releases them after the next real submit. Tested.
+  3. No upper clamp on the surface size. Fix: readable startup `Err` above the device texture cap; `resize` clamps to the cap (logged once) instead of a wgpu validation panic. Tested (`fit_to_limit`).
+  4. `MAC_SHELL_PORT.md` scope wording inaccurate and two Windows-only sites missing (`main.rs:1` `windows_subsystem`, `ui.rs:1392` `C:/Windows/Fonts`). Fixed.
+- **Codex review, round 2:** APPROVE WITH NITS — two P3 doc nits: (a) `MAC_SHELL_PORT.md` — egui-winit deduplicates unchanged cursor icons rather than writing the OS cursor every frame, and the "Two renderer bugs" heading sat above three entries; (b) the `FreeQueue` comment needed "once acquisition succeeds again". Fixed after the merge in `b0972e7` (docs + one comment, no code).
+- **Checks run (moderator, on the merged `main` at `b0972e7`, macOS/Apple M5/Metal, Rust `~/.cargo/bin`).** This is the first time the whole workspace, `varos-app` included, ran on this Mac:
+  - `cargo test --workspace -j 4` → 36 result lines, **250 passed, 0 failed, 0 ignored** (core 200 · pdf 13 · render-wgpu 15 · app 22 = 6 lib + 16 bin). Matches the implementer's 244 on the branch + the 6 A26/A32 tests on `main`.
+  - `cargo clippy --workspace --all-targets -- -D warnings` → clean (exit 0, 0 warnings).
+  - `cargo fmt --all --check` → clean (exit 0, no output).
+  - `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings` → clean (exit 0, 0 warnings) — Windows still compiles.
+  - `cargo build --release -p varos-app` → OK (3m 21s); `varos/target/release/varos` 17.9 MB.
+  - **Launch smoke test:** release binary run 8 s, still alive, then killed. stderr (complete): `[varos] adapter: "Apple M5" | backend: Metal` / `[varos] present: Immediate | format: Bgra8Unorm | msaa: 8`. No "panic" in stdout/stderr, no macOS crash report, no process left. (The app's `crash.txt` lives under `%APPDATA%`, which does not exist on macOS, so "no panic file" is shown by the clean stderr, not by that file.)
+- **Conflicts:** none (`ort` merge, 7 files; `main` had only gained tests and docs since `61786a0`).
+- **Hand test:** not yet — batch 1 list in `STATUS.md`.
+- **Verdict:** PASS. **Merged:** `9f8ec1d` to `main`.
+- Sign-off: moderator — PASS — 2026-09-23
