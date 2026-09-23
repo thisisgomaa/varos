@@ -25,7 +25,10 @@ use winit::{
     window::Window,
 };
 
+mod chrome;
 mod cursors;
+#[cfg(target_os = "macos")]
+mod mac_menu;
 mod single_instance;
 mod ui;
 use cursors::CK;
@@ -247,6 +250,35 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
     }
 }
 
+/// The ✓ a native menu row shows, for the states the EDITOR owns (None = a UI-shell state the `Ui`
+/// answers). The macOS menu sync and the tests read the same function (MAC_CHROME.md §C).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn editor_check(ed: &Editor, c: chrome::Check) -> Option<bool> {
+    use chrome::Check as C;
+    Some(match c {
+        C::Rulers => ed.show_rulers,
+        C::Guides => !ed.guides_hidden,
+        C::GuidesLocked => ed.doc.guides_locked,
+        C::SmartGuides => ed.doc.snap.smart,
+        C::SnapGrid => ed.doc.snap.grid,
+        C::SnapPoint => ed.doc.snap.key_points,
+        C::Rail | C::Dock | C::Panel(_) => return None,
+    })
+}
+
+/// View ▸ Snap to Grid / Snap to Point — the magnet quick-menu's rows: flip the flag and commit it
+/// through the same non-undoable `SetSnapConfig` the magnet menu's frame commit uses.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn menu_snap_toggle(ed: &mut Editor, grid: bool) {
+    let mut s = ed.doc.snap;
+    if grid {
+        s.grid = !s.grid;
+    } else {
+        s.key_points = !s.key_points;
+    }
+    ed.execute(EditCommand::SetSnapConfig(s));
+}
+
 /// A8a fallback region when there is nothing to frame (an empty free canvas): a default page-sized
 /// square at the origin, so a brand-new boardless document still opens onto something sensible.
 const FIT_FALLBACK: (f32, f32, f32, f32) = (0.0, 0.0, 1080.0, 1080.0);
@@ -460,6 +492,62 @@ impl OpenDocContext<'_> {
             }
         }
     }
+
+    /// One pressed shortcut key (no text field focused). The keyboard AND the macOS menu bar
+    /// (docs/foundation/MAC_CHROME.md §C) both land here, so a menu row can never drift from its key.
+    fn shortcut(&mut self, code: KeyCode, mc: bool, ms: bool, ma: bool) {
+        let cs = format!("{:?}", code);
+        if mc && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {
+            // Ctrl+0 = Fit in the Board box — the active page, or content on a
+            // free canvas (A8a), or the default region when there's nothing.
+            let (x, y, w, h) = fit_rect(self.ed);
+            *self.view = fit_to_board(self.gui, self.window, x, y, w, h, 0.9);
+            *self.zoom_target = self.view.zoom; // instant fit cancels any in-flight zoom glide
+        } else if mc && code == KeyCode::KeyS {
+            // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
+            let dest = if ms { None } else { self.cur_file.clone() }.or_else(|| {
+                rfd::FileDialog::new()
+                    .add_filter("Varos document (PDF-compatible)", &["vrs"])
+                    .add_filter("PDF", &["pdf"]) // same bytes — a valid PDF either way
+                    .set_file_name(format!("{}.vrs", doc_stem(self.cur_file.as_deref())))
+                    .save_file()
+            });
+            if let Some(mut p) = dest {
+                if p.extension().is_none_or(|e| !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))) {
+                    p.set_extension("vrs");
+                }
+                match varos_pdf::save_vrs(&self.ed.doc, &p) {
+                    Ok(()) => {
+                        *self.cur_file = Some(p);
+                        *self.saved_rev = self.ed.rev;
+                    }
+                    Err(e) => {
+                        rfd::MessageDialog::new()
+                            .set_level(rfd::MessageLevel::Error)
+                            .set_title("Varos")
+                            .set_description(format!("Save failed: {e}"))
+                            .show();
+                    }
+                }
+            }
+            self.ed.mods = Default::default(); // the native dialog eats the key releases
+        } else if mc && code == KeyCode::KeyO {
+            // Ctrl+O = Open — guard unsaved changes first
+            if confirm_discard_unsaved(self.ed, *self.saved_rev) {
+                if let Some(p) = rfd::FileDialog::new().add_filter("Varos document", &["vrs", "pdf"]).pick_file() {
+                    self.load_path(p);
+                }
+            }
+            self.ed.mods = Default::default();
+        } else {
+            apply_key(self.ed, self.view, &cs, mc, ms, ma);
+            // Ctrl+1 (view.zoom = 1.0) is apply_key's only zoom change — resync
+            // the easer target so it snaps to 100% instead of gliding away from it.
+            if mc && code == KeyCode::Digit1 {
+                *self.zoom_target = self.view.zoom;
+            }
+        }
+    }
 }
 /// Restore the last window geometry: `(maximized, outer_x, outer_y, inner_w, inner_h)` in physical px.
 fn load_win_state() -> Option<(bool, i32, i32, u32, u32)> {
@@ -526,7 +614,15 @@ fn main() {
         Some(guard) => guard,
         None => return,
     };
-    let event_loop = match EventLoop::new() {
+    #[cfg(not(target_os = "macos"))]
+    let event_loop = EventLoop::new();
+    // macOS: winit's own default menu (app name only) is replaced by our menu bar (MAC_CHROME.md §C).
+    #[cfg(target_os = "macos")]
+    let event_loop = {
+        use winit::platform::macos::EventLoopBuilderExtMacOS;
+        EventLoop::builder().with_default_menu(false).build()
+    };
+    let event_loop = match event_loop {
         Ok(el) => el,
         Err(e) => fatal("Varos couldn't connect to the Windows desktop.", &e.to_string()),
     };
@@ -543,6 +639,20 @@ fn main() {
     #[cfg(windows)]
     {
         attrs = attrs.with_class_name(single_instance::WINDOW_CLASS_NAME);
+    }
+    // macOS (MAC_CHROME.md §A/§B): ONE bar — our egui bar fills the title-bar area with the native
+    // traffic lights over it — and an OPAQUE window (a transparent one let the title strip show the
+    // desktop). Decorated from the start: winit's later set_decorations(true) would drop the
+    // full-size content view, so macOS never toggles decorations.
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::WindowAttributesExtMacOS;
+        attrs = attrs
+            .with_transparent(false)
+            .with_decorations(true)
+            .with_fullsize_content_view(true)
+            .with_titlebar_transparent(true)
+            .with_title_hidden(true);
     }
     attrs = match saved {
         Some((_, _, _, w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
@@ -585,6 +695,22 @@ fn main() {
     // HCURSORs) once, before the `hcur` table below asks for them.
     #[cfg(not(windows))]
     cursors::create_custom_cursors(&event_loop);
+    // macOS: the NSWindow's own background is the warm black, so no frame (the one before the GPU's
+    // first present, a live-resize edge) ever shows the desktop or a system gray (MAC_CHROME.md §B).
+    #[cfg(target_os = "macos")]
+    {
+        let bg = varos_app::shell::tokens::BG;
+        mac_menu::set_window_background(&window, [bg.r(), bg.g(), bg.b()]);
+    }
+    // macOS: the native menu bar; installed on the first NewEvents (after the app finished launching).
+    #[cfg(target_os = "macos")]
+    let mac_menu = match mac_menu::MacMenu::build(event_loop.create_proxy()) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            eprintln!("[varos] menu bar: could not be built ({e}) — running without it");
+            None
+        }
+    };
     single_instance::install_file_open_handler(hwnd);
     cursors::set_cloaked(hwnd, true);
     window.set_visible(true); // now "shown" but cloaked → not composited (no flash), surface is presentable
@@ -625,6 +751,8 @@ fn main() {
     }
     let mut last_ck: Option<CK> = None;
     let mut last_click: Option<(Instant, Pt)> = None;
+    #[cfg(target_os = "macos")]
+    let mut last_caption_click: Option<Instant> = None; // double-click on the empty bar = zoom
     let mut view = {
         // open zoomed-out so the artboard reads as a DEFINED page sitting on the larger board
         // (lots of dotted board visible around it). Ctrl+0 later does a tight Fit-in-Window.
@@ -688,6 +816,48 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
+            #[cfg(target_os = "macos")]
+            if let Some(menu) = &mac_menu {
+                if matches!(&event, Event::NewEvents(winit::event::StartCause::Init)) {
+                    menu.install();
+                }
+                // a menu row (clicked, or its ⌘ key) runs the SAME path its key / button already runs
+                for cmd in menu.drain() {
+                    use chrome::MenuCmd as M;
+                    match cmd {
+                        M::Key(k) => {
+                            if gui.wants_keyboard() {
+                                // typing in a field: the key belongs to egui, as on the keyboard path
+                                if let Some(key) = chrome::egui_key(k.code) {
+                                    gui.forward_shortcut(key, k.shift, k.alt);
+                                }
+                            } else {
+                                OpenDocContext {
+                                    ed: &mut ed,
+                                    gui: &gui,
+                                    window: &window,
+                                    view: &mut view,
+                                    zoom_target: &mut zoom_target,
+                                    cur_file: &mut cur_file,
+                                    saved_rev: &mut saved_rev,
+                                }
+                                .shortcut(k.code, true, k.shift, k.alt);
+                            }
+                        }
+                        M::Close => {
+                            // exactly the ✕ caption button's arm (WinAction::Close below)
+                            save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
+                            elwt.exit();
+                        }
+                        M::ToggleRail => gui.toggle_rail(),
+                        M::ToggleDock => gui.toggle_dock(),
+                        M::TogglePanel(p) => gui.toggle_panel(p),
+                        M::SnapGrid => menu_snap_toggle(&mut ed, true),
+                        M::SnapPoint => menu_snap_toggle(&mut ed, false),
+                    }
+                    window.request_redraw();
+                }
+            }
             if matches!(&event, Event::AboutToWait) {
                 for p in single_instance::take_pending_file_paths() {
                     OpenDocContext {
@@ -738,6 +908,11 @@ fn main() {
                         }
                         window.request_redraw();
                     }
+                    // macOS: an opaque window that was covered gets no redraws (AppKit skips drawing an
+                    // occluded view), so a splash that started behind another window would sit there
+                    // until the next input event — repaint the moment it is uncovered.
+                    #[cfg(target_os = "macos")]
+                    WindowEvent::Occluded(false) => window.request_redraw(),
                     WindowEvent::Moved(pos) => {
                         // Windows parks a MINIMIZED window at (−32000,−32000) with a 0×0 client area —
                         // never persist that as the "normal" bounds, or it reopens the window invisible.
@@ -793,6 +968,24 @@ fn main() {
                                         } else {
                                             panning = true;
                                             pan_last = screen_cursor;
+                                        }
+                                        window.request_redraw();
+                                        return;
+                                    }
+                                    // macOS: an EMPTY spot on our bar is the title bar (Windows gets this from
+                                    // the OS hit-test, HTCAPTION): press = move the window, double-click =
+                                    // zoom, like the native title bar did (MAC_CHROME.md §A).
+                                    #[cfg(target_os = "macos")]
+                                    if cursors::caption_drag_hit(screen_cursor[0], screen_cursor[1]) {
+                                        let now = Instant::now();
+                                        let dbl =
+                                            last_caption_click.is_some_and(|t| now.duration_since(t).as_millis() < 350);
+                                        if dbl {
+                                            last_caption_click = None;
+                                            window.set_maximized(!window.is_maximized());
+                                        } else {
+                                            last_caption_click = Some(now);
+                                            let _ = window.drag_window();
                                         }
                                         window.request_redraw();
                                         return;
@@ -891,71 +1084,16 @@ fn main() {
                                 window.request_redraw();
                             } else if event.state == ElementState::Pressed {
                                 let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
-                                let cs = format!("{:?}", code);
-                                if mc && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {
-                                    // Ctrl+0 = Fit in the Board box — the active page, or content on a
-                                    // free canvas (A8a), or the default region when there's nothing.
-                                    let (x, y, w, h) = fit_rect(&ed);
-                                    view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
-                                    zoom_target = view.zoom; // instant fit cancels any in-flight zoom glide
-                                } else if mc && code == KeyCode::KeyS {
-                                    // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
-                                    let dest = if ms { None } else { cur_file.clone() }.or_else(|| {
-                                        rfd::FileDialog::new()
-                                            .add_filter("Varos document (PDF-compatible)", &["vrs"])
-                                            .add_filter("PDF", &["pdf"]) // same bytes — a valid PDF either way
-                                            .set_file_name(format!("{}.vrs", doc_stem(cur_file.as_deref())))
-                                            .save_file()
-                                    });
-                                    if let Some(mut p) = dest {
-                                        if p.extension().is_none_or(|e| {
-                                            !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))
-                                        }) {
-                                            p.set_extension("vrs");
-                                        }
-                                        match varos_pdf::save_vrs(&ed.doc, &p) {
-                                            Ok(()) => {
-                                                cur_file = Some(p);
-                                                saved_rev = ed.rev;
-                                            }
-                                            Err(e) => {
-                                                rfd::MessageDialog::new()
-                                                    .set_level(rfd::MessageLevel::Error)
-                                                    .set_title("Varos")
-                                                    .set_description(format!("Save failed: {e}"))
-                                                    .show();
-                                            }
-                                        }
-                                    }
-                                    ed.mods = Default::default(); // the native dialog eats the key releases
-                                } else if mc && code == KeyCode::KeyO {
-                                    // Ctrl+O = Open — guard unsaved changes first
-                                    if confirm_discard_unsaved(&ed, saved_rev) {
-                                        if let Some(p) = rfd::FileDialog::new()
-                                            .add_filter("Varos document", &["vrs", "pdf"])
-                                            .pick_file()
-                                        {
-                                            OpenDocContext {
-                                                ed: &mut ed,
-                                                gui: &gui,
-                                                window: &window,
-                                                view: &mut view,
-                                                zoom_target: &mut zoom_target,
-                                                cur_file: &mut cur_file,
-                                                saved_rev: &mut saved_rev,
-                                            }
-                                            .load_path(p);
-                                        }
-                                    }
-                                    ed.mods = Default::default();
-                                } else {
-                                    apply_key(&mut ed, &mut view, &cs, mc, ms, ma);
-                                    // Ctrl+1 (view.zoom = 1.0) is apply_key's only zoom change — resync
-                                    // the easer target so it snaps to 100% instead of gliding away from it.
-                                    if mc && code == KeyCode::Digit1 {
-                                        zoom_target = view.zoom;
-                                    }
+                                OpenDocContext {
+                                    ed: &mut ed,
+                                    gui: &gui,
+                                    window: &window,
+                                    view: &mut view,
+                                    zoom_target: &mut zoom_target,
+                                    cur_file: &mut cur_file,
+                                    saved_rev: &mut saved_rev,
                                 }
+                                .shortcut(code, mc, ms, ma);
                                 window.request_redraw();
                             }
                         }
@@ -1002,6 +1140,19 @@ fn main() {
                             ));
                             last_title = title;
                             window.request_redraw(); // repaint once more so the tab text shows this change
+                        }
+                        // macOS menu bar: every ✓ is read back from the real state (only changes are written)
+                        #[cfg(target_os = "macos")]
+                        if let Some(menu) = &mac_menu {
+                            use chrome::Check as C;
+                            menu.sync(|c| {
+                                editor_check(&ed, c).unwrap_or_else(|| match c {
+                                    C::Rail => gui.rail_shown(),
+                                    C::Dock => gui.dock_shown(),
+                                    C::Panel(p) => gui.panel_open(p),
+                                    _ => false,
+                                })
+                            });
                         }
                         // a "Fit in window" request from the artboard panel / status Fit / ⋮ menu
                         if let Some(i) = gui.fit_request.take() {
@@ -1086,6 +1237,9 @@ fn main() {
                         // AFTER rendering this frame (so no mid-frame size change), switch the borderless splash
                         // window into the framed editor; the resulting Resized event syncs the surface next frame.
                         if !gui.splashing() && !editor_framed {
+                            // macOS is decorated from creation (set_decorations would drop the full-size
+                            // content view — MAC_CHROME.md §A)
+                            #[cfg(not(target_os = "macos"))]
                             window.set_decorations(true);
                             cursors::custom_frame(hwnd);
                             if saved.is_some_and(|(m, ..)| m) {
@@ -1193,5 +1347,61 @@ mod scene_signature_tests {
         let before = scene_signature(&ed, View::identity(), [800, 600]);
         ed.doc.paths[0].fill = Paint::Solid([0.0, 1.0, 0.0, 1.0]);
         assert_ne!(before, scene_signature(&ed, View::identity(), [800, 600]));
+    }
+}
+
+#[cfg(test)]
+mod menu_mirror_tests {
+    //! The native menu (MAC_CHROME.md §C) must run the SAME path as the keyboard: every ⌘-row that
+    //! carries a ✓ flips, through `apply_key`, exactly the state its ✓ reads back.
+    use super::{apply_key, editor_check, menu_snap_toggle, Editor};
+    use crate::chrome::{menus, Accel, Check, Entry, MenuCmd};
+    use varos_core::geom::View;
+
+    fn keyed_checks(entries: &[Entry], out: &mut Vec<(String, Accel, Check)>) {
+        for e in entries {
+            match e {
+                Entry::Item { id, cmd: MenuCmd::Key(k), check: Some(c), .. } => out.push((id.clone(), *k, *c)),
+                Entry::Sub { items, .. } => keyed_checks(items, out),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn every_checked_shortcut_row_flips_the_state_its_check_mark_reads() {
+        let mut rows = Vec::new();
+        for (_, m) in menus() {
+            keyed_checks(&m, &mut rows);
+        }
+        assert_eq!(rows.len(), 4, "Rulers · Guides · Lock Guides · Smart Guides");
+        for (id, k, c) in rows {
+            let mut ed = Editor::new();
+            let mut view = View::identity();
+            let before = editor_check(&ed, c).expect("an editor-owned check");
+            apply_key(&mut ed, &mut view, &format!("{:?}", k.code), true, k.shift, k.alt);
+            assert_eq!(editor_check(&ed, c), Some(!before), "{id}: the ⌘ key did not flip its ✓ state");
+        }
+    }
+
+    #[test]
+    fn actual_size_row_is_the_ctrl_1_path() {
+        let mut ed = Editor::new();
+        let mut view = View::identity();
+        view.zoom = 0.3;
+        apply_key(&mut ed, &mut view, "Digit1", true, false, false);
+        assert_eq!(view.zoom, 1.0);
+    }
+
+    #[test]
+    fn snap_rows_flip_what_their_check_marks_read() {
+        for (grid, c) in [(true, Check::SnapGrid), (false, Check::SnapPoint)] {
+            let mut ed = Editor::new();
+            let before = editor_check(&ed, c).unwrap();
+            menu_snap_toggle(&mut ed, grid);
+            assert_eq!(editor_check(&ed, c), Some(!before), "{c:?}");
+            menu_snap_toggle(&mut ed, grid);
+            assert_eq!(editor_check(&ed, c), Some(before), "{c:?} toggles back");
+        }
     }
 }
