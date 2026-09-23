@@ -870,6 +870,41 @@ fn load_icon_filled(ctx: &egui::Context, name: &str, svg_inner: &str) -> Option<
     })
 }
 
+/// Native menu-bar mirrors (macOS, docs/foundation/MAC_CHROME.md §C): the SAME state the bar's Window
+/// menu rows flip, and the keyboard hand-off for a focused text field.
+#[cfg(target_os = "macos")]
+impl Ui {
+    /// Window ▸ Tool rail / Control bar / a dockable panel — what the egui Window menu rows do.
+    pub fn toggle_rail(&mut self) {
+        self.show_rail = !self.show_rail;
+    }
+    pub fn toggle_dock(&mut self) {
+        self.show_dock = !self.show_dock;
+    }
+    pub fn toggle_panel(&mut self, p: varos_app::shell::PanelId) {
+        self.shell.toggle_panel(p);
+    }
+    /// The check marks those rows show.
+    pub fn rail_shown(&self) -> bool {
+        self.show_rail
+    }
+    pub fn dock_shown(&self) -> bool {
+        self.show_dock
+    }
+    pub fn panel_open(&self, p: varos_app::shell::PanelId) -> bool {
+        self.shell.is_open(p)
+    }
+    /// A menu shortcut that arrives while a text field is focused goes to egui, exactly as the keyboard
+    /// would have delivered it (so ⌘Z still undoes typing in a field instead of the document).
+    pub fn forward_shortcut(&mut self, key: egui::Key, shift: bool, alt: bool) {
+        let modifiers = egui::Modifiers { alt, shift, mac_cmd: true, command: true, ctrl: false };
+        let ev = &mut self.state.egui_input_mut().events;
+        for pressed in [true, false] {
+            ev.push(egui::Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers });
+        }
+    }
+}
+
 impl Ui {
     pub fn new(window: &Window) -> Self {
         let ctx = egui::Context::default();
@@ -2810,6 +2845,14 @@ fn build_splash(ctx: &egui::Context, _e: f32, logo: &Option<egui::TextureHandle>
 
     // The card floats on the window's transparent surface (no dark scrim) → it sits over the desktop.
     let scr = ctx.content_rect();
+    // macOS: the window is opaque (MAC_CHROME.md §B) — the card sits on the warm-black board instead.
+    if crate::chrome::OPAQUE_WINDOW {
+        ctx.layer_painter(egui::LayerId::background()).rect_filled(
+            scr,
+            CornerRadius::ZERO,
+            varos_app::shell::tokens::BG,
+        );
+    }
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("splash")));
     let card = egui::Rect::from_center_size(scr.center() + egui::vec2(0.0, 2.0), egui::vec2(520.0, 300.0));
     // rule 2 — NOT ONE SHADOW: the 1px hairline below is the only separation ("الفصل بخط شعرة، مش ضل")
@@ -3195,36 +3238,46 @@ fn build_topbar(
         let p = ui.painter().clone();
         let cy = bar.center().y;
         let mut excl: Vec<egui::Rect> = Vec::new();
+        // platform chrome (docs/foundation/MAC_CHROME.md): macOS keeps its native traffic lights at the
+        // left, so there are no caps of ours and the burger clears the lights; Windows = old numbers.
+        let chrome = crate::chrome::TOPBAR;
 
         // window controls (min · max · close)
-        let bw = 42.0;
-        let close_r =
-            egui::Rect::from_min_max(egui::pos2(bar.right() - bw, bar.top()), egui::pos2(bar.right(), bar.bottom()));
-        let max_r = egui::Rect::from_min_max(
-            egui::pos2(bar.right() - 2.0 * bw, bar.top()),
-            egui::pos2(bar.right() - bw, bar.bottom()),
-        );
-        let min_r = egui::Rect::from_min_max(
-            egui::pos2(bar.right() - 3.0 * bw, bar.top()),
-            egui::pos2(bar.right() - 2.0 * bw, bar.bottom()),
-        );
-        if winctl(ui, &p, min_r, Cap::Min, "wc-min", HOVER, false) {
-            *win_action = Some(WinAction::Minimize);
-        }
-        if winctl(ui, &p, max_r, if maximized { Cap::Restore } else { Cap::Max }, "wc-max", HOVER, false) {
-            *win_action = Some(WinAction::ToggleMaximize);
-        }
-        if winctl(ui, &p, close_r, Cap::Close, "wc-close", CLOSE_RED, true) {
-            *win_action = Some(WinAction::Close);
-        }
-        excl.extend([min_r, max_r, close_r]);
+        let caps_left = if chrome.window_caps {
+            let bw = 42.0;
+            let close_r = egui::Rect::from_min_max(
+                egui::pos2(bar.right() - bw, bar.top()),
+                egui::pos2(bar.right(), bar.bottom()),
+            );
+            let max_r = egui::Rect::from_min_max(
+                egui::pos2(bar.right() - 2.0 * bw, bar.top()),
+                egui::pos2(bar.right() - bw, bar.bottom()),
+            );
+            let min_r = egui::Rect::from_min_max(
+                egui::pos2(bar.right() - 3.0 * bw, bar.top()),
+                egui::pos2(bar.right() - 2.0 * bw, bar.bottom()),
+            );
+            if winctl(ui, &p, min_r, Cap::Min, "wc-min", HOVER, false) {
+                *win_action = Some(WinAction::Minimize);
+            }
+            if winctl(ui, &p, max_r, if maximized { Cap::Restore } else { Cap::Max }, "wc-max", HOVER, false) {
+                *win_action = Some(WinAction::ToggleMaximize);
+            }
+            if winctl(ui, &p, close_r, Cap::Close, "wc-close", CLOSE_RED, true) {
+                *win_action = Some(WinAction::Close);
+            }
+            excl.extend([min_r, max_r, close_r]);
+            min_r.left()
+        } else {
+            bar.right() - chrome.right_inset
+        };
 
         // right cluster (§3.5), right→left: window caps · [snapping] · Window · Share · Export · search pill
         let window_id = ui.make_persistent_id("window_menu");
         let menu_id = ui.make_persistent_id("app_menu");
         // magnet = the Snapping quick-menu (Illustrator layout)
         let magnet_id = ui.make_persistent_id("snap_menu");
-        let magnet_r = egui::Rect::from_center_size(egui::pos2(min_r.left() - 6.0 - 14.0, cy), egui::vec2(28.0, 28.0));
+        let magnet_r = egui::Rect::from_center_size(egui::pos2(caps_left - 6.0 - 14.0, cy), egui::vec2(28.0, 28.0));
         let magnet_active = menu_open(ui, magnet_id) || snap.smart || snap.grid;
         let magr = topbtn(ui, &p, magnet_r, &top.magnet, "tb-magnet", magnet_active);
         if magr.clicked() {
@@ -3245,7 +3298,7 @@ fn build_topbar(
         excl.extend([magnet_r, winb.rect, share.rect, export.rect, kpill_r]);
 
         // burger — a flush 36×40 void cell at the far left (§3.5)
-        let menu_r = egui::Rect::from_min_size(egui::pos2(bar.left() + 4.0, bar.top()), egui::vec2(36.0, h));
+        let menu_r = egui::Rect::from_min_size(egui::pos2(bar.left() + chrome.lead, bar.top()), egui::vec2(36.0, h));
         let mr = ui.interact(menu_r, ui.id().with("tb-menu"), egui::Sense::click());
         let mopen = menu_open(ui, menu_id);
         if mopen || mr.hovered() {
