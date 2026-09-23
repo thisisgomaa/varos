@@ -30,6 +30,31 @@ mod single_instance;
 mod ui;
 use cursors::CK;
 
+/// The one cursor this frame wants: a pan in progress beats the Space hand, which beats the chrome's
+/// own cursor (`chrome` = Some while the pointer is over a panel), which beats the tool's (lazy). Pure.
+fn resolve_ck(panning: bool, space_down: bool, chrome: Option<CK>, tool: impl FnOnce() -> CK) -> CK {
+    if panning {
+        CK::Grab
+    } else if space_down {
+        CK::Hand
+    } else if let Some(c) = chrome {
+        c
+    } else {
+        tool()
+    }
+}
+
+/// Windows: our WM_SETCURSOR subclass owns the OS cursor, so it is set only when it changes. Elsewhere
+/// egui-winit ALSO writes the OS cursor from egui's platform output, so the resolved cursor is
+/// re-asserted every frame after it — otherwise e.g. Space-hand → over a splitter → back leaves egui's
+/// arrow up while `CK` never changed (docs/foundation/MAC_SHELL_PORT.md).
+const REASSERT_CURSOR_EACH_FRAME: bool = cfg!(not(windows));
+
+/// Should `ck` be (re)applied this frame? Pure; unit-tested for both platform policies.
+fn cursor_apply_needed(last: Option<CK>, ck: CK, reassert_each_frame: bool) -> bool {
+    reassert_each_frame || last != Some(ck)
+}
+
 /// Which native cursor the current effective tool wants (Pen reports its contextual state; the
 /// Selection tool reports transform/copy states using the Illustrator cursor set).
 fn desired_ck(ed: &Editor, world: Pt) -> CK {
@@ -1013,17 +1038,15 @@ fn main() {
                         // Win32 set — seam-resize arrows on box splitters, ↔ on a scrubbed field,
                         // arrow elsewhere); over the canvas show the tool's cursor. It was hardwired
                         // to Select here, which broke the new box seams' arrows (Ahmed 07-07).
-                        let ck = if panning {
-                            CK::Grab
-                        } else if space_down {
-                            CK::Hand
-                        } else if gui.wants_pointer() {
-                            gui.chrome_ck()
-                        } else {
+                        let ck = resolve_ck(panning, space_down, gui.wants_pointer().then(|| gui.chrome_ck()), || {
                             desired_ck(&ed, view.s2w(screen_cursor))
-                        };
-                        if Some(ck) != last_ck {
+                        });
+                        // Runs AFTER gui.run (egui's platform output is already applied), so on non-Windows
+                        // the re-assert each frame wins over egui-winit's own cursor write.
+                        if cursor_apply_needed(last_ck, ck, REASSERT_CURSOR_EACH_FRAME) {
                             cursors::set(hcur[&ck]);
+                        }
+                        if Some(ck) != last_ck {
                             last_ck = Some(ck);
                             let (hw, ins, hits, cur) = cursors::dbg();
                             let _ = std::fs::write(
@@ -1088,6 +1111,39 @@ fn main() {
             }
         })
         .unwrap_or_else(|e| fatal("The Windows event loop stopped unexpectedly.", &e.to_string()));
+}
+
+#[cfg(test)]
+mod cursor_policy_tests {
+    use super::{cursor_apply_needed, resolve_ck, CK};
+
+    #[test]
+    fn resolve_ck_priority_pan_then_space_then_chrome_then_tool() {
+        assert!(resolve_ck(true, true, Some(CK::ResizeH), || CK::Pen) == CK::Grab);
+        assert!(resolve_ck(false, true, Some(CK::ResizeH), || CK::Pen) == CK::Hand);
+        assert!(resolve_ck(false, false, Some(CK::ResizeH), || CK::Pen) == CK::ResizeH);
+        assert!(resolve_ck(false, false, None, || CK::Pen) == CK::Pen);
+        // the tool closure is not evaluated when something above it decides
+        assert!(resolve_ck(false, true, None, || unreachable!()) == CK::Hand);
+    }
+
+    // Review P2: Space held (Hand) while crossing a splitter and back — CK never changes, but egui-winit
+    // may have written its own cursor in between. The re-assert policy must still apply Hand every frame.
+    #[test]
+    fn reassert_policy_reapplies_an_unchanged_cursor_every_frame() {
+        let frames = [None, Some(CK::ResizeH), None]; // canvas → splitter → canvas, Space held throughout
+        let mut last = None;
+        for chrome in frames {
+            let ck = resolve_ck(false, true, chrome, || CK::Select);
+            assert!(ck == CK::Hand);
+            assert!(cursor_apply_needed(last, ck, true)); // non-Windows: every frame
+            last = Some(ck);
+        }
+        // Windows policy (unchanged behaviour): only on change
+        assert!(!cursor_apply_needed(Some(CK::Hand), CK::Hand, false));
+        assert!(cursor_apply_needed(Some(CK::Hand), CK::Select, false));
+        assert!(cursor_apply_needed(None, CK::Hand, false));
+    }
 }
 
 #[cfg(test)]
