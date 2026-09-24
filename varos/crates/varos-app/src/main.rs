@@ -190,7 +190,9 @@ fn full_title(t: ToolKind, file: Option<&std::path::Path>, unsaved: bool) -> Str
 }
 
 /// Apply a keyboard shortcut. `code` is a W3C key code; shared by canvas focus + forwarded keys.
-fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bool, alt: bool) {
+/// `canvas_centre` = the centre of the visible drawing area (physical px): the point the keyboard
+/// zooms (⌘= / ⌘− / ⌘1) keep fixed, so the view never jumps away from the work.
+fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ctrl: bool, shift: bool, alt: bool) {
     if ctrl {
         match code {
             "Semicolon" => {
@@ -202,7 +204,11 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
                     ed.toggle_guides_visibility()
                 }
             } // Hide/Show Guides (Ctrl+;)
-            "Digit1" => view.zoom = 1.0,
+            // Actual Size (⌘1): 100% around the canvas centre — never a jump to empty space (Astra F06)
+            "Digit1" => zoom_to(view, canvas_centre, 1.0),
+            // Zoom In / Out (⌘= or ⌘+ · ⌘−): one wheel notch, instantly, around the canvas centre (Astra F05)
+            "Equal" | "NumpadAdd" => zoom_step(view, canvas_centre, ZOOM_NOTCH),
+            "Minus" | "NumpadSubtract" => zoom_step(view, canvas_centre, 1.0 / ZOOM_NOTCH),
             "KeyZ" => {
                 if shift {
                     ed.execute(EditCommand::Redo)
@@ -322,13 +328,17 @@ fn fit_rect(ed: &Editor) -> (f32, f32, f32, f32) {
     }
 }
 
-/// Fit an artboard into the CANVAS area — the Board box's interior when the shell reports one
-/// (Stage 4; physical px), else the whole window. Pan shifts so the page centres in the BOX.
-fn fit_to_board(gui: &ui::Ui, window: &Window, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
+/// The CANVAS area (the visible drawing region) in physical px — the Board box's interior when the
+/// shell reports one (Stage 4), else the whole window.
+fn canvas_px(gui: &ui::Ui, window: &Window) -> egui::Rect {
     let sz = window.inner_size();
-    let b = gui
-        .board_px
-        .unwrap_or(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(sz.width as f32, sz.height as f32)));
+    gui.board_px
+        .unwrap_or(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(sz.width as f32, sz.height as f32)))
+}
+
+/// Fit an artboard into the CANVAS area (`canvas_px`). Pan shifts so the page centres in the BOX.
+fn fit_to_board(gui: &ui::Ui, window: &Window, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
+    let b = canvas_px(gui, window);
     let mut v = View::fit(x, y, w, h, b.width(), b.height(), k);
     v.pan[0] += b.left();
     v.pan[1] += b.top();
@@ -471,10 +481,18 @@ fn confirm_discard_unsaved(ed: &Editor, saved_rev: u64) -> bool {
             == rfd::MessageDialogResult::Yes
 }
 
+/// One wheel notch of zoom (Alt+wheel); ⌘= / ⌘− step by exactly the same amount.
+const ZOOM_NOTCH: f32 = 1.12;
+
 /// Apply a complete zoom step now, keeping the world point under the cursor fixed.
 fn zoom_step(view: &mut View, screen: Pt, factor: f32) {
+    zoom_to(view, screen, view.zoom * factor);
+}
+
+/// Jump to `zoom` now (clamped to the view limits), keeping the world point at `screen` fixed.
+fn zoom_to(view: &mut View, screen: Pt, zoom: f32) {
     let anchor = view.s2w(screen);
-    view.zoom = (view.zoom * factor).clamp(0.05, 40.0);
+    view.zoom = zoom.clamp(0.05, 40.0);
     view.pan = geom::pan_for_anchor(anchor, screen, view.zoom);
 }
 
@@ -559,7 +577,8 @@ impl OpenDocContext<'_> {
             }
             self.ed.mods = Default::default();
         } else {
-            apply_key(self.ed, self.view, &cs, mc, ms, ma);
+            let c = canvas_px(self.gui, self.window).center();
+            apply_key(self.ed, self.view, [c.x, c.y], &cs, mc, ms, ma);
         }
     }
 }
@@ -1077,7 +1096,7 @@ fn main() {
                         };
                         if ed.mods.alt {
                             // Exponential per notch, including coalesced wheel events.
-                            let f = 1.12f32.powf(dy).clamp(0.2, 5.0);
+                            let f = ZOOM_NOTCH.powf(dy).clamp(0.2, 5.0);
                             zoom_step(&mut view, screen_cursor, f);
                         } else if ed.mods.shift {
                             view.pan[0] += (dy + dx) * 30.0;
@@ -1388,7 +1407,7 @@ mod scene_signature_tests {
 mod menu_mirror_tests {
     //! The native menu (MAC_CHROME.md §C) must run the SAME path as the keyboard: every ⌘-row that
     //! carries a ✓ flips, through `apply_key`, exactly the state its ✓ reads back.
-    use super::{apply_key, editor_check, menu_snap_toggle, Editor};
+    use super::{apply_key, editor_check, menu_snap_toggle, Editor, ZOOM_NOTCH};
     use crate::chrome::{menus, Accel, Check, Entry, MenuCmd};
     use varos_core::geom::View;
 
@@ -1413,18 +1432,79 @@ mod menu_mirror_tests {
             let mut ed = Editor::new();
             let mut view = View::identity();
             let before = editor_check(&ed, c).expect("an editor-owned check");
-            apply_key(&mut ed, &mut view, &format!("{:?}", k.code), true, k.shift, k.alt);
+            apply_key(&mut ed, &mut view, [400.0, 300.0], &format!("{:?}", k.code), true, k.shift, k.alt);
             assert_eq!(editor_check(&ed, c), Some(!before), "{id}: the ⌘ key did not flip its ✓ state");
         }
     }
 
+    fn menu_key(id: &str) -> Accel {
+        crate::chrome::flat_items(&menus())
+            .into_iter()
+            .find_map(|e| match e {
+                Entry::Item { id: i, cmd: MenuCmd::Key(k), .. } if i == id => Some(k),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{id} is a ⌘-row of the menu"))
+    }
+
+    fn assert_pinned(view: &View, anchor: [f32; 2], centre: [f32; 2], what: &str) {
+        let p = view.w2s(anchor);
+        assert!(
+            (p[0] - centre[0]).abs() < 0.01 && (p[1] - centre[1]).abs() < 0.01,
+            "{what}: the world point at the canvas centre moved to {p:?} (want {centre:?})"
+        );
+    }
+
+    /// Astra F06: ⌘1 = 100% AND the place stays — the world point at the canvas centre is kept,
+    /// even far from the origin (the old path set zoom only and jumped to empty space).
     #[test]
     fn actual_size_row_is_the_ctrl_1_path() {
-        let mut ed = Editor::new();
-        let mut view = View::identity();
-        view.zoom = 0.3;
-        apply_key(&mut ed, &mut view, "Digit1", true, false, false);
-        assert_eq!(view.zoom, 1.0);
+        let k = menu_key("view.actual");
+        let centre = [700.0, 420.0];
+        for (zoom, pan) in [(0.3, [0.0, 0.0]), (1.77, [-90_000.0, 42_000.0]), (8.0, [15_000.0, -3_000.0])] {
+            let mut ed = Editor::new();
+            let mut view = View { zoom, pan };
+            let anchor = view.s2w(centre);
+            apply_key(&mut ed, &mut view, centre, &format!("{:?}", k.code), true, k.shift, k.alt);
+            assert_eq!(view.zoom, 1.0);
+            assert_pinned(&view, anchor, centre, "⌘1");
+        }
+    }
+
+    /// Astra F05: the View menu's Zoom In / Zoom Out rows send exactly the keystroke the keyboard
+    /// path handles, and that path zooms the CANVAS by one wheel notch around the canvas centre.
+    #[test]
+    fn zoom_rows_are_the_ctrl_plus_minus_path() {
+        let centre = [512.0, 384.0];
+        for (id, factor) in [("view.zoomin", ZOOM_NOTCH), ("view.zoomout", 1.0 / ZOOM_NOTCH)] {
+            let k = menu_key(id);
+            let mut ed = Editor::new();
+            let mut view = View { zoom: 1.77, pan: [-9_000.0, 4_000.0] };
+            let anchor = view.s2w(centre);
+            apply_key(&mut ed, &mut view, centre, &format!("{:?}", k.code), true, k.shift, k.alt);
+            assert_eq!(view.zoom, 1.77 * factor, "{id}");
+            assert_pinned(&view, anchor, centre, id);
+        }
+    }
+
+    /// The other keys that mean zoom: ⌘+ typed as ⌘⇧= on a US keyboard, and the numeric keypad.
+    /// Without ⌘ they do nothing to the view.
+    #[test]
+    fn plus_and_keypad_keys_zoom_the_canvas_too() {
+        let centre = [300.0, 200.0];
+        for (code, shift, factor) in
+            [("Equal", true, ZOOM_NOTCH), ("NumpadAdd", false, ZOOM_NOTCH), ("NumpadSubtract", false, 1.0 / ZOOM_NOTCH)]
+        {
+            let mut ed = Editor::new();
+            let mut view = View { zoom: 2.0, pan: [123.0, -456.0] };
+            let anchor = view.s2w(centre);
+            apply_key(&mut ed, &mut view, centre, code, true, shift, false);
+            assert_eq!(view.zoom, 2.0 * factor, "{code}");
+            assert_pinned(&view, anchor, centre, code);
+            let before = view;
+            apply_key(&mut ed, &mut view, centre, code, false, shift, false);
+            assert_eq!((view.zoom, view.pan), (before.zoom, before.pan), "{code} without ⌘");
+        }
     }
 
     #[test]
