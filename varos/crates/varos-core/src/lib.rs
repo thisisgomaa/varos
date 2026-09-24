@@ -2,6 +2,7 @@
 //! NO gpu/window/tauri deps. Everything below the "hard seam".
 
 pub mod boolean;
+pub mod clipboard;
 pub mod command;
 pub mod editor;
 pub mod flatten;

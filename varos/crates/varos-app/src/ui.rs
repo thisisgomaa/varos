@@ -12,6 +12,8 @@ use varos_core::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, 
 use varos_core::geom::{Pt, Rgba, View};
 use varos_core::EditCommand;
 use winit::event::WindowEvent;
+
+use crate::app_command::{AppCommand, SessionId, TabView};
 use winit::window::Window;
 
 // Stage 0b (BOX_SYSTEM_PLAN §6, ruling 4): the palette now comes from the LAW ramp — the warm black
@@ -624,6 +626,7 @@ struct Snap {
     tool: ToolKind,
     name: String,
     sel: bool,
+    direct: bool, // Astra F07: no object selection, but a Direct selection (anchors / Direct path) is measured
     drawing: bool, // Pen mid-draft (an open path is active) — drives the "Drawing path…" status (P9)
     x: f32,
     y: f32,
@@ -652,11 +655,22 @@ struct Snap {
 impl Snap {
     fn read(ed: &Editor) -> Self {
         let n = ed.objsel.len();
+        // Pen mid-draft. The Pen deselects other art when a draft starts (core `pen.rs`), so the selection
+        // below already IS the draft (its anchors) — only the header name says what is going on (FB6 nit).
+        let drawing = ed.tool == ToolKind::Pen && ed.active.is_some();
         // A7 Stage 5: X/Y = the WORLD AABB top-left (matches `obj_bbox`); W/H = the TRUE un-rotated size
         // (the LOCAL bbox), so a rotated object reports its own dimensions, not its axis-aligned envelope.
+        // Astra F07: with NO object selection, a Direct selection (grabbed anchors, or a Direct path-level
+        // selection) is measured by `direct_bbox` — a single anchor reads X/Y = its position, W = H = 0 —
+        // instead of the zeros that made a successful anchor edit look unselected.
+        let direct_bb = if n == 0 { ed.direct_bbox() } else { None };
+        let direct = direct_bb.is_some();
         let (sel, x, y, w, h, world_w, world_h) = match (ed.obj_bbox(), ed.obj_local_dims()) {
             (Some((x0, y0, x1, y1)), Some((lw, lh))) if n > 0 => (true, x0, y0, lw, lh, x1 - x0, y1 - y0),
-            _ => (false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            _ => match direct_bb {
+                Some((x0, y0, x1, y1)) => (false, x0, y0, x1 - x0, y1 - y0, x1 - x0, y1 - y0),
+                None => (false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            },
         };
         // fill/stroke/weight/opacity follow the EFFECTIVE paint selection (object sel, a Direct path-level
         // selection, or a selected anchor's path) — not objsel alone, so the Direct tool shows real colours.
@@ -668,11 +682,11 @@ impl Snap {
             }
             None => (ed.cur_fill, ed.cur_stroke, ed.cur_sw, 1.0),
         };
-        let name = if n == 0 {
-            match repr {
-                Some(pi) => ed.doc.paths[pi].name.clone().unwrap_or_else(|| "Path".into()),
-                None => "No selection".into(),
-            }
+        let name = if drawing {
+            "Drawing path\u{2026}".into()
+        } else if n == 0 {
+            // "Anchor" / "N anchors" / the path's name (or "Path") — see `Editor::direct_label`.
+            ed.direct_label().unwrap_or_else(|| "No selection".into())
         } else if n == 1 {
             repr.and_then(|pi| ed.doc.paths[pi].name.clone()).unwrap_or_else(|| "Path".into())
         } else {
@@ -682,7 +696,8 @@ impl Snap {
             tool: ed.tool,
             name,
             sel,
-            drawing: ed.tool == ToolKind::Pen && ed.active.is_some(),
+            direct,
+            drawing,
             x,
             y,
             w,
@@ -811,6 +826,14 @@ pub struct Ui {
     show_dock: bool,
     tabs: Vec<String>,
     tab_active: usize,
+    // DFS S1: the real tab strip's data (host → `set_tabs` every frame) and the lifecycle commands the
+    // chrome raised this frame (host ← `take_app_commands`). S1-C replaces `tabs`/`tab_active` with these.
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    doc_tabs: Vec<TabView>,
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    doc_active: Option<SessionId>,
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    app_cmds: Vec<AppCommand>,
     logo: Option<egui::TextureHandle>,
     splash_start: Option<Instant>,   // startup loading screen; None once it has faded out
     last_splash: bool,               // did this frame draw the splash (host renders it transparent)?
@@ -896,7 +919,17 @@ impl Ui {
     }
     /// A menu shortcut that arrives while a text field is focused goes to egui, exactly as the keyboard
     /// would have delivered it (so ⌘Z still undoes typing in a field instead of the document).
+    /// ⌘C / ⌘X / ⌘V become egui's clipboard EVENTS, exactly what egui-winit makes of those keys on
+    /// the keyboard path (a text field reads `Copy` / `Cut` / `Paste`, never the bare key) — so copy
+    /// and paste keep working in a focused field now that the Edit menu owns those shortcuts.
     pub fn forward_shortcut(&mut self, key: egui::Key, shift: bool, alt: bool) {
+        let state = &mut self.state;
+        if let Some(clip) = text_clipboard_event(key, || state.clipboard_text()) {
+            if let Some(ev) = clip {
+                self.state.egui_input_mut().events.push(ev);
+            }
+            return;
+        }
         let modifiers = egui::Modifiers { alt, shift, mac_cmd: true, command: true, ctrl: false };
         let ev = &mut self.state.egui_input_mut().events;
         for pressed in [true, false] {
@@ -905,11 +938,28 @@ impl Ui {
     }
 }
 
+/// The egui event a ⌘-clipboard key means to a focused text field — the same mapping egui-winit
+/// applies to real key presses (`is_copy_command` & co.). `None` = not a clipboard key (forward the
+/// key itself); `Some(None)` = ⌘V with nothing pasteable (egui-winit then sends nothing either).
+/// `clipboard` is only read for ⌘V.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the caller is the macOS menu hand-off
+fn text_clipboard_event(key: egui::Key, clipboard: impl FnOnce() -> Option<String>) -> Option<Option<egui::Event>> {
+    match key {
+        egui::Key::C => Some(Some(egui::Event::Copy)),
+        egui::Key::X => Some(Some(egui::Event::Cut)),
+        egui::Key::V => {
+            Some(clipboard().map(|t| t.replace("\r\n", "\n")).filter(|t| !t.is_empty()).map(egui::Event::Paste))
+        }
+        _ => None,
+    }
+}
+
 impl Ui {
     pub fn new(window: &Window) -> Self {
         let ctx = egui::Context::default();
         install_fonts(&ctx);
         install_style(&ctx);
+        disable_ui_keyboard_zoom(&ctx);
         // rail singletons — Artboard sits with Selection + Direct Selection (Ahmed), then Pen, Eyedropper.
         let defs: [(ToolKind, &str, &str, bool); 7] = [
             (ToolKind::Object, IC_SELECT, "Selection (V)", false),
@@ -1026,6 +1076,9 @@ impl Ui {
             show_dock: true,
             tabs: vec!["Untitled-1".into()],
             tab_active: 0,
+            doc_tabs: vec![],
+            doc_active: None,
+            app_cmds: vec![],
             logo,
             splash_start: Some(Instant::now()),
             last_splash: false,
@@ -1112,6 +1165,41 @@ impl Ui {
         } else {
             self.tabs[0] = name;
         }
+    }
+    /// DFS S1: the host hands the workspace's tabs over every frame. S1-A stub: stored, and the labels
+    /// mirrored into the old `tabs` strip (S1-C draws `doc_tabs` for real).
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
+        self.tabs = tabs.iter().map(|t| t.label.clone()).collect();
+        self.tab_active = tabs.iter().position(|t| Some(t.id) == active).unwrap_or(0);
+        self.doc_tabs = tabs;
+        self.doc_active = active;
+    }
+    /// DFS S1: the lifecycle commands the chrome (tab strip, burger rows) raised since the last call.
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    pub fn take_app_commands(&mut self) -> Vec<AppCommand> {
+        std::mem::take(&mut self.app_cmds)
+    }
+    /// DFS S1: before any lifecycle command, close every Ui-side edit still open on `ed` — an open colour
+    /// picker is CANCELLED (its live preview is not a commit), and unsaved inline rename buffers (layer,
+    /// artboard) are discarded.
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    pub fn settle(&mut self, ed: &mut Editor) {
+        if self.color_modal.take().is_some() {
+            ed.execute(EditCommand::PickerCancel);
+        }
+        self.lay_rename = None;
+        self.ab_name_edit = None;
+    }
+    /// DFS S1: the active document changed — drop the Ui state that belongs to the previous document
+    /// (the Layers rows cache, drag, Shift-range anchor, collapsed rows and search).
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    pub fn document_switched(&mut self) {
+        self.layer_rows_cache = None;
+        self.lay_drag = None;
+        self.lay_anchor = None;
+        self.lay_collapsed.clear();
+        self.lay_search.clear();
     }
     /// The native cursor the UI chrome wants this frame — egui's icon mapped onto our Win32 set.
     /// Box-seam resizes (egui_tiles splitters) and number-field scrubs get their arrows; everything
@@ -1471,6 +1559,13 @@ fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(f);
 }
 
+/// ⌘+ / ⌘− / ⌘0 belong to the CANVAS (zoom the artwork, Fit), never to the chrome. egui's built-in
+/// browser-style shortcut (`Options::zoom_with_keyboard`, on by default) scaled the whole UI instead
+/// (Astra F05) — switch it off, so the UI scale only follows the display.
+fn disable_ui_keyboard_zoom(ctx: &egui::Context) {
+    ctx.options_mut(|o| o.zoom_with_keyboard = false);
+}
+
 fn install_style(ctx: &egui::Context) {
     use egui::{FontFamily, TextStyle};
     ctx.set_theme(egui::Theme::Dark);
@@ -1762,7 +1857,8 @@ fn num_field(
             ui.memory_mut(|m| m.request_focus(id));
         }
         if !tip.is_empty() {
-            resp.on_hover_text(tip);
+            // disabled fields carry their REASON in `tip`, so show it in both states
+            resp.on_hover_text(tip).on_disabled_hover_text(tip);
         }
     }
     out
@@ -3751,6 +3847,33 @@ fn board_ctlbar(
                         }
                         bar_sep(ui);
                         pathfinder_row(ui, ops, true); // compact bar mirror — the essential shape modes, in reach (Ahmed 07-07)
+                    } else if s.direct && !s.drawing {
+                        // Astra F07: a Direct selection with no object selection (e.g. an anchor grabbed
+                        // straight off a deselected path) — name it and show its REAL bounds. Only controls
+                        // that act on a Direct selection are mirrored here: X/Y/W/H (moves / scales the
+                        // selected anchors via `SetObjectBounds`) and paint. Rotation, align and pathfinder
+                        // work on objects, so they stay in the object branch above.
+                        ui.label(RichText::new(&s.name).color(MUTED).size(11.5));
+                        let fw = 64.0;
+                        if let Some(v) =
+                            num_field(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, 1.0, full.clone())
+                        {
+                            ops.push(Op::SetBBox(Some(v), None, None, None, 0.0, 0.0));
+                        }
+                        if let Some(v) =
+                            num_field(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, 1.0, full.clone())
+                        {
+                            ops.push(Op::SetBBox(None, Some(v), None, None, 0.0, 0.0));
+                        }
+                        if let Some(v) = dim_field(ui, fw, true, s.w, true) {
+                            ops.push(Op::SetBBox(None, None, Some(v), None, 0.0, 0.0));
+                        }
+                        if let Some(v) = dim_field(ui, fw, false, s.h, true) {
+                            ops.push(Op::SetBBox(None, None, None, Some(v), 0.0, 0.0));
+                        }
+                        bar_sep(ui);
+                        ctl_chip(ui, s.fill, PaintTarget::Fill, ops);
+                        ctl_chip(ui, s.stroke, PaintTarget::Stroke, ops);
                     } else {
                         // idle: the current tool + a quiet hint — the bar keeps its place. While the Pen is
                         // mid-draft the hint reflects the ACT, not the (still-empty) selection (P9).
@@ -3761,6 +3884,20 @@ fn board_ctlbar(
                 });
             });
         });
+}
+
+/// A W (`width` = true) or H numeric field. For a Direct selection (`direct`) with a ZERO extent — one
+/// anchor, or a purely horizontal/vertical run of anchors — there is nothing to scale, so the field is
+/// shown disabled with that reason as its tooltip instead of silently ignoring the edit (Astra F07).
+fn dim_field(ui: &mut egui::Ui, fw: f32, width: bool, value: f32, direct: bool) -> Option<f32> {
+    let (lab, tip, why) = if width {
+        ("W", "Width", "Width: nothing to scale (the selected anchors have no horizontal extent)")
+    } else {
+        ("H", "Height", "Height: nothing to scale (the selected anchors have no vertical extent)")
+    };
+    let enabled = !direct || value > 1e-3; // same zero-extent threshold as `Editor::set_direct_bbox`
+    let tip = if enabled { tip } else { why };
+    ui.add_enabled_ui(enabled, |ui| num_field(ui, fw, Lab::Letter(lab), tip, value, 0, 1.0, 1.0, 0.0..=1.0e6)).inner
 }
 
 /// 1×16 vertical hairline separator inside the control bar (§3.5 vsep).
@@ -4065,7 +4202,8 @@ fn col_toggle(
 
 /// The Layers panel — the SIMPLE (Photoshop/Affinity) VIEW of the scene tree (07-03 pivot), docked UNDER
 /// the inspector (`dock_below`) and growing downward. Row = eye · lock · disclosure · thumbnail · name.
-/// Click=select · Ctrl=toggle · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate.
+/// Click=select · Ctrl=toggle · Shift=range · dbl or right-click ▸ Rename=rename · drag=reorder/nest ·
+/// Alt+drag=duplicate.
 /// Header: title + search. Footer: Group · Delete.
 #[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state, split deferred with ui.rs
 fn panel_layers(
@@ -4367,23 +4505,43 @@ fn panel_layers(
                         let renaming = !rename_shown && rename.as_ref().is_some_and(|(id, _)| *id == row.id);
                         if renaming {
                             rename_shown = true;
+                            // Illustrator's inline rename (QW3): Enter or a click elsewhere commits, Escape
+                            // cancels, an empty or unchanged name changes nothing. The field's id is explicit
+                            // (never an auto id that shifts with what the rows above allocate).
+                            let te_id = ui.id().with(("lay-rename", row.id));
                             let buf = &mut rename.as_mut().unwrap().1;
                             let te = ui.put(
                                 name_rect.shrink2(egui::vec2(2.0, 4.0)),
                                 egui::TextEdit::singleline(buf)
+                                    .id(te_id)
                                     .frame(egui::Frame::NONE)
                                     .font(egui::FontId::proportional(12.5))
                                     .text_color(TEXT),
                             );
-                            te.request_focus();
-                            if te.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                let v = std::mem::take(buf);
-                                ops.push(if row.kind == LKind::Board {
-                                    Op::AbName(row.sec as usize, v)
-                                } else {
-                                    Op::LayerRename(row.id, v)
-                                });
+                            let focused = ui.memory(|m| m.has_focus(te_id));
+                            if te.lost_focus() {
+                                let v = varos_core::command::clean_name(&std::mem::take(buf)).to_string();
+                                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                if !cancel && !v.is_empty() && v != row.name {
+                                    ops.push(if row.kind == LKind::Board {
+                                        Op::AbName(row.sec as usize, v)
+                                    } else {
+                                        Op::LayerRename(row.id, v)
+                                    });
+                                }
                                 *rename = None;
+                            } else if !focused {
+                                // the frame it opens: take focus ONCE with the whole old name selected, so
+                                // typing replaces it. (Re-requesting focus every frame — the old code — also
+                                // re-grabbed it after Escape or a click elsewhere: the field never closed.)
+                                te.request_focus();
+                                let all = egui::text::CCursorRange::two(
+                                    egui::text::CCursor::new(0),
+                                    egui::text::CCursor::new(buf.chars().count()),
+                                );
+                                let mut st = egui::text_edit::TextEditState::load(ui.ctx(), te_id).unwrap_or_default();
+                                st.cursor.set_char_range(Some(all));
+                                st.store(ui.ctx(), te_id);
                             }
                         } else {
                             let auto = row.name.starts_with('<');
@@ -4450,6 +4608,22 @@ fn panel_layers(
                         if (resp.double_clicked() && !renaming) || manual_dbl {
                             *rename = Some((row.id, row.name.clone()));
                         }
+                        // the name cell says how to rename it; right-click offers the same editor (Astra
+                        // F10: nothing on the row hinted at the double-click, right-click did nothing)
+                        if !renaming && resp.hovered() && ptr.is_some_and(|pp| name_rect.contains(pp)) {
+                            resp.clone().on_hover_text("Double-click to rename");
+                        }
+                        let menu_id = ui.id().with(("lay-menu", row.id, row.sec));
+                        if resp.secondary_clicked() && !renaming {
+                            menu_set(ui, menu_id, true);
+                        }
+                        menu_below(ui, menu_id, &resp, None, |ui| {
+                            ui.set_width(160.0);
+                            if menu_row(ui, "Rename", "") {
+                                *rename = Some((row.id, row.name.clone()));
+                                menu_set(ui, menu_id, false);
+                            }
+                        });
                         // the lifted rows read as "picked up" — the whole payload dims while dragged
                         // (a mirror dims on BOTH appearances — it IS the same object)
                         if drag.is_some() && payload.contains(&row.id) {
@@ -4584,7 +4758,8 @@ fn panel_properties(
                 return;
             }
 
-            ui.label(RichText::new(&s.name).color(if s.sel { TEXT } else { MUTED }).size(12.5).strong());
+            let measured = s.sel || s.direct; // real numbers below (objects, or a Direct selection — Astra F07)
+            ui.label(RichText::new(&s.name).color(if measured { TEXT } else { MUTED }).size(12.5).strong());
             ui.add_space(2.0);
             ui.label(RichText::new("TRANSFORM").color(MUTED).size(10.0).strong());
             ui.add_space(2.0);
@@ -4605,7 +4780,7 @@ fn panel_properties(
                         {
                             ops.push(Op::SetBBox(Some(v), None, None, None, ax, ay));
                         }
-                        if let Some(v) = num_field(ui, fw, Lab::Letter("W"), "Width", s.w, 0, 1.0, 1.0, 0.0..=1.0e6) {
+                        if let Some(v) = dim_field(ui, fw, true, s.w, s.direct) {
                             if *lock && s.w > 0.0 {
                                 ops.push(Op::SetBBox(None, None, Some(v), Some(s.h * v / s.w), ax, ay));
                             } else {
@@ -4620,7 +4795,7 @@ fn panel_properties(
                         {
                             ops.push(Op::SetBBox(None, Some(v), None, None, ax, ay));
                         }
-                        if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 1.0, 0.0..=1.0e6) {
+                        if let Some(v) = dim_field(ui, fw, false, s.h, s.direct) {
                             if *lock && s.h > 0.0 {
                                 ops.push(Op::SetBBox(None, None, Some(s.w * v / s.h), Some(v), ax, ay));
                             } else {
@@ -4635,18 +4810,27 @@ fn panel_properties(
             });
 
             // ── Angle + flip ──
-            ui.horizontal(|ui| {
-                if let Some(v) =
-                    num_field(ui, 150.0, Lab::Icon(ic.rotate.as_ref()), "Rotation", s.rot, 1, 1.0, 0.5, full.clone())
-                {
-                    ops.push(Op::SetRot(v));
-                }
-                if icon_btn(ui, ic.fliph, "Flip horizontal") {
-                    ops.push(Op::Flip(true));
-                }
-                if icon_btn(ui, ic.flipv, "Flip vertical") {
-                    ops.push(Op::Flip(false));
-                }
+            // Rotate/flip act on OBJECTS only; for a Direct selection (Astra F07) they would silently do
+            // nothing, so they are shown disabled with the reason on the rotation field's tooltip.
+            ui.add_enabled_ui(!s.direct, |ui| {
+                ui.horizontal(|ui| {
+                    let (rot_tip, rot) = if s.direct {
+                        ("Rotation: select the whole object (Selection tool, V) to rotate or flip", 0.0)
+                    } else {
+                        ("Rotation", s.rot)
+                    };
+                    if let Some(v) =
+                        num_field(ui, 150.0, Lab::Icon(ic.rotate.as_ref()), rot_tip, rot, 1, 1.0, 0.5, full.clone())
+                    {
+                        ops.push(Op::SetRot(v));
+                    }
+                    if icon_btn(ui, ic.fliph, "Flip horizontal") {
+                        ops.push(Op::Flip(true));
+                    }
+                    if icon_btn(ui, ic.flipv, "Flip vertical") {
+                        ops.push(Op::Flip(false));
+                    }
+                });
             });
 
             hsep(ui, inner);
@@ -5607,7 +5791,11 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::LayerToggle(n) => ed.layer_toggle(n),
             Op::LayerEye(node) => ed.execute(EditCommand::ToggleNodeHidden(node)),
             Op::LayerLock(node) => ed.execute(EditCommand::ToggleNodeLocked(node)),
-            Op::LayerRename(node, name) => ed.execute(EditCommand::RenameNode { node, name }),
+            // a `<Path>` row shows `Path::name`, not its leaf node's name — rename what the row reads
+            Op::LayerRename(node, name) => match ed.doc.node(node).map(|n| n.kind) {
+                Some(varos_core::model::NodeKind::Path(path)) => ed.execute(EditCommand::RenamePath { path, name }),
+                _ => ed.execute(EditCommand::RenameNode { node, name }),
+            },
             Op::LayerGroup => ed.execute(EditCommand::GroupSelection),
             Op::LayerDeleteSel => ed.execute(EditCommand::DeleteLayerSelection),
             Op::LayerMove(srcs, target, zone) => {
@@ -5723,6 +5911,44 @@ pub fn dump_tool_icons(path: &str) {
 }
 
 #[cfg(test)]
+mod ui_zoom_tests {
+    use super::disable_ui_keyboard_zoom;
+    use egui::{Event, Key, Modifiers, RawInput};
+
+    /// Press ⌘+key for one pass, then run one more pass (egui applies a new zoom factor between
+    /// passes), and return the UI zoom factor afterwards.
+    fn ui_zoom_after(ctx: &egui::Context, key: Key) -> f32 {
+        let press = RawInput {
+            modifiers: Modifiers::COMMAND,
+            events: vec![Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            }],
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(press, |_| {});
+        let _ = ctx.run_ui(RawInput::default(), |_| {});
+        ctx.zoom_factor()
+    }
+
+    /// Astra F05: ⌘+ / ⌘= / ⌘− must never scale the panels and text. The control case proves the
+    /// test really drives egui's built-in shortcut (it DOES scale a default context).
+    #[test]
+    fn cmd_plus_minus_never_scale_the_ui() {
+        let stock = egui::Context::default();
+        assert_ne!(ui_zoom_after(&stock, Key::Plus), 1.0, "control: egui's default scales the UI on ⌘+");
+        for key in [Key::Plus, Key::Equals, Key::Minus, Key::Num0] {
+            let ctx = egui::Context::default();
+            disable_ui_keyboard_zoom(&ctx);
+            assert_eq!(ui_zoom_after(&ctx, key), 1.0, "⌘{key:?} changed the UI zoom");
+        }
+    }
+}
+
+#[cfg(test)]
 mod color_tests {
     use super::{hsv_to_rgb, rgb_to_hsv};
 
@@ -5799,6 +6025,25 @@ mod layer_cache_tests {
         assert_eq!(before, thumb_key(&ed, &[7]));
         ed.doc.paths[0].anchors[0].p[0] = 4.0;
         assert_ne!(before, thumb_key(&ed, &[7]));
+    }
+}
+
+#[cfg(test)]
+mod text_clipboard_tests {
+    use super::text_clipboard_event;
+
+    #[test]
+    fn menu_clipboard_keys_reach_a_text_field_as_clipboard_events() {
+        let unread = || -> Option<String> { panic!("only ⌘V reads the clipboard") };
+        assert_eq!(text_clipboard_event(egui::Key::C, unread), Some(Some(egui::Event::Copy)));
+        assert_eq!(text_clipboard_event(egui::Key::X, unread), Some(Some(egui::Event::Cut)));
+        assert_eq!(
+            text_clipboard_event(egui::Key::V, || Some("a\r\nb".into())),
+            Some(Some(egui::Event::Paste("a\nb".into())))
+        );
+        assert_eq!(text_clipboard_event(egui::Key::V, || Some(String::new())), Some(None), "empty ⇒ nothing");
+        assert_eq!(text_clipboard_event(egui::Key::V, || None), Some(None));
+        assert_eq!(text_clipboard_event(egui::Key::Z, unread), None, "⌘Z stays a key (TextEdit undo)");
     }
 }
 
@@ -5882,9 +6127,407 @@ mod characterization_tests {
         let mut view = View::identity();
 
         toggle_smart_guides(&mut from_menu.doc.snap);
-        crate::apply_key(&mut from_shortcut, &mut view, "KeyU", true, false, false);
+        crate::apply_key(&mut from_shortcut, &mut view, [0.0, 0.0], "KeyU", true, false, false);
 
         assert_eq!(from_menu.doc.snap.smart, from_shortcut.doc.snap.smart);
         assert_eq!(from_menu.doc.snap, from_shortcut.doc.snap);
+    }
+}
+
+/// QW3 (Astra F10, PAINS_LOG P4 + FB6 nit): the Layers-row rename, driven headlessly through a bare
+/// `egui::Context` with synthetic pointer/keyboard input — no window, no GPU.
+#[cfg(test)]
+mod layer_rename_tests {
+    use super::{apply_ops, build_layer_rows, panel_layers, LKind, LRow, LayerIcons, Op, Snap};
+    use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
+    use std::collections::{HashMap, HashSet};
+    use varos_core::editor::{Editor, ToolKind};
+    use varos_core::model::{Anchor, NodeKind, Path};
+
+    const NAME_X: f32 = 150.0; // inside the name cell of a depth-0 row (the cell starts at x = 94)
+
+    fn path_row(id: u32, name: &str) -> LRow {
+        LRow {
+            id,
+            depth: 0,
+            kind: LKind::Path,
+            sec: u32::MAX,
+            name: name.into(),
+            hidden: false,
+            locked: false,
+            eff_hidden: false,
+            eff_locked: false,
+            has_children: false,
+            collapsed: false,
+            selected: false,
+            full_sel: false,
+            drag_sel: false,
+            active: false,
+            thumb: vec![],
+        }
+    }
+
+    fn no_icons() -> LayerIcons {
+        LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, grp: None, trash: None, search: None }
+    }
+
+    /// One Layers panel in a bare context, plus the state `Ui` keeps for it between frames.
+    struct Panel {
+        ctx: egui::Context,
+        t: f64,
+        rows: Vec<LRow>,
+        icons: LayerIcons,
+        search: String,
+        rename: Option<(u32, String)>,
+        collapsed: HashSet<u32>,
+        drag: Option<(u32, u32)>,
+        anchor: Option<(u32, u32)>,
+        ops: Vec<Op>,
+    }
+
+    impl Panel {
+        fn new(rows: Vec<LRow>) -> Self {
+            let mut p = Panel {
+                ctx: egui::Context::default(),
+                t: 10.0,
+                rows,
+                icons: no_icons(),
+                search: String::new(),
+                rename: None,
+                collapsed: HashSet::new(),
+                drag: None,
+                anchor: None,
+                ops: vec![],
+            };
+            p.frame(vec![]); // egui hit-tests against the PREVIOUS pass's widgets: lay the panel out once
+            p
+        }
+
+        /// Run one frame 1/60 s after the previous one; returns the ops it emitted.
+        fn frame(&mut self, events: Vec<Event>) -> Vec<Op> {
+            self.t += 1.0 / 60.0;
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 480.0))),
+                time: Some(self.t),
+                events,
+                ..Default::default()
+            };
+            let Panel { ctx, rows, icons, search, rename, collapsed, drag, anchor, .. } = self;
+            let mut ops = vec![];
+            let _ = ctx.run_ui(input, |ui| {
+                panel_layers(ui, rows, icons, search, rename, collapsed, drag, anchor, &mut ops);
+            });
+            self.ops.extend(ops.iter().filter_map(clone_op));
+            ops
+        }
+        fn button(&mut self, p: Pos2, button: PointerButton, pressed: bool) -> Vec<Op> {
+            let mut ops = self.frame(vec![Event::PointerMoved(p)]); // hover first, as a real mouse does
+            ops.extend(self.frame(vec![Event::PointerButton { pos: p, button, pressed, modifiers: Modifiers::NONE }]));
+            ops
+        }
+        fn click(&mut self, p: Pos2) -> Vec<Op> {
+            let mut ops = self.button(p, PointerButton::Primary, true);
+            ops.extend(self.button(p, PointerButton::Primary, false));
+            ops
+        }
+        fn double_click(&mut self, p: Pos2) -> Vec<Op> {
+            let mut ops = self.click(p);
+            ops.extend(self.click(p));
+            ops
+        }
+        fn key(&mut self, key: Key) -> Vec<Op> {
+            self.frame(vec![Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }])
+        }
+        fn type_text(&mut self, s: &str) -> Vec<Op> {
+            self.frame(vec![Event::Text(s.into())])
+        }
+        fn focused(&self) -> bool {
+            self.ctx.memory(|m| m.focused().is_some())
+        }
+    }
+
+    /// `Op` is not `Clone`; the log keeps only the kinds these tests inspect.
+    fn clone_op(op: &Op) -> Option<Op> {
+        match op {
+            Op::LayerRename(id, s) => Some(Op::LayerRename(*id, s.clone())),
+            Op::LayerSelectSet(v) => Some(Op::LayerSelectSet(v.clone())),
+            Op::AbName(i, s) => Some(Op::AbName(*i, s.clone())),
+            _ => None,
+        }
+    }
+
+    fn renames(ops: &[Op]) -> Vec<(u32, String)> {
+        ops.iter()
+            .filter_map(|o| match o {
+                Op::LayerRename(id, s) => Some((*id, s.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Find the screen y of row `id` by probing single clicks down ONE laid-out panel — no layout
+    /// constants assumed. Probes sit a second apart (no two can pair into a double-click) and stop as
+    /// soon as the row's hit band ends.
+    fn row_y(rows: &[LRow], id: u32) -> f32 {
+        let mut p = Panel::new(rows.to_vec());
+        let mut hits: Vec<f32> = vec![];
+        for k in 0..120 {
+            let y = k as f32 * 2.0;
+            p.t += 1.0;
+            let hit =
+                p.click(egui::pos2(NAME_X, y)).iter().any(|o| matches!(o, Op::LayerSelectSet(v) if v == &vec![id]));
+            assert!(p.rename.is_none(), "a probe opened the editor");
+            if hit {
+                hits.push(y);
+            } else if !hits.is_empty() {
+                break;
+            }
+        }
+        assert!(!hits.is_empty(), "row {id} was never hit by a click");
+        (hits[0] + hits[hits.len() - 1]) * 0.5
+    }
+
+    fn two_paths() -> Vec<LRow> {
+        vec![path_row(3, "<Path>"), path_row(4, "<Path>")]
+    }
+
+    /// Double-click a row name, then let the editor settle for two frames.
+    fn open_editor(rows: &[LRow], id: u32) -> Panel {
+        let y = row_y(rows, id);
+        let mut p = Panel::new(rows.to_vec());
+        p.double_click(egui::pos2(NAME_X, y));
+        p.frame(vec![]);
+        p.frame(vec![]);
+        p
+    }
+
+    #[test]
+    fn double_click_opens_rename_and_enter_commits() {
+        let mut p = open_editor(&two_paths(), 4);
+        assert_eq!(p.rename.as_ref().map(|r| r.0), Some(4), "double-click on a <Path> row opened no editor");
+        assert!(p.focused(), "the editor never took keyboard focus");
+        p.type_text("Logo");
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert_eq!(renames(&p.ops), vec![(4, "Logo".to_string())], "typing a name + Enter must commit exactly it");
+        assert!(p.rename.is_none(), "Enter closes the editor");
+    }
+
+    #[test]
+    fn rename_field_keeps_focus_on_the_frame_it_opens() {
+        let rows = two_paths();
+        let y = row_y(&rows, 3);
+        let mut p = Panel::new(rows);
+        p.double_click(egui::pos2(NAME_X, y));
+        assert_eq!(p.rename.as_ref().map(|r| r.0), Some(3), "double-click opened no editor");
+        // the frames right after opening: no commit sneaks out, focus arrives and stays
+        for _ in 0..4 {
+            let ops = p.frame(vec![]);
+            assert!(renames(&ops).is_empty(), "the editor committed on its own while opening");
+            assert!(p.rename.is_some(), "the editor closed while opening");
+        }
+        assert!(p.focused());
+    }
+
+    #[test]
+    fn right_click_rename_opens_the_same_editor() {
+        let rows = two_paths();
+        let y = row_y(&rows, 4);
+        let mut p = Panel::new(rows);
+        p.button(egui::pos2(NAME_X, y), PointerButton::Secondary, true);
+        p.button(egui::pos2(NAME_X, y), PointerButton::Secondary, false);
+        p.frame(vec![]);
+        assert!(p.rename.is_none(), "right-click alone must not start renaming");
+        // the menu hangs under the row: probe downwards for its single "Rename" row
+        let mut opened = false;
+        for dy in (14..60).step_by(4) {
+            let q = egui::pos2(NAME_X - 40.0, y + dy as f32);
+            p.frame(vec![Event::PointerMoved(q)]);
+            p.click(q);
+            if p.rename.is_some() {
+                opened = true;
+                break;
+            }
+        }
+        assert!(opened, "Rename in the row's context menu did not open the editor");
+        assert_eq!(p.rename.as_ref().map(|r| r.0), Some(4));
+        p.frame(vec![]);
+        p.frame(vec![]);
+        assert!(p.focused());
+        p.type_text("Ring");
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert_eq!(renames(&p.ops), vec![(4, "Ring".to_string())]);
+    }
+
+    #[test]
+    fn escape_or_blur_with_unchanged_name_is_harmless() {
+        let rows = vec![path_row(3, "Logo"), path_row(4, "<Path>")];
+        // Escape with an unchanged name: nothing is emitted
+        let mut p = open_editor(&rows, 3);
+        assert!(p.rename.is_some());
+        p.key(Key::Escape);
+        p.frame(vec![]);
+        assert!(p.rename.is_none(), "Escape closes the editor");
+        assert!(renames(&p.ops).is_empty(), "Escape with an unchanged name emitted a rename");
+        // blur (click another row) with an unchanged name: nothing is emitted
+        let y4 = row_y(&rows, 4);
+        let mut p = open_editor(&rows, 3);
+        assert!(p.rename.is_some());
+        p.click(egui::pos2(NAME_X, y4));
+        p.frame(vec![]);
+        assert!(p.rename.is_none(), "clicking elsewhere closes the editor");
+        assert!(renames(&p.ops).is_empty(), "blur with an unchanged name emitted a rename");
+    }
+
+    #[test]
+    fn escape_cancels_an_edited_name() {
+        let mut p = open_editor(&two_paths(), 4);
+        assert!(p.rename.is_some());
+        p.type_text("Oops");
+        p.key(Key::Escape);
+        p.frame(vec![]);
+        assert!(p.rename.is_none());
+        assert!(renames(&p.ops).is_empty(), "Escape must cancel (Illustrator), not commit the typed text");
+    }
+
+    #[test]
+    fn typing_replaces_the_whole_old_name() {
+        let mut p = open_editor(&[path_row(3, "Logo")], 3);
+        p.type_text("Mark");
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert_eq!(renames(&p.ops), vec![(3, "Mark".to_string())], "the old name is selected on open");
+    }
+
+    #[test]
+    fn emptied_name_keeps_the_old_one() {
+        let mut p = open_editor(&[path_row(3, "Logo")], 3);
+        assert!(p.rename.is_some());
+        p.frame(vec![Event::Key {
+            key: Key::A,
+            physical_key: Some(Key::A),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        }]);
+        p.key(Key::Backspace);
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert!(p.rename.is_none());
+        assert!(renames(&p.ops).is_empty(), "an empty name must keep the old one (no rename)");
+    }
+
+    fn anchor(id: u32, x: f32, y: f32) -> Anchor {
+        Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
+    }
+
+    /// Two open paths: A (id 1, red fill, weight 2) and B (id 2, blue fill, weight 7).
+    fn two_path_editor() -> Editor {
+        let mut ed = Editor::new();
+        ed.doc.artboards.clear();
+        ed.doc.paths.push(Path::new(
+            1,
+            vec![anchor(11, 0.0, 0.0), anchor(12, 10.0, 0.0)],
+            false,
+            Some([1.0, 0.0, 0.0, 1.0]),
+            Some([0.0, 0.0, 0.0, 1.0]),
+            2.0,
+        ));
+        ed.doc.paths.push(Path::new(
+            2,
+            vec![anchor(21, 50.0, 50.0), anchor(22, 80.0, 60.0)],
+            false,
+            Some([0.0, 0.0, 1.0, 1.0]),
+            Some([0.0, 0.0, 0.0, 1.0]),
+            7.0,
+        ));
+        ed.doc.ids = 30;
+        ed.doc.sync_tree();
+        ed
+    }
+
+    /// The whole chain a real double-click drives: the panel's op → `apply_ops` → the rebuilt row.
+    #[test]
+    fn path_row_rename_shows_in_the_rebuilt_row() {
+        let mut ed = two_path_editor();
+        let node = ed.doc.node_of_path(2).expect("path 2 has a leaf node");
+        let rev = ed.rev;
+        apply_ops(&mut ed, vec![Op::LayerRename(node, "Logo".into())]);
+        let mut thumbs = HashMap::new();
+        let rows = build_layer_rows(&ed, &HashSet::new(), "", &mut thumbs);
+        let row = rows.iter().find(|r| r.id == node).expect("the path's row");
+        assert_eq!(row.name, "Logo", "the rename landed nowhere the Layers row reads");
+        assert_eq!(ed.rev, rev + 1, "a rename is one undoable edit");
+        ed.undo();
+        let rows = build_layer_rows(&ed, &HashSet::new(), "", &mut thumbs);
+        assert_eq!(rows.iter().find(|r| r.id == node).unwrap().name, "<Path>", "undo restores the auto-name");
+        // a Layer (container) row keeps using the node rename — its name lives on the node
+        let layer = ed.doc.nodes.iter().find(|n| matches!(n.kind, NodeKind::Layer)).map(|n| n.id).unwrap();
+        apply_ops(&mut ed, vec![Op::LayerRename(layer, "Art".into())]);
+        assert_eq!(ed.doc.node(layer).unwrap().name, "Art");
+        assert_eq!(ed.doc.paths[1].name.as_deref(), None, "renaming the layer left the path alone");
+    }
+
+    /// Pen draft through the real tool: two clicks away from everything, drawn in `cur_fill` (blue).
+    fn draw_two_points(ed: &mut Editor) {
+        ed.cur_fill = Some([0.0, 0.0, 1.0, 1.0]);
+        ed.ppu = 1.0;
+        ed.set_tool(ToolKind::Pen);
+        for p in [[200.0, 200.0], [260.0, 230.0]] {
+            ed.pointer_down(p);
+            ed.pointer_up();
+        }
+        assert!(ed.active.is_some(), "mid-draft");
+    }
+
+    /// PAINS_LOG FB6 nit + QW3 review P2-1: mid-draft, the dock describes the draft AND its fields edit
+    /// the draft — with or without a selection left over from before the Pen. Chosen behaviour: the
+    /// Transform block stays live on the draft (its anchors, as the no-selection case always did); the
+    /// Pen deselects other art when the draft starts, so no field can reach the old object.
+    #[test]
+    fn drawing_snap_reports_active_path_not_stale_selection() {
+        let read = |ed: &Editor| {
+            let s = Snap::read(ed);
+            (s.name, s.sel, s.direct, s.drawing, [s.x, s.y, s.w, s.h], s.fill, s.sw)
+        };
+        // leftover selection: A (path 1, red) selected, then the Pen draws B
+        let mut stale = two_path_editor();
+        stale.doc.paths[0].name = Some("Old".into());
+        stale.objsel.insert(1);
+        assert_eq!(read(&stale).0, "Old", "control: before the Pen, the dock names A");
+        draw_two_points(&mut stale);
+        // no selection: the same draft
+        let mut clean = two_path_editor();
+        draw_two_points(&mut clean);
+
+        let (name, sel, direct, drawing, xywh, fill, _) = read(&stale);
+        assert_eq!(name, "Drawing path\u{2026}");
+        assert!(drawing && !sel && direct, "the draft (its anchors) is what the dock measures");
+        assert_eq!(xywh, [200.0, 200.0, 60.0, 30.0], "live numbers of the draft, not zeros or A's");
+        assert_eq!(fill, Some([0.0, 0.0, 1.0, 1.0]), "paint of the draft, not A's red");
+        assert_eq!(read(&stale), read(&clean), "a leftover selection changes nothing about the draft's dock");
+
+        // the fields write to what they show: X = 500 moves the draft, never A
+        let a_before: Vec<_> = stale.doc.paths[0].anchors.iter().map(|a| a.p).collect();
+        apply_ops(&mut stale, vec![Op::SetBBox(Some(500.0), None, None, None, 0.0, 0.0)]);
+        let a_after: Vec<_> = stale.doc.paths[0].anchors.iter().map(|a| a.p).collect();
+        assert_eq!(a_before, a_after, "a mid-draft X edit moved the old object");
+        assert_eq!(read(&stale).4[0], 500.0, "…it moved the draft");
+
+        // not drawing: the ordinary selection read is unchanged
+        let mut idle = two_path_editor();
+        idle.doc.paths[0].name = Some("Old".into());
+        idle.objsel.insert(1);
+        let s = Snap::read(&idle);
+        assert!(!s.drawing && s.sel);
+        assert_eq!(s.name, "Old");
+        assert_eq!(s.fill, Some([1.0, 0.0, 0.0, 1.0]));
     }
 }
