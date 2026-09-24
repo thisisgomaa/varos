@@ -8,9 +8,6 @@
 //! `Window(_)`, by the host). It is not a plugin or scripting protocol.
 //!
 //! API frozen by S1-A — S1-B (lifecycle), S1-C (tab strip) and S1-D (host) build on it as is.
-// S1-A: nothing calls this module until S1-D wires the host; S1-D removes this allow. (Plain `allow`,
-// not `cfg_attr(not(test), ..)`: test builds would otherwise fail `clippy --all-targets -D warnings`.)
-#![allow(dead_code)]
 
 use std::path::PathBuf;
 
@@ -26,6 +23,9 @@ pub struct SessionId(pub u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenOrigin {
     /// File ▸ Open… / ⌘O / the burger row (paths picked in the Open dialog).
+    // Frozen S1-A API: in S1 the Open dialog's paths are opened inside `Lifecycle::run(OpenDialog)`,
+    // so no source builds `OpenPaths(.., Dialog)` yet (S2's Start / Recent rows are its callers).
+    #[allow(dead_code)]
     Dialog,
     /// The file argument the app was started with (once, after the first framed frame).
     CommandLine,

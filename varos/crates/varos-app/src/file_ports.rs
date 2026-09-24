@@ -2,9 +2,6 @@
 //! the exact copy of spec §4, and `DiskStore` reads/writes `.vrs` through `varos_pdf` and says which
 //! file a path names (`FileKey`). `lifecycle.rs` stays free of rfd and fs; the fake ports in its
 //! tests cover the rules, this file covers the plumbing.
-// S1-B: nothing calls this module until S1-D wires the host; S1-D removes this allow (as in the
-// three S1-A modules).
-#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 
