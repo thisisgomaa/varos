@@ -74,6 +74,45 @@ pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<
     }
 }
 
+/// One entry of the host's action queue (DFS S1 review P1): a lifecycle / window command, or a
+/// document action raised by a key or a menu row. Keys, native menu rows, the burger and the tab
+/// strip all feed ONE FIFO queue, so a ⌘Z pressed after a ⌘S in the same event batch runs after the
+/// Save, never before it.
+#[derive(Clone)]
+pub enum HostAction {
+    /// A command for `main.rs`'s `dispatch` (always waits for the queue's drain at `AboutToWait`).
+    App(AppCommand),
+    /// A document action on whichever tab is active when it runs.
+    Doc(DocAction),
+}
+
+/// A document action a key or a menu row raises (not a lifecycle command).
+#[derive(Clone, Copy)]
+pub enum DocAction {
+    /// A document shortcut key (`main.rs`'s `doc_key`) with the modifiers held when it was pressed.
+    Key(KeyCode, Mods),
+    /// A magnet quick-menu row (grid = Snap to Grid, else Snap to Point).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // raised only by the macOS menu bar
+    Snap { grid: bool },
+}
+
+/// A shortcut key meant for the document (not typed into a field): its lifecycle command, else the
+/// document shortcut itself. Pure.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the menu bar's ⌘-rows; the keyboard splits earlier
+pub fn key_action(code: KeyCode, m: Mods, active: Option<SessionId>) -> HostAction {
+    match key_command(code, m, active) {
+        Some(c) => HostAction::App(c),
+        None => HostAction::Doc(DocAction::Key(code, m)),
+    }
+}
+
+/// Whether a freshly raised document action may run at once instead of joining the queue: only when
+/// nothing raised earlier is still waiting. Running it then IS running it in queue order, and a
+/// shortcut with nothing ahead of it still answers in the same frame, as before the queue. Pure.
+pub fn doc_runs_now(pending: &[HostAction]) -> bool {
+    pending.is_empty()
+}
+
 /// The custom caption's window controls. The ✕ is the Quit transaction (S1 has one window, so
 /// Close Window = Quit — work order §6 Q1).
 pub fn win_action_command(a: WinAction) -> AppCommand {
