@@ -195,6 +195,41 @@ fn dragging_a_selected_artboard_moves_the_selected_set() {
 }
 
 #[test]
+fn clicking_a_board_to_activate_it_is_not_an_edit() {
+    // Astra 09-24 observation: switching the active artboard marked the document unsaved. With the
+    // Artboard tool a click on a page body arms a Move drag; the window then delivers CursorMoved at
+    // the SAME spot (trackpad jitter / press-time events) and `ab_move` used to set `dirty`
+    // unconditionally → commit → `rev` +1 (the title's unsaved `*`) and a no-op undo step. A click that
+    // never moves only ACTIVATES the page — no revision, no undo entry, nothing moves (snap included).
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 160.0, 10.0, 20.0)); // art on B (travels with B under move-art)
+    ed.doc.ids = 10;
+    ed.doc.sync_tree();
+    ed.set_tool(ToolKind::Artboard);
+    let before = ed.doc.clone();
+    let rev0 = ed.rev;
+
+    ed.pointer_down([160.0, 10.0]);
+    ed.pointer_move([160.0, 10.0]); // a same-spot move event while pressed
+    ed.pointer_up();
+
+    assert_eq!(ed.doc.active, 1, "the click activates page B");
+    assert_eq!(ab_selection(&ed), vec![1]);
+    assert_eq!(ed.rev, rev0, "activating a page is not a document edit (no unsaved *)");
+    assert_eq!(ed.doc.artboards, before.artboards, "no page moved");
+    assert_eq!(ed.doc.paths, before.paths, "no art moved");
+    ed.undo();
+    assert_eq!(ed.rev, rev0, "…and no empty undo step was recorded");
+
+    // a real drag is still one committed edit
+    ed.pointer_down([160.0, 10.0]);
+    ed.pointer_move([180.0, 30.0]);
+    ed.pointer_up();
+    assert_eq!(ed.rev, rev0 + 1, "an actual move commits");
+    assert_ne!(ed.doc.artboards[1].x, before.artboards[1].x, "…and moved the page");
+}
+
+#[test]
 fn membership_is_visible_overlap() {
     let mut ed = two_pages(true);
     ed.doc.paths.push(sq(1, 1, 10.0, 10.0, 30.0)); // fully on A

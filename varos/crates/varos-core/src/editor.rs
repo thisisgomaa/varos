@@ -1872,6 +1872,14 @@ impl Editor {
             AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids, piv } => {
                 let mut d = sub(pos, grab);
                 let moved = moved || d[0].abs() > 0.001 || d[1].abs() > 0.001;
+                if !moved {
+                    // Astra 09-24: a same-spot move event during a CLICK (which only activates the page)
+                    // must not mark the gesture dirty — that committed a no-op undo step and bumped `rev`
+                    // (the unsaved `*`). Nothing moves yet (not even by snap); an Alt+dup stays dirty
+                    // from `ab_down`.
+                    self.ab_drag = AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids, piv };
+                    return;
+                }
                 if self.mods.shift {
                     d = snap45(d);
                 }
