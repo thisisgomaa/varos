@@ -117,26 +117,29 @@ struct StrokeEnd {
     // fan reuses these emitted vertices, so shared edges coincide by construction.
     corners: [Vertex; 2],
 }
-fn stroke_cap(v: &mut Vec<Vertex>, c: StrokePt, r: f64, col: [f32; 4], w: f32, h: f32) {
-    static RING: std::sync::OnceLock<Vec<StrokePt>> = std::sync::OnceLock::new();
-    let ring = RING.get_or_init(|| {
-        (0..=24)
-            .map(|i| {
-                let a = i as f64 / 24.0 * std::f64::consts::TAU;
-                [a.cos(), a.sin()]
-            })
-            .collect()
-    });
-    for edge in ring.windows(2) {
-        stroke_tri(
-            v,
-            c,
-            [c[0] + edge[0][0] * r, c[1] + edge[0][1] * r],
-            [c[0] + edge[1][0] * r, c[1] + edge[1][1] * r],
-            col,
-            w,
-            h,
-        );
+impl StrokeEnd {
+    /// The same end seen from the other side: heading reversed, normal negated, corners swapped. The
+    /// corners are the SAME emitted vertices, so a fan built against it shares the quad's edge exactly.
+    fn reversed(self) -> StrokeEnd {
+        StrokeEnd {
+            dir: [-self.dir[0], -self.dir[1]],
+            normal: [-self.normal[0], -self.normal[1]],
+            corners: [self.corners[1], self.corners[0]],
+        }
+    }
+}
+/// A round cap on `end` (the frame heading INTO the cap at `c`): a half-disc built as a 180°
+/// `stroke_join` against the same frame reversed. Caps therefore get exactly the joins' screen-space
+/// subdivision (sagitta <= JOIN_TOL_PX, at least 4 chords, at most JOIN_MAX_STEPS) and pivot on the
+/// quad's own corners (no T-junction). At 180° the join's last chord ends ON its pivot; that final
+/// zero-area triangle is dropped, because the previous chord already closes the half-disc.
+#[allow(clippy::too_many_arguments)] // centre + frame + radius + paint + framebuffer
+fn stroke_cap(v: &mut Vec<Vertex>, c: StrokePt, end: StrokeEnd, r: f64, col: [f32; 4], w: f32, h: f32) {
+    let start = v.len();
+    stroke_join(v, c, end, end.reversed(), r, col, w, h);
+    let n = v.len();
+    if n - start >= 6 && v[n - 1].pos == v[n - 3].pos {
+        v.truncate(n - 3);
     }
 }
 fn stroke_poly(v: &mut Vec<Vertex>, pts: &[StrokePt], width: f32, col: [f32; 4], w: f32, h: f32) {
@@ -145,9 +148,10 @@ fn stroke_poly(v: &mut Vec<Vertex>, pts: &[StrokePt], width: f32, col: [f32; 4],
     }
     let joins = width >= 1.6;
     let r = width as f64 * 0.5;
-    v.reserve((pts.len() - 1) * 6 + if joins { pts.len() * 3 + 144 } else { 0 });
+    v.reserve((pts.len() - 1) * 6 + if joins { pts.len() * 3 + 24 } else { 0 });
     // Only exact duplicates are skipped. Every nonzero segment gets a full-width quad
     // and a join, including segments shorter than 1e-3 px. Duplicates keep the same joint.
+    let mut first: Option<StrokeEnd> = None;
     let mut prev: Option<StrokeEnd> = None;
     for edge in pts.windows(2) {
         let (a, b) = (edge[0], edge[1]);
@@ -166,17 +170,36 @@ fn stroke_poly(v: &mut Vec<Vertex>, pts: &[StrokePt], width: f32, col: [f32; 4],
         );
         let [ap, bp, bm, am] = [ap, bp, bm, am].map(|p| stroke_vertex(p, col, w, h));
         v.extend([ap, bp, bm, ap, bm, am]);
+        let outgoing = StrokeEnd { dir, normal: n, corners: [ap, am] };
         if joins {
             if let Some(incoming) = prev {
-                let outgoing = StrokeEnd { dir, normal: n, corners: [ap, am] };
                 stroke_join(v, a, incoming, outgoing, r, col, w, h);
             }
         }
+        first.get_or_insert(outgoing);
         prev = Some(StrokeEnd { dir, normal: n, corners: [bp, bm] });
     }
-    if joins {
-        stroke_cap(v, pts[0], r, col, w, h);
-        stroke_cap(v, pts[pts.len() - 1], r, col, w, h);
+    if !joins {
+        return;
+    }
+    let (c0, c1) = (pts[0], pts[pts.len() - 1]);
+    match (first, prev) {
+        // A closed ring arrives with its first point repeated at the end (`ring_px` ends the closing
+        // segment exactly on anchor 0; hole rings push it again). Its seam is a JOIN, never two caps.
+        // (Round caps meeting at one point cover the same disc as a round join, so this is exact even
+        // for an open path whose ends happen to coincide.)
+        (Some(first), Some(last)) if c0 == c1 => stroke_join(v, c0, last, first, r, col, w, h),
+        (Some(first), Some(last)) => {
+            stroke_cap(v, c0, first.reversed(), r, col, w, h);
+            stroke_cap(v, c1, last, r, col, w, h);
+        }
+        // Every segment has zero length: two half-caps on an arbitrary axis keep the round dot.
+        _ => {
+            let corners = [[c0[0], c0[1] + r], [c0[0], c0[1] - r]].map(|p| stroke_vertex(p, col, w, h));
+            let end = StrokeEnd { dir: [1.0, 0.0], normal: [0.0, r], corners };
+            stroke_cap(v, c0, end, r, col, w, h);
+            stroke_cap(v, c0, end.reversed(), r, col, w, h);
+        }
     }
 }
 
@@ -703,18 +726,18 @@ mod tests {
             100.0,
             100.0,
         );
-        // Three segment quads (18 vertices), two 24-triangle round caps (144 vertices) and one bevel
-        // wedge (3 vertices) at each of the two gentle turns — never a 72-vertex disc there.
-        assert_eq!(vertices.len(), 168);
+        // Three segment quads (18 vertices), two half-disc caps (4 chords = 3 triangles each at r = 2 px,
+        // 18 vertices) and one bevel wedge (3 vertices) at each of the two gentle turns — never a disc there.
+        assert_eq!(vertices.len(), 42);
     }
 
     #[test]
     fn a_real_corner_gets_a_round_outer_join() {
         let mut vertices = Vec::new();
         stroke_poly(&mut vertices, &[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 4.0, [0.0, 0.0, 0.0, 1.0], 100.0, 100.0);
-        // Two segment quads (12), two 24-triangle caps (144) and the 90° join as a two-triangle outer
-        // round sector (6): at r = 2 px a 45° chord already sits within 0.25 px of the circle.
-        assert_eq!(vertices.len(), 162);
+        // Two segment quads (12), two 3-triangle half-disc caps (18) and the 90° join as a two-triangle
+        // outer round sector (6): at r = 2 px a 45° chord already sits within 0.25 px of the circle.
+        assert_eq!(vertices.len(), 36);
     }
 
     #[test]
@@ -1022,8 +1045,9 @@ mod tests {
             stroke_poly(&mut v, &pts, 160.0, [0.0, 0.0, 0.0, 1.0], 800.0, 800.0);
             let (samples, _) = assert_band_intact(label, &v, std::slice::from_ref(&pts), 80.0, 800.0, 800.0);
             assert!(samples > 300, "{label}: the check must actually sample the band ({samples})");
-            // still no per-point disc explosion: 45 quads + 44 bevel wedges + 2 caps
-            assert_eq!(v.len(), 45 * 6 + 44 * 3 + 2 * 72, "{label}: one bevel per gentle turn, no join discs");
+            // still no per-point disc explosion: 45 quads + 44 bevel wedges + 2 half-disc caps (r = 80:
+            // 20 chords within 0.25 px = 19 triangles each)
+            assert_eq!(v.len(), 45 * 6 + 44 * 3 + 2 * 19 * 3, "{label}: one bevel per gentle turn, no join discs");
         }
     }
 
@@ -1232,6 +1256,408 @@ mod tests {
                 assert!(samples > 300 && tris > 0, "{label}: the band was actually sampled ({samples})");
             }
         }
+    }
+
+    // ---- QW4 (PAINS_LOG P13): round caps are half-discs on the joins' subdivision rule ----
+    // The old caps were full 24-gon discs: inscribed, so at r = 1 600 px (width 80 at 4000%) they sat
+    // up to r·(1 − cos 7.5°) ≈ 13.7 px inside the true circle. They also hid a missing seam join on
+    // closed rings (two full discs on the repeated first point).
+
+    const CAP_FRAME: f32 = 10_000.0;
+
+    /// One straight segment of half width `r` px heading `deg`, centred in a 10 000 px frame (far from
+    /// the NDC origin, as in the join tests). Returns the mesh, both end points and the heading.
+    fn capped_segment(deg: f32, r: f32) -> (Vec<Vertex>, Pt, Pt, Pt) {
+        let d = unit_deg(deg);
+        let (c, half) = (CAP_FRAME * 0.5, 1.25 * r);
+        let a = [c - d[0] * half, c - d[1] * half];
+        let b = [c + d[0] * half, c + d[1] * half];
+        let mut v = Vec::new();
+        stroke_poly(&mut v, &[a, b], 2.0 * r, [0.0, 0.0, 0.0, 1.0], CAP_FRAME, CAP_FRAME);
+        (v, a, b, d)
+    }
+    /// A single segment's mesh is its quad (6 vertices), then the start cap, then the end cap.
+    fn split_caps(v: &[Vertex]) -> (&[Vertex], &[Vertex]) {
+        let caps = &v[6..];
+        assert!(caps.len().is_multiple_of(6), "two equal caps of whole triangles");
+        caps.split_at(caps.len() / 2)
+    }
+    fn px_tris(v: &[Vertex], w: f32, h: f32) -> Vec<[Pt; 3]> {
+        v.chunks(3).map(|t| [to_px(t[0].pos, w, h), to_px(t[1].pos, w, h), to_px(t[2].pos, w, h)]).collect()
+    }
+    /// Points of the disc of radius `rad` around `c`, at `angles` directions spread over `span_deg`
+    /// degrees centred on `out`, and at the given fractions of `rad`, that no triangle covers.
+    fn uncovered_disc_points(tris: &[[Pt; 3]], c: Pt, out: Pt, span_deg: f32, rad: f32, fracs: &[f32]) -> Vec<Pt> {
+        let mut bad = Vec::new();
+        let steps = span_deg.round() as i32;
+        for i in 0..=steps {
+            let (s, co) = (i as f32 - steps as f32 * 0.5).to_radians().sin_cos();
+            let dir = [out[0] * co - out[1] * s, out[0] * s + out[1] * co];
+            for &f in fracs {
+                let q = [c[0] + dir[0] * rad * f, c[1] + dir[1] * rad * f];
+                if !tris.iter().any(|t| in_tri(q, t)) {
+                    bad.push(q);
+                }
+            }
+        }
+        bad
+    }
+
+    /// Width 80 at 100% (r = 40 px) and 4000% (r = 1 600 px): each cap is a half-disc on the outward
+    /// side whose every vertex lies on the true circle and whose every chord sits within JOIN_TOL_PX of
+    /// it (the joins' rule), and the whole half-disc up to that tolerance is covered.
+    #[test]
+    fn round_cap_hugs_true_circle_at_100_and_4000_percent() {
+        for zoom in [1.0f32, 40.0] {
+            let r = 80.0 * zoom * 0.5;
+            for deg in [0.0f32, 23.0, 90.0, 137.0, 180.0, 271.0] {
+                let (v, a, b, d) = capped_segment(deg, r);
+                let (start, end) = split_caps(&v);
+                for (which, cap, c, out) in [("start", start, a, [-d[0], -d[1]]), ("end", end, b, d)] {
+                    let label = format!("zoom {zoom}, heading {deg}°, {which} cap");
+                    let tris = px_tris(cap, CAP_FRAME, CAP_FRAME);
+                    let slack = 0.01; // NDC round trip at 5 000 px coordinates
+                    for t in &tris {
+                        for &q in t {
+                            assert!((dist(q, c) - r).abs() <= slack, "{label}: vertex {q:?} off the true circle");
+                            let along = (q[0] - c[0]) * out[0] + (q[1] - c[1]) * out[1];
+                            assert!(along >= -slack, "{label}: vertex {q:?} behind the end (not a half-disc)");
+                        }
+                        let m = [(t[1][0] + t[2][0]) * 0.5, (t[1][1] + t[2][1]) * 0.5];
+                        let bulge = r - dist(m, c);
+                        assert!(bulge <= JOIN_TOL_PX + slack, "{label}: chord sits {bulge:.3} px inside the circle");
+                    }
+                    let inner = (r - JOIN_TOL_PX - 0.05) / r;
+                    let bad = uncovered_disc_points(&tris, c, out, 178.0, r, &[0.25, 0.5, 0.9, inner]);
+                    assert!(bad.is_empty(), "{label}: {} half-disc points uncovered, e.g. {:?}", bad.len(), bad[0]);
+                }
+            }
+        }
+    }
+
+    /// Every cap triangle pivots on the end quad's own corner vertex and the arc starts on its other
+    /// corner, bit for bit (the same emitted vertices), so the cap shares the quad's whole end edge.
+    #[test]
+    fn cap_shares_the_end_quad_corners_bit_exact() {
+        for (deg, r) in [(0.0f32, 2.0f32), (37.0, 40.0), (200.0, 1600.0)] {
+            let (v, ..) = capped_segment(deg, r);
+            // The quad is [ap, bp, bm, ap, bm, am].
+            let (ap, bp, bm, am) = (v[0].pos, v[1].pos, v[2].pos, v[5].pos);
+            let (start, end) = split_caps(&v);
+            for (cap, pivot, first_outer) in [(start, ap, am), (end, bm, bp)] {
+                assert!(cap.chunks(3).all(|t| t[0].pos == pivot), "r {r}: every cap triangle pivots on the corner");
+                assert_eq!(cap[1].pos, first_outer, "r {r}: the arc starts on the quad's other corner");
+                assert!(
+                    cap.chunks(3).all(|t| t[1].pos != pivot && t[2].pos != pivot),
+                    "r {r}: no zero-area triangle ends on the pivot"
+                );
+            }
+        }
+    }
+
+    /// Caps use the joins' step rule: at least 4 chords (1 per 45°), at most JOIN_MAX_STEPS.
+    #[test]
+    fn cap_step_count_is_bounded() {
+        for r in [0.8f32, 2.0, 40.0, 1600.0, 3000.0, 1e5, 1e9] {
+            let (v, ..) = capped_segment(0.0, r);
+            let (start, end) = split_caps(&v);
+            let chords = start.len() / 3 + 1;
+            assert_eq!(start.len(), end.len());
+            assert!((4..=JOIN_MAX_STEPS).contains(&chords), "r {r}: {chords} chords");
+            if r <= 2.0 {
+                assert_eq!(chords, 4, "r {r}: a thin stroke still gets 4 chords (1 per 45°)");
+            }
+            if r >= 1e5 {
+                assert_eq!(chords, JOIN_MAX_STEPS, "r {r}: capped");
+            }
+        }
+        // r = 1 600 px (width 80 at 4000%): the 0.25 px sagitta needs 89 chords, well under the cap.
+        let (v, ..) = capped_segment(0.0, 1600.0);
+        assert_eq!(split_caps(&v).0.len() / 3 + 1, 89);
+    }
+
+    /// Below 1.6 px wide, strokes stay bare quads: no joins and no caps, open or closed.
+    #[test]
+    fn thin_strokes_unchanged() {
+        let col = [0.0, 0.0, 0.0, 1.0];
+        let mut v = Vec::new();
+        stroke_poly(&mut v, &[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 1.5, col, 100.0, 100.0);
+        assert_eq!(v.len(), 12, "open, 1.5 px: two quads only");
+        v.clear();
+        stroke_poly(&mut v, &[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]], 1.5, col, 100.0, 100.0);
+        assert_eq!(v.len(), 24, "closed, 1.5 px: four quads only");
+        v.clear();
+        stroke_poly(&mut v, &[[0.0, 0.0], [10.0, 0.0]], 1.6, col, 100.0, 100.0);
+        assert_eq!(v.len(), 6 + 2 * 9, "at 1.6 px the caps start: 4 chords = 3 triangles each");
+    }
+
+    /// A zero-length stroke (every point equal) is still a round dot.
+    #[test]
+    fn zero_length_stroke_is_still_a_round_dot() {
+        let mut v = Vec::new();
+        stroke_poly(&mut v, &[[50.0, 50.0], [50.0, 50.0]], 10.0, [0.0, 0.0, 0.0, 1.0], 100.0, 100.0);
+        let tris = px_tris(&v, 100.0, 100.0);
+        assert!(tris.iter().flatten().all(|q| dist(*q, [50.0, 50.0]) <= 5.0 + 1e-3), "inside the dot");
+        let bad = uncovered_disc_points(&tris, [50.0, 50.0], [1.0, 0.0], 360.0, 5.0, &[0.3, 0.6, 0.9]);
+        assert!(bad.is_empty(), "{} dot points uncovered, e.g. {:?}", bad.len(), bad.first());
+    }
+
+    fn one_path_editor(path: varos_core::model::Path) -> varos_core::editor::Editor {
+        let mut ed = varos_core::editor::Editor::new();
+        ed.doc.artboards.clear();
+        ed.doc.paths.push(path);
+        ed.doc.ids = 10_000;
+        ed.doc.sync_tree();
+        ed
+    }
+    fn blob_path(width: f32) -> varos_core::model::Path {
+        use varos_core::model::{Anchor, Path};
+        let radii = [240.0f32, 190.0, 225.0, 170.0, 235.0, 185.0, 210.0];
+        let n = radii.len();
+        let pts: Vec<Pt> = (0..n)
+            .map(|i| {
+                let a = i as f32 / n as f32 * std::f32::consts::TAU;
+                [a.cos() * radii[i], a.sin() * radii[i] * 0.83]
+            })
+            .collect();
+        let anchors = (0..n)
+            .map(|i| {
+                let (p, prev, next) = (pts[i], pts[(i + n - 1) % n], pts[(i + 1) % n]);
+                let t = [(next[0] - prev[0]) / 6.0, (next[1] - prev[1]) / 6.0];
+                Anchor {
+                    id: 100 + i as u32,
+                    p,
+                    hin: Some([p[0] - t[0], p[1] - t[1]]),
+                    hout: Some([p[0] + t[0], p[1] + t[1]]),
+                    smooth: true,
+                }
+            })
+            .collect();
+        Path::new(10, anchors, true, None, Some([0.0, 0.0, 0.0, 1.0]), width)
+    }
+
+    /// How closed outlines arrive (the planner's risk): the scene hands every closed ring — outer
+    /// outline, straight or curved, and hole rings — to the tessellator with its first point repeated
+    /// exactly at the end, and an open path without it. So `stroke_poly`'s `c0 == c1` seam branch is
+    /// the one real closed paths take.
+    #[test]
+    fn closed_rings_arrive_with_the_first_point_repeated() {
+        use varos_core::model::{Anchor, Path};
+        use varos_core::scene::build_scene;
+        let anc = |id: u32, x: f32, y: f32| Anchor { id, p: [x, y], hin: None, hout: None, smooth: false };
+        let square = |base: u32, s: f32, o: f32| {
+            vec![anc(base, o, o), anc(base + 1, o + s, o), anc(base + 2, o + s, o + s), anc(base + 3, o, o + s)]
+        };
+        let mut holed = Path::new(20, square(200, 100.0, 0.0), true, None, Some([0.0, 0.0, 0.0, 1.0]), 8.0);
+        holed.holes.push(square(300, 40.0, 30.0));
+        let open = Path::new(30, square(400, 100.0, 0.0), false, None, Some([0.0, 0.0, 0.0, 1.0]), 8.0);
+        for ppu in [1.0f32, 40.0] {
+            for (label, path, closed_runs) in [("curved blob", blob_path(80.0), 1), ("square + hole", holed.clone(), 2)]
+            {
+                let scene = build_scene(&one_path_editor(path), ppu);
+                let runs: Vec<&Vec<Pt>> = scene
+                    .content
+                    .iter()
+                    .flat_map(|g| g.prims())
+                    .filter_map(|p| match p {
+                        Prim::Stroke { pts, .. } => Some(pts),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(runs.len(), closed_runs, "{label} at ppu {ppu}: one run per ring");
+                for run in runs {
+                    assert!(run.len() > 3 && run[0] == run[run.len() - 1], "{label} at ppu {ppu}: ring not repeated");
+                }
+            }
+            let scene = build_scene(&one_path_editor(open.clone()), ppu);
+            let open_runs: Vec<&Prim> = scene.content.iter().flat_map(|g| g.prims()).collect();
+            assert!(
+                matches!(open_runs.as_slice(), [Prim::Stroke { pts, .. }] if pts[0] != pts[pts.len() - 1]),
+                "an open path stays open at ppu {ppu}"
+            );
+        }
+    }
+
+    /// A closed ring gets a seam JOIN at its repeated first point and no caps: the vertex count is
+    /// exactly quads + one join per corner, it does not depend on which corner the ring starts at, and
+    /// the round-join disc at the seam is covered.
+    #[test]
+    fn closed_ring_seam_is_joined_not_capped() {
+        let (s0, s1) = (4_000.0f32, 4_400.0f32);
+        let corners = [[s0, s0], [s1, s0], [s1, s1], [s0, s1]];
+        let r = 10.0f32;
+        for start in 0..4 {
+            let ring: Vec<Pt> = (0..=4).map(|i| corners[(start + i) % 4]).collect();
+            let mut v = Vec::new();
+            stroke_poly(&mut v, &ring, 2.0 * r, [0.0, 0.0, 0.0, 1.0], CAP_FRAME, CAP_FRAME);
+            // 4 quads (24) + 4 round 90° joins; at r = 10 a 0.25 px sagitta needs 4 chords (12 each).
+            assert_eq!(v.len(), 24 + 4 * 12, "starting at corner {start}: quads + 4 joins, no caps");
+            let tris = px_tris(&v, CAP_FRAME, CAP_FRAME);
+            let seam = ring[0];
+            let bad = uncovered_disc_points(&tris, seam, [1.0, 0.0], 360.0, r, &[0.25, 0.5, 0.9, 0.97]);
+            assert!(bad.is_empty(), "seam at corner {start}: {} points uncovered, e.g. {:?}", bad.len(), bad.first());
+        }
+    }
+
+    /// The same seam through the real scene: the curved blob, width 80, at 100% (whole ring in view:
+    /// one closed run, so a seam join) and 4000% (the view cuts the ring and the seam stays in view:
+    /// two open runs whose half-disc caps meet there). The disc around the seam is covered on screen.
+    #[test]
+    fn closed_path_seam_is_covered_in_and_out_of_view() {
+        let ed = one_path_editor(blob_path(80.0));
+        let seam = [240.0f32, 0.0]; // anchor 0 of the blob
+        for (zoom, frame, n_runs, closed) in [(1.0f32, [1200u32, 1000u32], 1, true), (40.0, [1600, 1000], 2, false)] {
+            let (runs, sampled, bad) = disc_coverage_in_scene(&ed, zoom, frame, seam, 40.0 * zoom);
+            assert_eq!(runs.len(), n_runs, "zoom {zoom}: stroke runs");
+            assert!(runs.iter().all(|run| (run[0] == run[run.len() - 1]) == closed), "zoom {zoom}: closed = {closed}");
+            if !closed {
+                // the cut left the seam as a run END on both sides: one run starts there, one ends there
+                assert!(runs.iter().any(|run| run[0] == seam), "4000%: a run starts on the seam");
+                assert!(runs.iter().any(|run| run[run.len() - 1] == seam), "4000%: a run ends on the seam");
+            }
+            assert!(sampled > 600, "zoom {zoom}: the seam disc was sampled ({sampled})");
+            assert!(bad.is_empty(), "zoom {zoom}: {} seam points uncovered, e.g. {:?}", bad.len(), bad.first());
+        }
+    }
+
+    /// Build `ed` through the real scene at `zoom`, centring world point `focus` in a `frame`, and
+    /// return the stroke runs (world) and how many on-screen points of the disc of radius `r_px`
+    /// around `focus` were sampled / left uncovered by the stroke triangles.
+    fn disc_coverage_in_scene(
+        ed: &varos_core::editor::Editor,
+        zoom: f32,
+        frame: [u32; 2],
+        focus: Pt,
+        r_px: f32,
+    ) -> (Vec<Vec<Pt>>, usize, Vec<Pt>) {
+        let (w, h) = (frame[0] as f32, frame[1] as f32);
+        let view = View { pan: [w * 0.5 - focus[0] * zoom, h * 0.5 - focus[1] * zoom], zoom };
+        let scene = varos_core::scene::build_scene_in_view(ed, view, frame);
+        let runs = scene
+            .content
+            .iter()
+            .flat_map(|g| g.prims())
+            .filter_map(|p| match p {
+                Prim::Stroke { pts, .. } => Some(pts.clone()),
+                _ => None,
+            })
+            .collect();
+        let (_, fgv, _, _) = build_content(&scene.content, view, zoom, w, h);
+        let tris = px_tris(&fgv, w, h);
+        let fracs = [0.1, 0.25, 0.5, 0.75, 0.9, 0.97];
+        let on_screen: Vec<Pt> = uncovered_disc_points(&[], view.w2s(focus), [1.0, 0.0], 360.0, r_px, &fracs)
+            .into_iter()
+            .filter(|q| q[0] >= 0.0 && q[1] >= 0.0 && q[0] < w && q[1] < h)
+            .collect();
+        let bad = on_screen.iter().copied().filter(|q| !tris.iter().any(|t| in_tri(*q, t))).collect();
+        (runs, on_screen.len(), bad)
+    }
+
+    /// Plan review P2 "QW4 seams": a closed RECTANGLE's seam is a 90° corner (anchor 0), at 4000%, with
+    /// the view centred on that corner. When the whole ring fits the view's clip rect it arrives as one
+    /// closed run and the seam gets a round join (width 4, r = 80 px; and width 80, r = 1 600 px, on a
+    /// small rectangle). When the view cuts a big rectangle, two open runs end on the corner and their
+    /// half-disc caps meet there. In every case the full round-corner disc is covered on screen.
+    #[test]
+    fn rectangle_seam_corner_is_round_at_4000_percent() {
+        use varos_core::model::{Anchor, Path};
+        let anc = |id: u32, x: f32, y: f32| Anchor { id, p: [x, y], hin: None, hout: None, smooth: false };
+        let rect = |size: f32, width: f32| {
+            let anchors = vec![anc(100, 0.0, 0.0), anc(101, size, 0.0), anc(102, size, size), anc(103, 0.0, size)];
+            Path::new(10, anchors, true, Some([0.9, 0.9, 0.9, 1.0]), Some([0.0, 0.0, 0.0, 1.0]), width)
+        };
+        let seam = [0.0f32, 0.0];
+        // (stroke width, rectangle side, frame, arrives closed?)
+        for (width, size, frame, closed) in [
+            (4.0f32, 20.0f32, [1800u32, 1800u32], true),
+            (80.0, 20.0, [1600, 1000], true),
+            (80.0, 200.0, [1600, 1000], false),
+        ] {
+            let label = format!("width {width}, side {size}");
+            let r = width * 40.0 * 0.5;
+            let (runs, sampled, bad) =
+                disc_coverage_in_scene(&one_path_editor(rect(size, width)), 40.0, frame, seam, r);
+            if closed {
+                assert!(runs.len() == 1 && runs[0][0] == seam && runs[0][runs[0].len() - 1] == seam, "{label}: closed");
+            } else {
+                assert!(runs.iter().all(|r| r[0] != r[r.len() - 1]), "{label}: the view cut the ring open");
+                assert!(runs.iter().any(|r| r[0] == seam), "{label}: a run starts on the seam");
+                assert!(runs.iter().any(|r| r[r.len() - 1] == seam), "{label}: a run ends on the seam");
+            }
+            assert!(sampled > 600, "{label}: the corner disc was sampled ({sampled})");
+            assert!(bad.is_empty(), "{label}: {} seam-corner points uncovered, e.g. {:?}", bad.len(), bad.first());
+        }
+    }
+
+    /// Plan review P2: a zero-length open path (two anchors on one point) with round caps renders a
+    /// full disc through the real scene, at 100% and 4000%. (A ONE-anchor path never reaches the
+    /// tessellator: the scene emits strokes only for paths with >= 2 anchors, before and after QW4.)
+    #[test]
+    fn zero_length_path_renders_a_full_disc() {
+        use varos_core::model::{Anchor, Path};
+        let anc = |id: u32| Anchor { id, p: [10.0, 10.0], hin: None, hout: None, smooth: false };
+        let ed =
+            one_path_editor(Path::new(10, vec![anc(100), anc(101)], false, None, Some([0.0, 0.0, 0.0, 1.0]), 80.0));
+        for (zoom, frame) in [(1.0f32, [400u32, 400u32]), (40.0, [1600, 1000])] {
+            let r = 40.0 * zoom;
+            let (runs, sampled, bad) = disc_coverage_in_scene(&ed, zoom, frame, [10.0, 10.0], r);
+            assert_eq!(runs.len(), 1, "zoom {zoom}: the zero-length run reaches the tessellator");
+            assert!(sampled > 600, "zoom {zoom}: the dot was sampled ({sampled})");
+            assert!(bad.is_empty(), "zoom {zoom}: {} dot points uncovered, e.g. {:?}", bad.len(), bad.first());
+        }
+    }
+
+    /// The perf harness's curved scenes, rebuilt here (same construction as
+    /// `examples/perf_harness.rs`): stroke vertex counts must not grow past the numbers of record in
+    /// `P11_2_PERF.md` (round 3: C 100 500 at 100%, D 3 387 at 4000%). Closed rings lose their two
+    /// 72-vertex discs for one seam join; D's two view-cut runs get four half-disc caps instead of discs.
+    #[test]
+    fn harness_curved_scenes_stroke_vertices_do_not_grow() {
+        use varos_core::editor::Editor;
+        use varos_core::model::{Anchor, Path};
+        use varos_core::scene::build_scene_in_view;
+        let curved = |id: u32, base: u32, c: Pt, radius: f32, count: usize| {
+            let step = std::f32::consts::TAU / count as f32;
+            let handle = radius * (4.0 / 3.0) * (step * 0.25).tan();
+            let anchors = (0..count)
+                .map(|i| {
+                    let (sin, cos) = (i as f32 * step).sin_cos();
+                    let p = [c[0] + cos * radius, c[1] + sin * radius];
+                    Anchor {
+                        id: base + i as u32,
+                        p,
+                        hin: Some([p[0] + sin * handle, p[1] - cos * handle]),
+                        hout: Some([p[0] - sin * handle, p[1] + cos * handle]),
+                        smooth: true,
+                    }
+                })
+                .collect();
+            Path::new(id, anchors, true, Some([0.18, 0.55, 0.86, 1.0]), Some([0.04, 0.04, 0.05, 1.0]), 2.0)
+        };
+        let fg_vertices = |paths: Vec<Path>, view: View| {
+            let mut ed = Editor::new();
+            ed.doc.paths = paths;
+            ed.doc.ids = 100_000;
+            ed.doc.sync_tree();
+            let scene = build_scene_in_view(&ed, view, [1920, 1080]);
+            build_content(&scene.content, view, view.zoom, 1920.0, 1080.0).1.len()
+        };
+        let c_paths = (0..100u32)
+            .map(|i| {
+                curved(
+                    40_000 + i,
+                    50_000 + i * 12,
+                    [60.0 + (i % 10) as f32 * 90.0, 60.0 + (i / 10) as f32 * 90.0],
+                    32.0,
+                    12,
+                )
+            })
+            .collect();
+        let c = fg_vertices(c_paths, View::identity());
+        assert_eq!(c, 100_500 - 100 * (2 * 72 - 3), "C at 100%: each closed ring trades two discs for one seam bevel");
+        let d_view = View { pan: [960.0 - 490.0 * 40.0, 540.0 - 220.0 * 40.0], zoom: 40.0 };
+        let d = fg_vertices(vec![curved(10, 100, [320.0, 220.0], 170.0, 150)], d_view);
+        assert_eq!(d, 3_387 - 4 * 72 + 4 * 14 * 3, "D at 4000%: four discs become four 15-chord half-discs");
     }
 }
 

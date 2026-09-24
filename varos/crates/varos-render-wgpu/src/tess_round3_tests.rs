@@ -204,7 +204,8 @@ fn round3_nonzero_tiny_turn_is_never_elided() {
     let b = [0.0, 0.0];
     let c = [10.0, 0.00001];
     let v = mesh(&[a, b, c], 2.0);
-    assert_eq!(v.len(), 12 + 144 + 3, "a nonzero cross always emits the outer triangle");
+    // 2 quads + two half-disc caps (r = 1: 4 chords = 3 triangles each) + the one closing triangle.
+    assert_eq!(v.len(), 12 + 2 * 9 + 3, "a nonzero cross always emits the outer triangle");
 }
 #[test]
 fn round3_short_segments_and_duplicates_keep_the_band_closed() {
@@ -229,7 +230,8 @@ fn round3_short_segments_and_duplicates_keep_the_band_closed() {
 fn round3_small_angle_sagitta_controls_subdivision() {
     // f32 cos(theta) rounds to 1, but r*theta^2/8 is 1.25 px: one chord is insufficient.
     let v = mesh(&[[-1_000_000.0, 0.0], [0.0, 0.0], [1_000_000.0, 100.0]], 2_000_000_000.0);
-    assert_eq!(v.len(), 12 + 144 + 9, "stable sagitta needs three fan triangles");
+    // 2 quads + two half-disc caps at the JOIN_MAX_STEPS cap (128 chords = 127 triangles each).
+    assert_eq!(v.len(), 12 + 2 * 127 * 3 + 9, "stable sagitta needs three fan triangles");
 }
 
 #[test]
