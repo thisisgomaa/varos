@@ -652,10 +652,10 @@ struct Snap {
 }
 impl Snap {
     fn read(ed: &Editor) -> Self {
-        // PAINS_LOG FB6 nit: mid-draft the dock describes the in-progress path — a selection left over
-        // from before the Pen started is not what the user is working on (the bar already ignores it).
+        let n = ed.objsel.len();
+        // Pen mid-draft. The Pen deselects other art when a draft starts (core `pen.rs`), so the selection
+        // below already IS the draft (its anchors) — only the header name says what is going on (FB6 nit).
         let drawing = ed.tool == ToolKind::Pen && ed.active.is_some();
-        let n = if drawing { 0 } else { ed.objsel.len() };
         // A7 Stage 5: X/Y = the WORLD AABB top-left (matches `obj_bbox`); W/H = the TRUE un-rotated size
         // (the LOCAL bbox), so a rotated object reports its own dimensions, not its axis-aligned envelope.
         // Astra F07: with NO object selection, a Direct selection (grabbed anchors, or a Direct path-level
@@ -672,7 +672,7 @@ impl Snap {
         };
         // fill/stroke/weight/opacity follow the EFFECTIVE paint selection (object sel, a Direct path-level
         // selection, or a selected anchor's path) — not objsel alone, so the Direct tool shows real colours.
-        let repr = if drawing { ed.active.and_then(|pid| ed.doc.pidx(pid)) } else { ed.repr_path() };
+        let repr = ed.repr_path();
         let (fill, stroke, sw, opacity) = match repr {
             Some(pi) => {
                 let p = &ed.doc.paths[pi];
@@ -4472,7 +4472,7 @@ fn panel_layers(
                             );
                             let focused = ui.memory(|m| m.has_focus(te_id));
                             if te.lost_focus() {
-                                let v = std::mem::take(buf).trim().to_string();
+                                let v = varos_core::command::clean_name(&std::mem::take(buf)).to_string();
                                 let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
                                 if !cancel && !v.is_empty() && v != row.name {
                                     ops.push(if row.kind == LKind::Board {
@@ -4710,9 +4710,7 @@ fn panel_properties(
                 return;
             }
 
-            // real numbers below (objects, or a Direct selection — Astra F07); a draft in progress is not a
-            // measured selection, so its "Drawing path…" header stays MUTED (FB6 nit)
-            let measured = (s.sel || s.direct) && !s.drawing;
+            let measured = s.sel || s.direct; // real numbers below (objects, or a Direct selection — Astra F07)
             ui.label(RichText::new(&s.name).color(if measured { TEXT } else { MUTED }).size(12.5).strong());
             ui.add_space(2.0);
             ui.label(RichText::new("TRANSFORM").color(MUTED).size(10.0).strong());
@@ -6171,7 +6169,7 @@ mod layer_rename_tests {
             let _ = ctx.run_ui(input, |ui| {
                 panel_layers(ui, rows, icons, search, rename, collapsed, drag, anchor, &mut ops);
             });
-            self.ops.extend(ops.iter().map(clone_op));
+            self.ops.extend(ops.iter().filter_map(clone_op));
             ops
         }
         fn button(&mut self, p: Pos2, button: PointerButton, pressed: bool) -> Vec<Op> {
@@ -6206,12 +6204,13 @@ mod layer_rename_tests {
         }
     }
 
-    fn clone_op(op: &Op) -> Op {
+    /// `Op` is not `Clone`; the log keeps only the kinds these tests inspect.
+    fn clone_op(op: &Op) -> Option<Op> {
         match op {
-            Op::LayerRename(id, s) => Op::LayerRename(*id, s.clone()),
-            Op::LayerSelectSet(v) => Op::LayerSelectSet(v.clone()),
-            Op::AbName(i, s) => Op::AbName(*i, s.clone()),
-            _ => Op::LayerGroup, // any other op: a stand-in (the tests below only inspect the three above)
+            Op::LayerRename(id, s) => Some(Op::LayerRename(*id, s.clone())),
+            Op::LayerSelectSet(v) => Some(Op::LayerSelectSet(v.clone())),
+            Op::AbName(i, s) => Some(Op::AbName(*i, s.clone())),
+            _ => None,
         }
     }
 
@@ -6224,17 +6223,24 @@ mod layer_rename_tests {
             .collect()
     }
 
-    /// Find the screen y of row `id` by probing single clicks down the panel (each probe in a fresh
-    /// context, so no probe can pair with another into a double-click) — no layout constants assumed.
+    /// Find the screen y of row `id` by probing single clicks down ONE laid-out panel — no layout
+    /// constants assumed. Probes sit a second apart (no two can pair into a double-click) and stop as
+    /// soon as the row's hit band ends.
     fn row_y(rows: &[LRow], id: u32) -> f32 {
-        let hits: Vec<f32> = (0..120)
-            .map(|k| k as f32 * 2.0)
-            .filter(|&y| {
-                let mut p = Panel::new(rows.to_vec());
-                let ops = p.click(egui::pos2(NAME_X, y));
-                ops.iter().any(|o| matches!(o, Op::LayerSelectSet(v) if v == &vec![id]))
-            })
-            .collect();
+        let mut p = Panel::new(rows.to_vec());
+        let mut hits: Vec<f32> = vec![];
+        for k in 0..120 {
+            let y = k as f32 * 2.0;
+            p.t += 1.0;
+            let hit =
+                p.click(egui::pos2(NAME_X, y)).iter().any(|o| matches!(o, Op::LayerSelectSet(v) if v == &vec![id]));
+            assert!(p.rename.is_none(), "a probe opened the editor");
+            if hit {
+                hits.push(y);
+            } else if !hits.is_empty() {
+                break;
+            }
+        }
         assert!(!hits.is_empty(), "row {id} was never hit by a click");
         (hits[0] + hits[hits.len() - 1]) * 0.5
     }
@@ -6421,24 +6427,57 @@ mod layer_rename_tests {
         assert_eq!(ed.doc.paths[1].name.as_deref(), None, "renaming the layer left the path alone");
     }
 
-    /// PAINS_LOG FB6 nit: mid-draft with an old selection still active, the dock must describe the
-    /// in-progress path — never the stale object.
+    /// Pen draft through the real tool: two clicks away from everything, drawn in `cur_fill` (blue).
+    fn draw_two_points(ed: &mut Editor) {
+        ed.cur_fill = Some([0.0, 0.0, 1.0, 1.0]);
+        ed.ppu = 1.0;
+        ed.set_tool(ToolKind::Pen);
+        for p in [[200.0, 200.0], [260.0, 230.0]] {
+            ed.pointer_down(p);
+            ed.pointer_up();
+        }
+        assert!(ed.active.is_some(), "mid-draft");
+    }
+
+    /// PAINS_LOG FB6 nit + QW3 review P2-1: mid-draft, the dock describes the draft AND its fields edit
+    /// the draft — with or without a selection left over from before the Pen. Chosen behaviour: the
+    /// Transform block stays live on the draft (its anchors, as the no-selection case always did); the
+    /// Pen deselects other art when the draft starts, so no field can reach the old object.
     #[test]
     fn drawing_snap_reports_active_path_not_stale_selection() {
-        let mut ed = two_path_editor();
-        ed.doc.paths[0].name = Some("Old".into());
-        ed.objsel.insert(1);
-        ed.tool = ToolKind::Pen;
-        ed.active = Some(2);
-        let s = Snap::read(&ed);
-        assert!(s.drawing);
-        assert_eq!(s.name, "Drawing path\u{2026}");
-        assert_eq!(s.fill, Some([0.0, 0.0, 1.0, 1.0]), "paint must come from the in-progress path");
-        assert_eq!(s.sw, 7.0);
-        assert!(!s.sel, "the stale selection is not what the dock measures while drawing");
+        let read = |ed: &Editor| {
+            let s = Snap::read(ed);
+            (s.name, s.sel, s.direct, s.drawing, [s.x, s.y, s.w, s.h], s.fill, s.sw)
+        };
+        // leftover selection: A (path 1, red) selected, then the Pen draws B
+        let mut stale = two_path_editor();
+        stale.doc.paths[0].name = Some("Old".into());
+        stale.objsel.insert(1);
+        assert_eq!(read(&stale).0, "Old", "control: before the Pen, the dock names A");
+        draw_two_points(&mut stale);
+        // no selection: the same draft
+        let mut clean = two_path_editor();
+        draw_two_points(&mut clean);
+
+        let (name, sel, direct, drawing, xywh, fill, _) = read(&stale);
+        assert_eq!(name, "Drawing path\u{2026}");
+        assert!(drawing && !sel && direct, "the draft (its anchors) is what the dock measures");
+        assert_eq!(xywh, [200.0, 200.0, 60.0, 30.0], "live numbers of the draft, not zeros or A's");
+        assert_eq!(fill, Some([0.0, 0.0, 1.0, 1.0]), "paint of the draft, not A's red");
+        assert_eq!(read(&stale), read(&clean), "a leftover selection changes nothing about the draft's dock");
+
+        // the fields write to what they show: X = 500 moves the draft, never A
+        let a_before: Vec<_> = stale.doc.paths[0].anchors.iter().map(|a| a.p).collect();
+        apply_ops(&mut stale, vec![Op::SetBBox(Some(500.0), None, None, None, 0.0, 0.0)]);
+        let a_after: Vec<_> = stale.doc.paths[0].anchors.iter().map(|a| a.p).collect();
+        assert_eq!(a_before, a_after, "a mid-draft X edit moved the old object");
+        assert_eq!(read(&stale).4[0], 500.0, "…it moved the draft");
+
         // not drawing: the ordinary selection read is unchanged
-        ed.active = None;
-        let s = Snap::read(&ed);
+        let mut idle = two_path_editor();
+        idle.doc.paths[0].name = Some("Old".into());
+        idle.objsel.insert(1);
+        let s = Snap::read(&idle);
         assert!(!s.drawing && s.sel);
         assert_eq!(s.name, "Old");
         assert_eq!(s.fill, Some([1.0, 0.0, 0.0, 1.0]));

@@ -237,10 +237,21 @@ impl Editor {
     }
 }
 
+/// A user-typed object name with its invisible edges removed: whitespace AND the zero-width
+/// direction/format marks an Arabic keyboard or a paste can carry (LRM/RLM U+200E/F, ALM U+061C, the
+/// embeddings/overrides U+202A–E, isolates U+2066–9, ZWSP U+200B, BOM U+FEFF). A name made only of
+/// those comes back empty, so it can never become a blank-looking row. Marks INSIDE the name are kept.
+pub fn clean_name(name: &str) -> &str {
+    name.trim_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{061C}' | '\u{FEFF}')
+    })
+}
+
 /// `RenamePath`: only a real change becomes an edit. `Editor::rename_path` itself always opens an undo
 /// step (and maps an empty name to the auto-name), so the no-op guards live here.
 fn rename_path(ed: &mut Editor, path: u32, name: String) {
-    let name = name.trim();
+    let name = clean_name(&name);
     let Some(pi) = ed.doc.pidx(path) else { return };
     if name.is_empty() || ed.doc.paths[pi].name.as_deref() == Some(name) {
         return;
