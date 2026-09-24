@@ -2002,6 +2002,14 @@ impl Editor {
             AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids, piv } => {
                 let mut d = sub(pos, grab);
                 let moved = moved || d[0].abs() > 0.001 || d[1].abs() > 0.001;
+                if !moved {
+                    // Astra 09-24: a same-spot move event during a CLICK (which only activates the page)
+                    // must not mark the gesture dirty — that committed a no-op undo step and bumped `rev`
+                    // (the unsaved `*`). Nothing moves yet (not even by snap); an Alt+dup stays dirty
+                    // from `ab_down`.
+                    self.ab_drag = AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids, piv };
+                    return;
+                }
                 if self.mods.shift {
                     d = snap45(d);
                 }
@@ -2180,12 +2188,40 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
+    /// Duplicate page `i` to its right (one undo step). F09 (Astra 09-24): with "Move artwork" on, the
+    /// art ON the page comes along — the SAME membership test and copy helper as the Alt+drag duplicate
+    /// (`paths_on_ab` + `dup_paths`: groups, masks and layer membership preserved), offset by the same
+    /// delta as the new page. The copies are NOT selected (matches Alt+drag). Off ⇒ an empty page.
     pub fn ab_duplicate(&mut self, i: usize) {
         self.begin();
         if let Some(src) = self.doc.artboards.get(i).cloned() {
             let mut c = src.clone();
             c.x = src.x + src.w + AB_GAP;
             c.name = format!("{} copy", src.name);
+            if self.doc.move_art_with_ab {
+                let d: Pt = [c.x - src.x, c.y - src.y];
+                let on = self.paths_on_ab(i);
+                let copies = self.doc.dup_paths(&on);
+                // translate like an artboard Move drag: local anchors + each rotated copy unit's pivot by
+                // the same d (translation commutes with rotation) — un-rotated art stays a plain shift.
+                let mut units: Vec<u32> = vec![];
+                for &pid in &copies {
+                    if let Some(pi) = self.doc.pidx(pid) {
+                        self.translate_path(pi, d);
+                    }
+                    if let Some(u) = self.doc.unit_of(pid) {
+                        if !units.contains(&u) {
+                            units.push(u);
+                        }
+                    }
+                }
+                for u in units {
+                    let xf = self.doc.node_xform(u);
+                    if !xf.is_identity() {
+                        self.doc.set_node_xform(u, xf.translated(d));
+                    }
+                }
+            }
             self.doc.artboards.insert(i + 1, c);
             self.doc.active = i + 1;
             self.absel.clear();
@@ -4139,7 +4175,7 @@ impl Editor {
     /// Paths targeted by inspector edits (paint / stroke-weight / opacity): object selection ∪ the paths of
     /// individually-selected anchors ∪ the Direct-tool path-level selection. Missing that last term was the
     /// bug where changing colour / removing stroke did nothing while the Direct-Selection tool was active.
-    fn selected_pids(&self) -> HashSet<u32> {
+    pub(crate) fn selected_pids(&self) -> HashSet<u32> {
         let mut pids: HashSet<u32> = self.objsel.clone();
         for &aid in &self.selected {
             if let Some(pid) = self.doc.pid_of_anchor(aid) {
