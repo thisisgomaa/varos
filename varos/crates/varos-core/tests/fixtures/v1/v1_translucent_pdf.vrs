@@ -1,0 +1,177 @@
+%PDF-1.7
+%€€€€
+
+9 0 obj
+<<
+  /Length 60
+>>
+stream
+1 J
+1 j
+q
+1 1 1 rg
+0 0 1080 1080 re
+f*
+Q
+q
+/GS0 gs
+/Fx0 Do
+Q
+endstream
+endobj
+
+10 0 obj
+<<
+  /Type /Page
+  /Parent 2 0 R
+  /MediaBox [0 0 1080 1080]
+  /Contents 9 0 R
+  /Resources <<
+    /ExtGState <<
+      /GS0 8 0 R
+    >>
+    /XObject <<
+      /Fx0 7 0 R
+    >>
+  >>
+>>
+endobj
+
+8 0 obj
+<<
+  /Type /ExtGState
+  /ca 0.7
+  /CA 0.7
+>>
+endobj
+
+7 0 obj
+<<
+  /Length 276
+  /Type /XObject
+  /Subtype /Form
+  /BBox [-1.5 1028.5 51.5 1081.5]
+  /Group <<
+    /Type /Group
+    /S /Transparency
+    /I true
+    /K true
+  >>
+  /Resources <<
+    /ExtGState <<
+      /Gf 5 0 R
+      /Gk 6 0 R
+    >>
+  >>
+>>
+stream
+1 J
+1 j
+q
+/Gf gs
+0 0.6 1 rg
+0 1080 m
+0 1080 50 1080 50 1080 c
+50 1080 50 1030 50 1030 c
+50 1030 0 1030 0 1030 c
+0 1030 0 1080 0 1080 c
+h
+f*
+Q
+q
+/Gk gs
+0 0 0 RG
+3 w
+0 1080 m
+0 1080 50 1080 50 1080 c
+50 1080 50 1030 50 1030 c
+50 1030 0 1030 0 1030 c
+0 1030 0 1080 0 1080 c
+h
+S
+Q
+endstream
+endobj
+
+5 0 obj
+<<
+  /Type /ExtGState
+  /ca 0.4
+>>
+endobj
+
+6 0 obj
+<<
+  /Type /ExtGState
+  /CA 0.5
+>>
+endobj
+
+2 0 obj
+<<
+  /Type /Pages
+  /Kids [10 0 R]
+  /Count 1
+>>
+endobj
+
+3 0 obj
+<<
+  /Length 1511
+  /Type /EmbeddedFile
+  /Subtype /application#2Fjson
+>>
+stream
+{"varos":1,"doc":{"paths":[{"id":1,"anchors":[{"id":1,"p":[0.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":2,"p":[50.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":3,"p":[50.0,50.0],"hin":null,"hout":null,"smooth":false},{"id":4,"p":[0.0,50.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.0,0.6,1.0,0.4],"stroke":[0.0,0.0,0.0,0.5],"stroke_width":3.0,"holes":[],"opacity":0.7,"hidden":false,"locked":false,"name":null}],"groups":[],"group_of":{},"nodes":[{"id":1,"kind":"Layer","name":"Layer 1","parent":null,"children":[5],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":5,"kind":{"Path":1},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"}],"roots":[1],"active_layer":1,"ids":5,"units":{"ppi":72.0,"display":"Px"},"artboards":[],"active":0,"move_art_with_ab":true,"snap":{"enabled":true,"smart":true,"radius_px":8.0,"candidate_max":8,"show_candidates":true,"force_pixel_align":false,"move_whole_px":false,"grid":false,"grid_lines":true,"baseline_grid":false,"guides":true,"artboard":true,"artboard_mids":true,"margins":false,"margin_mids":false,"visible_only":true,"object_bounds":true,"bbox_mids":true,"gaps_and_sizes":true,"key_points":true,"object_geometry":true,"segment_mids":true,"path_intersections":true,"pixel_bounds":false,"alignment_guides":true,"equal_spacing":true,"equal_size":true,"grid_spacing":72.0},"ruler_origin":[0.0,0.0],"guides":[],"guides_locked":false}}
+endstream
+endobj
+
+4 0 obj
+<<
+  /Type /Filespec
+  /F (model.varos.json)
+  /UF (model.varos.json)
+  /EF <<
+    /F 3 0 R
+  >>
+  /AFRelationship /Source
+  /Desc (Varos editable model (source of truth))
+>>
+endobj
+
+1 0 obj
+<<
+  /Type /Catalog
+  /Pages 2 0 R
+  /Names <<
+    /EmbeddedFiles <<
+      /Names [(model.varos.json) 4 0 R]
+    >>
+  >>
+  /AF [4 0 R]
+  /VAROS_Model 3 0 R
+  /VAROS_SchemaVersion 1
+>>
+endobj
+
+xref
+0 11
+0000000000 65535 f
+0000002924 00000 n
+0000001049 00000 n
+0000001114 00000 n
+0000002733 00000 n
+0000000947 00000 n
+0000000998 00000 n
+0000000392 00000 n
+0000000331 00000 n
+0000000016 00000 n
+0000000129 00000 n
+trailer
+<<
+  /Size 11
+  /Root 1 0 R
+>>
+startxref
+3124
+%%EOF

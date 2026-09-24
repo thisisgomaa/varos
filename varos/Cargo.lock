@@ -4031,6 +4031,8 @@ version = "0.1.0"
 dependencies = [
  "lopdf",
  "pdf-writer",
+ "serde",
+ "serde_json",
  "varos-core",
 ]
 
