@@ -319,6 +319,42 @@ fn rect_from_corners(a: Pt, b: Pt, square: bool) -> (f32, f32, f32, f32) {
     (a[0].min(a[0] + dx), a[1].min(a[1] + dy), dx.abs().max(1.0), dy.abs().max(1.0))
 }
 
+/// Half the width of the stroke band actually PAINTED for a path (world units): the stroke is centred
+/// on the outline, so it reaches `stroke_width / 2` either side — or nothing when no stroke is drawn.
+/// Hit-testing adds this to its screen-px tolerance so a thick stroke is clickable where it is painted.
+fn painted_half_width(p: &Path) -> f32 {
+    if p.stroke.solid().is_some() {
+        (p.stroke_width * 0.5).max(0.0)
+    } else {
+        0.0
+    }
+}
+
+/// Does the segment a→b touch the axis-aligned rect r = (x0, y0, x1, y1) (edges inclusive)?
+/// Liang–Barsky clip: the segment touches iff some parameter range in [0, 1] survives all four slabs.
+fn seg_touches_rect(a: Pt, b: Pt, r: (f32, f32, f32, f32)) -> bool {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (p, q) in [(-dx, a[0] - r.0), (dx, r.2 - a[0]), (-dy, a[1] - r.1), (dy, r.3 - a[1])] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return false; // parallel to this slab and outside it
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+            if t0 > t1 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub struct Editor {
     pub doc: Document,
     pub tool: ToolKind,
@@ -471,6 +507,10 @@ impl Editor {
     /// its FILL — an unfilled shape catches only its outline, so its hollow interior is click-through to
     /// the art below (Illustrator). Visible parts of lower shapes stay reachable because the covering
     /// shape fails both tests there.
+    ///
+    /// QW1 (Astra F08): the outline reach is the PAINTED band — `EDGE_R` screen px (÷ `ppu`, so it is
+    /// zoom-constant on screen) PLUS half the stroke width when the stroke is drawn. A click anywhere on
+    /// a thick stroke selects it, and that band occludes what lies beneath it (A31 walk unchanged).
     pub fn path_under(&self, pos: Pt) -> Option<u32> {
         let edge_r = EDGE_R / self.ppu;
         for pi in (0..self.doc.paths.len()).rev() {
@@ -480,8 +520,10 @@ impl Editor {
             }
             // A7 seam: map the cursor into the path's UNIT-local frame, then run the existing local-space
             // tests. `edge_r` is rotation-invariant (distance). Identity ⇒ `lp == pos` (byte-for-byte).
+            // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
-            let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= edge_r); // outer + hole rims (FB3)
+            let reach = edge_r + painted_half_width(&self.doc.paths[pi]);
+            let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= reach); // outer + hole rims (FB3)
             let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
             if on_edge || in_fill {
                 return Some(id);
@@ -659,29 +701,41 @@ impl Editor {
         }
         base
     }
-    /// Does a path touch / fall inside a marquee rect? (a vertex inside, or the rect-centre inside a
-    /// FILLED region). The centre-inside fallback counts only for a real filled area — a closed shape
-    /// (as before) or an open-but-filled one — so a hollow open polyline must be TOUCHED, not merely
-    /// enclosed (point_in_path now treats open paths as implied-closed; this keeps that from leaking
-    /// into marquee over-selection — session-lock correctness fix).
+    /// Does a path touch / fall inside a marquee rect? Illustrator rule (QW1 / Astra F08): the marquee
+    /// must touch the PAINTED geometry — (a) any piece of the outline or a hole rim, grown by the painted
+    /// stroke half-width, crosses the rect (a segment test, so a thin marquee across a long edge counts
+    /// even with no vertex inside), or (b) the rect centre lies inside a FILLED region. (b) no longer
+    /// counts a merely `closed` shape: a marquee sitting in the hollow of an unfilled ring leaves it alone,
+    /// exactly as a hollow open polyline already was (session-lock correctness fix).
     pub fn path_in_rect(&self, pi: usize, x0: f32, y0: f32, x1: f32, y1: f32) -> bool {
         // A7 seam: marquee-test the WORLD outline (unit transform composed) so a rotated object is caught
-        // by its VISUAL bounds. Identity ⇒ today's local test byte-for-byte.
-        let xf = self.doc.unit_xform(self.doc.paths[pi].id);
-        let poly = self.doc.outline(pi, 16);
+        // by its VISUAL bounds. Identity ⇒ today's local geometry untouched. `outline_px`/`ring_px` keep
+        // chords ~4 screen px, so the polyline hugs the drawn curve at any zoom.
+        let p = &self.doc.paths[pi];
+        let xf = self.doc.unit_xform(p.id);
+        let poly = self.doc.outline_px(pi, self.ppu);
         if poly.is_empty() {
             return false;
         }
-        if poly.iter().any(|q| {
-            let q = xf.apply(*q);
-            q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1
-        }) {
+        // (a) the painted band touches the rect ⇔ the centreline touches the rect grown by half the width
+        let hw = painted_half_width(p);
+        let r = (x0 - hw, y0 - hw, x1 + hw, y1 + hw);
+        let touches = |ring: &[Pt]| {
+            if ring.len() == 1 {
+                return seg_touches_rect(xf.apply(ring[0]), xf.apply(ring[0]), r);
+            }
+            ring.windows(2).any(|w| seg_touches_rect(xf.apply(w[0]), xf.apply(w[1]), r))
+        };
+        if touches(&poly) {
             return true;
         }
-        let p = &self.doc.paths[pi];
-        // centre-inside test in the path's LOCAL frame (map the rect centre back through the transform)
+        // hole rims are drawn too (FB3); a closed `ring_px` already ends on its first point
+        if p.holes.iter().any(|h| !h.is_empty() && touches(&Document::ring_px(h, true, self.ppu))) {
+            return true;
+        }
+        // (b) centre-inside test in the path's LOCAL frame (map the rect centre back through the transform)
         let c = xf.inverse_apply([(x0 + x1) * 0.5, (y0 + y1) * 0.5]);
-        (p.closed || p.fill.solid().is_some()) && self.doc.point_in_path(pi, c)
+        p.fill.solid().is_some() && self.doc.point_in_path(pi, c)
     }
     /// Did a press land on a transform handle (scale) or a corner's rotate ring (just outside)?
     pub fn transform_hit(&self, pos: Pt) -> Option<TfHit> {
@@ -704,7 +758,11 @@ impl Editor {
         // (or shift-clicking) another nearby object selects it instead of rotating this one.
         let bb = self.obj_local_bbox()?;
         let lp = rotate_about(pos, [0.0, 0.0], -self.obj_angle);
-        if (lp[0] < bb.0 || lp[0] > bb.2 || lp[1] < bb.1 || lp[1] > bb.3) && self.path_under(pos).is_none() {
+        // QW1: a thick stroke's painted band now hits past the outline — so hitting the SELECTION'S OWN
+        // band must not block its rotate ring; only another (unselected) object under the cursor does.
+        if (lp[0] < bb.0 || lp[0] > bb.2 || lp[1] < bb.1 || lp[1] > bb.3)
+            && self.path_under(pos).is_none_or(|id| self.objsel.contains(&id))
+        {
             let ring = 22.0 / self.ppu;
             for i in 0..4u8 {
                 if dist(pos, hs[i as usize]) <= ring {
@@ -3188,8 +3246,11 @@ impl Editor {
         if let Some(pid) = self.path_under(pos) {
             if self.is_editable(pid) {
                 if let Some(pi) = self.doc.pidx(pid) {
-                    if let Some((_, _, d)) = self.doc.nearest_seg(pi, pos) {
-                        if d <= EDGE_R {
+                    // mirrors the Pen's add-anchor test (tools/pen.rs) exactly — same local frame, same
+                    // screen-px centreline tolerance (QW1) — so the cursor never promises a different act
+                    let lpos = self.doc.unit_xform(pid).inverse_apply(pos);
+                    if let Some((_, _, d)) = self.doc.nearest_seg(pi, lpos) {
+                        if d <= EDGE_R / self.ppu {
                             return PenHint::Add;
                         }
                     }
