@@ -29,6 +29,7 @@ mod app_command;
 mod chrome;
 mod cursors;
 mod file_ports;
+mod host;
 mod lifecycle;
 #[cfg(target_os = "macos")]
 mod mac_caption;
@@ -37,6 +38,7 @@ mod mac_menu;
 mod single_instance;
 mod ui;
 mod workspace;
+use app_command::{AppCommand, OpenOrigin, WindowCmd};
 use cursors::CK;
 
 /// The one cursor this frame wants: a pan in progress beats the Space hand, which beats the chrome's
@@ -168,6 +170,7 @@ fn rotate_ck(corner: u8, angle: f32) -> CK {
 
 // ============================ helpers ============================
 
+/// The control bar's idle label for the current tool (`ui.rs`).
 fn tool_name(t: ToolKind) -> &'static str {
     match t {
         ToolKind::Pen => "Pen (P)",
@@ -183,14 +186,6 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Rotate => "Rotate (R)",
         ToolKind::Scale => "Scale (S)",
     }
-}
-/// Display name of the open document ("Untitled-1" until it lives on disk).
-fn doc_stem(file: Option<&std::path::Path>) -> String {
-    file.and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled-1".into())
-}
-/// Window title: "name* · Varos α — Tool" (the * = unsaved changes, like every desktop editor).
-fn full_title(t: ToolKind, file: Option<&std::path::Path>, unsaved: bool) -> String {
-    format!("{}{} \u{b7} Varos \u{3b1} \u{2014} {}", doc_stem(file), if unsaved { "*" } else { "" }, tool_name(t))
 }
 
 /// Apply a keyboard shortcut. `code` is a W3C key code; shared by canvas focus + forwarded keys.
@@ -234,7 +229,7 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
             "KeyD" => ed.execute(EditCommand::TransformAgain), // Transform Again / step-and-repeat (Illustrator Ctrl+D)
             "KeyR" => ed.toggle_rulers_visibility(),           // Show/Hide Rulers (Illustrator Ctrl+R)
             // Edit ▸ Copy / Cut (⌘C / ⌘X) — the in-app clipboard. ⌘V / ⇧⌘V (Paste / Paste in Place)
-            // need the canvas rect for a view-centred paste, so `OpenDocContext::shortcut` owns them.
+            // need the canvas rect for a view-centred paste, so `doc_key` owns them.
             "KeyC" if !shift && !alt => ed.execute(EditCommand::Copy),
             "KeyX" if !shift && !alt => ed.execute(EditCommand::Cut),
             // Edit ▸ Select All (⌘A) / Deselect (⇧⌘A — the Escape path). Never reached from a focused
@@ -355,7 +350,10 @@ fn canvas_px(gui: &ui::Ui, window: &Window) -> egui::Rect {
 
 /// Fit an artboard into the CANVAS area (`canvas_px`). Pan shifts so the page centres in the BOX.
 fn fit_to_board(gui: &ui::Ui, window: &Window, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
-    let b = canvas_px(gui, window);
+    fit_in(canvas_px(gui, window), x, y, w, h, k)
+}
+/// Fit a world rect into the canvas area `b` (physical px).
+fn fit_in(b: egui::Rect, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
     let mut v = View::fit(x, y, w, h, b.width(), b.height(), k);
     v.pan[0] += b.left();
     v.pan[1] += b.top();
@@ -491,58 +489,6 @@ fn fatal(context: &str, detail: &str) -> ! {
     std::process::exit(1);
 }
 
-fn confirm_discard_unsaved(ed: &Editor, saved_rev: u64) -> bool {
-    ed.rev == saved_rev
-        || rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Warning)
-            .set_title("Varos")
-            .set_description("You have unsaved changes.\nDiscard them and open another file?")
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show()
-            == rfd::MessageDialogResult::Yes
-}
-
-/// The user's answer to the quit guard (Astra F01 / P0: a dirty document must never be lost by
-/// ⌘Q, the red traffic light or the ✕ caption without a Save / Don't Save / Cancel decision).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum QuitAnswer {
-    Save,
-    DontSave,
-    Cancel,
-}
-
-const QUIT_SAVE: &str = "Save";
-const QUIT_DONT_SAVE: &str = "Don't Save";
-const QUIT_CANCEL: &str = "Cancel";
-
-/// Map the native dialog's result onto a decision. Custom labels come back as `Custom(label)`
-/// (macOS, portals); backends that only know Yes/No/Cancel are mapped the same way. Anything
-/// unknown (dialog dismissed, Escape) is Cancel — the safe answer.
-fn quit_answer(r: &rfd::MessageDialogResult) -> QuitAnswer {
-    use rfd::MessageDialogResult as R;
-    match r {
-        R::Yes => QuitAnswer::Save,
-        R::No => QuitAnswer::DontSave,
-        R::Custom(l) if l == QUIT_SAVE => QuitAnswer::Save,
-        R::Custom(l) if l == QUIT_DONT_SAVE => QuitAnswer::DontSave,
-        _ => QuitAnswer::Cancel,
-    }
-}
-
-/// The quit decision table. `ask` is only called for a dirty document; `save` only for Save, and
-/// the app quits after Save only when the save really completed (a cancelled Save As, or a failed
-/// write, keeps the app open with the work intact).
-fn may_quit(unsaved: bool, ask: impl FnOnce() -> QuitAnswer, save: impl FnOnce() -> bool) -> bool {
-    if !unsaved {
-        return true;
-    }
-    match ask() {
-        QuitAnswer::Save => save(),
-        QuitAnswer::DontSave => true,
-        QuitAnswer::Cancel => false,
-    }
-}
-
 /// One wheel notch of zoom (Alt+wheel) — fine, because a wheel gives many notches per gesture.
 const ZOOM_NOTCH: f32 = 1.12;
 /// One ⌘= / ⌘− press — Illustrator-sized (100 → 150 → 225 %…), because a key press is one deliberate step.
@@ -575,131 +521,70 @@ fn zoom_to(view: &mut View, screen: Pt, zoom: f32) {
     view.pan = geom::pan_for_anchor(anchor, screen, view.zoom);
 }
 
-struct OpenDocContext<'a> {
-    ed: &'a mut Editor,
-    gui: &'a ui::Ui,
-    window: &'a Window,
-    view: &'a mut View,
-    cur_file: &'a mut Option<std::path::PathBuf>,
-    saved_rev: &'a mut u64,
-}
-
-impl OpenDocContext<'_> {
-    /// Save to the current file, or (`save_as`, or no file yet) to a path the user picks.
-    /// Returns `true` only when the bytes are on disk and the saved revision is recorded.
-    fn save(&mut self, save_as: bool) -> bool {
-        let dest = if save_as { None } else { self.cur_file.clone() }.or_else(|| {
-            rfd::FileDialog::new()
-                .add_filter("Varos document (PDF-compatible)", &["vrs"])
-                .add_filter("PDF", &["pdf"]) // same bytes — a valid PDF either way
-                .set_file_name(format!("{}.vrs", doc_stem(self.cur_file.as_deref())))
-                .save_file()
-        });
-        let Some(mut p) = dest else {
-            return false; // Save As cancelled
-        };
-        if p.extension().is_none_or(|e| !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))) {
-            p.set_extension("vrs");
-        }
-        match varos_pdf::save_vrs(&self.ed.doc, &p) {
-            Ok(()) => {
-                *self.cur_file = Some(p);
-                *self.saved_rev = self.ed.rev;
-                true
-            }
-            Err(e) => {
-                rfd::MessageDialog::new()
-                    .set_level(rfd::MessageLevel::Error)
-                    .set_title("Varos")
-                    .set_description(format!("Save failed: {e}"))
-                    .show();
-                false
-            }
-        }
-    }
-
-    /// The quit guard shared by ⌘Q / Quit Varos, the OS close request (red traffic light, ✕) and
-    /// the custom caption ✕: a clean document quits at once; a dirty one asks Save / Don't Save /
-    /// Cancel. Returns `true` when the app may exit now.
-    fn confirm_quit(&mut self) -> bool {
-        let unsaved = self.ed.rev != *self.saved_rev;
-        let name = doc_stem(self.cur_file.as_deref());
-        let ask = || {
-            let r = rfd::MessageDialog::new()
-                .set_level(rfd::MessageLevel::Warning)
-                .set_title("Varos")
-                .set_description(format!(
-                    "Save changes to \"{name}\" before quitting?\nIf you don't save, your changes will be lost."
-                ))
-                .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
-                    QUIT_SAVE.into(),
-                    QUIT_DONT_SAVE.into(),
-                    QUIT_CANCEL.into(),
-                ))
-                .show();
-            quit_answer(&r)
-        };
-        let ok = may_quit(unsaved, ask, || self.save(false));
-        self.ed.mods = Default::default(); // the native dialog eats the key releases
-        ok
-    }
-
-    fn open_path(&mut self, p: std::path::PathBuf) {
-        if confirm_discard_unsaved(self.ed, *self.saved_rev) {
-            self.load_path(p);
-        }
-    }
-
-    fn load_path(&mut self, p: std::path::PathBuf) {
-        match varos_pdf::load_vrs(&p) {
-            Ok(doc) => {
-                self.ed.replace_doc(doc);
-                *self.cur_file = Some(p);
-                *self.saved_rev = self.ed.rev;
-                let (x, y, w, h) = fit_rect(self.ed);
-                *self.view = fit_to_board(self.gui, self.window, x, y, w, h, 0.9);
-            }
-            Err(e) => {
-                rfd::MessageDialog::new()
-                    .set_level(rfd::MessageLevel::Error)
-                    .set_title("Varos")
-                    .set_description(format!("Open failed: {e}"))
-                    .show();
-            }
-        }
-    }
-
-    /// One pressed shortcut key (no text field focused). The keyboard AND the macOS menu bar
-    /// (docs/foundation/MAC_CHROME.md §C) both land here, so a menu row can never drift from its key.
-    fn shortcut(&mut self, code: KeyCode, mc: bool, ms: bool, ma: bool) {
-        let cs = format!("{:?}", code);
-        if mc && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {
-            // Ctrl+0 = Fit in the Board box — the active page, or content on a
-            // free canvas (A8a), or the default region when there's nothing.
-            let (x, y, w, h) = fit_rect(self.ed);
-            *self.view = fit_to_board(self.gui, self.window, x, y, w, h, 0.9);
-        } else if mc && code == KeyCode::KeyS {
-            // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
-            self.save(ms);
-            self.ed.mods = Default::default(); // the native dialog eats the key releases
-        } else if mc && !ma && code == KeyCode::KeyV {
-            // ⌘V = Paste (centred in the canvas box) · ⇧⌘V = Paste in Place (Illustrator-exact)
-            let c = canvas_px(self.gui, self.window).center();
-            paste_key(self.ed, self.view, [c.x, c.y], ms);
-        } else if mc && code == KeyCode::KeyO {
-            // Ctrl+O = Open — guard unsaved changes first
-            if confirm_discard_unsaved(self.ed, *self.saved_rev) {
-                if let Some(p) = rfd::FileDialog::new().add_filter("Varos document", &["vrs", "pdf"]).pick_file() {
-                    self.load_path(p);
-                }
-            }
-            self.ed.mods = Default::default();
-        } else {
-            let c = canvas_px(self.gui, self.window).center();
-            apply_key(self.ed, self.view, [c.x, c.y], &cs, mc, ms, ma);
-        }
+/// One DOCUMENT shortcut key (a lifecycle key never gets here — `host::key_command` takes those):
+/// ⌘0 Fit (the active page, or the content on a free canvas — A8a — or the default region), ⌘V /
+/// ⇧⌘V Paste centred in the canvas / Paste in Place, else `apply_key`. The keyboard AND the macOS
+/// menu bar (MAC_CHROME.md §C) both land here, so a menu row can never drift from its key.
+/// `canvas` = the visible drawing area in physical px (`canvas_px`).
+fn doc_key(ed: &mut Editor, view: &mut View, canvas: egui::Rect, code: KeyCode, m: Mods) {
+    let c = canvas.center();
+    if m.ctrl && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {
+        let (x, y, w, h) = fit_rect(ed);
+        *view = fit_in(canvas, x, y, w, h, 0.9);
+    } else if m.ctrl && !m.alt && code == KeyCode::KeyV {
+        paste_key(ed, view, [c.x, c.y], m.shift);
+    } else {
+        apply_key(ed, view, [c.x, c.y], &format!("{code:?}"), m.ctrl, m.shift, m.alt);
     }
 }
+
+/// Apply a tab's owed fit (`DocumentSession::fit_pending`: a new / opened / re-maximized document)
+/// once the Board box is known. Returns `true` when it was applied.
+fn take_pending_fit(fit: &mut Option<f32>, ed: &Editor, view: &mut View, gui: &ui::Ui, window: &Window) -> bool {
+    if gui.splashing() || gui.board_px.is_none() {
+        return false;
+    }
+    let Some(k) = fit.take() else {
+        return false;
+    };
+    let (x, y, w, h) = fit_rect(ed);
+    *view = fit_to_board(gui, window, x, y, w, h, k);
+    true
+}
+
+/// THE dispatch (DFS S1 §3.5): every `AppCommand`, whatever raised it, runs here — the window /
+/// panel effects on the window, everything else as one lifecycle command (`host::run_lifecycle`:
+/// settle the active tab, run the rules over the ports, reset what a dialog or a switch left stale).
+fn dispatch(
+    cmd: AppCommand,
+    ws: &mut workspace::Workspace,
+    gui: &mut ui::Ui,
+    window: &Window,
+    hwnd: isize,
+    dialogs: &mut dyn lifecycle::Dialogs,
+    store: &mut dyn lifecycle::DocStore,
+) -> host::Ran {
+    match cmd {
+        AppCommand::Window(w) => {
+            match w {
+                WindowCmd::Minimize => window.set_minimized(true),
+                WindowCmd::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
+                #[cfg(target_os = "macos")]
+                WindowCmd::ToggleRail => gui.toggle_rail(),
+                #[cfg(target_os = "macos")]
+                WindowCmd::ToggleDock => gui.toggle_dock(),
+                #[cfg(target_os = "macos")]
+                WindowCmd::TogglePanel(p) => gui.toggle_panel(p),
+                // raised only by the macOS menu bar's Window rows
+                #[cfg(not(target_os = "macos"))]
+                WindowCmd::ToggleRail | WindowCmd::ToggleDock | WindowCmd::TogglePanel(_) => {}
+            }
+            host::Ran::default()
+        }
+        cmd => host::run_lifecycle(cmd, ws, gui, dialogs, store),
+    }
+}
+
 /// Restore the last window geometry: `(maximized, outer_x, outer_y, inner_w, inner_h)` in physical px.
 fn load_win_state() -> Option<(bool, i32, i32, u32, u32)> {
     let s = std::fs::read_to_string(win_state_path()?).ok()?;
@@ -765,6 +650,16 @@ fn main() {
         Some(guard) => guard,
         None => return,
     };
+    // DFS S1: every tab is its own document (editor + view + file + saved checkpoint); the host
+    // always works on the ACTIVE session (never empty in S1: it starts as a pristine Untitled-1).
+    let mut ws = workspace::Workspace::new();
+    // Every command, whatever raised it (keys, native menu, tab strip, window controls, OS close,
+    // files handed in), queues here and runs through `dispatch` once the loop is about to wait. The
+    // first instance opens its OWN file argument, once, after the first framed frame (F13).
+    let mut pending: Vec<AppCommand> = Vec::new();
+    let mut startup_open = host::open_paths_command(file_arg.into_iter().collect(), OpenOrigin::CommandLine);
+    // the lifecycle's ports: native dialogs + the disk
+    let (mut dialogs, mut store) = (file_ports::RfdDialogs, file_ports::DiskStore);
     #[cfg(not(target_os = "macos"))]
     let event_loop = EventLoop::new();
     // macOS: winit's own default menu (app name only) is replaced by our menu bar (MAC_CHROME.md §C).
@@ -780,7 +675,7 @@ fn main() {
     let saved = load_win_state(); // remembered geometry from last session (None on first run)
                                   // winit 0.30 removed WindowBuilder — WindowAttributes carries the identical with_* methods
     let mut attrs = Window::default_attributes()
-        .with_title(full_title(ToolKind::Object, None, false))
+        .with_title(ws.active().map_or_else(|| "Varos".into(), |s| host::window_title(&s.display_name(), false)))
         .with_window_icon(load_icon())
         .with_visible(false) // created hidden — no visible flash at all
         .with_transparent(true) // lets the startup splash card float over the desktop
@@ -871,9 +766,7 @@ fn main() {
     let scale = window.scale_factor();
 
     let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
-                                        // DFS S1: every tab is its own document (editor + view + file + saved checkpoint); the host
-                                        // always works on the ACTIVE session (never empty in S1: it starts as a pristine Untitled-1).
-    let mut ws = workspace::Workspace::new();
+    gui.set_tabs(ws.tabs(), ws.active_id());
 
     let installed = cursors::install(hwnd); // subclass live; custom_frame is deferred until the splash ends
     cursors::set_dark_class_brush(hwnd); // any OS background fill is now #141313, never white
@@ -928,14 +821,11 @@ fn main() {
         saved.map(|(_, x, y, w, h)| (x, y, w, h)).unwrap_or((p.x, p.y, sz.width, sz.height))
     };
     let mut refit_pending = saved.is_some_and(|(m, ..)| m);
-    // Stage 4: refit into the Board box on the first real frame (the factor = how tight); the
-    // pre-shell fits centre on the whole window, so one box-aware pass corrects them.
-    let mut board_fit_pending: Option<f32> = Some(0.45);
-
-    // ---- the 🔖 slice: the open .vrs + unsaved-changes tracking (drives the title/tab "*") ----
-    let mut cur_file: Option<std::path::PathBuf> = None;
-    let mut saved_rev: u64 = ws.active().map_or(0, |s| s.editor.rev);
+    // Stage 4: each tab refits into the Board box on its first real frame (`fit_pending`, 0.45 for the
+    // startup Untitled-1); the pre-shell fit above centres on the whole window, so one box-aware pass
+    // corrects it.
     let mut last_title = String::new();
+    let mut drawn_tabs = ws.tabs();
 
     // Paint frame 0 imperatively while cloaked, then reveal — the first pixels on screen are our dark
     // UI + splash (never a white flash, never the native caption).
@@ -969,88 +859,71 @@ fn main() {
                 if matches!(&event, Event::NewEvents(winit::event::StartCause::Init)) {
                     menu.install();
                 }
-                // a menu row (clicked, or its ⌘ key) runs the SAME path its key / button already runs
+                // a menu row (clicked, or its ⌘ key): File / Quit / Window rows are commands for the one
+                // dispatch; the other rows run the SAME path their key already runs
                 for cmd in menu.drain() {
-                    use chrome::MenuCmd as M;
-                    let Some(s) = ws.active_mut() else { continue };
-                    let (ed, view) = (&mut s.editor, &mut s.view);
-                    match cmd {
-                        M::Key(k) => {
+                    use host::MenuRoute as R;
+                    let canvas = canvas_px(&gui, &window);
+                    match host::menu_route(cmd, ws.active_id()) {
+                        Some(R::App(c)) => pending.push(c),
+                        Some(R::Key(k)) => {
                             if gui.wants_keyboard() {
                                 // typing in a field: the key belongs to egui, as on the keyboard path
                                 if let Some(key) = chrome::egui_key(k.code) {
                                     gui.forward_shortcut(key, k.shift, k.alt);
                                 }
-                            } else {
-                                OpenDocContext {
-                                    ed,
-                                    gui: &gui,
-                                    window: &window,
-                                    view,
-                                    cur_file: &mut cur_file,
-                                    saved_rev: &mut saved_rev,
+                            } else if let Some(s) = ws.active_mut() {
+                                let m = Mods { ctrl: true, shift: k.shift, alt: k.alt };
+                                match host::key_command(k.code, m, Some(s.id)) {
+                                    Some(c) => pending.push(c),
+                                    None => doc_key(&mut s.editor, &mut s.view, canvas, k.code, m),
                                 }
-                                .shortcut(k.code, true, k.shift, k.alt);
                             }
                         }
                         // a click-only row (Edit ▸ Delete): the plain key's path, never while typing
-                        M::Plain(code) => {
+                        Some(R::Plain(code)) => {
                             if !gui.wants_keyboard() {
-                                OpenDocContext {
-                                    ed,
-                                    gui: &gui,
-                                    window: &window,
-                                    view,
-                                    cur_file: &mut cur_file,
-                                    saved_rev: &mut saved_rev,
+                                if let Some(s) = ws.active_mut() {
+                                    doc_key(&mut s.editor, &mut s.view, canvas, code, Mods::default());
                                 }
-                                .shortcut(code, false, false, false);
                             }
                         }
-                        M::Quit => {
-                            // exactly the ✕ caption button's arm (WinAction::Close below)
-                            let may_exit = OpenDocContext {
-                                ed,
-                                gui: &gui,
-                                window: &window,
-                                view,
-                                cur_file: &mut cur_file,
-                                saved_rev: &mut saved_rev,
-                            }
-                            .confirm_quit();
-                            if may_exit {
-                                save_win_state(
-                                    cursors::is_maximized(hwnd),
-                                    win_norm.0,
-                                    win_norm.1,
-                                    win_norm.2,
-                                    win_norm.3,
-                                );
-                                elwt.exit();
+                        Some(R::Snap { grid }) => {
+                            if let Some(s) = ws.active_mut() {
+                                menu_snap_toggle(&mut s.editor, grid);
                             }
                         }
-                        M::ToggleRail => gui.toggle_rail(),
-                        M::ToggleDock => gui.toggle_dock(),
-                        M::TogglePanel(p) => gui.toggle_panel(p),
-                        M::SnapGrid => menu_snap_toggle(ed, true),
-                        M::SnapPoint => menu_snap_toggle(ed, false),
+                        None => {}
                     }
                     window.request_redraw();
                 }
             }
             if matches!(&event, Event::AboutToWait) {
-                for p in single_instance::take_pending_file_paths() {
-                    let Some(s) = ws.active_mut() else { continue };
-                    let (ed, view) = (&mut s.editor, &mut s.view);
-                    OpenDocContext {
-                        ed,
-                        gui: &gui,
-                        window: &window,
-                        view,
-                        cur_file: &mut cur_file,
-                        saved_rev: &mut saved_rev,
+                // a second instance handed us files (Windows single-instance)
+                pending.extend(host::open_paths_command(
+                    single_instance::take_pending_file_paths(),
+                    OpenOrigin::OsHandoff,
+                ));
+                // THE one dispatch: every queued command, in the order it was raised
+                if !pending.is_empty() {
+                    for cmd in std::mem::take(&mut pending) {
+                        let ran = dispatch(cmd, &mut ws, &mut gui, &window, hwnd, &mut dialogs, &mut store);
+                        if ran.ran {
+                            last_scene_signature = None; // the drawn document may be another one now
+                        }
+                        if ran.switched {
+                            // a gesture / pan in flight belonged to the tab that was active before
+                            canvas_gesture = false;
+                            panning = false;
+                        }
+                        if ran.exit {
+                            save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
+                            elwt.exit();
+                            return;
+                        }
                     }
-                    .open_path(p);
+                    drawn_tabs = ws.tabs();
+                    gui.set_tabs(drawn_tabs.clone(), ws.active_id());
                     window.request_redraw();
                 }
             }
@@ -1060,7 +933,18 @@ fn main() {
                 }
                 // Feed egui first. `over_panel` = pointer is over a native panel → the canvas must NOT
                 // get the event (gate #3: panels don't swallow canvas strokes; canvas input stays native).
-                let egui_consumed = gui.on_event(&window, &event);
+                // A file / tab key (⌘S, Ctrl+Tab …) is a command, not text: egui never sees it — so
+                // Ctrl+Tab cannot also move egui's keyboard focus onto a widget (UI audit 04 B4).
+                let lifecycle_key_event = match &event {
+                    WindowEvent::KeyboardInput { event: k, .. } => match k.physical_key {
+                        PhysicalKey::Code(c) => {
+                            ws.active().is_some_and(|s| host::key_command(c, s.editor.mods, Some(s.id)).is_some())
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                let egui_consumed = !lifecycle_key_event && gui.on_event(&window, &event);
                 let over_panel = gui.wants_pointer();
                 let Some(s) = ws.active_mut() else { return };
                 let (ed, view) = (&mut s.editor, &mut s.view);
@@ -1088,24 +972,9 @@ fn main() {
                             window.request_redraw();
                         }
                     }
-                    WindowEvent::CloseRequested => {
-                        // red traffic light / OS close: same guard as Quit (Astra F01)
-                        let may_exit = OpenDocContext {
-                            ed,
-                            gui: &gui,
-                            window: &window,
-                            view,
-                            cur_file: &mut cur_file,
-                            saved_rev: &mut saved_rev,
-                        }
-                        .confirm_quit();
-                        if may_exit {
-                            save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
-                            elwt.exit();
-                        } else {
-                            window.request_redraw();
-                        }
-                    }
+                    // red traffic light / OS close: the Quit transaction over every tab (Astra F01; S1
+                    // has one window, so Close Window = Quit — work order §6 Q1)
+                    WindowEvent::CloseRequested => pending.push(AppCommand::Quit),
                     WindowEvent::Resized(size) => {
                         if size.width == 0 || size.height == 0 {
                             return; // minimized / degenerate — don't reconfigure the surface or record garbage bounds
@@ -1235,15 +1104,18 @@ fn main() {
                                     canvas_gesture = true; // started on the canvas — track it through panels until release
                                 }
                                 ElementState::Released => {
-                                    canvas_gesture = false;
-                                    if panning {
-                                        panning = false;
-                                    } else if over_panel && ed.delete_dragged_guide() {
-                                        window.request_redraw();
-                                    }
-                                    // dropped a guide onto a ruler → delete
-                                    else {
-                                        ed.pointer_up();
+                                    // the release goes where its press went (UI audit 04 A2/B1): a press
+                                    // on chrome never ends an Editor transaction such as the colour
+                                    // picker's open session
+                                    let pressed_on_canvas = std::mem::replace(&mut canvas_gesture, false);
+                                    match host::route_left_release(pressed_on_canvas, panning, over_panel) {
+                                        host::LeftRelease::EndPan => panning = false,
+                                        host::LeftRelease::Chrome => {}
+                                        // dropped a guide onto a ruler → delete
+                                        host::LeftRelease::Canvas { over_panel: true } if ed.delete_dragged_guide() => {
+                                            window.request_redraw();
+                                        }
+                                        host::LeftRelease::Canvas { .. } => ed.pointer_up(),
                                     }
                                 }
                             },
@@ -1282,36 +1154,37 @@ fn main() {
                         window.request_redraw();
                     }
                     WindowEvent::KeyboardInput { event, .. } => {
+                        let PhysicalKey::Code(code) = event.physical_key else { return };
+                        // DFS S1 + UI audit 04: the file / tab keys (⌘N ⌘O ⌘S ⇧⌘S ⌘W ⌘Q, Ctrl+Tab) are
+                        // commands, decided BEFORE the text-field check — so ⌘S inside a field saves on
+                        // every platform, as the Mac menu's key equivalent already does. A held key does
+                        // not repeat them (no queue of dialogs).
+                        if let Some(cmd) = host::key_command(code, ed.mods, Some(s.id)) {
+                            if event.state == ElementState::Pressed && !event.repeat {
+                                pending.push(cmd);
+                                window.request_redraw();
+                            }
+                        }
                         // Only skip canvas shortcuts when a text field is actually focused — NOT on egui's
                         // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
                         // The Color Picker is a floating palette: the canvas stays fully usable beside it,
                         // but Esc/Enter belong to the dialog while it is open (Cancel / OK).
-                        if gui.wants_keyboard() { /* typing into a field — keys go to egui */
-                        } else if let PhysicalKey::Code(code) = event.physical_key {
-                            if gui.modal_open()
-                                && matches!(code, KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter)
-                            {
-                                /* the dialog owns these */
-                            } else if code == KeyCode::Space {
-                                space_down = event.state == ElementState::Pressed;
-                                ed.space = space_down; // A9: lets a live placement drag reposition on Space
-                                if !space_down {
-                                    panning = false;
-                                }
-                                window.request_redraw();
-                            } else if event.state == ElementState::Pressed {
-                                let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
-                                OpenDocContext {
-                                    ed,
-                                    gui: &gui,
-                                    window: &window,
-                                    view,
-                                    cur_file: &mut cur_file,
-                                    saved_rev: &mut saved_rev,
-                                }
-                                .shortcut(code, mc, ms, ma);
-                                window.request_redraw();
+                        else if gui.wants_keyboard() { /* typing into a field — keys go to egui */
+                        } else if gui.modal_open()
+                            && matches!(code, KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter)
+                        {
+                            /* the dialog owns these */
+                        } else if code == KeyCode::Space {
+                            space_down = event.state == ElementState::Pressed;
+                            ed.space = space_down; // A9: lets a live placement drag reposition on Space
+                            if !space_down {
+                                panning = false;
                             }
+                            window.request_redraw();
+                        } else if event.state == ElementState::Pressed {
+                            let m = ed.mods;
+                            doc_key(ed, view, canvas_px(&gui, &window), code, m);
+                            window.request_redraw();
                         }
                     }
                     WindowEvent::RedrawRequested => {
@@ -1322,23 +1195,22 @@ fn main() {
                             return;
                         }
                         let perf_start = Instant::now();
+                        // a new / opened tab's owed fit, BEFORE its first frame is drawn (the Board box is
+                        // known from the previous frame)
+                        take_pending_fit(&mut s.fit_pending, ed, view, &gui, &window);
                         ed.ppu = view.zoom;
                         // Native UI runs FIRST (the rail may switch the tool), THEN we build the scene from
                         // the updated editor so the change shows this same frame.
                         let (jobs, tdelta, screen) =
                             gui.run(&window, ed, scale as f32, *view, cursors::is_maximized(hwnd));
-                        // title + tab track the document (name, unsaved *) and the active tool
-                        let unsaved = ed.rev != saved_rev;
-                        let title = full_title(ed.tool, cur_file.as_deref(), unsaved);
-                        if title != last_title {
-                            window.set_title(&title);
-                            gui.set_doc_tab(format!(
-                                "{}{}",
-                                doc_stem(cur_file.as_deref()),
-                                if unsaved { " *" } else { "" }
-                            ));
-                            last_title = title;
-                            window.request_redraw(); // repaint once more so the tab text shows this change
+                        // the tab strip / burger / window controls raised commands: the one dispatch runs
+                        // them when the loop is about to wait (right after this frame)
+                        pending.extend(gui.take_app_commands());
+                        if let Some(act) = gui.win_action.take() {
+                            pending.push(host::win_action_command(act));
+                        }
+                        if !pending.is_empty() {
+                            window.request_redraw();
                         }
                         // macOS menu bar: every ✓ is read back from the real state (only changes are written)
                         #[cfg(target_os = "macos")]
@@ -1361,41 +1233,8 @@ fn main() {
                         }
                         // Stage 4: the first non-splash frame knows the Board box — refit the startup
                         // view INTO it once (the pre-shell fit centred on the whole window).
-                        if let Some(k) = board_fit_pending {
-                            if !gui.splashing() && gui.board_px.is_some() {
-                                let (x, y, w, h) = fit_rect(ed);
-                                *view = fit_to_board(&gui, &window, x, y, w, h, k);
-                                board_fit_pending = None;
-                                window.request_redraw();
-                            }
-                        }
-                        // custom title-bar window controls
-                        if let Some(act) = gui.win_action.take() {
-                            match act {
-                                ui::WinAction::Minimize => window.set_minimized(true),
-                                ui::WinAction::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
-                                ui::WinAction::Close => {
-                                    let may_exit = OpenDocContext {
-                                        ed,
-                                        gui: &gui,
-                                        window: &window,
-                                        view,
-                                        cur_file: &mut cur_file,
-                                        saved_rev: &mut saved_rev,
-                                    }
-                                    .confirm_quit();
-                                    if may_exit {
-                                        save_win_state(
-                                            cursors::is_maximized(hwnd),
-                                            win_norm.0,
-                                            win_norm.1,
-                                            win_norm.2,
-                                            win_norm.3,
-                                        );
-                                        elwt.exit();
-                                    }
-                                }
-                            }
+                        if take_pending_fit(&mut s.fit_pending, ed, view, &gui, &window) {
+                            window.request_redraw();
                         }
                         // Cursor: over chrome show the UI's OWN cursor (egui's icon mapped to the
                         // Win32 set — seam-resize arrows on box splitters, ↔ on a scrubbed field,
@@ -1426,7 +1265,8 @@ fn main() {
                             renderer.render_splash(&jobs, &tdelta, &screen);
                         // floating card on a transparent surface
                         } else {
-                            let signature = scene_signature(ed, *view, [psz.width, psz.height]);
+                            // keyed by WHICH tab too: equal signatures of two tabs must never share art
+                            let signature = host::scene_key(s.id, scene_signature(ed, *view, [psz.width, psz.height]));
                             let scene_start = Instant::now();
                             let cache_hit = last_scene_signature == Some(signature);
                             let rendered = if cache_hit {
@@ -1464,16 +1304,36 @@ fn main() {
                                 renderer.resize(sz.width, sz.height);
                                 let (x, y, w, h) = fit_rect(ed);
                                 *view = View::fit(x, y, w, h, sz.width as f32, sz.height as f32, 0.9);
-                                board_fit_pending = Some(0.9); // the box re-lays-out at the new size — refit into it
+                                s.fit_pending = Some(0.9); // the box re-lays-out at the new size — refit into it
                                 refit_pending = false;
                             }
                             editor_framed = true;
+                            // the first instance opens its OWN file argument now (F13), through the dispatch
+                            pending.extend(startup_open.take());
                             window.request_redraw();
                         }
                         // Zoom needs no follow-up frames; idle when egui has no work.
                         if gui.repaint {
                             window.request_redraw();
                         }
+                        // the tab strip + window title follow the documents (name, unsaved dot / `*`)
+                        let (name, dirty) = (s.display_name(), s.is_dirty());
+                        let title = host::window_title(&name, dirty);
+                        if title != last_title {
+                            window.set_title(&title);
+                            #[cfg(target_os = "macos")]
+                            {
+                                use winit::platform::macos::WindowExtMacOS;
+                                window.set_document_edited(dirty);
+                            }
+                            last_title = title;
+                        }
+                        let tabs = ws.tabs();
+                        if tabs != drawn_tabs {
+                            window.request_redraw(); // repaint once more so the strip shows the change
+                        }
+                        gui.set_tabs(tabs.clone(), ws.active_id());
+                        drawn_tabs = tabs;
                     }
                     _ => {}
                 }
@@ -1738,64 +1598,6 @@ mod instant_zoom_tests {
             assert!((pinned[0] - screen[0]).abs() < 0.0001);
             assert!((pinned[1] - screen[1]).abs() < 0.0001);
         }
-    }
-}
-
-#[cfg(test)]
-mod quit_guard_tests {
-    use super::{may_quit, quit_answer, QuitAnswer, QUIT_CANCEL, QUIT_DONT_SAVE, QUIT_SAVE};
-    use rfd::MessageDialogResult as R;
-    use std::cell::Cell;
-
-    #[test]
-    fn clean_document_quits_without_asking_or_saving() {
-        let asked = Cell::new(false);
-        let saved = Cell::new(false);
-        let ok = may_quit(
-            false,
-            || {
-                asked.set(true);
-                QuitAnswer::Cancel
-            },
-            || {
-                saved.set(true);
-                true
-            },
-        );
-        assert!(ok);
-        assert!(!asked.get(), "a clean document must never show the quit dialog");
-        assert!(!saved.get());
-    }
-
-    #[test]
-    fn dirty_document_save_quits_only_when_the_save_completed() {
-        assert!(may_quit(true, || QuitAnswer::Save, || true));
-        // cancelled Save As / failed write: stay open, work intact
-        assert!(!may_quit(true, || QuitAnswer::Save, || false));
-    }
-
-    #[test]
-    fn dirty_document_dont_save_quits_and_cancel_stays() {
-        let saved = Cell::new(false);
-        let save = || {
-            saved.set(true);
-            true
-        };
-        assert!(may_quit(true, || QuitAnswer::DontSave, save));
-        assert!(!may_quit(true, || QuitAnswer::Cancel, save));
-        assert!(!saved.get(), "Don't Save and Cancel never write to disk");
-    }
-
-    #[test]
-    fn dialog_results_map_to_answers_and_unknown_is_cancel() {
-        assert_eq!(quit_answer(&R::Custom(QUIT_SAVE.into())), QuitAnswer::Save);
-        assert_eq!(quit_answer(&R::Custom(QUIT_DONT_SAVE.into())), QuitAnswer::DontSave);
-        assert_eq!(quit_answer(&R::Custom(QUIT_CANCEL.into())), QuitAnswer::Cancel);
-        assert_eq!(quit_answer(&R::Yes), QuitAnswer::Save);
-        assert_eq!(quit_answer(&R::No), QuitAnswer::DontSave);
-        assert_eq!(quit_answer(&R::Cancel), QuitAnswer::Cancel);
-        assert_eq!(quit_answer(&R::Ok), QuitAnswer::Cancel);
-        assert_eq!(quit_answer(&R::Custom("Something else".into())), QuitAnswer::Cancel);
     }
 }
 

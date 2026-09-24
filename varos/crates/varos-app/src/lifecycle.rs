@@ -4,9 +4,6 @@
 //! (`file_ports.rs`); tests plug in scripted fakes. No rfd, fs or egui in this file.
 //!
 //! API frozen by S1-A; the rule bodies of `Lifecycle::run` are S1-B's.
-// S1-A: nothing calls this module until S1-D wires the host; S1-D removes this allow. (Plain `allow`,
-// not `cfg_attr(not(test), ..)`: test builds would otherwise fail `clippy --all-targets -D warnings`.)
-#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 

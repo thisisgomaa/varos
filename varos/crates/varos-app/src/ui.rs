@@ -825,11 +825,9 @@ pub struct Ui {
     show_rail: bool,
     show_dock: bool,
     // DFS S1: the real tab strip's data (host → `set_tabs` every frame) and the lifecycle commands the
-    // chrome raised this frame (host ← `take_app_commands`, still unwired until S1-D lands the host
-    // dispatch — `app_cmds` is therefore written every frame but not yet drained by anyone).
+    // chrome raised this frame (host ← `take_app_commands`).
     doc_tabs: Vec<TabView>,
     doc_active: Option<SessionId>,
-    #[allow(dead_code)] // S1-C pushes into this; S1-D adds the caller that drains it via `take_app_commands`
     app_cmds: Vec<AppCommand>,
     logo: Option<egui::TextureHandle>,
     splash_start: Option<Instant>,   // startup loading screen; None once it has faded out
@@ -1153,34 +1151,18 @@ impl Ui {
     pub fn picking_screen(&self) -> bool {
         self.color_modal.as_ref().is_some_and(|m| m.eyedropping)
     }
-    /// DFS S1 F4: a small stand-in `set_doc_tab` deletes — until S1-D wires `set_tabs`, this keeps a
-    /// single real `TabView` (id 0) so a tab is still visible on the intermediate branch: the host
-    /// still names "tab 0" after the open document ("name" / "name *") every time the title changes.
-    pub fn set_doc_tab(&mut self, name: String) {
-        if let Some(t) = self.doc_tabs.first_mut() {
-            t.label = name;
-        } else {
-            let id = SessionId(0);
-            self.doc_active = Some(id);
-            self.doc_tabs.push(TabView { id, label: name, dirty: false, tooltip: "Not saved yet".into() });
-        }
-    }
-    /// DFS S1: the host hands the workspace's tabs over every frame (S1-D wires this in, replacing the
-    /// `set_doc_tab` shim above).
-    #[allow(dead_code)] // no caller until S1-D
+    /// DFS S1: the host hands the workspace's tabs over every frame.
     pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
         self.doc_tabs = tabs;
         self.doc_active = active;
     }
     /// DFS S1: the lifecycle commands the chrome (tab strip, burger rows) raised since the last call.
-    #[allow(dead_code)] // no caller until S1-D drains this every frame
     pub fn take_app_commands(&mut self) -> Vec<AppCommand> {
         std::mem::take(&mut self.app_cmds)
     }
     /// DFS S1: before any lifecycle command, close every Ui-side edit still open on `ed` — an open colour
     /// picker is CANCELLED (its live preview is not a commit), and unsaved inline rename buffers (layer,
     /// artboard) are discarded.
-    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
     pub fn settle(&mut self, ed: &mut Editor) {
         if self.color_modal.take().is_some() {
             ed.execute(EditCommand::PickerCancel);
@@ -1190,7 +1172,6 @@ impl Ui {
     }
     /// DFS S1: the active document changed — drop the Ui state that belongs to the previous document
     /// (the Layers rows cache, drag, Shift-range anchor, collapsed rows and search).
-    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
     pub fn document_switched(&mut self) {
         self.layer_rows_cache = None;
         self.lay_drag = None;
