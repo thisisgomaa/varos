@@ -3987,6 +3987,46 @@ impl Editor {
         self.drag = Drag::None;
         self.ab_drag = AbDrag::None;
     }
+    /// Edit ▸ Select All (⌘A) — the mirror of `escape` (⇧⌘A Deselect). Like `escape`, it only changes
+    /// selection state: no history entry, no `rev` bump, no dirty mark.
+    /// * Artboard tool: every page (`doc.active` stays the primary).
+    /// * Direct tool: every anchor (holes too) of every visible, unlocked path — as a whole-canvas
+    ///   Direct marquee would take.
+    /// * Every other tool: the object selection = every visible, unlocked path, widened to whole
+    ///   groups exactly as a canvas click or object marquee does (a group selects as one unit).
+    ///
+    /// A Pen path in progress ends first, as on any selection change.
+    pub fn select_all(&mut self) {
+        self.active = None;
+        self.drag = Drag::None;
+        self.ab_drag = AbDrag::None;
+        self.dsel_path = None;
+        self.pivot = None; // the transform origin re-homes to the new selection's centre
+        if self.tool == ToolKind::Artboard {
+            self.absel = (0..self.doc.artboards.len()).collect();
+            return;
+        }
+        let pickable: Vec<usize> = (0..self.doc.paths.len())
+            .filter(|&pi| {
+                let id = self.doc.paths[pi].id;
+                !self.doc.eff_hidden(id) && !self.doc.eff_locked(id)
+            })
+            .collect();
+        self.selected.clear();
+        self.objsel.clear();
+        if self.tool == ToolKind::Direct {
+            for pi in pickable {
+                let p = &self.doc.paths[pi];
+                self.selected.extend(p.anchors.iter().chain(p.holes.iter().flatten()).map(|a| a.id));
+            }
+        } else {
+            for pi in pickable {
+                let members = self.doc.group_members(self.doc.paths[pi].id);
+                self.objsel.extend(members);
+            }
+        }
+        self.refresh_obj_angle(); // one unit keeps its stored rotation; several axis-align (A7)
+    }
     pub fn nudge(&mut self, dx: f32, dy: f32) {
         if self.selected.is_empty() {
             return;
