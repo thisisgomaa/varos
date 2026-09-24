@@ -25,14 +25,17 @@ use winit::{
     window::Window,
 };
 
+mod app_command;
 mod chrome;
 mod cursors;
+mod lifecycle;
 #[cfg(target_os = "macos")]
 mod mac_caption;
 #[cfg(target_os = "macos")]
 mod mac_menu;
 mod single_instance;
 mod ui;
+mod workspace;
 use cursors::CK;
 
 /// The one cursor this frame wants: a pan in progress beats the Space hand, which beats the chrome's
@@ -968,7 +971,7 @@ fn main() {
                                 .shortcut(k.code, true, k.shift, k.alt);
                             }
                         }
-                        M::Close => {
+                        M::Quit => {
                             // exactly the ✕ caption button's arm (WinAction::Close below)
                             let may_exit = OpenDocContext {
                                 ed: &mut ed,

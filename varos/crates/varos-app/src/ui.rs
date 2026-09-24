@@ -12,6 +12,8 @@ use varos_core::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, 
 use varos_core::geom::{Pt, Rgba, View};
 use varos_core::EditCommand;
 use winit::event::WindowEvent;
+
+use crate::app_command::{AppCommand, SessionId, TabView};
 use winit::window::Window;
 
 // Stage 0b (BOX_SYSTEM_PLAN §6, ruling 4): the palette now comes from the LAW ramp — the warm black
@@ -819,6 +821,14 @@ pub struct Ui {
     show_dock: bool,
     tabs: Vec<String>,
     tab_active: usize,
+    // DFS S1: the real tab strip's data (host → `set_tabs` every frame) and the lifecycle commands the
+    // chrome raised this frame (host ← `take_app_commands`). S1-C replaces `tabs`/`tab_active` with these.
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    doc_tabs: Vec<TabView>,
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    doc_active: Option<SessionId>,
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    app_cmds: Vec<AppCommand>,
     logo: Option<egui::TextureHandle>,
     splash_start: Option<Instant>,   // startup loading screen; None once it has faded out
     last_splash: bool,               // did this frame draw the splash (host renders it transparent)?
@@ -1061,6 +1071,9 @@ impl Ui {
             show_dock: true,
             tabs: vec!["Untitled-1".into()],
             tab_active: 0,
+            doc_tabs: vec![],
+            doc_active: None,
+            app_cmds: vec![],
             logo,
             splash_start: Some(Instant::now()),
             last_splash: false,
@@ -1147,6 +1160,41 @@ impl Ui {
         } else {
             self.tabs[0] = name;
         }
+    }
+    /// DFS S1: the host hands the workspace's tabs over every frame. S1-A stub: stored, and the labels
+    /// mirrored into the old `tabs` strip (S1-C draws `doc_tabs` for real).
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
+        self.tabs = tabs.iter().map(|t| t.label.clone()).collect();
+        self.tab_active = tabs.iter().position(|t| Some(t.id) == active).unwrap_or(0);
+        self.doc_tabs = tabs;
+        self.doc_active = active;
+    }
+    /// DFS S1: the lifecycle commands the chrome (tab strip, burger rows) raised since the last call.
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    pub fn take_app_commands(&mut self) -> Vec<AppCommand> {
+        std::mem::take(&mut self.app_cmds)
+    }
+    /// DFS S1: before any lifecycle command, close every Ui-side edit still open on `ed` — an open colour
+    /// picker is CANCELLED (its live preview is not a commit), and unsaved inline rename buffers (layer,
+    /// artboard) are discarded.
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    pub fn settle(&mut self, ed: &mut Editor) {
+        if self.color_modal.take().is_some() {
+            ed.execute(EditCommand::PickerCancel);
+        }
+        self.lay_rename = None;
+        self.ab_name_edit = None;
+    }
+    /// DFS S1: the active document changed — drop the Ui state that belongs to the previous document
+    /// (the Layers rows cache, drag, Shift-range anchor, collapsed rows and search).
+    #[allow(dead_code)] // S1-A stub, wired by S1-C / S1-D — remove this allow then
+    pub fn document_switched(&mut self) {
+        self.layer_rows_cache = None;
+        self.lay_drag = None;
+        self.lay_anchor = None;
+        self.lay_collapsed.clear();
+        self.lay_search.clear();
     }
     /// The native cursor the UI chrome wants this frame — egui's icon mapped onto our Win32 set.
     /// Box-seam resizes (egui_tiles splitters) and number-field scrubs get their arrows; everything

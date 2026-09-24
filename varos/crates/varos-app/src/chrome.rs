@@ -131,8 +131,9 @@ const fn cmd_alt(code: KeyCode) -> Option<Accel> {
 pub enum MenuCmd {
     /// The ⌘ + key shortcut, fed to the same dispatch the keyboard uses (`main.rs`).
     Key(Accel),
-    /// The ✕ caption button's path (`WinAction::Close`: save window state, exit).
-    Close,
+    /// The ✕ caption button's path (`WinAction::Close`: save window state, exit) — the Quit
+    /// transaction (DFS S1: `AppCommand::Quit`).
+    Quit,
     /// The bar's Window menu rows.
     ToggleRail,
     ToggleDock,
@@ -228,7 +229,7 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
                 Entry::Native(Native::HideOthers),
                 Entry::Native(Native::ShowAll),
                 Entry::Sep,
-                item("app.quit", "Quit Varos", cmd(K::KeyQ), MenuCmd::Close),
+                item("app.quit", "Quit Varos", cmd(K::KeyQ), MenuCmd::Quit),
             ],
         ),
         (
@@ -239,7 +240,7 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
                 key("file.save", "Save", cmd(K::KeyS)),
                 key("file.saveas", "Save As\u{2026}", cmd_shift(K::KeyS)),
                 Entry::Sep,
-                item("file.close", "Close Window", cmd(K::KeyW), MenuCmd::Close),
+                item("file.close", "Close Window", cmd(K::KeyW), MenuCmd::Quit),
             ],
         ),
         (
@@ -474,7 +475,7 @@ mod tests {
         let close: Vec<_> = items
             .iter()
             .filter_map(|e| match e {
-                Entry::Item { cmd: MenuCmd::Close, accel, .. } => *accel,
+                Entry::Item { cmd: MenuCmd::Quit, accel, .. } => *accel,
                 _ => None,
             })
             .collect();
