@@ -1,14 +1,18 @@
-//! Real native tool cursors, modeled on Adobe Illustrator's: a small fountain-pen NIB (not a
-//! generic icon), solid/hollow arrows, a precise crosshair, eyedropper. SVGs are rendered to
-//! bitmaps (resvg) and turned into Windows HCURSORs, set on the canvas window so they show across
-//! the whole client area (the web panels use a matching CSS cursor). Glyphs are kept SMALL inside
-//! the 32px frame and use a thin white halo so they read on any background without looking bloated.
+//! Native tool cursors: the **Varos cursor set v1** (our own drawings, `assets/cursors/v1/`, see
+//! docs/studies/2026-09-23-CURSOR_SET_V1.md), compiled into the binary. Every `CK` state has a real
+//! glyph. Each SVG is rendered to straight-alpha RGBA (resvg) and turned into the platform cursor:
+//! a Win32 HCURSOR on Windows, a Retina NSCursor (1× + 2× bitmaps in one 32-pt image) on macOS, a
+//! winit `CustomCursor` elsewhere. A system cursor is used only if the OS refuses one of ours.
+//!
+//! Dev-only A/B switch: `VAROS_CURSORS_AI=1` swaps in the LOCAL Illustrator reference set
+//! (`assets/cursors-ai/svg/`, gitignored, never shipped) wherever those files are present.
 
 use resvg::{tiny_skia, usvg};
+use std::sync::OnceLock;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum CK {
-    // ---- our own SVG-rendered cursors (shippable: Font Awesome / Lucide / drawn) ----
+    // ---- tool cursors ----
     Select,
     Direct,
     Pen,
@@ -20,7 +24,7 @@ pub enum CK {
     Convert,
     Cross,
     Eye,
-    // ---- interaction-state cursors backed by the Illustrator set (TEMP local, see ai_svg) ----
+    // ---- interaction states ----
     ResizeH,
     ResizeV,
     ResizeNE,
@@ -41,22 +45,7 @@ pub enum CK {
     RotateNE,
 }
 
-// SVG-backed cursors only — these are what the dev `--dump-cursors` previews.
-pub const ALL: [CK; 11] = [
-    CK::Select,
-    CK::Direct,
-    CK::Pen,
-    CK::PenNew,
-    CK::PenAdd,
-    CK::PenDel,
-    CK::PenClose,
-    CK::PenConnect,
-    CK::Convert,
-    CK::Cross,
-    CK::Eye,
-];
-
-// Every cursor we build an HCURSOR for (SVG ones + the interaction/rotate states).
+/// Every cursor state, in slot order (the non-Windows cursor token is `slot + 1`).
 pub const ALL_CURSORS: [CK; 28] = [
     CK::Select,
     CK::Direct,
@@ -88,11 +77,168 @@ pub const ALL_CURSORS: [CK; 28] = [
     CK::RotateNE,
 ];
 
-/// The real Adobe Illustrator vector cursor for a CK: (SVG filename stem, hotspot_x, hotspot_y).
-/// Hotspots are in the cursor's 1× (32px-logical) space (the SVGs are @2x / viewBox 64). TEMP local
-/// set in assets/cursors-ai/svg/ — proprietary, never shipped; we fall back to our own SVG if absent.
-pub fn ai_svg(ck: CK) -> Option<(&'static str, f32, f32)> {
-    Some(match ck {
+/// A CK's slot in `ALL_CURSORS`. Total: every CK is in the table (unit-tested).
+fn slot(ck: CK) -> usize {
+    ALL_CURSORS.iter().position(|c| *c == ck).expect("every CK has a cursor slot")
+}
+
+// ───────────────────────────── Varos cursor set v1 (embedded) ─────────────────────────────
+
+/// Logical cursor size: the v1 SVGs are drawn on a 32×32 grid and hotspots are in that space.
+/// On macOS this is the NSImage size in POINTS; on Windows / winit it is the bitmap size in pixels.
+pub const CURSOR_PT: u32 = 32;
+/// The 2× (Retina) render size used for the macOS NSCursor's high-resolution representation.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS runtime + tests
+pub const CURSOR_PX_2X: u32 = CURSOR_PT * 2;
+
+/// `hotspots.json` from the v1 set: the `ck` map (every CK name → file + hotspot in 32-px space).
+const V1_HOTSPOTS_JSON: &str = include_str!("../assets/cursors/v1/hotspots.json");
+
+macro_rules! v1_files {
+    ($($f:literal),* $(,)?) => { [$(($f, include_str!(concat!("../assets/cursors/v1/", $f)))),*] };
+}
+/// All 30 v1 files, including the three proposed cursor states. The 28 current CK states
+/// use 27 files (`Move` reuses `select.svg`).
+const V1_FILES: [(&str, &str); 30] = v1_files!(
+    "select.svg",
+    "direct.svg",
+    "pen.svg",
+    "pen-new.svg",
+    "pen-add.svg",
+    "pen-delete.svg",
+    "pen-close.svg",
+    "pen-connect.svg",
+    "convert.svg",
+    "shape-rect.svg",
+    "eyedropper.svg",
+    "resize-h.svg",
+    "resize-v.svg",
+    "resize-ne.svg",
+    "resize-nw.svg",
+    "hand.svg",
+    "grab.svg",
+    "copy.svg",
+    "no-drop.svg",
+    "rotate-e.svg",
+    "rotate-se.svg",
+    "rotate-s.svg",
+    "rotate-sw.svg",
+    "rotate-w.svg",
+    "rotate-nw.svg",
+    "rotate-n.svg",
+    "rotate-ne.svg",
+    "zoom-in.svg",
+    "zoom-out.svg",
+    "artboard.svg",
+);
+
+/// One v1 cursor: the state, its file, the embedded SVG text, and the hotspot in 32-px space.
+#[derive(Debug)]
+pub struct V1Cursor {
+    pub ck: CK,
+    pub file: &'static str,
+    pub svg: &'static str,
+    pub hx: u16,
+    pub hy: u16,
+}
+
+/// Parse `hotspots.json` → one entry per `ALL_CURSORS` slot (same order). Pure; fails with a message
+/// if a CK is missing, names a file that is not embedded, or has a hotspot outside the 32×32 grid.
+fn parse_v1(json: &str) -> Result<Vec<V1Cursor>, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("hotspots.json: {e}"))?;
+    let map = v.get("ck").and_then(|m| m.as_object()).ok_or("hotspots.json: no \"ck\" map")?;
+    ALL_CURSORS
+        .iter()
+        .map(|&ck| {
+            let name = format!("{ck:?}");
+            let e = map.get(&name).ok_or_else(|| format!("hotspots.json: CK {name} missing"))?;
+            let file = e.get("file").and_then(|f| f.as_str()).ok_or_else(|| format!("{name}: no file"))?;
+            let &(file, svg) =
+                V1_FILES.iter().find(|(f, _)| *f == file).ok_or_else(|| format!("{name}: {file} is not embedded"))?;
+            let hs = e.get("hotspot").and_then(|h| h.as_array()).ok_or_else(|| format!("{name}: no hotspot"))?;
+            let coord = |i: usize| {
+                hs.get(i)
+                    .and_then(|n| n.as_u64())
+                    .filter(|&n| n < CURSOR_PT as u64)
+                    .map(|n| n as u16)
+                    .ok_or_else(|| format!("{name}: hotspot[{i}] missing or outside 0..{CURSOR_PT}"))
+            };
+            Ok(V1Cursor { ck, file, svg, hx: coord(0)?, hy: coord(1)? })
+        })
+        .collect()
+}
+
+/// The v1 table, parsed once from the embedded `hotspots.json` (28 entries, `ALL_CURSORS` order).
+/// The data is compiled in and fully checked by `v1_table_covers_every_ck_once_with_hotspots_inside`,
+/// so the `expect` is an invariant of the build, not a runtime condition.
+pub fn v1_table() -> &'static [V1Cursor] {
+    static T: OnceLock<Vec<V1Cursor>> = OnceLock::new();
+    T.get_or_init(|| parse_v1(V1_HOTSPOTS_JSON).expect("embedded cursors/v1/hotspots.json is valid"))
+}
+
+/// The v1 entry for a CK.
+pub fn v1(ck: CK) -> &'static V1Cursor {
+    &v1_table()[slot(ck)]
+}
+
+/// A cursor bitmap: (straight-alpha RGBA, width, height, hotspot_x, hotspot_y) in bitmap pixels.
+pub type CursorBitmap = (Vec<u8>, u16, u16, u16, u16);
+
+/// tiny-skia renders premultiplied RGBA; every cursor consumer (the Win32 DIB builder, winit
+/// `CustomCursor`, the macOS PNG → NSBitmapImageRep path) takes straight alpha. In place.
+fn unpremultiply(d: &mut [u8]) {
+    for px in d.chunks_mut(4) {
+        let a = px[3] as u32;
+        if a > 0 && a < 255 {
+            px[0] = ((px[0] as u32 * 255) / a) as u8;
+            px[1] = ((px[1] as u32 * 255) / a) as u8;
+            px[2] = ((px[2] as u32 * 255) / a) as u8;
+        }
+    }
+}
+
+/// Render a cursor SVG into a `px`×`px` straight-alpha RGBA bitmap, its viewBox fitted to the square
+/// (32 for v1, 64 for the @2x Illustrator reference files). None if the SVG does not parse.
+fn rasterize(svg: &str, px: u32) -> Option<Vec<u8>> {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).ok()?;
+    let vb = tree.size().width().max(tree.size().height()).max(1.0);
+    let scale = px as f32 / vb;
+    let mut pm = tiny_skia::Pixmap::new(px, px)?;
+    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
+    let mut d = pm.data().to_vec();
+    unpremultiply(&mut d);
+    Some(d)
+}
+
+/// Scale a 32-px-space hotspot coordinate to a `px` bitmap.
+fn hotspot_px(h: f32, px: u32) -> u16 {
+    (h * px as f32 / CURSOR_PT as f32).round() as u16
+}
+
+/// A CK's v1 bitmap rendered at `px` (32 = 1×, 64 = 2×), hotspot scaled to that bitmap.
+pub fn v1_rgba(ck: CK, px: u32) -> Option<CursorBitmap> {
+    let e = v1(ck);
+    let d = rasterize(e.svg, px)?;
+    let p = px as u16;
+    Some((d, p, p, hotspot_px(e.hx as f32, px), hotspot_px(e.hy as f32, px)))
+}
+
+// ───────────────────── local Illustrator reference set (dev A/B only, never shipped) ─────────────────────
+
+/// Env var that turns the local Illustrator reference override on (`=1`). Off by default.
+pub const AI_ENV: &str = "VAROS_CURSORS_AI";
+/// Where the local reference SVGs live (gitignored — never committed or shipped, see .gitignore).
+const AI_SVG_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cursors-ai/svg/");
+
+/// Is the dev-only reference override switched on (`VAROS_CURSORS_AI=1`)?
+pub fn ai_override_enabled() -> bool {
+    std::env::var(AI_ENV).is_ok_and(|v| v == "1")
+}
+
+/// The Illustrator reference cursor for a CK: (SVG filename stem, hotspot_x, hotspot_y). Hotspots are
+/// in the 32-px-logical space (the files are @2x, viewBox 64). Local A/B reference only.
+pub fn ai_svg(ck: CK) -> (&'static str, f32, f32) {
+    match ck {
         CK::Select => ("CUR_SELECT", 1.0, 1.0),
         CK::Direct => ("CUR_DIRECTSELECT", 1.0, 1.0),
         CK::Pen => ("CUR_PEN", 1.0, 1.0),
@@ -121,92 +267,37 @@ pub fn ai_svg(ck: CK) -> Option<(&'static str, f32, f32)> {
         CK::RotateNW => ("CUR_ROTATETOPLEFTCORNER", 7.0, 7.0),
         CK::RotateN => ("CUR_ROTATEFROMTOP", 7.0, 7.0),
         CK::RotateNE => ("CUR_ROTATETOPRIGHTCORNER", 7.0, 7.0),
-    })
-}
-
-const SZ: u32 = 32; // cursor bitmap size (standard Windows cursor) for our built-in SVG cursors
-
-/// Rendered size for the Illustrator vector cursors. On macOS winit makes the NSCursor image
-/// `width × height` POINTS (not pixels), so this is also the cursor's logical size there — keep 32.
-const CURSOR_PX: u32 = 32;
-/// Where the TEMP local Illustrator cursor SVGs live (gitignored — never shipped, see .gitignore).
-const AI_SVG_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cursors-ai/svg/");
-
-/// tiny-skia renders premultiplied RGBA; every cursor consumer (the Win32 DIB builder, winit
-/// `CustomCursor`) takes straight alpha. In place.
-fn unpremultiply(d: &mut [u8]) {
-    for px in d.chunks_mut(4) {
-        let a = px[3] as u32;
-        if a > 0 && a < 255 {
-            px[0] = ((px[0] as u32 * 255) / a) as u8;
-            px[1] = ((px[1] as u32 * 255) / a) as u8;
-            px[2] = ((px[2] as u32 * 255) / a) as u8;
-        }
     }
 }
 
-// ---- glyph geometry (24×24 viewBox; kept compact, upper-left, like Illustrator) ----
-// Selection arrow: tip (hotspot) at (3,3), short tail. ~10×15 in viewBox.
-const ARROW: &str = "M3 3 L3 17 L6.8 13.2 L9.2 18.5 L11.2 17.6 L8.8 12.5 L13.5 12.5 Z";
-// Pen nib: the real fountain-pen nib from Font Awesome Free 6 (icon `pen-nib`, CC-BY-4.0) — a
-// professional silhouette with a sharp lower-left tip (the active point), center slit, and round
-// vent hole. Native 512×512 viewBox; we scale it into the 24-space and add a white halo. See NOTICE.
-const FA_NIB: &str = "M368.4 18.3L312.7 74.1 437.9 199.3l55.7-55.7c21.9-21.9 21.9-57.3 0-79.2L447.6 18.3c-21.9-21.9-57.3-21.9-79.2 0zM288 94.6l-9.2 2.8L134.7 140.6c-19.9 6-35.7 21.2-42.3 41L3.8 445.8c-3.8 11.3-1 23.9 7.3 32.4L164.7 324.7c-3-6.3-4.7-13.3-4.7-20.7c0-26.5 21.5-48 48-48s48 21.5 48 48s-21.5 48-48 48c-7.4 0-14.4-1.7-20.7-4.7L33.7 500.9c8.6 8.3 21.1 11.2 32.4 7.3l264.3-88.6c19.7-6.6 35-22.4 41-42.3l43.2-144.1 2.7-9.2L288 94.6z";
-const PIPETTE: &str = r##"<path d="m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12"/><path d="m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z"/><path d="m2 22 .414-.414"/>"##;
-const CARET: &str = r##"<path d="M7 13 L11 9 L15 13"/>"##; // convert-anchor "^"
-const CROSS: &str = r##"<path d="M12 4V10"/><path d="M12 14V20"/><path d="M4 12H10"/><path d="M14 12H20"/>"##; // crosshair with center gap
-
-/// stroked line-glyph (caret / crosshair / pipette): thin white halo + dark glyph.
-fn stroked(paths: &str) -> String {
-    format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><g stroke="#f4f4f7" stroke-width="2.2">{paths}</g><g stroke="#161619" stroke-width="1.4">{paths}</g></svg>"##
-    )
+/// The local reference bitmap for a CK at `px`, or None when that file is absent / unreadable.
+fn ai_rgba(ck: CK, px: u32) -> Option<CursorBitmap> {
+    let (stem, hx, hy) = ai_svg(ck);
+    let svg = std::fs::read_to_string(format!("{AI_SVG_DIR}{stem}.svg")).ok()?;
+    let d = rasterize(&svg, px)?;
+    let p = px as u16;
+    Some((d, p, p, hotspot_px(hx, px), hotspot_px(hy, px)))
 }
 
-/// solid (Select) or hollow (Direct) arrow with a thin contrasting edge.
-fn arrow(fill: &str, edge: &str) -> String {
-    format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-linejoin="round"><path d="{ARROW}" fill="{fill}" stroke="{edge}" stroke-width="1.3"/></svg>"##
-    )
-}
-
-/// the pen nib, optionally with a small state badge (✱/+/−/○/⁄) at its lower-right.
-fn pen(glyph: &str) -> String {
-    let badge = if glyph.is_empty() {
-        String::new()
-    } else {
-        format!(
-            r##"<g transform="translate(14.5,15)" stroke-linecap="round" stroke-linejoin="round"><g stroke="#f4f4f7" stroke-width="2.6" fill="none">{glyph}</g><g stroke="#161619" stroke-width="1.5" fill="none">{glyph}</g></g>"##
-        )
-    };
-    format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g transform="translate(1.4 1.4) scale(0.0415)" stroke-linejoin="round"><path d="{FA_NIB}" fill="none" stroke="#f4f4f7" stroke-width="58"/><path d="{FA_NIB}" fill="#161619"/></g>{badge}</svg>"##
-    )
-}
-
-/// (svg, hotspot_x, hotspot_y) in the 24×24 viewBox space
-fn svg(ck: CK) -> (String, f32, f32) {
-    match ck {
-        CK::Select => (arrow("#161619", "#f4f4f7"), 3.0, 3.0),
-        CK::Direct => (arrow("#f4f4f7", "#161619"), 3.0, 3.0),
-        CK::Pen => (pen(""), 2.7, 21.8),
-        CK::PenNew => {
-            (pen(r##"<path d="M3 0V6"/><path d="M0.6 1.5 5.4 4.5"/><path d="M5.4 1.5 0.6 4.5"/>"##), 2.7, 21.8)
+/// The bitmap a CK's cursor is built from at `px`: the local reference file when `use_ai` and it is
+/// present (`.1 == true`), else the v1 glyph. None only if even the embedded v1 SVG failed to render
+/// (never, per the tests) — the caller then keeps the system cursor.
+pub fn cursor_rgba(ck: CK, use_ai: bool, px: u32) -> Option<(CursorBitmap, bool)> {
+    if use_ai {
+        if let Some(b) = ai_rgba(ck, px) {
+            return Some((b, true));
         }
-        CK::PenAdd => (pen(r##"<path d="M3 0V6"/><path d="M0 3H6"/>"##), 2.7, 21.8),
-        CK::PenDel => (pen(r##"<path d="M0 3H6"/>"##), 2.7, 21.8),
-        CK::PenClose => (pen(r##"<circle cx="3" cy="3" r="2.8"/>"##), 2.7, 21.8),
-        CK::PenConnect => (pen(r##"<path d="M0 6 6 0"/>"##), 2.7, 21.8),
-        CK::Convert => (stroked(CARET), 11.0, 9.0),
-        CK::Cross => (stroked(CROSS), 12.0, 12.0),
-        CK::Eye => (stroked(PIPETTE), 2.6, 21.4),
-        // PNG-backed interaction cursors: only reached as a fallback when the AI PNGs are absent.
-        _ => (arrow("#161619", "#f4f4f7"), 3.0, 3.0),
     }
+    v1_rgba(ck, px).map(|b| (b, false))
+}
+
+/// The startup log line every platform prints (a platform may append its own detail after it).
+pub fn summary_line(overrides: usize) -> String {
+    format!("[varos] cursors: {} v1 (+ {overrides} reference overrides)", v1_table().len())
 }
 
 /// Render an arbitrary SVG string to straight-alpha RGBA, fit into a `size`×`size` box.
-/// Used by the dev `--preview` mode to eyeball candidate nib assets. `force_black` recolors
+/// Used for the UI icons and the dev `--preview` mode. `force_black` recolors
 /// everything to solid black (many icon sets use currentColor / theme fills).
 pub fn render_svg(svg: &str, size: u32, force_black: bool) -> Option<(Vec<u8>, u32, u32)> {
     let svg = if force_black {
@@ -253,107 +344,35 @@ fn inner_of(svg: &str) -> String {
     }
 }
 
-/// straight-alpha RGBA + hotspot in bitmap pixels
-pub fn rgba(ck: CK) -> (Vec<u8>, u16, u16, u16, u16) {
-    let (s, hx, hy) = svg(ck);
-    let tree = usvg::Tree::from_str(&s, &usvg::Options::default()).unwrap();
-    let mut pm = tiny_skia::Pixmap::new(SZ, SZ).unwrap();
-    let sc = SZ as f32 / 24.0;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(sc, sc), &mut pm.as_mut());
-    let mut d = pm.data().to_vec(); // premultiplied RGBA
-    unpremultiply(&mut d);
-    (d, SZ as u16, SZ as u16, (hx * sc).round() as u16, (hy * sc).round() as u16)
-}
-
-/// Build a Windows HCURSOR for one of our SVG-rendered cursors.
+/// Build every Windows HCURSOR once (32-px bitmaps — the standard Windows cursor size) and log the
+/// summary. A reference bitmap Win32 refuses retries with v1; a handle of 0 (Win32 refused both)
+/// makes WM_SETCURSOR keep the OS arrow for that state.
 #[cfg(windows)]
-pub fn hcursor(ck: CK) -> isize {
-    let (rgba, w, h, hx, hy) = rgba(ck);
-    build_hcursor(&rgba, w as u32, h as u32, hx, hy)
-}
-
-/// Render an Illustrator vector cursor SVG (`AI_SVG_DIR/<stem>.svg`) to straight-alpha RGBA at
-/// CURSOR_PX — same tuple shape as `rgba`. The hotspot is given in 1× (32px-logical) space and scaled
-/// to the rendered bitmap. None if the file is missing or unreadable. Shared by Windows (HCURSOR) and
-/// macOS (winit `CustomCursor`), so both platforms show the identical bitmap.
-pub fn svg_file_rgba(stem: &str, hx: f32, hy: f32) -> Option<(Vec<u8>, u16, u16, u16, u16)> {
-    let svg = std::fs::read_to_string(format!("{AI_SVG_DIR}{stem}.svg")).ok()?;
-    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).ok()?;
-    let vb = tree.size().width().max(tree.size().height()).max(1.0); // 64 for these @2x assets
-    let scale = CURSOR_PX as f32 / vb;
-    let mut pm = tiny_skia::Pixmap::new(CURSOR_PX, CURSOR_PX)?;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
-    let mut d = pm.data().to_vec();
-    unpremultiply(&mut d);
-    let hs = CURSOR_PX as f32 / 32.0; // 1×-logical → bitmap pixels
-    let px = CURSOR_PX as u16;
-    Some((d, px, px, (hx * hs).round() as u16, (hy * hs).round() as u16))
-}
-
-/// Build a Windows HCURSOR from an Illustrator vector cursor SVG (see `svg_file_rgba`). None if the
-/// file is missing or Win32 refuses the handle.
-#[cfg(windows)]
-pub fn hcursor_svg_file(stem: &str, hx: f32, hy: f32) -> Option<isize> {
-    let (d, w, h, hx, hy) = svg_file_rgba(stem, hx, hy)?;
-    match build_hcursor(&d, w as u32, h as u32, hx, hy) {
-        0 => None, // Win32 refused → let the caller fall back to the built-in SVG cursor
-        hc => Some(hc),
-    }
-}
-
-/// A cursor bitmap: (straight-alpha RGBA, width, height, hotspot_x, hotspot_y) — the `rgba` shape.
-pub type CursorBitmap = (Vec<u8>, u16, u16, u16, u16);
-
-/// True when `svg(ck)` draws a REAL, distinct built-in cursor for this state. False = `svg` only
-/// returns the generic selection-arrow placeholder (the interaction / rotate states have no shippable
-/// glyph of their own yet). Explicit and exhaustive on purpose — a new CK must choose.
-#[cfg_attr(windows, allow(dead_code))] // only the non-Windows CustomCursor path (and tests) ask
-pub const fn has_builtin(ck: CK) -> bool {
-    match ck {
-        CK::Select
-        | CK::Direct
-        | CK::Pen
-        | CK::PenNew
-        | CK::PenAdd
-        | CK::PenDel
-        | CK::PenClose
-        | CK::PenConnect
-        | CK::Convert
-        | CK::Cross
-        | CK::Eye => true,
-        CK::ResizeH
-        | CK::ResizeV
-        | CK::ResizeNE
-        | CK::ResizeNW
-        | CK::Move
-        | CK::Hand
-        | CK::Grab
-        | CK::Copy
-        | CK::NoDrop
-        | CK::RotateE
-        | CK::RotateSE
-        | CK::RotateS
-        | CK::RotateSW
-        | CK::RotateW
-        | CK::RotateNW
-        | CK::RotateN
-        | CK::RotateNE => false,
-    }
-}
-
-/// The bitmap a CK's non-Windows cursor is built from: the local Illustrator SVG when present
-/// (`.1 == true`), else our own built-in SVG — but ONLY if that built-in is a real distinct glyph
-/// (`has_builtin`). `None` = no distinct bitmap exists → the caller keeps the system `CursorIcon`, so
-/// e.g. the resize / hand / no-drop cues never collapse into the plain arrow. `use_ai = false` forces
-/// the built-in (shippable) set.
-#[cfg_attr(windows, allow(dead_code))] // Windows picks per CK in main.rs (hcursor_svg_file → hcursor)
-pub fn cursor_rgba(ck: CK, use_ai: bool) -> Option<(CursorBitmap, bool)> {
-    let ai = if use_ai { ai_svg(ck).and_then(|(stem, hx, hy)| svg_file_rgba(stem, hx, hy)) } else { None };
-    match ai {
-        Some(b) => Some((b, true)),
-        None if has_builtin(ck) => Some((rgba(ck), false)),
-        None => None,
-    }
+pub fn create_cursors() -> std::collections::HashMap<CK, isize> {
+    let use_ai = ai_override_enabled();
+    let (mut overrides, mut refused) = (0, 0);
+    let map = ALL_CURSORS
+        .iter()
+        .map(|&ck| {
+            let make = |ai: bool| {
+                let ((d, w, h, hx, hy), from_ai) = cursor_rgba(ck, ai, CURSOR_PT)?;
+                Some((build_hcursor(&d, w as u32, h as u32, hx, hy), from_ai)).filter(|(hc, _)| *hc != 0)
+            };
+            let hc = match make(use_ai).or_else(|| make(false)) {
+                Some((hc, from_ai)) => {
+                    overrides += from_ai as usize;
+                    hc
+                }
+                None => {
+                    refused += 1;
+                    0
+                }
+            };
+            (ck, hc)
+        })
+        .collect();
+    eprintln!("{}; {refused} refused by Win32 (OS arrow)", summary_line(overrides));
+    map
 }
 
 /// Build a Windows HCURSOR from straight-alpha RGBA. Returns the handle as isize, or 0 if Windows
@@ -735,15 +754,15 @@ pub use win::{
 
 // Non-Windows twins of the Win32 shell functions above — SAME signatures, so main.rs / ui.rs call
 // sites are identical on every platform (docs/foundation/MAC_SHELL_PORT.md). Nothing here pretends:
-// features with no native equivalent yet are plain no-ops. Cursors are real winit `CustomCursor`s
-// built from the SAME bitmaps + hotspots as the Windows HCURSORs (`cursor_rgba`), created once by
-// `create_custom_cursors` and cached per CK — but only where a DISTINCT bitmap exists (a cursors-ai
-// file, or a real built-in glyph per `has_builtin`). Every other state (e.g. resize / hand / no-drop
-// in a fresh clone) keeps winit's system `CursorIcon`, so no cue collapses into the plain arrow. The
-// winit window is handed over once via `bind_window`.
+// features with no native equivalent yet are plain no-ops. Cursors are built once by
+// `create_cursors` from the SAME v1 bitmaps + hotspots as the Windows HCURSORs (`cursor_rgba`):
+// on macOS a Retina `NSCursor` (see `mac`), elsewhere a winit `CustomCursor`. A winit system
+// `CursorIcon` is used only for a state whose custom cursor the OS refused. The winit window is
+// handed over once via `bind_window`.
 #[cfg(not(windows))]
 mod portable {
-    use super::{ai_svg, cursor_rgba, ALL_CURSORS, CK};
+    use super::{ai_override_enabled, cursor_rgba, summary_line, CursorBitmap, ALL_CURSORS, CK, CURSOR_PT};
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicIsize, Ordering};
     use std::sync::{Arc, OnceLock};
     use winit::event_loop::EventLoop;
@@ -752,71 +771,70 @@ mod portable {
     static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
     static CUR: AtomicIsize = AtomicIsize::new(0);
 
-    /// One ready cursor per `ALL_CURSORS` slot (slot = token − 1) and whether it came from the local
-    /// Illustrator set. `None` in a slot = no distinct bitmap for that state (or winit refused it) →
-    /// `set` uses the system `icon` fallback.
-    struct Built {
-        cursor: CustomCursor,
-        from_ai: bool,
-    }
-    static CUSTOM: OnceLock<Vec<Option<Built>>> = OnceLock::new();
+    /// One winit cursor per `ALL_CURSORS` slot (slot = token − 1). On macOS a slot is `None` when its
+    /// Retina NSCursor was built (that one is used instead) or when winit refused the bitmap; elsewhere
+    /// `None` only when winit refused it. `set` then falls back as documented there.
+    static WINIT: OnceLock<Vec<Option<CustomCursor>>> = OnceLock::new();
 
     /// Give the cursor/window helpers the live winit window (call once, right after creation).
     pub fn bind_window(w: Arc<Window>) {
         let _ = WINDOW.set(w);
     }
 
-    /// Build each tool cursor that has a distinct bitmap once (creating an NSCursor is not free) and
-    /// cache it per CK; the rest stay on the system `CursorIcon` (counted as "system fallbacks"). Call once,
-    /// after the event loop + window exist and BEFORE `hcursor` / `hcursor_svg_file` are queried.
-    /// Bitmaps are CURSOR_PX/SZ = 32 px, which winit on macOS turns into a 32×32-POINT cursor — the
-    /// right on-screen size on Retina (a 64 px bitmap would be a double-size cursor). Logs one line.
-    /// Returns (custom cursors built, of which from the Illustrator set).
-    pub fn create_custom_cursors<T: 'static>(el: &EventLoop<T>) -> (usize, usize) {
-        let built: Vec<Option<Built>> = ALL_CURSORS
-            .iter()
-            .map(|&ck| {
-                let make = |use_ai: bool| {
-                    let ((d, w, h, hx, hy), from_ai) = cursor_rgba(ck, use_ai)?;
-                    CustomCursor::from_rgba(d, w, h, hx, hy)
-                        .ok()
-                        .map(|src| Built { cursor: el.create_custom_cursor(src), from_ai })
-                };
-                // an Illustrator bitmap winit rejects falls back to the built-in one, like Windows does;
-                // no distinct bitmap at all → None → `set` keeps the system CursorIcon for this state
-                make(true).or_else(|| make(false))
-            })
-            .collect();
-        let n = built.iter().flatten().count();
-        let m = built.iter().flatten().filter(|b| b.from_ai).count();
-        let s = built.iter().filter(|b| b.is_none()).count();
-        let _ = CUSTOM.set(built);
-        eprintln!(
-            "[varos] cursors: {n} custom ({m} from cursors-ai, {} built-in) + {s} system fallbacks of {}",
-            n - m,
-            ALL_CURSORS.len()
-        );
-        (n, m)
-    }
-
-    fn built(slot: usize) -> Option<&'static Built> {
-        CUSTOM.get().and_then(|v| v.get(slot)).and_then(|b| b.as_ref())
-    }
-
-    /// Stand-in "cursor handle": a non-zero token (index into `ALL_CURSORS` + 1), decoded by `set`.
+    /// Stand-in "cursor handle": a non-zero token (slot in `ALL_CURSORS` + 1), decoded by `set`.
     pub fn hcursor(ck: CK) -> isize {
         ALL_CURSORS.iter().position(|c| *c == ck).map_or(0, |i| i as isize + 1)
     }
-    /// Some(token) when the cached cursor for the CK that uses this Illustrator `stem` really was built
-    /// from the local cursors-ai SVG; None otherwise (the caller then falls back to `hcursor`, which
-    /// resolves to the built-in bitmap for that CK). Hotspots come from `ai_svg`, as on Windows.
-    pub fn hcursor_svg_file(stem: &str, _hx: f32, _hy: f32) -> Option<isize> {
-        let i = ALL_CURSORS.iter().position(|&ck| ai_svg(ck).is_some_and(|(s, _, _)| s == stem))?;
-        built(i).filter(|b| b.from_ai).map(|_| i as isize + 1)
+
+    /// Build every cursor once (creating an NSCursor is not free), cache it per slot, log one line,
+    /// and return the CK → token table `main.rs` passes to `set`. macOS: a Retina NSCursor (32-pt
+    /// image with 32-px + 64-px bitmaps); if AppKit refuses it, a 32-px winit `CustomCursor`.
+    /// Elsewhere: the 32-px winit `CustomCursor`. A reference bitmap that is refused retries with v1.
+    pub fn create_cursors<T: 'static>(el: &EventLoop<T>) -> HashMap<CK, isize> {
+        /// What one slot ended up as (`bool` = built from the local reference set).
+        enum Made {
+            #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+            Native(bool),
+            Winit(CustomCursor, bool),
+            System,
+        }
+        let use_ai = ai_override_enabled();
+        let made: Vec<Made> = ALL_CURSORS
+            .iter()
+            .enumerate()
+            .map(|(slot, &ck)| {
+                #[cfg(target_os = "macos")]
+                if let Some(from_ai) = super::mac::build(slot, ck, use_ai) {
+                    return Made::Native(from_ai);
+                }
+                let _ = slot; // only the macOS native path caches per slot
+                let make = |ai: bool| {
+                    let ((d, w, h, hx, hy), from_ai): (CursorBitmap, bool) = cursor_rgba(ck, ai, CURSOR_PT)?;
+                    let src = CustomCursor::from_rgba(d, w, h, hx, hy).ok()?;
+                    Some(Made::Winit(el.create_custom_cursor(src), from_ai))
+                };
+                make(use_ai).or_else(|| make(false)).unwrap_or(Made::System)
+            })
+            .collect();
+        let count = |f: fn(&Made) -> bool| made.iter().filter(|m| f(m)).count();
+        let native = count(|m| matches!(m, Made::Native(_)));
+        let winit_1x = count(|m| matches!(m, Made::Winit(..)));
+        let system = count(|m| matches!(m, Made::System));
+        let overrides = count(|m| matches!(m, Made::Native(true) | Made::Winit(_, true)));
+        let _ = WINIT.set(
+            made.into_iter()
+                .map(|m| match m {
+                    Made::Winit(c, _) => Some(c),
+                    _ => None,
+                })
+                .collect(),
+        );
+        let how = if cfg!(target_os = "macos") { "Retina NSCursor (32 pt, 1x + 2x)" } else { "native" };
+        eprintln!("{}; {native} {how}, {winit_1x} winit 1x, {system} system fallbacks", summary_line(overrides));
+        ALL_CURSORS.iter().map(|&ck| (ck, hcursor(ck))).collect()
     }
 
-    /// System cursor for a state with no distinct custom bitmap (or one winit refused): the closest
-    /// winit built-in cursor for each tool/interaction state.
+    /// System cursor for a state whose custom cursor the OS refused: the closest winit built-in.
     pub fn icon(ck: CK) -> CursorIcon {
         match ck {
             CK::Select | CK::Direct => CursorIcon::Default,
@@ -849,16 +867,22 @@ mod portable {
         }
     }
 
+    /// Apply a cursor token after egui's platform output. On macOS main.rs only calls this while
+    /// the pointer is inside the focused client view. macOS Retina NSCursor first (`NSCursor::set`), else the cached winit cursor, else the system
+    /// icon. Cheap: `NSCursor::set` of the current cursor is a no-op for AppKit, a winit clone is a
+    /// refcount bump and winit returns early when the view already shows that cursor.
     pub fn set(hcursor: isize) {
         CUR.store(hcursor, Ordering::Relaxed);
         let Some(i) = usize::try_from(hcursor - 1).ok().filter(|&i| i < ALL_CURSORS.len()) else {
             return; // 0 / unknown token → keep the OS arrow
         };
+        #[cfg(target_os = "macos")]
+        if super::mac::set(i) {
+            return;
+        }
         if let Some(w) = WINDOW.get() {
-            // Re-asserted every frame by main.rs; cheap — the clone is a refcount bump and winit's
-            // macOS `set_cursor` returns early when the view already shows this NSCursor.
-            match built(i) {
-                Some(b) => w.set_cursor(b.cursor.clone()),
+            match WINIT.get().and_then(|v| v.get(i)).and_then(|c| c.as_ref()) {
+                Some(c) => w.set_cursor(c.clone()),
                 None => w.set_cursor(icon(ALL_CURSORS[i])),
             }
         }
@@ -889,9 +913,93 @@ mod portable {
 }
 #[cfg(not(windows))]
 pub use portable::{
-    bind_window, create_custom_cursors, custom_frame, dbg, hcursor, hcursor_svg_file, install, is_maximized, maximize,
-    set, set_caption, set_cloaked, set_dark_class_brush,
+    bind_window, create_cursors, custom_frame, dbg, install, is_maximized, maximize, set, set_caption, set_cloaked,
+    set_dark_class_brush,
 };
+
+// macOS Retina cursors. winit 0.30's `CustomCursor` makes the NSImage `width × height` POINTS from a
+// bitmap of the same pixel count (winit-0.30.13 src/platform_impl/macos/cursor.rs), so a 32-px bitmap
+// is a 32-pt cursor that AppKit upscales 2× on Retina — soft. Here each cursor is one NSImage of
+// 32×32 POINTS carrying TWO bitmap representations, 32 px (1×) and 64 px (2×), each rendered straight
+// from the SVG; AppKit picks the one matching the screen. The hotspot is in points (the 32-px space).
+//
+// Ownership: main.rs calls `set` after egui's platform output only while the pointer is inside the
+// focused client view. Entry and focus gain request redraws; exit/focus loss relinquish ownership.
+// ui.rs suppresses egui's changing cursor icons to avoid routine cursor-rect invalidations; fallback
+// Window::set_cursor writes can still invalidate the rect. AppKit owns the native title bar/outside.
+//
+// No `unsafe`: the bitmaps travel as PNG → `NSBitmapImageRep::imageRepWithData`, all safe objc2 APIs.
+// The NSCursors are !Send, so they live in a main-thread `thread_local!` (all cursor calls run there).
+#[cfg(target_os = "macos")]
+mod mac {
+    use super::{cursor_rgba, CursorBitmap, CK, CURSOR_PT, CURSOR_PX_2X};
+    use objc2::rc::Retained;
+    use objc2::AllocAnyThread;
+    use objc2_app_kit::{NSBitmapImageRep, NSCursor, NSImage};
+    use objc2_foundation::{NSData, NSPoint, NSSize};
+    use std::cell::RefCell;
+
+    thread_local! {
+        static NATIVE: RefCell<Vec<Option<Retained<NSCursor>>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Straight-alpha RGBA → PNG bytes (the image crate is already a dependency).
+    fn png(b: &CursorBitmap) -> Option<Vec<u8>> {
+        let img = image::RgbaImage::from_raw(b.1 as u32, b.2 as u32, b.0.clone())?;
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).ok()?;
+        Some(out.into_inner())
+    }
+
+    /// One 32×32-POINT NSCursor from a 1× (32 px) and a 2× (64 px) bitmap of the same glyph;
+    /// `hotspot_pt` is in points. None if AppKit cannot decode a bitmap.
+    pub fn nscursor(one_x: &CursorBitmap, two_x: &CursorBitmap, hotspot_pt: (f64, f64)) -> Option<Retained<NSCursor>> {
+        let pt = NSSize::new(CURSOR_PT as f64, CURSOR_PT as f64);
+        let image = NSImage::initWithSize(NSImage::alloc(), pt);
+        for b in [one_x, two_x] {
+            let rep = NSBitmapImageRep::imageRepWithData(&NSData::with_bytes(&png(b)?))?;
+            rep.setSize(pt); // 32 pt: the 64-px rep is therefore the 2× (Retina) one
+            image.addRepresentation(&rep);
+        }
+        Some(NSCursor::initWithImage_hotSpot(NSCursor::alloc(), &image, NSPoint::new(hotspot_pt.0, hotspot_pt.1)))
+    }
+
+    /// The 1× + 2× bitmaps for a CK from ONE source (reference override or v1), with that flag.
+    pub fn bitmaps(ck: CK, use_ai: bool) -> Option<(CursorBitmap, CursorBitmap, bool)> {
+        let pair = |ai: bool| {
+            let (a, a_ai) = cursor_rgba(ck, ai, CURSOR_PT)?;
+            let (b, b_ai) = cursor_rgba(ck, ai, CURSOR_PX_2X)?;
+            (a_ai == b_ai).then_some((a, b, a_ai))
+        };
+        pair(use_ai).or_else(|| pair(false))
+    }
+
+    /// Build + cache the Retina NSCursor for `slot`. Some(from reference set) on success.
+    pub fn build(slot: usize, ck: CK, use_ai: bool) -> Option<bool> {
+        let (one_x, two_x, from_ai) = bitmaps(ck, use_ai)?;
+        // hotspot in points = the 1× bitmap's pixel hotspot (1 px = 1 pt at 1×)
+        let cursor = nscursor(&one_x, &two_x, (one_x.3 as f64, one_x.4 as f64))?;
+        NATIVE.with(|n| {
+            let mut n = n.borrow_mut();
+            if n.len() <= slot {
+                n.resize(slot + 1, None);
+            }
+            n[slot] = Some(cursor);
+        });
+        Some(from_ai)
+    }
+
+    /// `NSCursor::set` the cached Retina cursor for `slot`; false if there is none (caller falls back).
+    pub fn set(slot: usize) -> bool {
+        NATIVE.with(|n| match n.borrow().get(slot) {
+            Some(Some(c)) => {
+                c.set();
+                true
+            }
+            _ => false,
+        })
+    }
+}
 
 /// True when the system-wide (outside-the-window) eyedropper can actually sample the screen. On other
 /// platforms the picker shows the eyedropper disabled rather than arming a pick that can never land.
@@ -899,91 +1007,204 @@ pub const SCREEN_EYEDROPPER: bool = cfg!(windows);
 
 #[cfg(test)]
 mod tests {
-    use super::colorref_to_rgba;
+    use super::*;
+
+    // Every CK variant is covered by the v1 table exactly once, in ALL_CURSORS order, with a hotspot
+    // inside the 32×32 grid and an embedded SVG; ALL_CURSORS itself lists each variant once.
+    #[test]
+    fn v1_table_covers_every_ck_once_with_hotspots_inside() {
+        let t = parse_v1(V1_HOTSPOTS_JSON).expect("hotspots.json parses");
+        assert_eq!(t.len(), 28);
+        for (i, e) in t.iter().enumerate() {
+            assert!(e.ck == ALL_CURSORS[i], "slot {i} out of order");
+            assert_eq!(ALL_CURSORS.iter().filter(|c| **c == e.ck).count(), 1, "{:?} listed twice", e.ck);
+            assert!(e.hx < 32 && e.hy < 32, "{:?} hotspot outside 32x32", e.ck);
+            assert!(e.svg.contains("<svg") && e.svg.contains("viewBox=\"0 0 32 32\""), "{}", e.file);
+            assert_eq!(slot(e.ck), i);
+        }
+        // exhaustive match: adding a CK variant without a slot fails to compile here
+        for ck in ALL_CURSORS {
+            match ck {
+                CK::Select
+                | CK::Direct
+                | CK::Pen
+                | CK::PenNew
+                | CK::PenAdd
+                | CK::PenDel
+                | CK::PenClose
+                | CK::PenConnect
+                | CK::Convert
+                | CK::Cross
+                | CK::Eye
+                | CK::ResizeH
+                | CK::ResizeV
+                | CK::ResizeNE
+                | CK::ResizeNW
+                | CK::Move
+                | CK::Hand
+                | CK::Grab
+                | CK::Copy
+                | CK::NoDrop
+                | CK::RotateE
+                | CK::RotateSE
+                | CK::RotateS
+                | CK::RotateSW
+                | CK::RotateW
+                | CK::RotateNW
+                | CK::RotateN
+                | CK::RotateNE => {}
+            }
+        }
+        // Embed the entire set, including the three proposed states without a CK yet.
+        let json: serde_json::Value = serde_json::from_str(V1_HOTSPOTS_JSON).unwrap();
+        let files = json["files"].as_object().unwrap();
+        assert_eq!(V1_FILES.len(), 30);
+        assert_eq!(files.len(), V1_FILES.len());
+        let unique: std::collections::HashSet<_> = V1_FILES.iter().map(|(file, _)| *file).collect();
+        assert_eq!(unique.len(), V1_FILES.len());
+        for (file, _) in V1_FILES {
+            assert!(files.contains_key(file), "{file} missing from hotspots.json");
+        }
+    }
+
+    // The embedded table matches hotspots.json's own "files" map, and `Move` is the selection arrow.
+    #[test]
+    fn move_is_select_and_hotspots_match_the_files_map() {
+        let v: serde_json::Value = serde_json::from_str(V1_HOTSPOTS_JSON).unwrap();
+        for e in v1_table() {
+            let h = &v["files"][e.file];
+            assert_eq!((h[0].as_u64(), h[1].as_u64()), (Some(e.hx as u64), Some(e.hy as u64)), "{}", e.file);
+        }
+        assert_eq!(v1(CK::Move).file, "select.svg");
+        assert_eq!((v1(CK::Move).hx, v1(CK::Move).hy), (v1(CK::Select).hx, v1(CK::Select).hy));
+        assert!(v1_rgba(CK::Move, 32).unwrap().0 == v1_rgba(CK::Select, 32).unwrap().0);
+    }
+
+    // Broken data is rejected with a message (missing CK, unknown file, hotspot outside the grid).
+    #[test]
+    fn parse_v1_rejects_bad_data() {
+        assert!(parse_v1("{}").is_err());
+        let bad_hot = V1_HOTSPOTS_JSON.replacen("\"hotspot\": [2, 2]", "\"hotspot\": [32, 2]", 1);
+        assert!(parse_v1(&bad_hot).unwrap_err().contains("outside"));
+        let bad_file = V1_HOTSPOTS_JSON.replacen("\"file\": \"direct.svg\"", "\"file\": \"nope.svg\"", 1);
+        assert!(parse_v1(&bad_file).unwrap_err().contains("not embedded"));
+    }
+
+    // Every v1 bitmap: 32×32 (1×) and 64×64 (2×) straight RGBA, not blank, hotspot inside and on or
+    // next to ink, accepted by winit's `CustomCursor::from_rgba` (pure: no EventLoop, no GPU).
+    #[test]
+    fn every_v1_bitmap_is_non_blank_at_1x_and_2x_with_hotspot_inside() {
+        for ck in ALL_CURSORS {
+            for px in [CURSOR_PT, CURSOR_PX_2X] {
+                let (d, w, h, hx, hy) = v1_rgba(ck, px).unwrap_or_else(|| panic!("{ck:?} failed to render"));
+                assert_eq!((w as u32, h as u32), (px, px), "{ck:?}");
+                assert_eq!(d.len(), px as usize * px as usize * 4);
+                assert!(hx < w && hy < h, "{ck:?} hotspot ({hx},{hy}) outside {w}x{h}");
+                let ink = d.chunks(4).filter(|p| p[3] > 0).count();
+                assert!(ink > 20, "{ck:?} at {px}px is (nearly) blank");
+                // the hotspot lies on ink or within 2 px (1×) of it — a misplaced hotspot would not
+                let r = (2 * px / CURSOR_PT) as i32;
+                let near = (-r..=r).any(|dy| {
+                    (-r..=r).any(|dx| {
+                        let (x, y) = (hx as i32 + dx, hy as i32 + dy);
+                        x >= 0 && y >= 0 && x < w as i32 && y < h as i32 && d[((y * w as i32 + x) * 4 + 3) as usize] > 0
+                    })
+                });
+                assert!(near, "{ck:?} hotspot not on/near ink at {px}px");
+                assert!(winit::window::CustomCursor::from_rgba(d, w, h, hx, hy).is_ok(), "{ck:?}");
+            }
+        }
+    }
+
+    // Check all 30 embedded files (including proposed states), with no window or GPU.
+    // Distinct files must have distinct bitmaps at both sizes.
+    #[test]
+    fn all_embedded_files_render_distinct_non_blank_bitmaps_at_both_sizes() {
+        let json: serde_json::Value = serde_json::from_str(V1_HOTSPOTS_JSON).unwrap();
+        for px in [CURSOR_PT, CURSOR_PX_2X] {
+            let mut rendered = Vec::new();
+            for (file, svg) in V1_FILES {
+                let bitmap = rasterize(svg, px).unwrap_or_else(|| panic!("{file} at {px}px"));
+                assert_eq!(bitmap.len(), (px * px * 4) as usize, "{file}");
+                assert!(bitmap.chunks(4).any(|p| p[3] != 0), "{file} is blank");
+                let hs = json["files"][file].as_array().unwrap();
+                assert_eq!(hs.len(), 2);
+                for h in hs {
+                    let h = h.as_u64().unwrap();
+                    assert!(h < CURSOR_PT as u64, "{file} hotspot outside logical grid");
+                    assert!((hotspot_px(h as f32, px) as u32) < px, "{file} hotspot outside bitmap");
+                }
+                for (other_file, other_bitmap) in &rendered {
+                    assert!(&bitmap != other_bitmap, "{file} == {other_file} at {px}px");
+                }
+                rendered.push((file, bitmap));
+            }
+        }
+        let files: std::collections::HashSet<_> = v1_table().iter().map(|e| e.file).collect();
+        assert_eq!(files.len(), 27);
+    }
+
+    // v1 is the default: without the env var the reference set is never consulted, and with it an
+    // absent reference file falls back to v1 (the reference set is never in CI).
+    #[test]
+    fn v1_is_the_default_and_the_reference_override_is_opt_in() {
+        for ck in ALL_CURSORS {
+            let (b, from_ai) = cursor_rgba(ck, false, 32).unwrap();
+            assert!(!from_ai);
+            assert!(b.0 == v1_rgba(ck, 32).unwrap().0);
+            let (stem, hx, hy) = ai_svg(ck);
+            assert!(hx < 32.0 && hy < 32.0, "{stem}");
+            let present = std::path::Path::new(&format!("{AI_SVG_DIR}{stem}.svg")).exists();
+            let (b, from_ai) = cursor_rgba(ck, true, 32).unwrap();
+            assert_eq!(from_ai, present, "{stem}");
+            assert_eq!((b.1, b.2), (32, 32));
+        }
+        assert_eq!(AI_ENV, "VAROS_CURSORS_AI");
+        assert_eq!(summary_line(0), "[varos] cursors: 28 v1 (+ 0 reference overrides)");
+    }
 
     // macOS port — every cursor gets a distinct non-zero token that decodes back to itself, so
     // `set` never falls through to "keep the OS arrow" for a real cursor.
     #[cfg(not(windows))]
     #[test]
     fn portable_cursor_tokens_round_trip() {
-        use super::{hcursor, ALL_CURSORS};
         for (i, ck) in ALL_CURSORS.iter().enumerate() {
-            let t = hcursor(*ck);
+            let t = portable::hcursor(*ck);
             assert_eq!(t, i as isize + 1);
             assert!(ALL_CURSORS[(t - 1) as usize] == *ck);
         }
     }
 
-    // Every CK's built-in bitmap (`rgba` — what the Win32 HCURSOR fallback uses for all 28) is 32×32
-    // straight RGBA with its hotspot inside, is not blank, and passes winit's own
-    // `CustomCursor::from_rgba` validation (pure: no EventLoop, no GPU).
+    // macOS Retina: every CK builds an NSCursor whose image is 32×32 POINTS and carries a 32-px and a
+    // 64-px representation (the 2× one is what a Retina screen shows), hotspot in points. AppKit
+    // objects only — no window, no EventLoop, no GPU.
+    #[cfg(target_os = "macos")]
     #[test]
-    fn every_cursor_bitmap_is_32px_with_hotspot_inside_and_winit_accepts_it() {
-        use super::{rgba, ALL_CURSORS};
+    fn macos_retina_nscursor_is_32pt_with_1x_and_2x_reps() {
         for ck in ALL_CURSORS {
-            let (d, w, h, hx, hy) = rgba(ck);
-            assert_eq!((w, h), (32, 32));
-            assert_eq!(d.len(), w as usize * h as usize * 4);
-            assert!(hx < w && hy < h, "hotspot ({hx},{hy}) outside {w}x{h}");
-            assert!(d.chunks(4).any(|p| p[3] > 0), "blank cursor bitmap");
-            assert!(winit::window::CustomCursor::from_rgba(d, w, h, hx, hy).is_ok());
-        }
-    }
-
-    // `has_builtin` is the explicit list of real glyphs: it matches `ALL` (the SVG-backed set), and each
-    // of those glyphs is a different bitmap from the Select arrow placeholder (except Select itself).
-    // With use_ai=false, `cursor_rgba` offers exactly those and nothing else.
-    #[test]
-    fn has_builtin_is_exactly_the_distinct_svg_glyphs() {
-        use super::{cursor_rgba, has_builtin, rgba, ALL, ALL_CURSORS, CK};
-        let arrow = rgba(CK::Select).0;
-        for ck in ALL_CURSORS {
-            assert_eq!(has_builtin(ck), ALL.contains(&ck));
-            if has_builtin(ck) && ck != CK::Select {
-                assert!(rgba(ck).0 != arrow, "a 'distinct' built-in is really the arrow placeholder");
+            let (one_x, two_x, from_ai) = mac::bitmaps(ck, false).expect("bitmaps");
+            assert!(!from_ai);
+            assert_eq!((one_x.1, two_x.1), (32, 64));
+            let c = mac::nscursor(&one_x, &two_x, (one_x.3 as f64, one_x.4 as f64)).expect("NSCursor");
+            let img = c.image();
+            let size = img.size();
+            assert_eq!((size.width, size.height), (32.0, 32.0), "{ck:?} image not 32 pt");
+            let mut px: Vec<isize> = img.representations().iter().map(|r| r.pixelsWide()).collect();
+            px.sort();
+            assert_eq!(px, vec![32, 64], "{ck:?} reps");
+            for r in img.representations().iter() {
+                let s = r.size();
+                assert_eq!((s.width, s.height), (32.0, 32.0), "{ck:?} rep not 32 pt");
             }
-            match cursor_rgba(ck, false) {
-                Some((_, from_ai)) => assert!(has_builtin(ck) && !from_ai),
-                None => assert!(!has_builtin(ck)),
-            }
-        }
-    }
-
-    // Review P2 — in a fresh clone (no cursors-ai), no state may silently collapse into the plain arrow:
-    // each CK has a distinct built-in bitmap OR keeps a non-default system CursorIcon on this platform.
-    #[cfg(not(windows))]
-    #[test]
-    fn without_cursors_ai_no_state_collapses_to_the_arrow() {
-        use super::portable::icon;
-        use super::{cursor_rgba, ALL_CURSORS};
-        use winit::window::CursorIcon;
-        for (slot, ck) in ALL_CURSORS.into_iter().enumerate() {
-            let distinct = cursor_rgba(ck, false).is_some();
-            assert!(distinct || icon(ck) != CursorIcon::Default, "ALL_CURSORS[{slot}] collapses to the arrow");
-        }
-    }
-
-    // The Illustrator (local, gitignored) set: hotspots scale inside the CURSOR_PX bitmap. A file that
-    // is ABSENT is skipped (that set is never shipped; the built-in set above is what CI always checks),
-    // but a file that is PRESENT must render at CURSOR_PX, be preferred, and pass winit — a present but
-    // broken file fails the test with its name instead of being silently skipped.
-    #[test]
-    fn illustrator_cursor_hotspots_fit_and_present_files_render() {
-        use super::{ai_svg, cursor_rgba, svg_file_rgba, AI_SVG_DIR, ALL_CURSORS, CURSOR_PX};
-        for ck in ALL_CURSORS {
-            let (stem, hx, hy) = ai_svg(ck).expect("every CK maps to an Illustrator stem");
-            let s = CURSOR_PX as f32 / 32.0;
-            assert!((hx * s).round() < CURSOR_PX as f32 && (hy * s).round() < CURSOR_PX as f32, "{stem}");
-            if !std::path::Path::new(&format!("{AI_SVG_DIR}{stem}.svg")).exists() {
-                continue;
-            }
-            let (d, w, h, bx, by) =
-                svg_file_rgba(stem, hx, hy).unwrap_or_else(|| panic!("{stem}.svg is present but failed to render"));
-            assert_eq!((w as u32, h as u32), (CURSOR_PX, CURSOR_PX), "{stem}");
-            assert_eq!(d.len(), w as usize * h as usize * 4, "{stem}");
-            assert!(bx < w && by < h, "{stem}");
-            assert!(cursor_rgba(ck, true).is_some_and(|(_, ai)| ai), "{stem} present but not preferred");
-            assert!(winit::window::CustomCursor::from_rgba(d, w, h, bx, by).is_ok(), "{stem}");
+            let hs = c.hotSpot();
+            assert_eq!((hs.x, hs.y), (v1(ck).hx as f64, v1(ck).hy as f64), "{ck:?} hotspot");
+            // with the dev override on, a PRESENT reference file gives both sizes from that file
+            // (absent files — always, in CI — fall back to v1 for both)
+            let (a, b, from_ai) = mac::bitmaps(ck, true).expect("bitmaps (override)");
+            let (stem, _, _) = ai_svg(ck);
+            assert_eq!(from_ai, std::path::Path::new(&format!("{AI_SVG_DIR}{stem}.svg")).exists(), "{stem}");
+            assert_eq!((a.1, b.1), (32, 64), "{stem}");
+            assert!(mac::nscursor(&a, &b, (a.3 as f64, a.4 as f64)).is_some(), "{stem}");
         }
     }
 

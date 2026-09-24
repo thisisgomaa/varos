@@ -6,7 +6,7 @@
 - **Authority:** none. Level-5 document under `docs/foundation/FOUNDATION_CHARTER.md` §3. If anything here conflicts with `docs/UI_DIRECTION.md`, the law wins.
 - **Deliverables (committed):** `varos/crates/varos-app/assets/cursors/v1/` holds **30 SVGs** and `hotspots.json`. `hotspots.json` maps all 28 `CK` variants plus 3 proposed ones to a file and a hotspot.
 - **Review page (NOT committed):** `varos/target/cursors-review/gallery.html`. It sits under `target/`, which is gitignored, because it holds copies of Adobe's cursors for side-by-side viewing.
-- **Code:** `cursors.rs` and `main.rs` are untouched. §6 lists what changes once the set is wired.
+- **Code:** `cursors.rs` and `main.rs` were untouched when this study was written. **Update 2026-09-24:** the set is now wired (embedded, default on every platform, 1×/2× Retina representations on macOS; human sharpness verification pending) — see `docs/foundation/MAC_SHELL_PORT.md` § "Tool cursors: Varos cursor set v1". §6 below is the plan as written before wiring.
 
 ---
 
@@ -145,7 +145,7 @@ The comparison gallery holds Adobe's files, so it lives only under the gitignore
 
 **Independent check (round 2):** Codex compared the 20 round-2 files against the same 326 Adobe SVGs and judged all 20 Original — **APPROVE WITH NITS**. Both nits were doc-only (badge sizes and caps/grid described inaccurately in §3) and are fixed in §3 above. The set merged to `main` on 2026-09-23.
 
-## 6. How to wire the set (after sign-off; nothing here is done yet)
+## 6. How to wire the set (the plan as written before wiring — implemented 2026-09-24, see the update in the header)
 
 1. **Table, in `varos/crates/varos-app/src/cursors.rs`:**
    - Add `pub fn varos_svg(ck: CK) -> (&'static str, f32, f32)`, returning (stem, hx, hy) for **all 28 `CK` variants**. It mirrors `ai_svg()` (lines 91–125) but points at `assets/cursors/v1/`, and its values come from `hotspots.json` → `"ck"`.
