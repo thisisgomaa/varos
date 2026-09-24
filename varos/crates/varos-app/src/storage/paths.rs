@@ -70,7 +70,6 @@ pub fn resolve_data_root(os: Os, env: &dyn Fn(&str) -> Option<OsString>, home: O
 
 /// The data root for this process (real environment + real home folder).
 pub fn data_root() -> Option<PathBuf> {
-    #[allow(deprecated)] // un-deprecated in newer std; the Windows quirk it was deprecated for is fixed
     let home = std::env::home_dir();
     resolve_data_root(Os::current(), &|k| std::env::var_os(k), home)
 }

@@ -6,17 +6,19 @@
 //!    missing folder is reported;
 //! 2. the bytes go to a unique hidden temp **in the same folder** (`.{name}.{nonce}.varos-tmp`,
 //!    created with O_EXCL — two writes never share a temp);
-//! 3. `write_all` → `sync_all` → close → copy the destination's permissions onto the temp.
-//!    On Apple targets `File::sync_all` issues `fcntl(F_FULLFSYNC)` (Rust 1.94.1
+//! 3. copy the destination's permissions onto the (still empty) temp → `write_all` → `sync_all` →
+//!    close. On Apple targets `File::sync_all` issues `fcntl(F_FULLFSYNC)` (Rust 1.94.1
 //!    `library/std/src/sys/fs/unix.rs:1381-1388`, `os_fsync` under `cfg(target_vendor = "apple")`),
-//!    so the bytes are on the platter, not just in the drive cache. Some volumes (network shares,
-//!    some USB sticks) reject F_FULLFSYNC with ENOTSUP/ENOTTY/EINVAL; then, like SQLite's
-//!    `full_fsync`, Varos retries with a plain `fsync` before calling it a failure;
+//!    so the bytes are on the platter, not just in the drive cache. Some volumes (SMB shares, some
+//!    USB sticks) reject F_FULLFSYNC — typically with ENOTSUP (45 on macOS, which std reports as
+//!    `ErrorKind::Uncategorized`). Exactly like SQLite's `full_fsync` (`if( rc ) rc = fsync(fd);`),
+//!    ANY F_FULLFSYNC error is retried with a plain `fsync`; a real disk error surfaces from that;
 //! 4. `rename(temp, dest)` — POSIX `rename(2)` is an atomic replace; on Windows `std::fs::rename`
 //!    replaces an existing file, and a sharing violation (file open elsewhere) fails **before**
 //!    anything is replaced;
-//! 5. Unix: the folder is synced (same fallback) so the rename itself survives power loss; a failed
-//!    folder sync never fails the write — it reports [`WriteOutcome::ReplacedUnconfirmed`]. Windows: skipped;
+//! 5. Unix: the folder is synced (same fallback) so the rename itself survives power loss. A folder
+//!    sync never fails the write: "not supported on this volume" (by errno, per OS) counts as
+//!    durable, any other error reports [`WriteOutcome::ReplacedUnconfirmed`]. Windows: skipped;
 //! 6. any failure before step 4 removes the temp (best effort) and leaves the destination untouched.
 //!    The destination is never deleted first.
 //!
@@ -27,6 +29,8 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
+
+use super::paths::Os;
 
 /// A writer whose contents can be forced to stable storage.
 pub trait SyncWrite: Write + Send {
@@ -39,22 +43,45 @@ impl SyncWrite for std::fs::File {
     }
 }
 
-/// `ENOTTY` — 25 on both macOS and Linux (checked against `libc` on macOS below).
-const ENOTTY: i32 = 25;
+// errno values meaning "this volume can't do that sync" (macOS numbers checked against `libc`).
+const MAC_EINVAL: i32 = 22;
+const MAC_ENOTTY: i32 = 25;
+const MAC_ENOTSUP: i32 = 45;
+const MAC_ENOSYS: i32 = 78;
+const MAC_EOPNOTSUPP: i32 = 102;
 #[cfg(target_os = "macos")]
-const _: () = assert!(ENOTTY == libc::ENOTTY);
+const _: () = assert!(
+    MAC_EINVAL == libc::EINVAL
+        && MAC_ENOTTY == libc::ENOTTY
+        && MAC_ENOTSUP == libc::ENOTSUP
+        && MAC_ENOSYS == libc::ENOSYS
+        && MAC_EOPNOTSUPP == libc::EOPNOTSUPP
+);
+// Linux: EINVAL 22, ENOTTY 25, ENOSYS 38, EOPNOTSUPP = ENOTSUP 95.
+const LINUX_UNSUPPORTED: [i32; 4] = [22, 25, 38, 95];
 
-/// Did a full sync fail only because the volume doesn't support it (ENOTSUP / ENOTTY / EINVAL)?
-fn full_sync_unsupported(e: &io::Error) -> bool {
-    matches!(e.kind(), io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput) || e.raw_os_error() == Some(ENOTTY)
+/// Is raw `errno` a "not supported by this volume" answer on `os`? Pure, so the macOS table is
+/// tested on Linux. (std maps macOS ENOTSUP = 45 to `Uncategorized`, so the kind alone misses it.)
+fn unsupported_errno(os: Os, raw: i32) -> bool {
+    match os {
+        Os::Mac => [MAC_EINVAL, MAC_ENOTTY, MAC_ENOTSUP, MAC_ENOSYS, MAC_EOPNOTSUPP].contains(&raw),
+        Os::Linux => LINUX_UNSUPPORTED.contains(&raw),
+        Os::Windows => false,
+    }
 }
 
-/// Run the full sync; if the volume rejects it as unsupported, run the plain sync instead
-/// (SQLite's `full_fsync` fallback). Any other full-sync error is returned as is.
+/// Did a folder sync fail only because the volume can't sync folders?
+fn sync_unsupported(os: Os, e: &io::Error) -> bool {
+    matches!(e.kind(), io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput)
+        || e.raw_os_error().is_some_and(|raw| unsupported_errno(os, raw))
+}
+
+/// SQLite's `full_fsync`: run the full sync; on ANY error run the plain sync, whose result is final
+/// (a real disk error surfaces from it).
 fn sync_with_fallback(full: impl FnOnce() -> io::Result<()>, plain: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
     match full() {
-        Err(e) if full_sync_unsupported(&e) => plain(),
-        r => r,
+        Ok(()) => Ok(()),
+        Err(_) => plain(),
     }
 }
 
@@ -74,7 +101,7 @@ fn plain_fsync(f: &std::fs::File) -> io::Result<()> {
     }
 }
 
-/// `File::sync_all` (F_FULLFSYNC on macOS) with the plain-`fsync` fallback for volumes that reject it.
+/// `File::sync_all` (F_FULLFSYNC on macOS), falling back to plain `fsync` on any F_FULLFSYNC error.
 #[cfg(target_os = "macos")]
 fn full_sync(f: &std::fs::File) -> io::Result<()> {
     sync_with_fallback(|| f.sync_all(), || plain_fsync(f))
@@ -102,10 +129,12 @@ pub trait FsPort: Send + Sync {
     /// Create a new file, failing if it already exists (O_EXCL).
     fn create_new(&self, path: &Path) -> io::Result<Box<dyn SyncWrite>>;
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
-    /// Flush a directory's entries (Unix). May return `Unsupported`/`InvalidInput` on some systems.
+    /// Flush a directory's entries (Unix; same full-sync → plain-fsync fallback as files). May
+    /// return a "not supported" error on some volumes.
     fn sync_dir(&self, dir: &Path) -> io::Result<()>;
     fn remove_file(&self, path: &Path) -> io::Result<()>;
-    /// Remove an EMPTY directory.
+    /// Remove an EMPTY directory. Unused by the writer itself; kept for the recovery store's
+    /// cleanup (piece C: retired session folders, stale temp folders).
     fn remove_dir(&self, path: &Path) -> io::Result<()>;
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
     fn metadata(&self, path: &Path) -> io::Result<FileMeta>;
@@ -285,7 +314,7 @@ pub fn temp_path(dest: &Path, nonce: &str) -> PathBuf {
 }
 
 /// Longest slice of the destination's file name kept in a temp name (bytes). With the dots, a
-/// 32-char nonce and `.varos-tmp` the temp name stays ≤ 173 bytes.
+/// 32-char nonce and `.varos-tmp` the temp name stays ≤ 172 bytes (1 + 128 + 1 + 32 + 10).
 pub const TEMP_NAME_MAX_BYTES: usize = 128;
 
 /// Replace `dest` with `bytes` durably (see the module docs for the exact steps).
@@ -313,9 +342,13 @@ pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) ->
         _ => None,
     };
 
-    // 2–3. Unique temp in the same folder: write, sync, close, copy permissions.
+    // 2–3. Unique temp in the same folder: copy permissions (before any byte lands, so a private
+    // document is never readable through its temp), write, sync, close.
     let temp = temp_path(&dest, nonce);
     let mut w = fs.create_new(&temp).map_err(WriteError::Create)?;
+    if let Some(p) = old_perms {
+        let _ = fs.set_permissions(&temp, p); // best effort; a new file keeps default permissions
+    }
     let fail = |w: Box<dyn SyncWrite>, err: WriteError| {
         drop(w);
         let _ = fs.remove_file(&temp);
@@ -328,9 +361,6 @@ pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) ->
         return fail(w, WriteError::Sync(e));
     }
     drop(w);
-    if let Some(p) = old_perms {
-        let _ = fs.set_permissions(&temp, p); // best effort; a new file keeps default permissions
-    }
 
     // 4. Atomic replace.
     if let Err(e) = fs.rename(&temp, &dest) {
@@ -346,7 +376,7 @@ pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) ->
         Ok(()) => Ok(WriteOutcome::Durable),
         // Some file systems cannot sync a directory at all (even after the plain-fsync fallback);
         // the rename is then as durable as that volume allows.
-        Err(e) if full_sync_unsupported(&e) => Ok(WriteOutcome::Durable),
+        Err(e) if sync_unsupported(Os::current(), &e) => Ok(WriteOutcome::Durable),
         // Never fails the write: the new bytes are in place, only the confirmation is missing.
         Err(e) => Ok(WriteOutcome::ReplacedUnconfirmed(e)),
     }
@@ -377,8 +407,7 @@ pub enum Step {
     },
     /// Both the full sync and its plain-`fsync` fallback fail.
     Sync,
-    /// Only the full sync (F_FULLFSYNC) fails; the plain-`fsync` fallback then runs if the error
-    /// kind is `Unsupported`/`InvalidInput` (or raw ENOTTY).
+    /// Only the full sync (F_FULLFSYNC) fails; the plain-`fsync` fallback then runs (any error).
     FullSync,
     Rename,
     SyncDir,
@@ -396,12 +425,15 @@ pub struct Fault {
     /// source and destination are both checked.
     pub path_contains: Option<String>,
     pub kind: io::ErrorKind,
+    /// When set, the injected error is `io::Error::from_raw_os_error(n)` (real errno decoding,
+    /// e.g. macOS ENOTSUP = 45) instead of one built from `kind`.
+    pub raw_os_error: Option<i32>,
 }
 
 impl Fault {
     /// A fault at `step` on any path, with `ErrorKind::Other`.
     pub fn at(step: Step) -> Self {
-        Fault { step, path_contains: None, kind: io::ErrorKind::Other }
+        Fault { step, path_contains: None, kind: io::ErrorKind::Other, raw_os_error: None }
     }
     pub fn on(mut self, path_contains: &str) -> Self {
         self.path_contains = Some(path_contains.to_string());
@@ -411,6 +443,11 @@ impl Fault {
         self.kind = kind;
         self
     }
+    /// Inject a raw OS error number (decoded by std exactly like a real syscall failure).
+    pub fn os_error(mut self, raw: i32) -> Self {
+        self.raw_os_error = Some(raw);
+        self
+    }
     fn matches_path(&self, paths: &[&Path]) -> bool {
         match &self.path_contains {
             None => true,
@@ -418,6 +455,9 @@ impl Fault {
         }
     }
     fn error(&self) -> io::Error {
+        if let Some(raw) = self.raw_os_error {
+            return io::Error::from_raw_os_error(raw);
+        }
         io::Error::new(self.kind, format!("injected fault at {:?}", self.step))
     }
 }
@@ -656,33 +696,73 @@ mod tests {
     }
 
     #[test]
-    fn full_sync_unsupported_falls_back_to_plain_fsync() {
-        // F_FULLFSYNC rejected by the volume (ENOTSUP / EINVAL / ENOTTY) ⇒ plain fsync ⇒ saved, durable.
-        let enotty = || io::Error::from_raw_os_error(ENOTTY);
-        assert!(full_sync_unsupported(&enotty()));
-        for kind in [io::ErrorKind::Unsupported, io::ErrorKind::InvalidInput] {
+    fn full_sync_error_falls_back_to_plain_fsync() {
+        // SMB/USB volumes on macOS reject F_FULLFSYNC with ENOTSUP = 45, which std decodes as
+        // `Uncategorized`: the plain fsync must still run and the save succeed. Any other full-sync
+        // error takes the same path (SQLite rule); only the plain fsync's own error is final.
+        let cases = [
+            Fault::at(Step::FullSync).os_error(45),
+            Fault::at(Step::FullSync).os_error(5), // EIO from F_FULLFSYNC: plain fsync still decides
+            Fault::at(Step::FullSync).kind(io::ErrorKind::Unsupported),
+            Fault::at(Step::FullSync),
+        ];
+        for fault in cases {
+            let label = format!("{fault:?}");
             let (d, dest) = setup("dur-fullsync");
-            let fs = FaultFs::new(vec![Fault::at(Step::FullSync).kind(kind)]);
+            let fs = FaultFs::new(vec![fault]);
             let out = write_replace(&fs, &dest, NEW, &new_nonce()).unwrap();
-            assert!(matches!(out, WriteOutcome::Durable), "{kind:?}: {out:?}");
-            assert_eq!(fs.pending(), 0);
+            assert!(matches!(out, WriteOutcome::Durable), "{label}: {out:?}");
+            assert_eq!(fs.pending(), 0, "{label}: the fault must have fired");
             assert_eq!(std::fs::read(&dest).unwrap(), NEW);
             assert!(temps(&d).is_empty());
         }
-        // Any other full-sync error (e.g. an I/O error) is NOT papered over: the write fails, old file kept.
-        assert_fault_keeps_old("dur-fullsync-io", Fault::at(Step::FullSync), |e| matches!(e, WriteError::Sync(_)));
-        // The fallback helper: plain sync runs only for "unsupported" errors, and its result is final.
-        let ran = std::cell::Cell::new(false);
-        let plain_ok = || {
-            ran.set(true);
-            Ok(())
-        };
-        assert!(sync_with_fallback(|| Err(enotty()), plain_ok).is_ok());
-        assert!(ran.replace(false));
-        let r = sync_with_fallback(|| Err(io::Error::other("eio")), || unreachable!("no fallback for real I/O errors"));
-        assert!(r.is_err());
-        let r = sync_with_fallback(|| Err(io::ErrorKind::Unsupported.into()), || Err(io::Error::other("plain failed")));
+        // The raw 45 really is "uncategorized" to std's kind mapping (why the kind check alone missed it on Mac).
+        if cfg!(target_os = "macos") {
+            assert!(!matches!(
+                io::Error::from_raw_os_error(45).kind(),
+                io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput
+            ));
+        }
+        // When the plain fsync fails too, the write fails and the old file is kept.
+        assert_fault_keeps_old("dur-fullsync-both", Fault::at(Step::Sync).os_error(5), |e| {
+            matches!(e, WriteError::Sync(_))
+        });
+        // The helper: the plain sync's result is final.
+        let r = sync_with_fallback(|| Err(io::Error::from_raw_os_error(45)), || Err(io::Error::other("plain failed")));
         assert_eq!(r.unwrap_err().to_string(), "plain failed");
+        assert!(sync_with_fallback(|| Ok(()), || unreachable!("no fallback after success")).is_ok());
+    }
+
+    #[test]
+    fn unsupported_errno_table_per_os() {
+        for raw in [22, 25, 45, 78, 102] {
+            assert!(unsupported_errno(Os::Mac, raw), "mac {raw}");
+        }
+        for raw in [22, 25, 38, 95] {
+            assert!(unsupported_errno(Os::Linux, raw), "linux {raw}");
+        }
+        for raw in [5, 28, 13] {
+            // EIO, ENOSPC, EACCES are real failures everywhere.
+            assert!(!unsupported_errno(Os::Mac, raw) && !unsupported_errno(Os::Linux, raw), "{raw}");
+        }
+        assert!(!unsupported_errno(Os::Linux, 45), "45 is not ENOTSUP on Linux");
+        assert!(!unsupported_errno(Os::Windows, 45));
+        assert!(sync_unsupported(Os::Mac, &io::Error::from_raw_os_error(45)));
+        assert!(sync_unsupported(Os::Linux, &io::ErrorKind::Unsupported.into()));
+        assert!(!sync_unsupported(Os::Mac, &io::Error::from_raw_os_error(5)));
+    }
+
+    #[test]
+    fn dir_sync_unsupported_errno_counts_as_durable() {
+        let (_d, dest) = setup("dur-dirsync-errno");
+        let raw = if cfg!(target_os = "macos") { 45 } else { 95 }; // ENOTSUP on this host
+        let fs = FaultFs::new(vec![Fault::at(Step::SyncDir).os_error(raw)]);
+        let out = write_replace(&fs, &dest, NEW, &new_nonce()).unwrap();
+        assert!(matches!(out, WriteOutcome::Durable), "{out:?}");
+        let fs = FaultFs::new(vec![Fault::at(Step::SyncDir).os_error(5)]); // EIO: new bytes in place, unconfirmed
+        let out = write_replace(&fs, &dest, OLD, &new_nonce()).unwrap();
+        assert!(matches!(out, WriteOutcome::ReplacedUnconfirmed(_)), "{out:?}");
+        assert_eq!(std::fs::read(&dest).unwrap(), OLD);
     }
 
     #[test]
@@ -791,6 +871,16 @@ mod tests {
         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o640)).unwrap();
         write_replace(&RealFs, &dest, NEW, &new_nonce()).unwrap();
         assert_eq!(std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777, 0o640);
+        assert_eq!(std::fs::read(&dest).unwrap(), NEW);
+        // The permissions land on the temp BEFORE any byte: fail the very first write and the
+        // temp's permission change has already happened.
+        let fs = FaultFs::new(vec![Fault::at(Step::Write { after: 0 })]);
+        let nonce = new_nonce();
+        write_replace(&fs, &dest, OLD, &nonce).unwrap_err();
+        let temp = temp_path(&dest, &nonce);
+        let log = fs.log();
+        let created = log.iter().position(|e| *e == (Op::Create, temp.clone())).unwrap();
+        assert_eq!(log[created + 1], (Op::SetPermissions, temp), "permissions copied right after create");
         assert_eq!(std::fs::read(&dest).unwrap(), NEW);
     }
 
