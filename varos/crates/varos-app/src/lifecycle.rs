@@ -198,11 +198,8 @@ impl Lifecycle<'_> {
         loop {
             let picked = self.dialogs.pick_save(&suggested, dir.as_deref())?;
             let (dest, appended) = if is_vrs(&picked) { (picked, false) } else { (with_vrs(picked), true) };
-            // The Save dialog already asked about the name the user typed; only a name WE changed
-            // needs its own “Replace?”.
-            if appended && self.store.exists(&dest) && !self.dialogs.confirm_replace(&file_name(&dest)) {
-                continue;
-            }
+            // Another tab's file is refused FIRST, so the user is never asked “Replace?” about a file
+            // that cannot be replaced anyway.
             let key = self.store.key(&dest);
             if let Some(other) = self.open_tab_of(&key, Some(id)) {
                 let other = self.name_of(other);
@@ -210,6 +207,11 @@ impl Lifecycle<'_> {
                     &format!("“{other}” is open in another tab."),
                     "Saving here would replace that document. Choose another name, or close that tab first.",
                 );
+                continue;
+            }
+            // The Save dialog already asked about the name the user typed; only a name WE changed
+            // needs its own “Replace?”.
+            if appended && self.store.exists(&dest) && !self.dialogs.confirm_replace(&file_name(&dest)) {
                 continue;
             }
             return Some(dest);
@@ -804,11 +806,19 @@ mod tests {
         draw(r.ed(b), BLUE);
         // onto A's file (also through an alias of it) → refused, back to the dialog, then cancelled
         r.s.aliases.insert(p("/Link/A.vrs"), p("/d/a.vrs"));
-        r.script([Ans::Pick(Some(p("/d/a.vrs"))), Ans::Pick(Some(p("/Link/A.vrs"))), Ans::Pick(None)]);
+        // …and "/d/a" (we append .vrs → A's file) is refused WITHOUT a pointless “Replace?” first
+        r.script([
+            Ans::Pick(Some(p("/d/a.vrs"))),
+            Ans::Pick(Some(p("/Link/A.vrs"))),
+            Ans::Pick(Some(p("/d/a"))),
+            Ans::Pick(None),
+        ]);
         r.run(AppCommand::SaveAs(b));
         assert_eq!(
             r.prompts(),
             [
+                "save-as b.vrs in /d",
+                "notice “a.vrs” is open in another tab.",
                 "save-as b.vrs in /d",
                 "notice “a.vrs” is open in another tab.",
                 "save-as b.vrs in /d",

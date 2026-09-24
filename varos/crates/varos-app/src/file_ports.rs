@@ -159,15 +159,51 @@ impl Dialogs for RfdDialogs {
     }
 }
 
-/// The disk: `.vrs` through `varos_pdf` (atomic write), identity through `file_key`.
+const NEWER_VAROS: &str = "It was saved by a newer version of Varos. Update Varos to open it.";
+const NOT_VAROS: &str = "It isn't a Varos document, or it is damaged.";
+const NOT_WRITTEN: &str = "Varos couldn't write the document.";
+
+/// The loader/writer's internal error text as a plain sentence for the `{reason}` in the prompts.
+/// File-system failures (`read failed:` / `write failed:` / `rename failed:` + the OS text) get the
+/// same wording as the storage module (`io_reason`: no “(os error N)”, capitalised, “The disk is
+/// full.”…); a newer-format file says so; anything else is `fallback` (a load: not a Varos
+/// document or damaged — the parser's details mean nothing to the user).
+fn plain_reason(raw: &str, fallback: &str) -> String {
+    use std::io;
+    use varos_app::storage::durable::io_reason;
+    for (prefix, reading) in [("read failed: ", true), ("write failed: ", false), ("rename failed: ", false)] {
+        let Some(os_text) = raw.strip_prefix(prefix) else {
+            continue;
+        };
+        // Rebuild the real OS error from its code when the text carries one, so the wording is exact.
+        let code = os_text
+            .rfind(" (os error ")
+            .and_then(|i| os_text[i + " (os error ".len()..].trim_end_matches(')').parse::<i32>().ok());
+        let err = match code {
+            Some(c) => io::Error::from_raw_os_error(c),
+            None => io::Error::other(os_text.to_string()),
+        };
+        if reading && err.kind() == io::ErrorKind::PermissionDenied {
+            return "Varos isn't allowed to read this file.".into(); // io_reason's text speaks of writing
+        }
+        return io_reason(&err);
+    }
+    if raw.contains("newer Varos") {
+        return NEWER_VAROS.into();
+    }
+    fallback.into()
+}
+
+/// The disk: `.vrs` through `varos_pdf` (atomic write), identity through `file_key`. Errors come
+/// back as plain sentences (`plain_reason`).
 pub struct DiskStore;
 
 impl DocStore for DiskStore {
     fn load(&mut self, path: &Path) -> Result<Document, String> {
-        varos_pdf::load_vrs(path)
+        varos_pdf::load_vrs(path).map_err(|e| plain_reason(&e, NOT_VAROS))
     }
     fn save(&mut self, doc: &Document, path: &Path) -> Result<(), String> {
-        varos_pdf::save_vrs(doc, path)
+        varos_pdf::save_vrs(doc, path).map_err(|e| plain_reason(&e, NOT_WRITTEN))
     }
     fn key(&self, path: &Path) -> FileKey {
         file_key(path)
@@ -283,16 +319,50 @@ mod tests {
             "Your changes will be lost if you don't save them.\n\nDocument 1 of 2"
         );
         assert_eq!(
-            save_failed_copy("Logo.vrs", "write failed: permission denied"),
+            save_failed_copy("Logo.vrs", "Varos isn't allowed to write there."),
             (
                 "Couldn't save “Logo.vrs”.".into(),
-                "Your changes are still open. write failed: permission denied.".into()
+                "Your changes are still open. Varos isn't allowed to write there.".into()
             )
         );
         assert_eq!(
-            open_failed_copy("x.vrs", "not a valid .vrs."),
-            ("Couldn't open “x.vrs”.".into(), "not a valid .vrs. Your open documents have not changed.".into())
+            open_failed_copy("x.vrs", NOT_VAROS),
+            (
+                "Couldn't open “x.vrs”.".into(),
+                "It isn't a Varos document, or it is damaged. Your open documents have not changed.".into()
+            )
         );
+    }
+
+    #[test]
+    fn plain_reason_hides_internal_error_text() {
+        // file-system failures: no prefix, no "(os error N)", a capitalised sentence (io_reason)
+        let enoent = std::io::Error::from_raw_os_error(2).to_string(); // the OS's own wording + code
+        let plain = enoent[..enoent.rfind(" (os error ").unwrap()].to_string();
+        let expect = format!("{}{}.", plain[..1].to_uppercase(), &plain[1..]);
+        assert_eq!(plain_reason(&format!("read failed: {enoent}"), NOT_VAROS), expect);
+        assert_eq!(
+            plain_reason("write failed: Permission denied (os error 13)", NOT_WRITTEN),
+            "Varos isn't allowed to write there."
+        );
+        assert_eq!(
+            plain_reason("read failed: Permission denied (os error 13)", NOT_VAROS),
+            "Varos isn't allowed to read this file."
+        );
+        assert_eq!(plain_reason("rename failed: something odd", NOT_WRITTEN), "Something odd.");
+        // a newer format says so; any parser detail is replaced by one plain sentence
+        assert_eq!(
+            plain_reason("this file was saved by a newer Varos (v3) — please update", NOT_VAROS),
+            "It was saved by a newer version of Varos. Update Varos to open it."
+        );
+        for raw in [
+            "not a valid .vrs model: expected value at line 1 column 1",
+            "not a valid .vrs",
+            "not a readable PDF: invalid file header",
+        ] {
+            assert_eq!(plain_reason(raw, NOT_VAROS), "It isn't a Varos document, or it is damaged.", "{raw}");
+        }
+        assert_eq!(plain_reason("serialize failed: x", NOT_WRITTEN), "Varos couldn't write the document.");
     }
 
     #[test]
@@ -325,10 +395,13 @@ mod tests {
         std::fs::create_dir_all(dir.0.join("sub")).unwrap();
         assert!(store.key(&dotted).same_file(&key));
         // failures come back as errors, never panics
-        assert!(store.load(&dir.0.join("missing.vrs")).is_err());
+        // failures come back as plain sentences, never panics or raw internal text
+        let missing = store.load(&dir.0.join("missing.vrs")).unwrap_err();
+        assert!(!missing.contains("failed") && !missing.contains("os error") && missing.ends_with('.'), "{missing}");
         std::fs::write(dir.0.join("junk.vrs"), b"not a varos file").unwrap();
-        assert!(store.load(&dir.0.join("junk.vrs")).is_err());
-        assert!(store.save(&doc, &dir.0.join("no-such-folder").join("x.vrs")).is_err());
+        assert_eq!(store.load(&dir.0.join("junk.vrs")).unwrap_err(), NOT_VAROS);
+        let no_dir = store.save(&doc, &dir.0.join("no-such-folder").join("x.vrs")).unwrap_err();
+        assert!(!no_dir.contains("failed") && !no_dir.contains("os error") && no_dir.ends_with('.'), "{no_dir}");
     }
 
     #[cfg(unix)]
