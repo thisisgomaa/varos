@@ -215,10 +215,15 @@ impl Editor {
     }
 }
 
+/// The stroke-weight field: like a colour pick (`apply_paint`) and `bump_stroke`, the weight becomes the
+/// CURRENT one (the next Pen/shape uses it — Illustrator's last-used appearance) AND lands on the same
+/// target set the inspector displays (`selected_pids`: object selection ∪ Direct path ∪ a selected
+/// anchor's path, which covers the Pen's in-progress path). Astra 09-24: it used to touch `cur_sw` only
+/// when nothing was selected and to read `objsel` alone, so a width-80 stroke left new Pen paths at 2.
 fn set_stroke_width(ed: &mut Editor, width: f32) {
-    let paths: Vec<u32> = ed.objsel.iter().copied().collect();
+    ed.cur_sw = width.max(0.0);
+    let paths: Vec<u32> = ed.selected_pids().into_iter().collect();
     if paths.is_empty() {
-        ed.cur_sw = width.max(0.0);
         return;
     }
     ed.begin();
