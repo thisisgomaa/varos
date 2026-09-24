@@ -10,6 +10,7 @@
 pub mod checksum;
 pub mod durable;
 pub mod paths;
+pub mod recovery;
 pub mod time_text;
 
 #[cfg(test)]
