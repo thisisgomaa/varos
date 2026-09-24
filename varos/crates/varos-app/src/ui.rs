@@ -910,6 +910,7 @@ impl Ui {
         let ctx = egui::Context::default();
         install_fonts(&ctx);
         install_style(&ctx);
+        disable_ui_keyboard_zoom(&ctx);
         // rail singletons — Artboard sits with Selection + Direct Selection (Ahmed), then Pen, Eyedropper.
         let defs: [(ToolKind, &str, &str, bool); 7] = [
             (ToolKind::Object, IC_SELECT, "Selection (V)", false),
@@ -1469,6 +1470,13 @@ fn install_fonts(ctx: &egui::Context) {
         f.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "mono".to_owned());
     }
     ctx.set_fonts(f);
+}
+
+/// ⌘+ / ⌘− / ⌘0 belong to the CANVAS (zoom the artwork, Fit), never to the chrome. egui's built-in
+/// browser-style shortcut (`Options::zoom_with_keyboard`, on by default) scaled the whole UI instead
+/// (Astra F05) — switch it off, so the UI scale only follows the display.
+fn disable_ui_keyboard_zoom(ctx: &egui::Context) {
+    ctx.options_mut(|o| o.zoom_with_keyboard = false);
 }
 
 fn install_style(ctx: &egui::Context) {
@@ -5723,6 +5731,44 @@ pub fn dump_tool_icons(path: &str) {
 }
 
 #[cfg(test)]
+mod ui_zoom_tests {
+    use super::disable_ui_keyboard_zoom;
+    use egui::{Event, Key, Modifiers, RawInput};
+
+    /// Press ⌘+key for one pass, then run one more pass (egui applies a new zoom factor between
+    /// passes), and return the UI zoom factor afterwards.
+    fn ui_zoom_after(ctx: &egui::Context, key: Key) -> f32 {
+        let press = RawInput {
+            modifiers: Modifiers::COMMAND,
+            events: vec![Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            }],
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(press, |_| {});
+        let _ = ctx.run_ui(RawInput::default(), |_| {});
+        ctx.zoom_factor()
+    }
+
+    /// Astra F05: ⌘+ / ⌘= / ⌘− must never scale the panels and text. The control case proves the
+    /// test really drives egui's built-in shortcut (it DOES scale a default context).
+    #[test]
+    fn cmd_plus_minus_never_scale_the_ui() {
+        let stock = egui::Context::default();
+        assert_ne!(ui_zoom_after(&stock, Key::Plus), 1.0, "control: egui's default scales the UI on ⌘+");
+        for key in [Key::Plus, Key::Equals, Key::Minus, Key::Num0] {
+            let ctx = egui::Context::default();
+            disable_ui_keyboard_zoom(&ctx);
+            assert_eq!(ui_zoom_after(&ctx, key), 1.0, "⌘{key:?} changed the UI zoom");
+        }
+    }
+}
+
+#[cfg(test)]
 mod color_tests {
     use super::{hsv_to_rgb, rgb_to_hsv};
 
@@ -5882,7 +5928,7 @@ mod characterization_tests {
         let mut view = View::identity();
 
         toggle_smart_guides(&mut from_menu.doc.snap);
-        crate::apply_key(&mut from_shortcut, &mut view, "KeyU", true, false, false);
+        crate::apply_key(&mut from_shortcut, &mut view, [0.0, 0.0], "KeyU", true, false, false);
 
         assert_eq!(from_menu.doc.snap.smart, from_shortcut.doc.snap.smart);
         assert_eq!(from_menu.doc.snap, from_shortcut.doc.snap);
