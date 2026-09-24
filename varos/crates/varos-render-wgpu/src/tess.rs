@@ -186,8 +186,8 @@ fn stroke_poly(v: &mut Vec<Vertex>, pts: &[StrokePt], width: f32, col: [f32; 4],
     match (first, prev) {
         // A closed ring arrives with its first point repeated at the end (`ring_px` ends the closing
         // segment exactly on anchor 0; hole rings push it again). Its seam is a JOIN, never two caps.
-        // (Round caps meeting at one point cover the same disc as a round join, so this is exact even
-        // for an open path whose ends happen to coincide.)
+        // Two half-caps would also cover the seam; the join is the cheaper choice. An open path whose
+        // ends happen to coincide gets the same coverage as any interior round join.
         (Some(first), Some(last)) if c0 == c1 => stroke_join(v, c0, last, first, r, col, w, h),
         (Some(first), Some(last)) => {
             stroke_cap(v, c0, first.reversed(), r, col, w, h);
@@ -246,13 +246,16 @@ fn stroke_join(
     // outgoing edge overlaps its quad. The fan stays inside the round-join disk.
     let pivot = incoming.corners[1 - outer];
     let mut prev = cin;
+    // One sin_cos per fan, then rotate the offset step by step (f64, at most 128 steps: the drift is
+    // ~1e-13 of r). The last vertex is always the quad's own corner, so the shared edge stays exact.
+    let (sd, cd) = (-s * theta / steps as f64).sin_cos();
+    let mut n = [nin[0] * s, nin[1] * s];
     for k in 1..=steps {
         let next = if k == steps {
             cout
         } else {
-            let (sn, cs) = (-s * theta * k as f64 / steps as f64).sin_cos();
-            let n = [nin[0] * s, nin[1] * s];
-            stroke_vertex([b[0] + n[0] * cs - n[1] * sn, b[1] + n[0] * sn + n[1] * cs], col, w, h)
+            n = [n[0] * cd - n[1] * sd, n[0] * sd + n[1] * cd];
+            stroke_vertex([b[0] + n[0], b[1] + n[1]], col, w, h)
         };
         v.extend([pivot, prev, next]);
         prev = next;
@@ -644,7 +647,12 @@ pub fn build_content(
     h: f32,
 ) -> (Vec<Vertex>, Vec<Vertex>, Vec<Vertex>, Vec<GroupDraw>) {
     let mut fillv = Vec::new();
-    let mut fgv = Vec::new();
+    // A 128 Ki-vertex (3 MB) floor for the stroke buffer (QW4 review P2-1). On Linux/glibc, growing
+    // it from empty every frame put harness scene C into a heap grow/trim cycle (brk + fresh page
+    // faults each frame, 3× its content time). The floor only MOVES that glibc cliff: other sizes
+    // (e.g. ~180 k vertices) can still hit it. The real fix is reusing vertex buffers across frames
+    // in the renderer. macOS uses a different allocator; the effect there is unmeasured.
+    let mut fgv = Vec::with_capacity(1 << 17);
     let mut opv = Vec::new();
     let mut metas: Vec<GroupDraw> = Vec::new();
     for g in groups {
@@ -1140,7 +1148,7 @@ mod tests {
     /// chord) stays within JOIN_TOL_PX of the true circle — for thin to huge radii and small to U-turns.
     #[test]
     fn round_join_outer_edge_hugs_the_true_circle() {
-        for r in [0.8f32, 2.0, 40.0, 131.0, 1600.0, 2400.0] {
+        for r in [0.8f32, 2.0, 40.0, 131.0, 1600.0, 2400.0, 3300.0] {
             for (deg_in, deg_out) in [(6.0f32, 9.0f32), (0.0, 30.0), (0.0, -90.0), (15.0, 170.0), (0.0, 180.0)] {
                 let (din, dout) = (unit_deg(deg_in), unit_deg(deg_out));
                 let b = [5_000.0f32, 5_000.0];
@@ -1260,8 +1268,8 @@ mod tests {
 
     // ---- QW4 (PAINS_LOG P13): round caps are half-discs on the joins' subdivision rule ----
     // The old caps were full 24-gon discs: inscribed, so at r = 1 600 px (width 80 at 4000%) they sat
-    // up to r·(1 − cos 7.5°) ≈ 13.7 px inside the true circle. They also hid a missing seam join on
-    // closed rings (two full discs on the repeated first point).
+    // up to r·(1 − cos 7.5°) ≈ 13.7 px inside the true circle. Closed rings now take a seam join
+    // instead of two caps (a vertex-count choice: half-caps alone would also cover the seam).
 
     const CAP_FRAME: f32 = 10_000.0;
 
@@ -1305,14 +1313,19 @@ mod tests {
 
     /// Width 80 at 100% (r = 40 px) and 4000% (r = 1 600 px): each cap is a half-disc on the outward
     /// side whose every vertex lies on the true circle and whose every chord sits within JOIN_TOL_PX of
-    /// it (the joins' rule), and the whole half-disc up to that tolerance is covered.
+    /// it (the joins' rule), and the whole half-disc up to that tolerance is covered. Zoom 8250%
+    /// (r = 3 300 px) is the largest cap that still meets 0.25 px with the full 128 chords: it pins
+    /// that the incremental rotation in `stroke_join` does not drift over the longest fan.
     #[test]
     fn round_cap_hugs_true_circle_at_100_and_4000_percent() {
-        for zoom in [1.0f32, 40.0] {
+        for zoom in [1.0f32, 40.0, 82.5] {
             let r = 80.0 * zoom * 0.5;
             for deg in [0.0f32, 23.0, 90.0, 137.0, 180.0, 271.0] {
                 let (v, a, b, d) = capped_segment(deg, r);
                 let (start, end) = split_caps(&v);
+                if zoom == 82.5 {
+                    assert_eq!(start.len() / 3 + 1, JOIN_MAX_STEPS, "r {r}: the 128-chord case");
+                }
                 for (which, cap, c, out) in [("start", start, a, [-d[0], -d[1]]), ("end", end, b, d)] {
                     let label = format!("zoom {zoom}, heading {deg}°, {which} cap");
                     let tris = px_tris(cap, CAP_FRAME, CAP_FRAME);
