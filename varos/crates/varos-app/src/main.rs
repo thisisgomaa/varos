@@ -25,14 +25,17 @@ use winit::{
     window::Window,
 };
 
+mod app_command;
 mod chrome;
 mod cursors;
+mod lifecycle;
 #[cfg(target_os = "macos")]
 mod mac_caption;
 #[cfg(target_os = "macos")]
 mod mac_menu;
 mod single_instance;
 mod ui;
+mod workspace;
 use cursors::CK;
 
 /// The one cursor this frame wants: a pan in progress beats the Space hand, which beats the chrome's
@@ -442,13 +445,17 @@ fn preview_svgs(dir: &str) {
     }
 }
 
-/// Where the remembered window geometry lives (`%APPDATA%\Varos\window.txt`).
+/// Where the remembered window geometry lives (`<data root>/window.txt` — still `%APPDATA%\Varos\window.txt`
+/// on Windows). Stays off on macOS: Mac window memory is separate Mac polish (DFS work order Q4).
 fn win_state_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("Varos").join("window.txt"))
+    if cfg!(target_os = "macos") {
+        return None;
+    }
+    varos_app::storage::paths::AppLayout::current().map(|l| l.window_state())
 }
-/// Crash-log home (`%APPDATA%\Varos\crash.txt`) — same folder as window.txt.
+/// Crash-log home (`<data root>/Logs/crash.txt`) — the one app-data resolver, so macOS gets a crash log too.
 fn crash_log_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("Varos").join("crash.txt"))
+    varos_app::storage::paths::AppLayout::current().map(|l| l.crash_log())
 }
 fn write_crash_log(msg: &str) -> Option<std::path::PathBuf> {
     let p = crash_log_path()?;
@@ -968,7 +975,7 @@ fn main() {
                                 .shortcut(k.code, true, k.shift, k.alt);
                             }
                         }
-                        M::Close => {
+                        M::Quit => {
                             // exactly the ✕ caption button's arm (WinAction::Close below)
                             let may_exit = OpenDocContext {
                                 ed: &mut ed,

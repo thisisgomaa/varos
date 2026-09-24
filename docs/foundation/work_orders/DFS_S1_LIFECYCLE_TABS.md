@@ -1,4 +1,5 @@
 > **Status:** current — work order (charter §3 level 4), derived from docs/specs/DOCUMENT_FILE_SYSTEM.md; owner decisions D1–D3 recorded 2026-09-24.
+> Amended 2026-09-24 after the independent plan review (see reviews/DFS_S1_LIFECYCLE_TABS.review.md); P1/P2 applied, "Needs Ahmed" items carry their default.
 # DFS S1 — AppCommand + lifecycle + real tab identity
 
 Date: 2026-09-24 · Base: branch `claude/sweet-cerf-1sg30t` @ `56516a9` · Spec: `docs/specs/DOCUMENT_FILE_SYSTEM.md` §2 "Lifecycle, identity and tabs", §3 "State machine" + "ONE-HOME", §4, §5 row S1.
@@ -26,7 +27,7 @@ Every tab is a real, independent document: its own `Editor` (document + history 
 
 - **F1: one document, as locals.** `main.rs:857` `let mut ed = Editor::new()`; `:917–918` `cur_file`, `saved_rev`; `view` at `:885`. Every event arm borrows these directly. `OpenDocContext` (`:561–700`) bundles `ed/gui/window/view/cur_file/saved_rev` and is rebuilt at 5 call sites (`:957`, `:973`, `:1004`, `:1050`, `:1335`).
 - **F2: fake tabs.** `ui.rs:820–821` `tabs: Vec<String>`, `tab_active: usize`, initialised `["Untitled-1"]` (`:1062`). `set_doc_tab` (`:1144–1150`) overwrites index 0 only. `build_topbar` (`:3294–3470`): `+` pushes `Untitled-{len+1}` (`:3394`); the × removes a label (`:3402–3409`). No document changes behind either.
-- **F3: ⌘N does nothing.** `apply_key` (`main.rs:195–271`) and `OpenDocContext::shortcut` (`:657–690`) have no KeyN/KeyW branch. The chrome test *requires* KeyN to be absent (`chrome.rs:466–473`). `egui_key` (`chrome.rs:323–346`) and `mac_menu::muda_code` (`mac_menu.rs:16–40`) have no KeyN.
+- **F3: ⌘N does nothing.** `apply_key` (`main.rs:195–271`) and `OpenDocContext::shortcut` (`:657–690`) have no KeyN branch (KeyW is already mapped by `egui_key`, `chrome.rs:336`, to the quit guard — see F5). The chrome test *requires* KeyN to be absent (`chrome.rs:466–473`). `mac_menu::muda_code` (`mac_menu.rs:16–40`) has no KeyN.
 - **F4: burger rows are visual only.** `ui.rs:3415–3422`: `menu_row` returns a click `bool` (`:3235`) that is ignored for New/Open/Save/Export. The Export top button (`:3358`) is drawn enabled and does nothing. This is an "enabled dead button", which spec §2 forbids.
 - **F5: ⌘W = quit.** The native File menu row `file.close` “Close Window” ⌘W and `app.quit` ⌘Q both use `MenuCmd::Close` (`chrome.rs:231,242`), which runs `confirm_quit` (`main.rs:971–995`). The test pins this (`chrome.rs:456–465`).
 - **F6: Open replaces.** `load_path` (`main.rs:636–655`) calls `Editor::replace_doc`. That clears history (`editor.rs:3106–3123`) and bumps `rev`. The guard `confirm_discard_unsaved` (`:477–486`) is a Yes/No **discard** prompt. The Open dialog is single-file (`:675`).
@@ -51,7 +52,7 @@ Seam: `varos-core` gains only pure helpers: content comparison, clipboard hand-o
   - One rule handles all of these without touching history semantics: undo or redo back to saved, no-op commits, preference-only history steps (units, move-art) and any view action.
   - It is exact, so there is no hash-collision risk of a false clean.
   - Cost: one O(n) `PartialEq` walk per `rev` change (no serialization) and one extra `Document` per tab. History already holds up to 200.
-  - A state-ID scheme would still mark no-op commits and units changes dirty. It would also miss any content write that skipped `commit`.
+  - A state-ID scheme would still mark no-op commits and units changes dirty. It would also miss any content write that skipped `commit` — that same blind spot applies to the per-frame dot, which is memoised on `rev`; it does not apply to any Save/Close/Quit decision, because those call `is_dirty_exact` and ignore the memo.
 - Undo/redo carry the **non-history** preferences forward (`snap`, `guides_locked`, `ruler_origin`) from the current doc into the restored snapshot (spec: "undo must preserve current navigation/preferences"). `active`/`active_layer` stay history-restored because tests pin them. Units and move-art stay undoable steps; they just never dirty.
 - Also: `Editor::transaction_open(&self) -> bool` (`pending.is_some()`), `Editor::take_clipboard(&mut self) -> Clipboard`, `Editor::set_clipboard(&mut self, c: Clipboard)`.
 
@@ -73,8 +74,8 @@ There is no Export command: Export stays unavailable until S6 (§3.6). In S1, Cl
 
 ### 3.3 Workspace — `varos-app/src/workspace.rs` (new; implemented fully by piece A)
 ```rust
-#[derive(Clone, Debug, PartialEq, Eq)] pub struct FileKey { pub path: PathBuf, pub dev_ino: Option<(u64, u64)> }
-impl FileKey { pub fn same_file(&self, o: &FileKey) -> bool } // compare dev_ino when both are Some, else compare path
+#[derive(Clone, Debug, PartialEq, Eq)] pub struct FileKey { pub path: PathBuf, pub dev_ino: Option<(u64, u64)> } // derives PartialEq for storage only; callers compare identity via same_file, never ==
+impl FileKey { pub fn same_file(&self, o: &FileKey) -> bool } // same file if the canonical paths are equal, OR both dev_ino are Some and equal (path first: atomic saves change the inode)
 pub struct DocumentSession { pub id: SessionId, pub editor: Editor, pub view: View, pub path: Option<PathBuf>,
     pub key: Option<FileKey>, pub untitled: Option<u32>, pub fit_pending: Option<f32>, saved: Document, memo: Cell<Option<(u64, bool)>> }
 impl DocumentSession {
@@ -82,13 +83,13 @@ impl DocumentSession {
     pub fn is_dirty(&self) -> bool;         // memoised on editor.rev (+ open-transaction overlay)
     pub fn is_dirty_exact(&self) -> bool;   // fresh compare, used for every decision
     pub fn is_pristine(&self) -> bool;      // path None && !is_dirty_exact() && !editor.transaction_open()
-    pub fn mark_saved(&mut self, path: PathBuf, key: FileKey); // path/name set; checkpoint = current content; untitled = None
+    pub fn mark_saved(&mut self, path: PathBuf, key: FileKey); // path/name set; checkpoint = current content; untitled = None; also resets the rev-memo
     pub fn settle(&mut self);               // drag/ab_drag in flight → editor.pointer_up() (finish the gesture)
 }
-pub struct Workspace { sessions: Vec<DocumentSession>, active: SessionId, next_id: u64, next_untitled: u32 }
+pub struct Workspace { sessions: Vec<DocumentSession>, active: Option<SessionId>, next_id: u64, next_untitled: u32 }
 impl Workspace {
     pub fn new() -> Self;                                   // exactly one pristine Untitled-1, fit_pending Some(0.45)
-    pub fn active_id(&self) -> SessionId; pub fn active(&self) -> &DocumentSession; pub fn active_mut(&mut self) -> &mut DocumentSession;
+    pub fn active_id(&self) -> Option<SessionId>; pub fn active(&self) -> Option<&DocumentSession>; pub fn active_mut(&mut self) -> Option<&mut DocumentSession>; // Option now for S2's empty workspace; S1 behaviour stays "never empty" (remove always makes a fresh Untitled-N) — only the type is future-proofed
     pub fn get(&self, id: SessionId) -> Option<&DocumentSession>; pub fn get_mut(&mut self, id: SessionId) -> Option<&mut DocumentSession>;
     pub fn sessions(&self) -> &[DocumentSession]; pub fn index_of(&self, id: SessionId) -> Option<usize>;
     pub fn new_untitled(&mut self) -> SessionId;            // appended + activated; numbers never reused
@@ -96,7 +97,7 @@ impl Workspace {
     pub fn find_file(&self, key: &FileKey) -> Option<SessionId>;
     pub fn activate(&mut self, id: SessionId) -> bool;      // hands over clipboard + tool + recent_colors; resets incoming mods/space
     pub fn activate_relative(&mut self, step: isize) -> bool; // wraps around
-    pub fn reorder(&mut self, id: SessionId, to: usize) -> bool;
+    pub fn reorder(&mut self, id: SessionId, to: usize) -> bool; // to = insertion slot 0..=len in the CURRENT order (tab_drop_index); dropping on its own slot or the next is a no-op
     pub fn remove(&mut self, id: SessionId) -> bool;        // right neighbour else left; last tab → a fresh pristine Untitled-N (no-op if it already was pristine); clipboard handed over first
     pub fn tabs(&self) -> Vec<TabView>;                     // equal file names get " — <parent folder>"; tooltip = full path or "Not saved yet"
 }
@@ -133,7 +134,7 @@ Rules (spec §2/§4):
   - Suggest `<display stem>.vrs` in the file's folder.
   - If the chosen name lacks `.vrs`, append it. Never silently drop part of the name. If the appended name exists → `confirm_replace`.
   - A target whose key matches **another** open tab is refused with `notice` (“… is open in another tab…”).
-  - Path, name and checkpoint change only after the store succeeded.
+  - Path, name and checkpoint change only after the store succeeded. After a successful save, recompute `store.key(path)` and pass that key to `mark_saved` (atomic saves change the inode).
   - On failure → `save_failed` loop (TryAgain / SaveAs / Cancel).
 - **CloseDocument(id):** clean → remove. Dirty → ask about **that** tab by name, without activating it. Save (may go through Save As) → remove only on success. DontSave → remove. Cancel → keep.
 - **Quit:** collect the dirty tabs in tab order. For each (i of n): activate it and ask. Save must succeed, or the quit aborts. DontSave is recorded. Cancel aborts, earlier saves stay saved, and nothing is removed. `exit` is true only when every decision resolved.
@@ -143,9 +144,9 @@ Rules (spec §2/§4):
 - Before any lifecycle command: `gui.settle(&mut active.editor)` then `active.settle()`.
 - After it:
   - Reset the editor's `mods` (native dialogs eat key releases).
-  - If the active id changed → `gui.document_switched()`, `canvas_gesture = false`, `panning = false`.
+  - After every lifecycle command (not only on id change): `gui.document_switched()` and `last_scene_signature = None` — `add_loaded` can replace a pristine active tab under the SAME id, which would otherwise leave layer caches, `lay_collapsed` and the scene-cache mix stale. If the active id also changed → additionally `canvas_gesture = false`, `panning = false`.
   - If `exit` → save window state, then `elwt.exit()`.
-- The scene cache key becomes `hash((active_id, scene_signature(..)))` (F12).
+- The scene cache key becomes `hash((active_id, scene_signature(..)))` (F12); the `document_switched` reset above is a second guard on top of it.
 - Every frame:
   - `gui.set_tabs(ws.tabs(), ws.active_id())`.
   - Window title `"{name}{*} — Varos"`; on macOS also `set_document_edited(dirty)`.
@@ -156,10 +157,11 @@ Rules (spec §2/§4):
   - One chip per `TabView`, with a neutral dirty dot (MUTED, never azure) before the name and a tooltip.
   - Click → `ActivateDocument`. × or middle-click → `CloseDocument`. `+` → `NewDocument`.
   - Drag a chip → `ReorderDocument(id, tab_drop_index(..))`, with a 1 px TEXT insertion mark (no animation, no shadow).
-  - `topbar_layout` reserves `+` before placing tabs.
+  - `topbar_layout` reserves `+` before placing tabs, and always places the ACTIVE tab (it takes the last visible slot on overflow — spec §4 "Active document name always matches canvas/layers").
 - **Burger:** New / Open… / Save / Save As… emit commands. Export… is a disabled row.
 - **Top Export button:** disabled look (FAINT, hover only), tooltip “Export isn't available yet — PDF export comes in a later update. Save keeps an editable .vrs.” There is no native Export row until S6.
-- **Native File menu:** New ⌘N · Open… ⌘O · ─ · Close Tab ⌘W · Save ⌘S · Save As… ⇧⌘S (all `MenuCmd::Key`, the same key path). Varos ▸ Quit ⌘Q → `MenuCmd::Quit`. Ctrl+Tab / Ctrl+⇧Tab switch tabs (keyboard only in S1).
+- **Top Share button:** also an enabled dead button today (`ui.rs:3357`), which spec §2 forbids. Give it the same disabled look and a "not available yet" tooltip (2 lines, no wiring).
+- **Native File menu:** New ⌘N · Open… ⌘O · ─ · Close Tab ⌘W · Save ⌘S · Save As… ⇧⌘S (all `MenuCmd::File(FileCmd)`; `FileCmd` lives in `chrome.rs`; they bypass the text-field forward — spec §4: "Menus and physical keys dispatch once through command IDs, not synthetic key events"). Varos ▸ Quit ⌘Q → `MenuCmd::File(FileCmd::Quit)` (A's `MenuCmd::Close → Quit` rename folds in here; C does not forward this rename to A). Ctrl+Tab / Ctrl+⇧Tab switch tabs (keyboard only in S1). `FileCmd` is also S6-C's extension point (it adds `Export`) — there is no separate `file_routes.rs`.
 - **ONE-HOME:** the tab strip is the home for activate/close/reorder. New/Open/Save rows are mirrors whose homes (Start S2, Document section S2/S3) do not exist yet. They stay mirrors of the same commands.
 
 ## 4. Pieces
@@ -172,17 +174,17 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
   - New `varos-core/tests/content_checkpoint.rs`.
   - New `varos-app/src/app_command.rs` and `workspace.rs` (full), and `lifecycle.rs` (types, traits, `Lifecycle`, stub `run`).
   - `ui.rs` additions next to `set_doc_tab` (`:1144`): fields `doc_tabs: Vec<TabView>`, `doc_active: Option<SessionId>`, `app_cmds: Vec<AppCommand>`, and:
-    - `pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: SessionId)` — stub: also mirrors the labels into the old `tabs: Vec<String>`.
+    - `pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>)` — stub: also mirrors the labels into the old `tabs: Vec<String>`.
     - `pub fn take_app_commands(&mut self) -> Vec<AppCommand>`.
     - `pub fn settle(&mut self, ed: &mut Editor)` — full: `PickerCancel` if the modal is open, then drop the modal, `lay_rename` and `ab_name_edit`.
     - `pub fn document_switched(&mut self)` — full: clear `layer_rows_cache`, `lay_drag`, `lay_anchor`, `lay_collapsed` and `lay_search`.
   - `chrome.rs`: rename `MenuCmd::Close` → `MenuCmd::Quit` and its test assertion. `main.rs`: the three `mod` lines and the `M::Close` arm rename only.
-- **Must not touch:** `build_topbar` / `tab_item` / menus content, `apply_key` / `shortcut`, golden fixtures, `characterization_tests`.
+- **Must not touch:** `build_topbar` / `tab_item` / menus content, `apply_key` / `shortcut`, golden fixtures, `characterization_tests` — except `set_doc_tab`'s body only: make it update `doc_tabs[0].label` (a stand-in shim that D deletes). This keeps a visible tab on the intermediate branch.
 - **Steps:**
   1. Add the core API and its tests. Existing core tests must stay green unmodified. If one needs a change, stop and report.
   2. Add `app_command.rs` exactly as in §3.2. Add `workspace.rs` exactly as in §3.3.
-  3. Add `lifecycle.rs` exactly as in §3.4. The stub `run` exits on `Quit` only when no session `is_dirty_exact()`, and does nothing for everything else. Mark it `// S1-B replaces`.
-  4. Put `#![cfg_attr(not(test), allow(dead_code))]` at the top of the three new app modules (D removes it). Add the Ui stubs.
+  3. Add `lifecycle.rs` exactly as in §3.4. The stub `run` exits on `Quit` only when no session `is_dirty_exact()`, and does nothing for everything else. Mark it `// S1-B replaces` (a plain no-op is enough — B throws this rule away and the host never calls it before D).
+  4. Put `#![cfg_attr(not(test), allow(dead_code))]` at the top of the three new app modules (D removes it). Add the Ui stubs, each with `#[allow(dead_code)]` (`doc_tabs`, `doc_active`, `app_cmds`, `set_tabs`, `take_app_commands`, `settle`, `document_switched` have no caller until D; a binary crate fails `clippy -D warnings` on A/B/C otherwise) — D's cleanup list also removes these `ui.rs` allows.
 - **Tests:**
   - Core:
     - `content_eq_ignores_view_and_preference_fields`
@@ -196,7 +198,7 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
     - `untitled_numbers_increase_and_are_never_reused`
     - `activate_hands_over_clipboard_and_tool`
     - `remove_picks_right_then_left_and_never_leaves_zero_tabs`
-    - `reorder_keeps_identity_and_state`
+    - `reorder_keeps_identity_and_state` (incl. move-right-by-one and drop-on-own-slot/next-slot no-ops)
     - `add_loaded_reuses_only_a_pristine_active_tab`
     - `find_file_matches_same_file_key`
     - `tabs_disambiguate_equal_file_names`
@@ -205,9 +207,9 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
     - `settle_finishes_an_in_flight_drag`
 
 ### S1-B — Lifecycle rules + fake-port tests · **opus** · M · depends on A
-- **Owns:** `varos-app/src/lifecycle.rs`: `run` bodies, private helpers, and a `#[cfg(test)]` module with `FakeDialogs` (a scripted answer queue that records every prompt) and `FakeStore` (`HashMap<PathBuf, Document>`, per-path load/save failure injection, alias → key map).
+- **Owns:** `varos-app/src/lifecycle.rs`: `run` bodies, private helpers, and a `#[cfg(test)]` module with `FakeDialogs` (a scripted answer queue that records every prompt) and `FakeStore` (`HashMap<PathBuf, Document>`, per-path load/save failure injection, alias → key map). Also new `varos-app/src/file_ports.rs` (moved from D: it is headless-testable and does not depend on `main.rs`): `RfdDialogs` implements `Dialogs` with spec §4 copy (titles **Open Varos Document** / **Save Varos Document**, filters *Varos documents (.vrs)* + *Varos PDF documents (.pdf)* for Open and *Varos document (.vrs)* for Save, `pick_files` for multi-select, `YesNoCancelCustom` buttons; `quit_answer`'s mapping and test move here as `decision_from`); `DiskStore` implements `DocStore` via `varos_pdf::{load_vrs, save_vrs}` + `std::fs::canonicalize` + `MetadataExt` dev/ino under `cfg(unix)` (this is where F1's identity rule lives, next to B's Save rules). One `mod file_ports;` line goes in `main.rs` (trivial conflict with D).
 - **Must not touch:** any other file. Frozen signatures change only through the moderator.
-- **Steps:** implement §3.4 with exact spec §4 copy passed to the ports (the name, the “Document i of n” progress). No rfd, fs or egui in this file.
+- **Steps:** implement §3.4 with exact spec §4 copy passed to the ports (the name, the “Document i of n” progress). No rfd, fs or egui in `lifecycle.rs`.
 - **Tests:**
   - `new_command_adds_clean_boardless_untitled`
   - `open_lands_in_a_new_tab_and_dirty_tab_survives`
@@ -223,17 +225,23 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
   - `save_as_onto_other_open_tab_is_refused`
   - `save_on_pdf_path_offers_vrs`
   - `appended_extension_asks_before_replacing`
+  - `open_after_save_still_focuses_the_same_tab` (FakeStore changes the dev_ino on each save)
   - `undo_back_to_saved_is_clean_end_to_end`
   - `two_tabs_have_independent_history` (red A / blue B / undo A)
   - `close_clean_tab_no_prompt`
   - `close_dirty_tab_save_dont_save_cancel`
   - `close_inactive_dirty_tab_saves_that_tab_only`
   - `close_save_as_cancel_keeps_tab`
+  - `close_inactive_untitled_suggests_its_own_name`
   - `quit_clean_asks_nothing`
   - `quit_cancel_on_second_keeps_everything_and_first_stays_saved`
   - `quit_dont_save_all_exits_and_writes_nothing`
   - `quit_save_failure_aborts`
+  - `quit_untitled_save_as_cancel_aborts`
   - `clipboard_survives_close_of_active_tab`
+  - `decision_from_dialog_results_and_unknown_is_cancel`
+  - `disk_store_round_trips_through_varos_pdf` (temp dir)
+  - `disk_store_key_sees_symlink_alias` (`cfg(unix)`)
 
 ### S1-C — Tab strip, burger, Export honesty, native File rows · **sonnet** · M · depends on A
 - **Owns:**
@@ -245,35 +253,32 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
   1. Chips per §3.6, reusing `tab_item` geometry; `Sense::click_and_drag`.
   2. Pure `pub(crate) fn tab_drop_index(tab_rects: &[egui::Rect], pointer_x: f32) -> usize`.
   3. Burger rows → commands. Export disabled with tooltip.
-  4. Update the chrome tests: ⌘Q → `Quit`; ⌘W → `Key(W)`; KeyN is now allowed; still no Export row and no ⌘A.
+  4. Update the chrome tests: ⌘Q → `File(FileCmd::Quit)`; ⌘W → `File(FileCmd::CloseTab)`; New/Open/Save/Save As rows → their `FileCmd` variants; KeyN is now allowed; still no Export row and no ⌘A.
 - **Tests:**
   - `tab_drop_index_before_between_after`
   - `plus_is_always_placed_even_with_overflowing_tabs`
+  - `active_tab_is_placed_when_tabs_overflow`
   - `file_menu_rows_are_new_open_close_save_saveas_on_their_keys`
   - the updated `the_bar_has_the_standard_mac_menus_…`
   - `every_menu_key_can_be_handed_to_a_text_field` (now with N)
   - mac `every_menu_key_has_a_native_key_equivalent` (type-checked by the Mac-target clippy)
 
-### S1-D — Host integration + real ports · **opus** · L · depends on A; merges LAST (after B and C)
-- **Owns:** `varos-app/src/main.rs` and a new `varos-app/src/file_ports.rs`.
-  - `RfdDialogs` implements `Dialogs` with spec §4 copy: titles **Open Varos Document** / **Save Varos Document**, filters *Varos documents (.vrs)* + *Varos PDF documents (.pdf)* for Open and *Varos document (.vrs)* for Save, `pick_files` for multi-select. Buttons use `YesNoCancelCustom`. The `quit_answer` mapping and its test move here as `decision_from`.
-  - `DiskStore` implements `DocStore` via `varos_pdf::{load_vrs, save_vrs}` + `std::fs::canonicalize` + `MetadataExt` dev/ino under `cfg(unix)`.
-- **Post-rebase cleanup, allowed only here:** delete `Ui::set_doc_tab` in `ui.rs`, and the `allow(dead_code)` lines in the three A modules.
+### S1-D — Host integration · **opus** · L · depends on A; merges LAST (after B and C)
+- **Owns:** `varos-app/src/main.rs` only (`file_ports.rs` moved to B — see B's Owns).
+- **Post-rebase cleanup, allowed only here:** delete `Ui::set_doc_tab` in `ui.rs`, and the `allow(dead_code)` lines in the three A modules and in `ui.rs` (F6).
 - **Must not touch:** anything else in `ui.rs` / `chrome.rs`, and `lifecycle.rs` / `workspace.rs` bodies.
 - **Steps:**
+  0. Land the mechanical `ed`/`view` → `ws.active…` swap as its own commit (the app must behave identically) before adding dispatch/ports — a day-cap stop then still leaves a reviewable diff.
   1. Replace `ed` / `view` / `cur_file` / `saved_rev` with `ws: Workspace`. Each event arm uses `ws.active_mut()`.
   2. Delete `OpenDocContext`, `confirm_discard_unsaved`, `may_quit`, `QuitAnswer`, `doc_stem`, the old `full_title` and `board_fit_pending`.
-  3. Add a pure `fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<LifecycleKey>` (N, O, S, ⇧S, W, Tab, ⇧Tab). The shortcut path maps it to an `AppCommand` with `ws.active_id()`. The other keys go to `apply_key` / paste / fit as today.
-  4. Add a single `dispatch` per §3.5. Map all sources: `MenuCmd::{ToggleRail, ToggleDock, TogglePanel}` and `WinAction::{Minimize, ToggleMaximize}` go through `AppCommand::Window`; `WinAction::Close`, `CloseRequested` and `MenuCmd::Quit` go through `Quit`.
+  3. Add a pure `fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<FileCmd>` (N, O, S, ⇧S, W, Tab, ⇧Tab; plain N/O/S/W stay tool keys), plus one `fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> AppCommand`, the only mapper from `FileCmd` to `AppCommand` (S6-C later adds `FileCmd::Export` and reuses this same function). The shortcut path maps a key through `lifecycle_key` then `to_app_command`. The other keys go to `apply_key` / paste / fit as today.
+  4. Add a single `dispatch` per §3.5. Map all sources: `MenuCmd::{ToggleRail, ToggleDock, TogglePanel}` and `WinAction::{Minimize, ToggleMaximize}` go through `AppCommand::Window`; `WinAction::Close`, `CloseRequested` and `MenuCmd::File(FileCmd::Quit)` go through `Quit`.
   5. Add the per-frame tabs/title/fit logic, the scene-key mix, and the startup `file_arg`.
 - **Tests:**
   - `lifecycle_key_maps_file_and_tab_keys` (and plain N/O/S/W stay tool keys)
   - `every_file_menu_row_reaches_its_lifecycle_command` (walks `chrome::menus()`)
   - `window_title_names_active_document_and_dirty`
   - `scene_key_differs_between_sessions_with_equal_signature` (two Editors with equal rev/view and different art → equal `scene_signature`, different mixed key)
-  - `decision_from_dialog_results_and_unknown_is_cancel`
-  - `disk_store_round_trips_through_varos_pdf` (temp dir)
-  - `disk_store_key_sees_symlink_alias` (`cfg(unix)`)
   - Existing `menu_mirror_tests` / `clipboard_key_tests` / `instant_zoom_tests` keep passing.
 
 ## 5. Merge order and conflict hot-spots
@@ -290,10 +295,12 @@ Order: **A → (B, C in either order) → D**.
 Hot spots:
 - `ui.rs`: A adds fields and 4 methods near `:1144`; C rewrites topbar internals and the two stub bodies; D deletes `set_doc_tab`. These are distinct regions. D rebases onto B + C before its cleanup.
 - `chrome.rs`: A renames one variant plus one test line; C edits `menus()`, `egui_key` and the tests. C rebases on A (trivial).
-- `main.rs`: A touches 4 lines, D rewrites. Only D edits after A.
+- `main.rs`: A touches 4 lines, B adds one `mod file_ports;` line, D rewrites. Only D edits after A and B.
 - `lifecycle.rs`: A writes the skeleton, B fills the bodies, D removes the top `allow`. Take B's file, then apply D's one-line removal.
 
 No behaviour is hand-testable until **all four** are merged. The intermediate branch is safe but incomplete: the stub quit refuses to exit while dirty. The moderator adds GATE_LOG/STATUS entries and the Ahmed checklist (§1) after D. Independent Codex review is required before `main`; it is not available in the cloud, so record it as pending, as in batch 1.
+
+Later orders adapt to S1's names (`Lifecycle::run`, `find_file(&FileKey)`, tuple `OpenPaths`, `transaction_open`); the moderator ticks S2 §3.9 against the merged API.
 
 ## 6. Risks / open questions (recommended default; execution never blocks)
 
@@ -327,3 +334,10 @@ No behaviour is hand-testable until **all four** are merged. The intermediate br
 - Accessibility labels beyond tooltips.
 - F09 (Artboards) and Astra F04–F08/F10/F11.
 - Any change to `shell/tokens.rs` values.
+- Typed open errors + the migration notice (spec §4's separate "needs a newer Varos" / "no editable Varos document" titles): a small integration piece after S5 changes `DocStore::load` to return `Loaded`/`LoadError` (2 implementations + the Open rule).
+
+## Needs Ahmed (from review)
+1. Red traffic light / Close Window runs the whole Quit transaction until the Start page (S2) exists. **Working assumption: yes, as this WO already does.**
+2. Current fill / stroke / stroke weight: per tab (as this WO has it) or shared across tabs like the tool? **Working assumption: per tab; check it at the hand test.**
+3. Tabs that don't fit the strip: only the active one is guaranteed visible, the others are reachable with Ctrl+Tab, and an overflow menu comes later. **Working assumption: yes.**
+4. Share button shown disabled with "not available yet", like Export. **Working assumption: yes.**

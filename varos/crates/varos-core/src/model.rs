@@ -585,6 +585,67 @@ impl Default for Document {
 }
 
 impl Document {
+    /// The saved-content checkpoint rule (DFS S1 §3.1): do `self` and `other` hold the same
+    /// **authored content**? The app's dirty dot / `*` is `!doc.content_eq(&saved)`, so undo or redo
+    /// back to the saved state, a no-op commit and every view / preference action read as clean.
+    ///
+    /// Every `Document` field is sorted into one of two columns. The destructuring below is
+    /// exhaustive, so a NEW field does not compile until someone decides which column it belongs to.
+    ///
+    /// | field              | column     | why |
+    /// |--------------------|------------|-----|
+    /// | `paths`            | content    | geometry, fill/stroke/weight, opacity, holes, path hide/lock and path names (Layers rename) |
+    /// | `groups`, `group_of` | content  | the legacy group registry (empty after `migrate_legacy`, compared for completeness) |
+    /// | `nodes`            | content    | the scene tree: layer/group names, parents/children order, node hide/lock, layer colour, `clip_exempt`, live transform `xform`, clip `role` + `mask_child` |
+    /// | `roots`            | content    | layer order |
+    /// | `artboards`        | content    | rect, name, bleed, page colour, `clip`, `hidden`, `locked` |
+    /// | `guides`           | content    | ruler guides are placed with undo and saved with the file |
+    /// | `units.ppi`        | content    | the px ↔ physical bridge changes what a size means in print |
+    /// | `units.display`    | preference | the unit shown in fields/rulers (`CycleUnits`); geometry stays in pt |
+    /// | `active_layer`     | preference | where the next object lands (a navigation choice) |
+    /// | `ids`              | preference | the id counter; a created-then-discarded object bumps it without changing art |
+    /// | `active`           | preference | which artboard is active (a click / `SetActiveArtboard`) |
+    /// | `move_art_with_ab` | preference | an Artboard-tool behaviour toggle (`SetMoveArtWithArtboard`) |
+    /// | `snap`             | preference | the snapping config (`SetSnapConfig`, Ctrl+U, magnet menu) |
+    /// | `ruler_origin`     | preference | the ruler zero point (`SetRulerOrigin`) |
+    /// | `guides_locked`    | preference | a guides behaviour toggle (`ToggleGuidesLocked`) |
+    ///
+    /// Preferences are still SAVED with the file (the format is unchanged); they just never make the
+    /// document dirty. Comparison is plain `PartialEq`: a NaN compares unequal, so the rule can only
+    /// ever produce a false *dirty*, never a false *clean*.
+    pub fn content_eq(&self, other: &Document) -> bool {
+        let Document {
+            paths,
+            groups,
+            group_of,
+            nodes,
+            roots,
+            active_layer: _,
+            ids: _,
+            units,
+            artboards,
+            active: _,
+            move_art_with_ab: _,
+            snap: _,
+            ruler_origin: _,
+            guides,
+            guides_locked: _,
+        } = self;
+        // the unit settings split in two: ppi is content, the display unit a preference
+        let DocUnits { ppi, display: _ } = *units;
+        // cheap, discriminating fields first
+        paths.len() == other.paths.len()
+            && nodes.len() == other.nodes.len()
+            && ppi == other.units.ppi
+            && roots == &other.roots
+            && artboards == &other.artboards
+            && guides == &other.guides
+            && paths == &other.paths
+            && nodes == &other.nodes
+            && groups == &other.groups
+            && group_of == &other.group_of
+    }
+
     pub fn nid(&mut self) -> u32 {
         self.ids += 1;
         self.ids
