@@ -331,6 +331,24 @@ fn painted_half_width(p: &Path) -> f32 {
     }
 }
 
+/// Is `q` (path-local) within `grow` of the bbox of every anchor AND handle of the path (outer + holes)?
+/// A cubic never leaves the hull of its control points, and the fill never leaves its outline, so when
+/// this is false neither an edge hit (≤ `grow`) nor a fill hit is possible — `path_under` skips the
+/// per-segment distance for that path. Pure speed: it never changes an answer.
+fn ctrl_bbox_near(p: &Path, q: Pt, grow: f32) -> bool {
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
+        for c in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
+            x0 = x0.min(c[0]);
+            y0 = y0.min(c[1]);
+            x1 = x1.max(c[0]);
+            y1 = y1.max(c[1]);
+        }
+    }
+    // an empty path (no anchors) leaves the box inverted → false, matching "nothing to hit"
+    q[0] >= x0 - grow && q[0] <= x1 + grow && q[1] >= y0 - grow && q[1] <= y1 + grow
+}
+
 /// Does the segment a→b touch the axis-aligned rect r = (x0, y0, x1, y1) (edges inclusive)?
 /// Liang–Barsky clip: the segment touches iff some parameter range in [0, 1] survives all four slabs.
 fn seg_touches_rect(a: Pt, b: Pt, r: (f32, f32, f32, f32)) -> bool {
@@ -528,6 +546,9 @@ impl Editor {
             // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
             let reach = edge_r + painted_half_width(&self.doc.paths[pi]);
+            if !ctrl_bbox_near(&self.doc.paths[pi], lp, reach) {
+                continue; // cheap cull: out of reach of every curve AND of the fill (review P3-1)
+            }
             let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= reach); // outer + hole rims (FB3)
             let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
             if on_edge || in_fill {

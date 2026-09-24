@@ -1937,7 +1937,7 @@ impl Document {
 /// Nearest point on ONE cubic segment to `pos` → (t, distance), measured on the true curve (QW1).
 /// 1. The old 25-sample grid → project `pos` onto each chord between neighbouring samples and keep the
 ///    closest chord point, interpolating `t` along it (so a valid `t` still feeds add-anchor).
-/// 2. A few clamped Newton steps on |B(t) − pos|² from that `t`, bracketed to the chords either side,
+/// 2. A few clamped Gauss–Newton steps on |B(t) − pos|² from that `t`, bracketed to the chords either side,
 ///    close the chord-vs-arc gap (the sagitta: ~5 units per chord on a 20000-wide circle).
 ///
 /// The distance returned is always to a real curve point: the refined `t` wins only when it is closer
@@ -1960,7 +1960,10 @@ fn cubic_nearest(p0: Pt, p1: Pt, p2: Pt, p3: Pt, pos: Pt) -> (f32, f32) {
         }
         prev = q;
     }
-    // Newton on f(t) = (B − P)·B′ = 0, kept inside the chords either side of the guess.
+    // Gauss–Newton on f(t) = (B − P)·B′ = 0, kept inside the chords either side of the guess. The divisor
+    // is |B′|² only: full Newton's curvature term (B − P)·B″ can make it ≤ 0 — on a STRAIGHT segment
+    // `(p0, p0, p3, p3)` it does so near both ends, which stalled the refinement ~22 units off on a 20000
+    // edge (review P1-1). |B′|² ≥ 0 always, and it converges fast when the residual is small (a hit).
     let step = 1.0 / N as f32;
     let (lo, hi) = ((bt - step).max(0.0), (bt + step).min(1.0));
     let guess_d = dist(cubic(p0, p1, p2, p3, bt), pos);
@@ -1969,15 +1972,13 @@ fn cubic_nearest(p0: Pt, p1: Pt, p2: Pt, p3: Pt, pos: Pt) -> (f32, f32) {
         let mt = 1.0 - t;
         let r = sub(cubic(p0, p1, p2, p3, t), pos);
         let mut d1 = [0.0f32; 2]; // B′(t)
-        let mut d2 = [0.0f32; 2]; // B″(t)
         for c in 0..2 {
             d1[c] = 3.0 * (mt * mt * (p1[c] - p0[c]) + 2.0 * mt * t * (p2[c] - p1[c]) + t * t * (p3[c] - p2[c]));
-            d2[c] = 6.0 * (mt * (p2[c] - 2.0 * p1[c] + p0[c]) + t * (p3[c] - 2.0 * p2[c] + p1[c]));
         }
         let f = r[0] * d1[0] + r[1] * d1[1];
-        let fp = d1[0] * d1[0] + d1[1] * d1[1] + r[0] * d2[0] + r[1] * d2[1];
+        let fp = d1[0] * d1[0] + d1[1] * d1[1];
         if !f.is_finite() || fp.is_nan() || fp <= 1e-12 {
-            break; // flat/degenerate spot (e.g. a straight segment's zero-length handle end) — keep the guess
+            break; // B′ = 0 (exactly at a zero-length handle's anchor, or a zero-length segment) — keep t
         }
         let nt = (t - f / fp).clamp(lo, hi);
         let done = (nt - t).abs() < 1e-7;
