@@ -76,6 +76,16 @@ pub enum EditCommand {
     Arrange(ZOrder),
     TransformAgain,
     DeleteSelected,
+    /// Edit ▸ Copy: selection → the in-app clipboard. Leaves the document untouched (no history).
+    Copy,
+    /// Edit ▸ Cut: Copy + delete the selection, as ONE undo step.
+    Cut,
+    /// Edit ▸ Paste / Paste in Place: a fresh copy of the clipboard onto the active layer, selected,
+    /// as ONE undo step. `offset` = world translation from the copied position (the app passes the
+    /// delta that centres the art in the view — core has no view); `None` = in place (⇧⌘V).
+    Paste {
+        offset: Option<Pt>,
+    },
     Nudge {
         x: f32,
         y: f32,
@@ -155,6 +165,9 @@ impl EditCommand {
             Self::Arrange(order) => ed.arrange(order),
             Self::TransformAgain => ed.transform_again(),
             Self::DeleteSelected => ed.delete_selected(),
+            Self::Copy => ed.copy_selection(),
+            Self::Cut => ed.cut_selection(),
+            Self::Paste { offset } => ed.paste(offset),
             Self::Nudge { x, y } => ed.nudge(x, y),
             Self::SetActiveArtboard(index) => ed.ab_set_active(index),
             Self::SetArtboardRect { index, x, y, width, height } => ed.ab_set_rect(index, x, y, width, height),
