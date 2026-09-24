@@ -34,6 +34,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # macOS only: native menu bar and opaque window background (MAC_CHROME.md), plus
 # Retina tool cursors whose 32-point NSImage carries 1× and 2× bitmap representations.
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"   # plain fsync fallback when a volume rejects F_FULLFSYNC (storage/durable.rs); already in the lock
 muda = { version = "0.20", default-features = false }
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSGeometry"] }
