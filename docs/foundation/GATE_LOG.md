@@ -449,3 +449,30 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Checks run (moderator, cloud, Linux, on `6999970`):** `cargo test --workspace` → **624/624 passed, 0 failed, 4 ignored by design (old-reader harness ×2 pre-existing, timing, corpus check)**; clippy Linux + Windows target + Mac target (type-check) → clean; fmt → clean.
 - **Process notes:** shared cargo build dirs between worktrees clobbered artifacts (cargo hashes workspace crates by workspace-relative path) — two agents reported false test results until sources were touched; rule changed to a private build dir per piece. Independent Codex review: not run (cloud); required before any merge to `main`. Hand test: pending (Mac) — batch 3 list in `STATUS.md`.
 - Sign-off: moderator — gates PASS — 2026-09-24
+
+## Integration branch — Mac clippy compatibility fix
+
+- **Date:** 2026-09-24 (evening). **Branch:** `integrate/cloud-wave-1`. **Landing:** `2415902`. **Reviewer:** Mac moderator gates.
+- **Finding and fix:** the cloud branch passed **629/629** workspace tests and fmt, but Mac clippy 1.98 rejected `storage/recovery.rs` for `unnecessary_sort_by`. The one-line compatibility fix cleared that failure.
+- **Checks run (Mac, integration branch):** `cargo test --workspace` → **629/629 passed**; fmt → clean; clippy on Mac + Windows target → clean after the fix.
+- **Verdict:** PASS. **Landed on `integrate/cloud-wave-1`; not on `main` yet.**
+- Sign-off: moderator — PASS — 2026-09-24
+
+## S3-D scheduler — independent Codex review fixes
+
+- **Date:** 2026-09-24 (evening). **Branch:** `fix/s3d-scheduler-review` (fix commit `cce22e6`). **Integration merge:** `f59da81`. **Reviewer:** Codex (Sol) + Mac moderator gates.
+- **Codex review:** REQUEST CHANGES — P1 the recovery deadline restarted after Retire completed; P2 `done.sid` was unchecked, allowing cross-session completion; P2 manifest `seq = u64::MAX` could panic or wrap. Opus fixed all three with four red→green tests. Codex re-check: **APPROVE WITH NITS**; §3.6 documentation was updated in `542790a`.
+- **Checks run (Mac, integration branch):** `cargo test --workspace` → **633/633 passed**; clippy on Mac + Windows target → clean; fmt → clean.
+- **Verdict:** PASS. **Merged as `f59da81` on `integrate/cloud-wave-1`; not on `main` yet.**
+- Sign-off: moderator — PASS — 2026-09-24
+
+## S2-E1 Start model — independent Codex review fixes
+
+- **Date:** 2026-09-24 (evening). **Branch:** `fix/s2e1-start-model-review` (commits `26030d1`, `c3a099c`). **Integration merge:** `e2298f9`. **Reviewer:** Codex (Sol) + Mac moderator gates.
+- **Codex review:** REQUEST CHANGES — P1 E1 shipped only the model instead of the work-order scope; P2 arrow handling was not list-scoped; P2 public collections could panic; P3 Escape behaviour was invented. Opus fixed the findings and split the work order honestly: E1 model **DONE**, E2 drawing **PENDING**. Codex re-check: **APPROVE**.
+- **Checks run (Mac, integration branch):** `cargo test --workspace` → **634/634 passed**; clippy on Mac + Windows target → clean; fmt → clean.
+- **Process note:** the first Codex review attempt collided with S3-D's output directory because the relay directories shared the same millisecond; the S2-E1 review was re-run alone.
+- **Verdict:** PASS. **Merged as `e2298f9` on `integrate/cloud-wave-1`; not on `main` yet.**
+- Sign-off: moderator — PASS — 2026-09-24
+
+**In flight:** `fix/s1cd-tabs-review` — Codex review of `e5b9315` REQUEST CHANGES: P1 typed field values cross tabs; P1 dispatch is not FIFO (⌘S then ⌘Z saves the undone state); P2 overflow-tab drag order; P3 overclaims. Opus is fixing the findings; the first P1 is fixed in `1115e76`. Not landed on `integrate/cloud-wave-1` or `main` yet.

@@ -1,4 +1,4 @@
-> **Status:** reference — Proposed ADR awaiting the product owner's acceptance; not current authority under `docs/foundation/FOUNDATION_CHARTER.md` §3 until its Status reads Accepted.
+> **Status:** current — Accepted project decision, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # ADR-0008: `.vrs` format versioning, migration and bounded validation
 
 - **Date:** 2026-09-24
@@ -69,8 +69,6 @@ This ADR complements both and edits neither text. ADR-0003's container stays. AD
 
 ## Status
 
-Proposed — drafted 2026-09-24 for the product owner.
-
-Acceptance is the product owner's act: Ahmed accepts by editing this line to `Accepted — product owner, <date>`. No S5 code (pieces B–E of `DFS_S5_FORMAT_V2.md`) reaches `main` while this ADR is Proposed.
+Accepted — product owner (Ahmed), 2026-09-24.
 
 **Number note:** 0008 is taken by this ADR because it is filed first. The MCP study (`docs/studies/2026-09-23-MCP_CONTROL_STUDY.md`) and the Online study (`docs/studies/2026-09-23-ONLINE_AND_MAC_STUDY.md`) also propose "ADR-0008"; they take the next free numbers when their ADRs are drafted.
