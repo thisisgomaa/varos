@@ -239,3 +239,51 @@ fn clipboard_moves_between_editors() {
     assert_eq!(b.clipboard().len(), 1, "pasting keeps the clipboard");
     assert_eq!(a.doc.paths.len(), 2, "A is unchanged");
 }
+
+#[test]
+fn pen_resume_from_the_first_anchor_is_one_undoable_edit() {
+    // S1-A review P2-1: resuming an open path from its FIRST anchor reverses the anchor order — a real
+    // content change. It must record a history step (rev bump ⇒ the tab's dirty dot) and undo in one.
+    let a = |i: u32, x: f32, y: f32| Anchor { id: i, p: [x, y], hin: None, hout: None, smooth: false };
+    let mut ed = Editor::new();
+    ed.doc.paths.push(Path::new(
+        10,
+        vec![a(1, 0.0, 0.0), a(2, 100.0, 0.0), a(3, 100.0, 60.0)],
+        false,
+        None,
+        Some([0.0, 0.0, 0.0, 1.0]),
+        2.0,
+    ));
+    ed.doc.ids = 3;
+    ed.ppu = 1.0;
+    ed.doc.snap.enabled = false;
+    ed.doc.sync_tree();
+    ed.set_tool(ToolKind::Pen);
+    let saved = ed.doc.clone();
+    let order = |ed: &Editor| ed.doc.paths[0].anchors.iter().map(|x| x.id).collect::<Vec<_>>();
+    let rev = ed.rev;
+
+    ed.pointer_move([0.0, 0.0]); // hover the first anchor (as the app does before a click)
+    ed.pointer_down([0.0, 0.0]);
+    ed.pointer_up(); // resume(10, 1): the path now continues from anchor 1
+    assert_eq!(ed.active, Some(10), "the Pen resumed the path");
+    assert_eq!(order(&ed), [3, 2, 1], "resuming from the first anchor reverses the path");
+    assert_eq!(ed.rev, rev + 1, "…as a recorded edit");
+    assert!(!ed.doc.content_eq(&saved), "…that makes the document dirty");
+
+    ed.execute(EditCommand::Undo);
+    assert_eq!(order(&ed), [1, 2, 3], "one Undo restores the order");
+    assert!(ed.doc.content_eq(&saved), "…and the document is clean again");
+
+    // resuming from the LAST anchor changes nothing and records nothing
+    let mut ed2 = Editor::new();
+    ed2.doc = saved.clone();
+    ed2.ppu = 1.0;
+    ed2.set_tool(ToolKind::Pen);
+    ed2.pointer_move([100.0, 60.0]);
+    ed2.pointer_down([100.0, 60.0]);
+    ed2.pointer_up();
+    assert_eq!(ed2.active, Some(10));
+    assert_eq!(ed2.rev, 0, "no reversal ⇒ no history step");
+    assert!(ed2.doc.content_eq(&saved));
+}

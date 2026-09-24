@@ -112,9 +112,10 @@ impl DocumentSession {
     }
 
     /// Unsaved changes, for DRAWING (the tab dot, the title `*`): memoised on `editor.rev`, plus the
-    /// in-flight overlay. Content changes inside a history transaction (which sets `dirty`) or with a
-    /// `rev` bump, so the memo holds for every EditCommand path; a content write that skipped
-    /// `begin`/`commit` would be missed by the memo only until the next `rev` change, which is why
+    /// in-flight overlay. Content changes inside a history transaction (which sets `dirty`) and is
+    /// recorded with a `rev` bump when it commits, so the memo holds for every committed transaction
+    /// (EditCommands and pointer gestures alike); a content write that skipped `begin`/`dirty`/`commit`
+    /// would be missed by the memo only until the next `rev` change, which is why
     /// every Save / Close / Quit decision uses `is_dirty_exact` instead. `mark_saved` resets the memo.
     pub fn is_dirty(&self) -> bool {
         let ed = &self.editor;
@@ -158,9 +159,13 @@ impl DocumentSession {
 
     /// Finish a pointer gesture still in flight (a canvas drag or an Artboard-tool drag) the way a
     /// mouse release would, so a lifecycle command never saves / closes / switches mid-gesture.
+    ///
+    /// Also finishes a gesture whose transaction is open without a drag (a Pen click that added or
+    /// deleted an anchor, before its release). Call `Ui::settle` FIRST: it cancels an open colour
+    /// picker, whose transaction must be reverted, not committed here.
     pub fn settle(&mut self) {
         let ed = &mut self.editor;
-        if !matches!(ed.drag, Drag::None) || !matches!(ed.ab_drag, AbDrag::None) {
+        if !matches!(ed.drag, Drag::None) || !matches!(ed.ab_drag, AbDrag::None) || ed.transaction_open() {
             ed.pointer_up();
             // With the Artboard tool `pointer_up` ends only the board drag; never leave a stale
             // artwork drag behind (its transaction was committed above).
@@ -922,6 +927,21 @@ mod tests {
         s.settle();
         assert!(matches!(s.editor.ab_drag, AbDrag::None) && !s.editor.transaction_open());
         assert!(s.is_dirty_exact(), "the board moved");
+        // a Pen click that added an anchor (transaction open, no drag yet) settles too
+        s.editor.set_tool(ToolKind::Pen);
+        s.editor.objsel.insert(10);
+        let rev = s.editor.rev;
+        let n = s.editor.doc.paths.iter().find(|p| p.id == 10).unwrap().anchors.len();
+        let sqr = s.editor.doc.paths.iter().find(|p| p.id == 10).unwrap();
+        let (a0, a1) = (sqr.anchors[0].p, sqr.anchors[1].p);
+        let mid = [(a0[0] + a1[0]) * 0.5, (a0[1] + a1[1]) * 0.5]; // on the square's first segment
+        s.editor.pointer_move(mid);
+        s.editor.pointer_down(mid);
+        assert!(s.editor.transaction_open() && matches!(s.editor.drag, Drag::None), "open, no drag");
+        assert_eq!(s.editor.doc.paths.iter().find(|p| p.id == 10).unwrap().anchors.len(), n + 1);
+        s.settle();
+        assert!(!s.editor.transaction_open(), "the Pen click's transaction is committed");
+        assert_eq!(s.editor.rev, rev + 1, "as one undo step");
         // nothing in flight → settle is a no-op
         let rev = s.editor.rev;
         s.settle();

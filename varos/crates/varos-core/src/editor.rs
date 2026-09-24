@@ -3244,7 +3244,10 @@ impl Editor {
         let pi = self.doc.pidx(pid).unwrap();
         let last = self.doc.paths[pi].anchors.last().map(|a| a.id);
         if last != Some(end_aid) {
+            // resuming from the FIRST anchor flips the path's direction — a real content change, so it
+            // must be part of this gesture's undo step (and bump `rev`; S1 review P2-1)
             self.reverse(pi);
+            self.dirty = true;
         }
         self.active = Some(pid);
         self.selected.clear();
