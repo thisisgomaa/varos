@@ -6,6 +6,7 @@ pub mod clipboard;
 pub mod command;
 pub mod editor;
 pub mod flatten;
+pub mod format;
 pub mod geom;
 pub mod model;
 pub mod scene;
