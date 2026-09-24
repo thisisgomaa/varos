@@ -217,7 +217,7 @@ fn missing_zero_negative_fractional_huge_versions_refused() {
     assert_eq!(dec("").unwrap_err(), LoadError::NotAVarosFile);
     assert_eq!(dec("[1,2]").unwrap_err(), LoadError::NotAVarosFile);
     // a truncated object is damaged, not foreign
-    assert!(matches!(dec(r#"{"varos":2,"doc":{"#).unwrap_err(), LoadError::Malformed(_)));
+    assert!(matches!(dec(r#"{"varos":2,"doc":{"#).unwrap_err(), LoadError::Malformed { .. }));
     // the message is plain English
     assert!(LoadError::MissingVersion.to_string().contains("no Varos format number"));
 }
@@ -250,7 +250,7 @@ fn unknown_field_fails_closed_envelope_document_node() {
             let mut v = base.clone();
             poke(&mut v);
             match dec_value(&v) {
-                Err(LoadError::Malformed(m)) => {
+                Err(LoadError::Malformed { detail: m, .. }) => {
                     assert!(m.contains("unknown") || m.contains("variant"), "v{version} {spot}: {m}")
                 }
                 other => panic!("v{version} {spot}: expected Malformed, got {other:?}"),
@@ -299,7 +299,7 @@ fn json_depth_over_limit_refused() {
     // serde_json's built-in recursion limit (128) is active: a 200-deep value where a value is parsed
     let deep = format!(r#"{{"varos":{}{},"doc":{{}}}}"#, "[".repeat(200), "]".repeat(200));
     match dec(&deep) {
-        Err(LoadError::Malformed(m)) => assert!(m.contains("recursion limit"), "{m}"),
+        Err(LoadError::Malformed { detail: m, .. }) => assert!(m.contains("recursion limit"), "{m}"),
         other => panic!("expected Malformed(recursion limit), got {other:?}"),
     }
     // just under the limit parses (and is then refused as an invalid version, not as too deep)
@@ -308,9 +308,9 @@ fn json_depth_over_limit_refused() {
     // a million levels of junk anywhere else neither overflows the stack nor hangs
     let n = 1_000_000;
     let junk = format!(r#"{{"varos":2,"junk":{}{},"doc":{{}}}}"#, "[".repeat(n), "]".repeat(n));
-    assert!(matches!(dec(&junk), Err(LoadError::Malformed(_))));
+    assert!(matches!(dec(&junk), Err(LoadError::Malformed { .. })));
     let junk = format!(r#"{{"varos":2,"doc":{{"paths":{}{}}}}}"#, "[".repeat(n), "]".repeat(n));
-    assert!(matches!(dec(&junk), Err(LoadError::Malformed(_))));
+    assert!(matches!(dec(&junk), Err(LoadError::Malformed { .. })));
 }
 
 #[test]
@@ -574,7 +574,18 @@ fn v1_invalid_clip_refused_not_demoted() {
     let mut v = blob_as_raw(&d, 1);
     let ci = d.nodes.iter().position(|n| n.id == clip).unwrap();
     v["doc"]["nodes"][ci]["mask_child"] = json!(4242);
-    assert_eq!(invalid(dec_value(&v)), Invalid::BadMask { group: clip, reason: "its mask shape is missing" });
+    let dangling = Invalid::Dangling { from: "node", id: clip, missing: 4242 };
+    assert_eq!(invalid(dec_value(&v)), dangling, "refused by the structure check, before any migration");
+    // review P3-1: with a tree-less path to adopt, the migration would otherwise hand out node 4242 to it
+    // and the clip would silently bind to an arbitrary shape
+    let mut v2 = blob_as_raw(&d, 1);
+    v2["doc"]["nodes"][ci]["mask_child"] = json!(4242);
+    v2["doc"]["ids"] = json!(4241);
+    v2["doc"]["paths"].as_array_mut().unwrap().push(serde_json::to_value(tri(9, 0.0, 0.0)).unwrap());
+    assert_eq!(invalid(dec_value(&v2)), dangling);
+    let mut sd = d.clone();
+    sd.nodes[ci].mask_child = Some(4242);
+    assert_eq!(save_invalid(&sd), dangling, "save refuses it too");
     // save refuses it and leaves the editor's document untouched
     let before = d.clone();
     assert_eq!(save_invalid(&d), want);
@@ -641,7 +652,7 @@ fn save_refuses_non_finite_and_leaves_doc_unchanged() {
     d.paths[0].opacity = f32::NAN;
     let raw = blob_as_raw(&d, 2).to_string();
     assert!(raw.contains(r#""opacity":null"#));
-    assert!(matches!(dec(&raw), Err(LoadError::Malformed(_))));
+    assert!(matches!(dec(&raw), Err(LoadError::Malformed { .. })));
 }
 
 #[test]
@@ -719,5 +730,50 @@ fn decode_timing_at_caps() {
             save.as_secs_f64() * 1e3,
             load.as_secs_f64() * 1e3
         );
+    }
+}
+
+/// Review P2-1: user-facing text never leaks parser internals (type names, field lists, serde words).
+#[test]
+fn user_messages_hide_parser_internals() {
+    let base = blob_as(&masked_rotated(), 2);
+    let mut inputs: Vec<String> = vec![
+        r#"{"varos":2,"doc":42}"#.into(),
+        r#"{"varos":2,"doc":{"#.into(),
+        format!(r#"{{"varos":{}{},"doc":{{}}}}"#, "[".repeat(200), "]".repeat(200)),
+    ];
+    let pokes: [fn(&mut Value); 6] = [
+        |v| v["extra"] = json!(1),
+        |v| v["doc"]["bogus"] = json!(1),
+        |v| v["doc"]["ids"] = json!("x"),
+        |v| v["doc"]["paths"][0]["stroke_width"] = json!(null),
+        |v| v["doc"]["nodes"][0]["kind"] = json!("Blob"),
+        |v| {
+            v["doc"].as_object_mut().unwrap().remove("paths");
+        },
+    ];
+    for poke in pokes {
+        let mut v = base.clone();
+        poke(&mut v);
+        inputs.push(v.to_string());
+    }
+    let mut messages: Vec<String> = inputs.iter().map(|s| dec(s).expect_err("refused").to_string()).collect();
+    let mut nan = doc_with(1);
+    nan.paths[0].anchors[0].p[0] = f32::NAN;
+    messages.push(encode_model(&nan, &Limits::DEFAULT).unwrap_err().to_string());
+    for m in &messages {
+        for bad in ["struct", "expected", "serde", "field", "u32", "f32", "`", "stroke_width", "move_art_with_ab"] {
+            assert!(!m.contains(bad), "user message leaks {bad:?}: {m}");
+        }
+    }
+    assert!(messages[0].ends_with("(line 1, column 19)."), "{}", messages[0]);
+    assert_eq!(
+        messages.last().unwrap(),
+        "This document can't be saved: a number in this document has a value that is not a finite number. It is still open."
+    );
+    // the raw parser text is still kept for logs
+    match dec(r#"{"varos":2,"doc":42}"#) {
+        Err(LoadError::Malformed { line: 1, column: 19, detail }) => assert!(detail.contains("expected")),
+        other => panic!("{other:?}"),
     }
 }

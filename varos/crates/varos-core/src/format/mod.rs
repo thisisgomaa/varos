@@ -82,7 +82,7 @@ pub fn peek_version(json: &[u8]) -> Result<u32, LoadError> {
     if json.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'{') {
         return Err(LoadError::NotAVarosFile);
     }
-    let head: Head = serde_json::from_slice(json).map_err(|e| LoadError::Malformed(e.to_string()))?;
+    let head: Head = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     let value = head.varos.ok_or(LoadError::MissingVersion)?;
     let version = match value.as_u64() {
         Some(0) | None => return Err(LoadError::InvalidVersion(value.to_string())),
@@ -111,7 +111,7 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
             return Err(LoadError::VersionMismatch { container, model: version });
         }
     }
-    let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::Malformed(e.to_string()))?;
+    let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     let doc = file.doc;
     check_structure(&doc, limits)?;
     let migrated = version < FORMAT_VERSION;
@@ -158,14 +158,16 @@ fn canonical(doc: Document) -> Result<Document, LoadError> {
 
 /// Serialize a document as the current format. Runs `check_structure`, normalizes a CLONE (a clip
 /// the normalizer would demote is refused), re-checks the structure and runs `validate` on that clone,
-/// enforces the model size cap, and finally proves the bytes decode back. `doc` is never mutated.
+/// enforces the model size cap, and checks serde can read the bytes back (today the only guard against
+/// a non-finite float, which serde writes as `null`; S5-C's finiteness rule names the object). `doc` is
+/// never mutated.
 pub fn encode_model(doc: &Document, limits: &Limits) -> Result<String, SaveRefused> {
     check_structure(doc, limits).map_err(SaveRefused)?;
     let norm = migrate::normalize(doc.clone()).map_err(SaveRefused)?;
     check_structure(&norm, limits).map_err(SaveRefused)?; // adoption may add nodes
     validate(&norm, limits).map_err(|i| SaveRefused(i.into()))?;
     let out = serde_json::to_string(&VrsFileRef { varos: FORMAT_VERSION, doc: &norm })
-        .map_err(|e| SaveRefused(LoadError::Malformed(e.to_string())))?;
+        .map_err(|e| SaveRefused(LoadError::malformed(&e)))?;
     if out.len() > limits.max_model_bytes {
         return Err(SaveRefused(LoadError::TooLarge {
             limit: LimitKind::ModelBytes,
@@ -176,9 +178,8 @@ pub fn encode_model(doc: &Document, limits: &Limits) -> Result<String, SaveRefus
     // Backstop for anything serde writes but cannot read back (a non-finite float serializes as
     // `null`): the saved bytes must at least decode as a typed model. `validate` names such values
     // precisely; this only guarantees nothing unreadable ever reaches the disk.
-    serde_json::from_str::<VrsFile>(&out).map_err(|e| {
-        SaveRefused(Invalid::NonFinite { what: format!("a number in this document (the saved data: {e})") }.into())
-    })?;
+    serde_json::from_str::<VrsFile>(&out)
+        .map_err(|_| SaveRefused(Invalid::NonFinite { what: "a number in this document".into() }.into()))?;
     Ok(out)
 }
 

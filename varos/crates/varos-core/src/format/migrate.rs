@@ -4,9 +4,9 @@
 
 use super::error::{Invalid, LoadError};
 use super::limits::Limits;
-use super::structure::{check_structure, max_used_id};
+use super::structure::max_used_id;
 use crate::model::{Document, GroupRole};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// A migration step: format `from` → `from + 1`.
 pub type Step = fn(Document, &Limits) -> Result<Document, LoadError>;
@@ -31,9 +31,9 @@ pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result
 /// repairs authored mask meaning: a clip group that `sync_tree` would demote is refused
 /// (`Invalid::BadMask`). The id counter is raised to cover every id in use.
 ///
-/// Re-runs `check_structure` first, so it is safe to call on any decoded document.
-pub fn migrate_v1_to_v2(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
-    check_structure(&doc, limits)?;
+/// Requires a document that passed `check_structure` (`decode_model` runs it first): the tree walks in
+/// `sync_tree` assume an acyclic, depth-bounded tree.
+pub fn migrate_v1_to_v2(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     normalize(doc)
 }
 
@@ -44,21 +44,15 @@ pub(crate) fn normalize(mut doc: Document) -> Result<Document, LoadError> {
     doc.ids = doc.ids.max(max_used_id(&doc));
     let clips: Vec<(u32, Option<u32>)> =
         doc.nodes.iter().filter(|n| n.role == GroupRole::Clip).map(|n| (n.id, n.mask_child)).collect();
-    let pre_mask_exists: Vec<bool> = if clips.is_empty() {
-        vec![]
-    } else {
-        let ids: HashSet<u32> = doc.nodes.iter().map(|n| n.id).collect();
-        clips.iter().map(|(_, mc)| mc.is_some_and(|m| ids.contains(&m))).collect()
-    };
     doc.sync_tree();
     if !clips.is_empty() {
         let after: HashMap<u32, (GroupRole, Option<u32>)> =
             doc.nodes.iter().map(|n| (n.id, (n.role, n.mask_child))).collect();
-        for ((group, mask_child), mask_existed) in clips.iter().zip(pre_mask_exists) {
+        for (group, mask_child) in &clips {
             if after.get(group) != Some(&(GroupRole::Clip, *mask_child)) {
+                // a mask id naming no node is refused earlier, by `check_structure` (Dangling)
                 let reason = match mask_child {
                     None => "it has no mask shape",
-                    Some(_) if !mask_existed => "its mask shape is missing",
                     Some(_) => "its mask shape is no longer inside it",
                 };
                 return Err(Invalid::BadMask { group: *group, reason }.into());
