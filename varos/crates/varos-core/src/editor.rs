@@ -4045,7 +4045,7 @@ impl Editor {
     /// Paths targeted by inspector edits (paint / stroke-weight / opacity): object selection ∪ the paths of
     /// individually-selected anchors ∪ the Direct-tool path-level selection. Missing that last term was the
     /// bug where changing colour / removing stroke did nothing while the Direct-Selection tool was active.
-    fn selected_pids(&self) -> HashSet<u32> {
+    pub(crate) fn selected_pids(&self) -> HashSet<u32> {
         let mut pids: HashSet<u32> = self.objsel.clone();
         for &aid in &self.selected {
             if let Some(pid) = self.doc.pid_of_anchor(aid) {
