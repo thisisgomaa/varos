@@ -239,7 +239,7 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
                 if shift {
                     ed.escape()
                 } else {
-                    ed.execute(EditCommand::SelectAll)
+                    ed.select_all()
                 }
             }
             _ => {}
