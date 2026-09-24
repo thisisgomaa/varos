@@ -475,3 +475,147 @@ fn floaters_and_bleed_pages_draw_uncut() {
     assert_eq!(fills.len(), 1, "clip-off page invites bleed — one uncut draw");
     assert_eq!(xs(&fills[0]), (80.0, 120.0));
 }
+
+/// F09 fixture: ONE 100×100 page "A" at the origin holding a lone square (1) + a clip group of two
+/// squares (2 = content, 3 = mask), and a floater (4) far off the page.
+fn populated_page() -> Editor {
+    let mut ed = Editor::new();
+    ed.ppu = 1.0;
+    ed.doc.artboards = vec![board(0.0, "A", true)];
+    ed.doc.paths.push(sq(1, 1, 10.0, 10.0, 20.0)); // on A
+    ed.doc.paths.push(sq(2, 10, 50.0, 50.0, 30.0)); // on A — clip content
+    ed.doc.paths.push(sq(3, 20, 55.0, 55.0, 20.0)); // on A — the mask
+    ed.doc.paths.push(sq(4, 30, 500.0, 500.0, 20.0)); // floater, on no page
+    ed.doc.ids = 100;
+    ed.doc.sync_tree();
+    ed.doc.clip_group(&[2, 3], 3).expect("the pair clips");
+    ed
+}
+
+#[test]
+fn duplicate_artboard_carries_its_art_when_move_art_is_on() {
+    // F09 (Astra 09-24): Duplicate on a populated page made an EMPTY "copy". With "Move artwork" on
+    // (the default), the page's art comes along — offset by the page's delta, groups + masks + layer kept,
+    // the originals untouched, the copies not selected (as Alt+drag), and it is ONE undo step.
+    let mut ed = populated_page();
+    assert!(ed.doc.move_art_with_ab, "move-art is on by default");
+    let before = ed.doc.clone();
+    let rev0 = ed.rev;
+
+    ed.ab_duplicate(0);
+
+    assert_eq!(ed.doc.artboards.len(), 2);
+    let (a, c) = (ed.doc.artboards[0].clone(), ed.doc.artboards[1].clone());
+    assert_eq!(c.name, "A copy");
+    let d = c.x - a.x;
+    assert!(d > a.w, "the copy sits to the right of the source, got dx={d}");
+    assert_eq!(c.y, a.y);
+
+    // exactly the 3 on-page paths were copied (the floater was not)
+    assert_eq!(ed.doc.paths.len(), 4 + 3, "three on-page paths copied, the floater left alone");
+    let new_pids: Vec<u32> = ed.doc.paths.iter().map(|p| p.id).filter(|id| ![1, 2, 3, 4].contains(id)).collect();
+    assert_eq!(new_pids.len(), 3);
+
+    // originals byte-identical; each copy = an original shifted by exactly (d, 0)
+    for &pid in &[1u32, 2, 3, 4] {
+        let i = ed.doc.pidx(pid).unwrap();
+        let j = before.pidx(pid).unwrap();
+        assert_eq!(ed.doc.paths[i].anchors, before.paths[j].anchors, "original {pid} untouched");
+    }
+    let bb = |ed: &Editor, pid: u32| ed.doc.outline_bbox(ed.doc.pidx(pid).unwrap());
+    let near = |x: f32, y: f32| (x - y).abs() < 0.01;
+    for &src in &[1u32, 2, 3] {
+        let o = bb(&ed, src);
+        let hit = new_pids.iter().any(|&n| {
+            let b = bb(&ed, n);
+            near(b.0, o.0 + d) && near(b.1, o.1) && near(b.2, o.2 + d) && near(b.3, o.3)
+        });
+        assert!(hit, "a copy of path {src} sits exactly (dx={d}, 0) from it");
+    }
+    for &n in &new_pids {
+        let i = ed.doc.pidx(n).unwrap();
+        assert_eq!(ed.doc.path_boards(i), vec![1], "every copy lives on the NEW page only");
+    }
+
+    // group + mask structure preserved: the two clip copies share a NEW clip group with its OWN mask
+    let orig_clip = ed.doc.clip_group_of(2).unwrap();
+    let copy_clips: Vec<u32> = new_pids.iter().filter_map(|&n| ed.doc.clip_group_of(n)).collect();
+    assert_eq!(copy_clips.len(), 2, "both copied clip members are in a clip group");
+    assert_eq!(copy_clips[0], copy_clips[1], "…the SAME one");
+    assert_ne!(copy_clips[0], orig_clip, "…a fresh group, not the original's");
+    let mc = ed.doc.node(copy_clips[0]).unwrap().mask_child.expect("the copied clip has a mask");
+    let mask_paths = ed.doc.node_paths(mc);
+    assert_eq!(mask_paths.len(), 1);
+    assert!(new_pids.contains(&mask_paths[0]), "the copy clips to its OWN (copied) mask");
+    // layer membership preserved
+    let lo = ed.doc.layer_ancestor(ed.doc.node_of_path(1).unwrap());
+    for &n in &new_pids {
+        let ln = ed.doc.layer_ancestor(ed.doc.node_of_path(n).unwrap());
+        assert_eq!(ln, lo, "copies stay on the source's layer");
+    }
+
+    // selection: the new page is active; the copied art is NOT selected (consistent with Alt+drag)
+    assert_eq!(ed.doc.active, 1);
+    assert_eq!(ab_selection(&ed), vec![1]);
+    assert!(new_pids.iter().all(|n| !ed.objsel.contains(n)), "copies are not selected");
+    assert_eq!(ed.rev, rev0 + 1, "one committed change");
+
+    // one undo removes the page AND its copied art
+    ed.undo();
+    assert_eq!(ed.doc.artboards.len(), 1, "undo removes the copy page");
+    assert_eq!(ed.doc.paths.len(), 4, "…and the copied art in the same step");
+    for &pid in &[1u32, 2, 3, 4] {
+        assert_eq!(
+            ed.doc.paths[ed.doc.pidx(pid).unwrap()].anchors,
+            before.paths[before.pidx(pid).unwrap()].anchors,
+            "original {pid} intact after undo"
+        );
+    }
+    assert_eq!(ed.doc.clip_group_of(2), Some(orig_clip), "the original clip group is intact");
+}
+
+#[test]
+fn duplicate_artboard_is_empty_when_move_art_is_off() {
+    // F09: "Move artwork" off keeps today's behaviour — the duplicate is an empty page.
+    let mut ed = populated_page();
+    ed.ab_set_move_art(false);
+    ed.ab_duplicate(0);
+    assert_eq!(ed.doc.artboards.len(), 2);
+    assert_eq!(ed.doc.artboards[1].name, "A copy");
+    assert_eq!(ed.doc.paths.len(), 4, "no art copied with move-art off");
+    ed.undo();
+    assert_eq!(ed.doc.artboards.len(), 1, "undo removes the empty copy");
+    assert_eq!(ed.doc.paths.len(), 4);
+}
+
+#[test]
+fn duplicate_artboard_keeps_a_rotated_copy_glued_to_its_page() {
+    // A7 + F09: a live-rotated object copies with its rotation AND lands exactly (d, 0) away — the pivot
+    // travels with the anchors (the same rule an artboard Move drag uses), so it isn't swung by R·d.
+    let mut ed = Editor::new();
+    ed.doc.artboards = vec![board(0.0, "A", true)];
+    ed.doc.paths.push(sq(1, 1, 30.0, 30.0, 20.0));
+    ed.doc.ids = 10;
+    ed.doc.sync_tree();
+    let unit = ed.doc.unit_of(1).unwrap();
+    ed.doc.set_node_xform(unit, varos_core::model::Xform { rot: 0.5, piv: [40.0, 40.0] });
+    let o = ed.doc.outline_bbox(ed.doc.pidx(1).unwrap());
+
+    ed.ab_duplicate(0);
+    let d = ed.doc.artboards[1].x - ed.doc.artboards[0].x;
+    let cid = ed.doc.paths.iter().map(|p| p.id).find(|&id| id != 1).expect("the rotated square was copied");
+    let b = ed.doc.outline_bbox(ed.doc.pidx(cid).unwrap());
+    let near = |x: f32, y: f32| (x - y).abs() < 0.01;
+    assert!(near(b.0, o.0 + d) && near(b.1, o.1) && near(b.2, o.2 + d) && near(b.3, o.3), "{o:?} → {b:?}");
+    let cu = ed.doc.unit_of(cid).unwrap();
+    assert!((ed.doc.node_xform(cu).rot - 0.5).abs() < 1e-6, "the copy keeps its live rotation");
+}
+
+#[test]
+fn duplicate_artboard_command_carries_art() {
+    // the app's panel / ⋮-menu Duplicate goes through EditCommand::DuplicateArtboard — same result.
+    let mut ed = populated_page();
+    ed.execute(varos_core::command::EditCommand::DuplicateArtboard(0));
+    assert_eq!(ed.doc.artboards.len(), 2);
+    assert_eq!(ed.doc.paths.len(), 7, "the command path copies the page's art too");
+}

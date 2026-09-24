@@ -2050,12 +2050,40 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
+    /// Duplicate page `i` to its right (one undo step). F09 (Astra 09-24): with "Move artwork" on, the
+    /// art ON the page comes along — the SAME membership test and copy helper as the Alt+drag duplicate
+    /// (`paths_on_ab` + `dup_paths`: groups, masks and layer membership preserved), offset by the same
+    /// delta as the new page. The copies are NOT selected (matches Alt+drag). Off ⇒ an empty page.
     pub fn ab_duplicate(&mut self, i: usize) {
         self.begin();
         if let Some(src) = self.doc.artboards.get(i).cloned() {
             let mut c = src.clone();
             c.x = src.x + src.w + AB_GAP;
             c.name = format!("{} copy", src.name);
+            if self.doc.move_art_with_ab {
+                let d: Pt = [c.x - src.x, c.y - src.y];
+                let on = self.paths_on_ab(i);
+                let copies = self.doc.dup_paths(&on);
+                // translate like an artboard Move drag: local anchors + each rotated copy unit's pivot by
+                // the same d (translation commutes with rotation) — un-rotated art stays a plain shift.
+                let mut units: Vec<u32> = vec![];
+                for &pid in &copies {
+                    if let Some(pi) = self.doc.pidx(pid) {
+                        self.translate_path(pi, d);
+                    }
+                    if let Some(u) = self.doc.unit_of(pid) {
+                        if !units.contains(&u) {
+                            units.push(u);
+                        }
+                    }
+                }
+                for u in units {
+                    let xf = self.doc.node_xform(u);
+                    if !xf.is_identity() {
+                        self.doc.set_node_xform(u, xf.translated(d));
+                    }
+                }
+            }
             self.doc.artboards.insert(i + 1, c);
             self.doc.active = i + 1;
             self.absel.clear();
