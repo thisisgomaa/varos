@@ -45,8 +45,9 @@ fn resolve_ck(panning: bool, space_down: bool, chrome: Option<CK>, tool: impl Fn
 }
 
 /// Windows: our WM_SETCURSOR subclass owns the OS cursor, so it is set only when it changes. Elsewhere
-/// egui-winit ALSO writes the OS cursor from egui's platform output, so the resolved cursor is
-/// re-asserted every frame after it — otherwise e.g. Space-hand → over a splitter → back leaves egui's
+/// the OS can put its own cursor up between frames (egui-winit's writes off macOS; on macOS AppKit's
+/// cursor rect when the pointer enters the view), so the resolved cursor is re-asserted every frame
+/// after egui's platform output — otherwise e.g. Space-hand → over a splitter → back leaves the
 /// arrow up while `CK` never changed (docs/foundation/MAC_SHELL_PORT.md).
 const REASSERT_CURSOR_EACH_FRAME: bool = cfg!(not(windows));
 
@@ -55,8 +56,16 @@ fn cursor_apply_needed(last: Option<CK>, ck: CK, reassert_each_frame: bool) -> b
     reassert_each_frame || last != Some(ck)
 }
 
+/// AppKit owns the cursor outside our focused client view, including the native title bar.
+/// Keep physical containment separate from focus so reactivation can restore an unchanged cursor
+/// without waiting for a mouse move. Focus loss always relinquishes effective ownership.
+#[cfg(any(target_os = "macos", test))]
+fn native_cursor_apply_needed(pointer_inside: bool, focused: bool) -> bool {
+    pointer_inside && focused
+}
+
 /// Which native cursor the current effective tool wants (Pen reports its contextual state; the
-/// Selection tool reports transform/copy states using the Illustrator cursor set).
+/// Selection tool reports its transform/copy states).
 fn desired_ck(ed: &Editor, world: Pt) -> CK {
     if let Drag::Scale { handle, angle, .. } = ed.drag {
         return resize_ck(handle, angle);
@@ -299,31 +308,35 @@ fn load_icon() -> Option<winit::window::Icon> {
     winit::window::Icon::from_rgba(img.into_raw(), w, h).ok()
 }
 
-/// Dev-only: render every tool cursor to an 8× PNG (over neutral gray) for eyeballing.
+/// Dev-only: render every v1 tool cursor (1× at 8×, 2× at 4×) over neutral gray for eyeballing.
 fn dump_cursors() {
     let dir = "target/cursor-preview";
     let _ = std::fs::create_dir_all(dir);
-    let names =
-        ["select", "direct", "pen", "pennew", "penadd", "pendel", "penclose", "penconnect", "convert", "cross", "eye"];
-    let scale = 8u32;
-    for (ck, name) in cursors::ALL.iter().zip(names) {
-        let (rgba, w, h, _hx, _hy) = cursors::rgba(*ck);
-        save_gray_png(&rgba, w as u32, h as u32, scale, &format!("{dir}/{name}.png"));
+    for e in cursors::v1_table() {
+        let name = format!("{:?}-{}", e.ck, e.file.trim_end_matches(".svg"));
+        for (px, scale) in [(32u32, 8u32), (64, 4)] {
+            if let Some((rgba, w, h, _hx, _hy)) = cursors::v1_rgba(e.ck, px) {
+                save_gray_png(&rgba, w as u32, h as u32, scale, &format!("{dir}/{name}@{px}.png"));
+            }
+        }
+    }
+    if !cursors::ai_override_enabled() {
+        return;
     }
     let svg_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cursors-ai/svg/");
     let mut report = String::new();
+    // the local reference set (VAROS_CURSORS_AI), when present on this machine
     for ck in cursors::ALL_CURSORS {
-        if let Some((stem, _, _)) = cursors::ai_svg(ck) {
-            match std::fs::read_to_string(format!("{svg_dir}{stem}.svg")) {
-                Ok(svg) => match cursors::render_svg(&svg, 96, false) {
-                    Some((rgba, w, h)) => {
-                        save_gray_png(&rgba, w, h, 1, &format!("{dir}/ai-{stem}.png"));
-                        report.push_str(&format!("OK   {stem}  {w}x{h}\n"));
-                    }
-                    None => report.push_str(&format!("RENDERFAIL {stem}\n")),
-                },
-                Err(_) => report.push_str(&format!("MISSING {stem}\n")),
-            }
+        let (stem, _, _) = cursors::ai_svg(ck);
+        match std::fs::read_to_string(format!("{svg_dir}{stem}.svg")) {
+            Ok(svg) => match cursors::render_svg(&svg, 96, false) {
+                Some((rgba, w, h)) => {
+                    save_gray_png(&rgba, w, h, 1, &format!("{dir}/ai-{stem}.png"));
+                    report.push_str(&format!("OK   {stem}  {w}x{h}\n"));
+                }
+                None => report.push_str(&format!("RENDERFAIL {stem}\n")),
+            },
+            Err(_) => report.push_str(&format!("MISSING {stem}\n")),
         }
     }
     let _ = std::fs::write(format!("{dir}/ai-report.txt"), report);
@@ -581,10 +594,6 @@ fn main() {
     // Non-Windows: there is no HWND, so the cursor/maximize fallbacks talk to the winit window directly.
     #[cfg(not(windows))]
     cursors::bind_window(window.clone());
-    // Non-Windows: build the real tool cursors (winit CustomCursor, same bitmaps as the Win32
-    // HCURSORs) once, before the `hcur` table below asks for them.
-    #[cfg(not(windows))]
-    cursors::create_custom_cursors(&event_loop);
     single_instance::install_file_open_handler(hwnd);
     cursors::set_cloaked(hwnd, true);
     window.set_visible(true); // now "shown" but cloaked → not composited (no flash), surface is presentable
@@ -602,16 +611,15 @@ fn main() {
 
     let installed = cursors::install(hwnd); // subclass live; custom_frame is deferred until the splash ends
     cursors::set_dark_class_brush(hwnd); // any OS background fill is now #141313, never white
-    let hcur: HashMap<CK, isize> = cursors::ALL_CURSORS
-        .iter()
-        .map(|&ck| {
-            let h = match cursors::ai_svg(ck) {
-                Some((stem, hx, hy)) => cursors::hcursor_svg_file(stem, hx, hy).unwrap_or_else(|| cursors::hcursor(ck)),
-                None => cursors::hcursor(ck),
-            };
-            (ck, h)
-        })
-        .collect();
+
+    // The Varos cursor set v1 (embedded), built once per platform: Win32 HCURSORs / macOS Retina
+    // NSCursors / winit CustomCursors. Logs `[varos] cursors: 28 v1 (+ N reference overrides) …`.
+    #[cfg(windows)]
+    let hcur: HashMap<CK, isize> = cursors::create_cursors();
+    #[cfg(not(windows))]
+    let hcur: HashMap<CK, isize> = cursors::create_cursors(&event_loop);
+    // On macOS wait for client-view pointer ownership before touching AppKit's global cursor.
+    #[cfg(not(target_os = "macos"))]
     cursors::set(hcur[&CK::Select]);
     {
         let zeros = cursors::ALL_CURSORS.iter().filter(|c| hcur[c] == 0).count();
@@ -642,6 +650,10 @@ fn main() {
     let mut zoom_anchor_world: Pt = [0.0, 0.0];
     let mut zoom_anchor_screen: Pt = [0.0, 0.0];
     let mut screen_cursor: Pt = [0.0, 0.0];
+    #[cfg(target_os = "macos")]
+    let mut pointer_inside = false;
+    #[cfg(target_os = "macos")]
+    let mut cursor_window_focused = window.has_focus();
     let mut panning = false;
     let mut pan_last: Pt = [0.0, 0.0];
     let mut space_down = false;
@@ -715,6 +727,26 @@ fn main() {
                     window.request_redraw();
                 }
                 match event {
+                    // Winit's macOS tracking rect is the content view's bounds. With our normal
+                    // (non-full-size) content view this excludes the native title strip.
+                    #[cfg(target_os = "macos")]
+                    WindowEvent::CursorEntered { .. } => {
+                        pointer_inside = true;
+                        window.request_redraw();
+                    }
+                    #[cfg(target_os = "macos")]
+                    WindowEvent::CursorLeft { .. } => {
+                        pointer_inside = false; // no cursor write: AppKit owns it now
+                    }
+                    #[cfg(target_os = "macos")]
+                    WindowEvent::Focused(focused) => {
+                        cursor_window_focused = focused;
+                        // Unfocused means outside for cursor ownership, even if the pointer has
+                        // not moved. Retain containment for immediate restoration on reactivation.
+                        if focused {
+                            window.request_redraw();
+                        }
+                    }
                     WindowEvent::CloseRequested => {
                         save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
                         elwt.exit();
@@ -1048,6 +1080,11 @@ fn main() {
                         // Runs AFTER gui.run (egui's platform output is already applied), so on non-Windows
                         // the re-assert each frame wins over egui-winit's own cursor write.
                         if cursor_apply_needed(last_ck, ck, REASSERT_CURSOR_EACH_FRAME) {
+                            #[cfg(target_os = "macos")]
+                            if native_cursor_apply_needed(pointer_inside, cursor_window_focused) {
+                                cursors::set(hcur[&ck]);
+                            }
+                            #[cfg(not(target_os = "macos"))]
                             cursors::set(hcur[&ck]);
                         }
                         if Some(ck) != last_ck {
@@ -1119,7 +1156,35 @@ fn main() {
 
 #[cfg(test)]
 mod cursor_policy_tests {
-    use super::{cursor_apply_needed, resolve_ck, CK};
+    use super::{cursor_apply_needed, native_cursor_apply_needed, resolve_ck, CK};
+
+    #[test]
+    fn native_cursor_requires_both_client_containment_and_focus() {
+        assert!(!native_cursor_apply_needed(false, false));
+        assert!(!native_cursor_apply_needed(false, true)); // keyboard redraw outside/title bar
+        assert!(!native_cursor_apply_needed(true, false)); // focus lost without pointer movement
+        assert!(native_cursor_apply_needed(true, true));
+    }
+
+    #[test]
+    fn native_cursor_restores_unchanged_tool_on_reentry_and_reactivation() {
+        // Startup → enter → leave → re-enter → deactivate → reactivate → leave while inactive.
+        let ownership = [
+            (false, true, false),
+            (true, true, true),
+            (false, true, false),
+            (true, true, true),
+            (true, false, false),
+            (true, true, true),
+            (false, false, false),
+            (false, true, false),
+        ];
+        for (inside, focused, expected) in ownership {
+            let apply =
+                cursor_apply_needed(Some(CK::Pen), CK::Pen, true) && native_cursor_apply_needed(inside, focused);
+            assert_eq!(apply, expected, "inside={inside}, focused={focused}");
+        }
+    }
 
     #[test]
     fn resolve_ck_priority_pan_then_space_then_chrome_then_tool() {

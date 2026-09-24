@@ -1011,7 +1011,18 @@ impl Ui {
 
     /// Feed a window event to egui. Returns true if egui consumed it (so the canvas should NOT).
     pub fn on_event(&mut self, window: &Window, ev: &WindowEvent) -> bool {
-        self.state.on_window_event(window, ev).consumed
+        #[cfg(windows)]
+        {
+            self.state.on_window_event(window, ev).consumed
+        }
+        #[cfg(not(windows))]
+        {
+            let response = self.state.on_window_event(window, ev);
+            if response.repaint {
+                window.request_redraw();
+            }
+            response.consumed
+        }
     }
     /// Is the pointer over chrome (a box, ruler, bar, hand, menu)? The canvas owns everything else.
     /// Stage 4: the box tree paints the whole workspace on the BACKGROUND layer, so the old
@@ -1343,6 +1354,16 @@ impl Ui {
         });
         apply_ops(ed, ops);
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
+
+        // macOS: cursors.rs owns the OS cursor (Retina NSCursor, re-set every frame from `chrome_ck` /
+        // the tool). Hand egui-winit a constant icon so it never re-writes winit's cursor — each such
+        // write invalidates the view's cursor rect and AppKit would re-show that cursor over ours.
+        #[cfg(target_os = "macos")]
+        let out = {
+            let mut out = out;
+            out.platform_output.cursor_icon = egui::CursorIcon::Default;
+            out
+        };
         self.state.handle_platform_output(window, out.platform_output);
         // Stage 4: publish the canvas hole. Logical for the pointer test, physical for main.rs's view
         // fits. A changed hole (box resized/dragged) repaints once more so the underlay catches up.
