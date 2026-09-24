@@ -31,6 +31,7 @@ impl Tool for Pen {
                         return;
                     }
                 } else {
+                    deselect_other_art(ed);
                     ed.resume(pid, aid);
                     return;
                 }
@@ -71,6 +72,7 @@ impl Tool for Pen {
                 ed.doc.paths.push(Path::new(id, vec![], false, f, st, sw));
                 ed.active = Some(id);
                 ed.selected.clear();
+                deselect_other_art(ed);
                 id
             }
         };
@@ -91,4 +93,13 @@ impl Tool for Pen {
         ed.dirty = true;
         ed.drag = Drag::PenNew { aid, down: pos, broken: false };
     }
+}
+
+/// A draft (new or resumed) is the only thing the Pen works on — Illustrator deselects other art when a
+/// path starts. Without this a selection left over from before the Pen stayed the target of the dock's
+/// X/Y/W/H and paint fields while the dock described the draft (QW3 review P2-1, PAINS_LOG FB6 nit).
+fn deselect_other_art(ed: &mut Editor) {
+    ed.objsel.clear();
+    ed.dsel_path = None;
+    ed.refresh_obj_angle();
 }
