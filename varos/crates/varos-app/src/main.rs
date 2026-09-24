@@ -190,7 +190,9 @@ fn full_title(t: ToolKind, file: Option<&std::path::Path>, unsaved: bool) -> Str
 }
 
 /// Apply a keyboard shortcut. `code` is a W3C key code; shared by canvas focus + forwarded keys.
-fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bool, alt: bool) {
+/// `canvas_centre` = the centre of the visible drawing area (physical px): the point the keyboard
+/// zooms (⌘= / ⌘− / ⌘1) keep fixed, so the view never jumps away from the work.
+fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ctrl: bool, shift: bool, alt: bool) {
     if ctrl {
         match code {
             "Semicolon" => {
@@ -202,7 +204,11 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
                     ed.toggle_guides_visibility()
                 }
             } // Hide/Show Guides (Ctrl+;)
-            "Digit1" => view.zoom = 1.0,
+            // Actual Size (⌘1): 100% around the canvas centre — never a jump to empty space (Astra F06)
+            "Digit1" => zoom_to(view, canvas_centre, 1.0),
+            // Zoom In / Out (⌘= or ⌘+ · ⌘−): one key step, instantly, around the canvas centre (Astra F05)
+            "Equal" | "NumpadAdd" => zoom_step(view, canvas_centre, ZOOM_KEY_STEP),
+            "Minus" | "NumpadSubtract" => zoom_step(view, canvas_centre, 1.0 / ZOOM_KEY_STEP),
             "KeyZ" => {
                 if shift {
                     ed.execute(EditCommand::Redo)
@@ -223,6 +229,10 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
             "KeyU" => ed.execute(EditCommand::ToggleSmartGuides), // Smart Guides toggle (Illustrator Ctrl+U)
             "KeyD" => ed.execute(EditCommand::TransformAgain), // Transform Again / step-and-repeat (Illustrator Ctrl+D)
             "KeyR" => ed.toggle_rulers_visibility(),           // Show/Hide Rulers (Illustrator Ctrl+R)
+            // Edit ▸ Copy / Cut (⌘C / ⌘X) — the in-app clipboard. ⌘V / ⇧⌘V (Paste / Paste in Place)
+            // need the canvas rect for a view-centred paste, so `OpenDocContext::shortcut` owns them.
+            "KeyC" if !shift && !alt => ed.execute(EditCommand::Copy),
+            "KeyX" if !shift && !alt => ed.execute(EditCommand::Cut),
             _ => {}
         }
         return;
@@ -322,13 +332,17 @@ fn fit_rect(ed: &Editor) -> (f32, f32, f32, f32) {
     }
 }
 
-/// Fit an artboard into the CANVAS area — the Board box's interior when the shell reports one
-/// (Stage 4; physical px), else the whole window. Pan shifts so the page centres in the BOX.
-fn fit_to_board(gui: &ui::Ui, window: &Window, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
+/// The CANVAS area (the visible drawing region) in physical px — the Board box's interior when the
+/// shell reports one (Stage 4), else the whole window.
+fn canvas_px(gui: &ui::Ui, window: &Window) -> egui::Rect {
     let sz = window.inner_size();
-    let b = gui
-        .board_px
-        .unwrap_or(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(sz.width as f32, sz.height as f32)));
+    gui.board_px
+        .unwrap_or(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(sz.width as f32, sz.height as f32)))
+}
+
+/// Fit an artboard into the CANVAS area (`canvas_px`). Pan shifts so the page centres in the BOX.
+fn fit_to_board(gui: &ui::Ui, window: &Window, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
+    let b = canvas_px(gui, window);
     let mut v = View::fit(x, y, w, h, b.width(), b.height(), k);
     v.pan[0] += b.left();
     v.pan[1] += b.top();
@@ -471,10 +485,76 @@ fn confirm_discard_unsaved(ed: &Editor, saved_rev: u64) -> bool {
             == rfd::MessageDialogResult::Yes
 }
 
+/// The user's answer to the quit guard (Astra F01 / P0: a dirty document must never be lost by
+/// ⌘Q, the red traffic light or the ✕ caption without a Save / Don't Save / Cancel decision).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QuitAnswer {
+    Save,
+    DontSave,
+    Cancel,
+}
+
+const QUIT_SAVE: &str = "Save";
+const QUIT_DONT_SAVE: &str = "Don't Save";
+const QUIT_CANCEL: &str = "Cancel";
+
+/// Map the native dialog's result onto a decision. Custom labels come back as `Custom(label)`
+/// (macOS, portals); backends that only know Yes/No/Cancel are mapped the same way. Anything
+/// unknown (dialog dismissed, Escape) is Cancel — the safe answer.
+fn quit_answer(r: &rfd::MessageDialogResult) -> QuitAnswer {
+    use rfd::MessageDialogResult as R;
+    match r {
+        R::Yes => QuitAnswer::Save,
+        R::No => QuitAnswer::DontSave,
+        R::Custom(l) if l == QUIT_SAVE => QuitAnswer::Save,
+        R::Custom(l) if l == QUIT_DONT_SAVE => QuitAnswer::DontSave,
+        _ => QuitAnswer::Cancel,
+    }
+}
+
+/// The quit decision table. `ask` is only called for a dirty document; `save` only for Save, and
+/// the app quits after Save only when the save really completed (a cancelled Save As, or a failed
+/// write, keeps the app open with the work intact).
+fn may_quit(unsaved: bool, ask: impl FnOnce() -> QuitAnswer, save: impl FnOnce() -> bool) -> bool {
+    if !unsaved {
+        return true;
+    }
+    match ask() {
+        QuitAnswer::Save => save(),
+        QuitAnswer::DontSave => true,
+        QuitAnswer::Cancel => false,
+    }
+}
+
+/// One wheel notch of zoom (Alt+wheel) — fine, because a wheel gives many notches per gesture.
+const ZOOM_NOTCH: f32 = 1.12;
+/// One ⌘= / ⌘− press — Illustrator-sized (100 → 150 → 225 %…), because a key press is one deliberate step.
+const ZOOM_KEY_STEP: f32 = 1.5;
+
+/// Edit ▸ Paste (⌘V): the world translation that puts the clipboard's centre on the world point under
+/// the centre of the CANVAS (`canvas_centre`, physical px) — Illustrator pastes into the middle of the
+/// view. `None` when the clipboard is empty.
+fn view_centre_paste_offset(ed: &Editor, view: &View, canvas_centre: Pt) -> Option<Pt> {
+    let c = ed.clipboard().center()?;
+    let t = view.s2w(canvas_centre);
+    Some([t[0] - c[0], t[1] - c[1]])
+}
+
+/// ⌘V = Paste centred in the canvas · ⇧⌘V = Paste in Place (the copied coordinates).
+fn paste_key(ed: &mut Editor, view: &View, canvas_centre: Pt, in_place: bool) {
+    let offset = if in_place { None } else { view_centre_paste_offset(ed, view, canvas_centre) };
+    ed.execute(EditCommand::Paste { offset });
+}
+
 /// Apply a complete zoom step now, keeping the world point under the cursor fixed.
 fn zoom_step(view: &mut View, screen: Pt, factor: f32) {
+    zoom_to(view, screen, view.zoom * factor);
+}
+
+/// Jump to `zoom` now (clamped to the view limits), keeping the world point at `screen` fixed.
+fn zoom_to(view: &mut View, screen: Pt, zoom: f32) {
     let anchor = view.s2w(screen);
-    view.zoom = (view.zoom * factor).clamp(0.05, 40.0);
+    view.zoom = zoom.clamp(0.05, 40.0);
     view.pan = geom::pan_for_anchor(anchor, screen, view.zoom);
 }
 
@@ -488,6 +568,65 @@ struct OpenDocContext<'a> {
 }
 
 impl OpenDocContext<'_> {
+    /// Save to the current file, or (`save_as`, or no file yet) to a path the user picks.
+    /// Returns `true` only when the bytes are on disk and the saved revision is recorded.
+    fn save(&mut self, save_as: bool) -> bool {
+        let dest = if save_as { None } else { self.cur_file.clone() }.or_else(|| {
+            rfd::FileDialog::new()
+                .add_filter("Varos document (PDF-compatible)", &["vrs"])
+                .add_filter("PDF", &["pdf"]) // same bytes — a valid PDF either way
+                .set_file_name(format!("{}.vrs", doc_stem(self.cur_file.as_deref())))
+                .save_file()
+        });
+        let Some(mut p) = dest else {
+            return false; // Save As cancelled
+        };
+        if p.extension().is_none_or(|e| !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))) {
+            p.set_extension("vrs");
+        }
+        match varos_pdf::save_vrs(&self.ed.doc, &p) {
+            Ok(()) => {
+                *self.cur_file = Some(p);
+                *self.saved_rev = self.ed.rev;
+                true
+            }
+            Err(e) => {
+                rfd::MessageDialog::new()
+                    .set_level(rfd::MessageLevel::Error)
+                    .set_title("Varos")
+                    .set_description(format!("Save failed: {e}"))
+                    .show();
+                false
+            }
+        }
+    }
+
+    /// The quit guard shared by ⌘Q / Quit Varos, the OS close request (red traffic light, ✕) and
+    /// the custom caption ✕: a clean document quits at once; a dirty one asks Save / Don't Save /
+    /// Cancel. Returns `true` when the app may exit now.
+    fn confirm_quit(&mut self) -> bool {
+        let unsaved = self.ed.rev != *self.saved_rev;
+        let name = doc_stem(self.cur_file.as_deref());
+        let ask = || {
+            let r = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Warning)
+                .set_title("Varos")
+                .set_description(format!(
+                    "Save changes to \"{name}\" before quitting?\nIf you don't save, your changes will be lost."
+                ))
+                .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                    QUIT_SAVE.into(),
+                    QUIT_DONT_SAVE.into(),
+                    QUIT_CANCEL.into(),
+                ))
+                .show();
+            quit_answer(&r)
+        };
+        let ok = may_quit(unsaved, ask, || self.save(false));
+        self.ed.mods = Default::default(); // the native dialog eats the key releases
+        ok
+    }
+
     fn open_path(&mut self, p: std::path::PathBuf) {
         if confirm_discard_unsaved(self.ed, *self.saved_rev) {
             self.load_path(p);
@@ -524,32 +663,12 @@ impl OpenDocContext<'_> {
             *self.view = fit_to_board(self.gui, self.window, x, y, w, h, 0.9);
         } else if mc && code == KeyCode::KeyS {
             // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
-            let dest = if ms { None } else { self.cur_file.clone() }.or_else(|| {
-                rfd::FileDialog::new()
-                    .add_filter("Varos document (PDF-compatible)", &["vrs"])
-                    .add_filter("PDF", &["pdf"]) // same bytes — a valid PDF either way
-                    .set_file_name(format!("{}.vrs", doc_stem(self.cur_file.as_deref())))
-                    .save_file()
-            });
-            if let Some(mut p) = dest {
-                if p.extension().is_none_or(|e| !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))) {
-                    p.set_extension("vrs");
-                }
-                match varos_pdf::save_vrs(&self.ed.doc, &p) {
-                    Ok(()) => {
-                        *self.cur_file = Some(p);
-                        *self.saved_rev = self.ed.rev;
-                    }
-                    Err(e) => {
-                        rfd::MessageDialog::new()
-                            .set_level(rfd::MessageLevel::Error)
-                            .set_title("Varos")
-                            .set_description(format!("Save failed: {e}"))
-                            .show();
-                    }
-                }
-            }
+            self.save(ms);
             self.ed.mods = Default::default(); // the native dialog eats the key releases
+        } else if mc && !ma && code == KeyCode::KeyV {
+            // ⌘V = Paste (centred in the canvas box) · ⇧⌘V = Paste in Place (Illustrator-exact)
+            let c = canvas_px(self.gui, self.window).center();
+            paste_key(self.ed, self.view, [c.x, c.y], ms);
         } else if mc && code == KeyCode::KeyO {
             // Ctrl+O = Open — guard unsaved changes first
             if confirm_discard_unsaved(self.ed, *self.saved_rev) {
@@ -559,7 +678,8 @@ impl OpenDocContext<'_> {
             }
             self.ed.mods = Default::default();
         } else {
-            apply_key(self.ed, self.view, &cs, mc, ms, ma);
+            let c = canvas_px(self.gui, self.window).center();
+            apply_key(self.ed, self.view, [c.x, c.y], &cs, mc, ms, ma);
         }
     }
 }
@@ -850,8 +970,25 @@ fn main() {
                         }
                         M::Close => {
                             // exactly the ✕ caption button's arm (WinAction::Close below)
-                            save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
-                            elwt.exit();
+                            let may_exit = OpenDocContext {
+                                ed: &mut ed,
+                                gui: &gui,
+                                window: &window,
+                                view: &mut view,
+                                cur_file: &mut cur_file,
+                                saved_rev: &mut saved_rev,
+                            }
+                            .confirm_quit();
+                            if may_exit {
+                                save_win_state(
+                                    cursors::is_maximized(hwnd),
+                                    win_norm.0,
+                                    win_norm.1,
+                                    win_norm.2,
+                                    win_norm.3,
+                                );
+                                elwt.exit();
+                            }
                         }
                         M::ToggleRail => gui.toggle_rail(),
                         M::ToggleDock => gui.toggle_dock(),
@@ -909,8 +1046,22 @@ fn main() {
                         }
                     }
                     WindowEvent::CloseRequested => {
-                        save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
-                        elwt.exit();
+                        // red traffic light / OS close: same guard as Quit (Astra F01)
+                        let may_exit = OpenDocContext {
+                            ed: &mut ed,
+                            gui: &gui,
+                            window: &window,
+                            view: &mut view,
+                            cur_file: &mut cur_file,
+                            saved_rev: &mut saved_rev,
+                        }
+                        .confirm_quit();
+                        if may_exit {
+                            save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
+                            elwt.exit();
+                        } else {
+                            window.request_redraw();
+                        }
                     }
                     WindowEvent::Resized(size) => {
                         if size.width == 0 || size.height == 0 {
@@ -1077,7 +1228,7 @@ fn main() {
                         };
                         if ed.mods.alt {
                             // Exponential per notch, including coalesced wheel events.
-                            let f = 1.12f32.powf(dy).clamp(0.2, 5.0);
+                            let f = ZOOM_NOTCH.powf(dy).clamp(0.2, 5.0);
                             zoom_step(&mut view, screen_cursor, f);
                         } else if ed.mods.shift {
                             view.pan[0] += (dy + dx) * 30.0;
@@ -1181,14 +1332,25 @@ fn main() {
                                 ui::WinAction::Minimize => window.set_minimized(true),
                                 ui::WinAction::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
                                 ui::WinAction::Close => {
-                                    save_win_state(
-                                        cursors::is_maximized(hwnd),
-                                        win_norm.0,
-                                        win_norm.1,
-                                        win_norm.2,
-                                        win_norm.3,
-                                    );
-                                    elwt.exit();
+                                    let may_exit = OpenDocContext {
+                                        ed: &mut ed,
+                                        gui: &gui,
+                                        window: &window,
+                                        view: &mut view,
+                                        cur_file: &mut cur_file,
+                                        saved_rev: &mut saved_rev,
+                                    }
+                                    .confirm_quit();
+                                    if may_exit {
+                                        save_win_state(
+                                            cursors::is_maximized(hwnd),
+                                            win_norm.0,
+                                            win_norm.1,
+                                            win_norm.2,
+                                            win_norm.3,
+                                        );
+                                        elwt.exit();
+                                    }
                                 }
                             }
                         }
@@ -1388,7 +1550,7 @@ mod scene_signature_tests {
 mod menu_mirror_tests {
     //! The native menu (MAC_CHROME.md §C) must run the SAME path as the keyboard: every ⌘-row that
     //! carries a ✓ flips, through `apply_key`, exactly the state its ✓ reads back.
-    use super::{apply_key, editor_check, menu_snap_toggle, Editor};
+    use super::{apply_key, editor_check, menu_snap_toggle, Editor, ZOOM_KEY_STEP};
     use crate::chrome::{menus, Accel, Check, Entry, MenuCmd};
     use varos_core::geom::View;
 
@@ -1413,18 +1575,81 @@ mod menu_mirror_tests {
             let mut ed = Editor::new();
             let mut view = View::identity();
             let before = editor_check(&ed, c).expect("an editor-owned check");
-            apply_key(&mut ed, &mut view, &format!("{:?}", k.code), true, k.shift, k.alt);
+            apply_key(&mut ed, &mut view, [400.0, 300.0], &format!("{:?}", k.code), true, k.shift, k.alt);
             assert_eq!(editor_check(&ed, c), Some(!before), "{id}: the ⌘ key did not flip its ✓ state");
         }
     }
 
+    fn menu_key(id: &str) -> Accel {
+        crate::chrome::flat_items(&menus())
+            .into_iter()
+            .find_map(|e| match e {
+                Entry::Item { id: i, cmd: MenuCmd::Key(k), .. } if i == id => Some(k),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{id} is a ⌘-row of the menu"))
+    }
+
+    fn assert_pinned(view: &View, anchor: [f32; 2], centre: [f32; 2], what: &str) {
+        let p = view.w2s(anchor);
+        assert!(
+            (p[0] - centre[0]).abs() < 0.01 && (p[1] - centre[1]).abs() < 0.01,
+            "{what}: the world point at the canvas centre moved to {p:?} (want {centre:?})"
+        );
+    }
+
+    /// Astra F06: ⌘1 = 100% AND the place stays — the world point at the canvas centre is kept,
+    /// even far from the origin (the old path set zoom only and jumped to empty space).
     #[test]
     fn actual_size_row_is_the_ctrl_1_path() {
-        let mut ed = Editor::new();
-        let mut view = View::identity();
-        view.zoom = 0.3;
-        apply_key(&mut ed, &mut view, "Digit1", true, false, false);
-        assert_eq!(view.zoom, 1.0);
+        let k = menu_key("view.actual");
+        let centre = [700.0, 420.0];
+        for (zoom, pan) in [(0.3, [0.0, 0.0]), (1.77, [-90_000.0, 42_000.0]), (8.0, [15_000.0, -3_000.0])] {
+            let mut ed = Editor::new();
+            let mut view = View { zoom, pan };
+            let anchor = view.s2w(centre);
+            apply_key(&mut ed, &mut view, centre, &format!("{:?}", k.code), true, k.shift, k.alt);
+            assert_eq!(view.zoom, 1.0);
+            assert_pinned(&view, anchor, centre, "⌘1");
+        }
+    }
+
+    /// Astra F05: the View menu's Zoom In / Zoom Out rows send exactly the keystroke the keyboard
+    /// path handles, and that path zooms the CANVAS by one key step around the canvas centre.
+    #[test]
+    fn zoom_rows_are_the_ctrl_plus_minus_path() {
+        let centre = [512.0, 384.0];
+        for (id, factor) in [("view.zoomin", ZOOM_KEY_STEP), ("view.zoomout", 1.0 / ZOOM_KEY_STEP)] {
+            let k = menu_key(id);
+            let mut ed = Editor::new();
+            let mut view = View { zoom: 1.77, pan: [-9_000.0, 4_000.0] };
+            let anchor = view.s2w(centre);
+            apply_key(&mut ed, &mut view, centre, &format!("{:?}", k.code), true, k.shift, k.alt);
+            assert_eq!(view.zoom, 1.77 * factor, "{id}");
+            assert_pinned(&view, anchor, centre, id);
+        }
+    }
+
+    /// The other keys that mean zoom: ⌘+ typed as ⌘⇧= on a US keyboard, and the numeric keypad.
+    /// Without ⌘ they do nothing to the view.
+    #[test]
+    fn plus_and_keypad_keys_zoom_the_canvas_too() {
+        let centre = [300.0, 200.0];
+        for (code, shift, factor) in [
+            ("Equal", true, ZOOM_KEY_STEP),
+            ("NumpadAdd", false, ZOOM_KEY_STEP),
+            ("NumpadSubtract", false, 1.0 / ZOOM_KEY_STEP),
+        ] {
+            let mut ed = Editor::new();
+            let mut view = View { zoom: 2.0, pan: [123.0, -456.0] };
+            let anchor = view.s2w(centre);
+            apply_key(&mut ed, &mut view, centre, code, true, shift, false);
+            assert_eq!(view.zoom, 2.0 * factor, "{code}");
+            assert_pinned(&view, anchor, centre, code);
+            let before = view;
+            apply_key(&mut ed, &mut view, centre, code, false, shift, false);
+            assert_eq!((view.zoom, view.pan), (before.zoom, before.pan), "{code} without ⌘");
+        }
     }
 
     #[test]
@@ -1470,5 +1695,153 @@ mod instant_zoom_tests {
             assert!((pinned[0] - screen[0]).abs() < 0.0001);
             assert!((pinned[1] - screen[1]).abs() < 0.0001);
         }
+    }
+}
+
+#[cfg(test)]
+mod quit_guard_tests {
+    use super::{may_quit, quit_answer, QuitAnswer, QUIT_CANCEL, QUIT_DONT_SAVE, QUIT_SAVE};
+    use rfd::MessageDialogResult as R;
+    use std::cell::Cell;
+
+    #[test]
+    fn clean_document_quits_without_asking_or_saving() {
+        let asked = Cell::new(false);
+        let saved = Cell::new(false);
+        let ok = may_quit(
+            false,
+            || {
+                asked.set(true);
+                QuitAnswer::Cancel
+            },
+            || {
+                saved.set(true);
+                true
+            },
+        );
+        assert!(ok);
+        assert!(!asked.get(), "a clean document must never show the quit dialog");
+        assert!(!saved.get());
+    }
+
+    #[test]
+    fn dirty_document_save_quits_only_when_the_save_completed() {
+        assert!(may_quit(true, || QuitAnswer::Save, || true));
+        // cancelled Save As / failed write: stay open, work intact
+        assert!(!may_quit(true, || QuitAnswer::Save, || false));
+    }
+
+    #[test]
+    fn dirty_document_dont_save_quits_and_cancel_stays() {
+        let saved = Cell::new(false);
+        let save = || {
+            saved.set(true);
+            true
+        };
+        assert!(may_quit(true, || QuitAnswer::DontSave, save));
+        assert!(!may_quit(true, || QuitAnswer::Cancel, save));
+        assert!(!saved.get(), "Don't Save and Cancel never write to disk");
+    }
+
+    #[test]
+    fn dialog_results_map_to_answers_and_unknown_is_cancel() {
+        assert_eq!(quit_answer(&R::Custom(QUIT_SAVE.into())), QuitAnswer::Save);
+        assert_eq!(quit_answer(&R::Custom(QUIT_DONT_SAVE.into())), QuitAnswer::DontSave);
+        assert_eq!(quit_answer(&R::Custom(QUIT_CANCEL.into())), QuitAnswer::Cancel);
+        assert_eq!(quit_answer(&R::Yes), QuitAnswer::Save);
+        assert_eq!(quit_answer(&R::No), QuitAnswer::DontSave);
+        assert_eq!(quit_answer(&R::Cancel), QuitAnswer::Cancel);
+        assert_eq!(quit_answer(&R::Ok), QuitAnswer::Cancel);
+        assert_eq!(quit_answer(&R::Custom("Something else".into())), QuitAnswer::Cancel);
+    }
+}
+
+#[cfg(test)]
+mod clipboard_key_tests {
+    //! Astra F04: ⌘C / ⌘X / ⌘V / ⇧⌘V reach the core clipboard commands; plain V / X keep their
+    //! tool / colour meaning.
+    use super::*;
+    use varos_core::editor::PaintTarget;
+    use varos_core::model::{Anchor, Path};
+
+    fn one_square() -> Editor {
+        let a = |i: u32, p: [f32; 2]| Anchor { id: i, p, hin: None, hout: None, smooth: false };
+        let mut ed = Editor::new();
+        ed.doc.artboards.clear();
+        ed.doc.paths.push(Path::new(
+            1,
+            vec![a(2, [0.0, 0.0]), a(3, [40.0, 0.0]), a(4, [40.0, 20.0]), a(5, [0.0, 20.0])],
+            true,
+            Some([0.5, 0.5, 0.5, 1.0]),
+            None,
+            1.0,
+        ));
+        ed.doc.ids = 5;
+        ed.doc.sync_tree();
+        ed.objsel.insert(1);
+        ed
+    }
+
+    #[test]
+    fn cmd_c_copies_and_cmd_v_pastes_centred_in_the_canvas() {
+        let mut ed = one_square();
+        let mut view = View { zoom: 2.0, pan: [100.0, 50.0] };
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyC", true, false, false);
+        assert_eq!(ed.rev, 0, "⌘C does not edit the document");
+        assert_eq!(ed.clipboard().len(), 1);
+        // canvas box centre (physical px) → the world point the paste must centre on
+        let centre = [700.0, 450.0];
+        paste_key(&mut ed, &view, centre, false);
+        assert_eq!(ed.rev, 1);
+        assert_eq!(ed.doc.paths.len(), 2);
+        let (x0, y0, x1, y1) = ed.obj_bbox().unwrap();
+        let want = view.s2w(centre);
+        assert!(((x0 + x1) * 0.5 - want[0]).abs() < 1e-3 && ((y0 + y1) * 0.5 - want[1]).abs() < 1e-3);
+    }
+
+    #[test]
+    fn shift_cmd_v_pastes_in_place() {
+        let mut ed = one_square();
+        let mut view = View { zoom: 3.0, pan: [-10.0, 5.0] };
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyC", true, false, false);
+        paste_key(&mut ed, &view, [640.0, 400.0], true);
+        let pid = *ed.objsel.iter().next().unwrap();
+        assert_ne!(pid, 1);
+        let copy = ed.doc.paths.iter().find(|p| p.id == pid).unwrap();
+        assert_eq!(copy.anchors[0].p, [0.0, 0.0], "in place = the copied coordinates");
+    }
+
+    #[test]
+    fn cmd_x_cuts_as_one_undo_step() {
+        let mut ed = one_square();
+        let mut view = View::identity();
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyX", true, false, false);
+        assert!(ed.doc.paths.is_empty());
+        assert_eq!(ed.rev, 1);
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyZ", true, false, false);
+        assert_eq!(ed.doc.paths.len(), 1, "one ⌘Z brings the cut art back");
+    }
+
+    #[test]
+    fn plain_v_and_x_keep_their_tool_and_colour_meaning() {
+        let mut ed = one_square();
+        let mut view = View::identity();
+        ed.set_tool(ToolKind::Pen);
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyV", false, false, false);
+        assert!(ed.tool == ToolKind::Object, "V = Selection tool");
+        assert!(ed.paint == PaintTarget::Fill);
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyX", false, false, false);
+        assert!(ed.paint == PaintTarget::Stroke, "X = fill/stroke focus swap");
+        assert_eq!(ed.doc.paths.len(), 1, "plain X never cuts");
+        assert!(ed.clipboard().is_empty(), "plain keys never copy");
+    }
+
+    #[test]
+    fn paste_with_an_empty_clipboard_does_nothing() {
+        let mut ed = one_square();
+        paste_key(&mut ed, &View::identity(), [100.0, 100.0], false);
+        paste_key(&mut ed, &View::identity(), [100.0, 100.0], true);
+        assert_eq!(ed.rev, 0);
+        assert_eq!(ed.doc.paths.len(), 1);
     }
 }
