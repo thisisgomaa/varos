@@ -647,12 +647,7 @@ pub fn build_content(
     h: f32,
 ) -> (Vec<Vertex>, Vec<Vertex>, Vec<Vertex>, Vec<GroupDraw>) {
     let mut fillv = Vec::new();
-    // A 128 Ki-vertex (3 MB) floor for the stroke buffer (QW4 review P2-1). On Linux/glibc, growing
-    // it from empty every frame put harness scene C into a heap grow/trim cycle (brk + fresh page
-    // faults each frame, 3× its content time). The floor only MOVES that glibc cliff: other sizes
-    // (e.g. ~180 k vertices) can still hit it. The real fix is reusing vertex buffers across frames
-    // in the renderer. macOS uses a different allocator; the effect there is unmeasured.
-    let mut fgv = Vec::with_capacity(1 << 17);
+    let mut fgv = Vec::new();
     let mut opv = Vec::new();
     let mut metas: Vec<GroupDraw> = Vec::new();
     for g in groups {
