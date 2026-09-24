@@ -115,6 +115,30 @@ fn thick_top_band_occludes_lower_path() {
 }
 
 #[test]
+fn lower_thick_band_does_not_steal_from_thin_top_path() {
+    // The other side of the band rule: a thick band LOWER in the stack never takes a click from a thin
+    // path painted on top of it (adopted from the QW1 code review, P3-4).
+    let ink = [0.0, 0.0, 0.0, 1.0];
+    let band = || {
+        let mut r = rect(1, 1, 0.0, -500.0, 1000.0, 500.0, None); // left edge x = 0, band x ∈ [-40, 40]
+        r.stroke = Paint::Solid(ink);
+        r.stroke_width = 80.0;
+        r
+    };
+    let mut ed = Editor::new();
+    ed.ppu = 1.0;
+    let line = Path::new(2, vec![corner(11, 20.0, -300.0), corner(12, 20.0, 300.0)], false, None, Some(ink), 1.0);
+    ed.doc.paths = vec![band(), line];
+    ed.doc.ids = 100;
+    assert_eq!(ed.path_under([20.0, 0.0]), Some(2), "on the thin top line");
+    assert_eq!(ed.path_under([27.0, 0.0]), Some(2), "within 8 px of the thin top line: the top still wins");
+    assert_eq!(ed.path_under([30.0, 0.0]), Some(1), "past the top line's reach: the painted band below");
+    // a FILLED thin rect on top of the band: its fill wins over the band beneath it
+    ed.doc.paths = vec![band(), rect(3, 21, 10.0, -50.0, 35.0, 50.0, Some(GREY))];
+    assert_eq!(ed.path_under([22.0, 0.0]), Some(3), "the top fill wins over the lower band");
+}
+
+#[test]
 fn a_donuts_inner_rim_is_grabbable_but_its_hole_stays_click_through() {
     // FB3: a donut's INNER edge is drawn, so it must be clickable — the old hit-test only walked the
     // OUTER outline, so a click on the inner rim fell through. The hole's hollow INTERIOR stays empty

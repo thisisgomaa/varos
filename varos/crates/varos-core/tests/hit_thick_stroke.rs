@@ -233,6 +233,52 @@ fn thin_marquee_crossing_long_edge_selects() {
     assert!(!ed.path_in_rect(0, 530.0, -30.0, 534.0, -10.0), "the same marquee above the edge does not");
 }
 
+#[test]
+fn marquee_touching_only_a_donut_hole_rim_selects_it() {
+    // A FILLED donut (outer r 400, hole r 200, stroke 40). The hole's rim is painted too, so a marquee on
+    // its inner band touches the path — even though the marquee's centre sits in the (unfilled) hole.
+    let mut donut = circle(1, 1, [0.0, 0.0], 400.0, Some(GREY), Some(INK), 40.0);
+    donut.holes = vec![circle(9, 20, [0.0, 0.0], 200.0, None, None, 1.0).anchors];
+    let ed = editor_with(vec![donut], 1.0);
+    assert!(ed.path_in_rect(0, 185.0, -5.0, 195.0, 5.0), "a marquee on the hole rim's inner band catches it");
+    assert!(!ed.path_in_rect(0, -50.0, -50.0, 50.0, 50.0), "a marquee wholly inside the hole catches nothing");
+}
+
+// ───────────────────────── straight edges measure true distance too ─────────────────────────
+
+#[test]
+fn big_rect_edge_near_corner_centreline_is_hit() {
+    // Review P1-1: a straight segment is the cubic (p0, p0, p3, p3). Full Newton stalled near its ends,
+    // leaving a click ON the top edge of a 20000 rect up to ~22 units "away" — a miss at 327 %.
+    let ed = editor_with(vec![rect(1, [0.0, 0.0, 20_000.0, 20_000.0], None, Some(INK))], 3.27);
+    for i in 0..=400 {
+        let x = i as f32 * 0.5; // x ∈ [0, 200], the first ~650 screen px beside the corner
+        for q in [[x, 0.0], [20_000.0 - x, 0.0], [0.0, x]] {
+            let d = ed.doc.edge_dist(0, q).unwrap();
+            assert!(d < 0.1, "a point ON the edge measures ~0 from it: {q:?} → {d}");
+            assert_eq!(ed.path_under(q), Some(1), "the edge near the corner is clickable at 327 %: {q:?}");
+        }
+    }
+}
+
+#[test]
+fn pen_add_anchor_near_a_corner_lands_on_the_line() {
+    // Same stall, seen through the Pen: the inserted anchor must sit ON the line under the cursor.
+    let mut ed = editor_with(
+        vec![Path::new(1, vec![corner(1, 0.0, 0.0), corner(2, 20_000.0, 0.0)], false, None, Some(INK), 1.0)],
+        3.27,
+    );
+    ed.doc.snap.enabled = false;
+    ed.set_tool(ToolKind::Pen);
+    ed.objsel.insert(1);
+    let x = 32.5; // where the old refinement was worst (~22 units off)
+    ed.pointer_down([x, 1.0 / 3.27]); // 1 screen px below the line
+    ed.pointer_up();
+    assert_eq!(ed.doc.paths[0].anchors.len(), 3, "an anchor was added");
+    let added = ed.doc.paths[0].anchors[1].p;
+    assert!(added[1].abs() < 1e-3 && (added[0] - x).abs() < 0.1, "inserted on the line under the cursor: {added:?}");
+}
+
 // ───────────────────────── Pen add-anchor tolerance ─────────────────────────
 
 fn pen_on_line(ppu: f32) -> Editor {
