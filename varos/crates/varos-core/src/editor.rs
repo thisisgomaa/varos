@@ -2,6 +2,7 @@
 //! Tools (see `tools/`) define what a *press* does; the shared move/up engine handles the drag.
 
 use crate::boolean::{run_boolean_curves, BoolOp, ResultShape, Seg};
+use crate::clipboard::Clipboard;
 use crate::geom::*;
 use crate::model::*;
 use crate::tools;
@@ -368,6 +369,9 @@ pub struct Editor {
     /// P11.2 cross-frame flatten cache (render-side memo, never serialized, never part of undo). Keyed by
     /// each path's exact geometry inputs, so it can never serve stale geometry — see `flatten.rs`.
     pub flatten_cache: crate::flatten::SharedFlattenCache,
+    /// Edit ▸ Copy / Cut / Paste — the IN-APP clipboard (deep copies of model data). Not the OS
+    /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
+    clipboard: Clipboard,
     undo: Vec<Document>,
     redo: Vec<Document>,
     pending: Option<Document>,
@@ -418,6 +422,7 @@ impl Editor {
             rev: 0,
             dirty: false,
             flatten_cache: Default::default(),
+            clipboard: Clipboard::default(),
             undo: vec![],
             redo: vec![],
             pending: None,
@@ -4033,6 +4038,76 @@ impl Editor {
             }
             self.objsel.clear();
         }
+        self.dirty = true;
+        self.commit();
+    }
+    // ---------- clipboard (Edit ▸ Cut / Copy / Paste / Paste in Place — Astra F04) ----------
+    /// The in-app clipboard (read-only view — e.g. its `center()` for a view-centred paste).
+    pub fn clipboard(&self) -> &Clipboard {
+        &self.clipboard
+    }
+    /// What Copy / Cut take: the WHOLE paths of the object selection, plus the Direct tool's
+    /// whole-path selection. A bare anchor selection copies nothing (partial-path copy is not built).
+    fn clipboard_sources(&self) -> Vec<u32> {
+        let mut pids: Vec<u32> = self.objsel.iter().copied().chain(self.dsel_path).collect();
+        pids.retain(|&p| self.doc.pidx(p).is_some());
+        pids.sort_unstable();
+        pids.dedup();
+        pids
+    }
+    /// Edit ▸ Copy (⌘C): put a deep copy of the selection (groups, clip masks and live transforms kept)
+    /// on the in-app clipboard. The document is untouched — no history entry, no `rev` bump. With
+    /// nothing selected the clipboard keeps its previous content (Illustrator).
+    pub fn copy_selection(&mut self) {
+        let pids = self.clipboard_sources();
+        if !pids.is_empty() {
+            self.clipboard = Clipboard::capture(&self.doc, &pids);
+        }
+    }
+    /// Edit ▸ Cut (⌘X): Copy, then delete the selection — ONE undo step. No-op with nothing selected.
+    pub fn cut_selection(&mut self) {
+        let pids = self.clipboard_sources();
+        if pids.is_empty() {
+            return;
+        }
+        self.clipboard = Clipboard::capture(&self.doc, &pids);
+        let gone: HashSet<u32> = pids.into_iter().collect();
+        self.begin();
+        self.doc.paths.retain(|p| !gone.contains(&p.id));
+        self.objsel.clear();
+        self.selected.clear();
+        self.dsel_path = None;
+        if self.active.is_some_and(|a| gone.contains(&a)) {
+            self.active = None;
+        }
+        self.drag = Drag::None;
+        self.refresh_obj_angle();
+        self.dirty = true;
+        self.commit(); // sync_tree prunes the dead leaves + emptied groups
+    }
+    /// Edit ▸ Paste (⌘V) / Paste in Place (⇧⌘V): insert a fresh copy of the clipboard onto the ACTIVE
+    /// layer, moved by `offset` (`None` = in place, at the copied coordinates), and select it — ONE undo
+    /// step. Every paste mints new ids, so pasting twice gives two independent copies. Empty clipboard ⇒
+    /// no-op (no history, no `rev` bump).
+    pub fn paste(&mut self, offset: Option<Pt>) {
+        if self.clipboard.is_empty() {
+            return;
+        }
+        self.begin();
+        let new = self.clipboard.paste_into(&mut self.doc, offset.unwrap_or([0.0, 0.0]));
+        self.objsel = new.into_iter().collect();
+        self.selected.clear();
+        self.absel.clear();
+        self.dsel_path = None;
+        self.active = None; // a pen path in progress ends, as on any selection change
+        self.drag = Drag::None;
+        self.ab_drag = AbDrag::None;
+        if !matches!(self.tool, ToolKind::Object | ToolKind::Direct | ToolKind::Rotate | ToolKind::Scale) {
+            // the pasted art must show as selected (the same hand-off the Layers Alt-drag copy makes)
+            self.tool = ToolKind::Object;
+        }
+        self.pivot = None;
+        self.refresh_obj_angle(); // pasted units keep their live rotation → the frame follows (A7)
         self.dirty = true;
         self.commit();
     }
