@@ -51,7 +51,7 @@ fn sorted(v: impl IntoIterator<Item = u32>) -> Vec<u32> {
 fn select_all_takes_visible_unlocked_paths_only() {
     let mut ed = canvas();
     ed.selected.insert(10); // a stale anchor selection is dropped
-    ed.execute(EditCommand::SelectAll);
+    ed.select_all();
     assert_eq!(sorted(ed.objsel.iter().copied()), [1, 4, 5], "hidden 2 and locked 3 are not selectable");
     assert!(ed.selected.is_empty(), "Select All in the Selection tool is an object selection");
     assert!(ed.dsel_path.is_none());
@@ -114,7 +114,7 @@ fn select_all_is_not_an_edit() {
     let rev = ed.rev;
     let doc_before = serde_json::to_string(&ed.doc).unwrap();
 
-    ed.execute(EditCommand::SelectAll);
+    ed.select_all();
     assert_eq!(ed.rev, rev, "Select All does not bump the document revision");
     assert!(!ed.dirty, "and does not mark a gesture dirty");
     assert_eq!(serde_json::to_string(&ed.doc).unwrap(), doc_before, "the document is untouched");
