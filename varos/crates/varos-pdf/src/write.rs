@@ -67,7 +67,8 @@ fn native_pages(doc: &Document) -> Vec<PageSpec> {
     boards.iter().map(PageSpec::of_board).collect()
 }
 
-/// One path as the page loop draws it: resolved paints, drawability and its live unit transform.
+/// One path as the page loop draws it: resolved paints, drawability, its live unit transform and the
+/// clipping mask it paints under.
 pub(crate) struct Drawn<'a> {
     pub(crate) p: &'a Path,
     pub(crate) xf: Xform,
@@ -76,11 +77,14 @@ pub(crate) struct Drawn<'a> {
     fillable: bool,
     strokable: bool,
     pub(crate) pad: f32,
+    /// `Some(mask)` = a clip-group member: the mask paths (each with its OWN live transform) whose
+    /// silhouette clips it, even-odd, exactly as the canvas's `Group::Clip`. Only mask paths with a
+    /// drawable ring (≥ 2 anchors) are kept, so `Some` is never empty.
+    pub(crate) clip: Option<Vec<(&'a Path, Xform)>>,
 }
 
-/// Every path the page loop draws on `page`, in paint order. THE single predicate shared by the writer
-/// and the export planner (mask detection), so the planner judges exactly what the writer would emit.
-pub(crate) fn drawn_on<'a>(doc: &'a Document, page: &'a PageSpec) -> impl Iterator<Item = Drawn<'a>> + 'a {
+/// Every path the page loop draws on `page`, in paint order.
+fn drawn_on<'a>(doc: &'a Document, page: &'a PageSpec) -> impl Iterator<Item = Drawn<'a>> + 'a {
     // artwork: the paintable content in document order (paint_list, LAYERS_VISION §5 — a mask
     // source must never reach the page); conservative bbox cull per page
     doc.paint_list().filter_map(move |(_, p)| {
@@ -89,8 +93,9 @@ pub(crate) fn drawn_on<'a>(doc: &'a Document, page: &'a PageSpec) -> impl Iterat
     })
 }
 
-/// A path's draw recipe, or `None` when it draws nothing anywhere (hidden, or no paint to show).
-pub(crate) fn drawable<'a>(doc: &Document, p: &'a Path) -> Option<Drawn<'a>> {
+/// A path's draw recipe, or `None` when it draws nothing anywhere (hidden, no paint to show, or a clip
+/// member that its mask clips away entirely).
+pub(crate) fn drawable<'a>(doc: &'a Document, p: &'a Path) -> Option<Drawn<'a>> {
     // WYSIWYG with the canvas: skip anything EFFECTIVELY hidden — the path's own eye, a hidden
     // parent group/layer (node cascade), OR art whose every member board is hidden (board eye).
     // Raw `p.hidden` missed the last two, so hidden groups and hidden pages still bled out.
@@ -112,7 +117,34 @@ pub(crate) fn drawable<'a>(doc: &Document, p: &'a Path) -> Option<Drawn<'a>> {
         return None;
     }
     let pad = if strokable { p.stroke_width * 0.5 } else { 0.0 };
-    Some(Drawn { p, xf, fill, stroke, fillable, strokable, pad })
+    // MASKS_PLAN Stage 5: a clip-group member paints only inside its mask. Single level, like the
+    // canvas (`scene.rs` keys the clip on the NEAREST clip group, `clip_group_of`). A mask with no
+    // drawable ring clips its members to nothing, and a member whose box misses the mask's box is
+    // wholly clipped out — neither is emitted (so nothing the mask hides reaches the file).
+    let clip = match doc.clip_group_of(p.id) {
+        None => None,
+        Some(c) => {
+            let mask: Vec<(&Path, Xform)> = doc
+                .node_mask_child(c)
+                .map(|mc| doc.node_paths(mc))
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|mp| doc.pidx(mp).map(|i| &doc.paths[i]))
+                .filter(|mp| mp.anchors.len() >= 2 || mp.holes.iter().any(|h| h.len() >= 2))
+                .map(|mp| (mp, doc.unit_xform(mp.id)))
+                .collect();
+            let (x0, y0, x1, y1) = world_bbox(p, &xf, pad);
+            let hits = mask.iter().any(|(mp, mxf)| {
+                let (m0, n0, m1, n1) = world_bbox(mp, mxf, 0.0);
+                x0 <= m1 && x1 >= m0 && y0 <= n1 && y1 >= n0
+            });
+            if !hits {
+                return None;
+            }
+            Some(mask)
+        }
+    };
+    Some(Drawn { p, xf, fill, stroke, fillable, strokable, pad, clip })
 }
 
 /// Write `pages` (world rects, in order) as a PDF. `model = Some(blob)` embeds the editable model
@@ -159,7 +191,16 @@ pub(crate) fn write_pages(
             c.restore_state();
         }
 
-        for Drawn { p, xf, fill, stroke, fillable, strokable, pad } in drawn_on(doc, ab) {
+        for Drawn { p, xf, fill, stroke, fillable, strokable, pad, clip } in drawn_on(doc, ab) {
+            // MASKS_PLAN Stage 5: `q <mask rings> W* n <the member's usual paint> Q` — the PDF-native clip,
+            // even-odd over every mask ring like the canvas. Knockout XObjects paint inside it too.
+            if let Some(mask) = &clip {
+                c.save_state();
+                for (mp, mxf) in mask {
+                    emit_rings(&mut c, mp, mxf, &t);
+                }
+                c.clip_even_odd().end_path();
+            }
             let fa = fill.map_or(0.0, |f| f[3]) * p.opacity;
             let sa = stroke.map_or(0.0, |s| s[3]) * p.opacity;
 
@@ -217,6 +258,9 @@ pub(crate) fn write_pages(
                         c.stroke();
                     }
                 }
+                c.restore_state();
+            }
+            if clip.is_some() {
                 c.restore_state();
             }
         }
