@@ -26,12 +26,15 @@ rfd = "0.15"   # native Save/Open/message dialogs (the 🔖 slice: .vrs on disk)
 egui_tiles = "0.16"                                  # split-tree layout + drag-resize + serde (egui 0.35)
 serde = { version = "1", features = ["derive"] }     # BoxState / PanelId serde — workspaces from day one
 serde_json = "1"
+# Local clock text ("Recovery copy saved at 14:32"). Already in the lock through lopdf with `clock` — no new crate.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Win32 is only compiled on Windows (native cursors, custom frame, single-instance, screen eyedropper).
 # Other platforms use the #[cfg(not(windows))] fallbacks — see docs/foundation/MAC_SHELL_PORT.md.
 # macOS only: native menu bar and opaque window background (MAC_CHROME.md), plus
 # Retina tool cursors whose 32-point NSImage carries 1× and 2× bitmap representations.
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"   # plain fsync fallback when a volume rejects F_FULLFSYNC (storage/durable.rs); already in the lock
 muda = { version = "0.20", default-features = false }
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSGeometry"] }
