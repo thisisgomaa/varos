@@ -954,6 +954,129 @@ impl Editor {
     pub fn obj_local_dims(&self) -> Option<(f32, f32)> {
         self.obj_local_bbox().map(|(x0, y0, x1, y1)| (x1 - x0, y1 - y0))
     }
+
+    // ---------- Direct-Selection inspector (Astra F07) ----------
+    /// The anchors the inspector measures and edits when there is NO object selection: the individually
+    /// selected anchors (Direct tool), else every anchor (outer + holes) of the Direct path-level selection.
+    /// Empty when an object selection exists (objects always win) or nothing is direct-selected. Sorted, so
+    /// the result is deterministic.
+    fn direct_anchor_ids(&self) -> Vec<u32> {
+        if !self.objsel.is_empty() {
+            return vec![];
+        }
+        let mut ids: Vec<u32> = self.selected.iter().copied().filter(|&a| self.doc.aidx(a).is_some()).collect();
+        if ids.is_empty() {
+            if let Some(pi) = self.dsel_path.and_then(|p| self.doc.pidx(p)) {
+                let p = &self.doc.paths[pi];
+                ids = p.anchors.iter().chain(p.holes.iter().flatten()).map(|a| a.id).collect();
+            }
+        }
+        ids.sort_unstable();
+        ids
+    }
+    /// WORLD bbox (x0, y0, x1, y1) of the Direct selection when there is no object selection — what the
+    /// X/Y/W/H fields show for a directly-grabbed anchor (Astra F07). Selected anchors → the bbox of their
+    /// anchor POINTS (one anchor ⇒ x0 == x1, y0 == y1: X/Y is its position, W = H = 0). A path-level Direct
+    /// selection → that path's outline bbox (the same measure as an object selection). `None` otherwise.
+    pub fn direct_bbox(&self) -> Option<(f32, f32, f32, f32)> {
+        if !self.objsel.is_empty() {
+            return None;
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        let mut grow = |q: Pt| {
+            x0 = x0.min(q[0]);
+            y0 = y0.min(q[1]);
+            x1 = x1.max(q[0]);
+            y1 = y1.max(q[1]);
+        };
+        let anchors: Vec<u32> = self.selected.iter().copied().filter(|&a| self.doc.aidx(a).is_some()).collect();
+        if !anchors.is_empty() {
+            for aid in anchors {
+                // A7 seam: an anchor of a rotated (not yet baked) unit is shown at its WORLD position.
+                if let (Some(pid), Some(a)) = (self.doc.pid_of_anchor(aid), self.doc.anchor(aid)) {
+                    grow(self.doc.unit_xform(pid).apply(a.p));
+                }
+            }
+        } else if let Some(pid) = self.dsel_path {
+            if let Some(pi) = self.doc.pidx(pid) {
+                let xf = self.doc.unit_xform(pid);
+                for q in self.doc.outline(pi, 8) {
+                    grow(xf.apply(q));
+                }
+            }
+        }
+        (x0 <= x1).then_some((x0, y0, x1, y1))
+    }
+    /// The inspector / context-bar label for the Direct selection when there is no object selection
+    /// (Astra F07): `"Anchor"` for one selected anchor, `"N anchors"` for several, and the path's name
+    /// (or `"Path"`) for a path-level Direct selection. `None` when objects are selected or nothing is
+    /// direct-selected (the caller then shows its own label, e.g. "No selection").
+    pub fn direct_label(&self) -> Option<String> {
+        if !self.objsel.is_empty() {
+            return None;
+        }
+        match self.selected.iter().filter(|&&a| self.doc.aidx(a).is_some()).count() {
+            0 => self
+                .dsel_path
+                .and_then(|p| self.doc.pidx(p))
+                .map(|pi| self.doc.paths[pi].name.clone().unwrap_or_else(|| "Path".into())),
+            1 => Some("Anchor".into()),
+            n => Some(format!("{n} anchors")),
+        }
+    }
+    /// Numeric X/Y/W/H for the Direct selection (see `direct_bbox`) — the Direct-tool twin of
+    /// `set_obj_bbox`: W/H scale the selected anchors (points + handles) about the reference point
+    /// (ax, ay); X/Y then translate them so that reference point lands on the requested WORLD position.
+    /// A zero extent (a single anchor, or a purely horizontal/vertical run) cannot be scaled and is left
+    /// as is. Every spanned rotated unit is baked first (as `nudge` / `begin_anchor_drag` do), so the edit
+    /// is a true world edit. One undo step; a no-op (no undo step) when nothing would change.
+    fn set_direct_bbox(
+        &mut self,
+        nx: Option<f32>,
+        ny: Option<f32>,
+        nw: Option<f32>,
+        nh: Option<f32>,
+        ax: f32,
+        ay: f32,
+    ) {
+        let ids = self.direct_anchor_ids();
+        let Some((x0, y0, x1, y1)) = self.direct_bbox() else { return };
+        if ids.is_empty() {
+            return;
+        }
+        let (w, h) = (x1 - x0, y1 - y0);
+        let sx = if w.abs() > 1e-3 { nw.map(|v| (v / w).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
+        let sy = if h.abs() > 1e-3 { nh.map(|v| (v / h).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
+        let (fx, fy) = (x0 + w * ax, y0 + h * ay); // WORLD reference point, fixed under scale
+        let tx = nx.map(|v| v - fx).unwrap_or(0.0);
+        let ty = ny.map(|v| v - fy).unwrap_or(0.0);
+        if (sx - 1.0).abs() < 1e-5 && (sy - 1.0).abs() < 1e-5 && tx.abs() < 1e-4 && ty.abs() < 1e-4 {
+            return;
+        }
+        self.begin();
+        let mut units: Vec<u32> = vec![];
+        for &aid in &ids {
+            if let Some(u) = self.doc.pid_of_anchor(aid).and_then(|pid| self.doc.unit_of(pid)) {
+                if !units.contains(&u) {
+                    units.push(u);
+                }
+            }
+        }
+        for u in units {
+            self.bake_unit(u); // world geometry unchanged; the stored anchors become world coordinates
+        }
+        let tf = |p: Pt| [fx + (p[0] - fx) * sx + tx, fy + (p[1] - fy) * sy + ty];
+        for aid in ids {
+            if let Some(a) = self.doc.anchor_mut(aid) {
+                a.p = tf(a.p);
+                a.hin = a.hin.map(tf);
+                a.hout = a.hout.map(tf);
+            }
+        }
+        self.dirty = true;
+        self.commit();
+    }
+
     /// Bbox of a unit's own LOCAL anchor geometry (the coordinates as stored, pre-transform). Used by the
     /// numeric W/H edit to scale a rotated unit in its own frame.
     fn unit_local_bbox(&self, unit: u32) -> Option<(f32, f32, f32, f32)> {
@@ -1394,7 +1517,8 @@ impl Editor {
     }
     /// Set the object selection's AXIS-ALIGNED bbox (any of x/y/w/h). `ax,ay` (0..1) is the reference
     /// point that stays fixed while w/h scale (the Transform 9-point selector). x/y set the bbox
-    /// top-left absolutely. Drives the editable Transform X·Y·W·H fields. Resets frame angle.
+    /// top-left absolutely. Drives the editable Transform X·Y·W·H fields. Resets frame angle. With NO
+    /// object selection it edits the Direct selection instead (`set_direct_bbox`, Astra F07).
     pub fn set_obj_bbox(
         &mut self,
         nx: Option<f32>,
@@ -1404,6 +1528,12 @@ impl Editor {
         ax: f32,
         ay: f32,
     ) {
+        // Astra F07: no object selection → the fields address the Direct selection (selected anchors, or a
+        // Direct path-level selection) instead of silently doing nothing.
+        if self.objsel.is_empty() {
+            self.set_direct_bbox(nx, ny, nw, nh, ax, ay);
+            return;
+        }
         // A7 Stage 5: a SINGLE unit scales in its OWN LOCAL frame — W/H is the true un-rotated size and θ is
         // preserved. X/Y still address the WORLD AABB top-left (simplest, matches `obj_bbox`). A multi-unit
         // selection has no common local frame → bake to identity first, then the historic world-AABB scale.
