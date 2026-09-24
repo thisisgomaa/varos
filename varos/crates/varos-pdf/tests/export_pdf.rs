@@ -5,9 +5,13 @@
 //! Run with:  cargo test -p varos-pdf --test export_pdf
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
-use varos_core::model::{Anchor, Artboard, Document, Path, Xform};
-use varos_pdf::write_pdf;
+use varos_core::model::{Anchor, Artboard, Document, GroupRole, Node, NodeKind, Path, Xform};
+use varos_pdf::{
+    default_scope, export_pdf_bytes, has_embedded_model, load_vrs, plan_pdf_export, save_vrs, write_pdf, ExportError,
+    ExportPlan, ExportScope, ExportUnavailable, PageSpec, PlannedPage,
+};
 
 // ───────────────────────────── document builders ─────────────────────────────
 
@@ -148,4 +152,507 @@ fn native_write_is_byte_identical_to_fixture() {
             want.len()
         );
     }
+}
+
+// ───────────────────────────── pure export: helpers ─────────────────────────────
+
+fn plan(doc: &Document, scope: ExportScope) -> ExportPlan {
+    plan_pdf_export(doc, scope).unwrap_or_else(|u| panic!("{scope:?} should plan, got {u:?}"))
+}
+fn export(doc: &Document, scope: ExportScope) -> Vec<u8> {
+    let plan = plan(doc, scope);
+    export_pdf_bytes(doc, &plan, &AtomicBool::new(false)).expect("exports")
+}
+fn load(bytes: &[u8]) -> lopdf::Document {
+    lopdf::Document::load_mem(bytes).expect("lopdf parses the export")
+}
+/// Each page's MediaBox, in page order.
+fn media_boxes(bytes: &[u8]) -> Vec<[f32; 4]> {
+    let pdf = load(bytes);
+    pdf.get_pages()
+        .values()
+        .map(|&pid| {
+            let page = pdf.get_dictionary(pid).unwrap();
+            let mb = page.get(b"MediaBox").unwrap().as_array().unwrap();
+            [0, 1, 2, 3].map(|i| mb[i].as_float().unwrap())
+        })
+        .collect()
+}
+/// Each page's decoded content-stream operations, in page order.
+fn page_ops(bytes: &[u8]) -> Vec<Vec<lopdf::content::Operation>> {
+    let pdf = load(bytes);
+    pdf.get_pages()
+        .values()
+        .map(|&pid| lopdf::content::Content::decode(&pdf.get_page_content(pid).unwrap()).unwrap().operations)
+        .collect()
+}
+fn has_op(ops: &[lopdf::content::Operation], op: &str, operands: &[f32]) -> bool {
+    ops.iter().any(|o| {
+        o.operator == op
+            && o.operands.len() == operands.len()
+            && o.operands.iter().zip(operands).all(|(a, b)| a.as_float().is_ok_and(|a| (a - b).abs() < 1e-3))
+    })
+}
+/// Every stream in the file, decompressed when possible — content streams AND form XObjects.
+fn all_streams(bytes: &[u8]) -> Vec<Vec<u8>> {
+    load(bytes)
+        .objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .map(|s| s.decompressed_content().unwrap_or_else(|_| s.content.clone()))
+        .collect()
+}
+fn contains(hay: &[u8], needle: &str) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle.as_bytes())
+}
+
+/// Two boards: A (400×300, white) with a blue rect, B (200×250, transparent) with a red rect.
+fn two_board_doc() -> Document {
+    let mut d = Document {
+        artboards: vec![
+            Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, name: "A".into(), ..Default::default() },
+            Artboard { x: 500.0, y: 0.0, w: 200.0, h: 250.0, name: "B".into(), page_color: None, ..Default::default() },
+        ],
+        ..Default::default()
+    };
+    d.paths.push(rect(1, 1, 40.0, 40.0, 100.0, 50.0, Some([0.0, 0.0, 1.0, 1.0])));
+    d.paths.push(rect(2, 5, 540.0, 60.0, 50.0, 50.0, Some([1.0, 0.0, 0.0, 1.0])));
+    d.ids = 8;
+    d.sync_tree();
+    d
+}
+
+// ───────────────────────────── scope ─────────────────────────────
+
+#[test]
+fn default_scope_follows_boards() {
+    assert_eq!(default_scope(&two_board_doc()), ExportScope::AllVisibleArtboards);
+    assert_eq!(default_scope(&Document::default()), ExportScope::ArtworkBounds);
+}
+
+#[test]
+fn all_visible_two_boards_two_pages_sized_like_boards() {
+    let doc = two_board_doc();
+    let p = plan(&doc, ExportScope::AllVisibleArtboards);
+    assert_eq!(p.page_count(), 2);
+    assert!(p.pages.iter().all(|pg| pg.is_ready()) && p.refusal().is_none());
+    let bytes = export(&doc, ExportScope::AllVisibleArtboards);
+    assert_eq!(media_boxes(&bytes), vec![[0.0, 0.0, 400.0, 300.0], [0.0, 0.0, 200.0, 250.0]]);
+    let ops = page_ops(&bytes);
+    // page 1: white background + the blue rect (world 40,40 → page 40, 300−40)
+    assert!(has_op(&ops[0], "rg", &[1.0, 1.0, 1.0]) && has_op(&ops[0], "re", &[0.0, 0.0, 400.0, 300.0]));
+    assert!(has_op(&ops[0], "m", &[40.0, 260.0]) && has_op(&ops[0], "rg", &[0.0, 0.0, 1.0]));
+    // page 2: transparent (no background rect), the red rect in board-local coords (540−500, 250−60)
+    assert!(!ops[1].iter().any(|o| o.operator == "re"), "a transparent page draws no background");
+    assert!(has_op(&ops[1], "m", &[40.0, 190.0]) && has_op(&ops[1], "rg", &[1.0, 0.0, 0.0]));
+    assert!(!has_op(&ops[1], "rg", &[0.0, 0.0, 1.0]), "board A's art is not on board B's page");
+}
+
+#[test]
+fn hidden_board_excluded() {
+    let mut doc = two_board_doc();
+    doc.artboards.push(Artboard { x: 0.0, y: 400.0, w: 300.0, h: 100.0, ..Default::default() });
+    doc.artboards[1].hidden = true;
+    let p = plan(&doc, ExportScope::AllVisibleArtboards);
+    assert_eq!(p.page_count(), 2, "3 boards, 1 hidden → 2 pages");
+    let bytes = export(&doc, ExportScope::AllVisibleArtboards);
+    assert_eq!(media_boxes(&bytes), vec![[0.0, 0.0, 400.0, 300.0], [0.0, 0.0, 300.0, 100.0]]);
+    assert!(page_ops(&bytes).iter().all(|ops| !has_op(ops, "rg", &[1.0, 0.0, 0.0])), "the hidden board's art is gone");
+}
+
+#[test]
+fn all_hidden_is_unavailable_not_a_dummy_page() {
+    let mut doc = two_board_doc();
+    for ab in &mut doc.artboards {
+        ab.hidden = true;
+    }
+    assert_eq!(plan_pdf_export(&doc, ExportScope::AllVisibleArtboards), Err(ExportUnavailable::NoVisibleArtboards));
+    assert_eq!(plan_pdf_export(&doc, ExportScope::ActiveArtboard), Err(ExportUnavailable::ActiveArtboardHidden));
+    assert_eq!(plan_pdf_export(&doc, ExportScope::ArtworkBounds), Err(ExportUnavailable::NotBoardless));
+}
+
+#[test]
+fn active_scope_one_page() {
+    let mut doc = two_board_doc();
+    doc.active = 1;
+    let p = plan(&doc, ExportScope::ActiveArtboard);
+    assert_eq!(p.page_count(), 1);
+    assert_eq!(*p.pages[0].spec(), PageSpec { rect: [500.0, 0.0, 200.0, 250.0], background: None });
+    let bytes = export(&doc, ExportScope::ActiveArtboard);
+    assert_eq!(media_boxes(&bytes), vec![[0.0, 0.0, 200.0, 250.0]]);
+    let ops = page_ops(&bytes);
+    assert!(has_op(&ops[0], "rg", &[1.0, 0.0, 0.0]) && !has_op(&ops[0], "rg", &[0.0, 0.0, 1.0]));
+}
+
+#[test]
+fn active_hidden_unavailable() {
+    let mut doc = two_board_doc();
+    doc.active = 1;
+    doc.artboards[1].hidden = true;
+    assert_eq!(plan_pdf_export(&doc, ExportScope::ActiveArtboard), Err(ExportUnavailable::ActiveArtboardHidden));
+    assert_eq!(plan(&doc, ExportScope::AllVisibleArtboards).page_count(), 1, "the other board still exports");
+}
+
+#[test]
+fn board_scopes_need_boards_and_bounds_needs_none() {
+    let mut doc = two_board_doc();
+    assert_eq!(plan_pdf_export(&doc, ExportScope::ArtworkBounds), Err(ExportUnavailable::NotBoardless));
+    doc.artboards.clear();
+    assert_eq!(plan_pdf_export(&doc, ExportScope::AllVisibleArtboards), Err(ExportUnavailable::NeedsArtboards));
+    assert_eq!(plan_pdf_export(&doc, ExportScope::ActiveArtboard), Err(ExportUnavailable::NeedsArtboards));
+    for u in [
+        ExportUnavailable::NoVisibleArtboards,
+        ExportUnavailable::ActiveArtboardHidden,
+        ExportUnavailable::NotBoardless,
+        ExportUnavailable::NeedsArtboards,
+        ExportUnavailable::NothingToExport,
+        ExportUnavailable::ClipMasksNotSupported,
+    ] {
+        assert!(!u.reason().is_empty() && u.reason().ends_with('.'), "{u:?} has user copy");
+    }
+}
+
+#[test]
+fn boardless_artwork_bounds_page_matches_padded_bbox() {
+    let mut doc = Document::default(); // a free canvas: no artboards
+    doc.paths.push(rect(1, 1, 10.0, 20.0, 100.0, 50.0, Some([0.0, 0.5, 0.0, 1.0]))); // fill only → no pad
+    let line = vec![anc(5, 200.0, 100.0), anc(6, 300.0, 100.0)];
+    doc.paths.push(Path::new(2, line, false, None, Some([0.0, 0.0, 0.0, 1.0]), 4.0)); // 4-pt stroke → pad 2
+    let mut ghost = rect(3, 7, 900.0, 900.0, 10.0, 10.0, Some([1.0, 0.0, 0.0, 1.0]));
+    ghost.hidden = true; // hidden art must not stretch the page
+    doc.paths.push(ghost);
+    doc.ids = 10;
+    doc.sync_tree();
+    // x: rect 10 … line 300 + 2 (half of the 4-pt stroke); y: rect 20 … line 100 + 2
+    let p = plan(&doc, ExportScope::ArtworkBounds);
+    assert_eq!(p.page_count(), 1);
+    assert_eq!(*p.pages[0].spec(), PageSpec { rect: [10.0, 20.0, 292.0, 82.0], background: None });
+    let bytes = export(&doc, ExportScope::ArtworkBounds);
+    assert_eq!(media_boxes(&bytes), vec![[0.0, 0.0, 292.0, 82.0]]);
+    let ops = &page_ops(&bytes)[0];
+    assert!(!ops.iter().any(|o| o.operator == "re"), "artwork bounds are transparent: no background");
+    // the rect's top-left world (10,20) → page (0, 82); the line starts at world (200,100) → page (190, 2)
+    assert!(has_op(ops, "m", &[0.0, 82.0]) && has_op(ops, "m", &[190.0, 2.0]));
+}
+
+#[test]
+fn boardless_empty_is_nothing_to_export() {
+    let mut doc = Document::default();
+    assert_eq!(plan_pdf_export(&doc, ExportScope::ArtworkBounds), Err(ExportUnavailable::NothingToExport));
+    let mut hidden = rect(1, 1, 0.0, 0.0, 10.0, 10.0, Some([0.0, 0.0, 0.0, 1.0]));
+    hidden.hidden = true;
+    doc.paths.push(hidden);
+    doc.ids = 5;
+    doc.sync_tree();
+    assert_eq!(plan_pdf_export(&doc, ExportScope::ArtworkBounds), Err(ExportUnavailable::NothingToExport));
+    // and an empty hand-built plan never becomes a zero-page PDF
+    let empty = ExportPlan { scope: ExportScope::ArtworkBounds, pages: vec![] };
+    assert_eq!(
+        export_pdf_bytes(&doc, &empty, &AtomicBool::new(false)),
+        Err(ExportError::Unavailable(ExportUnavailable::NothingToExport))
+    );
+}
+
+// ───────────────────────────── privacy ─────────────────────────────
+
+/// Unique coordinates the hidden things carry; none may appear anywhere in the export.
+const SECRET_NUMBERS: [&str; 5] = ["277.125", "290.125", "311.375", "1077.625", "77.625"];
+const SECRET_NAMES: [&str; 5] = ["SECRET-LAYER", "Board Secret", "Board Public", "Visible Name", "Hidden Name"];
+
+/// Board "Board Public" (visible) + "Board Secret" (hidden); a visible LOCKED named path; a hidden path;
+/// a path on a hidden layer; a path standing only on the hidden board.
+fn secret_doc() -> Document {
+    let mut d = Document {
+        artboards: vec![
+            Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, name: "Board Public".into(), ..Default::default() },
+            Artboard {
+                x: 1000.0,
+                y: 0.0,
+                w: 200.0,
+                h: 200.0,
+                name: "Board Secret".into(),
+                hidden: true,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    let mut visible = rect(1, 1, 40.0, 40.0, 100.0, 50.0, Some([0.0, 0.0, 1.0, 1.0]));
+    visible.name = Some("Visible Name".into());
+    visible.locked = true;
+    d.paths.push(visible);
+    let mut hidden = rect(2, 5, 277.125, 40.0, 13.0, 20.0, Some([1.0, 0.0, 0.0, 1.0])); // spans 277.125 … 290.125
+    hidden.hidden = true;
+    hidden.name = Some("Hidden Name".into());
+    d.paths.push(hidden);
+    d.paths.push(rect(3, 9, 1077.625, 50.0, 30.0, 30.0, Some([1.0, 0.0, 0.0, 1.0]))); // only on the hidden board
+    d.ids = 20;
+    d.sync_tree();
+    // a hidden layer holding one path at x = 311.375 (on the visible board)
+    let layer = d.nid();
+    d.nodes.push(Node {
+        id: layer,
+        kind: NodeKind::Layer,
+        name: "SECRET-LAYER".into(),
+        parent: None,
+        children: vec![],
+        hidden: true,
+        locked: true,
+        color: None,
+        clip_exempt: false,
+        xform: Xform::default(),
+        role: GroupRole::Normal,
+        mask_child: None,
+    });
+    d.roots.insert(0, layer);
+    d.active_layer = layer;
+    d.paths.push(rect(4, 13, 311.375, 100.0, 20.0, 20.0, Some([1.0, 0.0, 0.0, 1.0])));
+    d.sync_tree();
+    d
+}
+
+#[test]
+fn secret_doc_really_hides_what_the_privacy_tests_think_it_hides() {
+    // guard the fixture itself: if the model's hiding rules changed, the privacy tests would pass vacuously
+    let d = secret_doc();
+    assert!(!d.eff_hidden(1) && d.eff_locked(1), "the visible path is visible and locked");
+    assert!(d.eff_hidden(2) && d.eff_hidden(3) && d.eff_hidden(4), "hidden path / hidden board / hidden layer");
+    let native = write_pdf(&d).unwrap();
+    assert!(contains(&native, "SECRET-LAYER") && contains(&native, "1077.625"), "the NATIVE file does carry them");
+}
+
+#[test]
+fn export_has_no_embedded_file_filespec_af_names_or_varos_keys() {
+    let doc = secret_doc();
+    let p = plan(&doc, ExportScope::AllVisibleArtboards);
+    let bytes = export(&doc, ExportScope::AllVisibleArtboards);
+    let pdf = load(&bytes);
+    assert_eq!(pdf.get_pages().len(), p.page_count(), "page count = planned pages");
+    assert!(!pdf.trailer.has(b"Info"), "no Info dictionary");
+    let banned_keys: [&[u8]; 6] = [b"EmbeddedFiles", b"EmbeddedFile", b"EF", b"AF", b"Names", b"Metadata"];
+    let banned_types: [&[u8]; 2] = [b"EmbeddedFile", b"Filespec"];
+    for (id, obj) in &pdf.objects {
+        let dict = match obj {
+            lopdf::Object::Dictionary(d) => d,
+            lopdf::Object::Stream(s) => &s.dict,
+            _ => continue,
+        };
+        for (k, v) in dict.iter() {
+            assert!(!banned_keys.contains(&k.as_slice()), "object {id:?} carries /{}", String::from_utf8_lossy(k));
+            assert!(!k.starts_with(b"VAROS"), "object {id:?} carries a private /VAROS_* key");
+            if k.as_slice() == b"Type" {
+                let t = v.as_name().unwrap_or_default();
+                assert!(!banned_types.contains(&t), "object {id:?} is a /{}", String::from_utf8_lossy(t));
+            }
+        }
+    }
+    for needle in ["EmbeddedFile", "Filespec", "/AF", "/Names", "VAROS", "model.varos.json", "\"varos\"", "\"paths\""] {
+        assert!(!contains(&bytes, needle), "raw export bytes contain {needle:?}");
+    }
+    assert!(!has_embedded_model(&bytes));
+}
+
+#[test]
+fn export_leaks_no_hidden_coordinates_or_names() {
+    let doc = secret_doc();
+    for scope in [ExportScope::AllVisibleArtboards, ExportScope::ActiveArtboard] {
+        let bytes = export(&doc, scope);
+        let streams = all_streams(&bytes);
+        assert!(!streams.is_empty());
+        for s in SECRET_NUMBERS.iter().chain(SECRET_NAMES.iter()) {
+            assert!(!contains(&bytes, s), "{scope:?}: raw bytes leak {s:?}");
+            assert!(streams.iter().all(|st| !contains(st, s)), "{scope:?}: a stream leaks {s:?}");
+        }
+        // only the visible (blue) art paints; the three hidden red things do not
+        let ops = page_ops(&bytes);
+        assert_eq!(ops.len(), 1);
+        assert!(has_op(&ops[0], "rg", &[0.0, 0.0, 1.0]) && !has_op(&ops[0], "rg", &[1.0, 0.0, 0.0]));
+    }
+}
+
+#[test]
+fn hidden_and_locked_state_change_no_export_byte() {
+    // the strongest form of "nothing hidden leaks": the export equals the export of a document where
+    // the hidden things never existed, and locking changes nothing at all
+    let doc = secret_doc();
+    let mut clean = Document {
+        artboards: vec![Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, ..Default::default() }],
+        ..Default::default()
+    };
+    clean.paths.push(rect(1, 1, 40.0, 40.0, 100.0, 50.0, Some([0.0, 0.0, 1.0, 1.0])));
+    clean.ids = 4;
+    clean.sync_tree();
+    let a = export(&doc, ExportScope::AllVisibleArtboards);
+    assert_eq!(a, export(&clean, ExportScope::AllVisibleArtboards), "hidden things and names leave no trace");
+    let mut unlocked = doc.clone();
+    unlocked.paths.iter_mut().find(|p| p.id == 1).unwrap().locked = false;
+    assert_eq!(a, export(&unlocked, ExportScope::AllVisibleArtboards), "lock state leaves no trace");
+}
+
+#[test]
+fn exported_pdf_is_refused_by_load_vrs() {
+    let bytes = export(&two_board_doc(), ExportScope::AllVisibleArtboards);
+    let p = std::env::temp_dir().join(format!("varos-s6a-{}-export.pdf", std::process::id()));
+    std::fs::write(&p, &bytes).unwrap();
+    let r = load_vrs(&p);
+    let _ = std::fs::remove_file(&p);
+    assert!(r.is_err(), "a pure export carries no model, so it cannot open as a document");
+}
+
+// ───────────────────────────── content & behaviour ─────────────────────────────
+
+#[test]
+fn visible_content_present() {
+    let bytes = export(&demo_doc(), ExportScope::AllVisibleArtboards);
+    let ops = &page_ops(&bytes)[0];
+    // the knockout triangle is a Form XObject painted by `Do`; the open red stroke is drawn in place
+    assert!(ops.iter().any(|o| o.operator == "Do"), "the knockout unit is painted");
+    assert!(has_op(ops, "m", &[250.0, 250.0]) && ops.iter().any(|o| o.operator == "S"), "the open stroke");
+    assert!(has_op(ops, "RG", &[0.9, 0.2, 0.2]));
+    // the triangle's own ops live in its form XObject: fill f* and stroke, starting at (40, 300−40)
+    let forms: Vec<_> = all_streams(&bytes)
+        .into_iter()
+        .filter_map(|s| lopdf::content::Content::decode(&s).ok())
+        .filter(|c| c.operations.iter().any(|o| o.operator == "f*"))
+        .collect();
+    assert!(forms.iter().any(|c| has_op(&c.operations, "m", &[40.0, 260.0])), "the triangle's fill reaches the file");
+}
+
+#[test]
+fn opacity_and_rotation_survive_export() {
+    // the rotated_export.rs rect: 100×40 at [100,100], spun 90° about [150,120] → its first corner lands
+    // at world [170,70] → page (170, 330); object opacity 0.5 → an ExtGState with /ca 0.5
+    let mut d = Document {
+        artboards: vec![Artboard { x: 0.0, y: 0.0, w: 400.0, h: 400.0, ..Default::default() }],
+        ..Default::default()
+    };
+    let mut r = rect(1, 1, 100.0, 100.0, 100.0, 40.0, Some([0.2, 0.6, 0.9, 1.0]));
+    r.opacity = 0.5;
+    d.paths.push(r);
+    d.ids = 4;
+    d.sync_tree();
+    let unit = d.unit_of(1).unwrap();
+    d.set_node_xform(unit, Xform { rot: std::f32::consts::FRAC_PI_2, piv: [150.0, 120.0] });
+    let bytes = export(&d, ExportScope::AllVisibleArtboards);
+    let ops = &page_ops(&bytes)[0];
+    assert!(has_op(ops, "m", &[170.0, 330.0]), "the rotated corner is on the page");
+    assert!(ops.iter().any(|o| o.operator == "gs"), "the opacity graphics state is applied");
+    let pdf = load(&bytes);
+    let half = pdf.objects.values().filter_map(|o| o.as_dict().ok()).any(|d| {
+        d.get(b"Type").and_then(|t| t.as_name()).ok() == Some(b"ExtGState".as_slice())
+            && d.get(b"ca").and_then(|v| v.as_float()).is_ok_and(|v| (v - 0.5).abs() < 1e-3)
+    });
+    assert!(half, "an ExtGState with /ca 0.5 carries the object opacity");
+}
+
+#[test]
+fn clip_mask_member_makes_scope_unavailable() {
+    let doc = rich_doc(); // clip group on board B; board A is mask-free
+    let p = plan(&doc, ExportScope::AllVisibleArtboards);
+    assert_eq!(p.page_count(), 2, "the refused page still counts — nothing silently disappears");
+    assert!(p.pages[0].is_ready());
+    match p.pages[1] {
+        PlannedPage::Refused { spec, reason } => {
+            assert_eq!(spec.rect, [500.0, 0.0, 300.0, 300.0]);
+            assert_eq!(reason, "Clipping masks can't be exported to PDF yet.");
+        }
+        other => panic!("board B must be refused, got {other:?}"),
+    }
+    assert_eq!(p.refusal(), Some(ExportUnavailable::ClipMasksNotSupported));
+    let no = AtomicBool::new(false);
+    assert_eq!(
+        export_pdf_bytes(&doc, &p, &no),
+        Err(ExportError::Unavailable(ExportUnavailable::ClipMasksNotSupported)),
+        "the whole export is refused, never a silent subset or unclipped art"
+    );
+    // a hand-built (or stale) plan that claims the page is ready is re-checked and still refused
+    let forged =
+        ExportPlan { scope: p.scope, pages: p.pages.iter().map(|pg| PlannedPage::Ready(*pg.spec())).collect() };
+    assert_eq!(
+        export_pdf_bytes(&doc, &forged, &no),
+        Err(ExportError::Unavailable(ExportUnavailable::ClipMasksNotSupported))
+    );
+    // a boardless document with a clip group is refused the same way
+    let mut free = rich_doc();
+    free.artboards.clear();
+    let fp = plan(&free, ExportScope::ArtworkBounds);
+    assert!(!fp.pages[0].is_ready() && fp.refusal() == Some(ExportUnavailable::ClipMasksNotSupported));
+}
+
+#[test]
+fn clip_mask_off_page_does_not_block() {
+    let mut doc = rich_doc();
+    doc.active = 0; // board A: the clip group stands on board B only
+    let p = plan(&doc, ExportScope::ActiveArtboard);
+    assert!(p.refusal().is_none());
+    let bytes = export(&doc, ExportScope::ActiveArtboard);
+    assert_eq!(media_boxes(&bytes), vec![[0.0, 0.0, 400.0, 300.0]]);
+    let ops = &page_ops(&bytes)[0];
+    assert!(!has_op(ops, "rg", &[0.8, 0.1, 0.5]), "the clip member is not on board A's page");
+    assert!(has_op(ops, "rg", &[0.1, 0.3, 0.9]) && has_op(ops, "rg", &[0.9, 0.5, 0.1]), "board A's art is");
+    // hiding the clip group's board lets "all visible" export too
+    doc.artboards[1].hidden = true;
+    assert!(plan(&doc, ExportScope::AllVisibleArtboards).refusal().is_none());
+}
+
+#[test]
+fn export_is_deterministic() {
+    let doc = two_board_doc();
+    let a = export(&doc, ExportScope::AllVisibleArtboards);
+    assert_eq!(a, export(&doc.clone(), ExportScope::AllVisibleArtboards));
+    assert_eq!(a, export(&doc, ExportScope::AllVisibleArtboards));
+}
+
+#[test]
+fn cancel_before_first_page_returns_cancelled() {
+    let doc = two_board_doc();
+    let p = plan(&doc, ExportScope::AllVisibleArtboards);
+    assert_eq!(export_pdf_bytes(&doc, &p, &AtomicBool::new(true)), Err(ExportError::Cancelled));
+}
+
+#[test]
+fn has_embedded_model_true_for_native_false_for_export() {
+    let doc = demo_doc();
+    assert!(has_embedded_model(&write_pdf(&doc).unwrap()), "a native .vrs carries the model");
+    assert!(!has_embedded_model(&export(&doc, ExportScope::AllVisibleArtboards)), "the export does not");
+    assert!(!has_embedded_model(b"not a pdf at all"));
+    assert!(!has_embedded_model(b""));
+}
+
+#[test]
+fn native_save_is_unchanged_by_the_export_path() {
+    // exporting must not alter what the native writer produces (shared page loop, separate outputs)
+    let doc = rich_doc();
+    let before = write_pdf(&doc).unwrap();
+    let _ = plan_pdf_export(&doc, ExportScope::AllVisibleArtboards);
+    let _ = export(&two_board_doc(), ExportScope::AllVisibleArtboards);
+    assert_eq!(before, write_pdf(&doc).unwrap());
+    let loaded = {
+        let p = std::env::temp_dir().join(format!("varos-s6a-{}-native.vrs", std::process::id()));
+        save_vrs(&doc, &p).unwrap();
+        let l = load_vrs(&p);
+        let _ = std::fs::remove_file(&p);
+        l.unwrap()
+    };
+    assert_eq!(loaded, doc, "the native container still round-trips");
+}
+
+#[test]
+fn artwork_bounds_follow_the_curve_not_its_handles() {
+    // an arch from (0,0) to (100,0) with both handles 100 up: the curve peaks at y = −75 (t = ½), the
+    // handles reach −100. A 2-pt stroke pads 1. The page hugs the curve, not the handle box.
+    let mut doc = Document::default();
+    let arch = vec![
+        Anchor { id: 1, p: [0.0, 0.0], hin: None, hout: Some([0.0, -100.0]), smooth: false },
+        Anchor { id: 2, p: [100.0, 0.0], hin: Some([100.0, -100.0]), hout: None, smooth: false },
+    ];
+    doc.paths.push(Path::new(1, arch, false, None, Some([0.0, 0.0, 0.0, 1.0]), 2.0));
+    doc.ids = 3;
+    doc.sync_tree();
+    let r = plan(&doc, ExportScope::ArtworkBounds).pages[0].spec().rect;
+    let want = [-1.0, -76.0, 102.0, 77.0];
+    assert!(r.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-3), "page {r:?} ≈ {want:?}");
+    // and the export's single page has exactly that size
+    let mb = media_boxes(&export(&doc, ExportScope::ArtworkBounds));
+    assert!(mb.len() == 1 && (mb[0][2] - 102.0).abs() < 1e-3 && (mb[0][3] - 77.0).abs() < 1e-3, "{mb:?}");
 }
