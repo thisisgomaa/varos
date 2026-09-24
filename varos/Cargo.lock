@@ -3991,6 +3991,7 @@ dependencies = [
 name = "varos-app"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "egui",
  "egui-wgpu",
  "egui-winit",
