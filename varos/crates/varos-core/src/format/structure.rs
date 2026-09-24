@@ -54,6 +54,9 @@ pub fn check_structure(doc: &Document, limits: &Limits) -> Result<(), LoadError>
                 return Err(Invalid::Dangling { from: "node", id: n.id, missing: c }.into());
             }
         }
+        if let Some(m) = n.mask_child.filter(|m| !index.contains_key(m)) {
+            return Err(Invalid::Dangling { from: "node", id: n.id, missing: m }.into());
+        }
     }
     for &r in &doc.roots {
         if !index.contains_key(&r) {

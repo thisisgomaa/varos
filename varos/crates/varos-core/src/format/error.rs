@@ -19,8 +19,10 @@ pub enum LoadError {
     UnsupportedPdf(String),
     /// A PDF that is damaged.
     MalformedPdf(String),
-    /// The model JSON is damaged or has fields/values this format does not allow.
-    Malformed(String),
+    /// The model JSON is damaged or has fields/values this format does not allow. `line`/`column`
+    /// (1-based; 0 when unknown) are all the user sees; `detail` is the raw parser text for `Debug`
+    /// and logs only (it names internal types and fields).
+    Malformed { line: usize, column: usize, detail: String },
     /// The model has no `varos` format number.
     MissingVersion,
     /// The format number is zero, negative, fractional, too large or not a number.
@@ -86,7 +88,10 @@ impl fmt::Display for LoadError {
                  Open the original .vrs."
             ),
             LoadError::MalformedPdf(e) => write!(f, "This PDF is damaged and can't be opened ({e})."),
-            LoadError::Malformed(e) => write!(f, "This file is damaged or not a valid Varos document ({e})."),
+            LoadError::Malformed { line: 0, .. } => f.write_str("This file is damaged or not a valid Varos document."),
+            LoadError::Malformed { line, column, .. } => {
+                write!(f, "This file is damaged or not a valid Varos document (line {line}, column {column}).")
+            }
             LoadError::MissingVersion => {
                 f.write_str("This file has no Varos format number, so Varos can't tell how to read it.")
             }
@@ -152,6 +157,13 @@ impl fmt::Display for SaveRefused {
 impl std::error::Error for LoadError {}
 impl std::error::Error for Invalid {}
 impl std::error::Error for SaveRefused {}
+
+impl LoadError {
+    /// A JSON parse/decode failure: position for the user, raw parser text kept in `detail`.
+    pub fn malformed(e: &serde_json::Error) -> Self {
+        LoadError::Malformed { line: e.line(), column: e.column(), detail: e.to_string() }
+    }
+}
 
 impl From<Invalid> for LoadError {
     fn from(i: Invalid) -> Self {
