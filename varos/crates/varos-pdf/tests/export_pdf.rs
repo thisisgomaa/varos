@@ -131,6 +131,8 @@ fn fixture(name: &str) -> PathBuf {
 /// still matched after the refactor (commit 69c34c4). `native_rich.pdf` was then re-blessed ONCE, on
 /// purpose, when the page loop learned the PDF clip (MASKS_PLAN Stage 5): the only change is board B's
 /// content stream gaining `q <mask rect> W* n … Q` around the clipped member (+ its /Length and offsets).
+/// The later switch to one clip scope per RUN of members (+ ring culling) left both files unchanged
+/// (that document has a single clip member whose mask ring is in reach).
 /// `write_pdf` is fully deterministic (pdf-writer writes no timestamp, no /ID and no /Info; the model
 /// blob is serde JSON of a document whose only map field, the legacy `group_of`, is empty), so the
 /// whole file is compared byte for byte. Re-bless ONLY for an intentional native-format change (e.g.
@@ -190,11 +192,7 @@ fn page_ops(bytes: &[u8]) -> Vec<Vec<lopdf::content::Operation>> {
         .collect()
 }
 fn has_op(ops: &[lopdf::content::Operation], op: &str, operands: &[f32]) -> bool {
-    ops.iter().any(|o| {
-        o.operator == op
-            && o.operands.len() == operands.len()
-            && o.operands.iter().zip(operands).all(|(a, b)| a.as_float().is_ok_and(|a| (a - b).abs() < 1e-3))
-    })
+    find_op(ops, op, operands).is_some()
 }
 /// Every stream in the file, decompressed when possible — content streams AND form XObjects.
 fn all_streams(bytes: &[u8]) -> Vec<Vec<u8>> {
@@ -434,6 +432,7 @@ fn export_has_no_embedded_file_filespec_af_names_or_varos_keys() {
     let pdf = load(&bytes);
     assert_eq!(pdf.get_pages().len(), p.pages.len(), "page count = planned pages");
     assert!(!pdf.trailer.has(b"Info"), "no Info dictionary");
+    assert!(!pdf.trailer.has(b"ID"), "no file ID");
     let banned_keys: [&[u8]; 6] = [b"EmbeddedFiles", b"EmbeddedFile", b"EF", b"AF", b"Names", b"Metadata"];
     let banned_types: [&[u8]; 2] = [b"EmbeddedFile", b"Filespec"];
     for (id, obj) in &pdf.objects {
@@ -673,8 +672,7 @@ fn clip_off_page_leaves_the_page_unclipped() {
 fn export_is_deterministic() {
     let doc = two_board_doc();
     let a = export(&doc, ExportScope::AllVisibleArtboards);
-    assert_eq!(a, export(&doc.clone(), ExportScope::AllVisibleArtboards));
-    assert_eq!(a, export(&doc, ExportScope::AllVisibleArtboards));
+    assert_eq!(a, export(&doc.clone(), ExportScope::AllVisibleArtboards), "a fresh plan + write, same bytes");
 }
 
 #[test]
@@ -697,21 +695,149 @@ fn has_embedded_model_true_for_native_false_for_export() {
 }
 
 #[test]
-fn native_save_is_unchanged_by_the_export_path() {
-    // exporting must not alter what the native writer produces (shared page loop, separate outputs)
+fn clipped_native_file_round_trips() {
+    // MASKS_PLAN Stage 5's own check: a clipped document saves and reopens with its clip intact
     let doc = rich_doc();
-    let before = write_pdf(&doc).unwrap();
-    let _ = plan_pdf_export(&doc, ExportScope::AllVisibleArtboards);
-    let _ = export(&two_board_doc(), ExportScope::AllVisibleArtboards);
-    assert_eq!(before, write_pdf(&doc).unwrap());
-    let loaded = {
-        let p = std::env::temp_dir().join(format!("varos-s6a-{}-native.vrs", std::process::id()));
-        save_vrs(&doc, &p).unwrap();
-        let l = load_vrs(&p);
-        let _ = std::fs::remove_file(&p);
-        l.unwrap()
+    let p = std::env::temp_dir().join(format!("varos-s6a-{}-clipped.vrs", std::process::id()));
+    save_vrs(&doc, &p).unwrap();
+    let loaded = load_vrs(&p);
+    let _ = std::fs::remove_file(&p);
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded, doc, "the native container round-trips a clipped document");
+    assert_eq!(loaded.clip_group_of(4), doc.clip_group_of(4));
+}
+
+/// The `m` (subpath start) ops inside the first clip scope, before its `W*`, as page coordinates.
+fn clip_ring_starts(ops: &[lopdf::content::Operation]) -> Vec<[f32; 2]> {
+    let w = ops.iter().position(|o| o.operator == "W*").expect("a clip");
+    let q = ops[..w].iter().rposition(|o| o.operator == "q").expect("the clip's q");
+    assert!(
+        ops[q + 1..w].iter().all(|o| !["f", "f*", "B", "B*", "S", "Do"].contains(&o.operator.as_str())),
+        "nothing paints while the clip path is built"
+    );
+    ops[q + 1..w]
+        .iter()
+        .filter(|o| o.operator == "m")
+        .map(|o| [o.operands[0].as_float().unwrap(), o.operands[1].as_float().unwrap()])
+        .collect()
+}
+
+#[test]
+fn hidden_mask_path_far_away_never_reaches_the_file() {
+    // a mask group of {m2 on the visible board, m3 HIDDEN and standing only on a hidden board at
+    // x = 1077.625}; the member is on the visible board. m3 cannot affect anything the member paints
+    // (its box is far away), so its outline must not be written — the "no hidden data" contract.
+    let mut d = Document {
+        artboards: vec![
+            Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, page_color: None, ..Default::default() },
+            Artboard { x: 1000.0, y: 0.0, w: 200.0, h: 200.0, hidden: true, ..Default::default() },
+        ],
+        ..Default::default()
     };
-    assert_eq!(loaded, doc, "the native container still round-trips");
+    d.paths.push(rect(1, 1, 20.0, 20.0, 200.0, 100.0, Some([0.8, 0.1, 0.5, 1.0])));
+    d.paths.push(rect(2, 5, 60.0, 40.0, 80.0, 60.0, Some([0.0, 0.0, 0.0, 1.0])));
+    let mut m3 = rect(3, 9, 1077.625, 50.0, 30.0, 30.0, Some([0.0, 0.0, 0.0, 1.0]));
+    m3.hidden = true;
+    d.paths.push(m3);
+    d.ids = 12;
+    d.sync_tree();
+    d.group(&[2, 3]).expect("the two mask paths form one mask unit");
+    let clip = d.clip_group(&[1, 2], 2).expect("1 clips to the {2,3} mask");
+    let mc = d.node_mask_child(clip).unwrap();
+    assert!(d.node_paths(mc).contains(&3), "the hidden far path really is part of the mask");
+
+    for bytes in [export(&d, ExportScope::AllVisibleArtboards), export(&d, ExportScope::ActiveArtboard)] {
+        assert!(!contains(&bytes, "1077.625"), "raw bytes leak the hidden mask path");
+        assert!(all_streams(&bytes).iter().all(|st| !contains(st, "1077.625") && !contains(st, "77.625")));
+        let ops = &page_ops(&bytes)[0];
+        assert_eq!(clip_ring_starts(ops), vec![[60.0, 260.0]], "only the mask ring that matters is written");
+        assert!(has_op(ops, "rg", &[0.8, 0.1, 0.5]), "and the member still paints, clipped");
+    }
+}
+
+#[test]
+fn clip_uses_every_mask_ring_even_odd() {
+    // the mask is TWO paths, one with a hole: A = [40,40 → 120,120] minus [60,60 → 100,100], B = [200,40 →
+    // 280,120]. One big member covers them all. Every ring (A outer, A hole, B) builds the W* clip path.
+    let mut d = Document {
+        artboards: vec![Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, page_color: None, ..Default::default() }],
+        ..Default::default()
+    };
+    d.paths.push(rect(1, 1, 20.0, 20.0, 300.0, 180.0, Some([0.8, 0.1, 0.5, 1.0])));
+    let mut a = rect(2, 5, 40.0, 40.0, 80.0, 80.0, Some([0.0, 0.0, 0.0, 1.0]));
+    a.holes = vec![rect(0, 9, 60.0, 60.0, 40.0, 40.0, None).anchors];
+    d.paths.push(a);
+    d.paths.push(rect(3, 13, 200.0, 40.0, 80.0, 80.0, Some([0.0, 0.0, 0.0, 1.0])));
+    d.ids = 20;
+    d.sync_tree();
+    d.group(&[2, 3]).unwrap();
+    d.clip_group(&[1, 2], 2).unwrap();
+    let ops = &page_ops(&export(&d, ExportScope::AllVisibleArtboards))[0];
+    let mut starts = clip_ring_starts(ops);
+    starts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(starts, vec![[40.0, 260.0], [60.0, 240.0], [200.0, 260.0]], "A outer + A hole + B");
+    let w = ops.iter().position(|o| o.operator == "W*").unwrap();
+    assert_eq!(ops[w + 1].operator, "n");
+    let member = find_op(ops, "m", &[20.0, 280.0]).expect("the member");
+    assert!(member > w && clip_state(ops)[member]);
+}
+
+#[test]
+fn nested_clip_uses_nearest_mask_only() {
+    // member 1 is clipped by inner mask 2; that clip group is itself clipped by outer mask 3 (x = 33.375).
+    // The canvas supports one level and uses the NEAREST clip; the PDF must do the same.
+    let mut d = Document {
+        artboards: vec![Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, page_color: None, ..Default::default() }],
+        ..Default::default()
+    };
+    d.paths.push(rect(1, 1, 20.0, 20.0, 200.0, 100.0, Some([0.8, 0.1, 0.5, 1.0])));
+    d.paths.push(rect(2, 5, 60.0, 40.0, 80.0, 60.0, Some([0.0, 0.0, 0.0, 1.0])));
+    d.paths.push(rect(3, 9, 33.375, 30.0, 300.0, 200.0, Some([0.0, 0.0, 0.0, 1.0])));
+    d.ids = 12;
+    d.sync_tree();
+    let inner = d.clip_group(&[1, 2], 2).unwrap();
+    let outer = d.clip_group(&[1, 3], 3).unwrap();
+    assert!(inner != outer && d.node(outer).unwrap().children.contains(&inner), "a real nested clip");
+    assert_eq!(d.clip_group_of(1), Some(inner));
+    let bytes = export(&d, ExportScope::AllVisibleArtboards);
+    let ops = &page_ops(&bytes)[0];
+    assert_eq!(ops.iter().filter(|o| o.operator == "W*").count(), 1);
+    assert_eq!(clip_ring_starts(ops), vec![[60.0, 260.0]], "the inner mask only");
+    assert!(!contains(&bytes, "33.375"), "the outer mask ring is not written");
+}
+
+#[test]
+fn one_clip_scope_per_run_of_members() {
+    // three members under ONE mask (one of them a knockout, drawn with `Do`) + a free path in front:
+    // the mask is written once, every member paints inside that one scope, the free path outside it
+    let mut d = Document {
+        artboards: vec![Artboard { x: 0.0, y: 0.0, w: 400.0, h: 300.0, page_color: None, ..Default::default() }],
+        ..Default::default()
+    };
+    d.paths.push(rect(1, 1, 20.0, 20.0, 100.0, 60.0, Some([0.8, 0.1, 0.5, 1.0])));
+    d.paths.push(rect(2, 5, 70.0, 50.0, 100.0, 60.0, Some([0.1, 0.8, 0.5, 1.0])));
+    let mut k = rect(3, 9, 50.0, 70.0, 80.0, 50.0, Some([0.1, 0.5, 0.8, 1.0]));
+    k.stroke = varos_core::model::Paint::from_opt(Some([0.0, 0.0, 0.0, 0.5])); // translucent → knockout
+    k.stroke_width = 4.0;
+    d.paths.push(k);
+    d.paths.push(rect(4, 13, 60.0, 40.0, 80.0, 60.0, Some([0.0, 0.0, 0.0, 1.0]))); // the mask
+    d.ids = 20;
+    d.sync_tree();
+    d.clip_group(&[1, 2, 3, 4], 4).unwrap();
+    d.paths.push(rect(5, 21, 300.0, 200.0, 20.0, 20.0, Some([0.9, 0.9, 0.1, 1.0]))); // free, in front
+    d.ids = 30;
+    d.sync_tree();
+    let ops = &page_ops(&export(&d, ExportScope::AllVisibleArtboards))[0];
+    let clipped = clip_state(ops);
+    assert_eq!(ops.iter().filter(|o| o.operator == "W*").count(), 1, "one clip scope for the whole run");
+    let mask_starts = ops.iter().filter(|o| has_op(std::slice::from_ref(*o), "m", &[60.0, 260.0])).count();
+    assert_eq!(mask_starts, 1, "the mask ring is written once, not once per member");
+    for colour in [[0.8, 0.1, 0.5], [0.1, 0.8, 0.5]] {
+        assert!(clipped[find_op(ops, "rg", &colour).expect("member drawn")], "{colour:?} is clipped");
+    }
+    let do_idx = ops.iter().position(|o| o.operator == "Do").expect("the knockout member");
+    assert!(clipped[do_idx], "the knockout XObject paints inside the clip");
+    assert!(!clipped[find_op(ops, "rg", &[0.9, 0.9, 0.1]).expect("the free path")], "the free path is unclipped");
 }
 
 #[test]
