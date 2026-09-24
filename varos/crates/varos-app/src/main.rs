@@ -471,6 +471,47 @@ fn confirm_discard_unsaved(ed: &Editor, saved_rev: u64) -> bool {
             == rfd::MessageDialogResult::Yes
 }
 
+/// The user's answer to the quit guard (Astra F01 / P0: a dirty document must never be lost by
+/// ⌘Q, the red traffic light or the ✕ caption without a Save / Don't Save / Cancel decision).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QuitAnswer {
+    Save,
+    DontSave,
+    Cancel,
+}
+
+const QUIT_SAVE: &str = "Save";
+const QUIT_DONT_SAVE: &str = "Don't Save";
+const QUIT_CANCEL: &str = "Cancel";
+
+/// Map the native dialog's result onto a decision. Custom labels come back as `Custom(label)`
+/// (macOS, portals); backends that only know Yes/No/Cancel are mapped the same way. Anything
+/// unknown (dialog dismissed, Escape) is Cancel — the safe answer.
+fn quit_answer(r: &rfd::MessageDialogResult) -> QuitAnswer {
+    use rfd::MessageDialogResult as R;
+    match r {
+        R::Yes => QuitAnswer::Save,
+        R::No => QuitAnswer::DontSave,
+        R::Custom(l) if l == QUIT_SAVE => QuitAnswer::Save,
+        R::Custom(l) if l == QUIT_DONT_SAVE => QuitAnswer::DontSave,
+        _ => QuitAnswer::Cancel,
+    }
+}
+
+/// The quit decision table. `ask` is only called for a dirty document; `save` only for Save, and
+/// the app quits after Save only when the save really completed (a cancelled Save As, or a failed
+/// write, keeps the app open with the work intact).
+fn may_quit(unsaved: bool, ask: impl FnOnce() -> QuitAnswer, save: impl FnOnce() -> bool) -> bool {
+    if !unsaved {
+        return true;
+    }
+    match ask() {
+        QuitAnswer::Save => save(),
+        QuitAnswer::DontSave => true,
+        QuitAnswer::Cancel => false,
+    }
+}
+
 /// Apply a complete zoom step now, keeping the world point under the cursor fixed.
 fn zoom_step(view: &mut View, screen: Pt, factor: f32) {
     let anchor = view.s2w(screen);
@@ -488,6 +529,65 @@ struct OpenDocContext<'a> {
 }
 
 impl OpenDocContext<'_> {
+    /// Save to the current file, or (`save_as`, or no file yet) to a path the user picks.
+    /// Returns `true` only when the bytes are on disk and the saved revision is recorded.
+    fn save(&mut self, save_as: bool) -> bool {
+        let dest = if save_as { None } else { self.cur_file.clone() }.or_else(|| {
+            rfd::FileDialog::new()
+                .add_filter("Varos document (PDF-compatible)", &["vrs"])
+                .add_filter("PDF", &["pdf"]) // same bytes — a valid PDF either way
+                .set_file_name(format!("{}.vrs", doc_stem(self.cur_file.as_deref())))
+                .save_file()
+        });
+        let Some(mut p) = dest else {
+            return false; // Save As cancelled
+        };
+        if p.extension().is_none_or(|e| !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))) {
+            p.set_extension("vrs");
+        }
+        match varos_pdf::save_vrs(&self.ed.doc, &p) {
+            Ok(()) => {
+                *self.cur_file = Some(p);
+                *self.saved_rev = self.ed.rev;
+                true
+            }
+            Err(e) => {
+                rfd::MessageDialog::new()
+                    .set_level(rfd::MessageLevel::Error)
+                    .set_title("Varos")
+                    .set_description(format!("Save failed: {e}"))
+                    .show();
+                false
+            }
+        }
+    }
+
+    /// The quit guard shared by ⌘Q / Quit Varos, the OS close request (red traffic light, ✕) and
+    /// the custom caption ✕: a clean document quits at once; a dirty one asks Save / Don't Save /
+    /// Cancel. Returns `true` when the app may exit now.
+    fn confirm_quit(&mut self) -> bool {
+        let unsaved = self.ed.rev != *self.saved_rev;
+        let name = doc_stem(self.cur_file.as_deref());
+        let ask = || {
+            let r = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Warning)
+                .set_title("Varos")
+                .set_description(format!(
+                    "Save changes to \"{name}\" before quitting?\nIf you don't save, your changes will be lost."
+                ))
+                .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                    QUIT_SAVE.into(),
+                    QUIT_DONT_SAVE.into(),
+                    QUIT_CANCEL.into(),
+                ))
+                .show();
+            quit_answer(&r)
+        };
+        let ok = may_quit(unsaved, ask, || self.save(false));
+        self.ed.mods = Default::default(); // the native dialog eats the key releases
+        ok
+    }
+
     fn open_path(&mut self, p: std::path::PathBuf) {
         if confirm_discard_unsaved(self.ed, *self.saved_rev) {
             self.load_path(p);
@@ -524,31 +624,7 @@ impl OpenDocContext<'_> {
             *self.view = fit_to_board(self.gui, self.window, x, y, w, h, 0.9);
         } else if mc && code == KeyCode::KeyS {
             // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
-            let dest = if ms { None } else { self.cur_file.clone() }.or_else(|| {
-                rfd::FileDialog::new()
-                    .add_filter("Varos document (PDF-compatible)", &["vrs"])
-                    .add_filter("PDF", &["pdf"]) // same bytes — a valid PDF either way
-                    .set_file_name(format!("{}.vrs", doc_stem(self.cur_file.as_deref())))
-                    .save_file()
-            });
-            if let Some(mut p) = dest {
-                if p.extension().is_none_or(|e| !(e.eq_ignore_ascii_case("vrs") || e.eq_ignore_ascii_case("pdf"))) {
-                    p.set_extension("vrs");
-                }
-                match varos_pdf::save_vrs(&self.ed.doc, &p) {
-                    Ok(()) => {
-                        *self.cur_file = Some(p);
-                        *self.saved_rev = self.ed.rev;
-                    }
-                    Err(e) => {
-                        rfd::MessageDialog::new()
-                            .set_level(rfd::MessageLevel::Error)
-                            .set_title("Varos")
-                            .set_description(format!("Save failed: {e}"))
-                            .show();
-                    }
-                }
-            }
+            self.save(ms);
             self.ed.mods = Default::default(); // the native dialog eats the key releases
         } else if mc && code == KeyCode::KeyO {
             // Ctrl+O = Open — guard unsaved changes first
@@ -850,8 +926,25 @@ fn main() {
                         }
                         M::Close => {
                             // exactly the ✕ caption button's arm (WinAction::Close below)
-                            save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
-                            elwt.exit();
+                            let may_exit = OpenDocContext {
+                                ed: &mut ed,
+                                gui: &gui,
+                                window: &window,
+                                view: &mut view,
+                                cur_file: &mut cur_file,
+                                saved_rev: &mut saved_rev,
+                            }
+                            .confirm_quit();
+                            if may_exit {
+                                save_win_state(
+                                    cursors::is_maximized(hwnd),
+                                    win_norm.0,
+                                    win_norm.1,
+                                    win_norm.2,
+                                    win_norm.3,
+                                );
+                                elwt.exit();
+                            }
                         }
                         M::ToggleRail => gui.toggle_rail(),
                         M::ToggleDock => gui.toggle_dock(),
@@ -909,8 +1002,22 @@ fn main() {
                         }
                     }
                     WindowEvent::CloseRequested => {
-                        save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
-                        elwt.exit();
+                        // red traffic light / OS close: same guard as Quit (Astra F01)
+                        let may_exit = OpenDocContext {
+                            ed: &mut ed,
+                            gui: &gui,
+                            window: &window,
+                            view: &mut view,
+                            cur_file: &mut cur_file,
+                            saved_rev: &mut saved_rev,
+                        }
+                        .confirm_quit();
+                        if may_exit {
+                            save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
+                            elwt.exit();
+                        } else {
+                            window.request_redraw();
+                        }
                     }
                     WindowEvent::Resized(size) => {
                         if size.width == 0 || size.height == 0 {
@@ -1181,14 +1288,25 @@ fn main() {
                                 ui::WinAction::Minimize => window.set_minimized(true),
                                 ui::WinAction::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
                                 ui::WinAction::Close => {
-                                    save_win_state(
-                                        cursors::is_maximized(hwnd),
-                                        win_norm.0,
-                                        win_norm.1,
-                                        win_norm.2,
-                                        win_norm.3,
-                                    );
-                                    elwt.exit();
+                                    let may_exit = OpenDocContext {
+                                        ed: &mut ed,
+                                        gui: &gui,
+                                        window: &window,
+                                        view: &mut view,
+                                        cur_file: &mut cur_file,
+                                        saved_rev: &mut saved_rev,
+                                    }
+                                    .confirm_quit();
+                                    if may_exit {
+                                        save_win_state(
+                                            cursors::is_maximized(hwnd),
+                                            win_norm.0,
+                                            win_norm.1,
+                                            win_norm.2,
+                                            win_norm.3,
+                                        );
+                                        elwt.exit();
+                                    }
                                 }
                             }
                         }
@@ -1470,5 +1588,63 @@ mod instant_zoom_tests {
             assert!((pinned[0] - screen[0]).abs() < 0.0001);
             assert!((pinned[1] - screen[1]).abs() < 0.0001);
         }
+    }
+}
+
+#[cfg(test)]
+mod quit_guard_tests {
+    use super::{may_quit, quit_answer, QuitAnswer, QUIT_CANCEL, QUIT_DONT_SAVE, QUIT_SAVE};
+    use rfd::MessageDialogResult as R;
+    use std::cell::Cell;
+
+    #[test]
+    fn clean_document_quits_without_asking_or_saving() {
+        let asked = Cell::new(false);
+        let saved = Cell::new(false);
+        let ok = may_quit(
+            false,
+            || {
+                asked.set(true);
+                QuitAnswer::Cancel
+            },
+            || {
+                saved.set(true);
+                true
+            },
+        );
+        assert!(ok);
+        assert!(!asked.get(), "a clean document must never show the quit dialog");
+        assert!(!saved.get());
+    }
+
+    #[test]
+    fn dirty_document_save_quits_only_when_the_save_completed() {
+        assert!(may_quit(true, || QuitAnswer::Save, || true));
+        // cancelled Save As / failed write: stay open, work intact
+        assert!(!may_quit(true, || QuitAnswer::Save, || false));
+    }
+
+    #[test]
+    fn dirty_document_dont_save_quits_and_cancel_stays() {
+        let saved = Cell::new(false);
+        let save = || {
+            saved.set(true);
+            true
+        };
+        assert!(may_quit(true, || QuitAnswer::DontSave, save));
+        assert!(!may_quit(true, || QuitAnswer::Cancel, save));
+        assert!(!saved.get(), "Don't Save and Cancel never write to disk");
+    }
+
+    #[test]
+    fn dialog_results_map_to_answers_and_unknown_is_cancel() {
+        assert_eq!(quit_answer(&R::Custom(QUIT_SAVE.into())), QuitAnswer::Save);
+        assert_eq!(quit_answer(&R::Custom(QUIT_DONT_SAVE.into())), QuitAnswer::DontSave);
+        assert_eq!(quit_answer(&R::Custom(QUIT_CANCEL.into())), QuitAnswer::Cancel);
+        assert_eq!(quit_answer(&R::Yes), QuitAnswer::Save);
+        assert_eq!(quit_answer(&R::No), QuitAnswer::DontSave);
+        assert_eq!(quit_answer(&R::Cancel), QuitAnswer::Cancel);
+        assert_eq!(quit_answer(&R::Ok), QuitAnswer::Cancel);
+        assert_eq!(quit_answer(&R::Custom("Something else".into())), QuitAnswer::Cancel);
     }
 }
