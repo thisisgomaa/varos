@@ -50,6 +50,14 @@ pub enum EditCommand {
         node: u32,
         name: String,
     },
+    /// Name a path (its Layers row, the inspector header). A path's leaf node does not carry the
+    /// displayed name — `Path::name` does — so a `<Path>` row renames through this, not `RenameNode`
+    /// (QW3 / Astra F10). The name is trimmed; an empty or unchanged name is a no-op (no undo step,
+    /// the document stays clean) — Illustrator keeps the old name when the field is emptied.
+    RenamePath {
+        path: u32,
+        name: String,
+    },
     GroupSelection,
     UngroupSelection,
     DeleteLayerSelection,
@@ -152,6 +160,7 @@ impl EditCommand {
             Self::ToggleNodeHidden(node) => ed.layer_toggle_hidden(node),
             Self::ToggleNodeLocked(node) => ed.layer_toggle_locked(node),
             Self::RenameNode { node, name } => ed.layer_rename(node, name),
+            Self::RenamePath { path, name } => rename_path(ed, path, name),
             Self::GroupSelection => ed.group_selection(),
             Self::UngroupSelection => ed.ungroup_selection(),
             Self::DeleteLayerSelection => ed.layer_delete_selection(),
@@ -226,6 +235,17 @@ impl Editor {
     pub fn toggle_rulers_visibility(&mut self) {
         self.show_rulers = !self.show_rulers;
     }
+}
+
+/// `RenamePath`: only a real change becomes an edit. `Editor::rename_path` itself always opens an undo
+/// step (and maps an empty name to the auto-name), so the no-op guards live here.
+fn rename_path(ed: &mut Editor, path: u32, name: String) {
+    let name = name.trim();
+    let Some(pi) = ed.doc.pidx(path) else { return };
+    if name.is_empty() || ed.doc.paths[pi].name.as_deref() == Some(name) {
+        return;
+    }
+    ed.rename_path(path, name.to_string());
 }
 
 /// The stroke-weight field: like a colour pick (`apply_paint`) and `bump_stroke`, the weight becomes the
