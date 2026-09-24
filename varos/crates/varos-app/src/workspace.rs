@@ -13,9 +13,6 @@
 //! per tab.
 //!
 //! API frozen by S1-A — S1-B (lifecycle) and S1-D (host) build on it as is.
-// S1-A: nothing calls this module until S1-D wires the host; S1-D removes this allow. (Plain `allow`,
-// not `cfg_attr(not(test), ..)`: test builds would otherwise fail `clippy --all-targets -D warnings`.)
-#![allow(dead_code)]
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -153,6 +150,9 @@ impl DocumentSession {
 
     /// Store a freshly computed file key for this tab's path (e.g. `store.key(path)` right after a
     /// successful save, which replaced the file's inode). `mark_saved` takes one too.
+    // Frozen S1-A API with no caller in the S1 binary yet (the lifecycle re-keys every tab fresh,
+    // `lifecycle::open_tab_of`); its tests use it, and S2/S3 are its planned callers.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_key(&mut self, key: FileKey) {
         self.key = Some(key);
     }
@@ -312,6 +312,9 @@ impl Workspace {
     }
 
     /// The open tab holding this file, if any (`FileKey::same_file`).
+    // Frozen S1-A API with no caller in the S1 binary yet (the lifecycle re-keys every tab fresh,
+    // `lifecycle::open_tab_of`); its tests use it, and S2/S3 are its planned callers.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn find_file(&self, key: &FileKey) -> Option<SessionId> {
         self.sessions.iter().find(|s| s.key.as_ref().is_some_and(|k| k.same_file(key))).map(|s| s.id)
     }
