@@ -739,7 +739,11 @@ impl Document {
         self.paths.iter().find(|p| p.anchors.iter().chain(p.holes.iter().flatten()).any(|a| a.id == aid)).map(|p| p.id)
     }
 
-    /// Nearest point on a path's outline → (segment index, t, distance).
+    /// Nearest point on a path's outline → (segment index, t, distance). The distance is to the TRUE
+    /// cubic (QW1 / Astra F08): the 25 samples only bracket the answer — the chords between them are
+    /// projected, then the result is refined on the curve itself — so a click on the drawn centreline
+    /// BETWEEN two samples measures ~0, even on a 20000-unit circle (it used to be up to half a sample
+    /// spacing off, which made centreline hits on big shapes a matter of luck).
     pub fn nearest_seg(&self, pi: usize, pos: Pt) -> Option<(usize, f32, f32)> {
         let p = &self.paths[pi];
         let n = p.anchors.len();
@@ -751,13 +755,9 @@ impl Document {
         for i in 0..segs {
             let a = &p.anchors[i];
             let b = &p.anchors[(i + 1) % n];
-            let (p0, p1, p2, p3) = (a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p);
-            for k in 0..=24 {
-                let t = k as f32 / 24.0;
-                let d = dist(cubic(p0, p1, p2, p3, t), pos);
-                if best.is_none_or(|(_, _, bd)| d < bd) {
-                    best = Some((i, t, d));
-                }
+            let (t, d) = cubic_nearest(a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p, pos);
+            if best.is_none_or(|(_, _, bd)| d < bd) {
+                best = Some((i, t, d));
             }
         }
         best
@@ -765,7 +765,8 @@ impl Document {
 
     /// Shortest distance from `pos` to ANY drawn edge of a path — its outer outline OR a hole's rim.
     /// Hit-testing uses this so a donut's inner edge is grabbable, not click-through (FB3). Distinct from
-    /// `nearest_seg` (outer-ring only — that one feeds add-anchor a valid OUTER segment index).
+    /// `nearest_seg` (outer-ring only — that one feeds add-anchor a valid OUTER segment index). Same
+    /// true-curve measure as `nearest_seg` (QW1).
     pub fn edge_dist(&self, pi: usize, pos: Pt) -> Option<f32> {
         let mut best = self.nearest_seg(pi, pos).map(|(_, _, d)| d);
         for h in &self.paths[pi].holes {
@@ -777,12 +778,9 @@ impl Document {
                 // a hole ring is always closed
                 let a = &h[i];
                 let b = &h[(i + 1) % n];
-                let (p0, p1, p2, p3) = (a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p);
-                for k in 0..=24 {
-                    let d = dist(cubic(p0, p1, p2, p3, k as f32 / 24.0), pos);
-                    if best.is_none_or(|bd| d < bd) {
-                        best = Some(d);
-                    }
+                let (_, d) = cubic_nearest(a.p, a.hout.unwrap_or(a.p), b.hin.unwrap_or(b.p), b.p, pos);
+                if best.is_none_or(|bd| d < bd) {
+                    best = Some(d);
                 }
             }
         }
@@ -1933,5 +1931,65 @@ impl Document {
         if let Some(n) = self.node_mut(nid) {
             n.locked = !n.locked;
         }
+    }
+}
+
+/// Nearest point on ONE cubic segment to `pos` → (t, distance), measured on the true curve (QW1).
+/// 1. The old 25-sample grid → project `pos` onto each chord between neighbouring samples and keep the
+///    closest chord point, interpolating `t` along it (so a valid `t` still feeds add-anchor).
+/// 2. A few clamped Newton steps on |B(t) − pos|² from that `t`, bracketed to the chords either side,
+///    close the chord-vs-arc gap (the sagitta: ~5 units per chord on a 20000-wide circle).
+///
+/// The distance returned is always to a real curve point: the refined `t` wins only when it is closer
+/// than the chord guess evaluated ON the curve, so a stalled Newton can never make the answer worse.
+fn cubic_nearest(p0: Pt, p1: Pt, p2: Pt, p3: Pt, pos: Pt) -> (f32, f32) {
+    const N: usize = 24;
+    let mut prev = p0;
+    let (mut bt, mut bd2) = (0.0f32, f32::MAX);
+    for k in 1..=N {
+        let q = cubic(p0, p1, p2, p3, k as f32 / N as f32);
+        let e = sub(q, prev);
+        let l2 = e[0] * e[0] + e[1] * e[1];
+        let u =
+            if l2 > 0.0 { (((pos[0] - prev[0]) * e[0] + (pos[1] - prev[1]) * e[1]) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let c = [prev[0] + e[0] * u, prev[1] + e[1] * u];
+        let d2 = (c[0] - pos[0]).powi(2) + (c[1] - pos[1]).powi(2);
+        if d2 < bd2 {
+            bd2 = d2;
+            bt = (k as f32 - 1.0 + u) / N as f32;
+        }
+        prev = q;
+    }
+    // Newton on f(t) = (B − P)·B′ = 0, kept inside the chords either side of the guess.
+    let step = 1.0 / N as f32;
+    let (lo, hi) = ((bt - step).max(0.0), (bt + step).min(1.0));
+    let guess_d = dist(cubic(p0, p1, p2, p3, bt), pos);
+    let mut t = bt;
+    for _ in 0..5 {
+        let mt = 1.0 - t;
+        let r = sub(cubic(p0, p1, p2, p3, t), pos);
+        let mut d1 = [0.0f32; 2]; // B′(t)
+        let mut d2 = [0.0f32; 2]; // B″(t)
+        for c in 0..2 {
+            d1[c] = 3.0 * (mt * mt * (p1[c] - p0[c]) + 2.0 * mt * t * (p2[c] - p1[c]) + t * t * (p3[c] - p2[c]));
+            d2[c] = 6.0 * (mt * (p2[c] - 2.0 * p1[c] + p0[c]) + t * (p3[c] - 2.0 * p2[c] + p1[c]));
+        }
+        let f = r[0] * d1[0] + r[1] * d1[1];
+        let fp = d1[0] * d1[0] + d1[1] * d1[1] + r[0] * d2[0] + r[1] * d2[1];
+        if !f.is_finite() || fp.is_nan() || fp <= 1e-12 {
+            break; // flat/degenerate spot (e.g. a straight segment's zero-length handle end) — keep the guess
+        }
+        let nt = (t - f / fp).clamp(lo, hi);
+        let done = (nt - t).abs() < 1e-7;
+        t = nt;
+        if done {
+            break;
+        }
+    }
+    let d = dist(cubic(p0, p1, p2, p3, t), pos);
+    if d < guess_d {
+        (t, d)
+    } else {
+        (bt, guess_d)
     }
 }

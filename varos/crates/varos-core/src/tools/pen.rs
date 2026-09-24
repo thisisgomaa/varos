@@ -51,8 +51,11 @@ impl Tool for Pen {
                     // holds) so clicking a rotated path's segment inserts under the cursor. Identity unit ⇒
                     // `lpos == pos` (byte-for-byte); the path keeps its live rotation (no bake).
                     let lpos = ed.doc.unit_xform(pid).inverse_apply(pos);
+                    // QW1: the tolerance is SCREEN px (÷ ppu, like Direct's segment grab), and it is the
+                    // CENTRELINE distance — a click on a thick band away from the centre falls through to
+                    // the draw branch below rather than inserting an anchor somewhere off the curve.
                     if let Some((i, t, d)) = ed.doc.nearest_seg(pi, lpos) {
-                        if d <= EDGE_R {
+                        if d <= EDGE_R / ed.ppu {
                             let nid = ed.add_anchor(pi, i, t);
                             ed.selected.insert(nid);
                             ed.dirty = true;

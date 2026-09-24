@@ -97,6 +97,24 @@ fn an_unfilled_cover_is_click_through_but_its_outline_is_grabbable() {
 }
 
 #[test]
+fn thick_top_band_occludes_lower_path() {
+    // QW1 (Astra F08): a thick stroke is hit where it is PAINTED, so its band covers the art beneath it
+    // exactly like a fill does (A31). Bottom: a filled bar. Top: an UNFILLED, 40-wide-stroked rect whose
+    // left edge runs down x = 60 — its band paints x ∈ [40, 80].
+    let mut ed = stack(); // A x∈[0,120], B x∈[30,120], C x∈[60,120]; all filled, y∈[0,40]
+    let mut band = rect(4, 30, 60.0, -100.0, 300.0, 140.0, None);
+    band.stroke = Paint::Solid([0.0, 0.0, 0.0, 1.0]);
+    band.stroke_width = 40.0;
+    ed.doc.paths.push(band);
+    // 15 left of the band's centreline (> edge_r 8, < 8 + 20): on the painted band, over B
+    assert_eq!(ed.path_under([45.0, 20.0]), Some(4), "the thick band on top occludes B beneath it");
+    // past the band's inner edge + 8 px (x = 60 + 28 = 88): its hollow is click-through to C again
+    assert_eq!(ed.path_under([95.0, 20.0]), Some(3), "inside the band's hollow the filled art below wins");
+    // left of the band + 8 px (x < 32) and clear of B's own edge (x = 30 ± 8): A shows through as before
+    assert_eq!(ed.path_under([15.0, 20.0]), Some(1), "outside the band the art below is reachable");
+}
+
+#[test]
 fn a_donuts_inner_rim_is_grabbable_but_its_hole_stays_click_through() {
     // FB3: a donut's INNER edge is drawn, so it must be clickable — the old hit-test only walked the
     // OUTER outline, so a click on the inner rim fell through. The hole's hollow INTERIOR stays empty
