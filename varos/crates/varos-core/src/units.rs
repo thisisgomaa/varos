@@ -108,6 +108,7 @@ pub fn from_pt(pt: f32, unit: Unit, ppi: f32) -> f32 {
 /// The document's measurement settings — what the Artboard/Document system (slot 1) owns and
 /// serializes. Defined here so the unit math and the document property stay a single source.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocUnits {
     /// Pixels-per-inch: the px↔physical bridge. 72 ⇒ 1 pt == 1 px (the screen default).
     pub ppi: f32,

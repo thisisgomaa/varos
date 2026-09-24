@@ -11,6 +11,7 @@ use std::collections::HashMap;
 pub const K: f32 = 0.5522847; // bezier circle constant (ellipse handles)
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Anchor {
     pub id: u32,
     pub p: Pt,
@@ -26,6 +27,7 @@ pub struct Anchor {
 /// a 2×3 affine with a one-file change (the same HARD-SEAM discipline `paint_list`/`unit_of` use). Plain
 /// floats ⇒ derive serde. **Until Stage 4 nothing writes a non-identity value, so it changes nothing.**
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Xform {
     /// rotation in radians; identity == 0.0
     pub rot: f32,
@@ -172,6 +174,7 @@ impl<'de> Deserialize<'de> for Paint {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Path {
     pub id: u32,
     pub anchors: Vec<Anchor>,
@@ -230,6 +233,7 @@ pub enum ShapeKind {
 /// LEGACY group registry entry (pre-tree files only): kept so old `.vrs` documents still deserialize;
 /// `migrate_legacy()` converts the registry into tree nodes on load and clears it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Group {
     pub id: u32,
     pub name: String,
@@ -266,8 +270,9 @@ pub enum PaintRole {
 /// What a GROUP node IS to clipping (MASKS_PLAN §1 / LAYERS_VISION §3.1). `Normal` = an ordinary group.
 /// `Clip` = a clipping-mask group: its `mask_child`'s silhouette clips every OTHER child (Illustrator
 /// `<Clip Group>`, the PDF-native form). `MaskAlpha` / `MaskLuma` are RESERVED for FUTURE soft masks
-/// (§7.1) — parsed today but treated as `Normal` until soft masks ship. Name-keyed serde ⇒ additive, no
-/// `.vrs` format bump; an old file with no `role` key loads as `Normal`.
+/// (§7.1) — parsed today but treated as `Normal` until soft masks ship. Masks are part of `.vrs` format
+/// v2 (see ADR-0008: any writer-side change raises the format number); a v1 file with no `role` key
+/// loads as `Normal`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GroupRole {
     #[default]
@@ -281,6 +286,7 @@ pub enum GroupRole {
 /// stay in the flat `Vec<Path>` (which is kept re-flattened to tree order, so everything that reads
 /// "vec order = z" keeps working untouched).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Node {
     pub id: u32,
     pub kind: NodeKind,
@@ -334,6 +340,7 @@ pub struct Node {
 /// page furniture — never a z-object and never *contains* artwork (the Illustrator model); which page an
 /// object belongs to is decided by bounds overlap at export, not by containment.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Artboard {
     pub x: f32,
     pub y: f32,
@@ -409,6 +416,7 @@ fn yes() -> bool {
 /// adding fields never breaks old `.varos` files. `smart` is the Ctrl+U master (Smart Guides). Stage-1 acts
 /// on the ON-by-default fields; the rest are present-but-inert until their subsystem lands (grid/pixel/etc.).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(default)]
 pub struct SnapConfig {
     // ── BEHAVIOUR (global) ──
@@ -490,12 +498,14 @@ impl Default for SnapConfig {
 /// (dragged out of the LEFT ruler); else a horizontal line at world y = `pos` (dragged out of the TOP
 /// ruler). Snapping locks onto it like any other target; persisted with the document.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Guide {
     pub vertical: bool,
     pub pos: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Document {
     pub paths: Vec<Path>,
     /// LEGACY registry (pre-tree files). Deserialized for compatibility, converted by
