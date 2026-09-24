@@ -1,0 +1,116 @@
+%PDF-1.7
+%€€€€
+
+6 0 obj
+<<
+  /Length 341
+>>
+stream
+1 J
+1 j
+q
+1 1 1 rg
+0 0 1080 1080 re
+f*
+Q
+q
+/GS0 gs
+0.9 0.5 0.1 rg
+9.139713 1089.5463 m
+9.139713 1089.5463 42.153137 1066.9604 42.153137 1066.9604 c
+42.153137 1066.9604 30.860289 1050.4537 30.860289 1050.4537 c
+30.860289 1050.4537 -2.1531367 1073.0396 -2.1531367 1073.0396 c
+-2.1531367 1073.0396 9.139713 1089.5463 9.139713 1089.5463 c
+h
+f*
+Q
+endstream
+endobj
+
+7 0 obj
+<<
+  /Type /Page
+  /Parent 2 0 R
+  /MediaBox [0 0 1080 1080]
+  /Contents 6 0 R
+  /Resources <<
+    /ExtGState <<
+      /GS0 5 0 R
+    >>
+  >>
+>>
+endobj
+
+5 0 obj
+<<
+  /Type /ExtGState
+  /ca 1
+  /CA 0
+>>
+endobj
+
+2 0 obj
+<<
+  /Type /Pages
+  /Kids [7 0 R]
+  /Count 1
+>>
+endobj
+
+3 0 obj
+<<
+  /Length 1536
+  /Type /EmbeddedFile
+  /Subtype /application#2Fjson
+>>
+stream
+{"varos":1,"doc":{"paths":[{"id":1,"anchors":[{"id":1,"p":[0.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":2,"p":[40.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":3,"p":[40.0,20.0],"hin":null,"hout":null,"smooth":false},{"id":4,"p":[0.0,20.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.9,0.5,0.1,1.0],"stroke":null,"stroke_width":1.0,"holes":[],"opacity":1.0,"hidden":false,"locked":false,"name":null}],"groups":[],"group_of":{},"nodes":[{"id":1,"kind":"Layer","name":"Layer 1","parent":null,"children":[5],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":5,"kind":{"Path":1},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"xform":{"rot":0.6,"piv":[20.0,10.0]},"role":"Normal"}],"roots":[1],"active_layer":1,"ids":5,"units":{"ppi":72.0,"display":"Px"},"artboards":[],"active":0,"move_art_with_ab":true,"snap":{"enabled":true,"smart":true,"radius_px":8.0,"candidate_max":8,"show_candidates":true,"force_pixel_align":false,"move_whole_px":false,"grid":false,"grid_lines":true,"baseline_grid":false,"guides":true,"artboard":true,"artboard_mids":true,"margins":false,"margin_mids":false,"visible_only":true,"object_bounds":true,"bbox_mids":true,"gaps_and_sizes":true,"key_points":true,"object_geometry":true,"segment_mids":true,"path_intersections":true,"pixel_bounds":false,"alignment_guides":true,"equal_spacing":true,"equal_size":true,"grid_spacing":72.0},"ruler_origin":[0.0,0.0],"guides":[],"guides_locked":false}}
+endstream
+endobj
+
+4 0 obj
+<<
+  /Type /Filespec
+  /F (model.varos.json)
+  /UF (model.varos.json)
+  /EF <<
+    /F 3 0 R
+  >>
+  /AFRelationship /Source
+  /Desc (Varos editable model (source of truth))
+>>
+endobj
+
+1 0 obj
+<<
+  /Type /Catalog
+  /Pages 2 0 R
+  /Names <<
+    /EmbeddedFiles <<
+      /Names [(model.varos.json) 4 0 R]
+    >>
+  >>
+  /AF [4 0 R]
+  /VAROS_Model 3 0 R
+  /VAROS_SchemaVersion 1
+>>
+endobj
+
+xref
+0 8
+0000000000 65535 f
+0000002528 00000 n
+0000000629 00000 n
+0000000693 00000 n
+0000002337 00000 n
+0000000572 00000 n
+0000000016 00000 n
+0000000411 00000 n
+trailer
+<<
+  /Size 8
+  /Root 1 0 R
+>>
+startxref
+2728
+%%EOF
