@@ -346,3 +346,16 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Hand test:** pending — batch 1 list in `STATUS.md`.
 - **Verdict:** PASS. **Merged:** `d6095f0` to `main`.
 - Sign-off: moderator — PASS — 2026-09-24
+
+## P11.2 (0) instant zoom + macOS shortcut labels and top-bar alignment
+
+- **Date:** 2026-09-24. **Branch:** `feat/mac-small-fixes` (commit `4c7cba9`). **Reviewer:** Codex + moderator gates.
+- **Scope:** P11.2 item (0) — instant zoom on all platforms; A13 glide/easing removed (`eased_step` deleted from `varos-core/src/geom.rs`), with anchor-at-cursor math unchanged. Owner decision of 2026-07-12 reaffirmed 2026-09-23. macOS shortcut labels show ⌘ via single-home helpers in `shell/tokens.rs` (labels only; key handling unchanged). The macOS top bar is 28 pt (Windows stays 46 pt), to centre its controls vertically on the native traffic lights.
+- **Codex review:** REQUEST CHANGES — P2 Windows should be instant too; P3 geometry test overclaimed. Both fixed → APPROVE. The geometry test now uses production control rects (±1 pt); real-window alignment remains unverified.
+- **Checks run (moderator, on the merged `main` at `36d04d4`, macOS):**
+  - Workspace tests → **306/306 passed**.
+  - Clippy (macOS + Windows target) → clean; fmt → clean.
+  - `Varos.app` rebuilt and reinstalled 2026-09-24 (~03:5x).
+- **Hand test:** pending — batch 1 list in `STATUS.md`. Astra (Codex computer-use) was **BLOCKED** by macOS app-control permission for Varos; the owner must allow control of Varos in the Codex app, then retry. Brief staged at `varos/target/astra-brief.txt`.
+- **Verdict:** PASS. **Merged:** `36d04d4` to `main`.
+- Sign-off: moderator — PASS — 2026-09-24
