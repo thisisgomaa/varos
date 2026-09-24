@@ -1162,8 +1162,9 @@ impl Ui {
     }
     /// DFS S1: before any lifecycle command, close every Ui-side edit still open on `ed` — an open colour
     /// picker is CANCELLED (its live preview is not a commit), and unsaved inline rename buffers (layer,
-    /// artboard) are discarded.
+    /// artboard) and the focused text field's typed buffer (`settle_field_edits`) are discarded.
     pub fn settle(&mut self, ed: &mut Editor) {
+        settle_field_edits(&self.ctx);
         if self.color_modal.take().is_some() {
             ed.execute(EditCommand::PickerCancel);
         }
@@ -1214,6 +1215,7 @@ impl Ui {
         maximized: bool,
     ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
         let input = self.state.take_egui_input(window);
+        set_doc_salt(&self.ctx, self.doc_active); // per-widget edit state stays inside its document
         let snap = Snap::read(ed);
         let absnap = AbSnap::read(ed);
         let abs = ab_infos(ed);
@@ -1664,6 +1666,38 @@ enum Lab<'a> {
 
 const UV01: fn() -> egui::Rect = || egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
 
+/// The egui temp key that holds the ACTIVE document's id for the frames being laid out.
+fn doc_salt_key() -> egui::Id {
+    egui::Id::new("varos-doc-salt")
+}
+
+/// Tag this context's next frames with the active document (`Ui::run` does it every frame).
+pub(crate) fn set_doc_salt(ctx: &egui::Context, doc: Option<SessionId>) {
+    ctx.data_mut(|d| d.insert_temp(doc_salt_key(), doc));
+}
+
+/// A persistent widget id scoped to the ACTIVE document (DFS S1 review P1): per-widget edit state —
+/// a number field's typed buffer and focus, a name field's buffer, a row's double-click memory — can
+/// never follow the user into another tab.
+fn doc_id(ui: &egui::Ui, src: impl Hash + std::fmt::Debug) -> egui::Id {
+    let doc = ui.ctx().data(|d| d.get_temp::<Option<SessionId>>(doc_salt_key())).flatten();
+    ui.make_persistent_id((src, doc))
+}
+
+/// Close the text-field edit that holds keyboard focus, BEFORE a lifecycle command (tab switch, close,
+/// save, quit) — the same rule as the other Ui-side edits in `Ui::settle`: its typed buffer is
+/// discarded, never applied to whichever document is active next.
+pub(crate) fn settle_field_edits(ctx: &egui::Context) {
+    let Some(id) = ctx.memory(|m| m.focused()) else { return };
+    ctx.memory_mut(|m| m.surrender_focus(id));
+    // `num_field` / `name_field` keep their buffer, "just clicked" flag and nudge accumulator here
+    ctx.data_mut(|d| {
+        d.remove::<String>(id);
+        d.remove::<bool>(id);
+        d.remove::<f32>(id.with("acc"));
+    });
+}
+
 /// Number field. A dim label column, then a rounded box holding the value CENTERED. The WHOLE box is
 /// one interactive target via `ui.interact` (the exact mechanism the tool-rail buttons use): drag it to
 /// scrub (↔ cursor), single-click to type (value pre-selected). Returns Some(new) on change.
@@ -1709,7 +1743,7 @@ fn num_field(
         Lab::Icon(None) => {}
     }
     let bx = egui::Rect::from_min_max(egui::pos2(row.left() + labw + 2.0, row.top()), row.max);
-    let id = ui.make_persistent_id(("numf", tip));
+    let id = doc_id(ui, ("numf", tip));
     let r5 = CornerRadius::same(R);
     // 'just entered' flag (set on click) survives the one frame until the TextEdit claims focus.
     let just = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
@@ -3473,7 +3507,10 @@ fn build_topbar(
             if resp.drag_stopped() {
                 if let Some(src) = dragging {
                     if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                        cmds.push(AppCommand::ReorderDocument(src, crate::chrome::tab_drop_index(&tab_rects, pos.x)));
+                        // the drawn slot, mapped into the FULL order (hidden overflow tabs — review P2)
+                        let slot = crate::chrome::tab_drop_index(&tab_rects, pos.x);
+                        let to = crate::chrome::tab_full_slot(&layout.tabs, slot);
+                        cmds.push(AppCommand::ReorderDocument(src, to));
                     }
                 }
                 ui.data_mut(|d| d.remove::<SessionId>(drag_id));
@@ -4401,7 +4438,7 @@ fn panel_layers(
                         if resp.drag_started() && row.kind != LKind::Board {
                             *drag = Some((row.id, row.sec));
                             // a drag is not a click — drop any half-built manual double-click
-                            let dc_id = ui.make_persistent_id("lay-last-click");
+                            let dc_id = doc_id(ui, "lay-last-click");
                             ui.data_mut(|d| d.remove::<(u32, u32, f64)>(dc_id));
                         }
                         // decide the drop zone. SAME section: top third = Before, bottom third = After,
@@ -4573,7 +4610,7 @@ fn panel_layers(
                             // Illustrator's inline rename (QW3): Enter or a click elsewhere commits, Escape
                             // cancels, an empty or unchanged name changes nothing. The field's id is explicit
                             // (never an auto id that shifts with what the rows above allocate).
-                            let te_id = ui.id().with(("lay-rename", row.id));
+                            let te_id = doc_id(ui, ("lay-rename", row.id));
                             let buf = &mut rename.as_mut().unwrap().1;
                             let te = ui.put(
                                 name_rect.shrink2(egui::vec2(2.0, 4.0)),
@@ -4664,7 +4701,7 @@ fn panel_layers(
                         // keyed on (id, SEC): a straddler's mirror rows share the id across board
                         // sections — two single clicks on two mirrors must not read as a double-click.
                         let manual_dbl = resp.clicked() && !renaming && {
-                            let dc_id = ui.make_persistent_id("lay-last-click");
+                            let dc_id = doc_id(ui, "lay-last-click");
                             let now = ui.input(|i| i.time);
                             let last: Option<(u32, u32, f64)> = ui.data(|d| d.get_temp(dc_id));
                             ui.data_mut(|d| d.insert_temp(dc_id, (row.id, row.sec, now)));
@@ -5188,7 +5225,7 @@ struct AbIcons<'a> {
 /// A single-line text field bound to an external value (artboard name). While unfocused it tracks the
 /// model value; once focused it edits a temp buffer; commits the buffer on focus loss (returns it).
 fn name_field(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str) -> Option<String> {
-    let id = ui.make_persistent_id(("abname", id_src));
+    let id = doc_id(ui, ("abname", id_src));
     let editing = ui.memory(|m| m.has_focus(id));
     let mut buf = if editing {
         ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.to_string())
@@ -7095,5 +7132,85 @@ mod dead_control_tests {
         let y = bar_rect().bottom() + MENU_PAD_V as f32 + MENU_ROW_H / 2.0;
         let _ = bar.click(egui::pos2(layout.window.left() + 50.0, y));
         assert_ne!(bar.rail, before_rail, "Window ▸ Tool rail did not flip — the Window button was dead");
+    }
+}
+
+/// DFS S1 review P1: a number field being typed into on one tab must never commit into another tab.
+#[cfg(test)]
+mod field_settle_tests {
+    use super::{num_field, set_doc_salt, settle_field_edits, Lab};
+    use crate::app_command::SessionId;
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
+
+    /// One pass of the Properties X field showing `value`. Returns (what the field committed, where
+    /// its box sits).
+    fn frame(ctx: &egui::Context, events: Vec<Event>, value: f32) -> (Option<f32>, Pos2) {
+        let (mut out, mut at) = (None, Pos2::ZERO);
+        let input = RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            // the field's box starts 24 px right of the row (the label column) and is 25 px tall
+            at = ui.cursor().min + egui::vec2(80.0, 12.0);
+            out = num_field(ui, 150.0, Lab::Letter("X"), "X position", value, 0, 1.0, 1.0, -1.0e6..=1.0e6);
+        });
+        (out, at)
+    }
+    fn button(pos: Pos2, pressed: bool) -> Vec<Event> {
+        vec![
+            Event::PointerMoved(pos),
+            Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE },
+        ]
+    }
+
+    /// Tab A: object A's X is 10 — click the field and type 999 (the value is pre-selected).
+    fn type_999_on_tab_a(ctx: &egui::Context, a: SessionId) {
+        set_doc_salt(ctx, Some(a));
+        let (_, field) = frame(ctx, vec![], 10.0);
+        frame(ctx, button(field, true), 10.0);
+        frame(ctx, button(field, false), 10.0);
+        frame(ctx, vec![], 10.0); // the text edit claims focus
+        let (typed, _) = frame(ctx, vec![Event::Text("999".into())], 10.0);
+        assert_eq!(typed, None, "premise: typing alone commits nothing");
+        assert!(ctx.memory(|m| m.focused().is_some()), "premise: the field is being edited");
+    }
+    /// Tab B: object B's X is 5 — the user clicks elsewhere (a blur). Returns every commit seen.
+    fn blur_on_tab_b(ctx: &egui::Context, b: SessionId) -> Vec<Option<f32>> {
+        set_doc_salt(ctx, Some(b));
+        let away = Pos2::new(600.0, 500.0);
+        let mut got = vec![frame(ctx, vec![], 5.0).0];
+        got.push(frame(ctx, button(away, true), 5.0).0);
+        got.push(frame(ctx, button(away, false), 5.0).0);
+        got.push(frame(ctx, vec![], 5.0).0);
+        got
+    }
+
+    #[test]
+    fn a_typed_number_never_crosses_into_the_next_tab() {
+        let (a, b) = (SessionId(1), SessionId(2));
+        let ctx = egui::Context::default();
+        type_999_on_tab_a(&ctx, a);
+        // Ctrl+Tab: the lifecycle key bypasses egui; the host settles the Ui BEFORE switching
+        settle_field_edits(&ctx);
+        assert!(ctx.memory(|m| m.focused().is_none()), "settle closes the focused edit");
+        assert_eq!(blur_on_tab_b(&ctx, b), [None; 4], "B must never receive A's typed 999");
+        assert!(ctx.memory(|m| m.focused().is_none()), "no field is left focused on B");
+        // back on A: the discarded edit does not come back or commit either
+        set_doc_salt(&ctx, Some(a));
+        let away = Pos2::new(600.0, 500.0);
+        assert_eq!(frame(&ctx, vec![], 10.0).0, None);
+        assert_eq!(frame(&ctx, button(away, true), 10.0).0, None);
+        assert_eq!(frame(&ctx, button(away, false), 10.0).0, None);
+    }
+
+    /// The second wall: even an edit that was NOT settled (a future path that forgets to) lives under
+    /// A's id only, so B's field of the same name cannot inherit it.
+    #[test]
+    fn field_state_is_scoped_to_its_document() {
+        let ctx = egui::Context::default();
+        type_999_on_tab_a(&ctx, SessionId(1));
+        assert_eq!(blur_on_tab_b(&ctx, SessionId(2)), [None; 4], "B must never receive A's typed 999");
     }
 }

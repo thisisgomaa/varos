@@ -1,11 +1,17 @@
-//! DFS S1 §3.5 — the host's ONE command path, as pure pieces the event loop in `main.rs` calls.
+//! DFS S1 §3.5 — the host's command path, as pure pieces the event loop in `main.rs` calls.
 //!
-//! Every source turns into an [`AppCommand`] here: shortcut keys ([`lifecycle_key`] →
-//! [`to_app_command`]), native menu rows ([`menu_route`]), the custom caption's window controls
-//! ([`win_action_command`]), the OS close request (`AppCommand::Quit`), the tab strip / burger
-//! (`Ui::take_app_commands`), and files handed in from outside ([`open_paths_command`]). The event
-//! loop queues them and runs each through `main.rs`'s `dispatch`: `Window(_)` effects on the window,
-//! everything else through [`run_lifecycle`].
+//! Every lifecycle / window command becomes an [`AppCommand`] here: shortcut keys ([`lifecycle_key`]
+//! → [`to_app_command`], [`tab_key`]), native File / Window rows ([`menu_route`]), the custom
+//! caption's window controls ([`win_action_command`]), the OS close request (`AppCommand::Quit`), the
+//! tab strip / burger (`Ui::take_app_commands`), and files handed in from outside
+//! ([`open_paths_command`]). They wait in ONE FIFO queue of [`HostAction`]s that `main.rs` drains at
+//! `AboutToWait` through its `dispatch`: `Window(_)` effects on the window, everything else through
+//! [`run_lifecycle`]. The document actions keys and menu rows raise ([`DocAction`]: a shortcut key,
+//! Edit ▸ Delete, a snap row) share that order but not always that path: one runs at once when
+//! nothing is queued — no command, no pointer button whose chrome command is still to come
+//! ([`ActionQueue::doc_runs_now`]) — else it queues behind and goes through `dispatch` too.
+//! Pointer input and panel edits act on the editor directly, outside the queue; a pointer button only
+//! marks the queue, so what is raised after a click waits for the click's own chrome command.
 //!
 //! No window, no GPU, no dialogs here: everything is testable headless (the dialogs and the disk are
 //! the lifecycle's ports).
@@ -71,6 +77,122 @@ pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<
     match lifecycle_key(code, m.ctrl, m.shift, m.alt) {
         Some(f) => to_app_command(f, active),
         None => tab_key(code, m.ctrl, m.shift, m.alt),
+    }
+}
+
+/// One entry of the host's action queue (DFS S1 review P1): a lifecycle / window command, or a
+/// document action raised by a key or a menu row. Keys, native menu rows, the burger and the tab
+/// strip all feed ONE FIFO queue, so a ⌘Z pressed after a ⌘S in the same event batch runs after the
+/// Save, never before it.
+#[derive(Clone)]
+pub enum HostAction {
+    /// A command for `main.rs`'s `dispatch` (always waits for the queue's drain at `AboutToWait`).
+    App(AppCommand),
+    /// A document action on whichever tab is active when it runs.
+    Doc(DocAction),
+}
+
+/// A document action a key or a menu row raises (not a lifecycle command).
+#[derive(Clone, Copy)]
+pub enum DocAction {
+    /// A document shortcut key (`main.rs`'s `doc_key`) with the modifiers held when it was pressed.
+    Key(KeyCode, Mods),
+    /// A magnet quick-menu row (grid = Snap to Grid, else Snap to Point).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // raised only by the macOS menu bar
+    Snap { grid: bool },
+}
+
+/// A shortcut key meant for the document (not typed into a field): its lifecycle command, else the
+/// document shortcut itself. Pure.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the menu bar's ⌘-rows; the keyboard splits earlier
+pub fn key_action(code: KeyCode, m: Mods, active: Option<SessionId>) -> HostAction {
+    match key_command(code, m, active) {
+        Some(c) => HostAction::App(c),
+        None => HostAction::Doc(DocAction::Key(code, m)),
+    }
+}
+
+/// The host's ONE FIFO action queue (DFS S1 review P1). Commands wait here for the drain at
+/// `AboutToWait`; a document action runs at once only when nothing is waiting ([`Self::doc_runs_now`]).
+///
+/// A pointer button fed to egui (a tab chip, a burger row) becomes a command only at the next Ui
+/// frame, so every press and every release leaves a MARK in the queue, in event order. The Ui frame
+/// inserts each command at the mark of the event that produced it — for a click, its RELEASE
+/// ([`Self::chrome_frame`]) — and removes every mark. So click tab B then ⌘Z undoes on B, while
+/// press B, ⌘Z, release B undoes before B is activated.
+#[derive(Default)]
+pub struct ActionQueue {
+    slots: Vec<Slot>,
+    next_mark: u64,
+}
+
+/// One place in the queue: an action, or the mark a pointer event left.
+enum Slot {
+    Action(HostAction),
+    Mark { id: u64, release: bool },
+}
+
+impl ActionQueue {
+    pub fn push(&mut self, a: HostAction) {
+        self.slots.push(Slot::Action(a));
+    }
+
+    pub fn extend(&mut self, it: impl IntoIterator<Item = HostAction>) {
+        self.slots.extend(it.into_iter().map(Slot::Action));
+    }
+
+    /// A pointer button was pressed (`release` false) or released: leave its mark. Returns its id.
+    pub fn pointer_button(&mut self, release: bool) -> u64 {
+        let id = self.next_mark;
+        self.next_mark += 1;
+        self.slots.push(Slot::Mark { id, release });
+        id
+    }
+
+    /// The latest release mark still waiting: where the click egui reports at the next Ui frame came
+    /// from (egui reports at most one click per frame, decided at a release).
+    pub fn last_release(&self) -> Option<u64> {
+        self.slots.iter().rev().find_map(|s| match *s {
+            Slot::Mark { id, release: true } => Some(id),
+            _ => None,
+        })
+    }
+
+    /// The Ui frame ran: each command goes in at the mark of the pointer event that produced it (in
+    /// the given order; at the tail when it has none, or its mark is gone), then every mark is removed.
+    pub fn chrome_frame(&mut self, produced: impl IntoIterator<Item = (Option<u64>, HostAction)>) {
+        for (mark, a) in produced {
+            let at = mark
+                .and_then(|m| self.slots.iter().position(|s| matches!(*s, Slot::Mark { id, .. } if id == m)))
+                .unwrap_or(self.slots.len());
+            self.slots.insert(at, Slot::Action(a)); // before the mark: several keep their order
+        }
+        self.slots.retain(|s| matches!(s, Slot::Action(_)));
+    }
+
+    /// Nothing is waiting: no queued action and no pointer mark.
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// May a freshly raised document action run at once? Only when nothing raised earlier is still
+    /// waiting — no queued action, no pointer mark ([`Self::is_empty`]); running it then IS running it
+    /// in event order, and a shortcut with nothing ahead of it answers in the same frame as before.
+    pub fn doc_runs_now(&self) -> bool {
+        self.is_empty()
+    }
+
+    /// The drain: every action ahead of the first mark, in order. What is behind a mark waits for
+    /// the Ui frame that turns the pointer events into their commands.
+    pub fn take_ready(&mut self) -> Vec<HostAction> {
+        let n = self.slots.iter().position(|s| matches!(s, Slot::Mark { .. })).unwrap_or(self.slots.len());
+        self.slots
+            .drain(..n)
+            .map(|s| match s {
+                Slot::Action(a) => a,
+                Slot::Mark { .. } => unreachable!("the drain stops at the first mark"),
+            })
+            .collect()
     }
 }
 
@@ -530,5 +652,114 @@ mod tests {
         assert!(!mods.ctrl && !mods.shift, "held modifiers are reset");
         // a clean workspace quits at once
         assert!(run(&mut ws, &mut ui, AppCommand::Quit).exit);
+    }
+
+    // ---- the action queue (review re-check: pointer input orders document keys) ----
+
+    fn names(v: &[HostAction]) -> Vec<String> {
+        v.iter()
+            .map(|a| match a {
+                HostAction::App(c) => format!("{c:?}"),
+                HostAction::Doc(DocAction::Key(code, _)) => format!("Key({code:?})"),
+                HostAction::Doc(DocAction::Snap { grid }) => format!("Snap({grid})"),
+            })
+            .collect()
+    }
+
+    const UNDO: HostAction =
+        HostAction::Doc(DocAction::Key(KeyCode::KeyZ, Mods { ctrl: true, shift: false, alt: false }));
+
+    fn activate(n: u64) -> HostAction {
+        HostAction::App(AppCommand::ActivateDocument(SessionId(n)))
+    }
+
+    #[test]
+    fn a_key_alone_runs_now() {
+        let q = ActionQueue::default();
+        assert!(q.doc_runs_now());
+    }
+
+    #[test]
+    fn a_key_after_a_whole_click_waits_behind_the_click() {
+        let mut q = ActionQueue::default();
+        q.pointer_button(false);
+        q.pointer_button(true); // the release on tab B's chip — egui makes it Activate(B) at the frame
+        assert!(!q.doc_runs_now(), "the click's command is still to come");
+        q.push(UNDO);
+        let at = q.last_release();
+        q.chrome_frame([(at, activate(2))]);
+        assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))", "Key(KeyZ)"]);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn a_key_between_press_and_release_runs_before_the_click() {
+        // (a) press B → ⌘Z → release B → frame: the click completes AFTER the key
+        let mut q = ActionQueue::default();
+        q.pointer_button(false);
+        assert!(!q.doc_runs_now(), "an unfilled mark: the key waits");
+        q.push(UNDO);
+        q.pointer_button(true);
+        let at = q.last_release();
+        q.chrome_frame([(at, activate(2))]);
+        assert_eq!(names(&q.take_ready()), ["Key(KeyZ)", "ActivateDocument(SessionId(2))"]);
+    }
+
+    #[test]
+    fn two_clicks_around_a_key_keep_event_order() {
+        // (b) click A → ⌘Z → click B → frame: Activate(A), ⌘Z, Activate(B)
+        let mut q = ActionQueue::default();
+        q.pointer_button(false);
+        let release_a = q.pointer_button(true);
+        q.push(UNDO);
+        q.pointer_button(false);
+        let release_b = q.pointer_button(true);
+        assert_eq!(q.last_release(), Some(release_b));
+        q.chrome_frame([(Some(release_a), activate(1)), (Some(release_b), activate(2))]);
+        assert_eq!(
+            names(&q.take_ready()),
+            ["ActivateDocument(SessionId(1))", "Key(KeyZ)", "ActivateDocument(SessionId(2))"]
+        );
+    }
+
+    #[test]
+    fn unfilled_marks_go_after_the_frame_and_keys_stop_waiting() {
+        // (c) a canvas click raises no chrome command: its marks must not outlive the frame
+        let mut q = ActionQueue::default();
+        q.pointer_button(false);
+        q.pointer_button(true);
+        assert!(!q.doc_runs_now());
+        q.chrome_frame([]);
+        assert!(q.is_empty() && q.doc_runs_now(), "no marks left: the next key runs at once");
+    }
+
+    #[test]
+    fn a_key_before_a_click_ran_first() {
+        let mut q = ActionQueue::default();
+        assert!(q.doc_runs_now(), "the key runs at once, ahead of the later click");
+        q.pointer_button(false);
+        q.pointer_button(true);
+        let at = q.last_release();
+        q.chrome_frame([(at, activate(2))]);
+        assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))"]);
+    }
+
+    #[test]
+    fn a_drain_before_the_ui_frame_keeps_the_click_and_what_follows_it() {
+        let mut q = ActionQueue::default();
+        q.push(HostAction::App(AppCommand::Save(SessionId(1))));
+        q.pointer_button(false);
+        q.pointer_button(true);
+        q.push(UNDO);
+        q.push(HostAction::App(AppCommand::Save(SessionId(1))));
+        assert_eq!(names(&q.take_ready()), ["Save(SessionId(1))"], "only what came before the click");
+        assert!(!q.is_empty() && !q.doc_runs_now());
+        let at = q.last_release();
+        q.chrome_frame([(at, activate(2))]);
+        assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))", "Key(KeyZ)", "Save(SessionId(1))"]);
+        // a command with no pointer event behind it goes to the tail
+        q.chrome_frame([(None, HostAction::App(AppCommand::NewDocument))]);
+        assert_eq!(names(&q.take_ready()), ["NewDocument"]);
+        assert!(q.is_empty());
     }
 }

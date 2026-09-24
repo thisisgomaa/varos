@@ -364,7 +364,7 @@ impl Workspace {
     }
 
     /// Move tab `id` to the INSERTION SLOT `to` of the CURRENT order, exactly what the tab strip's
-    /// `tab_drop_index` returns: `0` = before the first tab, `k` = between tab `k-1` and tab `k`,
+    /// `tab_full_slot` returns: `0` = before the first tab, `k` = between tab `k-1` and tab `k`,
     /// `len` = after the last (larger values clamp to `len`). It is NOT the final index: with tabs
     /// `[A, B, C]`, dropping A into slot 2 (between B and C) gives `[B, A, C]`. Dropping a tab into
     /// its own slot or the next one (either edge of itself) is a no-op. Only the order changes;
@@ -415,15 +415,20 @@ impl Workspace {
     /// ` — <parent folder>` appended; the tooltip is the full path or `Not saved yet`.
     pub fn tabs(&self) -> Vec<TabView> {
         let names: Vec<String> = self.sessions.iter().map(DocumentSession::display_name).collect();
+        // how many SAVED tabs share each name — one pass, not a scan per tab (review: per-frame cost)
+        let mut saved_names: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for (s, name) in self.sessions.iter().zip(&names) {
+            if s.path.is_some() {
+                *saved_names.entry(name.as_str()).or_default() += 1;
+            }
+        }
         self.sessions
             .iter()
             .zip(&names)
             .map(|(s, name)| {
                 let mut label = name.clone();
                 if let Some(path) = &s.path {
-                    let twins =
-                        self.sessions.iter().zip(&names).filter(|(o, n)| o.path.is_some() && *n == name).count();
-                    if twins > 1 {
+                    if saved_names[name.as_str()] > 1 {
                         if let Some(parent) = path.parent().and_then(|p| p.file_name()) {
                             label = format!("{name} — {}", parent.to_string_lossy());
                         }
