@@ -1,5 +1,6 @@
 # ---- Rust build output (huge, regenerated) ----
 target/
+target-*/   # shared cargo build dirs used by parallel cloud agents (CARGO_TARGET_DIR)
 
 # ---- Node / web (Tauri front-end, if any) ----
 node_modules/
