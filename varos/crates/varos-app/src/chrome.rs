@@ -267,6 +267,8 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
             vec![
                 key("view.fit", "Fit in Window", cmd(K::Digit0)),
                 key("view.actual", "Actual Size", cmd(K::Digit1)),
+                key("view.zoomin", "Zoom In", cmd(K::Equal)),
+                key("view.zoomout", "Zoom Out", cmd(K::Minus)),
                 Entry::Sep,
                 key_check("view.rulers", "Rulers", cmd(K::KeyR), Check::Rulers),
                 key_check("view.guides", "Guides", cmd(K::Semicolon), Check::Guides),
@@ -319,6 +321,8 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         K::KeyZ => E::Z,
         K::Digit0 => E::Num0,
         K::Digit1 => E::Num1,
+        K::Equal => E::Equals,
+        K::Minus => E::Minus,
         K::Semicolon => E::Semicolon,
         K::BracketLeft => E::OpenBracket,
         K::BracketRight => E::CloseBracket,
