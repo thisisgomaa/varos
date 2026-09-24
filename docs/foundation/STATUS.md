@@ -32,8 +32,9 @@ Landed later on 2026-09-23/24:
 - **Original Varos cursor set v1 merged** `d30365c` (branch `design/cursors-v1`, commits `fcc235f` + `e7a471e`; doc nits fixed in `b8bc2ec`) — 30 original SVGs + `hotspots.json` in `varos/crates/varos-app/assets/cursors/v1/` and the study `docs/studies/2026-09-23-CURSOR_SET_V1.md`. Assets + docs only, no code. Codex originality review against all 326 local Adobe reference SVGs: round 1 all 10 Original, round 2 all 20 Original (APPROVE WITH NITS, doc nits fixed). Ahmed approved the set visually. Tests 271/271 unchanged; nothing from `cursors-ai` is tracked (`git ls-files | grep -c cursors-ai` → 0). Details: `GATE_LOG.md`.
 - **Stroke-join wedge fix merged** `b37f78b` (branch `fix/stroke-fan-artifact`, commits `045c956` + `ccd92ea`; Codex REQUEST CHANGES (disc fallback left gaps) → fixed → APPROVE WITH NITS; doc nit fixed in `35443b8`). Thick curved strokes at high zoom no longer render as "spokes": P11.1's 5° join elision (`1931c80`) had left an open wedge on the outer side of every curve point; now every turn is closed by a round fan within 0.25 screen px (up to 128 steps per join). Whole workspace **276/276** on macOS (render-wgpu 16 → 21), clippy/fmt clean, Windows-target clippy clean. Harness D stroke vertices 2,388 → 3,363, E 51,624 → 27,996. **`/Applications/Varos.app` refreshed at 23:25 (2026-09-23)** and launches. Leftover: round caps at open path ends are still 24-gons (`PAINS_LOG.md` P13). Details: `GATE_LOG.md`.
 - **macOS chrome merged (2026-09-24)** `e212cf0` (branch `feat/mac-chrome`, commits `efd29ef`, `209705a`, `1c05ac0`) — one bar, opaque title strip, native menu bar via `muda` 0.20 (macOS only). Codex REQUEST CHANGES (P2 caption drag through floating UI; P2 false double-click zoom) → both fixed, Codex gates **284/284**. Moderator gates on merged `main`: **289/289**, clippy/fmt clean, Windows-target clippy clean. **`/Applications/Varos.app` refreshed 2026-09-24** via `tools/mac/bundle.sh`; Ahmed's hand test pending. Details: `GATE_LOG.md`, `MAC_CHROME.md`.
-- **Next piece: wire cursor set v1 into `varos-app/src/cursors.rs`** — replace the local Illustrator reference set on Mac and Windows with `assets/cursors/v1/` (study §6: `varos_svg(ck)` table from `hotspots.json`); add `CK::ZoomIn` / `ZoomOut` / `Artboard` only when those tools exist; make the cursors Retina-sharp on macOS (2× bitmaps).
-- **In progress: icon-library study** (`docs/studies/2026-09-23-ICON_LIBRARY_STUDY.md`, being written by another agent).
+- **Varos cursor set v1 wired + Retina NSCursor merged (2026-09-24)** `ac7d633` (branch `feat/cursors-v1-wired`, commit `1ca727d`) — 30 embedded SVGs cover all 28 `CK` states; v1 defaults on all platforms, Illustrator references only via `VAROS_CURSORS_AI=1`. Mac cursors use a 32-pt `NSImage` with 1× + 2× reps. Codex REQUEST CHANGES (P2 unscoped `NSCursor::set`; P2 cursor restoration stall) → fixed → merged; mac-chrome conflicts resolved keeping both. Moderator gates: **294/294**, clippy Mac + Windows clean, fmt clean. Installed startup: 28 v1, 28 Retina NSCursor, no reference overrides or fallbacks; hand test pending. Details: `GATE_LOG.md`.
+- **Stroke joins round 3 merged (2026-09-24)** `d6095f0` (branch `fix/stroke-fan-artifact`, commit `f751cb2`) — f64 geometry, shared once-cast corners, every non-zero segment kept and f64 cover bounds/padding close the remaining radial hairlines on huge circles far from the origin. Nine GPU-free regressions fail before and pass after. Codex REQUEST CHANGES (P2 f32 cover bounds crop; P3 perf docs) → fixed → merged. Moderator gates: **303/303**, clippy Mac + Windows clean, fmt clean. **`Varos.app` refreshed 2026-09-24**; hand test pending. Details: `GATE_LOG.md`.
+- **Next queued pieces:** Astra (Codex computer-use) user test; P11.2 item (0), instant zoom; ⌘ labels on Mac; icon library S1 (`docs/studies/2026-09-23-ICON_LIBRARY_STUDY.md`).
 - **Next small piece: P11.2 item (0), instant zoom** — remove the A13 glide easing in `varos-app/src/main.rs` (owner-authorized, 2026-07-12). Now unblocked: the Mac port has landed, so `main.rs` builds and runs here. Follow-up measurement: harness scene F (many same-colour translucent strokes — structural cost of the P1-1 fix, not yet measured).
 
 **For Ahmed to try (batch 1)** — on the Mac, from the release build `varos/target/release/varos`:
@@ -48,12 +49,10 @@ Landed later on 2026-09-23/24:
 8. (from P11.2) On a complex file, zoom to 4000% and pan and zoom around — it should stay smooth, with nothing missing at the window edges.
 9. (from P11.2) Overlapping translucent strokes (e.g. two 50% red lines crossing) look the same as before — the crossing is darker.
 10. (from P11.2) Masked objects look right while you pan them partly off screen and back.
-11. (from Mac cursors) Hover each tool over the canvas and check the cursor changes: the pen nib (and its + / − states over a segment / an anchor), the selection arrows, the hand while Space is held. You can also open the installed `/Applications/Varos.app`.
-    - Expect the cursors to look a little soft on the Retina screen (32-pixel bitmaps shown at 32 points) — known, not a bug of this piece.
-    - On your Mac the local Illustrator reference set is present, so all 28 states are custom. Without that folder (a fresh clone), 17 states (resize ×4, move, hand, grab, copy, no-drop, rotate ×8) use the standard Mac cursors — by design until our own set lands.
-    - The original Varos cursor set v1 has landed as design files (`d30365c`) but is **not wired yet**. After the wiring piece, all these cursors will change to the Varos set — re-check this item then.
+11. hover every tool: the Varos v1 cursors (pen nib, arrows, hand…) should be sharp on Retina.
 12. (from the stroke-join fix) Draw a closed curvy path, stroke width 80, zoom to ~327% and 4000% — the band must be solid, no spokes.
 13. (from macOS chrome) One bar + traffic lights; drag the empty bar to move the window; ⌘R and View▸Rulers toggle exactly once; File▸Save; Quit ⌘Q.
+14. thick stroke on a huge circle far from the artboard at 100–400% zoom: no radial hairlines.
 
 **Known Mac gaps (expected, not bugs of this piece):** screen eyedropper disabled; window position/size not remembered; traffic lights sit ≈9pt above the bar's control centre; Quit/Close do not prompt for unsaved changes (same as ✕ today); menu items without an existing shortcut are omitted (New, Export, Cut/Copy/Paste, Duplicate, Select All, Deselect, Zoom In/Out, Delete); “Ctrl” labels should read ⌘ on Mac — next small piece.
 
@@ -90,8 +89,8 @@ Landed later on 2026-09-23/24:
 |---|---:|
 | `ui.rs` lines | 5,826 (re-measured `wc -l` 2026-09-23, after `9f8ec1d`) |
 | `editor.rs` lines | 4,537 (re-measured `wc -l` 2026-09-23, after `b15d2bf`) |
-| Workspace tests | 289 — whole workspace, run on macOS 2026-09-24 on merged `main` at `e212cf0` (0 failed) |
-| Tests on macOS | 289 / 289 — whole workspace incl. `varos-app` (2026-09-24, merged `main` at `e212cf0`) |
+| Workspace tests | 303 — whole workspace, run on macOS 2026-09-24 on merged `main` at `d6095f0` (0 failed) |
+| Tests on macOS | 303 / 303 — whole workspace incl. `varos-app` (2026-09-24, merged `main` at `d6095f0`) |
 | `unsafe` sites (app crates) | 27 |
 | Direct external deps | 23 |
 | `cargo audit` | 4 vulns + 6 warnings (triaged 2026-09-23, `docs/audits/2026-09-23-CARGO_AUDIT_TRIAGE.md`; fixes await owner approval) |
