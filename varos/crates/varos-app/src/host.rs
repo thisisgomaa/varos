@@ -8,8 +8,10 @@
 //! `AboutToWait` through its `dispatch`: `Window(_)` effects on the window, everything else through
 //! [`run_lifecycle`]. The document actions keys and menu rows raise ([`DocAction`]: a shortcut key,
 //! Edit ▸ Delete, a snap row) share that order but not always that path: one runs at once when
-//! nothing is queued ([`doc_runs_now`]), else it queues behind and goes through `dispatch` too.
-//! Pointer input and panel edits act on the editor directly, outside the queue.
+//! nothing is queued — no command, no pointer button whose chrome command is still to come
+//! ([`ActionQueue::doc_runs_now`]) — else it queues behind and goes through `dispatch` too.
+//! Pointer input and panel edits act on the editor directly, outside the queue; a pointer button only
+//! marks the queue, so what is raised after a click waits for the click's own chrome command.
 //!
 //! No window, no GPU, no dialogs here: everything is testable headless (the dialogs and the disk are
 //! the lifecycle's ports).
@@ -110,11 +112,65 @@ pub fn key_action(code: KeyCode, m: Mods, active: Option<SessionId>) -> HostActi
     }
 }
 
-/// Whether a freshly raised document action may run at once instead of joining the queue: only when
-/// nothing raised earlier is still waiting. Running it then IS running it in queue order, and a
-/// shortcut with nothing ahead of it still answers in the same frame, as before the queue. Pure.
-pub fn doc_runs_now(pending: &[HostAction]) -> bool {
-    pending.is_empty()
+/// The host's ONE FIFO action queue (DFS S1 review P1). Commands wait here for the drain at
+/// `AboutToWait`; a document action runs at once only when nothing is waiting ([`Self::doc_runs_now`]).
+///
+/// A pointer button fed to egui (a tab chip, a burger row) becomes a command only at the next Ui
+/// frame, so the queue keeps a MARK where that click happened: whatever is raised after it waits
+/// behind it, and the Ui frame's commands are inserted at the mark ([`Self::chrome_frame`]) — click
+/// tab B then ⌘Z undoes on B, never on the tab that was active before the click.
+#[derive(Default)]
+pub struct ActionQueue {
+    items: Vec<HostAction>,
+    /// Where the commands of the pointer buttons egui has not turned into commands yet belong.
+    chrome_mark: Option<usize>,
+}
+
+impl ActionQueue {
+    pub fn push(&mut self, a: HostAction) {
+        self.items.push(a);
+    }
+
+    pub fn extend(&mut self, it: impl IntoIterator<Item = HostAction>) {
+        self.items.extend(it);
+    }
+
+    /// A pointer button was pressed or released: its commands (if any) come at the next Ui frame.
+    pub fn pointer_button(&mut self) {
+        self.chrome_mark.get_or_insert(self.items.len());
+    }
+
+    /// The Ui frame ran: its commands take the place of the first pointer button since the last
+    /// frame (appended when there was none), and the mark is gone.
+    pub fn chrome_frame(&mut self, cmds: impl IntoIterator<Item = HostAction>) {
+        let at = self.chrome_mark.take().unwrap_or(self.items.len());
+        self.items.splice(at..at, cmds);
+    }
+
+    /// Nothing is waiting: no command, and no pointer button whose commands are still to come.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty() && self.chrome_mark.is_none()
+    }
+
+    /// May a freshly raised document action run at once? Only when nothing raised earlier is still
+    /// waiting ([`Self::is_empty`]); running it then IS running it in event order, and a shortcut
+    /// with nothing ahead of it still answers in the same frame, as before the queue.
+    pub fn doc_runs_now(&self) -> bool {
+        self.is_empty()
+    }
+
+    /// The drain: every action ahead of the mark, in order. What is behind the mark waits for the
+    /// Ui frame that turns the click into its commands.
+    pub fn take_ready(&mut self) -> Vec<HostAction> {
+        match self.chrome_mark {
+            Some(at) => {
+                let rest = self.items.split_off(at);
+                self.chrome_mark = Some(0);
+                std::mem::replace(&mut self.items, rest)
+            }
+            None => std::mem::take(&mut self.items),
+        }
+    }
 }
 
 /// The custom caption's window controls. The ✕ is the Quit transaction (S1 has one window, so
@@ -573,5 +629,63 @@ mod tests {
         assert!(!mods.ctrl && !mods.shift, "held modifiers are reset");
         // a clean workspace quits at once
         assert!(run(&mut ws, &mut ui, AppCommand::Quit).exit);
+    }
+
+    // ---- the action queue (review re-check: pointer input orders document keys) ----
+
+    fn names(v: &[HostAction]) -> Vec<String> {
+        v.iter()
+            .map(|a| match a {
+                HostAction::App(c) => format!("{c:?}"),
+                HostAction::Doc(DocAction::Key(code, _)) => format!("Key({code:?})"),
+                HostAction::Doc(DocAction::Snap { grid }) => format!("Snap({grid})"),
+            })
+            .collect()
+    }
+
+    const UNDO: HostAction =
+        HostAction::Doc(DocAction::Key(KeyCode::KeyZ, Mods { ctrl: true, shift: false, alt: false }));
+
+    #[test]
+    fn a_key_alone_runs_now() {
+        let q = ActionQueue::default();
+        assert!(q.doc_runs_now());
+    }
+
+    #[test]
+    fn a_key_after_a_pointer_release_waits_behind_the_click() {
+        let mut q = ActionQueue::default();
+        q.pointer_button(); // the release on tab B's chip — egui makes it Activate(B) at the next frame
+        assert!(!q.doc_runs_now(), "the click's command is still to come");
+        q.push(UNDO);
+        q.chrome_frame([HostAction::App(AppCommand::ActivateDocument(SessionId(2)))]);
+        assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))", "Key(KeyZ)"]);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn a_key_before_a_pointer_release_ran_first() {
+        let mut q = ActionQueue::default();
+        assert!(q.doc_runs_now(), "the key runs at once, ahead of the later click");
+        q.pointer_button();
+        q.chrome_frame([HostAction::App(AppCommand::ActivateDocument(SessionId(2)))]);
+        assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))"]);
+    }
+
+    #[test]
+    fn a_drain_before_the_ui_frame_keeps_the_click_and_what_follows_it() {
+        let mut q = ActionQueue::default();
+        q.push(HostAction::App(AppCommand::Save(SessionId(1))));
+        q.pointer_button();
+        q.push(UNDO);
+        q.push(HostAction::App(AppCommand::Save(SessionId(1))));
+        assert_eq!(names(&q.take_ready()), ["Save(SessionId(1))"], "only what came before the click");
+        assert!(!q.is_empty() && !q.doc_runs_now());
+        q.chrome_frame([HostAction::App(AppCommand::ActivateDocument(SessionId(2)))]);
+        assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))", "Key(KeyZ)", "Save(SessionId(1))"]);
+        // a frame with no pointer button appends its commands (a chrome command raised by the keyboard)
+        q.chrome_frame([HostAction::App(AppCommand::NewDocument)]);
+        assert_eq!(names(&q.take_ready()), ["NewDocument"]);
+        assert!(q.is_empty());
     }
 }
