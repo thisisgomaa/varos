@@ -223,6 +223,10 @@ fn apply_key(ed: &mut Editor, view: &mut View, code: &str, ctrl: bool, shift: bo
             "KeyU" => ed.execute(EditCommand::ToggleSmartGuides), // Smart Guides toggle (Illustrator Ctrl+U)
             "KeyD" => ed.execute(EditCommand::TransformAgain), // Transform Again / step-and-repeat (Illustrator Ctrl+D)
             "KeyR" => ed.toggle_rulers_visibility(),           // Show/Hide Rulers (Illustrator Ctrl+R)
+            // Edit ▸ Copy / Cut (⌘C / ⌘X) — the in-app clipboard. ⌘V / ⇧⌘V (Paste / Paste in Place)
+            // need the canvas rect for a view-centred paste, so `OpenDocContext::shortcut` owns them.
+            "KeyC" if !shift && !alt => ed.execute(EditCommand::Copy),
+            "KeyX" if !shift && !alt => ed.execute(EditCommand::Cut),
             _ => {}
         }
         return;
@@ -322,13 +326,17 @@ fn fit_rect(ed: &Editor) -> (f32, f32, f32, f32) {
     }
 }
 
-/// Fit an artboard into the CANVAS area — the Board box's interior when the shell reports one
-/// (Stage 4; physical px), else the whole window. Pan shifts so the page centres in the BOX.
-fn fit_to_board(gui: &ui::Ui, window: &Window, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
+/// The CANVAS area in physical px — the Board box's interior when the shell reports one (Stage 4),
+/// else the whole window.
+fn canvas_px(gui: &ui::Ui, window: &Window) -> egui::Rect {
     let sz = window.inner_size();
-    let b = gui
-        .board_px
-        .unwrap_or(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(sz.width as f32, sz.height as f32)));
+    gui.board_px
+        .unwrap_or(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(sz.width as f32, sz.height as f32)))
+}
+
+/// Fit an artboard into the CANVAS area (`canvas_px`). Pan shifts so the page centres in the BOX.
+fn fit_to_board(gui: &ui::Ui, window: &Window, x: f32, y: f32, w: f32, h: f32, k: f32) -> View {
+    let b = canvas_px(gui, window);
     let mut v = View::fit(x, y, w, h, b.width(), b.height(), k);
     v.pan[0] += b.left();
     v.pan[1] += b.top();
@@ -471,6 +479,21 @@ fn confirm_discard_unsaved(ed: &Editor, saved_rev: u64) -> bool {
             == rfd::MessageDialogResult::Yes
 }
 
+/// Edit ▸ Paste (⌘V): the world translation that puts the clipboard's centre on the world point under
+/// the centre of the CANVAS (`canvas_centre`, physical px) — Illustrator pastes into the middle of the
+/// view. `None` when the clipboard is empty.
+fn view_centre_paste_offset(ed: &Editor, view: &View, canvas_centre: Pt) -> Option<Pt> {
+    let c = ed.clipboard().center()?;
+    let t = view.s2w(canvas_centre);
+    Some([t[0] - c[0], t[1] - c[1]])
+}
+
+/// ⌘V = Paste centred in the canvas · ⇧⌘V = Paste in Place (the copied coordinates).
+fn paste_key(ed: &mut Editor, view: &View, canvas_centre: Pt, in_place: bool) {
+    let offset = if in_place { None } else { view_centre_paste_offset(ed, view, canvas_centre) };
+    ed.execute(EditCommand::Paste { offset });
+}
+
 /// Apply a complete zoom step now, keeping the world point under the cursor fixed.
 fn zoom_step(view: &mut View, screen: Pt, factor: f32) {
     let anchor = view.s2w(screen);
@@ -550,6 +573,10 @@ impl OpenDocContext<'_> {
                 }
             }
             self.ed.mods = Default::default(); // the native dialog eats the key releases
+        } else if mc && !ma && code == KeyCode::KeyV {
+            // ⌘V = Paste (centred in the canvas box) · ⇧⌘V = Paste in Place (Illustrator-exact)
+            let c = canvas_px(self.gui, self.window).center();
+            paste_key(self.ed, self.view, [c.x, c.y], ms);
         } else if mc && code == KeyCode::KeyO {
             // Ctrl+O = Open — guard unsaved changes first
             if confirm_discard_unsaved(self.ed, *self.saved_rev) {
@@ -1470,5 +1497,95 @@ mod instant_zoom_tests {
             assert!((pinned[0] - screen[0]).abs() < 0.0001);
             assert!((pinned[1] - screen[1]).abs() < 0.0001);
         }
+    }
+}
+
+#[cfg(test)]
+mod clipboard_key_tests {
+    //! Astra F04: ⌘C / ⌘X / ⌘V / ⇧⌘V reach the core clipboard commands; plain V / X keep their
+    //! tool / colour meaning.
+    use super::*;
+    use varos_core::editor::PaintTarget;
+    use varos_core::model::{Anchor, Path};
+
+    fn one_square() -> Editor {
+        let a = |i: u32, p: [f32; 2]| Anchor { id: i, p, hin: None, hout: None, smooth: false };
+        let mut ed = Editor::new();
+        ed.doc.artboards.clear();
+        ed.doc.paths.push(Path::new(
+            1,
+            vec![a(2, [0.0, 0.0]), a(3, [40.0, 0.0]), a(4, [40.0, 20.0]), a(5, [0.0, 20.0])],
+            true,
+            Some([0.5, 0.5, 0.5, 1.0]),
+            None,
+            1.0,
+        ));
+        ed.doc.ids = 5;
+        ed.doc.sync_tree();
+        ed.objsel.insert(1);
+        ed
+    }
+
+    #[test]
+    fn cmd_c_copies_and_cmd_v_pastes_centred_in_the_canvas() {
+        let mut ed = one_square();
+        let mut view = View { zoom: 2.0, pan: [100.0, 50.0] };
+        apply_key(&mut ed, &mut view, "KeyC", true, false, false);
+        assert_eq!(ed.rev, 0, "⌘C does not edit the document");
+        assert_eq!(ed.clipboard().len(), 1);
+        // canvas box centre (physical px) → the world point the paste must centre on
+        let centre = [700.0, 450.0];
+        paste_key(&mut ed, &view, centre, false);
+        assert_eq!(ed.rev, 1);
+        assert_eq!(ed.doc.paths.len(), 2);
+        let (x0, y0, x1, y1) = ed.obj_bbox().unwrap();
+        let want = view.s2w(centre);
+        assert!(((x0 + x1) * 0.5 - want[0]).abs() < 1e-3 && ((y0 + y1) * 0.5 - want[1]).abs() < 1e-3);
+    }
+
+    #[test]
+    fn shift_cmd_v_pastes_in_place() {
+        let mut ed = one_square();
+        let mut view = View { zoom: 3.0, pan: [-10.0, 5.0] };
+        apply_key(&mut ed, &mut view, "KeyC", true, false, false);
+        paste_key(&mut ed, &view, [640.0, 400.0], true);
+        let pid = *ed.objsel.iter().next().unwrap();
+        assert_ne!(pid, 1);
+        let copy = ed.doc.paths.iter().find(|p| p.id == pid).unwrap();
+        assert_eq!(copy.anchors[0].p, [0.0, 0.0], "in place = the copied coordinates");
+    }
+
+    #[test]
+    fn cmd_x_cuts_as_one_undo_step() {
+        let mut ed = one_square();
+        let mut view = View::identity();
+        apply_key(&mut ed, &mut view, "KeyX", true, false, false);
+        assert!(ed.doc.paths.is_empty());
+        assert_eq!(ed.rev, 1);
+        apply_key(&mut ed, &mut view, "KeyZ", true, false, false);
+        assert_eq!(ed.doc.paths.len(), 1, "one ⌘Z brings the cut art back");
+    }
+
+    #[test]
+    fn plain_v_and_x_keep_their_tool_and_colour_meaning() {
+        let mut ed = one_square();
+        let mut view = View::identity();
+        ed.set_tool(ToolKind::Pen);
+        apply_key(&mut ed, &mut view, "KeyV", false, false, false);
+        assert!(ed.tool == ToolKind::Object, "V = Selection tool");
+        assert!(ed.paint == PaintTarget::Fill);
+        apply_key(&mut ed, &mut view, "KeyX", false, false, false);
+        assert!(ed.paint == PaintTarget::Stroke, "X = fill/stroke focus swap");
+        assert_eq!(ed.doc.paths.len(), 1, "plain X never cuts");
+        assert!(ed.clipboard().is_empty(), "plain keys never copy");
+    }
+
+    #[test]
+    fn paste_with_an_empty_clipboard_does_nothing() {
+        let mut ed = one_square();
+        paste_key(&mut ed, &View::identity(), [100.0, 100.0], false);
+        paste_key(&mut ed, &View::identity(), [100.0, 100.0], true);
+        assert_eq!(ed.rev, 0);
+        assert_eq!(ed.doc.paths.len(), 1);
     }
 }
