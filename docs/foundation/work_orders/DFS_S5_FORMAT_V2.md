@@ -1,4 +1,5 @@
 > **Status:** current — work order (charter §3 level 4), derived from docs/specs/DOCUMENT_FILE_SYSTEM.md; owner decisions D1–D3 recorded 2026-09-24.
+> Amended 2026-09-24 after the independent plan review (see reviews/DFS_S5_FORMAT_V2.review.md); P1/P2 applied, "Needs Ahmed" items carry their default.
 # DFS S5 — `.vrs` format version 2, migration and bounded validation
 
 Date: 2026-09-24 · Base: `ecf67f5` on `claude/sweet-cerf-1sg30t` · Scope: `varos-core` (model/format) + `varos-pdf` (container read side) + docs. **No `varos-app` edits.** Parallel-safe with S1, because S5 does not touch the app loop and keeps every existing public signature the app uses.
@@ -15,6 +16,7 @@ Date: 2026-09-24 · Base: `ecf67f5` on `claude/sweet-cerf-1sg30t` · Scope: `var
 - (e) Limits are enforced inside the PDF read path (no unbounded inflation).
 
 **Ahmed's hand test (Mac, batched after merge):**
+0. **Before merge to `main`, a precondition, not a batched item:** `VAROS_CORPUS_DIR=~/Documents cargo test -p varos-pdf --test corpus_check -- --ignored --nocapture`. Send the output. Any refusal of one of your own files blocks the merge.
 1. Open the old fixtures (`varos/crates/varos-core/tests/fixtures/*.vrs` and `varos/crates/varos-pdf/tests/fixtures/v1_*`), including the populated masked v1 file. Save, then reopen: same editable content, masks still clip, rotation kept.
 2. Keep document A dirty, then try `v3_future.vrs`, `cycle_nodes.vrs` and an oversized file (`mkfile -n 300m ~/Desktop/big.vrs`). Each gives a readable refusal, and A, its history and its path stay untouched.
 3. Open a v2 file with a pre-S5 build (`main` today). It refuses with "saved by a newer Varos (v2)".
@@ -94,17 +96,17 @@ The wrapper key stays **`varos`**. It is the `format_version` field. Renaming it
 **Load pipeline** (core function `format::decode_model`; the PDF prefix lives in `varos-pdf`):
 1. **Bytes.** File ≤ `max_file_bytes`: check `metadata().len()`, then read through `take(max+1)`.
 2. **PDF.** Pre-gate, then bounded lopdf parse, then the model stream (§3 PDF), giving `(model_json, catalog_version)`.
-3. **JSON size.** ≤ `max_model_bytes`. Then our own byte-scanner depth check (≤ `max_json_depth`, outside strings), with serde's 128 limit as a backstop.
+3. **JSON size.** ≤ `max_model_bytes`. Depth: serde_json's built-in 128-level limit; no own scanner (it is already active — `cargo tree -i serde_json` shows only `default`/`std`, no `unbounded_depth` — and skipped unknown content goes through its iterative, heap-stacked `ignore_value`, so deep junk cannot overflow the stack; the model's own typed depth is about 6).
 4. **Version gate.** A header-only parse of `varos`:
    - missing → `MissingVersion`;
    - not a positive integer that fits in u32, or `0` → `InvalidVersion`;
    - `> 2` → `NewerVersion`;
    - catalog version present and `≠` the JSON version → `VersionMismatch`.
    All of this happens **before any typed decode**.
-5. **Typed decode.** `VrsFile` and every persisted struct get `#[serde(deny_unknown_fields)]`, so a serde error becomes `Malformed(msg)`. **For v2 only**, a second cheap key pass (`V2DocKeys` / `V2ArtboardKeys`, all fields `IgnoredAny`, all required) rejects a missing key whose default is legacy. This covers every `Document` key, plus `Artboard.{bleed,page_color,clip,hidden,locked}`. A v1 file without `artboards` still gets the legacy single non-clipping board; an explicit `[]` stays boardless in both versions.
+5. **Typed decode.** `VrsFile` and every persisted struct get `#[serde(deny_unknown_fields)]`, so a serde error becomes `Malformed(msg)`. No Varos writer ever omits a legacy-defaulted key (none of them is `skip_serializing`), so there is no separate v2 required-key pass — it would cost a second full JSON walk over up to 32 MiB and would wrongly make the legacy `groups`/`group_of` keys mandatory in v2, freezing keys the format wants retired. A v1 file without `artboards` still gets the legacy single non-clipping board; an explicit `[]` stays boardless in both versions.
 6. **Structural precheck** (`format/structure.rs`, iterative, HashMap-indexed; must run before any tree walk):
    - counts against the limits: nodes, paths, total anchors (outer + holes), artboards, legacy groups;
-   - unique path, node and legacy-group ids;
+   - ids unique within each kind; cross-kind reuse is legal (existing tests and older files already reuse ids across kinds, e.g. path 1 / anchor 1 / Layer node 1 coexisting; R10);
    - every `NodeKind::Path(pid)` points to an existing path; no dangling parent or child ids;
    - `parent` agrees with the `children` membership, and each node has exactly one owner;
    - no cycles, including legacy `groups[].parent` cycles;
@@ -125,7 +127,7 @@ The wrapper key stays **`varos`**. It is the `format_version` field. Renaming it
 
    The result is `Loaded { doc, source_version, migrated }`. The original bytes are never modified.
 
-**Save:** `format::encode_model(doc, limits)` runs `check_structure` + `validate` + the size cap on the output, then emits `{"varos":2,"doc":…}`. `doc_to_blob` delegates to it, so `write_pdf`, raw `save_vrs` and S3's snapshots all refuse invalid documents with a readable `SaveRefused`. The editor keeps the document dirty in memory.
+**Save:** `encode_model` runs `check_structure` on `doc`. It then runs the step-7 normalizer on a clone (`sync_tree`; a clip demotion ⇒ `SaveRefused(Invalid::BadMask)`), then `validate` and the size cap, and serializes the normalized clone. The editor's document is never mutated. `doc_to_blob` delegates to it, so `write_pdf`, raw `save_vrs` and S3's snapshots all refuse invalid documents with a readable `SaveRefused`, and this build cannot write a file it would then refuse to reopen (step 9's canonical check on load is now matched on save). The editor keeps the document dirty in memory.
 
 **PDF side** (`varos-pdf/src/read.rs`, new; `lib.rs` read side only):
 1. **Pre-gate on raw bytes, before lopdf:**
@@ -137,10 +139,7 @@ The wrapper key stays **`varos`**. It is the `format_version` field. Renaming it
    - Prefer catalog `/VAROS_Model`.
    - Otherwise walk `/Names/EmbeddedFiles` **iteratively**, with depth ≤ `max_pdf_depth`, a visited `ObjectId` set and a node budget. Accept **only** the name-tree key `model.varos.json`.
    - If there is none → `NoEmbeddedModel`.
-4. **Decoding the model stream:**
-   - no `/Filter` → the raw content;
-   - a single `/FlateDecode` with no `DecodeParms` → `flate2::read::ZlibDecoder` through `take(max_model_bytes+1)`, counted against `max_decoded_stream_bytes`;
-   - anything else → `UnsupportedPdf("model encoding")`.
+4. **Decoding the model stream:** no `/Filter` ⇒ raw content (≤ `max_model_bytes`); any filter ⇒ `UnsupportedPdf("model encoding")`. No `flate2` dependency: Varos writes the model unfiltered (`lib.rs:252`), and an app that re-compresses it will almost certainly also write object/xref streams, which the pre-gate already refuses — so decompression support buys nothing acceptance needs. Revisit only if hand test 4 finds a Preview output that passes the pre-gate with a Flate model (R7's own default).
 5. **Catalog version:** `/VAROS_SchemaVersion` must be an integer in `1..=u32::MAX` if present (else `MalformedPdf`/`InvalidVersion`). `None` if absent.
 
 **Public API** (spelled out exactly; S5-B lands it and the others code against it):
@@ -157,13 +156,13 @@ pub fn encode_model(doc: &Document, limits: &Limits) -> Result<String, SaveRefus
 // format/limits.rs
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits { pub max_file_bytes: u64 /*256 MiB*/, pub max_model_bytes: usize /*32 MiB*/,
-  pub max_json_depth: usize /*128*/, pub max_pdf_objects: usize /*100_000*/,
+  pub max_pdf_objects: usize /*100_000*/,
   pub max_decoded_stream_bytes: usize /*64 MiB*/, pub max_pdf_depth: usize /*64*/,
   pub max_nodes: usize /*100_000*/, pub max_paths: usize /*100_000*/, pub max_anchors: usize /*1_000_000*/,
-  pub max_artboards: usize /*1_000*/, pub max_tree_depth: usize /*64*/ }
+  pub max_artboards: usize /*1_000*/, pub max_tree_depth: usize /*64*/ } // no max_json_depth: serde_json's built-in 128-level limit already applies
 impl Limits { pub const DEFAULT: Limits = /* the numbers above */; } impl Default for Limits { /* DEFAULT */ }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LimitKind { FileBytes, ModelBytes, JsonDepth, PdfObjects, DecodedStreams, PdfDepth, Nodes, Paths, Anchors, Artboards, TreeDepth }
+pub enum LimitKind { FileBytes, ModelBytes, PdfObjects, DecodedStreams, PdfDepth, Nodes, Paths, Anchors, Artboards, TreeDepth }
 // format/error.rs  (Display = the user-readable reason; std::error::Error)
 #[derive(Clone, Debug, PartialEq)]
 pub enum LoadError {
@@ -201,7 +200,7 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
   - **Context:** ADR-0004 defers migrations and validation; the hole at `file.rs:11-12` and `model.rs:269-271,319-329`; D3 of 2026-09-24.
   - **Decision:**
     - integer format version in the wrapper `varos` plus `/VAROS_SchemaVersion`; the container generation (ADR-0003) is distinct;
-    - the bump rule for every non-additive-safe change;
+    - the bump rule, stated simply: any change to what the writer can emit raises the format number; reader-only relaxations do not (no "needs proof" case, since `deny_unknown_fields` already makes every writer-side addition non-additive-safe);
     - refusal of newer, missing, zero and mismatched versions before typed decode;
     - no view-only fallback or downgrade save;
     - sequential pure migrations, each with old and new fixtures plus a rejection fixture;
@@ -210,7 +209,7 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
     - `VRS_FORMAT.md` as the wire contract;
     - a pointer that the deliverable PDF omits the model (S6).
   - **Deferred:** a plugin/introspectable schema, stable property ids, downgrade.
-  - **Consequences:** old builds refuse new files; bounded third-party PDF support.
+  - **Consequences:** old builds refuse new files, even when the new feature is unused in that file; bounded third-party PDF support.
   - **Status:** `Proposed`.
 - Also state that it complements, and does not amend, ADR-0003/0004, and note the number collision with the MCP and Online studies.
 
@@ -220,7 +219,8 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
   - `varos-core/src/lib.rs` (+`pub mod format;`);
   - `varos-core/src/file.rs` (delegation, bounded `load_vrs`, `VRS_VERSION` alias);
   - `varos-core/src/model.rs`: **attributes and comments only**. Add `#[serde(deny_unknown_fields)]` on `Anchor, Xform, Path, Group, Node, Artboard, SnapConfig, Guide, Document`, and `units.rs::DocUnits`; fix the `GroupRole` comment ("no bump" → "v2, see ADR-0008").
-- Must not touch: `editor.rs`, `command.rs`, `varos-pdf`, `varos-app`, fixtures, `golden.rs`.
+- Also owns, conditionally: `varos-pdf/tests/fixtures/native_demo.pdf` and `native_rich.pdf` — **only** if S6-A merges before B, and only to regenerate them for the version bump (2-byte diff each, proved with `cmp -l`; see §5 hot spots).
+- Must not touch: `editor.rs`, `command.rs`, `varos-pdf` source, `varos-app`, other fixtures, `golden.rs`.
 - Steps: implement pipeline steps 3–7 and step 9 of §3; wire `doc_to_blob`/`doc_from_blob`; run the full workspace suite (existing tests must stay green unchanged, except messages that intentionally change).
 - Tests (`format_v2.rs`):
   - `new_saves_write_format_2`
@@ -229,7 +229,7 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
   - `newer_version_refused_before_typed_decode` (body `"doc":42` ⇒ `NewerVersion`, not `Malformed`)
   - `missing_zero_negative_fractional_huge_versions_refused`
   - `unknown_field_fails_closed_envelope_document_node`
-  - `v2_missing_legacy_defaulted_key_is_malformed` + `v1_missing_artboards_gets_legacy_board`
+  - `v1_missing_artboards_gets_legacy_board`
   - `explicit_empty_artboards_stays_boardless_v1_and_v2`
   - `container_version_mismatch_refused`
   - `json_depth_over_limit_refused`
@@ -242,17 +242,17 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
   - `v1_masks_and_xform_preserved_through_migration`
   - `sync_tree_is_noop_on_canonical_v2`
   - `save_refuses_non_finite_and_leaves_doc_unchanged`
+  - `every_saved_doc_reopens` (for every document built in `format_v2.rs`/`format_validate.rs`: `decode_model(encode_model(d)?)` is `Ok`)
   - `limits_default_values_match_documented_numbers`
-  - `#[ignore] decode_timing_at_caps` (prints load time at 10k, 50k and 100k nodes; the numbers go in the PR, see R4).
+  - `#[ignore] decode_timing_at_caps` (prints load **and encode** time at 10k, 50k and 100k nodes — S3 pays the encode cost every 30 s; the numbers go in the PR, see R4).
 
 **S5-C — Semantic validator** · `opus` · M · branches from B's merge (or codes against §3 API from base and rebases) · parallel with D
 - Owns: `varos-core/src/format/validate.rs` (replaces B's stub wholesale) and `varos-core/tests/format_validate.rs`. Must not touch other `format/*` files, `model.rs`, or `varos-pdf`.
-- Rules (every rule must cite the code that maintains it in the live editor; a rule the editor cannot guarantee is dropped and listed in the PR, never tightened silently):
-  - **Kinds and parentage:** roots are Layers with `parent: None`; Path leaves have no children; nesting of Layer/Group matches what `model.rs` actually permits; every path has exactly one leaf; no orphan paths; no empty Groups.
+- Rules are trimmed to what the user actually drew, not what the save-side normalizer (§3 step 7, now also run on save per F1) already guarantees: "legacy registry empty; no nested live xform; no empty group; no orphan path" are `sync_tree` invariants produced by that normalizer, so re-checking them here refuses nothing new on load and, on save, they were the rules most likely to refuse a user's work for no benefit (R5). (Every remaining rule must cite the code that maintains it in the live editor; a rule the editor cannot guarantee is dropped and listed in the PR, never tightened silently.)
+  - **Kinds and parentage:** roots are Layers with `parent: None`; Path leaves have no children; nesting of Layer/Group matches what `model.rs` actually permits; every path has exactly one leaf.
   - **Masks:** `Clip` only on Group nodes; `mask_child` is `Some` iff `Clip`, and it is a direct child that exists; `MaskAlpha`/`MaskLuma` refused.
-  - **Legacy and xform:** legacy `groups`/`group_of` empty; no live xform on a nested node (`top_group_at_or_above` rule).
-  - **Finite:** every `f32` (anchor `p/hin/hout`, holes, `stroke_width`, `opacity`, paint channels, `xform.rot/piv`, artboard `x/y/w/h/bleed/page_color`, guides, `ruler_origin`, snap floats, `units.ppi`).
-  - **Ranges:** `opacity` and color channels ∈ [0,1]; `stroke_width` ≥ 0; artboard `w`,`h` > 0 and `bleed` ≥ 0; `ppi` > 0; `snap.candidate_max` bounded.
+  - **Finite:** every `f32` (anchor `p/hin/hout`, holes, `stroke_width`, `opacity`, paint channels, `xform.rot/piv`, artboard `x/y/w/h/bleed/page_color`, guides, `ruler_origin`, snap floats, `units.ppi`). `Invalid::NonFinite { what }` names the object (path name or id), so a refused save tells Ahmed which shape to fix.
+  - **Ranges:** `opacity` and color channels ∈ [0,1]; `stroke_width` ≥ 0; artboard `w`,`h` ≥ 0 (the spec says "negative sizes"; `> 0` has no cited editor invariant) and `bleed` ≥ 0; `ppi` > 0; `snap.candidate_max` bounded.
   - **Complexity:** O(n) with HashMaps.
 - Tests:
   - `valid_editor_documents_pass` (fresh, grouped, `clip_group`, rotated via `set_node_xform`, boardless, multi-board)
@@ -263,7 +263,6 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
 - Owns:
   - `varos-pdf/src/read.rs` (new: pre-gate, filter, iterative name-tree walk, bounded decode);
   - `varos-pdf/src/lib.rs` (**read side only**: remove `extract_model`, add `load_vrs_bytes`/`load_vrs_checked`, rewire `load_vrs`);
-  - `varos-pdf/Cargo.toml` (+`flate2 = "1"`; `Cargo.lock` must gain no new package);
   - `varos-pdf/tests/container_bounds.rs`.
 - Must not touch: `write_pdf`/page code (S6), `varos-core`, `varos-app`.
 - Tests:
@@ -273,8 +272,7 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
   - `resaved_with_object_streams_refused`, `xref_stream_refused` (lopdf `SaveOptions{use_object_streams/use_xref_streams}`)
   - `incremental_update_refused`, `encrypted_trailer_refused`
   - `xref_count_over_limit_refused`
-  - `flate_model_decodes_within_cap`, `flate_bomb_model_refused_at_cap`
-  - `unsupported_model_filter_refused`
+  - `filtered_model_refused` (any `/Filter`, including Flate, is `UnsupportedPdf("model encoding")` — no `flate2` dependency)
   - `name_tree_kids_cycle_terminates`, `name_tree_depth_over_limit_refused`
   - `fallback_accepts_only_model_varos_json`
   - `normal_streams_not_inflated_by_parse` (content length equals the compressed length after load)
@@ -288,6 +286,7 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
   - new files in `varos-core/tests/fixtures/` and `varos-pdf/tests/fixtures/`;
   - `varos-core/tests/golden.rs` (extend the list);
   - `varos-pdf/tests/golden_pdf.rs`, `varos-pdf/tests/old_reader_harness.rs`;
+  - `varos-pdf/tests/corpus_check.rs` — `#[ignore]`, reads `VAROS_CORPUS_DIR`, prints OK or the refusal reason for each file found there, and never writes; it is the harness behind hand test 0.
   - `docs/reference/VRS_FORMAT.md`.
 - Must not touch any `src/`.
 - Fixture generation at base, with a one-off throwaway test that is not committed:
@@ -299,13 +298,10 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
   - `id_overflow.vrs` (id `4294967295`), `float_overflow.vrs` (`1e39`).
 - After B: `v2_masked_rotated.vrs` and `v2_masked_rotated_pdf.vrs`, frozen as the v2 goldens for a future v3.
 - Oversized and deep inputs are generated in-test with tiny `Limits`; never commit big binaries. Provenance (base sha, generator snippet) is recorded in `VRS_FORMAT.md` §Fixtures.
-- **Old-reader harness:**
-  - `mod frozen_v1` is a **verbatim copy** of `ecf67f5:varos-core/src/file.rs:27-40` (`doc_from_blob`) and `ecf67f5:varos-pdf/src/lib.rs:36-44,343-407` (sniff + `extract_model`). It is made generic over `T: DeserializeOwned`, and the `sync_tree` hook becomes a closure. The reviewer diffs it with `git show ecf67f5:<path>`.
-  - Tests:
-    - `old_reader_accepts_v1_fixtures` (control, with the real `Document`);
-    - `old_reader_refuses_current_json_before_decode` and `old_reader_refuses_current_pdf_before_decode`: output from the current `doc_to_blob`/`write_pdf`, decoded into `Tripwire`, whose `Deserialize` increments a static counter. Assert `Err` contains "newer" **and** counter == 0;
-    - `old_reader_silently_drops_unknown_fields` (documents the hole).
-  - The two refusal tests **fail at base and pass after B**. That is the evidence.
+- **Old-reader harness (shrunk to what it actually proves — every build able to save has always had the header-first gate, from `7a5b3c8:file.rs:38` through `ecf67f5:file.rs:33`, and every Varos PDF has written `/VAROS_Model` since `b06194a:lib.rs:194`; a generic copy with a `Tripwire` counter would only prove `2 > 1` again):**
+  - `old_reader_harness.rs` holds a **≤15-line verbatim copy** of `ecf67f5:file.rs:28-35` (the typed decode comes after the gate, so the gate returns first by construction) and of the old `/VAROS_Model` lookup (`ecf67f5:lib.rs:343-356`). No generics, no `Tripwire` counter, no `sync_tree` closure. The reviewer diffs it with `git show ecf67f5:<path>`.
+  - Tests: it asserts that the v2 JSON and PDF fixtures give "newer Varos (v2)" — `old_reader_refuses_v2_json_before_decode` and `old_reader_refuses_v2_pdf_before_decode`.
+  - Both refusal tests **fail at base and pass after B**. That is the evidence.
   - Honesty note in the file: this proves the frozen *logic*. The old *binary* is covered by Ahmed's hand test 3.
 - **Golden law:**
   - Extend `golden.rs` to every JSON fixture.
@@ -334,19 +330,18 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
 - `varos-core/src/model.rs`: B adds attribute lines only; S1 may add content-checkpoint code. Textual merge, keep both.
 - `varos-core/src/lib.rs`: B's one line vs any S1 module line.
 - `format/validate.rs`: add/add between B's stub and C. **Take C's file wholesale.**
-- `varos-pdf/src/lib.rs`: D edits the read side. If S6-A (writer → `write.rs`) lands first, D rebases onto it; if D lands first, S6-A keeps D's read side. S6's `native_demo.pdf` is regenerated by whichever lands second (the version key changes); say so in the PR.
-- `Cargo.toml`/`Cargo.lock` (D's `flate2` edge): regenerate the lock with cargo, and verify with `git diff Cargo.lock` that no package was added.
+- `varos-pdf/src/lib.rs`: D edits the read side. If S6-A (writer → `write.rs`) lands first, D rebases onto it; if D lands first, S6-A keeps D's read side. S6-A's `write.rs:12,283` imports `VRS_VERSION` and its `export_pdf.rs:136-138` compares `write_pdf` byte-for-byte against `native_demo.pdf` **and** `native_rich.pdf` — B's own bump breaks that byte-identity, and S6-A is being built now. So: if S6-A is merged first, **B** regenerates both `varos-pdf/tests/fixtures/native_demo.pdf` and `native_rich.pdf` itself (added to B's owned files), and proves with `cmp -l` that each file differs in exactly 2 bytes (`"varos":1→2` in the blob, `/VAROS_SchemaVersion 1→2`; both are the same length, so no offsets move). Any other difference stops B.
 - `file.rs`: B edits it now; S3 later moves `write_atomic`. B must not touch `write_atomic`.
 
 ## 6. Risks / open questions (each with a default so execution never blocks)
 
 - **R1 — ADR acceptance is an owner act.** Default: A merges as `Proposed`, and code pieces may be built and merged on the work branch, but not to `main`, until Ahmed marks it Accepted. On the number collision (MCP and Online studies also *propose* "ADR-0008"): this ADR takes 0008 because it is the first filed, and the studies renumber when they are drafted. The moderator notes this in STATUS.
 - **R2 — Some third-party re-saved PDFs will now be refused** (object/xref streams, incremental updates, encryption). Today they may open unboundedly. Default: fail closed with the reason "This file was re-saved by another app in a form Varos can't read safely yet. Open the original .vrs." Bounded ObjStm support is a later F7 follow-up. It is unknown whether macOS Preview re-saves this way; hand test 4 measures it.
-- **R3 — Real v1 user files may carry retired or unknown keys, dangling leaves or invalid clips,** which are now refused under fail-closed. Default: refuse with the precise reason. Before any merge to `main`, run `#[ignore] corpus_check` (reads `VAROS_CORPUS_DIR`) over Ahmed's own `.vrs` files. A legitimately retired key becomes an explicit, documented allowlist field (`#[serde(default, skip_serializing)]` + `IgnoredAny`), never blanket tolerance.
+- **R3 — Real v1 user files may carry retired or unknown keys, dangling leaves or invalid clips,** which are now refused under fail-closed. A full-history audit narrows this: the first build that could save `.vrs` is `7a5b3c8` (2026-07-02), no earlier app code wrote files; since then no persisted field has been removed or renamed in `model.rs`/`units.rs` (`d556acf` kept the `fill`/`stroke` keys and only changed their type; `0f3c629` was a fmt reflow that re-added every field it removed); the singular `artboard` key was removed in `d1e5f80`, before any save existed. So `deny_unknown_fields` on v1 is safe by construction — the remaining risk is *structural*: broken clips, dangling leaves, out-of-range values. Default: refuse with the precise reason. Before any merge to `main`, run `#[ignore] corpus_check` (`varos-pdf/tests/corpus_check.rs`, reads `VAROS_CORPUS_DIR`) over Ahmed's own `.vrs` files — this is hand test 0, required, not optional. A legitimately retired key becomes an explicit, documented allowlist field (`#[serde(default, skip_serializing)]` + `IgnoredAny`), never blanket tolerance.
 - **R4 — Declared limits versus measured cost.** `sync_tree` is about O(n²) (`model.rs:1004`), and lopdf may amplify memory on huge array objects. Default: B and D report the measured time and peak memory at the caps. If loading at the caps takes more than about 2 s or 8× the file size, **lower the default numbers** in `limits.rs` and `VRS_FORMAT.md`. Optimizing `sync_tree` is out of S5.
 - **R5 — Save-side refusal could block saving work the editor produced** if the validator is stricter than the editor. Default: only rules backed by a cited editor invariant (C's rule); a refused save leaves the document dirty with the reason, and S3 recovery still holds it in memory; `valid_editor_documents_pass` covers the flows the tests exercise.
 - **R6 — The harness is frozen logic, not the old binary.** Builds older than the header-first check (if any exist) cannot be protected retroactively. v1 files already damaged by an old re-save cannot be reconstructed (spec §2). Default: state this in `VRS_FORMAT.md`, and rely on hand test 3 for the binary.
-- **R7 — `flate2` as a direct dependency edge** (external, already locked at 1.1.9). Default: add it. If the reviewer rejects it, a Flate-encoded model is refused as "unsupported encoding" instead.
+- **R7 — No `flate2` dependency.** Decided: D keeps the pre-gate and the ObjStm filter (the minimum lopdf needs) but does not add `flate2`; a Flate-encoded model is refused as "unsupported encoding" instead. Varos writes the model unfiltered, and any re-compressing app is already caught by the pre-gate's object/xref-stream refusal. Revisit only if hand test 4 finds a Preview-resaved file that needs it.
 - **R8 — App messaging.** S5 keeps `load_vrs`/`save_vrs` returning `String`. The exact dialog titles and the "Opened an older file…" notice are wired by S1's open pipeline, or a small integration piece after S1, consuming `Loaded`/`LoadError`. For S5, the hand test sees "Open failed: {reason}".
 - **R9 — Day cap.** D (bounded parsing) may exceed S5's one-day cap (spec §6). Default: reveal at entry. The release gate stays closed until bounded parsing is real, and checks are never moved after live replacement to meet the deadline.
 - **R10 — Anchor-id uniqueness is not enforced.** Tests and older files reuse ids across kinds (e.g. `vrs.rs:21-31`). Anchor ids only feed `max_used`. Documented as a non-invariant.
@@ -366,3 +361,9 @@ pub fn load_vrs(path: &Path) -> Result<Document, String>; // UNCHANGED signature
 - An editor-side `nid()` overflow guard at runtime.
 - A plugin or introspectable schema.
 - Amending ADR-0003/0004, charter flags, and STATUS/GATE_LOG edits (the moderator's job).
+
+## Needs Ahmed (from review)
+1. **Accept ADR-0008** after the review's edits are applied (they are, in this amendment). **Working assumption: accept.**
+2. **An old file whose clipping mask is already broken** (the mask shape is no longer inside its group). Refuse to open it, or open it with the mask released and a notice? **Working assumption: refuse — unless hand test 0's corpus check finds one of Ahmed's own files like this, in which case open it with a notice instead.**
+3. **Every new saved feature raises the format number** (an older Varos then cannot open files from a newer one, even ones that don't use the new feature). **Working assumption: yes** — simple and honest (see ADR-0008 rule 3 and Consequences).
+4. **Run the one corpus command on the Mac before S5 reaches `main`.** **Working assumption: required** — see hand test 0.

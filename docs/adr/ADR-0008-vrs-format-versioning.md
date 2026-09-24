@@ -27,11 +27,11 @@ The owner approved decision D3 on 2026-09-24: format 2 for all new saves, conser
 
 **2. v2 is the same model with a stricter reader.** Format 2 is today's `Document` Serde model with the stamp raised to 2. There is no schema change. What is new is the contract:
 - a strict version check before any typed decode (rule 4);
-- in v2, required keys wherever a Serde default is a legacy reinterpretation (every `Document` key, plus `Artboard.{bleed,page_color,clip,hidden,locked}`); v1 files keep their legacy defaults;
+- v1 files keep their legacy Serde defaults;
 - unknown fields and unknown enum variants fail closed, at every level;
 - declared size, depth, count and id limits (rule 6), and structural and semantic validity.
 
-**3. The bump rule.** Every change that is not additive-safe raises the format number. That includes removed or renamed fields, changed units or defaults, new enum variants, and any optional or defaulted field whose absence changes artwork, structure, editability or meaning. "Additive-safe" needs proof, not optionality: an older reader's read → save must keep all authored meaning and all required data. Because v2 readers refuse unknown keys, a new persisted key without a bump would turn the readable "newer Varos" refusal into a generic "malformed" one, so in practice new keys bump too. Each bump ships, before its writer ships: a named pure migration, old and new fixtures, a rejection fixture, and an update to `docs/reference/VRS_FORMAT.md`.
+**3. The bump rule.** Any change to what the writer can emit — a new, removed or renamed key, a new enum variant, a changed type, unit or default — raises the format number. Reader-only relaxations (accepting input no writer emits yet) do not. Each bump ships, before its writer ships: a named pure migration, old and new fixtures, a rejection fixture, and an update to `docs/reference/VRS_FORMAT.md`.
 
 **4. Refusal policy (all before typed `Document` decoding).**
 - Newer than this build supports → refused: "This file needs a newer Varos…". No view-only fallback, no editable guess.
@@ -59,7 +59,8 @@ This ADR complements both and edits neither text. ADR-0003's container stays. AD
 
 ## Consequences
 
-- Old builds refuse v2 files with their existing readable message ("saved by a newer Varos (v2)"), because their header check already runs before typed decode (`file.rs:33`). Builds older than that check cannot be protected, and v1 files already damaged by an old re-save cannot be rebuilt.
+- An older build refuses a newer file even when the new feature is unused in it — rule 3 bumps on any writer-side change, not only ones a given file exercises. Stamping the minimum version a file actually needs is a possible later ADR, not v2.
+- Old builds refuse v2 files with their existing readable message ("saved by a newer Varos (v2)"), because their header check already runs before typed decode (`file.rs:33`). Every `.vrs`-capable build since `7a5b3c8` has this check. v1 files already damaged by an old re-save cannot be rebuilt.
 - No downgrade-save: a file saved by this build cannot be written for older builds.
 - Fail-closed may refuse some real v1 files (retired keys, dangling leaves, invalid clips). Before any S5 merge to `main`, a corpus check runs over the owner's own `.vrs` files. A legitimately retired key becomes an explicit, documented allowlist entry, never blanket tolerance.
 - Some PDFs re-saved by other apps (object streams, xref streams, incremental updates, encryption) will be refused with a readable reason.
