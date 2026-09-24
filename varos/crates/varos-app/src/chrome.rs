@@ -14,6 +14,8 @@ use winit::keyboard::KeyCode;
 /// How the top bar fits the window chrome on one platform.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TopbarChrome {
+    /// Logical height: match the native 28 pt title area on macOS.
+    pub height: f32,
     /// Logical px before the burger cell (macOS: room for the native traffic lights).
     pub lead: f32,
     /// Logical px between the right-most bar control and the window edge when there are no caps.
@@ -26,14 +28,75 @@ pub struct TopbarChrome {
 /// them — they end ≈ 70 pt from the left); every other platform keeps the original Windows numbers.
 pub const fn topbar_chrome(macos: bool) -> TopbarChrome {
     if macos {
-        TopbarChrome { lead: 78.0, right_inset: 6.0, window_caps: false }
+        TopbarChrome { height: 28.0, lead: 78.0, right_inset: 6.0, window_caps: false }
     } else {
-        TopbarChrome { lead: 4.0, right_inset: 0.0, window_caps: true }
+        TopbarChrome { height: 46.0, lead: 4.0, right_inset: 0.0, window_caps: true }
     }
 }
 
 /// This build's top-bar chrome.
 pub const TOPBAR: TopbarChrome = topbar_chrome(cfg!(target_os = "macos"));
+
+/// The actual rectangles painted / hit-tested by the top bar. Text widths come from egui's
+/// font measurement; all padding, vertical alignment and tab fitting live here.
+pub struct TopbarLayout {
+    pub caps: Option<[egui::Rect; 3]>,
+    pub menu: egui::Rect,
+    pub magnet: egui::Rect,
+    pub window: egui::Rect,
+    pub share: egui::Rect,
+    pub export: egui::Rect,
+    pub search: egui::Rect,
+    pub tabs: Vec<egui::Rect>,
+    pub plus: Option<egui::Rect>,
+}
+
+pub fn topbar_layout(
+    bar: egui::Rect,
+    chrome: TopbarChrome,
+    button_text_widths: [f32; 3],
+    search_width: f32,
+    tab_text_widths: impl IntoIterator<Item = f32>,
+) -> TopbarLayout {
+    use egui::{pos2, vec2, Rect};
+    let cy = bar.center().y;
+    let caps = chrome.window_caps.then(|| {
+        [3.0, 2.0, 1.0].map(|i| {
+            Rect::from_min_max(
+                pos2(bar.right() - i * 42.0, bar.top()),
+                pos2(bar.right() - (i - 1.0) * 42.0, bar.bottom()),
+            )
+        })
+    });
+    let caps_left = caps.map_or(bar.right() - chrome.right_inset, |r| r[0].left());
+    let magnet = Rect::from_center_size(pos2(caps_left - 6.0 - 14.0, cy), vec2(28.0, 28.0));
+    let button = |right: f32, text_width: f32| {
+        Rect::from_min_max(pos2(right - text_width - 24.0, cy - 13.0), pos2(right, cy + 13.0))
+    };
+    let window = button(magnet.left() - 8.0, button_text_widths[0]);
+    let share = button(window.left() - 8.0, button_text_widths[1]);
+    let export = button(share.left() - 8.0, button_text_widths[2]);
+    let search_right = export.left() - 8.0;
+    let search = Rect::from_min_max(pos2(search_right - search_width, cy - 12.0), pos2(search_right, cy + 12.0));
+    let menu = Rect::from_min_size(pos2(bar.left() + chrome.lead, bar.top()), vec2(36.0, bar.height()));
+    let tabs_right = search.left() - 12.0;
+    let mut tx = menu.right() + 8.0;
+    let mut tabs = Vec::new();
+    for text_width in tab_text_widths {
+        let tw = (12.0 + text_width + 8.0 + 18.0 + 4.0).clamp(76.0, 220.0);
+        if tx + tw > tabs_right {
+            break;
+        }
+        tabs.push(Rect::from_min_size(pos2(tx, cy - 14.0), vec2(tw, 28.0)));
+        tx += tw + 4.0;
+    }
+    let plus = (tx + 32.0 <= tabs_right).then(|| Rect::from_center_size(pos2(tx + 16.0, cy), vec2(32.0, 28.0)));
+    TopbarLayout { caps, menu, magnet, window, share, export, search, tabs, plus }
+}
+
+pub fn tab_close_rect(tab: egui::Rect) -> egui::Rect {
+    egui::Rect::from_center_size(egui::pos2(tab.right() - 13.0, tab.center().y), egui::vec2(18.0, 18.0))
+}
 
 /// Is the window opaque from the first frame? macOS: yes — a transparent NSWindow let the title strip
 /// show the desktop through (Ahmed 2026-09-23), so the splash card sits on the dark window instead of
@@ -270,12 +333,42 @@ mod tests {
     #[test]
     fn windows_topbar_numbers_are_unchanged_and_mac_clears_the_traffic_lights() {
         let win = topbar_chrome(false);
-        assert_eq!(win, TopbarChrome { lead: 4.0, right_inset: 0.0, window_caps: true });
+        assert_eq!(win, TopbarChrome { height: 46.0, lead: 4.0, right_inset: 0.0, window_caps: true });
         let mac = topbar_chrome(true);
         assert!(!mac.window_caps, "macOS uses the native traffic lights, never our ─ ☐ ✕");
         assert!(mac.lead >= 72.0, "the three traffic lights end ≈ 70 pt from the left edge");
         assert!(mac.right_inset > 0.0);
         assert_eq!(TOPBAR, topbar_chrome(cfg!(target_os = "macos")));
+    }
+
+    #[test]
+    fn mac_topbar_controls_share_the_native_traffic_light_centre() {
+        let chrome = topbar_chrome(true);
+        // Include a translated bar, minimum window width, overflow tabs and a wide window.
+        for origin in [egui::pos2(0.0, 0.0), egui::pos2(31.0, 47.0)] {
+            for width in [800.0, 1280.0, 1920.0] {
+                let bar = egui::Rect::from_min_size(origin, egui::vec2(width, chrome.height));
+                let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, [65.0, 180.0, 300.0]);
+                assert!(layout.caps.is_none());
+                assert!(!layout.tabs.is_empty());
+                if width >= 1280.0 {
+                    assert!(layout.plus.is_some());
+                }
+                let controls = [layout.menu, layout.magnet, layout.window, layout.share, layout.export, layout.search]
+                    .into_iter()
+                    .chain(layout.tabs.iter().copied())
+                    .chain(layout.tabs.iter().copied().map(tab_close_rect))
+                    .chain(layout.plus);
+                let traffic_light_centre = bar.top() + 14.0;
+                for rect in controls {
+                    assert!(bar.contains_rect(rect), "control {rect:?} escapes bar {bar:?}");
+                    assert!(
+                        (rect.center().y - traffic_light_centre).abs() <= 1.0,
+                        "control {rect:?} is not centred on traffic lights at {traffic_light_centre}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

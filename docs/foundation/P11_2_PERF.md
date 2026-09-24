@@ -1,9 +1,17 @@
-> **Status:** current — P11.2 items (1) and (2) design, measurement and implementation evidence, governed by `FOUNDATION_CHARTER.md`.
+> **Status:** current — P11.2 items (0), (1) and (2) design, measurement and implementation evidence, governed by `FOUNDATION_CHARTER.md`.
 # P11.2 Performance Evidence — view culling, view clipping, flatten cache
 
 Scope: work order P11.2 items **(1)** viewport culling at path level plus ring/edge clipping to the
 view rect (owner symptom (d), 4000% zoom), and **(2)** a cross-frame flatten cache with zoom buckets.
-Item (0), instant zoom, lives in the app crate and is a separate piece — **not done here**.
+Item **(0), instant zoom, is done on all platforms (2026-09-24)** in `varos-app/src/main.rs`.
+The existing Alt+wheel and ⌘/Ctrl+Space-click paths apply their complete clamped zoom step during
+input handling, before the next render, with the same cursor anchor. **A13 glide removed on all
+platforms, owner decision 2026-07-12/2026-09-23** (GATE_LOG P11.1; no-animation law).
+The obsolete easing helper, state, tests and glide-driven redraws are deleted, including on Windows.
+Fit and actual-size paths stay instant; culling and cache code are untouched. This branch has no ⌘±
+binding, and this polish does not add one.
+GPU-free tests: `one_zoom_step_reaches_final_zoom_immediately_at_cursor` and
+`instant_zoom_limits_keep_the_cursor_anchor`.
 
 ## Design (decided 2026-09-23)
 
