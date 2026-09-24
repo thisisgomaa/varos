@@ -236,6 +236,15 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
             // need the canvas rect for a view-centred paste, so `OpenDocContext::shortcut` owns them.
             "KeyC" if !shift && !alt => ed.execute(EditCommand::Copy),
             "KeyX" if !shift && !alt => ed.execute(EditCommand::Cut),
+            // Edit ▸ Select All (⌘A) / Deselect (⇧⌘A — the Escape path). Never reached from a focused
+            // text field: the keyboard path skips canvas shortcuts there and the menu hands ⌘A to egui.
+            "KeyA" if !alt => {
+                if shift {
+                    ed.escape()
+                } else {
+                    ed.select_all()
+                }
+            }
             _ => {}
         }
         return;
@@ -973,6 +982,20 @@ fn main() {
                                     saved_rev: &mut saved_rev,
                                 }
                                 .shortcut(k.code, true, k.shift, k.alt);
+                            }
+                        }
+                        // a click-only row (Edit ▸ Delete): the plain key's path, never while typing
+                        M::Plain(code) => {
+                            if !gui.wants_keyboard() {
+                                OpenDocContext {
+                                    ed: &mut ed,
+                                    gui: &gui,
+                                    window: &window,
+                                    view: &mut view,
+                                    cur_file: &mut cur_file,
+                                    saved_rev: &mut saved_rev,
+                                }
+                                .shortcut(code, false, false, false);
                             }
                         }
                         M::Quit => {
@@ -1850,5 +1873,73 @@ mod clipboard_key_tests {
         paste_key(&mut ed, &View::identity(), [100.0, 100.0], true);
         assert_eq!(ed.rev, 0);
         assert_eq!(ed.doc.paths.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod select_all_key_tests {
+    //! QW5: ⌘A / ⇧⌘A reach Select All / Deselect through `apply_key` (the path the Edit menu rows
+    //! send), plain A keeps the Direct tool, and the click-only Edit ▸ Delete row's plain key runs the
+    //! Delete/Backspace path.
+    use super::*;
+    use crate::chrome::{flat_items, menus, Entry, MenuCmd};
+    use varos_core::model::{Anchor, Path};
+
+    fn two_squares() -> Editor {
+        let a = |i: u32, x: f32| Anchor { id: i, p: [x, 0.0], hin: None, hout: None, smooth: false };
+        let mut ed = Editor::new();
+        ed.doc.artboards.clear();
+        for (id, x) in [(1u32, 0.0f32), (6, 100.0)] {
+            ed.doc.paths.push(Path::new(
+                id,
+                vec![a(id + 1, x), a(id + 2, x + 40.0), a(id + 3, x + 40.0), a(id + 4, x)],
+                true,
+                Some([0.5, 0.5, 0.5, 1.0]),
+                None,
+                1.0,
+            ));
+        }
+        ed.doc.ids = 10;
+        ed.doc.sync_tree();
+        ed
+    }
+
+    fn row(id: &str) -> MenuCmd {
+        flat_items(&menus())
+            .into_iter()
+            .find_map(|e| match e {
+                Entry::Item { id: i, cmd, .. } if i == id => Some(cmd),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the menu has {id}"))
+    }
+
+    #[test]
+    fn cmd_a_selects_all_and_shift_cmd_a_deselects() {
+        let mut ed = two_squares();
+        let mut view = View::identity();
+        for (id, want) in [("edit.selectall", 2), ("edit.deselect", 0)] {
+            let MenuCmd::Key(k) = row(id) else { panic!("{id} is a ⌘-row") };
+            apply_key(&mut ed, &mut view, [0.0, 0.0], &format!("{:?}", k.code), true, k.shift, k.alt);
+            assert_eq!(ed.objsel.len(), want, "{id}");
+            assert_eq!(ed.rev, 0, "{id}: selection is not a document edit");
+        }
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyA", false, false, false);
+        assert!(ed.tool == ToolKind::Direct, "plain A stays the Direct Selection tool");
+        assert!(ed.objsel.is_empty() && ed.selected.is_empty(), "plain A selects nothing");
+    }
+
+    #[test]
+    fn delete_row_runs_delete_selected() {
+        let MenuCmd::Plain(code) = row("edit.delete") else { panic!("Edit ▸ Delete is a plain-key row") };
+        let mut ed = two_squares();
+        let mut view = View::identity();
+        ed.objsel.insert(1);
+        // the host's `M::Plain` arm: `shortcut(code, false, false, false)` → this `apply_key` call
+        apply_key(&mut ed, &mut view, [0.0, 0.0], &format!("{code:?}"), false, false, false);
+        assert_eq!(ed.doc.paths.iter().map(|p| p.id).collect::<Vec<_>>(), [6], "the selection is deleted");
+        assert_eq!(ed.rev, 1, "one undoable edit, exactly as the Delete key");
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyZ", true, false, false);
+        assert_eq!(ed.doc.paths.len(), 2, "⌘Z brings it back");
     }
 }
