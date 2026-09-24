@@ -652,7 +652,10 @@ struct Snap {
 }
 impl Snap {
     fn read(ed: &Editor) -> Self {
-        let n = ed.objsel.len();
+        // PAINS_LOG FB6 nit: mid-draft the dock describes the in-progress path — a selection left over
+        // from before the Pen started is not what the user is working on (the bar already ignores it).
+        let drawing = ed.tool == ToolKind::Pen && ed.active.is_some();
+        let n = if drawing { 0 } else { ed.objsel.len() };
         // A7 Stage 5: X/Y = the WORLD AABB top-left (matches `obj_bbox`); W/H = the TRUE un-rotated size
         // (the LOCAL bbox), so a rotated object reports its own dimensions, not its axis-aligned envelope.
         // Astra F07: with NO object selection, a Direct selection (grabbed anchors, or a Direct path-level
@@ -669,7 +672,7 @@ impl Snap {
         };
         // fill/stroke/weight/opacity follow the EFFECTIVE paint selection (object sel, a Direct path-level
         // selection, or a selected anchor's path) — not objsel alone, so the Direct tool shows real colours.
-        let repr = ed.repr_path();
+        let repr = if drawing { ed.active.and_then(|pid| ed.doc.pidx(pid)) } else { ed.repr_path() };
         let (fill, stroke, sw, opacity) = match repr {
             Some(pi) => {
                 let p = &ed.doc.paths[pi];
@@ -677,7 +680,9 @@ impl Snap {
             }
             None => (ed.cur_fill, ed.cur_stroke, ed.cur_sw, 1.0),
         };
-        let name = if n == 0 {
+        let name = if drawing {
+            "Drawing path\u{2026}".into()
+        } else if n == 0 {
             // "Anchor" / "N anchors" / the path's name (or "Path") — see `Editor::direct_label`.
             ed.direct_label().unwrap_or_else(|| "No selection".into())
         } else if n == 1 {
@@ -690,7 +695,7 @@ impl Snap {
             name,
             sel,
             direct,
-            drawing: ed.tool == ToolKind::Pen && ed.active.is_some(),
+            drawing,
             x,
             y,
             w,
@@ -4149,7 +4154,8 @@ fn col_toggle(
 
 /// The Layers panel — the SIMPLE (Photoshop/Affinity) VIEW of the scene tree (07-03 pivot), docked UNDER
 /// the inspector (`dock_below`) and growing downward. Row = eye · lock · disclosure · thumbnail · name.
-/// Click=select · Ctrl=toggle · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate.
+/// Click=select · Ctrl=toggle · Shift=range · dbl or right-click ▸ Rename=rename · drag=reorder/nest ·
+/// Alt+drag=duplicate.
 /// Header: title + search. Footer: Group · Delete.
 #[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state, split deferred with ui.rs
 fn panel_layers(
@@ -4451,23 +4457,43 @@ fn panel_layers(
                         let renaming = !rename_shown && rename.as_ref().is_some_and(|(id, _)| *id == row.id);
                         if renaming {
                             rename_shown = true;
+                            // Illustrator's inline rename (QW3): Enter or a click elsewhere commits, Escape
+                            // cancels, an empty or unchanged name changes nothing. The field's id is explicit
+                            // (never an auto id that shifts with what the rows above allocate).
+                            let te_id = ui.id().with(("lay-rename", row.id));
                             let buf = &mut rename.as_mut().unwrap().1;
                             let te = ui.put(
                                 name_rect.shrink2(egui::vec2(2.0, 4.0)),
                                 egui::TextEdit::singleline(buf)
+                                    .id(te_id)
                                     .frame(egui::Frame::NONE)
                                     .font(egui::FontId::proportional(12.5))
                                     .text_color(TEXT),
                             );
-                            te.request_focus();
-                            if te.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                let v = std::mem::take(buf);
-                                ops.push(if row.kind == LKind::Board {
-                                    Op::AbName(row.sec as usize, v)
-                                } else {
-                                    Op::LayerRename(row.id, v)
-                                });
+                            let focused = ui.memory(|m| m.has_focus(te_id));
+                            if te.lost_focus() {
+                                let v = std::mem::take(buf).trim().to_string();
+                                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                if !cancel && !v.is_empty() && v != row.name {
+                                    ops.push(if row.kind == LKind::Board {
+                                        Op::AbName(row.sec as usize, v)
+                                    } else {
+                                        Op::LayerRename(row.id, v)
+                                    });
+                                }
                                 *rename = None;
+                            } else if !focused {
+                                // the frame it opens: take focus ONCE with the whole old name selected, so
+                                // typing replaces it. (Re-requesting focus every frame — the old code — also
+                                // re-grabbed it after Escape or a click elsewhere: the field never closed.)
+                                te.request_focus();
+                                let all = egui::text::CCursorRange::two(
+                                    egui::text::CCursor::new(0),
+                                    egui::text::CCursor::new(buf.chars().count()),
+                                );
+                                let mut st = egui::text_edit::TextEditState::load(ui.ctx(), te_id).unwrap_or_default();
+                                st.cursor.set_char_range(Some(all));
+                                st.store(ui.ctx(), te_id);
                             }
                         } else {
                             let auto = row.name.starts_with('<');
@@ -4534,6 +4560,22 @@ fn panel_layers(
                         if (resp.double_clicked() && !renaming) || manual_dbl {
                             *rename = Some((row.id, row.name.clone()));
                         }
+                        // the name cell says how to rename it; right-click offers the same editor (Astra
+                        // F10: nothing on the row hinted at the double-click, right-click did nothing)
+                        if !renaming && resp.hovered() && ptr.is_some_and(|pp| name_rect.contains(pp)) {
+                            resp.clone().on_hover_text("Double-click to rename");
+                        }
+                        let menu_id = ui.id().with(("lay-menu", row.id, row.sec));
+                        if resp.secondary_clicked() && !renaming {
+                            menu_set(ui, menu_id, true);
+                        }
+                        menu_below(ui, menu_id, &resp, None, |ui| {
+                            ui.set_width(160.0);
+                            if menu_row(ui, "Rename", "") {
+                                *rename = Some((row.id, row.name.clone()));
+                                menu_set(ui, menu_id, false);
+                            }
+                        });
                         // the lifted rows read as "picked up" — the whole payload dims while dragged
                         // (a mirror dims on BOTH appearances — it IS the same object)
                         if drag.is_some() && payload.contains(&row.id) {
@@ -4668,7 +4710,9 @@ fn panel_properties(
                 return;
             }
 
-            let measured = s.sel || s.direct; // real numbers below (objects, or a Direct selection — Astra F07)
+            // real numbers below (objects, or a Direct selection — Astra F07); a draft in progress is not a
+            // measured selection, so its "Drawing path…" header stays MUTED (FB6 nit)
+            let measured = (s.sel || s.direct) && !s.drawing;
             ui.label(RichText::new(&s.name).color(if measured { TEXT } else { MUTED }).size(12.5).strong());
             ui.add_space(2.0);
             ui.label(RichText::new("TRANSFORM").color(MUTED).size(10.0).strong());
@@ -5701,7 +5745,11 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::LayerToggle(n) => ed.layer_toggle(n),
             Op::LayerEye(node) => ed.execute(EditCommand::ToggleNodeHidden(node)),
             Op::LayerLock(node) => ed.execute(EditCommand::ToggleNodeLocked(node)),
-            Op::LayerRename(node, name) => ed.execute(EditCommand::RenameNode { node, name }),
+            // a `<Path>` row shows `Path::name`, not its leaf node's name — rename what the row reads
+            Op::LayerRename(node, name) => match ed.doc.node(node).map(|n| n.kind) {
+                Some(varos_core::model::NodeKind::Path(path)) => ed.execute(EditCommand::RenamePath { path, name }),
+                _ => ed.execute(EditCommand::RenameNode { node, name }),
+            },
             Op::LayerGroup => ed.execute(EditCommand::GroupSelection),
             Op::LayerDeleteSel => ed.execute(EditCommand::DeleteLayerSelection),
             Op::LayerMove(srcs, target, zone) => {
@@ -6037,5 +6085,362 @@ mod characterization_tests {
 
         assert_eq!(from_menu.doc.snap.smart, from_shortcut.doc.snap.smart);
         assert_eq!(from_menu.doc.snap, from_shortcut.doc.snap);
+    }
+}
+
+/// QW3 (Astra F10, PAINS_LOG P4 + FB6 nit): the Layers-row rename, driven headlessly through a bare
+/// `egui::Context` with synthetic pointer/keyboard input — no window, no GPU.
+#[cfg(test)]
+mod layer_rename_tests {
+    use super::{apply_ops, build_layer_rows, panel_layers, LKind, LRow, LayerIcons, Op, Snap};
+    use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
+    use std::collections::{HashMap, HashSet};
+    use varos_core::editor::{Editor, ToolKind};
+    use varos_core::model::{Anchor, NodeKind, Path};
+
+    const NAME_X: f32 = 150.0; // inside the name cell of a depth-0 row (the cell starts at x = 94)
+
+    fn path_row(id: u32, name: &str) -> LRow {
+        LRow {
+            id,
+            depth: 0,
+            kind: LKind::Path,
+            sec: u32::MAX,
+            name: name.into(),
+            hidden: false,
+            locked: false,
+            eff_hidden: false,
+            eff_locked: false,
+            has_children: false,
+            collapsed: false,
+            selected: false,
+            full_sel: false,
+            drag_sel: false,
+            active: false,
+            thumb: vec![],
+        }
+    }
+
+    fn no_icons() -> LayerIcons {
+        LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, grp: None, trash: None, search: None }
+    }
+
+    /// One Layers panel in a bare context, plus the state `Ui` keeps for it between frames.
+    struct Panel {
+        ctx: egui::Context,
+        t: f64,
+        rows: Vec<LRow>,
+        icons: LayerIcons,
+        search: String,
+        rename: Option<(u32, String)>,
+        collapsed: HashSet<u32>,
+        drag: Option<(u32, u32)>,
+        anchor: Option<(u32, u32)>,
+        ops: Vec<Op>,
+    }
+
+    impl Panel {
+        fn new(rows: Vec<LRow>) -> Self {
+            let mut p = Panel {
+                ctx: egui::Context::default(),
+                t: 10.0,
+                rows,
+                icons: no_icons(),
+                search: String::new(),
+                rename: None,
+                collapsed: HashSet::new(),
+                drag: None,
+                anchor: None,
+                ops: vec![],
+            };
+            p.frame(vec![]); // egui hit-tests against the PREVIOUS pass's widgets: lay the panel out once
+            p
+        }
+
+        /// Run one frame 1/60 s after the previous one; returns the ops it emitted.
+        fn frame(&mut self, events: Vec<Event>) -> Vec<Op> {
+            self.t += 1.0 / 60.0;
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 480.0))),
+                time: Some(self.t),
+                events,
+                ..Default::default()
+            };
+            let Panel { ctx, rows, icons, search, rename, collapsed, drag, anchor, .. } = self;
+            let mut ops = vec![];
+            let _ = ctx.run_ui(input, |ui| {
+                panel_layers(ui, rows, icons, search, rename, collapsed, drag, anchor, &mut ops);
+            });
+            self.ops.extend(ops.iter().map(clone_op));
+            ops
+        }
+        fn button(&mut self, p: Pos2, button: PointerButton, pressed: bool) -> Vec<Op> {
+            let mut ops = self.frame(vec![Event::PointerMoved(p)]); // hover first, as a real mouse does
+            ops.extend(self.frame(vec![Event::PointerButton { pos: p, button, pressed, modifiers: Modifiers::NONE }]));
+            ops
+        }
+        fn click(&mut self, p: Pos2) -> Vec<Op> {
+            let mut ops = self.button(p, PointerButton::Primary, true);
+            ops.extend(self.button(p, PointerButton::Primary, false));
+            ops
+        }
+        fn double_click(&mut self, p: Pos2) -> Vec<Op> {
+            let mut ops = self.click(p);
+            ops.extend(self.click(p));
+            ops
+        }
+        fn key(&mut self, key: Key) -> Vec<Op> {
+            self.frame(vec![Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }])
+        }
+        fn type_text(&mut self, s: &str) -> Vec<Op> {
+            self.frame(vec![Event::Text(s.into())])
+        }
+        fn focused(&self) -> bool {
+            self.ctx.memory(|m| m.focused().is_some())
+        }
+    }
+
+    fn clone_op(op: &Op) -> Op {
+        match op {
+            Op::LayerRename(id, s) => Op::LayerRename(*id, s.clone()),
+            Op::LayerSelectSet(v) => Op::LayerSelectSet(v.clone()),
+            Op::AbName(i, s) => Op::AbName(*i, s.clone()),
+            _ => Op::LayerGroup, // any other op: a stand-in (the tests below only inspect the three above)
+        }
+    }
+
+    fn renames(ops: &[Op]) -> Vec<(u32, String)> {
+        ops.iter()
+            .filter_map(|o| match o {
+                Op::LayerRename(id, s) => Some((*id, s.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Find the screen y of row `id` by probing single clicks down the panel (each probe in a fresh
+    /// context, so no probe can pair with another into a double-click) — no layout constants assumed.
+    fn row_y(rows: &[LRow], id: u32) -> f32 {
+        let hits: Vec<f32> = (0..120)
+            .map(|k| k as f32 * 2.0)
+            .filter(|&y| {
+                let mut p = Panel::new(rows.to_vec());
+                let ops = p.click(egui::pos2(NAME_X, y));
+                ops.iter().any(|o| matches!(o, Op::LayerSelectSet(v) if v == &vec![id]))
+            })
+            .collect();
+        assert!(!hits.is_empty(), "row {id} was never hit by a click");
+        (hits[0] + hits[hits.len() - 1]) * 0.5
+    }
+
+    fn two_paths() -> Vec<LRow> {
+        vec![path_row(3, "<Path>"), path_row(4, "<Path>")]
+    }
+
+    /// Double-click a row name, then let the editor settle for two frames.
+    fn open_editor(rows: &[LRow], id: u32) -> Panel {
+        let y = row_y(rows, id);
+        let mut p = Panel::new(rows.to_vec());
+        p.double_click(egui::pos2(NAME_X, y));
+        p.frame(vec![]);
+        p.frame(vec![]);
+        p
+    }
+
+    #[test]
+    fn double_click_opens_rename_and_enter_commits() {
+        let mut p = open_editor(&two_paths(), 4);
+        assert_eq!(p.rename.as_ref().map(|r| r.0), Some(4), "double-click on a <Path> row opened no editor");
+        assert!(p.focused(), "the editor never took keyboard focus");
+        p.type_text("Logo");
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert_eq!(renames(&p.ops), vec![(4, "Logo".to_string())], "typing a name + Enter must commit exactly it");
+        assert!(p.rename.is_none(), "Enter closes the editor");
+    }
+
+    #[test]
+    fn rename_field_keeps_focus_on_the_frame_it_opens() {
+        let rows = two_paths();
+        let y = row_y(&rows, 3);
+        let mut p = Panel::new(rows);
+        p.double_click(egui::pos2(NAME_X, y));
+        assert_eq!(p.rename.as_ref().map(|r| r.0), Some(3), "double-click opened no editor");
+        // the frames right after opening: no commit sneaks out, focus arrives and stays
+        for _ in 0..4 {
+            let ops = p.frame(vec![]);
+            assert!(renames(&ops).is_empty(), "the editor committed on its own while opening");
+            assert!(p.rename.is_some(), "the editor closed while opening");
+        }
+        assert!(p.focused());
+    }
+
+    #[test]
+    fn right_click_rename_opens_the_same_editor() {
+        let rows = two_paths();
+        let y = row_y(&rows, 4);
+        let mut p = Panel::new(rows);
+        p.button(egui::pos2(NAME_X, y), PointerButton::Secondary, true);
+        p.button(egui::pos2(NAME_X, y), PointerButton::Secondary, false);
+        p.frame(vec![]);
+        assert!(p.rename.is_none(), "right-click alone must not start renaming");
+        // the menu hangs under the row: probe downwards for its single "Rename" row
+        let mut opened = false;
+        for dy in (14..60).step_by(4) {
+            let q = egui::pos2(NAME_X - 40.0, y + dy as f32);
+            p.frame(vec![Event::PointerMoved(q)]);
+            p.click(q);
+            if p.rename.is_some() {
+                opened = true;
+                break;
+            }
+        }
+        assert!(opened, "Rename in the row's context menu did not open the editor");
+        assert_eq!(p.rename.as_ref().map(|r| r.0), Some(4));
+        p.frame(vec![]);
+        p.frame(vec![]);
+        assert!(p.focused());
+        p.type_text("Ring");
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert_eq!(renames(&p.ops), vec![(4, "Ring".to_string())]);
+    }
+
+    #[test]
+    fn escape_or_blur_with_unchanged_name_is_harmless() {
+        let rows = vec![path_row(3, "Logo"), path_row(4, "<Path>")];
+        // Escape with an unchanged name: nothing is emitted
+        let mut p = open_editor(&rows, 3);
+        assert!(p.rename.is_some());
+        p.key(Key::Escape);
+        p.frame(vec![]);
+        assert!(p.rename.is_none(), "Escape closes the editor");
+        assert!(renames(&p.ops).is_empty(), "Escape with an unchanged name emitted a rename");
+        // blur (click another row) with an unchanged name: nothing is emitted
+        let y4 = row_y(&rows, 4);
+        let mut p = open_editor(&rows, 3);
+        assert!(p.rename.is_some());
+        p.click(egui::pos2(NAME_X, y4));
+        p.frame(vec![]);
+        assert!(p.rename.is_none(), "clicking elsewhere closes the editor");
+        assert!(renames(&p.ops).is_empty(), "blur with an unchanged name emitted a rename");
+    }
+
+    #[test]
+    fn escape_cancels_an_edited_name() {
+        let mut p = open_editor(&two_paths(), 4);
+        assert!(p.rename.is_some());
+        p.type_text("Oops");
+        p.key(Key::Escape);
+        p.frame(vec![]);
+        assert!(p.rename.is_none());
+        assert!(renames(&p.ops).is_empty(), "Escape must cancel (Illustrator), not commit the typed text");
+    }
+
+    #[test]
+    fn typing_replaces_the_whole_old_name() {
+        let mut p = open_editor(&[path_row(3, "Logo")], 3);
+        p.type_text("Mark");
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert_eq!(renames(&p.ops), vec![(3, "Mark".to_string())], "the old name is selected on open");
+    }
+
+    #[test]
+    fn emptied_name_keeps_the_old_one() {
+        let mut p = open_editor(&[path_row(3, "Logo")], 3);
+        assert!(p.rename.is_some());
+        p.frame(vec![Event::Key {
+            key: Key::A,
+            physical_key: Some(Key::A),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        }]);
+        p.key(Key::Backspace);
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert!(p.rename.is_none());
+        assert!(renames(&p.ops).is_empty(), "an empty name must keep the old one (no rename)");
+    }
+
+    fn anchor(id: u32, x: f32, y: f32) -> Anchor {
+        Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
+    }
+
+    /// Two open paths: A (id 1, red fill, weight 2) and B (id 2, blue fill, weight 7).
+    fn two_path_editor() -> Editor {
+        let mut ed = Editor::new();
+        ed.doc.artboards.clear();
+        ed.doc.paths.push(Path::new(
+            1,
+            vec![anchor(11, 0.0, 0.0), anchor(12, 10.0, 0.0)],
+            false,
+            Some([1.0, 0.0, 0.0, 1.0]),
+            Some([0.0, 0.0, 0.0, 1.0]),
+            2.0,
+        ));
+        ed.doc.paths.push(Path::new(
+            2,
+            vec![anchor(21, 50.0, 50.0), anchor(22, 80.0, 60.0)],
+            false,
+            Some([0.0, 0.0, 1.0, 1.0]),
+            Some([0.0, 0.0, 0.0, 1.0]),
+            7.0,
+        ));
+        ed.doc.ids = 30;
+        ed.doc.sync_tree();
+        ed
+    }
+
+    /// The whole chain a real double-click drives: the panel's op → `apply_ops` → the rebuilt row.
+    #[test]
+    fn path_row_rename_shows_in_the_rebuilt_row() {
+        let mut ed = two_path_editor();
+        let node = ed.doc.node_of_path(2).expect("path 2 has a leaf node");
+        let rev = ed.rev;
+        apply_ops(&mut ed, vec![Op::LayerRename(node, "Logo".into())]);
+        let mut thumbs = HashMap::new();
+        let rows = build_layer_rows(&ed, &HashSet::new(), "", &mut thumbs);
+        let row = rows.iter().find(|r| r.id == node).expect("the path's row");
+        assert_eq!(row.name, "Logo", "the rename landed nowhere the Layers row reads");
+        assert_eq!(ed.rev, rev + 1, "a rename is one undoable edit");
+        ed.undo();
+        let rows = build_layer_rows(&ed, &HashSet::new(), "", &mut thumbs);
+        assert_eq!(rows.iter().find(|r| r.id == node).unwrap().name, "<Path>", "undo restores the auto-name");
+        // a Layer (container) row keeps using the node rename — its name lives on the node
+        let layer = ed.doc.nodes.iter().find(|n| matches!(n.kind, NodeKind::Layer)).map(|n| n.id).unwrap();
+        apply_ops(&mut ed, vec![Op::LayerRename(layer, "Art".into())]);
+        assert_eq!(ed.doc.node(layer).unwrap().name, "Art");
+        assert_eq!(ed.doc.paths[1].name.as_deref(), None, "renaming the layer left the path alone");
+    }
+
+    /// PAINS_LOG FB6 nit: mid-draft with an old selection still active, the dock must describe the
+    /// in-progress path — never the stale object.
+    #[test]
+    fn drawing_snap_reports_active_path_not_stale_selection() {
+        let mut ed = two_path_editor();
+        ed.doc.paths[0].name = Some("Old".into());
+        ed.objsel.insert(1);
+        ed.tool = ToolKind::Pen;
+        ed.active = Some(2);
+        let s = Snap::read(&ed);
+        assert!(s.drawing);
+        assert_eq!(s.name, "Drawing path\u{2026}");
+        assert_eq!(s.fill, Some([0.0, 0.0, 1.0, 1.0]), "paint must come from the in-progress path");
+        assert_eq!(s.sw, 7.0);
+        assert!(!s.sel, "the stale selection is not what the dock measures while drawing");
+        // not drawing: the ordinary selection read is unchanged
+        ed.active = None;
+        let s = Snap::read(&ed);
+        assert!(!s.drawing && s.sel);
+        assert_eq!(s.name, "Old");
+        assert_eq!(s.fill, Some([1.0, 0.0, 0.0, 1.0]));
     }
 }
