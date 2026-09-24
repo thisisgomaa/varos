@@ -19,7 +19,8 @@ runs a path that already exists; no new editor behaviour.
   **drops** `FullSizeContentView` — `window_delegate.rs:1508-1522`). The splash-→-editor switch keeps
   only its Windows half.
 - Platform table `chrome::TOPBAR` (pure, tested): macOS = 78 pt left inset for the traffic lights,
-  no ─ ☐ ✕ caps, 6 pt right inset; Windows/other = the old numbers (4 pt, caps on).
+  no ─ ☐ ✕ caps, 6 pt right inset, 28 pt height (controls centred at the native 14 pt traffic-light
+  centre); Windows/other = the old numbers (4 pt, caps on, 46 pt height).
 - The window title string ("Untitled-1 · Varos α — Select (V)") is still set every change — hidden
   in the bar, but used by Mission Control, the Window menu and the Dock.
 - **Drag:** Windows drags through the OS hit-test (`HTCAPTION` on the empty bar). macOS mirrors it:
@@ -69,25 +70,37 @@ tab, not a document) · Export… (burger row unwired) · Cut / Copy / Paste / D
 Deselect · Zoom In / Zoom Out (only Alt+wheel and Space-click zoom exist) · Delete (Backspace as a
 menu key would steal it from text fields). Each lands when its home exists.
 
-## Recommended next piece: "⌘ instead of Ctrl" labels
-Dispatch already treats ⌘ as Ctrl (`ed.mods.ctrl = control || super`, `main.rs` `ModifiersChanged`),
-so ⌘ shortcuts work; only the **labels** say Ctrl: the search pill "Ctrl K" (`ui.rs` `search_pill`),
-burger rows "Ctrl+N/O/S", "Smart Guides (Ctrl+U)", tool tooltips, `tool_name` "(Shift+O)". Needs one
-`shortcut_label()` helper (⌘ ⇧ ⌥ glyphs on macOS) used by all of them. Risk: low (text only), but it
-touches many strings — keep it its own reviewed piece. Physical Ctrl should keep working (habit).
+## Shortcut labels (done 2026-09-24)
+
+`tokens::primary_mod_label()` / `shortcut_label()` are the shared source for primary-modifier
+labels: ⌘ on macOS, the original Ctrl strings on Windows. Search, burger menu mirrors, Smart Guides
+and the Group tooltip use them. Native menu accelerators already display AppKit's glyphs.
+Dispatch and physical Ctrl support are unchanged. GPU-free test:
+`shortcut_labels_use_the_platform_primary_modifier`.
+
+The top bar now uses `chrome::TOPBAR.height` everywhere, including its drag band and menu edge.
+The Mac bar matches the native 28 pt title area instead of leaving its controls 9 pt too low;
+Windows retains 46 pt. `topbar_layout` computes the production control rectangles from the bar
+rect and measured text widths. GPU-free test `mac_topbar_controls_share_the_native_traffic_light_centre`
+checks every control, including tab close buttons, for containment and centring within ±1 pt of
+the traffic lights at three window widths and two bar origins.
+
+Review follow-up verification (2026-09-24): workspace **306 passed, 0 failed** (one obsolete easing
+test removed); macOS and Windows-target Clippy with warnings denied and formatting all passed.
+The earlier release build passed, but its launch found **no display** in the sandbox:
+winit stopped with `invalid display ID`, and
+`screencapture -x /tmp/varos-chrome-centred.png` failed (`could not create image from display`).
+Centring is checked through shared production geometry; a real-window visual check remains pending.
 
 ## Known gaps (honest)
-1. Traffic lights stay at macOS's native height (centre ≈ 14 pt from the top) while our 46 pt bar
-   centres its controls at 23 pt. Centring them means moving AppKit's buttons on every resize /
-   full-screen change (what Electron's `trafficLightPosition` does) — fragile; a later piece if wanted.
-2. A nearby, timely double-click on empty bar space zooms; it still ignores the System Settings
+1. A nearby, timely double-click on empty bar space zooms; it still ignores the System Settings
    "double-click title bar" choice (minimize / do nothing). Floating UI and intervening window drags
    now block caption zoom (GPU-free regression tests); these fixes still need a real-window hand-test.
-3. Close Window / Quit have no unsaved-changes prompt — same as the ✕ button on Windows today.
-4. The splash no longer floats over the desktop on macOS (see B).
-5. An opaque window that is covered gets no redraws, so a splash started behind another window
+2. Close Window / Quit have no unsaved-changes prompt — same as the ✕ button on Windows today.
+3. The splash no longer floats over the desktop on macOS (see B).
+4. An opaque window that is covered gets no redraws, so a splash started behind another window
    stalled until the next input; fixed by repainting on `WindowEvent::Occluded(false)` (macOS only).
-6. Measured 2026-09-23 (synthetic mouse/keys on this Mac): one bar + traffic lights, opaque strip,
+5. Measured 2026-09-23 (synthetic mouse/keys on this Mac): one bar + traffic lights, opaque strip,
    menu bar File/Edit/Object/View/Window, View ✓ marks match state, View ▸ Rulers by mouse and ⌘R
    by key each toggle exactly once, bar drag moves the window (7/9 tries; two presses lost right after
    a previous drag — cause unknown), double-click zooms/unzooms. **Not verified:** ⌘U produced no

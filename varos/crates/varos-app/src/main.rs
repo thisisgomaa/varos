@@ -471,12 +471,18 @@ fn confirm_discard_unsaved(ed: &Editor, saved_rev: u64) -> bool {
             == rfd::MessageDialogResult::Yes
 }
 
+/// Apply a complete zoom step now, keeping the world point under the cursor fixed.
+fn zoom_step(view: &mut View, screen: Pt, factor: f32) {
+    let anchor = view.s2w(screen);
+    view.zoom = (view.zoom * factor).clamp(0.05, 40.0);
+    view.pan = geom::pan_for_anchor(anchor, screen, view.zoom);
+}
+
 struct OpenDocContext<'a> {
     ed: &'a mut Editor,
     gui: &'a ui::Ui,
     window: &'a Window,
     view: &'a mut View,
-    zoom_target: &'a mut f32,
     cur_file: &'a mut Option<std::path::PathBuf>,
     saved_rev: &'a mut u64,
 }
@@ -496,7 +502,6 @@ impl OpenDocContext<'_> {
                 *self.saved_rev = self.ed.rev;
                 let (x, y, w, h) = fit_rect(self.ed);
                 *self.view = fit_to_board(self.gui, self.window, x, y, w, h, 0.9);
-                *self.zoom_target = self.view.zoom; // instant fit on open
             }
             Err(e) => {
                 rfd::MessageDialog::new()
@@ -517,7 +522,6 @@ impl OpenDocContext<'_> {
             // free canvas (A8a), or the default region when there's nothing.
             let (x, y, w, h) = fit_rect(self.ed);
             *self.view = fit_to_board(self.gui, self.window, x, y, w, h, 0.9);
-            *self.zoom_target = self.view.zoom; // instant fit cancels any in-flight zoom glide
         } else if mc && code == KeyCode::KeyS {
             // Ctrl+S = Save · Ctrl+Shift+S = Save As (Illustrator-exact)
             let dest = if ms { None } else { self.cur_file.clone() }.or_else(|| {
@@ -556,11 +560,6 @@ impl OpenDocContext<'_> {
             self.ed.mods = Default::default();
         } else {
             apply_key(self.ed, self.view, &cs, mc, ms, ma);
-            // Ctrl+1 (view.zoom = 1.0) is apply_key's only zoom change — resync
-            // the easer target so it snaps to 100% instead of gliding away from it.
-            if mc && code == KeyCode::Digit1 {
-                *self.zoom_target = self.view.zoom;
-            }
         }
     }
 }
@@ -771,14 +770,6 @@ fn main() {
         let sz = window.inner_size();
         View::fit(x, y, w, h, sz.width as f32, sz.height as f32, 0.45)
     };
-    // A13 — frame-based zoom easing. `zoom_target` is the desired zoom; `view.zoom` glides toward it
-    // one frame at a time (see the easer in RedrawRequested). Wheel / click-zoom set `zoom_target`
-    // and capture the anchor; every INSTANT zoom path (fit, Ctrl+0/1) keeps `zoom_target == view.zoom`
-    // so the easer stays idle for them. `zoom_anchor_world`/`_screen` pin the world point under the
-    // cursor to its screen position through the whole glide (zoom-to-cursor stays exact).
-    let mut zoom_target: f32 = view.zoom;
-    let mut zoom_anchor_world: Pt = [0.0, 0.0];
-    let mut zoom_anchor_screen: Pt = [0.0, 0.0];
     let mut screen_cursor: Pt = [0.0, 0.0];
     #[cfg(target_os = "macos")]
     let mut pointer_inside = false;
@@ -851,7 +842,6 @@ fn main() {
                                     gui: &gui,
                                     window: &window,
                                     view: &mut view,
-                                    zoom_target: &mut zoom_target,
                                     cur_file: &mut cur_file,
                                     saved_rev: &mut saved_rev,
                                 }
@@ -879,7 +869,6 @@ fn main() {
                         gui: &gui,
                         window: &window,
                         view: &mut view,
-                        zoom_target: &mut zoom_target,
                         cur_file: &mut cur_file,
                         saved_rev: &mut saved_rev,
                     }
@@ -937,7 +926,6 @@ fn main() {
                             // restored a maximized window → fit the page (or content, A8a) to the view ONCE
                             let (x, y, w, h) = fit_rect(&ed);
                             view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
-                            zoom_target = view.zoom; // instant fit — keep the easer idle (no phantom glide)
                             refit_pending = false;
                         }
                         window.request_redraw();
@@ -999,12 +987,9 @@ fn main() {
                                         #[cfg(target_os = "macos")]
                                         caption_clicks.reset_after_drag();
                                         if ed.mods.ctrl {
-                                            // A13: click-zoom eases too — set the target + anchor at the
-                                            // click point and let the RedrawRequested easer glide there.
+                                            // Apply the entire step at the click point immediately.
                                             let f = if ed.mods.alt { 1.0 / 1.5 } else { 1.5 };
-                                            zoom_target = (zoom_target * f).clamp(0.05, 40.0);
-                                            zoom_anchor_world = view.s2w(screen_cursor);
-                                            zoom_anchor_screen = screen_cursor;
+                                            zoom_step(&mut view, screen_cursor, f);
                                         } else {
                                             panning = true;
                                             pan_last = screen_cursor;
@@ -1091,15 +1076,9 @@ fn main() {
                             MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 40.0, p.y as f32 / 40.0),
                         };
                         if ed.mods.alt {
-                            // exponential per notch: winit 0.30 coalesces fast wheel notches into ONE event
-                            // with a bigger dy — 1.12^dy is the correct FINAL zoom, but applying it in one
-                            // redraw is a single visible jump. A13: push it into `zoom_target` and let the
-                            // per-frame easer in RedrawRequested glide there (many frames → the smooth glide
-                            // that used to be emergent from many small OS wheel events). Anchor captured now.
+                            // Exponential per notch, including coalesced wheel events.
                             let f = 1.12f32.powf(dy).clamp(0.2, 5.0);
-                            zoom_target = (zoom_target * f).clamp(0.05, 40.0);
-                            zoom_anchor_world = view.s2w(screen_cursor);
-                            zoom_anchor_screen = screen_cursor;
+                            zoom_step(&mut view, screen_cursor, f);
                         } else if ed.mods.shift {
                             view.pan[0] += (dy + dx) * 30.0;
                         } else {
@@ -1133,7 +1112,6 @@ fn main() {
                                     gui: &gui,
                                     window: &window,
                                     view: &mut view,
-                                    zoom_target: &mut zoom_target,
                                     cur_file: &mut cur_file,
                                     saved_rev: &mut saved_rev,
                                 }
@@ -1150,23 +1128,6 @@ fn main() {
                             return;
                         }
                         let perf_start = Instant::now();
-                        // A13 — one eased zoom frame. This runs ONLY while a glide is in flight: if
-                        // `view.zoom` already sits on `zoom_target` (every instant path keeps them
-                        // equal) the predicate is false and nothing here executes. While it IS active
-                        // it steps `view.zoom` 25% closer, re-pins the captured anchor under the cursor,
-                        // and — via `zoom_active` at the bottom of this arm — keeps requesting redraws
-                        // to drive continuous frames. The step that first lands within epsilon snaps to
-                        // the exact target and clears `zoom_active`, so the NEXT frame requests nothing
-                        // and the loop falls back to ControlFlow::Wait (no busy-spin, no battery drain).
-                        let mut zoom_active = (view.zoom - zoom_target).abs() > zoom_target * 0.001;
-                        if zoom_active {
-                            view.zoom = geom::eased_step(view.zoom, zoom_target, 0.25);
-                            if (view.zoom - zoom_target).abs() <= zoom_target * 0.001 {
-                                view.zoom = zoom_target; // final glide frame — land exactly on target
-                                zoom_active = false; // settled: this frame renders the target, then Wait
-                            }
-                            view.pan = geom::pan_for_anchor(zoom_anchor_world, zoom_anchor_screen, view.zoom);
-                        }
                         ed.ppu = view.zoom;
                         // Native UI runs FIRST (the rail may switch the tool), THEN we build the scene from
                         // the updated editor so the change shows this same frame.
@@ -1202,7 +1163,6 @@ fn main() {
                         if let Some(i) = gui.fit_request.take() {
                             if let Some(a) = ed.doc.artboards.get(i).cloned() {
                                 view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
-                                zoom_target = view.zoom; // instant fit cancels any in-flight zoom glide
                             }
                         }
                         // Stage 4: the first non-splash frame knows the Board box — refit the startup
@@ -1211,7 +1171,6 @@ fn main() {
                             if !gui.splashing() && gui.board_px.is_some() {
                                 let (x, y, w, h) = fit_rect(&ed);
                                 view = fit_to_board(&gui, &window, x, y, w, h, k);
-                                zoom_target = view.zoom; // instant startup fit — no glide
                                 board_fit_pending = None;
                                 window.request_redraw();
                             }
@@ -1300,16 +1259,14 @@ fn main() {
                                 renderer.resize(sz.width, sz.height);
                                 let (x, y, w, h) = fit_rect(&ed);
                                 view = View::fit(x, y, w, h, sz.width as f32, sz.height as f32, 0.9);
-                                zoom_target = view.zoom; // instant fit — keep the easer idle
                                 board_fit_pending = Some(0.9); // the box re-lays-out at the new size — refit into it
                                 refit_pending = false;
                             }
                             editor_framed = true;
                             window.request_redraw();
                         }
-                        // Drive the next frame ONLY while egui wants one or a zoom glide is still in
-                        // flight; when both are false the loop returns to ControlFlow::Wait and idles.
-                        if gui.repaint || zoom_active {
+                        // Zoom needs no follow-up frames; idle when egui has no work.
+                        if gui.repaint {
                             window.request_redraw();
                         }
                     }
@@ -1479,6 +1436,39 @@ mod menu_mirror_tests {
             assert_eq!(editor_check(&ed, c), Some(!before), "{c:?}");
             menu_snap_toggle(&mut ed, grid);
             assert_eq!(editor_check(&ed, c), Some(before), "{c:?} toggles back");
+        }
+    }
+}
+
+#[cfg(test)]
+mod instant_zoom_tests {
+    use super::*;
+
+    #[test]
+    fn one_zoom_step_reaches_final_zoom_immediately_at_cursor() {
+        let screen = [341.0, 227.0];
+        for factor in [1.12f32.powf(3.0), 1.5, 1.0 / 1.5] {
+            let mut view = View { zoom: 2.0, pan: [17.0, -41.0] };
+            let anchor = view.s2w(screen);
+            zoom_step(&mut view, screen, factor);
+            assert_eq!(view.zoom, 2.0 * factor);
+            let pinned = view.w2s(anchor);
+            assert!((pinned[0] - screen[0]).abs() < 0.0001);
+            assert!((pinned[1] - screen[1]).abs() < 0.0001);
+        }
+    }
+
+    #[test]
+    fn instant_zoom_limits_keep_the_cursor_anchor() {
+        for (zoom, factor, expected) in [(39.0, 1.5, 40.0), (0.06, 0.2, 0.05)] {
+            let mut view = View { zoom, pan: [12.0, -8.0] };
+            let screen = [200.0, 300.0];
+            let anchor = view.s2w(screen);
+            zoom_step(&mut view, screen, factor);
+            assert_eq!(view.zoom, expected);
+            let pinned = view.w2s(anchor);
+            assert!((pinned[0] - screen[0]).abs() < 0.0001);
+            assert!((pinned[1] - screen[1]).abs() < 0.0001);
         }
     }
 }
