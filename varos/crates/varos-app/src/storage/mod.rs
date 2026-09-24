@@ -7,9 +7,13 @@
 //! - [`durable`] — the durable replacement writer (unique temp → sync → atomic rename → dir sync).
 //! - [`checksum`] — CRC-32 and unique nonces for temp/recovery names.
 //! - [`time_text`] — "saved at 14:32" and "3 min ago" text.
+//! - [`recents`] — the 20-item deduplicated Recent-documents list.
+//! - [`settings`] — app-wide settings (the Recovery on/off switch).
 pub mod checksum;
 pub mod durable;
 pub mod paths;
+pub mod recents;
+pub mod settings;
 pub mod time_text;
 
 #[cfg(test)]
