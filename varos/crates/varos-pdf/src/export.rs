@@ -3,18 +3,16 @@
 //! board names, and nothing hidden. Pages are PLANNED first (`plan_pdf_export`) so the app can show
 //! the page count, or a plain-English reason when a scope cannot be exported, before any bytes exist.
 //!
-//! Masks: the writer does not emit PDF clipping yet, so a clip group's members would come out
-//! UNCLIPPED (the canvas clips them). Rather than silently misrender — and expose the art the mask
-//! hides — a page that would draw any clip-group member is planned as `PlannedPage::Refused`, and
-//! `export_pdf_bytes` refuses the whole export while any page is refused (never a silent subset).
+//! Masks: clip-group members are written inside a PDF clip (`q … W* n … Q`, MASKS_PLAN Stage 5), in
+//! the shared page loop (`crate::write`), so the export and the native `.vrs` pages both match the canvas.
 
 use std::fmt;
 use std::sync::atomic::AtomicBool;
 
-use varos_core::model::{Anchor, Artboard, Document, Xform};
+use varos_core::model::{Artboard, Document};
 use varos_core::Rgba;
 
-use crate::write::{drawable, drawn_on, write_pages};
+use crate::write::{drawable, write_pages};
 
 /// Which pages an export produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -40,38 +38,16 @@ impl PageSpec {
     }
 }
 
-/// A planned page: exportable, or refused with a plain-English reason (the page is still listed so
-/// the page count and the refusal are honest about what the scope covers).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PlannedPage {
-    Ready(PageSpec),
-    Refused { spec: PageSpec, reason: &'static str },
-}
-impl PlannedPage {
-    pub fn spec(&self) -> &PageSpec {
-        match self {
-            PlannedPage::Ready(spec) | PlannedPage::Refused { spec, .. } => spec,
-        }
-    }
-    pub fn is_ready(&self) -> bool {
-        matches!(self, PlannedPage::Ready(_))
-    }
-}
-
 /// The pages a scope will export, in order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportPlan {
     pub scope: ExportScope,
-    pub pages: Vec<PlannedPage>,
+    pub pages: Vec<PageSpec>,
 }
 impl ExportPlan {
-    /// Pages the scope covers (refused ones included).
+    /// How many pages the PDF will have.
     pub fn page_count(&self) -> usize {
         self.pages.len()
-    }
-    /// Why this plan cannot be exported as a whole, if it can't (today: a page with a clipping mask).
-    pub fn refusal(&self) -> Option<ExportUnavailable> {
-        self.pages.iter().any(|p| !p.is_ready()).then_some(ExportUnavailable::ClipMasksNotSupported)
     }
 }
 
@@ -83,7 +59,6 @@ pub enum ExportUnavailable {
     NotBoardless,
     NeedsArtboards,
     NothingToExport,
-    ClipMasksNotSupported,
 }
 impl ExportUnavailable {
     pub fn reason(&self) -> &'static str {
@@ -93,7 +68,6 @@ impl ExportUnavailable {
             ExportUnavailable::NotBoardless => "Artwork bounds is only for documents without artboards.",
             ExportUnavailable::NeedsArtboards => "This document has no artboards. Export its artwork bounds instead.",
             ExportUnavailable::NothingToExport => "There is no visible artwork to export.",
-            ExportUnavailable::ClipMasksNotSupported => "Clipping masks can't be exported to PDF yet.",
         }
     }
 }
@@ -129,10 +103,9 @@ pub fn default_scope(doc: &Document) -> ExportScope {
     }
 }
 
-/// Plan the pages `scope` exports. Scope-level impossibilities are `Err`; a page that would need a
-/// clipping mask is planned as `PlannedPage::Refused` (see `ExportPlan::refusal`). Never a dummy page.
+/// Plan the pages `scope` exports, or say why it can't. Never a dummy page.
 pub fn plan_pdf_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan, ExportUnavailable> {
-    let specs: Vec<PageSpec> = match scope {
+    let pages: Vec<PageSpec> = match scope {
         ExportScope::AllVisibleArtboards => {
             if doc.artboards.is_empty() {
                 return Err(ExportUnavailable::NeedsArtboards);
@@ -157,151 +130,61 @@ pub fn plan_pdf_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan,
             vec![artwork_bounds_page(doc).ok_or(ExportUnavailable::NothingToExport)?]
         }
     };
-    Ok(ExportPlan { scope, pages: specs.into_iter().map(|s| plan_page(doc, s)).collect() })
+    Ok(ExportPlan { scope, pages })
 }
 
-/// Write the pure PDF for `plan`. Refuses (never silently drops pages) while any page needs a clipping
-/// mask — re-checked here against `doc`, so a hand-built or stale plan cannot leak unclipped art.
-/// `cancel` is checked before every page. Deterministic: the same document and plan give the same bytes.
+/// Write the pure PDF for `plan`: its pages and a bare catalog, nothing else. `cancel` is checked
+/// before every page. Deterministic: the same document and plan give the same bytes.
 pub fn export_pdf_bytes(doc: &Document, plan: &ExportPlan, cancel: &AtomicBool) -> Result<Vec<u8>, ExportError> {
     if plan.pages.is_empty() {
         return Err(ExportError::Unavailable(ExportUnavailable::NothingToExport));
     }
-    let specs: Vec<PageSpec> = plan.pages.iter().map(|p| *p.spec()).collect();
-    if let Some(u) = plan.refusal() {
-        return Err(ExportError::Unavailable(u));
-    }
-    if specs.iter().any(|s| !plan_page(doc, *s).is_ready()) {
-        return Err(ExportError::Unavailable(ExportUnavailable::ClipMasksNotSupported));
-    }
-    write_pages(doc, &specs, None, cancel)
+    write_pages(doc, &plan.pages, None, cancel)
 }
 
-/// Does this file carry an embedded Varos model (a native `.vrs` container)? Checks the catalog's
-/// `/VAROS_Model` key and the `/Names` → `/EmbeddedFiles` tree for the model's file name. Anything
-/// that is not a readable PDF answers `false`.
+/// Does this file carry an embedded Varos model (a native `.vrs` container)? Bounded byte scan for
+/// `/VAROS_Model` or `model.varos.json`; no PDF parse (the bytes come from a file the user picked, so
+/// nothing here may allocate or recurse on its content). It feeds a warning only, so a false positive
+/// just asks one extra question. At most the first `HAS_MODEL_SCAN_CAP` bytes are scanned.
 pub fn has_embedded_model(bytes: &[u8]) -> bool {
-    let Ok(pdf) = lopdf::Document::load_mem(bytes) else { return false };
-    let Ok(catalog) = pdf.catalog() else { return false };
-    if catalog.has(b"VAROS_Model") {
-        return true;
-    }
-    let tree = catalog
-        .get_deref(b"Names", &pdf)
-        .and_then(|o| o.as_dict())
-        .and_then(|names| names.get_deref(b"EmbeddedFiles", &pdf))
-        .and_then(|o| o.as_dict());
-    match tree {
-        Ok(root) => name_tree_has(&pdf, root, b"model.varos.json", 0),
-        Err(_) => false,
-    }
+    let hay = &bytes[..bytes.len().min(HAS_MODEL_SCAN_CAP)];
+    [b"/VAROS_Model".as_slice(), b"model.varos.json".as_slice()]
+        .iter()
+        .any(|needle| hay.windows(needle.len()).any(|w| w == *needle))
 }
+/// The scan cap for `has_embedded_model` — the same 256 MiB the Export flow reads a destination up to.
+pub const HAS_MODEL_SCAN_CAP: usize = 256 * 1024 * 1024;
 
-/// Walk a PDF name tree (leaf `/Names` pairs, inner `/Kids`) looking for `key`. Depth-capped.
-fn name_tree_has(pdf: &lopdf::Document, node: &lopdf::Dictionary, key: &[u8], depth: u32) -> bool {
-    if depth > 32 {
-        return false;
-    }
-    if let Ok(arr) = node.get_deref(b"Names", pdf).and_then(|o| o.as_array()) {
-        if arr.chunks(2).any(|kv| kv.first().and_then(|k| k.as_str().ok()) == Some(key)) {
-            return true;
-        }
-    }
-    if let Ok(kids) = node.get_deref(b"Kids", pdf).and_then(|o| o.as_array()) {
-        for kid in kids {
-            if let Ok(d) = pdf.dereference(kid).and_then(|(_, o)| o.as_dict()) {
-                if name_tree_has(pdf, d, key, depth + 1) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-/// A page is refused when anything the writer would draw on it is a clip-group member (a mask source
-/// never paints — `paint_list` already drops it — so any clip ancestor here means "needs clipping").
-fn plan_page(doc: &Document, spec: PageSpec) -> PlannedPage {
-    if drawn_on(doc, &spec).any(|d| doc.clip_group_of(d.p.id).is_some()) {
-        PlannedPage::Refused { spec, reason: ExportUnavailable::ClipMasksNotSupported.reason() }
-    } else {
-        PlannedPage::Ready(spec)
-    }
-}
-
-/// The boardless page: the union of every drawn path's exact WORLD extent (curve extrema, not
-/// handles), padded by half its stroke, with a transparent background. `None` when nothing visible draws.
+/// The boardless page: the union of `doc.outline_bbox` (the canvas's own WORLD extent, xform-aware,
+/// curves flattened — not the control-point hull) over every drawn path, padded by half its stroke; a
+/// clip member counts only where it overlaps its mask's outline box. Transparent background. `None`
+/// when nothing visible draws.
 fn artwork_bounds_page(doc: &Document) -> Option<PageSpec> {
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for (_, p) in doc.paint_list() {
+    for (pi, p) in doc.paint_list() {
         let Some(d) = drawable(doc, p) else { continue };
-        let mut own = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
-        ring_extent(&p.anchors, p.closed, &d.xf, &mut own);
-        for hole in &p.holes {
-            ring_extent(hole, true, &d.xf, &mut own);
+        let (bx0, by0, bx1, by1) = doc.outline_bbox(pi);
+        let mut b = [bx0 - d.pad, by0 - d.pad, bx1 + d.pad, by1 + d.pad];
+        if let Some(mask) = &d.clip {
+            let mut m = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+            for (mp, _) in mask {
+                let Some(mi) = doc.pidx(mp.id) else { continue };
+                let (mx0, my0, mx1, my1) = doc.outline_bbox(mi);
+                m = [m[0].min(mx0), m[1].min(my0), m[2].max(mx1), m[3].max(my1)];
+            }
+            b = [b[0].max(m[0]), b[1].max(m[1]), b[2].min(m[2]), b[3].min(m[3])];
+            if b[0] > b[2] || b[1] > b[3] {
+                continue;
+            }
         }
-        x0 = x0.min(own[0] - d.pad);
-        y0 = y0.min(own[1] - d.pad);
-        x1 = x1.max(own[2] + d.pad);
-        y1 = y1.max(own[3] + d.pad);
+        x0 = x0.min(b[0]);
+        y0 = y0.min(b[1]);
+        x1 = x1.max(b[2]);
+        y1 = y1.max(b[3]);
     }
     if x0 > x1 || y0 > y1 {
         return None;
     }
     // a degenerate (zero-width or zero-height) extent still gets a real page, at least 1 pt each way
     Some(PageSpec { rect: [x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0)], background: None })
-}
-
-/// Grow `b` = [x0, y0, x1, y1] by the exact extent of one ring in WORLD space: every anchor plus each
-/// cubic segment's interior extrema (roots of its derivative). Rotation is affine, so the control
-/// points are mapped first and the extrema are taken on the world curve.
-fn ring_extent(anchors: &[Anchor], closed: bool, xf: &Xform, b: &mut [f32; 4]) {
-    let mut grow = |q: [f32; 2]| {
-        b[0] = b[0].min(q[0]);
-        b[1] = b[1].min(q[1]);
-        b[2] = b[2].max(q[0]);
-        b[3] = b[3].max(q[1]);
-    };
-    let n = anchors.len();
-    if n == 0 {
-        return;
-    }
-    grow(xf.apply(anchors[0].p));
-    let segs = if closed { n } else { n - 1 };
-    for i in 0..segs {
-        let (a, c) = (&anchors[i], &anchors[(i + 1) % n]);
-        let pts = [a.p, a.hout.unwrap_or(a.p), c.hin.unwrap_or(c.p), c.p].map(|q| xf.apply(q));
-        grow(pts[3]);
-        for t in cubic_extrema_t(&pts) {
-            let mt = 1.0 - t;
-            let w = [mt * mt * mt, 3.0 * mt * mt * t, 3.0 * mt * t * t, t * t * t];
-            grow([0, 1].map(|k| w.iter().zip(&pts).map(|(w, p)| w * p[k]).sum()));
-        }
-    }
-}
-
-/// Parameters in (0, 1) where either coordinate of the cubic has a zero derivative.
-fn cubic_extrema_t(p: &[[f32; 2]; 4]) -> Vec<f32> {
-    let mut out = Vec::new();
-    for axis in [0, 1] {
-        // B'(t) / 3 = a·t² + b·t + c
-        let [p0, p1, p2, p3] = p.map(|q| q[axis]);
-        let a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
-        let b = 2.0 * (p0 - 2.0 * p1 + p2);
-        let c = p1 - p0;
-        if a.abs() < 1e-9 {
-            if b.abs() > 1e-9 {
-                out.push(-c / b);
-            }
-        } else {
-            let disc = b * b - 4.0 * a * c;
-            if disc >= 0.0 {
-                let r = disc.sqrt();
-                out.push((-b + r) / (2.0 * a));
-                out.push((-b - r) / (2.0 * a));
-            }
-        }
-    }
-    out.retain(|t| *t > 0.0 && *t < 1.0);
-    out
 }
