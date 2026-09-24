@@ -1,11 +1,15 @@
-//! DFS S1 §3.5 — the host's ONE command path, as pure pieces the event loop in `main.rs` calls.
+//! DFS S1 §3.5 — the host's command path, as pure pieces the event loop in `main.rs` calls.
 //!
-//! Every source turns into an [`AppCommand`] here: shortcut keys ([`lifecycle_key`] →
-//! [`to_app_command`]), native menu rows ([`menu_route`]), the custom caption's window controls
-//! ([`win_action_command`]), the OS close request (`AppCommand::Quit`), the tab strip / burger
-//! (`Ui::take_app_commands`), and files handed in from outside ([`open_paths_command`]). The event
-//! loop queues them and runs each through `main.rs`'s `dispatch`: `Window(_)` effects on the window,
-//! everything else through [`run_lifecycle`].
+//! Every lifecycle / window command becomes an [`AppCommand`] here: shortcut keys ([`lifecycle_key`]
+//! → [`to_app_command`], [`tab_key`]), native File / Window rows ([`menu_route`]), the custom
+//! caption's window controls ([`win_action_command`]), the OS close request (`AppCommand::Quit`), the
+//! tab strip / burger (`Ui::take_app_commands`), and files handed in from outside
+//! ([`open_paths_command`]). They wait in ONE FIFO queue of [`HostAction`]s that `main.rs` drains at
+//! `AboutToWait` through its `dispatch`: `Window(_)` effects on the window, everything else through
+//! [`run_lifecycle`]. The document actions keys and menu rows raise ([`DocAction`]: a shortcut key,
+//! Edit ▸ Delete, a snap row) share that order but not always that path: one runs at once when
+//! nothing is queued ([`doc_runs_now`]), else it queues behind and goes through `dispatch` too.
+//! Pointer input and panel edits act on the editor directly, outside the queue.
 //!
 //! No window, no GPU, no dialogs here: everything is testable headless (the dialogs and the disk are
 //! the lifecycle's ports).
