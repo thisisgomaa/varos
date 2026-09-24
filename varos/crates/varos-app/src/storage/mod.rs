@@ -13,6 +13,7 @@ pub mod checksum;
 pub mod durable;
 pub mod paths;
 pub mod recents;
+pub mod recovery;
 pub mod settings;
 pub mod time_text;
 
