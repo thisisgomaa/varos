@@ -127,24 +127,29 @@ proved by a passing test, not just argued.)*
 
 ## 8. Limits
 
-Starting numbers proposed in ADR-0008 §6 ("Bounded load, symmetric save"); **S5-B is the deliverable
-that turns them into the enforced `varos_core::format::Limits::DEFAULT`** (and may lower any of them
-after measuring load/encode time at the cap — ADR-0008 R4, never raise silently). Until S5-B merges,
-none of these are enforced by running code; nothing in this repo relies on the "Enforced" column yet.
+Starting numbers proposed in ADR-0008 §6 ("Bounded load, symmetric save"); S5-B made them the enforced
+`varos_core::format::Limits::DEFAULT` (`varos-core/src/format/limits.rs`, the one place they are
+declared) and lowered two after measuring (ADR-0008 R4: lowered after measurement, never raised silently).
 
 | limit | proposed (ADR-0008 §6) | enforced (`Limits::DEFAULT`) |
 |---|---|---|
-| file bytes | 256 MiB | (to be filled by S5-B) |
-| JSON model bytes | 32 MiB | (to be filled by S5-B) |
-| JSON nesting depth | 128 (serde_json's built-in limit — no separate scanner) | (to be filled by S5-B) |
-| PDF objects | 100,000 | (to be filled by S5-B) |
-| decoded PDF stream bytes | 64 MiB | (to be filled by S5-B) |
-| PDF name-tree depth | 64 | (to be filled by S5-B) |
-| nodes | 100,000 | (to be filled by S5-B) |
-| paths | 100,000 | (to be filled by S5-B) |
-| anchors (outer + holes, total) | 1,000,000 | (to be filled by S5-B) |
-| artboards | 1,000 | (to be filled by S5-B) |
-| tree depth | 64 | (to be filled by S5-B) |
+| file bytes | 256 MiB | 256 MiB |
+| JSON model bytes | 32 MiB | 32 MiB |
+| JSON nesting depth | 128 (serde_json's built-in limit — no separate scanner) | 128 (serde_json built-in; no `Limits` field) |
+| PDF objects | 100,000 | 100,000 (enforced by S5-D's reader) |
+| decoded PDF stream bytes | 64 MiB | 64 MiB (enforced by S5-D's reader) |
+| PDF name-tree depth | 64 | 64 (enforced by S5-D's reader) |
+| nodes (legacy registry groups count here too) | 100,000 | **40,000** |
+| paths | 100,000 | **40,000** |
+| anchors (outer + holes, total) | 1,000,000 | 1,000,000 — in practice never reached: the 32 MiB model cap binds first, at about 350,000 anchors (~92 bytes per anchor with handles) |
+| artboards | 1,000 | 1,000 |
+| tree depth (a root Layer is level 1) | 64 | 64 |
+
+Why 40,000 (2026-09-24, S5-B measurement, release build, cloud Linux): loading is dominated by
+`sync_tree`, which is roughly quadratic. 40,000 one-anchor paths (≈15 MiB model) took ≈1.3 s to load and
+≈1.25 s to save; 50,000 took ≈2.8 s / 2.4 s; 100,000 did not fit under the 32 MiB model cap. The work
+order's bar is "about 2 s at the cap" (R4). Optimising `sync_tree` is out of S5; raising the number
+afterwards needs the owner.
 
 Over-limit input is refused with the number that was exceeded, never silently truncated.
 
@@ -153,7 +158,7 @@ Over-limit input is refused with the number that was exceeded, never silently tr
 | condition | copy |
 |---|---|
 | newer format than this build supports | "This file needs a newer Varos. It uses file format {found}; this build supports up to {supported}. Update Varos to open it. The file has not been changed." |
-| over any limit | "The {editable model \| file \| …} exceeds the {32 MiB \| 100,000 nodes \| …} limit." |
+| over any limit | "The {editable model \| file \| …} exceeds the {32 MiB \| 40,000 \| …} limit (found: {n})." |
 | PDF with no embedded model | "This PDF has no editable Varos document. Open the original .vrs file. Importing other PDFs is not available yet." |
 | a re-saved PDF using object/xref streams, incremental updates or encryption | "This file was re-saved by another app in a form Varos can't read safely yet. Open the original .vrs." (ADR-0008 R2 — not yet enforced; today's reader has no such gate.) |
 | a save that would violate its own limits or validity | "This document can't be saved: {reason}. It is still open." — the document stays dirty in memory; nothing on disk changes. |
