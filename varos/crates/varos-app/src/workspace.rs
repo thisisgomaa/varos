@@ -364,7 +364,7 @@ impl Workspace {
     }
 
     /// Move tab `id` to the INSERTION SLOT `to` of the CURRENT order, exactly what the tab strip's
-    /// `tab_drop_index` returns: `0` = before the first tab, `k` = between tab `k-1` and tab `k`,
+    /// `tab_full_slot` returns: `0` = before the first tab, `k` = between tab `k-1` and tab `k`,
     /// `len` = after the last (larger values clamp to `len`). It is NOT the final index: with tabs
     /// `[A, B, C]`, dropping A into slot 2 (between B and C) gives `[B, A, C]`. Dropping a tab into
     /// its own slot or the next one (either edge of itself) is a no-op. Only the order changes;
