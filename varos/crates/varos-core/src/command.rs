@@ -78,6 +78,9 @@ pub enum EditCommand {
     Arrange(ZOrder),
     TransformAgain,
     DeleteSelected,
+    /// Edit ▸ Select All (⌘A): selection state only, like Deselect (`Editor::escape`) — no history
+    /// entry, no `rev` bump. See `Editor::select_all`.
+    SelectAll,
     /// Edit ▸ Copy: selection → the in-app clipboard. Leaves the document untouched (no history).
     Copy,
     /// Edit ▸ Cut: Copy + delete the selection, as ONE undo step.
@@ -167,6 +170,7 @@ impl EditCommand {
             Self::Arrange(order) => ed.arrange(order),
             Self::TransformAgain => ed.transform_again(),
             Self::DeleteSelected => ed.delete_selected(),
+            Self::SelectAll => ed.select_all(),
             Self::Copy => ed.copy_selection(),
             Self::Cut => ed.cut_selection(),
             Self::Paste { offset } => ed.paste(offset),
