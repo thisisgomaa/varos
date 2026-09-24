@@ -315,3 +315,34 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Hand test:** not yet — batch 1 list in `STATUS.md`.
 - **Verdict:** PASS. **Merged:** `e212cf0` to `main`.
 - Sign-off: moderator — PASS — 2026-09-24
+
+## Varos cursor set v1 wired + Retina NSCursor
+
+- **Date:** 2026-09-24. **Branch:** `feat/cursors-v1-wired` (commit `1ca727d`). **Reviewer:** Codex + moderator gates.
+- **Scope:** 30 v1 SVGs embedded at compile time, covering all 28 `CK` states; v1 is the default on all platforms. The Illustrator reference set is available only behind `VAROS_CURSORS_AI=1`. On macOS, each `NSCursor` comes from a 32-pt `NSImage` with 1× + 2× representations.
+- **Codex review:** REQUEST CHANGES — P2 unscoped `NSCursor::set`; P2 cursor restoration stall. Both fixed before merge: `native_cursor_apply_needed` limits application to the pointer inside the focused client area, after egui output; redraw on `CursorEntered` / `Focused` and on egui repaint restores the cursor promptly.
+- **Conflicts:** with mac-chrome in `Cargo.toml`, `Cargo.lock`, `THIRD_PARTY_NOTICES` and `main.rs`; resolved by Codex keeping both changes.
+- **Checks run (moderator, on the merged `main`, macOS):**
+  - Workspace tests → **294/294 passed**.
+  - Clippy (macOS + Windows target) → clean; fmt → clean.
+  - **Startup log after install:** `[varos] cursors: 28 v1 (+ 0 reference overrides); 28 Retina NSCursor (32 pt, 1x + 2x), 0 winit 1x, 0 system fallbacks`.
+- **Hand test:** pending — batch 1 list in `STATUS.md`.
+- **Verdict:** PASS. **Merged:** `ac7d633` to `main`.
+- Sign-off: moderator — PASS — 2026-09-24
+
+## Stroke joins round 3 — close radial hairlines far from the origin
+
+- **Date:** 2026-09-24. **Branch:** `fix/stroke-fan-artifact` (commit `f751cb2`). **Reviewer:** Codex + moderator gates.
+- **Symptom:** Ahmed still saw ≈1 px radial hairline gaps on the outer half of thick strokes at extreme zoom on a large circle far from the origin.
+- **Root causes:** fan/quad T-junctions (edges not shared exactly), f32 cancellation far from the origin, tiny-turn elision and skipped short segments.
+- **Fix:** f64 stroke geometry with shared corners cast once; stable sagitta used only for subdivision; every non-zero segment kept; f64 cover bounds and padding for translucent strokes / knockout.
+- **Codex review:** REQUEST CHANGES — P2 f32 cover bounds crop; P3 perf docs. Both fixed before merge.
+- **Regression evidence:** 9 GPU-free regressions using a radial-seam sampler fail on the old code and pass after the fix. Uncovered samples before → after: near circle **3/0/0 → 0**, far circle **8/0/0 → 0**, seven-point **15/1 → 0**, short-segment **38 → 0**.
+- **Perf harness:** alternating before/after runs, 10 rounds, load ≈0.95 — A **+5.8%**, B **−0.05%**, C **+3.8%**, D **+3.1%**, E **0.0%**.
+- **Checks run (moderator, on the merged `main`, macOS):**
+  - Workspace tests → **303/303 passed** (294 before + 9 regressions).
+  - Clippy (macOS + Windows target) → clean; fmt → clean.
+  - `Varos.app` rebuilt (2026-09-24).
+- **Hand test:** pending — batch 1 list in `STATUS.md`.
+- **Verdict:** PASS. **Merged:** `d6095f0` to `main`.
+- Sign-off: moderator — PASS — 2026-09-24
