@@ -13,7 +13,10 @@
 //!   half-finished edit); otherwise one [`Action::Snapshot`].
 //! - A clean session never snapshots; if it has copies, it gets one [`Action::Retire`].
 //! - One job in flight per session: nothing more is issued until its completion arrives. A
-//!   completion that does not match the job in flight (stale or out of order) is ignored.
+//!   completion that does not match the job in flight (stale, out of order, or another session's)
+//!   is ignored.
+//! - A change made while a retire is in flight still starts its 30 s at the change; the retire's
+//!   completion does not restart it.
 //! - A failure keeps the previous copy, records the reason, and backs off 30 s;
 //!   [`Scheduler::retry_now`] (the Retry button) lifts the back-off at once.
 //! - After a successful copy, if the document moved on meanwhile, the next copy is due 30 s after
@@ -99,7 +102,7 @@ impl SessionRecovery {
     /// not copied again until it changes).
     pub fn adopted(rid: String, loaded: Generation, rev: u64) -> Self {
         SessionRecovery {
-            next_seq: loaded.seq + 1,
+            next_seq: loaded.seq.saturating_add(1),
             last_snapshot_rev: Some(rev),
             has_copies: true,
             last_ok: Some(loaded),
@@ -109,7 +112,8 @@ impl SessionRecovery {
 
     fn issue<K>(&mut self, kind: JobKind, sid: K, rev: u64, now: Instant) -> Action<K> {
         let seq = self.next_seq;
-        self.next_seq += 1;
+        // Saturating: a wrap would reuse old generation names; the store refuses a seq this large.
+        self.next_seq = self.next_seq.saturating_add(1);
         self.in_flight = Some(InFlight { kind, seq, rev, issued_at: now });
         self.waiting = false;
         let rid = self.rid.clone();
@@ -203,7 +207,11 @@ impl Scheduler {
         }
         for p in probes {
             let r = p.recovery;
-            if r.in_flight.is_some() {
+            if let Some(job) = &r.in_flight {
+                // A change during a retire starts its deadline now, not when the retire completes.
+                if job.kind == JobKind::Retire && !p.clean && r.last_snapshot_rev != Some(p.rev) {
+                    r.next_deadline.get_or_insert(now + self.interval);
+                }
                 continue; // one job per session; its completion wakes the loop
             }
             let ready_at = r.backoff_until.filter(|&b| b > now);
@@ -237,9 +245,19 @@ impl Scheduler {
         out
     }
 
-    /// Record a finished job. Returns `false` (and changes nothing) for a completion that does not
-    /// match the session's job in flight — stale, duplicated or out of order.
-    pub fn on_complete<K>(&self, now: Instant, r: &mut SessionRecovery, done: Completion<K>) -> bool {
+    /// Record a finished job for the session `sid`, whose state is `r`. Returns `false` (and changes
+    /// nothing) for a completion that does not match that session's job in flight — another
+    /// session's (every session's tickets start at 1), stale, duplicated or out of order.
+    pub fn on_complete<K: PartialEq>(
+        &self,
+        now: Instant,
+        sid: K,
+        r: &mut SessionRecovery,
+        done: Completion<K>,
+    ) -> bool {
+        if done.sid != sid {
+            return false;
+        }
         let Some(job) = r.in_flight.clone().filter(|j| j.seq == done.seq) else { return false };
         let kind_matches = matches!(
             (job.kind, &done.result),
@@ -251,7 +269,7 @@ impl Scheduler {
         r.in_flight = None;
         match done.result {
             Ok(Done::Snapshot(generation)) => {
-                r.next_seq = r.next_seq.max(generation.seq + 1);
+                r.next_seq = r.next_seq.max(generation.seq.saturating_add(1));
                 r.last_snapshot_rev = Some(job.rev);
                 r.last_ok = Some(generation);
                 r.last_err = None;
@@ -261,7 +279,8 @@ impl Scheduler {
                 r.next_deadline = Some(job.issued_at + self.interval);
             }
             Ok(Done::Retired) => {
-                // The store refuses a retired rid: continue in a fresh one.
+                // The store refuses a retired rid: continue in a fresh one. `next_deadline` is kept:
+                // a change made during the retire stays due 30 s after that change.
                 r.rid = fresh_rid();
                 r.has_copies = false;
                 r.last_snapshot_rev = None;
@@ -399,7 +418,7 @@ mod tests {
         }
         assert_eq!(snap_seq(&one(&mut s, t0 + 30 * S, &mut a)), Some(1));
         // After the copy, a document that kept changing is due 30 s after that copy was issued.
-        assert!(s.on_complete(t0 + 31 * S, &mut a.rec, ok_snapshot(1, 1)));
+        assert!(s.on_complete(t0 + 31 * S, a.id, &mut a.rec, ok_snapshot(1, 1)));
         a.edit();
         assert!(one(&mut s, t0 + 45 * S, &mut a).is_empty());
         assert_eq!(snap_seq(&one(&mut s, t0 + 60 * S, &mut a)), Some(2));
@@ -419,12 +438,12 @@ mod tests {
         a.edit();
         one(&mut s, t0, &mut a);
         one(&mut s, t0 + 30 * S, &mut a);
-        s.on_complete(t0 + 31 * S, &mut a.rec, ok_snapshot(1, 1));
+        s.on_complete(t0 + 31 * S, a.id, &mut a.rec, ok_snapshot(1, 1));
         a.clean = true;
         let acts = one(&mut s, t0 + 32 * S, &mut a);
         assert_eq!(acts, vec![Action::Retire { sid: 1, rid: "rid1".into(), seq: 2 }]);
         assert!(one(&mut s, t0 + 33 * S, &mut a).is_empty(), "retire in flight: nothing more");
-        assert!(s.on_complete(t0 + 33 * S, &mut a.rec, Completion { sid: 1, seq: 2, result: Ok(Done::Retired) }));
+        assert!(s.on_complete(t0 + 33 * S, a.id, &mut a.rec, Completion { sid: 1, seq: 2, result: Ok(Done::Retired) }));
         assert!(!a.rec.has_copies && a.rec.last_ok.is_none());
         assert_ne!(a.rec.rid, "rid1", "a retired rid is never reused");
         assert!(one(&mut s, t0 + 400 * S, &mut a).is_empty());
@@ -461,7 +480,7 @@ mod tests {
             assert!(one(&mut s, t0 + sec * S, &mut a).is_empty(), "job 1 still in flight at {sec}s");
         }
         assert_eq!(s.next_wake(), None);
-        s.on_complete(t0 + 601 * S, &mut a.rec, ok_snapshot(1, 1));
+        s.on_complete(t0 + 601 * S, a.id, &mut a.rec, ok_snapshot(1, 1));
         assert_eq!(snap_seq(&one(&mut s, t0 + 601 * S, &mut a)), Some(2), "overdue content goes at once");
     }
 
@@ -481,8 +500,8 @@ mod tests {
         // A's job in flight does not hold B back, and B's failure does not touch A.
         let acts = observe(&mut s, t0 + 40 * S, &mut [&mut a, &mut b]);
         assert_eq!(acts, vec![Action::Snapshot { sid: 2, rid: "rid2".into(), seq: 1 }]);
-        s.on_complete(t0 + 41 * S, &mut b.rec, Completion { sid: 2, seq: 1, result: Err("disk full".into()) });
-        s.on_complete(t0 + 41 * S, &mut a.rec, ok_snapshot(1, 1));
+        s.on_complete(t0 + 41 * S, b.id, &mut b.rec, Completion { sid: 2, seq: 1, result: Err("disk full".into()) });
+        s.on_complete(t0 + 41 * S, a.id, &mut a.rec, ok_snapshot(1, 1));
         assert!(a.rec.last_err.is_none() && a.rec.backoff_until.is_none());
         assert_eq!(b.rec.last_err.as_deref(), Some("disk full"));
     }
@@ -495,18 +514,18 @@ mod tests {
         a.edit();
         one(&mut s, t0, &mut a);
         one(&mut s, t0 + 30 * S, &mut a);
-        assert!(s.on_complete(t0 + 31 * S, &mut a.rec, ok_snapshot(1, 1)));
+        assert!(s.on_complete(t0 + 31 * S, a.id, &mut a.rec, ok_snapshot(1, 1)));
         a.edit();
         assert_eq!(snap_seq(&one(&mut s, t0 + 60 * S, &mut a)), Some(2));
         let before = a.rec.clone();
         // A stale (older) completion, a future one and a duplicate change nothing.
-        assert!(!s.on_complete(t0 + 61 * S, &mut a.rec, ok_snapshot(1, 1)));
-        assert!(!s.on_complete(t0 + 61 * S, &mut a.rec, ok_snapshot(1, 7)));
+        assert!(!s.on_complete(t0 + 61 * S, a.id, &mut a.rec, ok_snapshot(1, 1)));
+        assert!(!s.on_complete(t0 + 61 * S, a.id, &mut a.rec, ok_snapshot(1, 7)));
         let wrong_kind = Completion { sid: 1, seq: 2, result: Ok(Done::Retired) };
-        assert!(!s.on_complete(t0 + 61 * S, &mut a.rec, wrong_kind));
+        assert!(!s.on_complete(t0 + 61 * S, a.id, &mut a.rec, wrong_kind));
         assert_eq!(a.rec, before);
-        assert!(s.on_complete(t0 + 62 * S, &mut a.rec, ok_snapshot(1, 2)));
-        assert!(!s.on_complete(t0 + 63 * S, &mut a.rec, ok_snapshot(1, 2)), "a duplicate is ignored");
+        assert!(s.on_complete(t0 + 62 * S, a.id, &mut a.rec, ok_snapshot(1, 2)));
+        assert!(!s.on_complete(t0 + 63 * S, a.id, &mut a.rec, ok_snapshot(1, 2)), "a duplicate is ignored");
         assert_eq!(a.rec.last_ok, Some(gen(2)));
         assert_eq!(a.rec.last_snapshot_rev, Some(a.rev));
     }
@@ -520,7 +539,7 @@ mod tests {
         one(&mut s, t0, &mut a);
         one(&mut s, t0 + 30 * S, &mut a);
         let fail = |seq| Completion { sid: 1, seq, result: Err("The disk is full.".to_string()) };
-        assert!(s.on_complete(t0 + 31 * S, &mut a.rec, fail(1)));
+        assert!(s.on_complete(t0 + 31 * S, a.id, &mut a.rec, fail(1)));
         assert_eq!(a.rec.last_err.as_deref(), Some("The disk is full."));
         assert_eq!(a.rec.last_snapshot_rev, None, "the failed copy protects nothing");
         assert!(one(&mut s, t0 + 32 * S, &mut a).is_empty());
@@ -528,17 +547,17 @@ mod tests {
         assert!(one(&mut s, t0 + 60 * S, &mut a).is_empty());
         assert_eq!(snap_seq(&one(&mut s, t0 + 61 * S, &mut a)), Some(2));
         // Second failure; Retry acts at once.
-        s.on_complete(t0 + 62 * S, &mut a.rec, fail(2));
+        s.on_complete(t0 + 62 * S, a.id, &mut a.rec, fail(2));
         assert!(one(&mut s, t0 + 63 * S, &mut a).is_empty());
         s.retry_now(t0 + 63 * S, &mut a.rec);
         assert_eq!(s.next_wake(), Some(t0 + 63 * S));
         assert_eq!(snap_seq(&one(&mut s, t0 + 63 * S, &mut a)), Some(3));
-        s.on_complete(t0 + 64 * S, &mut a.rec, ok_snapshot(1, 3));
+        s.on_complete(t0 + 64 * S, a.id, &mut a.rec, ok_snapshot(1, 3));
         assert!(a.rec.last_err.is_none());
         // A failed retire backs off the same way.
         a.clean = true;
         assert!(matches!(one(&mut s, t0 + 65 * S, &mut a)[..], [Action::Retire { seq: 4, .. }]));
-        s.on_complete(t0 + 65 * S, &mut a.rec, fail(4));
+        s.on_complete(t0 + 65 * S, a.id, &mut a.rec, fail(4));
         assert!(one(&mut s, t0 + 66 * S, &mut a).is_empty());
         assert!(matches!(one(&mut s, t0 + 95 * S, &mut a)[..], [Action::Retire { seq: 5, .. }]));
     }
@@ -597,6 +616,71 @@ mod tests {
         a.edit();
         one(&mut s, t0, &mut a);
         assert_eq!(one(&mut s, t0 + 30 * S, &mut a), vec![Action::Snapshot { sid: 1, rid: "orphan".into(), seq: 8 }]);
+    }
+
+    #[test]
+    fn edit_during_retire_keeps_the_30s_deadline_from_the_edit() {
+        let t0 = Instant::now();
+        let mut s = Scheduler::default();
+        let mut a = Sess::new(1);
+        a.edit();
+        one(&mut s, t0, &mut a);
+        one(&mut s, t0 + 30 * S, &mut a);
+        assert!(s.on_complete(t0 + 31 * S, a.id, &mut a.rec, ok_snapshot(1, 1)));
+        a.clean = true; // saved: the copies retire
+        assert!(matches!(one(&mut s, t0 + 100 * S, &mut a)[..], [Action::Retire { seq: 2, .. }]));
+        a.edit(); // a change while the (slow) retire is still running
+        assert!(one(&mut s, t0 + 101 * S, &mut a).is_empty());
+        assert_eq!(a.rec.next_deadline, Some(t0 + 131 * S), "the 30 s start at the edit");
+        assert!(s.on_complete(
+            t0 + 126 * S,
+            a.id,
+            &mut a.rec,
+            Completion { sid: 1, seq: 2, result: Ok(Done::Retired) }
+        ));
+        assert!(one(&mut s, t0 + 126 * S, &mut a).is_empty());
+        assert_eq!(s.next_wake(), Some(t0 + 131 * S), "not 30 s after the retire finished");
+        let fresh = a.rec.rid.clone();
+        assert_eq!(one(&mut s, t0 + 131 * S, &mut a), vec![Action::Snapshot { sid: 1, rid: fresh, seq: 3 }]);
+    }
+
+    #[test]
+    fn completion_for_another_session_is_ignored() {
+        let t0 = Instant::now();
+        let mut s = Scheduler::default();
+        let (mut a, mut b) = (Sess::new(1), Sess::new(2));
+        a.edit();
+        b.edit();
+        observe(&mut s, t0, &mut [&mut a, &mut b]);
+        let acts = observe(&mut s, t0 + 30 * S, &mut [&mut a, &mut b]);
+        assert_eq!(acts.len(), 2, "both sessions have job seq 1 in flight");
+        let before = b.rec.clone();
+        // A's completion (same seq, same kind) handed to B's state protects nothing in B.
+        assert!(!s.on_complete(t0 + 31 * S, b.id, &mut b.rec, ok_snapshot(1, 1)));
+        assert_eq!(b.rec, before);
+        assert!(b.rec.in_flight.is_some() && b.rec.last_snapshot_rev.is_none());
+        assert!(s.on_complete(t0 + 31 * S, a.id, &mut a.rec, ok_snapshot(1, 1)));
+        assert!(s.on_complete(t0 + 31 * S, b.id, &mut b.rec, ok_snapshot(2, 1)));
+    }
+
+    #[test]
+    fn huge_generation_seq_never_panics_or_wraps() {
+        let t0 = Instant::now();
+        let mut s = Scheduler::default();
+        let mut a = Sess::new(1);
+        a.rev = 1;
+        a.clean = false;
+        let top =
+            Generation { seq: u64::MAX, file: format!("snap-{}.json", u64::MAX), bytes: 10, crc32: 0, saved_at: 1 };
+        a.rec = SessionRecovery::adopted("orphan".into(), top.clone(), 1);
+        assert_eq!(a.rec.next_seq, u64::MAX, "saturates instead of overflowing");
+        a.edit();
+        one(&mut s, t0, &mut a);
+        assert_eq!(snap_seq(&one(&mut s, t0 + 30 * S, &mut a)), Some(u64::MAX));
+        assert_eq!(a.rec.next_seq, u64::MAX, "never wraps back to a low (reused) generation name");
+        let done = Completion { sid: 1, seq: u64::MAX, result: Ok(Done::Snapshot(top)) };
+        assert!(s.on_complete(t0 + 31 * S, a.id, &mut a.rec, done));
+        assert_eq!(a.rec.next_seq, u64::MAX);
     }
 
     #[test]
