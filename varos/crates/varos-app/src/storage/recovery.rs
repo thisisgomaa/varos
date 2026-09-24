@@ -209,6 +209,29 @@ fn snap_file(seq: u64) -> String {
     format!("snap-{seq}.json")
 }
 
+/// `snap-<digits>.json`.
+fn is_snap_name(name: &str) -> bool {
+    name.strip_prefix("snap-")
+        .and_then(|r| r.strip_suffix(".json"))
+        .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A file name this build writes inside a session folder (the only names it will ever delete).
+fn is_known_name(name: &str) -> bool {
+    name == LOCK_FILE
+        || name == MANIFEST_FILE
+        || is_snap_name(name)
+        || (name.starts_with('.') && name.ends_with(".varos-tmp"))
+}
+
+/// Plain-English text for a failed READ (the shared `io_reason` words permission errors for writes).
+fn read_reason(e: &io::Error) -> String {
+    match e.kind() {
+        io::ErrorKind::PermissionDenied => "Varos isn't allowed to read it.".to_string(),
+        _ => io_reason(e),
+    }
+}
+
 fn lock_guard<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -274,6 +297,24 @@ impl RecoveryStore {
         &self.dir
     }
 
+    /// Is `p` itself (not a symlink)? Links are never followed: a link inside `Recovery/` could
+    /// point at the user's own folders.
+    fn not_a_link(&self, p: &Path) -> bool {
+        self.fs.resolve_link(p).is_ok_and(|r| r == p)
+    }
+
+    /// `Recovery/<rid>` for a valid rid whose folder is not a symlink (it may not exist yet).
+    fn session_dir(&self, rid: &str) -> Result<PathBuf, SnapError> {
+        if !valid_rid(rid) {
+            return Err(SnapError::InvalidRid);
+        }
+        let dir = self.dir.join(rid);
+        if !self.not_a_link(&dir) {
+            return Err(SnapError::Damaged("The recovery folder is a link; Varos won't follow it.".to_string()));
+        }
+        Ok(dir)
+    }
+
     /// Hold `rid`'s lock: create its folder and take the lock, or keep the one `scan` already
     /// claimed (the claim becomes a live session once a generation is published).
     fn ensure_live(&self, rid: &str, dir: &Path) -> Result<(), SnapError> {
@@ -285,6 +326,9 @@ impl RecoveryStore {
         match try_take_lock(dir) {
             Ok(Some(f)) => {
                 locks.insert(rid.to_string(), Held { _file: f, claimed: false });
+                // Make the new folder's own entry in `Recovery/` durable (write_replace only syncs
+                // the folder it writes into).
+                let _ = self.fs.sync_dir(&self.dir);
                 Ok(())
             }
             Ok(None) => Err(SnapError::Locked),
@@ -297,7 +341,7 @@ impl RecoveryStore {
         match self.fs.read(&dir.join(MANIFEST_FILE)) {
             Ok(bytes) => parse_manifest(&bytes).map(Some),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(SnapError::Damaged(format!("The recovery record can't be read. {}", io_reason(&e)))),
+            Err(e) => Err(SnapError::Damaged(format!("The recovery record can't be read. {}", read_reason(&e)))),
         }
     }
 
@@ -323,7 +367,7 @@ impl RecoveryStore {
         if lock_guard(&self.retired).contains(rid) {
             return Err(SnapError::Retired);
         }
-        let dir = self.dir.join(rid);
+        let dir = self.session_dir(rid)?;
         self.ensure_live(rid, &dir)?;
         // A present-but-unreadable (or newer) manifest is refused rather than overwritten: its data is kept.
         let prev = self.read_manifest(&dir)?;
@@ -382,9 +426,7 @@ impl RecoveryStore {
         let Ok(entries) = self.fs.read_dir(dir) else { return };
         for p in entries {
             let Some(name) = p.file_name().and_then(|n| n.to_str()) else { continue };
-            let unlisted_snap = name.starts_with("snap-")
-                && name.ends_with(".json")
-                && !manifest.generations.iter().any(|g| g.file == name);
+            let unlisted_snap = is_snap_name(name) && !manifest.generations.iter().any(|g| g.file == name);
             let temp = name.starts_with('.') && name.ends_with(".varos-tmp");
             if unlisted_snap || temp {
                 let _ = self.fs.remove_file(&p);
@@ -392,7 +434,8 @@ impl RecoveryStore {
         }
     }
 
-    /// Verify one listed generation: exact size, CRC-32 and a readable model head.
+    /// Verify one listed generation: exact size, CRC-32 and the model blob's head (`{"varos":`, as
+    /// `doc_to_blob` writes it; the full decode is Recover's `doc_from_blob`).
     fn verify(&self, dir: &Path, g: &Generation) -> Result<Vec<u8>, String> {
         if g.bytes > MAX_SNAPSHOT_BYTES {
             return Err("The recovery copy is larger than allowed.".to_string());
@@ -401,18 +444,15 @@ impl RecoveryStore {
         match self.fs.metadata(&path) {
             Ok(m) if m.len == g.bytes && !m.is_dir => {}
             Ok(_) => return Err("The recovery copy is incomplete.".to_string()),
-            Err(e) => return Err(format!("The recovery copy can't be read. {}", io_reason(&e))),
+            Err(e) => return Err(format!("The recovery copy can't be read. {}", read_reason(&e))),
         }
-        let blob = self.fs.read(&path).map_err(|e| format!("The recovery copy can't be read. {}", io_reason(&e)))?;
+        let blob = self.fs.read(&path).map_err(|e| format!("The recovery copy can't be read. {}", read_reason(&e)))?;
         if blob.len() as u64 != g.bytes || crc32(&blob) != g.crc32 {
             return Err("The recovery copy is damaged.".to_string());
         }
-        #[derive(Deserialize)]
-        struct Head {
-            #[allow(dead_code)]
-            varos: u32,
+        if !blob.starts_with(br#"{"varos":"#) {
+            return Err("The recovery copy is damaged.".to_string());
         }
-        serde_json::from_slice::<Head>(&blob).map_err(|_| "The recovery copy is damaged.".to_string())?;
         Ok(blob)
     }
 
@@ -435,10 +475,7 @@ impl RecoveryStore {
     /// The best usable generation of `rid`: the newest that verifies, else the previous one
     /// (`fell_back = true`). Nothing usable ⇒ `Damaged`/`NewerFormat` (the data is kept).
     pub fn load_best(&self, rid: &str) -> Result<Loaded, SnapError> {
-        if !valid_rid(rid) {
-            return Err(SnapError::InvalidRid);
-        }
-        let dir = self.dir.join(rid);
+        let dir = self.session_dir(rid)?;
         let manifest = self.read_manifest(&dir)?.ok_or(SnapError::NotFound)?;
         self.best(&dir, &manifest)
     }
@@ -446,16 +483,19 @@ impl RecoveryStore {
     /// Orphans left by dead sessions, each claimed by this process (its lock stays held until
     /// Recover writes into it, [`Self::retire`] discards it, or the store is dropped). Folders locked
     /// elsewhere (live sessions) and this process's own live sessions are skipped; orphans claimed by
-    /// an earlier scan are listed again. A claimed folder that never published a manifest holds
-    /// nothing recoverable and is removed. Every generation is verified (read + CRC), so `state` is
-    /// what Recover will meet. Sorted newest first.
+    /// an earlier scan are listed again. Symlinks are skipped, never followed. A claimed folder
+    /// without a manifest that holds only names this build writes never published anything and is
+    /// retired (renamed while the claim is held, then removed); one holding anything else (e.g. a
+    /// newer build's layout) is listed as `Damaged` and kept. Every generation is verified (read +
+    /// CRC), so `state` is what Recover will meet — this reads every orphan's blobs: call it off the
+    /// UI thread. Sorted newest first.
     pub fn scan(&self) -> Vec<OrphanEntry> {
         let Ok(mut entries) = self.fs.read_dir(&self.dir) else { return Vec::new() };
         entries.sort();
         let mut out = Vec::new();
         for path in entries {
             let Some(rid) = path.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
-            if !valid_rid(&rid) || !self.fs.metadata(&path).is_ok_and(|m| m.is_dir) {
+            if !valid_rid(&rid) || !self.not_a_link(&path) || !self.fs.metadata(&path).is_ok_and(|m| m.is_dir) {
                 continue;
             }
             {
@@ -472,12 +512,17 @@ impl RecoveryStore {
                 }
             }
             let (display_name, original_path, saved_at, state) = match self.read_manifest(&path) {
-                Ok(None) => {
-                    // Nothing was ever published here: release the claim and clean up.
-                    lock_guard(&self.locks).remove(&rid);
-                    let _ = self.remove_tree(&path);
+                Ok(None) if self.only_known_files(&path) => {
+                    // Nothing was ever published here. Retire renames it while the claim is held.
+                    let _ = self.retire(&rid);
                     continue;
                 }
+                Ok(None) => (
+                    "Unknown document".to_string(),
+                    None,
+                    None,
+                    OrphanState::Damaged("The recovery record can't be read.".to_string()),
+                ),
                 Ok(Some(m)) => match self.best(&path, &m) {
                     Ok(l) => (m.display_name, m.original_path, Some(l.generation.saved_at), OrphanState::Ready),
                     Err(e) => (m.display_name, m.original_path, m.generations.first().map(|g| g.saved_at), state_of(e)),
@@ -494,11 +539,13 @@ impl RecoveryStore {
     /// leftover tombstone is removed by [`Self::cleanup_completed`]). Afterwards `rid` is refused by
     /// `write_generation` — the session takes a fresh rid. A rid that has no folder is simply marked
     /// retired. Refused with `Locked` if another live session holds the folder.
+    ///
+    /// Known Windows limitation (compile-only there): Windows can't rename a folder with an open
+    /// file inside, so the lock is released just before the rename. Another process's `scan` can
+    /// claim the folder in that gap; the rename then fails, the lock may not be taken back, and the
+    /// session's copies stay with that other process.
     pub fn retire(&self, rid: &str) -> Result<(), SnapError> {
-        if !valid_rid(rid) {
-            return Err(SnapError::InvalidRid);
-        }
-        let dir = self.dir.join(rid);
+        let dir = self.session_dir(rid)?;
         let mut locks = lock_guard(&self.locks);
         let mut held = locks.remove(rid);
         if held.is_none() {
@@ -536,7 +583,7 @@ impl RecoveryStore {
         drop(locks);
         lock_guard(&self.retired).insert(rid.to_string());
         let _ = self.fs.sync_dir(&self.dir);
-        let _ = self.remove_tree(&tomb);
+        let _ = self.remove_session_files(&tomb);
         Ok(())
     }
 
@@ -548,24 +595,38 @@ impl RecoveryStore {
             let is_tomb = p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
                 n.split_once(DISCARDED_MARK).is_some_and(|(rid, nonce)| valid_rid(rid) && !nonce.is_empty())
             });
-            if is_tomb {
-                let _ = self.remove_tree(&p);
+            if is_tomb && self.not_a_link(&p) {
+                let _ = self.remove_session_files(&p);
             }
         }
     }
 
-    /// Recursive removal through the port (session folders are flat; nested folders are handled
-    /// anyway). Only ever called on a path inside the recovery folder.
-    fn remove_tree(&self, path: &Path) -> io::Result<()> {
-        debug_assert!(path.starts_with(&self.dir) && path != self.dir);
-        for p in self.fs.read_dir(path)? {
-            if self.fs.metadata(&p).is_ok_and(|m| m.is_dir) {
-                self.remove_tree(&p)?;
-            } else {
+    /// Does `dir` hold only plain files with names this build writes?
+    fn only_known_files(&self, dir: &Path) -> bool {
+        self.fs.read_dir(dir).is_ok_and(|entries| {
+            entries.iter().all(|p| {
+                p.file_name().and_then(|n| n.to_str()).is_some_and(is_known_name)
+                    && self.not_a_link(p)
+                    && self.fs.metadata(p).is_ok_and(|m| !m.is_dir)
+            })
+        })
+    }
+
+    /// Flat removal of a (renamed) session folder: delete only plain files with names this build
+    /// writes, then the folder. Never recurses and never follows a link, so anything else (a
+    /// folder, a link, a newer build's file) stays and the folder with it.
+    fn remove_session_files(&self, dir: &Path) -> io::Result<()> {
+        debug_assert!(dir.starts_with(&self.dir) && dir != self.dir);
+        if !self.not_a_link(dir) {
+            return Err(io::Error::other("refusing to follow a link"));
+        }
+        for p in self.fs.read_dir(dir)? {
+            let known = p.file_name().and_then(|n| n.to_str()).is_some_and(is_known_name);
+            if known && self.not_a_link(&p) && self.fs.metadata(&p).is_ok_and(|m| !m.is_dir) {
                 self.fs.remove_file(&p)?;
             }
         }
-        self.fs.remove_dir(path)
+        self.fs.remove_dir(dir)
     }
 }
 
@@ -652,11 +713,25 @@ mod tests {
         let man_at = renames.iter().position(|p| p.ends_with(MANIFEST_FILE)).unwrap();
         assert!(blob_at < man_at, "{renames:?}");
         assert!(matches!(store.load_best(&rid), Err(SnapError::NotFound)));
-        // The session dies; the next launch sees no generation and cleans the unpublished blob.
+        // The session dies; the next launch sees no generation and cleans the unpublished blob —
+        // renamed to a tombstone while its claim is held, never unlinked in place.
         drop(store);
-        let next = real_store(&d);
+        let (fs2, next) = fault_store(&d);
         assert!(next.scan().is_empty());
-        assert!(!session.exists(), "unpublished folder cleaned: {:?}", names(next.dir()));
+        assert!(names(next.dir()).is_empty(), "unpublished folder cleaned: {:?}", names(next.dir()));
+        let log = fs2.log();
+        let tomb_at = log.iter().position(|(op, p)| {
+            *op == Op::Rename && p.file_name().is_some_and(|n| n.to_string_lossy().contains(DISCARDED_MARK))
+        });
+        let tomb_at = tomb_at.expect("renamed to a tombstone");
+        assert!(
+            !log[..tomb_at].iter().any(|(op, p)| matches!(op, Op::Remove | Op::RemoveDir) && p.starts_with(&session)),
+            "nothing removed before the rename: {log:?}"
+        );
+        assert!(
+            !log.iter().any(|(op, p)| *op == Op::Remove && *p == session.join(LOCK_FILE)),
+            "lock never unlinked in place"
+        );
     }
 
     #[test]
@@ -670,10 +745,115 @@ mod tests {
         }
         assert_eq!(seqs(&store, &rid), vec![5, 4]);
         assert_eq!(names(&store.dir().join(&rid)), vec![MANIFEST_FILE, LOCK_FILE, "snap-4.json", "snap-5.json"]);
+        // A temp left by a crashed write is swept by the next durable publish.
+        std::fs::write(store.dir().join(&rid).join(".snap-9.json.dead.varos-tmp"), b"half").unwrap();
+        store.write_generation(&meta(&rid, "Logo"), 6, &blob(6), 106).unwrap();
+        assert_eq!(names(&store.dir().join(&rid)), vec![MANIFEST_FILE, LOCK_FILE, "snap-5.json", "snap-6.json"]);
         let l = store.load_best(&rid).unwrap();
-        assert_eq!((l.blob, l.generation.seq, l.fell_back), (blob(5), 5, false));
+        assert_eq!((l.blob, l.generation.seq, l.fell_back), (blob(6), 6, false));
         let m = read_manifest(&store, &rid);
         assert_eq!((m.created, m.model_version, m.manifest_version), (101, varos_core::file::VRS_VERSION, 1));
+    }
+
+    #[test]
+    fn older_generation_is_swept_only_after_the_manifest_is_confirmed() {
+        let d = TestDir::new("rec-sweep-durable");
+        let (fs, store) = fault_store(&d);
+        let rid = fresh_rid();
+        store.write_generation(&meta(&rid, "Logo"), 1, &blob(1), 101).unwrap();
+        store.write_generation(&meta(&rid, "Logo"), 2, &blob(2), 102).unwrap();
+        // Both folder syncs of the next write fail (the blob's, then the manifest's): the manifest
+        // is replaced but not confirmed, so N-2 must stay on disk.
+        fs.push(Fault::at(Step::SyncDir).on(&rid));
+        fs.push(Fault::at(Step::SyncDir).on(&rid));
+        store.write_generation(&meta(&rid, "Logo"), 3, &blob(3), 103).unwrap();
+        assert_eq!(fs.pending(), 0);
+        assert_eq!(seqs(&store, &rid), vec![3, 2]);
+        let session = store.dir().join(&rid);
+        assert!(session.join("snap-1.json").exists(), "N-2 kept until a manifest is confirmed");
+        // A confirmed write sweeps everything the manifest no longer lists.
+        store.write_generation(&meta(&rid, "Logo"), 4, &blob(4), 104).unwrap();
+        assert_eq!(names(&session), vec![MANIFEST_FILE, LOCK_FILE, "snap-3.json", "snap-4.json"]);
+    }
+
+    #[test]
+    fn repeated_seq_never_overwrites_a_listed_blob() {
+        let d = TestDir::new("rec-seq");
+        let store = real_store(&d);
+        let rid = fresh_rid();
+        store.write_generation(&meta(&rid, "Logo"), 2, &blob(2), 102).unwrap();
+        let listed = std::fs::read(store.dir().join(&rid).join("snap-2.json")).unwrap();
+        let g = store.write_generation(&meta(&rid, "Logo"), 2, &blob(99), 103).unwrap();
+        assert_eq!(g.seq, 3);
+        assert_eq!(std::fs::read(store.dir().join(&rid).join("snap-2.json")).unwrap(), listed);
+        assert_eq!(seqs(&store, &rid), vec![3, 2]);
+        assert_eq!(store.load_best(&rid).unwrap().blob, blob(99));
+    }
+
+    #[test]
+    fn unknown_folder_without_manifest_is_listed_damaged_and_kept() {
+        let d = TestDir::new("rec-unknown");
+        let store = real_store(&d);
+        let future = store.dir().join("future-session");
+        std::fs::create_dir_all(&future).unwrap();
+        std::fs::write(future.join("manifest-v2.json"), b"{}").unwrap();
+        std::fs::write(future.join("snap-9.json"), b"{\"varos\":2}").unwrap();
+        let orphans = store.scan();
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].rid, "future-session");
+        assert_eq!(orphans[0].state, OrphanState::Damaged("The recovery record can't be read.".into()));
+        store.cleanup_completed();
+        assert_eq!(store.scan().len(), 1);
+        assert_eq!(names(&future), vec!["manifest-v2.json", LOCK_FILE, "snap-9.json"], "kept");
+        // Discard is explicit, and still deletes only names this build writes.
+        store.retire("future-session").unwrap();
+        let left = names(store.dir());
+        assert_eq!(left.len(), 1, "{left:?}");
+        let tomb = store.dir().join(&left[0]);
+        assert_eq!(names(&tomb), vec!["manifest-v2.json"]);
+        store.cleanup_completed();
+        assert_eq!(names(&tomb), vec!["manifest-v2.json"], "an unknown file is never deleted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_rid_is_never_followed() {
+        let d = TestDir::new("rec-symlink");
+        let docs = d.join("UserDocs");
+        std::fs::create_dir_all(docs.join("sub")).unwrap();
+        std::fs::write(docs.join("precious.vrs"), b"precious").unwrap();
+        std::fs::write(docs.join("sub").join("more.vrs"), b"more").unwrap();
+        // Known names too, so a "flat removal of known names" through the link would bite.
+        std::fs::write(docs.join("snap-1.json"), b"user file").unwrap();
+        std::fs::write(docs.join(LOCK_FILE), b"user file").unwrap();
+        let (fs, store) = fault_store(&d);
+        std::os::unix::fs::symlink(&docs, store.dir().join("abc123")).unwrap();
+        std::os::unix::fs::symlink(&docs, store.dir().join(format!("abc124{DISCARDED_MARK}x"))).unwrap();
+        // A real tombstone holding links to the user's files and folders.
+        let tomb = store.dir().join(format!("abc125{DISCARDED_MARK}y"));
+        std::fs::create_dir_all(&tomb).unwrap();
+        std::os::unix::fs::symlink(docs.join("precious.vrs"), tomb.join("snap-1.json")).unwrap();
+        std::os::unix::fs::symlink(docs.join("sub"), tomb.join("snap-2.json")).unwrap();
+
+        assert!(store.scan().is_empty());
+        store.cleanup_completed();
+        assert!(matches!(store.retire("abc123"), Err(SnapError::Damaged(_))));
+        assert!(matches!(store.load_best("abc123"), Err(SnapError::Damaged(_))));
+        assert!(matches!(store.write_generation(&meta("abc123", "X"), 1, &blob(1), 1), Err(SnapError::Damaged(_))));
+
+        let mut outside = names(&docs);
+        outside.sort();
+        assert_eq!(outside, vec!["precious.vrs", LOCK_FILE, "snap-1.json", "sub"]);
+        assert_eq!(std::fs::read(docs.join(LOCK_FILE)).unwrap(), b"user file");
+        assert_eq!(std::fs::read(docs.join("snap-1.json")).unwrap(), b"user file");
+        assert_eq!(std::fs::read(docs.join("precious.vrs")).unwrap(), b"precious");
+        assert_eq!(names(&docs.join("sub")), vec!["more.vrs"]);
+        assert!(
+            !fs.log().iter().any(|(op, p)| matches!(op, Op::Remove | Op::RemoveDir | Op::Create | Op::Rename)
+                && (p.starts_with(store.dir().join("abc123")) || p.starts_with(&docs))),
+            "{:?}",
+            fs.log()
+        );
     }
 
     #[test]
