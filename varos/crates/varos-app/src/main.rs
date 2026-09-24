@@ -871,7 +871,9 @@ fn main() {
     let scale = window.scale_factor();
 
     let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
-    let mut ed = Editor::new();
+                                        // DFS S1: every tab is its own document (editor + view + file + saved checkpoint); the host
+                                        // always works on the ACTIVE session (never empty in S1: it starts as a pristine Untitled-1).
+    let mut ws = workspace::Workspace::new();
 
     let installed = cursors::install(hwnd); // subclass live; custom_frame is deferred until the splash ends
     cursors::set_dark_class_brush(hwnd); // any OS background fill is now #141313, never white
@@ -899,14 +901,14 @@ fn main() {
     let mut last_click: Option<(Instant, Pt)> = None;
     #[cfg(target_os = "macos")]
     let mut caption_clicks = mac_caption::CaptionClicks::default();
-    let mut view = {
+    if let Some(s) = ws.active_mut() {
         // open zoomed-out so the artboard reads as a DEFINED page sitting on the larger board
         // (lots of dotted board visible around it). Ctrl+0 later does a tight Fit-in-Window.
         // A8a: a boardless new doc has no page — frame its content, else the default region.
-        let (x, y, w, h) = fit_rect(&ed);
+        let (x, y, w, h) = fit_rect(&s.editor);
         let sz = window.inner_size();
-        View::fit(x, y, w, h, sz.width as f32, sz.height as f32, 0.45)
-    };
+        s.view = View::fit(x, y, w, h, sz.width as f32, sz.height as f32, 0.45);
+    }
     let mut screen_cursor: Pt = [0.0, 0.0];
     #[cfg(target_os = "macos")]
     let mut pointer_inside = false;
@@ -932,7 +934,7 @@ fn main() {
 
     // ---- the 🔖 slice: the open .vrs + unsaved-changes tracking (drives the title/tab "*") ----
     let mut cur_file: Option<std::path::PathBuf> = None;
-    let mut saved_rev: u64 = ed.rev;
+    let mut saved_rev: u64 = ws.active().map_or(0, |s| s.editor.rev);
     let mut last_title = String::new();
 
     // Paint frame 0 imperatively while cloaked, then reveal — the first pixels on screen are our dark
@@ -942,13 +944,17 @@ fn main() {
         // custom_frame stripped the caption → the client area grew; sync the surface before rendering.
         let sz0 = window.inner_size();
         renderer.resize(sz0.width, sz0.height);
-        ed.ppu = view.zoom;
-        let (jobs, tdelta, screen) = gui.run(&window, &mut ed, scale as f32, view, cursors::is_maximized(hwnd));
-        if gui.splashing() {
-            renderer.render_splash(&jobs, &tdelta, &screen);
-        } else {
-            let world = build_scene_in_view(&ed, view, [sz0.width, sz0.height]);
-            renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
+        if let Some(s) = ws.active_mut() {
+            let view = s.view;
+            let ed = &mut s.editor;
+            ed.ppu = view.zoom;
+            let (jobs, tdelta, screen) = gui.run(&window, ed, scale as f32, view, cursors::is_maximized(hwnd));
+            if gui.splashing() {
+                renderer.render_splash(&jobs, &tdelta, &screen);
+            } else {
+                let world = build_scene_in_view(ed, view, [sz0.width, sz0.height]);
+                renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
+            }
         }
     }
     cursors::set_cloaked(hwnd, false);
@@ -966,6 +972,8 @@ fn main() {
                 // a menu row (clicked, or its ⌘ key) runs the SAME path its key / button already runs
                 for cmd in menu.drain() {
                     use chrome::MenuCmd as M;
+                    let Some(s) = ws.active_mut() else { continue };
+                    let (ed, view) = (&mut s.editor, &mut s.view);
                     match cmd {
                         M::Key(k) => {
                             if gui.wants_keyboard() {
@@ -975,10 +983,10 @@ fn main() {
                                 }
                             } else {
                                 OpenDocContext {
-                                    ed: &mut ed,
+                                    ed,
                                     gui: &gui,
                                     window: &window,
-                                    view: &mut view,
+                                    view,
                                     cur_file: &mut cur_file,
                                     saved_rev: &mut saved_rev,
                                 }
@@ -989,10 +997,10 @@ fn main() {
                         M::Plain(code) => {
                             if !gui.wants_keyboard() {
                                 OpenDocContext {
-                                    ed: &mut ed,
+                                    ed,
                                     gui: &gui,
                                     window: &window,
-                                    view: &mut view,
+                                    view,
                                     cur_file: &mut cur_file,
                                     saved_rev: &mut saved_rev,
                                 }
@@ -1002,10 +1010,10 @@ fn main() {
                         M::Quit => {
                             // exactly the ✕ caption button's arm (WinAction::Close below)
                             let may_exit = OpenDocContext {
-                                ed: &mut ed,
+                                ed,
                                 gui: &gui,
                                 window: &window,
-                                view: &mut view,
+                                view,
                                 cur_file: &mut cur_file,
                                 saved_rev: &mut saved_rev,
                             }
@@ -1024,19 +1032,21 @@ fn main() {
                         M::ToggleRail => gui.toggle_rail(),
                         M::ToggleDock => gui.toggle_dock(),
                         M::TogglePanel(p) => gui.toggle_panel(p),
-                        M::SnapGrid => menu_snap_toggle(&mut ed, true),
-                        M::SnapPoint => menu_snap_toggle(&mut ed, false),
+                        M::SnapGrid => menu_snap_toggle(ed, true),
+                        M::SnapPoint => menu_snap_toggle(ed, false),
                     }
                     window.request_redraw();
                 }
             }
             if matches!(&event, Event::AboutToWait) {
                 for p in single_instance::take_pending_file_paths() {
+                    let Some(s) = ws.active_mut() else { continue };
+                    let (ed, view) = (&mut s.editor, &mut s.view);
                     OpenDocContext {
-                        ed: &mut ed,
+                        ed,
                         gui: &gui,
                         window: &window,
-                        view: &mut view,
+                        view,
                         cur_file: &mut cur_file,
                         saved_rev: &mut saved_rev,
                     }
@@ -1052,6 +1062,8 @@ fn main() {
                 // get the event (gate #3: panels don't swallow canvas strokes; canvas input stays native).
                 let egui_consumed = gui.on_event(&window, &event);
                 let over_panel = gui.wants_pointer();
+                let Some(s) = ws.active_mut() else { return };
+                let (ed, view) = (&mut s.editor, &mut s.view);
                 if egui_consumed {
                     window.request_redraw();
                 }
@@ -1079,10 +1091,10 @@ fn main() {
                     WindowEvent::CloseRequested => {
                         // red traffic light / OS close: same guard as Quit (Astra F01)
                         let may_exit = OpenDocContext {
-                            ed: &mut ed,
+                            ed,
                             gui: &gui,
                             window: &window,
-                            view: &mut view,
+                            view,
                             cur_file: &mut cur_file,
                             saved_rev: &mut saved_rev,
                         }
@@ -1106,8 +1118,8 @@ fn main() {
                             }
                         } else if refit_pending {
                             // restored a maximized window → fit the page (or content, A8a) to the view ONCE
-                            let (x, y, w, h) = fit_rect(&ed);
-                            view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
+                            let (x, y, w, h) = fit_rect(ed);
+                            *view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
                             refit_pending = false;
                         }
                         window.request_redraw();
@@ -1171,7 +1183,7 @@ fn main() {
                                         if ed.mods.ctrl {
                                             // Apply the entire step at the click point immediately.
                                             let f = if ed.mods.alt { 1.0 / 1.5 } else { 1.5 };
-                                            zoom_step(&mut view, screen_cursor, f);
+                                            zoom_step(view, screen_cursor, f);
                                         } else {
                                             panning = true;
                                             pan_last = screen_cursor;
@@ -1260,7 +1272,7 @@ fn main() {
                         if ed.mods.alt {
                             // Exponential per notch, including coalesced wheel events.
                             let f = ZOOM_NOTCH.powf(dy).clamp(0.2, 5.0);
-                            zoom_step(&mut view, screen_cursor, f);
+                            zoom_step(view, screen_cursor, f);
                         } else if ed.mods.shift {
                             view.pan[0] += (dy + dx) * 30.0;
                         } else {
@@ -1290,10 +1302,10 @@ fn main() {
                             } else if event.state == ElementState::Pressed {
                                 let (mc, ms, ma) = (ed.mods.ctrl, ed.mods.shift, ed.mods.alt);
                                 OpenDocContext {
-                                    ed: &mut ed,
+                                    ed,
                                     gui: &gui,
                                     window: &window,
-                                    view: &mut view,
+                                    view,
                                     cur_file: &mut cur_file,
                                     saved_rev: &mut saved_rev,
                                 }
@@ -1314,7 +1326,7 @@ fn main() {
                         // Native UI runs FIRST (the rail may switch the tool), THEN we build the scene from
                         // the updated editor so the change shows this same frame.
                         let (jobs, tdelta, screen) =
-                            gui.run(&window, &mut ed, scale as f32, view, cursors::is_maximized(hwnd));
+                            gui.run(&window, ed, scale as f32, *view, cursors::is_maximized(hwnd));
                         // title + tab track the document (name, unsaved *) and the active tool
                         let unsaved = ed.rev != saved_rev;
                         let title = full_title(ed.tool, cur_file.as_deref(), unsaved);
@@ -1333,7 +1345,7 @@ fn main() {
                         if let Some(menu) = &mac_menu {
                             use chrome::Check as C;
                             menu.sync(|c| {
-                                editor_check(&ed, c).unwrap_or_else(|| match c {
+                                editor_check(ed, c).unwrap_or_else(|| match c {
                                     C::Rail => gui.rail_shown(),
                                     C::Dock => gui.dock_shown(),
                                     C::Panel(p) => gui.panel_open(p),
@@ -1344,15 +1356,15 @@ fn main() {
                         // a "Fit in window" request from the artboard panel / status Fit / ⋮ menu
                         if let Some(i) = gui.fit_request.take() {
                             if let Some(a) = ed.doc.artboards.get(i).cloned() {
-                                view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
+                                *view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
                             }
                         }
                         // Stage 4: the first non-splash frame knows the Board box — refit the startup
                         // view INTO it once (the pre-shell fit centred on the whole window).
                         if let Some(k) = board_fit_pending {
                             if !gui.splashing() && gui.board_px.is_some() {
-                                let (x, y, w, h) = fit_rect(&ed);
-                                view = fit_to_board(&gui, &window, x, y, w, h, k);
+                                let (x, y, w, h) = fit_rect(ed);
+                                *view = fit_to_board(&gui, &window, x, y, w, h, k);
                                 board_fit_pending = None;
                                 window.request_redraw();
                             }
@@ -1364,10 +1376,10 @@ fn main() {
                                 ui::WinAction::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
                                 ui::WinAction::Close => {
                                     let may_exit = OpenDocContext {
-                                        ed: &mut ed,
+                                        ed,
                                         gui: &gui,
                                         window: &window,
-                                        view: &mut view,
+                                        view,
                                         cur_file: &mut cur_file,
                                         saved_rev: &mut saved_rev,
                                     }
@@ -1390,7 +1402,7 @@ fn main() {
                         // arrow elsewhere); over the canvas show the tool's cursor. It was hardwired
                         // to Select here, which broke the new box seams' arrows (Ahmed 07-07).
                         let ck = resolve_ck(panning, space_down, gui.wants_pointer().then(|| gui.chrome_ck()), || {
-                            desired_ck(&ed, view.s2w(screen_cursor))
+                            desired_ck(ed, view.s2w(screen_cursor))
                         });
                         // Runs AFTER gui.run (egui's platform output is already applied), so on non-Windows
                         // the re-assert each frame wins over egui-winit's own cursor write.
@@ -1414,14 +1426,14 @@ fn main() {
                             renderer.render_splash(&jobs, &tdelta, &screen);
                         // floating card on a transparent surface
                         } else {
-                            let signature = scene_signature(&ed, view, [psz.width, psz.height]);
+                            let signature = scene_signature(ed, *view, [psz.width, psz.height]);
                             let scene_start = Instant::now();
                             let cache_hit = last_scene_signature == Some(signature);
                             let rendered = if cache_hit {
                                 renderer.render_ui_cached(&jobs, &tdelta, &screen)
                             } else {
-                                let world = build_scene_in_view(&ed, view, [psz.width, psz.height]);
-                                renderer.render_ui(&world, view, &jobs, &tdelta, &screen)
+                                let world = build_scene_in_view(ed, *view, [psz.width, psz.height]);
+                                renderer.render_ui(&world, *view, &jobs, &tdelta, &screen)
                             };
                             last_scene_signature = rendered.then_some(signature);
                             let scene_elapsed = scene_start.elapsed();
@@ -1450,8 +1462,8 @@ fn main() {
                                 // otherwise a frame draws a maximized viewport into the still-small target (wgpu panic).
                                 let sz = window.inner_size();
                                 renderer.resize(sz.width, sz.height);
-                                let (x, y, w, h) = fit_rect(&ed);
-                                view = View::fit(x, y, w, h, sz.width as f32, sz.height as f32, 0.9);
+                                let (x, y, w, h) = fit_rect(ed);
+                                *view = View::fit(x, y, w, h, sz.width as f32, sz.height as f32, 0.9);
                                 board_fit_pending = Some(0.9); // the box re-lays-out at the new size — refit into it
                                 refit_pending = false;
                             }
