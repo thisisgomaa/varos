@@ -130,6 +130,17 @@ pub(crate) fn tab_drop_index(tab_rects: &[egui::Rect], pointer_x: f32) -> usize 
     tab_rects.iter().filter(|r| pointer_x >= r.center().x).count()
 }
 
+/// A drawn-chip insertion slot (`tab_drop_index` over `chips`) as a slot of the FULL tab order, which
+/// `Workspace::reorder` takes. On overflow the drawn chips are not a `0..n` prefix (hidden tabs; the
+/// active one moved into the last slot — F7), so a boundary maps through the ORIGINAL index of the
+/// chip beside it: before chip `k` = its index, after the last chip = its index + 1.
+pub(crate) fn tab_full_slot(chips: &[(usize, egui::Rect)], slot: usize) -> usize {
+    match chips.get(slot) {
+        Some(&(i, _)) => i,
+        None => chips.last().map_or(0, |&(i, _)| i + 1),
+    }
+}
+
 /// Is the window opaque from the first frame? macOS: yes — a transparent NSWindow let the title strip
 /// show the desktop through (Ahmed 2026-09-23), so the splash card sits on the dark window instead of
 /// floating over the desktop. Windows keeps its transparent floating splash.
@@ -502,6 +513,83 @@ mod tests {
         assert_eq!(tab_drop_index(&rects, 209.0), 3, "right half of the last chip");
         assert_eq!(tab_drop_index(&rects, 999.0), 3, "past the last chip");
         assert_eq!(tab_drop_index(&[], 50.0), 0, "no chips at all");
+    }
+
+    /// `n` tabs with tab `active` active, laid out in a `width`-wide bar with every name `text` wide:
+    /// the workspace, its ids, the drawn chips and "drop at x" as a full-order slot.
+    fn overflow_strip(
+        n: usize,
+        active: usize,
+        width: f32,
+        text: f32,
+    ) -> (crate::workspace::Workspace, Vec<crate::app_command::SessionId>, TopbarLayout) {
+        let chrome = topbar_chrome(true);
+        let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, chrome.height));
+        let mut ws = crate::workspace::Workspace::new();
+        for _ in 1..n {
+            ws.new_untitled();
+        }
+        let ids: Vec<_> = ws.sessions().iter().map(|s| s.id).collect();
+        assert!(ws.activate(ids[active]));
+        let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &vec![text; n], Some(active));
+        (ws, ids, layout)
+    }
+
+    fn drop_at(layout: &TopbarLayout, x: f32) -> usize {
+        let rects: Vec<egui::Rect> = layout.tabs.iter().map(|&(_, r)| r).collect();
+        tab_full_slot(&layout.tabs, tab_drop_index(&rects, x))
+    }
+
+    fn chip(layout: &TopbarLayout, i: usize) -> egui::Rect {
+        layout.tabs.iter().find(|&&(j, _)| j == i).expect("chip is drawn").1
+    }
+
+    #[test]
+    fn overflow_drop_lands_in_the_full_order() {
+        // [A..J], J active: drawn [A, B, C, J] — D..I hidden
+        let (mut ws, ids, layout) = overflow_strip(10, 9, 900.0, 40.0);
+        let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
+        assert_eq!(drawn, [0, 1, 2, 9], "setup: overflow, J drawn last");
+        let (a, j, jr) = (ids[0], ids[9], chip(&layout, 9));
+        assert!(!ws.reorder(j, drop_at(&layout, jr.right() - 1.0)), "J onto its own right half");
+        assert!(!ws.reorder(j, drop_at(&layout, jr.left() + 1.0)), "J onto its own left half");
+        assert_eq!(ws.sessions().last().unwrap().id, j);
+        assert!(ws.reorder(a, drop_at(&layout, jr.right() + 10.0)), "A dropped past J");
+        assert_eq!(ws.sessions().last().unwrap().id, a, "A lands at the end of the FULL order");
+        assert_eq!(tab_full_slot(&[], 0), 0, "no chips at all");
+    }
+
+    #[test]
+    fn overflow_drop_around_a_mid_order_active_tab() {
+        // 20 tabs, tab 12 active: drawn [0, 1, 2, 12] — 3..11 and 13..19 hidden
+        let (mut ws, ids, layout) = overflow_strip(20, 12, 900.0, 40.0);
+        let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
+        assert_eq!(drawn, [0, 1, 2, 12], "setup: the active tab takes the last drawn slot");
+        let (m, mr) = (ids[12], chip(&layout, 12));
+        assert!(!ws.reorder(m, drop_at(&layout, mr.right() - 1.0)), "12 onto its own right half");
+        assert!(!ws.reorder(m, drop_at(&layout, mr.left() + 1.0)), "12 onto its own left half");
+        assert_eq!(ws.index_of(m), Some(12), "12 stays where it was, not near the front");
+        // tab 0 dropped right of 12 lands right AFTER 12 (not after the 4th tab)
+        assert!(ws.reorder(ids[0], drop_at(&layout, mr.right() + 1.0)));
+        assert_eq!(ws.index_of(ids[0]), Some(ws.index_of(m).unwrap() + 1));
+        // tab 2 dropped on 12's left half lands right BEFORE 12
+        let (mut ws2, ids2, layout2) = overflow_strip(20, 12, 900.0, 40.0);
+        assert!(ws2.reorder(ids2[2], drop_at(&layout2, chip(&layout2, 12).left() + 1.0)));
+        assert_eq!(ws2.index_of(ids2[2]).unwrap() + 1, ws2.index_of(ids2[12]).unwrap());
+    }
+
+    #[test]
+    fn overflow_drop_with_a_single_drawn_chip() {
+        // 10 wide names in a 900-px bar: only the active tab (the last) is drawn
+        let (mut ws, ids, layout) = overflow_strip(10, 9, 900.0, 180.0);
+        let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
+        assert_eq!(drawn, [9], "setup: one drawn chip");
+        let r = chip(&layout, 9);
+        assert_eq!(drop_at(&layout, r.left() + 1.0), 9, "before the only chip = its own index");
+        assert_eq!(drop_at(&layout, r.right() - 1.0), 10, "after it = its index + 1");
+        assert!(!ws.reorder(ids[9], drop_at(&layout, r.left() + 1.0)));
+        assert!(!ws.reorder(ids[9], drop_at(&layout, r.right() - 1.0)));
+        assert_eq!(ws.sessions().last().unwrap().id, ids[9], "the only chip stays last");
     }
 
     #[test]

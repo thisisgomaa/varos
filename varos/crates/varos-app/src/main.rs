@@ -552,20 +552,21 @@ fn take_pending_fit(fit: &mut Option<f32>, ed: &Editor, view: &mut View, gui: &u
     true
 }
 
-/// THE dispatch (DFS S1 §3.5): every `AppCommand`, whatever raised it, runs here — the window /
-/// panel effects on the window, everything else as one lifecycle command (`host::run_lifecycle`:
-/// settle the active tab, run the rules over the ports, reset what a dialog or a switch left stale).
+/// THE dispatch (DFS S1 §3.5): every queued `HostAction` runs here, in queue order — the window /
+/// panel effects on the window, everything else through `run_action`.
+#[allow(clippy::too_many_arguments)] // the event loop's own state, passed as-is
 fn dispatch(
-    cmd: AppCommand,
+    action: host::HostAction,
     ws: &mut workspace::Workspace,
     gui: &mut ui::Ui,
     window: &Window,
     hwnd: isize,
+    canvas: egui::Rect,
     dialogs: &mut dyn lifecycle::Dialogs,
     store: &mut dyn lifecycle::DocStore,
 ) -> host::Ran {
-    match cmd {
-        AppCommand::Window(w) => {
+    match action {
+        host::HostAction::App(AppCommand::Window(w)) => {
             match w {
                 WindowCmd::Minimize => window.set_minimized(true),
                 WindowCmd::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
@@ -581,7 +582,56 @@ fn dispatch(
             }
             host::Ran::default()
         }
-        cmd => host::run_lifecycle(cmd, ws, gui, dialogs, store),
+        action => run_action(action, ws, gui, canvas, dialogs, store),
+    }
+}
+
+/// One queued action that is not a window command: a lifecycle command (`host::run_lifecycle`:
+/// settle the active tab, run the rules over the ports, reset what a dialog or a switch left stale),
+/// or a document action on whichever tab is active by then. No window: the FIFO test drives it
+/// headless. `canvas` = the visible drawing area (`canvas_px`).
+fn run_action(
+    action: host::HostAction,
+    ws: &mut workspace::Workspace,
+    ui: &mut dyn host::DocUi,
+    canvas: egui::Rect,
+    dialogs: &mut dyn lifecycle::Dialogs,
+    store: &mut dyn lifecycle::DocStore,
+) -> host::Ran {
+    match action {
+        host::HostAction::App(cmd) => host::run_lifecycle(cmd, ws, ui, dialogs, store),
+        host::HostAction::Doc(a) => {
+            if let Some(s) = ws.active_mut() {
+                run_doc_action(a, &mut s.editor, &mut s.view, canvas);
+            }
+            host::Ran::default()
+        }
+    }
+}
+
+/// A document action on one tab: a shortcut key's path, or a magnet quick-menu row.
+fn run_doc_action(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: egui::Rect) {
+    match a {
+        host::DocAction::Key(code, m) => doc_key(ed, view, canvas, code, m),
+        host::DocAction::Snap { grid } => menu_snap_toggle(ed, grid),
+    }
+}
+
+/// Raise a document action (a key, a menu row) on the active tab: it runs at once when nothing raised
+/// earlier is still waiting (`ActionQueue::doc_runs_now` — no command, no click whose command is still
+/// to come), else it joins the queue behind it — so the queue order is the event order (review P1: a
+/// ⌘Z after a queued ⌘S runs after the Save; a ⌘Z after a click on tab B runs on B).
+fn raise_doc(
+    pending: &mut host::ActionQueue,
+    a: host::DocAction,
+    ed: &mut Editor,
+    view: &mut View,
+    canvas: egui::Rect,
+) {
+    if pending.doc_runs_now() {
+        run_doc_action(a, ed, view, canvas);
+    } else {
+        pending.push(host::HostAction::Doc(a));
     }
 }
 
@@ -653,10 +703,13 @@ fn main() {
     // DFS S1: every tab is its own document (editor + view + file + saved checkpoint); the host
     // always works on the ACTIVE session (never empty in S1: it starts as a pristine Untitled-1).
     let mut ws = workspace::Workspace::new();
-    // Every command, whatever raised it (keys, native menu, tab strip, window controls, OS close,
-    // files handed in), queues here and runs through `dispatch` once the loop is about to wait. The
-    // first instance opens its OWN file argument, once, after the first framed frame (F13).
-    let mut pending: Vec<AppCommand> = Vec::new();
+    // The ONE FIFO action queue (review P1): the lifecycle / window commands (keys, native menu, tab
+    // strip, burger, window controls, OS close, files handed in) queue here and run through `dispatch`
+    // once the loop is about to wait; a document action a key or a menu row raises runs at once only
+    // when nothing is waiting, else it queues behind (`raise_doc`) — so they all run in event order.
+    // Pointer input and panel edits act on the editor directly. The first instance opens its OWN file
+    // argument, once, after the first framed frame (F13).
+    let mut pending = host::ActionQueue::default();
     let mut startup_open = host::open_paths_command(file_arg.into_iter().collect(), OpenOrigin::CommandLine);
     // the lifecycle's ports: native dialogs + the disk
     let (mut dialogs, mut store) = (file_ports::RfdDialogs, file_ports::DiskStore);
@@ -859,13 +912,14 @@ fn main() {
                 if matches!(&event, Event::NewEvents(winit::event::StartCause::Init)) {
                     menu.install();
                 }
-                // a menu row (clicked, or its ⌘ key): File / Quit / Window rows are commands for the one
-                // dispatch; the other rows run the SAME path their key already runs
+                // a menu row (clicked, or its ⌘ key): every row queues into the one FIFO queue — File /
+                // Quit / Window rows as commands, the other rows as the SAME document action their key
+                // queues — except a ⌘-row while typing, which goes to the focused field
                 for cmd in menu.drain() {
-                    use host::MenuRoute as R;
+                    use host::{DocAction as D, HostAction as A, MenuRoute as R};
                     let canvas = canvas_px(&gui, &window);
                     match host::menu_route(cmd, ws.active_id()) {
-                        Some(R::App(c)) => pending.push(c),
+                        Some(R::App(c)) => pending.push(A::App(c)),
                         Some(R::Key(k)) => {
                             if gui.wants_keyboard() {
                                 // typing in a field: the key belongs to egui, as on the keyboard path
@@ -874,9 +928,9 @@ fn main() {
                                 }
                             } else if let Some(s) = ws.active_mut() {
                                 let m = Mods { ctrl: true, shift: k.shift, alt: k.alt };
-                                match host::key_command(k.code, m, Some(s.id)) {
-                                    Some(c) => pending.push(c),
-                                    None => doc_key(&mut s.editor, &mut s.view, canvas, k.code, m),
+                                match host::key_action(k.code, m, Some(s.id)) {
+                                    A::App(c) => pending.push(A::App(c)),
+                                    A::Doc(d) => raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas),
                                 }
                             }
                         }
@@ -884,13 +938,14 @@ fn main() {
                         Some(R::Plain(code)) => {
                             if !gui.wants_keyboard() {
                                 if let Some(s) = ws.active_mut() {
-                                    doc_key(&mut s.editor, &mut s.view, canvas, code, Mods::default());
+                                    let d = D::Key(code, Mods::default());
+                                    raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas);
                                 }
                             }
                         }
                         Some(R::Snap { grid }) => {
                             if let Some(s) = ws.active_mut() {
-                                menu_snap_toggle(&mut s.editor, grid);
+                                raise_doc(&mut pending, D::Snap { grid }, &mut s.editor, &mut s.view, canvas);
                             }
                         }
                         None => {}
@@ -900,14 +955,17 @@ fn main() {
             }
             if matches!(&event, Event::AboutToWait) {
                 // a second instance handed us files (Windows single-instance)
-                pending.extend(host::open_paths_command(
-                    single_instance::take_pending_file_paths(),
-                    OpenOrigin::OsHandoff,
-                ));
-                // THE one dispatch: every queued command, in the order it was raised
-                if !pending.is_empty() {
-                    for cmd in std::mem::take(&mut pending) {
-                        let ran = dispatch(cmd, &mut ws, &mut gui, &window, hwnd, &mut dialogs, &mut store);
+                pending.extend(
+                    host::open_paths_command(single_instance::take_pending_file_paths(), OpenOrigin::OsHandoff)
+                        .map(host::HostAction::App),
+                );
+                // THE one dispatch: every queued action, in the order it was raised (FIFO) — up to a
+                // click the Ui frame has not turned into its command yet
+                let ready = pending.take_ready();
+                if !ready.is_empty() {
+                    let canvas = canvas_px(&gui, &window);
+                    for action in ready {
+                        let ran = dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, &mut dialogs, &mut store);
                         if ran.ran {
                             last_scene_signature = None; // the drawn document may be another one now
                         }
@@ -945,6 +1003,12 @@ fn main() {
                     _ => false,
                 };
                 let egui_consumed = !lifecycle_key_event && gui.on_event(&window, &event);
+                // a pointer button's chrome command (a tab chip, a burger row) exists only after the next
+                // Ui frame: each press / release leaves its mark, and what is raised after it waits
+                if let WindowEvent::MouseInput { state, .. } = &event {
+                    pending.pointer_button(*state == ElementState::Released);
+                    window.request_redraw();
+                }
                 let over_panel = gui.wants_pointer();
                 let Some(s) = ws.active_mut() else { return };
                 let (ed, view) = (&mut s.editor, &mut s.view);
@@ -974,7 +1038,7 @@ fn main() {
                     }
                     // red traffic light / OS close: the Quit transaction over every tab (Astra F01; S1
                     // has one window, so Close Window = Quit — work order §6 Q1)
-                    WindowEvent::CloseRequested => pending.push(AppCommand::Quit),
+                    WindowEvent::CloseRequested => pending.push(host::HostAction::App(AppCommand::Quit)),
                     WindowEvent::Resized(size) => {
                         if size.width == 0 || size.height == 0 {
                             return; // minimized / degenerate — don't reconfigure the surface or record garbage bounds
@@ -1161,7 +1225,7 @@ fn main() {
                         // not repeat them (no queue of dialogs).
                         if let Some(cmd) = host::key_command(code, ed.mods, Some(s.id)) {
                             if event.state == ElementState::Pressed && !event.repeat {
-                                pending.push(cmd);
+                                pending.push(host::HostAction::App(cmd));
                                 window.request_redraw();
                             }
                         }
@@ -1182,8 +1246,9 @@ fn main() {
                             }
                             window.request_redraw();
                         } else if event.state == ElementState::Pressed {
-                            let m = ed.mods;
-                            doc_key(ed, view, canvas_px(&gui, &window), code, m);
+                            // runs now, or waits behind a command raised earlier in this batch (FIFO)
+                            let d = host::DocAction::Key(code, ed.mods);
+                            raise_doc(&mut pending, d, ed, view, canvas_px(&gui, &window));
                             window.request_redraw();
                         }
                     }
@@ -1192,6 +1257,7 @@ fn main() {
                         // (that was closing the app on minimize). Skip the frame until it's restored.
                         let psz = window.inner_size();
                         if psz.width == 0 || psz.height == 0 {
+                            pending.chrome_frame([]); // no Ui frame: a click's mark must not hold the queue
                             return;
                         }
                         let perf_start = Instant::now();
@@ -1205,10 +1271,12 @@ fn main() {
                             gui.run(&window, ed, scale as f32, *view, cursors::is_maximized(hwnd));
                         // the tab strip / burger / window controls raised commands: the one dispatch runs
                         // them when the loop is about to wait (right after this frame)
-                        pending.extend(gui.take_app_commands());
-                        if let Some(act) = gui.win_action.take() {
-                            pending.push(host::win_action_command(act));
-                        }
+                        // …in the place of the click that raised them (`ActionQueue::chrome_frame`)
+                        let win = gui.win_action.take().map(host::win_action_command);
+                        let raised = gui.take_app_commands().into_iter().chain(win);
+                        // egui reports at most one click per frame, decided at the latest release
+                        let at = pending.last_release();
+                        pending.chrome_frame(raised.map(|c| (at, host::HostAction::App(c))));
                         if !pending.is_empty() {
                             window.request_redraw();
                         }
@@ -1309,7 +1377,7 @@ fn main() {
                             }
                             editor_framed = true;
                             // the first instance opens its OWN file argument now (F13), through the dispatch
-                            pending.extend(startup_open.take());
+                            pending.extend(startup_open.take().map(host::HostAction::App));
                             window.request_redraw();
                         }
                         // Zoom needs no follow-up frames; idle when egui has no work.
@@ -1328,12 +1396,14 @@ fn main() {
                             }
                             last_title = title;
                         }
+                        // the one per-frame snapshot; handed to the strip only when it changed (a
+                        // dispatch in `AboutToWait` already handed over its own result)
                         let tabs = ws.tabs();
                         if tabs != drawn_tabs {
                             window.request_redraw(); // repaint once more so the strip shows the change
+                            gui.set_tabs(tabs.clone(), ws.active_id());
+                            drawn_tabs = tabs;
                         }
-                        gui.set_tabs(tabs.clone(), ws.active_id());
-                        drawn_tabs = tabs;
                     }
                     _ => {}
                 }
@@ -1446,6 +1516,184 @@ mod scene_signature_tests {
         let before = scene_signature(&ed, View::identity(), [800, 600]);
         ed.doc.paths[0].fill = Paint::Solid([0.0, 1.0, 0.0, 1.0]);
         assert_ne!(before, scene_signature(&ed, View::identity(), [800, 600]));
+    }
+}
+
+#[cfg(test)]
+mod action_queue_tests {
+    use super::*;
+    use crate::app_command::SessionId;
+    use crate::lifecycle::{Dialogs, DocStore, SaveDecision, SaveFailChoice};
+    use crate::workspace::FileKey;
+    use std::path::{Path, PathBuf};
+    use varos_core::model::Document;
+
+    #[derive(Default)]
+    struct FakeUi;
+    impl host::DocUi for FakeUi {
+        fn settle(&mut self, _: &mut Editor) {}
+        fn document_switched(&mut self) {}
+    }
+
+    struct NoDialogs;
+    impl Dialogs for NoDialogs {
+        fn pick_open(&mut self) -> Vec<PathBuf> {
+            unreachable!()
+        }
+        fn pick_save(&mut self, _: &str, _: Option<&Path>) -> Option<PathBuf> {
+            unreachable!()
+        }
+        fn ask_save_changes(&mut self, _: &str, _: Option<(usize, usize)>) -> SaveDecision {
+            unreachable!()
+        }
+        fn save_failed(&mut self, _: &str, _: &str) -> SaveFailChoice {
+            unreachable!()
+        }
+        fn open_failed(&mut self, _: &str, _: &str) {
+            unreachable!()
+        }
+        fn confirm_replace(&mut self, _: &str) -> bool {
+            unreachable!()
+        }
+        fn notice(&mut self, _: &str, _: &str) {
+            unreachable!()
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingStore {
+        saved: Option<Document>,
+    }
+    impl DocStore for RecordingStore {
+        fn load(&mut self, _: &Path) -> Result<Document, String> {
+            unreachable!()
+        }
+        fn save(&mut self, doc: &Document, _: &Path) -> Result<(), String> {
+            self.saved = Some(doc.clone());
+            Ok(())
+        }
+        fn key(&self, path: &Path) -> FileKey {
+            FileKey { path: path.to_path_buf(), dev_ino: None }
+        }
+        fn exists(&self, _: &Path) -> bool {
+            false
+        }
+    }
+
+    const UNDO: KeyCode = KeyCode::KeyZ;
+    const CMD: Mods = Mods { ctrl: true, shift: false, alt: false };
+
+    /// A tab saved at 1 artboard, then edited to 2 (dirty).
+    fn saved_then_edited() -> (workspace::Workspace, SessionId) {
+        let mut ws = workspace::Workspace::new();
+        let id = ws.active_id().unwrap();
+        let path = PathBuf::from("ordered.vrs");
+        let session = ws.active_mut().unwrap();
+        session.editor.execute(EditCommand::AddArtboard);
+        session.mark_saved(path.clone(), FileKey { path, dev_ino: None });
+        session.editor.execute(EditCommand::AddArtboard);
+        assert_eq!(session.editor.doc.artboards.len(), 2);
+        assert!(session.is_dirty_exact());
+        (ws, id)
+    }
+
+    /// What one event batch raises, in event order.
+    enum Raised {
+        Action(host::HostAction),
+        /// A pointer button fed to egui: pressed (false) or released (true).
+        Pointer(bool),
+        /// The Ui frame: the commands the chrome raised from the buffered clicks.
+        UiFrame(Vec<AppCommand>),
+    }
+
+    /// One event batch as the event loop runs it: a command is queued, a document action goes through
+    /// `raise_doc`, a pointer button marks the queue, the Ui frame inserts its commands at the latest
+    /// release mark (as the event loop does); then the queue drains at `AboutToWait`.
+    fn run_batch(ws: &mut workspace::Workspace, raised: Vec<Raised>) -> RecordingStore {
+        let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut pending = host::ActionQueue::default();
+        for r in raised {
+            match r {
+                Raised::Action(host::HostAction::App(c)) => pending.push(host::HostAction::App(c)),
+                Raised::Action(host::HostAction::Doc(d)) => {
+                    let s = ws.active_mut().unwrap();
+                    raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas);
+                }
+                Raised::Pointer(release) => {
+                    pending.pointer_button(release);
+                }
+                Raised::UiFrame(cmds) => {
+                    let at = pending.last_release();
+                    pending.chrome_frame(cmds.into_iter().map(|c| (at, host::HostAction::App(c))));
+                }
+            }
+        }
+        let (mut ui, mut dialogs, mut store) = (FakeUi, NoDialogs, RecordingStore::default());
+        for action in pending.take_ready() {
+            run_action(action, ws, &mut ui, canvas, &mut dialogs, &mut store);
+        }
+        assert!(pending.is_empty(), "the batch drained completely");
+        store
+    }
+
+    fn app(c: AppCommand) -> Raised {
+        Raised::Action(host::HostAction::App(c))
+    }
+
+    fn undo() -> Raised {
+        Raised::Action(host::HostAction::Doc(host::DocAction::Key(UNDO, CMD)))
+    }
+
+    #[test]
+    fn save_then_undo_in_one_batch_saves_pre_undo_content_and_stays_dirty() {
+        let (mut ws, id) = saved_then_edited();
+        let store = run_batch(&mut ws, vec![app(AppCommand::Save(id)), undo()]);
+        assert_eq!(store.saved.unwrap().artboards.len(), 2, "Save ran before the following Undo");
+        let session = ws.active().unwrap();
+        assert_eq!(session.editor.doc.artboards.len(), 1, "Undo still ran after Save");
+        assert!(session.is_dirty_exact(), "the undone content differs from the saved checkpoint");
+    }
+
+    #[test]
+    fn undo_then_save_in_one_batch_saves_post_undo_content_and_is_clean() {
+        let (mut ws, id) = saved_then_edited();
+        let store = run_batch(&mut ws, vec![undo(), app(AppCommand::Save(id))]);
+        assert_eq!(store.saved.unwrap().artboards.len(), 1, "Undo ran before the following Save");
+        let session = ws.active().unwrap();
+        assert_eq!(session.editor.doc.artboards.len(), 1);
+        assert!(!session.is_dirty_exact(), "what is on screen is what was saved");
+    }
+
+    /// Tab A (saved, then edited: 2 artboards) active; tab B beside it with 1 artboard of its own.
+    fn two_tabs() -> (workspace::Workspace, SessionId, SessionId) {
+        let (mut ws, a) = saved_then_edited();
+        ws.new_untitled();
+        let b = ws.active_id().unwrap();
+        ws.active_mut().unwrap().editor.execute(EditCommand::AddArtboard);
+        assert!(ws.activate(a));
+        (ws, a, b)
+    }
+
+    #[test]
+    fn undo_after_a_click_on_another_tab_undoes_that_tab() {
+        // click B's chip (egui turns it into Activate(B) only at the Ui frame), then ⌘Z before that frame
+        let (mut ws, a, b) = two_tabs();
+        let frame = Raised::UiFrame(vec![AppCommand::ActivateDocument(b)]);
+        run_batch(&mut ws, vec![Raised::Pointer(false), Raised::Pointer(true), undo(), frame]);
+        assert_eq!(ws.active_id(), Some(b));
+        assert_eq!(ws.get(b).unwrap().editor.doc.artboards.len(), 0, "the ⌘Z undid B's edit");
+        assert_eq!(ws.get(a).unwrap().editor.doc.artboards.len(), 2, "A was not touched");
+    }
+
+    #[test]
+    fn undo_between_press_and_release_undoes_the_tab_active_before_the_click() {
+        // press B → ⌘Z → release B: the click completes after the key
+        let (mut ws, a, b) = two_tabs();
+        let frame = Raised::UiFrame(vec![AppCommand::ActivateDocument(b)]);
+        run_batch(&mut ws, vec![Raised::Pointer(false), undo(), Raised::Pointer(true), frame]);
+        assert_eq!(ws.active_id(), Some(b));
+        assert_eq!(ws.get(a).unwrap().editor.doc.artboards.len(), 1, "the ⌘Z undid A's edit");
+        assert_eq!(ws.get(b).unwrap().editor.doc.artboards.len(), 1, "B was not touched");
     }
 }
 

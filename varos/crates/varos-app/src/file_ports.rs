@@ -22,7 +22,7 @@ const REPLACE: &str = "Replace";
 /// Map the “Save changes?” result onto a decision (batch 1's `quit_answer`, moved here). Backends
 /// that only know Yes/No/Cancel map the same way. Anything unknown (dismissed, Escape) is Cancel —
 /// the safe answer, never a discard.
-pub fn decision_from(r: &MessageDialogResult) -> SaveDecision {
+fn decision_from(r: &MessageDialogResult) -> SaveDecision {
     use MessageDialogResult as R;
     match r {
         R::Yes => SaveDecision::Save,
@@ -34,7 +34,7 @@ pub fn decision_from(r: &MessageDialogResult) -> SaveDecision {
 }
 
 /// Map the “Couldn't save” result onto a choice; anything unknown is Cancel.
-pub fn fail_choice_from(r: &MessageDialogResult) -> SaveFailChoice {
+fn fail_choice_from(r: &MessageDialogResult) -> SaveFailChoice {
     use MessageDialogResult as R;
     match r {
         R::Yes => SaveFailChoice::TryAgain,
