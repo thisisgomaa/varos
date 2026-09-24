@@ -1384,12 +1384,14 @@ fn main() {
                             }
                             last_title = title;
                         }
+                        // the one per-frame snapshot; handed to the strip only when it changed (a
+                        // dispatch in `AboutToWait` already handed over its own result)
                         let tabs = ws.tabs();
                         if tabs != drawn_tabs {
                             window.request_redraw(); // repaint once more so the strip shows the change
+                            gui.set_tabs(tabs.clone(), ws.active_id());
+                            drawn_tabs = tabs;
                         }
-                        gui.set_tabs(tabs.clone(), ws.active_id());
-                        drawn_tabs = tabs;
                     }
                     _ => {}
                 }
