@@ -27,8 +27,7 @@ fn quad(v: &mut Vec<Vertex>, p0: Pt, p1: Pt, p2: Pt, p3: Pt, col: [f32; 4], w: f
     tri(v, p0, p2, p3, col, w, h);
 }
 /// The half-width offset of segment `a→b`: the vector from the centerline to one long side of its quad.
-/// `line` and the stroke joins share this exact expression, so a join's corners land bit-for-bit on the
-/// quad corners they must meet (no hairline crack between the quad and the wedge that fills its gap).
+/// Used by dashed lines; solid strokes keep their segment frames in f64 below.
 fn seg_normal(a: Pt, b: Pt, width: f32) -> Pt {
     let d = [b[0] - a[0], b[1] - a[1]];
     let l = (d[0] * d[0] + d[1] * d[1]).sqrt().max(1e-3);
@@ -82,112 +81,157 @@ fn disc(v: &mut Vec<Vertex>, c: Pt, r: f32, col: [f32; 4], w: f32, h: f32) {
         );
     }
 }
-fn stroke_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32; 4], w: f32, h: f32) {
-    let joins = width >= 1.6 && pts.len() >= 2;
-    // segment quads + at most one bevel wedge per vertex + two caps (round joins are rare; they grow the
-    // buffer on demand)
-    v.reserve(pts.len().saturating_sub(1) * 6 + if joins { pts.len() * 3 + 2 * 24 * 3 } else { 0 });
-    for i in 0..pts.len().saturating_sub(1) {
-        line(v, pts[i], pts[i + 1], width, col, w, h);
+// Keep the world→screen multiply/add, offsets and NDC conversion in f64. Rounding an
+// absolute screen point to f32 before subtracting its neighbour loses the small turn.
+type StrokePt = [f64; 2];
+fn stroke_screen(p: Pt, view: View) -> StrokePt {
+    [p[0] as f64 * view.zoom as f64 + view.pan[0] as f64, p[1] as f64 * view.zoom as f64 + view.pan[1] as f64]
+}
+fn stroke_vertex(p: StrokePt, col: [f32; 4], w: f32, h: f32) -> Vertex {
+    Vertex { pos: [(p[0] / w as f64 * 2.0 - 1.0) as f32, (1.0 - p[1] / h as f64 * 2.0) as f32], color: col }
+}
+fn stroke_tri(v: &mut Vec<Vertex>, a: StrokePt, b: StrokePt, c: StrokePt, col: [f32; 4], w: f32, h: f32) {
+    v.extend([a, b, c].map(|p| stroke_vertex(p, col, w, h)));
+}
+// Bounds use the same screen points and rounded screen width as stroke_poly. Do not
+// round the centre, radius, padding or cover coordinates before the final NDC cast.
+fn extend_stroke_bounds(bounds: &mut [f64; 4], pts: &[StrokePt], width: f32) {
+    let r = width as f64 * 0.5 + 1.5;
+    for p in pts {
+        bounds[0] = bounds[0].min(p[0] - r);
+        bounds[1] = bounds[1].min(p[1] - r);
+        bounds[2] = bounds[2].max(p[0] + r);
+        bounds[3] = bounds[3].max(p[1] + r);
     }
-    if !joins {
+}
+fn stroke_cover(v: &mut Vec<Vertex>, bounds: [f64; 4], col: [f32; 4], w: f32, h: f32) {
+    let [x0, y0, x1, y1] = bounds;
+    stroke_tri(v, [x0, y0], [x1, y0], [x1, y1], col, w, h);
+    stroke_tri(v, [x0, y0], [x1, y1], [x0, y1], col, w, h);
+}
+#[derive(Clone, Copy)]
+struct StrokeEnd {
+    dir: StrokePt,
+    normal: StrokePt,
+    // The +/- normal quad corners, calculated in f64 and cast exactly once. The
+    // fan reuses these emitted vertices, so shared edges coincide by construction.
+    corners: [Vertex; 2],
+}
+fn stroke_cap(v: &mut Vec<Vertex>, c: StrokePt, r: f64, col: [f32; 4], w: f32, h: f32) {
+    static RING: std::sync::OnceLock<Vec<StrokePt>> = std::sync::OnceLock::new();
+    let ring = RING.get_or_init(|| {
+        (0..=24)
+            .map(|i| {
+                let a = i as f64 / 24.0 * std::f64::consts::TAU;
+                [a.cos(), a.sin()]
+            })
+            .collect()
+    });
+    for edge in ring.windows(2) {
+        stroke_tri(
+            v,
+            c,
+            [c[0] + edge[0][0] * r, c[1] + edge[0][1] * r],
+            [c[0] + edge[1][0] * r, c[1] + edge[1][1] * r],
+            col,
+            w,
+            h,
+        );
+    }
+}
+fn stroke_poly(v: &mut Vec<Vertex>, pts: &[StrokePt], width: f32, col: [f32; 4], w: f32, h: f32) {
+    if pts.len() < 2 {
         return;
     }
-    let r = width * 0.5;
-    disc(v, pts[0], r, col, w, h);
-    // Joins. Where the direction turns, the two segment quads leave an open WEDGE on the outer side of
-    // the turn, of angle θ and radius r; its mouth is about r·θ wide. P11.1 skipped every join under 5°,
-    // but for a thick stroke that wedge is many pixels wide (80 px stroke at 327%: r ≈ 131 px, θ ≈ 3°
-    // ⇒ ~7 px) and a curve has one at EVERY flattened point: the outer half of the band became radial
-    // spokes. So every turn is closed with a ROUND SECTOR on the outer side, anchored on the two quads'
-    // exact outer corners and split just finely enough that no chord sits more than JOIN_TOL_PX inside
-    // the true circle. On a gently curving path that is one triangle per point (a bevel); a real corner
-    // gets a few. Not P11's 24-triangle disc at every point, so the P11.1 vertex saving stays.
-    let mut prev: Option<(Pt, Pt)> = None; // incoming segment's (unit direction, half-width normal)
-    for i in 0..pts.len() - 1 {
-        let (a, b) = (pts[i], pts[i + 1]);
+    let joins = width >= 1.6;
+    let r = width as f64 * 0.5;
+    v.reserve((pts.len() - 1) * 6 + if joins { pts.len() * 3 + 144 } else { 0 });
+    // Only exact duplicates are skipped. Every nonzero segment gets a full-width quad
+    // and a join, including segments shorter than 1e-3 px. Duplicates keep the same joint.
+    let mut prev: Option<StrokeEnd> = None;
+    for edge in pts.windows(2) {
+        let (a, b) = (edge[0], edge[1]);
         let d = [b[0] - a[0], b[1] - a[1]];
-        let l = (d[0] * d[0] + d[1] * d[1]).sqrt();
-        if l < 1e-3 {
-            continue; // `line` draws nothing usable here; join the neighbours across it instead
+        let len = d[0].hypot(d[1]);
+        if len == 0.0 {
+            continue;
         }
-        let dir = [d[0] / l, d[1] / l];
-        let n = seg_normal(a, b, width);
-        if let Some((pdir, pn)) = prev {
-            stroke_join(v, a, pdir, pn, dir, n, r, col, w, h);
+        let dir = [d[0] / len, d[1] / len];
+        let n = [-dir[1] * r, dir[0] * r];
+        let (ap, bp, bm, am) = (
+            [a[0] + n[0], a[1] + n[1]],
+            [b[0] + n[0], b[1] + n[1]],
+            [b[0] - n[0], b[1] - n[1]],
+            [a[0] - n[0], a[1] - n[1]],
+        );
+        let [ap, bp, bm, am] = [ap, bp, bm, am].map(|p| stroke_vertex(p, col, w, h));
+        v.extend([ap, bp, bm, ap, bm, am]);
+        if joins {
+            if let Some(incoming) = prev {
+                let outgoing = StrokeEnd { dir, normal: n, corners: [ap, am] };
+                stroke_join(v, a, incoming, outgoing, r, col, w, h);
+            }
         }
-        prev = Some((dir, n));
+        prev = Some(StrokeEnd { dir, normal: n, corners: [bp, bm] });
     }
-    disc(v, pts[pts.len() - 1], r, col, w, h);
+    if joins {
+        stroke_cap(v, pts[0], r, col, w, h);
+        stroke_cap(v, pts[pts.len() - 1], r, col, w, h);
+    }
 }
 
-/// Largest gap (screen px) allowed between a round join's chord and the true circle. A quarter pixel is
-/// below what the MSAA edge can resolve.
+/// Maximum chord sagitta in screen pixels, until the bounded fan reaches its cap.
 const JOIN_TOL_PX: f32 = 0.25;
-/// Upper bound on one join's fan. A U-turn first needs it at r ≈ 3 300 px (a stroke 80 wide at 8 300%);
-/// past that its chords sit further inside the circle than JOIN_TOL_PX.
 const JOIN_MAX_STEPS: usize = 128;
 
-/// Close the turn at `b` between an incoming segment (unit `din`, normal `nin`) and an outgoing one
-/// (`dout`, `nout`) with a round sector on the outer side of the turn: a fan around `b` from the incoming
-/// quad's outer corner to the outgoing quad's. Normals are `seg_normal`'s, and the fan's first and last
-/// vertices ARE those corners, so the fan meets both quads with no crack. Steps are chosen so every chord
-/// sits within JOIN_TOL_PX of the circle of radius `r` (one step = a plain bevel on a gentle curve), and
-/// at least one per 45° so a sharp turn never collapses to a flat triangle.
+/// Close every nonzero turn using the quad's already-emitted corners.
 #[allow(clippy::too_many_arguments)] // two segment frames + radius + paint + framebuffer
 fn stroke_join(
     v: &mut Vec<Vertex>,
-    b: Pt,
-    din: Pt,
-    nin: Pt,
-    dout: Pt,
-    nout: Pt,
-    r: f32,
+    b: StrokePt,
+    incoming: StrokeEnd,
+    outgoing: StrokeEnd,
+    r: f64,
     col: [f32; 4],
     w: f32,
     h: f32,
 ) {
+    let (din, dout, nin) = (incoming.dir, outgoing.dir, incoming.normal);
     let cos = (din[0] * dout[0] + din[1] * dout[1]).clamp(-1.0, 1.0);
     let cross = din[0] * dout[1] - din[1] * dout[0];
-    // the gap opens on the side AWAY from the turn: `seg_normal` points to +90° of the direction, and
-    // the turn is toward +90° when cross > 0 — so the outer side is −normal then, +normal otherwise.
-    let s = if cross > 0.0 { -1.0 } else { 1.0 };
-    let (c_in, c_out) = ([nin[0] * s, nin[1] * s], [nout[0] * s, nout[1] * s]);
-    // Fast path — almost every point of a flattened curve: a turn under 45° whose single chord already
-    // sits within tolerance, r·(1 − cos(θ/2)) with cos(θ/2) = √((1 + cos θ)/2), is one bevel triangle.
-    if cos >= std::f32::consts::FRAC_1_SQRT_2 {
-        // the wedge's area is ≈ ½·r²·sin θ; under 1e-4 px² there is nothing to cover (and no collapsed
-        // triangle to emit — floating-point drift on a straight run lands here)
-        if 0.5 * r * r * cross.abs() < 1e-4 {
-            return;
-        }
-        if r * (1.0 - ((1.0 + cos) * 0.5).sqrt()) <= JOIN_TOL_PX {
-            tri(v, b, [b[0] + c_in[0], b[1] + c_in[1]], [b[0] + c_out[0], b[1] + c_out[1]], col, w, h);
-            return;
-        }
-    }
-    // turn angle, 0..=π — via atan2, since acos(cos) rounds turns under ~3e-4 rad to zero in f32
-    let theta = cross.abs().atan2(cos);
-    if 0.5 * r * r * theta < 1e-4 {
+    if cross == 0.0 && cos >= 0.0 {
         return;
     }
-    // the outer corner rotates with the direction: by +θ when turning toward +90° (s = −1), else by −θ.
-    // (At an exact U-turn this still sweeps round the FRONT of the joint, through `din`.)
-    let phi = -s * theta;
-    // a chord spanning angle α sits r·(1 − cos(α/2)) inside the circle; keep that ≤ JOIN_TOL_PX
-    let max_step = if r > JOIN_TOL_PX { 2.0 * (1.0 - JOIN_TOL_PX / r).acos() } else { std::f32::consts::PI };
-    let steps = (theta / max_step).ceil().max((theta / std::f32::consts::FRAC_PI_4).ceil()).max(1.0) as usize;
-    let steps = steps.min(JOIN_MAX_STEPS);
-    v.reserve(steps * 3);
-    let mut prev = c_in;
+    let s = if cross > 0.0 { -1.0 } else { 1.0 };
+    let outer = usize::from(cross > 0.0);
+    let cin = incoming.corners[outer];
+    let cout = outgoing.corners[outer];
+    let theta = cross.abs().atan2(cos);
+    // Unlike 1-cos(theta/2), this retains tiny angles at huge radii. Sagitta
+    // chooses subdivision ONLY: no area/angle threshold may remove a closing wedge.
+    let sagitta = 2.0 * r * (theta * 0.25).sin().powi(2);
+    let steps = if theta <= std::f64::consts::FRAC_PI_4 && sagitta <= JOIN_TOL_PX as f64 {
+        1
+    } else {
+        let max_step = 4.0 * ((JOIN_TOL_PX as f64 / (2.0 * r)).min(1.0).sqrt()).asin();
+        (theta / max_step).ceil().max((theta / std::f64::consts::FRAC_PI_4).ceil()).max(1.0) as usize
+    }
+    .min(JOIN_MAX_STEPS);
+    // Anchor on the incoming quad's INNER corner, not the centerline midpoint.
+    // The latter is a T-junction: after f32 NDC rounding it need not lie on the
+    // quad's end edge. Sharing that entire edge removes the radial crack; the
+    // outgoing edge overlaps its quad. The fan stays inside the round-join disk.
+    let pivot = incoming.corners[1 - outer];
+    let mut prev = cin;
     for k in 1..=steps {
         let next = if k == steps {
-            c_out // land exactly on the outgoing quad's corner
+            cout
         } else {
-            let (sn, cs) = (phi * k as f32 / steps as f32).sin_cos();
-            [c_in[0] * cs - c_in[1] * sn, c_in[0] * sn + c_in[1] * cs]
+            let (sn, cs) = (-s * theta * k as f64 / steps as f64).sin_cos();
+            let n = [nin[0] * s, nin[1] * s];
+            stroke_vertex([b[0] + n[0] * cs - n[1] * sn, b[1] + n[0] * sn + n[1] * cs], col, w, h)
         };
-        tri(v, b, [b[0] + prev[0], b[1] + prev[1]], [b[0] + next[0], b[1] + next[1]], col, w, h);
+        v.extend([pivot, prev, next]);
         prev = next;
     }
 }
@@ -331,7 +375,7 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
             // `clip` is honoured at DRAW time (a GPU scissor set around this stroke's Fg range) — the band
             // is tessellated here in full and trimmed to the page edge by the scissor. See build_content.
             Prim::Stroke { pts, width, color, .. } => {
-                let sp: Vec<Pt> = pts.iter().map(|p| view.w2s(*p)).collect();
+                let sp: Vec<StrokePt> = pts.iter().map(|p| stroke_screen(*p, view)).collect();
                 stroke_poly(&mut v, &sp, width * z, *color, w, h);
             }
             Prim::Dashed { pts, width, color } => {
@@ -413,20 +457,15 @@ fn knock_draws(
     fgv: &mut Vec<Vertex>,
 ) -> Vec<Draw> {
     let t0 = fgv.len() as u32;
-    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    let mut bounds = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
     let mut bcol = [0.0f32; 4];
     for p in prims {
         if let Prim::Stroke { pts, width, color, .. } = p {
             bcol = *color;
-            let sp: Vec<Pt> = pts.iter().map(|q| view.w2s(*q)).collect();
-            let r = width * zoom * 0.5 + 1.5;
-            for q in &sp {
-                x0 = x0.min(q[0] - r);
-                y0 = y0.min(q[1] - r);
-                x1 = x1.max(q[0] + r);
-                y1 = y1.max(q[1] + r);
-            }
-            stroke_poly(fgv, &sp, width * zoom, bcol, w, h);
+            let sp: Vec<StrokePt> = pts.iter().map(|q| stroke_screen(*q, view)).collect();
+            let screen_width = width * zoom;
+            extend_stroke_bounds(&mut bounds, &sp, screen_width);
+            stroke_poly(fgv, &sp, screen_width, bcol, w, h);
         }
     }
     let band = (t0, fgv.len() as u32 - t0);
@@ -437,7 +476,7 @@ fn knock_draws(
         fr.first().map(|((fs, fl), (cs, cl))| ((*fs + off, *fl), (*cs + off, *cl))).unwrap_or(((0, 0), (0, 0)));
     let c0 = fgv.len() as u32;
     if band.1 > 0 {
-        quad(fgv, [x0, y0], [x1, y0], [x1, y1], [x0, y1], bcol, w, h);
+        stroke_cover(fgv, bounds, bcol, w, h);
     }
     vec![Draw::Knockout { band, fan, fcover, bcover: (c0, fgv.len() as u32 - c0) }]
 }
@@ -497,23 +536,18 @@ fn group_draws(
                             .find(|&k| !matches!(&prims[k], Prim::Stroke { color: c2, .. } if *c2 == col))
                             .unwrap_or(j);
                         let t0 = fgv.len() as u32;
-                        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                        let mut bounds = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
                         for p in &prims[i..e] {
                             if let Prim::Stroke { pts, width, .. } = p {
-                                let sp: Vec<Pt> = pts.iter().map(|q| view.w2s(*q)).collect();
-                                let r = width * zoom * 0.5 + 1.5;
-                                for q in &sp {
-                                    x0 = x0.min(q[0] - r);
-                                    y0 = y0.min(q[1] - r);
-                                    x1 = x1.max(q[0] + r);
-                                    y1 = y1.max(q[1] + r);
-                                }
-                                stroke_poly(fgv, &sp, width * zoom, col, w, h);
+                                let sp: Vec<StrokePt> = pts.iter().map(|q| stroke_screen(*q, view)).collect();
+                                let screen_width = width * zoom;
+                                extend_stroke_bounds(&mut bounds, &sp, screen_width);
+                                stroke_poly(fgv, &sp, screen_width, col, w, h);
                             }
                         }
                         let tris = (t0, fgv.len() as u32 - t0);
                         let c0 = fgv.len() as u32;
-                        quad(fgv, [x0, y0], [x1, y0], [x1, y1], [x0, y1], col, w, h);
+                        stroke_cover(fgv, bounds, col, w, h);
                         draws.push(Draw::StrokeCov { tris, cover: (c0, fgv.len() as u32 - c0) });
                         i = e;
                         continue;
@@ -643,6 +677,11 @@ fn fullscreen_quad(v: &mut Vec<Vertex>, opacity: f32) {
 mod tests {
     use super::*;
     use varos_core::scene::Group;
+
+    fn stroke_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32; 4], w: f32, h: f32) {
+        let pts: Vec<StrokePt> = pts.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
+        super::stroke_poly(v, &pts, width, col, w, h);
+    }
 
     fn stroke(alpha: f32) -> Prim {
         Prim::Stroke {
@@ -1085,7 +1124,20 @@ mod tests {
                 let nout = seg_normal(b, [b[0] + dout[0] * 10.0, b[1] + dout[1] * 10.0], 2.0 * r);
                 let (w, h) = (10_000.0, 10_000.0);
                 let mut v = Vec::new();
-                stroke_join(&mut v, b, din, nin, dout, nout, r, [0.0, 0.0, 0.0, 1.0], w, h);
+                let up = |p: Pt| [p[0] as f64, p[1] as f64];
+                let end = |dir: Pt, n: Pt| StrokeEnd {
+                    dir: up(dir),
+                    normal: up(n),
+                    corners: [-1.0, 1.0].map(|s| {
+                        stroke_vertex(
+                            [b[0] as f64 - n[0] as f64 * s, b[1] as f64 - n[1] as f64 * s],
+                            [0.0, 0.0, 0.0, 1.0],
+                            w,
+                            h,
+                        )
+                    }),
+                };
+                stroke_join(&mut v, up(b), end(din, nin), end(dout, nout), r as f64, [0.0, 0.0, 0.0, 1.0], w, h);
                 let label = format!("r {r}, turn {deg_in}° → {deg_out}°");
                 assert!(!v.is_empty(), "{label}: a turn gets a join");
                 let tris: Vec<[Pt; 3]> = v
@@ -1094,7 +1146,8 @@ mod tests {
                     .collect();
                 let slack = 0.01; // NDC round trip at 5 000 px coordinates
                 for t in &tris {
-                    assert!(dist(t[0], b) <= slack, "{label}: every fan triangle starts at the joint");
+                    // The inner quad corner anchors the fan, sharing the whole cap edge.
+                    assert!((dist(t[0], b) - r).abs() <= slack + r * 1e-6, "{label}: pivot on inner corner");
                     for q in [t[1], t[2]] {
                         assert!((dist(q, b) - r).abs() <= slack + r * 1e-6, "{label}: fan vertex off the circle");
                     }
@@ -1105,11 +1158,14 @@ mod tests {
                 // the fan's first and last outer vertices are the quads' own outer corners (no crack)
                 let cross = din[0] * dout[1] - din[1] * dout[0];
                 let s = if cross > 0.0 { -1.0 } else { 1.0 };
-                let (cin, cout) = ([b[0] + nin[0] * s, b[1] + nin[1] * s], [b[0] + nout[0] * s, b[1] + nout[1] * s]);
                 let first = v[1].pos;
                 let last = v[v.len() - 1].pos;
-                assert_eq!(first, ndc(cin, w, h), "{label}: fan starts on the incoming quad's corner");
-                assert_eq!(last, ndc(cout, w, h), "{label}: fan ends on the outgoing quad's corner");
+                let precise_ndc = |n: Pt| {
+                    let p = [b[0] as f64 + n[0] as f64 * s, b[1] as f64 + n[1] as f64 * s];
+                    [(p[0] / w as f64 * 2.0 - 1.0) as f32, (1.0 - p[1] / h as f64 * 2.0) as f32]
+                };
+                assert_eq!(first, precise_ndc(nin), "{label}: fan starts on the incoming quad's corner");
+                assert_eq!(last, precise_ndc(nout), "{label}: fan ends on the outgoing quad's corner");
             }
         }
     }
@@ -1178,3 +1234,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tess_round3_tests.rs"]
+mod round3_tests;

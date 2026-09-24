@@ -171,6 +171,61 @@ alternating method (9 rounds, load average about 2.6), `main` at `7f3d883` again
   vertices per curve point. Skipping bevels whose gap is under 1/16 px was considered and **rejected**
   (review agreed): at r = 1 600 px a 1/16 px-wide wedge is about 50 px² and would speckle under MSAA.
 
+### Round-3 alternating comparison (2026-09-24)
+
+The first round-3 harness run was **unpaired**, with uncontrolled host load and no recorded
+load average. Its cold times and counts were:
+
+| Scene | Initial round-3 cold | fill / fg / opacity vertices | Overlay vertices |
+|---|---:|---:|---:|
+| A | 0.321 ms | 3,078 / 9,480 / 0 | 38,520 |
+| B | 2.420 ms | 10,500 / 12,000 / 0 | 0 |
+| C | 0.705 ms | 29,700 / 100,500 / 0 | 0 |
+| D | 0.129 ms | 1,068 / 3,387 / 0 | 4,383 |
+| E | 1.326 ms | 2,835 / 27,996 / 0 | 0 |
+
+These numbers are not directly comparable to historical runs under different load. The f64
+performance effect was **unresolved pending alternating before/after runs**, rather than
+proved by those absolute times.
+
+The follow-up compares release harness binaries from **HEAD `adc1436`** and the **reviewed
+round-3 working diff** (including f64 cover bounds and shared emitted quad corners). Ten
+paired rounds ran sequentially, reversing pair order each round (HEAD/after, after/HEAD),
+with one excluded whole-harness warm-up per binary. Each harness invocation itself reports
+the median of 15 measured iterations after its own warm-up. The table takes the median of
+the ten reported per-process medians; the printed harness precision is 0.001 ms. No builds,
+tests or other agent-launched workload ran during measurement. The host was macOS arm64,
+10 logical CPUs, Rust **1.98.1**; one-minute load ranged **0.943–0.948** (initial 1/5/15-minute
+load **0.943/1.234/1.354**, final **0.948/1.230/1.352**). External load and scheduling were
+not controlled, so overlapping ranges and small differences should not be overinterpreted.
+
+| Scene | HEAD cold median | Round-3 cold median | Change | HEAD range | Round-3 range |
+|---|---:|---:|---:|---:|---:|
+| A | 0.0955 ms | 0.1010 ms | +5.8% | 0.093–0.111 ms | 0.099–0.114 ms |
+| B | 2.0455 ms | 2.0445 ms | −0.05% | 1.909–2.300 ms | 1.959–2.294 ms |
+| C | 0.5720 ms | 0.5940 ms | +3.8% | 0.555–0.659 ms | 0.563–0.664 ms |
+| D | 0.1130 ms | 0.1165 ms | +3.1% | 0.108–0.126 ms | 0.110–0.129 ms |
+| E | 1.2170 ms | 1.2170 ms | 0.0% | 1.134–1.424 ms | 1.134–1.343 ms |
+
+**B does not show a >5% regression in this comparison** (−0.05%, effectively flat).
+A's measured median is **5.8% slower**; C and D are 3.8% and 3.1% slower. This measures the
+whole round-3 patch, including topology, precision and retained tiny turns, and does not
+isolate the cost of f64 itself. That causal attribution remains unresolved; GPU cost is
+also unmeasured.
+
+Counts were stable across all ten runs. A/B/C/E match the initial round-3 table on both
+binaries. D changed **1,068 / 3,363 / 0 → 1,068 / 3,387 / 0** and overlay vertices
+**4,170 → 4,383**, consistent with retaining nonzero turns. Binary SHA-256 identities:
+
+- HEAD: `fe5e2799675449339619a7c80a21c5a051efe5c46596d59123981ad2999b0677`
+- Round 3: `25a3df098a29c9a4ae5f88c8b246d11ddcca748e099b95148e13069f5db66b1e`
+
+A shared-target cache initially supplied the same executable for both labels. That trial
+was discarded; the current crate was forcibly rebuilt and different hashes verified before
+collecting the results above. Raw per-run output, the comparison script and `results.json`
+remain in `/tmp/codex-r3-p3-bench/` for this session. Review gates passed: **285 workspace
+tests, 0 failures**, native and Windows-target all-target Clippy with warnings denied, and fmt.
+
 ## Verification
 
 | Gate | Result |

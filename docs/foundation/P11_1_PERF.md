@@ -106,6 +106,77 @@ Wider strokes and higher zoom made it worse.
   1 600 px, and the polygon sits up to about 14 px inside the true circle. Caps should get the same
   tolerance-driven subdivision as joins.
 
+**Round 3 (2026-09-24):** CPU probes found a second crack mechanism: the centerline fan
+pivot is a T-junction on the quad's end edge, and independent f32/NDC rounding can move it off
+that edge even when both outer corners match exactly. The fan now starts at the incoming
+quad's inner corner, sharing its entire end edge and overlapping the outgoing quad; its
+outer arc and triangle count are unchanged. World-to-screen mapping, segment frames, offsets,
+and NDC conversion now use f64 until the final vertex cast. Every nonzero cross emits a wedge;
+`2*r*sin(theta/4)^2` and the stable inverse-sine step bound only choose subdivision (still at
+least one step per 45°, capped at 128). Nonzero segments below 1e-3 px now retain full-width
+quads and joins; only exact duplicate points are skipped. A precision-only intermediate fix
+still failed the radial seam probes, confirming that higher precision alone is insufficient.
+
+GPU-free `build_scene_in_view` → `build_content` probes use 1600×1000 small-arc views of a
+radius-2000, width-40 circle (64 smooth spans, seven viewing angles and four radial view
+positions) near (0, 0) and far (-20000, 15000), plus the seven-point smooth closed path at width
+80. At **every retained interior flattened vertex**, samples cover the outer bisector and both
+radial seams at 25/50/75/95% of the half-width, including the viewport's padded geometry. f64
+point-in-triangle predicates inspect the actual emitted f32 NDC mesh without an epsilon;
+these are geometric samples, not measured screen pixels. Bisector-only counts were **zero
+before and after**; the extra seam samples exposed the failures:
+
+| Fixture | Zoom | Uncovered on HEAD `adc1436` | After round 3 | Samples |
+|---|---:|---:|---:|---:|
+| Near circle | 40× | 3 | 0 | 34,488 |
+| Near circle | 100× | 0 | 0 | 23,364 |
+| Near circle | 400× | 0 | 0 | 17,064 |
+| Far circle | 40× | 8 | 0 | 34,488 |
+| Far circle | 100× | 0 | 0 | 23,364 |
+| Far circle | 400× | 0 | 0 | 17,064 |
+| Seven-point path | 3.27× | 15 | 0 | 7,236 |
+| Seven-point path | 40× | 1 | 0 | 2,328 |
+| Short-segment gap | 1× | 38 | 0 | 38 |
+
+Seven new CPU regressions cover those fixtures, bitwise fan/quad edge coincidence at ±1e6
+coordinates, tiny nonzero turns, small-angle sagitta subdivision, short segments/duplicates,
+and translation-invariant emitted geometry. All seven fail against HEAD in a detached
+worktree of a temporary local clone and pass with this fix; no session stash was used.
+Validation: workspace tests **283 passed, 0 failed**; native and Windows-target Clippy
+(`--all-targets -- -D warnings`), formatting, release build and the A–E CPU harness passed.
+The requested eight-second release smoke launch exited 101 after 1.46 seconds; a diagnostic
+retry recorded Winit `macos/monitor.rs:205:46: invalid display ID`, following macOS service
+connection failures. The live visual check therefore remains unverified in this environment.
+This verifies mesh coverage, not Ahmed's visual acceptance in the app. The cap faceting
+limitation above remains.
+
+**Round-3 review follow-up (2026-09-24):** translucent and knockout cover bounds now use
+the band's exact f64 screen points and screen width, retaining f64 radius, 1.5 px padding and
+cover NDC conversion until vertex emission. Previously, x = 1e8, pan = 108 and width = 2e8
+could put the band edge at 108 px but the cover edge at 112 px. Two new GPU-free regressions
+(`round3_translucent_cover_contains_large_band_with_padding` and
+`round3_knockout_cover_contains_large_band_with_padding`) fail on the earlier round-3 diff and
+pass now: every emitted band vertex is contained, and the padded bounds match the f64 reference
+on both axes and both coordinate signs. Quad corners are constructed in f64 and cast once;
+the fan receives those same emitted vertices, making shared-edge equality structural.
+Review validation: **285 tests passed, 0 failed**, native and Windows-target all-target Clippy
+with warnings denied, and formatting passed.
+
+**Round-3 performance caveat:** the initial unpaired A–E cold observations were
+**0.321 / 2.420 / 0.705 / 0.129 / 1.326 ms**, with fill/fg/opacity vertices
+**3078/9480/0, 10500/12000/0, 29700/100500/0, 1068/3387/0, 2835/27996/0**
+and overlay vertices **38520, 0, 0, 4383, 0**. Host load was uncontrolled and its load average
+was not captured. These absolute times cannot establish the f64 cost against older runs;
+at that point its performance effect was **unresolved pending alternating before/after runs**.
+The follow-up ran ten paired rounds per binary, alternating pair order, HEAD `adc1436` versus
+the reviewed round-3 diff, with no concurrent agent-launched build/test workload. One-minute
+load was **0.943–0.948**. Median cold times, HEAD → round 3: **A 0.0955 → 0.1010,
+B 2.0455 → 2.0445, C 0.5720 → 0.5940, D 0.1130 → 0.1165, E 1.2170 → 1.2170 ms**.
+A measured **+5.8%**, C **+3.8%**, D **+3.1%**; B was **−0.05%**, so no >5% B regression
+was observed. This compares the whole diff, not f64 alone; the isolated f64 effect remains
+unresolved. Method, vertex counts, ranges and binary identities are recorded in
+[P11.2 round-3 comparison](P11_2_PERF.md#round-3-alternating-comparison-2026-09-24).
+
 ## Scope and verification
 
 P11.1 does not add viewport culling, a cross-frame subdivision cache, undo-storage changes, PresentMode
