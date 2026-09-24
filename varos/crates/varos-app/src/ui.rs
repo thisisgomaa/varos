@@ -904,12 +904,38 @@ impl Ui {
     }
     /// A menu shortcut that arrives while a text field is focused goes to egui, exactly as the keyboard
     /// would have delivered it (so ⌘Z still undoes typing in a field instead of the document).
+    /// ⌘C / ⌘X / ⌘V become egui's clipboard EVENTS, exactly what egui-winit makes of those keys on
+    /// the keyboard path (a text field reads `Copy` / `Cut` / `Paste`, never the bare key) — so copy
+    /// and paste keep working in a focused field now that the Edit menu owns those shortcuts.
     pub fn forward_shortcut(&mut self, key: egui::Key, shift: bool, alt: bool) {
+        let state = &mut self.state;
+        if let Some(clip) = text_clipboard_event(key, || state.clipboard_text()) {
+            if let Some(ev) = clip {
+                self.state.egui_input_mut().events.push(ev);
+            }
+            return;
+        }
         let modifiers = egui::Modifiers { alt, shift, mac_cmd: true, command: true, ctrl: false };
         let ev = &mut self.state.egui_input_mut().events;
         for pressed in [true, false] {
             ev.push(egui::Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers });
         }
+    }
+}
+
+/// The egui event a ⌘-clipboard key means to a focused text field — the same mapping egui-winit
+/// applies to real key presses (`is_copy_command` & co.). `None` = not a clipboard key (forward the
+/// key itself); `Some(None)` = ⌘V with nothing pasteable (egui-winit then sends nothing either).
+/// `clipboard` is only read for ⌘V.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the caller is the macOS menu hand-off
+fn text_clipboard_event(key: egui::Key, clipboard: impl FnOnce() -> Option<String>) -> Option<Option<egui::Event>> {
+    match key {
+        egui::Key::C => Some(Some(egui::Event::Copy)),
+        egui::Key::X => Some(Some(egui::Event::Cut)),
+        egui::Key::V => {
+            Some(clipboard().map(|t| t.replace("\r\n", "\n")).filter(|t| !t.is_empty()).map(egui::Event::Paste))
+        }
+        _ => None,
     }
 }
 
@@ -5905,6 +5931,25 @@ mod layer_cache_tests {
         assert_eq!(before, thumb_key(&ed, &[7]));
         ed.doc.paths[0].anchors[0].p[0] = 4.0;
         assert_ne!(before, thumb_key(&ed, &[7]));
+    }
+}
+
+#[cfg(test)]
+mod text_clipboard_tests {
+    use super::text_clipboard_event;
+
+    #[test]
+    fn menu_clipboard_keys_reach_a_text_field_as_clipboard_events() {
+        let unread = || -> Option<String> { panic!("only ⌘V reads the clipboard") };
+        assert_eq!(text_clipboard_event(egui::Key::C, unread), Some(Some(egui::Event::Copy)));
+        assert_eq!(text_clipboard_event(egui::Key::X, unread), Some(Some(egui::Event::Cut)));
+        assert_eq!(
+            text_clipboard_event(egui::Key::V, || Some("a\r\nb".into())),
+            Some(Some(egui::Event::Paste("a\nb".into())))
+        );
+        assert_eq!(text_clipboard_event(egui::Key::V, || Some(String::new())), Some(None), "empty ⇒ nothing");
+        assert_eq!(text_clipboard_event(egui::Key::V, || None), Some(None));
+        assert_eq!(text_clipboard_event(egui::Key::Z, unread), None, "⌘Z stays a key (TextEdit undo)");
     }
 }
 
