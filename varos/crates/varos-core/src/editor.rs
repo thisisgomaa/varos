@@ -722,7 +722,9 @@ impl Editor {
         if poly.is_empty() {
             return false;
         }
-        // (a) the painted band touches the rect ⇔ the centreline touches the rect grown by half the width
+        // (a) the painted band touches the rect ⇔ the centreline touches the rect grown by half the width.
+        // Growing by `hw` on every side is a SQUARE Minkowski sum (the true one has rounded corners), so
+        // near a marquee corner it over-catches by up to (√2 − 1)·hw ≈ 0.41·hw — accepted as harmless.
         let hw = painted_half_width(p);
         let r = (x0 - hw, y0 - hw, x1 + hw, y1 + hw);
         let touches = |ring: &[Pt]| {
