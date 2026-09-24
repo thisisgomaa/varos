@@ -64,13 +64,7 @@ pub fn load(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
         Err(_) => return corrupt(fs, path),
     };
     if probe.version != SETTINGS_VERSION {
-        return (
-            Settings::default(),
-            Some(format!(
-                "Settings were saved by a newer version of Varos (format {}); they were left unchanged.",
-                probe.version
-            )),
-        );
+        return (Settings::default(), Some(version_mismatch_warning(probe.version)));
     }
     match serde_json::from_slice::<OnDisk>(&bytes) {
         Ok(doc) => (Settings { recovery_enabled: doc.recovery_enabled }, None),
@@ -78,10 +72,22 @@ pub fn load(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
     }
 }
 
+/// See `recents::version_mismatch_warning` — same code review P2 fix: word the direction
+/// correctly instead of a bare `!=` that would call an older file "newer" once `SETTINGS_VERSION`
+/// is ever bumped past 1. Neither direction is migrated; only the wording changes.
+fn version_mismatch_warning(found: u32) -> String {
+    let word = if found > SETTINGS_VERSION { "a newer" } else { "an older" };
+    format!("Settings were saved by {word} version of Varos (format {found}); they were left unchanged.")
+}
+
+/// Move a corrupt `settings.json` aside to `<name>.bad`, but only when no earlier corruption is
+/// already parked there — a second crash/bad-write must not erase the first one's evidence (code
+/// review P3, mirrors `recents::corrupt`).
 fn corrupt(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
     let bad = bad_path(path);
-    let _ = fs.remove_file(&bad);
-    let _ = fs.rename(path, &bad);
+    if fs.metadata(&bad).is_err() {
+        let _ = fs.rename(path, &bad);
+    }
     (Settings::default(), Some("Settings were damaged and have been reset.".to_string()))
 }
 
@@ -109,5 +115,44 @@ mod tests {
         let (loaded, warning) = load(&RealFs, &path);
         assert!(warning.is_none());
         assert_eq!(loaded, s);
+    }
+
+    #[test]
+    fn version_mismatch_is_worded_for_the_right_direction() {
+        let d = TestDir::new("settings-verdir");
+        let newer = d.join("newer.json");
+        std::fs::write(&newer, br#"{"version":99,"recovery_enabled":true}"#).unwrap();
+        let (_, w) = load(&RealFs, &newer);
+        let w = w.expect("a warning is reported");
+        assert!(w.contains("newer") && !w.contains("older"), "{w:?}");
+        assert_eq!(std::fs::read(&newer).unwrap(), br#"{"version":99,"recovery_enabled":true}"#);
+
+        let older = d.join("older.json");
+        std::fs::write(&older, br#"{"version":0,"recovery_enabled":true}"#).unwrap();
+        let (_, w) = load(&RealFs, &older);
+        let w = w.expect("a warning is reported");
+        assert!(w.contains("older") && !w.contains("newer"), "{w:?}");
+        assert_eq!(
+            std::fs::read(&older).unwrap(),
+            br#"{"version":0,"recovery_enabled":true}"#,
+            "left unchanged either way"
+        );
+    }
+
+    #[test]
+    fn second_corruption_preserves_the_first_bad_file() {
+        let d = TestDir::new("settings-doublecorrupt");
+        let path = d.join("settings.json");
+        let bad = d.join("settings.json.bad");
+        std::fs::write(&path, b"first corrupt bytes").unwrap();
+        load(&RealFs, &path);
+        assert_eq!(std::fs::read(&bad).unwrap(), b"first corrupt bytes");
+
+        std::fs::write(&path, b"second corrupt bytes").unwrap();
+        let (s, warning) = load(&RealFs, &path);
+        assert!(s.recovery_enabled, "safe default while corrupt");
+        assert!(warning.is_some());
+        assert_eq!(std::fs::read(&bad).unwrap(), b"first corrupt bytes", "the first crash's evidence survives");
+        assert_eq!(std::fs::read(&path).unwrap(), b"second corrupt bytes");
     }
 }

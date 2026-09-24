@@ -131,7 +131,8 @@ fn bad_path(path: &Path) -> PathBuf {
 /// Missing file → empty list, no warning. Corrupt JSON → empty list + warning, and the bad bytes
 /// are moved aside to `<name>.bad` (never silently discarded on first read). A version this build
 /// does not recognise → empty list + warning, but the file on disk is left **completely
-/// untouched** — `load` never writes, so a future Varos build's data is never silently overwritten.
+/// untouched** — `load` never writes, so a future (or, before any migration exists, an older)
+/// Varos build's data is never silently overwritten.
 pub fn load(fs: &dyn FsPort, path: &Path) -> (Recents, Option<String>) {
     let bytes = match fs.read(path) {
         Ok(b) => b,
@@ -145,28 +146,35 @@ pub fn load(fs: &dyn FsPort, path: &Path) -> (Recents, Option<String>) {
     };
     let probe: VersionProbe = match serde_json::from_slice(&bytes) {
         Ok(p) => p,
-        Err(_) => return corrupt(fs, path, &bytes),
+        Err(_) => return corrupt(fs, path),
     };
     if probe.version != RECENTS_VERSION {
-        return (
-            Recents::default(),
-            Some(format!(
-                "The recent documents list was saved by a newer version of Varos (format {}); it was left unchanged.",
-                probe.version
-            )),
-        );
+        return (Recents::default(), Some(version_mismatch_warning(probe.version)));
     }
     match serde_json::from_slice::<OnDisk>(&bytes) {
         Ok(doc) => (Recents { entries: doc.items }, None),
-        Err(_) => corrupt(fs, path, &bytes),
+        Err(_) => corrupt(fs, path),
     }
 }
 
-fn corrupt(fs: &dyn FsPort, path: &Path, bytes: &[u8]) -> (Recents, Option<String>) {
-    let _ = bytes;
+/// `probe.version` is only ever compared for equality against [`RECENTS_VERSION`] by the caller, so
+/// this wording has to say which direction the mismatch actually goes (code review P2: a bare `!=`
+/// mislabels an older file as "newer" the moment the version is ever bumped past 1). Neither
+/// direction is migrated — this only makes the "left unchanged" warning read correctly either way.
+fn version_mismatch_warning(found: u32) -> String {
+    let word = if found > RECENTS_VERSION { "a newer" } else { "an older" };
+    format!("The recent documents list was saved by {word} version of Varos (format {found}); it was left unchanged.")
+}
+
+/// Move a corrupt `recent.json` aside to `<name>.bad` so the bytes are never silently discarded —
+/// but only when no earlier corruption is already parked there: a second crash/bad-write must not
+/// erase the forensic evidence of the first (code review P3). The second corrupt file is then left
+/// at `path`; the next `load()` reports it as missing-or-corrupt again rather than losing it.
+fn corrupt(fs: &dyn FsPort, path: &Path) -> (Recents, Option<String>) {
     let bad = bad_path(path);
-    let _ = fs.remove_file(&bad);
-    let _ = fs.rename(path, &bad);
+    if fs.metadata(&bad).is_err() {
+        let _ = fs.rename(path, &bad);
+    }
     (Recents::default(), Some("The recent documents list was damaged and has been reset.".to_string()))
 }
 
@@ -292,10 +300,46 @@ mod tests {
         std::fs::write(&path, original).unwrap();
         let (r, warning) = load(&RealFs, &path);
         assert!(r.entries().is_empty());
-        assert!(warning.is_some());
+        let warning = warning.expect("a warning is reported");
+        assert!(warning.contains("newer"), "99 > 1: correctly worded as newer — {warning:?}");
         // `load` never writes on this path: byte-identical, and no `.bad` sibling appears.
         assert_eq!(std::fs::read(&path).unwrap(), original);
         assert!(!d.join("recent.json.bad").exists());
+    }
+
+    #[test]
+    fn older_version_is_worded_as_older_not_newer() {
+        // Code review P2: `!=` alone mislabels an older file as "newer" once RECENTS_VERSION is
+        // ever bumped past 1. `version:0` is already older than today's `RECENTS_VERSION == 1`.
+        let d = TestDir::new("recents-oldver");
+        let path = d.join("recent.json");
+        let original: &[u8] = br#"{"version":0,"items":[]}"#;
+        std::fs::write(&path, original).unwrap();
+        let (r, warning) = load(&RealFs, &path);
+        assert!(r.entries().is_empty());
+        let warning = warning.expect("a warning is reported");
+        assert!(warning.contains("older"), "0 < 1: correctly worded as older — {warning:?}");
+        assert!(!warning.contains("newer"), "{warning:?}");
+        assert_eq!(std::fs::read(&path).unwrap(), original, "left unchanged either way");
+    }
+
+    #[test]
+    fn second_corruption_preserves_the_first_bad_file() {
+        let d = TestDir::new("recents-doublecorrupt");
+        let path = d.join("recent.json");
+        let bad = d.join("recent.json.bad");
+        std::fs::write(&path, b"first corrupt bytes").unwrap();
+        let (_, warning1) = load(&RealFs, &path);
+        assert!(warning1.is_some());
+        assert_eq!(std::fs::read(&bad).unwrap(), b"first corrupt bytes");
+
+        // A second bad write lands at the same path before anyone looks at the first `.bad`.
+        std::fs::write(&path, b"second corrupt bytes").unwrap();
+        let (r, warning2) = load(&RealFs, &path);
+        assert!(r.entries().is_empty());
+        assert!(warning2.is_some());
+        assert_eq!(std::fs::read(&bad).unwrap(), b"first corrupt bytes", "the first crash's evidence survives");
+        assert_eq!(std::fs::read(&path).unwrap(), b"second corrupt bytes", "the second is left where it is, not lost");
     }
 
     #[test]
