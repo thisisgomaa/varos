@@ -11,9 +11,11 @@
 //! - [`settings`] — app-wide settings (the Recovery on/off switch).
 pub mod checksum;
 pub mod durable;
+pub mod io_worker;
 pub mod paths;
 pub mod recents;
 pub mod recovery;
+pub mod scheduler;
 pub mod settings;
 pub mod time_text;
 
