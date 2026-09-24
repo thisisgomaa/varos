@@ -131,6 +131,11 @@ const fn cmd_alt(code: KeyCode) -> Option<Accel> {
 pub enum MenuCmd {
     /// The ⌘ + key shortcut, fed to the same dispatch the keyboard uses (`main.rs`).
     Key(Accel),
+    /// A PLAIN key (no modifier) fed to that same dispatch — for a click-only row that shows NO key
+    /// equivalent, so AppKit never takes the key from a focused text field (e.g. Edit ▸ Delete runs
+    /// the Delete/Backspace path, while Backspace keeps deleting text in a field). The host runs it
+    /// only when no text field wants the keyboard.
+    Plain(KeyCode),
     /// The ✕ caption button's path (`WinAction::Close`: save window state, exit) — the Quit
     /// transaction (DFS S1: `AppCommand::Quit`).
     Quit,
@@ -256,6 +261,13 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
                 key("edit.copy", "Copy", cmd(K::KeyC)),
                 key("edit.paste", "Paste", cmd(K::KeyV)),
                 key("edit.pasteinplace", "Paste in Place", cmd_shift(K::KeyV)),
+                // click-only: the Delete/Backspace key path, with no key equivalent (so a text field
+                // keeps its Backspace)
+                item("edit.delete", "Delete", None, MenuCmd::Plain(K::Backspace)),
+                Entry::Sep,
+                // ⌘A / ⇧⌘A via `apply_key`; in a focused text field ⌘A is handed to the field (select text)
+                key("edit.selectall", "Select All", cmd(K::KeyA)),
+                key("edit.deselect", "Deselect", cmd_shift(K::KeyA)),
             ],
         ),
         (
@@ -325,6 +337,7 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
     use egui::Key as E;
     use KeyCode as K;
     Some(match code {
+        K::KeyA => E::A,
         K::KeyC => E::C,
         K::KeyD => E::D,
         K::KeyG => E::G,
@@ -460,6 +473,50 @@ mod tests {
         }
     }
 
+    fn edit_rows() -> Vec<Entry> {
+        let m = menus();
+        m.into_iter().find(|(t, _)| *t == "Edit").expect("an Edit menu").1
+    }
+
+    #[test]
+    fn edit_menu_mirrors_select_all_deselect_delete() {
+        let rows = edit_rows();
+        let find = |want: &str| {
+            rows.iter()
+                .find_map(|e| match e {
+                    Entry::Item { id, label, accel, cmd, .. } if id == want => Some((*label, *accel, *cmd)),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Edit menu misses {want}"))
+        };
+        let all = cmd(KeyCode::KeyA);
+        let none = cmd_shift(KeyCode::KeyA);
+        assert_eq!(find("edit.selectall"), ("Select All", all, MenuCmd::Key(all.unwrap())));
+        assert_eq!(find("edit.deselect"), ("Deselect", none, MenuCmd::Key(none.unwrap())));
+        assert_eq!(find("edit.delete"), ("Delete", None, MenuCmd::Plain(KeyCode::Backspace)));
+        assert!(egui_key(KeyCode::KeyA).is_some(), "a focused text field must still get ⌘A (select text)");
+    }
+
+    #[test]
+    fn plain_delete_row_has_no_native_key_equivalent() {
+        // every Plain row is click-only: showing a key would let AppKit steal it from a text field
+        let items = flat_items(&menus());
+        let plain: Vec<_> = items
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Item { id, accel, cmd: MenuCmd::Plain(_), .. } => Some((id.as_str(), *accel)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(plain, [("edit.delete", None)]);
+        // …and no row anywhere claims Backspace / Delete as a key equivalent
+        for e in &items {
+            if let Entry::Item { id, accel: Some(a), .. } = e {
+                assert!(!matches!(a.code, KeyCode::Backspace | KeyCode::Delete), "{id} claims {:?}", a.code);
+            }
+        }
+    }
+
     #[test]
     fn the_bar_has_the_standard_mac_menus_and_mirrors_every_dockable_panel() {
         let m = menus();
@@ -480,13 +537,13 @@ mod tests {
             })
             .collect();
         assert_eq!(close, [cmd(KeyCode::KeyQ).unwrap(), cmd(KeyCode::KeyW).unwrap()]);
-        // mirrors only: no item may claim a New / Export / Select-All key that has no path yet
-        // (the clipboard keys got their path in Astra F04 — `every_clipboard_row_is_its_shortcut` below)
-        for missing in [KeyCode::KeyN, KeyCode::KeyA] {
-            assert!(
-                !items.iter().any(|e| matches!(e, Entry::Item { accel: Some(a), .. } if a.code == missing)),
-                "{missing:?} has no existing shortcut path — must not be in the menu"
-            );
-        }
+        // mirrors only: no item may claim a New / Export key that has no path yet
+        // (the clipboard keys got their path in Astra F04 — `every_clipboard_row_is_its_shortcut` below;
+        // ⌘A / ⇧⌘A in QW5 — `edit_menu_mirrors_select_all_deselect_delete`)
+        let missing = KeyCode::KeyN;
+        assert!(
+            !items.iter().any(|e| matches!(e, Entry::Item { accel: Some(a), .. } if a.code == missing)),
+            "{missing:?} has no existing shortcut path — must not be in the menu"
+        );
     }
 }
