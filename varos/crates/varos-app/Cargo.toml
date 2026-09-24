@@ -26,6 +26,8 @@ rfd = "0.15"   # native Save/Open/message dialogs (the 🔖 slice: .vrs on disk)
 egui_tiles = "0.16"                                  # split-tree layout + drag-resize + serde (egui 0.35)
 serde = { version = "1", features = ["derive"] }     # BoxState / PanelId serde — workspaces from day one
 serde_json = "1"
+# Local clock text ("Recovery copy saved at 14:32"). Already in the lock through lopdf with `clock` — no new crate.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Win32 is only compiled on Windows (native cursors, custom frame, single-instance, screen eyedropper).
 # Other platforms use the #[cfg(not(windows))] fallbacks — see docs/foundation/MAC_SHELL_PORT.md.
