@@ -9,11 +9,14 @@
 //! 3. `write_all` → `sync_all` → close → copy the destination's permissions onto the temp.
 //!    On Apple targets `File::sync_all` issues `fcntl(F_FULLFSYNC)` (Rust 1.94.1
 //!    `library/std/src/sys/fs/unix.rs:1381-1388`, `os_fsync` under `cfg(target_vendor = "apple")`),
-//!    so the bytes are on the platter, not just in the drive cache;
+//!    so the bytes are on the platter, not just in the drive cache. Some volumes (network shares,
+//!    some USB sticks) reject F_FULLFSYNC with ENOTSUP/ENOTTY/EINVAL; then, like SQLite's
+//!    `full_fsync`, Varos retries with a plain `fsync` before calling it a failure;
 //! 4. `rename(temp, dest)` — POSIX `rename(2)` is an atomic replace; on Windows `std::fs::rename`
 //!    replaces an existing file, and a sharing violation (file open elsewhere) fails **before**
 //!    anything is replaced;
-//! 5. Unix: the folder is synced so the rename itself survives power loss. Windows: skipped;
+//! 5. Unix: the folder is synced (same fallback) so the rename itself survives power loss; a failed
+//!    folder sync never fails the write — it reports [`WriteOutcome::ReplacedUnconfirmed`]. Windows: skipped;
 //! 6. any failure before step 4 removes the temp (best effort) and leaves the destination untouched.
 //!    The destination is never deleted first.
 //!
@@ -32,8 +35,55 @@ pub trait SyncWrite: Write + Send {
 
 impl SyncWrite for std::fs::File {
     fn sync_all(&mut self) -> io::Result<()> {
-        std::fs::File::sync_all(self)
+        full_sync(self)
     }
+}
+
+/// `ENOTTY` — 25 on both macOS and Linux (checked against `libc` on macOS below).
+const ENOTTY: i32 = 25;
+#[cfg(target_os = "macos")]
+const _: () = assert!(ENOTTY == libc::ENOTTY);
+
+/// Did a full sync fail only because the volume doesn't support it (ENOTSUP / ENOTTY / EINVAL)?
+fn full_sync_unsupported(e: &io::Error) -> bool {
+    matches!(e.kind(), io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput) || e.raw_os_error() == Some(ENOTTY)
+}
+
+/// Run the full sync; if the volume rejects it as unsupported, run the plain sync instead
+/// (SQLite's `full_fsync` fallback). Any other full-sync error is returned as is.
+fn sync_with_fallback(full: impl FnOnce() -> io::Result<()>, plain: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
+    match full() {
+        Err(e) if full_sync_unsupported(&e) => plain(),
+        r => r,
+    }
+}
+
+/// Plain `fsync(2)` (no F_FULLFSYNC), retried on EINTR like std does.
+#[cfg(target_os = "macos")]
+fn plain_fsync(f: &std::fs::File) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    loop {
+        // SAFETY: `f` owns an open descriptor for the whole call; `fsync` only reads the fd number.
+        if unsafe { libc::fsync(f.as_raw_fd()) } == 0 {
+            return Ok(());
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() != io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    }
+}
+
+/// `File::sync_all` (F_FULLFSYNC on macOS) with the plain-`fsync` fallback for volumes that reject it.
+#[cfg(target_os = "macos")]
+fn full_sync(f: &std::fs::File) -> io::Result<()> {
+    sync_with_fallback(|| f.sync_all(), || plain_fsync(f))
+}
+
+/// Elsewhere `File::sync_all` already is the plain sync (`fsync` / `FlushFileBuffers`).
+#[cfg(not(target_os = "macos"))]
+fn full_sync(f: &std::fs::File) -> io::Result<()> {
+    f.sync_all()
 }
 
 /// What [`FsPort::metadata`] reports (symlinks followed).
@@ -85,7 +135,7 @@ impl FsPort for RealFs {
             // A directory cannot be opened as a file on Windows; NTFS journals the rename itself.
             return Err(io::Error::from(io::ErrorKind::Unsupported));
         }
-        std::fs::File::open(dir)?.sync_all()
+        full_sync(&std::fs::File::open(dir)?)
     }
     fn remove_file(&self, path: &Path) -> io::Result<()> {
         std::fs::remove_file(path)
@@ -222,11 +272,21 @@ impl std::error::Error for WriteError {
 }
 
 /// The hidden same-folder temp name used for one write to `dest`.
+/// The name part is capped at [`TEMP_NAME_MAX_BYTES`] (cut on a character boundary) so a long
+/// document name plus the nonce never exceeds the 255-byte file-name limit.
 pub fn temp_path(dest: &Path, nonce: &str) -> PathBuf {
     let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut cut = name.len().min(TEMP_NAME_MAX_BYTES);
+    while !name.is_char_boundary(cut) {
+        cut -= 1;
+    }
     let dir = dest.parent().unwrap_or(Path::new(""));
-    dir.join(format!(".{name}.{nonce}.varos-tmp"))
+    dir.join(format!(".{}.{nonce}.varos-tmp", &name[..cut]))
 }
+
+/// Longest slice of the destination's file name kept in a temp name (bytes). With the dots, a
+/// 32-char nonce and `.varos-tmp` the temp name stays ≤ 173 bytes.
+pub const TEMP_NAME_MAX_BYTES: usize = 128;
 
 /// Replace `dest` with `bytes` durably (see the module docs for the exact steps).
 /// `nonce` makes the temp name unique — pass [`super::checksum::new_nonce`]; it must be a plain
@@ -284,10 +344,10 @@ pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) ->
     }
     match fs.sync_dir(&parent) {
         Ok(()) => Ok(WriteOutcome::Durable),
-        // Some file systems cannot sync a directory; the rename is then as durable as it gets.
-        Err(e) if matches!(e.kind(), io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput) => {
-            Ok(WriteOutcome::Durable)
-        }
+        // Some file systems cannot sync a directory at all (even after the plain-fsync fallback);
+        // the rename is then as durable as that volume allows.
+        Err(e) if full_sync_unsupported(&e) => Ok(WriteOutcome::Durable),
+        // Never fails the write: the new bytes are in place, only the confirmation is missing.
         Err(e) => Ok(WriteOutcome::ReplacedUnconfirmed(e)),
     }
 }
@@ -315,7 +375,11 @@ pub enum Step {
     Write {
         after: usize,
     },
+    /// Both the full sync and its plain-`fsync` fallback fail.
     Sync,
+    /// Only the full sync (F_FULLFSYNC) fails; the plain-`fsync` fallback then runs if the error
+    /// kind is `Unsupported`/`InvalidInput` (or raw ENOTTY).
+    FullSync,
     Rename,
     SyncDir,
     Remove,
@@ -428,6 +492,7 @@ struct FaultWriter {
     written: usize,
     write_fault: Option<(usize, Fault)>,
     sync_fault: Option<Fault>,
+    full_sync_fault: Option<Fault>,
 }
 
 impl Write for FaultWriter {
@@ -457,7 +522,13 @@ impl SyncWrite for FaultWriter {
         if let Some(f) = self.sync_fault.take() {
             return Err(f.error());
         }
-        self.inner.sync_all()
+        // The same fallback decision as the real macOS path; the inner sync plays "plain fsync".
+        let full_fault = self.full_sync_fault.take();
+        let inner = &mut self.inner;
+        match full_fault {
+            Some(f) => sync_with_fallback(|| Err(f.error()), || inner.sync_all()),
+            None => inner.sync_all(),
+        }
     }
 }
 
@@ -471,7 +542,8 @@ impl FsPort for FaultFs {
             _ => unreachable!("filtered to Write"),
         });
         let sync_fault = self.take(|s| *s == Step::Sync, &[path]);
-        Ok(Box::new(FaultWriter { inner, written: 0, write_fault, sync_fault }))
+        let full_sync_fault = self.take(|s| *s == Step::FullSync, &[path]);
+        Ok(Box::new(FaultWriter { inner, written: 0, write_fault, sync_fault, full_sync_fault }))
     }
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
         self.record(Op::Rename, from);
@@ -581,6 +653,36 @@ mod tests {
     #[test]
     fn fail_at_sync_keeps_old_file_byte_identical() {
         assert_fault_keeps_old("dur-sync", Fault::at(Step::Sync), |e| matches!(e, WriteError::Sync(_)));
+    }
+
+    #[test]
+    fn full_sync_unsupported_falls_back_to_plain_fsync() {
+        // F_FULLFSYNC rejected by the volume (ENOTSUP / EINVAL / ENOTTY) ⇒ plain fsync ⇒ saved, durable.
+        let enotty = || io::Error::from_raw_os_error(ENOTTY);
+        assert!(full_sync_unsupported(&enotty()));
+        for kind in [io::ErrorKind::Unsupported, io::ErrorKind::InvalidInput] {
+            let (d, dest) = setup("dur-fullsync");
+            let fs = FaultFs::new(vec![Fault::at(Step::FullSync).kind(kind)]);
+            let out = write_replace(&fs, &dest, NEW, &new_nonce()).unwrap();
+            assert!(matches!(out, WriteOutcome::Durable), "{kind:?}: {out:?}");
+            assert_eq!(fs.pending(), 0);
+            assert_eq!(std::fs::read(&dest).unwrap(), NEW);
+            assert!(temps(&d).is_empty());
+        }
+        // Any other full-sync error (e.g. an I/O error) is NOT papered over: the write fails, old file kept.
+        assert_fault_keeps_old("dur-fullsync-io", Fault::at(Step::FullSync), |e| matches!(e, WriteError::Sync(_)));
+        // The fallback helper: plain sync runs only for "unsupported" errors, and its result is final.
+        let ran = std::cell::Cell::new(false);
+        let plain_ok = || {
+            ran.set(true);
+            Ok(())
+        };
+        assert!(sync_with_fallback(|| Err(enotty()), plain_ok).is_ok());
+        assert!(ran.replace(false));
+        let r = sync_with_fallback(|| Err(io::Error::other("eio")), || unreachable!("no fallback for real I/O errors"));
+        assert!(r.is_err());
+        let r = sync_with_fallback(|| Err(io::ErrorKind::Unsupported.into()), || Err(io::Error::other("plain failed")));
+        assert_eq!(r.unwrap_err().to_string(), "plain failed");
     }
 
     #[test]
@@ -711,6 +813,27 @@ mod tests {
         let created: Vec<PathBuf> = fs.log().into_iter().filter(|(op, _)| *op == Op::Create).map(|(_, p)| p).collect();
         assert_eq!(created, vec![temp_path(&dest, &b)]);
         assert!(d.names().contains(&"doc.vrs".to_string()));
+    }
+
+    #[test]
+    fn long_names_get_a_capped_temp_name() {
+        let d = TestDir::new("dur-longname");
+        // "a" + 116 Arabic letters (2 bytes each) + ".vrs" = 237 bytes: legal, but + nonce would exceed 255.
+        // Byte 128 falls inside a letter, so the cut must step back to 127.
+        let name = format!("a{}.vrs", "\u{645}".repeat(116));
+        assert_eq!(name.len(), 237);
+        let dest = d.join(&name);
+        let nonce = new_nonce();
+        let t = temp_path(&dest, &nonce);
+        let tname = t.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(tname.len() <= 255, "temp name is {} bytes", tname.len());
+        assert!(tname.starts_with(&format!(".a{}.", "\u{645}".repeat(63))), "cut on a character boundary");
+        assert!(tname.ends_with(&format!(".{nonce}.varos-tmp")));
+        write_replace(&RealFs, &dest, NEW, &nonce).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), NEW);
+        assert_eq!(d.names(), vec![name]);
+        // Short names are kept whole.
+        assert_eq!(temp_path(Path::new("doc.vrs"), "n"), PathBuf::from(".doc.vrs.n.varos-tmp"));
     }
 
     #[test]
