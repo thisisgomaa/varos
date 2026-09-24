@@ -2,6 +2,7 @@
 //! Tools (see `tools/`) define what a *press* does; the shared move/up engine handles the drag.
 
 use crate::boolean::{run_boolean_curves, BoolOp, ResultShape, Seg};
+use crate::clipboard::Clipboard;
 use crate::geom::*;
 use crate::model::*;
 use crate::tools;
@@ -319,6 +320,60 @@ fn rect_from_corners(a: Pt, b: Pt, square: bool) -> (f32, f32, f32, f32) {
     (a[0].min(a[0] + dx), a[1].min(a[1] + dy), dx.abs().max(1.0), dy.abs().max(1.0))
 }
 
+/// Half the width of the stroke band actually PAINTED for a path (world units): the stroke is centred
+/// on the outline, so it reaches `stroke_width / 2` either side — or nothing when no stroke is drawn.
+/// Hit-testing adds this to its screen-px tolerance so a thick stroke is clickable where it is painted.
+fn painted_half_width(p: &Path) -> f32 {
+    if p.stroke.solid().is_some() {
+        (p.stroke_width * 0.5).max(0.0)
+    } else {
+        0.0
+    }
+}
+
+/// Is `q` (path-local) within `grow` of the bbox of every anchor AND handle of the path (outer + holes)?
+/// A cubic never leaves the hull of its control points, and the fill never leaves its outline, so when
+/// this is false neither an edge hit (≤ `grow`) nor a fill hit is possible — `path_under` skips the
+/// per-segment distance for that path. Pure speed: it never changes an answer.
+fn ctrl_bbox_near(p: &Path, q: Pt, grow: f32) -> bool {
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
+        for c in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
+            x0 = x0.min(c[0]);
+            y0 = y0.min(c[1]);
+            x1 = x1.max(c[0]);
+            y1 = y1.max(c[1]);
+        }
+    }
+    // an empty path (no anchors) leaves the box inverted → false, matching "nothing to hit"
+    q[0] >= x0 - grow && q[0] <= x1 + grow && q[1] >= y0 - grow && q[1] <= y1 + grow
+}
+
+/// Does the segment a→b touch the axis-aligned rect r = (x0, y0, x1, y1) (edges inclusive)?
+/// Liang–Barsky clip: the segment touches iff some parameter range in [0, 1] survives all four slabs.
+fn seg_touches_rect(a: Pt, b: Pt, r: (f32, f32, f32, f32)) -> bool {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (p, q) in [(-dx, a[0] - r.0), (dx, r.2 - a[0]), (-dy, a[1] - r.1), (dy, r.3 - a[1])] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return false; // parallel to this slab and outside it
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+            if t0 > t1 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub struct Editor {
     pub doc: Document,
     pub tool: ToolKind,
@@ -368,6 +423,9 @@ pub struct Editor {
     /// P11.2 cross-frame flatten cache (render-side memo, never serialized, never part of undo). Keyed by
     /// each path's exact geometry inputs, so it can never serve stale geometry — see `flatten.rs`.
     pub flatten_cache: crate::flatten::SharedFlattenCache,
+    /// Edit ▸ Copy / Cut / Paste — the IN-APP clipboard (deep copies of model data). Not the OS
+    /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
+    clipboard: Clipboard,
     undo: Vec<Document>,
     redo: Vec<Document>,
     pending: Option<Document>,
@@ -418,6 +476,7 @@ impl Editor {
             rev: 0,
             dirty: false,
             flatten_cache: Default::default(),
+            clipboard: Clipboard::default(),
             undo: vec![],
             redo: vec![],
             pending: None,
@@ -471,6 +530,10 @@ impl Editor {
     /// its FILL — an unfilled shape catches only its outline, so its hollow interior is click-through to
     /// the art below (Illustrator). Visible parts of lower shapes stay reachable because the covering
     /// shape fails both tests there.
+    ///
+    /// QW1 (Astra F08): the outline reach is the PAINTED band — `EDGE_R` screen px (÷ `ppu`, so it is
+    /// zoom-constant on screen) PLUS half the stroke width when the stroke is drawn. A click anywhere on
+    /// a thick stroke selects it, and that band occludes what lies beneath it (A31 walk unchanged).
     pub fn path_under(&self, pos: Pt) -> Option<u32> {
         let edge_r = EDGE_R / self.ppu;
         for pi in (0..self.doc.paths.len()).rev() {
@@ -480,8 +543,13 @@ impl Editor {
             }
             // A7 seam: map the cursor into the path's UNIT-local frame, then run the existing local-space
             // tests. `edge_r` is rotation-invariant (distance). Identity ⇒ `lp == pos` (byte-for-byte).
+            // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
-            let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= edge_r); // outer + hole rims (FB3)
+            let reach = edge_r + painted_half_width(&self.doc.paths[pi]);
+            if !ctrl_bbox_near(&self.doc.paths[pi], lp, reach) {
+                continue; // cheap cull: out of reach of every curve AND of the fill (review P3-1)
+            }
+            let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= reach); // outer + hole rims (FB3)
             let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
             if on_edge || in_fill {
                 return Some(id);
@@ -659,29 +727,43 @@ impl Editor {
         }
         base
     }
-    /// Does a path touch / fall inside a marquee rect? (a vertex inside, or the rect-centre inside a
-    /// FILLED region). The centre-inside fallback counts only for a real filled area — a closed shape
-    /// (as before) or an open-but-filled one — so a hollow open polyline must be TOUCHED, not merely
-    /// enclosed (point_in_path now treats open paths as implied-closed; this keeps that from leaking
-    /// into marquee over-selection — session-lock correctness fix).
+    /// Does a path touch / fall inside a marquee rect? Illustrator rule (QW1 / Astra F08): the marquee
+    /// must touch the PAINTED geometry — (a) any piece of the outline or a hole rim, grown by the painted
+    /// stroke half-width, crosses the rect (a segment test, so a thin marquee across a long edge counts
+    /// even with no vertex inside), or (b) the rect centre lies inside a FILLED region. (b) no longer
+    /// counts a merely `closed` shape: a marquee sitting in the hollow of an unfilled ring leaves it alone,
+    /// exactly as a hollow open polyline already was (session-lock correctness fix).
     pub fn path_in_rect(&self, pi: usize, x0: f32, y0: f32, x1: f32, y1: f32) -> bool {
         // A7 seam: marquee-test the WORLD outline (unit transform composed) so a rotated object is caught
-        // by its VISUAL bounds. Identity ⇒ today's local test byte-for-byte.
-        let xf = self.doc.unit_xform(self.doc.paths[pi].id);
-        let poly = self.doc.outline(pi, 16);
+        // by its VISUAL bounds. Identity ⇒ today's local geometry untouched. `outline_px`/`ring_px` keep
+        // chords ~4 screen px, so the polyline hugs the drawn curve at any zoom.
+        let p = &self.doc.paths[pi];
+        let xf = self.doc.unit_xform(p.id);
+        let poly = self.doc.outline_px(pi, self.ppu);
         if poly.is_empty() {
             return false;
         }
-        if poly.iter().any(|q| {
-            let q = xf.apply(*q);
-            q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1
-        }) {
+        // (a) the painted band touches the rect ⇔ the centreline touches the rect grown by half the width.
+        // Growing by `hw` on every side is a SQUARE Minkowski sum (the true one has rounded corners), so
+        // near a marquee corner it over-catches by up to (√2 − 1)·hw ≈ 0.41·hw — accepted as harmless.
+        let hw = painted_half_width(p);
+        let r = (x0 - hw, y0 - hw, x1 + hw, y1 + hw);
+        let touches = |ring: &[Pt]| {
+            if ring.len() == 1 {
+                return seg_touches_rect(xf.apply(ring[0]), xf.apply(ring[0]), r);
+            }
+            ring.windows(2).any(|w| seg_touches_rect(xf.apply(w[0]), xf.apply(w[1]), r))
+        };
+        if touches(&poly) {
             return true;
         }
-        let p = &self.doc.paths[pi];
-        // centre-inside test in the path's LOCAL frame (map the rect centre back through the transform)
+        // hole rims are drawn too (FB3); a closed `ring_px` already ends on its first point
+        if p.holes.iter().any(|h| !h.is_empty() && touches(&Document::ring_px(h, true, self.ppu))) {
+            return true;
+        }
+        // (b) centre-inside test in the path's LOCAL frame (map the rect centre back through the transform)
         let c = xf.inverse_apply([(x0 + x1) * 0.5, (y0 + y1) * 0.5]);
-        (p.closed || p.fill.solid().is_some()) && self.doc.point_in_path(pi, c)
+        p.fill.solid().is_some() && self.doc.point_in_path(pi, c)
     }
     /// Did a press land on a transform handle (scale) or a corner's rotate ring (just outside)?
     pub fn transform_hit(&self, pos: Pt) -> Option<TfHit> {
@@ -704,7 +786,11 @@ impl Editor {
         // (or shift-clicking) another nearby object selects it instead of rotating this one.
         let bb = self.obj_local_bbox()?;
         let lp = rotate_about(pos, [0.0, 0.0], -self.obj_angle);
-        if (lp[0] < bb.0 || lp[0] > bb.2 || lp[1] < bb.1 || lp[1] > bb.3) && self.path_under(pos).is_none() {
+        // QW1: a thick stroke's painted band now hits past the outline — so hitting the SELECTION'S OWN
+        // band must not block its rotate ring; only another (unselected) object under the cursor does.
+        if (lp[0] < bb.0 || lp[0] > bb.2 || lp[1] < bb.1 || lp[1] > bb.3)
+            && self.path_under(pos).is_none_or(|id| self.objsel.contains(&id))
+        {
             let ring = 22.0 / self.ppu;
             for i in 0..4u8 {
                 if dist(pos, hs[i as usize]) <= ring {
@@ -954,6 +1040,129 @@ impl Editor {
     pub fn obj_local_dims(&self) -> Option<(f32, f32)> {
         self.obj_local_bbox().map(|(x0, y0, x1, y1)| (x1 - x0, y1 - y0))
     }
+
+    // ---------- Direct-Selection inspector (Astra F07) ----------
+    /// The anchors the inspector measures and edits when there is NO object selection: the individually
+    /// selected anchors (Direct tool), else every anchor (outer + holes) of the Direct path-level selection.
+    /// Empty when an object selection exists (objects always win) or nothing is direct-selected. Sorted, so
+    /// the result is deterministic.
+    fn direct_anchor_ids(&self) -> Vec<u32> {
+        if !self.objsel.is_empty() {
+            return vec![];
+        }
+        let mut ids: Vec<u32> = self.selected.iter().copied().filter(|&a| self.doc.aidx(a).is_some()).collect();
+        if ids.is_empty() {
+            if let Some(pi) = self.dsel_path.and_then(|p| self.doc.pidx(p)) {
+                let p = &self.doc.paths[pi];
+                ids = p.anchors.iter().chain(p.holes.iter().flatten()).map(|a| a.id).collect();
+            }
+        }
+        ids.sort_unstable();
+        ids
+    }
+    /// WORLD bbox (x0, y0, x1, y1) of the Direct selection when there is no object selection — what the
+    /// X/Y/W/H fields show for a directly-grabbed anchor (Astra F07). Selected anchors → the bbox of their
+    /// anchor POINTS (one anchor ⇒ x0 == x1, y0 == y1: X/Y is its position, W = H = 0). A path-level Direct
+    /// selection → that path's outline bbox (the same measure as an object selection). `None` otherwise.
+    pub fn direct_bbox(&self) -> Option<(f32, f32, f32, f32)> {
+        if !self.objsel.is_empty() {
+            return None;
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        let mut grow = |q: Pt| {
+            x0 = x0.min(q[0]);
+            y0 = y0.min(q[1]);
+            x1 = x1.max(q[0]);
+            y1 = y1.max(q[1]);
+        };
+        let anchors: Vec<u32> = self.selected.iter().copied().filter(|&a| self.doc.aidx(a).is_some()).collect();
+        if !anchors.is_empty() {
+            for aid in anchors {
+                // A7 seam: an anchor of a rotated (not yet baked) unit is shown at its WORLD position.
+                if let (Some(pid), Some(a)) = (self.doc.pid_of_anchor(aid), self.doc.anchor(aid)) {
+                    grow(self.doc.unit_xform(pid).apply(a.p));
+                }
+            }
+        } else if let Some(pid) = self.dsel_path {
+            if let Some(pi) = self.doc.pidx(pid) {
+                let xf = self.doc.unit_xform(pid);
+                for q in self.doc.outline(pi, 8) {
+                    grow(xf.apply(q));
+                }
+            }
+        }
+        (x0 <= x1).then_some((x0, y0, x1, y1))
+    }
+    /// The inspector / context-bar label for the Direct selection when there is no object selection
+    /// (Astra F07): `"Anchor"` for one selected anchor, `"N anchors"` for several, and the path's name
+    /// (or `"Path"`) for a path-level Direct selection. `None` when objects are selected or nothing is
+    /// direct-selected (the caller then shows its own label, e.g. "No selection").
+    pub fn direct_label(&self) -> Option<String> {
+        if !self.objsel.is_empty() {
+            return None;
+        }
+        match self.selected.iter().filter(|&&a| self.doc.aidx(a).is_some()).count() {
+            0 => self
+                .dsel_path
+                .and_then(|p| self.doc.pidx(p))
+                .map(|pi| self.doc.paths[pi].name.clone().unwrap_or_else(|| "Path".into())),
+            1 => Some("Anchor".into()),
+            n => Some(format!("{n} anchors")),
+        }
+    }
+    /// Numeric X/Y/W/H for the Direct selection (see `direct_bbox`) — the Direct-tool twin of
+    /// `set_obj_bbox`: W/H scale the selected anchors (points + handles) about the reference point
+    /// (ax, ay); X/Y then translate them so that reference point lands on the requested WORLD position.
+    /// A zero extent (a single anchor, or a purely horizontal/vertical run) cannot be scaled and is left
+    /// as is. Every spanned rotated unit is baked first (as `nudge` / `begin_anchor_drag` do), so the edit
+    /// is a true world edit. One undo step; a no-op (no undo step) when nothing would change.
+    fn set_direct_bbox(
+        &mut self,
+        nx: Option<f32>,
+        ny: Option<f32>,
+        nw: Option<f32>,
+        nh: Option<f32>,
+        ax: f32,
+        ay: f32,
+    ) {
+        let ids = self.direct_anchor_ids();
+        let Some((x0, y0, x1, y1)) = self.direct_bbox() else { return };
+        if ids.is_empty() {
+            return;
+        }
+        let (w, h) = (x1 - x0, y1 - y0);
+        let sx = if w.abs() > 1e-3 { nw.map(|v| (v / w).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
+        let sy = if h.abs() > 1e-3 { nh.map(|v| (v / h).max(1e-3)).unwrap_or(1.0) } else { 1.0 };
+        let (fx, fy) = (x0 + w * ax, y0 + h * ay); // WORLD reference point, fixed under scale
+        let tx = nx.map(|v| v - fx).unwrap_or(0.0);
+        let ty = ny.map(|v| v - fy).unwrap_or(0.0);
+        if (sx - 1.0).abs() < 1e-5 && (sy - 1.0).abs() < 1e-5 && tx.abs() < 1e-4 && ty.abs() < 1e-4 {
+            return;
+        }
+        self.begin();
+        let mut units: Vec<u32> = vec![];
+        for &aid in &ids {
+            if let Some(u) = self.doc.pid_of_anchor(aid).and_then(|pid| self.doc.unit_of(pid)) {
+                if !units.contains(&u) {
+                    units.push(u);
+                }
+            }
+        }
+        for u in units {
+            self.bake_unit(u); // world geometry unchanged; the stored anchors become world coordinates
+        }
+        let tf = |p: Pt| [fx + (p[0] - fx) * sx + tx, fy + (p[1] - fy) * sy + ty];
+        for aid in ids {
+            if let Some(a) = self.doc.anchor_mut(aid) {
+                a.p = tf(a.p);
+                a.hin = a.hin.map(tf);
+                a.hout = a.hout.map(tf);
+            }
+        }
+        self.dirty = true;
+        self.commit();
+    }
+
     /// Bbox of a unit's own LOCAL anchor geometry (the coordinates as stored, pre-transform). Used by the
     /// numeric W/H edit to scale a rotated unit in its own frame.
     fn unit_local_bbox(&self, unit: u32) -> Option<(f32, f32, f32, f32)> {
@@ -1394,7 +1603,8 @@ impl Editor {
     }
     /// Set the object selection's AXIS-ALIGNED bbox (any of x/y/w/h). `ax,ay` (0..1) is the reference
     /// point that stays fixed while w/h scale (the Transform 9-point selector). x/y set the bbox
-    /// top-left absolutely. Drives the editable Transform X·Y·W·H fields. Resets frame angle.
+    /// top-left absolutely. Drives the editable Transform X·Y·W·H fields. Resets frame angle. With NO
+    /// object selection it edits the Direct selection instead (`set_direct_bbox`, Astra F07).
     pub fn set_obj_bbox(
         &mut self,
         nx: Option<f32>,
@@ -1404,6 +1614,12 @@ impl Editor {
         ax: f32,
         ay: f32,
     ) {
+        // Astra F07: no object selection → the fields address the Direct selection (selected anchors, or a
+        // Direct path-level selection) instead of silently doing nothing.
+        if self.objsel.is_empty() {
+            self.set_direct_bbox(nx, ny, nw, nh, ax, ay);
+            return;
+        }
         // A7 Stage 5: a SINGLE unit scales in its OWN LOCAL frame — W/H is the true un-rotated size and θ is
         // preserved. X/Y still address the WORLD AABB top-left (simplest, matches `obj_bbox`). A multi-unit
         // selection has no common local frame → bake to identity first, then the historic world-AABB scale.
@@ -1872,6 +2088,14 @@ impl Editor {
             AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids, piv } => {
                 let mut d = sub(pos, grab);
                 let moved = moved || d[0].abs() > 0.001 || d[1].abs() > 0.001;
+                if !moved {
+                    // Astra 09-24: a same-spot move event during a CLICK (which only activates the page)
+                    // must not mark the gesture dirty — that committed a no-op undo step and bumped `rev`
+                    // (the unsaved `*`). Nothing moves yet (not even by snap); an Alt+dup stays dirty
+                    // from `ab_down`.
+                    self.ab_drag = AbDrag::Move { grab, ox, oy, moved, reset_on_click, boards, art, pids, piv };
+                    return;
+                }
                 if self.mods.shift {
                     d = snap45(d);
                 }
@@ -2050,12 +2274,40 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
+    /// Duplicate page `i` to its right (one undo step). F09 (Astra 09-24): with "Move artwork" on, the
+    /// art ON the page comes along — the SAME membership test and copy helper as the Alt+drag duplicate
+    /// (`paths_on_ab` + `dup_paths`: groups, masks and layer membership preserved), offset by the same
+    /// delta as the new page. The copies are NOT selected (matches Alt+drag). Off ⇒ an empty page.
     pub fn ab_duplicate(&mut self, i: usize) {
         self.begin();
         if let Some(src) = self.doc.artboards.get(i).cloned() {
             let mut c = src.clone();
             c.x = src.x + src.w + AB_GAP;
             c.name = format!("{} copy", src.name);
+            if self.doc.move_art_with_ab {
+                let d: Pt = [c.x - src.x, c.y - src.y];
+                let on = self.paths_on_ab(i);
+                let copies = self.doc.dup_paths(&on);
+                // translate like an artboard Move drag: local anchors + each rotated copy unit's pivot by
+                // the same d (translation commutes with rotation) — un-rotated art stays a plain shift.
+                let mut units: Vec<u32> = vec![];
+                for &pid in &copies {
+                    if let Some(pi) = self.doc.pidx(pid) {
+                        self.translate_path(pi, d);
+                    }
+                    if let Some(u) = self.doc.unit_of(pid) {
+                        if !units.contains(&u) {
+                            units.push(u);
+                        }
+                    }
+                }
+                for u in units {
+                    let xf = self.doc.node_xform(u);
+                    if !xf.is_identity() {
+                        self.doc.set_node_xform(u, xf.translated(d));
+                    }
+                }
+            }
             self.doc.artboards.insert(i + 1, c);
             self.doc.active = i + 1;
             self.absel.clear();
@@ -2893,7 +3145,7 @@ impl Editor {
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
             self.redo.push(self.doc.clone());
-            self.doc = s;
+            self.restore_keeping_prefs(s);
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
@@ -2901,10 +3153,27 @@ impl Editor {
     pub fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
             self.undo.push(self.doc.clone());
-            self.doc = s;
+            self.restore_keeping_prefs(s);
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
+    }
+    /// Swap a history snapshot in, carrying the CURRENT non-history preferences forward (DFS S1 §3.1:
+    /// "undo must preserve current navigation/preferences"). `snap`, `guides_locked` and `ruler_origin`
+    /// are written without history (`SetSnapConfig`, `ToggleSnapping`, `ToggleSmartGuides`,
+    /// `ToggleGuidesLocked`, `SetRulerOrigin`), so an undo of an unrelated edit must not roll them back.
+    /// `active` / `active_layer` stay history-restored (pinned by tests); units and move-art are real
+    /// undo steps and stay restored too.
+    fn restore_keeping_prefs(&mut self, mut snapshot: Document) {
+        snapshot.snap = self.doc.snap;
+        snapshot.guides_locked = self.doc.guides_locked;
+        snapshot.ruler_origin = self.doc.ruler_origin;
+        self.doc = snapshot;
+    }
+    /// Is a history transaction open (`begin` without its `commit` / picker cancel yet)? The app reads
+    /// this with `dirty` for the in-flight overlay of the dirty dot, and to know a gesture must settle.
+    pub fn transaction_open(&self) -> bool {
+        self.pending.is_some()
     }
     fn clear_transient(&mut self) {
         self.selected.clear();
@@ -3056,7 +3325,10 @@ impl Editor {
         let pi = self.doc.pidx(pid).unwrap();
         let last = self.doc.paths[pi].anchors.last().map(|a| a.id);
         if last != Some(end_aid) {
+            // resuming from the FIRST anchor flips the path's direction — a real content change, so it
+            // must be part of this gesture's undo step (and bump `rev`; S1 review P2-1)
             self.reverse(pi);
+            self.dirty = true;
         }
         self.active = Some(pid);
         self.selected.clear();
@@ -3188,8 +3460,11 @@ impl Editor {
         if let Some(pid) = self.path_under(pos) {
             if self.is_editable(pid) {
                 if let Some(pi) = self.doc.pidx(pid) {
-                    if let Some((_, _, d)) = self.doc.nearest_seg(pi, pos) {
-                        if d <= EDGE_R {
+                    // mirrors the Pen's add-anchor test (tools/pen.rs) exactly — same local frame, same
+                    // screen-px centreline tolerance (QW1) — so the cursor never promises a different act
+                    let lpos = self.doc.unit_xform(pid).inverse_apply(pos);
+                    if let Some((_, _, d)) = self.doc.nearest_seg(pi, lpos) {
+                        if d <= EDGE_R / self.ppu {
                             return PenHint::Add;
                         }
                     }
@@ -3870,6 +4145,86 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
+    // ---------- clipboard (Edit ▸ Cut / Copy / Paste / Paste in Place — Astra F04) ----------
+    /// The in-app clipboard (read-only view — e.g. its `center()` for a view-centred paste).
+    pub fn clipboard(&self) -> &Clipboard {
+        &self.clipboard
+    }
+    /// Move the in-app clipboard OUT of this editor (leaving it empty). The clipboard is app-wide, but
+    /// each document tab owns its own `Editor`: the app hands it from the outgoing tab's editor to the
+    /// incoming one with `take_clipboard` + `set_clipboard` (DFS S1 §3.1). Never touches the document.
+    pub fn take_clipboard(&mut self) -> Clipboard {
+        std::mem::take(&mut self.clipboard)
+    }
+    /// Install a clipboard handed over from another editor (see `take_clipboard`). No history, no `rev`.
+    pub fn set_clipboard(&mut self, clipboard: Clipboard) {
+        self.clipboard = clipboard;
+    }
+    /// What Copy / Cut take: the WHOLE paths of the object selection, plus the Direct tool's
+    /// whole-path selection. A bare anchor selection copies nothing (partial-path copy is not built).
+    fn clipboard_sources(&self) -> Vec<u32> {
+        let mut pids: Vec<u32> = self.objsel.iter().copied().chain(self.dsel_path).collect();
+        pids.retain(|&p| self.doc.pidx(p).is_some());
+        pids.sort_unstable();
+        pids.dedup();
+        pids
+    }
+    /// Edit ▸ Copy (⌘C): put a deep copy of the selection (groups, clip masks and live transforms kept)
+    /// on the in-app clipboard. The document is untouched — no history entry, no `rev` bump. With
+    /// nothing selected the clipboard keeps its previous content (Illustrator).
+    pub fn copy_selection(&mut self) {
+        let pids = self.clipboard_sources();
+        if !pids.is_empty() {
+            self.clipboard = Clipboard::capture(&self.doc, &pids);
+        }
+    }
+    /// Edit ▸ Cut (⌘X): Copy, then delete the selection — ONE undo step. No-op with nothing selected.
+    pub fn cut_selection(&mut self) {
+        let pids = self.clipboard_sources();
+        if pids.is_empty() {
+            return;
+        }
+        self.clipboard = Clipboard::capture(&self.doc, &pids);
+        let gone: HashSet<u32> = pids.into_iter().collect();
+        self.begin();
+        self.doc.paths.retain(|p| !gone.contains(&p.id));
+        self.objsel.clear();
+        self.selected.clear();
+        self.dsel_path = None;
+        if self.active.is_some_and(|a| gone.contains(&a)) {
+            self.active = None;
+        }
+        self.drag = Drag::None;
+        self.refresh_obj_angle();
+        self.dirty = true;
+        self.commit(); // sync_tree prunes the dead leaves + emptied groups
+    }
+    /// Edit ▸ Paste (⌘V) / Paste in Place (⇧⌘V): insert a fresh copy of the clipboard onto the ACTIVE
+    /// layer, moved by `offset` (`None` = in place, at the copied coordinates), and select it — ONE undo
+    /// step. Every paste mints new ids, so pasting twice gives two independent copies. Empty clipboard ⇒
+    /// no-op (no history, no `rev` bump).
+    pub fn paste(&mut self, offset: Option<Pt>) {
+        if self.clipboard.is_empty() {
+            return;
+        }
+        self.begin();
+        let new = self.clipboard.paste_into(&mut self.doc, offset.unwrap_or([0.0, 0.0]));
+        self.objsel = new.into_iter().collect();
+        self.selected.clear();
+        self.absel.clear();
+        self.dsel_path = None;
+        self.active = None; // a pen path in progress ends, as on any selection change
+        self.drag = Drag::None;
+        self.ab_drag = AbDrag::None;
+        if !matches!(self.tool, ToolKind::Object | ToolKind::Direct | ToolKind::Rotate | ToolKind::Scale) {
+            // the pasted art must show as selected (the same hand-off the Layers Alt-drag copy makes)
+            self.tool = ToolKind::Object;
+        }
+        self.pivot = None;
+        self.refresh_obj_angle(); // pasted units keep their live rotation → the frame follows (A7)
+        self.dirty = true;
+        self.commit();
+    }
     /// If a guide is being dragged, remove it (drag-to-ruler delete) — undoable. Returns true if it did.
     pub fn delete_dragged_guide(&mut self) -> bool {
         if let Drag::Guide { idx } = self.drag {
@@ -4009,7 +4364,7 @@ impl Editor {
     /// Paths targeted by inspector edits (paint / stroke-weight / opacity): object selection ∪ the paths of
     /// individually-selected anchors ∪ the Direct-tool path-level selection. Missing that last term was the
     /// bug where changing colour / removing stroke did nothing while the Direct-Selection tool was active.
-    fn selected_pids(&self) -> HashSet<u32> {
+    pub(crate) fn selected_pids(&self) -> HashSet<u32> {
         let mut pids: HashSet<u32> = self.objsel.clone();
         for &aid in &self.selected {
             if let Some(pid) = self.doc.pid_of_anchor(aid) {
