@@ -1004,9 +1004,9 @@ fn main() {
                 };
                 let egui_consumed = !lifecycle_key_event && gui.on_event(&window, &event);
                 // a pointer button's chrome command (a tab chip, a burger row) exists only after the next
-                // Ui frame: whatever is raised after it waits behind it (review re-check of P1)
-                if matches!(event, WindowEvent::MouseInput { .. }) {
-                    pending.pointer_button();
+                // Ui frame: each press / release leaves its mark, and what is raised after it waits
+                if let WindowEvent::MouseInput { state, .. } = &event {
+                    pending.pointer_button(*state == ElementState::Released);
                     window.request_redraw();
                 }
                 let over_panel = gui.wants_pointer();
@@ -1274,7 +1274,9 @@ fn main() {
                         // …in the place of the click that raised them (`ActionQueue::chrome_frame`)
                         let win = gui.win_action.take().map(host::win_action_command);
                         let raised = gui.take_app_commands().into_iter().chain(win);
-                        pending.chrome_frame(raised.map(host::HostAction::App));
+                        // egui reports at most one click per frame, decided at the latest release
+                        let at = pending.last_release();
+                        pending.chrome_frame(raised.map(|c| (at, host::HostAction::App(c))));
                         if !pending.is_empty() {
                             window.request_redraw();
                         }
@@ -1598,15 +1600,15 @@ mod action_queue_tests {
     /// What one event batch raises, in event order.
     enum Raised {
         Action(host::HostAction),
-        /// A pointer button fed to egui.
-        Pointer,
+        /// A pointer button fed to egui: pressed (false) or released (true).
+        Pointer(bool),
         /// The Ui frame: the commands the chrome raised from the buffered clicks.
         UiFrame(Vec<AppCommand>),
     }
 
     /// One event batch as the event loop runs it: a command is queued, a document action goes through
-    /// `raise_doc`, a pointer button marks the queue, the Ui frame fills the mark; then the queue
-    /// drains at `AboutToWait`.
+    /// `raise_doc`, a pointer button marks the queue, the Ui frame inserts its commands at the latest
+    /// release mark (as the event loop does); then the queue drains at `AboutToWait`.
     fn run_batch(ws: &mut workspace::Workspace, raised: Vec<Raised>) -> RecordingStore {
         let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let mut pending = host::ActionQueue::default();
@@ -1617,8 +1619,13 @@ mod action_queue_tests {
                     let s = ws.active_mut().unwrap();
                     raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas);
                 }
-                Raised::Pointer => pending.pointer_button(),
-                Raised::UiFrame(cmds) => pending.chrome_frame(cmds.into_iter().map(host::HostAction::App)),
+                Raised::Pointer(release) => {
+                    pending.pointer_button(release);
+                }
+                Raised::UiFrame(cmds) => {
+                    let at = pending.last_release();
+                    pending.chrome_frame(cmds.into_iter().map(|c| (at, host::HostAction::App(c))));
+                }
             }
         }
         let (mut ui, mut dialogs, mut store) = (FakeUi, NoDialogs, RecordingStore::default());
@@ -1657,19 +1664,36 @@ mod action_queue_tests {
         assert!(!session.is_dirty_exact(), "what is on screen is what was saved");
     }
 
-    #[test]
-    fn undo_after_a_click_on_another_tab_undoes_that_tab() {
-        // tab A (saved, then edited) is active; B is a second tab with one artboard of its own
+    /// Tab A (saved, then edited: 2 artboards) active; tab B beside it with 1 artboard of its own.
+    fn two_tabs() -> (workspace::Workspace, SessionId, SessionId) {
         let (mut ws, a) = saved_then_edited();
         ws.new_untitled();
         let b = ws.active_id().unwrap();
         ws.active_mut().unwrap().editor.execute(EditCommand::AddArtboard);
         assert!(ws.activate(a));
+        (ws, a, b)
+    }
+
+    #[test]
+    fn undo_after_a_click_on_another_tab_undoes_that_tab() {
         // click B's chip (egui turns it into Activate(B) only at the Ui frame), then ⌘Z before that frame
-        run_batch(&mut ws, vec![Raised::Pointer, undo(), Raised::UiFrame(vec![AppCommand::ActivateDocument(b)])]);
+        let (mut ws, a, b) = two_tabs();
+        let frame = Raised::UiFrame(vec![AppCommand::ActivateDocument(b)]);
+        run_batch(&mut ws, vec![Raised::Pointer(false), Raised::Pointer(true), undo(), frame]);
         assert_eq!(ws.active_id(), Some(b));
         assert_eq!(ws.get(b).unwrap().editor.doc.artboards.len(), 0, "the ⌘Z undid B's edit");
         assert_eq!(ws.get(a).unwrap().editor.doc.artboards.len(), 2, "A was not touched");
+    }
+
+    #[test]
+    fn undo_between_press_and_release_undoes_the_tab_active_before_the_click() {
+        // press B → ⌘Z → release B: the click completes after the key
+        let (mut ws, a, b) = two_tabs();
+        let frame = Raised::UiFrame(vec![AppCommand::ActivateDocument(b)]);
+        run_batch(&mut ws, vec![Raised::Pointer(false), undo(), Raised::Pointer(true), frame]);
+        assert_eq!(ws.active_id(), Some(b));
+        assert_eq!(ws.get(a).unwrap().editor.doc.artboards.len(), 1, "the ⌘Z undid A's edit");
+        assert_eq!(ws.get(b).unwrap().editor.doc.artboards.len(), 1, "B was not touched");
     }
 }
 
