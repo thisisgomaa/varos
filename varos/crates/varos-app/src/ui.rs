@@ -3507,7 +3507,10 @@ fn build_topbar(
             if resp.drag_stopped() {
                 if let Some(src) = dragging {
                     if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                        cmds.push(AppCommand::ReorderDocument(src, crate::chrome::tab_drop_index(&tab_rects, pos.x)));
+                        // the drawn slot, mapped into the FULL order (hidden overflow tabs — review P2)
+                        let slot = crate::chrome::tab_drop_index(&tab_rects, pos.x);
+                        let to = crate::chrome::tab_full_slot(&layout.tabs, slot);
+                        cmds.push(AppCommand::ReorderDocument(src, to));
                     }
                 }
                 ui.data_mut(|d| d.remove::<SessionId>(drag_id));
