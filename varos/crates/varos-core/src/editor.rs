@@ -3064,7 +3064,7 @@ impl Editor {
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
             self.redo.push(self.doc.clone());
-            self.doc = s;
+            self.restore_keeping_prefs(s);
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
@@ -3072,10 +3072,27 @@ impl Editor {
     pub fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
             self.undo.push(self.doc.clone());
-            self.doc = s;
+            self.restore_keeping_prefs(s);
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
+    }
+    /// Swap a history snapshot in, carrying the CURRENT non-history preferences forward (DFS S1 §3.1:
+    /// "undo must preserve current navigation/preferences"). `snap`, `guides_locked` and `ruler_origin`
+    /// are written without history (`SetSnapConfig`, `ToggleSnapping`, `ToggleSmartGuides`,
+    /// `ToggleGuidesLocked`, `SetRulerOrigin`), so an undo of an unrelated edit must not roll them back.
+    /// `active` / `active_layer` stay history-restored (pinned by tests); units and move-art are real
+    /// undo steps and stay restored too.
+    fn restore_keeping_prefs(&mut self, mut snapshot: Document) {
+        snapshot.snap = self.doc.snap;
+        snapshot.guides_locked = self.doc.guides_locked;
+        snapshot.ruler_origin = self.doc.ruler_origin;
+        self.doc = snapshot;
+    }
+    /// Is a history transaction open (`begin` without its `commit` / picker cancel yet)? The app reads
+    /// this with `dirty` for the in-flight overlay of the dirty dot, and to know a gesture must settle.
+    pub fn transaction_open(&self) -> bool {
+        self.pending.is_some()
     }
     fn clear_transient(&mut self) {
         self.selected.clear();
@@ -4045,6 +4062,16 @@ impl Editor {
     /// The in-app clipboard (read-only view — e.g. its `center()` for a view-centred paste).
     pub fn clipboard(&self) -> &Clipboard {
         &self.clipboard
+    }
+    /// Move the in-app clipboard OUT of this editor (leaving it empty). The clipboard is app-wide, but
+    /// each document tab owns its own `Editor`: the app hands it from the outgoing tab's editor to the
+    /// incoming one with `take_clipboard` + `set_clipboard` (DFS S1 §3.1). Never touches the document.
+    pub fn take_clipboard(&mut self) -> Clipboard {
+        std::mem::take(&mut self.clipboard)
+    }
+    /// Install a clipboard handed over from another editor (see `take_clipboard`). No history, no `rev`.
+    pub fn set_clipboard(&mut self, clipboard: Clipboard) {
+        self.clipboard = clipboard;
     }
     /// What Copy / Cut take: the WHOLE paths of the object selection, plus the Direct tool's
     /// whole-path selection. A bare anchor selection copies nothing (partial-path copy is not built).
