@@ -3,6 +3,21 @@
 //! (BOX_SYSTEM_PLAN §3 + ruling 1 "tokens from the mockup" + ruling 4 "azure is a scalpel".)
 use egui::{Color32, CornerRadius, Stroke};
 
+/// Presentation only; shortcut dispatch continues to accept the same physical modifiers.
+pub const fn primary_mod_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "⌘"
+    } else {
+        "Ctrl"
+    }
+}
+
+/// Compact shortcut hint. Keep the existing Windows spelling byte-for-byte.
+pub fn shortcut_label(key: &str) -> String {
+    let separator = if cfg!(target_os = "macos") { "" } else { "+" };
+    format!("{}{separator}{key}", primary_mod_label())
+}
+
 const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
@@ -104,6 +119,15 @@ pub fn apply(ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use egui::Color32;
+
+    #[test]
+    fn shortcut_labels_use_the_platform_primary_modifier() {
+        let (primary, save, search) =
+            if cfg!(target_os = "macos") { ("⌘", "⌘S", "⌘ K") } else { ("Ctrl", "Ctrl+S", "Ctrl K") };
+        assert_eq!(super::primary_mod_label(), primary);
+        assert_eq!(super::shortcut_label("S"), save);
+        assert_eq!(format!("{} K", super::primary_mod_label()), search);
+    }
 
     /// The premultiplied azure consts are bit-equal to the `from_rgba_unmultiplied` calls they
     /// replace (that constructor is not const, so the outputs are baked in — this proves them).

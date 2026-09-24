@@ -18,9 +18,9 @@ use winit::window::Window;
 // (R ≥ G ≥ B, tokens.rs = UI_VISION_MOCKUP's :root). The old cool-gray names alias their warm
 // successors so this 4k-line file needs no body edits; Stage 4's re-cut chrome uses the law names.
 use varos_app::shell::tokens::{
-    ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, INPUT_WELL, LINE as BORDER, LINE2 as BORDER_2, MUTED,
-    NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM, SURFACE as BG_SURFACE,
-    SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
+    primary_mod_label, shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, INPUT_WELL,
+    LINE as BORDER, LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
+    SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
 };
 
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
@@ -3089,11 +3089,9 @@ fn topbtn(
 }
 
 /// §3.5 app-bar text button (pad 5 12, radius r): solid = surface fill + line2 border;
-/// ghost = bare muted text that lights on hover. Laid out from its RIGHT edge; returns its Response.
-fn bar_btn(ui: &mut egui::Ui, p: &egui::Painter, right: f32, cy: f32, label: &str, ghost: bool) -> egui::Response {
+/// ghost = bare muted text that lights on hover. Uses the shared top-bar layout rectangle.
+fn bar_btn(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, label: &str, ghost: bool) -> egui::Response {
     let f = FontId::proportional(12.0);
-    let gw = p.layout_no_wrap(label.to_owned(), f.clone(), TEXT).size().x;
-    let rect = egui::Rect::from_min_max(egui::pos2(right - gw - 24.0, cy - 13.0), egui::pos2(right, cy + 13.0));
     let resp = ui.interact(rect, ui.id().with(("bar-btn", label)), egui::Sense::click());
     let rr = CornerRadius::same(3);
     if ghost {
@@ -3109,21 +3107,21 @@ fn bar_btn(ui: &mut egui::Ui, p: &egui::Painter, right: f32, cy: f32, label: &st
     resp
 }
 
-/// §3.5 search pill: 🔍 Search · [Ctrl K] — a surface capsule sitting on the void.
-/// Laid out from its RIGHT edge; returns its rect. (Visual mirror — search lands with its home.)
-fn search_pill(
-    ui: &mut egui::Ui,
-    p: &egui::Painter,
-    right: f32,
-    cy: f32,
-    icon: &Option<egui::TextureHandle>,
-) -> egui::Rect {
+/// Width measurement for the shared top-bar layout (visual mirror; search has no home yet).
+fn search_pill_width(p: &egui::Painter) -> f32 {
+    let sw = p.layout_no_wrap("Search".into(), FontId::proportional(11.5), FAINT).size().x;
+    let shortcut = format!("{} K", primary_mod_label());
+    let kw = p.layout_no_wrap(shortcut, FontId::monospace(10.0), MUTED).size().x + 8.0;
+    9.0 + 13.0 + 6.0 + sw + 8.0 + kw + 9.0
+}
+
+/// Paint the search pill inside its shared top-bar layout rectangle.
+fn search_pill(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, icon: &Option<egui::TextureHandle>) {
+    let cy = rect.center().y;
     let f = FontId::proportional(11.5);
     let fk = FontId::monospace(10.0);
-    let sw = p.layout_no_wrap("Search".into(), f.clone(), FAINT).size().x;
-    let kw = p.layout_no_wrap("Ctrl K".into(), fk.clone(), MUTED).size().x + 8.0;
-    let w = 9.0 + 13.0 + 6.0 + sw + 8.0 + kw + 9.0;
-    let rect = egui::Rect::from_min_max(egui::pos2(right - w, cy - 12.0), egui::pos2(right, cy + 12.0));
+    let shortcut = format!("{} K", primary_mod_label());
+    let kw = p.layout_no_wrap(shortcut.clone(), fk.clone(), MUTED).size().x + 8.0;
     let _ = ui.interact(rect, ui.id().with("tb-kpill"), egui::Sense::hover());
     let rr = CornerRadius::same(3);
     p.rect_filled(rect, rr, BG_SURFACE);
@@ -3137,8 +3135,7 @@ fn search_pill(
     x = tr.right() + 8.0;
     let krect = egui::Rect::from_min_size(egui::pos2(x, cy - 8.0), egui::vec2(kw, 16.0));
     p.rect_stroke(krect, CornerRadius::same(2), Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
-    p.text(krect.center(), Align2::CENTER_CENTER, "Ctrl K", fk, MUTED);
-    rect
+    p.text(krect.center(), Align2::CENTER_CENTER, shortcut, fk, MUTED);
 }
 
 /// One document tab. Returns (activate_clicked, close_clicked).
@@ -3167,7 +3164,7 @@ fn tab_item(
         FontId::proportional(12.0),
         if active { TEXT } else { MUTED },
     );
-    let x_r = egui::Rect::from_center_size(egui::pos2(rect.right() - 13.0, rect.center().y), egui::vec2(18.0, 18.0));
+    let x_r = crate::chrome::tab_close_rect(rect);
     let xr = ui.interact(x_r, ui.id().with((key, "x")), egui::Sense::click());
     if xr.hovered() {
         p.rect_filled(x_r, CornerRadius::same(4), HOVER);
@@ -3263,35 +3260,26 @@ fn build_topbar(
     snap: &mut varos_core::model::SnapConfig,
     maximized: bool,
 ) {
-    let h = 46.0; // a touch taller so the bar and its flush dropdowns breathe (Ahmed 07-07)
-                  // Stage 1 (BOX_SYSTEM_PLAN §3.5): the app bar IS the void — seam fill, no hairline; the doc tabs
-                  // are Brave-style chips floating in it and the window caps are flush 42px void cells.
+    let h = crate::chrome::TOPBAR.height;
+    // Stage 1 (BOX_SYSTEM_PLAN §3.5): the app bar IS the void — seam fill, no hairline; the doc tabs
+    // are Brave-style chips floating in it and the window caps are flush 42px void cells.
     let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
     // no separator line — the bar melts into the void below it (Ahmed 07-07 "في خط لسا موجود")
     egui::Panel::top("topbar").exact_size(h).frame(frame).show_separator_line(false).show(root, |ui| {
         let bar = ui.max_rect();
         let p = ui.painter().clone();
-        let cy = bar.center().y;
         let mut excl: Vec<egui::Rect> = Vec::new();
-        // platform chrome (docs/foundation/MAC_CHROME.md): macOS keeps its native traffic lights at the
-        // left, so there are no caps of ours and the burger clears the lights; Windows = old numbers.
-        let chrome = crate::chrome::TOPBAR;
+        let text_width = |text: &str| p.layout_no_wrap(text.to_owned(), FontId::proportional(12.0), TEXT).size().x;
+        let layout = crate::chrome::topbar_layout(
+            bar,
+            crate::chrome::TOPBAR,
+            [text_width("Window"), text_width("Share"), text_width("Export")],
+            search_pill_width(&p),
+            tabs.iter().map(|tab| text_width(tab)),
+        );
 
-        // window controls (min · max · close)
-        let caps_left = if chrome.window_caps {
-            let bw = 42.0;
-            let close_r = egui::Rect::from_min_max(
-                egui::pos2(bar.right() - bw, bar.top()),
-                egui::pos2(bar.right(), bar.bottom()),
-            );
-            let max_r = egui::Rect::from_min_max(
-                egui::pos2(bar.right() - 2.0 * bw, bar.top()),
-                egui::pos2(bar.right() - bw, bar.bottom()),
-            );
-            let min_r = egui::Rect::from_min_max(
-                egui::pos2(bar.right() - 3.0 * bw, bar.top()),
-                egui::pos2(bar.right() - 2.0 * bw, bar.bottom()),
-            );
+        // window controls (min · max · close), absent on macOS
+        if let Some([min_r, max_r, close_r]) = layout.caps {
             if winctl(ui, &p, min_r, Cap::Min, "wc-min", HOVER, false) {
                 *win_action = Some(WinAction::Minimize);
             }
@@ -3302,17 +3290,14 @@ fn build_topbar(
                 *win_action = Some(WinAction::Close);
             }
             excl.extend([min_r, max_r, close_r]);
-            min_r.left()
-        } else {
-            bar.right() - chrome.right_inset
-        };
+        }
 
         // right cluster (§3.5), right→left: window caps · [snapping] · Window · Share · Export · search pill
         let window_id = ui.make_persistent_id("window_menu");
         let menu_id = ui.make_persistent_id("app_menu");
         // magnet = the Snapping quick-menu (Illustrator layout)
         let magnet_id = ui.make_persistent_id("snap_menu");
-        let magnet_r = egui::Rect::from_center_size(egui::pos2(caps_left - 6.0 - 14.0, cy), egui::vec2(28.0, 28.0));
+        let magnet_r = layout.magnet;
         let magnet_active = menu_open(ui, magnet_id) || snap.smart || snap.grid;
         let magr = topbtn(ui, &p, magnet_r, &top.magnet, "tb-magnet", magnet_active);
         if magr.clicked() {
@@ -3320,20 +3305,21 @@ fn build_topbar(
         }
         // Window — every panel one click away, landing in an AUTOMATIC spot (Ahmed 07-07; replaces
         // the old layout/panels buttons)
-        let winb = bar_btn(ui, &p, magnet_r.left() - 8.0, cy, "Window", true);
+        let winb = bar_btn(ui, &p, layout.window, "Window", true);
         if winb.clicked() {
             menu_toggle(ui, window_id);
         }
         // Share (solid) + Export (ghost) — the mockup pair; visual MIRRORS for now (like the burger's
         // menu rows: the look lands in Stage 1, the wiring lands with its home)
-        let share = bar_btn(ui, &p, winb.rect.left() - 8.0, cy, "Share", false);
-        let export = bar_btn(ui, &p, share.rect.left() - 8.0, cy, "Export", true);
+        let share = bar_btn(ui, &p, layout.share, "Share", false);
+        let export = bar_btn(ui, &p, layout.export, "Export", true);
         // search pill: 🔍 Search · Ctrl K — a surface capsule on the void (visual mirror too)
-        let kpill_r = search_pill(ui, &p, export.rect.left() - 8.0, cy, &top.search);
+        let kpill_r = layout.search;
+        search_pill(ui, &p, kpill_r, &top.search);
         excl.extend([magnet_r, winb.rect, share.rect, export.rect, kpill_r]);
 
         // burger — a flush 36×40 void cell at the far left (§3.5)
-        let menu_r = egui::Rect::from_min_size(egui::pos2(bar.left() + chrome.lead, bar.top()), egui::vec2(36.0, h));
+        let menu_r = layout.menu;
         let mr = ui.interact(menu_r, ui.id().with("tb-menu"), egui::Sense::click());
         let mopen = menu_open(ui, menu_id);
         if mopen || mr.hovered() {
@@ -3349,16 +3335,8 @@ fn build_topbar(
         excl.push(menu_r);
 
         // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5)
-        let tabs_right = kpill_r.left() - 12.0;
-        let mut tx = menu_r.right() + 8.0;
         let (mut to_close, mut to_activate) = (None, None);
-        for (i, tab) in tabs.iter().enumerate() {
-            let gw = p.layout_no_wrap(tab.clone(), FontId::proportional(12.0), TEXT).size().x;
-            let tw = (12.0 + gw + 8.0 + 18.0 + 4.0).clamp(76.0, 220.0);
-            if tx + tw > tabs_right {
-                break;
-            }
-            let trect = egui::Rect::from_min_size(egui::pos2(tx, cy - 14.0), egui::vec2(tw, 28.0));
+        for (i, (tab, &trect)) in tabs.iter().zip(&layout.tabs).enumerate() {
             let (click, close) = tab_item(ui, &p, trect, tab, i == *tab_active, &top.x, &format!("tab{i}"));
             if click {
                 to_activate = Some(i);
@@ -3367,10 +3345,8 @@ fn build_topbar(
                 to_close = Some(i);
             }
             excl.push(trect);
-            tx += tw + 4.0;
         }
-        let plus_r = egui::Rect::from_center_size(egui::pos2(tx + 16.0, cy), egui::vec2(32.0, 28.0));
-        if tx + 32.0 <= tabs_right {
+        if let Some(plus_r) = layout.plus {
             if topbtn(ui, &p, plus_r, &top.plus, "tb-plus", false).clicked() {
                 tabs.push(format!("Untitled-{}", tabs.len() + 1));
                 *tab_active = tabs.len() - 1;
@@ -3395,9 +3371,9 @@ fn build_topbar(
         let flush = Some(bar.bottom());
         menu_below(ui, menu_id, &mr, flush, |ui| {
             ui.set_width(210.0);
-            menu_row(ui, "New", "Ctrl+N");
-            menu_row(ui, "Open\u{2026}", "Ctrl+O");
-            menu_row(ui, "Save", "Ctrl+S");
+            menu_row(ui, "New", &shortcut_label("N"));
+            menu_row(ui, "Open\u{2026}", &shortcut_label("O"));
+            menu_row(ui, "Save", &shortcut_label("S"));
             menu_sep(ui);
             menu_row(ui, "Export\u{2026}", "");
         });
@@ -3438,7 +3414,7 @@ fn build_topbar(
                 hit = true;
             }
             menu_sep(ui);
-            if check_row(ui, "Smart Guides  (Ctrl+U)", snap.smart) {
+            if check_row(ui, &format!("Smart Guides  ({})", shortcut_label("U")), snap.smart) {
                 toggle_smart_guides(snap);
                 hit = true;
             }
@@ -4561,7 +4537,7 @@ fn panel_layers(
                     }
                     rp.on_hover_text(tip).clicked()
                 };
-                if fbtn(ui, &ic.grp, "Group the selection (Ctrl+G)") {
+                if fbtn(ui, &ic.grp, &format!("Group the selection ({})", shortcut_label("G"))) {
                     ops.push(Op::LayerGroup);
                 }
                 if fbtn(ui, &ic.trash, "Delete") {
