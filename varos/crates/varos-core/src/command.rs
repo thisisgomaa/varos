@@ -10,6 +10,8 @@ use crate::model::{DropPos, SnapConfig};
 
 /// A deterministic edit or history action executed entirely inside `varos-core`.
 pub enum EditCommand {
+    /// Transform-panel X/Y/W/H. Edits the object selection, or — when there is none — the Direct
+    /// selection (selected anchors / Direct path-level selection; Astra F07).
     SetObjectBounds {
         x: Option<f32>,
         y: Option<f32>,
