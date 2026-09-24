@@ -624,6 +624,7 @@ struct Snap {
     tool: ToolKind,
     name: String,
     sel: bool,
+    direct: bool, // Astra F07: no object selection, but a Direct selection (anchors / Direct path) is measured
     drawing: bool, // Pen mid-draft (an open path is active) — drives the "Drawing path…" status (P9)
     x: f32,
     y: f32,
@@ -654,9 +655,17 @@ impl Snap {
         let n = ed.objsel.len();
         // A7 Stage 5: X/Y = the WORLD AABB top-left (matches `obj_bbox`); W/H = the TRUE un-rotated size
         // (the LOCAL bbox), so a rotated object reports its own dimensions, not its axis-aligned envelope.
+        // Astra F07: with NO object selection, a Direct selection (grabbed anchors, or a Direct path-level
+        // selection) is measured by `direct_bbox` — a single anchor reads X/Y = its position, W = H = 0 —
+        // instead of the zeros that made a successful anchor edit look unselected.
+        let direct_bb = if n == 0 { ed.direct_bbox() } else { None };
+        let direct = direct_bb.is_some();
         let (sel, x, y, w, h, world_w, world_h) = match (ed.obj_bbox(), ed.obj_local_dims()) {
             (Some((x0, y0, x1, y1)), Some((lw, lh))) if n > 0 => (true, x0, y0, lw, lh, x1 - x0, y1 - y0),
-            _ => (false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            _ => match direct_bb {
+                Some((x0, y0, x1, y1)) => (false, x0, y0, x1 - x0, y1 - y0, x1 - x0, y1 - y0),
+                None => (false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            },
         };
         // fill/stroke/weight/opacity follow the EFFECTIVE paint selection (object sel, a Direct path-level
         // selection, or a selected anchor's path) — not objsel alone, so the Direct tool shows real colours.
@@ -669,10 +678,8 @@ impl Snap {
             None => (ed.cur_fill, ed.cur_stroke, ed.cur_sw, 1.0),
         };
         let name = if n == 0 {
-            match repr {
-                Some(pi) => ed.doc.paths[pi].name.clone().unwrap_or_else(|| "Path".into()),
-                None => "No selection".into(),
-            }
+            // "Anchor" / "N anchors" / the path's name (or "Path") — see `Editor::direct_label`.
+            ed.direct_label().unwrap_or_else(|| "No selection".into())
         } else if n == 1 {
             repr.and_then(|pi| ed.doc.paths[pi].name.clone()).unwrap_or_else(|| "Path".into())
         } else {
@@ -682,6 +689,7 @@ impl Snap {
             tool: ed.tool,
             name,
             sel,
+            direct,
             drawing: ed.tool == ToolKind::Pen && ed.active.is_some(),
             x,
             y,
@@ -1770,7 +1778,8 @@ fn num_field(
             ui.memory_mut(|m| m.request_focus(id));
         }
         if !tip.is_empty() {
-            resp.on_hover_text(tip);
+            // disabled fields carry their REASON in `tip`, so show it in both states
+            resp.on_hover_text(tip).on_disabled_hover_text(tip);
         }
     }
     out
@@ -3759,6 +3768,33 @@ fn board_ctlbar(
                         }
                         bar_sep(ui);
                         pathfinder_row(ui, ops, true); // compact bar mirror — the essential shape modes, in reach (Ahmed 07-07)
+                    } else if s.direct && !s.drawing {
+                        // Astra F07: a Direct selection with no object selection (e.g. an anchor grabbed
+                        // straight off a deselected path) — name it and show its REAL bounds. Only controls
+                        // that act on a Direct selection are mirrored here: X/Y/W/H (moves / scales the
+                        // selected anchors via `SetObjectBounds`) and paint. Rotation, align and pathfinder
+                        // work on objects, so they stay in the object branch above.
+                        ui.label(RichText::new(&s.name).color(MUTED).size(11.5));
+                        let fw = 64.0;
+                        if let Some(v) =
+                            num_field(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, 1.0, full.clone())
+                        {
+                            ops.push(Op::SetBBox(Some(v), None, None, None, 0.0, 0.0));
+                        }
+                        if let Some(v) =
+                            num_field(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, 1.0, full.clone())
+                        {
+                            ops.push(Op::SetBBox(None, Some(v), None, None, 0.0, 0.0));
+                        }
+                        if let Some(v) = dim_field(ui, fw, true, s.w, true) {
+                            ops.push(Op::SetBBox(None, None, Some(v), None, 0.0, 0.0));
+                        }
+                        if let Some(v) = dim_field(ui, fw, false, s.h, true) {
+                            ops.push(Op::SetBBox(None, None, None, Some(v), 0.0, 0.0));
+                        }
+                        bar_sep(ui);
+                        ctl_chip(ui, s.fill, PaintTarget::Fill, ops);
+                        ctl_chip(ui, s.stroke, PaintTarget::Stroke, ops);
                     } else {
                         // idle: the current tool + a quiet hint — the bar keeps its place. While the Pen is
                         // mid-draft the hint reflects the ACT, not the (still-empty) selection (P9).
@@ -3769,6 +3805,20 @@ fn board_ctlbar(
                 });
             });
         });
+}
+
+/// A W (`width` = true) or H numeric field. For a Direct selection (`direct`) with a ZERO extent — one
+/// anchor, or a purely horizontal/vertical run of anchors — there is nothing to scale, so the field is
+/// shown disabled with that reason as its tooltip instead of silently ignoring the edit (Astra F07).
+fn dim_field(ui: &mut egui::Ui, fw: f32, width: bool, value: f32, direct: bool) -> Option<f32> {
+    let (lab, tip, why) = if width {
+        ("W", "Width", "Width: nothing to scale (the selected anchors have no horizontal extent)")
+    } else {
+        ("H", "Height", "Height: nothing to scale (the selected anchors have no vertical extent)")
+    };
+    let enabled = !direct || value > 1e-3; // same zero-extent threshold as `Editor::set_direct_bbox`
+    let tip = if enabled { tip } else { why };
+    ui.add_enabled_ui(enabled, |ui| num_field(ui, fw, Lab::Letter(lab), tip, value, 0, 1.0, 1.0, 0.0..=1.0e6)).inner
 }
 
 /// 1×16 vertical hairline separator inside the control bar (§3.5 vsep).
@@ -4592,7 +4642,8 @@ fn panel_properties(
                 return;
             }
 
-            ui.label(RichText::new(&s.name).color(if s.sel { TEXT } else { MUTED }).size(12.5).strong());
+            let measured = s.sel || s.direct; // real numbers below (objects, or a Direct selection — Astra F07)
+            ui.label(RichText::new(&s.name).color(if measured { TEXT } else { MUTED }).size(12.5).strong());
             ui.add_space(2.0);
             ui.label(RichText::new("TRANSFORM").color(MUTED).size(10.0).strong());
             ui.add_space(2.0);
@@ -4613,7 +4664,7 @@ fn panel_properties(
                         {
                             ops.push(Op::SetBBox(Some(v), None, None, None, ax, ay));
                         }
-                        if let Some(v) = num_field(ui, fw, Lab::Letter("W"), "Width", s.w, 0, 1.0, 1.0, 0.0..=1.0e6) {
+                        if let Some(v) = dim_field(ui, fw, true, s.w, s.direct) {
                             if *lock && s.w > 0.0 {
                                 ops.push(Op::SetBBox(None, None, Some(v), Some(s.h * v / s.w), ax, ay));
                             } else {
@@ -4628,7 +4679,7 @@ fn panel_properties(
                         {
                             ops.push(Op::SetBBox(None, Some(v), None, None, ax, ay));
                         }
-                        if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 1.0, 0.0..=1.0e6) {
+                        if let Some(v) = dim_field(ui, fw, false, s.h, s.direct) {
                             if *lock && s.h > 0.0 {
                                 ops.push(Op::SetBBox(None, None, Some(s.w * v / s.h), Some(v), ax, ay));
                             } else {
@@ -4643,18 +4694,27 @@ fn panel_properties(
             });
 
             // ── Angle + flip ──
-            ui.horizontal(|ui| {
-                if let Some(v) =
-                    num_field(ui, 150.0, Lab::Icon(ic.rotate.as_ref()), "Rotation", s.rot, 1, 1.0, 0.5, full.clone())
-                {
-                    ops.push(Op::SetRot(v));
-                }
-                if icon_btn(ui, ic.fliph, "Flip horizontal") {
-                    ops.push(Op::Flip(true));
-                }
-                if icon_btn(ui, ic.flipv, "Flip vertical") {
-                    ops.push(Op::Flip(false));
-                }
+            // Rotate/flip act on OBJECTS only; for a Direct selection (Astra F07) they would silently do
+            // nothing, so they are shown disabled with the reason on the rotation field's tooltip.
+            ui.add_enabled_ui(!s.direct, |ui| {
+                ui.horizontal(|ui| {
+                    let (rot_tip, rot) = if s.direct {
+                        ("Rotation: select the whole object (Selection tool, V) to rotate or flip", 0.0)
+                    } else {
+                        ("Rotation", s.rot)
+                    };
+                    if let Some(v) =
+                        num_field(ui, 150.0, Lab::Icon(ic.rotate.as_ref()), rot_tip, rot, 1, 1.0, 0.5, full.clone())
+                    {
+                        ops.push(Op::SetRot(v));
+                    }
+                    if icon_btn(ui, ic.fliph, "Flip horizontal") {
+                        ops.push(Op::Flip(true));
+                    }
+                    if icon_btn(ui, ic.flipv, "Flip vertical") {
+                        ops.push(Op::Flip(false));
+                    }
+                });
             });
 
             hsep(ui, inner);
