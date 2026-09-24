@@ -161,6 +161,7 @@ Rules (spec §2/§4):
 - **Burger:** New / Open… / Save / Save As… emit commands. Export… is a disabled row.
 - **Top Export button:** disabled look (FAINT, hover only), tooltip “Export isn't available yet — PDF export comes in a later update. Save keeps an editable .vrs.” There is no native Export row until S6.
 - **Top Share button:** also an enabled dead button today (`ui.rs:3357`), which spec §2 forbids. Give it the same disabled look and a "not available yet" tooltip (2 lines, no wiring).
+- **Search pill (QUICK_WINS QW7, folded in here):** the pill advertises "⌘ K" for a path that does not exist. Remove that keycap. Render the pill disabled (FAINT icon and text, no hover fill), hover text "Search isn't available yet". Do not bind ⌘K. Same 10-line pattern as the Export/Share disabled treatment, same function (`build_topbar`). Test: `search_pill_advertises_no_shortcut` (asserts `layout_no_wrap` text excludes the key label); the existing `mac_topbar_controls_share_the_native_traffic_light_centre` stays green.
 - **Native File menu:** New ⌘N · Open… ⌘O · ─ · Close Tab ⌘W · Save ⌘S · Save As… ⇧⌘S (all `MenuCmd::File(FileCmd)`; `FileCmd` lives in `chrome.rs`; they bypass the text-field forward — spec §4: "Menus and physical keys dispatch once through command IDs, not synthetic key events"). Varos ▸ Quit ⌘Q → `MenuCmd::File(FileCmd::Quit)` (A's `MenuCmd::Close → Quit` rename folds in here; C does not forward this rename to A). Ctrl+Tab / Ctrl+⇧Tab switch tabs (keyboard only in S1). `FileCmd` is also S6-C's extension point (it adds `Export`) — there is no separate `file_routes.rs`.
 - **ONE-HOME:** the tab strip is the home for activate/close/reorder. New/Open/Save rows are mirrors whose homes (Start S2, Document section S2/S3) do not exist yet. They stay mirrors of the same commands.
 
@@ -245,7 +246,7 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
 
 ### S1-C — Tab strip, burger, Export honesty, native File rows · **sonnet** · M · depends on A
 - **Owns:**
-  - `varos-app/src/ui.rs`: `build_topbar`, `tab_item`, the burger `menu_below` block, the Export button, a new `menu_row_disabled`, and the real bodies of `set_tabs` / `take_app_commands`. Replace `tabs: Vec<String>` / `tab_active` with `doc_tabs` / `doc_active`; the tab pushes `AppCommand`s into `app_cmds`.
+  - `varos-app/src/ui.rs`: `build_topbar`, `tab_item`, the burger `menu_below` block, the Export button, the Share button, the search pill (QUICK_WINS QW7, folded in — §3.6), a new `menu_row_disabled`, and the real bodies of `set_tabs` / `take_app_commands`. Replace `tabs: Vec<String>` / `tab_active` with `doc_tabs` / `doc_active`; the tab pushes `AppCommand`s into `app_cmds`.
   - `varos-app/src/chrome.rs`: `menus()` File rows per §3.6, `egui_key` + KeyN/KeyW, `topbar_layout` reserving `+`, tests.
   - `varos-app/src/mac_menu.rs`: `muda_code` + KeyN.
 - **Must not touch:** `main.rs`, `lifecycle.rs`, `workspace.rs`, `Ui::settle` / `document_switched`, `set_doc_tab` (D deletes it), `characterization_tests`, `shell/tokens.rs` values (reuse MUTED/FAINT/TEXT/SOLID_PANEL; no new colours).
@@ -253,7 +254,7 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
   1. Chips per §3.6, reusing `tab_item` geometry; `Sense::click_and_drag`.
   2. Pure `pub(crate) fn tab_drop_index(tab_rects: &[egui::Rect], pointer_x: f32) -> usize`.
   3. Burger rows → commands. Export disabled with tooltip.
-  4. Update the chrome tests: ⌘Q → `File(FileCmd::Quit)`; ⌘W → `File(FileCmd::CloseTab)`; New/Open/Save/Save As rows → their `FileCmd` variants; KeyN is now allowed; still no Export row and no ⌘A.
+  4. Update the chrome tests: ⌘Q → `File(FileCmd::Quit)`; ⌘W → `File(FileCmd::CloseTab)`; New/Open/Save/Save As rows → their `FileCmd` variants; KeyN is now allowed; ⌘A/⇧⌘A rows exist (QUICK_WINS QW5, which lands before this piece); still no Export row.
 - **Tests:**
   - `tab_drop_index_before_between_after`
   - `plus_is_always_placed_even_with_overflowing_tabs`
@@ -261,6 +262,7 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
   - `file_menu_rows_are_new_open_close_save_saveas_on_their_keys`
   - the updated `the_bar_has_the_standard_mac_menus_…`
   - `every_menu_key_can_be_handed_to_a_text_field` (now with N)
+  - `search_pill_advertises_no_shortcut` (QUICK_WINS QW7)
   - mac `every_menu_key_has_a_native_key_equivalent` (type-checked by the Mac-target clippy)
 
 ### S1-D — Host integration · **opus** · L · depends on A; merges LAST (after B and C)
@@ -272,7 +274,7 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
   1. Replace `ed` / `view` / `cur_file` / `saved_rev` with `ws: Workspace`. Each event arm uses `ws.active_mut()`.
   2. Delete `OpenDocContext`, `confirm_discard_unsaved`, `may_quit`, `QuitAnswer`, `doc_stem`, the old `full_title` and `board_fit_pending`.
   3. Add a pure `fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<FileCmd>` (N, O, S, ⇧S, W, Tab, ⇧Tab; plain N/O/S/W stay tool keys), plus one `fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> AppCommand`, the only mapper from `FileCmd` to `AppCommand` (S6-C later adds `FileCmd::Export` and reuses this same function). The shortcut path maps a key through `lifecycle_key` then `to_app_command`. The other keys go to `apply_key` / paste / fit as today.
-  4. Add a single `dispatch` per §3.5. Map all sources: `MenuCmd::{ToggleRail, ToggleDock, TogglePanel}` and `WinAction::{Minimize, ToggleMaximize}` go through `AppCommand::Window`; `WinAction::Close`, `CloseRequested` and `MenuCmd::File(FileCmd::Quit)` go through `Quit`.
+  4. Add a single `dispatch` per §3.5. Map all sources: `MenuCmd::{ToggleRail, ToggleDock, TogglePanel}` and `WinAction::{Minimize, ToggleMaximize}` go through `AppCommand::Window`; `WinAction::Close`, `CloseRequested` and `MenuCmd::File(FileCmd::Quit)` go through `Quit`. Route `MenuCmd::Plain` (QUICK_WINS QW5's Delete row, already landed) through `dispatch` too, keeping its `wants_keyboard` guard — it is not a lifecycle command, so it goes straight to the same key path `apply_key` already uses, not through `to_app_command`.
   5. Add the per-frame tabs/title/fit logic, the scene-key mix, and the startup `file_arg`.
 - **Tests:**
   - `lifecycle_key_maps_file_and_tab_keys` (and plain N/O/S/W stay tool keys)
