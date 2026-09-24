@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicBool;
 use varos_core::model::{Artboard, Document};
 use varos_core::Rgba;
 
-use crate::write::{drawable, write_pages};
+use crate::write::{drawable, mask_paths, write_pages};
 
 /// Which pages an export produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -77,19 +77,18 @@ impl fmt::Display for ExportUnavailable {
     }
 }
 
-/// Why `export_pdf_bytes` produced no bytes.
+/// Why `export_pdf_bytes` produced no bytes. (Writing the bytes to disk is the caller's job — S6-B maps
+/// its own file errors; this crate never touches the destination.)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExportError {
     Cancelled,
     Unavailable(ExportUnavailable),
-    Write(String),
 }
 impl fmt::Display for ExportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ExportError::Cancelled => f.write_str("The export was cancelled."),
             ExportError::Unavailable(u) => f.write_str(u.reason()),
-            ExportError::Write(e) => f.write_str(e),
         }
     }
 }
@@ -145,7 +144,9 @@ pub fn export_pdf_bytes(doc: &Document, plan: &ExportPlan, cancel: &AtomicBool) 
 /// Does this file carry an embedded Varos model (a native `.vrs` container)? Bounded byte scan for
 /// `/VAROS_Model` or `model.varos.json`; no PDF parse (the bytes come from a file the user picked, so
 /// nothing here may allocate or recurse on its content). It feeds a warning only, so a false positive
-/// just asks one extra question. At most the first `HAS_MODEL_SCAN_CAP` bytes are scanned.
+/// just asks one extra question. At most the first `HAS_MODEL_SCAN_CAP` bytes are scanned. Cost: about
+/// 0.4 s at the full 256 MiB cap (release build, measured in the S6-A code review), so callers must run
+/// it off the UI thread (S6-B: inside the export job).
 pub fn has_embedded_model(bytes: &[u8]) -> bool {
     let hay = &bytes[..bytes.len().min(HAS_MODEL_SCAN_CAP)];
     [b"/VAROS_Model".as_slice(), b"model.varos.json".as_slice()]
@@ -162,12 +163,12 @@ pub const HAS_MODEL_SCAN_CAP: usize = 256 * 1024 * 1024;
 fn artwork_bounds_page(doc: &Document) -> Option<PageSpec> {
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for (pi, p) in doc.paint_list() {
-        let Some(d) = drawable(doc, p) else { continue };
+        let Some(d) = drawable(doc, pi, p) else { continue };
         let (bx0, by0, bx1, by1) = doc.outline_bbox(pi);
         let mut b = [bx0 - d.pad, by0 - d.pad, bx1 + d.pad, by1 + d.pad];
-        if let Some(mask) = &d.clip {
+        if let Some(c) = d.clip {
             let mut m = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
-            for (mp, _) in mask {
+            for (mp, _, _) in mask_paths(doc, c) {
                 let Some(mi) = doc.pidx(mp.id) else { continue };
                 let (mx0, my0, mx1, my1) = doc.outline_bbox(mi);
                 m = [m[0].min(mx0), m[1].min(my0), m[2].max(mx1), m[3].max(my1)];

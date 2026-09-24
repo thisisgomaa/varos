@@ -2,14 +2,16 @@
 //! - the native `.vrs` container (`write_pdf`): pages + the embedded editable model (the `.ai` pattern);
 //! - the pure export (`crate::export`): the same pages, and NOTHING else — no model, no names.
 //!
-//! The page loop below was moved here verbatim from `lib.rs` (S6-A); `write_pdf`'s bytes are pinned
-//! by `tests/export_pdf.rs::native_write_is_byte_identical_to_fixture`.
+//! The page loop below was moved here from `lib.rs` (S6-A) unchanged, then gained the MASKS_PLAN
+//! Stage 5 clip (one `q <mask rings> W* n … Q` per run of clip-group members). `write_pdf`'s bytes are
+//! pinned by `tests/export_pdf.rs::native_write_is_byte_identical_to_fixture`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use pdf_writer::types::{AssociationKind, LineCapStyle, LineJoinStyle};
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 use varos_core::file::{doc_to_blob, VRS_VERSION};
+use varos_core::flatten::{control_bbox, Rect as WRect};
 use varos_core::model::{Anchor, Artboard, Document, Path, Xform};
 use varos_core::Rgba;
 
@@ -67,35 +69,34 @@ fn native_pages(doc: &Document) -> Vec<PageSpec> {
     boards.iter().map(PageSpec::of_board).collect()
 }
 
-/// One path as the page loop draws it: resolved paints, drawability, its live unit transform and the
-/// clipping mask it paints under.
+/// One path as the page loop draws it: resolved paints, drawability, its live unit transform, its
+/// padded WORLD control box and the clip group it paints under.
+#[derive(Clone, Copy)]
 pub(crate) struct Drawn<'a> {
     pub(crate) p: &'a Path,
-    pub(crate) xf: Xform,
+    xf: Xform,
     fill: Option<Rgba>,
     stroke: Option<Rgba>,
     fillable: bool,
     strokable: bool,
     pub(crate) pad: f32,
-    /// `Some(mask)` = a clip-group member: the mask paths (each with its OWN live transform) whose
-    /// silhouette clips it, even-odd, exactly as the canvas's `Group::Clip`. Only mask paths with a
-    /// drawable ring (≥ 2 anchors) are kept, so `Some` is never empty.
-    pub(crate) clip: Option<Vec<(&'a Path, Xform)>>,
+    /// Conservative WORLD box (anchors + handles of all rings, through the unit transform) grown by
+    /// `pad` — it contains every point the path can paint (round caps/joins: nothing lies beyond w/2).
+    bbox: WRect,
+    /// The NEAREST clip group (canvas `clip_group_of`: single level) whose mask clips this path, if any.
+    pub(crate) clip: Option<u32>,
 }
 
 /// Every path the page loop draws on `page`, in paint order.
-fn drawn_on<'a>(doc: &'a Document, page: &'a PageSpec) -> impl Iterator<Item = Drawn<'a>> + 'a {
+fn drawn_on<'a>(doc: &'a Document, page: &PageSpec) -> impl Iterator<Item = Drawn<'a>> + 'a {
     // artwork: the paintable content in document order (paint_list, LAYERS_VISION §5 — a mask
     // source must never reach the page); conservative bbox cull per page
-    doc.paint_list().filter_map(move |(_, p)| {
-        let d = drawable(doc, p)?;
-        bbox_hits(p, &d.xf, d.pad, page).then_some(d)
-    })
+    let page_box = page_rect(page);
+    doc.paint_list().filter_map(move |(pi, p)| drawable(doc, pi, p).filter(|d| overlaps(d.bbox, page_box)))
 }
 
-/// A path's draw recipe, or `None` when it draws nothing anywhere (hidden, no paint to show, or a clip
-/// member that its mask clips away entirely).
-pub(crate) fn drawable<'a>(doc: &'a Document, p: &'a Path) -> Option<Drawn<'a>> {
+/// A path's draw recipe, or `None` when it draws nothing anywhere (hidden, or no paint to show).
+pub(crate) fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Drawn<'a>> {
     // WYSIWYG with the canvas: skip anything EFFECTIVELY hidden — the path's own eye, a hidden
     // parent group/layer (node cascade), OR art whose every member board is hidden (board eye).
     // Raw `p.hidden` missed the last two, so hidden groups and hidden pages still bled out.
@@ -117,34 +118,26 @@ pub(crate) fn drawable<'a>(doc: &'a Document, p: &'a Path) -> Option<Drawn<'a>> 
         return None;
     }
     let pad = if strokable { p.stroke_width * 0.5 } else { 0.0 };
-    // MASKS_PLAN Stage 5: a clip-group member paints only inside its mask. Single level, like the
-    // canvas (`scene.rs` keys the clip on the NEAREST clip group, `clip_group_of`). A mask with no
-    // drawable ring clips its members to nothing, and a member whose box misses the mask's box is
-    // wholly clipped out — neither is emitted (so nothing the mask hides reaches the file).
-    let clip = match doc.clip_group_of(p.id) {
-        None => None,
-        Some(c) => {
-            let mask: Vec<(&Path, Xform)> = doc
-                .node_mask_child(c)
-                .map(|mc| doc.node_paths(mc))
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|mp| doc.pidx(mp).map(|i| &doc.paths[i]))
-                .filter(|mp| mp.anchors.len() >= 2 || mp.holes.iter().any(|h| h.len() >= 2))
-                .map(|mp| (mp, doc.unit_xform(mp.id)))
-                .collect();
-            let (x0, y0, x1, y1) = world_bbox(p, &xf, pad);
-            let hits = mask.iter().any(|(mp, mxf)| {
-                let (m0, n0, m1, n1) = world_bbox(mp, mxf, 0.0);
-                x0 <= m1 && x1 >= m0 && y0 <= n1 && y1 >= n0
-            });
-            if !hits {
-                return None;
-            }
-            Some(mask)
-        }
-    };
-    Some(Drawn { p, xf, fill, stroke, fillable, strokable, pad, clip })
+    let (x0, y0, x1, y1) = control_bbox(doc, pi); // A7: the WORLD (rotated) extent, so nothing clips away
+    let bbox = (x0 - pad, y0 - pad, x1 + pad, y1 + pad);
+    Some(Drawn { p, xf, fill, stroke, fillable, strokable, pad, bbox, clip: doc.clip_group_of(p.id) })
+}
+
+/// The mask of clip group `c`: every path under its `mask_child` that has a ring to emit, with its own
+/// live transform and its WORLD control box. Hidden mask paths count — the canvas ignores the mask's
+/// eye too (`scene.rs` `mask_rings_of`). Empty ⇒ the clip hides its members entirely.
+pub(crate) fn mask_paths(doc: &Document, c: u32) -> Vec<(&Path, Xform, WRect)> {
+    doc.node_mask_child(c)
+        .map(|mc| doc.node_paths(mc))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|id| doc.pidx(id))
+        .filter(|&i| {
+            let mp = &doc.paths[i];
+            mp.anchors.len() >= 2 || mp.holes.iter().any(|h| h.len() >= 2)
+        })
+        .map(|i| (&doc.paths[i], doc.unit_xform(doc.paths[i].id), control_bbox(doc, i)))
+        .collect()
 }
 
 /// Write `pages` (world rects, in order) as a PDF. `model = Some(blob)` embeds the editable model
@@ -191,78 +184,44 @@ pub(crate) fn write_pages(
             c.restore_state();
         }
 
-        for Drawn { p, xf, fill, stroke, fillable, strokable, pad, clip } in drawn_on(doc, ab) {
-            // MASKS_PLAN Stage 5: `q <mask rings> W* n <the member's usual paint> Q` — the PDF-native clip,
-            // even-odd over every mask ring like the canvas. Knockout XObjects paint inside it too.
-            if let Some(mask) = &clip {
-                c.save_state();
-                for (mp, mxf) in mask {
-                    emit_rings(&mut c, mp, mxf, &t);
+        // MASKS_PLAN Stage 5 / §2.4: a clip group's members form ONE contiguous run in paint order (as on
+        // the canvas, `scene.rs` Group::Clip), so each run is written as ONE `q <mask rings> W* n … Q`.
+        let items: Vec<Drawn> = drawn_on(doc, ab).collect();
+        let page_box = page_rect(ab);
+        let mut i = 0;
+        while i < items.len() {
+            let clip = items[i].clip;
+            let run_len = items[i..].iter().take_while(|d| d.clip == clip).count();
+            let run = &items[i..i + run_len];
+            i += run_len;
+            let Some(cg) = clip else {
+                for d in run {
+                    paint(&mut c, &mut gss, &mut knocks, &mut ids, d, &t);
                 }
-                c.clip_even_odd().end_path();
+                continue;
+            };
+            let mask = mask_paths(doc, cg);
+            // A member paints only where (its box ∩ the page) meets some mask ring's box; one that
+            // doesn't is wholly clipped out on this page and is not written at all.
+            let members: Vec<&Drawn> = run
+                .iter()
+                .filter(|d| intersect(d.bbox, page_box).is_some_and(|v| mask.iter().any(|m| overlaps(v, m.2))))
+                .collect();
+            let Some(reach) = members.iter().filter_map(|d| intersect(d.bbox, page_box)).reduce(union) else {
+                continue;
+            };
+            // Only rings whose box meets where the run can paint are written. Exact, not a heuristic: under
+            // even-odd a ring whose box misses a point cannot contain it, so the clip is unchanged wherever
+            // a member paints — and a mask path far away (e.g. on a hidden board) never reaches the file.
+            c.save_state();
+            for (mp, mxf, _) in mask.iter().filter(|m| overlaps(m.2, reach)) {
+                emit_rings(&mut c, mp, mxf, &t);
             }
-            let fa = fill.map_or(0.0, |f| f[3]) * p.opacity;
-            let sa = stroke.map_or(0.0, |s| s[3]) * p.opacity;
-
-            if fillable && strokable && sa < 0.999 {
-                // Varos knockout: fill+stroke composite as an isolated unit, the stroke band REPLACES
-                // the fill beneath it, then the unit fades once → /I /K transparency group.
-                let (fill, stroke) = (fill.unwrap(), stroke.unwrap());
-                let mut ic = Content::new();
-                ic.set_line_cap(LineCapStyle::RoundCap).set_line_join(LineJoinStyle::RoundJoin);
-                let gf = ids.next();
-                let gk = ids.next();
-                ic.save_state().set_parameters(Name(b"Gf")).set_fill_rgb(fill[0], fill[1], fill[2]);
-                emit_rings(&mut ic, p, &xf, &t);
-                ic.fill_even_odd().restore_state();
-                ic.save_state()
-                    .set_parameters(Name(b"Gk"))
-                    .set_stroke_rgb(stroke[0], stroke[1], stroke[2])
-                    .set_line_width(p.stroke_width);
-                emit_rings(&mut ic, p, &xf, &t);
-                ic.stroke().restore_state();
-                let xr = ids.next();
-                let bb = page_bbox(p, &xf, pad, &t);
-                // paint site: object opacity applied ONCE to the whole unit
-                let n = gs_name(&mut gss, &mut ids, p.opacity, p.opacity);
-                c.save_state().set_parameters(Name(n.as_bytes()));
-                c.x_object(Name(format!("Fx{}", knocks.len()).as_bytes()));
-                c.restore_state();
-                knocks.push(Knock {
-                    r: xr,
-                    content: ic.finish().to_vec(),
-                    bbox: bb,
-                    gs_fill: (gf, fill[3]),
-                    gs_stroke: (gk, stroke[3]),
-                });
-            } else {
-                c.save_state();
-                let n = gs_name(&mut gss, &mut ids, fa, sa);
-                c.set_parameters(Name(n.as_bytes()));
-                if let (true, Some(f)) = (fillable, fill) {
-                    c.set_fill_rgb(f[0], f[1], f[2]);
-                }
-                if let (true, Some(s)) = (strokable, stroke) {
-                    c.set_stroke_rgb(s[0], s[1], s[2]);
-                    c.set_line_width(p.stroke_width);
-                }
-                emit_rings(&mut c, p, &xf, &t);
-                match (fillable, strokable) {
-                    (true, true) => {
-                        c.fill_even_odd_and_stroke();
-                    } // B* — one gs carries /ca + /CA
-                    (true, false) => {
-                        c.fill_even_odd();
-                    }
-                    _ => {
-                        c.stroke();
-                    }
-                }
-                c.restore_state();
+            c.clip_even_odd().end_path();
+            for d in members {
+                paint(&mut c, &mut gss, &mut knocks, &mut ids, d, &t);
             }
-            if clip.is_some() {
-                c.restore_state();
-            }
+            c.restore_state();
         }
 
         // page objects: content stream → page (+ resources) → gs objects → knockout xobjects
@@ -336,6 +295,77 @@ pub(crate) fn write_pages(
     Ok(pdf.finish())
 }
 
+/// One path's paint ops (knockout XObject or in-place fill/stroke), appended to the page content.
+fn paint(
+    c: &mut Content,
+    gss: &mut Vec<Gs>,
+    knocks: &mut Vec<Knock>,
+    ids: &mut Alloc,
+    d: &Drawn,
+    t: &impl Fn([f32; 2]) -> (f32, f32),
+) {
+    let Drawn { p, xf, fill, stroke, fillable, strokable, bbox, .. } = *d;
+    let fa = fill.map_or(0.0, |f| f[3]) * p.opacity;
+    let sa = stroke.map_or(0.0, |s| s[3]) * p.opacity;
+
+    if fillable && strokable && sa < 0.999 {
+        // Varos knockout: fill+stroke composite as an isolated unit, the stroke band REPLACES
+        // the fill beneath it, then the unit fades once → /I /K transparency group.
+        let (fill, stroke) = (fill.unwrap(), stroke.unwrap());
+        let mut ic = Content::new();
+        ic.set_line_cap(LineCapStyle::RoundCap).set_line_join(LineJoinStyle::RoundJoin);
+        let gf = ids.next();
+        let gk = ids.next();
+        ic.save_state().set_parameters(Name(b"Gf")).set_fill_rgb(fill[0], fill[1], fill[2]);
+        emit_rings(&mut ic, p, &xf, t);
+        ic.fill_even_odd().restore_state();
+        ic.save_state()
+            .set_parameters(Name(b"Gk"))
+            .set_stroke_rgb(stroke[0], stroke[1], stroke[2])
+            .set_line_width(p.stroke_width);
+        emit_rings(&mut ic, p, &xf, t);
+        ic.stroke().restore_state();
+        let xr = ids.next();
+        let bb = page_bbox(bbox, t);
+        // paint site: object opacity applied ONCE to the whole unit
+        let n = gs_name(gss, ids, p.opacity, p.opacity);
+        c.save_state().set_parameters(Name(n.as_bytes()));
+        c.x_object(Name(format!("Fx{}", knocks.len()).as_bytes()));
+        c.restore_state();
+        knocks.push(Knock {
+            r: xr,
+            content: ic.finish().to_vec(),
+            bbox: bb,
+            gs_fill: (gf, fill[3]),
+            gs_stroke: (gk, stroke[3]),
+        });
+    } else {
+        c.save_state();
+        let n = gs_name(gss, ids, fa, sa);
+        c.set_parameters(Name(n.as_bytes()));
+        if let (true, Some(f)) = (fillable, fill) {
+            c.set_fill_rgb(f[0], f[1], f[2]);
+        }
+        if let (true, Some(s)) = (strokable, stroke) {
+            c.set_stroke_rgb(s[0], s[1], s[2]);
+            c.set_line_width(p.stroke_width);
+        }
+        emit_rings(c, p, &xf, t);
+        match (fillable, strokable) {
+            (true, true) => {
+                c.fill_even_odd_and_stroke();
+            } // B* — one gs carries /ca + /CA
+            (true, false) => {
+                c.fill_even_odd();
+            }
+            _ => {
+                c.stroke();
+            }
+        }
+        c.restore_state();
+    }
+}
+
 /// Pooled ExtGState name for an (/ca, /CA) pair — one object per distinct (quantized) pair per page.
 fn gs_name(gss: &mut Vec<Gs>, ids: &mut Alloc, ca: f32, cap: f32) -> String {
     let q = |v: f32| (v * 1000.0).round() / 1000.0;
@@ -379,28 +409,23 @@ fn emit_ring(c: &mut Content, anchors: &[Anchor], closed: bool, xf: &Xform, t: &
     }
 }
 
-/// Conservative world bbox (anchors + handles of all rings) inflated by `pad`; hits the page rect?
-fn bbox_hits(p: &Path, xf: &Xform, pad: f32, page: &PageSpec) -> bool {
+/// A page's WORLD rect as (x0, y0, x1, y1).
+fn page_rect(page: &PageSpec) -> WRect {
     let [ax, ay, aw, ah] = page.rect;
-    let (x0, y0, x1, y1) = world_bbox(p, xf, pad);
-    x0 <= ax + aw && x1 >= ax && y0 <= ay + ah && y1 >= ay
+    (ax, ay, ax + aw, ay + ah)
 }
-fn world_bbox(p: &Path, xf: &Xform, pad: f32) -> (f32, f32, f32, f32) {
-    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
-        for q in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
-            let q = xf.apply(q); // A7: the cull box is the WORLD (rotated) extent, so nothing clips away
-            x0 = x0.min(q[0]);
-            y0 = y0.min(q[1]);
-            x1 = x1.max(q[0]);
-            y1 = y1.max(q[1]);
-        }
-    }
-    (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
+/// Do two WORLD boxes touch (edges inclusive, as the page cull always was)?
+fn overlaps(a: WRect, b: WRect) -> bool {
+    a.0 <= b.2 && a.2 >= b.0 && a.1 <= b.3 && a.3 >= b.1
 }
-/// The same bbox in page space (for the Form XObject /BBox), corners ordered lower-left/upper-right.
-fn page_bbox(p: &Path, xf: &Xform, pad: f32, t: &impl Fn([f32; 2]) -> (f32, f32)) -> [f32; 4] {
-    let (x0, y0, x1, y1) = world_bbox(p, xf, pad);
+fn intersect(a: WRect, b: WRect) -> Option<WRect> {
+    overlaps(a, b).then(|| (a.0.max(b.0), a.1.max(b.1), a.2.min(b.2), a.3.min(b.3)))
+}
+fn union(a: WRect, b: WRect) -> WRect {
+    (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3))
+}
+/// A WORLD box in page space (for the Form XObject /BBox), corners ordered lower-left/upper-right.
+fn page_bbox((x0, y0, x1, y1): WRect, t: &impl Fn([f32; 2]) -> (f32, f32)) -> [f32; 4] {
     let (ax0, ay0) = t([x0, y0]);
     let (ax1, ay1) = t([x1, y1]);
     [ax0.min(ax1), ay0.min(ay1), ax0.max(ax1), ay0.max(ay1)]
