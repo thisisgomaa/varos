@@ -297,3 +297,21 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 - **Hand test:** not yet — batch 1 list in `STATUS.md`.
 - **Verdict:** PASS. **Merged:** `b37f78b` to `main`.
 - Sign-off: moderator — PASS — 2026-09-23
+
+## macOS chrome — one bar, opaque strip, native menu bar (muda)
+
+- **Date:** 2026-09-24. **Branch:** `feat/mac-chrome` (worktree `agent-a4662a65bd9f34389`, commits `efd29ef` — design note `docs/foundation/MAC_CHROME.md`, `209705a` — chrome + native menu bar, `1c05ac0` — Codex-review fixes). **Reviewer:** Codex (independent, with build rights) + moderator gates.
+- **Scope:** macOS window chrome + native menu bar — new `chrome.rs` and `mac_menu.rs`, with `muda` 0.20 as a macOS-only dependency (Apache-2.0 OR MIT). One bar replaces the two title bars; the title strip is opaque.
+- **Codex review:** REQUEST CHANGES — P2 caption drag through floating UI; P2 false double-click zoom. Both fixed in `1c05ac0`: `mac_caption.rs` extracts the pure functions `caption_drag_allowed` / `caption_double_click`, with 3 tests.
+- **Codex gates (on the branch, after the fixes):** 284/284 tests.
+- **Checks run (moderator, on the merged `main` at `e212cf0`, macOS):**
+  - `cargo test --workspace` → **289 passed, 0 failed**.
+  - `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+  - `cargo fmt --all --check` → clean.
+  - `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings` → clean.
+  - `tools/mac/bundle.sh` → `Varos.app` rebuilt and reinstalled (2026-09-24).
+- **Process note:** merged early on 2026-09-24, after the 2am limit reset.
+- **Known gaps:** traffic lights sit ≈9pt above the bar's control centre; Quit/Close do not prompt for unsaved changes (same as ✕ today); menu items without an existing shortcut are omitted (New, Export, Cut/Copy/Paste, Duplicate, Select All, Deselect, Zoom In/Out, Delete). “Ctrl” labels should read ⌘ on Mac — next small piece.
+- **Hand test:** not yet — batch 1 list in `STATUS.md`.
+- **Verdict:** PASS. **Merged:** `e212cf0` to `main`.
+- Sign-off: moderator — PASS — 2026-09-24
