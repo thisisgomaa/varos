@@ -11,3 +11,9 @@ edition = "2021"
 varos-core = { path = "../varos-core" }
 pdf-writer = "0.15"
 lopdf = "0.43"
+
+# Test-only (DFS S5-E): the old-reader harness re-parses a version header and the golden-law tests
+# compare embedded model JSON byte-for-byte, without pulling either into the crate's own logic.
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

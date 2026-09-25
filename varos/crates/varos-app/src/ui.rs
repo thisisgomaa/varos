@@ -12,14 +12,16 @@ use varos_core::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, 
 use varos_core::geom::{Pt, Rgba, View};
 use varos_core::EditCommand;
 use winit::event::WindowEvent;
+
+use crate::app_command::{AppCommand, SessionId, TabView};
 use winit::window::Window;
 
 // Stage 0b (BOX_SYSTEM_PLAN §6, ruling 4): the palette now comes from the LAW ramp — the warm black
 // (R ≥ G ≥ B, tokens.rs = UI_VISION_MOCKUP's :root). The old cool-gray names alias their warm
 // successors so this 4k-line file needs no body edits; Stage 4's re-cut chrome uses the law names.
 use varos_app::shell::tokens::{
-    primary_mod_label, shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, INPUT_WELL,
-    LINE as BORDER, LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
+    shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, INPUT_WELL, LINE as BORDER,
+    LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
     SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
 };
 
@@ -653,6 +655,9 @@ struct Snap {
 impl Snap {
     fn read(ed: &Editor) -> Self {
         let n = ed.objsel.len();
+        // Pen mid-draft. The Pen deselects other art when a draft starts (core `pen.rs`), so the selection
+        // below already IS the draft (its anchors) — only the header name says what is going on (FB6 nit).
+        let drawing = ed.tool == ToolKind::Pen && ed.active.is_some();
         // A7 Stage 5: X/Y = the WORLD AABB top-left (matches `obj_bbox`); W/H = the TRUE un-rotated size
         // (the LOCAL bbox), so a rotated object reports its own dimensions, not its axis-aligned envelope.
         // Astra F07: with NO object selection, a Direct selection (grabbed anchors, or a Direct path-level
@@ -677,7 +682,9 @@ impl Snap {
             }
             None => (ed.cur_fill, ed.cur_stroke, ed.cur_sw, 1.0),
         };
-        let name = if n == 0 {
+        let name = if drawing {
+            "Drawing path\u{2026}".into()
+        } else if n == 0 {
             // "Anchor" / "N anchors" / the path's name (or "Path") — see `Editor::direct_label`.
             ed.direct_label().unwrap_or_else(|| "No selection".into())
         } else if n == 1 {
@@ -690,7 +697,7 @@ impl Snap {
             name,
             sel,
             direct,
-            drawing: ed.tool == ToolKind::Pen && ed.active.is_some(),
+            drawing,
             x,
             y,
             w,
@@ -817,8 +824,11 @@ pub struct Ui {
     pub win_action: Option<WinAction>, // a window control was clicked this frame (host acts on it)
     show_rail: bool,
     show_dock: bool,
-    tabs: Vec<String>,
-    tab_active: usize,
+    // DFS S1: the real tab strip's data (host → `set_tabs` every frame) and the lifecycle commands the
+    // chrome raised this frame (host ← `take_app_commands`).
+    doc_tabs: Vec<TabView>,
+    doc_active: Option<SessionId>,
+    app_cmds: Vec<AppCommand>,
     logo: Option<egui::TextureHandle>,
     splash_start: Option<Instant>,   // startup loading screen; None once it has faded out
     last_splash: bool,               // did this frame draw the splash (host renders it transparent)?
@@ -1059,8 +1069,9 @@ impl Ui {
             win_action: None,
             show_rail: true,
             show_dock: true,
-            tabs: vec!["Untitled-1".into()],
-            tab_active: 0,
+            doc_tabs: vec![],
+            doc_active: None,
+            app_cmds: vec![],
             logo,
             splash_start: Some(Instant::now()),
             last_splash: false,
@@ -1140,13 +1151,33 @@ impl Ui {
     pub fn picking_screen(&self) -> bool {
         self.color_modal.as_ref().is_some_and(|m| m.eyedropping)
     }
-    /// The 🔖 slice: the host names tab 0 after the open document ("name" / "name *").
-    pub fn set_doc_tab(&mut self, name: String) {
-        if self.tabs.is_empty() {
-            self.tabs.push(name);
-        } else {
-            self.tabs[0] = name;
+    /// DFS S1: the host hands the workspace's tabs over every frame.
+    pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
+        self.doc_tabs = tabs;
+        self.doc_active = active;
+    }
+    /// DFS S1: the lifecycle commands the chrome (tab strip, burger rows) raised since the last call.
+    pub fn take_app_commands(&mut self) -> Vec<AppCommand> {
+        std::mem::take(&mut self.app_cmds)
+    }
+    /// DFS S1: before any lifecycle command, close every Ui-side edit still open on `ed` — an open colour
+    /// picker is CANCELLED (its live preview is not a commit), and unsaved inline rename buffers (layer,
+    /// artboard) are discarded.
+    pub fn settle(&mut self, ed: &mut Editor) {
+        if self.color_modal.take().is_some() {
+            ed.execute(EditCommand::PickerCancel);
         }
+        self.lay_rename = None;
+        self.ab_name_edit = None;
+    }
+    /// DFS S1: the active document changed — drop the Ui state that belongs to the previous document
+    /// (the Layers rows cache, drag, Shift-range anchor, collapsed rows and search).
+    pub fn document_switched(&mut self) {
+        self.layer_rows_cache = None;
+        self.lay_drag = None;
+        self.lay_anchor = None;
+        self.lay_collapsed.clear();
+        self.lay_search.clear();
     }
     /// The native cursor the UI chrome wants this frame — egui's icon mapped onto our Win32 set.
     /// Box-seam resizes (egui_tiles splitters) and number-field scrubs get their arrows; everything
@@ -1242,8 +1273,11 @@ impl Ui {
         let mut show_rail = self.show_rail;
         let mut show_dock = self.show_dock;
         let mut snap_cfg = ed.doc.snap; // the magnet menu edits this; written back after layout (mode flag)
-        let mut tabs = std::mem::take(&mut self.tabs);
-        let mut tab_active = self.tab_active;
+        let doc_tabs = std::mem::take(&mut self.doc_tabs);
+        let doc_active = self.doc_active;
+        // an accumulating queue: nothing drains it until S1-D wires `take_app_commands` into the host,
+        // so this frame's clicks are APPENDED to whatever earlier frames already queued.
+        let mut app_cmds = std::mem::take(&mut self.app_cmds);
         let splash = self.splash_start.map(|t| t.elapsed().as_secs_f32());
         let splashing = splash.is_some_and(|e| e < SPLASH_DUR);
         let logo = &self.logo;
@@ -1262,8 +1296,9 @@ impl Ui {
                     top,
                     &mut *shell,
                     &mut win_action,
-                    &mut tabs,
-                    &mut tab_active,
+                    &doc_tabs,
+                    doc_active,
+                    &mut app_cmds,
                     &mut show_rail,
                     &mut show_dock,
                     &mut snap_cfg,
@@ -1403,8 +1438,8 @@ impl Ui {
         self.win_action = win_action;
         self.show_rail = show_rail;
         self.show_dock = show_dock;
-        self.tabs = tabs;
-        self.tab_active = tab_active;
+        self.doc_tabs = doc_tabs;
+        self.app_cmds = app_cmds;
         ed.execute(EditCommand::SetSnapConfig(snap_cfg)); // non-undoable mode flag, now core-owned
         ed.set_constrain_wh(lock); // A12: mirror the Properties W/H lock so canvas scale drags honour it too
                                    // OpenPicker is a UI op (it opens the modal, seeded from the target's colour) — intercept it here
@@ -3150,22 +3185,31 @@ fn bar_btn(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, label: &str, 
     resp
 }
 
-/// Width measurement for the shared top-bar layout (visual mirror; search has no home yet).
-fn search_pill_width(p: &egui::Painter) -> f32 {
-    let sw = p.layout_no_wrap("Search".into(), FontId::proportional(11.5), FAINT).size().x;
-    let shortcut = format!("{} K", primary_mod_label());
-    let kw = p.layout_no_wrap(shortcut, FontId::monospace(10.0), MUTED).size().x + 8.0;
-    9.0 + 13.0 + 6.0 + sw + 8.0 + kw + 9.0
+/// A bar button that ISN'T available yet (Export / Share, DFS S1 §3.6): FAINT text, no hover fill,
+/// `Sense::hover` only — it can never register a click, so it cannot become an "enabled dead button"
+/// (spec §2 forbids those). A tooltip carries the reason.
+fn bar_btn_disabled(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, label: &str, tip: &str) {
+    let f = FontId::proportional(12.0);
+    let resp = ui.interact(rect, ui.id().with(("bar-btn-disabled", label)), egui::Sense::hover());
+    p.text(rect.center(), Align2::CENTER_CENTER, label, f, FAINT);
+    resp.on_hover_text(tip);
 }
 
-/// Paint the search pill inside its shared top-bar layout rectangle.
+/// Width measurement for the shared top-bar layout (visual mirror; search has no home yet).
+/// QW7: no "⌘ K" badge — the pill must not advertise a shortcut it doesn't run.
+fn search_pill_width(p: &egui::Painter) -> f32 {
+    let sw = p.layout_no_wrap("Search".into(), FontId::proportional(11.5), FAINT).size().x;
+    9.0 + 13.0 + 6.0 + sw + 9.0
+}
+
+/// Paint the search pill inside its shared top-bar layout rectangle. QW7: just "Search", muted — the
+/// pill has no function yet, so it must not claim a ⌘K it doesn't run.
 fn search_pill(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, icon: &Option<egui::TextureHandle>) {
     let cy = rect.center().y;
     let f = FontId::proportional(11.5);
-    let fk = FontId::monospace(10.0);
-    let shortcut = format!("{} K", primary_mod_label());
-    let kw = p.layout_no_wrap(shortcut.clone(), fk.clone(), MUTED).size().x + 8.0;
-    let _ = ui.interact(rect, ui.id().with("tb-kpill"), egui::Sense::hover());
+    // `Sense::hover` only (never clickable) — honest about having no function yet, with the reason
+    // in the tooltip (spec §2 forbids an "enabled dead button"; UI audit finding 1).
+    ui.interact(rect, ui.id().with("tb-kpill"), egui::Sense::hover()).on_hover_text("Search isn't available yet.");
     let rr = CornerRadius::same(3);
     p.rect_filled(rect, rr, BG_SURFACE);
     p.rect_stroke(rect, rr, Stroke::new(1.0, BORDER), StrokeKind::Middle);
@@ -3174,36 +3218,42 @@ fn search_pill(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, icon: &Op
         p.image(t.id(), egui::Rect::from_center_size(egui::pos2(x + 6.5, cy), egui::vec2(13.0, 13.0)), UV01(), FAINT);
     }
     x += 13.0 + 6.0;
-    let tr = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Search", f, FAINT);
-    x = tr.right() + 8.0;
-    let krect = egui::Rect::from_min_size(egui::pos2(x, cy - 8.0), egui::vec2(kw, 16.0));
-    p.rect_stroke(krect, CornerRadius::same(2), Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
-    p.text(krect.center(), Align2::CENTER_CENTER, shortcut, fk, MUTED);
+    p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Search", f, FAINT);
 }
 
-/// One document tab. Returns (activate_clicked, close_clicked).
+/// One document tab: dirty dot, name, tooltip, × on hover. `Sense::click_and_drag` so `build_topbar`
+/// can detect drag-to-reorder on the returned response. Returns `(response, close_clicked)` — the
+/// caller reads `response.clicked()` / `.clicked_by(PointerButton::Middle)` / `.drag_started()` /
+/// `.drag_stopped()`.
 fn tab_item(
     ui: &mut egui::Ui,
     p: &egui::Painter,
     rect: egui::Rect,
-    label: &str,
+    tab: &TabView,
     active: bool,
     tex_x: &Option<egui::TextureHandle>,
     key: &str,
-) -> (bool, bool) {
+) -> (egui::Response, bool) {
     // Brave chip in the void (§3.5): active = filled panel block; inactive = bare muted text,
     // hover = a whisper of white. No accent — azure is a scalpel, not a tab decoration.
-    let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
+    let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click_and_drag());
     let rr = CornerRadius::same(RBOX);
     if active {
         p.rect_filled(rect, rr, SOLID_PANEL);
     } else if resp.hovered() {
         p.rect_filled(rect, rr, VOID_HOVER);
     }
+    let mut text_x = rect.left() + 12.0;
+    if tab.dirty {
+        // the neutral unsaved-changes dot — MUTED, never azure (azure is a scalpel: active/selection/
+        // focus only, spec's visual constitution).
+        p.circle_filled(egui::pos2(text_x + 2.0, rect.center().y), 2.5, MUTED);
+        text_x += 10.0;
+    }
     p.text(
-        egui::pos2(rect.left() + 12.0, rect.center().y),
+        egui::pos2(text_x, rect.center().y),
         Align2::LEFT_CENTER,
-        label,
+        &tab.label,
         FontId::proportional(12.0),
         if active { TEXT } else { MUTED },
     );
@@ -3220,7 +3270,8 @@ fn tab_item(
             if xr.hovered() { TEXT } else { FAINT },
         );
     }
-    (resp.clicked(), xr.clicked())
+    let resp = resp.on_hover_text(tab.tooltip.clone());
+    (resp, xr.clicked())
 }
 
 // ── menu metrics (Ahmed 07-07: "مساحات محسوبة بالمللي") — ONE place, Illustrator-crisp ──
@@ -3254,6 +3305,21 @@ fn menu_row(ui: &mut egui::Ui, label: &str, shortcut: &str) -> bool {
         );
     }
     resp.clicked()
+}
+
+/// A menu row that ISN'T available yet (burger ▸ Export…, DFS S1 §3.6): FAINT text, no hover fill,
+/// `Sense::hover` only — it can never be clicked, so it cannot become an "enabled dead button" (spec
+/// §2 forbids those). A tooltip carries the reason.
+fn menu_row_disabled(ui: &mut egui::Ui, label: &str, tip: &str) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), MENU_ROW_H), egui::Sense::hover());
+    ui.painter().text(
+        egui::pos2(rect.left() + MENU_GUTTER, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(12.0),
+        FAINT,
+    );
+    resp.on_hover_text(tip);
 }
 
 /// A toggle row: same skeleton as `menu_row`, with a hand-drawn ✓ in the gutter when on —
@@ -3296,8 +3362,9 @@ fn build_topbar(
     top: &TopIcons,
     shell: &mut varos_app::shell::ShellState,
     win_action: &mut Option<WinAction>,
-    tabs: &mut Vec<String>,
-    tab_active: &mut usize,
+    tabs: &[TabView],
+    active: Option<SessionId>,
+    cmds: &mut Vec<AppCommand>,
     show_rail: &mut bool,
     show_dock: &mut bool,
     snap: &mut varos_core::model::SnapConfig,
@@ -3313,12 +3380,15 @@ fn build_topbar(
         let p = ui.painter().clone();
         let mut excl: Vec<egui::Rect> = Vec::new();
         let text_width = |text: &str| p.layout_no_wrap(text.to_owned(), FontId::proportional(12.0), TEXT).size().x;
+        let tab_widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
+        let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
         let layout = crate::chrome::topbar_layout(
             bar,
             crate::chrome::TOPBAR,
             [text_width("Window"), text_width("Share"), text_width("Export")],
             search_pill_width(&p),
-            tabs.iter().map(|tab| text_width(tab)),
+            &tab_widths,
+            active_index,
         );
 
         // window controls (min · max · close), absent on macOS
@@ -3352,14 +3422,20 @@ fn build_topbar(
         if winb.clicked() {
             menu_toggle(ui, window_id);
         }
-        // Share (solid) + Export (ghost) — the mockup pair; visual MIRRORS for now (like the burger's
-        // menu rows: the look lands in Stage 1, the wiring lands with its home)
-        let share = bar_btn(ui, &p, layout.share, "Share", false);
-        let export = bar_btn(ui, &p, layout.export, "Export", true);
-        // search pill: 🔍 Search · Ctrl K — a surface capsule on the void (visual mirror too)
+        // Export / Share honesty (DFS S1 §3.6, review nit F15/P3-15): neither has a home yet, so both
+        // look and behave disabled instead of being "enabled dead buttons" (spec §2 forbids those).
+        bar_btn_disabled(ui, &p, layout.share, "Share", "Share isn't available yet.\nSave keeps an editable .vrs.");
+        bar_btn_disabled(
+            ui,
+            &p,
+            layout.export,
+            "Export",
+            "Export isn't available yet \u{2014} PDF export comes in a later update.\nSave keeps an editable .vrs.",
+        );
+        // search pill: 🔍 Search — a surface capsule on the void (visual mirror; no function yet, QW7)
         let kpill_r = layout.search;
         search_pill(ui, &p, kpill_r, &top.search);
-        excl.extend([magnet_r, winb.rect, share.rect, export.rect, kpill_r]);
+        excl.extend([magnet_r, winb.rect, layout.share, layout.export, kpill_r]);
 
         // burger — a flush 36×40 void cell at the far left (§3.5)
         let menu_r = layout.menu;
@@ -3377,35 +3453,49 @@ fn build_topbar(
         }
         excl.push(menu_r);
 
-        // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5)
-        let (mut to_close, mut to_activate) = (None, None);
-        for (i, (tab, &trect)) in tabs.iter().zip(&layout.tabs).enumerate() {
-            let (click, close) = tab_item(ui, &p, trect, tab, i == *tab_active, &top.x, &format!("tab{i}"));
-            if click {
-                to_activate = Some(i);
+        // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5).
+        // `layout.tabs` carries each chip's ORIGINAL tab index — not always a 0..n prefix once the
+        // active tab has displaced the greedy fit's last slot on overflow (F7).
+        let tab_rects: Vec<egui::Rect> = layout.tabs.iter().map(|&(_, r)| r).collect();
+        let drag_id = ui.id().with("tab-drag-src");
+        let dragging: Option<SessionId> = ui.data(|d| d.get_temp(drag_id));
+        for &(i, trect) in &layout.tabs {
+            let tab = &tabs[i];
+            let (resp, close) = tab_item(ui, &p, trect, tab, Some(tab.id) == active, &top.x, &format!("tab{i}"));
+            if close || resp.clicked_by(egui::PointerButton::Middle) {
+                cmds.push(AppCommand::CloseDocument(tab.id));
+            } else if resp.clicked() {
+                cmds.push(AppCommand::ActivateDocument(tab.id));
             }
-            if close {
-                to_close = Some(i);
+            if resp.drag_started() {
+                ui.data_mut(|d| d.insert_temp(drag_id, tab.id));
+            }
+            if resp.drag_stopped() {
+                if let Some(src) = dragging {
+                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                        cmds.push(AppCommand::ReorderDocument(src, crate::chrome::tab_drop_index(&tab_rects, pos.x)));
+                    }
+                }
+                ui.data_mut(|d| d.remove::<SessionId>(drag_id));
             }
             excl.push(trect);
         }
+        // while a chip is being dragged, a 1px TEXT insertion mark shows where it would land — no
+        // animation, no shadow (law).
+        if dragging.is_some() {
+            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                let slot = crate::chrome::tab_drop_index(&tab_rects, pos.x);
+                let x = tab_rects
+                    .get(slot)
+                    .map_or_else(|| tab_rects.last().map_or(bar.left(), |r| r.right() + 2.0), |r| r.left() - 2.0);
+                p.vline(x, bar.top() + 4.0..=bar.bottom() - 4.0, Stroke::new(1.0, TEXT));
+            }
+        }
         if let Some(plus_r) = layout.plus {
             if topbtn(ui, &p, plus_r, &top.plus, "tb-plus", false).clicked() {
-                tabs.push(format!("Untitled-{}", tabs.len() + 1));
-                *tab_active = tabs.len() - 1;
+                cmds.push(AppCommand::NewDocument);
             }
             excl.push(plus_r);
-        }
-        if let Some(i) = to_activate {
-            *tab_active = i;
-        }
-        if let Some(i) = to_close {
-            if tabs.len() > 1 {
-                tabs.remove(i);
-                if *tab_active >= tabs.len() {
-                    *tab_active = tabs.len() - 1;
-                }
-            }
         }
 
         // dropdowns — the app-bar menus are FLUSH seam extensions of the bar (Ahmed 07-07): same
@@ -3414,11 +3504,39 @@ fn build_topbar(
         let flush = Some(bar.bottom());
         menu_below(ui, menu_id, &mr, flush, |ui| {
             ui.set_width(210.0);
-            menu_row(ui, "New", &shortcut_label("N"));
-            menu_row(ui, "Open\u{2026}", &shortcut_label("O"));
-            menu_row(ui, "Save", &shortcut_label("S"));
+            let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
+            if menu_row(ui, "New", &shortcut_label("N")) {
+                cmds.push(AppCommand::NewDocument);
+                hit = true;
+            }
+            if menu_row(ui, "Open\u{2026}", &shortcut_label("O")) {
+                cmds.push(AppCommand::OpenDialog);
+                hit = true;
+            }
+            if let Some(id) = active {
+                if menu_row(ui, "Save", &shortcut_label("S")) {
+                    cmds.push(AppCommand::Save(id));
+                    hit = true;
+                }
+                let save_as = if cfg!(target_os = "macos") {
+                    format!("\u{21e7}{}", shortcut_label("S"))
+                } else {
+                    "Ctrl+Shift+S".into()
+                };
+                if menu_row(ui, "Save As\u{2026}", &save_as) {
+                    cmds.push(AppCommand::SaveAs(id));
+                    hit = true;
+                }
+            }
             menu_sep(ui);
-            menu_row(ui, "Export\u{2026}", "");
+            menu_row_disabled(
+                ui,
+                "Export\u{2026}",
+                "Export isn't available yet \u{2014} PDF export comes in a later update.\nSave keeps an editable .vrs.",
+            );
+            if hit {
+                menu_set(ui, menu_id, false);
+            }
         });
         // the Window menu: chrome toggles up top, then EVERY dockable panel — ✓ = it's in the
         // layout; click = open in an automatic spot / surface its tab / close (boxtree::toggle_panel)
@@ -4149,7 +4267,8 @@ fn col_toggle(
 
 /// The Layers panel — the SIMPLE (Photoshop/Affinity) VIEW of the scene tree (07-03 pivot), docked UNDER
 /// the inspector (`dock_below`) and growing downward. Row = eye · lock · disclosure · thumbnail · name.
-/// Click=select · Ctrl=toggle · Shift=range · dbl=rename · drag=reorder/nest · Alt+drag=duplicate.
+/// Click=select · Ctrl=toggle · Shift=range · dbl or right-click ▸ Rename=rename · drag=reorder/nest ·
+/// Alt+drag=duplicate.
 /// Header: title + search. Footer: Group · Delete.
 #[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state, split deferred with ui.rs
 fn panel_layers(
@@ -4451,23 +4570,43 @@ fn panel_layers(
                         let renaming = !rename_shown && rename.as_ref().is_some_and(|(id, _)| *id == row.id);
                         if renaming {
                             rename_shown = true;
+                            // Illustrator's inline rename (QW3): Enter or a click elsewhere commits, Escape
+                            // cancels, an empty or unchanged name changes nothing. The field's id is explicit
+                            // (never an auto id that shifts with what the rows above allocate).
+                            let te_id = ui.id().with(("lay-rename", row.id));
                             let buf = &mut rename.as_mut().unwrap().1;
                             let te = ui.put(
                                 name_rect.shrink2(egui::vec2(2.0, 4.0)),
                                 egui::TextEdit::singleline(buf)
+                                    .id(te_id)
                                     .frame(egui::Frame::NONE)
                                     .font(egui::FontId::proportional(12.5))
                                     .text_color(TEXT),
                             );
-                            te.request_focus();
-                            if te.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                let v = std::mem::take(buf);
-                                ops.push(if row.kind == LKind::Board {
-                                    Op::AbName(row.sec as usize, v)
-                                } else {
-                                    Op::LayerRename(row.id, v)
-                                });
+                            let focused = ui.memory(|m| m.has_focus(te_id));
+                            if te.lost_focus() {
+                                let v = varos_core::command::clean_name(&std::mem::take(buf)).to_string();
+                                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                if !cancel && !v.is_empty() && v != row.name {
+                                    ops.push(if row.kind == LKind::Board {
+                                        Op::AbName(row.sec as usize, v)
+                                    } else {
+                                        Op::LayerRename(row.id, v)
+                                    });
+                                }
                                 *rename = None;
+                            } else if !focused {
+                                // the frame it opens: take focus ONCE with the whole old name selected, so
+                                // typing replaces it. (Re-requesting focus every frame — the old code — also
+                                // re-grabbed it after Escape or a click elsewhere: the field never closed.)
+                                te.request_focus();
+                                let all = egui::text::CCursorRange::two(
+                                    egui::text::CCursor::new(0),
+                                    egui::text::CCursor::new(buf.chars().count()),
+                                );
+                                let mut st = egui::text_edit::TextEditState::load(ui.ctx(), te_id).unwrap_or_default();
+                                st.cursor.set_char_range(Some(all));
+                                st.store(ui.ctx(), te_id);
                             }
                         } else {
                             let auto = row.name.starts_with('<');
@@ -4534,6 +4673,22 @@ fn panel_layers(
                         if (resp.double_clicked() && !renaming) || manual_dbl {
                             *rename = Some((row.id, row.name.clone()));
                         }
+                        // the name cell says how to rename it; right-click offers the same editor (Astra
+                        // F10: nothing on the row hinted at the double-click, right-click did nothing)
+                        if !renaming && resp.hovered() && ptr.is_some_and(|pp| name_rect.contains(pp)) {
+                            resp.clone().on_hover_text("Double-click to rename");
+                        }
+                        let menu_id = ui.id().with(("lay-menu", row.id, row.sec));
+                        if resp.secondary_clicked() && !renaming {
+                            menu_set(ui, menu_id, true);
+                        }
+                        menu_below(ui, menu_id, &resp, None, |ui| {
+                            ui.set_width(160.0);
+                            if menu_row(ui, "Rename", "") {
+                                *rename = Some((row.id, row.name.clone()));
+                                menu_set(ui, menu_id, false);
+                            }
+                        });
                         // the lifted rows read as "picked up" — the whole payload dims while dragged
                         // (a mirror dims on BOTH appearances — it IS the same object)
                         if drag.is_some() && payload.contains(&row.id) {
@@ -5701,7 +5856,11 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::LayerToggle(n) => ed.layer_toggle(n),
             Op::LayerEye(node) => ed.execute(EditCommand::ToggleNodeHidden(node)),
             Op::LayerLock(node) => ed.execute(EditCommand::ToggleNodeLocked(node)),
-            Op::LayerRename(node, name) => ed.execute(EditCommand::RenameNode { node, name }),
+            // a `<Path>` row shows `Path::name`, not its leaf node's name — rename what the row reads
+            Op::LayerRename(node, name) => match ed.doc.node(node).map(|n| n.kind) {
+                Some(varos_core::model::NodeKind::Path(path)) => ed.execute(EditCommand::RenamePath { path, name }),
+                _ => ed.execute(EditCommand::RenameNode { node, name }),
+            },
             Op::LayerGroup => ed.execute(EditCommand::GroupSelection),
             Op::LayerDeleteSel => ed.execute(EditCommand::DeleteLayerSelection),
             Op::LayerMove(srcs, target, zone) => {
@@ -6037,5 +6196,904 @@ mod characterization_tests {
 
         assert_eq!(from_menu.doc.snap.smart, from_shortcut.doc.snap.smart);
         assert_eq!(from_menu.doc.snap, from_shortcut.doc.snap);
+    }
+}
+
+/// QW3 (Astra F10, PAINS_LOG P4 + FB6 nit): the Layers-row rename, driven headlessly through a bare
+/// `egui::Context` with synthetic pointer/keyboard input — no window, no GPU.
+#[cfg(test)]
+mod layer_rename_tests {
+    use super::{apply_ops, build_layer_rows, panel_layers, LKind, LRow, LayerIcons, Op, Snap};
+    use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
+    use std::collections::{HashMap, HashSet};
+    use varos_core::editor::{Editor, ToolKind};
+    use varos_core::model::{Anchor, NodeKind, Path};
+
+    const NAME_X: f32 = 150.0; // inside the name cell of a depth-0 row (the cell starts at x = 94)
+
+    fn path_row(id: u32, name: &str) -> LRow {
+        LRow {
+            id,
+            depth: 0,
+            kind: LKind::Path,
+            sec: u32::MAX,
+            name: name.into(),
+            hidden: false,
+            locked: false,
+            eff_hidden: false,
+            eff_locked: false,
+            has_children: false,
+            collapsed: false,
+            selected: false,
+            full_sel: false,
+            drag_sel: false,
+            active: false,
+            thumb: vec![],
+        }
+    }
+
+    fn no_icons() -> LayerIcons {
+        LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, grp: None, trash: None, search: None }
+    }
+
+    /// One Layers panel in a bare context, plus the state `Ui` keeps for it between frames.
+    struct Panel {
+        ctx: egui::Context,
+        t: f64,
+        rows: Vec<LRow>,
+        icons: LayerIcons,
+        search: String,
+        rename: Option<(u32, String)>,
+        collapsed: HashSet<u32>,
+        drag: Option<(u32, u32)>,
+        anchor: Option<(u32, u32)>,
+        ops: Vec<Op>,
+    }
+
+    impl Panel {
+        fn new(rows: Vec<LRow>) -> Self {
+            let mut p = Panel {
+                ctx: egui::Context::default(),
+                t: 10.0,
+                rows,
+                icons: no_icons(),
+                search: String::new(),
+                rename: None,
+                collapsed: HashSet::new(),
+                drag: None,
+                anchor: None,
+                ops: vec![],
+            };
+            p.frame(vec![]); // egui hit-tests against the PREVIOUS pass's widgets: lay the panel out once
+            p
+        }
+
+        /// Run one frame 1/60 s after the previous one; returns the ops it emitted.
+        fn frame(&mut self, events: Vec<Event>) -> Vec<Op> {
+            self.t += 1.0 / 60.0;
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 480.0))),
+                time: Some(self.t),
+                events,
+                ..Default::default()
+            };
+            let Panel { ctx, rows, icons, search, rename, collapsed, drag, anchor, .. } = self;
+            let mut ops = vec![];
+            let _ = ctx.run_ui(input, |ui| {
+                panel_layers(ui, rows, icons, search, rename, collapsed, drag, anchor, &mut ops);
+            });
+            self.ops.extend(ops.iter().filter_map(clone_op));
+            ops
+        }
+        fn button(&mut self, p: Pos2, button: PointerButton, pressed: bool) -> Vec<Op> {
+            let mut ops = self.frame(vec![Event::PointerMoved(p)]); // hover first, as a real mouse does
+            ops.extend(self.frame(vec![Event::PointerButton { pos: p, button, pressed, modifiers: Modifiers::NONE }]));
+            ops
+        }
+        fn click(&mut self, p: Pos2) -> Vec<Op> {
+            let mut ops = self.button(p, PointerButton::Primary, true);
+            ops.extend(self.button(p, PointerButton::Primary, false));
+            ops
+        }
+        fn double_click(&mut self, p: Pos2) -> Vec<Op> {
+            let mut ops = self.click(p);
+            ops.extend(self.click(p));
+            ops
+        }
+        fn key(&mut self, key: Key) -> Vec<Op> {
+            self.frame(vec![Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }])
+        }
+        fn type_text(&mut self, s: &str) -> Vec<Op> {
+            self.frame(vec![Event::Text(s.into())])
+        }
+        fn focused(&self) -> bool {
+            self.ctx.memory(|m| m.focused().is_some())
+        }
+    }
+
+    /// `Op` is not `Clone`; the log keeps only the kinds these tests inspect.
+    fn clone_op(op: &Op) -> Option<Op> {
+        match op {
+            Op::LayerRename(id, s) => Some(Op::LayerRename(*id, s.clone())),
+            Op::LayerSelectSet(v) => Some(Op::LayerSelectSet(v.clone())),
+            Op::AbName(i, s) => Some(Op::AbName(*i, s.clone())),
+            _ => None,
+        }
+    }
+
+    fn renames(ops: &[Op]) -> Vec<(u32, String)> {
+        ops.iter()
+            .filter_map(|o| match o {
+                Op::LayerRename(id, s) => Some((*id, s.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Find the screen y of row `id` by probing single clicks down ONE laid-out panel — no layout
+    /// constants assumed. Probes sit a second apart (no two can pair into a double-click) and stop as
+    /// soon as the row's hit band ends.
+    fn row_y(rows: &[LRow], id: u32) -> f32 {
+        let mut p = Panel::new(rows.to_vec());
+        let mut hits: Vec<f32> = vec![];
+        for k in 0..120 {
+            let y = k as f32 * 2.0;
+            p.t += 1.0;
+            let hit =
+                p.click(egui::pos2(NAME_X, y)).iter().any(|o| matches!(o, Op::LayerSelectSet(v) if v == &vec![id]));
+            assert!(p.rename.is_none(), "a probe opened the editor");
+            if hit {
+                hits.push(y);
+            } else if !hits.is_empty() {
+                break;
+            }
+        }
+        assert!(!hits.is_empty(), "row {id} was never hit by a click");
+        (hits[0] + hits[hits.len() - 1]) * 0.5
+    }
+
+    fn two_paths() -> Vec<LRow> {
+        vec![path_row(3, "<Path>"), path_row(4, "<Path>")]
+    }
+
+    /// Double-click a row name, then let the editor settle for two frames.
+    fn open_editor(rows: &[LRow], id: u32) -> Panel {
+        let y = row_y(rows, id);
+        let mut p = Panel::new(rows.to_vec());
+        p.double_click(egui::pos2(NAME_X, y));
+        p.frame(vec![]);
+        p.frame(vec![]);
+        p
+    }
+
+    #[test]
+    fn double_click_opens_rename_and_enter_commits() {
+        let mut p = open_editor(&two_paths(), 4);
+        assert_eq!(p.rename.as_ref().map(|r| r.0), Some(4), "double-click on a <Path> row opened no editor");
+        assert!(p.focused(), "the editor never took keyboard focus");
+        p.type_text("Logo");
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert_eq!(renames(&p.ops), vec![(4, "Logo".to_string())], "typing a name + Enter must commit exactly it");
+        assert!(p.rename.is_none(), "Enter closes the editor");
+    }
+
+    #[test]
+    fn rename_field_keeps_focus_on_the_frame_it_opens() {
+        let rows = two_paths();
+        let y = row_y(&rows, 3);
+        let mut p = Panel::new(rows);
+        p.double_click(egui::pos2(NAME_X, y));
+        assert_eq!(p.rename.as_ref().map(|r| r.0), Some(3), "double-click opened no editor");
+        // the frames right after opening: no commit sneaks out, focus arrives and stays
+        for _ in 0..4 {
+            let ops = p.frame(vec![]);
+            assert!(renames(&ops).is_empty(), "the editor committed on its own while opening");
+            assert!(p.rename.is_some(), "the editor closed while opening");
+        }
+        assert!(p.focused());
+    }
+
+    #[test]
+    fn right_click_rename_opens_the_same_editor() {
+        let rows = two_paths();
+        let y = row_y(&rows, 4);
+        let mut p = Panel::new(rows);
+        p.button(egui::pos2(NAME_X, y), PointerButton::Secondary, true);
+        p.button(egui::pos2(NAME_X, y), PointerButton::Secondary, false);
+        p.frame(vec![]);
+        assert!(p.rename.is_none(), "right-click alone must not start renaming");
+        // the menu hangs under the row: probe downwards for its single "Rename" row
+        let mut opened = false;
+        for dy in (14..60).step_by(4) {
+            let q = egui::pos2(NAME_X - 40.0, y + dy as f32);
+            p.frame(vec![Event::PointerMoved(q)]);
+            p.click(q);
+            if p.rename.is_some() {
+                opened = true;
+                break;
+            }
+        }
+        assert!(opened, "Rename in the row's context menu did not open the editor");
+        assert_eq!(p.rename.as_ref().map(|r| r.0), Some(4));
+        p.frame(vec![]);
+        p.frame(vec![]);
+        assert!(p.focused());
+        p.type_text("Ring");
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert_eq!(renames(&p.ops), vec![(4, "Ring".to_string())]);
+    }
+
+    #[test]
+    fn escape_or_blur_with_unchanged_name_is_harmless() {
+        let rows = vec![path_row(3, "Logo"), path_row(4, "<Path>")];
+        // Escape with an unchanged name: nothing is emitted
+        let mut p = open_editor(&rows, 3);
+        assert!(p.rename.is_some());
+        p.key(Key::Escape);
+        p.frame(vec![]);
+        assert!(p.rename.is_none(), "Escape closes the editor");
+        assert!(renames(&p.ops).is_empty(), "Escape with an unchanged name emitted a rename");
+        // blur (click another row) with an unchanged name: nothing is emitted
+        let y4 = row_y(&rows, 4);
+        let mut p = open_editor(&rows, 3);
+        assert!(p.rename.is_some());
+        p.click(egui::pos2(NAME_X, y4));
+        p.frame(vec![]);
+        assert!(p.rename.is_none(), "clicking elsewhere closes the editor");
+        assert!(renames(&p.ops).is_empty(), "blur with an unchanged name emitted a rename");
+    }
+
+    #[test]
+    fn escape_cancels_an_edited_name() {
+        let mut p = open_editor(&two_paths(), 4);
+        assert!(p.rename.is_some());
+        p.type_text("Oops");
+        p.key(Key::Escape);
+        p.frame(vec![]);
+        assert!(p.rename.is_none());
+        assert!(renames(&p.ops).is_empty(), "Escape must cancel (Illustrator), not commit the typed text");
+    }
+
+    #[test]
+    fn typing_replaces_the_whole_old_name() {
+        let mut p = open_editor(&[path_row(3, "Logo")], 3);
+        p.type_text("Mark");
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert_eq!(renames(&p.ops), vec![(3, "Mark".to_string())], "the old name is selected on open");
+    }
+
+    #[test]
+    fn emptied_name_keeps_the_old_one() {
+        let mut p = open_editor(&[path_row(3, "Logo")], 3);
+        assert!(p.rename.is_some());
+        p.frame(vec![Event::Key {
+            key: Key::A,
+            physical_key: Some(Key::A),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        }]);
+        p.key(Key::Backspace);
+        p.key(Key::Enter);
+        p.frame(vec![]);
+        assert!(p.rename.is_none());
+        assert!(renames(&p.ops).is_empty(), "an empty name must keep the old one (no rename)");
+    }
+
+    fn anchor(id: u32, x: f32, y: f32) -> Anchor {
+        Anchor { id, p: [x, y], hin: None, hout: None, smooth: false }
+    }
+
+    /// Two open paths: A (id 1, red fill, weight 2) and B (id 2, blue fill, weight 7).
+    fn two_path_editor() -> Editor {
+        let mut ed = Editor::new();
+        ed.doc.artboards.clear();
+        ed.doc.paths.push(Path::new(
+            1,
+            vec![anchor(11, 0.0, 0.0), anchor(12, 10.0, 0.0)],
+            false,
+            Some([1.0, 0.0, 0.0, 1.0]),
+            Some([0.0, 0.0, 0.0, 1.0]),
+            2.0,
+        ));
+        ed.doc.paths.push(Path::new(
+            2,
+            vec![anchor(21, 50.0, 50.0), anchor(22, 80.0, 60.0)],
+            false,
+            Some([0.0, 0.0, 1.0, 1.0]),
+            Some([0.0, 0.0, 0.0, 1.0]),
+            7.0,
+        ));
+        ed.doc.ids = 30;
+        ed.doc.sync_tree();
+        ed
+    }
+
+    /// The whole chain a real double-click drives: the panel's op → `apply_ops` → the rebuilt row.
+    #[test]
+    fn path_row_rename_shows_in_the_rebuilt_row() {
+        let mut ed = two_path_editor();
+        let node = ed.doc.node_of_path(2).expect("path 2 has a leaf node");
+        let rev = ed.rev;
+        apply_ops(&mut ed, vec![Op::LayerRename(node, "Logo".into())]);
+        let mut thumbs = HashMap::new();
+        let rows = build_layer_rows(&ed, &HashSet::new(), "", &mut thumbs);
+        let row = rows.iter().find(|r| r.id == node).expect("the path's row");
+        assert_eq!(row.name, "Logo", "the rename landed nowhere the Layers row reads");
+        assert_eq!(ed.rev, rev + 1, "a rename is one undoable edit");
+        ed.undo();
+        let rows = build_layer_rows(&ed, &HashSet::new(), "", &mut thumbs);
+        assert_eq!(rows.iter().find(|r| r.id == node).unwrap().name, "<Path>", "undo restores the auto-name");
+        // a Layer (container) row keeps using the node rename — its name lives on the node
+        let layer = ed.doc.nodes.iter().find(|n| matches!(n.kind, NodeKind::Layer)).map(|n| n.id).unwrap();
+        apply_ops(&mut ed, vec![Op::LayerRename(layer, "Art".into())]);
+        assert_eq!(ed.doc.node(layer).unwrap().name, "Art");
+        assert_eq!(ed.doc.paths[1].name.as_deref(), None, "renaming the layer left the path alone");
+    }
+
+    /// Pen draft through the real tool: two clicks away from everything, drawn in `cur_fill` (blue).
+    fn draw_two_points(ed: &mut Editor) {
+        ed.cur_fill = Some([0.0, 0.0, 1.0, 1.0]);
+        ed.ppu = 1.0;
+        ed.set_tool(ToolKind::Pen);
+        for p in [[200.0, 200.0], [260.0, 230.0]] {
+            ed.pointer_down(p);
+            ed.pointer_up();
+        }
+        assert!(ed.active.is_some(), "mid-draft");
+    }
+
+    /// PAINS_LOG FB6 nit + QW3 review P2-1: mid-draft, the dock describes the draft AND its fields edit
+    /// the draft — with or without a selection left over from before the Pen. Chosen behaviour: the
+    /// Transform block stays live on the draft (its anchors, as the no-selection case always did); the
+    /// Pen deselects other art when the draft starts, so no field can reach the old object.
+    #[test]
+    fn drawing_snap_reports_active_path_not_stale_selection() {
+        let read = |ed: &Editor| {
+            let s = Snap::read(ed);
+            (s.name, s.sel, s.direct, s.drawing, [s.x, s.y, s.w, s.h], s.fill, s.sw)
+        };
+        // leftover selection: A (path 1, red) selected, then the Pen draws B
+        let mut stale = two_path_editor();
+        stale.doc.paths[0].name = Some("Old".into());
+        stale.objsel.insert(1);
+        assert_eq!(read(&stale).0, "Old", "control: before the Pen, the dock names A");
+        draw_two_points(&mut stale);
+        // no selection: the same draft
+        let mut clean = two_path_editor();
+        draw_two_points(&mut clean);
+
+        let (name, sel, direct, drawing, xywh, fill, _) = read(&stale);
+        assert_eq!(name, "Drawing path\u{2026}");
+        assert!(drawing && !sel && direct, "the draft (its anchors) is what the dock measures");
+        assert_eq!(xywh, [200.0, 200.0, 60.0, 30.0], "live numbers of the draft, not zeros or A's");
+        assert_eq!(fill, Some([0.0, 0.0, 1.0, 1.0]), "paint of the draft, not A's red");
+        assert_eq!(read(&stale), read(&clean), "a leftover selection changes nothing about the draft's dock");
+
+        // the fields write to what they show: X = 500 moves the draft, never A
+        let a_before: Vec<_> = stale.doc.paths[0].anchors.iter().map(|a| a.p).collect();
+        apply_ops(&mut stale, vec![Op::SetBBox(Some(500.0), None, None, None, 0.0, 0.0)]);
+        let a_after: Vec<_> = stale.doc.paths[0].anchors.iter().map(|a| a.p).collect();
+        assert_eq!(a_before, a_after, "a mid-draft X edit moved the old object");
+        assert_eq!(read(&stale).4[0], 500.0, "…it moved the draft");
+
+        // not drawing: the ordinary selection read is unchanged
+        let mut idle = two_path_editor();
+        idle.doc.paths[0].name = Some("Old".into());
+        idle.objsel.insert(1);
+        let s = Snap::read(&idle);
+        assert!(!s.drawing && s.sel);
+        assert_eq!(s.name, "Old");
+        assert_eq!(s.fill, Some([1.0, 0.0, 0.0, 1.0]));
+    }
+}
+
+/// DFS S1 C — headless (no GPU, no `EventLoop`) proof that `build_topbar` really drives
+/// `AppCommand`s: no wgpu `Renderer`, just `egui::Context::run_ui` fed synthetic pointer input, the
+/// same technique `shell::boxtree::tests` already uses for headless rendering.
+#[cfg(test)]
+mod tab_strip_tests {
+    use super::*;
+    use crate::app_command::{AppCommand, SessionId, TabView};
+    use egui::{Event, PointerButton, Pos2, RawInput};
+
+    fn icons() -> TopIcons {
+        TopIcons { menu: None, search: None, plus: None, x: None, magnet: None }
+    }
+    fn tab(id: u64, label: &str, dirty: bool) -> TabView {
+        TabView { id: SessionId(id), label: label.into(), dirty, tooltip: "Not saved yet".into() }
+    }
+    /// The top bar's own rect — matches what `Panel::top(..).exact_size(h)` claims inside
+    /// `build_topbar`, and what `crate::chrome::topbar_layout` is fed.
+    fn bar_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, crate::chrome::TOPBAR.height))
+    }
+    /// The FULL window `RawInput.screen_rect`: much taller than the bar itself, so `menu_below`'s
+    /// `Area::constrain(true)` has room to place a dropdown BELOW the bar instead of clamping it back
+    /// inside a screen that was only as tall as the bar.
+    fn screen_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, 900.0))
+    }
+    fn press(pos: Pos2, button: PointerButton) -> RawInput {
+        RawInput {
+            screen_rect: Some(screen_rect()),
+            events: vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton { pos, button, pressed: true, modifiers: Default::default() },
+            ],
+            ..Default::default()
+        }
+    }
+    fn release(pos: Pos2, button: PointerButton) -> RawInput {
+        RawInput {
+            screen_rect: Some(screen_rect()),
+            events: vec![Event::PointerButton { pos, button, pressed: false, modifiers: Default::default() }],
+            ..Default::default()
+        }
+    }
+    fn idle() -> RawInput {
+        RawInput { screen_rect: Some(screen_rect()), ..Default::default() }
+    }
+
+    /// Drives one `build_topbar` frame and returns whatever `AppCommand`s it raised.
+    #[allow(clippy::too_many_arguments)]
+    fn frame(
+        ctx: &egui::Context,
+        input: RawInput,
+        top: &TopIcons,
+        shell: &mut varos_app::shell::ShellState,
+        tabs: &[TabView],
+        active: Option<SessionId>,
+        show_rail: &mut bool,
+        show_dock: &mut bool,
+        snap: &mut varos_core::model::SnapConfig,
+    ) -> Vec<AppCommand> {
+        let mut win_action = None;
+        let mut cmds = Vec::new();
+        let _ = ctx.run_ui(input, |root| {
+            build_topbar(root, top, shell, &mut win_action, tabs, active, &mut cmds, show_rail, show_dock, snap, false);
+        });
+        cmds
+    }
+
+    /// The chip / `+` / Share / Export / search rects for these tabs — measured with the exact same
+    /// font call `build_topbar` makes, on the SAME `Context` (egui's built-in default font is stable
+    /// across frames), so the rects line up with what a real frame draws.
+    fn measure(ctx: &egui::Context, tabs: &[TabView], active: Option<SessionId>) -> crate::chrome::TopbarLayout {
+        let bar = bar_rect();
+        let mut out = None;
+        let _ = ctx.run_ui(idle(), |ui| {
+            let p = ui.painter().clone();
+            let text_width =
+                |t: &str| p.layout_no_wrap(t.to_owned(), FontId::proportional(12.0), Color32::WHITE).size().x;
+            let widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
+            let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
+            out = Some(crate::chrome::topbar_layout(
+                bar,
+                crate::chrome::TOPBAR,
+                [text_width("Window"), text_width("Share"), text_width("Export")],
+                search_pill_width(&p),
+                &widths,
+                active_index,
+            ));
+        });
+        out.unwrap()
+    }
+
+    /// A warm-up frame, then press then release `button` at `pos`. egui resolves which widget a
+    /// pointer event hit from the PREVIOUS frame's registered rects, so the very first frame a chip
+    /// exists in can never be the one that receives its press — the warm-up frame is what makes the
+    /// chip "exist" before the click starts.
+    #[allow(clippy::too_many_arguments)]
+    fn click_at(
+        ctx: &egui::Context,
+        pos: Pos2,
+        button: PointerButton,
+        top: &TopIcons,
+        shell: &mut varos_app::shell::ShellState,
+        tabs: &[TabView],
+        active: Option<SessionId>,
+        show_rail: &mut bool,
+        show_dock: &mut bool,
+        snap: &mut varos_core::model::SnapConfig,
+    ) -> Vec<AppCommand> {
+        let _ = frame(ctx, idle(), top, shell, tabs, active, show_rail, show_dock, snap);
+        let _ = frame(ctx, press(pos, button), top, shell, tabs, active, show_rail, show_dock, snap);
+        frame(ctx, release(pos, button), top, shell, tabs, active, show_rail, show_dock, snap)
+    }
+
+    #[test]
+    fn click_emits_activate_document() {
+        let ctx = egui::Context::default();
+        let tabs = vec![tab(1, "A", false), tab(2, "B", false)];
+        let layout = measure(&ctx, &tabs, Some(SessionId(1)));
+        let (i, rect) = layout.tabs[1]; // the second placed chip
+        assert_eq!(tabs[i].id, SessionId(2));
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock) = (true, true);
+        let mut snap = varos_core::model::SnapConfig::default();
+        let pos = egui::pos2(rect.left() + 20.0, rect.center().y); // clear of the × in the corner
+        let cmds = click_at(
+            &ctx,
+            pos,
+            PointerButton::Primary,
+            &icons(),
+            &mut shell,
+            &tabs,
+            Some(SessionId(1)),
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        assert_eq!(cmds, [AppCommand::ActivateDocument(SessionId(2))]);
+    }
+
+    #[test]
+    fn middle_click_emits_close_document() {
+        let ctx = egui::Context::default();
+        let tabs = vec![tab(1, "A", false)];
+        let layout = measure(&ctx, &tabs, Some(SessionId(1)));
+        let (_, rect) = layout.tabs[0];
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock) = (true, true);
+        let mut snap = varos_core::model::SnapConfig::default();
+        let pos = egui::pos2(rect.left() + 20.0, rect.center().y);
+        let cmds = click_at(
+            &ctx,
+            pos,
+            PointerButton::Middle,
+            &icons(),
+            &mut shell,
+            &tabs,
+            Some(SessionId(1)),
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        assert_eq!(cmds, [AppCommand::CloseDocument(SessionId(1))]);
+    }
+
+    #[test]
+    fn close_x_emits_close_document() {
+        let ctx = egui::Context::default();
+        let tabs = vec![tab(1, "A", false)];
+        let layout = measure(&ctx, &tabs, Some(SessionId(1)));
+        let (_, rect) = layout.tabs[0];
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock) = (true, true);
+        let mut snap = varos_core::model::SnapConfig::default();
+        let pos = crate::chrome::tab_close_rect(rect).center();
+        let cmds = click_at(
+            &ctx,
+            pos,
+            PointerButton::Primary,
+            &icons(),
+            &mut shell,
+            &tabs,
+            Some(SessionId(1)),
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        assert_eq!(cmds, [AppCommand::CloseDocument(SessionId(1))]);
+    }
+
+    #[test]
+    fn plus_emits_new_document() {
+        let ctx = egui::Context::default();
+        let tabs = vec![tab(1, "A", false)];
+        let layout = measure(&ctx, &tabs, Some(SessionId(1)));
+        let plus = layout.plus.expect("+ is always placed (F15)");
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock) = (true, true);
+        let mut snap = varos_core::model::SnapConfig::default();
+        let cmds = click_at(
+            &ctx,
+            plus.center(),
+            PointerButton::Primary,
+            &icons(),
+            &mut shell,
+            &tabs,
+            Some(SessionId(1)),
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        assert_eq!(cmds, [AppCommand::NewDocument]);
+    }
+
+    #[test]
+    fn drag_reorder_emits_reorder_document_with_the_right_slot() {
+        let ctx = egui::Context::default();
+        let tabs = vec![tab(1, "A", false), tab(2, "B", false), tab(3, "C", false)];
+        let layout = measure(&ctx, &tabs, Some(SessionId(1)));
+        let src_rect = layout.tabs[0].1; // chip A
+        let dst_rect = layout.tabs[2].1; // chip C — drop past its centre = the end slot
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock) = (true, true);
+        let mut snap = varos_core::model::SnapConfig::default();
+        let from = egui::pos2(src_rect.left() + 20.0, src_rect.center().y);
+        let to = egui::pos2(dst_rect.right() - 4.0, dst_rect.center().y);
+        // a warm-up frame (chips must exist in the PREVIOUS frame to be hit-tested — see `click_at`),
+        // then press on A, drag past a real threshold, drop on C's right half → slot 3 (after every chip)
+        let _ = frame(&ctx, idle(), &icons(), &mut shell, &tabs, Some(SessionId(1)), &mut rail, &mut dock, &mut snap);
+        let _ = frame(
+            &ctx,
+            press(from, PointerButton::Primary),
+            &icons(),
+            &mut shell,
+            &tabs,
+            Some(SessionId(1)),
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        let mid = egui::pos2(from.x + 30.0, from.y);
+        let _ = frame(
+            &ctx,
+            RawInput { screen_rect: Some(screen_rect()), events: vec![Event::PointerMoved(mid)], ..Default::default() },
+            &icons(),
+            &mut shell,
+            &tabs,
+            Some(SessionId(1)),
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        let _ = frame(
+            &ctx,
+            RawInput { screen_rect: Some(screen_rect()), events: vec![Event::PointerMoved(to)], ..Default::default() },
+            &icons(),
+            &mut shell,
+            &tabs,
+            Some(SessionId(1)),
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        let cmds = frame(
+            &ctx,
+            release(to, PointerButton::Primary),
+            &icons(),
+            &mut shell,
+            &tabs,
+            Some(SessionId(1)),
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(1), 3)]);
+    }
+
+    /// The dirty dot (`tab_item`): a filled `MUTED` circle appears in the chip's clip rect only when
+    /// `TabView::dirty` is true — never azure (the visual constitution: azure is a scalpel).
+    #[test]
+    fn dirty_dot_is_drawn_only_when_dirty() {
+        fn has_dot(dirty: bool) -> bool {
+            let ctx = egui::Context::default();
+            let tabs = vec![tab(1, "A", dirty)];
+            let layout = measure(&ctx, &tabs, Some(SessionId(1)));
+            let rect = layout.tabs[0].1;
+            let mut shell = varos_app::shell::ShellState::standard();
+            let (mut rail, mut dock) = (true, true);
+            let mut snap = varos_core::model::SnapConfig::default();
+            let mut win_action = None;
+            let mut cmds = Vec::new();
+            let out = ctx.run_ui(idle(), |root| {
+                build_topbar(
+                    root,
+                    &icons(),
+                    &mut shell,
+                    &mut win_action,
+                    &tabs,
+                    Some(SessionId(1)),
+                    &mut cmds,
+                    &mut rail,
+                    &mut dock,
+                    &mut snap,
+                    false,
+                );
+            });
+            out.shapes.iter().any(|cs| {
+                matches!(&cs.shape, egui::Shape::Circle(c)
+                    if rect.contains(c.center) && c.fill == MUTED && c.radius > 0.0)
+            })
+        }
+        assert!(has_dot(true), "a dirty tab must draw its dot");
+        assert!(!has_dot(false), "a clean tab must not draw a dot");
+    }
+}
+
+/// DFS S1 / UI audit `docs/audits/ui-2026-09-24/05-defects-and-glue-map.md` finding 1: every burger
+/// row and every top-bar button must either DO something observable (raise an `AppCommand`, open a
+/// submenu, flip a toggle) or be drawn disabled with a tooltip reason — never silently swallow a
+/// click (spec §2's "enabled dead button"). This test drives the exact controls the audit named.
+#[cfg(test)]
+mod dead_control_tests {
+    use super::*;
+    use crate::app_command::{AppCommand, SessionId, TabView};
+    use egui::{Event, PointerButton, Pos2, RawInput};
+
+    fn icons() -> TopIcons {
+        TopIcons { menu: None, search: None, plus: None, x: None, magnet: None }
+    }
+    fn one_tab() -> Vec<TabView> {
+        vec![TabView { id: SessionId(1), label: "Untitled-1".into(), dirty: false, tooltip: "Not saved yet".into() }]
+    }
+    /// The top bar's own rect — matches what `Panel::top(..).exact_size(h)` claims inside
+    /// `build_topbar`, and what `crate::chrome::topbar_layout` is fed.
+    fn bar_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, crate::chrome::TOPBAR.height))
+    }
+    /// The FULL window `RawInput.screen_rect`: much taller than the bar, so `menu_below`'s
+    /// `Area::constrain(true)` has room to place a dropdown BELOW the bar (see `tab_strip_tests`).
+    fn screen_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, 900.0))
+    }
+    fn press(pos: Pos2, button: PointerButton) -> RawInput {
+        RawInput {
+            screen_rect: Some(screen_rect()),
+            events: vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton { pos, button, pressed: true, modifiers: Default::default() },
+            ],
+            ..Default::default()
+        }
+    }
+    fn release(pos: Pos2, button: PointerButton) -> RawInput {
+        RawInput {
+            screen_rect: Some(screen_rect()),
+            events: vec![Event::PointerButton { pos, button, pressed: false, modifiers: Default::default() }],
+            ..Default::default()
+        }
+    }
+
+    /// A tiny state machine around one `Context`, mirroring the fields `Ui::run` threads through
+    /// `build_topbar` every frame.
+    struct Bar {
+        ctx: egui::Context,
+        shell: varos_app::shell::ShellState,
+        tabs: Vec<TabView>,
+        active: Option<SessionId>,
+        rail: bool,
+        dock: bool,
+        snap: varos_core::model::SnapConfig,
+    }
+    impl Bar {
+        fn new() -> Self {
+            Self {
+                ctx: egui::Context::default(),
+                shell: varos_app::shell::ShellState::standard(),
+                tabs: one_tab(),
+                active: Some(SessionId(1)),
+                rail: true,
+                dock: true,
+                snap: varos_core::model::SnapConfig::default(),
+            }
+        }
+        fn frame(&mut self, input: RawInput) -> Vec<AppCommand> {
+            let mut win_action = None;
+            let mut cmds = Vec::new();
+            let _ = self.ctx.run_ui(input, |root| {
+                build_topbar(
+                    root,
+                    &icons(),
+                    &mut self.shell,
+                    &mut win_action,
+                    &self.tabs,
+                    self.active,
+                    &mut cmds,
+                    &mut self.rail,
+                    &mut self.dock,
+                    &mut self.snap,
+                    false,
+                );
+            });
+            cmds
+        }
+        /// A warm-up frame (a control must exist in the PREVIOUS frame to be hit-tested), then
+        /// press+release — see `tab_strip_tests::click_at`.
+        fn click(&mut self, pos: Pos2) -> Vec<AppCommand> {
+            let _ = self.frame(RawInput { screen_rect: Some(screen_rect()), ..Default::default() });
+            let _ = self.frame(press(pos, PointerButton::Primary));
+            self.frame(release(pos, PointerButton::Primary))
+        }
+        fn layout(&mut self) -> crate::chrome::TopbarLayout {
+            let bar = bar_rect();
+            let tabs = self.tabs.clone();
+            let active = self.active;
+            let mut out = None;
+            let _ = self.ctx.run_ui(RawInput { screen_rect: Some(screen_rect()), ..Default::default() }, |ui| {
+                let p = ui.painter().clone();
+                let text_width =
+                    |t: &str| p.layout_no_wrap(t.to_owned(), FontId::proportional(12.0), Color32::WHITE).size().x;
+                let widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
+                let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
+                out = Some(crate::chrome::topbar_layout(
+                    bar,
+                    crate::chrome::TOPBAR,
+                    [text_width("Window"), text_width("Share"), text_width("Export")],
+                    search_pill_width(&p),
+                    &widths,
+                    active_index,
+                ));
+            });
+            out.unwrap()
+        }
+        /// Open the burger menu (a press+release on its cell) and return its content's top-left —
+        /// the geometry `menu_below`'s flush frame uses: `(menu.left(), bar.bottom() + MENU_PAD_V)`.
+        fn open_burger(&mut self) -> Pos2 {
+            let menu = self.layout().menu;
+            let _ = self.click(menu.center());
+            egui::pos2(menu.left(), bar_rect().bottom() + MENU_PAD_V as f32)
+        }
+    }
+
+    /// New / Open… / Save / Save As… each raise their `AppCommand`; Export… is drawn disabled and
+    /// raises none. Row geometry: `MENU_ROW_H` tall, contiguous (`menu_below` zeroes row spacing),
+    /// then one `menu_sep` (4 + 1 + 4 px) before the disabled Export row.
+    #[test]
+    fn burger_rows_either_emit_a_command_or_are_disabled() {
+        const SEP_H: f32 = 9.0; // menu_sep: add_space(4) + a 1px line + add_space(4)
+        let rows = [
+            ("New", Some(AppCommand::NewDocument)),
+            ("Open", Some(AppCommand::OpenDialog)),
+            ("Save", Some(AppCommand::Save(SessionId(1)))),
+            ("Save As", Some(AppCommand::SaveAs(SessionId(1)))),
+        ];
+        for (i, (name, want)) in rows.iter().enumerate() {
+            let mut bar = Bar::new();
+            let top_left = bar.open_burger();
+            let y = top_left.y + i as f32 * MENU_ROW_H + MENU_ROW_H / 2.0;
+            let pos = egui::pos2(top_left.x + 100.0, y);
+            let cmds = bar.click(pos);
+            assert_eq!(cmds, want.iter().cloned().collect::<Vec<_>>(), "row {name}");
+        }
+        // Export…, past the separator after the 4 rows above — click raises nothing (disabled: FAINT
+        // text, `Sense::hover` only, tooltip carries the reason — never an "enabled dead button").
+        let mut bar = Bar::new();
+        let top_left = bar.open_burger();
+        let y = top_left.y + 4.0 * MENU_ROW_H + SEP_H + MENU_ROW_H / 2.0;
+        let pos = egui::pos2(top_left.x + 100.0, y);
+        let cmds = bar.click(pos);
+        assert!(cmds.is_empty(), "the disabled Export row must never raise a command");
+    }
+
+    /// Share / Export (top bar) and the search pill are `Sense::hover`-only (never clickable at all —
+    /// the strongest form of "not an enabled dead button"), each with a tooltip.
+    #[test]
+    fn share_export_and_search_pill_never_raise_a_command() {
+        let mut bar = Bar::new();
+        let layout = bar.layout();
+        for rect in [layout.share, layout.export, layout.search] {
+            let cmds = bar.click(rect.center());
+            assert!(cmds.is_empty(), "{rect:?} must not raise a command (disabled / not wired yet)");
+        }
+    }
+
+    /// Window and the magnet (Snapping) buttons are NOT dead: clicking them opens their dropdown,
+    /// which the very next frame renders (proven by the check-toggle rows becoming clickable — Tool
+    /// rail's row exists only while the Window menu is open). This is a real, observable effect
+    /// without an `AppCommand`, which is why they are excluded from the "must emit a command" rule.
+    #[test]
+    fn window_and_magnet_buttons_open_their_menu_instead_of_doing_nothing() {
+        let mut bar = Bar::new();
+        let layout = bar.layout();
+        let before_rail = bar.rail;
+        let _ = bar.click(layout.window.center());
+        // "Tool rail" is the Window menu's first row, right under the flush bar — clicking there
+        // only makes sense (and only flips `rail`) once the Window button's click actually opened it.
+        let y = bar_rect().bottom() + MENU_PAD_V as f32 + MENU_ROW_H / 2.0;
+        let _ = bar.click(egui::pos2(layout.window.left() + 50.0, y));
+        assert_ne!(bar.rail, before_rail, "Window ▸ Tool rail did not flip — the Window button was dead");
     }
 }

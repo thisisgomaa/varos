@@ -1,0 +1,303 @@
+%PDF-1.7
+%€€€€
+
+7 0 obj
+<<
+  /Length 488
+>>
+stream
+1 J
+1 j
+q
+1 1 1 rg
+0 0 400 300 re
+f*
+Q
+q
+/GS0 gs
+0.1 0.3 0.9 rg
+20 280 m
+20 280 140 280 140 280 c
+140 280 140 200 140 200 c
+140 200 20 200 20 200 c
+20 200 20 280 20 280 c
+h
+f*
+Q
+q
+/GS1 gs
+0.9 0.5 0.1 rg
+0 0 0 RG
+2 w
+215.7094 221.52292 m
+215.7094 221.52292 303.46762 173.58037 303.46762 173.58037 c
+303.46762 173.58037 284.29062 138.47707 284.29062 138.47707 c
+284.29062 138.47707 196.53236 186.41962 196.53236 186.41962 c
+196.53236 186.41962 215.7094 221.52292 215.7094 221.52292 c
+h
+B*
+Q
+endstream
+endobj
+
+8 0 obj
+<<
+  /Type /Page
+  /Parent 2 0 R
+  /MediaBox [0 0 400 300]
+  /Contents 7 0 R
+  /Resources <<
+    /ExtGState <<
+      /GS0 5 0 R
+      /GS1 6 0 R
+    >>
+  >>
+>>
+endobj
+
+5 0 obj
+<<
+  /Type /ExtGState
+  /ca 0.42
+  /CA 0
+>>
+endobj
+
+6 0 obj
+<<
+  /Type /ExtGState
+  /ca 1
+  /CA 1
+>>
+endobj
+
+15 0 obj
+<<
+  /Length 315
+>>
+stream
+1 J
+1 j
+q
+/GS0 gs
+1 0.9 0.8 rg
+0 0 300 300 re
+f*
+Q
+q
+/GS1 gs
+/Fx0 Do
+Q
+q
+60 100 m
+60 100 140 100 140 100 c
+140 100 140 40 140 40 c
+140 40 60 40 60 40 c
+60 40 60 100 60 100 c
+h
+W*
+n
+q
+/GS2 gs
+0.8 0.1 0.5 rg
+20 120 m
+20 120 220 120 220 120 c
+220 120 220 20 220 20 c
+220 20 20 20 20 20 c
+20 20 20 120 20 120 c
+h
+f*
+Q
+Q
+endstream
+endobj
+
+16 0 obj
+<<
+  /Type /Page
+  /Parent 2 0 R
+  /MediaBox [0 0 300 300]
+  /Contents 15 0 R
+  /Resources <<
+    /ExtGState <<
+      /GS0 9 0 R
+      /GS1 13 0 R
+      /GS2 14 0 R
+    >>
+    /XObject <<
+      /Fx0 12 0 R
+    >>
+  >>
+>>
+endobj
+
+9 0 obj
+<<
+  /Type /ExtGState
+  /ca 0.5
+  /CA 0.5
+>>
+endobj
+
+13 0 obj
+<<
+  /Type /ExtGState
+  /ca 1
+  /CA 1
+>>
+endobj
+
+14 0 obj
+<<
+  /Type /ExtGState
+  /ca 1
+  /CA 0
+>>
+endobj
+
+12 0 obj
+<<
+  /Length 462
+  /Type /XObject
+  /Subtype /Form
+  /BBox [46 76 224 284]
+  /Group <<
+    /Type /Group
+    /S /Transparency
+    /I true
+    /K true
+  >>
+  /Resources <<
+    /ExtGState <<
+      /Gf 10 0 R
+      /Gk 11 0 R
+    >>
+  >>
+>>
+stream
+1 J
+1 j
+q
+/Gf gs
+0.3 0.8 0.4 rg
+50 250 m
+100 280 180 270 200 240 c
+200 240 220 100 220 100 c
+220 100 60 80 60 80 c
+60 80 50 250 50 250 c
+h
+100 200 m
+100 200 150 200 150 200 c
+150 200 125 150 125 150 c
+125 150 100 200 100 200 c
+h
+f*
+Q
+q
+/Gk gs
+0.1 0.1 0.1 RG
+8 w
+50 250 m
+100 280 180 270 200 240 c
+200 240 220 100 220 100 c
+220 100 60 80 60 80 c
+60 80 50 250 50 250 c
+h
+100 200 m
+100 200 150 200 150 200 c
+150 200 125 150 125 150 c
+125 150 100 200 100 200 c
+h
+S
+Q
+endstream
+endobj
+
+10 0 obj
+<<
+  /Type /ExtGState
+  /ca 1
+>>
+endobj
+
+11 0 obj
+<<
+  /Type /ExtGState
+  /CA 0.4
+>>
+endobj
+
+2 0 obj
+<<
+  /Type /Pages
+  /Kids [8 0 R 16 0 R]
+  /Count 2
+>>
+endobj
+
+3 0 obj
+<<
+  /Length 5634
+  /Type /EmbeddedFile
+  /Subtype /application#2Fjson
+>>
+stream
+{"varos":2,"doc":{"paths":[{"id":1,"anchors":[{"id":1,"p":[20.0,20.0],"hin":null,"hout":null,"smooth":false},{"id":2,"p":[140.0,20.0],"hin":null,"hout":null,"smooth":false},{"id":3,"p":[140.0,100.0],"hin":null,"hout":null,"smooth":false},{"id":4,"p":[20.0,100.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.1,0.3,0.9,0.7],"stroke":null,"stroke_width":1.0,"holes":[],"opacity":0.6,"hidden":false,"locked":false,"name":null},{"id":2,"anchors":[{"id":5,"p":[200.0,100.0],"hin":null,"hout":null,"smooth":false},{"id":6,"p":[300.0,100.0],"hin":null,"hout":null,"smooth":false},{"id":7,"p":[300.0,140.0],"hin":null,"hout":null,"smooth":false},{"id":8,"p":[200.0,140.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.9,0.5,0.1,1.0],"stroke":[0.0,0.0,0.0,1.0],"stroke_width":2.0,"holes":[],"opacity":1.0,"hidden":false,"locked":false,"name":null},{"id":3,"anchors":[{"id":9,"p":[550.0,50.0],"hin":null,"hout":[600.0,20.0],"smooth":false},{"id":10,"p":[700.0,60.0],"hin":[680.0,30.0],"hout":null,"smooth":false},{"id":11,"p":[720.0,200.0],"hin":null,"hout":null,"smooth":false},{"id":12,"p":[560.0,220.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.3,0.8,0.4,1.0],"stroke":[0.1,0.1,0.1,0.4],"stroke_width":8.0,"holes":[[{"id":13,"p":[600.0,100.0],"hin":null,"hout":null,"smooth":false},{"id":14,"p":[650.0,100.0],"hin":null,"hout":null,"smooth":false},{"id":15,"p":[625.0,150.0],"hin":null,"hout":null,"smooth":false}]],"opacity":1.0,"hidden":false,"locked":false,"name":null},{"id":4,"anchors":[{"id":16,"p":[520.0,180.0],"hin":null,"hout":null,"smooth":false},{"id":17,"p":[720.0,180.0],"hin":null,"hout":null,"smooth":false},{"id":18,"p":[720.0,280.0],"hin":null,"hout":null,"smooth":false},{"id":19,"p":[520.0,280.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.8,0.1,0.5,1.0],"stroke":null,"stroke_width":1.0,"holes":[],"opacity":1.0,"hidden":false,"locked":false,"name":null},{"id":5,"anchors":[{"id":20,"p":[560.0,200.0],"hin":null,"hout":null,"smooth":false},{"id":21,"p":[640.0,200.0],"hin":null,"hout":null,"smooth":false},{"id":22,"p":[640.0,260.0],"hin":null,"hout":null,"smooth":false},{"id":23,"p":[560.0,260.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.0,0.0,0.0,1.0],"stroke":null,"stroke_width":1.0,"holes":[],"opacity":1.0,"hidden":false,"locked":false,"name":null},{"id":6,"anchors":[{"id":24,"p":[50.0,200.0],"hin":null,"hout":null,"smooth":false},{"id":25,"p":[80.0,200.0],"hin":null,"hout":null,"smooth":false},{"id":26,"p":[80.0,230.0],"hin":null,"hout":null,"smooth":false},{"id":27,"p":[50.0,230.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[1.0,0.0,0.0,1.0],"stroke":null,"stroke_width":1.0,"holes":[],"opacity":1.0,"hidden":true,"locked":false,"name":null},{"id":7,"anchors":[{"id":28,"p":[2000.0,2000.0],"hin":null,"hout":null,"smooth":false},{"id":29,"p":[2010.0,2000.0],"hin":null,"hout":null,"smooth":false},{"id":30,"p":[2010.0,2010.0],"hin":null,"hout":null,"smooth":false},{"id":31,"p":[2000.0,2010.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.0,1.0,0.0,1.0],"stroke":null,"stroke_width":1.0,"holes":[],"opacity":1.0,"hidden":false,"locked":false,"name":null}],"groups":[],"group_of":{},"nodes":[{"id":1,"kind":"Layer","name":"Layer 1","parent":null,"children":[38,37,39,34,33,32],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":32,"kind":{"Path":1},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":33,"kind":{"Path":2},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"xform":{"rot":0.5,"piv":[250.0,120.0]},"role":"Normal"},{"id":34,"kind":{"Path":3},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":35,"kind":{"Path":4},"name":"","parent":39,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":36,"kind":{"Path":5},"name":"","parent":39,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":37,"kind":{"Path":6},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":38,"kind":{"Path":7},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":39,"kind":"Group","name":"Group 39","parent":1,"children":[36,35],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Clip","mask_child":36}],"roots":[1],"active_layer":1,"ids":39,"units":{"ppi":72.0,"display":"Px"},"artboards":[{"x":0.0,"y":0.0,"w":400.0,"h":300.0,"name":"A","bleed":0.0,"page_color":[1.0,1.0,1.0,1.0],"clip":true,"hidden":false,"locked":false},{"x":500.0,"y":0.0,"w":300.0,"h":300.0,"name":"B","bleed":0.0,"page_color":[1.0,0.9,0.8,0.5],"clip":true,"hidden":false,"locked":false}],"active":0,"move_art_with_ab":true,"snap":{"enabled":true,"smart":true,"radius_px":8.0,"candidate_max":8,"show_candidates":true,"force_pixel_align":false,"move_whole_px":false,"grid":false,"grid_lines":true,"baseline_grid":false,"guides":true,"artboard":true,"artboard_mids":true,"margins":false,"margin_mids":false,"visible_only":true,"object_bounds":true,"bbox_mids":true,"gaps_and_sizes":true,"key_points":true,"object_geometry":true,"segment_mids":true,"path_intersections":true,"pixel_bounds":false,"alignment_guides":true,"equal_spacing":true,"equal_size":true,"grid_spacing":72.0},"ruler_origin":[0.0,0.0],"guides":[],"guides_locked":false}}
+endstream
+endobj
+
+4 0 obj
+<<
+  /Type /Filespec
+  /F (model.varos.json)
+  /UF (model.varos.json)
+  /EF <<
+    /F 3 0 R
+  >>
+  /AFRelationship /Source
+  /Desc (Varos editable model (source of truth))
+>>
+endobj
+
+1 0 obj
+<<
+  /Type /Catalog
+  /Pages 2 0 R
+  /Names <<
+    /EmbeddedFiles <<
+      /Names [(model.varos.json) 4 0 R]
+    >>
+  >>
+  /AF [4 0 R]
+  /VAROS_Model 3 0 R
+  /VAROS_SchemaVersion 2
+>>
+endobj
+
+xref
+0 17
+0000000000 65535 f
+0000008476 00000 n
+0000002472 00000 n
+0000002543 00000 n
+0000008285 00000 n
+0000000734 00000 n
+0000000794 00000 n
+0000000016 00000 n
+0000000558 00000 n
+0000001459 00000 n
+0000002370 00000 n
+0000002420 00000 n
+0000001636 00000 n
+0000001520 00000 n
+0000001578 00000 n
+0000000851 00000 n
+0000001221 00000 n
+trailer
+<<
+  /Size 17
+  /Root 1 0 R
+>>
+startxref
+8676
+%%EOF
