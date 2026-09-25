@@ -5167,6 +5167,8 @@ fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str, compact
     use varos_core::boolean::BoolOp;
     let chip = if compact { egui::vec2(26.0, 26.0) } else { egui::vec2(34.0, 28.0) };
     let (rect, resp) = ui.allocate_exact_size(chip, egui::Sense::click());
+    #[cfg(test)]
+    pathfinder_click_tests::PF_RECTS.with(|r| r.borrow_mut().push((op, rect)));
     let p = ui.painter();
     if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(3), HOVER);
@@ -7285,5 +7287,164 @@ mod field_settle_tests {
         let ctx = egui::Context::default();
         type_999_on_tab_a(&ctx, SessionId(1));
         assert_eq!(blur_on_tab_b(&ctx, SessionId(2)), [None; 4], "B must never receive A's typed 999");
+    }
+}
+
+/// PAINS_LOG P16 (owner 2026-09-25): "the Pathfinder buttons do nothing". Two overlapping shapes drawn
+/// with the real Rectangle gestures, selected, then each boolean button CLICKED — in the real box tree
+/// (`ShellState::standard`) hosting the real panel bodies exactly as `Ui::run` does, the frame's ops
+/// applied with `apply_ops` exactly as `Ui::run` does. No window, no GPU.
+#[cfg(test)]
+mod pathfinder_click_tests {
+    use super::{apply_ops, panel_pathfinder, panel_properties, DockIcons, Op, Snap};
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
+    use std::cell::RefCell;
+    use varos_app::shell::{PanelId, ShellState};
+    use varos_core::boolean::BoolOp;
+    use varos_core::editor::{Editor, ToolKind};
+
+    thread_local! {
+        /// Where `pf_btn` put each boolean button in the last frame (test-only probe).
+        pub(super) static PF_RECTS: RefCell<Vec<(BoolOp, egui::Rect)>> = const { RefCell::new(vec![]) };
+    }
+
+    const OPS: [(BoolOp, &str); 4] = [
+        (BoolOp::Unite, "Unite"),
+        (BoolOp::MinusFront, "Minus Front"),
+        (BoolOp::Intersect, "Intersect"),
+        (BoolOp::Exclude, "Exclude"),
+    ];
+
+    fn same(a: BoolOp, b: BoolOp) -> bool {
+        std::mem::discriminant(&a) == std::mem::discriminant(&b)
+    }
+
+    /// Two overlapping 100×100 rectangles drawn with the Rectangle tool, then Selection tool + Select All.
+    fn two_selected() -> Editor {
+        let mut ed = Editor::new();
+        ed.ppu = 1.0;
+        for (a, b) in [([100.0, 100.0], [200.0, 200.0]), ([150.0, 150.0], [250.0, 250.0])] {
+            ed.set_tool(ToolKind::Rect);
+            ed.pointer_down(a);
+            ed.pointer_move(b);
+            ed.pointer_up();
+        }
+        ed.set_tool(ToolKind::Object);
+        ed.select_all();
+        assert_eq!(ed.doc.paths.len(), 2, "premise: two shapes");
+        assert_eq!(ed.objsel.len(), 2, "premise: both selected");
+        ed
+    }
+
+    /// The right column of the real app: the standard box tree with the Properties + Pathfinder bodies
+    /// hosted exactly as `Ui::run` hosts them.
+    struct App {
+        ctx: egui::Context,
+        shell: ShellState,
+        t: f64,
+    }
+    impl App {
+        fn new(front: PanelId) -> Self {
+            let mut shell = ShellState::standard();
+            if front == PanelId::Pathfinder {
+                shell.toggle_panel(PanelId::Pathfinder); // buried behind Align → surfaced (Window menu)
+            }
+            App { ctx: egui::Context::default(), shell, t: 1.0 }
+        }
+        /// One `Ui::run`-shaped frame: lay out, collect ops, `apply_ops`.
+        fn frame(&mut self, ed: &mut Editor, events: Vec<Event>) {
+            self.t += 1.0 / 60.0;
+            PF_RECTS.with(|r| r.borrow_mut().clear());
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                time: Some(self.t),
+                events,
+                ..Default::default()
+            };
+            let snap = Snap::read(ed);
+            let none = None;
+            let align = [None, None, None, None, None, None, None, None];
+            let icons = DockIcons {
+                rotate: &none,
+                opacity: &none,
+                strokew: &none,
+                link: &none,
+                fliph: &none,
+                flipv: &none,
+                align: &align,
+            };
+            let (mut refpt, mut lock) = ((0.0, 0.0), false);
+            let mut ops: Vec<Op> = vec![];
+            let shell = &mut self.shell;
+            let _ = self.ctx.run_ui(input, |root| {
+                let mut host = |panel: PanelId, ui: &mut egui::Ui| -> bool {
+                    match panel {
+                        PanelId::Board => true,
+                        PanelId::Properties => {
+                            panel_properties(ui, &snap, &icons, &mut refpt, &mut lock, &mut ops);
+                            true
+                        }
+                        PanelId::Pathfinder => {
+                            panel_pathfinder(ui, &mut ops);
+                            true
+                        }
+                        _ => false,
+                    }
+                };
+                shell.ui_hosted(root, &mut host);
+            });
+            apply_ops(ed, ops);
+        }
+        fn button_at(&mut self, ed: &mut Editor, op: BoolOp) -> Pos2 {
+            self.frame(ed, vec![]);
+            let rects = PF_RECTS.with(|r| r.borrow().clone());
+            rects.iter().find(|(o, _)| same(*o, op)).map(|(_, r)| r.center()).expect("the button is drawn")
+        }
+        /// A mouse click (press and release in separate frames), or a trackpad tap (`tap`: press and
+        /// release arrive in ONE frame's events, as a fast macOS tap-to-click delivers them).
+        fn click(&mut self, ed: &mut Editor, p: Pos2, tap: bool) {
+            let btn = |pressed| Event::PointerButton {
+                pos: p,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            self.frame(ed, vec![Event::PointerMoved(p)]);
+            if tap {
+                self.frame(ed, vec![btn(true), btn(false)]);
+            } else {
+                self.frame(ed, vec![btn(true)]);
+                self.frame(ed, vec![btn(false)]);
+            }
+            self.frame(ed, vec![]);
+        }
+    }
+
+    fn click_each_op(front: PanelId, tap: bool) {
+        for (op, name) in OPS {
+            let mut ed = two_selected();
+            let rev0 = ed.rev;
+            let mut app = App::new(front);
+            let at = app.button_at(&mut ed, op);
+            app.click(&mut ed, at, tap);
+            // Unite: one outline · Minus Front: one L · Intersect: the overlap · Exclude: two L pieces
+            let want = if same(op, BoolOp::Exclude) { 2 } else { 1 };
+            assert_eq!(ed.doc.paths.len(), want, "{front:?} ▸ {name}: the two shapes were not combined");
+            assert_eq!(ed.rev, rev0 + 1, "{front:?} ▸ {name}: exactly one committed edit");
+            ed.undo();
+            assert_eq!(ed.doc.paths.len(), 2, "{front:?} ▸ {name}: ONE undo brings both shapes back");
+        }
+    }
+
+    #[test]
+    fn pathfinder_panel_buttons_combine_the_selection() {
+        click_each_op(PanelId::Pathfinder, false);
+        click_each_op(PanelId::Pathfinder, true);
+    }
+
+    #[test]
+    fn properties_shape_row_buttons_combine_the_selection() {
+        click_each_op(PanelId::Properties, false);
+        click_each_op(PanelId::Properties, true);
     }
 }
