@@ -6,6 +6,7 @@
 - **Authority:** none. Level-5 document under `docs/foundation/FOUNDATION_CHARTER.md` §3. If anything here conflicts with `docs/UI_DIRECTION.md`, the law wins.
 - **Deliverables (committed):** `varos/crates/varos-app/assets/cursors/v1/` holds **30 SVGs** and `hotspots.json`. `hotspots.json` maps all 28 `CK` variants plus 3 proposed ones to a file and a hotspot.
 - **Review page (NOT committed):** `varos/target/cursors-review/gallery.html`. It sits under `target/`, which is gitignored, because it holds copies of Adobe's cursors for side-by-side viewing.
+- **v1.1 (2026-09-25):** owner decisions A–D applied — new arrow family, plain crosshair for shape/Rotate/Scale tools, Artboard cursor wired, drag cursors locked, hover badges. See **§9** (supersedes the arrow, `Cross` and badge-slot rows below).
 - **Code:** `cursors.rs` and `main.rs` were untouched when this study was written. **Update 2026-09-24:** the set is now wired (embedded, default on every platform, 1×/2× Retina representations on macOS; human sharpness verification pending) — see `docs/foundation/MAC_SHELL_PORT.md` § "Tool cursors: Varos cursor set v1". §6 below is the plan as written before wiring.
 
 ---
@@ -196,3 +197,83 @@ open varos/target/cursors-review/gallery.html
 - Every one of the 32 Adobe counterparts was found. The page loads with no broken images (checked in a browser).
 - **Renderer:** no `resvg`, `rsvg-convert`, ImageMagick or Inkscape CLI exists on this Mac, and Python's `cairosvg` isn't installed. So the PNGs come from a throwaway Rust binary in the session scratch folder, pinned to **resvg 0.45.1** through the app's own `Cargo.lock`. It uses the same crate and the same fit-viewBox-to-N-px method as `cursors.rs`, so the PNGs are what the app would rasterise.
 - **Tooling:** the page, the family sheet and the SVG generator are small Python scripts (Pillow is used only for measurement and contact sheets). None of them is committed; the SVGs are the source of truth and can be edited by hand. If Ahmed wants this repeatable in the repo, a `tools/cursors/` builder is a small follow-up, as long as it never writes Adobe files outside `target/`.
+
+---
+
+## 9. v1.1 (2026-09-25) — the Cursor System, closed as one unit
+
+**Why.** Owner decisions of 2026-09-25 ("systems, not patches"). The evidence: Rotate, Scale and every shape
+tool fell through to the rectangle-badge crosshair (`shape-rect.svg`); a bounding-box rotate re-hit-tested
+every frame and flipped to the arrow once the pointer left the 22-px ring; `CK::Move` / `CK::NoDrop` were
+never returned; `artboard.svg`, `zoom-in.svg`, `zoom-out.svg` were drawn but unused.
+
+### 9.1 What changed
+
+| Decision | Change |
+|---|---|
+| **A. Arrows redrawn** | One new arrow silhouette, reused verbatim by every arrow cursor: a symmetric dart (tip, two wings, a notch — 4 points; axis 17 long, wings ±7.75, notch 4.5 deep) tilted 22° like a standard pointer, rounded corners (tip 0.2, wings 1.4, notch 1.2), warm-black `#141313` ink (1 px same-colour stroke → +0.5), and a **2 px white rim** beyond the ink (stroke 5). Extent 16.5 × 20.5 (v1: 15.5 × 20.5). Tip vertex at (3, 3) + 0.25 → **hotspot [3, 3]** (v1: [2, 2]; the thicker rim needs the extra pixel of margin). Selection = filled; Direct Selection = the same silhouette hollow (white interior inset 1 px from the path → a 1.5 px dark ring). Rebuilt on it: `select`, `direct`, `copy` (+ badge), `no-drop` (⊘ badge), and the three new hover-badge files. Generated from primitives by a throwaway script (not committed; the SVGs are the source of truth). |
+| **B. Shape tools = plain crosshair** | New `cross.svg` = the v1 crosshair without its badge (hotspot 11, 11). `CK::Cross` → `cross.svg` for Rect / Ellipse / Triangle / Polygon. `shape-rect.svg` had no remaining user → **deleted** with its table entry. |
+| **C. Rotate / Scale / Artboard / locks** | Rotate (R) and Scale (S): crosshair on hover, while the pivot click is pending (`TfPending`), and for the whole drag (`Rotate` without a corner, `ScaleLive`). **Bounding-box rotate lock:** `Drag::Rotate` now records the pressed `corner` (`Some(0..3)` for a Selection-tool rotate, `None` for the Rotate tool); the cursor is `rotate_ck(corner, a0)` — the arrow chosen at the press — for the whole drag, never re-hit-tested. **Resize lock:** `Drag::Scale` already carried its `handle` + press-time `angle`; now covered by a test. **Artboard:** `CK::Artboard` → `artboard.svg` on empty board and while creating a page. **Move:** `CK::Move` is now returned while the Selection tool drags an object (it still reuses `select.svg`: Illustrator shows the plain arrow while moving — the point of the state is that the hover badge drops during the move). **NoDrop:** removed from `CK` (no state in the app returns it); `no-drop.svg` is rebuilt on the new arrow and kept as a *proposed* state in `hotspots.json`. **Zoom:** there is no Zoom tool in `ToolKind`, so `zoom-in.svg` / `zoom-out.svg` stay proposed (⌥ = out when a Zoom tool lands). |
+| **D. Hover badges** | Three new CK states in the shared badge slot (centre (22.25, 22.75), 6 px square, 1.5 ink, 1.75 white keyline): `SelectObject` = arrow + filled square; `DirectAnchor` = hollow arrow + hollow square; `DirectPath` = hollow arrow + filled square. Chosen from hover state the editor already keeps (`hover_path`, set by the idle pointer-move hit-test) plus one new, bounded check: `Editor::hover_anchor` scans only the hovered path's anchors (never the whole document). Badges show only between gestures (`Drag::None`). |
+
+Counts: 31 `CK` states (v1: 28) → 30 files (`Move` reuses `select.svg`); 33 embedded files (+ zoom-in,
+zoom-out, no-drop as proposed). Stroke widths added by v1.1 (arrow family only): 1 (arrow ink edge) and 5
+(arrow rim and badge keylines).
+
+### 9.2 Tool → state → cursor (the whole table)
+
+Above every tool, in this order (`resolve_ck`): a pan in progress → `Grab`; Space held → `Hand`; pointer
+over the UI chrome → the chrome's own cursor. The *effective* tool: ⌘/Ctrl held → Direct Selection;
+Pen + ⌥ → Convert; the Artboard tool never morphs.
+
+| Tool | State | CK → file |
+|---|---|---|
+| any | ⌥ + dragging an object (or the press before it) | `Copy` → `copy.svg` |
+| Selection (V) | over empty board | `Select` → `select.svg` |
+| | over a selectable object (selected or not) | `SelectObject` → `select-object.svg` |
+| | ⌥ over an object | `Copy` → `copy.svg` |
+| | over a frame scale handle | `ResizeH/V/NE/NW` (handle + frame angle) |
+| | over a corner's rotate ring | `RotateE…RotateNE` (corner + frame angle) |
+| | dragging an object | `Move` → `select.svg` (no badge) |
+| | dragging a scale handle | the resize arrow of the press — **locked** |
+| | rotating from a corner | the rotate arrow of the press — **locked** |
+| | marquee / guide drag | `Select` |
+| Direct Selection (A) | over empty board | `Direct` → `direct.svg` |
+| | over an anchor of the hovered path | `DirectAnchor` → `direct-anchor.svg` |
+| | over a path (segment or fill) | `DirectPath` → `direct-path.svg` |
+| | any drag | `Direct` |
+| Rotate (R) / Scale (S) | hover, pivot click pending, dragging | `Cross` → `cross.svg` |
+| Rect / Ellipse / Triangle / Polygon | hover and drawing | `Cross` → `cross.svg` |
+| Pen (P) | contextual (`pen_hint`) | `Pen`, `PenNew`, `PenAdd`, `PenDel`, `PenClose`, `PenConnect` |
+| Convert (Pen + ⌥) | always | `Convert` → `convert.svg` |
+| Eyedropper (I) | always | `Eye` → `eyedropper.svg` |
+| Artboard (Shift+O) | over empty board / creating a page | `Artboard` → `artboard.svg` |
+| | over a page | `Select` |
+| | over / dragging a page resize handle | `ResizeH/V/NE/NW` |
+| | moving a page | `Select` |
+| (no Zoom tool yet) | — | `zoom-in.svg` / `zoom-out.svg` proposed |
+
+Every tool is matched by name in `desired_ck` (no catch-all arm), so a new tool cannot silently inherit a
+cursor.
+
+### 9.3 Tests (no GPU, no window)
+
+- `main.rs` `cursor_state_tests::tool_hover_drag_table_picks_the_expected_cursor_and_file` — 31 rows of
+  (tool, hover, drag) driven through the real `pointer_move` / `pointer_down`, each checking the CK **and**
+  the file it shows. Against the pre-v1.1 mapping it fails 23 rows (Rotate/Scale/shape rows showed
+  `shape-rect.svg`; the bbox-rotate lock rows showed `Select`; the badge, Move and Artboard rows).
+- `cursors.rs`: every CK maps to an embedded SVG + hotspot (31); no embedded file is an orphan; proposed
+  states are embedded with matching hotspots; `arrow_family_shares_one_silhouette_and_the_tip_hotspot`
+  (one arrow path in every arrow file, tip hotspot, filled vs hollow families, badge fills); all 33 files
+  render distinct, non-blank bitmaps at 1× and 2×.
+
+### 9.4 Known limits and open questions (for Ahmed's hand test)
+
+- **Badges — keep or drop?** They follow Illustrator, but a badge under every hover is visual noise some
+  users switch off. Judge in the real window: V over objects, A over anchors vs segments.
+- `hover_anchor` only looks at the hovered path: an anchor 8–12 px off an outline that the hover test did
+  not catch shows the path/empty cursor although a press there still grabs the anchor.
+- The hover state updates on pointer motion; after a gesture ends the badge refreshes on the next move.
+- The white rim of the left wing sits 0.12 px inside the canvas edge (tight but not clipped).
+- 1× vs 2×: the preview sheet shows both; on-screen sharpness still needs a human check on Retina and on a
+  1× display.

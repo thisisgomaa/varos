@@ -140,10 +140,14 @@ map; bad JSON (missing CK / unknown file / hotspot 32) is rejected with a messag
 default and the reference override is opt-in (present file → used, absent → v1); macOS: every CK's
 NSCursor image is 32 × 32 pt with exactly a 32-px and a 64-px rep, both 32 pt, hotspot in points.
 
-**System cursor mapping** (only for a state whose custom cursor the OS refused): Select/Direct →
-`Default` · Pen family, Convert, Cross, Eye, Rotate* → `Crosshair` · ResizeH → `EwResize` · ResizeV →
-`NsResize` · ResizeNE → `NeswResize` · ResizeNW → `NwseResize` · Move → `Move` · Hand → `Grab` · Grab →
-`Grabbing` · Copy → `Copy` · NoDrop → `NotAllowed`.
+**System cursor mapping** (only for a state whose custom cursor the OS refused): Select/Direct and the
+three hover-badge arrows (SelectObject, DirectAnchor, DirectPath) → `Default` · Pen family, Convert, Cross,
+Artboard, Eye, Rotate* → `Crosshair` · ResizeH → `EwResize` · ResizeV → `NsResize` · ResizeNE →
+`NeswResize` · ResizeNW → `NwseResize` · Move → `Move` · Hand → `Grab` · Grab → `Grabbing` · Copy → `Copy`.
+
+**Update 2026-09-25 (cursor set v1.1):** 31 CK states, 33 embedded files; `NoDrop` removed from `CK`
+(never returned; `no-drop.svg` kept as a proposed state). Tool→state→cursor table and the lock rules:
+`docs/studies/2026-09-23-CURSOR_SET_V1.md` §9.
 
 ## Three renderer bugs the macOS launch and review exposed (fixed in `varos-render-wgpu`, not Mac-only)
 
