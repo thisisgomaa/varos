@@ -853,6 +853,9 @@ fn main() {
     {
         let bg = varos_app::shell::tokens::BG;
         mac_menu::set_window_background(&window, [bg.r(), bg.g(), bg.b()]);
+        // P15: the title-bar strip over our content view is NOT a native drag region — a press on a
+        // tab / button belongs to egui; only empty bar space drags (MAC_CHROME.md §A).
+        mac_menu::forbid_native_titlebar_drag(&window);
     }
     // macOS: the native menu bar; installed on the first NewEvents (after the app finished launching).
     #[cfg(target_os = "macos")]
