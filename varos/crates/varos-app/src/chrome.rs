@@ -242,7 +242,21 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
                 item("file.close", "Close Window", cmd(K::KeyW), MenuCmd::Close),
             ],
         ),
-        ("Edit", vec![key("edit.undo", "Undo", cmd(K::KeyZ)), key("edit.redo", "Redo", cmd_shift(K::KeyZ))]),
+        (
+            "Edit",
+            vec![
+                key("edit.undo", "Undo", cmd(K::KeyZ)),
+                key("edit.redo", "Redo", cmd_shift(K::KeyZ)),
+                Entry::Sep,
+                // the in-app clipboard (Astra F04): ⌘C / ⌘X via `apply_key`, ⌘V / ⇧⌘V via the shortcut
+                // path's view-centred paste. In a focused text field `forward_shortcut` turns these
+                // into egui's own Copy / Cut / Paste events, so field editing keeps working.
+                key("edit.cut", "Cut", cmd(K::KeyX)),
+                key("edit.copy", "Copy", cmd(K::KeyC)),
+                key("edit.paste", "Paste", cmd(K::KeyV)),
+                key("edit.pasteinplace", "Paste in Place", cmd_shift(K::KeyV)),
+            ],
+        ),
         (
             "Object",
             vec![
@@ -267,6 +281,8 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
             vec![
                 key("view.fit", "Fit in Window", cmd(K::Digit0)),
                 key("view.actual", "Actual Size", cmd(K::Digit1)),
+                key("view.zoomin", "Zoom In", cmd(K::Equal)),
+                key("view.zoomout", "Zoom Out", cmd(K::Minus)),
                 Entry::Sep,
                 key_check("view.rulers", "Rulers", cmd(K::KeyR), Check::Rulers),
                 key_check("view.guides", "Guides", cmd(K::Semicolon), Check::Guides),
@@ -308,6 +324,7 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
     use egui::Key as E;
     use KeyCode as K;
     Some(match code {
+        K::KeyC => E::C,
         K::KeyD => E::D,
         K::KeyG => E::G,
         K::KeyO => E::O,
@@ -315,10 +332,14 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         K::KeyR => E::R,
         K::KeyS => E::S,
         K::KeyU => E::U,
+        K::KeyV => E::V,
         K::KeyW => E::W,
+        K::KeyX => E::X,
         K::KeyZ => E::Z,
         K::Digit0 => E::Num0,
         K::Digit1 => E::Num1,
+        K::Equal => E::Equals,
+        K::Minus => E::Minus,
         K::Semicolon => E::Semicolon,
         K::BracketLeft => E::OpenBracket,
         K::BracketRight => E::CloseBracket,
@@ -415,6 +436,30 @@ mod tests {
     }
 
     #[test]
+    fn every_clipboard_row_is_its_shortcut() {
+        let m = menus();
+        let (_, edit) = m.iter().find(|(t, _)| *t == "Edit").expect("an Edit menu");
+        let rows: Vec<(String, Accel)> = edit
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Item { id, cmd: MenuCmd::Key(k), .. } => Some((id.clone(), *k)),
+                _ => None,
+            })
+            .collect();
+        let want = [
+            ("edit.cut", cmd(KeyCode::KeyX)),
+            ("edit.copy", cmd(KeyCode::KeyC)),
+            ("edit.paste", cmd(KeyCode::KeyV)),
+            ("edit.pasteinplace", cmd_shift(KeyCode::KeyV)),
+        ];
+        for (id, a) in want {
+            let a = a.unwrap();
+            assert!(rows.iter().any(|(i, k)| i == id && *k == a), "Edit menu misses {id} = {a:?}");
+            assert!(egui_key(a.code).is_some(), "{id}: a focused text field must still get the key");
+        }
+    }
+
+    #[test]
     fn the_bar_has_the_standard_mac_menus_and_mirrors_every_dockable_panel() {
         let m = menus();
         let titles: Vec<&str> = m.iter().map(|(t, _)| *t).collect();
@@ -434,8 +479,9 @@ mod tests {
             })
             .collect();
         assert_eq!(close, [cmd(KeyCode::KeyQ).unwrap(), cmd(KeyCode::KeyW).unwrap()]);
-        // mirrors only: no item may claim a New / Export / clipboard key that has no path yet
-        for missing in [KeyCode::KeyN, KeyCode::KeyC, KeyCode::KeyV, KeyCode::KeyX, KeyCode::KeyA] {
+        // mirrors only: no item may claim a New / Export / Select-All key that has no path yet
+        // (the clipboard keys got their path in Astra F04 — `every_clipboard_row_is_its_shortcut` below)
+        for missing in [KeyCode::KeyN, KeyCode::KeyA] {
             assert!(
                 !items.iter().any(|e| matches!(e, Entry::Item { accel: Some(a), .. } if a.code == missing)),
                 "{missing:?} has no existing shortcut path — must not be in the menu"
