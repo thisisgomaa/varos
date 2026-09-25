@@ -46,6 +46,14 @@ Landed later on 2026-09-23/24:
 - **In flight:** `fix/s1cd-tabs-review` — Codex review of `e5b9315` REQUEST CHANGES: typed field values crossed tabs; command dispatch was not FIFO (⌘S then ⌘Z saved the undone state); overflow tab dragging reordered incorrectly; docs overclaimed. Opus is fixing it; the first P1 landed in `1115e76`.
 - **Owner process rules restated:** Opus implements; Fable moderates; Codex (Sol) handles reviews, docs and ordinary work; Astra is reserved for very hard problems or plan consultation. **Close what is broken or missing before starting anything new.**
 
+### 2026-09-25 — owner look at the integration build + fixes (branch `integrate/cloud-wave-1`, not `main` yet)
+
+- **Owner verified by hand:** independent tabs, tab numbering, dirty marking on content edits only, field edits never cross tabs, ⌘S/⌘Z order, ⌘S while typing, Pathfinder buttons, tab drag after P15, cursor arrows.
+- **Process change (owner):** Ahmed no longer runs long checklists. Codex computer-use runs them (launched from the Codex desktop app); Ahmed spot-checks what needs a designer's eye. Codex run on this build: 8 pass, 6 partial (tool limits), 4 reported fails — 3 were false alarms (native NSAlert dialogs are invisible to its screenshots; X toggles fill/stroke focus, ⇧X swaps, per Illustrator), 1 real (tab drag, P15).
+- **Landed on the branch, each with gates + Codex Sol review:** P14 Ctrl+Tab cycles every tab + Space survives a tab switch (`358e482`, REQUEST CHANGES → APPROVE WITH NITS); cursor system v1.1 — new arrow family approved by Ahmed, hover badges kept, a tool badge on every crosshair (Rect/Ellipse/Triangle/Polygon/Rotate/Scale), drag-locked bbox cursors, Artboard cursor (`6f2292d`, `fbe2ae4`); P15 tab drag moved the whole Mac window — AppKit native drag region disabled, one caption hit-test for Mac + Windows (`6f606ad`, APPROVE WITH NITS); Pathfinder click-path regression tests (`6cc6e8c`, owner's "Shape Builder broke" report not reproducible, later confirmed working by him). Gates on the merged branch: **668 passed / 0 failed / 4 ignored**, clippy Mac + Windows clean, fmt clean. `/Applications/Varos.app` rebuilt from the branch.
+- **Owner UI decisions routed to their systems (no patches):** remove the burger menu beside the tabs (native Mac menu bar only) and put a Home button there → DFS S2-E2 Start page + UI System spec v2; icons instead of text labels on buttons → icon library moves up right after stabilisation; tab-drag visuals are ugly (P16) → tab-strip component in UI System spec v2 (instant, no animation, azure drop marker).
+- **Next:** chunked merge of the branch to `main` (Astra batch + quick wins → S1 + S3 → S5 + S6-A), then UI System spec v2.
+
 **For Ahmed to try (batch 3)** — on the Mac, from branch `claude/sweet-cerf-1sg30t` (`git fetch origin claude/sweet-cerf-1sg30t && git checkout claude/sweet-cerf-1sg30t`, then `tools/mac/bundle.sh` or `cargo run --release -p varos-app`). Batch 2 (in this file, above) still applies; batch 3 adds:
 
 1. (S1) ⌘N twice → two independent tabs `Untitled-1`, `Untitled-2` (numbers never reused after closing); draw red in A, blue in B; switch tabs by click — each keeps its own drawing, view, selection and undo.
@@ -134,7 +142,7 @@ Landed later on 2026-09-23/24:
 |---|---:|
 | `ui.rs` lines | 5,826 (re-measured `wc -l` 2026-09-23, after `9f8ec1d`) |
 | `editor.rs` lines | 4,537 (re-measured `wc -l` 2026-09-23, after `b15d2bf`) |
-| Workspace tests | **634/634** — whole workspace, run on macOS 2026-09-24 on integration branch `integrate/cloud-wave-1` at `e2298f9` (0 failed); not on `main` yet · merged `main` at `36d04d4`: 306/306 on macOS · cloud branch head `6999970`: 624/624 on Linux (4 ignored by design) |
+| Workspace tests | **668 passed / 0 failed / 4 ignored** — macOS 2026-09-25, `integrate/cloud-wave-1` at `6cc6e8c` (not on `main` yet) · earlier: **634/634** — whole workspace, run on macOS 2026-09-24 on integration branch `integrate/cloud-wave-1` at `e2298f9` (0 failed); not on `main` yet · merged `main` at `36d04d4`: 306/306 on macOS · cloud branch head `6999970`: 624/624 on Linux (4 ignored by design) |
 | Tests on macOS | **634 / 634** — whole workspace incl. `varos-app` (2026-09-24, integration branch `integrate/cloud-wave-1` at `e2298f9`; not on `main` yet) |
 | `unsafe` sites (app crates) | 30 — re-measured 2026-09-24 via `grep -rc "unsafe" varos/crates/varos-app/src \| awk -F: '{s+=$2} END {print s}'` (Linux checkout of `claude/sweet-cerf-1sg30t`; was 27) |
 | Direct external deps | 23 |
