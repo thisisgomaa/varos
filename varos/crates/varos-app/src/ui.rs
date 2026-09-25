@@ -1146,6 +1146,11 @@ impl Ui {
     pub fn modal_open(&self) -> bool {
         self.color_modal.is_some()
     }
+    /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
+    /// cancels the drag) and must not also reach the canvas.
+    pub fn tab_drag_active(&self) -> bool {
+        self.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY)).is_some())
+    }
     /// Is the picker's system eyedropper armed? While it is, in-window clicks are swallowed by the host
     /// so the sampled click doesn't also poke the canvas (A5 samples via a global pixel read instead).
     pub fn picking_screen(&self) -> bool {
@@ -3255,10 +3260,10 @@ fn search_pill(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, icon: &Op
     p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Search", f, FAINT);
 }
 
-/// One document tab: dirty dot, name, tooltip, × on hover. `Sense::click_and_drag` so `build_topbar`
-/// can detect drag-to-reorder on the returned response. Returns `(response, close_clicked)` — the
-/// caller reads `response.clicked()` / `.clicked_by(PointerButton::Middle)` / `.drag_started()` /
-/// `.drag_stopped()`.
+/// One document tab: dirty dot, name, tooltip, × on hover, painted at `rect` (its resting slot, or
+/// its lifted / reflowed rect during a drag — P16). `Sense::click_and_drag` so `tab_drag_update` can
+/// read this chip's drag start / stop from egui. Returns `(response, close_clicked)` — the caller
+/// reads `response.clicked()` / `.clicked_by(PointerButton::Middle)`.
 fn tab_item(
     ui: &mut egui::Ui,
     p: &egui::Painter,
@@ -3387,6 +3392,95 @@ fn menu_sep(ui: &mut egui::Ui) {
     ui.add_space(4.0);
 }
 
+/// The live tab drag (P16). Kept in egui temp memory under ONE fixed id (`TAB_DRAG_KEY`) so the host
+/// can ask `Gui::tab_drag_active` — Esc then cancels the drag instead of also reaching the canvas.
+#[derive(Clone, Debug, PartialEq)]
+struct TabDrag {
+    /// The dragged tab.
+    id: SessionId,
+    /// Pointer x − chip left at the press: the grabbed point stays under the pointer.
+    grab_dx: f32,
+    /// The last known pointer x (kept for a frame where egui has no pointer position).
+    last_x: f32,
+    /// Last frame's gap slot (`TabDragFrame::landing`) — the hysteresis in `tab_drag_frame` reads it.
+    landing: usize,
+    /// The tab order and the active tab when the drag started. Any change under the drag (a tab
+    /// closed by ⌘W, a new / opened document, Ctrl+Tab) cancels it: the gap was measured against a
+    /// strip that no longer exists (P16 review).
+    order: Vec<SessionId>,
+    active: Option<SessionId>,
+}
+
+const TAB_DRAG_KEY: &str = "varos.tab-drag";
+
+/// This frame of the tab drag (P16): start it (the frame egui passes its drag threshold on a chip),
+/// follow the pointer, commit on release (`ReorderDocument` with `chrome::visible_drop_slot` — the
+/// Workspace still owns the order), or cancel on Esc / window focus loss / the tab list changing
+/// underneath (nothing committed, every chip back at rest). Returns the lifted chip's tab index and
+/// the geometry to paint, or `None` when no chip is lifted (paint at rest). The geometry is all
+/// `chrome::tab_drag_frame`; `drawn_after` is the real layout's "which tabs are drawn for this order".
+fn tab_drag_update(
+    ui: &egui::Ui,
+    layout: &crate::chrome::TopbarLayout,
+    tabs: &[TabView],
+    active: Option<SessionId>,
+    chip_key: impl Fn(usize) -> String,
+    drawn_after: impl Fn(&[usize]) -> Vec<usize>,
+    cmds: &mut Vec<AppCommand>,
+) -> Option<(usize, crate::chrome::TabDragFrame)> {
+    let ctx = ui.ctx();
+    let key = egui::Id::new(TAB_DRAG_KEY);
+    // the same id `tab_item` gives chip `i` (`ui.id().with(key)`)
+    let chip_id = |i: usize| ui.id().with(chip_key(i).as_str());
+    let clear = || {
+        ctx.stop_dragging();
+        ctx.data_mut(|d| d.remove::<TabDrag>(key));
+    };
+    let mut state: Option<TabDrag> = ctx.data(|d| d.get_temp(key));
+    if let Some(s) = &state {
+        let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let changed = s.active != active || !s.order.iter().copied().eq(tabs.iter().map(|t| t.id));
+        if esc || changed || !ctx.input(|i| i.focused) {
+            clear(); // cancel: nothing is committed, the chips paint at rest this very frame
+            return None;
+        }
+    }
+    // egui resolves this frame's drag start before any widget runs, so the chip lifts in the SAME
+    // frame the threshold is passed — no frame painted at rest in between.
+    if state.is_none() {
+        let started = ctx.drag_started_id()?;
+        let (k, &(i, r)) = layout.tabs.iter().enumerate().find(|&(_, &(i, _))| chip_id(i) == started)?;
+        let x = ctx.input(|inp| inp.pointer.press_origin().or(inp.pointer.interact_pos())).map_or(r.left(), |p| p.x);
+        let order = tabs.iter().map(|t| t.id).collect();
+        state = Some(TabDrag { id: tabs[i].id, grab_dx: x - r.left(), last_x: x, landing: k, order, active });
+    }
+    let mut s = state?;
+    let found = layout.tabs.iter().position(|&(i, _)| tabs.get(i).is_some_and(|t| t.id == s.id));
+    let (Some(dragged), Some(strip)) = (found, layout.tab_strip()) else {
+        clear(); // the dragged tab is not drawn any more — drop the drag
+        return None;
+    };
+    if let Some(p) = ctx.input(|i| i.pointer.interact_pos()) {
+        s.last_x = p.x;
+    }
+    let frame = crate::chrome::tab_drag_frame(&layout.tabs, dragged, s.grab_dx, s.last_x, strip, s.landing)?;
+    s.landing = frame.landing;
+    let i = layout.tabs[dragged].0;
+    if ctx.drag_stopped_id() == Some(chip_id(i)) {
+        // release: the chip lands in the gap — the tab strip only REQUESTS the move
+        let others: Vec<usize> = frame.others.iter().map(|&(j, _)| j).collect();
+        let slot = crate::chrome::visible_drop_slot(tabs.len(), i, &others, frame.landing, drawn_after);
+        cmds.push(AppCommand::ReorderDocument(s.id, slot));
+        ctx.data_mut(|d| d.remove::<TabDrag>(key));
+    } else if ctx.dragged_id() == Some(chip_id(i)) {
+        ctx.data_mut(|d| d.insert_temp(key, s));
+    } else {
+        clear(); // the drag ended some other way — never leave a chip lifted
+        return None;
+    }
+    Some((i, frame))
+}
+
 /// Custom top bar (the native caption is stripped in WM_NCCALCSIZE): menu · tabs · drag · right tools ·
 /// window controls. Interactive rects are published as exclusions so the OS hit-test makes them HTCLIENT
 /// (egui handles them) while the empty band is HTCAPTION (the OS drags/snaps the window).
@@ -3415,14 +3509,12 @@ fn build_topbar(
         let text_width = |text: &str| p.layout_no_wrap(text.to_owned(), FontId::proportional(12.0), TEXT).size().x;
         let tab_widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
         let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
-        let layout = crate::chrome::topbar_layout(
-            bar,
-            crate::chrome::TOPBAR,
-            [text_width("Window"), text_width("Share"), text_width("Export")],
-            search_pill_width(&p),
-            &tab_widths,
-            active_index,
-        );
+        let button_widths = [text_width("Window"), text_width("Share"), text_width("Export")];
+        let search_width = search_pill_width(&p);
+        let layout_for = |widths: &[f32], active: Option<usize>| {
+            crate::chrome::topbar_layout(bar, crate::chrome::TOPBAR, button_widths, search_width, widths, active)
+        };
+        let layout = layout_for(&tab_widths, active_index);
 
         // window controls (min · max · close), absent on macOS
         if let Some([min_r, max_r, close_r]) = layout.caps {
@@ -3486,41 +3578,31 @@ fn build_topbar(
         // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5).
         // `layout.tabs` carries each chip's ORIGINAL tab index — not always a 0..n prefix once the
         // active tab has displaced the greedy fit's last slot on overflow (F7).
-        let tab_rects: Vec<egui::Rect> = layout.tabs.iter().map(|&(_, r)| r).collect();
-        let drag_id = ui.id().with("tab-drag-src");
-        let dragging: Option<SessionId> = ui.data(|d| d.get_temp(drag_id));
-        for &(i, trect) in &layout.tabs {
+        // P16 — drag-to-reorder: past egui's drag threshold the chip is LIFTED (painted under the
+        // pointer, above the rest) and the other chips reflow live around a gap where it would land.
+        // All geometry is `chrome::tab_drag_frame`; this block only keeps the drag state and paints.
+        let chip_key = |i: usize| format!("tab{i}");
+        // which tabs this SAME layout would draw for a reordered full order (original indices) — the
+        // release uses it to keep the dropped tab visible (`chrome::visible_drop_slot`)
+        let drawn_after = |order: &[usize]| {
+            let widths: Vec<f32> = order.iter().map(|&i| tab_widths[i]).collect();
+            let act = active_index.and_then(|a| order.iter().position(|&i| i == a));
+            layout_for(&widths, act).tabs.iter().map(|&(k, _)| order[k]).collect::<Vec<usize>>()
+        };
+        let drag = tab_drag_update(ui, &layout, tabs, active, chip_key, drawn_after, cmds);
+        let mut paint: Vec<(usize, egui::Rect)> = Vec::with_capacity(layout.tabs.len());
+        match &drag {
+            // others first, the lifted chip last — drawn (and hit-tested) on top
+            Some((i, f)) => paint.extend(f.others.iter().copied().chain([(*i, f.lifted)])),
+            None => paint.extend(layout.tabs.iter().copied()),
+        }
+        for (i, trect) in paint {
             let tab = &tabs[i];
-            let (resp, close) = tab_item(ui, &p, trect, tab, Some(tab.id) == active, &top.x, &format!("tab{i}"));
+            let (resp, close) = tab_item(ui, &p, trect, tab, Some(tab.id) == active, &top.x, &chip_key(i));
             if close || resp.clicked_by(egui::PointerButton::Middle) {
                 cmds.push(AppCommand::CloseDocument(tab.id));
             } else if resp.clicked() {
                 cmds.push(AppCommand::ActivateDocument(tab.id));
-            }
-            if resp.drag_started() {
-                ui.data_mut(|d| d.insert_temp(drag_id, tab.id));
-            }
-            if resp.drag_stopped() {
-                if let Some(src) = dragging {
-                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                        // the drawn slot, mapped into the FULL order (hidden overflow tabs — review P2)
-                        let slot = crate::chrome::tab_drop_index(&tab_rects, pos.x);
-                        let to = crate::chrome::tab_full_slot(&layout.tabs, slot);
-                        cmds.push(AppCommand::ReorderDocument(src, to));
-                    }
-                }
-                ui.data_mut(|d| d.remove::<SessionId>(drag_id));
-            }
-        }
-        // while a chip is being dragged, a 1px TEXT insertion mark shows where it would land — no
-        // animation, no shadow (law).
-        if dragging.is_some() {
-            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                let slot = crate::chrome::tab_drop_index(&tab_rects, pos.x);
-                let x = tab_rects
-                    .get(slot)
-                    .map_or_else(|| tab_rects.last().map_or(bar.left(), |r| r.right() + 2.0), |r| r.left() - 2.0);
-                p.vline(x, bar.top() + 4.0..=bar.bottom() - 4.0, Stroke::new(1.0, TEXT));
             }
         }
         if let Some(plus_r) = layout.plus {
@@ -3626,8 +3708,13 @@ fn build_topbar(
         // publish caption height + interactive (non-drag) rects, in physical px — ONE list, the
         // layout's own `interactive_rects` (every control and FULL tab slot drawn above), so the OS /
         // macOS caption band can never disagree with the strip about what a press belongs to (P15).
+        // While a chip is lifted: the rects actually painted + its resting slot (P16 review).
         let ppp = ui.ctx().pixels_per_point();
-        let px = crate::chrome::caption_exclusions(&layout.interactive_rects(), ppp);
+        let rects = match &drag {
+            Some((_, f)) => layout.interactive_rects_with(f.chip_rects()),
+            None => layout.interactive_rects(),
+        };
+        let px = crate::chrome::caption_exclusions(&rects, ppp);
         crate::cursors::set_caption((h * ppp) as i32, &px);
     });
 }
@@ -6955,12 +7042,14 @@ mod tab_strip_tests {
         let (mut rail, mut dock) = (true, true);
         let mut snap = varos_core::model::SnapConfig::default();
 
-        // chip 0 dragged onto the right half of its neighbour (drawn slot 1) → full slot of drawn chip 2
+        // chip 0 lifted and dropped right onto its neighbour's slot (drawn slot 1) → the gap is after
+        // chip 1 → full slot of drawn chip 2. P16: the drop spot is the LIFTED chip (grabbed 20 px in),
+        // no longer the bare pointer — so the pointer ends 20 px into chip 1's slot.
         let (r0, r1) = (layout.tabs[0].1, layout.tabs[1].1);
         let cmds = drag(
             &ctx,
             egui::pos2(r0.left() + 20.0, r0.center().y),
-            egui::pos2(r1.right() - 4.0, r1.center().y),
+            egui::pos2(r1.left() + 20.0, r1.center().y),
             &tabs,
             active,
             &mut shell,
@@ -6984,6 +7073,412 @@ mod tab_strip_tests {
             &mut snap,
         );
         assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(8), 0)]);
+    }
+
+    /// P16 harness: one tab strip driven frame by frame, returning the commands AND the painted shapes
+    /// of each frame, so a test can read where every chip was actually DRAWN (not where the layout
+    /// said it would be).
+    struct Strip {
+        ctx: egui::Context,
+        tabs: Vec<TabView>,
+        active: Option<SessionId>,
+        shell: varos_app::shell::ShellState,
+        rail: bool,
+        dock: bool,
+        snap: varos_core::model::SnapConfig,
+    }
+
+    impl Strip {
+        fn new(labels: &[&str], active: usize) -> Self {
+            let tabs: Vec<TabView> = labels.iter().enumerate().map(|(i, l)| tab(i as u64 + 1, l, false)).collect();
+            let active = Some(tabs[active].id);
+            Strip {
+                ctx: egui::Context::default(),
+                tabs,
+                active,
+                shell: varos_app::shell::ShellState::standard(),
+                rail: true,
+                dock: true,
+                snap: varos_core::model::SnapConfig::default(),
+            }
+        }
+        fn layout(&self) -> crate::chrome::TopbarLayout {
+            measure(&self.ctx, &self.tabs, self.active)
+        }
+        /// Chip rect of the tab labelled `label` in the resting layout.
+        fn home(&self, label: &str) -> egui::Rect {
+            let i = self.tabs.iter().position(|t| t.label == label).expect("a tab with that label");
+            self.layout().tabs.iter().find(|&&(j, _)| j == i).expect("chip is drawn").1
+        }
+        fn run(&mut self, input: RawInput) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            let mut win_action = None;
+            let mut cmds = Vec::new();
+            let (tabs, active) = (&self.tabs, self.active);
+            let (shell, rail, dock, snap) = (&mut self.shell, &mut self.rail, &mut self.dock, &mut self.snap);
+            let out = self.ctx.run_ui(input, |root| {
+                build_topbar(root, &icons(), shell, &mut win_action, tabs, active, &mut cmds, rail, dock, snap, false);
+            });
+            (cmds, out.shapes)
+        }
+        fn idle(&mut self) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            self.run(idle())
+        }
+        fn press(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            self.run(press(at, PointerButton::Primary))
+        }
+        fn move_to(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            self.run(RawInput {
+                screen_rect: Some(screen_rect()),
+                events: vec![Event::PointerMoved(at)],
+                ..Default::default()
+            })
+        }
+        fn release(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            self.run(release(at, PointerButton::Primary))
+        }
+        /// Warm-up frame (see `click_at`), press at `from`, then one move 30 px towards `dir` — past
+        /// egui's drag threshold, so the drag has started.
+        fn begin_drag(&mut self, from: Pos2, dir: f32) {
+            let _ = self.idle();
+            let _ = self.press(from);
+            let _ = self.move_to(egui::pos2(from.x + 30.0 * dir.signum(), from.y));
+        }
+    }
+
+    /// Where the chip labelled `label` was PAINTED this frame: `(left edge, label y, paint order)`.
+    /// A clean chip's label starts 12 px in from its left edge (`tab_item`), and a higher paint order
+    /// means drawn later = on top.
+    fn painted(shapes: &[egui::epaint::ClippedShape], label: &str) -> (f32, f32, usize) {
+        let hits: Vec<(f32, f32, usize)> = shapes
+            .iter()
+            .enumerate()
+            .filter_map(|(k, cs)| match &cs.shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some((t.pos.x - 12.0, t.pos.y, k)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(hits.len(), 1, "chip {label:?} must be painted exactly once, got {hits:?}");
+        hits[0]
+    }
+
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 0.51
+    }
+
+    /// P16 (a): once a chip is dragged past the threshold it is LIFTED — painted under the pointer
+    /// with the grab offset kept, above every other chip, y locked to the strip, and clamped to the
+    /// strip's two ends.
+    #[test]
+    fn lifted_tab_follows_the_pointer_with_its_grab_offset_clamped_to_the_strip() {
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let (a, b, c) = (s.home("A"), s.home("B"), s.home("C"));
+        let grab = 25.0;
+        let from = egui::pos2(b.left() + grab, b.center().y);
+        s.begin_drag(from, 1.0);
+
+        let (_, shapes) = s.move_to(egui::pos2(from.x + 17.0, from.y));
+        let (left, y, order) = painted(&shapes, "B");
+        let rest_y = painted(&shapes, "A").1; // A rests in the strip's row
+        assert!(near(left, b.left() + 17.0), "B painted at {left}, want pointer − grab = {}", b.left() + 17.0);
+        assert!(order > painted(&shapes, "A").2 && order > painted(&shapes, "C").2, "the lifted chip is drawn on top");
+
+        // y stays locked to the strip even when the pointer leaves the bar downwards
+        let (_, shapes) = s.move_to(egui::pos2(from.x + 17.0, from.y + 120.0));
+        let (left, y2, _) = painted(&shapes, "B");
+        assert!(near(left, b.left() + 17.0) && near(y2, y), "y must stay locked ({y2} vs {y})");
+        assert!(near(y, rest_y), "the lifted chip keeps the strip's row");
+
+        // clamped: far right → its right edge sits on the strip's right end (C's right edge)
+        let (_, shapes) = s.move_to(egui::pos2(1390.0, from.y));
+        let (left, _, _) = painted(&shapes, "B");
+        assert!(
+            near(left + b.width(), c.right()),
+            "clamped right: B right {} vs strip end {}",
+            left + b.width(),
+            c.right()
+        );
+        // far left → its left edge sits on the strip's left end (A's left edge)
+        let (_, shapes) = s.move_to(egui::pos2(0.0, from.y));
+        let (left, _, _) = painted(&shapes, "B");
+        assert!(near(left, a.left()), "clamped left: B left {left} vs strip start {}", a.left());
+    }
+
+    /// P16 (b): while a chip is lifted, the OTHER chips reflow every frame to leave a gap exactly
+    /// where it would land. A neighbour crosses over (the gap jumps past it) once the lifted chip's
+    /// leading edge clears that neighbour's midpoint by the 2-pt hysteresis — dragging right,
+    /// dragging left, and coming back. Instant: no in-between positions.
+    #[test]
+    fn other_tabs_open_a_gap_that_moves_at_the_neighbours_midpoint() {
+        // dragging A rightwards over B
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let (a, b, c) = (s.home("A"), s.home("B"), s.home("C"));
+        assert!(near(a.width(), b.width()) && near(b.width(), c.width()), "setup: equal chips");
+        let grab = 20.0;
+        let from = egui::pos2(a.left() + grab, a.center().y);
+        s.begin_drag(from, 1.0);
+        // pointer at which A's right edge sits exactly on B's midpoint
+        let cross = b.center().x - a.width() + grab;
+        let (_, shapes) = s.move_to(egui::pos2(cross + 1.0, from.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "within the 2-pt hysteresis past the midpoint B stays put");
+        assert!(near(painted(&shapes, "C").0, c.left()));
+        let (_, shapes) = s.move_to(egui::pos2(cross + 3.0, from.y));
+        assert!(near(painted(&shapes, "B").0, a.left()), "clear of the midpoint B jumps into A's old slot");
+        assert!(near(painted(&shapes, "C").0, c.left()), "C is untouched (the gap is between B and C)");
+        // and back: B returns as soon as the edge is back on the near side
+        let (_, shapes) = s.move_to(egui::pos2(cross - 3.0, from.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "coming back, B returns to its own slot");
+
+        // dragging C leftwards over B
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let from = egui::pos2(c.left() + grab, c.center().y);
+        s.begin_drag(from, -1.0);
+        // pointer at which C's left edge sits exactly on B's midpoint
+        let cross = b.center().x + grab;
+        let (_, shapes) = s.move_to(egui::pos2(cross - 1.0, from.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "within the 2-pt hysteresis past the midpoint B stays put");
+        let (_, shapes) = s.move_to(egui::pos2(cross - 3.0, from.y));
+        assert!(near(painted(&shapes, "B").0, c.left()), "clear of the midpoint B jumps into C's old slot");
+        assert!(near(painted(&shapes, "A").0, a.left()), "A is untouched");
+        let (_, shapes) = s.move_to(egui::pos2(cross + 3.0, from.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "coming back, B returns");
+    }
+
+    /// P16 (c): the release commits exactly the gap's slot through `ReorderDocument` (the Workspace
+    /// still owns the order — the strip only requests the move), and the next frame is at rest.
+    #[test]
+    fn release_commits_the_gap_slot() {
+        let key = egui::Id::new(TAB_DRAG_KEY);
+        // A dragged right past B's midpoint → gap between B and C → full slot 2 ([B, A, C])
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let (a, b) = (s.home("A"), s.home("B"));
+        let from = egui::pos2(a.left() + 20.0, a.center().y);
+        s.begin_drag(from, 1.0);
+        let to = egui::pos2(b.center().x - a.width() + 20.0 + 3.0, from.y);
+        let _ = s.move_to(to);
+        assert!(s.ctx.data(|d| d.get_temp::<TabDrag>(key)).is_some(), "the drag is live");
+        let (cmds, _) = s.release(to);
+        assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(1), 2)]);
+        assert!(s.ctx.data(|d| d.get_temp::<TabDrag>(key)).is_none(), "released: no drag left");
+        let (cmds, shapes) = s.idle();
+        assert!(cmds.is_empty() && near(painted(&shapes, "A").0, a.left()), "next frame is at rest");
+        let mut ws = crate::workspace::Workspace::new();
+        ws.new_untitled();
+        ws.new_untitled();
+        let ids: Vec<SessionId> = ws.sessions().iter().map(|t| t.id).collect();
+        assert!(ws.reorder(ids[0], 2), "slot 2 moves the first tab");
+        assert_eq!(ws.sessions().iter().map(|t| t.id).collect::<Vec<_>>(), [ids[1], ids[0], ids[2]]);
+
+        // C dragged left past B's midpoint → gap between A and B → full slot 1
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let c = s.home("C");
+        let from = egui::pos2(c.left() + 20.0, c.center().y);
+        s.begin_drag(from, -1.0);
+        let to = egui::pos2(b.center().x + 20.0 - 3.0, from.y);
+        let _ = s.move_to(to);
+        assert_eq!(s.release(to).0, [AppCommand::ReorderDocument(SessionId(3), 1)]);
+
+        // lifted but dropped before any midpoint → its own slot (a no-op for `Workspace::reorder`)
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        s.begin_drag(egui::pos2(b.left() + 20.0, b.center().y), 1.0);
+        let to = egui::pos2(b.left() + 30.0, b.center().y);
+        assert_eq!(s.release(to).0, [AppCommand::ReorderDocument(SessionId(2), 1)]);
+    }
+
+    fn esc() -> RawInput {
+        RawInput {
+            screen_rect: Some(screen_rect()),
+            events: vec![Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// P16 (d): Esc during the drag, or the window losing focus, cancels — every chip snaps back
+    /// to rest in that same frame and the later release commits nothing.
+    #[test]
+    fn esc_or_focus_loss_cancels_the_drag_and_restores_the_order() {
+        for cancel in ["esc", "focus"] {
+            let mut s = Strip::new(&["A", "B", "C"], 0);
+            let (a, b, c) = (s.home("A"), s.home("B"), s.home("C"));
+            let from = egui::pos2(a.left() + 20.0, a.center().y);
+            s.begin_drag(from, 1.0);
+            let to = egui::pos2(c.center().x, from.y); // well past B: the gap sits after B
+            let (_, shapes) = s.move_to(to);
+            assert!(near(painted(&shapes, "B").0, a.left()), "{cancel}: setup — B had moved over");
+            assert!(s.ctx.dragged_id().is_some(), "{cancel}: setup — egui is dragging");
+            let (cmds, shapes) = match cancel {
+                "esc" => s.run(esc()),
+                _ => s.run(RawInput { screen_rect: Some(screen_rect()), focused: false, ..Default::default() }),
+            };
+            assert!(cmds.is_empty(), "{cancel}: cancel raises nothing");
+            for (label, home) in [("A", a), ("B", b), ("C", c)] {
+                assert!(near(painted(&shapes, label).0, home.left()), "{cancel}: {label} is back at rest");
+            }
+            assert!(!s.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY)).is_some()));
+            assert!(s.ctx.dragged_id().is_none(), "{cancel}: egui's drag is stopped too");
+            // still holding the button: moving no longer lifts anything, the release commits nothing
+            let (_, shapes) = s.move_to(egui::pos2(to.x + 10.0, to.y));
+            assert!(near(painted(&shapes, "A").0, a.left()), "{cancel}: nothing re-lifts");
+            let (cmds, _) = s.release(egui::pos2(to.x + 10.0, to.y));
+            assert!(
+                !cmds.iter().any(|c| matches!(c, AppCommand::ReorderDocument(..))),
+                "{cancel}: no reorder after a cancel, got {cmds:?}"
+            );
+        }
+    }
+
+    /// P16 (e): 8 tabs overflowing the strip (the active one displaced into the last drawn slot,
+    /// S1 F7): the active chip lifts, the drawn chips reflow around the gap, the release lands in the
+    /// FULL order, and while lifted egui owns the pointer — the macOS caption gate
+    /// (`mac_caption::caption_drag_allowed`) refuses a window drag, and the published caption
+    /// exclusions stay the resting slots (`interactive_rects`, P15).
+    #[test]
+    fn eight_tab_overflow_lifted_drag_lands_in_the_full_order() {
+        let names: Vec<String> = (1..=8).map(|i| format!("Brand guidelines draft {i}")).collect();
+        let labels: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut s = Strip::new(&labels, 7);
+        let layout = s.layout();
+        let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
+        assert!(drawn.len() < 8 && drawn.len() >= 3, "setup: overflow, got {drawn:?}");
+        assert_eq!(*drawn.last().unwrap(), 7, "setup: the active tab is drawn last");
+        let (r0, r1) = (layout.tabs[0].1, layout.tabs[1].1);
+        let rl = layout.tabs.last().unwrap().1;
+        let from = egui::pos2(rl.left() + 20.0, rl.center().y);
+        s.begin_drag(from, -1.0);
+        let to = egui::pos2(r1.left() + 20.0, from.y); // the lifted chip sits exactly on chip 1's slot
+        let (_, shapes) = s.move_to(to);
+        assert!(near(painted(&shapes, labels[7]).0, r1.left()), "the active chip is lifted onto slot 1");
+        assert!(near(painted(&shapes, labels[drawn[0]]).0, r0.left()), "chip 0 stays");
+        assert!(
+            near(painted(&shapes, labels[drawn[1]]).0, r1.left() + rl.width() + crate::chrome::TAB_GAP),
+            "chip 1 moves right by the lifted chip's width + gap"
+        );
+        let strip = layout.tab_strip().unwrap();
+        for &(i, _) in &layout.tabs {
+            let (left, _, _) = painted(&shapes, labels[i]);
+            assert!(left >= strip.min - 0.5, "chip {i} stays inside the strip");
+        }
+        assert!(s.ctx.dragged_id().is_some(), "while lifted, egui owns the pointer");
+        #[cfg(target_os = "macos")]
+        assert!(!crate::mac_caption::caption_drag_allowed(true, false, s.ctx.dragged_id().is_some()));
+        let (cmds, _) = s.release(to);
+        assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(8), drawn[1])]);
+    }
+
+    /// P16 (f): a press + a move smaller than egui's drag threshold + release is a plain activate —
+    /// nothing lifts, nothing reorders.
+    #[test]
+    fn a_sub_threshold_click_only_activates() {
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let b = s.home("B");
+        let at = egui::pos2(b.left() + 20.0, b.center().y);
+        let _ = s.idle();
+        let _ = s.press(at);
+        let (_, shapes) = s.move_to(egui::pos2(at.x + 2.0, at.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "under the threshold the chip does not lift");
+        assert!(s.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY))).is_none());
+        let (cmds, _) = s.release(egui::pos2(at.x + 2.0, at.y));
+        assert_eq!(cmds, [AppCommand::ActivateDocument(SessionId(2))]);
+    }
+
+    /// Commit `cmds` to a real `Workspace` holding the strip's tabs (ids 1..=n, same order, same
+    /// active) and return the tab ids the strip DRAWS afterwards, left → right.
+    fn drawn_after(s: &Strip, cmds: &[AppCommand]) -> Vec<SessionId> {
+        let mut ws = crate::workspace::Workspace::new();
+        for _ in 1..s.tabs.len() {
+            ws.new_untitled();
+        }
+        assert!(ws.activate(s.active.unwrap()));
+        for c in cmds {
+            if let AppCommand::ReorderDocument(id, slot) = *c {
+                ws.reorder(id, slot);
+            }
+        }
+        let label = |id: SessionId| s.tabs.iter().find(|t| t.id == id).unwrap().label.clone();
+        let after: Vec<TabView> = ws.sessions().iter().map(|t| tab(t.id.0, &label(t.id), false)).collect();
+        let layout = measure(&s.ctx, &after, s.active);
+        layout.tabs.iter().map(|&(i, _)| after[i].id).collect()
+    }
+
+    /// Codex review of P16 (HIGH): on an overflowing strip (the active tab displaced into the last
+    /// drawn slot, hidden tabs between it and the rest) a tab dropped into a VISIBLE gap must land in
+    /// that visible neighbour relation and stay visible — never behind the hidden tabs.
+    #[test]
+    fn overflow_drop_lands_beside_the_visible_neighbours_and_stays_visible() {
+        let names: Vec<String> = (1..=8).map(|i| format!("Brand guidelines draft {i}")).collect();
+        let labels: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut s = Strip::new(&labels, 7);
+        let layout = s.layout();
+        let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
+        let k = drawn.len();
+        assert!((3..8).contains(&k) && drawn[k - 1] == 7, "setup: overflow with the active tab last, got {drawn:?}");
+        // tab 1 lifted onto the slot of the last NON-active drawn chip → the gap sits between that
+        // chip and the active one
+        let (r0, rk) = (layout.tabs[0].1, layout.tabs[k - 2].1);
+        let from = egui::pos2(r0.left() + 20.0, r0.center().y);
+        s.begin_drag(from, 1.0);
+        let to = egui::pos2(rk.left() + 20.0, from.y);
+        let _ = s.move_to(to);
+        let (cmds, _) = s.release(to);
+        let after = drawn_after(&s, &cmds);
+        let d = after.iter().position(|&id| id == SessionId(1));
+        assert!(d.is_some(), "the dropped tab vanished behind the hidden tabs: drawn after = {after:?}");
+        let d = d.unwrap();
+        assert_eq!(after[d - 1], SessionId(drawn[k - 2] as u64 + 1), "left neighbour is the one it was dropped after");
+        assert_eq!(after[d + 1], SessionId(8), "right neighbour is the active tab it was dropped before");
+    }
+
+    /// Codex review of P16 (HIGH): dropping past the LAST visible tab (the displaced active one) of
+    /// an overflowing strip keeps the dropped tab visible.
+    #[test]
+    fn overflow_drop_after_the_last_visible_tab_stays_visible() {
+        let names: Vec<String> = (1..=8).map(|i| format!("Brand guidelines draft {i}")).collect();
+        let labels: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut s = Strip::new(&labels, 7);
+        let r0 = s.layout().tabs[0].1;
+        let from = egui::pos2(r0.left() + 20.0, r0.center().y);
+        s.begin_drag(from, 1.0);
+        let to = egui::pos2(1390.0, from.y); // clamped at the strip's end, past the active tab
+        let _ = s.move_to(to);
+        let (cmds, _) = s.release(to);
+        assert!(matches!(cmds[..], [AppCommand::ReorderDocument(SessionId(1), _)]), "got {cmds:?}");
+        let after = drawn_after(&s, &cmds);
+        assert!(after.contains(&SessionId(1)), "the dropped tab must stay visible: drawn after = {after:?}");
+        assert!(after.contains(&SessionId(8)), "the active tab stays visible (S1 F7)");
+    }
+
+    /// Codex review of P16 (MEDIUM): the tab list changing under a live drag (a tab closed by ⌘W,
+    /// a new / opened document, Ctrl+Tab switching the active tab) cancels it — chips back at rest,
+    /// nothing committed.
+    #[test]
+    fn a_workspace_change_mid_drag_cancels_it() {
+        for change in ["close", "new", "switch", "reorder"] {
+            let mut s = Strip::new(&["A", "B", "C"], 0);
+            let (a, b) = (s.home("A"), s.home("B"));
+            let from = egui::pos2(a.left() + 20.0, a.center().y);
+            s.begin_drag(from, 1.0);
+            let to = egui::pos2(b.center().x + 10.0, from.y);
+            let (_, shapes) = s.move_to(to);
+            assert!(near(painted(&shapes, "B").0, a.left()), "{change}: setup — B had moved over");
+            match change {
+                "close" => drop(s.tabs.remove(2)),
+                "new" => s.tabs.push(tab(4, "D", false)),
+                "switch" => s.active = Some(SessionId(2)),
+                _ => s.tabs.swap(1, 2),
+            }
+            let (_, shapes) = s.move_to(egui::pos2(to.x + 1.0, to.y));
+            assert!(near(painted(&shapes, "A").0, a.left()), "{change}: A must be back at rest");
+            let (cmds, _) = s.release(egui::pos2(to.x + 1.0, to.y));
+            assert!(
+                !cmds.iter().any(|c| matches!(c, AppCommand::ReorderDocument(..))),
+                "{change}: nothing may be committed, got {cmds:?}"
+            );
+        }
     }
 
     /// The dirty dot (`tab_item`): a filled `MUTED` circle appears in the chip's clip rect only when

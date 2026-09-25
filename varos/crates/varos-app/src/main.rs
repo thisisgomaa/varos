@@ -1309,6 +1309,8 @@ fn main() {
                             && matches!(code, KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter)
                         {
                             /* the dialog owns these */
+                        } else if gui.tab_drag_active() && code == KeyCode::Escape {
+                            /* P16: Esc cancels the tab drag (the strip reads it) — not also a canvas deselect */
                         } else if code == KeyCode::Space {
                             // A9: `Editor::space` lets a live placement drag reposition on Space
                             let down = event.state == ElementState::Pressed;
