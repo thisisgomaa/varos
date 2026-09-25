@@ -1219,6 +1219,10 @@ impl Ui {
         view: View,
         maximized: bool,
     ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
+        // host seed of egui's focus flag from winit (startup, activation, un-occlusion alike) — see
+        // `egui_focus_seed`
+        let raw = self.state.egui_input_mut();
+        raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
         let input = self.state.take_egui_input(window);
         set_doc_salt(&self.ctx, self.doc_active); // per-widget edit state stays inside its document
         let snap = Snap::read(ed);
@@ -3392,6 +3396,17 @@ fn menu_sep(ui: &mut egui::Ui) {
     ui.add_space(4.0);
 }
 
+/// egui's window-focus flag for this frame, seeded by the host (P16 owner re-test, 2026-09-26).
+/// egui-winit starts `RawInput::focused` at `false` and on macOS only updates it on a winit `Focused`
+/// event — a bundle launched via `open` ran a whole session without one, so egui believed the window
+/// unfocused: every text field lost its typed buffer and caret (`Response::has_focus` reads the flag)
+/// and the tab drag cancelled itself. `window_key` = winit's `window.has_focus()` (AppKit's
+/// `isKeyWindow`) read this frame: a key window is focused. It only ever RAISES the flag — losing
+/// focus stays winit's own `Focused(false)` path.
+pub(crate) fn egui_focus_seed(window_key: bool, egui_focused: bool) -> bool {
+    egui_focused || window_key
+}
+
 /// The live tab drag (P16). Kept in egui temp memory under ONE fixed id (`TAB_DRAG_KEY`) so the host
 /// can ask `Gui::tab_drag_active` — Esc then cancels the drag instead of also reaching the canvas.
 #[derive(Clone, Debug, PartialEq)]
@@ -3437,10 +3452,20 @@ fn tab_drag_update(
         ctx.data_mut(|d| d.remove::<TabDrag>(key));
     };
     let mut state: Option<TabDrag> = ctx.data(|d| d.get_temp(key));
+    // Focus loss = the window-focus EVENT arriving this frame, never the `InputState::focused` level
+    // (egui-winit's flag was stuck `false` on macOS bundle launches and cancelled every drag — P16
+    // owner re-test, 2026-09-26). Checked for the WHOLE frame: a frame that loses focus never starts
+    // a drag either, even when the threshold is crossed in that same frame (Codex review).
+    let focus_lost = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::WindowFocused(false))));
+    let chip_started = ctx.drag_started_id().is_some_and(|d| layout.tabs.iter().any(|&(i, _)| chip_id(i) == d));
+    if focus_lost && (state.is_some() || chip_started) {
+        clear(); // cancel: nothing is committed, the chips paint at rest this very frame
+        return None;
+    }
     if let Some(s) = &state {
         let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let changed = s.active != active || !s.order.iter().copied().eq(tabs.iter().map(|t| t.id));
-        if esc || changed || !ctx.input(|i| i.focused) {
+        if esc || changed {
             clear(); // cancel: nothing is committed, the chips paint at rest this very frame
             return None;
         }
@@ -7086,6 +7111,10 @@ mod tab_strip_tests {
         rail: bool,
         dock: bool,
         snap: varos_core::model::SnapConfig,
+        /// `RawInput::focused` on every frame. egui-winit STARTS at `false` and on macOS only flips it
+        /// when a winit `Focused` event arrives — which a real session may never deliver (observed:
+        /// the app launched as a bundle ran a whole session with `focused == false`).
+        focused: bool,
     }
 
     impl Strip {
@@ -7100,6 +7129,7 @@ mod tab_strip_tests {
                 rail: true,
                 dock: true,
                 snap: varos_core::model::SnapConfig::default(),
+                focused: true,
             }
         }
         fn layout(&self) -> crate::chrome::TopbarLayout {
@@ -7110,7 +7140,8 @@ mod tab_strip_tests {
             let i = self.tabs.iter().position(|t| t.label == label).expect("a tab with that label");
             self.layout().tabs.iter().find(|&&(j, _)| j == i).expect("chip is drawn").1
         }
-        fn run(&mut self, input: RawInput) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+        fn run(&mut self, mut input: RawInput) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            input.focused &= self.focused;
             let mut win_action = None;
             let mut cmds = Vec::new();
             let (tabs, active) = (&self.tabs, self.active);
@@ -7313,7 +7344,13 @@ mod tab_strip_tests {
             assert!(s.ctx.dragged_id().is_some(), "{cancel}: setup — egui is dragging");
             let (cmds, shapes) = match cancel {
                 "esc" => s.run(esc()),
-                _ => s.run(RawInput { screen_rect: Some(screen_rect()), focused: false, ..Default::default() }),
+                // the window really losing focus: winit's `Focused(false)` → egui's `WindowFocused(false)`
+                _ => s.run(RawInput {
+                    screen_rect: Some(screen_rect()),
+                    focused: false,
+                    events: vec![Event::WindowFocused(false)],
+                    ..Default::default()
+                }),
             };
             assert!(cmds.is_empty(), "{cancel}: cancel raises nothing");
             for (label, home) in [("A", a), ("B", b), ("C", c)] {
@@ -7330,6 +7367,28 @@ mod tab_strip_tests {
                 "{cancel}: no reorder after a cancel, got {cmds:?}"
             );
         }
+
+        // Codex review: the focus loss arriving in the SAME frame as the threshold crossing — a drag
+        // must never start in a frame that contains `WindowFocused(false)`
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let (a, b) = (s.home("A"), s.home("B"));
+        let from = egui::pos2(a.left() + 20.0, a.center().y);
+        let _ = s.idle();
+        let _ = s.press(from);
+        let cross = egui::pos2(b.center().x + 10.0, from.y);
+        let (_, shapes) = s.run(RawInput {
+            screen_rect: Some(screen_rect()),
+            focused: false,
+            events: vec![Event::PointerMoved(cross), Event::WindowFocused(false)],
+            ..Default::default()
+        });
+        assert!(near(painted(&shapes, "A").0, a.left()), "same-frame focus loss: A never lifts");
+        assert!(near(painted(&shapes, "B").0, b.left()), "same-frame focus loss: no gap opens");
+        assert!(!s.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY)).is_some()));
+        let (_, shapes) = s.move_to(egui::pos2(cross.x + 10.0, cross.y));
+        assert!(near(painted(&shapes, "A").0, a.left()), "same-frame focus loss: nothing lifts later");
+        let (cmds, _) = s.release(egui::pos2(cross.x + 10.0, cross.y));
+        assert!(!cmds.iter().any(|c| matches!(c, AppCommand::ReorderDocument(..))), "got {cmds:?}");
     }
 
     /// P16 (e): 8 tabs overflowing the strip (the active one displaced into the last drawn slot,
@@ -7450,6 +7509,49 @@ mod tab_strip_tests {
         let after = drawn_after(&s, &cmds);
         assert!(after.contains(&SessionId(1)), "the dropped tab must stay visible: drawn after = {after:?}");
         assert!(after.contains(&SessionId(8)), "the active tab stays visible (S1 F7)");
+    }
+
+    /// P16 owner re-test (2026-09-26, "مش شغال" — the tab did not move at all): egui-winit's
+    /// `RawInput::focused` starts `false` and on macOS only changes on a winit `Focused` event, which a
+    /// real session may never get (the bundle launched by `open` ran a whole session with `focused ==
+    /// false`, and every drag was cancelled on its first lifted frame). A stale "unfocused" flag must
+    /// never cancel a drag: an inactive AND the active tab both lift, follow, and commit — 3 and 8 tabs.
+    #[test]
+    fn dragging_any_tab_works_while_egui_believes_the_window_is_unfocused() {
+        let names: Vec<String> = (1..=8).map(|i| format!("Brand guidelines draft {i}")).collect();
+        let eight: Vec<&str> = names.iter().map(String::as_str).collect();
+        for labels in [vec!["A", "B", "C"], eight] {
+            let n = labels.len();
+            for dragged in ["inactive", "active"] {
+                let mut s = Strip::new(&labels, n - 1);
+                s.focused = false;
+                let layout = s.layout();
+                let (r0, r1) = (layout.tabs[0].1, layout.tabs[1].1);
+                let (k, onto) = if dragged == "inactive" { (0, r1) } else { (layout.tabs.len() - 1, r0) };
+                let (i, home) = layout.tabs[k];
+                let from = egui::pos2(home.left() + 20.0, home.center().y);
+                s.begin_drag(from, onto.left() - home.left());
+                let to = egui::pos2(onto.left() + 20.0, from.y);
+                let (_, shapes) = s.move_to(to);
+                let (_, shapes2) = s.move_to(to); // and it is STILL lifted a frame later
+                for sh in [&shapes, &shapes2] {
+                    let left = painted(sh, labels[i]).0;
+                    assert!(
+                        near(left, onto.left()),
+                        "{n} tabs, {dragged}: the chip must follow the pointer, at {left}"
+                    );
+                }
+                let (cmds, _) = s.release(to);
+                let after = drawn_after(&s, &cmds);
+                let id = SessionId(i as u64 + 1);
+                let want = if dragged == "inactive" { 1 } else { 0 };
+                assert_eq!(
+                    after.iter().position(|&t| t == id),
+                    Some(want),
+                    "{n} tabs, {dragged}: {cmds:?} → drawn after {after:?}"
+                );
+            }
+        }
     }
 
     /// Codex review of P16 (MEDIUM): the tab list changing under a live drag (a tab closed by ⌘W,
@@ -7941,5 +8043,69 @@ mod pathfinder_click_tests {
     fn properties_shape_row_buttons_combine_the_selection() {
         click_each_op(PanelId::Properties, false);
         click_each_op(PanelId::Properties, true);
+    }
+}
+
+/// P16 owner re-test / Codex review: egui-winit starts `RawInput::focused` at `false` and on macOS only
+/// updates it on a winit `Focused` event, which a bundle launched via `open` never received — so egui
+/// believed the window unfocused for the whole session. `Response::has_focus()` reads that flag, so
+/// text fields dropped their typed buffers and hid their carets. The host seeds the flag from winit's
+/// `window.has_focus()` every frame (`Ui::run` → `egui_focus_seed`); winit's real `Focused(false)`
+/// path stays untouched.
+#[cfg(test)]
+mod window_focus_tests {
+    use super::*;
+    use egui::{Event, RawInput};
+
+    #[test]
+    fn the_seed_raises_focus_for_a_key_window_and_never_lowers_it() {
+        // (window is key per winit, egui-winit's flag) → the flag egui runs the frame with
+        assert!(egui_focus_seed(true, false), "key window, flag never set (bundle launch): seeded true");
+        assert!(egui_focus_seed(true, true));
+        assert!(!egui_focus_seed(false, false), "a window that is not key stays unfocused");
+        assert!(egui_focus_seed(false, true), "never lowers: losing focus stays winit's Focused(false) path");
+    }
+
+    /// The artboard-name field (`name_field`) on a key window whose egui-winit flag never became
+    /// true: with the host seed the typed text survives across frames and is committed on blur.
+    #[test]
+    fn a_text_field_keeps_its_typed_buffer_once_the_host_seeds_window_focus() {
+        let ctx = egui::Context::default();
+        // the raw input egui-winit hands over on a macOS bundle launch — focused never set — after the
+        // host's seed for a window that IS key
+        let raw = |events: Vec<Event>| {
+            let mut r = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0))),
+                focused: false,
+                events,
+                ..Default::default()
+            };
+            r.focused = egui_focus_seed(true, r.focused);
+            r
+        };
+        let frame = |events: Vec<Event>, focus: bool| {
+            let mut out = None;
+            let _ = ctx.run_ui(raw(events), |ui| {
+                if focus {
+                    let id = doc_id(ui, ("abname", "t"));
+                    ui.memory_mut(|m| m.request_focus(id));
+                }
+                out = name_field(ui, 160.0, "Artboard", "t");
+            });
+            out
+        };
+        let enter = Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        assert_eq!(frame(vec![], false), None);
+        assert_eq!(frame(vec![], true), None, "focus the field");
+        assert_eq!(frame(vec![Event::Text("X".into())], false), None, "type");
+        assert_eq!(frame(vec![], false), None, "a frame later the buffer must still hold the X");
+        let committed = frame(vec![enter], false).expect("Enter commits the buffer");
+        assert!(committed.contains('X') && committed.len() == "Artboard".len() + 1, "committed {committed:?}");
     }
 }
