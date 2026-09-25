@@ -1,5 +1,5 @@
 {
-  "_about": "Varos cursor set v1.1 (2026-09-25; v1 2026-09-23). Hotspots in 32px-logical space, same convention as cursors.rs ai_svg(): scale by CURSOR_PX/32 then round. Geometric point = (hx+0.25, hy+0.25) = centre of the hotspot device pixel at 2x. 'ck' = every CK variant (all 31 in ALL_CURSORS) -> file + hotspot; 'proposed_ck' = drawn states with no CK yet (no Zoom tool; no not-allowed state); 'files' = each SVG -> hotspot. Move deliberately reuses select.svg (Illustrator shows the plain arrow while moving; it drops the hover badge). v1.1: new arrow family (select, direct, copy, no-drop + the three hover-badge arrows), cross.svg replaces shape-rect.svg, Artboard wired. See docs/studies/2026-09-23-CURSOR_SET_V1.md section 9.",
+  "_about": "Varos cursor set v1.1 (2026-09-25; v1 2026-09-23). Hotspots in 32px-logical space, same convention as cursors.rs ai_svg(): scale by CURSOR_PX/32 then round. Geometric point = (hx+0.25, hy+0.25) = centre of the hotspot device pixel at 2x. 'ck' = every CK variant (all 36 in ALL_CURSORS) -> file + hotspot; 'proposed_ck' = drawn states with no CK yet (no Zoom tool; no not-allowed state); 'files' = each SVG -> hotspot. Move deliberately reuses select.svg (Illustrator shows the plain arrow while moving; it drops the hover badge). v1.1: new arrow family (select, direct, copy, no-drop + the three hover-badge arrows), shape-rect.svg deleted; every crosshair tool gets the crosshair + its own badge (cross-rect, cross-ellipse, cross-triangle, cross-polygon, cross-rotate, cross-scale; owner 2026-09-25: the plain cross.svg was rejected and removed), Artboard wired. See docs/studies/2026-09-23-CURSOR_SET_V1.md section 9.",
   "ck": {
     "Select": {"file": "select.svg", "hotspot": [3, 3]},
     "Direct": {"file": "direct.svg", "hotspot": [3, 3]},
@@ -10,7 +10,6 @@
     "PenClose": {"file": "pen-close.svg", "hotspot": [2, 2]},
     "PenConnect": {"file": "pen-connect.svg", "hotspot": [2, 2]},
     "Convert": {"file": "convert.svg", "hotspot": [2, 2]},
-    "Cross": {"file": "cross.svg", "hotspot": [11, 11]},
     "Eye": {"file": "eyedropper.svg", "hotspot": [3, 20]},
     "ResizeH": {"file": "resize-h.svg", "hotspot": [10, 10]},
     "ResizeV": {"file": "resize-v.svg", "hotspot": [10, 10]},
@@ -31,7 +30,13 @@
     "Artboard": {"file": "artboard.svg", "hotspot": [11, 11]},
     "SelectObject": {"file": "select-object.svg", "hotspot": [3, 3]},
     "DirectAnchor": {"file": "direct-anchor.svg", "hotspot": [3, 3]},
-    "DirectPath": {"file": "direct-path.svg", "hotspot": [3, 3]}
+    "DirectPath": {"file": "direct-path.svg", "hotspot": [3, 3]},
+    "CrossRect": {"file": "cross-rect.svg", "hotspot": [11, 11]},
+    "CrossEllipse": {"file": "cross-ellipse.svg", "hotspot": [11, 11]},
+    "CrossTriangle": {"file": "cross-triangle.svg", "hotspot": [11, 11]},
+    "CrossPolygon": {"file": "cross-polygon.svg", "hotspot": [11, 11]},
+    "CrossRotate": {"file": "cross-rotate.svg", "hotspot": [11, 11]},
+    "CrossScale": {"file": "cross-scale.svg", "hotspot": [11, 11]}
   },
   "proposed_ck": {
     "ZoomIn": {"file": "zoom-in.svg", "hotspot": [9, 9]},
@@ -48,7 +53,6 @@
     "pen-close.svg": [2, 2],
     "pen-connect.svg": [2, 2],
     "convert.svg": [2, 2],
-    "cross.svg": [11, 11],
     "eyedropper.svg": [3, 20],
     "resize-h.svg": [10, 10],
     "resize-v.svg": [10, 10],
@@ -69,6 +73,12 @@
     "select-object.svg": [3, 3],
     "direct-anchor.svg": [3, 3],
     "direct-path.svg": [3, 3],
+    "cross-rect.svg": [11, 11],
+    "cross-ellipse.svg": [11, 11],
+    "cross-triangle.svg": [11, 11],
+    "cross-polygon.svg": [11, 11],
+    "cross-rotate.svg": [11, 11],
+    "cross-scale.svg": [11, 11],
     "zoom-in.svg": [9, 9],
     "zoom-out.svg": [9, 9],
     "no-drop.svg": [3, 3]
