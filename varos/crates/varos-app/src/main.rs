@@ -82,7 +82,7 @@ fn native_cursor_apply_needed(pointer_inside: bool, focused: bool) -> bool {
 ///    rotate arrow (never re-hit-tested mid-drag), a Selection move shows the plain arrow (`Move`).
 ///  - Hover badges (Illustrator): Selection over an object → arrow + filled square; Direct Selection over
 ///    an anchor → hollow arrow + hollow square, over a path → hollow arrow + filled square.
-///  - Rotate / Scale / every shape tool: the plain crosshair, on hover and for the whole drag.
+///  - Rotate / Scale / every shape tool: the crosshair + that tool's badge, on hover and for the whole drag.
 ///  - Every tool is matched by name (no catch-all), so a new tool must choose its cursor.
 fn desired_ck(ed: &Editor, world: Pt) -> CK {
     if let Drag::Scale { handle, angle, .. } = ed.drag {
@@ -122,8 +122,13 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
             Some(_) => CK::DirectPath,
             None => CK::Direct,
         },
-        ToolKind::Rotate | ToolKind::Scale => CK::Cross,
-        ToolKind::Rect | ToolKind::Ellipse | ToolKind::Triangle | ToolKind::Polygon => CK::Cross,
+        // crosshair + the tool's own badge, on hover and for the whole drag (owner 2026-09-25)
+        ToolKind::Rotate => CK::CrossRotate,
+        ToolKind::Scale => CK::CrossScale,
+        ToolKind::Rect => CK::CrossRect,
+        ToolKind::Ellipse => CK::CrossEllipse,
+        ToolKind::Triangle => CK::CrossTriangle,
+        ToolKind::Polygon => CK::CrossPolygon,
         ToolKind::Convert => CK::Convert,
         ToolKind::Eyedropper => CK::Eye,
         ToolKind::Pen => match ed.pen_hint(world) {
@@ -1540,7 +1545,7 @@ mod cursor_policy_tests {
 
 /// Cursor System v1.1 (2026-09-25): (tool, hover, drag) → cursor, driven through the REAL editor
 /// (pointer_down / pointer_move, no GPU, no window). Each row checks the CK AND the SVG file it shows, so
-/// a state that keeps its CK but changes glyph (Cross: shape-rect.svg → cross.svg) is caught too.
+/// a state that keeps its CK but changes glyph is caught too.
 #[cfg(test)]
 mod cursor_state_tests {
     use super::{desired_ck, CK};
@@ -1641,35 +1646,79 @@ mod cursor_state_tests {
             r("A over a segment", T::Direct, false, Hover([50.0, 1.0]), CK::DirectPath, "direct-path.svg"),
             r("A over a fill", T::Direct, false, Hover([50.0, 50.0]), CK::DirectPath, "direct-path.svg"),
             r("A dragging an anchor", T::Direct, false, Press([0.0, 0.0], &[[30.0, 30.0]]), CK::Direct, "direct.svg"),
-            // ---- Rotate (R) / Scale (S): plain crosshair on hover AND for the whole drag ----
-            r("R hover", T::Rotate, true, Hover([150.0, 50.0]), CK::Cross, "cross.svg"),
-            r("R pressed (pivot click pending)", T::Rotate, true, Press([150.0, 50.0], &[]), CK::Cross, "cross.svg"),
+            // ---- Rotate (R) / Scale (S): crosshair + own badge on hover AND for the whole drag ----
+            r("R hover", T::Rotate, true, Hover([150.0, 50.0]), CK::CrossRotate, "cross-rotate.svg"),
+            r(
+                "R pressed (pivot click pending)",
+                T::Rotate,
+                true,
+                Press([150.0, 50.0], &[]),
+                CK::CrossRotate,
+                "cross-rotate.svg",
+            ),
             r(
                 "R dragging (rotating)",
                 T::Rotate,
                 true,
                 Press([150.0, 50.0], &[[120.0, 120.0], [50.0, 50.0]]),
-                CK::Cross,
-                "cross.svg",
+                CK::CrossRotate,
+                "cross-rotate.svg",
             ),
-            r("S hover", T::Scale, true, Hover([150.0, 50.0]), CK::Cross, "cross.svg"),
-            r("S pressed (pivot click pending)", T::Scale, true, Press([150.0, 50.0], &[]), CK::Cross, "cross.svg"),
+            r("S hover", T::Scale, true, Hover([150.0, 50.0]), CK::CrossScale, "cross-scale.svg"),
+            r(
+                "S pressed (pivot click pending)",
+                T::Scale,
+                true,
+                Press([150.0, 50.0], &[]),
+                CK::CrossScale,
+                "cross-scale.svg",
+            ),
             r(
                 "S dragging (scaling)",
                 T::Scale,
                 true,
                 Press([150.0, 50.0], &[[180.0, 80.0], [50.0, 50.0]]),
-                CK::Cross,
-                "cross.svg",
+                CK::CrossScale,
+                "cross-scale.svg",
             ),
-            // ---- shape tools: plain crosshair (Illustrator), no badge ----
-            r("Rect hover", T::Rect, false, Hover([300.0, 300.0]), CK::Cross, "cross.svg"),
-            r("Ellipse hover", T::Ellipse, false, Hover([300.0, 300.0]), CK::Cross, "cross.svg"),
-            r("Triangle hover", T::Triangle, false, Hover([300.0, 300.0]), CK::Cross, "cross.svg"),
-            r("Polygon hover", T::Polygon, false, Hover([300.0, 300.0]), CK::Cross, "cross.svg"),
-            r("Rect hover over an object", T::Rect, false, Hover([50.0, 50.0]), CK::Cross, "cross.svg"),
-            r("Rect drawing", T::Rect, false, Press([300.0, 300.0], &[[360.0, 380.0]]), CK::Cross, "cross.svg"),
-            r("Ellipse drawing", T::Ellipse, false, Press([300.0, 300.0], &[[360.0, 380.0]]), CK::Cross, "cross.svg"),
+            // ---- shape tools: crosshair + each tool's own badge (owner 2026-09-25) ----
+            r("Rect hover", T::Rect, false, Hover([300.0, 300.0]), CK::CrossRect, "cross-rect.svg"),
+            r("Ellipse hover", T::Ellipse, false, Hover([300.0, 300.0]), CK::CrossEllipse, "cross-ellipse.svg"),
+            r("Triangle hover", T::Triangle, false, Hover([300.0, 300.0]), CK::CrossTriangle, "cross-triangle.svg"),
+            r("Polygon hover", T::Polygon, false, Hover([300.0, 300.0]), CK::CrossPolygon, "cross-polygon.svg"),
+            r("Rect hover over an object", T::Rect, false, Hover([50.0, 50.0]), CK::CrossRect, "cross-rect.svg"),
+            r(
+                "Rect drawing",
+                T::Rect,
+                false,
+                Press([300.0, 300.0], &[[360.0, 380.0]]),
+                CK::CrossRect,
+                "cross-rect.svg",
+            ),
+            r(
+                "Ellipse drawing",
+                T::Ellipse,
+                false,
+                Press([300.0, 300.0], &[[360.0, 380.0]]),
+                CK::CrossEllipse,
+                "cross-ellipse.svg",
+            ),
+            r(
+                "Triangle drawing",
+                T::Triangle,
+                false,
+                Press([300.0, 300.0], &[[360.0, 380.0]]),
+                CK::CrossTriangle,
+                "cross-triangle.svg",
+            ),
+            r(
+                "Polygon drawing",
+                T::Polygon,
+                false,
+                Press([300.0, 300.0], &[[360.0, 380.0]]),
+                CK::CrossPolygon,
+                "cross-polygon.svg",
+            ),
             // ---- Artboard (Shift+O): its own crosshair + frame badge ----
             r("Artboard over empty board", T::Artboard, false, Hover([5000.0, 5000.0]), CK::Artboard, "artboard.svg"),
             r(
