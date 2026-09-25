@@ -29,6 +29,23 @@ runs a path that already exists; no new editor behaviour.
   toggles zoom (what the native title bar did). Floating egui layers and active widget drags take
   priority over the caption geometry. Zoom requires two presses within 350 ms and 4 logical px,
   with no intervening window drag; dragging or zooming clears the pending click.
+- **No native drag region (P15, owner 2026-09-25: "dragging a tab moves the whole window").**
+  With a full-size content view, the top 28 pt of winit's content view lie in the title-bar area,
+  and AppKit makes every view there that answers YES to `mouseDownCanMoveWindow` a window-drag
+  region. A plain NSView is not opaque, so it answers YES (measured on this Mac:
+  `isOpaque=false mouseDownCanMoveWindow=true`), and winit 0.30.13's view does not override it — so
+  the whole bar, tabs and buttons included, dragged the window in the window server; egui saw the
+  press but never the motion, so tabs never reordered. Fix: at startup the content view's class
+  answers NO (`mac_caption::forbid_native_window_drag`, installed by
+  `mac_menu::forbid_native_titlebar_drag`). Our `drag_window()` on empty bar space is now the ONLY
+  drag path; `performWindowDragWithEvent` does not depend on that answer.
+- **One exclusion list.** The rects a press belongs to come from `TopbarLayout::interactive_rects`
+  (every control, each tab chip's FULL slot with its ×, the `+` chip, Windows' caps), published
+  through `chrome::caption_exclusions` (rounded outward) and read by the same `chrome::caption_hit`
+  on macOS (`caption_drag_hit`) and Windows (`WM_NCHITTEST`). GPU-free tests:
+  `a_press_on_any_tab_slot_or_plus_never_drags_the_window`, `a_press_on_empty_bar_space_drags_the_window`,
+  `overflow_slots_with_eight_tabs_are_still_covered`, `eight_tab_overflow_drag_reorders_and_never_starts_a_window_drag`,
+  `content_view_class_never_lets_appkit_drag_the_window`. Real-window hand-test pending.
 
 ## B. Opaque
 - `with_transparent(true)` (for the floating splash) is **off on macOS**; the NSWindow background is

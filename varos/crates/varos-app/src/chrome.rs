@@ -2,7 +2,9 @@
 //!
 //! * `TOPBAR`: how our own top bar sits in the window on this platform (left inset for the macOS
 //!   traffic lights, whether we paint our own ─ ☐ ✕ caps).
-//! * `caption_hit`: is a physical-px point on the EMPTY part of the bar (the drag band)?
+//! * `caption_hit`: is a physical-px point on the EMPTY part of the bar (the drag band)? Its
+//!   exclusions come from ONE list, `TopbarLayout::interactive_rects` — the same rects the bar's
+//!   controls and tab chips are hit-tested with — on Windows (`WM_NCHITTEST`) and macOS alike.
 //! * `menus()`: the native macOS menu bar as a table. Every item is a MIRROR of a path that already
 //!   exists — a ⌘-shortcut keystroke, the ✕ close path, or a toggle an egui menu already offers.
 //!   The AppKit glue that turns this table into an NSMenu lives in `mac_menu.rs` (macOS only).
@@ -116,6 +118,36 @@ pub fn topbar_layout(
     let plus_left = tx.min(tabs_right - PLUS_W).max(start_x);
     let plus = Some(Rect::from_min_size(pos2(plus_left, cy - 14.0), vec2(PLUS_W, 28.0)));
     TopbarLayout { caps, menu, magnet, window, share, export, search, tabs, plus }
+}
+
+impl TopbarLayout {
+    /// Every bar rect a press BELONGS to (a control, a tab chip's FULL slot — its × lives inside it —
+    /// the `+` chip, the burger, the right cluster, Windows' caps). This one list is what the bar
+    /// publishes as the caption exclusions (`caption_exclusions` → `cursors::set_caption`), so the
+    /// Windows `WM_NCHITTEST` band and the macOS `caption_drag_hit` test exactly the rects the strip
+    /// draws and hit-tests — never a second, hand-kept copy (P15).
+    pub fn interactive_rects(&self) -> Vec<egui::Rect> {
+        let mut out: Vec<egui::Rect> = self.caps.map_or_else(Vec::new, |c| c.to_vec());
+        out.extend([self.magnet, self.window, self.share, self.export, self.search, self.menu]);
+        out.extend(self.tabs.iter().map(|&(_, r)| r));
+        out.extend(self.plus);
+        out
+    }
+}
+
+/// Logical rects → the physical-px `[l, t, r, b]` exclusions `caption_hit` reads. Rounded OUTWARD
+/// (floor / ceil), so a fractional scale factor can only grow a control's no-drag area, never shave a
+/// sliver off its edge that would start a window drag.
+pub fn caption_exclusions(rects: &[egui::Rect], pixels_per_point: f32) -> Vec<[i32; 4]> {
+    rects
+        .iter()
+        .map(|r| {
+            let s = |v: f32, up: bool| {
+                (if up { (v * pixels_per_point).ceil() } else { (v * pixels_per_point).floor() }) as i32
+            };
+            [s(r.left(), false), s(r.top(), false), s(r.right(), true), s(r.bottom(), true)]
+        })
+        .collect()
 }
 
 pub fn tab_close_rect(tab: egui::Rect) -> egui::Rect {
@@ -600,6 +632,106 @@ mod tests {
         assert!(!caption_hit(92, &excl, 150, 10), "an interactive rect is not a drag spot");
         assert!(!caption_hit(92, &excl, 50, 92), "below the band");
         assert!(!caption_hit(0, &[], 50, 0), "no band published yet (splash) → never drag");
+    }
+
+    /// P15: the caption predicate exactly as both platforms run it — `interactive_rects` published
+    /// through `caption_exclusions` at scale `ppp`, then `caption_hit` on a physical-px point. True =
+    /// a press here drags the window.
+    fn drags_window(layout: &TopbarLayout, chrome: TopbarChrome, ppp: f32, pos: egui::Pos2) -> bool {
+        let excl = caption_exclusions(&layout.interactive_rects(), ppp);
+        caption_hit((chrome.height * ppp) as i32, &excl, (pos.x * ppp) as i32, (pos.y * ppp) as i32)
+    }
+
+    /// Points on a chip's FULL slot a press can land on: centre, the four inner corners, the ×.
+    fn slot_points(r: egui::Rect) -> [egui::Pos2; 6] {
+        let i = r.shrink(0.5);
+        [r.center(), i.left_top(), i.right_top(), i.left_bottom(), i.right_bottom(), tab_close_rect(r).center()]
+    }
+
+    #[test]
+    fn a_press_on_any_tab_slot_or_plus_never_drags_the_window() {
+        for chrome in [topbar_chrome(true), topbar_chrome(false)] {
+            for ppp in [1.0, 1.25, 1.5, 2.0] {
+                let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, chrome.height));
+                let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &[60.0, 90.0, 120.0], Some(1));
+                assert_eq!(layout.tabs.len(), 3, "setup: all three chips drawn");
+                for &(i, r) in &layout.tabs {
+                    for pos in slot_points(r) {
+                        assert!(!drags_window(&layout, chrome, ppp, pos), "tab {i} at {pos:?} (ppp {ppp}) drags");
+                    }
+                }
+                let plus = layout.plus.expect("+ is placed");
+                for pos in [plus.center(), plus.shrink(0.5).left_top(), plus.shrink(0.5).right_bottom()] {
+                    assert!(!drags_window(&layout, chrome, ppp, pos), "+ at {pos:?} (ppp {ppp}) drags");
+                }
+                for r in [layout.menu, layout.magnet, layout.window, layout.share, layout.export, layout.search] {
+                    assert!(!drags_window(&layout, chrome, ppp, r.center()), "control {r:?} (ppp {ppp}) drags");
+                }
+                if let Some(caps) = layout.caps {
+                    for r in caps {
+                        assert!(!drags_window(&layout, chrome, ppp, r.center()), "cap {r:?} drags");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_press_on_empty_bar_space_drags_the_window() {
+        for chrome in [topbar_chrome(true), topbar_chrome(false)] {
+            for ppp in [1.0, 1.25, 2.0] {
+                let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, chrome.height));
+                let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &[60.0, 90.0], Some(0));
+                let plus = layout.plus.expect("+ is placed");
+                let y = bar.center().y;
+                // the open stretch between `+` and the search pill — the main drag handle
+                let open = egui::pos2((plus.right() + layout.search.left()) / 2.0, y);
+                assert!(layout.search.left() - plus.right() > 40.0, "setup: a real empty stretch");
+                assert!(drags_window(&layout, chrome, ppp, open), "empty bar at {open:?} (ppp {ppp})");
+                // the 4-px gap between two chips is empty bar too
+                let gap = egui::pos2((layout.tabs[0].1.right() + layout.tabs[1].1.left()) / 2.0, y);
+                assert!(drags_window(&layout, chrome, ppp, gap), "chip gap at {gap:?} (ppp {ppp})");
+                // above/below a chip, still inside the band
+                let above = egui::pos2(layout.tabs[0].1.center().x, bar.top() + 0.2);
+                if layout.tabs[0].1.top() - bar.top() >= 1.0 {
+                    assert!(drags_window(&layout, chrome, ppp, above), "band above a chip (ppp {ppp})");
+                }
+                // below the band is never a caption
+                assert!(!drags_window(&layout, chrome, ppp, egui::pos2(open.x, bar.bottom() + 1.0)));
+            }
+        }
+    }
+
+    #[test]
+    fn overflow_slots_with_eight_tabs_are_still_covered() {
+        let chrome = topbar_chrome(true);
+        for active in [0, 4, 7] {
+            for width in [800.0, 1100.0] {
+                let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, chrome.height));
+                let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &[140.0; 8], Some(active));
+                assert!(layout.tabs.len() < 8, "setup: 8 tabs overflow at width {width}");
+                assert!(layout.tabs.iter().any(|&(i, _)| i == active), "setup: the active tab is drawn");
+                for ppp in [1.0, 2.0] {
+                    for &(i, r) in &layout.tabs {
+                        for pos in slot_points(r) {
+                            assert!(
+                                !drags_window(&layout, chrome, ppp, pos),
+                                "8 tabs, active {active}, width {width}: chip {i} at {pos:?} (ppp {ppp}) drags"
+                            );
+                        }
+                    }
+                    let plus = layout.plus.expect("+ survives overflow");
+                    assert!(!drags_window(&layout, chrome, ppp, plus.center()));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn caption_exclusions_round_outward() {
+        let r = egui::Rect::from_min_max(egui::pos2(10.3, 2.6), egui::pos2(20.2, 30.7));
+        assert_eq!(caption_exclusions(&[r], 1.0), [[10, 2, 21, 31]]);
+        assert_eq!(caption_exclusions(&[r], 2.0), [[20, 5, 41, 62]]);
     }
 
     #[test]

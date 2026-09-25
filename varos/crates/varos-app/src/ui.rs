@@ -3412,7 +3412,6 @@ fn build_topbar(
     egui::Panel::top("topbar").exact_size(h).frame(frame).show_separator_line(false).show(root, |ui| {
         let bar = ui.max_rect();
         let p = ui.painter().clone();
-        let mut excl: Vec<egui::Rect> = Vec::new();
         let text_width = |text: &str| p.layout_no_wrap(text.to_owned(), FontId::proportional(12.0), TEXT).size().x;
         let tab_widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
         let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
@@ -3436,7 +3435,6 @@ fn build_topbar(
             if winctl(ui, &p, close_r, Cap::Close, "wc-close", CLOSE_RED, true) {
                 *win_action = Some(WinAction::Close);
             }
-            excl.extend([min_r, max_r, close_r]);
         }
 
         // right cluster (§3.5), right→left: window caps · [snapping] · Window · Share · Export · search pill
@@ -3469,7 +3467,6 @@ fn build_topbar(
         // search pill: 🔍 Search — a surface capsule on the void (visual mirror; no function yet, QW7)
         let kpill_r = layout.search;
         search_pill(ui, &p, kpill_r, &top.search);
-        excl.extend([magnet_r, winb.rect, layout.share, layout.export, kpill_r]);
 
         // burger — a flush 36×40 void cell at the far left (§3.5)
         let menu_r = layout.menu;
@@ -3485,7 +3482,6 @@ fn build_topbar(
         if mr.clicked() {
             menu_toggle(ui, menu_id);
         }
-        excl.push(menu_r);
 
         // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5).
         // `layout.tabs` carries each chip's ORIGINAL tab index — not always a 0..n prefix once the
@@ -3515,7 +3511,6 @@ fn build_topbar(
                 }
                 ui.data_mut(|d| d.remove::<SessionId>(drag_id));
             }
-            excl.push(trect);
         }
         // while a chip is being dragged, a 1px TEXT insertion mark shows where it would land — no
         // animation, no shadow (law).
@@ -3532,7 +3527,6 @@ fn build_topbar(
             if topbtn(ui, &p, plus_r, &top.plus, "tb-plus", false).clicked() {
                 cmds.push(AppCommand::NewDocument);
             }
-            excl.push(plus_r);
         }
 
         // dropdowns — the app-bar menus are FLUSH seam extensions of the bar (Ahmed 07-07): same
@@ -3629,14 +3623,11 @@ fn build_topbar(
             }
         });
 
-        // publish caption height + interactive (non-drag) rects, in physical px
+        // publish caption height + interactive (non-drag) rects, in physical px — ONE list, the
+        // layout's own `interactive_rects` (every control and FULL tab slot drawn above), so the OS /
+        // macOS caption band can never disagree with the strip about what a press belongs to (P15).
         let ppp = ui.ctx().pixels_per_point();
-        let px: Vec<[i32; 4]> = excl
-            .iter()
-            .map(|r| {
-                [(r.left() * ppp) as i32, (r.top() * ppp) as i32, (r.right() * ppp) as i32, (r.bottom() * ppp) as i32]
-            })
-            .collect();
+        let px = crate::chrome::caption_exclusions(&layout.interactive_rects(), ppp);
         crate::cursors::set_caption((h * ppp) as i32, &px);
     });
 }
@@ -6909,6 +6900,88 @@ mod tab_strip_tests {
             &mut snap,
         );
         assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(1), 3)]);
+    }
+
+    /// Press at `from`, move past egui's drag threshold, move to `to`, release there — after a warm-up
+    /// frame (see `click_at`). Returns the commands the release frame raised.
+    #[allow(clippy::too_many_arguments)]
+    fn drag(
+        ctx: &egui::Context,
+        from: Pos2,
+        to: Pos2,
+        tabs: &[TabView],
+        active: Option<SessionId>,
+        shell: &mut varos_app::shell::ShellState,
+        rail: &mut bool,
+        dock: &mut bool,
+        snap: &mut varos_core::model::SnapConfig,
+    ) -> Vec<AppCommand> {
+        let moved = |p: Pos2| RawInput {
+            screen_rect: Some(screen_rect()),
+            events: vec![Event::PointerMoved(p)],
+            ..Default::default()
+        };
+        let _ = frame(ctx, idle(), &icons(), shell, tabs, active, rail, dock, snap);
+        let _ = frame(ctx, press(from, PointerButton::Primary), &icons(), shell, tabs, active, rail, dock, snap);
+        let step = if to.x >= from.x { 30.0 } else { -30.0 };
+        let _ = frame(ctx, moved(egui::pos2(from.x + step, from.y)), &icons(), shell, tabs, active, rail, dock, snap);
+        let _ = frame(ctx, moved(to), &icons(), shell, tabs, active, rail, dock, snap);
+        frame(ctx, release(to, PointerButton::Primary), &icons(), shell, tabs, active, rail, dock, snap)
+    }
+
+    /// P15 (owner 2026-09-25: "dragging a tab moves the whole window"; Codex saw the order never
+    /// change with 8 tabs). With 8 tabs overflowing the strip, a press on a drawn chip is NOT a
+    /// caption-drag spot (the same `interactive_rects` → `caption_hit` both platforms run), and
+    /// press → move → release across the neighbouring chip reorders — in the FULL order, also for the
+    /// active chip that overflow moved into the last drawn slot.
+    #[test]
+    fn eight_tab_overflow_drag_reorders_and_never_starts_a_window_drag() {
+        let ctx = egui::Context::default();
+        let tabs: Vec<TabView> = (1..=8).map(|i| tab(i, &format!("Brand guidelines draft {i}"), false)).collect();
+        let active = Some(SessionId(8));
+        let layout = measure(&ctx, &tabs, active);
+        let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
+        assert!(drawn.len() < 8 && drawn.len() >= 3, "setup: 8 tabs overflow the 1400-px bar, got {drawn:?}");
+        assert_eq!(*drawn.last().unwrap(), 7, "setup: the active (last) tab takes the last drawn slot");
+        let chrome = crate::chrome::TOPBAR;
+        let excl = crate::chrome::caption_exclusions(&layout.interactive_rects(), 1.0);
+        let drags_window = |p: Pos2| crate::chrome::caption_hit(chrome.height as i32, &excl, p.x as i32, p.y as i32);
+        for &(i, r) in &layout.tabs {
+            assert!(!drags_window(egui::pos2(r.left() + 20.0, r.center().y)), "chip {i}: press drags the window");
+        }
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock) = (true, true);
+        let mut snap = varos_core::model::SnapConfig::default();
+
+        // chip 0 dragged onto the right half of its neighbour (drawn slot 1) → full slot of drawn chip 2
+        let (r0, r1) = (layout.tabs[0].1, layout.tabs[1].1);
+        let cmds = drag(
+            &ctx,
+            egui::pos2(r0.left() + 20.0, r0.center().y),
+            egui::pos2(r1.right() - 4.0, r1.center().y),
+            &tabs,
+            active,
+            &mut shell,
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(1), drawn[2])]);
+
+        // the active overflow chip (last drawn) dragged onto the left half of chip 0 → full slot 0
+        let rl = layout.tabs.last().unwrap().1;
+        let cmds = drag(
+            &ctx,
+            egui::pos2(rl.left() + 20.0, rl.center().y),
+            egui::pos2(r0.left() + 4.0, r0.center().y),
+            &tabs,
+            active,
+            &mut shell,
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(8), 0)]);
     }
 
     /// The dirty dot (`tab_item`): a filled `MUTED` circle appears in the chip's clip rect only when
