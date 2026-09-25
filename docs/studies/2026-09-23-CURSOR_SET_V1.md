@@ -212,12 +212,12 @@ never returned; `artboard.svg`, `zoom-in.svg`, `zoom-out.svg` were drawn but unu
 | Decision | Change |
 |---|---|
 | **A. Arrows redrawn** | One new arrow silhouette, reused verbatim by every arrow cursor: a symmetric dart (tip, two wings, a notch — 4 points; axis 17 long, wings ±7.75, notch 4.5 deep) tilted 22° like a standard pointer, rounded corners (tip 0.2, wings 1.4, notch 1.2), warm-black `#141313` ink (1 px same-colour stroke → +0.5), and a **2 px white rim** beyond the ink (stroke 5). Extent 16.5 × 20.5 (v1: 15.5 × 20.5). Tip vertex at (3, 3) + 0.25 → **hotspot [3, 3]** (v1: [2, 2]; the thicker rim needs the extra pixel of margin). Selection = filled; Direct Selection = the same silhouette hollow (white interior inset 1 px from the path → a 1.5 px dark ring). Rebuilt on it: `select`, `direct`, `copy` (+ badge), `no-drop` (⊘ badge), and the three new hover-badge files. Generated from primitives by a throwaway script (not committed; the SVGs are the source of truth). |
-| **B. Shape tools = plain crosshair** | New `cross.svg` = the v1 crosshair without its badge (hotspot 11, 11). `CK::Cross` → `cross.svg` for Rect / Ellipse / Triangle / Polygon. `shape-rect.svg` had no remaining user → **deleted** with its table entry. |
+| **B. Shape tools = plain crosshair** *(superseded the same day — see §9.5)* | First pass: a badge-less `cross.svg` for Rect / Ellipse / Triangle / Polygon (and Rotate / Scale). `shape-rect.svg` → **deleted**. The owner rejected the plain crosshair after seeing it in the real app; §9.5 replaced it with one badge per tool and deleted `cross.svg`. |
 | **C. Rotate / Scale / Artboard / locks** | Rotate (R) and Scale (S): crosshair on hover, while the pivot click is pending (`TfPending`), and for the whole drag (`Rotate` without a corner, `ScaleLive`). **Bounding-box rotate lock:** `Drag::Rotate` now records the pressed `corner` (`Some(0..3)` for a Selection-tool rotate, `None` for the Rotate tool); the cursor is `rotate_ck(corner, a0)` — the arrow chosen at the press — for the whole drag, never re-hit-tested. **Resize lock:** `Drag::Scale` already carried its `handle` + press-time `angle`; now covered by a test. **Artboard:** `CK::Artboard` → `artboard.svg` on empty board and while creating a page. **Move:** `CK::Move` is now returned while the Selection tool drags an object (it still reuses `select.svg`: Illustrator shows the plain arrow while moving — the point of the state is that the hover badge drops during the move). **NoDrop:** removed from `CK` (no state in the app returns it); `no-drop.svg` is rebuilt on the new arrow and kept as a *proposed* state in `hotspots.json`. **Zoom:** there is no Zoom tool in `ToolKind`, so `zoom-in.svg` / `zoom-out.svg` stay proposed (⌥ = out when a Zoom tool lands). |
 | **D. Hover badges** | Three new CK states in the shared badge slot (centre (22.25, 22.75), 6 px square, 1.5 ink, 1.75 white keyline): `SelectObject` = arrow + filled square; `DirectAnchor` = hollow arrow + hollow square; `DirectPath` = hollow arrow + filled square. Chosen from hover state the editor already keeps (`hover_path`, set by the idle pointer-move hit-test) plus one new, bounded check: `Editor::hover_anchor` scans only the hovered path's anchors (never the whole document). Badges show only between gestures (`Drag::None`). |
 
-Counts: 31 `CK` states (v1: 28) → 30 files (`Move` reuses `select.svg`); 33 embedded files (+ zoom-in,
-zoom-out, no-drop as proposed). Stroke widths added by v1.1 (arrow family only): 1 (arrow ink edge) and 5
+Counts (after §9.5): 36 `CK` states (v1: 28) → 35 files (`Move` reuses `select.svg`); 38 embedded files (+
+zoom-in, zoom-out, no-drop as proposed). Stroke widths added by v1.1 (arrow family only): 1 (arrow ink edge) and 5
 (arrow rim and badge keylines).
 
 ### 9.2 Tool → state → cursor (the whole table)
@@ -242,8 +242,12 @@ Pen + ⌥ → Convert; the Artboard tool never morphs.
 | | over an anchor of the hovered path | `DirectAnchor` → `direct-anchor.svg` |
 | | over a path (segment or fill) | `DirectPath` → `direct-path.svg` |
 | | any drag | `Direct` |
-| Rotate (R) / Scale (S) | hover, pivot click pending, dragging | `Cross` → `cross.svg` |
-| Rect / Ellipse / Triangle / Polygon | hover and drawing | `Cross` → `cross.svg` |
+| Rotate (R) | hover, pivot click pending, dragging | `CrossRotate` → `cross-rotate.svg` |
+| Scale (S) | hover, pivot click pending, dragging | `CrossScale` → `cross-scale.svg` |
+| Rectangle (M) | hover and drawing | `CrossRect` → `cross-rect.svg` |
+| Ellipse (L) | hover and drawing | `CrossEllipse` → `cross-ellipse.svg` |
+| Triangle | hover and drawing | `CrossTriangle` → `cross-triangle.svg` |
+| Polygon | hover and drawing | `CrossPolygon` → `cross-polygon.svg` |
 | Pen (P) | contextual (`pen_hint`) | `Pen`, `PenNew`, `PenAdd`, `PenDel`, `PenClose`, `PenConnect` |
 | Convert (Pen + ⌥) | always | `Convert` → `convert.svg` |
 | Eyedropper (I) | always | `Eye` → `eyedropper.svg` |
@@ -258,14 +262,18 @@ cursor.
 
 ### 9.3 Tests (no GPU, no window)
 
-- `main.rs` `cursor_state_tests::tool_hover_drag_table_picks_the_expected_cursor_and_file` — 31 rows of
+- `main.rs` `cursor_state_tests::tool_hover_drag_table_picks_the_expected_cursor_and_file` — 31 rows (33 after
+  §9.5: + Triangle / Polygon drawing) of
   (tool, hover, drag) driven through the real `pointer_move` / `pointer_down`, each checking the CK **and**
   the file it shows. Against the pre-v1.1 mapping it fails 23 rows (Rotate/Scale/shape rows showed
-  `shape-rect.svg`; the bbox-rotate lock rows showed `Select`; the badge, Move and Artboard rows).
+  `shape-rect.svg`; the bbox-rotate lock rows showed `Select`; the badge, Move and Artboard rows). After
+  §9.5 the Rotate / Scale / shape rows expect each tool's own file, on hover and while dragging.
 - `cursors.rs`: every CK maps to an embedded SVG + hotspot (31); no embedded file is an orphan; proposed
   states are embedded with matching hotspots; `arrow_family_shares_one_silhouette_and_the_tip_hotspot`
   (one arrow path in every arrow file, tip hotspot, filled vs hollow families, badge fills); all 33 files
-  render distinct, non-blank bitmaps at 1× and 2×.
+  render distinct, non-blank bitmaps at 1× and 2×; `crosshair_family_shares_the_crosshair_and_each_tool_has_its_own_badge`
+  (§9.5: same crosshair and hotspot 11, 11 in all seven crosshair cursors incl. Artboard, seven different
+  badges, no plain `cross.svg`).
 
 ### 9.4 Known limits and open questions (for Ahmed's hand test)
 
@@ -277,3 +285,33 @@ cursor.
 - The white rim of the left wing sits 0.12 px inside the canvas edge (tight but not clipped).
 - 1× vs 2×: the preview sheet shows both; on-screen sharpness still needs a human check on Retina and on a
   1× display.
+
+### 9.5 Owner verdict on v1.1 (2026-09-25, seen installed in the real app)
+
+1. **The new arrow family is approved as is** — `select`, `direct`, `copy`, `no-drop` are frozen.
+2. **The hover badges stay** — `select-object`, `direct-anchor`, `direct-path`.
+3. **The plain crosshair is rejected** for Rotate, Scale and the shape tools: «مش واضحة خالص، لازم أيقون لكل
+   واحدة» (not clear at all — every tool needs its own icon). Each tool now shows the crosshair **plus its own
+   small badge**, in the `artboard.svg` language (the same crosshair; a 1.5 warm-black outline on a white fill,
+   3.5 white keyline; badge slot lower-right centred on (21.25, 21.25) like the old `shape-rect.svg`); hotspot
+   stays 11, 11 at the crosshair centre. Own drawings from primitives only.
+
+| File | CK | Tool | Badge |
+|---|---|---|---|
+| `cross-rect.svg` | `CrossRect` | Rectangle | 7 × 5.5 rounded rectangle |
+| `cross-ellipse.svg` | `CrossEllipse` | Ellipse | circle r 3.25 |
+| `cross-triangle.svg` | `CrossTriangle` | Triangle | triangle, circumradius 4, point up |
+| `cross-polygon.svg` | `CrossPolygon` | Polygon | hexagon, circumradius 3.75, point up |
+| `cross-rotate.svg` | `CrossRotate` | Rotate | 240° clockwise arc r 3.25 + solid arrowhead (↻) |
+| `cross-scale.svg` | `CrossScale` | Scale | ↗↙ diagonal double arrow, open chevron heads |
+
+**Design choice — one CK per tool, not a badge parameter.** Every `CK` is one pre-built native cursor
+(a Win32 HCURSOR / a Retina NSCursor / a winit `CustomCursor`, created once at startup into a slot); a
+`Cross(Badge)` parameter would still need one native cursor per badge, so it would only move the same six
+cases into a second enum plus slot arithmetic, and break the `CK` name ↔ `hotspots.json` key mapping. Six
+plain variants keep one table, one test path, and an exhaustive `match` in `desired_ck`.
+
+**`cross.svg` deleted, `CK::Cross` removed:** after this change no state shows a badge-less crosshair
+(Artboard has its own frame badge), so nothing uses it; the crosshair-family test guards that it does not
+come back.
+

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Varos — Triangle tool (crosshair + badge)</title>
+  <desc>Varos cursor v1.1 (2026-09-25) — cross-triangle: the v1 crosshair plus a small triangle in the lower-right badge slot. Hotspot 11,11 (32px space) = the crosshair centre. Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
+  <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="#ffffff" stroke="none">
+      <rect x="9.25" y="1.25" width="3.5" height="8" rx="1"/>
+      <rect x="9.25" y="12.75" width="3.5" height="8" rx="1"/>
+      <rect x="1.25" y="9.25" width="8" height="3.5" rx="1"/>
+      <rect x="12.75" y="9.25" width="8" height="3.5" rx="1"/>
+      <rect x="9.25" y="9.25" width="3.5" height="3.5" rx="1"/>
+    </g>
+    <g fill="none" stroke="#141313" stroke-width="1.5" stroke-linecap="butt">
+      <path d="M11 2.25V8.25"/>
+      <path d="M11 13.75V19.75"/>
+      <path d="M2.25 11H8.25"/>
+      <path d="M13.75 11H19.75"/>
+    </g>
+    <g fill="#141313" stroke="none">
+      <rect x="10.25" y="10.25" width="1.5" height="1.5"/>
+    </g>
+    <path d="M21 17L24.464 23L17.536 23Z" fill="#ffffff" stroke="#ffffff" stroke-width="3.5"/>
+    <path d="M21 17L24.464 23L17.536 23Z" fill="#ffffff" stroke="#141313" stroke-width="1.5"/>
+  </g>
+</svg>
