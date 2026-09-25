@@ -91,7 +91,9 @@ pub enum Drag {
     Scale { handle: u8, angle: f32, opp_l: Pt, cen_l: Pt, h0_l: Pt, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
     // A7 Stage 4: rotate COMPOSES into each unit's stored transform (no geometry bake). `units` = the
     // selection's unit nodes with their base (pre-drag) xform, so each frame recomposes from the snapshot.
-    Rotate { center: Pt, start: f32, a0: f32, units: Vec<(u32, Xform)> },
+    // `corner` = the bounding-box corner pressed (0=TL,1=TR,2=BR,3=BL) for a Selection-tool rotate, None for the
+    // Rotate tool (pivot drag). Read-only after the press: the app locks the rotate cursor to it for the whole drag.
+    Rotate { center: Pt, start: f32, a0: f32, units: Vec<(u32, Xform)>, corner: Option<u8> },
     ScaleLive { pivot: Pt, down: Pt, base: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> }, // Scale tool: about `pivot`, ratio from `down`
     TfPending { pivot: Pt, down: Pt }, // Rotate/Scale pressed: a plain click relocates the pivot, a drag transforms
     ConvPull { aid: u32, down: Pt },
@@ -524,6 +526,23 @@ impl Editor {
         }
         best.map(|(id, _)| id)
     }
+    /// The anchor of the HOVERED path (`hover_path`) within `ANCHOR_R` of `pos` — the cheap subset of
+    /// `nearest_anchor` the Direct Selection hover cursor uses (anchor → hollow-square badge). It scans only
+    /// the one path already found by the idle hover hit-test, never the whole document, so an anchor 8–12 px
+    /// off an outline the hover test did not catch reads as "no anchor" (the press still grabs it).
+    pub fn hover_anchor(&self, pos: Pt) -> Option<u32> {
+        let pi = self.doc.pidx(self.hover_path?)?;
+        let p = &self.doc.paths[pi];
+        let xf = self.doc.unit_xform(p.id);
+        let r = ANCHOR_R / self.ppu;
+        p.anchors
+            .iter()
+            .chain(p.holes.iter().flatten())
+            .map(|a| (a.id, dist(pos, xf.apply(a.p))))
+            .filter(|&(_, d)| d <= r)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
     /// The clickable path under `pos`, respecting z-order OCCLUSION (A31). Walk TOP → bottom (the paths
     /// vec is bottom→top in z): the first path the point actually touches wins, and everything beneath it
     /// at that point is occluded. A path is touched by a click on its OUTLINE (within edge_r) or inside
@@ -823,10 +842,11 @@ impl Editor {
                     base: self.objsel_base_world(), // A7: world base; write-back keeps each unit's θ
                 };
             }
-            TfHit::Rotate(_) => {
+            TfHit::Rotate(i) => {
                 let center = rotate_about(cen_l, [0.0, 0.0], self.obj_angle);
                 let start = (pos[1] - center[1]).atan2(pos[0] - center[0]);
-                self.drag = Drag::Rotate { center, start, a0: self.obj_angle, units: self.objsel_units_xform() };
+                let units = self.objsel_units_xform();
+                self.drag = Drag::Rotate { center, start, a0: self.obj_angle, units, corner: Some(i) };
             }
         }
     }
@@ -3941,7 +3961,7 @@ impl Editor {
                 self.drag = Drag::Scale { handle, angle, opp_l, cen_l, h0_l, base };
                 self.dirty = true;
             }
-            Drag::Rotate { center, start, a0, units } => {
+            Drag::Rotate { center, start, a0, units, corner } => {
                 let cur = (pos[1] - center[1]).atan2(pos[0] - center[0]);
                 let mut d = cur - start;
                 if self.mods.shift {
@@ -3959,7 +3979,7 @@ impl Editor {
                 self.obj_angle = a0 + d; // frame rotates with the selection
                 self.snap_hud = Some((pos, format!("{:.1}\u{b0}", -d.to_degrees()))); // CCW-positive (Illustrator)
                 self.gesture_tf = Some(TfAgain::Rotate { pivot: center, ang: d });
-                self.drag = Drag::Rotate { center, start, a0, units };
+                self.drag = Drag::Rotate { center, start, a0, units, corner };
                 self.dirty = true;
             }
             Drag::TfPending { pivot, down } => {
@@ -3980,7 +4000,8 @@ impl Editor {
                         _ => {
                             let start = (down[1] - pivot[1]).atan2(down[0] - pivot[0]);
                             // A7: rotate composes into the units' stored transforms (no bake).
-                            Drag::Rotate { center: pivot, start, a0: self.obj_angle, units: self.objsel_units_xform() }
+                            let units = self.objsel_units_xform();
+                            Drag::Rotate { center: pivot, start, a0: self.obj_angle, units, corner: None }
                         }
                     };
                     self.pointer_move(pos); // apply this frame's transform immediately

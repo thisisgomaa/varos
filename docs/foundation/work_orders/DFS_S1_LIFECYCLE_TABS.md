@@ -282,6 +282,7 @@ Run A first. Then B, C and D run **in parallel** in separate worktrees branched 
   - `window_title_names_active_document_and_dirty`
   - `scene_key_differs_between_sessions_with_equal_signature` (two Editors with equal rev/view and different art → equal `scene_signature`, different mixed key)
   - Existing `menu_mirror_tests` / `clipboard_key_tests` / `instant_zoom_tests` keep passing.
+- **Landed outside this order (recorded after the independent review):** `e5b9315` also routes a left-button release to whichever surface got the press (`host::route_left_release`, UI audit 04 A2/B1 — a release after a press on the chrome no longer commits the colour picker's open session); it is not an S1 lifecycle item and is kept as-is.
 
 ## 5. Merge order and conflict hot-spots
 

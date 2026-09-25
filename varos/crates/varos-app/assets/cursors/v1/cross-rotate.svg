@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <title>Varos — Rectangle / shape crosshair</title>
-  <desc>Varos cursor v1 — shape-rect. Hotspot 11,11 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
+  <title>Varos — Rotate tool (crosshair + badge)</title>
+  <desc>Varos cursor v1.1 (2026-09-25) — cross-rotate: the v1 crosshair plus a small curved arrow in the lower-right badge slot. Hotspot 11,11 (32px space) = the crosshair centre. Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data.</desc>
   <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
     <g fill="#ffffff" stroke="none">
       <rect x="9.25" y="1.25" width="3.5" height="8" rx="1"/>
@@ -18,11 +18,9 @@
     <g fill="#141313" stroke="none">
       <rect x="10.25" y="10.25" width="1.5" height="1.5"/>
     </g>
-    <g fill="#ffffff" stroke="#ffffff" stroke-width="3.5">
-      <rect x="18" y="18" width="6" height="6" rx="1.25"/>
-    </g>
-    <g fill="#ffffff" stroke="#141313" stroke-width="1.5">
-      <rect x="18" y="18" width="6" height="6" rx="1.25"/>
-    </g>
+    <path d="M19.375 23.065A3.25 3.25 0 1 1 24.25 20.25" fill="none" stroke="#ffffff" stroke-width="3.5"/>
+    <path d="M22 20L26.5 20L24.25 22.75Z" fill="#ffffff" stroke="#ffffff" stroke-width="3"/>
+    <path d="M19.375 23.065A3.25 3.25 0 1 1 24.25 20.25" fill="none" stroke="#141313" stroke-width="1.5" stroke-linecap="butt"/>
+    <path d="M22 20L26.5 20L24.25 22.75Z" fill="#141313" stroke="#141313" stroke-width="1"/>
   </g>
 </svg>

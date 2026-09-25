@@ -1,25 +1,30 @@
 //! Start page — pure view model (work order `DFS_S2_S3_START_RECENTS_RECOVERY.md` §3.7, piece
-//! **E1**).
+//! **E1**, model only).
 //!
-//! This module is model-only: drawing (`start_ui.rs`) is deferred by the moderator until the
-//! UI-system kit (U0) lands, so nothing here touches `egui`, `main.rs`, `ui.rs` or `chrome.rs`.
-//! [`StartModel`] is built from [`crate::storage::recents::Recents`] plus a caller-supplied
-//! "is this file missing" probe (S3-B design: missing is computed once, at build time, not per
-//! frame) and an optional list of [`RecoveryRow`]s (the data shape F2 will fill from
-//! `storage::recovery::OrphanEntry`; empty until then). It also carries a flat keyboard-focus
-//! model good enough for Tab/Shift+Tab/↑/↓ traversal, Enter-to-activate and Delete-to-remove —
-//! the exact widget-level key routing is a job for the host once `start_ui.rs` exists.
+//! E1 is this pure model and nothing else. Drawing (`start_ui.rs`: recovery/action rendering,
+//! token-only styling, the headless accent-use test) and host wiring moved to piece **E2**
+//! (pending; after S1 and the UI-system kit U0), so nothing here touches `egui`, `main.rs`,
+//! `ui.rs` or `chrome.rs`. [`StartModel`] is built from [`crate::storage::recents::Recents`] plus
+//! a caller-supplied "is this file missing" probe (S3-B design: missing is computed once, at build
+//! time, not per frame) and an optional list of [`RecoveryRow`]s (the data shape F2 will fill
+//! from `storage::recovery::OrphanEntry`; empty until then). It also carries the keyboard-focus
+//! model of §3.7: Tab/Shift+Tab traverse every action and row (wrapping), ↑/↓ move only inside
+//! the current list and stop at its ends, Enter activates, Delete removes the focused recent row.
+//! Escape is deliberately absent: the work order gives Start no Escape behaviour, so the host
+//! owns that policy.
 use std::path::{Path, PathBuf};
 
 use crate::storage::recents::Recents;
 use crate::storage::time_text;
 
 /// Window/heading title shown while Start is the active view (work order §3.7/§3.9: "Window
-/// title \"Varos\" on Start.").
+/// title \"Varos\" on Start."). No consumer yet: E2's `start_ui.rs` heading and `main.rs` window
+/// title use it.
 pub const START_TITLE: &str = "Varos";
 /// Exact empty-Recent copy (work order §3.7).
 pub const EMPTY_RECENT_COPY: &str = "No recent documents. Create a document or open a .vrs file.";
-/// Tag shown next to a recent row whose file can't be found on disk (work order §3.7).
+/// Tag shown next to a recent row whose file can't be found on disk (work order §3.7). No consumer
+/// yet: E2's `start_ui.rs` draws it beside a row whose [`StartRow::missing`] is true.
 pub const MISSING_TAG: &str = "Missing";
 
 /// How many characters a recent row's parent-folder text is elided to before the file-path
@@ -57,10 +62,10 @@ pub struct RecoveryRow {
     pub saved_at_text: String,
 }
 
-/// What activating the currently focused Start element means. The host (E2, wave 2) turns this
-/// into the matching `AppCommand`. `Locate` is not reachable from [`StartModel::activate`] — it
-/// is emitted by the host after the "can't be found" dialog it shows for a `missing` row's click,
-/// which is outside this pure model.
+/// What activating the currently focused Start element means. The host (E2) turns this into the
+/// matching `AppCommand`. `Locate` is not reachable from [`StartModel::activate`]: E2 emits it
+/// after the "can't be found" dialog it shows for a `missing` row's click (§3.7; E2 test
+/// `locate_validates_before_relocating`), which is outside this pure model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartAction {
     New,
@@ -88,14 +93,17 @@ enum FocusTarget {
 }
 
 /// The Start page's pure view model: everything `start_ui.rs` will need to draw, and everything
-/// its key handling will need to decide what Enter/Delete/Escape do — with no `egui` in sight.
+/// its key handling will need to decide what Tab/arrows/Enter/Delete do — with no `egui` in sight.
+///
+/// The collections and focus are private so the cached focus order can never drift out of step
+/// with them; rebuild the model (from fresh `Recents`/recovery data) to change what it shows.
 pub struct StartModel {
-    pub rows: Vec<StartRow>,
-    pub recovery: Vec<RecoveryRow>,
+    rows: Vec<StartRow>,
+    recovery: Vec<RecoveryRow>,
     /// Index into the flat focus order (New, Open, [Recover/Discard per recovery row, then one
     /// trailing Later], [one entry per recent row, then a Clear-Recent footer]). Always in
-    /// bounds for a non-empty model; New and Open make the order never empty.
-    pub focus: usize,
+    /// bounds: New and Open make the order never empty, and every setter keeps it in range.
+    focus: usize,
     focus_order: Vec<FocusTarget>,
 }
 
@@ -143,44 +151,98 @@ impl StartModel {
         Self::build(recents, now, missing, Vec::new())
     }
 
+    /// The Recent rows, newest first (read-only).
+    pub fn rows(&self) -> &[StartRow] {
+        &self.rows
+    }
+
+    /// The Recovery rows (read-only; empty until F2).
+    pub fn recovery(&self) -> &[RecoveryRow] {
+        &self.recovery
+    }
+
+    /// Index of the focused element in the flat traversal order.
+    pub fn focus(&self) -> usize {
+        self.focus
+    }
+
+    /// Put focus on element `index` (e.g. after a click). Out-of-range indices are ignored and
+    /// return `false`, so focus always stays valid.
+    pub fn set_focus(&mut self, index: usize) -> bool {
+        if index < self.focus_order.len() {
+            self.focus = index;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Total number of focusable elements (always ≥ 2: New and Open).
     pub fn focus_count(&self) -> usize {
         self.focus_order.len()
     }
 
-    /// Move focus by `delta` (Tab = +1, Shift+Tab = -1, ↑/↓ = ∓1), wrapping at both ends.
-    pub fn move_focus(&mut self, delta: isize) {
+    /// Tab: next element in the whole traversal order, wrapping from the last back to New.
+    pub fn tab_next(&mut self) {
         let len = self.focus_order.len();
-        if len == 0 {
-            return;
+        if len > 0 {
+            self.focus = (self.focus + 1) % len;
         }
-        let len_i = len as isize;
-        let mut new = (self.focus as isize + delta) % len_i;
-        if new < 0 {
-            new += len_i;
-        }
-        self.focus = new as usize;
     }
 
-    /// Enter: what the focused element does.
+    /// Shift+Tab: previous element in the whole traversal order, wrapping from New to the last.
+    pub fn tab_prev(&mut self) {
+        let len = self.focus_order.len();
+        if len > 0 {
+            self.focus = (self.focus + len - 1) % len;
+        }
+    }
+
+    /// ↑: previous item of the current list only. Stops at the list's first item and never
+    /// leaves the list; a no-op on elements that are not list items (New, Open, Later, Clear
+    /// Recent). In the Recovery list focus keeps its column (Recover ↔ Recover, Discard ↔
+    /// Discard).
+    pub fn arrow_up(&mut self) {
+        self.arrow(-1);
+    }
+
+    /// ↓: next item of the current list only. Stops at the list's last item and never leaves
+    /// the list; a no-op on elements that are not list items.
+    pub fn arrow_down(&mut self) {
+        self.arrow(1);
+    }
+
+    fn arrow(&mut self, delta: isize) {
+        let Some(current) = self.focus_order.get(self.focus).copied() else {
+            return;
+        };
+        let wanted = match current {
+            FocusTarget::Recent(i) => i.checked_add_signed(delta).map(FocusTarget::Recent),
+            FocusTarget::Recover(i) => i.checked_add_signed(delta).map(FocusTarget::Recover),
+            FocusTarget::Discard(i) => i.checked_add_signed(delta).map(FocusTarget::Discard),
+            FocusTarget::NewDocument
+            | FocusTarget::Open
+            | FocusTarget::RecoveryLater
+            | FocusTarget::ClearRecentFooter => None,
+        };
+        // Only move when the neighbour exists in the same list; otherwise stay put (list end).
+        if let Some(pos) = wanted.and_then(|t| self.focus_order.iter().position(|o| *o == t)) {
+            self.focus = pos;
+        }
+    }
+
+    /// Enter: what the focused element does (`None` only if its target no longer resolves).
     pub fn activate(&self) -> Option<StartAction> {
-        self.focus_order.get(self.focus).map(|t| self.action_for(*t))
+        self.focus_order.get(self.focus).and_then(|t| self.action_for(*t))
     }
 
     /// Delete: removes the focused Recent row from the list (the work order's "Delete removes
     /// the focused recent row"); `None` anywhere else focus can be.
     pub fn delete_focused(&self) -> Option<StartAction> {
         match self.focus_order.get(self.focus) {
-            Some(FocusTarget::Recent(i)) => Some(StartAction::RemoveRecent(self.rows[*i].path.clone())),
+            Some(FocusTarget::Recent(i)) => self.rows.get(*i).map(|r| StartAction::RemoveRecent(r.path.clone())),
             _ => None,
         }
-    }
-
-    /// Escape: the work order gives Start no modal to back out of, so this is the one sane
-    /// default — return focus to the top (New document) rather than leave it stranded on a row
-    /// that Tab/Shift+Tab no longer has to pass through once the host repaints.
-    pub fn escape(&mut self) {
-        self.focus = 0;
     }
 
     /// Exact copy for the empty-Recent state ([`EMPTY_RECENT_COPY`]), or `None` once any row
@@ -189,16 +251,17 @@ impl StartModel {
         self.rows.is_empty().then_some(EMPTY_RECENT_COPY)
     }
 
-    fn action_for(&self, target: FocusTarget) -> StartAction {
-        match target {
+    /// Resolve a focus target with checked indexing: a target whose row is gone yields `None`.
+    fn action_for(&self, target: FocusTarget) -> Option<StartAction> {
+        Some(match target {
             FocusTarget::NewDocument => StartAction::New,
             FocusTarget::Open => StartAction::Open,
-            FocusTarget::Recover(i) => StartAction::Recover(self.recovery[i].rid.clone()),
-            FocusTarget::Discard(i) => StartAction::DiscardRecovery(self.recovery[i].rid.clone()),
+            FocusTarget::Recover(i) => StartAction::Recover(self.recovery.get(i)?.rid.clone()),
+            FocusTarget::Discard(i) => StartAction::DiscardRecovery(self.recovery.get(i)?.rid.clone()),
             FocusTarget::RecoveryLater => StartAction::Later,
-            FocusTarget::Recent(i) => StartAction::OpenRecent(self.rows[i].path.clone()),
+            FocusTarget::Recent(i) => StartAction::OpenRecent(self.rows.get(i)?.path.clone()),
             FocusTarget::ClearRecentFooter => StartAction::ClearRecent,
-        }
+        })
     }
 }
 
@@ -265,15 +328,15 @@ mod tests {
         recents.record(Path::new("/docs/missing.vrs"), None, 200);
         let model = StartModel::without_recovery(&recents, 300, |p| p.ends_with("missing.vrs"));
 
-        assert_eq!(model.rows.len(), 2, "the missing row stays in the list");
-        let missing_row = model.rows.iter().find(|r| r.name == "missing.vrs").unwrap();
+        assert_eq!(model.rows().len(), 2, "the missing row stays in the list");
+        let missing_row = model.rows().iter().find(|r| r.name == "missing.vrs").unwrap();
         assert!(missing_row.missing);
-        let present_row = model.rows.iter().find(|r| r.name == "present.vrs").unwrap();
+        let present_row = model.rows().iter().find(|r| r.name == "present.vrs").unwrap();
         assert!(!present_row.missing);
     }
 
     #[test]
-    fn focus_wraps_and_activate_maps_to_actions() {
+    fn tab_wraps_and_activate_maps_to_actions() {
         let mut recents = Recents::default();
         recents.record(Path::new("/docs/a.vrs"), None, 100);
         recents.record(Path::new("/docs/b.vrs"), None, 200); // newest -> rows[0]
@@ -281,39 +344,121 @@ mod tests {
 
         // Order: New(0), Open(1), Recent(b)(2), Recent(a)(3), ClearRecentFooter(4).
         assert_eq!(model.focus_count(), 5);
-        assert_eq!(model.focus, 0);
+        assert_eq!(model.focus(), 0);
         assert_eq!(model.activate(), Some(StartAction::New));
 
-        model.move_focus(1);
-        assert_eq!(model.focus, 1);
+        model.tab_next();
+        assert_eq!(model.focus(), 1);
         assert_eq!(model.activate(), Some(StartAction::Open));
 
-        model.move_focus(1);
-        assert_eq!(model.focus, 2);
+        model.tab_next();
+        assert_eq!(model.focus(), 2);
         assert_eq!(model.activate(), Some(StartAction::OpenRecent(PathBuf::from("/docs/b.vrs"))));
 
-        // Forward wrap: 2 + 3 = 5 -> 0.
-        model.move_focus(3);
-        assert_eq!(model.focus, 0);
-        assert_eq!(model.activate(), Some(StartAction::New));
-
-        // Backward wrap: 0 - 1 -> the last element.
-        model.move_focus(-1);
-        assert_eq!(model.focus, 4);
+        // Shift+Tab from New wraps to the last element (the Clear Recent footer).
+        assert!(model.set_focus(0));
+        model.tab_prev();
+        assert_eq!(model.focus(), 4);
         assert_eq!(model.activate(), Some(StartAction::ClearRecent));
 
         // Delete only means something on a focused Recent row.
-        model.move_focus(-1); // -> Recent(a) at index 3
-        assert_eq!(model.focus, 3);
+        model.tab_prev(); // -> Recent(a) at index 3
+        assert_eq!(model.focus(), 3);
         assert_eq!(model.delete_focused(), Some(StartAction::RemoveRecent(PathBuf::from("/docs/a.vrs"))));
 
-        model.move_focus(-2); // -> Open at index 1
-        assert_eq!(model.focus, 1);
+        assert!(model.set_focus(1));
         assert_eq!(model.delete_focused(), None, "Delete does nothing off a recent row");
 
-        model.move_focus(1);
-        model.escape();
-        assert_eq!(model.focus, 0, "Escape returns focus to the top");
+        // Out-of-range focus requests are refused; focus stays valid.
+        assert!(!model.set_focus(5));
+        assert_eq!(model.focus(), 1);
+    }
+
+    #[test]
+    fn tab_from_last_wraps_to_new() {
+        let mut recents = Recents::default();
+        recents.record(Path::new("/docs/a.vrs"), None, 100);
+        let mut model = StartModel::without_recovery(&recents, 200, |_| false);
+        let last = model.focus_count() - 1;
+        assert!(model.set_focus(last));
+        assert_eq!(model.activate(), Some(StartAction::ClearRecent));
+        model.tab_next();
+        assert_eq!(model.focus(), 0);
+        assert_eq!(model.activate(), Some(StartAction::New));
+    }
+
+    #[test]
+    fn arrows_stay_inside_the_recent_list() {
+        let mut recents = Recents::default();
+        recents.record(Path::new("/docs/a.vrs"), None, 100);
+        recents.record(Path::new("/docs/b.vrs"), None, 200); // newest -> rows[0]
+        let mut model = StartModel::without_recovery(&recents, 300, |_| false);
+        // Order: New(0), Open(1), Recent(b)(2), Recent(a)(3), ClearRecentFooter(4).
+
+        assert!(model.set_focus(2)); // first Recent
+        model.arrow_up();
+        assert_eq!(model.focus(), 2, "↑ on the first Recent stays (no jump to Open)");
+
+        model.arrow_down();
+        assert_eq!(model.focus(), 3);
+        assert_eq!(model.activate(), Some(StartAction::OpenRecent(PathBuf::from("/docs/a.vrs"))));
+
+        model.arrow_down();
+        assert_eq!(model.focus(), 3, "↓ on the last Recent stays (no jump to the footer, no wrap)");
+
+        model.arrow_up();
+        assert_eq!(model.focus(), 2);
+    }
+
+    #[test]
+    fn arrows_do_nothing_outside_lists() {
+        let mut recents = Recents::default();
+        recents.record(Path::new("/docs/a.vrs"), None, 100);
+        let recovery = vec![RecoveryRow {
+            rid: "rid-1".to_string(),
+            name: "Untitled-1".to_string(),
+            original_dir: None,
+            saved_at_text: "saved 14:32".to_string(),
+        }];
+        let mut model = StartModel::build(&recents, 200, |_| false, recovery);
+        // Order: New(0), Open(1), Recover(2), Discard(3), Later(4), Recent(5), ClearRecent(6).
+
+        model.arrow_up();
+        assert_eq!(model.focus(), 0, "↑ on New stays");
+        model.arrow_down();
+        assert_eq!(model.focus(), 0, "↓ on New stays");
+
+        for idx in [1, 4, 6] {
+            assert!(model.set_focus(idx));
+            model.arrow_up();
+            assert_eq!(model.focus(), idx, "↑ is a no-op off a list item (index {idx})");
+            model.arrow_down();
+            assert_eq!(model.focus(), idx, "↓ is a no-op off a list item (index {idx})");
+        }
+    }
+
+    #[test]
+    fn arrows_in_recovery_keep_their_column_and_stop_at_ends() {
+        let row = |n: u32| RecoveryRow {
+            rid: format!("rid-{n}"),
+            name: format!("Untitled-{n}"),
+            original_dir: None,
+            saved_at_text: "saved 14:32".to_string(),
+        };
+        let mut model = StartModel::build(&Recents::default(), 200, |_| false, vec![row(1), row(2)]);
+        // Order: New(0), Open(1), Recover(0)(2), Discard(0)(3), Recover(1)(4), Discard(1)(5), Later(6).
+
+        assert!(model.set_focus(3)); // Discard on the first recovery row
+        model.arrow_up();
+        assert_eq!(model.focus(), 3, "↑ on the first recovery row stays");
+        model.arrow_down();
+        assert_eq!(model.activate(), Some(StartAction::DiscardRecovery("rid-2".to_string())));
+        model.arrow_down();
+        assert_eq!(model.focus(), 5, "↓ on the last recovery row stays (never reaches Later)");
+
+        assert!(model.set_focus(4)); // Recover on the second row
+        model.arrow_up();
+        assert_eq!(model.activate(), Some(StartAction::Recover("rid-1".to_string())));
     }
 
     #[test]
@@ -346,21 +491,43 @@ mod tests {
         // ClearRecentFooter(6) -- the recovery section is fully traversed before Recent.
         assert_eq!(model.focus_count(), 7);
 
-        model.move_focus(2);
+        model.tab_next();
+        model.tab_next();
         assert_eq!(model.activate(), Some(StartAction::Recover("rid-1".to_string())));
 
-        model.move_focus(1);
+        model.tab_next();
         assert_eq!(model.activate(), Some(StartAction::DiscardRecovery("rid-1".to_string())));
 
-        model.move_focus(1);
+        model.tab_next();
         assert_eq!(model.activate(), Some(StartAction::Later));
 
-        model.move_focus(1);
+        model.tab_next();
         assert_eq!(
             model.activate(),
             Some(StartAction::OpenRecent(PathBuf::from("/docs/a.vrs"))),
             "recent rows follow the recovery section, never precede it"
         );
+    }
+
+    #[test]
+    fn clearing_collections_never_panics_on_old_focus() {
+        let mut recents = Recents::default();
+        recents.record(Path::new("/docs/a.vrs"), None, 100);
+        let recovery = vec![RecoveryRow {
+            rid: "rid-1".to_string(),
+            name: "Untitled-1".to_string(),
+            original_dir: None,
+            saved_at_text: "saved 14:32".to_string(),
+        }];
+        let mut model = StartModel::build(&recents, 200, |_| false, recovery);
+        // Focus Recover(0) (index 2), then empty both collections behind the cached order.
+        model.focus = 2;
+        model.recovery.clear();
+        assert_eq!(model.activate(), None, "stale Recover target resolves to None, not a panic");
+        model.focus = 5; // Recent(0)
+        model.rows.clear();
+        assert_eq!(model.activate(), None);
+        assert_eq!(model.delete_focused(), None, "stale Recent target resolves to None");
     }
 
     #[test]
@@ -370,7 +537,7 @@ mod tests {
         recents.record(Path::new("/docs/a.vrs"), None, then);
         let model = StartModel::without_recovery(&recents, NOW, |_| false);
 
-        assert_eq!(model.rows[0].when_text, time_text::relative(NOW, then));
-        assert_eq!(model.rows[0].when_text, "2 min ago");
+        assert_eq!(model.rows()[0].when_text, time_text::relative(NOW, then));
+        assert_eq!(model.rows()[0].when_text, "2 min ago");
     }
 }

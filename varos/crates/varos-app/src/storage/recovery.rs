@@ -48,6 +48,10 @@ pub const LOCK_FILE: &str = "session.lock";
 pub const DISCARDED_MARK: &str = ".discarded-";
 /// Generations kept per session (N and N-1).
 pub const GENERATIONS_KEPT: usize = 2;
+/// Highest generation number accepted (2^53, exact in any JSON reader; one copy every 30 s never
+/// gets near it). A manifest listing more is damaged: `+ 1` on it could overflow or wrap, and a
+/// wrapped number would reuse the name of a listed generation.
+pub const MAX_GENERATION_SEQ: u64 = 1 << 53;
 
 /// One snapshot as listed in the manifest (newest first).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,8 +252,8 @@ fn try_take_lock(dir: &Path) -> io::Result<Option<File>> {
     }
 }
 
-/// Parse a manifest read from disk. Untrusted: versions are checked head-first, and every listed
-/// file name must be exactly `snap-<seq>.json`.
+/// Parse a manifest read from disk. Untrusted: versions are checked head-first, every listed
+/// file name must be exactly `snap-<seq>.json`, and no `seq` may exceed [`MAX_GENERATION_SEQ`].
 fn parse_manifest(bytes: &[u8]) -> Result<Manifest, SnapError> {
     #[derive(Deserialize)]
     struct Head {
@@ -264,7 +268,9 @@ fn parse_manifest(bytes: &[u8]) -> Result<Manifest, SnapError> {
     if m.model_version > varos_core::file::VRS_VERSION {
         return Err(SnapError::NewerFormat(m.model_version));
     }
-    if m.generations.is_empty() || m.generations.iter().any(|g| g.file != snap_file(g.seq)) {
+    if m.generations.is_empty()
+        || m.generations.iter().any(|g| g.seq > MAX_GENERATION_SEQ || g.file != snap_file(g.seq))
+    {
         return Err(damaged());
     }
     Ok(m)
@@ -373,9 +379,12 @@ impl RecoveryStore {
         let prev = self.read_manifest(&dir)?;
         let prev_gens: &[Generation] = prev.as_ref().map(|m| m.generations.as_slice()).unwrap_or(&[]);
         let seq = match prev_gens.iter().map(|g| g.seq).max() {
-            Some(newest) if seq <= newest => newest + 1,
+            Some(newest) if seq <= newest => newest.saturating_add(1),
             _ => seq,
         };
+        if seq > MAX_GENERATION_SEQ {
+            return Err(SnapError::Damaged("The recovery copy number is out of range.".to_string()));
+        }
 
         // 1. The blob (a new, unlisted name).
         let file = snap_file(seq);
@@ -1244,6 +1253,37 @@ mod tests {
         m.generations[0].file = "../../Original.vrs".into();
         std::fs::write(&path, serde_json::to_vec(&m).unwrap()).unwrap();
         assert!(matches!(store.load_best(&rid), Err(SnapError::Damaged(_))));
+    }
+
+    #[test]
+    fn out_of_range_manifest_seq_is_damaged_not_a_panic() {
+        let d = TestDir::new("rec-maxseq");
+        let store = real_store(&d);
+        let rid = fresh_rid();
+        store.write_generation(&meta(&rid, "Logo"), 1, &blob(1), 101).unwrap();
+        let dir = store.dir().join(&rid);
+        // A valid-looking manifest whose newest generation is u64::MAX (its blob even verifies).
+        let mut m = read_manifest(&store, &rid);
+        let top = snap_file(u64::MAX);
+        std::fs::copy(dir.join(&m.generations[0].file), dir.join(&top)).unwrap();
+        m.generations[0].seq = u64::MAX;
+        m.generations[0].file = top;
+        std::fs::write(dir.join(MANIFEST_FILE), serde_json::to_vec(&m).unwrap()).unwrap();
+        let before = snapshot_of(&dir);
+        let readable = |e: &SnapError| matches!(e, SnapError::Damaged(r) if r == "The recovery record can't be read.");
+        assert!(readable(&store.load_best(&rid).unwrap_err()));
+        let err = store.write_generation(&meta(&rid, "Logo"), 2, &blob(2), 102).unwrap_err();
+        assert!(readable(&err), "{err:?}");
+        assert_eq!(snapshot_of(&dir), before, "nothing is overwritten or reused");
+        // The ceiling itself: a generation at the bound loads, and nothing is written past it.
+        m.generations[0].seq = MAX_GENERATION_SEQ;
+        m.generations[0].file = snap_file(MAX_GENERATION_SEQ);
+        std::fs::copy(dir.join(snap_file(u64::MAX)), dir.join(snap_file(MAX_GENERATION_SEQ))).unwrap();
+        std::fs::write(dir.join(MANIFEST_FILE), serde_json::to_vec(&m).unwrap()).unwrap();
+        assert_eq!(store.load_best(&rid).unwrap().generation.seq, MAX_GENERATION_SEQ);
+        let err = store.write_generation(&meta(&rid, "Logo"), 2, &blob(2), 103).unwrap_err();
+        assert!(matches!(&err, SnapError::Damaged(r) if r == "The recovery copy number is out of range."), "{err:?}");
+        assert_eq!(seqs(&store, &rid)[0], MAX_GENERATION_SEQ, "the last good manifest is kept");
     }
 
     #[test]

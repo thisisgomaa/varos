@@ -38,7 +38,7 @@ mod mac_menu;
 mod single_instance;
 mod ui;
 mod workspace;
-use app_command::{AppCommand, OpenOrigin, WindowCmd};
+use app_command::{AppCommand, OpenOrigin, SessionId, WindowCmd};
 use cursors::CK;
 
 /// The one cursor this frame wants: a pan in progress beats the Space hand, which beats the chrome's
@@ -75,11 +75,21 @@ fn native_cursor_apply_needed(pointer_inside: bool, focused: bool) -> bool {
     pointer_inside && focused
 }
 
-/// Which native cursor the current effective tool wants (Pen reports its contextual state; the
-/// Selection tool reports its transform/copy states).
+/// Which native cursor the current effective tool wants — the Cursor System (study §9, v1.1). Pure: reads
+/// the editor's drag + hover state and runs no hit-test that is not already per-frame (transform_hit,
+/// pen_hint, ab_hit, the Alt path_under) except `hover_anchor`, which only scans the ONE hovered path.
+///  - A drag holds the cursor chosen at its press: a bbox scale keeps its resize arrow, a bbox rotate its
+///    rotate arrow (never re-hit-tested mid-drag), a Selection move shows the plain arrow (`Move`).
+///  - Hover badges (Illustrator): Selection over an object → arrow + filled square; Direct Selection over
+///    an anchor → hollow arrow + hollow square, over a path → hollow arrow + filled square.
+///  - Rotate / Scale / every shape tool: the crosshair + that tool's badge, on hover and for the whole drag.
+///  - Every tool is matched by name (no catch-all), so a new tool must choose its cursor.
 fn desired_ck(ed: &Editor, world: Pt) -> CK {
     if let Drag::Scale { handle, angle, .. } = ed.drag {
-        return resize_ck(handle, angle);
+        return resize_ck(handle, angle); // `angle` = the frame angle at the press → locked
+    }
+    if let Drag::Rotate { corner: Some(c), a0, .. } = ed.drag {
+        return rotate_ck(c, a0); // bbox rotate: the corner + frame angle at the press → locked
     }
     if let AbDrag::Resize { handle, .. } = ed.ab_drag {
         return resize_ck(handle, 0.0);
@@ -88,19 +98,37 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         return CK::Select;
     }
     if matches!(ed.ab_drag, AbDrag::Create { .. }) {
-        return CK::Cross;
+        return CK::Artboard;
     }
     if ed.mods.alt && matches!(ed.drag, Drag::Object { .. } | Drag::DupPending { .. }) {
         return CK::Copy;
     }
+    if matches!(ed.drag, Drag::Object { .. }) {
+        return CK::Move; // the hover badge drops while the object travels (Illustrator)
+    }
+    let idle = matches!(ed.drag, Drag::None); // hover badges only between gestures
     match ed.eff_tool() {
+        ToolKind::Object if !idle => CK::Select, // marquee / guide drag
         ToolKind::Object => match ed.transform_hit(world) {
             Some(TfHit::Scale(i)) => resize_ck(i, ed.obj_angle),
             Some(TfHit::Rotate(i)) => rotate_ck(i, ed.obj_angle),
             None if ed.mods.alt && ed.path_under(world).is_some() => CK::Copy,
+            None if ed.hover_path.is_some() => CK::SelectObject,
             None => CK::Select,
         },
-        ToolKind::Direct => CK::Direct,
+        ToolKind::Direct if !idle => CK::Direct,
+        ToolKind::Direct => match ed.hover_path {
+            Some(_) if ed.hover_anchor(world).is_some() => CK::DirectAnchor,
+            Some(_) => CK::DirectPath,
+            None => CK::Direct,
+        },
+        // crosshair + the tool's own badge, on hover and for the whole drag (owner 2026-09-25)
+        ToolKind::Rotate => CK::CrossRotate,
+        ToolKind::Scale => CK::CrossScale,
+        ToolKind::Rect => CK::CrossRect,
+        ToolKind::Ellipse => CK::CrossEllipse,
+        ToolKind::Triangle => CK::CrossTriangle,
+        ToolKind::Polygon => CK::CrossPolygon,
         ToolKind::Convert => CK::Convert,
         ToolKind::Eyedropper => CK::Eye,
         ToolKind::Pen => match ed.pen_hint(world) {
@@ -114,9 +142,8 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         ToolKind::Artboard => match ed.ab_hit(world) {
             Some(AbHit::Handle(i)) => resize_ck(i, 0.0), // ↔ on a page resize handle
             Some(AbHit::Body(_)) => CK::Select,          // arrow over a page (click to select / move)
-            None => CK::Cross,                           // empty board (drag to create a page)
+            None => CK::Artboard,                        // empty board (drag to create a page)
         },
-        _ => CK::Cross,
     }
 }
 
@@ -552,20 +579,22 @@ fn take_pending_fit(fit: &mut Option<f32>, ed: &Editor, view: &mut View, gui: &u
     true
 }
 
-/// THE dispatch (DFS S1 §3.5): every `AppCommand`, whatever raised it, runs here — the window /
-/// panel effects on the window, everything else as one lifecycle command (`host::run_lifecycle`:
-/// settle the active tab, run the rules over the ports, reset what a dialog or a switch left stale).
+/// THE dispatch (DFS S1 §3.5): every queued `HostAction` runs here, in queue order — the window /
+/// panel effects on the window, everything else through `run_action`.
+#[allow(clippy::too_many_arguments)] // the event loop's own state, passed as-is
 fn dispatch(
-    cmd: AppCommand,
+    action: host::HostAction,
     ws: &mut workspace::Workspace,
     gui: &mut ui::Ui,
     window: &Window,
     hwnd: isize,
+    canvas: egui::Rect,
     dialogs: &mut dyn lifecycle::Dialogs,
     store: &mut dyn lifecycle::DocStore,
+    keys: &host::Keyboard,
 ) -> host::Ran {
-    match cmd {
-        AppCommand::Window(w) => {
+    match action {
+        host::HostAction::App(AppCommand::Window(w)) => {
             match w {
                 WindowCmd::Minimize => window.set_minimized(true),
                 WindowCmd::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
@@ -581,7 +610,83 @@ fn dispatch(
             }
             host::Ran::default()
         }
-        cmd => host::run_lifecycle(cmd, ws, gui, dialogs, store),
+        action => run_action(action, ws, gui, canvas, dialogs, store, keys),
+    }
+}
+
+/// One queued action that is not a window command: a lifecycle command (`host::run_lifecycle`:
+/// settle the active tab, run the rules over the ports, reset what a dialog or a switch left stale),
+/// or a document action on whichever tab is active by then. No window: the FIFO test drives it
+/// headless. `canvas` = the visible drawing area (`canvas_px`); `keys` = the keys held right now
+/// (`host::Keyboard`), mirrored into the tab active after a command.
+fn run_action(
+    action: host::HostAction,
+    ws: &mut workspace::Workspace,
+    ui: &mut dyn host::DocUi,
+    canvas: egui::Rect,
+    dialogs: &mut dyn lifecycle::Dialogs,
+    store: &mut dyn lifecycle::DocStore,
+    keys: &host::Keyboard,
+) -> host::Ran {
+    match action {
+        host::HostAction::App(cmd) => host::run_lifecycle(cmd, ws, ui, dialogs, store, keys),
+        host::HostAction::Doc(a) => {
+            if let Some(s) = ws.active_mut() {
+                run_doc_action(a, &mut s.editor, &mut s.view, canvas);
+            }
+            host::Ran::default()
+        }
+    }
+}
+
+/// A document action on one tab: a shortcut key's path, or a magnet quick-menu row.
+fn run_doc_action(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: egui::Rect) {
+    match a {
+        host::DocAction::Key(code, m) => doc_key(ed, view, canvas, code, m),
+        host::DocAction::Snap { grid } => menu_snap_toggle(ed, grid),
+    }
+}
+
+/// A file / tab key (⌘N ⌘O ⌘S ⇧⌘S ⌘W ⌘Q, Ctrl+Tab) is a command, decided at its press on the
+/// keyboard's held modifiers (`host::Keyboard::key`) — never on a tab's own copy, which a tab switch
+/// resets while the key is still down (owner 2026-09-25: held-Ctrl Tab · Tab switched only once).
+/// Its press queues the command; its repeats (no queue of dialogs) and its release follow the press,
+/// whatever the modifiers did since. Returns whether the key event belongs to a command key: then it
+/// goes nowhere else — not to egui (so Ctrl+Tab cannot move egui's keyboard focus, UI audit 04 B4),
+/// not to the document.
+fn command_key(
+    pending: &mut host::ActionQueue,
+    keyboard: &mut host::Keyboard,
+    code: KeyCode,
+    active: Option<SessionId>,
+    pressed: bool,
+    repeat: bool,
+) -> bool {
+    match keyboard.key(code, pressed, repeat, active) {
+        host::KeyRoute::Queue(cmd) => {
+            pending.push(host::HostAction::App(cmd));
+            true
+        }
+        host::KeyRoute::Swallow => true,
+        host::KeyRoute::Pass => false,
+    }
+}
+
+/// Raise a document action (a key, a menu row) on the active tab: it runs at once when nothing raised
+/// earlier is still waiting (`ActionQueue::doc_runs_now` — no command, no click whose command is still
+/// to come), else it joins the queue behind it — so the queue order is the event order (review P1: a
+/// ⌘Z after a queued ⌘S runs after the Save; a ⌘Z after a click on tab B runs on B).
+fn raise_doc(
+    pending: &mut host::ActionQueue,
+    a: host::DocAction,
+    ed: &mut Editor,
+    view: &mut View,
+    canvas: egui::Rect,
+) {
+    if pending.doc_runs_now() {
+        run_doc_action(a, ed, view, canvas);
+    } else {
+        pending.push(host::HostAction::Doc(a));
     }
 }
 
@@ -653,10 +758,15 @@ fn main() {
     // DFS S1: every tab is its own document (editor + view + file + saved checkpoint); the host
     // always works on the ACTIVE session (never empty in S1: it starts as a pristine Untitled-1).
     let mut ws = workspace::Workspace::new();
-    // Every command, whatever raised it (keys, native menu, tab strip, window controls, OS close,
-    // files handed in), queues here and runs through `dispatch` once the loop is about to wait. The
-    // first instance opens its OWN file argument, once, after the first framed frame (F13).
-    let mut pending: Vec<AppCommand> = Vec::new();
+    // The ONE FIFO action queue (review P1): the lifecycle / window commands (keys, native menu, tab
+    // strip, burger, window controls, OS close, files handed in) queue here and run through `dispatch`
+    // once the loop is about to wait; a document action a key or a menu row raises runs at once only
+    // when nothing is waiting, else it queues behind (`raise_doc`) — so they all run in event order.
+    // Pointer input and panel edits act on the editor directly. The first instance opens its OWN file
+    // argument, once, after the first framed frame (F13).
+    let mut pending = host::ActionQueue::default();
+    // the held modifiers: ONE truth for the whole window (a tab switch must not forget a held Control)
+    let mut keyboard = host::Keyboard::default();
     let mut startup_open = host::open_paths_command(file_arg.into_iter().collect(), OpenOrigin::CommandLine);
     // the lifecycle's ports: native dialogs + the disk
     let (mut dialogs, mut store) = (file_ports::RfdDialogs, file_ports::DiskStore);
@@ -743,6 +853,9 @@ fn main() {
     {
         let bg = varos_app::shell::tokens::BG;
         mac_menu::set_window_background(&window, [bg.r(), bg.g(), bg.b()]);
+        // P15: the title-bar strip over our content view is NOT a native drag region — a press on a
+        // tab / button belongs to egui; only empty bar space drags (MAC_CHROME.md §A).
+        mac_menu::forbid_native_titlebar_drag(&window);
     }
     // macOS: the native menu bar; installed on the first NewEvents (after the app finished launching).
     #[cfg(target_os = "macos")]
@@ -771,8 +884,8 @@ fn main() {
     let installed = cursors::install(hwnd); // subclass live; custom_frame is deferred until the splash ends
     cursors::set_dark_class_brush(hwnd); // any OS background fill is now #141313, never white
 
-    // The Varos cursor set v1 (embedded), built once per platform: Win32 HCURSORs / macOS Retina
-    // NSCursors / winit CustomCursors. Logs `[varos] cursors: 28 v1 (+ N reference overrides) …`.
+    // The Varos cursor set v1.1 (embedded), built once per platform: Win32 HCURSORs / macOS Retina
+    // NSCursors / winit CustomCursors. Logs `[varos] cursors: 31 v1 (+ N reference overrides) …`.
     #[cfg(windows)]
     let hcur: HashMap<CK, isize> = cursors::create_cursors();
     #[cfg(not(windows))]
@@ -809,7 +922,6 @@ fn main() {
     let mut cursor_window_focused = window.has_focus();
     let mut panning = false;
     let mut pan_last: Pt = [0.0, 0.0];
-    let mut space_down = false;
     // a drag / marquee / pen gesture that STARTED on the canvas — keep feeding it moves even if the
     // cursor strays over a panel (C5), so it never freezes under chrome; cleared on button release.
     let mut canvas_gesture = false;
@@ -859,13 +971,14 @@ fn main() {
                 if matches!(&event, Event::NewEvents(winit::event::StartCause::Init)) {
                     menu.install();
                 }
-                // a menu row (clicked, or its ⌘ key): File / Quit / Window rows are commands for the one
-                // dispatch; the other rows run the SAME path their key already runs
+                // a menu row (clicked, or its ⌘ key): every row queues into the one FIFO queue — File /
+                // Quit / Window rows as commands, the other rows as the SAME document action their key
+                // queues — except a ⌘-row while typing, which goes to the focused field
                 for cmd in menu.drain() {
-                    use host::MenuRoute as R;
+                    use host::{DocAction as D, HostAction as A, MenuRoute as R};
                     let canvas = canvas_px(&gui, &window);
                     match host::menu_route(cmd, ws.active_id()) {
-                        Some(R::App(c)) => pending.push(c),
+                        Some(R::App(c)) => pending.push(A::App(c)),
                         Some(R::Key(k)) => {
                             if gui.wants_keyboard() {
                                 // typing in a field: the key belongs to egui, as on the keyboard path
@@ -874,9 +987,9 @@ fn main() {
                                 }
                             } else if let Some(s) = ws.active_mut() {
                                 let m = Mods { ctrl: true, shift: k.shift, alt: k.alt };
-                                match host::key_command(k.code, m, Some(s.id)) {
-                                    Some(c) => pending.push(c),
-                                    None => doc_key(&mut s.editor, &mut s.view, canvas, k.code, m),
+                                match host::key_action(k.code, m, Some(s.id)) {
+                                    A::App(c) => pending.push(A::App(c)),
+                                    A::Doc(d) => raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas),
                                 }
                             }
                         }
@@ -884,13 +997,14 @@ fn main() {
                         Some(R::Plain(code)) => {
                             if !gui.wants_keyboard() {
                                 if let Some(s) = ws.active_mut() {
-                                    doc_key(&mut s.editor, &mut s.view, canvas, code, Mods::default());
+                                    let d = D::Key(code, Mods::default());
+                                    raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas);
                                 }
                             }
                         }
                         Some(R::Snap { grid }) => {
                             if let Some(s) = ws.active_mut() {
-                                menu_snap_toggle(&mut s.editor, grid);
+                                raise_doc(&mut pending, D::Snap { grid }, &mut s.editor, &mut s.view, canvas);
                             }
                         }
                         None => {}
@@ -900,14 +1014,18 @@ fn main() {
             }
             if matches!(&event, Event::AboutToWait) {
                 // a second instance handed us files (Windows single-instance)
-                pending.extend(host::open_paths_command(
-                    single_instance::take_pending_file_paths(),
-                    OpenOrigin::OsHandoff,
-                ));
-                // THE one dispatch: every queued command, in the order it was raised
-                if !pending.is_empty() {
-                    for cmd in std::mem::take(&mut pending) {
-                        let ran = dispatch(cmd, &mut ws, &mut gui, &window, hwnd, &mut dialogs, &mut store);
+                pending.extend(
+                    host::open_paths_command(single_instance::take_pending_file_paths(), OpenOrigin::OsHandoff)
+                        .map(host::HostAction::App),
+                );
+                // THE one dispatch: every queued action, in the order it was raised (FIFO) — up to a
+                // click the Ui frame has not turned into its command yet
+                let ready = pending.take_ready();
+                if !ready.is_empty() {
+                    let canvas = canvas_px(&gui, &window);
+                    for action in ready {
+                        let (ds, keys) = (&mut dialogs, &keyboard);
+                        let ran = dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, ds, &mut store, keys);
                         if ran.ran {
                             last_scene_signature = None; // the drawn document may be another one now
                         }
@@ -931,20 +1049,47 @@ fn main() {
                 if window_id != window.id() {
                     return;
                 }
+                // The held keys: the keyboard's one truth (`host::Keyboard`), mirrored into the active
+                // tab's editor — kept even when no tab is active. Losing focus lets Space and the command
+                // keys go (their key-ups go elsewhere now); winit releases the modifiers itself.
+                if let WindowEvent::Focused(false) = &event {
+                    if keyboard.space() {
+                        panning = false; // as a Space key-up does: the Space pan ends
+                    }
+                    keyboard.focus_lost(ws.active_mut().map(|s| &mut s.editor));
+                }
+                if let WindowEvent::ModifiersChanged(m) = &event {
+                    let m = Mods {
+                        shift: m.state().shift_key(),
+                        alt: m.state().alt_key(),
+                        ctrl: m.state().control_key() || m.state().super_key(),
+                    };
+                    keyboard.modifiers_changed(m, ws.active_mut().map(|s| &mut s.editor));
+                }
                 // Feed egui first. `over_panel` = pointer is over a native panel → the canvas must NOT
                 // get the event (gate #3: panels don't swallow canvas strokes; canvas input stays native).
                 // A file / tab key (⌘S, Ctrl+Tab …) is a command, not text: egui never sees it — so
                 // Ctrl+Tab cannot also move egui's keyboard focus onto a widget (UI audit 04 B4).
-                let lifecycle_key_event = match &event {
+                let command_key_event = match &event {
                     WindowEvent::KeyboardInput { event: k, .. } => match k.physical_key {
                         PhysicalKey::Code(c) => {
-                            ws.active().is_some_and(|s| host::key_command(c, s.editor.mods, Some(s.id)).is_some())
+                            let pressed = k.state == ElementState::Pressed;
+                            command_key(&mut pending, &mut keyboard, c, ws.active_id(), pressed, k.repeat)
                         }
                         _ => false,
                     },
                     _ => false,
                 };
-                let egui_consumed = !lifecycle_key_event && gui.on_event(&window, &event);
+                if command_key_event {
+                    window.request_redraw();
+                }
+                let egui_consumed = !command_key_event && gui.on_event(&window, &event);
+                // a pointer button's chrome command (a tab chip, a burger row) exists only after the next
+                // Ui frame: each press / release leaves its mark, and what is raised after it waits
+                if let WindowEvent::MouseInput { state, .. } = &event {
+                    pending.pointer_button(*state == ElementState::Released);
+                    window.request_redraw();
+                }
                 let over_panel = gui.wants_pointer();
                 let Some(s) = ws.active_mut() else { return };
                 let (ed, view) = (&mut s.editor, &mut s.view);
@@ -974,7 +1119,7 @@ fn main() {
                     }
                     // red traffic light / OS close: the Quit transaction over every tab (Astra F01; S1
                     // has one window, so Close Window = Quit — work order §6 Q1)
-                    WindowEvent::CloseRequested => pending.push(AppCommand::Quit),
+                    WindowEvent::CloseRequested => pending.push(host::HostAction::App(AppCommand::Quit)),
                     WindowEvent::Resized(size) => {
                         if size.width == 0 || size.height == 0 {
                             return; // minimized / degenerate — don't reconfigure the surface or record garbage bounds
@@ -1028,13 +1173,6 @@ fn main() {
                         }
                         window.request_redraw();
                     }
-                    WindowEvent::ModifiersChanged(m) => {
-                        ed.mods = Mods {
-                            shift: m.state().shift_key(),
-                            alt: m.state().alt_key(),
-                            ctrl: m.state().control_key() || m.state().super_key(),
-                        };
-                    }
                     WindowEvent::MouseInput { state, button, .. } => {
                         // A5 — while the picker's system eyedropper is armed, the sample click is read
                         // globally (GetAsyncKeyState); swallow the in-window event so it doesn't also
@@ -1046,7 +1184,7 @@ fn main() {
                         match button {
                             MouseButton::Left => match state {
                                 ElementState::Pressed => {
-                                    if space_down {
+                                    if keyboard.space() {
                                         #[cfg(target_os = "macos")]
                                         caption_clicks.reset_after_drag();
                                         if ed.mods.ctrl {
@@ -1156,34 +1294,35 @@ fn main() {
                     WindowEvent::KeyboardInput { event, .. } => {
                         let PhysicalKey::Code(code) = event.physical_key else { return };
                         // DFS S1 + UI audit 04: the file / tab keys (⌘N ⌘O ⌘S ⇧⌘S ⌘W ⌘Q, Ctrl+Tab) are
-                        // commands, decided BEFORE the text-field check — so ⌘S inside a field saves on
-                        // every platform, as the Mac menu's key equivalent already does. A held key does
-                        // not repeat them (no queue of dialogs).
-                        if let Some(cmd) = host::key_command(code, ed.mods, Some(s.id)) {
-                            if event.state == ElementState::Pressed && !event.repeat {
-                                pending.push(cmd);
-                                window.request_redraw();
-                            }
+                        // commands, queued above (`command_key`) BEFORE the text-field check — so ⌘S
+                        // inside a field saves on every platform, as the Mac menu's key equivalent
+                        // already does. Such a key goes nowhere else.
+                        if command_key_event {
+                            return;
                         }
                         // Only skip canvas shortcuts when a text field is actually focused — NOT on egui's
                         // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
                         // The Color Picker is a floating palette: the canvas stays fully usable beside it,
                         // but Esc/Enter belong to the dialog while it is open (Cancel / OK).
-                        else if gui.wants_keyboard() { /* typing into a field — keys go to egui */
+                        if gui.wants_keyboard() { /* typing into a field — keys go to egui */
                         } else if gui.modal_open()
                             && matches!(code, KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter)
                         {
                             /* the dialog owns these */
+                        } else if gui.tab_drag_active() && code == KeyCode::Escape {
+                            /* P16: Esc cancels the tab drag (the strip reads it) — not also a canvas deselect */
                         } else if code == KeyCode::Space {
-                            space_down = event.state == ElementState::Pressed;
-                            ed.space = space_down; // A9: lets a live placement drag reposition on Space
-                            if !space_down {
+                            // A9: `Editor::space` lets a live placement drag reposition on Space
+                            let down = event.state == ElementState::Pressed;
+                            keyboard.space_changed(down, Some(ed));
+                            if !down {
                                 panning = false;
                             }
                             window.request_redraw();
                         } else if event.state == ElementState::Pressed {
-                            let m = ed.mods;
-                            doc_key(ed, view, canvas_px(&gui, &window), code, m);
+                            // runs now, or waits behind a command raised earlier in this batch (FIFO)
+                            let d = host::DocAction::Key(code, keyboard.held());
+                            raise_doc(&mut pending, d, ed, view, canvas_px(&gui, &window));
                             window.request_redraw();
                         }
                     }
@@ -1192,6 +1331,7 @@ fn main() {
                         // (that was closing the app on minimize). Skip the frame until it's restored.
                         let psz = window.inner_size();
                         if psz.width == 0 || psz.height == 0 {
+                            pending.chrome_frame([]); // no Ui frame: a click's mark must not hold the queue
                             return;
                         }
                         let perf_start = Instant::now();
@@ -1205,10 +1345,12 @@ fn main() {
                             gui.run(&window, ed, scale as f32, *view, cursors::is_maximized(hwnd));
                         // the tab strip / burger / window controls raised commands: the one dispatch runs
                         // them when the loop is about to wait (right after this frame)
-                        pending.extend(gui.take_app_commands());
-                        if let Some(act) = gui.win_action.take() {
-                            pending.push(host::win_action_command(act));
-                        }
+                        // …in the place of the click that raised them (`ActionQueue::chrome_frame`)
+                        let win = gui.win_action.take().map(host::win_action_command);
+                        let raised = gui.take_app_commands().into_iter().chain(win);
+                        // egui reports at most one click per frame, decided at the latest release
+                        let at = pending.last_release();
+                        pending.chrome_frame(raised.map(|c| (at, host::HostAction::App(c))));
                         if !pending.is_empty() {
                             window.request_redraw();
                         }
@@ -1240,9 +1382,10 @@ fn main() {
                         // Win32 set — seam-resize arrows on box splitters, ↔ on a scrubbed field,
                         // arrow elsewhere); over the canvas show the tool's cursor. It was hardwired
                         // to Select here, which broke the new box seams' arrows (Ahmed 07-07).
-                        let ck = resolve_ck(panning, space_down, gui.wants_pointer().then(|| gui.chrome_ck()), || {
-                            desired_ck(ed, view.s2w(screen_cursor))
-                        });
+                        let ck =
+                            resolve_ck(panning, keyboard.space(), gui.wants_pointer().then(|| gui.chrome_ck()), || {
+                                desired_ck(ed, view.s2w(screen_cursor))
+                            });
                         // Runs AFTER gui.run (egui's platform output is already applied), so on non-Windows
                         // the re-assert each frame wins over egui-winit's own cursor write.
                         if cursor_apply_needed(last_ck, ck, REASSERT_CURSOR_EACH_FRAME) {
@@ -1309,7 +1452,7 @@ fn main() {
                             }
                             editor_framed = true;
                             // the first instance opens its OWN file argument now (F13), through the dispatch
-                            pending.extend(startup_open.take());
+                            pending.extend(startup_open.take().map(host::HostAction::App));
                             window.request_redraw();
                         }
                         // Zoom needs no follow-up frames; idle when egui has no work.
@@ -1328,12 +1471,14 @@ fn main() {
                             }
                             last_title = title;
                         }
+                        // the one per-frame snapshot; handed to the strip only when it changed (a
+                        // dispatch in `AboutToWait` already handed over its own result)
                         let tabs = ws.tabs();
                         if tabs != drawn_tabs {
                             window.request_redraw(); // repaint once more so the strip shows the change
+                            gui.set_tabs(tabs.clone(), ws.active_id());
+                            drawn_tabs = tabs;
                         }
-                        gui.set_tabs(tabs.clone(), ws.active_id());
-                        drawn_tabs = tabs;
                     }
                     _ => {}
                 }
@@ -1403,6 +1548,237 @@ mod cursor_policy_tests {
     }
 }
 
+/// Cursor System v1.1 (2026-09-25): (tool, hover, drag) → cursor, driven through the REAL editor
+/// (pointer_down / pointer_move, no GPU, no window). Each row checks the CK AND the SVG file it shows, so
+/// a state that keeps its CK but changes glyph is caught too.
+#[cfg(test)]
+mod cursor_state_tests {
+    use super::{desired_ck, CK};
+    use varos_core::editor::{Editor, ToolKind};
+    use varos_core::geom::Pt;
+    use varos_core::model::{Anchor, Path};
+
+    /// A filled 100×100 square (path 10, anchors 1–4 at the corners), zoom 1, tool `t`.
+    fn ed_with_square(t: ToolKind, selected: bool) -> Editor {
+        let anc = |id, x, y| Anchor { id, p: [x, y], hin: None, hout: None, smooth: false };
+        let mut ed = Editor::new();
+        let pts = vec![anc(1, 0.0, 0.0), anc(2, 100.0, 0.0), anc(3, 100.0, 100.0), anc(4, 0.0, 100.0)];
+        ed.doc.paths.push(Path::new(10, pts, true, Some([0.5, 0.5, 0.5, 1.0]), None, 1.0));
+        ed.doc.ids = 10;
+        ed.doc.sync_tree();
+        ed.ppu = 1.0;
+        ed.set_tool(t);
+        if selected {
+            ed.objsel.insert(10);
+        }
+        ed
+    }
+
+    /// What the user does before we look at the cursor.
+    enum Act {
+        /// hover at a point (idle pointer motion — updates the editor's hover state like the real app)
+        Hover(Pt),
+        /// press at the first point, then (optionally) drag through the rest
+        Press(Pt, &'static [Pt]),
+    }
+
+    struct Row {
+        what: &'static str,
+        tool: ToolKind,
+        selected: bool,
+        alt: bool,
+        act: Act,
+        ck: CK,
+        file: &'static str,
+    }
+
+    fn rows() -> Vec<Row> {
+        use Act::*;
+        use ToolKind as T;
+        let r = |what, tool, selected, act, ck, file| Row { what, tool, selected, alt: false, act, ck, file };
+        vec![
+            // ---- Selection (V) ----
+            r("V over empty board", T::Object, false, Hover([300.0, 300.0]), CK::Select, "select.svg"),
+            r("V over an object", T::Object, false, Hover([50.0, 50.0]), CK::SelectObject, "select-object.svg"),
+            r(
+                "V over a selected object's body",
+                T::Object,
+                true,
+                Hover([50.0, 50.0]),
+                CK::SelectObject,
+                "select-object.svg",
+            ),
+            r("V over a corner scale handle", T::Object, true, Hover([100.0, 100.0]), CK::ResizeNW, "resize-nw.svg"),
+            r("V over the BR rotate ring", T::Object, true, Hover([112.0, 112.0]), CK::RotateSE, "rotate-se.svg"),
+            r("V dragging an object", T::Object, false, Press([50.0, 50.0], &[[80.0, 90.0]]), CK::Move, "select.svg"),
+            r(
+                "V marquee ending on a handle",
+                T::Object,
+                true,
+                Press([300.0, 300.0], &[[100.0, 100.0]]),
+                CK::Select,
+                "select.svg",
+            ),
+            // the lock: a bbox rotate keeps the cursor chosen at the press for the WHOLE drag, even when the
+            // pointer leaves the 22-px ring and the frame itself has turned under it
+            r(
+                "V bbox rotate, pointer far outside the ring",
+                T::Object,
+                true,
+                Press([112.0, 112.0], &[[160.0, 140.0], [300.0, 20.0]]),
+                CK::RotateSE,
+                "rotate-se.svg",
+            ),
+            r(
+                "V bbox rotate, pointer back over the object",
+                T::Object,
+                true,
+                Press([112.0, 112.0], &[[300.0, 20.0], [50.0, 50.0]]),
+                CK::RotateSE,
+                "rotate-se.svg",
+            ),
+            r(
+                "V bbox scale (right edge), pointer far away",
+                T::Object,
+                true,
+                Press([100.0, 50.0], &[[200.0, 300.0], [400.0, 20.0]]),
+                CK::ResizeH,
+                "resize-h.svg",
+            ),
+            // ---- Direct Selection (A) ----
+            r("A over empty board", T::Direct, false, Hover([300.0, 300.0]), CK::Direct, "direct.svg"),
+            r("A over an anchor", T::Direct, false, Hover([1.0, 1.0]), CK::DirectAnchor, "direct-anchor.svg"),
+            r("A over a segment", T::Direct, false, Hover([50.0, 1.0]), CK::DirectPath, "direct-path.svg"),
+            r("A over a fill", T::Direct, false, Hover([50.0, 50.0]), CK::DirectPath, "direct-path.svg"),
+            r("A dragging an anchor", T::Direct, false, Press([0.0, 0.0], &[[30.0, 30.0]]), CK::Direct, "direct.svg"),
+            // ---- Rotate (R) / Scale (S): crosshair + own badge on hover AND for the whole drag ----
+            r("R hover", T::Rotate, true, Hover([150.0, 50.0]), CK::CrossRotate, "cross-rotate.svg"),
+            r(
+                "R pressed (pivot click pending)",
+                T::Rotate,
+                true,
+                Press([150.0, 50.0], &[]),
+                CK::CrossRotate,
+                "cross-rotate.svg",
+            ),
+            r(
+                "R dragging (rotating)",
+                T::Rotate,
+                true,
+                Press([150.0, 50.0], &[[120.0, 120.0], [50.0, 50.0]]),
+                CK::CrossRotate,
+                "cross-rotate.svg",
+            ),
+            r("S hover", T::Scale, true, Hover([150.0, 50.0]), CK::CrossScale, "cross-scale.svg"),
+            r(
+                "S pressed (pivot click pending)",
+                T::Scale,
+                true,
+                Press([150.0, 50.0], &[]),
+                CK::CrossScale,
+                "cross-scale.svg",
+            ),
+            r(
+                "S dragging (scaling)",
+                T::Scale,
+                true,
+                Press([150.0, 50.0], &[[180.0, 80.0], [50.0, 50.0]]),
+                CK::CrossScale,
+                "cross-scale.svg",
+            ),
+            // ---- shape tools: crosshair + each tool's own badge (owner 2026-09-25) ----
+            r("Rect hover", T::Rect, false, Hover([300.0, 300.0]), CK::CrossRect, "cross-rect.svg"),
+            r("Ellipse hover", T::Ellipse, false, Hover([300.0, 300.0]), CK::CrossEllipse, "cross-ellipse.svg"),
+            r("Triangle hover", T::Triangle, false, Hover([300.0, 300.0]), CK::CrossTriangle, "cross-triangle.svg"),
+            r("Polygon hover", T::Polygon, false, Hover([300.0, 300.0]), CK::CrossPolygon, "cross-polygon.svg"),
+            r("Rect hover over an object", T::Rect, false, Hover([50.0, 50.0]), CK::CrossRect, "cross-rect.svg"),
+            r(
+                "Rect drawing",
+                T::Rect,
+                false,
+                Press([300.0, 300.0], &[[360.0, 380.0]]),
+                CK::CrossRect,
+                "cross-rect.svg",
+            ),
+            r(
+                "Ellipse drawing",
+                T::Ellipse,
+                false,
+                Press([300.0, 300.0], &[[360.0, 380.0]]),
+                CK::CrossEllipse,
+                "cross-ellipse.svg",
+            ),
+            r(
+                "Triangle drawing",
+                T::Triangle,
+                false,
+                Press([300.0, 300.0], &[[360.0, 380.0]]),
+                CK::CrossTriangle,
+                "cross-triangle.svg",
+            ),
+            r(
+                "Polygon drawing",
+                T::Polygon,
+                false,
+                Press([300.0, 300.0], &[[360.0, 380.0]]),
+                CK::CrossPolygon,
+                "cross-polygon.svg",
+            ),
+            // ---- Artboard (Shift+O): its own crosshair + frame badge ----
+            r("Artboard over empty board", T::Artboard, false, Hover([5000.0, 5000.0]), CK::Artboard, "artboard.svg"),
+            r(
+                "Artboard creating a page",
+                T::Artboard,
+                false,
+                Press([5000.0, 5000.0], &[[5200.0, 5150.0]]),
+                CK::Artboard,
+                "artboard.svg",
+            ),
+            // ---- Alt-drag copies ----
+            Row {
+                what: "V Alt-dragging an object",
+                tool: T::Object,
+                selected: false,
+                alt: true,
+                act: Press([50.0, 50.0], &[[80.0, 90.0]]),
+                ck: CK::Copy,
+                file: "copy.svg",
+            },
+        ]
+    }
+
+    #[test]
+    fn tool_hover_drag_table_picks_the_expected_cursor_and_file() {
+        let mut fails = vec![];
+        for row in rows() {
+            let mut ed = ed_with_square(row.tool, row.selected);
+            ed.mods.alt = row.alt;
+            let at = match row.act {
+                Act::Hover(p) => {
+                    ed.pointer_move(p);
+                    p
+                }
+                Act::Press(p, path) => {
+                    ed.pointer_move(p); // arrive (hover) first, like a real pointer
+                    ed.pointer_down(p);
+                    let mut at = p;
+                    for &q in path {
+                        ed.pointer_move(q);
+                        at = q;
+                    }
+                    at
+                }
+            };
+            let ck = desired_ck(&ed, at);
+            let file = crate::cursors::v1(ck).file;
+            if ck != row.ck || file != row.file {
+                fails.push(format!("{}: got {ck:?} ({file}), want {:?} ({})", row.what, row.ck, row.file));
+            }
+        }
+        assert!(fails.is_empty(), "{} row(s) wrong:\n  {}", fails.len(), fails.join("\n  "));
+    }
+}
+
 #[cfg(test)]
 mod scene_signature_tests {
     use super::*;
@@ -1446,6 +1822,259 @@ mod scene_signature_tests {
         let before = scene_signature(&ed, View::identity(), [800, 600]);
         ed.doc.paths[0].fill = Paint::Solid([0.0, 1.0, 0.0, 1.0]);
         assert_ne!(before, scene_signature(&ed, View::identity(), [800, 600]));
+    }
+}
+
+#[cfg(test)]
+mod action_queue_tests {
+    use super::*;
+    use crate::app_command::SessionId;
+    use crate::lifecycle::{Dialogs, DocStore, SaveDecision, SaveFailChoice};
+    use crate::workspace::FileKey;
+    use std::path::{Path, PathBuf};
+    use varos_core::model::Document;
+
+    #[derive(Default)]
+    struct FakeUi;
+    impl host::DocUi for FakeUi {
+        fn settle(&mut self, _: &mut Editor) {}
+        fn document_switched(&mut self) {}
+    }
+
+    struct NoDialogs;
+    impl Dialogs for NoDialogs {
+        fn pick_open(&mut self) -> Vec<PathBuf> {
+            unreachable!()
+        }
+        fn pick_save(&mut self, _: &str, _: Option<&Path>) -> Option<PathBuf> {
+            unreachable!()
+        }
+        fn ask_save_changes(&mut self, _: &str, _: Option<(usize, usize)>) -> SaveDecision {
+            unreachable!()
+        }
+        fn save_failed(&mut self, _: &str, _: &str) -> SaveFailChoice {
+            unreachable!()
+        }
+        fn open_failed(&mut self, _: &str, _: &str) {
+            unreachable!()
+        }
+        fn confirm_replace(&mut self, _: &str) -> bool {
+            unreachable!()
+        }
+        fn notice(&mut self, _: &str, _: &str) {
+            unreachable!()
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingStore {
+        saved: Option<Document>,
+    }
+    impl DocStore for RecordingStore {
+        fn load(&mut self, _: &Path) -> Result<Document, String> {
+            unreachable!()
+        }
+        fn save(&mut self, doc: &Document, _: &Path) -> Result<(), String> {
+            self.saved = Some(doc.clone());
+            Ok(())
+        }
+        fn key(&self, path: &Path) -> FileKey {
+            FileKey { path: path.to_path_buf(), dev_ino: None }
+        }
+        fn exists(&self, _: &Path) -> bool {
+            false
+        }
+    }
+
+    const UNDO: KeyCode = KeyCode::KeyZ;
+    const CMD: Mods = Mods { ctrl: true, shift: false, alt: false };
+
+    /// A tab saved at 1 artboard, then edited to 2 (dirty).
+    fn saved_then_edited() -> (workspace::Workspace, SessionId) {
+        let mut ws = workspace::Workspace::new();
+        let id = ws.active_id().unwrap();
+        let path = PathBuf::from("ordered.vrs");
+        let session = ws.active_mut().unwrap();
+        session.editor.execute(EditCommand::AddArtboard);
+        session.mark_saved(path.clone(), FileKey { path, dev_ino: None });
+        session.editor.execute(EditCommand::AddArtboard);
+        assert_eq!(session.editor.doc.artboards.len(), 2);
+        assert!(session.is_dirty_exact());
+        (ws, id)
+    }
+
+    /// What one event batch raises, in event order.
+    enum Raised {
+        Action(host::HostAction),
+        /// A pointer button fed to egui: pressed (false) or released (true).
+        Pointer(bool),
+        /// The Ui frame: the commands the chrome raised from the buffered clicks.
+        UiFrame(Vec<AppCommand>),
+    }
+
+    /// One event batch as the event loop runs it: a command is queued, a document action goes through
+    /// `raise_doc`, a pointer button marks the queue, the Ui frame inserts its commands at the latest
+    /// release mark (as the event loop does); then the queue drains at `AboutToWait`.
+    fn run_batch(ws: &mut workspace::Workspace, raised: Vec<Raised>) -> RecordingStore {
+        let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut pending = host::ActionQueue::default();
+        for r in raised {
+            match r {
+                Raised::Action(host::HostAction::App(c)) => pending.push(host::HostAction::App(c)),
+                Raised::Action(host::HostAction::Doc(d)) => {
+                    let s = ws.active_mut().unwrap();
+                    raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas);
+                }
+                Raised::Pointer(release) => {
+                    pending.pointer_button(release);
+                }
+                Raised::UiFrame(cmds) => {
+                    let at = pending.last_release();
+                    pending.chrome_frame(cmds.into_iter().map(|c| (at, host::HostAction::App(c))));
+                }
+            }
+        }
+        let (mut ui, mut dialogs, mut store) = (FakeUi, NoDialogs, RecordingStore::default());
+        for action in pending.take_ready() {
+            run_action(action, ws, &mut ui, canvas, &mut dialogs, &mut store, &host::Keyboard::default());
+        }
+        assert!(pending.is_empty(), "the batch drained completely");
+        store
+    }
+
+    fn app(c: AppCommand) -> Raised {
+        Raised::Action(host::HostAction::App(c))
+    }
+
+    fn undo() -> Raised {
+        Raised::Action(host::HostAction::Doc(host::DocAction::Key(UNDO, CMD)))
+    }
+
+    #[test]
+    fn save_then_undo_in_one_batch_saves_pre_undo_content_and_stays_dirty() {
+        let (mut ws, id) = saved_then_edited();
+        let store = run_batch(&mut ws, vec![app(AppCommand::Save(id)), undo()]);
+        assert_eq!(store.saved.unwrap().artboards.len(), 2, "Save ran before the following Undo");
+        let session = ws.active().unwrap();
+        assert_eq!(session.editor.doc.artboards.len(), 1, "Undo still ran after Save");
+        assert!(session.is_dirty_exact(), "the undone content differs from the saved checkpoint");
+    }
+
+    #[test]
+    fn undo_then_save_in_one_batch_saves_post_undo_content_and_is_clean() {
+        let (mut ws, id) = saved_then_edited();
+        let store = run_batch(&mut ws, vec![undo(), app(AppCommand::Save(id))]);
+        assert_eq!(store.saved.unwrap().artboards.len(), 1, "Undo ran before the following Save");
+        let session = ws.active().unwrap();
+        assert_eq!(session.editor.doc.artboards.len(), 1);
+        assert!(!session.is_dirty_exact(), "what is on screen is what was saved");
+    }
+
+    /// Tab A (saved, then edited: 2 artboards) active; tab B beside it with 1 artboard of its own.
+    fn two_tabs() -> (workspace::Workspace, SessionId, SessionId) {
+        let (mut ws, a) = saved_then_edited();
+        ws.new_untitled();
+        let b = ws.active_id().unwrap();
+        ws.active_mut().unwrap().editor.execute(EditCommand::AddArtboard);
+        assert!(ws.activate(a));
+        (ws, a, b)
+    }
+
+    #[test]
+    fn undo_after_a_click_on_another_tab_undoes_that_tab() {
+        // click B's chip (egui turns it into Activate(B) only at the Ui frame), then ⌘Z before that frame
+        let (mut ws, a, b) = two_tabs();
+        let frame = Raised::UiFrame(vec![AppCommand::ActivateDocument(b)]);
+        run_batch(&mut ws, vec![Raised::Pointer(false), Raised::Pointer(true), undo(), frame]);
+        assert_eq!(ws.active_id(), Some(b));
+        assert_eq!(ws.get(b).unwrap().editor.doc.artboards.len(), 0, "the ⌘Z undid B's edit");
+        assert_eq!(ws.get(a).unwrap().editor.doc.artboards.len(), 2, "A was not touched");
+    }
+
+    #[test]
+    fn undo_between_press_and_release_undoes_the_tab_active_before_the_click() {
+        // press B → ⌘Z → release B: the click completes after the key
+        let (mut ws, a, b) = two_tabs();
+        let frame = Raised::UiFrame(vec![AppCommand::ActivateDocument(b)]);
+        run_batch(&mut ws, vec![Raised::Pointer(false), undo(), Raised::Pointer(true), frame]);
+        assert_eq!(ws.active_id(), Some(b));
+        assert_eq!(ws.get(a).unwrap().editor.doc.artboards.len(), 1, "the ⌘Z undid A's edit");
+        assert_eq!(ws.get(b).unwrap().editor.doc.artboards.len(), 1, "B was not touched");
+    }
+
+    /// Owner hand-test 2026-09-25 (macOS): with Control HELD, Tab · Tab · Tab must cycle A → B → C → A,
+    /// and ⇧Tab back. winit reports the modifiers only when they change (`ModifiersChanged` on the
+    /// Control / ⇧ press), then only the Tab key events — the event stream modelled here through the
+    /// event loop's own pieces (`host::Keyboard`, `command_key`, the queue's drain, `run_action`), one
+    /// loop turn per key. It failed before the fix: the key path read the active tab's `Editor::mods`,
+    /// which the first switch reset, so the second Tab was a plain Tab (fed to egui = a focus move).
+    #[test]
+    fn held_ctrl_tab_cycles_every_tab_and_wraps() {
+        let mut ws = workspace::Workspace::new();
+        let a = ws.active_id().unwrap();
+        let b = ws.new_untitled();
+        let c = ws.new_untitled();
+        assert!(ws.activate(a));
+        let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (mut ui, mut dialogs, mut store) = (FakeUi, NoDialogs, RecordingStore::default());
+        let mut pending = host::ActionQueue::default();
+        let mut keyboard = host::Keyboard::default();
+        // one turn of the event loop for a Tab press (+ its release): queue, drain at AboutToWait
+        let mut tab = |ws: &mut workspace::Workspace, keyboard: &mut host::Keyboard| {
+            let id = ws.active_id();
+            assert!(command_key(&mut pending, keyboard, KeyCode::Tab, id, true, false), "a command, never egui's");
+            for action in pending.take_ready() {
+                run_action(action, ws, &mut ui, canvas, &mut dialogs, &mut store, keyboard);
+            }
+            assert!(command_key(&mut pending, keyboard, KeyCode::Tab, id, false, false), "its release too");
+            assert!(pending.is_empty(), "a release queues nothing");
+            ws.active_id().unwrap()
+        };
+        // Control goes down once…
+        keyboard.modifiers_changed(CMD, ws.active_mut().map(|s| &mut s.editor));
+        let forward: Vec<SessionId> = (0..3).map(|_| tab(&mut ws, &mut keyboard)).collect();
+        assert_eq!(forward, [b, c, a], "held Ctrl + Tab ×3 cycles A → B → C → A");
+        assert!(ws.active().unwrap().editor.mods.ctrl, "the active tab's gestures still see Control held");
+        // …⇧ joins it: backwards, wrapping the other way
+        let back = Mods { shift: true, ..CMD };
+        keyboard.modifiers_changed(back, ws.active_mut().map(|s| &mut s.editor));
+        let backward: Vec<SessionId> = (0..3).map(|_| tab(&mut ws, &mut keyboard)).collect();
+        assert_eq!(backward, [c, b, a], "held Ctrl+⇧ + Tab ×3 cycles A → C → B → A");
+        // both released: Tab is a plain Tab again (the UI's / document's key, not a switch)
+        keyboard.modifiers_changed(Mods::default(), ws.active_mut().map(|s| &mut s.editor));
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, Some(a), true, false));
+        assert!(!ws.active().unwrap().editor.mods.ctrl);
+    }
+
+    /// Codex review P2 (a): Ctrl+Tab down, Control released FIRST, then Tab up — the release belongs
+    /// to the command its press was, so it must not leak to egui (whose Tab press it never saw).
+    #[test]
+    fn a_command_keys_release_follows_its_press_when_ctrl_goes_up_first() {
+        let mut pending = host::ActionQueue::default();
+        let mut keyboard = host::Keyboard::default();
+        let id = Some(SessionId(1));
+        keyboard.modifiers_changed(CMD, None);
+        assert!(command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, true, false), "Ctrl+Tab: a command");
+        assert_eq!(pending.take_ready().len(), 1, "queued once");
+        keyboard.modifiers_changed(Mods::default(), None);
+        assert!(command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, false, false), "its release: not egui's");
+        assert!(pending.is_empty(), "a release queues nothing");
+        // the next Tab is a fresh, plain press again
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, true, false));
+    }
+
+    /// Codex review P2 (b): a PLAIN Tab down (egui got it), then Control down, then Tab up (and a
+    /// repeat in between) — the key is egui's from press to release, or egui's `keys_down` goes stale.
+    #[test]
+    fn a_plain_keys_release_follows_its_press_when_ctrl_goes_down_in_between() {
+        let mut pending = host::ActionQueue::default();
+        let mut keyboard = host::Keyboard::default();
+        let id = Some(SessionId(1));
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, true, false), "plain Tab: egui's");
+        keyboard.modifiers_changed(CMD, None);
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, true, true), "its repeat: egui's");
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, false, false), "its release: egui's");
+        assert!(pending.is_empty(), "no tab switch was raised");
     }
 }
 
