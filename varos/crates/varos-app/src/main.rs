@@ -38,7 +38,7 @@ mod mac_menu;
 mod single_instance;
 mod ui;
 mod workspace;
-use app_command::{AppCommand, OpenOrigin, WindowCmd};
+use app_command::{AppCommand, OpenOrigin, SessionId, WindowCmd};
 use cursors::CK;
 
 /// The one cursor this frame wants: a pan in progress beats the Space hand, which beats the chrome's
@@ -564,6 +564,7 @@ fn dispatch(
     canvas: egui::Rect,
     dialogs: &mut dyn lifecycle::Dialogs,
     store: &mut dyn lifecycle::DocStore,
+    keys: &host::Keyboard,
 ) -> host::Ran {
     match action {
         host::HostAction::App(AppCommand::Window(w)) => {
@@ -582,14 +583,15 @@ fn dispatch(
             }
             host::Ran::default()
         }
-        action => run_action(action, ws, gui, canvas, dialogs, store),
+        action => run_action(action, ws, gui, canvas, dialogs, store, keys),
     }
 }
 
 /// One queued action that is not a window command: a lifecycle command (`host::run_lifecycle`:
 /// settle the active tab, run the rules over the ports, reset what a dialog or a switch left stale),
 /// or a document action on whichever tab is active by then. No window: the FIFO test drives it
-/// headless. `canvas` = the visible drawing area (`canvas_px`).
+/// headless. `canvas` = the visible drawing area (`canvas_px`); `keys` = the keys held right now
+/// (`host::Keyboard`), mirrored into the tab active after a command.
 fn run_action(
     action: host::HostAction,
     ws: &mut workspace::Workspace,
@@ -597,9 +599,10 @@ fn run_action(
     canvas: egui::Rect,
     dialogs: &mut dyn lifecycle::Dialogs,
     store: &mut dyn lifecycle::DocStore,
+    keys: &host::Keyboard,
 ) -> host::Ran {
     match action {
-        host::HostAction::App(cmd) => host::run_lifecycle(cmd, ws, ui, dialogs, store),
+        host::HostAction::App(cmd) => host::run_lifecycle(cmd, ws, ui, dialogs, store, keys),
         host::HostAction::Doc(a) => {
             if let Some(s) = ws.active_mut() {
                 run_doc_action(a, &mut s.editor, &mut s.view, canvas);
@@ -614,6 +617,31 @@ fn run_doc_action(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: 
     match a {
         host::DocAction::Key(code, m) => doc_key(ed, view, canvas, code, m),
         host::DocAction::Snap { grid } => menu_snap_toggle(ed, grid),
+    }
+}
+
+/// A file / tab key (⌘N ⌘O ⌘S ⇧⌘S ⌘W ⌘Q, Ctrl+Tab) is a command, decided at its press on the
+/// keyboard's held modifiers (`host::Keyboard::key`) — never on a tab's own copy, which a tab switch
+/// resets while the key is still down (owner 2026-09-25: held-Ctrl Tab · Tab switched only once).
+/// Its press queues the command; its repeats (no queue of dialogs) and its release follow the press,
+/// whatever the modifiers did since. Returns whether the key event belongs to a command key: then it
+/// goes nowhere else — not to egui (so Ctrl+Tab cannot move egui's keyboard focus, UI audit 04 B4),
+/// not to the document.
+fn command_key(
+    pending: &mut host::ActionQueue,
+    keyboard: &mut host::Keyboard,
+    code: KeyCode,
+    active: Option<SessionId>,
+    pressed: bool,
+    repeat: bool,
+) -> bool {
+    match keyboard.key(code, pressed, repeat, active) {
+        host::KeyRoute::Queue(cmd) => {
+            pending.push(host::HostAction::App(cmd));
+            true
+        }
+        host::KeyRoute::Swallow => true,
+        host::KeyRoute::Pass => false,
     }
 }
 
@@ -710,6 +738,8 @@ fn main() {
     // Pointer input and panel edits act on the editor directly. The first instance opens its OWN file
     // argument, once, after the first framed frame (F13).
     let mut pending = host::ActionQueue::default();
+    // the held modifiers: ONE truth for the whole window (a tab switch must not forget a held Control)
+    let mut keyboard = host::Keyboard::default();
     let mut startup_open = host::open_paths_command(file_arg.into_iter().collect(), OpenOrigin::CommandLine);
     // the lifecycle's ports: native dialogs + the disk
     let (mut dialogs, mut store) = (file_ports::RfdDialogs, file_ports::DiskStore);
@@ -862,7 +892,6 @@ fn main() {
     let mut cursor_window_focused = window.has_focus();
     let mut panning = false;
     let mut pan_last: Pt = [0.0, 0.0];
-    let mut space_down = false;
     // a drag / marquee / pen gesture that STARTED on the canvas — keep feeding it moves even if the
     // cursor strays over a panel (C5), so it never freezes under chrome; cleared on button release.
     let mut canvas_gesture = false;
@@ -965,7 +994,8 @@ fn main() {
                 if !ready.is_empty() {
                     let canvas = canvas_px(&gui, &window);
                     for action in ready {
-                        let ran = dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, &mut dialogs, &mut store);
+                        let (ds, keys) = (&mut dialogs, &keyboard);
+                        let ran = dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, ds, &mut store, keys);
                         if ran.ran {
                             last_scene_signature = None; // the drawn document may be another one now
                         }
@@ -989,20 +1019,41 @@ fn main() {
                 if window_id != window.id() {
                     return;
                 }
+                // The held keys: the keyboard's one truth (`host::Keyboard`), mirrored into the active
+                // tab's editor — kept even when no tab is active. Losing focus lets Space and the command
+                // keys go (their key-ups go elsewhere now); winit releases the modifiers itself.
+                if let WindowEvent::Focused(false) = &event {
+                    if keyboard.space() {
+                        panning = false; // as a Space key-up does: the Space pan ends
+                    }
+                    keyboard.focus_lost(ws.active_mut().map(|s| &mut s.editor));
+                }
+                if let WindowEvent::ModifiersChanged(m) = &event {
+                    let m = Mods {
+                        shift: m.state().shift_key(),
+                        alt: m.state().alt_key(),
+                        ctrl: m.state().control_key() || m.state().super_key(),
+                    };
+                    keyboard.modifiers_changed(m, ws.active_mut().map(|s| &mut s.editor));
+                }
                 // Feed egui first. `over_panel` = pointer is over a native panel → the canvas must NOT
                 // get the event (gate #3: panels don't swallow canvas strokes; canvas input stays native).
                 // A file / tab key (⌘S, Ctrl+Tab …) is a command, not text: egui never sees it — so
                 // Ctrl+Tab cannot also move egui's keyboard focus onto a widget (UI audit 04 B4).
-                let lifecycle_key_event = match &event {
+                let command_key_event = match &event {
                     WindowEvent::KeyboardInput { event: k, .. } => match k.physical_key {
                         PhysicalKey::Code(c) => {
-                            ws.active().is_some_and(|s| host::key_command(c, s.editor.mods, Some(s.id)).is_some())
+                            let pressed = k.state == ElementState::Pressed;
+                            command_key(&mut pending, &mut keyboard, c, ws.active_id(), pressed, k.repeat)
                         }
                         _ => false,
                     },
                     _ => false,
                 };
-                let egui_consumed = !lifecycle_key_event && gui.on_event(&window, &event);
+                if command_key_event {
+                    window.request_redraw();
+                }
+                let egui_consumed = !command_key_event && gui.on_event(&window, &event);
                 // a pointer button's chrome command (a tab chip, a burger row) exists only after the next
                 // Ui frame: each press / release leaves its mark, and what is raised after it waits
                 if let WindowEvent::MouseInput { state, .. } = &event {
@@ -1092,13 +1143,6 @@ fn main() {
                         }
                         window.request_redraw();
                     }
-                    WindowEvent::ModifiersChanged(m) => {
-                        ed.mods = Mods {
-                            shift: m.state().shift_key(),
-                            alt: m.state().alt_key(),
-                            ctrl: m.state().control_key() || m.state().super_key(),
-                        };
-                    }
                     WindowEvent::MouseInput { state, button, .. } => {
                         // A5 — while the picker's system eyedropper is armed, the sample click is read
                         // globally (GetAsyncKeyState); swallow the in-window event so it doesn't also
@@ -1110,7 +1154,7 @@ fn main() {
                         match button {
                             MouseButton::Left => match state {
                                 ElementState::Pressed => {
-                                    if space_down {
+                                    if keyboard.space() {
                                         #[cfg(target_os = "macos")]
                                         caption_clicks.reset_after_drag();
                                         if ed.mods.ctrl {
@@ -1220,34 +1264,32 @@ fn main() {
                     WindowEvent::KeyboardInput { event, .. } => {
                         let PhysicalKey::Code(code) = event.physical_key else { return };
                         // DFS S1 + UI audit 04: the file / tab keys (⌘N ⌘O ⌘S ⇧⌘S ⌘W ⌘Q, Ctrl+Tab) are
-                        // commands, decided BEFORE the text-field check — so ⌘S inside a field saves on
-                        // every platform, as the Mac menu's key equivalent already does. A held key does
-                        // not repeat them (no queue of dialogs).
-                        if let Some(cmd) = host::key_command(code, ed.mods, Some(s.id)) {
-                            if event.state == ElementState::Pressed && !event.repeat {
-                                pending.push(host::HostAction::App(cmd));
-                                window.request_redraw();
-                            }
+                        // commands, queued above (`command_key`) BEFORE the text-field check — so ⌘S
+                        // inside a field saves on every platform, as the Mac menu's key equivalent
+                        // already does. Such a key goes nowhere else.
+                        if command_key_event {
+                            return;
                         }
                         // Only skip canvas shortcuts when a text field is actually focused — NOT on egui's
                         // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
                         // The Color Picker is a floating palette: the canvas stays fully usable beside it,
                         // but Esc/Enter belong to the dialog while it is open (Cancel / OK).
-                        else if gui.wants_keyboard() { /* typing into a field — keys go to egui */
+                        if gui.wants_keyboard() { /* typing into a field — keys go to egui */
                         } else if gui.modal_open()
                             && matches!(code, KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter)
                         {
                             /* the dialog owns these */
                         } else if code == KeyCode::Space {
-                            space_down = event.state == ElementState::Pressed;
-                            ed.space = space_down; // A9: lets a live placement drag reposition on Space
-                            if !space_down {
+                            // A9: `Editor::space` lets a live placement drag reposition on Space
+                            let down = event.state == ElementState::Pressed;
+                            keyboard.space_changed(down, Some(ed));
+                            if !down {
                                 panning = false;
                             }
                             window.request_redraw();
                         } else if event.state == ElementState::Pressed {
                             // runs now, or waits behind a command raised earlier in this batch (FIFO)
-                            let d = host::DocAction::Key(code, ed.mods);
+                            let d = host::DocAction::Key(code, keyboard.held());
                             raise_doc(&mut pending, d, ed, view, canvas_px(&gui, &window));
                             window.request_redraw();
                         }
@@ -1308,9 +1350,10 @@ fn main() {
                         // Win32 set — seam-resize arrows on box splitters, ↔ on a scrubbed field,
                         // arrow elsewhere); over the canvas show the tool's cursor. It was hardwired
                         // to Select here, which broke the new box seams' arrows (Ahmed 07-07).
-                        let ck = resolve_ck(panning, space_down, gui.wants_pointer().then(|| gui.chrome_ck()), || {
-                            desired_ck(ed, view.s2w(screen_cursor))
-                        });
+                        let ck =
+                            resolve_ck(panning, keyboard.space(), gui.wants_pointer().then(|| gui.chrome_ck()), || {
+                                desired_ck(ed, view.s2w(screen_cursor))
+                            });
                         // Runs AFTER gui.run (egui's platform output is already applied), so on non-Windows
                         // the re-assert each frame wins over egui-winit's own cursor write.
                         if cursor_apply_needed(last_ck, ck, REASSERT_CURSOR_EACH_FRAME) {
@@ -1630,7 +1673,7 @@ mod action_queue_tests {
         }
         let (mut ui, mut dialogs, mut store) = (FakeUi, NoDialogs, RecordingStore::default());
         for action in pending.take_ready() {
-            run_action(action, ws, &mut ui, canvas, &mut dialogs, &mut store);
+            run_action(action, ws, &mut ui, canvas, &mut dialogs, &mut store, &host::Keyboard::default());
         }
         assert!(pending.is_empty(), "the batch drained completely");
         store
@@ -1694,6 +1737,81 @@ mod action_queue_tests {
         assert_eq!(ws.active_id(), Some(b));
         assert_eq!(ws.get(a).unwrap().editor.doc.artboards.len(), 1, "the ⌘Z undid A's edit");
         assert_eq!(ws.get(b).unwrap().editor.doc.artboards.len(), 1, "B was not touched");
+    }
+
+    /// Owner hand-test 2026-09-25 (macOS): with Control HELD, Tab · Tab · Tab must cycle A → B → C → A,
+    /// and ⇧Tab back. winit reports the modifiers only when they change (`ModifiersChanged` on the
+    /// Control / ⇧ press), then only the Tab key events — the event stream modelled here through the
+    /// event loop's own pieces (`host::Keyboard`, `command_key`, the queue's drain, `run_action`), one
+    /// loop turn per key. It failed before the fix: the key path read the active tab's `Editor::mods`,
+    /// which the first switch reset, so the second Tab was a plain Tab (fed to egui = a focus move).
+    #[test]
+    fn held_ctrl_tab_cycles_every_tab_and_wraps() {
+        let mut ws = workspace::Workspace::new();
+        let a = ws.active_id().unwrap();
+        let b = ws.new_untitled();
+        let c = ws.new_untitled();
+        assert!(ws.activate(a));
+        let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (mut ui, mut dialogs, mut store) = (FakeUi, NoDialogs, RecordingStore::default());
+        let mut pending = host::ActionQueue::default();
+        let mut keyboard = host::Keyboard::default();
+        // one turn of the event loop for a Tab press (+ its release): queue, drain at AboutToWait
+        let mut tab = |ws: &mut workspace::Workspace, keyboard: &mut host::Keyboard| {
+            let id = ws.active_id();
+            assert!(command_key(&mut pending, keyboard, KeyCode::Tab, id, true, false), "a command, never egui's");
+            for action in pending.take_ready() {
+                run_action(action, ws, &mut ui, canvas, &mut dialogs, &mut store, keyboard);
+            }
+            assert!(command_key(&mut pending, keyboard, KeyCode::Tab, id, false, false), "its release too");
+            assert!(pending.is_empty(), "a release queues nothing");
+            ws.active_id().unwrap()
+        };
+        // Control goes down once…
+        keyboard.modifiers_changed(CMD, ws.active_mut().map(|s| &mut s.editor));
+        let forward: Vec<SessionId> = (0..3).map(|_| tab(&mut ws, &mut keyboard)).collect();
+        assert_eq!(forward, [b, c, a], "held Ctrl + Tab ×3 cycles A → B → C → A");
+        assert!(ws.active().unwrap().editor.mods.ctrl, "the active tab's gestures still see Control held");
+        // …⇧ joins it: backwards, wrapping the other way
+        let back = Mods { shift: true, ..CMD };
+        keyboard.modifiers_changed(back, ws.active_mut().map(|s| &mut s.editor));
+        let backward: Vec<SessionId> = (0..3).map(|_| tab(&mut ws, &mut keyboard)).collect();
+        assert_eq!(backward, [c, b, a], "held Ctrl+⇧ + Tab ×3 cycles A → C → B → A");
+        // both released: Tab is a plain Tab again (the UI's / document's key, not a switch)
+        keyboard.modifiers_changed(Mods::default(), ws.active_mut().map(|s| &mut s.editor));
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, Some(a), true, false));
+        assert!(!ws.active().unwrap().editor.mods.ctrl);
+    }
+
+    /// Codex review P2 (a): Ctrl+Tab down, Control released FIRST, then Tab up — the release belongs
+    /// to the command its press was, so it must not leak to egui (whose Tab press it never saw).
+    #[test]
+    fn a_command_keys_release_follows_its_press_when_ctrl_goes_up_first() {
+        let mut pending = host::ActionQueue::default();
+        let mut keyboard = host::Keyboard::default();
+        let id = Some(SessionId(1));
+        keyboard.modifiers_changed(CMD, None);
+        assert!(command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, true, false), "Ctrl+Tab: a command");
+        assert_eq!(pending.take_ready().len(), 1, "queued once");
+        keyboard.modifiers_changed(Mods::default(), None);
+        assert!(command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, false, false), "its release: not egui's");
+        assert!(pending.is_empty(), "a release queues nothing");
+        // the next Tab is a fresh, plain press again
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, true, false));
+    }
+
+    /// Codex review P2 (b): a PLAIN Tab down (egui got it), then Control down, then Tab up (and a
+    /// repeat in between) — the key is egui's from press to release, or egui's `keys_down` goes stale.
+    #[test]
+    fn a_plain_keys_release_follows_its_press_when_ctrl_goes_down_in_between() {
+        let mut pending = host::ActionQueue::default();
+        let mut keyboard = host::Keyboard::default();
+        let id = Some(SessionId(1));
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, true, false), "plain Tab: egui's");
+        keyboard.modifiers_changed(CMD, None);
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, true, true), "its repeat: egui's");
+        assert!(!command_key(&mut pending, &mut keyboard, KeyCode::Tab, id, false, false), "its release: egui's");
+        assert!(pending.is_empty(), "no tab switch was raised");
     }
 }
 

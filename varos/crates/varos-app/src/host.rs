@@ -80,6 +80,109 @@ pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<
     }
 }
 
+/// The keyboard as the window holds it — the host's ONE truth for the held keys, never a document
+/// tab's: the modifiers (Ctrl or ⌘, ⇧, ⌥) as winit's `ModifiersChanged` last reported them, Space (the
+/// pan / A9 reposition key), and which keys went down AS A COMMAND. winit reports a modifier only when
+/// it CHANGES, so a tab switch while Control is still held must not forget the Control (owner
+/// hand-test 2026-09-25: held-Ctrl Tab · Tab cycled only once, because the key path read the incoming
+/// tab's reset copy). A tab's `Editor::mods` / `Editor::space` are only mirrors for the gestures that
+/// read them ([`Self::mirror`]): rewritten on every change, by [`run_lifecycle`] after every command,
+/// and cleared with everything else when the window loses focus ([`Self::focus_lost`]).
+#[derive(Clone, Default)]
+pub struct Keyboard {
+    held: Mods,
+    space: bool,
+    /// The keys whose press was a command (Ctrl+Tab, ⌘S …), until their release: every later event of
+    /// such a key goes where its press went, whatever the modifiers did in between (Codex review P2).
+    commands_down: Vec<KeyCode>,
+}
+
+/// Where one key event goes ([`Keyboard::key`]).
+#[derive(Debug, PartialEq)]
+pub enum KeyRoute {
+    /// A command key's fresh press: queue this command. The key goes nowhere else.
+    Queue(AppCommand),
+    /// The rest of a command key — its repeats, its release: nowhere (not egui, not the document).
+    Swallow,
+    /// Not a command key, from press to release: egui / the document, as usual.
+    Pass,
+}
+
+impl Keyboard {
+    /// winit's `ModifiersChanged`: the new truth, mirrored into the active tab's editor.
+    pub fn modifiers_changed(&mut self, m: Mods, active: Option<&mut Editor>) {
+        self.held = m;
+        self.mirror_into(active);
+    }
+
+    /// Space went down (`true`) or up, as the canvas's key: mirrored into the active tab's editor.
+    pub fn space_changed(&mut self, down: bool, active: Option<&mut Editor>) {
+        self.space = down;
+        self.mirror_into(active);
+    }
+
+    /// The window lost key focus: the key-ups now go to whatever took it. winit releases the modifiers
+    /// itself (a synthetic `ModifiersChanged`); Space and the command keys are let go here. The active
+    /// tab's mirror follows.
+    pub fn focus_lost(&mut self, active: Option<&mut Editor>) {
+        *self = Keyboard::default();
+        self.mirror_into(active);
+    }
+
+    /// The modifiers held right now.
+    pub fn held(&self) -> Mods {
+        self.held
+    }
+
+    /// Space is held right now.
+    pub fn space(&self) -> bool {
+        self.space
+    }
+
+    /// Copy the held keys into a tab's editor (the one it shows now).
+    pub fn mirror(&self, ed: &mut Editor) {
+        ed.mods = self.held;
+        ed.space = self.space;
+    }
+
+    fn mirror_into(&self, active: Option<&mut Editor>) {
+        if let Some(ed) = active {
+            self.mirror(ed);
+        }
+    }
+
+    /// The file / tab command a key is with the held modifiers, if any ([`key_command`]).
+    pub fn command(&self, code: KeyCode, active: Option<SessionId>) -> Option<AppCommand> {
+        key_command(code, self.held, active)
+    }
+
+    /// Route one key event. A FRESH press is classified on the held modifiers ([`Self::command`]);
+    /// its repeats and its release then go where the press went, even when a modifier went up or down
+    /// in between — so Ctrl+Tab's key-up never leaks to egui, and a plain Tab's key-up always reaches
+    /// it (egui's held-key state stays true).
+    pub fn key(&mut self, code: KeyCode, pressed: bool, repeat: bool, active: Option<SessionId>) -> KeyRoute {
+        let was_command = self.commands_down.contains(&code);
+        if !pressed || repeat {
+            if !pressed {
+                self.commands_down.retain(|&c| c != code);
+            }
+            return if was_command { KeyRoute::Swallow } else { KeyRoute::Pass };
+        }
+        match self.command(code, active) {
+            Some(cmd) => {
+                if !was_command {
+                    self.commands_down.push(code);
+                }
+                KeyRoute::Queue(cmd)
+            }
+            None => {
+                self.commands_down.retain(|&c| c != code);
+                KeyRoute::Pass
+            }
+        }
+    }
+}
+
 /// One entry of the host's action queue (DFS S1 review P1): a lifecycle / window command, or a
 /// document action raised by a key or a menu row. Keys, native menu rows, the burger and the tab
 /// strip all feed ONE FIFO queue, so a ⌘Z pressed after a ⌘S in the same event batch runs after the
@@ -317,8 +420,12 @@ pub struct Ran {
 /// 1. finish every open edit on the active tab — the Ui side first (an open colour picker is
 ///    cancelled, not committed), then the pointer gesture (`DocumentSession::settle`);
 /// 2. run the lifecycle rules over the workspace and the ports;
-/// 3. reset the held modifiers (a native dialog eats the key releases) and ALWAYS the Ui's
-///    per-document caches (an Open can replace a pristine tab in place).
+/// 3. mirror the keyboard's held keys ([`Keyboard::mirror`]: modifiers + Space) into the (maybe
+///    new) active editor — never a blanket reset: Control still held after a Ctrl+Tab must still
+///    read as held, or the next Tab is a plain Tab; Space still held must still reposition (A9). A
+///    key-up a native dialog swallowed is not lost either: the window lost focus, and
+///    [`Keyboard::focus_lost`] / winit's `ModifiersChanged` rewrite the mirror. Then ALWAYS reset
+///    the Ui's per-document caches (an Open can replace a pristine tab in place).
 ///
 /// A click on the chip that is already active is not a lifecycle change: nothing is settled or reset.
 pub fn run_lifecycle(
@@ -327,6 +434,7 @@ pub fn run_lifecycle(
     ui: &mut dyn DocUi,
     dialogs: &mut dyn Dialogs,
     store: &mut dyn DocStore,
+    keys: &Keyboard,
 ) -> Ran {
     debug_assert!(!matches!(cmd, AppCommand::Window(_)), "window commands are the host's");
     if matches!(cmd, AppCommand::ActivateDocument(id) if ws.active_id() == Some(id)) {
@@ -339,7 +447,7 @@ pub fn run_lifecycle(
     let before = ws.active_id();
     let effect = Lifecycle { ws: &mut *ws, dialogs, store }.run(cmd);
     if let Some(s) = ws.active_mut() {
-        s.editor.mods = Mods::default();
+        keys.mirror(&mut s.editor);
     }
     ui.document_switched();
     Ran { exit: effect.exit, ran: true, switched: ws.active_id() != before }
@@ -608,8 +716,19 @@ mod tests {
         }
     }
 
+    /// A command with no modifier held (the mouse / a menu row / a key whose modifiers are up by now).
     fn run(ws: &mut Workspace, ui: &mut FakeUi, cmd: AppCommand) -> Ran {
-        run_lifecycle(cmd, ws, ui, &mut NoDialogs, &mut NoStore)
+        run_held(ws, ui, cmd, Mods::default())
+    }
+
+    fn run_held(ws: &mut Workspace, ui: &mut FakeUi, cmd: AppCommand, held: Mods) -> Ran {
+        let mut keys = Keyboard::default();
+        keys.modifiers_changed(held, None);
+        run_keys(ws, ui, cmd, &keys)
+    }
+
+    fn run_keys(ws: &mut Workspace, ui: &mut FakeUi, cmd: AppCommand, keys: &Keyboard) -> Ran {
+        run_lifecycle(cmd, ws, ui, &mut NoDialogs, &mut NoStore, keys)
     }
 
     #[test]
@@ -636,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn modifiers_reset_after_every_lifecycle_command_and_no_op_activation_does_nothing() {
+    fn the_active_editor_mirrors_the_keyboard_after_every_command_and_no_op_activation_does_nothing() {
         let mut ws = Workspace::new();
         let id = ws.active_id().unwrap();
         ws.active_mut().unwrap().editor.mods = m(true, true, false);
@@ -645,13 +764,63 @@ mod tests {
         assert_eq!(run(&mut ws, &mut ui, AppCommand::ActivateDocument(id)), Ran::default());
         assert!(ui.log.is_empty());
         assert!(ws.active().unwrap().editor.mods.ctrl, "untouched");
-        // Ctrl+Tab with one tab: no switch, but the command ran (a dialog may have eaten key-ups)
-        let ran = run(&mut ws, &mut ui, AppCommand::ActivateNext);
+        // Ctrl+Tab with one tab: no switch, but the command ran — the editor now reads what the keyboard holds
+        let ran = run_held(&mut ws, &mut ui, AppCommand::ActivateNext, m(true, false, false));
         assert_eq!(ran, Ran { exit: false, ran: true, switched: false });
         let mods = ws.active().unwrap().editor.mods;
-        assert!(!mods.ctrl && !mods.shift, "held modifiers are reset");
+        assert!(mods.ctrl && !mods.shift, "Control is still held; the stale ⇧ is gone");
+        // a command after the keys were released (e.g. under a native dialog): nothing reads as held
+        run(&mut ws, &mut ui, AppCommand::ActivateNext);
+        let mods = ws.active().unwrap().editor.mods;
+        assert!(!mods.ctrl && !mods.shift, "no modifier is held");
         // a clean workspace quits at once
         assert!(run(&mut ws, &mut ui, AppCommand::Quit).exit);
+    }
+
+    #[test]
+    fn the_keyboard_outlives_a_tab_switch() {
+        let mut ws = Workspace::new();
+        let a = ws.active_id().unwrap();
+        let b = ws.new_untitled();
+        assert!(ws.activate(a));
+        let mut kb = Keyboard::default();
+        kb.modifiers_changed(m(true, false, false), ws.active_mut().map(|s| &mut s.editor));
+        assert!(ws.active().unwrap().editor.mods.ctrl, "the active editor mirrors the keyboard");
+        assert_eq!(kb.command(KeyCode::Tab, Some(a)), Some(AppCommand::ActivateNext));
+        let mut ui = FakeUi::default();
+        assert!(run_keys(&mut ws, &mut ui, AppCommand::ActivateNext, &kb).switched);
+        assert_eq!(ws.active_id(), Some(b));
+        // winit sends nothing more while Control stays down: the next Tab is still Ctrl+Tab
+        assert_eq!(kb.command(KeyCode::Tab, Some(b)), Some(AppCommand::ActivateNext));
+        assert!(ws.active().unwrap().editor.mods.ctrl, "the incoming tab's gestures see Control held too");
+        // Control released: the keyboard and the active mirror both let go
+        kb.modifiers_changed(Mods::default(), ws.active_mut().map(|s| &mut s.editor));
+        assert_eq!(kb.command(KeyCode::Tab, Some(b)), None, "plain Tab is not a tab switch");
+        assert!(!ws.active().unwrap().editor.mods.ctrl);
+    }
+
+    /// Codex review P3: Space is a held key like the modifiers — ONE truth in the host, not a per-tab
+    /// flag a switch forgets (A9: a live placement drag repositions while Space is down).
+    #[test]
+    fn held_space_outlives_a_tab_switch_and_focus_loss_lets_it_go() {
+        let mut ws = Workspace::new();
+        let a = ws.active_id().unwrap();
+        let b = ws.new_untitled();
+        assert!(ws.activate(a));
+        let mut kb = Keyboard::default();
+        kb.space_changed(true, ws.active_mut().map(|s| &mut s.editor));
+        assert!(ws.active().unwrap().editor.space, "the active editor mirrors Space");
+        let mut ui = FakeUi::default();
+        assert!(run_keys(&mut ws, &mut ui, AppCommand::ActivateNext, &kb).switched);
+        assert_eq!(ws.active_id(), Some(b));
+        assert!(kb.space(), "still held");
+        assert!(ws.active().unwrap().editor.space, "the incoming tab's editor sees Space held");
+        // the window loses focus (a dialog, ⌘Tab): Space's key-up will never come — let it go now
+        kb.modifiers_changed(m(true, false, false), ws.active_mut().map(|s| &mut s.editor));
+        kb.focus_lost(ws.active_mut().map(|s| &mut s.editor));
+        assert!(!kb.space() && !kb.held().ctrl, "nothing reads as held");
+        let ed = &ws.active().unwrap().editor;
+        assert!(!ed.space && !ed.mods.ctrl, "and neither does the active mirror");
     }
 
     // ---- the action queue (review re-check: pointer input orders document keys) ----
