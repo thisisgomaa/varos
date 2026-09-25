@@ -75,11 +75,21 @@ fn native_cursor_apply_needed(pointer_inside: bool, focused: bool) -> bool {
     pointer_inside && focused
 }
 
-/// Which native cursor the current effective tool wants (Pen reports its contextual state; the
-/// Selection tool reports its transform/copy states).
+/// Which native cursor the current effective tool wants — the Cursor System (study §9, v1.1). Pure: reads
+/// the editor's drag + hover state and runs no hit-test that is not already per-frame (transform_hit,
+/// pen_hint, ab_hit, the Alt path_under) except `hover_anchor`, which only scans the ONE hovered path.
+///  - A drag holds the cursor chosen at its press: a bbox scale keeps its resize arrow, a bbox rotate its
+///    rotate arrow (never re-hit-tested mid-drag), a Selection move shows the plain arrow (`Move`).
+///  - Hover badges (Illustrator): Selection over an object → arrow + filled square; Direct Selection over
+///    an anchor → hollow arrow + hollow square, over a path → hollow arrow + filled square.
+///  - Rotate / Scale / every shape tool: the plain crosshair, on hover and for the whole drag.
+///  - Every tool is matched by name (no catch-all), so a new tool must choose its cursor.
 fn desired_ck(ed: &Editor, world: Pt) -> CK {
     if let Drag::Scale { handle, angle, .. } = ed.drag {
-        return resize_ck(handle, angle);
+        return resize_ck(handle, angle); // `angle` = the frame angle at the press → locked
+    }
+    if let Drag::Rotate { corner: Some(c), a0, .. } = ed.drag {
+        return rotate_ck(c, a0); // bbox rotate: the corner + frame angle at the press → locked
     }
     if let AbDrag::Resize { handle, .. } = ed.ab_drag {
         return resize_ck(handle, 0.0);
@@ -88,19 +98,32 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         return CK::Select;
     }
     if matches!(ed.ab_drag, AbDrag::Create { .. }) {
-        return CK::Cross;
+        return CK::Artboard;
     }
     if ed.mods.alt && matches!(ed.drag, Drag::Object { .. } | Drag::DupPending { .. }) {
         return CK::Copy;
     }
+    if matches!(ed.drag, Drag::Object { .. }) {
+        return CK::Move; // the hover badge drops while the object travels (Illustrator)
+    }
+    let idle = matches!(ed.drag, Drag::None); // hover badges only between gestures
     match ed.eff_tool() {
+        ToolKind::Object if !idle => CK::Select, // marquee / guide drag
         ToolKind::Object => match ed.transform_hit(world) {
             Some(TfHit::Scale(i)) => resize_ck(i, ed.obj_angle),
             Some(TfHit::Rotate(i)) => rotate_ck(i, ed.obj_angle),
             None if ed.mods.alt && ed.path_under(world).is_some() => CK::Copy,
+            None if ed.hover_path.is_some() => CK::SelectObject,
             None => CK::Select,
         },
-        ToolKind::Direct => CK::Direct,
+        ToolKind::Direct if !idle => CK::Direct,
+        ToolKind::Direct => match ed.hover_path {
+            Some(_) if ed.hover_anchor(world).is_some() => CK::DirectAnchor,
+            Some(_) => CK::DirectPath,
+            None => CK::Direct,
+        },
+        ToolKind::Rotate | ToolKind::Scale => CK::Cross,
+        ToolKind::Rect | ToolKind::Ellipse | ToolKind::Triangle | ToolKind::Polygon => CK::Cross,
         ToolKind::Convert => CK::Convert,
         ToolKind::Eyedropper => CK::Eye,
         ToolKind::Pen => match ed.pen_hint(world) {
@@ -114,9 +137,8 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         ToolKind::Artboard => match ed.ab_hit(world) {
             Some(AbHit::Handle(i)) => resize_ck(i, 0.0), // ↔ on a page resize handle
             Some(AbHit::Body(_)) => CK::Select,          // arrow over a page (click to select / move)
-            None => CK::Cross,                           // empty board (drag to create a page)
+            None => CK::Artboard,                        // empty board (drag to create a page)
         },
-        _ => CK::Cross,
     }
 }
 
@@ -824,8 +846,8 @@ fn main() {
     let installed = cursors::install(hwnd); // subclass live; custom_frame is deferred until the splash ends
     cursors::set_dark_class_brush(hwnd); // any OS background fill is now #141313, never white
 
-    // The Varos cursor set v1 (embedded), built once per platform: Win32 HCURSORs / macOS Retina
-    // NSCursors / winit CustomCursors. Logs `[varos] cursors: 28 v1 (+ N reference overrides) …`.
+    // The Varos cursor set v1.1 (embedded), built once per platform: Win32 HCURSORs / macOS Retina
+    // NSCursors / winit CustomCursors. Logs `[varos] cursors: 31 v1 (+ N reference overrides) …`.
     #[cfg(windows)]
     let hcur: HashMap<CK, isize> = cursors::create_cursors();
     #[cfg(not(windows))]
@@ -1470,6 +1492,193 @@ mod cursor_policy_tests {
         assert!(!cursor_apply_needed(Some(CK::Hand), CK::Hand, false));
         assert!(cursor_apply_needed(Some(CK::Hand), CK::Select, false));
         assert!(cursor_apply_needed(None, CK::Hand, false));
+    }
+}
+
+/// Cursor System v1.1 (2026-09-25): (tool, hover, drag) → cursor, driven through the REAL editor
+/// (pointer_down / pointer_move, no GPU, no window). Each row checks the CK AND the SVG file it shows, so
+/// a state that keeps its CK but changes glyph (Cross: shape-rect.svg → cross.svg) is caught too.
+#[cfg(test)]
+mod cursor_state_tests {
+    use super::{desired_ck, CK};
+    use varos_core::editor::{Editor, ToolKind};
+    use varos_core::geom::Pt;
+    use varos_core::model::{Anchor, Path};
+
+    /// A filled 100×100 square (path 10, anchors 1–4 at the corners), zoom 1, tool `t`.
+    fn ed_with_square(t: ToolKind, selected: bool) -> Editor {
+        let anc = |id, x, y| Anchor { id, p: [x, y], hin: None, hout: None, smooth: false };
+        let mut ed = Editor::new();
+        let pts = vec![anc(1, 0.0, 0.0), anc(2, 100.0, 0.0), anc(3, 100.0, 100.0), anc(4, 0.0, 100.0)];
+        ed.doc.paths.push(Path::new(10, pts, true, Some([0.5, 0.5, 0.5, 1.0]), None, 1.0));
+        ed.doc.ids = 10;
+        ed.doc.sync_tree();
+        ed.ppu = 1.0;
+        ed.set_tool(t);
+        if selected {
+            ed.objsel.insert(10);
+        }
+        ed
+    }
+
+    /// What the user does before we look at the cursor.
+    enum Act {
+        /// hover at a point (idle pointer motion — updates the editor's hover state like the real app)
+        Hover(Pt),
+        /// press at the first point, then (optionally) drag through the rest
+        Press(Pt, &'static [Pt]),
+    }
+
+    struct Row {
+        what: &'static str,
+        tool: ToolKind,
+        selected: bool,
+        alt: bool,
+        act: Act,
+        ck: CK,
+        file: &'static str,
+    }
+
+    fn rows() -> Vec<Row> {
+        use Act::*;
+        use ToolKind as T;
+        let r = |what, tool, selected, act, ck, file| Row { what, tool, selected, alt: false, act, ck, file };
+        vec![
+            // ---- Selection (V) ----
+            r("V over empty board", T::Object, false, Hover([300.0, 300.0]), CK::Select, "select.svg"),
+            r("V over an object", T::Object, false, Hover([50.0, 50.0]), CK::SelectObject, "select-object.svg"),
+            r(
+                "V over a selected object's body",
+                T::Object,
+                true,
+                Hover([50.0, 50.0]),
+                CK::SelectObject,
+                "select-object.svg",
+            ),
+            r("V over a corner scale handle", T::Object, true, Hover([100.0, 100.0]), CK::ResizeNW, "resize-nw.svg"),
+            r("V over the BR rotate ring", T::Object, true, Hover([112.0, 112.0]), CK::RotateSE, "rotate-se.svg"),
+            r("V dragging an object", T::Object, false, Press([50.0, 50.0], &[[80.0, 90.0]]), CK::Move, "select.svg"),
+            r(
+                "V marquee ending on a handle",
+                T::Object,
+                true,
+                Press([300.0, 300.0], &[[100.0, 100.0]]),
+                CK::Select,
+                "select.svg",
+            ),
+            // the lock: a bbox rotate keeps the cursor chosen at the press for the WHOLE drag, even when the
+            // pointer leaves the 22-px ring and the frame itself has turned under it
+            r(
+                "V bbox rotate, pointer far outside the ring",
+                T::Object,
+                true,
+                Press([112.0, 112.0], &[[160.0, 140.0], [300.0, 20.0]]),
+                CK::RotateSE,
+                "rotate-se.svg",
+            ),
+            r(
+                "V bbox rotate, pointer back over the object",
+                T::Object,
+                true,
+                Press([112.0, 112.0], &[[300.0, 20.0], [50.0, 50.0]]),
+                CK::RotateSE,
+                "rotate-se.svg",
+            ),
+            r(
+                "V bbox scale (right edge), pointer far away",
+                T::Object,
+                true,
+                Press([100.0, 50.0], &[[200.0, 300.0], [400.0, 20.0]]),
+                CK::ResizeH,
+                "resize-h.svg",
+            ),
+            // ---- Direct Selection (A) ----
+            r("A over empty board", T::Direct, false, Hover([300.0, 300.0]), CK::Direct, "direct.svg"),
+            r("A over an anchor", T::Direct, false, Hover([1.0, 1.0]), CK::DirectAnchor, "direct-anchor.svg"),
+            r("A over a segment", T::Direct, false, Hover([50.0, 1.0]), CK::DirectPath, "direct-path.svg"),
+            r("A over a fill", T::Direct, false, Hover([50.0, 50.0]), CK::DirectPath, "direct-path.svg"),
+            r("A dragging an anchor", T::Direct, false, Press([0.0, 0.0], &[[30.0, 30.0]]), CK::Direct, "direct.svg"),
+            // ---- Rotate (R) / Scale (S): plain crosshair on hover AND for the whole drag ----
+            r("R hover", T::Rotate, true, Hover([150.0, 50.0]), CK::Cross, "cross.svg"),
+            r("R pressed (pivot click pending)", T::Rotate, true, Press([150.0, 50.0], &[]), CK::Cross, "cross.svg"),
+            r(
+                "R dragging (rotating)",
+                T::Rotate,
+                true,
+                Press([150.0, 50.0], &[[120.0, 120.0], [50.0, 50.0]]),
+                CK::Cross,
+                "cross.svg",
+            ),
+            r("S hover", T::Scale, true, Hover([150.0, 50.0]), CK::Cross, "cross.svg"),
+            r("S pressed (pivot click pending)", T::Scale, true, Press([150.0, 50.0], &[]), CK::Cross, "cross.svg"),
+            r(
+                "S dragging (scaling)",
+                T::Scale,
+                true,
+                Press([150.0, 50.0], &[[180.0, 80.0], [50.0, 50.0]]),
+                CK::Cross,
+                "cross.svg",
+            ),
+            // ---- shape tools: plain crosshair (Illustrator), no badge ----
+            r("Rect hover", T::Rect, false, Hover([300.0, 300.0]), CK::Cross, "cross.svg"),
+            r("Ellipse hover", T::Ellipse, false, Hover([300.0, 300.0]), CK::Cross, "cross.svg"),
+            r("Triangle hover", T::Triangle, false, Hover([300.0, 300.0]), CK::Cross, "cross.svg"),
+            r("Polygon hover", T::Polygon, false, Hover([300.0, 300.0]), CK::Cross, "cross.svg"),
+            r("Rect hover over an object", T::Rect, false, Hover([50.0, 50.0]), CK::Cross, "cross.svg"),
+            r("Rect drawing", T::Rect, false, Press([300.0, 300.0], &[[360.0, 380.0]]), CK::Cross, "cross.svg"),
+            r("Ellipse drawing", T::Ellipse, false, Press([300.0, 300.0], &[[360.0, 380.0]]), CK::Cross, "cross.svg"),
+            // ---- Artboard (Shift+O): its own crosshair + frame badge ----
+            r("Artboard over empty board", T::Artboard, false, Hover([5000.0, 5000.0]), CK::Artboard, "artboard.svg"),
+            r(
+                "Artboard creating a page",
+                T::Artboard,
+                false,
+                Press([5000.0, 5000.0], &[[5200.0, 5150.0]]),
+                CK::Artboard,
+                "artboard.svg",
+            ),
+            // ---- Alt-drag copies ----
+            Row {
+                what: "V Alt-dragging an object",
+                tool: T::Object,
+                selected: false,
+                alt: true,
+                act: Press([50.0, 50.0], &[[80.0, 90.0]]),
+                ck: CK::Copy,
+                file: "copy.svg",
+            },
+        ]
+    }
+
+    #[test]
+    fn tool_hover_drag_table_picks_the_expected_cursor_and_file() {
+        let mut fails = vec![];
+        for row in rows() {
+            let mut ed = ed_with_square(row.tool, row.selected);
+            ed.mods.alt = row.alt;
+            let at = match row.act {
+                Act::Hover(p) => {
+                    ed.pointer_move(p);
+                    p
+                }
+                Act::Press(p, path) => {
+                    ed.pointer_move(p); // arrive (hover) first, like a real pointer
+                    ed.pointer_down(p);
+                    let mut at = p;
+                    for &q in path {
+                        ed.pointer_move(q);
+                        at = q;
+                    }
+                    at
+                }
+            };
+            let ck = desired_ck(&ed, at);
+            let file = crate::cursors::v1(ck).file;
+            if ck != row.ck || file != row.file {
+                fails.push(format!("{}: got {ck:?} ({file}), want {:?} ({})", row.what, row.ck, row.file));
+            }
+        }
+        assert!(fails.is_empty(), "{} row(s) wrong:\n  {}", fails.len(), fails.join("\n  "));
     }
 }
 
