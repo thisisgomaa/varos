@@ -183,6 +183,22 @@ pub fn set_window_background(window: &Window, rgb: [u8; 3]) {
     }
 }
 
+/// P15: stop AppKit from treating our content view's title-bar strip as a native window-drag region
+/// (a tab drag moved the whole window). Only EMPTY bar space drags now, through our own
+/// `caption_drag_position` → `drag_window()` (see `mac_caption::forbid_native_window_drag`).
+pub fn forbid_native_titlebar_drag(window: &Window) {
+    use objc2_app_kit::NSView;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::AppKit(h) = handle.as_raw() else { return };
+    // SAFETY: winit hands out its live content NSView; we are on the main thread and only borrow it
+    // to read its class.
+    let view: &NSView = unsafe { h.ns_view.cast::<NSView>().as_ref() };
+    if !crate::mac_caption::forbid_native_window_drag(view.class()) {
+        eprintln!("[varos] title bar: could not stop native window drag on tabs (P15)");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

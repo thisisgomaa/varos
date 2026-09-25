@@ -553,32 +553,18 @@ mod win {
     static HITS: AtomicUsize = AtomicUsize::new(0); // WM_SETCURSOR HTCLIENT intercepts (debug)
     static INSTALLED: AtomicIsize = AtomicIsize::new(-1); // -1 unknown, 0 fail, 1 ok
 
-    // The custom title-bar geometry, published each frame from the egui layout (physical px). The
-    // wndproc reads it to decide where the window drags (HTCAPTION) vs where our controls live (HTCLIENT).
-    #[derive(Clone, Copy, Default)]
-    struct PxRect {
-        l: i32,
-        t: i32,
-        r: i32,
-        b: i32,
-    }
-    impl PxRect {
-        fn has(&self, x: i32, y: i32) -> bool {
-            x >= self.l && x < self.r && y >= self.t && y < self.b
-        }
-    }
-    struct Caption {
-        h: i32,
-        excl: Vec<PxRect>,
-    }
-    static CAPTION: Mutex<Caption> = Mutex::new(Caption { h: 0, excl: Vec::new() });
+    // The custom title-bar geometry, published each frame from the egui layout (physical px): the
+    // band height + `TopbarLayout::interactive_rects`. The wndproc asks `chrome::caption_hit` — the
+    // SAME predicate macOS uses — where the window drags (HTCAPTION) vs where our controls live
+    // (HTCLIENT).
+    static CAPTION: Mutex<(i32, Vec<[i32; 4]>)> = Mutex::new((0, Vec::new()));
 
     /// Publish the caption height + the interactive (non-drag) rects, in PHYSICAL px, for hit-testing.
     pub fn set_caption(h: i32, excl: &[[i32; 4]]) {
         if let Ok(mut g) = CAPTION.lock() {
-            g.h = h;
-            g.excl.clear();
-            g.excl.extend(excl.iter().map(|r| PxRect { l: r[0], t: r[1], r: r[2], b: r[3] }));
+            g.0 = h;
+            g.1.clear();
+            g.1.extend_from_slice(excl);
         }
     }
 
@@ -647,10 +633,8 @@ mod win {
         }
         let mut p = POINT { x: sx, y: sy };
         let _ = ScreenToClient(h, &mut p);
-        if let Ok(g) = CAPTION.lock() {
-            if p.y >= 0 && p.y < g.h && !g.excl.iter().any(|e| e.has(p.x, p.y)) {
-                return LRESULT(HTCAPTION as isize);
-            }
+        if CAPTION.lock().is_ok_and(|g| crate::chrome::caption_hit(g.0, &g.1, p.x, p.y)) {
+            return LRESULT(HTCAPTION as isize);
         }
         LRESULT(HTCLIENT as isize)
     }
