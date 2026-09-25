@@ -1,5 +1,5 @@
-//! Native tool cursors: the **Varos cursor set v1** (our own drawings, `assets/cursors/v1/`, see
-//! docs/studies/2026-09-23-CURSOR_SET_V1.md), compiled into the binary. Every `CK` state has a real
+//! Native tool cursors: the **Varos cursor set v1.1** (our own drawings, `assets/cursors/v1/`, see
+//! docs/studies/2026-09-23-CURSOR_SET_V1.md §9), compiled into the binary. Every `CK` state has a real
 //! glyph. Each SVG is rendered to straight-alpha RGBA (resvg) and turned into the platform cursor:
 //! a Win32 HCURSOR on Windows, a Retina NSCursor (1× + 2× bitmaps in one 32-pt image) on macOS, a
 //! winit `CustomCursor` elsewhere. A system cursor is used only if the OS refuses one of ours.
@@ -33,7 +33,6 @@ pub enum CK {
     Hand,
     Grab,
     Copy,
-    NoDrop,
     // ---- rotate cursors, 8 compass directions (corner of the transform frame) ----
     RotateE,
     RotateSE,
@@ -43,10 +42,19 @@ pub enum CK {
     RotateNW,
     RotateN,
     RotateNE,
+    // ---- v1.1 (2026-09-25): Artboard tool + Illustrator-style hover badges ----
+    /// Artboard tool over empty board / creating a page: crosshair + frame badge.
+    Artboard,
+    /// Selection tool over a selectable object: arrow + filled square.
+    SelectObject,
+    /// Direct Selection over an anchor: hollow arrow + hollow square.
+    DirectAnchor,
+    /// Direct Selection over a path (segment or fill): hollow arrow + filled square.
+    DirectPath,
 }
 
 /// Every cursor state, in slot order (the non-Windows cursor token is `slot + 1`).
-pub const ALL_CURSORS: [CK; 28] = [
+pub const ALL_CURSORS: [CK; 31] = [
     CK::Select,
     CK::Direct,
     CK::Pen,
@@ -66,7 +74,6 @@ pub const ALL_CURSORS: [CK; 28] = [
     CK::Hand,
     CK::Grab,
     CK::Copy,
-    CK::NoDrop,
     CK::RotateE,
     CK::RotateSE,
     CK::RotateS,
@@ -75,6 +82,10 @@ pub const ALL_CURSORS: [CK; 28] = [
     CK::RotateNW,
     CK::RotateN,
     CK::RotateNE,
+    CK::Artboard,
+    CK::SelectObject,
+    CK::DirectAnchor,
+    CK::DirectPath,
 ];
 
 /// A CK's slot in `ALL_CURSORS`. Total: every CK is in the table (unit-tested).
@@ -97,9 +108,9 @@ const V1_HOTSPOTS_JSON: &str = include_str!("../assets/cursors/v1/hotspots.json"
 macro_rules! v1_files {
     ($($f:literal),* $(,)?) => { [$(($f, include_str!(concat!("../assets/cursors/v1/", $f)))),*] };
 }
-/// All 30 v1 files, including the three proposed cursor states. The 28 current CK states
-/// use 27 files (`Move` reuses `select.svg`).
-const V1_FILES: [(&str, &str); 30] = v1_files!(
+/// All 33 v1.1 files, including the three proposed cursor states (zoom-in, zoom-out, no-drop: drawn,
+/// no CK yet). The 31 current CK states use 30 files (`Move` reuses `select.svg`).
+const V1_FILES: [(&str, &str); 33] = v1_files!(
     "select.svg",
     "direct.svg",
     "pen.svg",
@@ -109,7 +120,7 @@ const V1_FILES: [(&str, &str); 30] = v1_files!(
     "pen-close.svg",
     "pen-connect.svg",
     "convert.svg",
-    "shape-rect.svg",
+    "cross.svg",
     "eyedropper.svg",
     "resize-h.svg",
     "resize-v.svg",
@@ -130,6 +141,9 @@ const V1_FILES: [(&str, &str); 30] = v1_files!(
     "zoom-in.svg",
     "zoom-out.svg",
     "artboard.svg",
+    "select-object.svg",
+    "direct-anchor.svg",
+    "direct-path.svg",
 );
 
 /// One v1 cursor: the state, its file, the embedded SVG text, and the hotspot in 32-px space.
@@ -168,7 +182,7 @@ fn parse_v1(json: &str) -> Result<Vec<V1Cursor>, String> {
         .collect()
 }
 
-/// The v1 table, parsed once from the embedded `hotspots.json` (28 entries, `ALL_CURSORS` order).
+/// The v1 table, parsed once from the embedded `hotspots.json` (31 entries, `ALL_CURSORS` order).
 /// The data is compiled in and fully checked by `v1_table_covers_every_ck_once_with_hotspots_inside`,
 /// so the `expect` is an invariant of the build, not a runtime condition.
 pub fn v1_table() -> &'static [V1Cursor] {
@@ -258,7 +272,6 @@ pub fn ai_svg(ck: CK) -> (&'static str, f32, f32) {
         CK::Hand => ("CUR_HAND", 11.0, 11.0),
         CK::Grab => ("CUR_FIST", 11.0, 11.0),
         CK::Copy => ("CUR_MOVECOPY", 1.0, 1.0),
-        CK::NoDrop => ("CUR_NOMOVE", 1.0, 1.0),
         CK::RotateE => ("CUR_ROTATEFROMRIGHT", 7.0, 7.0),
         CK::RotateSE => ("CUR_ROTATEBOTTOMRIGHTCORNER", 7.0, 7.0),
         CK::RotateS => ("CUR_ROTATEFROMBOTTOM", 7.0, 7.0),
@@ -267,6 +280,10 @@ pub fn ai_svg(ck: CK) -> (&'static str, f32, f32) {
         CK::RotateNW => ("CUR_ROTATETOPLEFTCORNER", 7.0, 7.0),
         CK::RotateN => ("CUR_ROTATEFROMTOP", 7.0, 7.0),
         CK::RotateNE => ("CUR_ROTATETOPRIGHTCORNER", 7.0, 7.0),
+        CK::Artboard => ("CUR_ARTBOARD", 8.0, 8.0),
+        CK::SelectObject => ("CUR_RESELECT", 1.0, 1.0),
+        CK::DirectAnchor => ("CUR_DIRECTSELECTANCHOR", 1.0, 1.0),
+        CK::DirectPath => ("CUR_DIRECTSELECTBBOX", 1.0, 1.0),
     }
 }
 
@@ -837,7 +854,7 @@ mod portable {
     /// System cursor for a state whose custom cursor the OS refused: the closest winit built-in.
     pub fn icon(ck: CK) -> CursorIcon {
         match ck {
-            CK::Select | CK::Direct => CursorIcon::Default,
+            CK::Select | CK::Direct | CK::SelectObject | CK::DirectAnchor | CK::DirectPath => CursorIcon::Default,
             CK::Pen
             | CK::PenNew
             | CK::PenAdd
@@ -846,6 +863,7 @@ mod portable {
             | CK::PenConnect
             | CK::Convert
             | CK::Cross
+            | CK::Artboard
             | CK::Eye => CursorIcon::Crosshair,
             CK::ResizeH => CursorIcon::EwResize,
             CK::ResizeV => CursorIcon::NsResize,
@@ -855,7 +873,6 @@ mod portable {
             CK::Hand => CursorIcon::Grab,
             CK::Grab => CursorIcon::Grabbing,
             CK::Copy => CursorIcon::Copy,
-            CK::NoDrop => CursorIcon::NotAllowed,
             CK::RotateE
             | CK::RotateSE
             | CK::RotateS
@@ -1030,7 +1047,7 @@ mod tests {
     #[test]
     fn v1_table_covers_every_ck_once_with_hotspots_inside() {
         let t = parse_v1(V1_HOTSPOTS_JSON).expect("hotspots.json parses");
-        assert_eq!(t.len(), 28);
+        assert_eq!(t.len(), 31);
         for (i, e) in t.iter().enumerate() {
             assert!(e.ck == ALL_CURSORS[i], "slot {i} out of order");
             assert_eq!(ALL_CURSORS.iter().filter(|c| **c == e.ck).count(), 1, "{:?} listed twice", e.ck);
@@ -1060,7 +1077,6 @@ mod tests {
                 | CK::Hand
                 | CK::Grab
                 | CK::Copy
-                | CK::NoDrop
                 | CK::RotateE
                 | CK::RotateSE
                 | CK::RotateS
@@ -1068,19 +1084,69 @@ mod tests {
                 | CK::RotateW
                 | CK::RotateNW
                 | CK::RotateN
-                | CK::RotateNE => {}
+                | CK::RotateNE
+                | CK::Artboard
+                | CK::SelectObject
+                | CK::DirectAnchor
+                | CK::DirectPath => {}
             }
         }
         // Embed the entire set, including the three proposed states without a CK yet.
         let json: serde_json::Value = serde_json::from_str(V1_HOTSPOTS_JSON).unwrap();
         let files = json["files"].as_object().unwrap();
-        assert_eq!(V1_FILES.len(), 30);
+        assert_eq!(V1_FILES.len(), 33);
         assert_eq!(files.len(), V1_FILES.len());
         let unique: std::collections::HashSet<_> = V1_FILES.iter().map(|(file, _)| *file).collect();
         assert_eq!(unique.len(), V1_FILES.len());
         for (file, _) in V1_FILES {
             assert!(files.contains_key(file), "{file} missing from hotspots.json");
         }
+        // No orphans: every embedded file is used by a CK or named by a proposed state (v1.1 deleted
+        // shape-rect.svg once the shape tools moved to the plain crosshair), and every proposed state's
+        // file is embedded with the same hotspot as the files map.
+        let proposed = json["proposed_ck"].as_object().unwrap();
+        for (name, e) in proposed {
+            let f = e["file"].as_str().unwrap();
+            assert!(V1_FILES.iter().any(|(file, _)| *file == f), "proposed {name}: {f} not embedded");
+            assert_eq!(&e["hotspot"], &files[f], "proposed {name}: hotspot differs from the files map");
+            assert!(!t.iter().any(|c| format!("{:?}", c.ck) == *name), "{name} is both a CK and proposed");
+        }
+        for (file, _) in V1_FILES {
+            let used = t.iter().any(|e| e.file == file) || proposed.values().any(|e| e["file"] == file);
+            assert!(used, "{file} is embedded but no CK or proposed state uses it");
+        }
+    }
+
+    // v1.1 family: every arrow-based cursor is built on the SAME arrow silhouette (one path, copied
+    // verbatim) with its hotspot on the tip; filled arrow = Selection family, hollow = Direct family.
+    #[test]
+    fn arrow_family_shares_one_silhouette_and_the_tip_hotspot() {
+        let first_path = |svg: &str| {
+            let i = svg.find("<path d=\"").expect("a path") + 9;
+            svg[i..i + svg[i..].find('"').unwrap()].to_string()
+        };
+        let base = first_path(v1(CK::Select).svg);
+        let filled = [CK::Select, CK::Move, CK::Copy, CK::SelectObject];
+        let hollow = [CK::Direct, CK::DirectAnchor, CK::DirectPath];
+        for ck in filled.iter().chain(hollow.iter()) {
+            let e = v1(*ck);
+            assert_eq!(first_path(e.svg), base, "{ck:?} ({}) is not on the shared arrow", e.file);
+            assert_eq!((e.hx, e.hy), (3, 3), "{ck:?} hotspot is not the arrow tip");
+        }
+        let no_drop = V1_FILES.iter().find(|(f, _)| *f == "no-drop.svg").unwrap().1;
+        assert_eq!(first_path(no_drop), base, "no-drop.svg is not on the shared arrow");
+        // the hollow family paints a stroke-less white interior over the ink; the filled family never does
+        let hollow_interior = |svg: &str| svg.contains("fill=\"#ffffff\"/>");
+        for ck in hollow {
+            assert!(hollow_interior(v1(ck).svg), "{ck:?} is not hollow");
+        }
+        for ck in filled {
+            assert!(!hollow_interior(v1(ck).svg), "{ck:?} is not filled");
+        }
+        // the two square badges differ only in fill: Direct-over-anchor hollow, the others filled
+        assert!(v1(CK::DirectAnchor).svg.contains("fill=\"#ffffff\" stroke=\"#141313\""));
+        assert!(v1(CK::DirectPath).svg.contains("fill=\"#141313\" stroke=\"#141313\" stroke-width=\"1.5\""));
+        assert!(v1(CK::SelectObject).svg.contains("fill=\"#141313\" stroke=\"#141313\" stroke-width=\"1.5\""));
     }
 
     // The embedded table matches hotspots.json's own "files" map, and `Move` is the selection arrow.
@@ -1132,7 +1198,7 @@ mod tests {
         }
     }
 
-    // Check all 30 embedded files (including proposed states), with no window or GPU.
+    // Check all 33 embedded files (including proposed states), with no window or GPU.
     // Distinct files must have distinct bitmaps at both sizes.
     #[test]
     fn all_embedded_files_render_distinct_non_blank_bitmaps_at_both_sizes() {
@@ -1157,7 +1223,7 @@ mod tests {
             }
         }
         let files: std::collections::HashSet<_> = v1_table().iter().map(|e| e.file).collect();
-        assert_eq!(files.len(), 27);
+        assert_eq!(files.len(), 30);
     }
 
     // v1 is the default: without the env var the reference set is never consulted, and with it an
@@ -1176,7 +1242,7 @@ mod tests {
             assert_eq!((b.1, b.2), (32, 32));
         }
         assert_eq!(AI_ENV, "VAROS_CURSORS_AI");
-        assert_eq!(summary_line(0), "[varos] cursors: 28 v1 (+ 0 reference overrides)");
+        assert_eq!(summary_line(0), "[varos] cursors: 31 v1 (+ 0 reference overrides)");
     }
 
     // macOS port — every cursor gets a distinct non-zero token that decodes back to itself, so
