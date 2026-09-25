@@ -1,11 +1,17 @@
-//! DFS S1 §3.5 — the host's ONE command path, as pure pieces the event loop in `main.rs` calls.
+//! DFS S1 §3.5 — the host's command path, as pure pieces the event loop in `main.rs` calls.
 //!
-//! Every source turns into an [`AppCommand`] here: shortcut keys ([`lifecycle_key`] →
-//! [`to_app_command`]), native menu rows ([`menu_route`]), the custom caption's window controls
-//! ([`win_action_command`]), the OS close request (`AppCommand::Quit`), the tab strip / burger
-//! (`Ui::take_app_commands`), and files handed in from outside ([`open_paths_command`]). The event
-//! loop queues them and runs each through `main.rs`'s `dispatch`: `Window(_)` effects on the window,
-//! everything else through [`run_lifecycle`].
+//! Every lifecycle / window command becomes an [`AppCommand`] here: shortcut keys ([`lifecycle_key`]
+//! → [`to_app_command`], [`tab_key`]), native File / Window rows ([`menu_route`]), the custom
+//! caption's window controls ([`win_action_command`]), the OS close request (`AppCommand::Quit`), the
+//! tab strip / burger (`Ui::take_app_commands`), and files handed in from outside
+//! ([`open_paths_command`]). They wait in ONE FIFO queue of [`HostAction`]s that `main.rs` drains at
+//! `AboutToWait` through its `dispatch`: `Window(_)` effects on the window, everything else through
+//! [`run_lifecycle`]. The document actions keys and menu rows raise ([`DocAction`]: a shortcut key,
+//! Edit ▸ Delete, a snap row) share that order but not always that path: one runs at once when
+//! nothing is queued — no command, no pointer button whose chrome command is still to come
+//! ([`ActionQueue::doc_runs_now`]) — else it queues behind and goes through `dispatch` too.
+//! Pointer input and panel edits act on the editor directly, outside the queue; a pointer button only
+//! marks the queue, so what is raised after a click waits for the click's own chrome command.
 //!
 //! No window, no GPU, no dialogs here: everything is testable headless (the dialogs and the disk are
 //! the lifecycle's ports).
@@ -71,6 +77,225 @@ pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<
     match lifecycle_key(code, m.ctrl, m.shift, m.alt) {
         Some(f) => to_app_command(f, active),
         None => tab_key(code, m.ctrl, m.shift, m.alt),
+    }
+}
+
+/// The keyboard as the window holds it — the host's ONE truth for the held keys, never a document
+/// tab's: the modifiers (Ctrl or ⌘, ⇧, ⌥) as winit's `ModifiersChanged` last reported them, Space (the
+/// pan / A9 reposition key), and which keys went down AS A COMMAND. winit reports a modifier only when
+/// it CHANGES, so a tab switch while Control is still held must not forget the Control (owner
+/// hand-test 2026-09-25: held-Ctrl Tab · Tab cycled only once, because the key path read the incoming
+/// tab's reset copy). A tab's `Editor::mods` / `Editor::space` are only mirrors for the gestures that
+/// read them ([`Self::mirror`]): rewritten on every change, by [`run_lifecycle`] after every command,
+/// and cleared with everything else when the window loses focus ([`Self::focus_lost`]).
+#[derive(Clone, Default)]
+pub struct Keyboard {
+    held: Mods,
+    space: bool,
+    /// The keys whose press was a command (Ctrl+Tab, ⌘S …), until their release: every later event of
+    /// such a key goes where its press went, whatever the modifiers did in between (Codex review P2).
+    commands_down: Vec<KeyCode>,
+}
+
+/// Where one key event goes ([`Keyboard::key`]).
+#[derive(Debug, PartialEq)]
+pub enum KeyRoute {
+    /// A command key's fresh press: queue this command. The key goes nowhere else.
+    Queue(AppCommand),
+    /// The rest of a command key — its repeats, its release: nowhere (not egui, not the document).
+    Swallow,
+    /// Not a command key, from press to release: egui / the document, as usual.
+    Pass,
+}
+
+impl Keyboard {
+    /// winit's `ModifiersChanged`: the new truth, mirrored into the active tab's editor.
+    pub fn modifiers_changed(&mut self, m: Mods, active: Option<&mut Editor>) {
+        self.held = m;
+        self.mirror_into(active);
+    }
+
+    /// Space went down (`true`) or up, as the canvas's key: mirrored into the active tab's editor.
+    pub fn space_changed(&mut self, down: bool, active: Option<&mut Editor>) {
+        self.space = down;
+        self.mirror_into(active);
+    }
+
+    /// The window lost key focus: the key-ups now go to whatever took it. winit releases the modifiers
+    /// itself (a synthetic `ModifiersChanged`); Space and the command keys are let go here. The active
+    /// tab's mirror follows.
+    pub fn focus_lost(&mut self, active: Option<&mut Editor>) {
+        *self = Keyboard::default();
+        self.mirror_into(active);
+    }
+
+    /// The modifiers held right now.
+    pub fn held(&self) -> Mods {
+        self.held
+    }
+
+    /// Space is held right now.
+    pub fn space(&self) -> bool {
+        self.space
+    }
+
+    /// Copy the held keys into a tab's editor (the one it shows now).
+    pub fn mirror(&self, ed: &mut Editor) {
+        ed.mods = self.held;
+        ed.space = self.space;
+    }
+
+    fn mirror_into(&self, active: Option<&mut Editor>) {
+        if let Some(ed) = active {
+            self.mirror(ed);
+        }
+    }
+
+    /// The file / tab command a key is with the held modifiers, if any ([`key_command`]).
+    pub fn command(&self, code: KeyCode, active: Option<SessionId>) -> Option<AppCommand> {
+        key_command(code, self.held, active)
+    }
+
+    /// Route one key event. A FRESH press is classified on the held modifiers ([`Self::command`]);
+    /// its repeats and its release then go where the press went, even when a modifier went up or down
+    /// in between — so Ctrl+Tab's key-up never leaks to egui, and a plain Tab's key-up always reaches
+    /// it (egui's held-key state stays true).
+    pub fn key(&mut self, code: KeyCode, pressed: bool, repeat: bool, active: Option<SessionId>) -> KeyRoute {
+        let was_command = self.commands_down.contains(&code);
+        if !pressed || repeat {
+            if !pressed {
+                self.commands_down.retain(|&c| c != code);
+            }
+            return if was_command { KeyRoute::Swallow } else { KeyRoute::Pass };
+        }
+        match self.command(code, active) {
+            Some(cmd) => {
+                if !was_command {
+                    self.commands_down.push(code);
+                }
+                KeyRoute::Queue(cmd)
+            }
+            None => {
+                self.commands_down.retain(|&c| c != code);
+                KeyRoute::Pass
+            }
+        }
+    }
+}
+
+/// One entry of the host's action queue (DFS S1 review P1): a lifecycle / window command, or a
+/// document action raised by a key or a menu row. Keys, native menu rows, the burger and the tab
+/// strip all feed ONE FIFO queue, so a ⌘Z pressed after a ⌘S in the same event batch runs after the
+/// Save, never before it.
+#[derive(Clone)]
+pub enum HostAction {
+    /// A command for `main.rs`'s `dispatch` (always waits for the queue's drain at `AboutToWait`).
+    App(AppCommand),
+    /// A document action on whichever tab is active when it runs.
+    Doc(DocAction),
+}
+
+/// A document action a key or a menu row raises (not a lifecycle command).
+#[derive(Clone, Copy)]
+pub enum DocAction {
+    /// A document shortcut key (`main.rs`'s `doc_key`) with the modifiers held when it was pressed.
+    Key(KeyCode, Mods),
+    /// A magnet quick-menu row (grid = Snap to Grid, else Snap to Point).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // raised only by the macOS menu bar
+    Snap { grid: bool },
+}
+
+/// A shortcut key meant for the document (not typed into a field): its lifecycle command, else the
+/// document shortcut itself. Pure.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the menu bar's ⌘-rows; the keyboard splits earlier
+pub fn key_action(code: KeyCode, m: Mods, active: Option<SessionId>) -> HostAction {
+    match key_command(code, m, active) {
+        Some(c) => HostAction::App(c),
+        None => HostAction::Doc(DocAction::Key(code, m)),
+    }
+}
+
+/// The host's ONE FIFO action queue (DFS S1 review P1). Commands wait here for the drain at
+/// `AboutToWait`; a document action runs at once only when nothing is waiting ([`Self::doc_runs_now`]).
+///
+/// A pointer button fed to egui (a tab chip, a burger row) becomes a command only at the next Ui
+/// frame, so every press and every release leaves a MARK in the queue, in event order. The Ui frame
+/// inserts each command at the mark of the event that produced it — for a click, its RELEASE
+/// ([`Self::chrome_frame`]) — and removes every mark. So click tab B then ⌘Z undoes on B, while
+/// press B, ⌘Z, release B undoes before B is activated.
+#[derive(Default)]
+pub struct ActionQueue {
+    slots: Vec<Slot>,
+    next_mark: u64,
+}
+
+/// One place in the queue: an action, or the mark a pointer event left.
+enum Slot {
+    Action(HostAction),
+    Mark { id: u64, release: bool },
+}
+
+impl ActionQueue {
+    pub fn push(&mut self, a: HostAction) {
+        self.slots.push(Slot::Action(a));
+    }
+
+    pub fn extend(&mut self, it: impl IntoIterator<Item = HostAction>) {
+        self.slots.extend(it.into_iter().map(Slot::Action));
+    }
+
+    /// A pointer button was pressed (`release` false) or released: leave its mark. Returns its id.
+    pub fn pointer_button(&mut self, release: bool) -> u64 {
+        let id = self.next_mark;
+        self.next_mark += 1;
+        self.slots.push(Slot::Mark { id, release });
+        id
+    }
+
+    /// The latest release mark still waiting: where the click egui reports at the next Ui frame came
+    /// from (egui reports at most one click per frame, decided at a release).
+    pub fn last_release(&self) -> Option<u64> {
+        self.slots.iter().rev().find_map(|s| match *s {
+            Slot::Mark { id, release: true } => Some(id),
+            _ => None,
+        })
+    }
+
+    /// The Ui frame ran: each command goes in at the mark of the pointer event that produced it (in
+    /// the given order; at the tail when it has none, or its mark is gone), then every mark is removed.
+    pub fn chrome_frame(&mut self, produced: impl IntoIterator<Item = (Option<u64>, HostAction)>) {
+        for (mark, a) in produced {
+            let at = mark
+                .and_then(|m| self.slots.iter().position(|s| matches!(*s, Slot::Mark { id, .. } if id == m)))
+                .unwrap_or(self.slots.len());
+            self.slots.insert(at, Slot::Action(a)); // before the mark: several keep their order
+        }
+        self.slots.retain(|s| matches!(s, Slot::Action(_)));
+    }
+
+    /// Nothing is waiting: no queued action and no pointer mark.
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// May a freshly raised document action run at once? Only when nothing raised earlier is still
+    /// waiting — no queued action, no pointer mark ([`Self::is_empty`]); running it then IS running it
+    /// in event order, and a shortcut with nothing ahead of it answers in the same frame as before.
+    pub fn doc_runs_now(&self) -> bool {
+        self.is_empty()
+    }
+
+    /// The drain: every action ahead of the first mark, in order. What is behind a mark waits for
+    /// the Ui frame that turns the pointer events into their commands.
+    pub fn take_ready(&mut self) -> Vec<HostAction> {
+        let n = self.slots.iter().position(|s| matches!(s, Slot::Mark { .. })).unwrap_or(self.slots.len());
+        self.slots
+            .drain(..n)
+            .map(|s| match s {
+                Slot::Action(a) => a,
+                Slot::Mark { .. } => unreachable!("the drain stops at the first mark"),
+            })
+            .collect()
     }
 }
 
@@ -195,8 +420,12 @@ pub struct Ran {
 /// 1. finish every open edit on the active tab — the Ui side first (an open colour picker is
 ///    cancelled, not committed), then the pointer gesture (`DocumentSession::settle`);
 /// 2. run the lifecycle rules over the workspace and the ports;
-/// 3. reset the held modifiers (a native dialog eats the key releases) and ALWAYS the Ui's
-///    per-document caches (an Open can replace a pristine tab in place).
+/// 3. mirror the keyboard's held keys ([`Keyboard::mirror`]: modifiers + Space) into the (maybe
+///    new) active editor — never a blanket reset: Control still held after a Ctrl+Tab must still
+///    read as held, or the next Tab is a plain Tab; Space still held must still reposition (A9). A
+///    key-up a native dialog swallowed is not lost either: the window lost focus, and
+///    [`Keyboard::focus_lost`] / winit's `ModifiersChanged` rewrite the mirror. Then ALWAYS reset
+///    the Ui's per-document caches (an Open can replace a pristine tab in place).
 ///
 /// A click on the chip that is already active is not a lifecycle change: nothing is settled or reset.
 pub fn run_lifecycle(
@@ -205,6 +434,7 @@ pub fn run_lifecycle(
     ui: &mut dyn DocUi,
     dialogs: &mut dyn Dialogs,
     store: &mut dyn DocStore,
+    keys: &Keyboard,
 ) -> Ran {
     debug_assert!(!matches!(cmd, AppCommand::Window(_)), "window commands are the host's");
     if matches!(cmd, AppCommand::ActivateDocument(id) if ws.active_id() == Some(id)) {
@@ -217,7 +447,7 @@ pub fn run_lifecycle(
     let before = ws.active_id();
     let effect = Lifecycle { ws: &mut *ws, dialogs, store }.run(cmd);
     if let Some(s) = ws.active_mut() {
-        s.editor.mods = Mods::default();
+        keys.mirror(&mut s.editor);
     }
     ui.document_switched();
     Ran { exit: effect.exit, ran: true, switched: ws.active_id() != before }
@@ -486,8 +716,19 @@ mod tests {
         }
     }
 
+    /// A command with no modifier held (the mouse / a menu row / a key whose modifiers are up by now).
     fn run(ws: &mut Workspace, ui: &mut FakeUi, cmd: AppCommand) -> Ran {
-        run_lifecycle(cmd, ws, ui, &mut NoDialogs, &mut NoStore)
+        run_held(ws, ui, cmd, Mods::default())
+    }
+
+    fn run_held(ws: &mut Workspace, ui: &mut FakeUi, cmd: AppCommand, held: Mods) -> Ran {
+        let mut keys = Keyboard::default();
+        keys.modifiers_changed(held, None);
+        run_keys(ws, ui, cmd, &keys)
+    }
+
+    fn run_keys(ws: &mut Workspace, ui: &mut FakeUi, cmd: AppCommand, keys: &Keyboard) -> Ran {
+        run_lifecycle(cmd, ws, ui, &mut NoDialogs, &mut NoStore, keys)
     }
 
     #[test]
@@ -514,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn modifiers_reset_after_every_lifecycle_command_and_no_op_activation_does_nothing() {
+    fn the_active_editor_mirrors_the_keyboard_after_every_command_and_no_op_activation_does_nothing() {
         let mut ws = Workspace::new();
         let id = ws.active_id().unwrap();
         ws.active_mut().unwrap().editor.mods = m(true, true, false);
@@ -523,12 +764,171 @@ mod tests {
         assert_eq!(run(&mut ws, &mut ui, AppCommand::ActivateDocument(id)), Ran::default());
         assert!(ui.log.is_empty());
         assert!(ws.active().unwrap().editor.mods.ctrl, "untouched");
-        // Ctrl+Tab with one tab: no switch, but the command ran (a dialog may have eaten key-ups)
-        let ran = run(&mut ws, &mut ui, AppCommand::ActivateNext);
+        // Ctrl+Tab with one tab: no switch, but the command ran — the editor now reads what the keyboard holds
+        let ran = run_held(&mut ws, &mut ui, AppCommand::ActivateNext, m(true, false, false));
         assert_eq!(ran, Ran { exit: false, ran: true, switched: false });
         let mods = ws.active().unwrap().editor.mods;
-        assert!(!mods.ctrl && !mods.shift, "held modifiers are reset");
+        assert!(mods.ctrl && !mods.shift, "Control is still held; the stale ⇧ is gone");
+        // a command after the keys were released (e.g. under a native dialog): nothing reads as held
+        run(&mut ws, &mut ui, AppCommand::ActivateNext);
+        let mods = ws.active().unwrap().editor.mods;
+        assert!(!mods.ctrl && !mods.shift, "no modifier is held");
         // a clean workspace quits at once
         assert!(run(&mut ws, &mut ui, AppCommand::Quit).exit);
+    }
+
+    #[test]
+    fn the_keyboard_outlives_a_tab_switch() {
+        let mut ws = Workspace::new();
+        let a = ws.active_id().unwrap();
+        let b = ws.new_untitled();
+        assert!(ws.activate(a));
+        let mut kb = Keyboard::default();
+        kb.modifiers_changed(m(true, false, false), ws.active_mut().map(|s| &mut s.editor));
+        assert!(ws.active().unwrap().editor.mods.ctrl, "the active editor mirrors the keyboard");
+        assert_eq!(kb.command(KeyCode::Tab, Some(a)), Some(AppCommand::ActivateNext));
+        let mut ui = FakeUi::default();
+        assert!(run_keys(&mut ws, &mut ui, AppCommand::ActivateNext, &kb).switched);
+        assert_eq!(ws.active_id(), Some(b));
+        // winit sends nothing more while Control stays down: the next Tab is still Ctrl+Tab
+        assert_eq!(kb.command(KeyCode::Tab, Some(b)), Some(AppCommand::ActivateNext));
+        assert!(ws.active().unwrap().editor.mods.ctrl, "the incoming tab's gestures see Control held too");
+        // Control released: the keyboard and the active mirror both let go
+        kb.modifiers_changed(Mods::default(), ws.active_mut().map(|s| &mut s.editor));
+        assert_eq!(kb.command(KeyCode::Tab, Some(b)), None, "plain Tab is not a tab switch");
+        assert!(!ws.active().unwrap().editor.mods.ctrl);
+    }
+
+    /// Codex review P3: Space is a held key like the modifiers — ONE truth in the host, not a per-tab
+    /// flag a switch forgets (A9: a live placement drag repositions while Space is down).
+    #[test]
+    fn held_space_outlives_a_tab_switch_and_focus_loss_lets_it_go() {
+        let mut ws = Workspace::new();
+        let a = ws.active_id().unwrap();
+        let b = ws.new_untitled();
+        assert!(ws.activate(a));
+        let mut kb = Keyboard::default();
+        kb.space_changed(true, ws.active_mut().map(|s| &mut s.editor));
+        assert!(ws.active().unwrap().editor.space, "the active editor mirrors Space");
+        let mut ui = FakeUi::default();
+        assert!(run_keys(&mut ws, &mut ui, AppCommand::ActivateNext, &kb).switched);
+        assert_eq!(ws.active_id(), Some(b));
+        assert!(kb.space(), "still held");
+        assert!(ws.active().unwrap().editor.space, "the incoming tab's editor sees Space held");
+        // the window loses focus (a dialog, ⌘Tab): Space's key-up will never come — let it go now
+        kb.modifiers_changed(m(true, false, false), ws.active_mut().map(|s| &mut s.editor));
+        kb.focus_lost(ws.active_mut().map(|s| &mut s.editor));
+        assert!(!kb.space() && !kb.held().ctrl, "nothing reads as held");
+        let ed = &ws.active().unwrap().editor;
+        assert!(!ed.space && !ed.mods.ctrl, "and neither does the active mirror");
+    }
+
+    // ---- the action queue (review re-check: pointer input orders document keys) ----
+
+    fn names(v: &[HostAction]) -> Vec<String> {
+        v.iter()
+            .map(|a| match a {
+                HostAction::App(c) => format!("{c:?}"),
+                HostAction::Doc(DocAction::Key(code, _)) => format!("Key({code:?})"),
+                HostAction::Doc(DocAction::Snap { grid }) => format!("Snap({grid})"),
+            })
+            .collect()
+    }
+
+    const UNDO: HostAction =
+        HostAction::Doc(DocAction::Key(KeyCode::KeyZ, Mods { ctrl: true, shift: false, alt: false }));
+
+    fn activate(n: u64) -> HostAction {
+        HostAction::App(AppCommand::ActivateDocument(SessionId(n)))
+    }
+
+    #[test]
+    fn a_key_alone_runs_now() {
+        let q = ActionQueue::default();
+        assert!(q.doc_runs_now());
+    }
+
+    #[test]
+    fn a_key_after_a_whole_click_waits_behind_the_click() {
+        let mut q = ActionQueue::default();
+        q.pointer_button(false);
+        q.pointer_button(true); // the release on tab B's chip — egui makes it Activate(B) at the frame
+        assert!(!q.doc_runs_now(), "the click's command is still to come");
+        q.push(UNDO);
+        let at = q.last_release();
+        q.chrome_frame([(at, activate(2))]);
+        assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))", "Key(KeyZ)"]);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn a_key_between_press_and_release_runs_before_the_click() {
+        // (a) press B → ⌘Z → release B → frame: the click completes AFTER the key
+        let mut q = ActionQueue::default();
+        q.pointer_button(false);
+        assert!(!q.doc_runs_now(), "an unfilled mark: the key waits");
+        q.push(UNDO);
+        q.pointer_button(true);
+        let at = q.last_release();
+        q.chrome_frame([(at, activate(2))]);
+        assert_eq!(names(&q.take_ready()), ["Key(KeyZ)", "ActivateDocument(SessionId(2))"]);
+    }
+
+    #[test]
+    fn two_clicks_around_a_key_keep_event_order() {
+        // (b) click A → ⌘Z → click B → frame: Activate(A), ⌘Z, Activate(B)
+        let mut q = ActionQueue::default();
+        q.pointer_button(false);
+        let release_a = q.pointer_button(true);
+        q.push(UNDO);
+        q.pointer_button(false);
+        let release_b = q.pointer_button(true);
+        assert_eq!(q.last_release(), Some(release_b));
+        q.chrome_frame([(Some(release_a), activate(1)), (Some(release_b), activate(2))]);
+        assert_eq!(
+            names(&q.take_ready()),
+            ["ActivateDocument(SessionId(1))", "Key(KeyZ)", "ActivateDocument(SessionId(2))"]
+        );
+    }
+
+    #[test]
+    fn unfilled_marks_go_after_the_frame_and_keys_stop_waiting() {
+        // (c) a canvas click raises no chrome command: its marks must not outlive the frame
+        let mut q = ActionQueue::default();
+        q.pointer_button(false);
+        q.pointer_button(true);
+        assert!(!q.doc_runs_now());
+        q.chrome_frame([]);
+        assert!(q.is_empty() && q.doc_runs_now(), "no marks left: the next key runs at once");
+    }
+
+    #[test]
+    fn a_key_before_a_click_ran_first() {
+        let mut q = ActionQueue::default();
+        assert!(q.doc_runs_now(), "the key runs at once, ahead of the later click");
+        q.pointer_button(false);
+        q.pointer_button(true);
+        let at = q.last_release();
+        q.chrome_frame([(at, activate(2))]);
+        assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))"]);
+    }
+
+    #[test]
+    fn a_drain_before_the_ui_frame_keeps_the_click_and_what_follows_it() {
+        let mut q = ActionQueue::default();
+        q.push(HostAction::App(AppCommand::Save(SessionId(1))));
+        q.pointer_button(false);
+        q.pointer_button(true);
+        q.push(UNDO);
+        q.push(HostAction::App(AppCommand::Save(SessionId(1))));
+        assert_eq!(names(&q.take_ready()), ["Save(SessionId(1))"], "only what came before the click");
+        assert!(!q.is_empty() && !q.doc_runs_now());
+        let at = q.last_release();
+        q.chrome_frame([(at, activate(2))]);
+        assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))", "Key(KeyZ)", "Save(SessionId(1))"]);
+        // a command with no pointer event behind it goes to the tail
+        q.chrome_frame([(None, HostAction::App(AppCommand::NewDocument))]);
+        assert_eq!(names(&q.take_ready()), ["NewDocument"]);
+        assert!(q.is_empty());
     }
 }

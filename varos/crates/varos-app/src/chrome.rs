@@ -2,7 +2,9 @@
 //!
 //! * `TOPBAR`: how our own top bar sits in the window on this platform (left inset for the macOS
 //!   traffic lights, whether we paint our own ─ ☐ ✕ caps).
-//! * `caption_hit`: is a physical-px point on the EMPTY part of the bar (the drag band)?
+//! * `caption_hit`: is a physical-px point on the EMPTY part of the bar (the drag band)? Its
+//!   exclusions come from ONE list, `TopbarLayout::interactive_rects` — the same rects the bar's
+//!   controls and tab chips are hit-tested with — on Windows (`WM_NCHITTEST`) and macOS alike.
 //! * `menus()`: the native macOS menu bar as a table. Every item is a MIRROR of a path that already
 //!   exists — a ⌘-shortcut keystroke, the ✕ close path, or a toggle an egui menu already offers.
 //!   The AppKit glue that turns this table into an NSMenu lives in `mac_menu.rs` (macOS only).
@@ -36,6 +38,10 @@ pub const fn topbar_chrome(macos: bool) -> TopbarChrome {
 
 /// This build's top-bar chrome.
 pub const TOPBAR: TopbarChrome = topbar_chrome(cfg!(target_os = "macos"));
+
+/// Logical px between two neighbouring tab chips — the resting layout (`topbar_layout`) and the live
+/// drag reflow (`tab_drag_frame`) both space chips with this one number.
+pub const TAB_GAP: f32 = 4.0;
 
 /// The actual rectangles painted / hit-tested by the top bar. Text widths come from egui's
 /// font measurement; all padding, vertical alignment and tab fitting live here.
@@ -100,7 +106,7 @@ pub fn topbar_layout(
             break;
         }
         tabs.push((i, Rect::from_min_size(pos2(tx, cy - 14.0), vec2(tw, 28.0))));
-        tx += tw + 4.0;
+        tx += tw + TAB_GAP;
     }
     // F7: the active tab is ALWAYS visible — on overflow it takes the last visible slot.
     if let Some(active) = active_tab {
@@ -109,7 +115,7 @@ pub fn topbar_layout(
             tabs.pop();
             let tw = tab_w(tab_text_widths[active]);
             tabs.push((active, Rect::from_min_size(pos2(slot_x, cy - 14.0), vec2(tw, 28.0))));
-            tx = slot_x + tw + 4.0;
+            tx = slot_x + tw + TAB_GAP;
         }
     }
     // clamp so a wider swapped-in active tab can never push `+` out of the bar.
@@ -118,16 +124,192 @@ pub fn topbar_layout(
     TopbarLayout { caps, menu, magnet, window, share, export, search, tabs, plus }
 }
 
+impl TopbarLayout {
+    /// Every bar rect a press BELONGS to (a control, a tab chip's FULL slot — its × lives inside it —
+    /// the `+` chip, the burger, the right cluster, Windows' caps). This one list is what the bar
+    /// publishes as the caption exclusions (`caption_exclusions` → `cursors::set_caption`), so the
+    /// Windows `WM_NCHITTEST` band and the macOS `caption_drag_hit` test exactly the rects the strip
+    /// draws and hit-tests — never a second, hand-kept copy (P15).
+    pub fn interactive_rects(&self) -> Vec<egui::Rect> {
+        self.interactive_rects_with(self.tabs.iter().map(|&(_, r)| r))
+    }
+
+    /// `interactive_rects` with the tab chips' rects supplied by the caller: while a chip is lifted
+    /// the strip publishes the rects it actually PAINTS (`TabDragFrame::chip_rects`) instead of the
+    /// resting slots — the same "published == painted" invariant (P15, P16 review).
+    pub fn interactive_rects_with(&self, chips: impl IntoIterator<Item = egui::Rect>) -> Vec<egui::Rect> {
+        let mut out: Vec<egui::Rect> = self.caps.map_or_else(Vec::new, |c| c.to_vec());
+        out.extend([self.magnet, self.window, self.share, self.export, self.search, self.menu]);
+        out.extend(chips);
+        out.extend(self.plus);
+        out
+    }
+
+    /// The tab strip's horizontal extent: from the first drawn chip's left edge to the last one's
+    /// right edge. A lifted (dragged) chip is clamped to this span (P16) — exactly the span the
+    /// reflowed chips fill, so the lifted chip can always reach the first and the last slot.
+    pub fn tab_strip(&self) -> Option<egui::Rangef> {
+        let first = self.tabs.first()?.1;
+        let last = self.tabs.last()?.1;
+        Some(egui::Rangef::new(first.left(), last.right()))
+    }
+}
+
+/// Logical rects → the physical-px `[l, t, r, b]` exclusions `caption_hit` reads. Rounded OUTWARD
+/// (floor / ceil), so a fractional scale factor can only grow a control's no-drag area, never shave a
+/// sliver off its edge that would start a window drag.
+pub fn caption_exclusions(rects: &[egui::Rect], pixels_per_point: f32) -> Vec<[i32; 4]> {
+    rects
+        .iter()
+        .map(|r| {
+            let s = |v: f32, up: bool| {
+                (if up { (v * pixels_per_point).ceil() } else { (v * pixels_per_point).floor() }) as i32
+            };
+            [s(r.left(), false), s(r.top(), false), s(r.right(), true), s(r.bottom(), true)]
+        })
+        .collect()
+}
+
 pub fn tab_close_rect(tab: egui::Rect) -> egui::Rect {
     egui::Rect::from_center_size(egui::pos2(tab.right() - 13.0, tab.center().y), egui::vec2(18.0, 18.0))
 }
 
-/// Where a chip dropped at `pointer_x` lands: an insertion SLOT `0..=len` in `tab_rects`' left → right
-/// order (`0` = before the first chip, `len` = after the last). Each chip's centre is the boundary
-/// between "before it" and "after it", so a drop anywhere over the left half of a chip inserts before
-/// it and the right half inserts after — `Workspace::reorder` (DFS S1 §3.3) takes this slot as-is.
-pub(crate) fn tab_drop_index(tab_rects: &[egui::Rect], pointer_x: f32) -> usize {
-    tab_rects.iter().filter(|r| pointer_x >= r.center().x).count()
+/// How far (logical pt) past a neighbour's midpoint the lifted chip's leading edge must go before
+/// the gap jumps over that neighbour — and, once it has, how far back before it jumps back (P16
+/// review). Pointer jitter sitting on a boundary can never toggle the gap.
+pub const TAB_DRAG_HYSTERESIS: f32 = 2.0;
+
+/// One frame of a tab drag (P16): where every drawn chip is painted while one of them is LIFTED.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TabDragFrame {
+    /// The dragged chip: its resting size, under the pointer (grab offset kept), y locked to the
+    /// strip, clamped to the strip's span. Painted last, above the others.
+    pub lifted: egui::Rect,
+    /// The dragged chip's resting slot — where the press began.
+    pub home: egui::Rect,
+    /// Every OTHER drawn chip, left → right, as `(original tab index, reflowed rect)`: packed with
+    /// `TAB_GAP` from the strip's start, leaving a gap of the lifted chip's width at `landing`.
+    pub others: Vec<(usize, egui::Rect)>,
+    /// Where the gap is: an insertion slot `0..=others.len()` in `others`' order.
+    pub landing: usize,
+    /// The gap itself: the rect the lifted chip lands in on release.
+    pub gap: egui::Rect,
+}
+
+impl TabDragFrame {
+    /// The chip rects a press belongs to during this frame: every rect PAINTED (the reflowed chips
+    /// and the lifted one) plus the dragged chip's resting slot. The bar publishes these as its caption
+    /// exclusions while a chip is lifted (`TopbarLayout::interactive_rects_with`), keeping P15's
+    /// "published == painted" — neither the lifted chip nor the press's origin can be a caption spot.
+    pub fn chip_rects(&self) -> Vec<egui::Rect> {
+        self.others.iter().map(|&(_, r)| r).chain([self.lifted, self.home]).collect()
+    }
+}
+
+/// The pure geometry of a tab drag (P16). `chips` = the drawn chips at rest (`TopbarLayout::tabs`),
+/// `dragged` = the lifted chip's position IN `chips`, `grab_dx` = pointer x − chip left at the press,
+/// `pointer_x` = the pointer now, `strip` = the span the lifted chip is clamped to
+/// (`TopbarLayout::tab_strip`), `prev_landing` = last frame's `landing` (`dragged` on the first
+/// frame: the gap starts at home). `None` only when `dragged` is not a drawn chip.
+///
+/// A neighbour sits BEFORE the gap while its resting midpoint lies left of the lifted chip's leading
+/// edge — the left edge for chips left of home, the right edge for chips right of home — i.e. the gap
+/// jumps over a neighbour once the lifted chip covers half of it. One comparison for both
+/// directions (`edge > midpoint`), with `TAB_DRAG_HYSTERESIS` against jitter. (The centre would not
+/// do: a wide chip clamped at the end of the strip could never pass a narrower end chip's midpoint,
+/// so the first / last slot would be unreachable.) No time, no interpolation: the gap is where it is.
+pub(crate) fn tab_drag_frame(
+    chips: &[(usize, egui::Rect)],
+    dragged: usize,
+    grab_dx: f32,
+    pointer_x: f32,
+    strip: egui::Rangef,
+    prev_landing: usize,
+) -> Option<TabDragFrame> {
+    let &(_, home) = chips.get(dragged)?;
+    let w = home.width();
+    let left = (pointer_x - grab_dx).clamp(strip.min, (strip.max - w).max(strip.min));
+    let lifted = egui::Rect::from_min_size(egui::pos2(left, home.top()), home.size());
+    // `k` = the neighbour's position among the OTHER chips; it was before the gap iff k < prev_landing
+    let before = |k: usize, edge: f32, mid: f32| {
+        let h = if k < prev_landing { -TAB_DRAG_HYSTERESIS } else { TAB_DRAG_HYSTERESIS };
+        edge > mid + h
+    };
+    let landing = chips
+        .iter()
+        .enumerate()
+        .filter(|&(k, _)| k != dragged)
+        .enumerate()
+        .filter(|&(k, (j, &(_, r)))| {
+            let edge = if j < dragged { lifted.left() } else { lifted.right() };
+            before(k, edge, r.center().x)
+        })
+        .count();
+    let slot_at = |x: f32| egui::Rect::from_min_size(egui::pos2(x, home.top()), home.size());
+    let mut x = chips[0].1.left();
+    let mut gap = None;
+    let mut others = Vec::with_capacity(chips.len() - 1);
+    for (k, &(i, r)) in chips.iter().enumerate().filter(|&(k, _)| k != dragged).map(|(_, c)| c).enumerate() {
+        if k == landing {
+            gap = Some(slot_at(x));
+            x += w + TAB_GAP;
+        }
+        others.push((i, egui::Rect::from_min_size(egui::pos2(x, r.top()), r.size())));
+        x += r.width() + TAB_GAP;
+    }
+    let gap = gap.unwrap_or_else(|| slot_at(x));
+    Some(TabDragFrame { lifted, home, others, landing, gap })
+}
+
+/// The full order after `Workspace::reorder(dragged, slot)`, as original indices `0..n`.
+fn reordered(n: usize, dragged: usize, slot: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..n).collect();
+    let slot = slot.min(n);
+    let dest = if slot > dragged { slot - 1 } else { slot };
+    let d = order.remove(dragged);
+    order.insert(dest, d);
+    order
+}
+
+/// The FULL-order insertion slot a release commits (`ReorderDocument` → `Workspace::reorder`) for a
+/// chip dropped into the gap (P16 review). `n` = tabs in the full order, `dragged` = the lifted tab's
+/// full-order index, `others` = the other DRAWN tabs' full-order indices left → right (as painted
+/// around the gap), `landing` = the gap's slot among them, `drawn_after(order)` = which tabs the
+/// strip would draw for a full order (original indices in their new order) — the real
+/// `topbar_layout`, never a second copy of the fitting rules.
+///
+/// On overflow the drawn chips are not contiguous in the full order (hidden tabs; the active one
+/// displaced into the last drawn slot — S1 F7), so "the slot before chip B" can sit behind hidden
+/// tabs and the dropped tab would vanish. Instead every slot is tried and the best kept: the
+/// dropped tab must be DRAWN afterwards; then its drawn neighbours should be exactly the ones it was
+/// dropped between (`others[landing - 1]` / `others[landing]`); then it should sit as close as
+/// possible to the gap's position; ties go to the smallest move in the full order (so a drop back
+/// into its own gap is a no-op, and hidden tabs are never reshuffled for nothing). When the gap is past
+/// a displaced active chip no single move can draw the tab right of it (the active one keeps the
+/// last drawn slot), so it lands just left of it — visible, one slot from the drop.
+pub(crate) fn visible_drop_slot(
+    n: usize,
+    dragged: usize,
+    others: &[usize],
+    landing: usize,
+    drawn_after: impl Fn(&[usize]) -> Vec<usize>,
+) -> usize {
+    let want_left = landing.checked_sub(1).and_then(|l| others.get(l).copied());
+    let want_right = others.get(landing).copied();
+    let score = |slot: usize| {
+        let order = reordered(n, dragged, slot);
+        // how far the tab moves in the FULL order — a drop back into its own gap is a no-op
+        let moved = order.iter().position(|&i| i == dragged).map_or(usize::MAX, |d| d.abs_diff(dragged));
+        let drawn = drawn_after(&order);
+        let Some(pos) = drawn.iter().position(|&i| i == dragged) else {
+            return (1, 2, usize::MAX, moved);
+        };
+        let left = pos.checked_sub(1).map(|p| drawn[p]);
+        let right = drawn.get(pos + 1).copied();
+        let mismatch = usize::from(left != want_left) + usize::from(right != want_right);
+        (0, mismatch, pos.abs_diff(landing), moved)
+    };
+    (0..=n).min_by_key(|&slot| score(slot)).unwrap_or(dragged)
 }
 
 /// Is the window opaque from the first frame? macOS: yes — a transparent NSWindow let the title strip
@@ -489,19 +671,180 @@ mod tests {
         assert!(layout.plus.is_some(), "+ still survives once the active tab claims a slot");
     }
 
+    /// Drawn chips `(tab index, rect)` of the given widths, packed from x = 0 with `TAB_GAP`.
+    fn chips(widths: &[f32], indices: &[usize]) -> Vec<(usize, egui::Rect)> {
+        let mut x = 0.0;
+        widths
+            .iter()
+            .zip(indices)
+            .map(|(&w, &i)| {
+                let r = egui::Rect::from_min_size(egui::pos2(x, 9.0), egui::vec2(w, 28.0));
+                x += w + TAB_GAP;
+                (i, r)
+            })
+            .collect()
+    }
+    fn span(c: &[(usize, egui::Rect)]) -> egui::Rangef {
+        egui::Rangef::new(c[0].1.left(), c.last().unwrap().1.right())
+    }
+    fn lefts(f: &TabDragFrame) -> Vec<(usize, f32)> {
+        f.others.iter().map(|&(i, r)| (i, r.left())).collect()
+    }
+    /// One drag frame of chip `d` (grab 0) at pointer `x`, the gap last at `prev`.
+    fn drag(c: &[(usize, egui::Rect)], d: usize, x: f32, prev: usize) -> TabDragFrame {
+        tab_drag_frame(c, d, 0.0, x, span(c), prev).unwrap()
+    }
+
     #[test]
-    fn tab_drop_index_before_between_after() {
-        let r = |l: f32, r: f32| egui::Rect::from_min_max(egui::pos2(l, 0.0), egui::pos2(r, 28.0));
-        // three chips: [0,80) [84,164) [168,248) — centres at 40, 124, 208
-        let rects = [r(0.0, 80.0), r(84.0, 164.0), r(168.0, 248.0)];
-        assert_eq!(tab_drop_index(&rects, -10.0), 0, "before the first chip");
-        assert_eq!(tab_drop_index(&rects, 39.0), 0, "left half of chip 0");
-        assert_eq!(tab_drop_index(&rects, 41.0), 1, "right half of chip 0");
-        assert_eq!(tab_drop_index(&rects, 123.0), 1, "left half of chip 1");
-        assert_eq!(tab_drop_index(&rects, 124.0), 2, "exactly on a centre already counts as past it");
-        assert_eq!(tab_drop_index(&rects, 209.0), 3, "right half of the last chip");
-        assert_eq!(tab_drop_index(&rects, 999.0), 3, "past the last chip");
-        assert_eq!(tab_drop_index(&[], 50.0), 0, "no chips at all");
+    fn lifted_chip_follows_the_pointer_with_its_grab_offset_and_is_clamped() {
+        let c = chips(&[80.0, 80.0, 80.0], &[0, 1, 2]); // [0,80) [84,164) [168,248)
+        let f = |x: f32| tab_drag_frame(&c, 1, 10.0, x, span(&c), 1).unwrap();
+        assert_eq!(f(100.0).lifted, egui::Rect::from_min_size(egui::pos2(90.0, 9.0), egui::vec2(80.0, 28.0)));
+        assert_eq!(f(100.0).home, c[1].1, "the resting slot is kept for the caption exclusions");
+        assert_eq!(f(-50.0).lifted.left(), 0.0, "clamped to the strip's start");
+        assert_eq!(f(999.0).lifted.right(), 248.0, "clamped to the strip's end");
+        assert_eq!(f(100.0).lifted.top(), 9.0, "y is the strip's, never the pointer's");
+        assert!(tab_drag_frame(&c, 3, 0.0, 0.0, span(&c), 3).is_none(), "not a drawn chip");
+    }
+
+    #[test]
+    fn the_gap_jumps_a_neighbour_once_the_leading_edge_clears_its_midpoint_both_ways() {
+        // three 80-wide chips: midpoints 40, 124, 208; hysteresis 2
+        let c = chips(&[80.0, 80.0, 80.0], &[0, 1, 2]);
+        assert_eq!(TAB_DRAG_HYSTERESIS, 2.0);
+
+        // chip 0 dragged right: its right edge (x + 80) must clear chip 1's midpoint + 2 = 126
+        assert_eq!((drag(&c, 0, 46.0, 0).landing, lefts(&drag(&c, 0, 46.0, 0))), (0, vec![(1, 84.0), (2, 168.0)]));
+        let f = drag(&c, 0, 46.1, 0);
+        assert_eq!((f.landing, lefts(&f), f.gap.left()), (1, vec![(1, 0.0), (2, 168.0)], 84.0), "1 hops left");
+        // …and back only once the same edge is 2 short of the midpoint: 122
+        assert_eq!(drag(&c, 0, 42.1, 1).landing, 1, "inside the band: stays");
+        assert_eq!(drag(&c, 0, 41.9, 1).landing, 0, "back past it: 1 returns");
+        assert_eq!(drag(&c, 0, 130.1, 0).landing, 2, "a fast move clears both neighbours in one frame");
+
+        // chip 2 dragged left: the SAME comparison on its left edge — chip 1 stays before the gap
+        // while x > 124 − 2, and gets back before it only once x > 124 + 2
+        assert_eq!(drag(&c, 2, 122.1, 2).landing, 2, "inside the band: stays");
+        let g = drag(&c, 2, 121.9, 2);
+        assert_eq!((g.landing, lefts(&g)), (1, vec![(0, 0.0), (1, 168.0)]), "1 hops right");
+        assert_eq!(drag(&c, 2, 125.9, 1).landing, 1, "inside the band: stays");
+        assert_eq!(drag(&c, 2, 126.1, 1).landing, 2, "back past it: 1 returns");
+        assert_eq!(drag(&c, 2, 37.9, 2).landing, 0, "past chip 0's midpoint too");
+    }
+
+    #[test]
+    fn pointer_jitter_on_a_boundary_never_toggles_the_gap() {
+        let c = chips(&[80.0, 80.0, 80.0], &[0, 1, 2]);
+        // chip 0 dragged right; the boundary for chip 1 is at x = 44 (right edge on 124)
+        let path = [44.0, 44.9, 43.1, 46.2, 44.0, 45.9, 42.1, 44.0, 41.8, 44.0, 45.5];
+        let want = [0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0];
+        let mut prev = 0;
+        for (&x, &w) in path.iter().zip(&want) {
+            prev = drag(&c, 0, x, prev).landing;
+            assert_eq!(prev, w, "pointer at {x}");
+        }
+        // mirrored: chip 2 dragged left; the boundary for chip 1 is at x = 124
+        let path = [124.0, 123.1, 124.9, 121.8, 124.0, 125.9, 126.3, 124.0];
+        let want = [2, 2, 2, 1, 1, 1, 2, 2];
+        let mut prev = 2;
+        for (&x, &w) in path.iter().zip(&want) {
+            prev = drag(&c, 2, x, prev).landing;
+            assert_eq!(prev, w, "pointer at {x}");
+        }
+    }
+
+    #[test]
+    fn a_wide_chip_reaches_both_ends_past_narrower_ones() {
+        // the reason for the leading edge, not the centre: a 220-wide chip clamped at the end has its
+        // centre at 190 — it could never pass the 76-wide end chip's midpoint (262) by its centre.
+        let c = chips(&[220.0, 76.0], &[0, 1]);
+        let f = drag(&c, 0, 9999.0, 0);
+        assert_eq!((f.lifted.right(), f.landing), (300.0, 1), "lands after the narrow chip");
+        let c = chips(&[76.0, 220.0], &[0, 1]);
+        let f = drag(&c, 1, -9999.0, 1);
+        assert_eq!((f.lifted.left(), f.landing), (0.0, 0), "lands before the narrow chip");
+    }
+
+    #[test]
+    fn reflowed_chips_and_the_gap_tile_the_strip_exactly() {
+        let c = chips(&[90.0, 150.0, 76.0, 120.0], &[0, 1, 2, 3]);
+        let strip = span(&c);
+        for dragged in 0..c.len() {
+            let mut prev = dragged;
+            for x in (-100..700).step_by(7) {
+                let f = tab_drag_frame(&c, dragged, 30.0, x as f32, strip, prev).unwrap();
+                prev = f.landing;
+                assert!(f.lifted.left() >= strip.min && f.lifted.right() <= strip.max);
+                assert_eq!(f.gap.width(), c[dragged].1.width());
+                let mut row: Vec<egui::Rect> = f.others.iter().map(|&(_, r)| r).collect();
+                row.insert(f.landing, f.gap);
+                assert_eq!(row[0].left(), strip.min);
+                assert_eq!(row.last().unwrap().right(), strip.max, "same span as at rest");
+                for w in row.windows(2) {
+                    assert_eq!(w[1].left() - w[0].right(), TAB_GAP, "packed with the one gap");
+                }
+            }
+        }
+    }
+
+    /// The real `topbar_layout` for `n` tabs every `text` wide in a `width`-wide Mac bar, tab
+    /// `active` active: "which tabs are drawn for this full order" — exactly what the strip hands
+    /// `visible_drop_slot`.
+    fn drawn_for(n: usize, active: usize, width: f32, text: f32) -> impl Fn(&[usize]) -> Vec<usize> {
+        move |order: &[usize]| {
+            let chrome = topbar_chrome(true);
+            let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, chrome.height));
+            let act = order.iter().position(|&i| i == active);
+            let l = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &vec![text; n], act);
+            l.tabs.iter().map(|&(k, _)| order[k]).collect()
+        }
+    }
+    /// Drop tab `d` into the gap at `landing` among the drawn `others`; the drawn tabs afterwards.
+    fn drop_and_draw(n: usize, drawn: &impl Fn(&[usize]) -> Vec<usize>, d: usize, landing: usize) -> Vec<usize> {
+        let before = drawn(&(0..n).collect::<Vec<_>>());
+        let others: Vec<usize> = before.into_iter().filter(|&i| i != d).collect();
+        let slot = visible_drop_slot(n, d, &others, landing, drawn);
+        drawn(&reordered(n, d, slot))
+    }
+
+    #[test]
+    fn overflow_drop_lands_between_its_visible_neighbours_and_stays_visible() {
+        // [0..9], 9 active: drawn [0, 1, 2, 9] — 3..8 hidden between 2 and 9
+        let (n, drawn) = (10, drawn_for(10, 9, 900.0, 40.0));
+        assert_eq!(drawn(&(0..n).collect::<Vec<_>>()), [0, 1, 2, 9], "setup");
+        // 0 dropped between 2 and 9 — NOT behind the hidden 3..8 (it used to vanish there)
+        assert_eq!(visible_drop_slot(n, 0, &[1, 2, 9], 2, &drawn), 3);
+        assert_eq!(drop_and_draw(n, &drawn, 0, 2), [1, 2, 0, 9]);
+        assert_eq!(drop_and_draw(n, &drawn, 0, 1), [1, 0, 2, 9], "between 1 and 2");
+        // the active 9 dragged to the front / between 1 and 2 / back home
+        assert_eq!(drop_and_draw(n, &drawn, 9, 0), [9, 0, 1, 2]);
+        assert_eq!(drop_and_draw(n, &drawn, 9, 2), [0, 1, 9, 2]);
+        assert_eq!(reordered(n, 9, visible_drop_slot(n, 9, &[0, 1, 2], 3, &drawn)), (0..n).collect::<Vec<_>>());
+        // a chip dropped back into its own gap changes nothing
+        assert_eq!(reordered(n, 1, visible_drop_slot(n, 1, &[0, 2, 9], 1, &drawn)), (0..n).collect::<Vec<_>>());
+        // 20 tabs, 12 active (drawn [0, 1, 2, 12]): 0 dropped between 2 and 12
+        let drawn20 = drawn_for(20, 12, 900.0, 40.0);
+        assert_eq!(drawn20(&(0..20).collect::<Vec<_>>()), [0, 1, 2, 12], "setup");
+        assert_eq!(drop_and_draw(20, &drawn20, 0, 2), [1, 2, 0, 12]);
+    }
+
+    #[test]
+    fn overflow_drop_after_the_last_visible_tab_stays_visible() {
+        // past the displaced active 9 no single move can draw 0 to its right (9 keeps the last drawn
+        // slot), so 0 lands just left of it: visible, one slot from the drop
+        let (n, drawn) = (10, drawn_for(10, 9, 900.0, 40.0));
+        assert_eq!(drop_and_draw(n, &drawn, 0, 3), [1, 2, 0, 9]);
+        let drawn20 = drawn_for(20, 12, 900.0, 40.0);
+        assert_eq!(drop_and_draw(20, &drawn20, 1, 3), [0, 2, 1, 12]);
+        // no overflow: after the last visible tab = the very end, exactly
+        let drawn3 = drawn_for(3, 0, 1400.0, 40.0);
+        assert_eq!(visible_drop_slot(3, 0, &[1, 2], 2, &drawn3), 3);
+        assert_eq!(drop_and_draw(3, &drawn3, 0, 2), [1, 2, 0]);
+        assert_eq!(drop_and_draw(3, &drawn3, 2, 0), [2, 0, 1]);
+        // a single drawn chip (the active one) has nowhere else to go
+        let drawn1 = drawn_for(10, 9, 900.0, 180.0);
+        assert_eq!(drawn1(&(0..10).collect::<Vec<_>>()), [9], "setup");
+        assert_eq!(reordered(10, 9, visible_drop_slot(10, 9, &[], 0, &drawn1)), (0..10).collect::<Vec<_>>());
     }
 
     #[test]
@@ -512,6 +855,134 @@ mod tests {
         assert!(!caption_hit(92, &excl, 150, 10), "an interactive rect is not a drag spot");
         assert!(!caption_hit(92, &excl, 50, 92), "below the band");
         assert!(!caption_hit(0, &[], 50, 0), "no band published yet (splash) → never drag");
+    }
+
+    /// P15: the caption predicate exactly as both platforms run it — `interactive_rects` published
+    /// through `caption_exclusions` at scale `ppp`, then `caption_hit` on a physical-px point. True =
+    /// a press here drags the window.
+    fn drags_window(layout: &TopbarLayout, chrome: TopbarChrome, ppp: f32, pos: egui::Pos2) -> bool {
+        let excl = caption_exclusions(&layout.interactive_rects(), ppp);
+        caption_hit((chrome.height * ppp) as i32, &excl, (pos.x * ppp) as i32, (pos.y * ppp) as i32)
+    }
+
+    /// Points on a chip's FULL slot a press can land on: centre, the four inner corners, the ×.
+    fn slot_points(r: egui::Rect) -> [egui::Pos2; 6] {
+        let i = r.shrink(0.5);
+        [r.center(), i.left_top(), i.right_top(), i.left_bottom(), i.right_bottom(), tab_close_rect(r).center()]
+    }
+
+    /// P16 review: during a LIVE drag frame the bar publishes `interactive_rects_with(chip_rects)` —
+    /// every chip where it is painted (reflowed or lifted) plus the lifted chip's resting slot. None of
+    /// those, nor `+`, may ever be a caption spot, for every chip lifted at every pointer x.
+    fn assert_live_drag_never_drags_the_window(layout: &TopbarLayout, chrome: TopbarChrome, ppp: f32) {
+        let strip = layout.tab_strip().expect("chips are drawn");
+        for d in 0..layout.tabs.len() {
+            let mut prev = d;
+            let mut x = strip.min - 60.0;
+            while x < strip.max + 60.0 {
+                let f = tab_drag_frame(&layout.tabs, d, 20.0, x, strip, prev).expect("a drawn chip");
+                prev = f.landing;
+                let excl = caption_exclusions(&layout.interactive_rects_with(f.chip_rects()), ppp);
+                let drags = |p: egui::Pos2| {
+                    caption_hit((chrome.height * ppp) as i32, &excl, (p.x * ppp) as i32, (p.y * ppp) as i32)
+                };
+                for r in f.chip_rects() {
+                    for pos in slot_points(r) {
+                        assert!(!drags(pos), "chip {d} lifted at x {x} (ppp {ppp}): {pos:?} on {r:?} drags");
+                    }
+                }
+                assert!(!drags(layout.plus.expect("+ is placed").center()));
+                x += 5.5;
+            }
+        }
+    }
+
+    #[test]
+    fn a_press_on_any_tab_slot_or_plus_never_drags_the_window() {
+        for chrome in [topbar_chrome(true), topbar_chrome(false)] {
+            for ppp in [1.0, 1.25, 1.5, 2.0] {
+                let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, chrome.height));
+                let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &[60.0, 90.0, 120.0], Some(1));
+                assert_eq!(layout.tabs.len(), 3, "setup: all three chips drawn");
+                for &(i, r) in &layout.tabs {
+                    for pos in slot_points(r) {
+                        assert!(!drags_window(&layout, chrome, ppp, pos), "tab {i} at {pos:?} (ppp {ppp}) drags");
+                    }
+                }
+                let plus = layout.plus.expect("+ is placed");
+                for pos in [plus.center(), plus.shrink(0.5).left_top(), plus.shrink(0.5).right_bottom()] {
+                    assert!(!drags_window(&layout, chrome, ppp, pos), "+ at {pos:?} (ppp {ppp}) drags");
+                }
+                for r in [layout.menu, layout.magnet, layout.window, layout.share, layout.export, layout.search] {
+                    assert!(!drags_window(&layout, chrome, ppp, r.center()), "control {r:?} (ppp {ppp}) drags");
+                }
+                if let Some(caps) = layout.caps {
+                    for r in caps {
+                        assert!(!drags_window(&layout, chrome, ppp, r.center()), "cap {r:?} drags");
+                    }
+                }
+                assert_live_drag_never_drags_the_window(&layout, chrome, ppp);
+            }
+        }
+    }
+
+    #[test]
+    fn a_press_on_empty_bar_space_drags_the_window() {
+        for chrome in [topbar_chrome(true), topbar_chrome(false)] {
+            for ppp in [1.0, 1.25, 2.0] {
+                let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, chrome.height));
+                let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &[60.0, 90.0], Some(0));
+                let plus = layout.plus.expect("+ is placed");
+                let y = bar.center().y;
+                // the open stretch between `+` and the search pill — the main drag handle
+                let open = egui::pos2((plus.right() + layout.search.left()) / 2.0, y);
+                assert!(layout.search.left() - plus.right() > 40.0, "setup: a real empty stretch");
+                assert!(drags_window(&layout, chrome, ppp, open), "empty bar at {open:?} (ppp {ppp})");
+                // the 4-px gap between two chips is empty bar too
+                let gap = egui::pos2((layout.tabs[0].1.right() + layout.tabs[1].1.left()) / 2.0, y);
+                assert!(drags_window(&layout, chrome, ppp, gap), "chip gap at {gap:?} (ppp {ppp})");
+                // above/below a chip, still inside the band
+                let above = egui::pos2(layout.tabs[0].1.center().x, bar.top() + 0.2);
+                if layout.tabs[0].1.top() - bar.top() >= 1.0 {
+                    assert!(drags_window(&layout, chrome, ppp, above), "band above a chip (ppp {ppp})");
+                }
+                // below the band is never a caption
+                assert!(!drags_window(&layout, chrome, ppp, egui::pos2(open.x, bar.bottom() + 1.0)));
+            }
+        }
+    }
+
+    #[test]
+    fn overflow_slots_with_eight_tabs_are_still_covered() {
+        let chrome = topbar_chrome(true);
+        for active in [0, 4, 7] {
+            for width in [800.0, 1100.0] {
+                let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, chrome.height));
+                let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &[140.0; 8], Some(active));
+                assert!(layout.tabs.len() < 8, "setup: 8 tabs overflow at width {width}");
+                assert!(layout.tabs.iter().any(|&(i, _)| i == active), "setup: the active tab is drawn");
+                for ppp in [1.0, 2.0] {
+                    for &(i, r) in &layout.tabs {
+                        for pos in slot_points(r) {
+                            assert!(
+                                !drags_window(&layout, chrome, ppp, pos),
+                                "8 tabs, active {active}, width {width}: chip {i} at {pos:?} (ppp {ppp}) drags"
+                            );
+                        }
+                    }
+                    let plus = layout.plus.expect("+ survives overflow");
+                    assert!(!drags_window(&layout, chrome, ppp, plus.center()));
+                    assert_live_drag_never_drags_the_window(&layout, chrome, ppp);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn caption_exclusions_round_outward() {
+        let r = egui::Rect::from_min_max(egui::pos2(10.3, 2.6), egui::pos2(20.2, 30.7));
+        assert_eq!(caption_exclusions(&[r], 1.0), [[10, 2, 21, 31]]);
+        assert_eq!(caption_exclusions(&[r], 2.0), [[20, 5, 41, 62]]);
     }
 
     #[test]

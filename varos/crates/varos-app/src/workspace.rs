@@ -17,7 +17,7 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 
-use varos_core::editor::{AbDrag, Drag, Editor, Mods};
+use varos_core::editor::{AbDrag, Drag, Editor};
 use varos_core::geom::View;
 use varos_core::model::Document;
 
@@ -185,15 +185,15 @@ impl DocumentSession {
 }
 
 /// Move the app-wide state (clipboard, current tool, recent colours) from the outgoing tab's editor
-/// to the incoming one, and reset the incoming editor's held keys (their releases went elsewhere).
+/// to the incoming one. The held keys (`Editor::mods` / `Editor::space`) are not the workspace's: they
+/// are the window's, and the host mirrors them into whichever tab is active (`host::Keyboard`,
+/// `host::run_lifecycle`) — resetting them here made a held Control / Space vanish on a tab switch.
 fn hand_over(from: &mut Editor, to: &mut Editor) {
     to.set_clipboard(from.take_clipboard());
     if to.tool != from.tool {
         to.set_tool(from.tool);
     }
     to.recent_colors = from.recent_colors.clone();
-    to.mods = Mods::default();
-    to.space = false;
 }
 
 /// Two distinct sessions mutably at once.
@@ -319,8 +319,8 @@ impl Workspace {
         self.sessions.iter().find(|s| s.key.as_ref().is_some_and(|k| k.same_file(key))).map(|s| s.id)
     }
 
-    /// Make `id` the active tab, handing over clipboard + tool + recent colours and resetting the
-    /// incoming editor's held modifiers / Space. Returns `false` only when there is no such tab
+    /// Make `id` the active tab, handing over clipboard + tool + recent colours (the held keys are the
+    /// host's to mirror: `host::Keyboard`). Returns `false` only when there is no such tab
     /// (activating the already-active tab is a no-op that returns `true`).
     pub fn activate(&mut self, id: SessionId) -> bool {
         let Some(to) = self.index_of(id) else {
@@ -329,16 +329,9 @@ impl Workspace {
         if self.active == Some(id) {
             return true;
         }
-        match self.active_index() {
-            Some(from) => {
-                let (outgoing, incoming) = pair_mut(&mut self.sessions, from, to);
-                hand_over(&mut outgoing.editor, &mut incoming.editor);
-            }
-            None => {
-                let ed = &mut self.sessions[to].editor;
-                ed.mods = Mods::default();
-                ed.space = false;
-            }
+        if let Some(from) = self.active_index() {
+            let (outgoing, incoming) = pair_mut(&mut self.sessions, from, to);
+            hand_over(&mut outgoing.editor, &mut incoming.editor);
         }
         self.active = Some(id);
         true
@@ -364,7 +357,7 @@ impl Workspace {
     }
 
     /// Move tab `id` to the INSERTION SLOT `to` of the CURRENT order, exactly what the tab strip's
-    /// `tab_drop_index` returns: `0` = before the first tab, `k` = between tab `k-1` and tab `k`,
+    /// `visible_drop_slot` returns: `0` = before the first tab, `k` = between tab `k-1` and tab `k`,
     /// `len` = after the last (larger values clamp to `len`). It is NOT the final index: with tabs
     /// `[A, B, C]`, dropping A into slot 2 (between B and C) gives `[B, A, C]`. Dropping a tab into
     /// its own slot or the next one (either edge of itself) is a no-op. Only the order changes;
@@ -415,15 +408,20 @@ impl Workspace {
     /// ` — <parent folder>` appended; the tooltip is the full path or `Not saved yet`.
     pub fn tabs(&self) -> Vec<TabView> {
         let names: Vec<String> = self.sessions.iter().map(DocumentSession::display_name).collect();
+        // how many SAVED tabs share each name — one pass, not a scan per tab (review: per-frame cost)
+        let mut saved_names: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for (s, name) in self.sessions.iter().zip(&names) {
+            if s.path.is_some() {
+                *saved_names.entry(name.as_str()).or_default() += 1;
+            }
+        }
         self.sessions
             .iter()
             .zip(&names)
             .map(|(s, name)| {
                 let mut label = name.clone();
                 if let Some(path) = &s.path {
-                    let twins =
-                        self.sessions.iter().zip(&names).filter(|(o, n)| o.path.is_some() && *n == name).count();
-                    if twins > 1 {
+                    if saved_names[name.as_str()] > 1 {
                         if let Some(parent) = path.parent().and_then(|p| p.file_name()) {
                             label = format!("{name} — {}", parent.to_string_lossy());
                         }
@@ -546,7 +544,6 @@ mod tests {
             ed.set_tool(ToolKind::Pen);
             ed.recent_colors = vec![[0.1, 0.2, 0.3, 1.0]];
             ed.cur_fill = Some([0.0, 0.0, 1.0, 1.0]);
-            ed.mods.shift = true;
         }
         let b = ws.new_untitled(); // activation #1
         {
@@ -557,14 +554,12 @@ mod tests {
             assert_ne!(s.editor.cur_fill, Some([0.0, 0.0, 1.0, 1.0]), "the current fill is per tab");
             assert!(ws.get(a).unwrap().editor.clipboard().is_empty(), "exactly one clipboard exists");
         }
-        // back to A: a held key on A (stale) is reset on the way in; B's Space too
-        ws.get_mut(a).unwrap().editor.space = true;
+        // back to A (its held keys are the host's to mirror: `host::Keyboard`)
         ws.get_mut(b).unwrap().editor.set_tool(ToolKind::Direct);
         assert!(ws.activate(a));
         let s = ws.get(a).unwrap();
         assert_eq!(s.editor.clipboard().len(), 1);
         assert!(s.editor.tool == ToolKind::Direct);
-        assert!(!s.editor.mods.shift && !s.editor.space, "incoming held keys are reset");
         assert!(ws.activate(a), "activating the active tab is a harmless no-op");
         assert!(!ws.activate(SessionId(999)), "an unknown id does nothing");
         assert_eq!(ws.active_id().unwrap(), a);

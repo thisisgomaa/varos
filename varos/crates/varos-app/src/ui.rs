@@ -1146,6 +1146,11 @@ impl Ui {
     pub fn modal_open(&self) -> bool {
         self.color_modal.is_some()
     }
+    /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
+    /// cancels the drag) and must not also reach the canvas.
+    pub fn tab_drag_active(&self) -> bool {
+        self.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY)).is_some())
+    }
     /// Is the picker's system eyedropper armed? While it is, in-window clicks are swallowed by the host
     /// so the sampled click doesn't also poke the canvas (A5 samples via a global pixel read instead).
     pub fn picking_screen(&self) -> bool {
@@ -1162,8 +1167,9 @@ impl Ui {
     }
     /// DFS S1: before any lifecycle command, close every Ui-side edit still open on `ed` — an open colour
     /// picker is CANCELLED (its live preview is not a commit), and unsaved inline rename buffers (layer,
-    /// artboard) are discarded.
+    /// artboard) and the focused text field's typed buffer (`settle_field_edits`) are discarded.
     pub fn settle(&mut self, ed: &mut Editor) {
+        settle_field_edits(&self.ctx);
         if self.color_modal.take().is_some() {
             ed.execute(EditCommand::PickerCancel);
         }
@@ -1213,7 +1219,12 @@ impl Ui {
         view: View,
         maximized: bool,
     ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
+        // host seed of egui's focus flag from winit (startup, activation, un-occlusion alike) — see
+        // `egui_focus_seed`
+        let raw = self.state.egui_input_mut();
+        raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
         let input = self.state.take_egui_input(window);
+        set_doc_salt(&self.ctx, self.doc_active); // per-widget edit state stays inside its document
         let snap = Snap::read(ed);
         let absnap = AbSnap::read(ed);
         let abs = ab_infos(ed);
@@ -1664,6 +1675,38 @@ enum Lab<'a> {
 
 const UV01: fn() -> egui::Rect = || egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
 
+/// The egui temp key that holds the ACTIVE document's id for the frames being laid out.
+fn doc_salt_key() -> egui::Id {
+    egui::Id::new("varos-doc-salt")
+}
+
+/// Tag this context's next frames with the active document (`Ui::run` does it every frame).
+pub(crate) fn set_doc_salt(ctx: &egui::Context, doc: Option<SessionId>) {
+    ctx.data_mut(|d| d.insert_temp(doc_salt_key(), doc));
+}
+
+/// A persistent widget id scoped to the ACTIVE document (DFS S1 review P1): per-widget edit state —
+/// a number field's typed buffer and focus, a name field's buffer, a row's double-click memory — can
+/// never follow the user into another tab.
+fn doc_id(ui: &egui::Ui, src: impl Hash + std::fmt::Debug) -> egui::Id {
+    let doc = ui.ctx().data(|d| d.get_temp::<Option<SessionId>>(doc_salt_key())).flatten();
+    ui.make_persistent_id((src, doc))
+}
+
+/// Close the text-field edit that holds keyboard focus, BEFORE a lifecycle command (tab switch, close,
+/// save, quit) — the same rule as the other Ui-side edits in `Ui::settle`: its typed buffer is
+/// discarded, never applied to whichever document is active next.
+pub(crate) fn settle_field_edits(ctx: &egui::Context) {
+    let Some(id) = ctx.memory(|m| m.focused()) else { return };
+    ctx.memory_mut(|m| m.surrender_focus(id));
+    // `num_field` / `name_field` keep their buffer, "just clicked" flag and nudge accumulator here
+    ctx.data_mut(|d| {
+        d.remove::<String>(id);
+        d.remove::<bool>(id);
+        d.remove::<f32>(id.with("acc"));
+    });
+}
+
 /// Number field. A dim label column, then a rounded box holding the value CENTERED. The WHOLE box is
 /// one interactive target via `ui.interact` (the exact mechanism the tool-rail buttons use): drag it to
 /// scrub (↔ cursor), single-click to type (value pre-selected). Returns Some(new) on change.
@@ -1709,7 +1752,7 @@ fn num_field(
         Lab::Icon(None) => {}
     }
     let bx = egui::Rect::from_min_max(egui::pos2(row.left() + labw + 2.0, row.top()), row.max);
-    let id = ui.make_persistent_id(("numf", tip));
+    let id = doc_id(ui, ("numf", tip));
     let r5 = CornerRadius::same(R);
     // 'just entered' flag (set on click) survives the one frame until the TextEdit claims focus.
     let just = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
@@ -3221,10 +3264,10 @@ fn search_pill(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, icon: &Op
     p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Search", f, FAINT);
 }
 
-/// One document tab: dirty dot, name, tooltip, × on hover. `Sense::click_and_drag` so `build_topbar`
-/// can detect drag-to-reorder on the returned response. Returns `(response, close_clicked)` — the
-/// caller reads `response.clicked()` / `.clicked_by(PointerButton::Middle)` / `.drag_started()` /
-/// `.drag_stopped()`.
+/// One document tab: dirty dot, name, tooltip, × on hover, painted at `rect` (its resting slot, or
+/// its lifted / reflowed rect during a drag — P16). `Sense::click_and_drag` so `tab_drag_update` can
+/// read this chip's drag start / stop from egui. Returns `(response, close_clicked)` — the caller
+/// reads `response.clicked()` / `.clicked_by(PointerButton::Middle)`.
 fn tab_item(
     ui: &mut egui::Ui,
     p: &egui::Painter,
@@ -3353,6 +3396,116 @@ fn menu_sep(ui: &mut egui::Ui) {
     ui.add_space(4.0);
 }
 
+/// egui's window-focus flag for this frame, seeded by the host (P16 owner re-test, 2026-09-26).
+/// egui-winit starts `RawInput::focused` at `false` and on macOS only updates it on a winit `Focused`
+/// event — a bundle launched via `open` ran a whole session without one, so egui believed the window
+/// unfocused: every text field lost its typed buffer and caret (`Response::has_focus` reads the flag)
+/// and the tab drag cancelled itself. `window_key` = winit's `window.has_focus()` (AppKit's
+/// `isKeyWindow`) read this frame: a key window is focused. It only ever RAISES the flag — losing
+/// focus stays winit's own `Focused(false)` path.
+pub(crate) fn egui_focus_seed(window_key: bool, egui_focused: bool) -> bool {
+    egui_focused || window_key
+}
+
+/// The live tab drag (P16). Kept in egui temp memory under ONE fixed id (`TAB_DRAG_KEY`) so the host
+/// can ask `Gui::tab_drag_active` — Esc then cancels the drag instead of also reaching the canvas.
+#[derive(Clone, Debug, PartialEq)]
+struct TabDrag {
+    /// The dragged tab.
+    id: SessionId,
+    /// Pointer x − chip left at the press: the grabbed point stays under the pointer.
+    grab_dx: f32,
+    /// The last known pointer x (kept for a frame where egui has no pointer position).
+    last_x: f32,
+    /// Last frame's gap slot (`TabDragFrame::landing`) — the hysteresis in `tab_drag_frame` reads it.
+    landing: usize,
+    /// The tab order and the active tab when the drag started. Any change under the drag (a tab
+    /// closed by ⌘W, a new / opened document, Ctrl+Tab) cancels it: the gap was measured against a
+    /// strip that no longer exists (P16 review).
+    order: Vec<SessionId>,
+    active: Option<SessionId>,
+}
+
+const TAB_DRAG_KEY: &str = "varos.tab-drag";
+
+/// This frame of the tab drag (P16): start it (the frame egui passes its drag threshold on a chip),
+/// follow the pointer, commit on release (`ReorderDocument` with `chrome::visible_drop_slot` — the
+/// Workspace still owns the order), or cancel on Esc / window focus loss / the tab list changing
+/// underneath (nothing committed, every chip back at rest). Returns the lifted chip's tab index and
+/// the geometry to paint, or `None` when no chip is lifted (paint at rest). The geometry is all
+/// `chrome::tab_drag_frame`; `drawn_after` is the real layout's "which tabs are drawn for this order".
+fn tab_drag_update(
+    ui: &egui::Ui,
+    layout: &crate::chrome::TopbarLayout,
+    tabs: &[TabView],
+    active: Option<SessionId>,
+    chip_key: impl Fn(usize) -> String,
+    drawn_after: impl Fn(&[usize]) -> Vec<usize>,
+    cmds: &mut Vec<AppCommand>,
+) -> Option<(usize, crate::chrome::TabDragFrame)> {
+    let ctx = ui.ctx();
+    let key = egui::Id::new(TAB_DRAG_KEY);
+    // the same id `tab_item` gives chip `i` (`ui.id().with(key)`)
+    let chip_id = |i: usize| ui.id().with(chip_key(i).as_str());
+    let clear = || {
+        ctx.stop_dragging();
+        ctx.data_mut(|d| d.remove::<TabDrag>(key));
+    };
+    let mut state: Option<TabDrag> = ctx.data(|d| d.get_temp(key));
+    // Focus loss = the window-focus EVENT arriving this frame, never the `InputState::focused` level
+    // (egui-winit's flag was stuck `false` on macOS bundle launches and cancelled every drag — P16
+    // owner re-test, 2026-09-26). Checked for the WHOLE frame: a frame that loses focus never starts
+    // a drag either, even when the threshold is crossed in that same frame (Codex review).
+    let focus_lost = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::WindowFocused(false))));
+    let chip_started = ctx.drag_started_id().is_some_and(|d| layout.tabs.iter().any(|&(i, _)| chip_id(i) == d));
+    if focus_lost && (state.is_some() || chip_started) {
+        clear(); // cancel: nothing is committed, the chips paint at rest this very frame
+        return None;
+    }
+    if let Some(s) = &state {
+        let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let changed = s.active != active || !s.order.iter().copied().eq(tabs.iter().map(|t| t.id));
+        if esc || changed {
+            clear(); // cancel: nothing is committed, the chips paint at rest this very frame
+            return None;
+        }
+    }
+    // egui resolves this frame's drag start before any widget runs, so the chip lifts in the SAME
+    // frame the threshold is passed — no frame painted at rest in between.
+    if state.is_none() {
+        let started = ctx.drag_started_id()?;
+        let (k, &(i, r)) = layout.tabs.iter().enumerate().find(|&(_, &(i, _))| chip_id(i) == started)?;
+        let x = ctx.input(|inp| inp.pointer.press_origin().or(inp.pointer.interact_pos())).map_or(r.left(), |p| p.x);
+        let order = tabs.iter().map(|t| t.id).collect();
+        state = Some(TabDrag { id: tabs[i].id, grab_dx: x - r.left(), last_x: x, landing: k, order, active });
+    }
+    let mut s = state?;
+    let found = layout.tabs.iter().position(|&(i, _)| tabs.get(i).is_some_and(|t| t.id == s.id));
+    let (Some(dragged), Some(strip)) = (found, layout.tab_strip()) else {
+        clear(); // the dragged tab is not drawn any more — drop the drag
+        return None;
+    };
+    if let Some(p) = ctx.input(|i| i.pointer.interact_pos()) {
+        s.last_x = p.x;
+    }
+    let frame = crate::chrome::tab_drag_frame(&layout.tabs, dragged, s.grab_dx, s.last_x, strip, s.landing)?;
+    s.landing = frame.landing;
+    let i = layout.tabs[dragged].0;
+    if ctx.drag_stopped_id() == Some(chip_id(i)) {
+        // release: the chip lands in the gap — the tab strip only REQUESTS the move
+        let others: Vec<usize> = frame.others.iter().map(|&(j, _)| j).collect();
+        let slot = crate::chrome::visible_drop_slot(tabs.len(), i, &others, frame.landing, drawn_after);
+        cmds.push(AppCommand::ReorderDocument(s.id, slot));
+        ctx.data_mut(|d| d.remove::<TabDrag>(key));
+    } else if ctx.dragged_id() == Some(chip_id(i)) {
+        ctx.data_mut(|d| d.insert_temp(key, s));
+    } else {
+        clear(); // the drag ended some other way — never leave a chip lifted
+        return None;
+    }
+    Some((i, frame))
+}
+
 /// Custom top bar (the native caption is stripped in WM_NCCALCSIZE): menu · tabs · drag · right tools ·
 /// window controls. Interactive rects are published as exclusions so the OS hit-test makes them HTCLIENT
 /// (egui handles them) while the empty band is HTCAPTION (the OS drags/snaps the window).
@@ -3378,18 +3531,15 @@ fn build_topbar(
     egui::Panel::top("topbar").exact_size(h).frame(frame).show_separator_line(false).show(root, |ui| {
         let bar = ui.max_rect();
         let p = ui.painter().clone();
-        let mut excl: Vec<egui::Rect> = Vec::new();
         let text_width = |text: &str| p.layout_no_wrap(text.to_owned(), FontId::proportional(12.0), TEXT).size().x;
         let tab_widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
         let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
-        let layout = crate::chrome::topbar_layout(
-            bar,
-            crate::chrome::TOPBAR,
-            [text_width("Window"), text_width("Share"), text_width("Export")],
-            search_pill_width(&p),
-            &tab_widths,
-            active_index,
-        );
+        let button_widths = [text_width("Window"), text_width("Share"), text_width("Export")];
+        let search_width = search_pill_width(&p);
+        let layout_for = |widths: &[f32], active: Option<usize>| {
+            crate::chrome::topbar_layout(bar, crate::chrome::TOPBAR, button_widths, search_width, widths, active)
+        };
+        let layout = layout_for(&tab_widths, active_index);
 
         // window controls (min · max · close), absent on macOS
         if let Some([min_r, max_r, close_r]) = layout.caps {
@@ -3402,7 +3552,6 @@ fn build_topbar(
             if winctl(ui, &p, close_r, Cap::Close, "wc-close", CLOSE_RED, true) {
                 *win_action = Some(WinAction::Close);
             }
-            excl.extend([min_r, max_r, close_r]);
         }
 
         // right cluster (§3.5), right→left: window caps · [snapping] · Window · Share · Export · search pill
@@ -3435,7 +3584,6 @@ fn build_topbar(
         // search pill: 🔍 Search — a surface capsule on the void (visual mirror; no function yet, QW7)
         let kpill_r = layout.search;
         search_pill(ui, &p, kpill_r, &top.search);
-        excl.extend([magnet_r, winb.rect, layout.share, layout.export, kpill_r]);
 
         // burger — a flush 36×40 void cell at the far left (§3.5)
         let menu_r = layout.menu;
@@ -3451,51 +3599,41 @@ fn build_topbar(
         if mr.clicked() {
             menu_toggle(ui, menu_id);
         }
-        excl.push(menu_r);
 
         // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5).
         // `layout.tabs` carries each chip's ORIGINAL tab index — not always a 0..n prefix once the
         // active tab has displaced the greedy fit's last slot on overflow (F7).
-        let tab_rects: Vec<egui::Rect> = layout.tabs.iter().map(|&(_, r)| r).collect();
-        let drag_id = ui.id().with("tab-drag-src");
-        let dragging: Option<SessionId> = ui.data(|d| d.get_temp(drag_id));
-        for &(i, trect) in &layout.tabs {
+        // P16 — drag-to-reorder: past egui's drag threshold the chip is LIFTED (painted under the
+        // pointer, above the rest) and the other chips reflow live around a gap where it would land.
+        // All geometry is `chrome::tab_drag_frame`; this block only keeps the drag state and paints.
+        let chip_key = |i: usize| format!("tab{i}");
+        // which tabs this SAME layout would draw for a reordered full order (original indices) — the
+        // release uses it to keep the dropped tab visible (`chrome::visible_drop_slot`)
+        let drawn_after = |order: &[usize]| {
+            let widths: Vec<f32> = order.iter().map(|&i| tab_widths[i]).collect();
+            let act = active_index.and_then(|a| order.iter().position(|&i| i == a));
+            layout_for(&widths, act).tabs.iter().map(|&(k, _)| order[k]).collect::<Vec<usize>>()
+        };
+        let drag = tab_drag_update(ui, &layout, tabs, active, chip_key, drawn_after, cmds);
+        let mut paint: Vec<(usize, egui::Rect)> = Vec::with_capacity(layout.tabs.len());
+        match &drag {
+            // others first, the lifted chip last — drawn (and hit-tested) on top
+            Some((i, f)) => paint.extend(f.others.iter().copied().chain([(*i, f.lifted)])),
+            None => paint.extend(layout.tabs.iter().copied()),
+        }
+        for (i, trect) in paint {
             let tab = &tabs[i];
-            let (resp, close) = tab_item(ui, &p, trect, tab, Some(tab.id) == active, &top.x, &format!("tab{i}"));
+            let (resp, close) = tab_item(ui, &p, trect, tab, Some(tab.id) == active, &top.x, &chip_key(i));
             if close || resp.clicked_by(egui::PointerButton::Middle) {
                 cmds.push(AppCommand::CloseDocument(tab.id));
             } else if resp.clicked() {
                 cmds.push(AppCommand::ActivateDocument(tab.id));
-            }
-            if resp.drag_started() {
-                ui.data_mut(|d| d.insert_temp(drag_id, tab.id));
-            }
-            if resp.drag_stopped() {
-                if let Some(src) = dragging {
-                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                        cmds.push(AppCommand::ReorderDocument(src, crate::chrome::tab_drop_index(&tab_rects, pos.x)));
-                    }
-                }
-                ui.data_mut(|d| d.remove::<SessionId>(drag_id));
-            }
-            excl.push(trect);
-        }
-        // while a chip is being dragged, a 1px TEXT insertion mark shows where it would land — no
-        // animation, no shadow (law).
-        if dragging.is_some() {
-            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                let slot = crate::chrome::tab_drop_index(&tab_rects, pos.x);
-                let x = tab_rects
-                    .get(slot)
-                    .map_or_else(|| tab_rects.last().map_or(bar.left(), |r| r.right() + 2.0), |r| r.left() - 2.0);
-                p.vline(x, bar.top() + 4.0..=bar.bottom() - 4.0, Stroke::new(1.0, TEXT));
             }
         }
         if let Some(plus_r) = layout.plus {
             if topbtn(ui, &p, plus_r, &top.plus, "tb-plus", false).clicked() {
                 cmds.push(AppCommand::NewDocument);
             }
-            excl.push(plus_r);
         }
 
         // dropdowns — the app-bar menus are FLUSH seam extensions of the bar (Ahmed 07-07): same
@@ -3592,14 +3730,16 @@ fn build_topbar(
             }
         });
 
-        // publish caption height + interactive (non-drag) rects, in physical px
+        // publish caption height + interactive (non-drag) rects, in physical px — ONE list, the
+        // layout's own `interactive_rects` (every control and FULL tab slot drawn above), so the OS /
+        // macOS caption band can never disagree with the strip about what a press belongs to (P15).
+        // While a chip is lifted: the rects actually painted + its resting slot (P16 review).
         let ppp = ui.ctx().pixels_per_point();
-        let px: Vec<[i32; 4]> = excl
-            .iter()
-            .map(|r| {
-                [(r.left() * ppp) as i32, (r.top() * ppp) as i32, (r.right() * ppp) as i32, (r.bottom() * ppp) as i32]
-            })
-            .collect();
+        let rects = match &drag {
+            Some((_, f)) => layout.interactive_rects_with(f.chip_rects()),
+            None => layout.interactive_rects(),
+        };
+        let px = crate::chrome::caption_exclusions(&rects, ppp);
         crate::cursors::set_caption((h * ppp) as i32, &px);
     });
 }
@@ -4401,7 +4541,7 @@ fn panel_layers(
                         if resp.drag_started() && row.kind != LKind::Board {
                             *drag = Some((row.id, row.sec));
                             // a drag is not a click — drop any half-built manual double-click
-                            let dc_id = ui.make_persistent_id("lay-last-click");
+                            let dc_id = doc_id(ui, "lay-last-click");
                             ui.data_mut(|d| d.remove::<(u32, u32, f64)>(dc_id));
                         }
                         // decide the drop zone. SAME section: top third = Before, bottom third = After,
@@ -4573,7 +4713,7 @@ fn panel_layers(
                             // Illustrator's inline rename (QW3): Enter or a click elsewhere commits, Escape
                             // cancels, an empty or unchanged name changes nothing. The field's id is explicit
                             // (never an auto id that shifts with what the rows above allocate).
-                            let te_id = ui.id().with(("lay-rename", row.id));
+                            let te_id = doc_id(ui, ("lay-rename", row.id));
                             let buf = &mut rename.as_mut().unwrap().1;
                             let te = ui.put(
                                 name_rect.shrink2(egui::vec2(2.0, 4.0)),
@@ -4664,7 +4804,7 @@ fn panel_layers(
                         // keyed on (id, SEC): a straddler's mirror rows share the id across board
                         // sections — two single clicks on two mirrors must not read as a double-click.
                         let manual_dbl = resp.clicked() && !renaming && {
-                            let dc_id = ui.make_persistent_id("lay-last-click");
+                            let dc_id = doc_id(ui, "lay-last-click");
                             let now = ui.input(|i| i.time);
                             let last: Option<(u32, u32, f64)> = ui.data(|d| d.get_temp(dc_id));
                             ui.data_mut(|d| d.insert_temp(dc_id, (row.id, row.sec, now)));
@@ -5139,6 +5279,8 @@ fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str, compact
     use varos_core::boolean::BoolOp;
     let chip = if compact { egui::vec2(26.0, 26.0) } else { egui::vec2(34.0, 28.0) };
     let (rect, resp) = ui.allocate_exact_size(chip, egui::Sense::click());
+    #[cfg(test)]
+    pathfinder_click_tests::PF_RECTS.with(|r| r.borrow_mut().push((op, rect)));
     let p = ui.painter();
     if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(3), HOVER);
@@ -5188,7 +5330,7 @@ struct AbIcons<'a> {
 /// A single-line text field bound to an external value (artboard name). While unfocused it tracks the
 /// model value; once focused it edits a temp buffer; commits the buffer on focus loss (returns it).
 fn name_field(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str) -> Option<String> {
-    let id = ui.make_persistent_id(("abname", id_src));
+    let id = doc_id(ui, ("abname", id_src));
     let editing = ui.memory(|m| m.has_focus(id));
     let mut buf = if editing {
         ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.to_string())
@@ -6874,6 +7016,573 @@ mod tab_strip_tests {
         assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(1), 3)]);
     }
 
+    /// Press at `from`, move past egui's drag threshold, move to `to`, release there — after a warm-up
+    /// frame (see `click_at`). Returns the commands the release frame raised.
+    #[allow(clippy::too_many_arguments)]
+    fn drag(
+        ctx: &egui::Context,
+        from: Pos2,
+        to: Pos2,
+        tabs: &[TabView],
+        active: Option<SessionId>,
+        shell: &mut varos_app::shell::ShellState,
+        rail: &mut bool,
+        dock: &mut bool,
+        snap: &mut varos_core::model::SnapConfig,
+    ) -> Vec<AppCommand> {
+        let moved = |p: Pos2| RawInput {
+            screen_rect: Some(screen_rect()),
+            events: vec![Event::PointerMoved(p)],
+            ..Default::default()
+        };
+        let _ = frame(ctx, idle(), &icons(), shell, tabs, active, rail, dock, snap);
+        let _ = frame(ctx, press(from, PointerButton::Primary), &icons(), shell, tabs, active, rail, dock, snap);
+        let step = if to.x >= from.x { 30.0 } else { -30.0 };
+        let _ = frame(ctx, moved(egui::pos2(from.x + step, from.y)), &icons(), shell, tabs, active, rail, dock, snap);
+        let _ = frame(ctx, moved(to), &icons(), shell, tabs, active, rail, dock, snap);
+        frame(ctx, release(to, PointerButton::Primary), &icons(), shell, tabs, active, rail, dock, snap)
+    }
+
+    /// P15 (owner 2026-09-25: "dragging a tab moves the whole window"; Codex saw the order never
+    /// change with 8 tabs). With 8 tabs overflowing the strip, a press on a drawn chip is NOT a
+    /// caption-drag spot (the same `interactive_rects` → `caption_hit` both platforms run), and
+    /// press → move → release across the neighbouring chip reorders — in the FULL order, also for the
+    /// active chip that overflow moved into the last drawn slot.
+    #[test]
+    fn eight_tab_overflow_drag_reorders_and_never_starts_a_window_drag() {
+        let ctx = egui::Context::default();
+        let tabs: Vec<TabView> = (1..=8).map(|i| tab(i, &format!("Brand guidelines draft {i}"), false)).collect();
+        let active = Some(SessionId(8));
+        let layout = measure(&ctx, &tabs, active);
+        let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
+        assert!(drawn.len() < 8 && drawn.len() >= 3, "setup: 8 tabs overflow the 1400-px bar, got {drawn:?}");
+        assert_eq!(*drawn.last().unwrap(), 7, "setup: the active (last) tab takes the last drawn slot");
+        let chrome = crate::chrome::TOPBAR;
+        let excl = crate::chrome::caption_exclusions(&layout.interactive_rects(), 1.0);
+        let drags_window = |p: Pos2| crate::chrome::caption_hit(chrome.height as i32, &excl, p.x as i32, p.y as i32);
+        for &(i, r) in &layout.tabs {
+            assert!(!drags_window(egui::pos2(r.left() + 20.0, r.center().y)), "chip {i}: press drags the window");
+        }
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock) = (true, true);
+        let mut snap = varos_core::model::SnapConfig::default();
+
+        // chip 0 lifted and dropped right onto its neighbour's slot (drawn slot 1) → the gap is after
+        // chip 1 → full slot of drawn chip 2. P16: the drop spot is the LIFTED chip (grabbed 20 px in),
+        // no longer the bare pointer — so the pointer ends 20 px into chip 1's slot.
+        let (r0, r1) = (layout.tabs[0].1, layout.tabs[1].1);
+        let cmds = drag(
+            &ctx,
+            egui::pos2(r0.left() + 20.0, r0.center().y),
+            egui::pos2(r1.left() + 20.0, r1.center().y),
+            &tabs,
+            active,
+            &mut shell,
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(1), drawn[2])]);
+
+        // the active overflow chip (last drawn) dragged onto the left half of chip 0 → full slot 0
+        let rl = layout.tabs.last().unwrap().1;
+        let cmds = drag(
+            &ctx,
+            egui::pos2(rl.left() + 20.0, rl.center().y),
+            egui::pos2(r0.left() + 4.0, r0.center().y),
+            &tabs,
+            active,
+            &mut shell,
+            &mut rail,
+            &mut dock,
+            &mut snap,
+        );
+        assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(8), 0)]);
+    }
+
+    /// P16 harness: one tab strip driven frame by frame, returning the commands AND the painted shapes
+    /// of each frame, so a test can read where every chip was actually DRAWN (not where the layout
+    /// said it would be).
+    struct Strip {
+        ctx: egui::Context,
+        tabs: Vec<TabView>,
+        active: Option<SessionId>,
+        shell: varos_app::shell::ShellState,
+        rail: bool,
+        dock: bool,
+        snap: varos_core::model::SnapConfig,
+        /// `RawInput::focused` on every frame. egui-winit STARTS at `false` and on macOS only flips it
+        /// when a winit `Focused` event arrives — which a real session may never deliver (observed:
+        /// the app launched as a bundle ran a whole session with `focused == false`).
+        focused: bool,
+    }
+
+    impl Strip {
+        fn new(labels: &[&str], active: usize) -> Self {
+            let tabs: Vec<TabView> = labels.iter().enumerate().map(|(i, l)| tab(i as u64 + 1, l, false)).collect();
+            let active = Some(tabs[active].id);
+            Strip {
+                ctx: egui::Context::default(),
+                tabs,
+                active,
+                shell: varos_app::shell::ShellState::standard(),
+                rail: true,
+                dock: true,
+                snap: varos_core::model::SnapConfig::default(),
+                focused: true,
+            }
+        }
+        fn layout(&self) -> crate::chrome::TopbarLayout {
+            measure(&self.ctx, &self.tabs, self.active)
+        }
+        /// Chip rect of the tab labelled `label` in the resting layout.
+        fn home(&self, label: &str) -> egui::Rect {
+            let i = self.tabs.iter().position(|t| t.label == label).expect("a tab with that label");
+            self.layout().tabs.iter().find(|&&(j, _)| j == i).expect("chip is drawn").1
+        }
+        fn run(&mut self, mut input: RawInput) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            input.focused &= self.focused;
+            let mut win_action = None;
+            let mut cmds = Vec::new();
+            let (tabs, active) = (&self.tabs, self.active);
+            let (shell, rail, dock, snap) = (&mut self.shell, &mut self.rail, &mut self.dock, &mut self.snap);
+            let out = self.ctx.run_ui(input, |root| {
+                build_topbar(root, &icons(), shell, &mut win_action, tabs, active, &mut cmds, rail, dock, snap, false);
+            });
+            (cmds, out.shapes)
+        }
+        fn idle(&mut self) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            self.run(idle())
+        }
+        fn press(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            self.run(press(at, PointerButton::Primary))
+        }
+        fn move_to(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            self.run(RawInput {
+                screen_rect: Some(screen_rect()),
+                events: vec![Event::PointerMoved(at)],
+                ..Default::default()
+            })
+        }
+        fn release(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+            self.run(release(at, PointerButton::Primary))
+        }
+        /// Warm-up frame (see `click_at`), press at `from`, then one move 30 px towards `dir` — past
+        /// egui's drag threshold, so the drag has started.
+        fn begin_drag(&mut self, from: Pos2, dir: f32) {
+            let _ = self.idle();
+            let _ = self.press(from);
+            let _ = self.move_to(egui::pos2(from.x + 30.0 * dir.signum(), from.y));
+        }
+    }
+
+    /// Where the chip labelled `label` was PAINTED this frame: `(left edge, label y, paint order)`.
+    /// A clean chip's label starts 12 px in from its left edge (`tab_item`), and a higher paint order
+    /// means drawn later = on top.
+    fn painted(shapes: &[egui::epaint::ClippedShape], label: &str) -> (f32, f32, usize) {
+        let hits: Vec<(f32, f32, usize)> = shapes
+            .iter()
+            .enumerate()
+            .filter_map(|(k, cs)| match &cs.shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some((t.pos.x - 12.0, t.pos.y, k)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(hits.len(), 1, "chip {label:?} must be painted exactly once, got {hits:?}");
+        hits[0]
+    }
+
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 0.51
+    }
+
+    /// P16 (a): once a chip is dragged past the threshold it is LIFTED — painted under the pointer
+    /// with the grab offset kept, above every other chip, y locked to the strip, and clamped to the
+    /// strip's two ends.
+    #[test]
+    fn lifted_tab_follows_the_pointer_with_its_grab_offset_clamped_to_the_strip() {
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let (a, b, c) = (s.home("A"), s.home("B"), s.home("C"));
+        let grab = 25.0;
+        let from = egui::pos2(b.left() + grab, b.center().y);
+        s.begin_drag(from, 1.0);
+
+        let (_, shapes) = s.move_to(egui::pos2(from.x + 17.0, from.y));
+        let (left, y, order) = painted(&shapes, "B");
+        let rest_y = painted(&shapes, "A").1; // A rests in the strip's row
+        assert!(near(left, b.left() + 17.0), "B painted at {left}, want pointer − grab = {}", b.left() + 17.0);
+        assert!(order > painted(&shapes, "A").2 && order > painted(&shapes, "C").2, "the lifted chip is drawn on top");
+
+        // y stays locked to the strip even when the pointer leaves the bar downwards
+        let (_, shapes) = s.move_to(egui::pos2(from.x + 17.0, from.y + 120.0));
+        let (left, y2, _) = painted(&shapes, "B");
+        assert!(near(left, b.left() + 17.0) && near(y2, y), "y must stay locked ({y2} vs {y})");
+        assert!(near(y, rest_y), "the lifted chip keeps the strip's row");
+
+        // clamped: far right → its right edge sits on the strip's right end (C's right edge)
+        let (_, shapes) = s.move_to(egui::pos2(1390.0, from.y));
+        let (left, _, _) = painted(&shapes, "B");
+        assert!(
+            near(left + b.width(), c.right()),
+            "clamped right: B right {} vs strip end {}",
+            left + b.width(),
+            c.right()
+        );
+        // far left → its left edge sits on the strip's left end (A's left edge)
+        let (_, shapes) = s.move_to(egui::pos2(0.0, from.y));
+        let (left, _, _) = painted(&shapes, "B");
+        assert!(near(left, a.left()), "clamped left: B left {left} vs strip start {}", a.left());
+    }
+
+    /// P16 (b): while a chip is lifted, the OTHER chips reflow every frame to leave a gap exactly
+    /// where it would land. A neighbour crosses over (the gap jumps past it) once the lifted chip's
+    /// leading edge clears that neighbour's midpoint by the 2-pt hysteresis — dragging right,
+    /// dragging left, and coming back. Instant: no in-between positions.
+    #[test]
+    fn other_tabs_open_a_gap_that_moves_at_the_neighbours_midpoint() {
+        // dragging A rightwards over B
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let (a, b, c) = (s.home("A"), s.home("B"), s.home("C"));
+        assert!(near(a.width(), b.width()) && near(b.width(), c.width()), "setup: equal chips");
+        let grab = 20.0;
+        let from = egui::pos2(a.left() + grab, a.center().y);
+        s.begin_drag(from, 1.0);
+        // pointer at which A's right edge sits exactly on B's midpoint
+        let cross = b.center().x - a.width() + grab;
+        let (_, shapes) = s.move_to(egui::pos2(cross + 1.0, from.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "within the 2-pt hysteresis past the midpoint B stays put");
+        assert!(near(painted(&shapes, "C").0, c.left()));
+        let (_, shapes) = s.move_to(egui::pos2(cross + 3.0, from.y));
+        assert!(near(painted(&shapes, "B").0, a.left()), "clear of the midpoint B jumps into A's old slot");
+        assert!(near(painted(&shapes, "C").0, c.left()), "C is untouched (the gap is between B and C)");
+        // and back: B returns as soon as the edge is back on the near side
+        let (_, shapes) = s.move_to(egui::pos2(cross - 3.0, from.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "coming back, B returns to its own slot");
+
+        // dragging C leftwards over B
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let from = egui::pos2(c.left() + grab, c.center().y);
+        s.begin_drag(from, -1.0);
+        // pointer at which C's left edge sits exactly on B's midpoint
+        let cross = b.center().x + grab;
+        let (_, shapes) = s.move_to(egui::pos2(cross - 1.0, from.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "within the 2-pt hysteresis past the midpoint B stays put");
+        let (_, shapes) = s.move_to(egui::pos2(cross - 3.0, from.y));
+        assert!(near(painted(&shapes, "B").0, c.left()), "clear of the midpoint B jumps into C's old slot");
+        assert!(near(painted(&shapes, "A").0, a.left()), "A is untouched");
+        let (_, shapes) = s.move_to(egui::pos2(cross + 3.0, from.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "coming back, B returns");
+    }
+
+    /// P16 (c): the release commits exactly the gap's slot through `ReorderDocument` (the Workspace
+    /// still owns the order — the strip only requests the move), and the next frame is at rest.
+    #[test]
+    fn release_commits_the_gap_slot() {
+        let key = egui::Id::new(TAB_DRAG_KEY);
+        // A dragged right past B's midpoint → gap between B and C → full slot 2 ([B, A, C])
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let (a, b) = (s.home("A"), s.home("B"));
+        let from = egui::pos2(a.left() + 20.0, a.center().y);
+        s.begin_drag(from, 1.0);
+        let to = egui::pos2(b.center().x - a.width() + 20.0 + 3.0, from.y);
+        let _ = s.move_to(to);
+        assert!(s.ctx.data(|d| d.get_temp::<TabDrag>(key)).is_some(), "the drag is live");
+        let (cmds, _) = s.release(to);
+        assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(1), 2)]);
+        assert!(s.ctx.data(|d| d.get_temp::<TabDrag>(key)).is_none(), "released: no drag left");
+        let (cmds, shapes) = s.idle();
+        assert!(cmds.is_empty() && near(painted(&shapes, "A").0, a.left()), "next frame is at rest");
+        let mut ws = crate::workspace::Workspace::new();
+        ws.new_untitled();
+        ws.new_untitled();
+        let ids: Vec<SessionId> = ws.sessions().iter().map(|t| t.id).collect();
+        assert!(ws.reorder(ids[0], 2), "slot 2 moves the first tab");
+        assert_eq!(ws.sessions().iter().map(|t| t.id).collect::<Vec<_>>(), [ids[1], ids[0], ids[2]]);
+
+        // C dragged left past B's midpoint → gap between A and B → full slot 1
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let c = s.home("C");
+        let from = egui::pos2(c.left() + 20.0, c.center().y);
+        s.begin_drag(from, -1.0);
+        let to = egui::pos2(b.center().x + 20.0 - 3.0, from.y);
+        let _ = s.move_to(to);
+        assert_eq!(s.release(to).0, [AppCommand::ReorderDocument(SessionId(3), 1)]);
+
+        // lifted but dropped before any midpoint → its own slot (a no-op for `Workspace::reorder`)
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        s.begin_drag(egui::pos2(b.left() + 20.0, b.center().y), 1.0);
+        let to = egui::pos2(b.left() + 30.0, b.center().y);
+        assert_eq!(s.release(to).0, [AppCommand::ReorderDocument(SessionId(2), 1)]);
+    }
+
+    fn esc() -> RawInput {
+        RawInput {
+            screen_rect: Some(screen_rect()),
+            events: vec![Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// P16 (d): Esc during the drag, or the window losing focus, cancels — every chip snaps back
+    /// to rest in that same frame and the later release commits nothing.
+    #[test]
+    fn esc_or_focus_loss_cancels_the_drag_and_restores_the_order() {
+        for cancel in ["esc", "focus"] {
+            let mut s = Strip::new(&["A", "B", "C"], 0);
+            let (a, b, c) = (s.home("A"), s.home("B"), s.home("C"));
+            let from = egui::pos2(a.left() + 20.0, a.center().y);
+            s.begin_drag(from, 1.0);
+            let to = egui::pos2(c.center().x, from.y); // well past B: the gap sits after B
+            let (_, shapes) = s.move_to(to);
+            assert!(near(painted(&shapes, "B").0, a.left()), "{cancel}: setup — B had moved over");
+            assert!(s.ctx.dragged_id().is_some(), "{cancel}: setup — egui is dragging");
+            let (cmds, shapes) = match cancel {
+                "esc" => s.run(esc()),
+                // the window really losing focus: winit's `Focused(false)` → egui's `WindowFocused(false)`
+                _ => s.run(RawInput {
+                    screen_rect: Some(screen_rect()),
+                    focused: false,
+                    events: vec![Event::WindowFocused(false)],
+                    ..Default::default()
+                }),
+            };
+            assert!(cmds.is_empty(), "{cancel}: cancel raises nothing");
+            for (label, home) in [("A", a), ("B", b), ("C", c)] {
+                assert!(near(painted(&shapes, label).0, home.left()), "{cancel}: {label} is back at rest");
+            }
+            assert!(!s.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY)).is_some()));
+            assert!(s.ctx.dragged_id().is_none(), "{cancel}: egui's drag is stopped too");
+            // still holding the button: moving no longer lifts anything, the release commits nothing
+            let (_, shapes) = s.move_to(egui::pos2(to.x + 10.0, to.y));
+            assert!(near(painted(&shapes, "A").0, a.left()), "{cancel}: nothing re-lifts");
+            let (cmds, _) = s.release(egui::pos2(to.x + 10.0, to.y));
+            assert!(
+                !cmds.iter().any(|c| matches!(c, AppCommand::ReorderDocument(..))),
+                "{cancel}: no reorder after a cancel, got {cmds:?}"
+            );
+        }
+
+        // Codex review: the focus loss arriving in the SAME frame as the threshold crossing — a drag
+        // must never start in a frame that contains `WindowFocused(false)`
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let (a, b) = (s.home("A"), s.home("B"));
+        let from = egui::pos2(a.left() + 20.0, a.center().y);
+        let _ = s.idle();
+        let _ = s.press(from);
+        let cross = egui::pos2(b.center().x + 10.0, from.y);
+        let (_, shapes) = s.run(RawInput {
+            screen_rect: Some(screen_rect()),
+            focused: false,
+            events: vec![Event::PointerMoved(cross), Event::WindowFocused(false)],
+            ..Default::default()
+        });
+        assert!(near(painted(&shapes, "A").0, a.left()), "same-frame focus loss: A never lifts");
+        assert!(near(painted(&shapes, "B").0, b.left()), "same-frame focus loss: no gap opens");
+        assert!(!s.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY)).is_some()));
+        let (_, shapes) = s.move_to(egui::pos2(cross.x + 10.0, cross.y));
+        assert!(near(painted(&shapes, "A").0, a.left()), "same-frame focus loss: nothing lifts later");
+        let (cmds, _) = s.release(egui::pos2(cross.x + 10.0, cross.y));
+        assert!(!cmds.iter().any(|c| matches!(c, AppCommand::ReorderDocument(..))), "got {cmds:?}");
+    }
+
+    /// P16 (e): 8 tabs overflowing the strip (the active one displaced into the last drawn slot,
+    /// S1 F7): the active chip lifts, the drawn chips reflow around the gap, the release lands in the
+    /// FULL order, and while lifted egui owns the pointer — the macOS caption gate
+    /// (`mac_caption::caption_drag_allowed`) refuses a window drag, and the published caption
+    /// exclusions stay the resting slots (`interactive_rects`, P15).
+    #[test]
+    fn eight_tab_overflow_lifted_drag_lands_in_the_full_order() {
+        let names: Vec<String> = (1..=8).map(|i| format!("Brand guidelines draft {i}")).collect();
+        let labels: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut s = Strip::new(&labels, 7);
+        let layout = s.layout();
+        let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
+        assert!(drawn.len() < 8 && drawn.len() >= 3, "setup: overflow, got {drawn:?}");
+        assert_eq!(*drawn.last().unwrap(), 7, "setup: the active tab is drawn last");
+        let (r0, r1) = (layout.tabs[0].1, layout.tabs[1].1);
+        let rl = layout.tabs.last().unwrap().1;
+        let from = egui::pos2(rl.left() + 20.0, rl.center().y);
+        s.begin_drag(from, -1.0);
+        let to = egui::pos2(r1.left() + 20.0, from.y); // the lifted chip sits exactly on chip 1's slot
+        let (_, shapes) = s.move_to(to);
+        assert!(near(painted(&shapes, labels[7]).0, r1.left()), "the active chip is lifted onto slot 1");
+        assert!(near(painted(&shapes, labels[drawn[0]]).0, r0.left()), "chip 0 stays");
+        assert!(
+            near(painted(&shapes, labels[drawn[1]]).0, r1.left() + rl.width() + crate::chrome::TAB_GAP),
+            "chip 1 moves right by the lifted chip's width + gap"
+        );
+        let strip = layout.tab_strip().unwrap();
+        for &(i, _) in &layout.tabs {
+            let (left, _, _) = painted(&shapes, labels[i]);
+            assert!(left >= strip.min - 0.5, "chip {i} stays inside the strip");
+        }
+        assert!(s.ctx.dragged_id().is_some(), "while lifted, egui owns the pointer");
+        #[cfg(target_os = "macos")]
+        assert!(!crate::mac_caption::caption_drag_allowed(true, false, s.ctx.dragged_id().is_some()));
+        let (cmds, _) = s.release(to);
+        assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(8), drawn[1])]);
+    }
+
+    /// P16 (f): a press + a move smaller than egui's drag threshold + release is a plain activate —
+    /// nothing lifts, nothing reorders.
+    #[test]
+    fn a_sub_threshold_click_only_activates() {
+        let mut s = Strip::new(&["A", "B", "C"], 0);
+        let b = s.home("B");
+        let at = egui::pos2(b.left() + 20.0, b.center().y);
+        let _ = s.idle();
+        let _ = s.press(at);
+        let (_, shapes) = s.move_to(egui::pos2(at.x + 2.0, at.y));
+        assert!(near(painted(&shapes, "B").0, b.left()), "under the threshold the chip does not lift");
+        assert!(s.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY))).is_none());
+        let (cmds, _) = s.release(egui::pos2(at.x + 2.0, at.y));
+        assert_eq!(cmds, [AppCommand::ActivateDocument(SessionId(2))]);
+    }
+
+    /// Commit `cmds` to a real `Workspace` holding the strip's tabs (ids 1..=n, same order, same
+    /// active) and return the tab ids the strip DRAWS afterwards, left → right.
+    fn drawn_after(s: &Strip, cmds: &[AppCommand]) -> Vec<SessionId> {
+        let mut ws = crate::workspace::Workspace::new();
+        for _ in 1..s.tabs.len() {
+            ws.new_untitled();
+        }
+        assert!(ws.activate(s.active.unwrap()));
+        for c in cmds {
+            if let AppCommand::ReorderDocument(id, slot) = *c {
+                ws.reorder(id, slot);
+            }
+        }
+        let label = |id: SessionId| s.tabs.iter().find(|t| t.id == id).unwrap().label.clone();
+        let after: Vec<TabView> = ws.sessions().iter().map(|t| tab(t.id.0, &label(t.id), false)).collect();
+        let layout = measure(&s.ctx, &after, s.active);
+        layout.tabs.iter().map(|&(i, _)| after[i].id).collect()
+    }
+
+    /// Codex review of P16 (HIGH): on an overflowing strip (the active tab displaced into the last
+    /// drawn slot, hidden tabs between it and the rest) a tab dropped into a VISIBLE gap must land in
+    /// that visible neighbour relation and stay visible — never behind the hidden tabs.
+    #[test]
+    fn overflow_drop_lands_beside_the_visible_neighbours_and_stays_visible() {
+        let names: Vec<String> = (1..=8).map(|i| format!("Brand guidelines draft {i}")).collect();
+        let labels: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut s = Strip::new(&labels, 7);
+        let layout = s.layout();
+        let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
+        let k = drawn.len();
+        assert!((3..8).contains(&k) && drawn[k - 1] == 7, "setup: overflow with the active tab last, got {drawn:?}");
+        // tab 1 lifted onto the slot of the last NON-active drawn chip → the gap sits between that
+        // chip and the active one
+        let (r0, rk) = (layout.tabs[0].1, layout.tabs[k - 2].1);
+        let from = egui::pos2(r0.left() + 20.0, r0.center().y);
+        s.begin_drag(from, 1.0);
+        let to = egui::pos2(rk.left() + 20.0, from.y);
+        let _ = s.move_to(to);
+        let (cmds, _) = s.release(to);
+        let after = drawn_after(&s, &cmds);
+        let d = after.iter().position(|&id| id == SessionId(1));
+        assert!(d.is_some(), "the dropped tab vanished behind the hidden tabs: drawn after = {after:?}");
+        let d = d.unwrap();
+        assert_eq!(after[d - 1], SessionId(drawn[k - 2] as u64 + 1), "left neighbour is the one it was dropped after");
+        assert_eq!(after[d + 1], SessionId(8), "right neighbour is the active tab it was dropped before");
+    }
+
+    /// Codex review of P16 (HIGH): dropping past the LAST visible tab (the displaced active one) of
+    /// an overflowing strip keeps the dropped tab visible.
+    #[test]
+    fn overflow_drop_after_the_last_visible_tab_stays_visible() {
+        let names: Vec<String> = (1..=8).map(|i| format!("Brand guidelines draft {i}")).collect();
+        let labels: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut s = Strip::new(&labels, 7);
+        let r0 = s.layout().tabs[0].1;
+        let from = egui::pos2(r0.left() + 20.0, r0.center().y);
+        s.begin_drag(from, 1.0);
+        let to = egui::pos2(1390.0, from.y); // clamped at the strip's end, past the active tab
+        let _ = s.move_to(to);
+        let (cmds, _) = s.release(to);
+        assert!(matches!(cmds[..], [AppCommand::ReorderDocument(SessionId(1), _)]), "got {cmds:?}");
+        let after = drawn_after(&s, &cmds);
+        assert!(after.contains(&SessionId(1)), "the dropped tab must stay visible: drawn after = {after:?}");
+        assert!(after.contains(&SessionId(8)), "the active tab stays visible (S1 F7)");
+    }
+
+    /// P16 owner re-test (2026-09-26, "مش شغال" — the tab did not move at all): egui-winit's
+    /// `RawInput::focused` starts `false` and on macOS only changes on a winit `Focused` event, which a
+    /// real session may never get (the bundle launched by `open` ran a whole session with `focused ==
+    /// false`, and every drag was cancelled on its first lifted frame). A stale "unfocused" flag must
+    /// never cancel a drag: an inactive AND the active tab both lift, follow, and commit — 3 and 8 tabs.
+    #[test]
+    fn dragging_any_tab_works_while_egui_believes_the_window_is_unfocused() {
+        let names: Vec<String> = (1..=8).map(|i| format!("Brand guidelines draft {i}")).collect();
+        let eight: Vec<&str> = names.iter().map(String::as_str).collect();
+        for labels in [vec!["A", "B", "C"], eight] {
+            let n = labels.len();
+            for dragged in ["inactive", "active"] {
+                let mut s = Strip::new(&labels, n - 1);
+                s.focused = false;
+                let layout = s.layout();
+                let (r0, r1) = (layout.tabs[0].1, layout.tabs[1].1);
+                let (k, onto) = if dragged == "inactive" { (0, r1) } else { (layout.tabs.len() - 1, r0) };
+                let (i, home) = layout.tabs[k];
+                let from = egui::pos2(home.left() + 20.0, home.center().y);
+                s.begin_drag(from, onto.left() - home.left());
+                let to = egui::pos2(onto.left() + 20.0, from.y);
+                let (_, shapes) = s.move_to(to);
+                let (_, shapes2) = s.move_to(to); // and it is STILL lifted a frame later
+                for sh in [&shapes, &shapes2] {
+                    let left = painted(sh, labels[i]).0;
+                    assert!(
+                        near(left, onto.left()),
+                        "{n} tabs, {dragged}: the chip must follow the pointer, at {left}"
+                    );
+                }
+                let (cmds, _) = s.release(to);
+                let after = drawn_after(&s, &cmds);
+                let id = SessionId(i as u64 + 1);
+                let want = if dragged == "inactive" { 1 } else { 0 };
+                assert_eq!(
+                    after.iter().position(|&t| t == id),
+                    Some(want),
+                    "{n} tabs, {dragged}: {cmds:?} → drawn after {after:?}"
+                );
+            }
+        }
+    }
+
+    /// Codex review of P16 (MEDIUM): the tab list changing under a live drag (a tab closed by ⌘W,
+    /// a new / opened document, Ctrl+Tab switching the active tab) cancels it — chips back at rest,
+    /// nothing committed.
+    #[test]
+    fn a_workspace_change_mid_drag_cancels_it() {
+        for change in ["close", "new", "switch", "reorder"] {
+            let mut s = Strip::new(&["A", "B", "C"], 0);
+            let (a, b) = (s.home("A"), s.home("B"));
+            let from = egui::pos2(a.left() + 20.0, a.center().y);
+            s.begin_drag(from, 1.0);
+            let to = egui::pos2(b.center().x + 10.0, from.y);
+            let (_, shapes) = s.move_to(to);
+            assert!(near(painted(&shapes, "B").0, a.left()), "{change}: setup — B had moved over");
+            match change {
+                "close" => drop(s.tabs.remove(2)),
+                "new" => s.tabs.push(tab(4, "D", false)),
+                "switch" => s.active = Some(SessionId(2)),
+                _ => s.tabs.swap(1, 2),
+            }
+            let (_, shapes) = s.move_to(egui::pos2(to.x + 1.0, to.y));
+            assert!(near(painted(&shapes, "A").0, a.left()), "{change}: A must be back at rest");
+            let (cmds, _) = s.release(egui::pos2(to.x + 1.0, to.y));
+            assert!(
+                !cmds.iter().any(|c| matches!(c, AppCommand::ReorderDocument(..))),
+                "{change}: nothing may be committed, got {cmds:?}"
+            );
+        }
+    }
+
     /// The dirty dot (`tab_item`): a filled `MUTED` circle appears in the chip's clip rect only when
     /// `TabView::dirty` is true — never azure (the visual constitution: azure is a scalpel).
     #[test]
@@ -7095,5 +7804,308 @@ mod dead_control_tests {
         let y = bar_rect().bottom() + MENU_PAD_V as f32 + MENU_ROW_H / 2.0;
         let _ = bar.click(egui::pos2(layout.window.left() + 50.0, y));
         assert_ne!(bar.rail, before_rail, "Window ▸ Tool rail did not flip — the Window button was dead");
+    }
+}
+
+/// DFS S1 review P1: a number field being typed into on one tab must never commit into another tab.
+#[cfg(test)]
+mod field_settle_tests {
+    use super::{num_field, set_doc_salt, settle_field_edits, Lab};
+    use crate::app_command::SessionId;
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
+
+    /// One pass of the Properties X field showing `value`. Returns (what the field committed, where
+    /// its box sits).
+    fn frame(ctx: &egui::Context, events: Vec<Event>, value: f32) -> (Option<f32>, Pos2) {
+        let (mut out, mut at) = (None, Pos2::ZERO);
+        let input = RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            // the field's box starts 24 px right of the row (the label column) and is 25 px tall
+            at = ui.cursor().min + egui::vec2(80.0, 12.0);
+            out = num_field(ui, 150.0, Lab::Letter("X"), "X position", value, 0, 1.0, 1.0, -1.0e6..=1.0e6);
+        });
+        (out, at)
+    }
+    fn button(pos: Pos2, pressed: bool) -> Vec<Event> {
+        vec![
+            Event::PointerMoved(pos),
+            Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE },
+        ]
+    }
+
+    /// Tab A: object A's X is 10 — click the field and type 999 (the value is pre-selected).
+    fn type_999_on_tab_a(ctx: &egui::Context, a: SessionId) {
+        set_doc_salt(ctx, Some(a));
+        let (_, field) = frame(ctx, vec![], 10.0);
+        frame(ctx, button(field, true), 10.0);
+        frame(ctx, button(field, false), 10.0);
+        frame(ctx, vec![], 10.0); // the text edit claims focus
+        let (typed, _) = frame(ctx, vec![Event::Text("999".into())], 10.0);
+        assert_eq!(typed, None, "premise: typing alone commits nothing");
+        assert!(ctx.memory(|m| m.focused().is_some()), "premise: the field is being edited");
+    }
+    /// Tab B: object B's X is 5 — the user clicks elsewhere (a blur). Returns every commit seen.
+    fn blur_on_tab_b(ctx: &egui::Context, b: SessionId) -> Vec<Option<f32>> {
+        set_doc_salt(ctx, Some(b));
+        let away = Pos2::new(600.0, 500.0);
+        let mut got = vec![frame(ctx, vec![], 5.0).0];
+        got.push(frame(ctx, button(away, true), 5.0).0);
+        got.push(frame(ctx, button(away, false), 5.0).0);
+        got.push(frame(ctx, vec![], 5.0).0);
+        got
+    }
+
+    #[test]
+    fn a_typed_number_never_crosses_into_the_next_tab() {
+        let (a, b) = (SessionId(1), SessionId(2));
+        let ctx = egui::Context::default();
+        type_999_on_tab_a(&ctx, a);
+        // Ctrl+Tab: the lifecycle key bypasses egui; the host settles the Ui BEFORE switching
+        settle_field_edits(&ctx);
+        assert!(ctx.memory(|m| m.focused().is_none()), "settle closes the focused edit");
+        assert_eq!(blur_on_tab_b(&ctx, b), [None; 4], "B must never receive A's typed 999");
+        assert!(ctx.memory(|m| m.focused().is_none()), "no field is left focused on B");
+        // back on A: the discarded edit does not come back or commit either
+        set_doc_salt(&ctx, Some(a));
+        let away = Pos2::new(600.0, 500.0);
+        assert_eq!(frame(&ctx, vec![], 10.0).0, None);
+        assert_eq!(frame(&ctx, button(away, true), 10.0).0, None);
+        assert_eq!(frame(&ctx, button(away, false), 10.0).0, None);
+    }
+
+    /// The second wall: even an edit that was NOT settled (a future path that forgets to) lives under
+    /// A's id only, so B's field of the same name cannot inherit it.
+    #[test]
+    fn field_state_is_scoped_to_its_document() {
+        let ctx = egui::Context::default();
+        type_999_on_tab_a(&ctx, SessionId(1));
+        assert_eq!(blur_on_tab_b(&ctx, SessionId(2)), [None; 4], "B must never receive A's typed 999");
+    }
+}
+
+/// PAINS_LOG P16 (owner 2026-09-25): "the Pathfinder buttons do nothing". Two overlapping shapes drawn
+/// with the real Rectangle gestures, selected, then each boolean button CLICKED — in the real box tree
+/// (`ShellState::standard`) hosting the real panel bodies exactly as `Ui::run` does, the frame's ops
+/// applied with `apply_ops` exactly as `Ui::run` does. No window, no GPU.
+#[cfg(test)]
+mod pathfinder_click_tests {
+    use super::{apply_ops, panel_pathfinder, panel_properties, DockIcons, Op, Snap};
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
+    use std::cell::RefCell;
+    use varos_app::shell::{PanelId, ShellState};
+    use varos_core::boolean::BoolOp;
+    use varos_core::editor::{Editor, ToolKind};
+
+    thread_local! {
+        /// Where `pf_btn` put each boolean button in the last frame (test-only probe).
+        pub(super) static PF_RECTS: RefCell<Vec<(BoolOp, egui::Rect)>> = const { RefCell::new(vec![]) };
+    }
+
+    const OPS: [(BoolOp, &str); 4] = [
+        (BoolOp::Unite, "Unite"),
+        (BoolOp::MinusFront, "Minus Front"),
+        (BoolOp::Intersect, "Intersect"),
+        (BoolOp::Exclude, "Exclude"),
+    ];
+
+    fn same(a: BoolOp, b: BoolOp) -> bool {
+        std::mem::discriminant(&a) == std::mem::discriminant(&b)
+    }
+
+    /// Two overlapping 100×100 rectangles drawn with the Rectangle tool, then Selection tool + Select All.
+    fn two_selected() -> Editor {
+        let mut ed = Editor::new();
+        ed.ppu = 1.0;
+        for (a, b) in [([100.0, 100.0], [200.0, 200.0]), ([150.0, 150.0], [250.0, 250.0])] {
+            ed.set_tool(ToolKind::Rect);
+            ed.pointer_down(a);
+            ed.pointer_move(b);
+            ed.pointer_up();
+        }
+        ed.set_tool(ToolKind::Object);
+        ed.select_all();
+        assert_eq!(ed.doc.paths.len(), 2, "premise: two shapes");
+        assert_eq!(ed.objsel.len(), 2, "premise: both selected");
+        ed
+    }
+
+    /// The right column of the real app: the standard box tree with the Properties + Pathfinder bodies
+    /// hosted exactly as `Ui::run` hosts them.
+    struct App {
+        ctx: egui::Context,
+        shell: ShellState,
+        t: f64,
+    }
+    impl App {
+        fn new(front: PanelId) -> Self {
+            let mut shell = ShellState::standard();
+            if front == PanelId::Pathfinder {
+                shell.toggle_panel(PanelId::Pathfinder); // buried behind Align → surfaced (Window menu)
+            }
+            App { ctx: egui::Context::default(), shell, t: 1.0 }
+        }
+        /// One `Ui::run`-shaped frame: lay out, collect ops, `apply_ops`.
+        fn frame(&mut self, ed: &mut Editor, events: Vec<Event>) {
+            self.t += 1.0 / 60.0;
+            PF_RECTS.with(|r| r.borrow_mut().clear());
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                time: Some(self.t),
+                events,
+                ..Default::default()
+            };
+            let snap = Snap::read(ed);
+            let none = None;
+            let align = [None, None, None, None, None, None, None, None];
+            let icons = DockIcons {
+                rotate: &none,
+                opacity: &none,
+                strokew: &none,
+                link: &none,
+                fliph: &none,
+                flipv: &none,
+                align: &align,
+            };
+            let (mut refpt, mut lock) = ((0.0, 0.0), false);
+            let mut ops: Vec<Op> = vec![];
+            let shell = &mut self.shell;
+            let _ = self.ctx.run_ui(input, |root| {
+                let mut host = |panel: PanelId, ui: &mut egui::Ui| -> bool {
+                    match panel {
+                        PanelId::Board => true,
+                        PanelId::Properties => {
+                            panel_properties(ui, &snap, &icons, &mut refpt, &mut lock, &mut ops);
+                            true
+                        }
+                        PanelId::Pathfinder => {
+                            panel_pathfinder(ui, &mut ops);
+                            true
+                        }
+                        _ => false,
+                    }
+                };
+                shell.ui_hosted(root, &mut host);
+            });
+            apply_ops(ed, ops);
+        }
+        fn button_at(&mut self, ed: &mut Editor, op: BoolOp) -> Pos2 {
+            self.frame(ed, vec![]);
+            let rects = PF_RECTS.with(|r| r.borrow().clone());
+            rects.iter().find(|(o, _)| same(*o, op)).map(|(_, r)| r.center()).expect("the button is drawn")
+        }
+        /// A mouse click (press and release in separate frames), or a trackpad tap (`tap`: press and
+        /// release arrive in ONE frame's events, as a fast macOS tap-to-click delivers them).
+        fn click(&mut self, ed: &mut Editor, p: Pos2, tap: bool) {
+            let btn = |pressed| Event::PointerButton {
+                pos: p,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            self.frame(ed, vec![Event::PointerMoved(p)]);
+            if tap {
+                self.frame(ed, vec![btn(true), btn(false)]);
+            } else {
+                self.frame(ed, vec![btn(true)]);
+                self.frame(ed, vec![btn(false)]);
+            }
+            self.frame(ed, vec![]);
+        }
+    }
+
+    fn click_each_op(front: PanelId, tap: bool) {
+        for (op, name) in OPS {
+            let mut ed = two_selected();
+            let rev0 = ed.rev;
+            let mut app = App::new(front);
+            let at = app.button_at(&mut ed, op);
+            app.click(&mut ed, at, tap);
+            // Unite: one outline · Minus Front: one L · Intersect: the overlap · Exclude: two L pieces
+            let want = if same(op, BoolOp::Exclude) { 2 } else { 1 };
+            assert_eq!(ed.doc.paths.len(), want, "{front:?} ▸ {name}: the two shapes were not combined");
+            assert_eq!(ed.rev, rev0 + 1, "{front:?} ▸ {name}: exactly one committed edit");
+            ed.undo();
+            assert_eq!(ed.doc.paths.len(), 2, "{front:?} ▸ {name}: ONE undo brings both shapes back");
+        }
+    }
+
+    #[test]
+    fn pathfinder_panel_buttons_combine_the_selection() {
+        click_each_op(PanelId::Pathfinder, false);
+        click_each_op(PanelId::Pathfinder, true);
+    }
+
+    #[test]
+    fn properties_shape_row_buttons_combine_the_selection() {
+        click_each_op(PanelId::Properties, false);
+        click_each_op(PanelId::Properties, true);
+    }
+}
+
+/// P16 owner re-test / Codex review: egui-winit starts `RawInput::focused` at `false` and on macOS only
+/// updates it on a winit `Focused` event, which a bundle launched via `open` never received — so egui
+/// believed the window unfocused for the whole session. `Response::has_focus()` reads that flag, so
+/// text fields dropped their typed buffers and hid their carets. The host seeds the flag from winit's
+/// `window.has_focus()` every frame (`Ui::run` → `egui_focus_seed`); winit's real `Focused(false)`
+/// path stays untouched.
+#[cfg(test)]
+mod window_focus_tests {
+    use super::*;
+    use egui::{Event, RawInput};
+
+    #[test]
+    fn the_seed_raises_focus_for_a_key_window_and_never_lowers_it() {
+        // (window is key per winit, egui-winit's flag) → the flag egui runs the frame with
+        assert!(egui_focus_seed(true, false), "key window, flag never set (bundle launch): seeded true");
+        assert!(egui_focus_seed(true, true));
+        assert!(!egui_focus_seed(false, false), "a window that is not key stays unfocused");
+        assert!(egui_focus_seed(false, true), "never lowers: losing focus stays winit's Focused(false) path");
+    }
+
+    /// The artboard-name field (`name_field`) on a key window whose egui-winit flag never became
+    /// true: with the host seed the typed text survives across frames and is committed on blur.
+    #[test]
+    fn a_text_field_keeps_its_typed_buffer_once_the_host_seeds_window_focus() {
+        let ctx = egui::Context::default();
+        // the raw input egui-winit hands over on a macOS bundle launch — focused never set — after the
+        // host's seed for a window that IS key
+        let raw = |events: Vec<Event>| {
+            let mut r = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0))),
+                focused: false,
+                events,
+                ..Default::default()
+            };
+            r.focused = egui_focus_seed(true, r.focused);
+            r
+        };
+        let frame = |events: Vec<Event>, focus: bool| {
+            let mut out = None;
+            let _ = ctx.run_ui(raw(events), |ui| {
+                if focus {
+                    let id = doc_id(ui, ("abname", "t"));
+                    ui.memory_mut(|m| m.request_focus(id));
+                }
+                out = name_field(ui, 160.0, "Artboard", "t");
+            });
+            out
+        };
+        let enter = Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        assert_eq!(frame(vec![], false), None);
+        assert_eq!(frame(vec![], true), None, "focus the field");
+        assert_eq!(frame(vec![Event::Text("X".into())], false), None, "type");
+        assert_eq!(frame(vec![], false), None, "a frame later the buffer must still hold the X");
+        let committed = frame(vec![enter], false).expect("Enter commits the buffer");
+        assert!(committed.contains('X') && committed.len() == "Artboard".len() + 1, "committed {committed:?}");
     }
 }

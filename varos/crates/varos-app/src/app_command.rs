@@ -67,8 +67,9 @@ pub enum AppCommand {
     ActivateNext,
     /// Ctrl+⇧Tab (wraps around).
     ActivatePrevious,
-    /// A chip dropped at an insertion SLOT of the current strip: `0` = before the first chip,
-    /// `n` = after the last (exactly what `tab_drop_index` returns). See `Workspace::reorder`.
+    /// A chip dropped at an insertion SLOT of the FULL tab order: `0` = before the first tab,
+    /// `n` = after the last (`chrome::visible_drop_slot`, which keeps the dropped tab visible). See
+    /// `Workspace::reorder`.
     ReorderDocument(SessionId, usize),
     /// F4.2 window/panel effects, performed by the host.
     Window(WindowCmd),
