@@ -3991,11 +3991,13 @@ dependencies = [
 name = "varos-app"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "egui",
  "egui-wgpu",
  "egui-winit",
  "egui_tiles",
  "image",
+ "libc",
  "muda",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
@@ -4029,6 +4031,8 @@ version = "0.1.0"
 dependencies = [
  "lopdf",
  "pdf-writer",
+ "serde",
+ "serde_json",
  "varos-core",
 ]
 

@@ -47,7 +47,13 @@ pub struct TopbarLayout {
     pub share: egui::Rect,
     pub export: egui::Rect,
     pub search: egui::Rect,
-    pub tabs: Vec<egui::Rect>,
+    /// `(original tab index, its chip rect)`, left → right. Not always a `0..n` prefix: when the
+    /// strip overflows, the greedy fit stops early and the ACTIVE tab (spec §4 "Active document name
+    /// always matches canvas/layers") takes the last visible slot even if that means displacing
+    /// whichever tab the greedy pass had put there (DFS S1 F7).
+    pub tabs: Vec<(usize, egui::Rect)>,
+    /// The `+` new-document chip — reserved BEFORE tabs are fitted, so it is always placed (F15):
+    /// only an unreasonably narrow window ever leaves this `None`.
     pub plus: Option<egui::Rect>,
 }
 
@@ -56,7 +62,8 @@ pub fn topbar_layout(
     chrome: TopbarChrome,
     button_text_widths: [f32; 3],
     search_width: f32,
-    tab_text_widths: impl IntoIterator<Item = f32>,
+    tab_text_widths: &[f32],
+    active_tab: Option<usize>,
 ) -> TopbarLayout {
     use egui::{pos2, vec2, Rect};
     let cy = bar.center().y;
@@ -80,22 +87,47 @@ pub fn topbar_layout(
     let search = Rect::from_min_max(pos2(search_right - search_width, cy - 12.0), pos2(search_right, cy + 12.0));
     let menu = Rect::from_min_size(pos2(bar.left() + chrome.lead, bar.top()), vec2(36.0, bar.height()));
     let tabs_right = search.left() - 12.0;
-    let mut tx = menu.right() + 8.0;
-    let mut tabs = Vec::new();
-    for text_width in tab_text_widths {
-        let tw = (12.0 + text_width + 8.0 + 18.0 + 4.0).clamp(76.0, 220.0);
-        if tx + tw > tabs_right {
+    const PLUS_W: f32 = 32.0;
+    // reserve the `+` chip's own width BEFORE fitting tabs (F15: it must never be starved out).
+    let fit_right = tabs_right - PLUS_W;
+    let tab_w = |text_width: f32| (12.0 + text_width + 8.0 + 18.0 + 4.0).clamp(76.0, 220.0);
+    let start_x = menu.right() + 8.0;
+    let mut tx = start_x;
+    let mut tabs: Vec<(usize, Rect)> = Vec::new();
+    for (i, &text_width) in tab_text_widths.iter().enumerate() {
+        let tw = tab_w(text_width);
+        if tx + tw > fit_right {
             break;
         }
-        tabs.push(Rect::from_min_size(pos2(tx, cy - 14.0), vec2(tw, 28.0)));
+        tabs.push((i, Rect::from_min_size(pos2(tx, cy - 14.0), vec2(tw, 28.0))));
         tx += tw + 4.0;
     }
-    let plus = (tx + 32.0 <= tabs_right).then(|| Rect::from_center_size(pos2(tx + 16.0, cy), vec2(32.0, 28.0)));
+    // F7: the active tab is ALWAYS visible — on overflow it takes the last visible slot.
+    if let Some(active) = active_tab {
+        if active < tab_text_widths.len() && !tabs.iter().any(|&(i, _)| i == active) {
+            let slot_x = tabs.last().map_or(start_x, |&(_, r)| r.left());
+            tabs.pop();
+            let tw = tab_w(tab_text_widths[active]);
+            tabs.push((active, Rect::from_min_size(pos2(slot_x, cy - 14.0), vec2(tw, 28.0))));
+            tx = slot_x + tw + 4.0;
+        }
+    }
+    // clamp so a wider swapped-in active tab can never push `+` out of the bar.
+    let plus_left = tx.min(tabs_right - PLUS_W).max(start_x);
+    let plus = Some(Rect::from_min_size(pos2(plus_left, cy - 14.0), vec2(PLUS_W, 28.0)));
     TopbarLayout { caps, menu, magnet, window, share, export, search, tabs, plus }
 }
 
 pub fn tab_close_rect(tab: egui::Rect) -> egui::Rect {
     egui::Rect::from_center_size(egui::pos2(tab.right() - 13.0, tab.center().y), egui::vec2(18.0, 18.0))
+}
+
+/// Where a chip dropped at `pointer_x` lands: an insertion SLOT `0..=len` in `tab_rects`' left → right
+/// order (`0` = before the first chip, `len` = after the last). Each chip's centre is the boundary
+/// between "before it" and "after it", so a drop anywhere over the left half of a chip inserts before
+/// it and the right half inserts after — `Workspace::reorder` (DFS S1 §3.3) takes this slot as-is.
+pub(crate) fn tab_drop_index(tab_rects: &[egui::Rect], pointer_x: f32) -> usize {
+    tab_rects.iter().filter(|r| pointer_x >= r.center().x).count()
 }
 
 /// Is the window opaque from the first frame? macOS: yes — a transparent NSWindow let the title strip
@@ -126,13 +158,33 @@ const fn cmd_alt(code: KeyCode) -> Option<Accel> {
     Some(Accel { code, shift: false, alt: true })
 }
 
+/// A native File-menu row's (and Varos ▸ Quit's) lifecycle identity (DFS S1 §3.6 / review F5). These
+/// dispatch through `MenuCmd::File`, never through `MenuCmd::Key`'s synthetic-keystroke path (spec
+/// §4: "Menus and physical keys dispatch once through command IDs, not synthetic key events") — a
+/// focused text field must not swallow ⌘S. S1-D's `to_app_command` is the one place that turns a
+/// `FileCmd` into an `AppCommand`; S6-C later adds `Export` to this same enum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileCmd {
+    New,
+    Open,
+    CloseTab,
+    Save,
+    SaveAs,
+    Quit,
+}
+
 /// What a clicked item does — each one an EXISTING path in the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuCmd {
     /// The ⌘ + key shortcut, fed to the same dispatch the keyboard uses (`main.rs`).
     Key(Accel),
-    /// The ✕ caption button's path (`WinAction::Close`: save window state, exit).
-    Close,
+    /// A PLAIN key (no modifier) fed to that same dispatch — for a click-only row that shows NO key
+    /// equivalent, so AppKit never takes the key from a focused text field (e.g. Edit ▸ Delete runs
+    /// the Delete/Backspace path, while Backspace keeps deleting text in a field). The host runs it
+    /// only when no text field wants the keyboard.
+    Plain(KeyCode),
+    /// A File-menu row (or Varos ▸ Quit) — see `FileCmd`.
+    File(FileCmd),
     /// The bar's Window menu rows.
     ToggleRail,
     ToggleDock,
@@ -190,6 +242,12 @@ fn key_check(id: &str, label: &'static str, a: Option<Accel>, check: Check) -> E
     let acc = a.expect("a shortcut item has a key");
     Entry::Item { id: id.into(), label, accel: a, cmd: MenuCmd::Key(acc), check: Some(check) }
 }
+/// A File-menu row (and Varos ▸ Quit): the accelerator shown IS the keystroke `FileCmd` runs — never
+/// `MenuCmd::Key`'s text-field-forwarding path (review F5).
+fn file_key(id: &str, label: &'static str, a: Option<Accel>, cmd: FileCmd) -> Entry {
+    let accel = a.expect("a shortcut item has a key");
+    Entry::Item { id: id.into(), label, accel: Some(accel), cmd: MenuCmd::File(cmd), check: None }
+}
 fn toggle(id: &str, label: &'static str, cmd: MenuCmd, check: Check) -> Entry {
     Entry::Item { id: id.into(), label, accel: None, cmd, check: Some(check) }
 }
@@ -228,18 +286,18 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
                 Entry::Native(Native::HideOthers),
                 Entry::Native(Native::ShowAll),
                 Entry::Sep,
-                item("app.quit", "Quit Varos", cmd(K::KeyQ), MenuCmd::Close),
+                file_key("app.quit", "Quit Varos", cmd(K::KeyQ), FileCmd::Quit),
             ],
         ),
         (
             "File",
             vec![
-                key("file.open", "Open\u{2026}", cmd(K::KeyO)),
+                file_key("file.new", "New", cmd(K::KeyN), FileCmd::New),
+                file_key("file.open", "Open\u{2026}", cmd(K::KeyO), FileCmd::Open),
                 Entry::Sep,
-                key("file.save", "Save", cmd(K::KeyS)),
-                key("file.saveas", "Save As\u{2026}", cmd_shift(K::KeyS)),
-                Entry::Sep,
-                item("file.close", "Close Window", cmd(K::KeyW), MenuCmd::Close),
+                file_key("file.close", "Close Tab", cmd(K::KeyW), FileCmd::CloseTab),
+                file_key("file.save", "Save", cmd(K::KeyS), FileCmd::Save),
+                file_key("file.saveas", "Save As\u{2026}", cmd_shift(K::KeyS), FileCmd::SaveAs),
             ],
         ),
         (
@@ -255,6 +313,13 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
                 key("edit.copy", "Copy", cmd(K::KeyC)),
                 key("edit.paste", "Paste", cmd(K::KeyV)),
                 key("edit.pasteinplace", "Paste in Place", cmd_shift(K::KeyV)),
+                // click-only: the Delete/Backspace key path, with no key equivalent (so a text field
+                // keeps its Backspace)
+                item("edit.delete", "Delete", None, MenuCmd::Plain(K::Backspace)),
+                Entry::Sep,
+                // ⌘A / ⇧⌘A via `apply_key`; in a focused text field ⌘A is handed to the field (select text)
+                key("edit.selectall", "Select All", cmd(K::KeyA)),
+                key("edit.deselect", "Deselect", cmd_shift(K::KeyA)),
             ],
         ),
         (
@@ -324,9 +389,11 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
     use egui::Key as E;
     use KeyCode as K;
     Some(match code {
+        K::KeyA => E::A,
         K::KeyC => E::C,
         K::KeyD => E::D,
         K::KeyG => E::G,
+        K::KeyN => E::N,
         K::KeyO => E::O,
         K::KeyQ => E::Q,
         K::KeyR => E::R,
@@ -369,16 +436,15 @@ mod tests {
         for origin in [egui::pos2(0.0, 0.0), egui::pos2(31.0, 47.0)] {
             for width in [800.0, 1280.0, 1920.0] {
                 let bar = egui::Rect::from_min_size(origin, egui::vec2(width, chrome.height));
-                let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, [65.0, 180.0, 300.0]);
+                let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &[65.0, 180.0, 300.0], Some(0));
                 assert!(layout.caps.is_none());
                 assert!(!layout.tabs.is_empty());
-                if width >= 1280.0 {
-                    assert!(layout.plus.is_some());
-                }
+                assert!(layout.plus.is_some(), "the + chip is reserved before tabs are fitted (F15)");
+                let tab_rects: Vec<egui::Rect> = layout.tabs.iter().map(|&(_, r)| r).collect();
                 let controls = [layout.menu, layout.magnet, layout.window, layout.share, layout.export, layout.search]
                     .into_iter()
-                    .chain(layout.tabs.iter().copied())
-                    .chain(layout.tabs.iter().copied().map(tab_close_rect))
+                    .chain(tab_rects.iter().copied())
+                    .chain(tab_rects.iter().copied().map(tab_close_rect))
                     .chain(layout.plus);
                 let traffic_light_centre = bar.top() + 14.0;
                 for rect in controls {
@@ -390,6 +456,52 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn plus_is_always_placed_even_with_overflowing_tabs() {
+        let chrome = topbar_chrome(true);
+        let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(900.0, chrome.height));
+        let widths = vec![180.0; 20]; // far more than fit
+        let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &widths, Some(0));
+        assert!(layout.tabs.len() < widths.len(), "the strip really is overflowing here");
+        let plus = layout.plus.expect("+ must survive overflow");
+        assert!(bar.contains_rect(plus), "+ escapes the bar: {plus:?}");
+        // + never overlaps a placed tab
+        for &(_, r) in &layout.tabs {
+            assert!(!r.intersects(plus), "tab {r:?} overlaps +");
+        }
+    }
+
+    #[test]
+    fn active_tab_is_placed_when_tabs_overflow() {
+        let chrome = topbar_chrome(true);
+        let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(900.0, chrome.height));
+        let widths = vec![180.0; 12];
+        let last = widths.len() - 1;
+        let layout = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &widths, Some(last));
+        // a greedy fit alone would never reach the last tab — confirm this scenario really overflows
+        let greedy = topbar_layout(bar, chrome, [47.0, 34.0, 39.0], 120.0, &widths, None);
+        assert!(!greedy.tabs.iter().any(|&(i, _)| i == last), "test setup: the last tab must overflow");
+        assert!(layout.tabs.iter().any(|&(i, _)| i == last), "the active (last) tab must still be placed");
+        let (_, active_rect) = *layout.tabs.last().expect("at least one tab is placed");
+        assert!(bar.contains_rect(active_rect), "the active tab's chip escapes the bar");
+        assert!(layout.plus.is_some(), "+ still survives once the active tab claims a slot");
+    }
+
+    #[test]
+    fn tab_drop_index_before_between_after() {
+        let r = |l: f32, r: f32| egui::Rect::from_min_max(egui::pos2(l, 0.0), egui::pos2(r, 28.0));
+        // three chips: [0,80) [84,164) [168,248) — centres at 40, 124, 208
+        let rects = [r(0.0, 80.0), r(84.0, 164.0), r(168.0, 248.0)];
+        assert_eq!(tab_drop_index(&rects, -10.0), 0, "before the first chip");
+        assert_eq!(tab_drop_index(&rects, 39.0), 0, "left half of chip 0");
+        assert_eq!(tab_drop_index(&rects, 41.0), 1, "right half of chip 0");
+        assert_eq!(tab_drop_index(&rects, 123.0), 1, "left half of chip 1");
+        assert_eq!(tab_drop_index(&rects, 124.0), 2, "exactly on a centre already counts as past it");
+        assert_eq!(tab_drop_index(&rects, 209.0), 3, "right half of the last chip");
+        assert_eq!(tab_drop_index(&rects, 999.0), 3, "past the last chip");
+        assert_eq!(tab_drop_index(&[], 50.0), 0, "no chips at all");
     }
 
     #[test]
@@ -459,6 +571,50 @@ mod tests {
         }
     }
 
+    fn edit_rows() -> Vec<Entry> {
+        let m = menus();
+        m.into_iter().find(|(t, _)| *t == "Edit").expect("an Edit menu").1
+    }
+
+    #[test]
+    fn edit_menu_mirrors_select_all_deselect_delete() {
+        let rows = edit_rows();
+        let find = |want: &str| {
+            rows.iter()
+                .find_map(|e| match e {
+                    Entry::Item { id, label, accel, cmd, .. } if id == want => Some((*label, *accel, *cmd)),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Edit menu misses {want}"))
+        };
+        let all = cmd(KeyCode::KeyA);
+        let none = cmd_shift(KeyCode::KeyA);
+        assert_eq!(find("edit.selectall"), ("Select All", all, MenuCmd::Key(all.unwrap())));
+        assert_eq!(find("edit.deselect"), ("Deselect", none, MenuCmd::Key(none.unwrap())));
+        assert_eq!(find("edit.delete"), ("Delete", None, MenuCmd::Plain(KeyCode::Backspace)));
+        assert!(egui_key(KeyCode::KeyA).is_some(), "a focused text field must still get ⌘A (select text)");
+    }
+
+    #[test]
+    fn plain_delete_row_has_no_native_key_equivalent() {
+        // every Plain row is click-only: showing a key would let AppKit steal it from a text field
+        let items = flat_items(&menus());
+        let plain: Vec<_> = items
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Item { id, accel, cmd: MenuCmd::Plain(_), .. } => Some((id.as_str(), *accel)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(plain, [("edit.delete", None)]);
+        // …and no row anywhere claims Backspace / Delete as a key equivalent
+        for e in &items {
+            if let Entry::Item { id, accel: Some(a), .. } = e {
+                assert!(!matches!(a.code, KeyCode::Backspace | KeyCode::Delete), "{id} claims {:?}", a.code);
+            }
+        }
+    }
+
     #[test]
     fn the_bar_has_the_standard_mac_menus_and_mirrors_every_dockable_panel() {
         let m = menus();
@@ -470,22 +626,44 @@ mod tests {
             assert!(has(MenuCmd::TogglePanel(p)), "Window menu misses {}", p.title());
         }
         assert!(has(MenuCmd::ToggleRail) && has(MenuCmd::ToggleDock));
-        // ⌘Q and ⌘W both take the ✕ path
-        let close: Vec<_> = items
+        // ⌘Q quits the app; ⌘W closes only the active tab — two DIFFERENT FileCmds (review F5: no
+        // longer both folded into one "Close Window" path).
+        assert!(has(MenuCmd::File(FileCmd::Quit)), "Varos ▸ Quit is File(FileCmd::Quit)");
+        assert!(has(MenuCmd::File(FileCmd::CloseTab)), "File ▸ Close Tab is File(FileCmd::CloseTab)");
+        // mirrors only: no Export row until it has a path (S6). The clipboard keys got their path in
+        // Astra F04 (`every_clipboard_row_is_its_shortcut`), ⌘A / ⇧⌘A in QW5
+        // (`edit_menu_mirrors_select_all_deselect_delete`), and KeyN is File ▸ New's real key (DFS S1).
+        assert!(
+            !items.iter().any(|e| matches!(e, Entry::Item { id, .. } if id.contains("export"))),
+            "Export has no path yet — it must not be in the menu"
+        );
+    }
+
+    #[test]
+    fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
+        let m = menus();
+        let (_, file) = m.iter().find(|(t, _)| *t == "File").expect("a File menu");
+        let rows: Vec<(&str, Accel, FileCmd)> = file
             .iter()
             .filter_map(|e| match e {
-                Entry::Item { cmd: MenuCmd::Close, accel, .. } => *accel,
+                Entry::Item { id, accel: Some(a), cmd: MenuCmd::File(fc), .. } => Some((id.as_str(), *a, *fc)),
                 _ => None,
             })
             .collect();
-        assert_eq!(close, [cmd(KeyCode::KeyQ).unwrap(), cmd(KeyCode::KeyW).unwrap()]);
-        // mirrors only: no item may claim a New / Export / Select-All key that has no path yet
-        // (the clipboard keys got their path in Astra F04 — `every_clipboard_row_is_its_shortcut` below)
-        for missing in [KeyCode::KeyN, KeyCode::KeyA] {
-            assert!(
-                !items.iter().any(|e| matches!(e, Entry::Item { accel: Some(a), .. } if a.code == missing)),
-                "{missing:?} has no existing shortcut path — must not be in the menu"
-            );
+        let want = [
+            ("file.new", cmd(KeyCode::KeyN).unwrap(), FileCmd::New),
+            ("file.open", cmd(KeyCode::KeyO).unwrap(), FileCmd::Open),
+            ("file.close", cmd(KeyCode::KeyW).unwrap(), FileCmd::CloseTab),
+            ("file.save", cmd(KeyCode::KeyS).unwrap(), FileCmd::Save),
+            ("file.saveas", cmd_shift(KeyCode::KeyS).unwrap(), FileCmd::SaveAs),
+        ];
+        for (id, accel, fc) in want {
+            assert!(rows.iter().any(|&(i, a, f)| i == id && a == accel && f == fc), "File menu misses {id}");
         }
+        assert_eq!(rows.len(), want.len(), "no extra File rows go through MenuCmd::Key any more (review F5)");
+        assert!(
+            file.iter().all(|e| !matches!(e, Entry::Item { cmd: MenuCmd::Key(_), .. })),
+            "File rows never dispatch through the synthetic-key path (spec §4)"
+        );
     }
 }

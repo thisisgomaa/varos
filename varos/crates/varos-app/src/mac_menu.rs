@@ -16,9 +16,11 @@ use winit::window::Window;
 pub fn muda_code(code: KeyCode) -> Option<Code> {
     use KeyCode as K;
     Some(match code {
+        K::KeyA => Code::KeyA,
         K::KeyC => Code::KeyC,
         K::KeyD => Code::KeyD,
         K::KeyG => Code::KeyG,
+        K::KeyN => Code::KeyN,
         K::KeyO => Code::KeyO,
         K::KeyQ => Code::KeyQ,
         K::KeyR => Code::KeyR,

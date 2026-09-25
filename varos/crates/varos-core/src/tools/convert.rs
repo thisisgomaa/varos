@@ -46,8 +46,9 @@ impl Tool for Convert {
             // segment index + reshape are in world (consistent with the other Convert branches).
             ed.dirty |= ed.bake_unit_of(pid);
             if let Some(pi) = ed.doc.pidx(pid) {
+                // QW1: screen-px centreline tolerance (÷ ppu), same as Direct's segment grab and the Pen
                 if let Some((i, _, d)) = ed.doc.nearest_seg(pi, pos) {
-                    if d <= EDGE_R {
+                    if d <= EDGE_R / ed.ppu {
                         ed.start_segment(pid, i, pos);
                     }
                 }

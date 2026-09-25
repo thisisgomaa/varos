@@ -320,6 +320,60 @@ fn rect_from_corners(a: Pt, b: Pt, square: bool) -> (f32, f32, f32, f32) {
     (a[0].min(a[0] + dx), a[1].min(a[1] + dy), dx.abs().max(1.0), dy.abs().max(1.0))
 }
 
+/// Half the width of the stroke band actually PAINTED for a path (world units): the stroke is centred
+/// on the outline, so it reaches `stroke_width / 2` either side — or nothing when no stroke is drawn.
+/// Hit-testing adds this to its screen-px tolerance so a thick stroke is clickable where it is painted.
+fn painted_half_width(p: &Path) -> f32 {
+    if p.stroke.solid().is_some() {
+        (p.stroke_width * 0.5).max(0.0)
+    } else {
+        0.0
+    }
+}
+
+/// Is `q` (path-local) within `grow` of the bbox of every anchor AND handle of the path (outer + holes)?
+/// A cubic never leaves the hull of its control points, and the fill never leaves its outline, so when
+/// this is false neither an edge hit (≤ `grow`) nor a fill hit is possible — `path_under` skips the
+/// per-segment distance for that path. Pure speed: it never changes an answer.
+fn ctrl_bbox_near(p: &Path, q: Pt, grow: f32) -> bool {
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
+        for c in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
+            x0 = x0.min(c[0]);
+            y0 = y0.min(c[1]);
+            x1 = x1.max(c[0]);
+            y1 = y1.max(c[1]);
+        }
+    }
+    // an empty path (no anchors) leaves the box inverted → false, matching "nothing to hit"
+    q[0] >= x0 - grow && q[0] <= x1 + grow && q[1] >= y0 - grow && q[1] <= y1 + grow
+}
+
+/// Does the segment a→b touch the axis-aligned rect r = (x0, y0, x1, y1) (edges inclusive)?
+/// Liang–Barsky clip: the segment touches iff some parameter range in [0, 1] survives all four slabs.
+fn seg_touches_rect(a: Pt, b: Pt, r: (f32, f32, f32, f32)) -> bool {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (p, q) in [(-dx, a[0] - r.0), (dx, r.2 - a[0]), (-dy, a[1] - r.1), (dy, r.3 - a[1])] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return false; // parallel to this slab and outside it
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+            if t0 > t1 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub struct Editor {
     pub doc: Document,
     pub tool: ToolKind,
@@ -476,6 +530,10 @@ impl Editor {
     /// its FILL — an unfilled shape catches only its outline, so its hollow interior is click-through to
     /// the art below (Illustrator). Visible parts of lower shapes stay reachable because the covering
     /// shape fails both tests there.
+    ///
+    /// QW1 (Astra F08): the outline reach is the PAINTED band — `EDGE_R` screen px (÷ `ppu`, so it is
+    /// zoom-constant on screen) PLUS half the stroke width when the stroke is drawn. A click anywhere on
+    /// a thick stroke selects it, and that band occludes what lies beneath it (A31 walk unchanged).
     pub fn path_under(&self, pos: Pt) -> Option<u32> {
         let edge_r = EDGE_R / self.ppu;
         for pi in (0..self.doc.paths.len()).rev() {
@@ -485,8 +543,13 @@ impl Editor {
             }
             // A7 seam: map the cursor into the path's UNIT-local frame, then run the existing local-space
             // tests. `edge_r` is rotation-invariant (distance). Identity ⇒ `lp == pos` (byte-for-byte).
+            // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
-            let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= edge_r); // outer + hole rims (FB3)
+            let reach = edge_r + painted_half_width(&self.doc.paths[pi]);
+            if !ctrl_bbox_near(&self.doc.paths[pi], lp, reach) {
+                continue; // cheap cull: out of reach of every curve AND of the fill (review P3-1)
+            }
+            let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= reach); // outer + hole rims (FB3)
             let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
             if on_edge || in_fill {
                 return Some(id);
@@ -664,29 +727,43 @@ impl Editor {
         }
         base
     }
-    /// Does a path touch / fall inside a marquee rect? (a vertex inside, or the rect-centre inside a
-    /// FILLED region). The centre-inside fallback counts only for a real filled area — a closed shape
-    /// (as before) or an open-but-filled one — so a hollow open polyline must be TOUCHED, not merely
-    /// enclosed (point_in_path now treats open paths as implied-closed; this keeps that from leaking
-    /// into marquee over-selection — session-lock correctness fix).
+    /// Does a path touch / fall inside a marquee rect? Illustrator rule (QW1 / Astra F08): the marquee
+    /// must touch the PAINTED geometry — (a) any piece of the outline or a hole rim, grown by the painted
+    /// stroke half-width, crosses the rect (a segment test, so a thin marquee across a long edge counts
+    /// even with no vertex inside), or (b) the rect centre lies inside a FILLED region. (b) no longer
+    /// counts a merely `closed` shape: a marquee sitting in the hollow of an unfilled ring leaves it alone,
+    /// exactly as a hollow open polyline already was (session-lock correctness fix).
     pub fn path_in_rect(&self, pi: usize, x0: f32, y0: f32, x1: f32, y1: f32) -> bool {
         // A7 seam: marquee-test the WORLD outline (unit transform composed) so a rotated object is caught
-        // by its VISUAL bounds. Identity ⇒ today's local test byte-for-byte.
-        let xf = self.doc.unit_xform(self.doc.paths[pi].id);
-        let poly = self.doc.outline(pi, 16);
+        // by its VISUAL bounds. Identity ⇒ today's local geometry untouched. `outline_px`/`ring_px` keep
+        // chords ~4 screen px, so the polyline hugs the drawn curve at any zoom.
+        let p = &self.doc.paths[pi];
+        let xf = self.doc.unit_xform(p.id);
+        let poly = self.doc.outline_px(pi, self.ppu);
         if poly.is_empty() {
             return false;
         }
-        if poly.iter().any(|q| {
-            let q = xf.apply(*q);
-            q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1
-        }) {
+        // (a) the painted band touches the rect ⇔ the centreline touches the rect grown by half the width.
+        // Growing by `hw` on every side is a SQUARE Minkowski sum (the true one has rounded corners), so
+        // near a marquee corner it over-catches by up to (√2 − 1)·hw ≈ 0.41·hw — accepted as harmless.
+        let hw = painted_half_width(p);
+        let r = (x0 - hw, y0 - hw, x1 + hw, y1 + hw);
+        let touches = |ring: &[Pt]| {
+            if ring.len() == 1 {
+                return seg_touches_rect(xf.apply(ring[0]), xf.apply(ring[0]), r);
+            }
+            ring.windows(2).any(|w| seg_touches_rect(xf.apply(w[0]), xf.apply(w[1]), r))
+        };
+        if touches(&poly) {
             return true;
         }
-        let p = &self.doc.paths[pi];
-        // centre-inside test in the path's LOCAL frame (map the rect centre back through the transform)
+        // hole rims are drawn too (FB3); a closed `ring_px` already ends on its first point
+        if p.holes.iter().any(|h| !h.is_empty() && touches(&Document::ring_px(h, true, self.ppu))) {
+            return true;
+        }
+        // (b) centre-inside test in the path's LOCAL frame (map the rect centre back through the transform)
         let c = xf.inverse_apply([(x0 + x1) * 0.5, (y0 + y1) * 0.5]);
-        (p.closed || p.fill.solid().is_some()) && self.doc.point_in_path(pi, c)
+        p.fill.solid().is_some() && self.doc.point_in_path(pi, c)
     }
     /// Did a press land on a transform handle (scale) or a corner's rotate ring (just outside)?
     pub fn transform_hit(&self, pos: Pt) -> Option<TfHit> {
@@ -709,7 +786,11 @@ impl Editor {
         // (or shift-clicking) another nearby object selects it instead of rotating this one.
         let bb = self.obj_local_bbox()?;
         let lp = rotate_about(pos, [0.0, 0.0], -self.obj_angle);
-        if (lp[0] < bb.0 || lp[0] > bb.2 || lp[1] < bb.1 || lp[1] > bb.3) && self.path_under(pos).is_none() {
+        // QW1: a thick stroke's painted band now hits past the outline — so hitting the SELECTION'S OWN
+        // band must not block its rotate ring; only another (unselected) object under the cursor does.
+        if (lp[0] < bb.0 || lp[0] > bb.2 || lp[1] < bb.1 || lp[1] > bb.3)
+            && self.path_under(pos).is_none_or(|id| self.objsel.contains(&id))
+        {
             let ring = 22.0 / self.ppu;
             for i in 0..4u8 {
                 if dist(pos, hs[i as usize]) <= ring {
@@ -3064,7 +3145,7 @@ impl Editor {
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
             self.redo.push(self.doc.clone());
-            self.doc = s;
+            self.restore_keeping_prefs(s);
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
@@ -3072,10 +3153,27 @@ impl Editor {
     pub fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
             self.undo.push(self.doc.clone());
-            self.doc = s;
+            self.restore_keeping_prefs(s);
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
+    }
+    /// Swap a history snapshot in, carrying the CURRENT non-history preferences forward (DFS S1 §3.1:
+    /// "undo must preserve current navigation/preferences"). `snap`, `guides_locked` and `ruler_origin`
+    /// are written without history (`SetSnapConfig`, `ToggleSnapping`, `ToggleSmartGuides`,
+    /// `ToggleGuidesLocked`, `SetRulerOrigin`), so an undo of an unrelated edit must not roll them back.
+    /// `active` / `active_layer` stay history-restored (pinned by tests); units and move-art are real
+    /// undo steps and stay restored too.
+    fn restore_keeping_prefs(&mut self, mut snapshot: Document) {
+        snapshot.snap = self.doc.snap;
+        snapshot.guides_locked = self.doc.guides_locked;
+        snapshot.ruler_origin = self.doc.ruler_origin;
+        self.doc = snapshot;
+    }
+    /// Is a history transaction open (`begin` without its `commit` / picker cancel yet)? The app reads
+    /// this with `dirty` for the in-flight overlay of the dirty dot, and to know a gesture must settle.
+    pub fn transaction_open(&self) -> bool {
+        self.pending.is_some()
     }
     fn clear_transient(&mut self) {
         self.selected.clear();
@@ -3227,7 +3325,10 @@ impl Editor {
         let pi = self.doc.pidx(pid).unwrap();
         let last = self.doc.paths[pi].anchors.last().map(|a| a.id);
         if last != Some(end_aid) {
+            // resuming from the FIRST anchor flips the path's direction — a real content change, so it
+            // must be part of this gesture's undo step (and bump `rev`; S1 review P2-1)
             self.reverse(pi);
+            self.dirty = true;
         }
         self.active = Some(pid);
         self.selected.clear();
@@ -3359,8 +3460,11 @@ impl Editor {
         if let Some(pid) = self.path_under(pos) {
             if self.is_editable(pid) {
                 if let Some(pi) = self.doc.pidx(pid) {
-                    if let Some((_, _, d)) = self.doc.nearest_seg(pi, pos) {
-                        if d <= EDGE_R {
+                    // mirrors the Pen's add-anchor test (tools/pen.rs) exactly — same local frame, same
+                    // screen-px centreline tolerance (QW1) — so the cursor never promises a different act
+                    let lpos = self.doc.unit_xform(pid).inverse_apply(pos);
+                    if let Some((_, _, d)) = self.doc.nearest_seg(pi, lpos) {
+                        if d <= EDGE_R / self.ppu {
                             return PenHint::Add;
                         }
                     }
@@ -3987,6 +4091,46 @@ impl Editor {
         self.drag = Drag::None;
         self.ab_drag = AbDrag::None;
     }
+    /// Edit ▸ Select All (⌘A) — the mirror of `escape` (⇧⌘A Deselect). Like `escape`, it only changes
+    /// selection state: no history entry, no `rev` bump, no dirty mark.
+    /// * Artboard tool: every page (`doc.active` stays the primary).
+    /// * Direct tool: every anchor (holes too) of every visible, unlocked path — as a whole-canvas
+    ///   Direct marquee would take.
+    /// * Every other tool: the object selection = every visible, unlocked path, widened to whole
+    ///   groups exactly as a canvas click or object marquee does (a group selects as one unit).
+    ///
+    /// A Pen path in progress ends first, as on any selection change.
+    pub fn select_all(&mut self) {
+        self.active = None;
+        self.drag = Drag::None;
+        self.ab_drag = AbDrag::None;
+        self.dsel_path = None;
+        self.pivot = None; // the transform origin re-homes to the new selection's centre
+        if self.tool == ToolKind::Artboard {
+            self.absel = (0..self.doc.artboards.len()).collect();
+            return;
+        }
+        let pickable: Vec<usize> = (0..self.doc.paths.len())
+            .filter(|&pi| {
+                let id = self.doc.paths[pi].id;
+                !self.doc.eff_hidden(id) && !self.doc.eff_locked(id)
+            })
+            .collect();
+        self.selected.clear();
+        self.objsel.clear();
+        if self.tool == ToolKind::Direct {
+            for pi in pickable {
+                let p = &self.doc.paths[pi];
+                self.selected.extend(p.anchors.iter().chain(p.holes.iter().flatten()).map(|a| a.id));
+            }
+        } else {
+            for pi in pickable {
+                let members = self.doc.group_members(self.doc.paths[pi].id);
+                self.objsel.extend(members);
+            }
+        }
+        self.refresh_obj_angle(); // one unit keeps its stored rotation; several axis-align (A7)
+    }
     pub fn nudge(&mut self, dx: f32, dy: f32) {
         if self.selected.is_empty() {
             return;
@@ -4045,6 +4189,16 @@ impl Editor {
     /// The in-app clipboard (read-only view — e.g. its `center()` for a view-centred paste).
     pub fn clipboard(&self) -> &Clipboard {
         &self.clipboard
+    }
+    /// Move the in-app clipboard OUT of this editor (leaving it empty). The clipboard is app-wide, but
+    /// each document tab owns its own `Editor`: the app hands it from the outgoing tab's editor to the
+    /// incoming one with `take_clipboard` + `set_clipboard` (DFS S1 §3.1). Never touches the document.
+    pub fn take_clipboard(&mut self) -> Clipboard {
+        std::mem::take(&mut self.clipboard)
+    }
+    /// Install a clipboard handed over from another editor (see `take_clipboard`). No history, no `rev`.
+    pub fn set_clipboard(&mut self, clipboard: Clipboard) {
+        self.clipboard = clipboard;
     }
     /// What Copy / Cut take: the WHOLE paths of the object selection, plus the Direct tool's
     /// whole-path selection. A bare anchor selection copies nothing (partial-path copy is not built).

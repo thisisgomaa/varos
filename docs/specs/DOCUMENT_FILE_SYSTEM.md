@@ -1,4 +1,4 @@
-> **Status:** reference — spec/proposal for Ahmed's decision (charter §3, level 5); not an accepted decision.
+> **Status:** reference — spec accepted by the owner on 2026-09-24 (D1, D2, D3 = yes; recorded in `docs/foundation/STATUS.md`). Executed through the stage work orders in `docs/foundation/work_orders/`; this text stays the reference, the work orders carry the decisions.
 # Document & File System
 
 Date: 2026-09-24 · Owner: Ahmed · Repository evidence baseline: `9e6cbcb`.

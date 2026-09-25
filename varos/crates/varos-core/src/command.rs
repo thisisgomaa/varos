@@ -50,6 +50,14 @@ pub enum EditCommand {
         node: u32,
         name: String,
     },
+    /// Name a path (its Layers row, the inspector header). A path's leaf node does not carry the
+    /// displayed name — `Path::name` does — so a `<Path>` row renames through this, not `RenameNode`
+    /// (QW3 / Astra F10). The name is trimmed; an empty or unchanged name is a no-op (no undo step,
+    /// the document stays clean) — Illustrator keeps the old name when the field is emptied.
+    RenamePath {
+        path: u32,
+        name: String,
+    },
     GroupSelection,
     UngroupSelection,
     DeleteLayerSelection,
@@ -152,6 +160,7 @@ impl EditCommand {
             Self::ToggleNodeHidden(node) => ed.layer_toggle_hidden(node),
             Self::ToggleNodeLocked(node) => ed.layer_toggle_locked(node),
             Self::RenameNode { node, name } => ed.layer_rename(node, name),
+            Self::RenamePath { path, name } => rename_path(ed, path, name),
             Self::GroupSelection => ed.group_selection(),
             Self::UngroupSelection => ed.ungroup_selection(),
             Self::DeleteLayerSelection => ed.layer_delete_selection(),
@@ -226,6 +235,28 @@ impl Editor {
     pub fn toggle_rulers_visibility(&mut self) {
         self.show_rulers = !self.show_rulers;
     }
+}
+
+/// A user-typed object name with its invisible edges removed: whitespace AND the zero-width
+/// direction/format marks an Arabic keyboard or a paste can carry (LRM/RLM U+200E/F, ALM U+061C, the
+/// embeddings/overrides U+202A–E, isolates U+2066–9, ZWSP U+200B, BOM U+FEFF). A name made only of
+/// those comes back empty, so it can never become a blank-looking row. Marks INSIDE the name are kept.
+pub fn clean_name(name: &str) -> &str {
+    name.trim_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{061C}' | '\u{FEFF}')
+    })
+}
+
+/// `RenamePath`: only a real change becomes an edit. `Editor::rename_path` itself always opens an undo
+/// step (and maps an empty name to the auto-name), so the no-op guards live here.
+fn rename_path(ed: &mut Editor, path: u32, name: String) {
+    let name = clean_name(&name);
+    let Some(pi) = ed.doc.pidx(path) else { return };
+    if name.is_empty() || ed.doc.paths[pi].name.as_deref() == Some(name) {
+        return;
+    }
+    ed.rename_path(path, name.to_string());
 }
 
 /// The stroke-weight field: like a colour pick (`apply_paint`) and `bump_stroke`, the weight becomes the
