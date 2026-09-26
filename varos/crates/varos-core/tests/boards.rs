@@ -654,3 +654,160 @@ fn duplicate_artboard_command_carries_art() {
     assert_eq!(ed.doc.artboards.len(), 2);
     assert_eq!(ed.doc.paths.len(), 7, "the command path copies the page's art too");
 }
+
+// ---------- P19 (Codex review of the Astra batch, 2026-09-26): Duplicate Artboard keeps clip groups whole ----
+// The per-path membership test used to drop a hidden / locked / off-page MASK while copying its clipped
+// content, so the copy's clip group lost its mask, was demoted to a plain group and showed the clipped-away
+// art. A clip group is all-or-nothing: if any member comes along, its mask and every member come too.
+
+/// Asserts the page copy holds exactly ONE clip group with its own copied mask whose paths are `mask_n`
+/// in number, and returns (clip group id, mask path ids, content path ids) of the copy.
+fn copied_clip(ed: &Editor, before: &[u32]) -> (u32, Vec<u32>, Vec<u32>) {
+    let new_pids: Vec<u32> = ed.doc.paths.iter().map(|p| p.id).filter(|id| !before.contains(id)).collect();
+    let clips: Vec<u32> = new_pids.iter().filter_map(|&n| ed.doc.clip_group_of(n)).collect();
+    assert!(!clips.is_empty(), "the copied clip members still sit in a clip group (not demoted)");
+    assert!(clips.iter().all(|&c| c == clips[0]), "…one and the same");
+    let cg = clips[0];
+    assert_eq!(ed.doc.node(cg).unwrap().role, varos_core::model::GroupRole::Clip, "role stays Clip");
+    let mc = ed.doc.node(cg).unwrap().mask_child.expect("the copied clip keeps a mask");
+    let mask: Vec<u32> = ed.doc.node_paths(mc);
+    assert!(mask.iter().all(|m| new_pids.contains(m)), "the copy clips to its OWN copied mask");
+    let content: Vec<u32> = new_pids.iter().copied().filter(|p| !mask.contains(p)).collect();
+    (cg, mask, content)
+}
+
+#[test]
+fn duplicate_artboard_copies_a_clip_group_whose_mask_is_hidden() {
+    let mut ed = populated_page();
+    let i3 = ed.doc.pidx(3).unwrap();
+    ed.doc.paths[i3].hidden = true; // the mask (3) hidden: Illustrator keeps clipping with a hidden mask
+    ed.ab_duplicate(0);
+    let (_, mask, content) = copied_clip(&ed, &[1, 2, 3, 4]);
+    assert_eq!(mask.len(), 1);
+    let m = ed.doc.pidx(mask[0]).unwrap();
+    assert!(ed.doc.paths[m].hidden, "the copied mask keeps its hidden state");
+    assert!(ed.doc.is_mask_source(mask[0]), "…and still shapes the clip (not painted as itself)");
+    assert!(content.iter().any(|&c| ed.doc.clip_group_of(c).is_some()), "the clipped content is clipped");
+    assert_eq!(ed.doc.paths.len(), 4 + 3, "square 1 + the whole clip group (content + mask) copied");
+}
+
+#[test]
+fn duplicate_artboard_copies_a_clip_group_whose_mask_is_locked_or_off_page() {
+    for case in ["locked", "off-page"] {
+        let mut ed = populated_page();
+        let i3 = ed.doc.pidx(3).unwrap();
+        if case == "locked" {
+            ed.doc.paths[i3].locked = true;
+        } else {
+            // mask moved far off the page; the (clipped) content stays on it
+            for a in &mut ed.doc.paths[i3].anchors {
+                a.p[0] += 1000.0;
+            }
+        }
+        ed.ab_duplicate(0);
+        let (_, mask, _) = copied_clip(&ed, &[1, 2, 3, 4]);
+        assert_eq!(mask.len(), 1, "{case}: the mask came along");
+        let m = ed.doc.pidx(mask[0]).unwrap();
+        assert_eq!(ed.doc.paths[m].locked, case == "locked", "{case}: the mask keeps its lock state");
+        assert_eq!(ed.doc.paths.len(), 4 + 3, "{case}: the whole clip group copied");
+    }
+}
+
+#[test]
+fn duplicate_artboard_skips_a_clip_group_that_is_wholly_off_the_page() {
+    let mut ed = populated_page();
+    for pid in [2u32, 3] {
+        let i = ed.doc.pidx(pid).unwrap();
+        for a in &mut ed.doc.paths[i].anchors {
+            a.p[0] += 1000.0;
+        }
+    }
+    ed.ab_duplicate(0);
+    assert_eq!(ed.doc.paths.len(), 4 + 1, "only square 1 is on the page — the clip group stays behind");
+}
+
+fn flagged_clip_page() -> (Editor, Vec<u32>) {
+    let mut ed = Editor::new();
+    ed.ppu = 1.0;
+    ed.doc.snap.enabled = false;
+    ed.doc.artboards = vec![board(0.0, "A", true)];
+    for (pid, base, x) in [(2, 10, 10.0), (3, 20, 20.0), (5, 30, 45.0), (6, 40, 70.0)] {
+        ed.doc.paths.push(sq(pid, base, x, 20.0, 15.0));
+    }
+    ed.doc.ids = 100;
+    ed.doc.sync_tree();
+    let nested = ed.doc.group(&[5, 6]).unwrap();
+    let clip = ed.doc.clip_group(&[2, 3, 5, 6], 3).unwrap();
+    assert_eq!(ed.doc.clip_group_of(5), Some(clip));
+    let mask_leaf = ed.doc.node_of_path(3).unwrap();
+    ed.execute(varos_core::EditCommand::ToggleNodeHidden(mask_leaf));
+    ed.execute(varos_core::EditCommand::ToggleNodeLocked(nested));
+    (ed, vec![2, 3, 5, 6])
+}
+
+fn assert_copied_node_flags(ed: &Editor, originals: &[u32]) {
+    let copied: Vec<u32> = ed.doc.paths.iter().map(|p| p.id).filter(|id| !originals.contains(id)).collect();
+    assert_eq!(copied.len(), originals.len(), "the duplicate carries the whole clip group");
+    let clip = copied.iter().find_map(|&pid| ed.doc.clip_group_of(pid)).expect("copied clip group");
+    let mask = ed.doc.node(clip).unwrap().mask_child.unwrap();
+    assert!(ed.doc.node(mask).unwrap().hidden, "the copied mask leaf keeps its node eye flag");
+    let locked_nested = ed
+        .doc
+        .node(clip)
+        .unwrap()
+        .children
+        .iter()
+        .copied()
+        .find(|&nid| {
+            ed.doc.node(nid).is_some_and(|n| {
+                matches!(n.kind, varos_core::model::NodeKind::Group) && n.role == varos_core::model::GroupRole::Normal
+            })
+        })
+        .expect("copied nested group");
+    assert!(ed.doc.node(locked_nested).unwrap().locked, "the copied nested group keeps its node lock flag");
+}
+
+#[test]
+fn duplicate_artboard_preserves_leaf_and_nested_group_node_flags() {
+    let (mut ed, originals) = flagged_clip_page();
+    ed.execute(varos_core::EditCommand::DuplicateArtboard(0));
+    assert_copied_node_flags(&ed, &originals);
+}
+
+#[test]
+fn alt_drag_artboard_preserves_leaf_and_nested_group_node_flags() {
+    let (mut ed, originals) = flagged_clip_page();
+    ed.set_tool(ToolKind::Artboard);
+    ed.mods.alt = true;
+    ed.pointer_down([90.0, 90.0]);
+    ed.pointer_move([210.0, 90.0]);
+    ed.pointer_up();
+    assert_copied_node_flags(&ed, &originals);
+}
+
+#[test]
+fn plain_artboard_move_never_moves_locked_clip_art_or_locked_board_art() {
+    let (mut ed, _) = flagged_clip_page();
+    let content_before = ed.doc.anchor(10).unwrap().p;
+    let hidden_before = ed.doc.anchor(20).unwrap().p;
+    let locked_before = ed.doc.anchor(30).unwrap().p;
+    ed.set_tool(ToolKind::Artboard);
+    ed.pointer_down([90.0, 90.0]);
+    ed.pointer_move([190.0, 90.0]);
+    ed.pointer_up();
+    assert_ne!(ed.doc.anchor(10).unwrap().p, content_before, "unlocked clip content follows the board");
+    assert_eq!(ed.doc.anchor(20).unwrap().p, hidden_before, "hidden mask keeps the historic move behaviour");
+    assert_eq!(ed.doc.anchor(30).unwrap().p, locked_before, "locked nested clip content stays put");
+
+    let mut ed = two_pages(true);
+    ed.doc.paths.push(sq(1, 1, 10.0, 10.0, 20.0));
+    ed.doc.ids = 20;
+    ed.doc.sync_tree();
+    ed.doc.artboards[0].locked = true;
+    let before = ed.doc.anchor(1).unwrap().p;
+    ed.set_tool(ToolKind::Artboard);
+    ed.pointer_down([90.0, 90.0]);
+    ed.pointer_move([120.0, 90.0]);
+    ed.pointer_up();
+    assert_eq!(ed.doc.anchor(1).unwrap().p, before, "art on a locked board never moves");
+}

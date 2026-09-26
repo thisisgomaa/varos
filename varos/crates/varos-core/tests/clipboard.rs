@@ -314,3 +314,202 @@ fn the_clipboard_survives_opening_another_document() {
     assert_eq!(ed.doc.paths.len(), 1);
     assert_eq!(ed.doc.paths[0].anchors[0].p, [100.0, 0.0]);
 }
+
+// ---------- P18 (Codex review of the Astra batch, 2026-09-26): Cut must never delete hidden/locked art ----
+// Direct-select a path, hide or lock it (itself, or a parent group / layer), then ⌘X: the stale Direct
+// selection used to survive the hide/lock and Cut deleted the invisible / protected art. The invariant is
+// "nothing hidden or locked is ever selected"; Cut/Copy also filter defensively.
+
+fn path_exists(ed: &Editor, pid: u32) -> bool {
+    ed.doc.pidx(pid).is_some()
+}
+
+/// Square 10 Direct-selected at path level (dsel) AND one of its anchors grabbed, squares grouped.
+fn direct_selected() -> (Editor, u32) {
+    let mut ed = two_squares();
+    let gid = ed.doc.group(&[10, 11]).expect("the squares group");
+    ed.set_tool(ToolKind::Direct);
+    ed.dsel_path = Some(10);
+    ed.selected.insert(101);
+    (ed, gid)
+}
+
+#[test]
+fn hiding_or_locking_drops_the_direct_selection_so_cut_cannot_delete_it() {
+    type Op = fn(&mut Editor, u32);
+    let ops: [(&str, Op); 8] = [
+        ("hide path (panel eye)", |ed, _| {
+            let leaf = ed.doc.node_of_path(10).unwrap();
+            ed.execute(EditCommand::ToggleNodeHidden(leaf));
+        }),
+        ("lock path (panel padlock)", |ed, _| {
+            let leaf = ed.doc.node_of_path(10).unwrap();
+            ed.execute(EditCommand::ToggleNodeLocked(leaf));
+        }),
+        ("hide path (set_hidden)", |ed, _| ed.set_hidden(10, true)),
+        ("lock path (set_locked)", |ed, _| ed.set_locked(10, true)),
+        ("hide parent group", |ed, gid| ed.execute(EditCommand::ToggleNodeHidden(gid))),
+        ("lock parent group", |ed, gid| ed.execute(EditCommand::ToggleNodeLocked(gid))),
+        ("hide parent layer", |ed, _| {
+            let layer = ed.doc.layer_ancestor(ed.doc.node_of_path(10).unwrap());
+            ed.execute(EditCommand::ToggleNodeHidden(layer));
+        }),
+        ("lock parent layer", |ed, _| {
+            let layer = ed.doc.layer_ancestor(ed.doc.node_of_path(10).unwrap());
+            ed.execute(EditCommand::ToggleNodeLocked(layer));
+        }),
+    ];
+    for (what, op) in ops {
+        let (mut ed, gid) = direct_selected();
+        op(&mut ed, gid);
+        assert!(ed.doc.eff_hidden(10) || ed.doc.eff_locked(10), "{what}: fixture — the path is now inert");
+        assert_eq!(ed.dsel_path, None, "{what}: the Direct path selection is dropped");
+        assert!(!ed.selected.contains(&101), "{what}: its grabbed anchor is dropped too");
+        ed.execute(EditCommand::Cut);
+        assert!(path_exists(&ed, 10), "{what}: ⌘X must not delete hidden/locked art");
+    }
+}
+
+#[test]
+fn hiding_a_board_drops_its_art_from_the_direct_selection() {
+    let mut ed = two_squares();
+    ed.doc.artboards = vec![varos_core::model::Artboard { x: 0.0, y: 0.0, w: 60.0, h: 60.0, ..Default::default() }];
+    ed.set_tool(ToolKind::Direct);
+    ed.dsel_path = Some(10);
+    ed.execute(EditCommand::ToggleArtboardHidden(0));
+    assert_eq!(ed.dsel_path, None, "board-hidden art leaves the Direct selection");
+    ed.execute(EditCommand::ToggleArtboardHidden(0));
+    ed.dsel_path = Some(10);
+    ed.execute(EditCommand::ToggleArtboardLocked(0));
+    assert_eq!(ed.dsel_path, None, "board-locked art leaves the Direct selection");
+    ed.execute(EditCommand::Cut);
+    assert!(path_exists(&ed, 10));
+}
+
+#[test]
+fn cut_and_copy_skip_hidden_or_locked_paths_even_if_still_selected() {
+    // Defence in depth: even if some future path leaves a hidden/locked path in a selection set, Cut and
+    // Copy refuse it — they only take what is visible and editable.
+    for lock in [false, true] {
+        let mut ed = two_squares();
+        {
+            let i = ed.doc.pidx(10).unwrap();
+            if lock {
+                ed.doc.paths[i].locked = true;
+            } else {
+                ed.doc.paths[i].hidden = true;
+            }
+        }
+        ed.dsel_path = Some(10); // forced past the ops, straight into the state
+        ed.objsel.insert(10);
+        let rev = ed.rev;
+        ed.execute(EditCommand::Copy);
+        assert!(ed.clipboard().is_empty(), "lock={lock}: nothing copyable");
+        ed.execute(EditCommand::Cut);
+        assert!(path_exists(&ed, 10), "lock={lock}: Cut refuses the inert path");
+        assert_eq!(ed.rev, rev, "lock={lock}: no edit, no undo step");
+    }
+}
+
+#[test]
+fn redo_of_hide_prunes_a_selection_restored_after_undo() {
+    let mut ed = two_squares();
+    let leaf = ed.doc.node_of_path(10).unwrap();
+    ed.execute(EditCommand::ToggleNodeHidden(leaf));
+    ed.execute(EditCommand::Undo);
+    ed.objsel.insert(10);
+    ed.dsel_path = Some(10);
+    ed.selected.insert(100);
+    ed.execute(EditCommand::Redo);
+    assert!(ed.doc.eff_hidden(10));
+    assert!(!ed.objsel.contains(&10) && ed.dsel_path.is_none() && !ed.selected.contains(&100));
+}
+
+#[test]
+fn moving_selected_art_onto_a_locked_board_prunes_it() {
+    let mut ed = two_squares();
+    ed.doc.artboards = vec![
+        varos_core::model::Artboard { x: 0.0, y: 0.0, w: 60.0, h: 60.0, ..Default::default() },
+        varos_core::model::Artboard { x: 200.0, y: 0.0, w: 60.0, h: 60.0, locked: true, ..Default::default() },
+    ];
+    ed.objsel.insert(10);
+    let leaf = ed.doc.node_of_path(10).unwrap();
+    ed.execute(EditCommand::MoveLayerToBoard { sources: vec![leaf], source_board: Some(0), target_board: 1 });
+    assert!(ed.doc.eff_locked(10), "the moved path now belongs to the locked board");
+    assert!(!ed.objsel.contains(&10), "central command pruning drops it");
+}
+
+#[test]
+fn delete_defensively_refuses_hidden_or_locked_paths_and_anchors() {
+    for locked in [false, true] {
+        let mut ed = two_squares();
+        let i = ed.doc.pidx(10).unwrap();
+        ed.doc.paths[i].hidden = !locked;
+        ed.doc.paths[i].locked = locked;
+        ed.objsel.insert(10);
+        ed.selected.insert(100);
+        let rev = ed.rev;
+        ed.execute(EditCommand::DeleteSelected);
+        assert!(path_exists(&ed, 10), "locked={locked}: inert art survives Delete");
+        assert_eq!(ed.doc.anchor(100).unwrap().p, [0.0, 0.0]);
+        assert_eq!(ed.rev, rev, "locked={locked}: no deletion means no history step");
+    }
+}
+
+#[test]
+fn cut_of_a_group_carries_its_hidden_member_and_flag() {
+    let mut ed = two_squares();
+    let group = ed.doc.group(&[10, 11]).unwrap();
+    ed.layer_select_set(&[group]);
+    let hidden_leaf = ed.doc.node_of_path(11).unwrap();
+    ed.execute(EditCommand::ToggleNodeHidden(hidden_leaf));
+    ed.execute(EditCommand::Cut);
+    assert!(!path_exists(&ed, 10) && !path_exists(&ed, 11), "the whole selected group is cut");
+    ed.execute(EditCommand::Paste { offset: None });
+    let hidden_copy = ed
+        .doc
+        .paths
+        .iter()
+        .map(|path| path.id)
+        .find(|pid| ![10, 11].contains(pid) && ed.doc.eff_hidden(*pid))
+        .expect("hidden member pasted");
+    assert!(ed.doc.node(ed.doc.node_of_path(hidden_copy).unwrap()).unwrap().hidden, "node eye flag survives");
+}
+
+#[test]
+fn copy_of_a_clip_group_carries_its_hidden_mask_and_stays_clip() {
+    let mut ed = two_squares();
+    let clip = ed.doc.clip_group(&[10, 11], 11).unwrap();
+    ed.layer_select_set(&[clip]);
+    let mask_leaf = ed.doc.node_of_path(11).unwrap();
+    ed.execute(EditCommand::ToggleNodeHidden(mask_leaf));
+    ed.execute(EditCommand::Copy);
+    ed.execute(EditCommand::Paste { offset: Some([0.0, 100.0]) });
+    let copied_clip = ed.objsel.iter().find_map(|&pid| ed.doc.clip_group_of(pid)).expect("copy stays clipped");
+    let copied_mask = ed.doc.node(copied_clip).unwrap().mask_child.unwrap();
+    assert!(ed.doc.node(copied_mask).unwrap().hidden, "copied mask keeps its node eye flag");
+}
+
+#[test]
+fn copy_of_a_direct_group_member_does_not_carry_a_hidden_sibling() {
+    let mut ed = two_squares();
+    ed.doc.group(&[10, 11]).unwrap();
+    let hidden_leaf = ed.doc.node_of_path(11).unwrap();
+    ed.execute(EditCommand::ToggleNodeHidden(hidden_leaf));
+    let direct_leaf = ed.doc.node_of_path(10).unwrap();
+    ed.layer_select_set(&[direct_leaf]);
+    ed.execute(EditCommand::Copy);
+    assert_eq!(ed.clipboard().len(), 1, "a directly selected leaf is not a whole-group structural selection");
+}
+
+#[test]
+fn delete_of_a_group_keeps_its_locked_member() {
+    let mut ed = two_squares();
+    let group = ed.doc.group(&[10, 11]).unwrap();
+    ed.layer_select_set(&[group]);
+    let locked_leaf = ed.doc.node_of_path(11).unwrap();
+    ed.execute(EditCommand::ToggleNodeLocked(locked_leaf));
+    ed.execute(EditCommand::DeleteSelected);
+    assert!(!path_exists(&ed, 10), "unlocked group member is deleted");
+    assert!(path_exists(&ed, 11), "locked group member wins and remains");
+}
