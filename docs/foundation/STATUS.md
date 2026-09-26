@@ -46,6 +46,14 @@ Landed later on 2026-09-23/24:
 - **In flight:** `fix/s1cd-tabs-review` — Codex review of `e5b9315` REQUEST CHANGES: typed field values crossed tabs; command dispatch was not FIFO (⌘S then ⌘Z saved the undone state); overflow tab dragging reordered incorrectly; docs overclaimed. Opus is fixing it; the first P1 landed in `1115e76`.
 - **Owner process rules restated:** Opus implements; Fable moderates; Codex (Sol) handles reviews, docs and ordinary work; Astra is reserved for very hard problems or plan consultation. **Close what is broken or missing before starting anything new.**
 
+### 2026-09-26 — the cloud wave is on `main`
+
+- **Merged to `main` in three waves** (each gated on macOS before the next): wave 1 Astra batch 1 `c85dc9c` (351 tests); wave 2 DFS wave 1 from the cloud run + Mac clippy fix `2415902` → `d1d8ee3`'s parent (629 tests); wave 3 Mac verification fixes + the 2026-09-25 owner round `d1d8ee3` (685 tests; tree identical to `integrate/cloud-wave-1`).
+- **Owner verified by hand on the installed build:** live tab drag (P16 — the tab follows the pointer, others reflow instantly; root cause egui's focus flag stayed false on macOS bundle launches, now seeded from winit — also restores text carets and typed buffers).
+- **Astra batch review (first Codex review of that batch):** REQUEST CHANGES → fixed on `main` `19eed19` (P17 hole anchors in the Direct inspector, P18 Cut deleting hidden/locked art, P19 Duplicate Artboard demoting clip groups, P20 Pen/Convert/Alt+Direct crash on hole anchors; one central "nothing hidden or locked is ever edited" invariant). Implemented by Codex Sol, reviewed by Opus (REQUEST CHANGES → APPROVE WITH NITS). Follow-ups in `PAINS_LOG.md` P21 (locked clip mask on copy, hole with 1–2 anchors, group_sel routes, board move vs hidden mask).
+- **Gates on `main` `19eed19`:** **708 passed / 0 failed / 4 ignored**, clippy Mac + Windows target clean, fmt clean. `/Applications/Varos.app` rebuilt from `main`.
+- **Open after this:** P21 decisions; the name field drops typed text on click-away (commit only on Enter); the old local worktree `codex-astra-1` holds uncommitted duplicate Astra fixes (superseded; kept until the owner says delete). **Next system:** UI System spec v2 (tab strip, Home button instead of the burger menu, icons instead of text labels), then the icon library.
+
 ### 2026-09-25 — owner look at the integration build + fixes (branch `integrate/cloud-wave-1`, not `main` yet)
 
 - **Owner verified by hand:** independent tabs, tab numbering, dirty marking on content edits only, field edits never cross tabs, ⌘S/⌘Z order, ⌘S while typing, Pathfinder buttons, tab drag after P15, cursor arrows.
@@ -142,7 +150,7 @@ Landed later on 2026-09-23/24:
 |---|---:|
 | `ui.rs` lines | 5,826 (re-measured `wc -l` 2026-09-23, after `9f8ec1d`) |
 | `editor.rs` lines | 4,537 (re-measured `wc -l` 2026-09-23, after `b15d2bf`) |
-| Workspace tests | **668 passed / 0 failed / 4 ignored** — macOS 2026-09-25, `integrate/cloud-wave-1` at `6cc6e8c` (not on `main` yet) · earlier: **634/634** — whole workspace, run on macOS 2026-09-24 on integration branch `integrate/cloud-wave-1` at `e2298f9` (0 failed); not on `main` yet · merged `main` at `36d04d4`: 306/306 on macOS · cloud branch head `6999970`: 624/624 on Linux (4 ignored by design) |
+| Workspace tests | **708 passed / 0 failed / 4 ignored** — macOS 2026-09-26, `main` at `19eed19` · earlier: **634/634** — whole workspace, run on macOS 2026-09-24 on integration branch `integrate/cloud-wave-1` at `e2298f9` (0 failed); not on `main` yet · merged `main` at `36d04d4`: 306/306 on macOS · cloud branch head `6999970`: 624/624 on Linux (4 ignored by design) |
 | Tests on macOS | **634 / 634** — whole workspace incl. `varos-app` (2026-09-24, integration branch `integrate/cloud-wave-1` at `e2298f9`; not on `main` yet) |
 | `unsafe` sites (app crates) | 30 — re-measured 2026-09-24 via `grep -rc "unsafe" varos/crates/varos-app/src \| awk -F: '{s+=$2} END {print s}'` (Linux checkout of `claude/sweet-cerf-1sg30t`; was 27) |
 | Direct external deps | 23 |
