@@ -20,6 +20,21 @@ pub struct Anchor {
     pub smooth: bool,
 }
 
+/// The contour containing an anchor. Combined with an index, this addresses every anchor in a
+/// compound path without pretending hole anchors live in the outer ring.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnchorRing {
+    Outer,
+    Hole(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AnchorAddress {
+    pub path: usize,
+    pub ring: AnchorRing,
+    pub index: usize,
+}
+
 /// A7 live per-object transform (A7_LIVE_TRANSFORM_PLAN §1): a rigid rotation `rot` (radians) about a
 /// pivot `piv`. **Identity == `rot 0`** (pivot irrelevant then), where `world == local` so an un-rotated
 /// unit is byte-for-byte today's baked geometry. This is the seam's VALUE TYPE — the internal
@@ -770,44 +785,44 @@ impl Document {
         }
         on.iter().enumerate().filter(|(_, &v)| v).map(|(i, _)| i).collect()
     }
-    pub fn aidx(&self, aid: u32) -> Option<(usize, usize)> {
+    /// Locate an anchor across every contour as `(path, ring, index)`. This is the single lookup used
+    /// by compound-path-aware callers; `aidx` below deliberately narrows it for outer-only Pen ops.
+    pub fn anchor_address(&self, aid: u32) -> Option<AnchorAddress> {
         for (pi, p) in self.paths.iter().enumerate() {
-            if let Some(ai) = p.anchors.iter().position(|a| a.id == aid) {
-                return Some((pi, ai));
+            if let Some(index) = p.anchors.iter().position(|a| a.id == aid) {
+                return Some(AnchorAddress { path: pi, ring: AnchorRing::Outer, index });
             }
-        }
-        None
-    }
-    /// Find an anchor by id across ALL contours (outer + holes). aidx covers only the outer ring.
-    pub fn anchor(&self, aid: u32) -> Option<&Anchor> {
-        for p in &self.paths {
-            if let Some(a) = p.anchors.iter().find(|a| a.id == aid) {
-                return Some(a);
-            }
-            for h in &p.holes {
-                if let Some(a) = h.iter().find(|a| a.id == aid) {
-                    return Some(a);
+            for (hi, hole) in p.holes.iter().enumerate() {
+                if let Some(index) = hole.iter().position(|a| a.id == aid) {
+                    return Some(AnchorAddress { path: pi, ring: AnchorRing::Hole(hi), index });
                 }
             }
         }
         None
+    }
+    /// Outer-ring-only lookup for operations whose segment model does not support hole contours.
+    pub fn aidx(&self, aid: u32) -> Option<(usize, usize)> {
+        let address = self.anchor_address(aid)?;
+        matches!(address.ring, AnchorRing::Outer).then_some((address.path, address.index))
+    }
+    /// Find an anchor by id across ALL contours (outer + holes).
+    pub fn anchor(&self, aid: u32) -> Option<&Anchor> {
+        let address = self.anchor_address(aid)?;
+        match address.ring {
+            AnchorRing::Outer => self.paths[address.path].anchors.get(address.index),
+            AnchorRing::Hole(hi) => self.paths[address.path].holes.get(hi)?.get(address.index),
+        }
     }
     pub fn anchor_mut(&mut self, aid: u32) -> Option<&mut Anchor> {
-        for pi in 0..self.paths.len() {
-            if let Some(ai) = self.paths[pi].anchors.iter().position(|a| a.id == aid) {
-                return Some(&mut self.paths[pi].anchors[ai]);
-            }
-            for hi in 0..self.paths[pi].holes.len() {
-                if let Some(ai) = self.paths[pi].holes[hi].iter().position(|a| a.id == aid) {
-                    return Some(&mut self.paths[pi].holes[hi][ai]);
-                }
-            }
+        let address = self.anchor_address(aid)?;
+        match address.ring {
+            AnchorRing::Outer => self.paths[address.path].anchors.get_mut(address.index),
+            AnchorRing::Hole(hi) => self.paths[address.path].holes.get_mut(hi)?.get_mut(address.index),
         }
-        None
     }
     /// The id of the path owning an anchor (outer or hole).
     pub fn pid_of_anchor(&self, aid: u32) -> Option<u32> {
-        self.paths.iter().find(|p| p.anchors.iter().chain(p.holes.iter().flatten()).any(|a| a.id == aid)).map(|p| p.id)
+        self.anchor_address(aid).map(|address| self.paths[address.path].id)
     }
 
     /// Nearest point on a path's outline → (segment index, t, distance). The distance is to the TRUE
@@ -1365,7 +1380,8 @@ impl Document {
         let mut gmap: HashMap<u32, u32> = HashMap::new();
         for &og in &gset {
             let ng = self.nid();
-            let name = self.node(og).map(|n| n.name.clone()).unwrap_or_default();
+            let (name, hidden, locked) =
+                self.node(og).map(|n| (n.name.clone(), n.hidden, n.locked)).unwrap_or_default();
             let xform = self.node_xform(og); // A7: the copy inherits the group unit's live rotation
             let role = self.node(og).map(|n| n.role).unwrap_or_default(); // clip-ness carries to the copy
             self.nodes.push(Node {
@@ -1374,8 +1390,8 @@ impl Document {
                 name,
                 parent: None,
                 children: vec![],
-                hidden: false,
-                locked: false,
+                hidden,
+                locked,
                 color: None,
                 clip_exempt: false,
                 xform,
@@ -1389,14 +1405,15 @@ impl Document {
             if let Some(old_leaf) = self.node_of_path(old_p) {
                 let nl = self.nid();
                 let xform = self.node_xform(old_leaf); // A7: an ungrouped rotated path's copy keeps its rotation
+                let (hidden, locked) = self.node(old_leaf).map(|n| (n.hidden, n.locked)).unwrap_or_default();
                 self.nodes.push(Node {
                     id: nl,
                     kind: NodeKind::Path(new_p),
                     name: String::new(),
                     parent: None,
                     children: vec![],
-                    hidden: false,
-                    locked: false,
+                    hidden,
+                    locked,
                     color: None,
                     clip_exempt: false,
                     xform,
