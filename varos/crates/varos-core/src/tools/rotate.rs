@@ -14,6 +14,9 @@ impl Tool for Transform {
         if ed.objsel.is_empty() {
             match ed.path_under(pos) {
                 Some(pid) => {
+                    if let Some(group) = ed.doc.top_group_of_path(pid) {
+                        ed.group_sel.insert(group);
+                    }
                     for m in ed.doc.group_members(pid) {
                         ed.objsel.insert(m);
                     }

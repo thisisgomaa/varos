@@ -13,11 +13,12 @@ impl Tool for Convert {
             if let Some(pid) = ed.doc.pid_of_anchor(aid) {
                 ed.dirty |= ed.bake_unit_of(pid);
             }
-            let (pi, ai) = ed.doc.aidx(aid).unwrap();
-            ed.doc.paths[pi].anchors[ai].smooth = false;
+            let Some(anchor) = ed.doc.anchor_mut(aid) else { return };
+            anchor.smooth = false;
             ed.selected.insert(aid);
             let out = ed.which_handle(aid, pos);
-            let hp = if out { ed.doc.paths[pi].anchors[ai].hout } else { ed.doc.paths[pi].anchors[ai].hin }.unwrap();
+            let Some(anchor) = ed.doc.anchor(aid) else { return };
+            let Some(hp) = (if out { anchor.hout } else { anchor.hin }) else { return };
             ed.dirty = true;
             ed.drag = Drag::Handle { aid, out, couple: false, opp_len: 0.0, grab: sub(hp, pos) };
             return;
@@ -29,10 +30,9 @@ impl Tool for Convert {
             if let Some(pid) = ed.doc.pid_of_anchor(aid) {
                 ed.dirty |= ed.bake_unit_of(pid);
             }
-            let (pi, ai) = ed.doc.aidx(aid).unwrap();
             ed.selected.clear();
             ed.selected.insert(aid);
-            if ed.doc.paths[pi].anchors[ai].smooth {
+            if ed.doc.anchor(aid).is_some_and(|anchor| anchor.smooth) {
                 ed.toggle_type(aid);
                 ed.dirty = true;
             } else {

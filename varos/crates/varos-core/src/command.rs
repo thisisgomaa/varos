@@ -214,6 +214,9 @@ impl Editor {
     /// Execute one deterministic edit through the core-owned command boundary.
     pub fn execute(&mut self, command: EditCommand) {
         command.apply(self);
+        // One invariant gate for every command, including commands whose geometry changes artboard
+        // membership (and therefore effective hidden/locked state) without touching a node flag.
+        self.prune_inert_selection();
     }
 
     pub fn set_paint_target(&mut self, target: PaintTarget) {

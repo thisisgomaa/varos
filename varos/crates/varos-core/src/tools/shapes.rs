@@ -8,6 +8,7 @@ impl Tool for Shapes {
     fn down(&self, ed: &mut Editor, pos: Pt) {
         ed.selected.clear();
         ed.objsel.clear();
+        ed.group_sel.clear();
         let kind = ed.gesture.shape();
         let id = ed.doc.nid();
         let (f, st, sw) = (ed.cur_fill, ed.cur_stroke, ed.cur_sw);
