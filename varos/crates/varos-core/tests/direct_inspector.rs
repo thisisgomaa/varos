@@ -168,3 +168,81 @@ fn rotated_unit_anchor_is_measured_and_moved_in_world() {
         assert!(close(world(&ed, a), others[i]), "anchor {a} kept its world position");
     }
 }
+
+// ---------- P17 (Codex review of the Astra batch, 2026-09-26): compound-path HOLE anchors ----------
+// The inspector used to filter the grabbed anchors through the OUTER-ring-only lookup, so a hole-only
+// Direct selection read as "nothing" (zeros, edits a no-op) and a mixed outer+hole selection measured and
+// moved only the outer points.
+
+/// A 100×100 square at the origin (anchors 1..4) with a 30×30 square HOLE at (30,30) (anchors 5..8).
+fn donut() -> Editor {
+    let mut ed = Editor::new();
+    let mut p = Path::new(
+        10,
+        vec![anc(1, 0.0, 0.0), anc(2, 100.0, 0.0), anc(3, 100.0, 100.0), anc(4, 0.0, 100.0)],
+        true,
+        Some([0.5, 0.5, 0.5, 1.0]),
+        None,
+        1.0,
+    );
+    p.holes = vec![vec![anc(5, 30.0, 30.0), anc(6, 60.0, 30.0), anc(7, 60.0, 60.0), anc(8, 30.0, 60.0)]];
+    ed.doc.paths.push(p);
+    ed.doc.ids = 8;
+    ed.ppu = 1.0;
+    ed.doc.snap.enabled = false;
+    ed.doc.sync_tree();
+    ed.set_tool(ToolKind::Direct);
+    ed
+}
+
+#[test]
+fn hole_only_direct_selection_is_measured_and_moved() {
+    let mut ed = donut();
+    ed.selected.extend([5, 6, 7, 8]);
+    assert_eq!(ed.direct_label().as_deref(), Some("4 anchors"), "hole anchors count as anchors");
+    let (x0, y0, x1, y1) = ed.direct_bbox().expect("a hole-only selection has real bounds");
+    assert!(close([x0, y0], [30.0, 30.0]) && close([x1, y1], [60.0, 60.0]), "got ({x0},{y0})-({x1},{y1})");
+
+    let rev = ed.rev;
+    set_bounds(&mut ed, Some(40.0), Some(35.0), None, None, 0.0, 0.0);
+    assert_eq!(ed.rev, rev + 1, "one undo step");
+    for (aid, p) in [(5, [40.0, 35.0]), (6, [70.0, 35.0]), (7, [70.0, 65.0]), (8, [40.0, 65.0])] {
+        assert!(close(world(&ed, aid), p), "hole anchor {aid} moved to {p:?}, got {:?}", world(&ed, aid));
+    }
+    for (aid, p) in [(1, [0.0, 0.0]), (2, [100.0, 0.0]), (3, [100.0, 100.0]), (4, [0.0, 100.0])] {
+        assert!(close(world(&ed, aid), p), "outer anchor {aid} must not move");
+    }
+    set_bounds(&mut ed, None, None, Some(60.0), None, 0.0, 0.0); // W 30 → 60 about the left edge
+    assert!(close(world(&ed, 6), [100.0, 35.0]) && close(world(&ed, 5), [40.0, 35.0]), "W scales the hole");
+
+    ed.undo();
+    ed.undo();
+    assert!(close(world(&ed, 5), [30.0, 30.0]), "undo restores the hole");
+    assert!(ed.selected.contains(&5), "…and keeps the hole anchor selected");
+}
+
+#[test]
+fn mixed_outer_and_hole_selection_moves_both_as_one_step() {
+    let mut ed = donut();
+    ed.selected.extend([3, 5]); // outer BR (100,100) + hole TL (30,30)
+    assert_eq!(ed.direct_label().as_deref(), Some("2 anchors"));
+    let (x0, y0, x1, y1) = ed.direct_bbox().unwrap();
+    assert!(close([x0, y0], [30.0, 30.0]) && close([x1, y1], [100.0, 100.0]), "bbox spans both rings");
+
+    let rev = ed.rev;
+    set_bounds(&mut ed, Some(40.0), Some(45.0), None, None, 0.0, 0.0);
+    assert_eq!(ed.rev, rev + 1, "ONE undo step for the pair");
+    assert!(close(world(&ed, 5), [40.0, 45.0]), "hole anchor moved, got {:?}", world(&ed, 5));
+    assert!(close(world(&ed, 3), [110.0, 115.0]), "outer anchor moved, got {:?}", world(&ed, 3));
+    assert!(close(world(&ed, 6), [60.0, 30.0]) && close(world(&ed, 1), [0.0, 0.0]), "others untouched");
+    ed.undo();
+    assert!(close(world(&ed, 5), [30.0, 30.0]) && close(world(&ed, 3), [100.0, 100.0]), "one undo restores both");
+}
+
+#[test]
+fn hole_anchor_selection_promotes_to_its_object_on_v() {
+    let mut ed = donut();
+    ed.selected.insert(7);
+    ed.set_tool(ToolKind::Object);
+    assert!(ed.objsel.contains(&10), "A→V promotes a hole anchor to its path, like an outer one");
+}

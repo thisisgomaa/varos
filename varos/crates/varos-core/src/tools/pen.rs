@@ -8,10 +8,12 @@ impl Tool for Pen {
     fn down(&self, ed: &mut Editor, pos: Pt) {
         // on an existing anchor?
         if let Some(aid) = ed.nearest_anchor(pos, ANCHOR_R, true) {
-            let (pi, ai) = ed.doc.aidx(aid).unwrap();
-            let pid = ed.doc.paths[pi].id;
-            let n = ed.doc.paths[pi].anchors.len();
-            let is_end = !ed.doc.paths[pi].closed && (ai == 0 || ai == n - 1);
+            let Some(address) = ed.doc.anchor_address(aid) else { return };
+            let pid = ed.doc.paths[address.path].id;
+            let n = ed.doc.paths[address.path].anchors.len();
+            let is_end = matches!(address.ring, crate::model::AnchorRing::Outer)
+                && !ed.doc.paths[address.path].closed
+                && (address.index == 0 || address.index == n - 1);
             let tip =
                 ed.active.and_then(|ap| ed.doc.pidx(ap)).and_then(|i| ed.doc.paths[i].anchors.last().map(|a| a.id));
             if is_end {
@@ -103,6 +105,7 @@ impl Tool for Pen {
 /// X/Y/W/H and paint fields while the dock described the draft (QW3 review P2-1, PAINS_LOG FB6 nit).
 fn deselect_other_art(ed: &mut Editor) {
     ed.objsel.clear();
+    ed.group_sel.clear();
     ed.dsel_path = None;
     ed.refresh_obj_angle();
 }

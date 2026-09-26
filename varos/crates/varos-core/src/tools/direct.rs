@@ -13,7 +13,7 @@ impl Tool for Direct {
                 ed.dirty |= ed.bake_unit_of(pid);
             }
             let out = ed.which_handle(aid, pos);
-            let a = ed.doc.anchor(aid).unwrap().clone();
+            let Some(a) = ed.doc.anchor(aid).cloned() else { return };
             let hp = if out { a.hout } else { a.hin }.unwrap();
             let couple = !ed.mods.alt && a.hin.is_some() && a.hout.is_some() && {
                 let vi = sub(a.hin.unwrap(), a.p);
@@ -39,8 +39,7 @@ impl Tool for Direct {
         // Alt + anchor/path => duplicate (only once a real drag starts)
         if ed.mods.alt {
             if let Some(aid) = ed.nearest_anchor(pos, ANCHOR_R, false) {
-                let (pi, _) = ed.doc.aidx(aid).unwrap();
-                let pid = ed.doc.paths[pi].id;
+                let Some(pid) = ed.doc.pid_of_anchor(aid) else { return };
                 if !ed.mods.shift {
                     ed.selected.clear();
                 }
