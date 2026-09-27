@@ -19,6 +19,12 @@ S1 is already merged. Baseline findings below about `cur_file`, absent transacti
 
 Dependency and acceptance details below remain applicable where not superseded by the owner decisions recorded in [UI_SYSTEM](../../specs/UI_SYSTEM.md). The minimal U0 prerequisite must not expand into completion of every UI panel before recovery can ship. Current queue: [PLAN](../../PLAN.md).
 
+### UI v2 planning boundary — 2026-09-27
+
+The proposed [UI v2](../../specs/UI_SYSTEM.md) narrows E2's U0 prerequisite to fonts/tokens validation, action buttons, list/section presentation, Home chip and their tests. It does **not** require U1's command table, generic fields/panels or layout persistence. E2 owns `start_ui.rs` and the one StartAction → AppCommand/host adapter. Start hides document controls while retaining S1's never-empty workspace; Home does not mutate the document. Existing S1 settle behavior (discard unconfirmed text, cancel picker preview) remains until a separately approved U3-T change.
+
+Recorded owner readability decisions supersede old §3.7 FAINT/9.5 label prescriptions: use MUTED or the contrast-qualified stronger token, with QW6 sizing, measured on the actual background. F2 extends the same controls for recovery rather than creating a parallel UI. E2 → F1 → F2 retain exclusive host/UI ownership before broad U1/U3 work. This amendment is planning only, not implementation acceptance.
+
 Date: 2026-09-24 · Planner: Claude (planning agent, no code) · Branch baseline: `claude/sweet-cerf-1sg30t` @ `56516a9`.
 Spec rows: §5 S2 and S3; §2 "Start, recent files and recovery"; §3 "State machine and storage safety"; §4 Start/recovery copy; §6 autosave-vs-atomicity risk.
 Owner decision **D2 = YES**: Start page by default, boardless New, recovery ON at 30 s with two generations, recover-as-copy, explicit discard.

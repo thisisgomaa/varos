@@ -3,6 +3,15 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-09-27 — UI v2 planning revision
+
+- **Branch/base:** `codex/ui-system-plan` from `601fd7c`. The base confirms project-health [PR #1](https://github.com/thisisgomaa/varos/pull/1) is merged; earlier entries below retain their then-current publication state.
+- **Scope:** documentation only. Replaced the active UI proposal with six bounded contracts and sequential pieces, preserved the complete prior body in history, mapped all 86 numbered findings to a design response/deferred owner, and aligned PLAN/STATUS and E2/S6 prerequisites. No Rust, assets, dependencies, vendor or accepted ADR changes.
+- **Self-review:** checked lib/bin exports, current host queue and S1 settlement/state hooks against the proposal. Kept the implemented SessionId salt distinguished from the unimplemented DocUi and live-span changes; typed-field confirmation remains an owner choice before U3-T. Original independent review verdicts remain unchanged. The response matrix is not independent approval.
+- **Local gates:** `cargo test --locked --workspace -j 4 --quiet` — **708 passed, 0 failed, 4 ignored**, across 48 result summaries. Host and Windows-target `cargo clippy --locked --workspace --all-targets -j 4 -- -D warnings` — PASS (Windows uses `--target x86_64-pc-windows-msvc`, compile only). `cargo fmt --all --check` and `python3 tools/check_dep_directions.py` — PASS.
+- **Documentation checks:** prior UI spec body exactly equals `git show 601fd7c:docs/specs/UI_SYSTEM.md` after each first-line banner. Matrix counts: architecture 11, input 14, visual 13, panels 27, economy 21. Temporary first-party checker — 128 documents, 226 relative links and 62 anchors, no failures. `git diff --check` — PASS.
+- **Verdict:** implementation-session checks PASS for this documentation slice; **independent review and merge pending**. No new GPU/window check, performance/font experiment, hosted CI result or runtime implementation is claimed. Existing local-gate/billing policy is unchanged.
+
 ## 2026-09-27 — Project-health publication and independent review follow-up
 
 - **Published:** `0e68a6a` on `codex/project-health`; [PR #1](https://github.com/thisisgomaa/varos/pull/1) created as a draft through the owner's signed-in Brave session. No merge performed.
