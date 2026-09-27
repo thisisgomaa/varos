@@ -1,7 +1,7 @@
 > **Status:** current — single current-state page, governed by [FOUNDATION_CHARTER](FOUNDATION_CHARTER.md) §3.
 # Varos — current state
 
-Updated 2026-09-27. Code baseline: `5ee21d4` on `main`. Current work: `codex/project-health` (branch changes; not merged).
+Updated 2026-09-27. Code baseline: `5ee21d4` on `main`. Current work: `codex/project-health`, published as [draft PR #1](https://github.com/thisisgomaa/varos/pull/1) (not merged).
 
 ## Product and platform
 
@@ -25,7 +25,7 @@ Keep the four-crate architecture: pure `varos-core`, scene renderer `varos-rende
 
 The single execution map is [PLAN](../PLAN.md). Start there for completed work, the queue and unresolved decisions.
 
-1. Finish review of this project-health/planning branch; its scope and evidence are in the [work order](work_orders/PROJECT_HEALTH_2026-09-27.md) and GATE_LOG.
+1. Project-health/planning review passed after the billing-policy correction; PR #1 remains a draft and is not merged. Its scope and evidence are in the [work order](work_orders/PROJECT_HEALTH_2026-09-27.md) and GATE_LOG.
 2. Reconcile UI v2 contracts and finish S5-C/D/E. Then minimum U0 → E2 Start/recents → F1/F2 recovery, reusing the modules already built.
 3. Complete S4/S6 association/export, then the remaining UI/Editor extraction in behavior-preserving pieces. Deferred product features remain recorded in PLAN.
 
@@ -37,7 +37,8 @@ The single execution map is [PLAN](../PLAN.md). Start there for completed work, 
 | Build, clippy and format | macOS build, macOS and Windows-target clippy with `-D warnings`, and `fmt --check`: PASS, 2026-09-27 implementation checks. |
 | Explicit old-reader checks | 2 passed when run with `--ignored`, 2026-09-27; not included in the default 708 count. |
 | Architecture checker | Portable gate and 7 checker tests PASS; real-source negative probe rejected as expected. |
-| CI configuration | Current branch adds full macOS gates and Windows compile-only checks. Hosted execution has not been verified. |
+| Independent review | APPROVE after one documentation-policy correction; separate Codex reviewer, 2026-09-27. Full scope and limitations in GATE_LOG. |
+| CI configuration | Full macOS gates and Windows compile-only checks configured. [Run 36300014830](https://github.com/thisisgomaa/varos/actions/runs/36300014830) failed before either job started: account locked due to a billing issue; no test steps executed. |
 | Source size | `ui.rs`: 8,111 lines (tests begin at 6,120); `editor.rs`: 5,057 lines, measured 2026-09-27. |
 | GPU/window interaction | Not tested in the 2026-09-27 architecture review; headless tests do not establish visual correctness. |
 
@@ -49,7 +50,7 @@ Fresh implementation validation is recorded in [GATE_LOG](GATE_LOG.md). Historic
 - Mac screen eyedropper and window geometry persistence remain pending.
 - Every submitted branch passes tests, clippy and format checks. Merge to `main` still requires independent review; local implementation verification is not merge approval.
 - Owner decisions: Mac-first; Windows compile-only; visible user-controlled updates; no UI motion; protect the pure-core boundary. Accepted ADRs remain authoritative.
-- GitHub runner/account verification was last recorded as blocked, with branch protection deferred. This session has not rechecked account settings; configuring a workflow does not prove hosted checks ran.
+- GitHub's billing hold is confirmed by the run annotations on 2026-09-27. The annotations do not specify whether a missing payment method is the cause; account settings were not inspected or changed. The owner's [2026-07-11 decision](../history/STATUS_THROUGH_2026-09-26.md#external-action-items-outside-the-repo) defers billing verification indefinitely: local gates remain authoritative, with independent review before merge. Hosted success is not a new merge prerequisite. Triggers stay enabled; rerun CI on the current PR tip when the hold clears. Branch protection remains deferred.
 - Dependency advisories were last triaged on 2026-09-23. This is historical evidence, not a fresh audit: [triage](../audits/2026-09-23-CARGO_AUDIT_TRIAGE.md).
 - The four charter trigger flags remain `false` (last owner setting: 2026-07-11). No flag is changed by this work.
 

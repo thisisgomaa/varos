@@ -24,7 +24,7 @@ rustup target add x86_64-pc-windows-msvc
 cargo clippy --locked --workspace --all-targets --target x86_64-pc-windows-msvc -j 4 -- -D warnings
 ```
 
-The workflow attempts every push/PR. Hosted runners were last recorded as blocked by account verification; their current availability has not been rechecked. Keep local evidence until a hosted run actually completes (see [STATUS](docs/foundation/STATUS.md)).
+The workflow attempts every push/PR. On 2026-09-27, [run 36300014830](https://github.com/thisisgomaa/varos/actions/runs/36300014830) reported that both jobs could not start because the account is locked due to a billing issue; no test steps ran. Under the owner's [2026-07-11 deferral](docs/history/STATUS_THROUGH_2026-09-26.md#external-action-items-outside-the-repo), local gates remain authoritative and independent review is required before merge. Billing resolution is not an additional merge prerequisite. Triggers remain enabled; rerun hosted CI on the current branch tip when the hold clears (see [STATUS](docs/foundation/STATUS.md)).
 
 ## Ground rules
 

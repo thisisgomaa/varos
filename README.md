@@ -24,7 +24,7 @@ Built in Rust, drawn directly on the GPU (wgpu + egui, no Electron, no web view)
 | Layers, artboard clipping, transforms, snapping | Recovery storage, scheduler and background worker | Gradients and swatches |
 | Independent tabs, save/close guards, `.vrs` v2 PDF files | Pure-PDF export library; mask model/render foundations | SVG/PNG interchange |
 
-Local verification on macOS, 2026-09-27: **708 passed, 0 failed, 4 intentionally ignored**; clippy and format checks passed. CI is configured for full macOS checks and Windows compile checks; hosted execution is not yet verified. See [current state and next steps](docs/foundation/STATUS.md).
+Local verification on macOS, 2026-09-27: **708 passed, 0 failed, 4 intentionally ignored**; clippy and format checks passed. CI is configured for full macOS checks and Windows compile checks; GitHub currently blocks jobs from starting because of an account billing issue. See [current state and next steps](docs/foundation/STATUS.md).
 
 The file-format work is still incomplete: semantic validation and bounded PDF reading remain pending. Follow the [execution plan](docs/PLAN.md) for the verified state of each stage.
 
