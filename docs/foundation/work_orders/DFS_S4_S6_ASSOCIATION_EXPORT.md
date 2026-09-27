@@ -2,6 +2,16 @@
 > Amended 2026-09-24 after the independent plan review (see reviews/DFS_S4_S6_ASSOCIATION_EXPORT.review.md); P1/P2 applied, "Needs Ahmed" items carry their default.
 # DFS work order — S4 file association (macOS + Windows) and S6 Export + system acceptance
 
+## Execution status — 2026-09-27
+
+- **S4-A/B pending:** no `os_open.rs` or `mac_open.rs` exists. Existing CLI/Windows handoff through S1 is a baseline, not proof of the planned cold/warm multi-file Finder flow. Bundle document-type declarations alone do not finish the bridge.
+- **S6-A implemented:** `varos-pdf/src/export.rs` and `write.rs` provide pure-PDF planning/writing, with export tests; merged in the cloud wave. Do not rebuild this library slice.
+- **S6-B/C pending:** app export command/home, worker integration, destination/progress/result UX and final system acceptance. Export is still unavailable from the app; no completion claim based only on S6-A tests.
+- Owner amendments: when the source document is a `.pdf`, the default export name is `<name> export.pdf`; Home replaces the burger beside tabs on Mac, so route export through its home and native File menu instead of recreating the removed burger.
+- Windows stays compile-only; Windows runtime acceptance is explicitly pending. S6-B needs S3-F1; full acceptance also needs S2/S3 and the remaining S5 checks.
+
+Follow [PLAN](../../PLAN.md) for sequencing. Findings and merge windows below describe the original branch, not an instruction to restart merged pieces.
+
 Date: 2026-09-24 · Branch baseline: `claude/sweet-cerf-1sg30t` · Planning only: nothing below has been built or run.
 Spec rows: §5 S4 and S6; §2 "Association and export boundary"; §6 "macOS process/events" and "Privacy and fidelity".
 D1 = YES, including the **narrow Windows exception for S4**. That exception covers the handoff code and the Windows-target compile gate only. **No Windows machine is available for hand-testing.** So the Windows half of P5 stays *pending* until real Windows access exists. A green compile gate does not prove it works at runtime (spec §5 S4).

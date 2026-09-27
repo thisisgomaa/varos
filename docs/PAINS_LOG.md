@@ -1,6 +1,12 @@
 > **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # دفتر الأوجاع — Varos Pain Log
 
+## Current routing — 2026-09-27
+
+This file preserves dated reports, fixes and owner wording; repeated old “open” labels are not a current work queue. Start with [PLAN](PLAN.md) and the updated [quick-wins status](foundation/work_orders/QUICK_WINS_2026-09-24.md).
+
+Still relevant: P12 Pen anchor-delete semantics; P21 mask/selection edge decisions; name-field click-away commit; QW6 readability and QW8 Fit placement; window memory and screen eyedropper. P14–P20 have merged fixes (`d1d8ee3`, `19eed19`); retain regressions and distinguish P16's fixed drag behavior from pending visual redesign. Do not reopen completed S1/tab work from an earlier report. Mask creation gestures and file integration are separate systems, tracked in their own work orders.
+
 سجل حيّ لكل حاجة بتضايق في الاستخدام. أحمد بيلعب في البرنامج ويكتب الوجع خام؛ التخطيط بيفرز ويحوّل لموجات للبروداكشن. الترتيب هنا مش أولوية — الأولوية بتتحدد وقت الفرز.
 
 **الحالة:** 🔴 عاجل · 🟠 مهم · 🟡 ذوق (قرار أحمد) · 🔵 صغير · ✅ اتصلح · ❌ اتفنّد (مش حقيقي)

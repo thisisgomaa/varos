@@ -1,6 +1,10 @@
 > **Status:** current — F4.1 implementation design, governed by ADR-0002 and `docs/foundation/FOUNDATION_CHARTER.md` sections 3-6.
 # F4.1 EditCommand Design
 
+## Current use — 2026-09-27
+
+F4.1 is implemented. F4.2 lifecycle/tabs were absorbed by merged DFS S1; Start/recovery/export effects remain in DFS S2/S3/S6. Do not start a second file-command refactor from the old call-site list. Follow [PLAN](../PLAN.md).
+
 ## Boundary
 
 `EditCommand` is the closed, internal command boundary for deterministic edits owned by `varos-core`. Any panel or keyboard action that mutates `Document` or participates in history enters core through this enum. Tool choice, selection, previews, and view preferences remain explicit `Editor` interfaces. Pointer/gesture methods remain core input interfaces: the app supplies input coordinates and modifiers, while core alone decides document mutation and history.

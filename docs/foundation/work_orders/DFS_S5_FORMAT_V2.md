@@ -2,6 +2,22 @@
 > Amended 2026-09-24 after the independent plan review (see reviews/DFS_S5_FORMAT_V2.review.md); P1/P2 applied, "Needs Ahmed" items carry their default.
 # DFS S5 — `.vrs` format version 2, migration and bounded validation
 
+## Execution status — 2026-09-27
+
+| Piece | Verified state | Remaining work |
+|---|---|---|
+| S5-A | ADR-0008 **Accepted** (2026-09-24) | Do not re-request its acceptance; preserve the immutable ADR. |
+| S5-B | Merged; `format/mod.rs` writes v2, structural/version checks and migration are present | Reuse this spine; do not restart it. |
+| S5-C | **Pending:** `format/validate.rs` still returns `Ok(())` unconditionally | Semantic validation and its focused tests. Existing structural checks and save decode-backstop are real but do not replace this piece. |
+| S5-D | **Pending:** PDF still uses `std::fs::read` and `lopdf::Document::load_mem` in `varos-pdf/src/lib.rs` | Bounded container reader, version propagation, bounded name-tree traversal; proposed `read.rs` is absent. |
+| S5-E | v1 fixtures, golden tests and harness merged | Final v2 fixtures, C/D refusal coverage and real-file corpus/old-binary acceptance remain open. |
+
+**S5 as a system is incomplete.** Passing format-v2 tests does not establish semantic validation or bounded PDF loading. The [wire contract](../../reference/VRS_FORMAT.md) now separates implemented checks from pending C/D checks.
+
+Owner amendment (2026-09-24): an old file with a broken clip mask should open with the mask released and a notice. Current `format/migrate.rs::normalize` still refuses a changed/broken clip. Reconcile that explicit v1 migration exception with structural checks, warnings and fixtures before implementing C; keep strict current-format validation. The original `v1_invalid_clip_refused_not_demoted` test requirement below is superseded for that owner-approved recoverable case. Do not weaken unrelated corruption checks or silently discard art.
+
+The pieces below retain their original baseline/API context; “Proposed ADR” and “start at base” are no longer current execution instructions. Current queue: [PLAN](../../PLAN.md).
+
 Date: 2026-09-24 · Base: `ecf67f5` on `claude/sweet-cerf-1sg30t` · Scope: `varos-core` (model/format) + `varos-pdf` (container read side) + docs. **No `varos-app` edits.** Parallel-safe with S1, because S5 does not touch the app loop and keeps every existing public signature the app uses.
 
 ## 1. Goal & acceptance

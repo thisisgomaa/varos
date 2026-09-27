@@ -3,6 +3,29 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-09-27 — Project health: current state and platform gates
+
+- **Branch:** `codex/project-health`, based on `5ee21d4`; branch changes, not merged. **Implementer:** Codex. **Independent review:** pending.
+- **Scope:** CI, portable dependency checker and its tests, README/CONTRIBUTING, concise STATUS with the original body preserved in a historical snapshot, and the work order. No Rust source, vendor code, lockfile or document fixture changes.
+- **Local checks (macOS):**
+  - `cargo test --locked --workspace -j 4 --quiet`: **708 passed, 0 failed, 4 intentionally ignored**.
+  - `cargo clippy --locked --workspace --all-targets -j 4 -- -D warnings`: PASS.
+  - Same clippy command with `--target x86_64-pc-windows-msvc`: PASS (compile check, not Windows execution).
+  - `cargo fmt --all --check` and `cargo build --locked --workspace -j 4`: PASS.
+  - `python3 tools/check_dep_directions.py`: PASS; also passed from `/tmp` using the absolute script path.
+  - `python3 -m unittest discover -s tools/tests -v`: **7 passed**, including reverse-edge, target-specific platform dependency, forbidden Winit, missing member and adapter-confinement regressions.
+  - Real-source negative probe: temporary unused `.rs` file under app source importing `egui_tiles` was rejected with exit 1 and its filename; deleting that probe restored PASS. No production file was modified by this check.
+  - CI YAML parsed with Ruby YAML; both platform entries and macOS-only test/build conditions verified. Python setup follows the [official setup-python action](https://github.com/actions/setup-python).
+  - Status history body compared to `git show HEAD:docs/foundation/STATUS.md`: byte-for-byte equivalent after the status banner. All 15 local Markdown link targets in edited/new entry-point docs resolve.
+  - `git diff --check`: PASS.
+- **Limits:** hosted CI was not run; account settings were not inspected. PowerShell is unavailable locally, so its compatibility wrapper was reviewed but not executed. This was a scoped link-target check, not the repository-wide PowerShell link/anchor checker. No GPU/window or fresh vulnerability audit was run.
+- **Owner-requested plan reconciliation:** added the single `docs/PLAN.md` entry point; updated stage status on S1, S2/S3, S4/S6, S5 and quick wins; routed old masks/polish/foundation plans to their current owners. Recorded existing UI owner decisions and remaining v2 review blockers without claiming v2 approval. Accepted ADRs remain untouched; the old plan-map body is preserved exactly after its status banner.
+- **Additional verified gaps:** S5-C is an unconditional validator stub, S5-D is not the app PDF reader yet, mask creation/release gestures are absent from the UI, and v2 frozen fixtures remain pending. README/STATUS and the wire contract now say so explicitly.
+- **Additional check:** `cargo test --locked -p varos-pdf --test old_reader_harness -- --ignored`: **2 passed**. The old “fails until v2” documentation was corrected; test annotations were not changed. These two are additional to the default 708 passes.
+- **Documentation validation:** temporary Python check following the existing checker's line-based fence handling and anchor rules: **125 first-party Markdown/HTML files, 206 relative links, 59 anchors, no failures** (includes new docs; vendor excluded). The earlier broad inline-code regex produced false failures in ELEMENTS_CATALOG; matching the existing line-based behavior resolved them. No reference content was edited to silence the checker.
+- **Result:** project-health and plan-reconciliation slices complete on this branch; E2/F1/F2 file integration and UI extraction remain subsequent slices. Independent review is still required before merging to `main`.
+- Sign-off: implementer — PASS (local validation only; not merge approval) — 2026-09-27
+
 ## F1 — Inventory & classification
 
 - **Date:** 2026-07-11. **Branch:** `codex/f1-inventory` (range `1aff281..2aa1c2f`, i.e. commits `74fdad7`, `cf59527`, `d3bbc17`, `96deeaf`, `2aa1c2f`). **Reviewer:** planner.

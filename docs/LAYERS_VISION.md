@@ -1,6 +1,10 @@
 > **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos Layers — Vision & Spec
 
+## Implementation note — 2026-09-27
+
+The simple Layers tree is implemented. Clip model/render/PDF foundations exist, but the two mask creation gestures are still pending; use the reconciled [MASKS_PLAN](MASKS_PLAN.md) for stage status. Structural bands remain deferred. Historical sections saying masks are wholly absent or indefinitely deferred do not describe the current code. The design remains a reference; execution timing is in [PLAN](PLAN.md).
+
 > The design of record for the Layers system after the **2026-07-03 pivot**. Supersedes the Illustrator-
 > panel direction in `LAYERS_SPEC.md` (that doc stays for its pixel/interaction research; this doc owns
 > the model + the pivot). Produced by a 5-agent design pass (3 research → synthesis → adversarial critique).

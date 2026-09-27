@@ -1,6 +1,10 @@
 > **Status:** current — macOS build/launch port design for `varos-app`, governed by `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # macOS Shell Port (build + launch)
 
+## Current use — 2026-09-27
+
+The Mac port and cursor follow-ups are merged. This design records their implementation; its old missing-feature lists are not the execution queue. Current remaining Mac work is routed through [PLAN](../PLAN.md), DFS S4 and the UI system.
+
 **Date:** 2026-09-23
 **Reason:** Ahmed now works on a Mac and must hand-test every stage in the real window. `varos-core`,
 `varos-pdf` and `varos-render-wgpu` already build and test green on macOS (Metal); only `varos-app`

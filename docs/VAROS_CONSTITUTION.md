@@ -1,6 +1,10 @@
 > **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — Constitution (الدستور)
 
+## Recorded amendments — 2026-09-27 reconciliation
+
+Later owner decisions supersede the corresponding old wording below: **Mac is the primary/official build; Windows is compile-only for now** (2026-09-23). Interaction checks may be run with Codex computer use, with Ahmed spot-checking visual judgment (2026-09-25); automated headless checks still do not prove interaction feel. Sources: [owner-decision archive](history/STATUS_THROUGH_2026-09-26.md), [current status](foundation/STATUS.md). This update does not change the v1 feature commitment or accept a new architecture.
+
 Original decisions were locked **2026-06-23**. Architecture, schema, and update clauses were deliberately amended **2026-07-11** by accepted [ADR-0001](adr/ADR-0001-native-gpu-ui-stack.md), [ADR-0004](adr/ADR-0004-v1-schema-policy.md), and [ADR-0007](adr/ADR-0007-visible-update-policy.md).
 
 ## Identity

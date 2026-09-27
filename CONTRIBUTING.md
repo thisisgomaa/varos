@@ -5,15 +5,26 @@ Thank you for even opening this file. Varos is built by a tiny team (one designe
 
 ## Build & test
 
+macOS is the primary runtime target. Install stable Rust and Python 3 (standard library only for the architecture checker).
+
 ```bash
 cd varos            # the Cargo workspace lives here, one level below repo root
-cargo build         # or: cargo run -p varos-app
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings   # CI gates on this
+cargo build --locked --workspace -j 4 # or: cargo run -p varos-app
+cargo test --locked --workspace -j 4
+cargo clippy --locked --workspace --all-targets -j 4 -- -D warnings   # CI gates on this
 cargo fmt --all --check
+python3 ../tools/check_dep_directions.py
+python3 -m unittest discover -s ../tools/tests -v
 ```
 
-All four must pass locally before review. The workflow is configured for every PR, but GitHub-hosted runners are currently blocked by account verification; until that clears, local gate evidence is authoritative (see [STATUS](docs/foundation/STATUS.md)).
+All checks must pass locally before review. On Windows use `python` instead of `python3`. CI runs the full suite and build on macOS; Windows runs clippy on all targets as a compile-only compatibility check. To reproduce that check from a Mac with the target installed:
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+cargo clippy --locked --workspace --all-targets --target x86_64-pc-windows-msvc -j 4 -- -D warnings
+```
+
+The workflow attempts every push/PR. Hosted runners were last recorded as blocked by account verification; their current availability has not been rechecked. Keep local evidence until a hosted run actually completes (see [STATUS](docs/foundation/STATUS.md)).
 
 ## Ground rules
 
@@ -36,8 +47,10 @@ If you're not comfortable with clause 2, open an issue and we'll talk before you
 
 ## Where to start
 
+Read the [execution plan](docs/PLAN.md) and [current state](docs/foundation/STATUS.md) before picking a work order. Older plans retain their dated baseline; the current-status note at the top takes precedence over old branch instructions.
+
 - Issues labeled **`good first issue`** are prepared to be finishable in one sitting.
-- Icons, translations, documentation, and testing on varied Windows GPUs (especially Intel iGPU) are always welcome — no Rust required.
+- Icons, translations, documentation, and macOS interaction testing are always welcome — no Rust required.
 - Big features start with a short design note in `docs/` (see existing ones for the pattern: problem → decision → gates), not with code.
 
 ## AI-assisted contributions

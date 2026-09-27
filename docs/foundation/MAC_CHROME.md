@@ -1,6 +1,10 @@
 > **Status:** current — macOS window chrome + native menu bar design for `varos-app`, governed by `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # macOS Window Chrome + Native Menu Bar
 
+## Current use — 2026-09-27
+
+This chrome piece is merged, with later tab-drag/focus fixes in `d1d8ee3`. Home/tab visual changes belong to the UI system and S2-E2. Follow [PLAN](../PLAN.md); baseline implementation notes below remain evidence.
+
 **Date:** 2026-09-23
 **Reason:** Ahmed on his Mac: "the whole top bar is broken, and the default Mac menu is not used at all."
 Seen in his screenshots: (1) two title bars — the Mac one (traffic lights + title) above our own bar,
