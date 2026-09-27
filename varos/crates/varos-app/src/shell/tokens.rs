@@ -1,4 +1,5 @@
-//! Design tokens — transcribed VERBATIM from `docs/UI_VISION_MOCKUP.html` `:root` (the visual law).
+//! Runtime design tokens — the warm palette and current UI text roles.
+//! Historical mockups are visual references, not a second machine-synchronized token source.
 //! This is the ONLY place raw colour / radius / spacing numbers live in the shell.
 //! (BOX_SYSTEM_PLAN §3 + ruling 1 "tokens from the mockup" + ruling 4 "azure is a scalpel".)
 use egui::{Color32, CornerRadius, Stroke};
@@ -66,6 +67,20 @@ pub fn r_box() -> CornerRadius {
 }
 pub fn hairline() -> Stroke {
     Stroke::new(1.0, LINE)
+}
+
+/// Existing dense desktop text ramp, centralized without changing sizes in U0-A.
+/// Names use Proportional; numeric fields use Monospace. All bundled faces are Regular (400).
+pub fn text_styles() -> std::collections::BTreeMap<egui::TextStyle, egui::FontId> {
+    use egui::{FontId, TextStyle};
+    [
+        (TextStyle::Heading, FontId::proportional(13.5)),
+        (TextStyle::Body, FontId::proportional(13.0)),
+        (TextStyle::Button, FontId::proportional(12.5)),
+        (TextStyle::Small, FontId::proportional(11.0)),
+        (TextStyle::Monospace, FontId::monospace(12.5)),
+    ]
+    .into()
 }
 
 /// Apply the constitution's base look to a context: warm-dark visuals + INSTANT (no animation).

@@ -1538,18 +1538,7 @@ fn lucide_filled(inner: &str) -> String {
 }
 
 fn install_fonts(ctx: &egui::Context) {
-    // §3.4: ui = Segoe UI Variable Text (Win11) → Segoe UI; mono = Cascadia Code → Consolas.
-    let mut f = egui::FontDefinitions::default();
-    let first = |names: &[&str]| names.iter().find_map(|n| std::fs::read(format!("C:/Windows/Fonts/{n}")).ok());
-    if let Some(b) = first(&["SegUIVar.ttf", "segoeuivf.ttf", "segoeui.ttf"]) {
-        f.font_data.insert("ui".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(b)));
-        f.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "ui".to_owned());
-    }
-    if let Some(b) = first(&["CascadiaCode.ttf", "CASCADIA.TTF", "consola.ttf"]) {
-        f.font_data.insert("mono".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(b)));
-        f.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "mono".to_owned());
-    }
-    ctx.set_fonts(f);
+    varos_app::shell::fonts::install(ctx);
 }
 
 /// ⌘+ / ⌘− / ⌘0 belong to the CANVAS (zoom the artwork, Fit), never to the chrome. egui's built-in
@@ -1560,7 +1549,6 @@ fn disable_ui_keyboard_zoom(ctx: &egui::Context) {
 }
 
 fn install_style(ctx: &egui::Context) {
-    use egui::{FontFamily, TextStyle};
     ctx.set_theme(egui::Theme::Dark);
     // Stage 4: the shell law is the base (warm visuals + INSTANT + thin overlay scrollbars +
     // tight seam grab) — the app only adds its text ramp on top.
@@ -1569,14 +1557,7 @@ fn install_style(ctx: &egui::Context) {
     // labels are UI chrome, not documents — double-clicking the artboard name / size chip must never
     // paint a text-selection highlight over it (Ahmed 2026-07-11 "حاجة رخمة"). TextEdits keep selection.
     s.interaction.selectable_labels = false;
-    s.text_styles = [
-        (TextStyle::Heading, FontId::new(13.5, FontFamily::Proportional)),
-        (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
-        (TextStyle::Button, FontId::new(12.5, FontFamily::Proportional)),
-        (TextStyle::Small, FontId::new(11.0, FontFamily::Proportional)),
-        (TextStyle::Monospace, FontId::new(12.5, FontFamily::Monospace)),
-    ]
-    .into();
+    s.text_styles = varos_app::shell::tokens::text_styles();
     ctx.set_style_of(egui::Theme::Dark, s.clone());
     ctx.set_style_of(egui::Theme::Light, s);
 }

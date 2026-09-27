@@ -9,13 +9,13 @@ for *why*, this for *what byte, what key, what number*.
 
 ## Implementation status — 2026-09-27
 
-The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; S5-C/D and the automated S5-E fixture/harness slice are implemented on the work branch with independent review pending; personal-file and real-application acceptance remain open.
+The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; S5-C/D and the automated S5-E fixture/harness slice are implemented on the work branch with independent review pending; real-application acceptance remains open. The owner reports no personal documents; the scoped scan found only fixtures.
 
 | Boundary | Enforced today | Pending |
 |---|---|---|
 | Core JSON (`format::decode_model`) | Model byte/depth caps, version-first gate, strict fields, structural/count checks, migration/canonical checks. Work branch adds semantic kinds/masks/ranges, all persisted floats and authored checks before normalization; save retains the decode-backstop | Batched independent review; C is not merged. |
 | Container version | Work branch extracts `/VAROS_SchemaVersion`, validates its type/range and supplies it to the core version gate before model decoding | Batched independent review. |
-| App file loading | Work branch routes both compatibility wrappers through checked bounded file/byte APIs; preserves migration notices | Personal corpus and real-window acceptance. |
+| App file loading | Work branch routes both compatibility wrappers through checked bounded file/byte APIs; preserves migration notices | Real-window acceptance; no personal documents reported/found in the scoped scan. |
 | PDF parsing | Work branch enforces the strict native profile below: preflight before lopdf, no stream inflation, bounded name-tree traversal, exact fallback filename | Independent review; third-party Preview re-save acceptance unverified. |
 | Legacy broken mask | Work branch: recoverable v1 Group clip references released in memory, with notice retained through PDF/disk/lifecycle Open; current v2/save stay strict | Real-window verification and batched independent review; no on-disk repair during Open. |
 
@@ -211,7 +211,7 @@ this reader; the notice-retaining wrapper continues to surface S5-C migration ou
 All eight frozen v1 native PDFs and current writer output pass the checked path. This does not
 establish support for Preview/other third-party re-saves: those may be refused with the unsupported
 profile reason. No PDF import or new compression dependency is introduced. Independent review,
-personal-file corpus and Preview hand checks remain pending before S5 release acceptance.
+Preview hand checks remain pending before S5 release acceptance; the owner reports no personal corpus.
 
 ## 11. Examples
 
@@ -320,6 +320,8 @@ VAROS_CORPUS_DIR="/path/to/personal-varos-documents" \
 
 Unset configuration, a missing/unreadable/empty folder or any refused document makes the
 explicit run fail. An ordinary CI run skips this entry point and cannot establish personal
-acceptance. Any refusal of a personal file blocks S5 merge until understood/resolved. No
-personal directory has yet been supplied for this run; synthetic harness checks are not a
-substitute (DFS_S5_FORMAT_V2.md §1; ADR-0008 §Consequences, R3).
+acceptance. Any refusal of a personal file blocks S5 merge until understood/resolved. On 2026-09-27 the owner said there are no saved personal files. Read-only filename scans of
+the home directory (excluding Library/build/cache trees), iCloud/CloudStorage and Varos support
+locations found only project fixtures, with no scan errors. The personal-file run is therefore
+not applicable to the currently available corpus, not a passing manual test. Run it if personal
+documents are found later (DFS_S5_FORMAT_V2.md §1; ADR-0008 §Consequences, R3).

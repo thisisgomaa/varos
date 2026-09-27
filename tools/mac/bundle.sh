@@ -55,6 +55,11 @@ done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Varos.icns"
 rm -rf "$ICONSET"
 
+# Redistribute the copyright/OFL notices with the fonts embedded in the executable.
+FONT_ASSETS="$WORKSPACE/crates/varos-app/assets/fonts"
+mkdir -p "$APP/Contents/Resources/Licenses/Fonts"
+cp "$FONT_ASSETS/"*-LICENSE.txt "$FONT_ASSETS/manifest.json" "$APP/Contents/Resources/Licenses/Fonts/"
+
 # ---- 5. binary ----
 cp "$BIN" "$APP/Contents/MacOS/varos"
 chmod +x "$APP/Contents/MacOS/varos"
