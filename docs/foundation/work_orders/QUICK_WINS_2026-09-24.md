@@ -3,6 +3,21 @@
 
 # Quick-wins backlog — Astra F08 / F10 / F11, open pains, Mac gaps
 
+## Execution status — 2026-09-27
+
+| Item | Current disposition |
+|---|---|
+| QW1 thick-stroke hit | Merged (`b9a8b2c`); keep regressions, do not repeat. |
+| QW2 duplicate path resolver | Dropped; S3-A owns the resolver. QW2-lite window memory remains pending. |
+| QW3 rename/drawing inspector | Merged (`3c208fa`); click-away commit is a distinct remaining issue. |
+| QW4 round caps | Merged (`4af375f`); retain renderer regressions. |
+| QW5 Edit menu rows | Merged (`66dafe2`), followed by S1 integration. |
+| QW6 contrast/sizes | Pending; absorbed into the UI System token/component work. Owner chose FAINT→MUTED and QW6 sizes on 2026-09-24. Do not run a competing standalone palette pass. |
+| QW7 Search/Share honesty | Absorbed into merged S1-C. |
+| QW8 Fit avoids floating controls | Pending; one owner with UI layout/placement work, not a second implementation alongside U4-C. |
+
+Old “start now”, branch windows and agent/model assignments below are historical execution context. P12 Pen-delete semantics and P21 edge cases remain decisions in the pain log. Window memory, screen eyedropper and control-bar placement are not silently approved here. Current execution queue: [PLAN](../../PLAN.md).
+
 **Date:** 2026-09-24 · **Branch read:** `claude/sweet-cerf-1sg30t` (head `56516a9`) · **Planner:** Claude subagent. It read the code and wrote this backlog. It changed no code, built nothing and ran no tests.
 
 ## 1. Goal & acceptance

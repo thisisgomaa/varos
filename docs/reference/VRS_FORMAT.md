@@ -3,10 +3,23 @@
 # `.vrs` file format — wire contract
 
 `.vrs` is Varos's document format: a versioned JSON model of `varos-core::model::Document`, carried
-either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pattern). This document
-is the exact contract a reader or writer must honour — envelope, container, versioning, limits and
+either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pattern). This document records the accepted target contract and the implementation status below. A pending check is not a current runtime guarantee. The contract covers the envelope, container, versioning, limits and
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
+
+## Implementation status — 2026-09-27
+
+The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; **S5-C and S5-D are not complete**.
+
+| Boundary | Enforced today | Pending |
+|---|---|---|
+| Core JSON (`format::decode_model`) | Model byte/depth caps, version-first gate, strict fields, structural/count checks, migration/canonical checks | Full semantic ranges/kinds/finite-field validation: `format/validate.rs` is still a stub. Save additionally has a typed decode-backstop for non-finite serialization. |
+| Container version | Core checks a supplied `container_version` | Current PDF reader does not extract/pass `/VAROS_SchemaVersion`; end-to-end mismatch refusal needs S5-D. |
+| App file loading | Extracted model goes through the core spine | App uses `varos_pdf::load_vrs`, which reads the whole file before parsing. The bounded raw helper in core is not this app path. |
+| PDF parsing | Existing legacy extraction works on the regression fixtures | Byte/object/decompressed-stream/name-tree bounds, strict PDF profile and exact fallback filename checks need S5-D. |
+| Legacy broken mask | Current migration rejects a clip that normalization would change | Owner chose release-with-notice for recoverable v1 broken masks; migration/warnings/fixtures still need reconciliation. |
+
+Source: `varos-core/src/format/{mod,validate,migrate,limits}.rs`, `varos-pdf/src/lib.rs`, `varos-app/src/file_ports.rs`. Work ownership: [S5](../foundation/work_orders/DFS_S5_FORMAT_V2.md). Sections below distinguish target rules from current enforcement.
 
 ## 1. Container
 
@@ -69,17 +82,14 @@ migration, old and new fixtures, a rejection fixture, and an update to this file
   mismatch. A *missing* catalog key (raw JSON files carry no catalog at all) is not a mismatch.
 - A refusal never installs a partial document and never modifies the file on disk.
 
-Today's build (pre-S5-B) already does a version-first, header-only parse before the typed decode
-(`varos-core/src/file.rs::doc_from_blob`) — that is the hole ADR-0008 closes: it accepts `0`, reports
-a missing version as a raw serde error, and never reads `/VAROS_SchemaVersion` back. S5-B replaces this
-with `varos_core::format::decode_model`, implementing every bullet above precisely.
+S5-B now supplies the version-first gate through `format::decode_model`, including missing/invalid/newer versions. Container mismatch checks work only when the caller supplies the catalog version; the current app PDF reader does not yet do so (S5-D).
 
 ## 5. Version table
 
 | version | status | written by | notes |
 |---|---|---|---|
-| 1 | **current** (every build up to and including this one) | every `.vrs`-capable build since `7a5b3c8` (2026-07-02) | a *family* of eras, all stamped `1` — raw JSON, pre-artboards, legacy group registry, pre-`Paint` enum, pre-tree, and (the hole) masks/rotation added under this same number. See ADR-0008 §Context. |
-| 2 | **planned** — lands with S5-B | this build, once S5-B merges | same `Document` shape as 1; the reader contract tightens (§6, §9). No schema change — see ADR-0008 §"v2 is the same model with a stricter reader". |
+| 1 | **legacy, readable through migration** | every `.vrs`-capable build since `7a5b3c8` (2026-07-02) | a *family* of eras, all stamped `1` — raw JSON, pre-artboards, legacy group registry, pre-`Paint` enum, pre-tree, and (the hole) masks/rotation added under this same number. See ADR-0008 §Context. |
+| 2 | **current writer** since S5-B | current build | same `Document` shape as 1; the reader contract tightens (§6, §9). No schema change — see ADR-0008 §"v2 is the same model with a stricter reader". |
 
 ## 6. Migration v1 → v2
 
@@ -127,18 +137,18 @@ proved by a passing test, not just argued.)*
 
 ## 8. Limits
 
-Starting numbers proposed in ADR-0008 §6 ("Bounded load, symmetric save"); S5-B made them the enforced
+Starting numbers proposed in ADR-0008 §6 ("Bounded load, symmetric save"); S5-B declared them in
 `varos_core::format::Limits::DEFAULT` (`varos-core/src/format/limits.rs`, the one place they are
 declared) and lowered two after measuring (ADR-0008 R4: lowered after measurement, never raised silently).
 
-| limit | proposed (ADR-0008 §6) | enforced (`Limits::DEFAULT`) |
+| limit | proposed (ADR-0008 §6) | declared value / actual enforcement |
 |---|---|---|
-| file bytes | 256 MiB | 256 MiB |
+| file bytes | 256 MiB | 256 MiB in the core bounded-file helper; **not applied by the app PDF/raw load path yet** (S5-D). |
 | JSON model bytes | 32 MiB | 32 MiB |
 | JSON nesting depth | 128 (serde_json's built-in limit — no separate scanner) | 128 (serde_json built-in; no `Limits` field) |
-| PDF objects | 100,000 | 100,000 (enforced by S5-D's reader) |
-| decoded PDF stream bytes | 64 MiB | 64 MiB (enforced by S5-D's reader) |
-| PDF name-tree depth | 64 | 64 (enforced by S5-D's reader) |
+| PDF objects | 100,000 | 100,000 — declared; S5-D enforcement pending |
+| decoded PDF stream bytes | 64 MiB | 64 MiB — declared; S5-D enforcement pending |
+| PDF name-tree depth | 64 | 64 — declared; S5-D enforcement pending |
 | nodes (legacy registry groups count here too) | 100,000 | **40,000** |
 | paths | 100,000 | **40,000** |
 | anchors (outer + holes, total) | 1,000,000 | 1,000,000 — in practice never reached: the 32 MiB model cap binds first, at about 350,000 anchors (~92 bytes per anchor with handles) |
@@ -151,7 +161,7 @@ Why 40,000 (2026-09-24, S5-B measurement, release build, cloud Linux): loading i
 order's bar is "about 2 s at the cap" (R4). Optimising `sync_tree` is out of S5; raising the number
 afterwards needs the owner.
 
-Over-limit input is refused with the number that was exceeded, never silently truncated.
+Enforced core limits refuse input with the number exceeded, never truncate it. Declared PDF bounds do not yet constrain the app reader; see the implementation-status table.
 
 ## 9. Refusal messages (user-facing copy, ADR-0008 §4 / spec §4)
 
@@ -163,9 +173,7 @@ Over-limit input is refused with the number that was exceeded, never silently tr
 | a re-saved PDF using object/xref streams, incremental updates or encryption | "This file was re-saved by another app in a form Varos can't read safely yet. Open the original .vrs." (ADR-0008 R2 — not yet enforced; today's reader has no such gate.) |
 | a save that would violate its own limits or validity | "This document can't be saved: {reason}. It is still open." — the document stays dirty in memory; nothing on disk changes. |
 
-Today's build (pre-S5-B) only has the "newer Varos (v{n}) — please update" message
-(`varos-core/src/file.rs:34`); the rest of this table is S5-B/C/D's deliverable, worded here so every
-piece implements the same copy.
+Core typed errors now exist in `format/error.rs`. PDF profile-specific refusal and semantic validation messages remain C/D deliverables; app `file_ports.rs` also translates errors to plain messages. The table describes the shared target copy, not proof that each app path emits it today.
 
 ## 10. Supported PDF profile (S5-D's deliverable)
 
@@ -178,13 +186,13 @@ cap) — this is a known, tracked gap, not yet closed by this piece.
 
 ## 11. Examples
 
-A minimal raw JSON `.vrs` (format 1, today):
+An abbreviated legacy raw JSON `.vrs` example (format 1; current saves write format 2):
 
 ```json
 {"varos":1,"doc":{"paths":[{"id":1,"anchors":[{"id":1,"p":[0.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":2,"p":[80.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":3,"p":[40.0,60.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.2,0.7,0.3,1.0],"stroke":[0.0,0.0,0.0,1.0],"stroke_width":2.0,"holes":[],"opacity":1.0,"hidden":false,"locked":false,"name":null}],"groups":[],"group_of":{},"nodes":[{"id":1,"kind":"Layer","name":"Layer 1","parent":null,"children":[4],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":4,"kind":{"Path":1},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"}],"roots":[1],"active_layer":1,"ids":4,"units":{"ppi":72.0,"display":"Px"},"artboards":[{"x":0.0,"y":0.0,"w":1080.0,"h":1080.0,"name":"Artboard 1","bleed":0.0,"page_color":[1.0,1.0,1.0,1.0],"clip":true,"hidden":false,"locked":false}],"active":0,"move_art_with_ab":true,"snap":{"...":"…SnapConfig fields…"},"ruler_origin":[0.0,0.0],"guides":[],"guides_locked":false}}
 ```
 
-(this is `varos-core/tests/fixtures/v1/v1_plain.vrs`, byte-identical, `snap` elided here for length.)
+(Based on `varos-core/tests/fixtures/v1/v1_plain.vrs`; `snap` is elided, so this illustration is not a loadable or byte-identical fixture. Use the actual fixture for tests.)
 
 A clip group's node shape (inside `nodes`, from `v1_masked.vrs`):
 
@@ -238,8 +246,7 @@ agree.
 
 ### Future v2 goldens
 
-Once S5-B lands and format 2 exists, `v2_masked_rotated.vrs` / `v2_masked_rotated_pdf.vrs` get frozen
-the same way, as the goldens a future v3 migration will be proved against.
+Format 2 now exists. Frozen `v2_masked_rotated.vrs` / `v2_masked_rotated_pdf.vrs` are still pending S5-E finalization, alongside C/D refusal fixtures; runtime-generated round trips do not replace that future migration baseline.
 
 ## 13. Old-reader harness
 
@@ -247,12 +254,14 @@ the same way, as the goldens a future v3 migration will be proved against.
 `ecf67f5:varos/crates/varos-core/src/file.rs:28-35` (diff it against `git show
 ecf67f5:varos/crates/varos-core/src/file.rs` to check it is still exact) and two tests,
 `old_reader_refuses_v2_json_before_decode` / `old_reader_refuses_v2_pdf_before_decode`, that feed it
-*this build's own* current writer output. They are `#[ignore]`d today with the reason "fails until
-S5-B raises the write version past 1" — run them with `--include-ignored` to see them fail now; once
-S5-B raises `FORMAT_VERSION`/`VRS_VERSION` to 2 they start passing, and that pass is exactly the proof
-that a pre-S5 build refuses a v2 file before any typed decode. This proves the frozen *logic*, not the
-old *binary* — the binary is covered by Ahmed's hand test 3
-(`docs/foundation/work_orders/DFS_S5_FORMAT_V2.md` §1).
+*this build's own* current writer output. They still carry the old `#[ignore]` attributes, but S5-B has already raised the writer version. Explicit verification on 2026-09-27:
+
+```bash
+cargo test --locked -p varos-pdf --test old_reader_harness -- --ignored
+# 2 passed, 0 failed
+```
+
+The two frozen-logic refusal checks pass. Removing the stale ignore annotations is a follow-up for S5-E; these are not included in the default 708-test total. This proves the frozen logic, not execution of an old application binary. Real-file corpus and old-binary acceptance remain separately pending.
 
 ## 14. Corpus check — Ahmed's hand test 0
 

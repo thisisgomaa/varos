@@ -1,6 +1,42 @@
 > **Status:** reference — spec/proposal for Ahmed's decision (charter §3, level 5); not an accepted decision.
 # Varos UI System
 
+## Reconciliation for the next revision — 2026-09-27
+
+**Implementation status:** v1 remains a reviewed proposal, not an accepted/executed v2. The five reviews below returned REQUEST CHANGES. S1 and quick wins have since merged; old branch queues, fixed line counts and the “24 agent-days” estimate below are baseline planning only. Do not build the whole v1 module tree verbatim.
+
+### Owner decisions already recorded
+
+Source: the [2026-09-24/25 owner-decision record](../history/STATUS_THROUGH_2026-09-26.md).
+
+| Topic | Current direction; supersedes the corresponding v1 proposal |
+|---|---|
+| Platform/chrome | Mac-first; Home replaces the burger beside tabs, with native Mac menus. Icons replace text button labels; tab drag remains instant, with visual refinement pending. |
+| Fonts/user names | Bundle IBM Plex Sans/Mono and Plex Sans Arabic; test bidi on real multi-word/mixed names. Do not repeat unverified “egui cannot shape Arabic” claims from early reviews. |
+| Motion | Remove drag easing, glide and azure glow; keep the direction bar. Changing the fork's accepted behavior needs the superseding ADR described by the panel review before code lands. |
+| On states | Tool = azure block; icon toggle = small azure bar; tab/segment = surface fill. These are distinct control states, not one universal selected style. |
+| Readability | FAINT→MUTED direction and QW6 sizes accepted. Resolve placeholders/disabled states and contrast on actual backgrounds in the token contract. |
+| Layout persistence | Deferred. **Do not implement `ui/layout.rs` or `workspace.json` from v1 U4-A now.** Reset Workspace belongs only in the Window menu. Size constraints/placement remain separate. |
+| File behavior | Broken legacy masks: release with notice; exporting a `.pdf` document defaults to `<name> export.pdf`. Owned by S5 and S6, not a second UI-side file implementation. |
+
+### Review blockers to resolve before claiming v2 ready
+
+| Boundary | Required revision/evidence | Review |
+|---|---|---|
+| lib/bin dependency | Kit controls must not name binary-only CommandId/Request/HomeId. Choose an action-agnostic interface or another compiling boundary; define types before consumers. Avoid a wholesale S1 move just to satisfy this dependency. | [architecture](../foundation/work_orders/reviews/UI_SYSTEM.architecture.review.md), [visual](../foundation/work_orders/reviews/UI_SYSTEM.visual.review.md) |
+| Live edits/history | Core owns the transaction; specify begin/update/commit/cancel and how existing per-command commits participate. One scrub = one undo; no nested-begin panic. Do not add a second independent UI transaction owner. | [architecture](../foundation/work_orders/reviews/UI_SYSTEM.architecture.review.md), [input](../foundation/work_orders/reviews/UI_SYSTEM.input.review.md) |
+| Keyboard responder | Text fields receive editing shortcuts first; document commands route only when appropriate. Start has its own keys; Esc/focus loss/modal transitions must settle deterministically. Preserve physical shortcut behavior on Arabic layouts. | [input](../foundation/work_orders/reviews/UI_SYSTEM.input.review.md), [economy](../foundation/work_orders/reviews/UI_SYSTEM.economy.review.md) |
+| Snapshot/caching | Measure large-selection snapshot cost; invalidation must cover live geometry and selection, not only committed revision. No speculative cache redesign without evidence. | [architecture](../foundation/work_orders/reviews/UI_SYSTEM.architecture.review.md) |
+| Panels/sizing | Define logical-point size/minimum behavior, one registry/owner, and Start as a workspace surface rather than a closable duplicate panel. Layout persistence is deferred, so its schema is not a current prerequisite. | [panels](../foundation/work_orders/reviews/UI_SYSTEM.panels.review.md) |
+| Controls/fonts | Complete states, focus-visible rules, error/disabled copy, font glyph coverage and bidi experiment. Headless geometry snapshots do not prove appearance; include real-window visual checks. | [visual](../foundation/work_orders/reviews/UI_SYSTEM.visual.review.md) |
+| Scope and sequencing | Start with controls actually consumed by E2; specify shared-file ownership per piece. No simultaneous UI/host refactors during E2/F1/F2. Include labels/semantics/localization decisions before multiplying components; reviewer suggestions remain proposals until resolved. | [economy](../foundation/work_orders/reviews/UI_SYSTEM.economy.review.md), [panels](../foundation/work_orders/reviews/UI_SYSTEM.panels.review.md) |
+
+**Next deliverable:** a bounded v2 revision covering these contracts, with each review finding either resolved or explicitly deferred to a named piece. This reconciliation records the work; it does not falsely mark all review findings closed. Minimum U0 → E2 → F1 → F2 precedes broad panel migration; S5-C/D can finish without that UI dependency. Full queue: [PLAN](../PLAN.md).
+
+---
+
+## Original v1 proposal (read with the amendments above)
+
 Date: 2026-09-24 · Owner: Ahmed · Evidence baseline: the five audits `docs/audits/ui-2026-09-24/01…05` (read at `4821cf0`) + branch `claude/sweet-cerf-1sg30t` head `a28f82d` (QW5 merged; S1-B/C/D, S2/S3 wave 2, S5, S6 still in flight).
 One system, not a list of fixes. Nothing here is implemented, scheduled or accepted by this document. Finding ids are cited as `01-B1` (audit 01, finding B1), `02-V-I4`, `03-F-B1`, `04-M1`, `05-D12` / `05-G06` / `05-R5`; the audits hold the file:line evidence, this spec does not repeat it.
 It builds **on** DFS S1's frozen API (`AppCommand`, `SessionId`, `TabView`, `Workspace`, `Lifecycle`, `Ui::{set_tabs, take_app_commands, settle, document_switched}`) and S2 §3.7's Start page, never against them. `docs/UI_DIRECTION.md` stays the visual law; where the law contradicts itself, §7 Q4 proposes one resolution.

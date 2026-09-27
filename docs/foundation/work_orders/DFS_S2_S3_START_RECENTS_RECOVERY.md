@@ -2,6 +2,23 @@
 > Amended 2026-09-24 after the independent plan review (see reviews/DFS_S2_S3_START_RECENTS_RECOVERY.review.md); P1/P2 applied, "Needs Ahmed" items carry their default.
 # DFS S2 + S3 — Start page, recent files, durable writes, autosave/recovery
 
+## Execution status — 2026-09-27
+
+| Piece | Verified state | Next action |
+|---|---|---|
+| A: paths/durable writer | Merged; `storage/paths.rs`, `durable.rs` | Reuse; real Save still needs F1 integration. |
+| B: recents/settings | Merged; `storage/recents.rs`, `settings.rs` | Wire successful open/save outcomes in E2. |
+| C: recovery store | Merged; `storage/recovery.rs` | Connect through F1/F2; not automatic recovery yet. |
+| D: scheduler/worker | Merged; `storage/scheduler.rs`, `io_worker.rs` | Connect timer/completions through F1. |
+| E1: Start model | Merged; `start.rs` | Reuse the tested model in E2. |
+| E2: Start/recents UI | Pending | Minimum U0 controls, then Start drawing and host integration. |
+| F1: durable Save/recovery writes | Pending | Session state, scheduler/worker, durability result and external-change handling. |
+| F2: recovery read/UI | Pending | Orphan scan, recover-as-copy, confirmation for discard; depends on E2 and F1. |
+
+S1 is already merged. Baseline findings below about `cur_file`, absent transaction probes and in-flight S1 are historical observations, not current APIs: use `Workspace`, `DocumentSession`, `Editor::transaction_open` and `host::run_lifecycle`. The owner-approved Home button replaces the burger beside the tabs on Mac; native menus remain. Preserve the never-empty S1 workspace contract while introducing Start.
+
+Dependency and acceptance details below remain applicable where not superseded by the owner decisions recorded in [UI_SYSTEM](../../specs/UI_SYSTEM.md). The minimal U0 prerequisite must not expand into completion of every UI panel before recovery can ship. Current queue: [PLAN](../../PLAN.md).
+
 Date: 2026-09-24 · Planner: Claude (planning agent, no code) · Branch baseline: `claude/sweet-cerf-1sg30t` @ `56516a9`.
 Spec rows: §5 S2 and S3; §2 "Start, recent files and recovery"; §3 "State machine and storage safety"; §4 Start/recovery copy; §6 autosave-vs-atomicity risk.
 Owner decision **D2 = YES**: Start page by default, boardless New, recovery ON at 30 s with two generations, recover-as-copy, explicit discard.
