@@ -133,7 +133,16 @@ pub fn apply(ctx: &egui::Context) {
 
 pub const START_PAD: f32 = 32.0;
 pub const START_GAP: f32 = 24.0;
-pub const START_WIDTH: f32 = 720.0;
+pub const START_WIDTH: f32 = 1040.0;
+pub const START_SIDEBAR: f32 = 208.0;
+pub const START_WIDE: f32 = 760.0;
+pub const START_TITLE_SIZE: f32 = 26.0;
+pub const START_SECTION_SIZE: f32 = 20.0;
+pub const START_FILE_SIZE: f32 = 14.0;
+pub const START_ROW_H: f32 = 72.0;
+pub const START_DATE_W: f32 = 112.0;
+pub const START_DATE_BREAK: f32 = 480.0;
+pub const START_EMPTY_PAD: f32 = 48.0;
 
 // Minimum Start/Recovery kit, in logical points. No runtime colour/size literals in controls.
 pub const KIT_MIN_TARGET: f32 = 24.0;

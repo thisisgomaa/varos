@@ -6,6 +6,15 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 
 
 
+
+## 2026-09-27 — Recent hierarchy and duplicate Home action refinement
+
+- **Scope:** `codex/ui-system-plan`, baseline `28db957`; owner called Recent visually weak and identified the duplicate top-bar plus. Centered bounded Start layout, launch column on wide windows/stacked narrow layout, clear heading hierarchy, document/path/date rows, visible actions menus and empty-state guidance. Plus hidden on Home; unchanged beside document tabs. Palette, fonts, lifecycle, persistence and recovery scope unchanged. Direction recorded in [E2](work_orders/DFS_S2_E2_START_INTEGRATION.md).
+- **Local gates:** **773 passed, 0 failed, 5 ignored** in the workspace. Final Start tests rerun after expanding the interaction check. macOS app build, format and both macOS/Windows-target all-target clippy with `-D warnings` PASS. Added CPU checks at 440/800/1460 logical points × 1×/2× prove long/missing row bounds, separate menu hit areas, single file activation and visible Locate/Remove menu without click-through. Existing keyboard/focus/recovery tests pass. No Renderer/EventLoop in tests.
+- **Visual evidence:** initial screenshot of the preceding splash-free E2 build now showed Start correctly, resolving its prior occluded-only inspection. It exposed the weak upper-left hierarchy and redundant plus. The refined build launched, but native captures again showed only the background while occluded. Asked the owner to leave the window visible; final refinement visual confirmation remains pending. No invented successful screenshot. Temporary fixture-only Recent data was restored to its pre-check list; installed Varos untouched.
+- **Checks and verdict:** architecture gate, its 7 tests, documentation links, format and diff checks PASS. Scoped Impeccable detector produced no findings (not visual or accessibility acceptance). Implementation ready on the branch; independent review, final native refinement confirmation, owner acceptance and merge pending. Windows remains compile-only.
+
+
 ## 2026-09-27 — E2 Start/Home/Recent integration
 
 - **Scope:** `codex/ui-system-plan`, baseline `c27b8a4`; [integration contract](work_orders/DFS_S2_E2_START_INTEGRATION.md). Start presentation, internal placeholder/Home state, one Start-to-host adapter and shared open pipeline, successful-only Recent persistence, missing Locate/Remove/Clear, Mac native Recent mirror and Home document-command isolation. Timed splash removed; GPU failure dialog retained. No core/renderer/dependency changes, installed app replacement or recovery implementation.

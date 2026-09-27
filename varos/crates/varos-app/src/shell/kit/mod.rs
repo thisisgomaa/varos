@@ -51,12 +51,17 @@ pub struct ControlResponse {
 
 /// Neutral action button. Use `icon_only` for Home/chrome with an accessible label.
 pub fn action(ui: &mut Ui, control: Control<'_>, icon_only: bool) -> ControlResponse {
-    paint_control(ui, control, None, icon_only)
+    paint_control(ui, control, None, None, icon_only)
 }
 
 /// A recent-file row; `detail` is already formatted by the caller (path, date, missing state).
 pub fn list_row(ui: &mut Ui, control: Control<'_>, detail: &str) -> ControlResponse {
-    paint_control(ui, control, Some(detail), false)
+    paint_control(ui, control, Some(detail), None, false)
+}
+
+/// Start's file row, with a separate trailing date when the caller has room.
+pub fn document_row(ui: &mut Ui, control: Control<'_>, detail: &str, date: &str) -> ControlResponse {
+    paint_control(ui, control, Some(detail), Some(date), false)
 }
 
 fn keyboard_visible(ui: &Ui) -> bool {
@@ -75,7 +80,13 @@ fn keyboard_visible(ui: &Ui) -> bool {
     keyboard
 }
 
-fn paint_control(ui: &mut Ui, c: Control<'_>, detail: Option<&str>, icon_only: bool) -> ControlResponse {
+fn paint_control(
+    ui: &mut Ui,
+    c: Control<'_>,
+    detail: Option<&str>,
+    date: Option<&str>,
+    icon_only: bool,
+) -> ControlResponse {
     let icon_only = icon_only && c.icon.is_some();
     let keyboard = keyboard_visible(ui);
     let reason = match c.availability {
@@ -87,7 +98,11 @@ fn paint_control(ui: &mut Ui, c: Control<'_>, detail: Option<&str>, icon_only: b
         // We own disabled colours; keep the ancestor's opacity (including a ghosted parent).
         ui.set_opacity(opacity);
         let enabled = ui.is_enabled();
-        let font = TextStyle::Button.resolve(ui.style());
+        let font = if date.is_some() {
+            egui::FontId::proportional(t::START_FILE_SIZE)
+        } else {
+            TextStyle::Button.resolve(ui.style())
+        };
         let label = ui.painter().layout_no_wrap(c.label.into(), font.clone(), t::TEXT);
         let icon_space = if c.icon.is_some() { t::KIT_ICON + t::KIT_GAP } else { 0.0 };
         let width = if detail.is_some() {
@@ -99,7 +114,13 @@ fn paint_control(ui: &mut Ui, c: Control<'_>, detail: Option<&str>, icon_only: b
         };
         let size = egui::vec2(
             width.min(ui.available_width()).max(t::KIT_MIN_TARGET),
-            if detail.is_some() { t::KIT_ROW_H } else { t::KIT_CONTROL_H },
+            if date.is_some() {
+                t::START_ROW_H
+            } else if detail.is_some() {
+                t::KIT_ROW_H
+            } else {
+                t::KIT_CONTROL_H
+            },
         );
         let (_, rect) = ui.allocate_space(size);
         let response = ui.interact(rect, c.id, if c.pointer_only { Sense::CLICK } else { Sense::click() });
@@ -135,10 +156,30 @@ fn paint_control(ui: &mut Ui, c: Control<'_>, detail: Option<&str>, icon_only: b
             icon.paint(&painter, center, text);
             x += icon_space;
         }
+        if date.is_some() {
+            painter.hline(rect.x_range(), rect.bottom() - t::KIT_STROKE, t::hairline());
+        }
         if !icon_only {
-            let width = (rect.right() - t::KIT_PAD - x).max(0.0);
+            let date_width = if date.is_some_and(|d| !d.is_empty()) { t::START_DATE_W } else { 0.0 };
+            if let Some(date) = date.filter(|d| !d.is_empty()) {
+                let color = if hover { t::TEXT } else { t::MUTED };
+                painter.text(
+                    egui::pos2(rect.right() - t::KIT_PAD, rect.center().y),
+                    egui::Align2::RIGHT_CENTER,
+                    date,
+                    TextStyle::Small.resolve(ui.style()),
+                    color,
+                );
+            }
+            let width = (rect.right() - t::KIT_PAD - x - date_width).max(0.0);
             let title = elided(ui, c.label, font, text, width);
-            let y = if detail.is_some() { rect.top() + t::KIT_PAD } else { rect.center().y - title.size().y / 2.0 };
+            let y = if date.is_some() {
+                rect.center().y - (title.size().y + t::KIT_TEXT_GAP + TextStyle::Small.resolve(ui.style()).size) / 2.0
+            } else if detail.is_some() {
+                rect.top() + t::KIT_PAD
+            } else {
+                rect.center().y - title.size().y / 2.0
+            };
             let title_height = title.size().y;
             painter.galley(egui::pos2(x, y), title, text);
             if let Some(detail) = detail {

@@ -3543,7 +3543,7 @@ fn build_topbar(
                 cmds.push(AppCommand::ActivateDocument(tab.id));
             }
         }
-        if let Some(plus_r) = layout.plus {
+        if let Some(plus_r) = layout.plus.filter(|_| !home) {
             if topbtn(ui, &p, plus_r, &top.plus, "tb-plus", false).clicked() {
                 cmds.push(AppCommand::NewDocument);
             }
