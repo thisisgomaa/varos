@@ -800,6 +800,7 @@ pub struct Ui {
     state: egui_winit::State,
     pub repaint: bool,
     pub repaint_at: Option<Instant>,
+    pub recovery: crate::recovery_host::RecoveryUi,
     tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
     shapes: Vec<ToolBtn>,   // the shape tools, collapsed into one rail slot (right-click → flyout)
     shape_active: ToolKind, // which shape the shapes slot currently represents
@@ -1037,6 +1038,7 @@ impl Ui {
             state,
             repaint: false,
             repaint_at: None,
+            recovery: Default::default(),
             tools,
             shapes,
             shape_active: ToolKind::Rect,
@@ -1313,6 +1315,7 @@ impl Ui {
             landscape: &self.ic_landscape,
             fit: &self.ic_fit,
         };
+        let recovery = &self.recovery;
         let ic_fit = &self.ic_fit; // the status strip's Fit control shares the artboard panel's icon
         let ic_pipette = &self.ic_pipette; // A16.2: the real pipette for the picker's in-picker eyedropper
         let shell = &mut self.shell; // Stage 4: the box tree hosting the whole workspace
@@ -1371,7 +1374,7 @@ impl Ui {
                 false,
                 cfg!(target_os = "macos"),
             );
-            build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request);
+            build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request, &recovery.status);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
             // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
             // frame's hole (one-frame lag on resize, healed by the request_repaint below). ──
@@ -1416,7 +1419,15 @@ impl Ui {
                             if snap.tool == ToolKind::Artboard {
                                 panel_artboard(ui, &absnap, &ab_icons, &mut ab_lock, &mut ops, &mut fit_request);
                             } else {
-                                panel_properties(ui, &snap, &icons, &mut refpt, &mut lock, &mut ops);
+                                panel_properties(
+                                    ui,
+                                    &snap,
+                                    &icons,
+                                    &mut refpt,
+                                    &mut lock,
+                                    &mut ops,
+                                    (recovery, &mut app_cmds),
+                                );
                             }
                             true
                         }
@@ -3724,6 +3735,7 @@ fn build_statusbar(
     zoom: f32,
     fit_icon: &Option<egui::TextureHandle>,
     fit_request: &mut Option<usize>,
+    recovery_status: &str,
 ) {
     let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
     // 31 = 25 of bar + the 6pt float-gap under the boxes, folded IN so the text centres in the
@@ -3734,19 +3746,18 @@ fn build_statusbar(
         let cy = bar.center().y;
         let f11 = FontId::proportional(11.0);
         let m11 = FontId::monospace(11.0);
-        // left: shortcut hints — keys muted, prose faint (the mockup's <b> pattern)
-        let mut x = bar.left() + 10.0;
-        for (s, muted) in [
-            ("V", true),
-            (" select    ·    ", false),
-            ("A", true),
-            (" direct    ·    ", false),
-            ("Alt", true),
-            ("+drag duplicates", false),
-        ] {
-            let r = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, s, f11.clone(), if muted { MUTED } else { FAINT });
-            x = r.right();
-        }
+        let status_rect = egui::Rect::from_min_max(
+            bar.min + egui::vec2(10.0, 0.0),
+            egui::pos2((bar.right() - 240.0).max(bar.left() + 10.0), bar.bottom()),
+        );
+        p.with_clip_rect(status_rect).text(
+            egui::pos2(status_rect.left(), cy),
+            Align2::LEFT_CENTER,
+            recovery_status,
+            f11.clone(),
+            MUTED,
+        );
+        ui.interact(status_rect, ui.id().with("recovery-status"), egui::Sense::hover()).on_hover_text(recovery_status);
         // right, laid right→left: zoom % · Fit · Artboard i/n (gap 14)
         let zr = p.text(
             egui::pos2(bar.right() - 10.0, cy),
@@ -4867,6 +4878,7 @@ fn panel_properties(
     refpt: &mut (f32, f32),
     lock: &mut bool,
     ops: &mut Vec<Op>,
+    recovery: (&crate::recovery_host::RecoveryUi, &mut Vec<AppCommand>),
 ) {
     let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
     egui::ScrollArea::vertical().id_salt("props-body").auto_shrink([false, false]).show(ui, |ui| {
@@ -4877,7 +4889,7 @@ fn panel_properties(
             // Pain A15: nothing to inspect (no object, no Direct/anchor path, not mid-draft) → the compact
             // Document settings home instead of a transform panel full of zeros. Returns from THIS closure.
             if !s.sel && !s.drawing && !s.has_paint {
-                document_section(ui, s, inner, ops);
+                document_section(ui, s, inner, ops, recovery);
                 return;
             }
 
@@ -5008,7 +5020,13 @@ fn panel_properties(
 /// The Document settings body (Pain A15) — shown in the Properties dock when nothing is selected, in
 /// place of a zeroed transform panel. A "DOCUMENT" micro-label (like "TRANSFORM") then compact rows:
 /// Units (click to cycle), Artboards count, Snapping/Guides/Rulers toggles, and static Grid/Colour info.
-fn document_section(ui: &mut egui::Ui, s: &Snap, w: f32, ops: &mut Vec<Op>) {
+fn document_section(
+    ui: &mut egui::Ui,
+    s: &Snap,
+    w: f32,
+    ops: &mut Vec<Op>,
+    recovery: (&crate::recovery_host::RecoveryUi, &mut Vec<AppCommand>),
+) {
     ui.label(RichText::new("DOCUMENT").color(MUTED).size(10.0).strong());
     ui.add_space(2.0);
     if action_row(ui, w, "Units", s.units_label) {
@@ -5028,6 +5046,29 @@ fn document_section(ui: &mut egui::Ui, s: &Snap, w: f32, ops: &mut Vec<Op>) {
     // and there is no colour-mode system — so these two stay honest read-only info, not fake toggles.
     info_row(ui, w, "Grid dots", "On");
     info_row(ui, w, "Colour", "RGB");
+    hsep(ui, w);
+    let (recovery, commands) = recovery;
+    if toggle_row(ui, w, "Recovery (all documents)", recovery.enabled) {
+        commands.push(AppCommand::SetRecoveryEnabled(!recovery.enabled));
+    }
+    ui.label(RichText::new(&recovery.status).color(MUTED).size(12.0));
+    if !recovery.last_copy.is_empty() {
+        ui.label(RichText::new(&recovery.last_copy).color(FAINT).size(11.0));
+    }
+    if !recovery.detail.is_empty() {
+        ui.label(RichText::new(&recovery.detail).color(MUTED).size(11.0));
+    }
+    if let Some(id) = recovery.sid.filter(|_| recovery.retry) {
+        ui.horizontal(|ui| {
+            use varos_app::shell::kit::{self, Control};
+            if kit::action(ui, Control::new(ui.id().with("recovery-retry"), "Retry"), false).activated {
+                commands.push(AppCommand::RetryRecovery(id));
+            }
+            if kit::action(ui, Control::new(ui.id().with("recovery-save"), "Save document"), false).activated {
+                commands.push(AppCommand::Save(id));
+            }
+        });
+    }
 }
 
 /// A read-only "label … value" settings row (Document panel): label left (MUTED), value right (FAINT).
@@ -7928,7 +7969,15 @@ mod pathfinder_click_tests {
                     match panel {
                         PanelId::Board => true,
                         PanelId::Properties => {
-                            panel_properties(ui, &snap, &icons, &mut refpt, &mut lock, &mut ops);
+                            panel_properties(
+                                ui,
+                                &snap,
+                                &icons,
+                                &mut refpt,
+                                &mut lock,
+                                &mut ops,
+                                (&Default::default(), &mut Vec::new()),
+                            );
                             true
                         }
                         PanelId::Pathfinder => {

@@ -58,6 +58,9 @@ pub struct DocumentSession {
     /// A fit the host still owes this tab (the `View::fit` pad factor), applied once the Board box
     /// size is known; the host takes it (`= None`) when applied.
     pub fit_pending: Option<f32>,
+    pub source_fingerprint: Option<varos_app::storage::durable::Fingerprint>,
+    pub save_unconfirmed: bool,
+    pub recovery: varos_app::storage::scheduler::SessionRecovery,
     /// The saved-content checkpoint (a clone taken at New, open and save).
     saved: Document,
     /// `is_dirty` memo: `(editor.rev, content differs)`, only ever written while no transaction is open.
@@ -78,6 +81,9 @@ impl DocumentSession {
             fit_pending: Some(0.45),
             saved,
             memo: Cell::new(None),
+            source_fingerprint: None,
+            save_unconfirmed: false,
+            recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
         }
     }
     fn loaded(id: SessionId, doc: Document, path: PathBuf, key: FileKey) -> Self {
@@ -94,6 +100,9 @@ impl DocumentSession {
             fit_pending: Some(0.9),
             saved,
             memo: Cell::new(None),
+            source_fingerprint: None,
+            save_unconfirmed: false,
+            recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
         }
     }
 
@@ -115,6 +124,9 @@ impl DocumentSession {
     /// would be missed by the memo only until the next `rev` change, which is why
     /// every Save / Close / Quit decision uses `is_dirty_exact` instead. `mark_saved` resets the memo.
     pub fn is_dirty(&self) -> bool {
+        if self.save_unconfirmed {
+            return true;
+        }
         let ed = &self.editor;
         if ed.transaction_open() && ed.dirty {
             return true; // a changed gesture still in flight
@@ -130,7 +142,7 @@ impl DocumentSession {
     /// Unsaved changes, compared fresh (ignores the memo). Every Save / Close / Quit decision uses this.
     pub fn is_dirty_exact(&self) -> bool {
         let ed = &self.editor;
-        self.content_dirty() || (ed.transaction_open() && ed.dirty)
+        self.save_unconfirmed || self.content_dirty() || (ed.transaction_open() && ed.dirty)
     }
 
     /// Nothing to lose and nowhere saved: an Open may replace this tab instead of adding one.
@@ -141,6 +153,7 @@ impl DocumentSession {
     /// A save to `path` succeeded: the tab takes that path/name, the checkpoint becomes the current
     /// content (clean), and it stops being `Untitled-n`.
     pub fn mark_saved(&mut self, path: PathBuf, key: FileKey) {
+        self.save_unconfirmed = false;
         self.path = Some(path);
         self.key = Some(key);
         self.untitled = None;
@@ -286,6 +299,9 @@ impl Workspace {
         self.sessions.iter_mut().find(|s| s.id == id)
     }
     /// The sessions in tab order.
+    pub fn sessions_mut(&mut self) -> &mut [DocumentSession] {
+        &mut self.sessions
+    }
     pub fn sessions(&self) -> &[DocumentSession] {
         &self.sessions
     }

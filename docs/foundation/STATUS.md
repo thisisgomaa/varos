@@ -1,7 +1,7 @@
 > **Status:** current — single current-state page, governed by [FOUNDATION_CHARTER](FOUNDATION_CHARTER.md) §3.
 # Varos — current state
 
-Updated 2026-09-27. Code baseline: `601fd7c` on `main`, merging [PR #1](https://github.com/thisisgomaa/varos/pull/1). Current work: `codex/ui-system-plan` now includes UI planning, S5-C semantic validation S5-D bounded PDF reading and S5-E frozen fixtures/harnesses and U0-A bundled Latin/numeric fonts plus minimum U0-B/C controls and E2 Start/Home/Recent integration; independent review batched at the owner’s request, not merged.
+Updated 2026-09-27. Code baseline: `601fd7c` on `main`, merging [PR #1](https://github.com/thisisgomaa/varos/pull/1). Current work: `codex/ui-system-plan` now includes UI planning, S5-C semantic validation S5-D bounded PDF reading and S5-E frozen fixtures/harnesses and U0-A bundled Latin/numeric fonts plus minimum U0-B/C controls and E2 Start/Home/Recent plus F1 durable Save/recovery writer integration; independent review batched at the owner’s request, not merged.
 
 ## Product and platform
 
@@ -17,7 +17,7 @@ Keep the four-crate architecture: pure `varos-core`, scene renderer `varos-rende
 | Documents | Independent tabs, dirty tracking, undo/redo, save/close/quit guards and `.vrs` v2 save/open are integrated. |
 | File format | `.vrs` remains a PDF containing editable document data. Core v2 version/structure checks, migration and v1 fixtures are implemented; ADR-0008 is accepted. S5-C semantic validation and v1 broken-mask notices are implemented on the work branch, not merged. S5-D bounded PDF reading is also implemented on this branch; S5-E frozen v2/refusal fixtures and old-gate checks are implemented; owner reports no personal files and the scoped read-only scan found only fixtures; real-application acceptance remains pending. |
 | Start and recent files | [E2](work_orders/DFS_S2_E2_START_INTEGRATION.md) is integrated on the work branch: immediate Start, Home retaining tabs, successful-only Recent persistence, Locate/Remove/Clear and native Open Recent. Independent review and merge pending. |
-| Recovery | Durable writer, snapshot store, scheduler and I/O worker are tested modules. Automatic recovery writing and recovery UI (F1/F2) are not wired into the running app. Existing Save still uses `varos_pdf::save_vrs`. |
+| Recovery | [F1](work_orders/DFS_S3_F1_INTEGRATION.md) is integrated on the work branch: durable Save, external-change prompts, automatic separate recovery copies, app-wide switch and status. F2 launch scanning/Recover/Discard/Later is still pending, so crash recovery is not an accepted end-to-end flow. |
 | Export | Pure-PDF export exists in the library; the complete app export flow is pending. SVG/PNG interchange is pending. |
 | UI system | Current panels work. [UI System v2](../specs/UI_SYSTEM.md) is a bounded planning proposal with a finding-by-finding response; independent acceptance is pending. U0-A embeds Plex Sans/Mono and symbol fallbacks; Arabic remains diagnostic-only after a failed RTL/caret probe. [Minimum Start controls](work_orders/UI_U0_BC_KIT.md) are library-ready with CPU interaction tests and a native gallery; E2 consumes these controls in the running app. |
 
@@ -26,21 +26,21 @@ Keep the four-crate architecture: pure `varos-core`, scene renderer `varos-rende
 The single execution map is [PLAN](../PLAN.md). Start there for completed work, the queue and unresolved decisions.
 
 1. Project-health/planning changes merged in PR #1 at `601fd7c`, after independent approval. UI v2 planning is now drafted separately; its scope is in the [UI planning work order](work_orders/UI_SYSTEM_V2_PLAN_2026-09-27.md).
-2. Batch-review UI v2 and S5-C/D/E at session end; no personal corpus exists in the scanned scope; application acceptance remains open. Minimum U0-B/C and E2 are built; next F1 durable Save/recovery writing → F2 recovery UI, reusing the modules already built.
-3. Complete S4/S6 association/export, then the remaining UI/Editor extraction in behavior-preserving pieces. Deferred product features remain recorded in PLAN.
+2. Batch-review UI v2 and S5-C/D/E at session end; no personal corpus exists in the scanned scope; application acceptance remains open. Minimum U0-B/C and E2 are built; F1 is implemented; next F2 recovery UI, reusing the modules already built.
+3. Complete S4/S6 association/export and asynchronous manual Save (12.6 MB encode + durable save measured 2.38 s), then the remaining UI/Editor extraction in behavior-preserving pieces. Deferred product features remain recorded in PLAN.
 
 ## Verification
 
 | Check | Latest evidence |
 |---|---|
-| Workspace tests | 773 passed, 0 failed, 5 intentionally ignored; fresh Recent refinement work-branch run, 2026-09-27. |
+| Workspace tests | 781 passed, 0 failed, 5 intentionally ignored; fresh F1 work-branch run, 2026-09-27. |
 | Build, clippy and format | macOS build, macOS and Windows-target clippy with `-D warnings`, and `fmt --check`: PASS, 2026-09-27 implementation checks. |
 | Explicit old-reader checks | 3 passed in the default suite, 2026-09-27; fresh/frozen v2 refused and frozen v1 gate control accepted. Old binary not tested. |
 | Architecture checker | Portable gate and 7 checker tests PASS; real-source negative probe rejected as expected. |
 | Independent review | PR #1 only: APPROVE after one documentation-policy correction; separate Codex reviewer, 2026-09-27. Full scope and limitations in GATE_LOG. |
 | CI configuration | Full macOS gates and Windows compile-only checks configured. [Run 36300014830](https://github.com/thisisgomaa/varos/actions/runs/36300014830) failed before either job started: account locked due to a billing issue; no test steps executed. |
-| Source size | `ui.rs`: 8,061 lines; `editor.rs`: 5,057 lines, measured 2026-09-27. |
-| GPU/window interaction | U0-A native Mac candidate/final font windows checked, 2026-09-27; Arabic candidate failed ordering/caret readiness. U0-B/C native Retina gallery checked for layout and keyboard activation. E2 Start/Open/Home/native Recent checked with isolated data and a copied fixture before final splash removal; the splash-free E2 surface was later observed. Owner-requested Recent refinement adds a responsive layout and visible row menus; its final native visual confirmation is pending due to occlusion. No general UI or S5 acceptance claimed; owner batch testing remains pending. |
+| Source size | `ui.rs`: 8,110 lines; `editor.rs`: 5,057 lines, measured 2026-09-27. |
+| GPU/window interaction | U0-A native Mac candidate/final font windows checked, 2026-09-27; Arabic candidate failed ordering/caret readiness. U0-B/C native Retina gallery checked for layout and keyboard activation. E2 Start/Open/Home/native Recent checked with isolated data and a copied fixture before final splash removal; the splash-free E2 surface was later observed. Owner-requested Recent refinement adds a responsive layout and visible row menus; its final native visual confirmation is pending due to occlusion. F1 launched and accepted New, but its controls and recovery runtime flow likewise remain visually unverified. No general UI or S5 acceptance claimed; owner batch testing remains pending. |
 
 Fresh implementation validation is recorded in [GATE_LOG](GATE_LOG.md). Historical measurements are not current results.
 

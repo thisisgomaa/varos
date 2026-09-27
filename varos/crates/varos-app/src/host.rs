@@ -722,7 +722,7 @@ mod tests {
         fn load(&mut self, _: &Path) -> Result<Document, String> {
             unreachable!()
         }
-        fn save(&mut self, _: &Document, _: &Path) -> Result<(), String> {
+        fn save(&mut self, _: &Document, _: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
             unreachable!()
         }
         fn key(&self, p: &Path) -> crate::workspace::FileKey {

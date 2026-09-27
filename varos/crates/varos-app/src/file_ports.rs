@@ -84,6 +84,22 @@ fn sentence(reason: &str) -> String {
 pub struct RfdDialogs;
 
 impl Dialogs for RfdDialogs {
+    fn external_change(&mut self, name: &str) -> crate::lifecycle::ExternalChoice {
+        use crate::lifecycle::ExternalChoice as C;
+        let result = MessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title(format!("“{name}” was changed by another app."))
+            .set_description("Saving now would replace those changes.")
+            .set_buttons(MessageButtons::YesNoCancelCustom(SAVE_AS.into(), "Replace Anyway…".into(), CANCEL.into()))
+            .show();
+        match result {
+            MessageDialogResult::Yes => C::SaveAs,
+            MessageDialogResult::No => C::Replace,
+            MessageDialogResult::Custom(ref label) if label == SAVE_AS => C::SaveAs,
+            MessageDialogResult::Custom(ref label) if label == "Replace Anyway…" => C::Replace,
+            _ => C::Cancel,
+        }
+    }
     fn pick_open(&mut self) -> Vec<PathBuf> {
         FileDialog::new()
             .set_title("Open Varos Document")
@@ -216,14 +232,80 @@ impl DocStore for DiskStore {
     fn load(&mut self, path: &Path) -> Result<Document, String> {
         varos_pdf::load_vrs(path).map_err(|e| plain_reason(&e, NOT_VAROS))
     }
-    fn save(&mut self, doc: &Document, path: &Path) -> Result<(), String> {
-        varos_pdf::save_vrs(doc, path).map_err(|e| plain_reason(&e, NOT_WRITTEN))
+    fn save(&mut self, doc: &Document, path: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
+        durable_save(&varos_app::storage::durable::RealFs, doc, path)
+    }
+    fn fingerprint(&self, path: &Path) -> Option<varos_app::storage::durable::Fingerprint> {
+        varos_app::storage::durable::fingerprint(&varos_app::storage::durable::RealFs, path)
     }
     fn key(&self, path: &Path) -> FileKey {
         file_key(path)
     }
     fn exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+}
+
+fn durable_save(
+    fs: &dyn varos_app::storage::durable::FsPort,
+    doc: &Document,
+    path: &Path,
+) -> Result<crate::lifecycle::SaveOutcome, String> {
+    use crate::lifecycle::SaveOutcome;
+    use varos_app::storage::{
+        checksum::new_nonce,
+        durable::{io_reason, write_replace, WriteOutcome},
+    };
+    let bytes = varos_pdf::write_pdf(doc).map_err(|e| plain_reason(&e, NOT_WRITTEN))?;
+    match write_replace(fs, path, &bytes, &new_nonce()).map_err(|e| e.reason())? {
+        WriteOutcome::Durable => {
+            cleanup_stale_save_temps(fs, path);
+            Ok(SaveOutcome::Durable)
+        }
+        WriteOutcome::ReplacedUnconfirmed(e) => Ok(SaveOutcome::ReplacedUnconfirmed(io_reason(&e))),
+    }
+}
+
+/// Remove only this destination's unambiguous, old temp files after confirmed Save.
+/// A day of grace avoids racing another live writer; long/truncated names are deliberately skipped.
+fn cleanup_stale_save_temps(fs: &dyn varos_app::storage::durable::FsPort, path: &Path) {
+    let Ok(path) = fs.resolve_link(path) else {
+        return;
+    };
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return;
+    };
+    // A UTF-8 truncation can end up to three bytes before the limit.
+    if name.len() >= varos_app::storage::durable::TEMP_NAME_MAX_BYTES - 3 {
+        return;
+    }
+    let prefix = format!(".{name}.");
+    let Ok(entries) = fs.read_dir(path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."))) else {
+        return;
+    };
+    for entry in entries {
+        let Some(nonce) = entry
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix(&prefix))
+            .and_then(|n| n.strip_suffix(".varos-tmp"))
+        else {
+            continue;
+        };
+        if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        // Never follow a symlink during cleanup.
+        if fs.resolve_link(&entry).is_ok_and(|target| target == entry)
+            && fs.metadata(&entry).is_ok_and(|m| {
+                !m.is_dir
+                    && m.modified
+                        .and_then(|t| t.elapsed().ok())
+                        .is_some_and(|age| age >= std::time::Duration::from_secs(86400))
+            })
+        {
+            let _ = fs.remove_file(&entry);
+        }
     }
 }
 
@@ -466,5 +548,43 @@ mod tests {
         assert_ne!(k_hard.path, k_after.path);
         assert!(k_hard.same_file(&k_after), "a hard link is the same file by device/inode");
         assert!(!store.key(&dir.0.join("other.vrs")).same_file(&k_after));
+    }
+    #[test]
+    fn durable_save_faults_preserve_old_bytes_and_report_unconfirmed() {
+        use crate::lifecycle::SaveOutcome;
+        use varos_app::storage::durable::{Fault, FaultFs, Step};
+        let dir = Scratch::new("durable-faults");
+        let path = dir.0.join("design.vrs");
+        for step in [Step::Write { after: 7 }, Step::Sync, Step::Rename] {
+            std::fs::write(&path, b"old bytes").unwrap();
+            assert!(durable_save(&FaultFs::new(vec![Fault::at(step)]), &doc_with_art(), &path).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), b"old bytes");
+        }
+        let result = durable_save(&FaultFs::new(vec![Fault::at(Step::SyncDir)]), &doc_with_art(), &path).unwrap();
+        assert!(matches!(result, SaveOutcome::ReplacedUnconfirmed(_)));
+        assert!(varos_pdf::load_vrs(&path).is_ok());
+    }
+
+    #[test]
+    fn successful_save_cleans_only_old_exact_destination_temps() {
+        use varos_app::storage::durable::{temp_path, RealFs};
+        let dir = Scratch::new("stale-temps");
+        let path = dir.0.join("design.vrs");
+        let old = temp_path(&path, &"a".repeat(32));
+        let live = temp_path(&path, &"b".repeat(32));
+        let other = temp_path(&dir.0.join("other.vrs"), &"a".repeat(32));
+        let unknown = dir.0.join(".design.vrs.not-a-nonce.varos-tmp");
+        for p in [&old, &live, &other, &unknown] {
+            std::fs::write(p, b"keep").unwrap();
+        }
+        let old_time = std::time::SystemTime::now() - std::time::Duration::from_secs(172800);
+        for p in [&old, &other, &unknown] {
+            std::fs::File::options().write(true).open(p).unwrap().set_modified(old_time).unwrap();
+        }
+        durable_save(&RealFs, &doc_with_art(), &path).unwrap();
+        assert!(!old.exists());
+        for p in [&live, &other, &unknown] {
+            assert_eq!(std::fs::read(p).unwrap(), b"keep");
+        }
     }
 }

@@ -55,6 +55,8 @@ pub enum AppCommand {
     LocateRecent(PathBuf),
     RemoveRecent(PathBuf),
     ClearRecent,
+    SetRecoveryEnabled(bool),
+    RetryRecovery(SessionId),
     /// ⌘O / File ▸ Open… — show the Open dialog, then open what was picked.
     OpenDialog,
     /// Open these files (an already-open file is focused, never reloaded).
