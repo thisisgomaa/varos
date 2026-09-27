@@ -33,14 +33,14 @@ The single execution map is [PLAN](../PLAN.md). Start there for completed work, 
 
 | Check | Latest evidence |
 |---|---|
-| Workspace tests | 772 passed, 0 failed, 5 intentionally ignored; fresh E2 work-branch run, 2026-09-27. |
+| Workspace tests | 773 passed, 0 failed, 5 intentionally ignored; fresh Recent refinement work-branch run, 2026-09-27. |
 | Build, clippy and format | macOS build, macOS and Windows-target clippy with `-D warnings`, and `fmt --check`: PASS, 2026-09-27 implementation checks. |
 | Explicit old-reader checks | 3 passed in the default suite, 2026-09-27; fresh/frozen v2 refused and frozen v1 gate control accepted. Old binary not tested. |
 | Architecture checker | Portable gate and 7 checker tests PASS; real-source negative probe rejected as expected. |
 | Independent review | PR #1 only: APPROVE after one documentation-policy correction; separate Codex reviewer, 2026-09-27. Full scope and limitations in GATE_LOG. |
 | CI configuration | Full macOS gates and Windows compile-only checks configured. [Run 36300014830](https://github.com/thisisgomaa/varos/actions/runs/36300014830) failed before either job started: account locked due to a billing issue; no test steps executed. |
 | Source size | `ui.rs`: 8,061 lines; `editor.rs`: 5,057 lines, measured 2026-09-27. |
-| GPU/window interaction | U0-A native Mac candidate/final font windows checked, 2026-09-27; Arabic candidate failed ordering/caret readiness. U0-B/C native Retina gallery checked for layout and keyboard activation. E2 Start/Open/Home/native Recent checked with isolated data and a copied fixture before final splash removal; final-build presentation recheck pending because Metal reported the window occluded. No general UI or S5 acceptance claimed; owner batch testing remains pending. |
+| GPU/window interaction | U0-A native Mac candidate/final font windows checked, 2026-09-27; Arabic candidate failed ordering/caret readiness. U0-B/C native Retina gallery checked for layout and keyboard activation. E2 Start/Open/Home/native Recent checked with isolated data and a copied fixture before final splash removal; the splash-free E2 surface was later observed. Owner-requested Recent refinement adds a responsive layout and visible row menus; its final native visual confirmation is pending due to occlusion. No general UI or S5 acceptance claimed; owner batch testing remains pending. |
 
 Fresh implementation validation is recorded in [GATE_LOG](GATE_LOG.md). Historical measurements are not current results.
 
