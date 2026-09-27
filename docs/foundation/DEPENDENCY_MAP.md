@@ -1,6 +1,10 @@
 > **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos Dependency Map (F1, as-is)
 
+## Current use — 2026-09-27
+
+This is the F1 dependency inventory. Enforced directions are in ADR-0005 and the portable `tools/check_dep_directions.py`; platform-specific dependencies and old counts below are baseline evidence. Follow [PLAN](../PLAN.md) for current work.
+
 **Baseline:** `1aff281` on 2026-07-11.
 **Read-only evidence:** `cargo metadata --format-version 1 --no-deps`; `cargo tree -p <workspace-crate> -e normal`; each crate manifest; and direct source searches recorded below. No compilation occurred for F1.
 

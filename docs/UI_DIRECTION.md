@@ -1,6 +1,10 @@
 > **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos — UI Direction & Visual Constitution (LOCKED with Ahmed, 2026-07-03)
 
+## Execution note — 2026-09-27
+
+This document retains the visual direction. `BOX_SYSTEM_PLAN` is implementation background, not the current build queue. Later owner decisions (Home instead of the Mac burger, icons instead of text buttons, bundled fonts, no drag easing/glide, deferred layout persistence) are collected in [UI_SYSTEM](specs/UI_SYSTEM.md). The mockup illustrates layout; runtime values live in `shell/tokens.rs`. Follow [PLAN](PLAN.md) for execution order; no new visual choice is approved by this navigation update.
+
 > ✅ **APPROVED by Ahmed 2026-07-03 ("برفكتو").** The living visual reference =
 > **`docs/reference/UI_VISION_MOCKUP.html`** (open it in a browser — it demonstrates every rule below:
 > void frame, box workspace with equal 6px seams, chip tabs, floating hands, warm-black ramp).

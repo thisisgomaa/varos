@@ -3,7 +3,7 @@
 
 **An Arabic-first, free and open-source vector editor — built in public. It opens instantly, and its working files are already PDFs.**
 
-Built in Rust, drawn directly on the GPU (wgpu + egui, no Electron, no web view). Windows-first. Built in public by a designer and AI pair-programming sessions — every decision documented, every stage hand-tested.
+Built in Rust, drawn directly on the GPU (wgpu + egui, no Electron, no web view). Mac-first; Windows is currently compile-checked only. Built in public by a designer and AI pair-programming sessions — every decision documented, automated checks accompany each stage, with interaction testing in batches.
 
 > ⚠️ **Early days, on purpose.** Varos is a working drawing tool under heavy construction — not yet a daily design tool (text is coming, see the roadmap below). We publish early because we build in the open.
 
@@ -18,31 +18,32 @@ Built in Rust, drawn directly on the GPU (wgpu + egui, no Electron, no web view)
 
 ## Status — honest version
 
-| Working today | Coming next | The vision |
+| Available in the app | Implemented modules awaiting app integration | Planned |
 |---|---|---|
-| Shapes, pen & bezier editing | New floating-panel UI (built, being merged) | Full Arabic engine with kashida |
-| Pathfinder (boolean ops) | Masks & clipping | Sandboxed WASM plugins over one schema |
-| Layers with per-artboard sections, cross-board drag | Gradients & swatches | AI that manipulates the document via the schema — no hallucinated coordinates |
-| Smart snapping & guides | Text system | Community template library |
-| `.vrs` save (= valid PDF) | PNG/SVG export; SVG import | |
-| 223 headless tests at the audited 2026-07-11 baseline; local fmt + clippy `-D warnings` + full-suite gates are green (GitHub triggers are enabled, but hosted runners remain blocked by account verification; see [STATUS](docs/foundation/STATUS.md)) | | |
+| Shapes, pen & bezier editing, boolean operations | Start page model and recent-file storage | Arabic text engine with kashida |
+| Layers, artboard clipping, transforms, snapping | Recovery storage, scheduler and background worker | Gradients and swatches |
+| Independent tabs, save/close guards, `.vrs` v2 PDF files | Pure-PDF export library; mask model/render foundations | SVG/PNG interchange |
+
+Local verification on macOS, 2026-09-27: **708 passed, 0 failed, 4 intentionally ignored**; clippy and format checks passed. CI is configured for full macOS checks and Windows compile checks; GitHub currently blocks jobs from starting because of an account billing issue. See [current state and next steps](docs/foundation/STATUS.md).
+
+The file-format work is still incomplete: semantic validation and bounded PDF reading remain pending. Follow the [execution plan](docs/PLAN.md) for the verified state of each stage.
 
 ## Build
 
 ```bash
 # stable Rust (rustup.rs), then:
-git clone https://github.com/<org>/varos
+git clone https://github.com/thisisgomaa/varos
 cd varos/varos
 cargo run --release -p varos-app
 ```
 
-The Cargo workspace lives in `varos/`. Architecture in one line: `varos-core` (pure logic, zero GPU/window deps — where most headless behavior tests live) → `varos-render-wgpu` (GPU tessellation & painting) → `varos-app` (window, input, UI). The compiler enforces the seam.
+The Cargo workspace lives in `varos/`. Architecture in one line: `varos-core` (pure logic, zero GPU/window deps — where most headless behavior tests live) → `varos-render-wgpu` (GPU tessellation & painting) → `varos-app` (window, input, UI). The PDF crate also depends on core; the app coordinates both PDF and rendering. The dependency-direction check guards these boundaries.
 
 ## Contributing
 
 We're a small project with an unusually deep paper trail — start with [CONTRIBUTING.md](CONTRIBUTING.md) and the `good first issue` label. Design decisions live in `docs/` with dates and reasons; the visual law is `docs/UI_DIRECTION.md`.
 
-Areas that need owners: icons, translations, docs, Windows-on-iGPU testing.
+Areas that need owners: icons, translations, docs, and macOS interaction testing.
 
 ## License
 

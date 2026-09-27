@@ -1,6 +1,12 @@
-> **Status:** current — work order (charter §3 level 4), derived from docs/specs/DOCUMENT_FILE_SYSTEM.md; owner decisions D1–D3 recorded 2026-09-24.
+> **Status:** reference — implemented S1 contract and acceptance record; follow-up execution lives in [PLAN](../../PLAN.md).
 > Amended 2026-09-24 after the independent plan review (see reviews/DFS_S1_LIFECYCLE_TABS.review.md); P1/P2 applied, "Needs Ahmed" items carry their default.
 # DFS S1 — AppCommand + lifecycle + real tab identity
+
+## Execution status — 2026-09-27
+
+**S1-A/B/C/D are implemented and merged into `main`**, including the later tab-focus, FIFO dispatch and field-buffer fixes. Evidence: `c23d9e5`, `d1d8ee3`, `19eed19`; `workspace.rs`, `lifecycle.rs`, `host.rs`, `chrome.rs` and their headless tests. Owner interaction checks are recorded in the [status archive](../../history/STATUS_THROUGH_2026-09-26.md).
+
+Do not restart the four pieces below. They remain the implementation/acceptance record, with baseline line numbers. Home/Start and Open Recent belong to S2-E2; recovery belongs to S3-F1/F2; Export belongs to S6. Outstanding name-field click-away behavior is tracked in the pain log/UI system, not a reason to rebuild S1. Current sequence: [PLAN](../../PLAN.md).
 
 Date: 2026-09-24 · Base: branch `claude/sweet-cerf-1sg30t` @ `56516a9` · Spec: `docs/specs/DOCUMENT_FILE_SYSTEM.md` §2 "Lifecycle, identity and tabs", §3 "State machine" + "ONE-HOME", §4, §5 row S1.
 Owner decisions (Ahmed, 2026-09-24): **D1** yes (one system, real tabs, F4.2 absorbed; the Windows exception concerns S4 only — S1 does no Windows-specific work), **D2** yes (Start/recovery are S2/S3, not here), **D3** yes (format v2 is S5, not here).

@@ -1,6 +1,10 @@
 > **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Varos Ownership Map (F1, as-is)
 
+## Current use — 2026-09-27
+
+This is the F1 ownership snapshot at `1aff281`, not a current line map. Before F5/F6 extraction, refresh ownership from the current `ui.rs`, `editor.rs`, `host.rs`, `workspace.rs` and `lifecycle.rs`. Follow [PLAN](../PLAN.md); preserve the snapshot below.
+
 **Baseline:** `1aff281` on 2026-07-11.
 **Purpose:** record who owns what **today** before any extraction. This is not a target architecture, a rename plan, or approval to move code.
 **Evidence:** module declarations/re-exports, caller searches, and the responsibility ranges below. Line references use the baseline file content.
