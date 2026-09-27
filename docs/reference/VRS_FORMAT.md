@@ -1,4 +1,4 @@
-> **Status:** current — the `.vrs` wire contract, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3. Owned by DFS S5-E (`docs/foundation/work_orders/DFS_S5_FORMAT_V2.md`); the version, limit and migration numbers below are filled in as S5-B/C/D land.
+> **Status:** current — the `.vrs` wire contract, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3. Owned by DFS S5-E (`docs/foundation/work_orders/DFS_S5_FORMAT_V2.md`); version, limits and migration behavior are recorded below; work-branch acceptance is tracked separately.
 
 # `.vrs` file format — wire contract
 
@@ -9,11 +9,11 @@ for *why*, this for *what byte, what key, what number*.
 
 ## Implementation status — 2026-09-27
 
-The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; S5-C/D are implemented on the work branch with independent review pending; S5-E final acceptance remains open.
+The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; S5-C/D and the automated S5-E fixture/harness slice are implemented on the work branch with independent review pending; personal-file and real-application acceptance remain open.
 
 | Boundary | Enforced today | Pending |
 |---|---|---|
-| Core JSON (`format::decode_model`) | Model byte/depth caps, version-first gate, strict fields, structural/count checks, migration/canonical checks | S5-C is implemented on the current work branch (not merged): semantic kinds/masks/ranges, all persisted floats, authored checks before normalization; independent review pending. Save retains the decode-backstop. |
+| Core JSON (`format::decode_model`) | Model byte/depth caps, version-first gate, strict fields, structural/count checks, migration/canonical checks. Work branch adds semantic kinds/masks/ranges, all persisted floats and authored checks before normalization; save retains the decode-backstop | Batched independent review; C is not merged. |
 | Container version | Work branch extracts `/VAROS_SchemaVersion`, validates its type/range and supplies it to the core version gate before model decoding | Batched independent review. |
 | App file loading | Work branch routes both compatibility wrappers through checked bounded file/byte APIs; preserves migration notices | Personal corpus and real-window acceptance. |
 | PDF parsing | Work branch enforces the strict native profile below: preflight before lopdf, no stream inflation, bounded name-tree traversal, exact fallback filename | Independent review; third-party Preview re-save acceptance unverified. |
@@ -273,37 +273,53 @@ via `Document::content_eq` — load → save → reload must preserve every auth
 test, `raw_and_pdf_twins_load_to_the_same_content`, checks the two containers of the same scenario
 agree.
 
-### Future v2 goldens
+### Frozen v2 and refusal corpus (S5-E)
 
-Format 2 now exists. Frozen `v2_masked_rotated.vrs` / `v2_masked_rotated_pdf.vrs` are still pending S5-E finalization, alongside C/D refusal fixtures; runtime-generated round trips do not replace that future migration baseline.
+`varos-core/tests/fixtures/v2/README.md` records the writer baseline (`6b6f41e`), exact
+construction and SHA256SUMS for masked+rotated and boardless raw/PDF twins. A synthetic
+v1 broken-mask sample in the same cohort proves notice-bearing in-memory repair.
+`fixtures/refused/README.md` records eighteen immutable refusal inputs and expected typed
+reasons. Existing v1 and ancient fixtures remain unchanged; tests never regenerate them.
+
+Core golden tests apply the full round-trip law to the raw fixtures. PDF golden tests now
+check complete Document equality and A==B for all eight frozen v1 PDFs. `frozen_v2.rs`
+checks raw/PDF equivalence, exact frozen v2 bytes, stable saves, mask/hole/rotation/board
+values, legacy repair notices, typed refusals through bytes and disk, and lowered limits.
+Large caps use small fixtures plus explicit Limits; no huge fixture is committed.
 
 ## 13. Old-reader harness
 
-`varos-pdf/tests/old_reader_harness.rs` carries a ≤15-line verbatim copy of the version gate at
-`ecf67f5:varos/crates/varos-core/src/file.rs:28-35` (diff it against `git show
-ecf67f5:varos/crates/varos-core/src/file.rs` to check it is still exact) and two tests,
-`old_reader_refuses_v2_json_before_decode` / `old_reader_refuses_v2_pdf_before_decode`, that feed it
-*this build's own* current writer output. They still carry the old `#[ignore]` attributes, but S5-B has already raised the writer version. Explicit verification on 2026-09-27:
+`varos-pdf/tests/old_reader_harness.rs` preserves the version gate from
+`ecf67f5:varos/crates/varos-core/src/file.rs:28-35`, replacing the old `VRS_VERSION` constant
+with literal 1. This is a frozen adaptation, not a verbatim copy of an old executable.
+Current lopdf is only test plumbing for extracting the PDF model. Fresh and frozen v2 raw/PDF
+outputs must receive the exact old newer-version refusal; a frozen v1 control must pass the gate.
 
 ```bash
-cargo test --locked -p varos-pdf --test old_reader_harness -- --ignored
-# 2 passed, 0 failed
+cargo test --locked -p varos-pdf --test old_reader_harness
+# 3 passed, 0 failed; included in the default workspace suite
 ```
 
-The two frozen-logic refusal checks pass. Removing the stale ignore annotations is a follow-up for S5-E; these are not included in the default 708-test total. This proves the frozen logic, not execution of an old application binary. Real-file corpus and old-binary acceptance remain separately pending.
+These tests prove the old gate logic, not execution of an old application binary. Personal
+files, real-window behavior, an actual pre-S5 build and Preview re-saving remain unverified.
 
 ## 14. Corpus check — Ahmed's hand test 0
 
-`varos-pdf/tests/corpus_check.rs` is `#[ignore]`d (it needs real files, not a CI fixture) and reads
-`VAROS_CORPUS_DIR`; unset, it prints a note and returns without failing. Pointed at a real folder, it
-walks every `.vrs`/`.json` file recursively and prints `OK <path>` or `REFUSED <path> — <reason>` for
-each, never writing anything:
+`varos-pdf/tests/corpus_check.rs` has one ignored manual entry point and ordinary synthetic
+harness tests. The explicit manual run requires `VAROS_CORPUS_DIR` to name a real, dedicated
+personal-document directory. It reads every regular `.vrs`/`.json` file recursively, with
+case-insensitive extensions. It reports/skips symlinks without following them, prints load
+notices and refusal reasons, and never writes files. Do not point it at source/configuration
+folders or the intentionally invalid test corpus.
 
-```
-VAROS_CORPUS_DIR=~/Documents CARGO_TARGET_DIR=/home/user/varos/target-s5 \
-  cargo test -p varos-pdf --test corpus_check -- --ignored --nocapture
+```bash
+# Run from varos/; substitute the actual personal-document directory.
+VAROS_CORPUS_DIR="/path/to/personal-varos-documents" \
+  cargo test --locked -p varos-pdf --test corpus_check -- --ignored --nocapture
 ```
 
-This is the required precondition before any S5 code reaches `main` (DFS_S5_FORMAT_V2.md §1, hand test
-0): any refusal of one of Ahmed's own `.vrs` files blocks the merge until it is understood (ADR-0008
-§Consequences, R3).
+Unset configuration, a missing/unreadable/empty folder or any refused document makes the
+explicit run fail. An ordinary CI run skips this entry point and cannot establish personal
+acceptance. Any refusal of a personal file blocks S5 merge until understood/resolved. No
+personal directory has yet been supplied for this run; synthetic harness checks are not a
+substitute (DFS_S5_FORMAT_V2.md §1; ADR-0008 §Consequences, R3).

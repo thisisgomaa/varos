@@ -43,8 +43,11 @@ fn model_path(doc: &Document, id: u32) -> &ModelPath {
 
 #[test]
 fn every_golden_fixture_obeys_the_full_round_trip_law() {
-    let names: Vec<&str> =
-        ["ancient_pre_artboards.vrs", "legacy_groups.vrs", "pre_paint_enum.vrs"].into_iter().chain(V1_CORPUS).collect();
+    let names: Vec<&str> = ["ancient_pre_artboards.vrs", "legacy_groups.vrs", "pre_paint_enum.vrs"]
+        .into_iter()
+        .chain(V1_CORPUS)
+        .chain(["v2/v2_masked_rotated.vrs", "v2/v2_boardless.vrs", "v2/v1_broken_mask.vrs"])
+        .collect();
     for name in names {
         let loaded = load_fixture(name);
         let bytes_a = doc_to_blob(&loaded).unwrap_or_else(|e| panic!("{name}: first save failed: {e}")).into_bytes();
