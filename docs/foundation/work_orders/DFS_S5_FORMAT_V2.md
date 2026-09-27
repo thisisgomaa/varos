@@ -46,6 +46,15 @@ The read-only personal-corpus harness now fails for unset configuration, missing
 
 Local evidence: 753 passed, 0 failed, 4 intentionally ignored; Mac/Windows-target clippy and format checks pass. Details in GATE_LOG. No source/runtime change or independent review in E. Continue minimum U0 while the requested batch review and real-file/application acceptance remain explicitly open; do not merge S5 without its preconditions.
 
+### Personal-corpus follow-up — 2026-09-27
+
+The owner explicitly reports no saved personal files. A read-only `.vrs` filename scan of home
+(excluding Library/build/cache trees), iCloud/CloudStorage and Varos support locations found only
+project fixtures and no scan errors. No personal-file acceptance run is possible or claimed;
+record this precondition as not applicable to the currently available corpus, and rerun if real
+documents are discovered. Synthetic tests remain separate. Real-window/old-binary/Preview
+acceptance and batched independent review remain open. No installed application was replaced.
+
 The pieces below retain their original baseline/API context; “Proposed ADR” and “start at base” are no longer current execution instructions. Current queue: [PLAN](../../PLAN.md).
 
 Date: 2026-09-24 · Base: `ecf67f5` on `claude/sweet-cerf-1sg30t` · Scope: `varos-core` (model/format) + `varos-pdf` (container read side) + docs. **No `varos-app` edits.** Parallel-safe with S1, because S5 does not touch the app loop and keeps every existing public signature the app uses.
