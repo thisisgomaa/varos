@@ -3,6 +3,17 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-09-27 — Project-health publication and independent review follow-up
+
+- **Published:** `0e68a6a` on `codex/project-health`; [PR #1](https://github.com/thisisgomaa/varos/pull/1) created as a draft through the owner's signed-in Brave session. No merge performed.
+- **Hosted evidence:** [push run 36300014830](https://github.com/thisisgomaa/varos/actions/runs/36300014830), jobs `108565816076` (macOS) and `108565816165` (Windows), both failed with no steps. Both annotations state: "The job was not started because your account is locked due to a billing issue." This is not a failing Rust test or evidence that the workflow passed. The account's specific billing remedy is unknown; no account settings or payment details were accessed or changed.
+- **Implementer review:** compared the Python gate with the former PowerShell implementation; reviewed workflow paths/platform conditions and the reconciled plan/work-order claims against the current file-loading and format boundaries. No additional code defect identified in this pass. Updated README, CONTRIBUTING and STATUS to replace the unverified-hosted-state wording with the observed billing hold and link the draft PR.
+- **Local recheck on the publication follow-up:** `cargo test --locked --workspace -j 4 --quiet` — 708 passed, 0 failed, 4 ignored; `cargo fmt --all --check`, host clippy and Windows-target clippy with `--locked --workspace --all-targets -j 4 -- -D warnings` — PASS. Python architecture checker and its 7 tests — PASS. The same temporary documentation checker reported 125 files, 209 relative links and 62 anchors with no failures; `git diff --check` — PASS. Rust, workflow and checker source remain unchanged from `0e68a6a` in this follow-up.
+- **Independent review finding addressed:** the proposed billing follow-up incorrectly made hosted CI a new prerequisite for merge. The owner's [2026-07-11 decision](../history/STATUS_THROUGH_2026-09-26.md#external-action-items-outside-the-repo) already defers billing indefinitely and makes local gates authoritative. CONTRIBUTING and STATUS now preserve that decision. Independent approval is still required; hosted CI remains unverified and should be rerun on the current branch tip when available.
+- **Independent final verdict:** APPROVE — separate Codex agent `review_project_health`, authorized by the owner, reviewed `5ee21d4..0e68a6a` and the four-file documentation follow-up, then rechecked the P2 correction. No remaining actionable findings. Reviewer independently ran the 7 Python tests and actual architecture gate, compared both historical bodies exactly, and checked that Rust/vendor/accepted ADRs were untouched. The final record update only transcribes that verdict and the final link totals.
+- **Limits:** hosted CI, PowerShell compatibility execution and GPU/window behavior remain unverified. The reviewer did not rerun Cargo; the implementation session's fresh local gates are recorded above. Approval applies to this reviewed scope, not later feature work. No account changes or merge are included in this follow-up.
+- Sign-off: independent Codex reviewer (`review_project_health`) — PASS — 2026-09-27
+
 ## 2026-09-27 — Project health: current state and platform gates
 
 - **Branch:** `codex/project-health`, based on `5ee21d4`; branch changes, not merged. **Implementer:** Codex. **Independent review:** pending.
