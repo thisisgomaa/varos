@@ -3,6 +3,16 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-09-27 — S5-C semantic validation and legacy mask notices
+
+- **Branch/base:** `codex/ui-system-plan` after `47ccdf3`. Owner explicitly requested continuing implementation and batching independent review at session end. No merge or independent-review claim.
+- **Scope:** implemented semantic validation of authored/canonical content, checking before normalization so invalid floats or roles cannot disappear through pruning/healing. Added the owner-approved v1-only broken-Group-clip release plus notice metadata and the minimal PDF/store/lifecycle notice seam. The S5 work-order amendment records the expanded ownership; no schema, dependencies, renderer or accepted ADR changed. S5-D bounded PDF parsing remains pending.
+- **Behavior evidence:** all persisted float slots tested with NaN and both infinities; range and kind/mask refusals on load/save; canonical round trips and real grouping/rotation/root drops; strict v2/save vs recoverable v1; unrelated corruption still refuses. Raw and PDF notice tests keep original file bytes unchanged. Lifecycle tests prove notice after successful first Open only, not on failure or duplicate focus. Refusals name the affected path/field. Two old exact-error expectations updated for earlier/more precise validation, not weakened to accept errors indiscriminately.
+- **Invariant reconciliation:** root paths/groups are produced by `move_node_to` and stay saveable; candidate_max is unused with no live upper bound, so no arbitrary cap was added. These departures from the old proposal are explicit in the work order/wire contract. Zero-size artboards remain allowed.
+- **Fresh local gates:** `cargo test --locked --workspace -j 4 --quiet` — **723 passed, 0 failed, 5 intentionally ignored**, 49 result summaries. Host and Windows-target `cargo clippy --locked --workspace --all-targets -j 4 -- -D warnings` — PASS (Windows adds `--target x86_64-pc-windows-msvc`; compile only). `cargo fmt --all --check`, portable dependency-direction gate, and `git diff --check` — PASS. Temporary documentation checker: 128 documents / 226 relative links / 62 anchors, no failures.
+- **Direct validator timing:** `cargo test --locked -p varos-core --release --test format_validate validate_is_linear -- --ignored --nocapture`, PASS. Mac17,4 / arm64 / rustc 1.98.1; ten validations per size: 10k paths **2.594 ms**, 20k **4.000 ms**, 40k **5.977 ms** per validation. This times the validator alone, not full decode/save, `sync_tree`, PDF parsing or window interaction; no universal runtime budget inferred. This explicit timing test is additional to the default suite.
+- **Limits:** independent review, real-window/native-dialog verification, personal-file corpus, bounded PDF reader, final v2 fixtures and old-binary checks remain pending. Hosted CI billing hold is unchanged; local gates remain authoritative. Self-review checked the data flow and exception boundary but is not a merge sign-off.
+
 ## 2026-09-27 — UI v2 planning revision
 
 - **Branch/base:** `codex/ui-system-plan` from `601fd7c`. The base confirms project-health [PR #1](https://github.com/thisisgomaa/varos/pull/1) is merged; earlier entries below retain their then-current publication state.

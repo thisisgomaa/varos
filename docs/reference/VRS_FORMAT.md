@@ -9,15 +9,15 @@ for *why*, this for *what byte, what key, what number*.
 
 ## Implementation status — 2026-09-27
 
-The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; **S5-C and S5-D are not complete**.
+The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; S5-C is implemented on the work branch with review pending; **S5-D remains unimplemented**.
 
 | Boundary | Enforced today | Pending |
 |---|---|---|
-| Core JSON (`format::decode_model`) | Model byte/depth caps, version-first gate, strict fields, structural/count checks, migration/canonical checks | Full semantic ranges/kinds/finite-field validation: `format/validate.rs` is still a stub. Save additionally has a typed decode-backstop for non-finite serialization. |
+| Core JSON (`format::decode_model`) | Model byte/depth caps, version-first gate, strict fields, structural/count checks, migration/canonical checks | S5-C is implemented on the current work branch (not merged): semantic kinds/masks/ranges, all persisted floats, authored checks before normalization; independent review pending. Save retains the decode-backstop. |
 | Container version | Core checks a supplied `container_version` | Current PDF reader does not extract/pass `/VAROS_SchemaVersion`; end-to-end mismatch refusal needs S5-D. |
-| App file loading | Extracted model goes through the core spine | App uses `varos_pdf::load_vrs`, which reads the whole file before parsing. The bounded raw helper in core is not this app path. |
+| App file loading | Extracted model goes through the core spine | App uses `varos_pdf::load_vrs_with_notice` on the work branch (the same reader as `load_vrs`), which reads the whole file before parsing. The bounded raw helper in core is not this app path. |
 | PDF parsing | Existing legacy extraction works on the regression fixtures | Byte/object/decompressed-stream/name-tree bounds, strict PDF profile and exact fallback filename checks need S5-D. |
-| Legacy broken mask | Current migration rejects a clip that normalization would change | Owner chose release-with-notice for recoverable v1 broken masks; migration/warnings/fixtures still need reconciliation. |
+| Legacy broken mask | Work branch: recoverable v1 Group clip references released in memory, with notice retained through PDF/disk/lifecycle Open; current v2/save stay strict | Real-window verification and batched independent review; no on-disk repair during Open. |
 
 Source: `varos-core/src/format/{mod,validate,migrate,limits}.rs`, `varos-pdf/src/lib.rs`, `varos-app/src/file_ports.rs`. Work ownership: [S5](../foundation/work_orders/DFS_S5_FORMAT_V2.md). Sections below distinguish target rules from current enforcement.
 
@@ -104,17 +104,28 @@ It performs *only* the normalizations `Document::sync_tree` already documents:
 | heal nested live transforms | a non-identity `Node.xform` nested under another non-identity `xform` is flattened to one |
 | raise the id counter | `ids = ids.max(max_used)`, `max_used` = the highest path/node/anchor/legacy-group id seen, via a checked `+1` (`IdExhausted` if it would overflow) |
 
-**What migration refuses instead of repairing:** if `sync_tree`'s before/after comparison shows a clip
-group's `(role, mask_child)` was *demoted* (the pre-S5 runtime repair for a mask whose shape was
-removed — `masks.rs::sync_tree_demotes_a_clip_whose_mask_was_removed` pins that this still happens at
-**runtime**), the v1→v2 **load** is refused instead: migration never repairs authored mask meaning.
+**Owner-approved v1 exception (implemented on the S5-C work branch):** before structural
+checking or allocating IDs, a Group with role Clip whose mask is missing or is not a direct child
+becomes Normal with no mask_child. This pass changes no paths or geometry. All other structural
+references, counts, kinds, reserved roles and numerical values remain subject to strict checks.
+A stale mask ID can never bind to a node newly allocated by normalization. Current v2 input and
+Save do not use this exception; their invalid clips are refused.
 
-A migrated file opens with the notice **"Opened an older file. Saving will update its format."** The
-original bytes on disk are never touched until the user explicitly saves.
+`Loaded::released_legacy_masks` retains this outcome. `Loaded::notice()` describes the release,
+that remaining artwork was kept and that the original was not changed. The app uses the additive
+notice-retaining store method and shows the notice only after successful Open; duplicate opens do
+not re-notify. Ordinary v1 migration keeps the existing “Opened an older file…” notice. Legacy
+Document-only library wrappers remain compatible and cannot carry notices; UI callers use the
+notice-retaining API. No bytes on disk change until an explicit Save.
 
-`migrate_v1_to_v2` itself, and the sequential migration table structure it sits in
-(`format/migrate.rs`), are S5-B's deliverable — this table is the contract that implementation must
-match.
+Semantic checks run before normalization to prevent invalid authored values disappearing when a
+nested transform is healed or a group pruned, and again on the canonical result. Every persisted
+float is checked, including hole handles and node colors; opacity/colors are in [0,1], stroke width
+and artboard width/height/bleed are nonnegative, ppi is positive. Path leaves have no children or
+duplicate owners; Layers cannot nest in Groups; Clip only belongs to Group and requires a direct
+mask child; Normal has no mask_child and reserved soft masks are refused. Root-level paths/groups
+remain legal because the live model supports them. candidate_max has no invented upper cap (no
+current editor invariant or active consumer). Canonical-only invariants retain their existing gate.
 
 ## 7. v2 required keys and the unknown-field policy
 
@@ -173,7 +184,7 @@ Enforced core limits refuse input with the number exceeded, never truncate it. D
 | a re-saved PDF using object/xref streams, incremental updates or encryption | "This file was re-saved by another app in a form Varos can't read safely yet. Open the original .vrs." (ADR-0008 R2 — not yet enforced; today's reader has no such gate.) |
 | a save that would violate its own limits or validity | "This document can't be saved: {reason}. It is still open." — the document stays dirty in memory; nothing on disk changes. |
 
-Core typed errors now exist in `format/error.rs`. PDF profile-specific refusal and semantic validation messages remain C/D deliverables; app `file_ports.rs` also translates errors to plain messages. The table describes the shared target copy, not proof that each app path emits it today.
+Core typed errors now exist in `format/error.rs`. Semantic refusals are implemented on the S5-C branch; PDF profile-specific refusals remain an S5-D deliverable; app `file_ports.rs` also translates errors to plain messages. The table describes the shared target copy, not proof that each app path emits it today.
 
 ## 10. Supported PDF profile (S5-D's deliverable)
 

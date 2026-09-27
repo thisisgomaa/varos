@@ -196,6 +196,9 @@ fn plain_reason(raw: &str, fallback: &str) -> String {
 pub struct DiskStore;
 
 impl DocStore for DiskStore {
+    fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
+        varos_pdf::load_vrs_with_notice(path).map_err(|e| plain_reason(&e, NOT_VAROS))
+    }
     fn load(&mut self, path: &Path) -> Result<Document, String> {
         varos_pdf::load_vrs(path).map_err(|e| plain_reason(&e, NOT_VAROS))
     }
@@ -360,6 +363,29 @@ mod tests {
             assert_eq!(plain_reason(raw, NOT_VAROS), "It isn't a Varos document, or it is damaged.", "{raw}");
         }
         assert_eq!(plain_reason("serialize failed: x", NOT_WRITTEN), "Varos couldn't write the document.");
+    }
+
+    #[test]
+    fn disk_store_keeps_legacy_repair_notice_and_original_bytes() {
+        use varos_core::model::GroupRole;
+        let dir = Scratch::new("legacy-notice");
+        let path = dir.0.join("old.vrs");
+        let mut doc = doc_with_art();
+        let pid = doc.paths[0].id;
+        let mut second = doc.paths[0].clone();
+        second.id = pid + 1;
+        doc.paths.push(second);
+        let group = doc.group(&[pid, pid + 1]).unwrap();
+        let node = doc.nodes.iter_mut().find(|n| n.id == group).unwrap();
+        node.role = GroupRole::Clip;
+        node.mask_child = Some(99999);
+        let bytes = serde_json::to_vec(&serde_json::json!({"varos":1,"doc":doc})).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let (opened, notice) = DiskStore.load_with_notice(&path).unwrap();
+        assert!(notice.unwrap().contains("broken clipping masks released"));
+        assert_eq!(opened.node(group).unwrap().role, GroupRole::Normal);
+        assert_eq!(opened.paths, doc.paths);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 
     #[test]
