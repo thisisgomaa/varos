@@ -93,6 +93,20 @@ impl Dialogs for RfdDialogs {
             .unwrap_or_default()
     }
 
+    fn pick_locate(&mut self) -> Option<PathBuf> {
+        FileDialog::new().set_title("Locate Varos Document").add_filter("Varos documents", &["vrs", "pdf"]).pick_file()
+    }
+    fn locate_missing(&mut self, path: &Path) -> bool {
+        let answer = MessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title("This file can't be found")
+            .set_description(format!("{}\nIt may have been moved or renamed.", path.display()))
+            .set_buttons(MessageButtons::OkCancelCustom("Locate…".into(), CANCEL.into()))
+            .show();
+        matches!(answer, MessageDialogResult::Ok)
+            || matches!(answer, MessageDialogResult::Custom(ref s) if s == "Locate…")
+    }
+
     fn pick_save(&mut self, suggested: &str, dir: Option<&Path>) -> Option<PathBuf> {
         let mut d = FileDialog::new()
             .set_title("Save Varos Document")

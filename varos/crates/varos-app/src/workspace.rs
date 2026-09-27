@@ -210,14 +210,16 @@ fn pair_mut(v: &mut [DocumentSession], a: usize, b: usize) -> (&mut DocumentSess
 
 /// All open documents in tab order, plus which one is active.
 ///
-/// The active document is an `Option` in the API (S2's Start page will allow an empty workspace), but
-/// in S1 the workspace is NEVER empty: `new` starts with `Untitled-1` and closing the last tab leaves
-/// a fresh `Untitled-N`. So in S1 `active_id()` / `active()` / `active_mut()` are always `Some`.
+/// The workspace stays internally nonempty. E2's Home is a view over the sessions;
+/// a private pristine placeholder is hidden from `visible_tabs` after launch/last close.
+/// Input routing uses `document_target`, not the retained active editor while Home is showing.
 pub struct Workspace {
     sessions: Vec<DocumentSession>,
     active: Option<SessionId>,
     next_id: u64,
     next_untitled: u32,
+    home: bool,
+    placeholder: bool,
 }
 
 impl Default for Workspace {
@@ -230,9 +232,41 @@ impl Workspace {
     /// Exactly one pristine `Untitled-1` (boardless, clean), with an initial fit pending (0.45).
     pub fn new() -> Self {
         let first = DocumentSession::untitled(SessionId(1), 1);
-        Workspace { sessions: vec![first], active: Some(SessionId(1)), next_id: 2, next_untitled: 2 }
+        Workspace {
+            sessions: vec![first],
+            active: Some(SessionId(1)),
+            next_id: 2,
+            next_untitled: 2,
+            home: false,
+            placeholder: false,
+        }
     }
 
+    /// Start retains a private pristine session to preserve the never-empty host invariant.
+    pub fn start_page() -> Self {
+        Self { home: true, placeholder: true, ..Self::new() }
+    }
+    pub fn on_home(&self) -> bool {
+        self.home
+    }
+    pub fn show_home(&mut self) {
+        self.home = true;
+    }
+    /// Only an exposed canvas can receive document shortcuts/menu actions.
+    pub fn document_target(&self) -> Option<SessionId> {
+        if self.home {
+            None
+        } else {
+            self.active
+        }
+    }
+    pub fn visible_tabs(&self) -> Vec<TabView> {
+        if self.placeholder {
+            vec![]
+        } else {
+            self.tabs()
+        }
+    }
     /// The active tab's id (always `Some` in S1).
     pub fn active_id(&self) -> Option<SessionId> {
         self.active
@@ -281,11 +315,18 @@ impl Workspace {
         let id = incoming.id;
         self.sessions[i] = incoming;
         self.active = Some(id);
+        self.home = false;
+        self.placeholder = false;
         id
     }
 
     /// A new clean, boardless `Untitled-N` tab, appended and activated. Numbers are never reused.
     pub fn new_untitled(&mut self) -> SessionId {
+        if self.placeholder {
+            self.placeholder = false;
+            self.home = false;
+            return self.active.expect("placeholder has a session");
+        }
         let s = self.alloc_untitled();
         let id = s.id;
         self.sessions.push(s);
@@ -326,6 +367,10 @@ impl Workspace {
         let Some(to) = self.index_of(id) else {
             return false;
         };
+        if self.placeholder {
+            return false;
+        }
+        self.home = false;
         if self.active == Some(id) {
             return true;
         }
@@ -351,6 +396,9 @@ impl Workspace {
         };
         let to = (cur as isize + step).rem_euclid(n as isize) as usize;
         if to == cur {
+            if self.home && !self.placeholder {
+                return self.activate(self.sessions[cur].id);
+            }
             return false;
         }
         self.activate(self.sessions[to].id)
@@ -380,18 +428,22 @@ impl Workspace {
     /// Close tab `id` (the caller has already resolved unsaved changes). Closing the active tab
     /// activates its right neighbour, else its left one, handing the clipboard (and tool, recent
     /// colours) over first. S1: closing the LAST tab leaves a fresh pristine `Untitled-N`, or, when
-    /// that last tab already was pristine, does nothing (S2's Start page will change this to an empty
-    /// workspace). Returns `true` when a tab was removed or replaced.
+    /// that last tab already was pristine, retains it as a private placeholder. Both show Start and
+    /// hide the placeholder. Returns `true` when a session was removed or replaced.
     pub fn remove(&mut self, id: SessionId) -> bool {
         let Some(i) = self.index_of(id) else {
             return false;
         };
         if self.sessions.len() == 1 {
             if self.sessions[0].is_pristine() {
+                self.home = true;
+                self.placeholder = true;
                 return false;
             }
             let fresh = self.alloc_untitled();
             self.replace_at(0, fresh);
+            self.home = true;
+            self.placeholder = true;
             return true;
         }
         if self.active == Some(id) {

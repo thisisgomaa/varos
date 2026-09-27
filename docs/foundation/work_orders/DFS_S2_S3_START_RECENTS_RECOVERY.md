@@ -7,11 +7,11 @@
 | Piece | Verified state | Next action |
 |---|---|---|
 | A: paths/durable writer | Merged; `storage/paths.rs`, `durable.rs` | Reuse; real Save still needs F1 integration. |
-| B: recents/settings | Merged; `storage/recents.rs`, `settings.rs` | Wire successful open/save outcomes in E2. |
+| B: recents/settings | Merged; `storage/recents.rs`, `settings.rs` | Successful open/save outcomes wired by E2 on the work branch. |
 | C: recovery store | Merged; `storage/recovery.rs` | Connect through F1/F2; not automatic recovery yet. |
 | D: scheduler/worker | Merged; `storage/scheduler.rs`, `io_worker.rs` | Connect timer/completions through F1. |
 | E1: Start model | Merged; `start.rs` | Reuse the tested model in E2. |
-| E2: Start/recents UI | Pending | Minimum U0 controls, then Start drawing and host integration. |
+| E2: Start/recents UI | Implemented on work branch; review/merge pending | [Integration record and limits](DFS_S2_E2_START_INTEGRATION.md). |
 | F1: durable Save/recovery writes | Pending | Session state, scheduler/worker, durability result and external-change handling. |
 | F2: recovery read/UI | Pending | Orphan scan, recover-as-copy, confirmation for discard; depends on E2 and F1. |
 
@@ -28,6 +28,10 @@ Recorded owner readability decisions supersede old §3.7 FAINT/9.5 label prescri
 Date: 2026-09-24 · Planner: Claude (planning agent, no code) · Branch baseline: `claude/sweet-cerf-1sg30t` @ `56516a9`.
 Spec rows: §5 S2 and S3; §2 "Start, recent files and recovery"; §3 "State machine and storage safety"; §4 Start/recovery copy; §6 autosave-vs-atomicity risk.
 Owner decision **D2 = YES**: Start page by default, boardless New, recovery ON at 30 s with two generations, recover-as-copy, explicit discard.
+
+## E2 implementation amendment — 2026-09-27
+
+[Implementation record](DFS_S2_E2_START_INTEGRATION.md): Start/Home/Recent now consume the minimum U0 kit, keep a hidden internal placeholder for the nonempty workspace invariant, and use a single host adapter plus an editor-free Home pass. The timed splash is removed. Recovery presentation is fake-data tested only; F1/F2 remain pending. All original acceptance items below remain the contract; local verification does not replace independent review or owner batch acceptance.
 
 ## 1. Goal & acceptance
 
@@ -169,7 +173,7 @@ Owns: `varos-app/src/start.rs` (pure view model: `StartModel`, `StartRow`, `Reco
 Key model (§3.7): `tab_next`/`tab_prev` traverse every action and row, wrapping; `arrow_up`/`arrow_down` move only inside the current list (Recent rows; Recovery rows, keeping the Recover/Discard column) and stop at its ends — a no-op on New, Open, Later and Clear Recent; `activate` (Enter); `delete_focused` (Delete, Recent rows only). No Escape behaviour: §3.7 specifies none, so the host (E2) owns Escape policy. Rows, recovery and focus are private (read-only accessors; `set_focus` refuses out-of-range), and focus targets resolve with checked indexing, so a stale target yields `None`, never a panic. `START_TITLE`, `MISSING_TAG` and `StartAction::Locate` are defined for E2 (no consumer until then).
 Tests (done): `elide_middle_keeps_both_ends`, `empty_recent_copy_is_exact`, `missing_rows_are_flagged_not_dropped`, `tab_wraps_and_activate_maps_to_actions`, `tab_from_last_wraps_to_new`, `arrows_stay_inside_the_recent_list`, `arrows_do_nothing_outside_lists`, `arrows_in_recovery_keep_their_column_and_stop_at_ends`, `recovery_rows_come_first_when_present`, `clearing_collections_never_panics_on_old_focus`, `relative_time_text_used` — all with fake `Recents`/`RecoveryRow`s, without an S1 `Workspace`.
 
-**E2 — Start page drawing + Start/recents host wiring (S2 integration)** · `opus` · L · deps: **S1 merged**, E1, U0 (UI-system kit). **Status: pending.**
+**E2 — Start page drawing + Start/recents host wiring (S2 integration)** · `opus` · L · deps: **S1 merged**, E1, U0 (UI-system kit). **Status: implemented on the work branch, independent review/merge pending; [record](DFS_S2_E2_START_INTEGRATION.md).**
 Drawing (moved here from E1, 2026-09-24): create `varos-app/src/start_ui.rs` (`draw(&mut egui::Ui, &StartModel) -> Vec<StartAction>`, tokens only, layout of §3.7). The Start surface renders the `StartModel::recovery()` slot and emits `Recover/Discard/Later` actions (data supplied by F2; tested here with fake rows); draws `START_TITLE`, the `MISSING_TAG` on missing rows, and emits `StartAction::Locate` from the missing-file dialog. Drawing tests: `start_ui_uses_no_accent_except_focus` (headless egui `Context`, inspect shapes — ACCENT appears only on the keyboard-focus outline), plus recovery/action rendering with fake rows.
 Host wiring owns: `main.rs` (AppView, launch-to-Start, Home, AppCommands of §3.9 S1-5, `Recents::record` calls at the Opened/Saved sites, Recents persistence, key gating), `ui.rs` (Home chip, Board-leaf Start mode, "No document open" placeholders — New/Open/Save hamburger rows are already wired by S1-C; E2 does not repeat that), `chrome.rs` + `mac_menu.rs` (**Open Recent ▸ (≤10) + Clear Menu only** — S1-C already adds native New ⌘N and updates the KeyN chrome test; update only the Open Recent addition to that same test). Must not touch `storage/*` except bug fixes agreed with the moderator.
 Host tests: `launch_without_intent_shows_start`, `file_intent_skips_start`, `closing_last_clean_tab_shows_start`, `home_keeps_tabs_and_tab_click_returns_unchanged` (view, selection, not dirty), `new_from_start_is_boardless` (A8a), `open_recent_success_moves_entry_to_top`, `failed_open_leaves_recents_and_sessions_unchanged`, `missing_recent_cancel_changes_nothing`, `locate_validates_before_relocating`, `start_blocks_document_shortcuts`, `native_open_recent_menu_mirrors_start`.

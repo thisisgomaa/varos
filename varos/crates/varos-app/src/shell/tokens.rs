@@ -131,6 +131,10 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style_of(egui::Theme::Light, style);
 }
 
+pub const START_PAD: f32 = 32.0;
+pub const START_GAP: f32 = 24.0;
+pub const START_WIDTH: f32 = 720.0;
+
 // Minimum Start/Recovery kit, in logical points. No runtime colour/size literals in controls.
 pub const KIT_MIN_TARGET: f32 = 24.0;
 pub const KIT_CONTROL_H: f32 = 32.0;

@@ -33,6 +33,12 @@ pub enum SaveFailChoice {
 pub trait Dialogs {
     /// The Open dialog (multi-select). Empty = cancelled.
     fn pick_open(&mut self) -> Vec<PathBuf>;
+    fn pick_locate(&mut self) -> Option<PathBuf> {
+        self.pick_open().into_iter().next()
+    }
+    fn locate_missing(&mut self, _path: &Path) -> bool {
+        false
+    }
     /// The Save dialog, pre-filled with `suggested` in `dir`. `None` = cancelled.
     fn pick_save(&mut self, suggested: &str, dir: Option<&Path>) -> Option<PathBuf>;
     /// “Save changes to “name”?” — `progress` = `Some((i, n))` during Quit (“Document i of n”).
@@ -60,6 +66,10 @@ pub trait DocStore {
     /// not exist yet), plus device/inode on unix.
     fn key(&self, path: &Path) -> FileKey;
     fn exists(&self, path: &Path) -> bool;
+    /// Only successful lifecycle outcomes reach Recent. Default preserves small fake stores.
+    fn remember(&mut self, _path: &Path, _relocated_from: Option<&Path>) {}
+    fn remove_recent(&mut self, _path: &Path) {}
+    fn clear_recent(&mut self) {}
 }
 
 /// What the host must do after a command.
@@ -85,6 +95,17 @@ impl Lifecycle<'_> {
     /// Run one command. `AppCommand::Window(_)` is ignored here (host-owned).
     pub fn run(&mut self, cmd: AppCommand) -> Effect {
         match cmd {
+            AppCommand::Home => self.ws.show_home(),
+            AppCommand::OpenRecent(path) => {
+                if self.store.exists(&path) {
+                    self.open_one(path, None);
+                } else if self.dialogs.locate_missing(&path) {
+                    self.locate(path);
+                }
+            }
+            AppCommand::LocateRecent(path) => self.locate(path),
+            AppCommand::RemoveRecent(path) => self.store.remove_recent(&path),
+            AppCommand::ClearRecent => self.store.clear_recent(),
             AppCommand::NewDocument => {
                 self.ws.new_untitled();
             }
@@ -124,23 +145,31 @@ impl Lifecycle<'_> {
     /// active `Untitled`); failure → “Couldn't open …”, and no tab, path, selection or history changes.
     fn open_paths(&mut self, paths: Vec<PathBuf>) {
         for path in paths {
-            let key = self.store.key(&path);
-            if let Some(id) = self.open_tab_of(&key, None) {
-                self.ws.activate(id);
-                continue;
-            }
-            match self.store.load_with_notice(&path) {
-                // The tab takes the store's normalised path (absolute, symlinks resolved), so a later
-                // Save replaces the real file, never a symlink standing in for it.
-                Ok((doc, notice)) => {
-                    let at = key.path.clone();
-                    self.ws.add_loaded(doc, at, key);
-                    if let Some(message) = notice {
-                        self.dialogs.notice(&format!("Opened “{}”", file_name(&path)), message);
-                    }
+            self.open_one(path, None);
+        }
+    }
+    fn locate(&mut self, old: PathBuf) {
+        if let Some(path) = self.dialogs.pick_locate() {
+            self.open_one(path, Some(&old));
+        }
+    }
+    fn open_one(&mut self, path: PathBuf, old: Option<&Path>) {
+        let key = self.store.key(&path);
+        if let Some(id) = self.open_tab_of(&key, None) {
+            self.ws.activate(id);
+            self.store.remember(&key.path, old);
+            return;
+        }
+        match self.store.load_with_notice(&path) {
+            Ok((doc, notice)) => {
+                let at = key.path.clone();
+                self.ws.add_loaded(doc, at.clone(), key);
+                self.store.remember(&at, old);
+                if let Some(message) = notice {
+                    self.dialogs.notice(&format!("Opened “{}”", file_name(&path)), message);
                 }
-                Err(reason) => self.dialogs.open_failed(&file_name(&path), &reason),
             }
+            Err(reason) => self.dialogs.open_failed(&file_name(&path), &reason),
         }
     }
 
@@ -232,6 +261,7 @@ impl Lifecycle<'_> {
         if let Some(s) = self.ws.get_mut(id) {
             s.mark_saved(dest.to_path_buf(), key);
         }
+        self.store.remember(dest, None);
         Ok(())
     }
 
@@ -329,6 +359,7 @@ mod tests {
         Decide(SaveDecision),
         Fail(SaveFailChoice),
         Replace(bool),
+        Locate(bool),
     }
 
     #[derive(Default)]
@@ -345,6 +376,12 @@ mod tests {
         }
     }
     impl Dialogs for FakeDialogs {
+        fn locate_missing(&mut self, _: &Path) -> bool {
+            match self.next("missing".into()) {
+                Ans::Locate(answer) => answer,
+                a => panic!("unexpected {a:?}"),
+            }
+        }
         fn pick_open(&mut self) -> Vec<PathBuf> {
             match self.next("open".into()) {
                 Ans::Open(v) => v,
@@ -403,6 +440,7 @@ mod tests {
         loads: Vec<PathBuf>,
         saves: Vec<PathBuf>,
         notices: HashMap<PathBuf, &'static str>,
+        recent: varos_app::storage::recents::Recents,
     }
     impl FakeStore {
         fn target(&self, p: &Path) -> PathBuf {
@@ -422,6 +460,13 @@ mod tests {
         }
     }
     impl DocStore for FakeStore {
+        fn remember(&mut self, path: &Path, old: Option<&Path>) {
+            if let Some(old) = old {
+                self.recent.relocate(old, path, None, 50);
+            } else {
+                self.recent.record(path, None, 50);
+            }
+        }
         fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
             let doc = self.load(path)?;
             Ok((doc, self.notices.get(&self.target(path)).copied()))
@@ -1228,5 +1273,117 @@ mod tests {
         assert_eq!(r.ids(), [c, a, b]);
         assert_eq!(r.active(), c);
         assert!(r.prompts().is_empty());
+    }
+    #[test]
+    fn launch_and_new_from_start_preserve_the_internal_session_without_a_phantom_tab() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        assert!(r.ws.on_home());
+        assert!(r.ws.visible_tabs().is_empty());
+        assert_eq!(r.ws.sessions().len(), 1);
+        r.run(AppCommand::NewDocument);
+        assert!(!r.ws.on_home());
+        assert_eq!(r.ws.visible_tabs().len(), 1);
+        assert_eq!(r.ws.active().unwrap().display_name(), "Untitled-1");
+        assert!(r.ws.active().unwrap().editor.doc.artboards.is_empty());
+        assert!(!r.ws.active().unwrap().is_dirty_exact());
+        r.run(AppCommand::CloseDocument(r.active()));
+        assert!(r.ws.on_home());
+        assert!(r.ws.visible_tabs().is_empty());
+    }
+    #[test]
+    fn file_intent_opens_canvas_and_successful_recent_open_records_once() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        r.s.put("/d/a.vrs", art(BLUE));
+        r.s.put("/d/b.vrs", art(RED));
+        let a = r.open("/d/a.vrs");
+        assert!(!r.ws.on_home());
+        assert_eq!(r.ws.visible_tabs().len(), 1);
+        r.open("/d/b.vrs");
+        r.run(AppCommand::Home);
+        r.run(AppCommand::OpenRecent(p("/d/a.vrs")));
+        assert_eq!(r.active(), a);
+        assert!(!r.ws.on_home());
+        assert_eq!(
+            r.s.recent.entries().iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
+            [p("/d/a.vrs"), p("/d/b.vrs")]
+        );
+        assert_eq!(r.s.loads.len(), 2, "already-open recent is focused, never reloaded");
+    }
+    #[test]
+    fn home_and_return_keep_documents_selection_view_and_dirty_state() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(BLUE));
+        let a = r.open("/d/a.vrs");
+        r.ws.active_mut().unwrap().view = varos_core::geom::View { zoom: 3.0, pan: [31.0, 42.0] };
+        let document = r.get(a).editor.doc.clone();
+        let selection = r.get(a).editor.selected.clone();
+        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::ActivateDocument(a));
+        r.run(AppCommand::Home);
+        assert_eq!(r.ws.document_target(), None);
+        assert_eq!(r.ws.visible_tabs().len(), 2);
+        r.run(AppCommand::ActivateDocument(a));
+        assert_eq!(r.ws.document_target(), Some(a));
+        assert!(r.get(a).editor.doc.content_eq(&document));
+        assert_eq!(r.get(a).editor.selected, selection);
+        assert_eq!(r.get(a).view.zoom, 3.0);
+        assert_eq!(r.get(a).view.pan, [31.0, 42.0]);
+        assert!(!r.get(a).is_dirty_exact());
+    }
+    #[test]
+    fn failed_open_and_cancelled_missing_leave_start_recents_and_sessions_unchanged() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        r.s.recent.record(Path::new("/gone.vrs"), None, 1);
+        let recent = r.s.recent.clone();
+        let ids = r.ids();
+        r.script([Ans::Locate(false)]);
+        r.run(AppCommand::OpenRecent(p("/gone.vrs")));
+        assert_eq!(r.s.recent, recent);
+        assert_eq!(r.ids(), ids);
+        assert!(r.ws.on_home());
+        r.s.put("/bad.vrs", art(BLUE));
+        r.s.fail_load.insert(p("/bad.vrs"));
+        r.run(AppCommand::OpenRecent(p("/bad.vrs")));
+        assert_eq!(r.s.recent, recent);
+        assert_eq!(r.ids(), ids);
+        assert!(r.ws.on_home());
+    }
+    #[test]
+    fn locate_validates_before_relocating_and_cancel_changes_nothing() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        r.s.recent.record(Path::new("/gone.vrs"), None, 1);
+        let original = r.s.recent.clone();
+        r.script([Ans::Open(vec![])]);
+        r.run(AppCommand::LocateRecent(p("/gone.vrs")));
+        assert_eq!(r.s.recent, original);
+        r.script([Ans::Open(vec![p("/bad.vrs")])]);
+        r.run(AppCommand::LocateRecent(p("/gone.vrs")));
+        assert_eq!(r.s.recent, original);
+        assert!(r.ws.on_home());
+        r.s.put("/found.vrs", art(BLUE));
+        r.script([Ans::Open(vec![p("/found.vrs")])]);
+        r.run(AppCommand::LocateRecent(p("/gone.vrs")));
+        assert_eq!(r.s.recent.entries().len(), 1);
+        assert_eq!(r.s.recent.entries()[0].path, p("/found.vrs"));
+        assert!(!r.ws.on_home());
+    }
+    #[test]
+    fn only_a_successful_save_records_a_recent() {
+        let mut r = Rig::new();
+        let id = r.active();
+        r.script([Ans::Pick(None)]);
+        r.run(AppCommand::Save(id));
+        assert!(r.s.recent.entries().is_empty());
+        r.s.fail_save.insert(p("/fail.vrs"), u32::MAX);
+        r.script([Ans::Pick(Some(p("/fail.vrs"))), Ans::Fail(SaveFailChoice::Cancel)]);
+        r.run(AppCommand::Save(id));
+        assert!(r.s.recent.entries().is_empty());
+        r.script([Ans::Pick(Some(p("/ok.vrs")))]);
+        r.run(AppCommand::Save(id));
+        assert_eq!(r.s.recent.entries()[0].path, p("/ok.vrs"));
     }
 }

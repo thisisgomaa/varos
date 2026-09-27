@@ -80,6 +80,20 @@ pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<
     }
 }
 
+/// The only Start presentation-to-host adapter. Recovery remains F2 and has no fake action.
+pub fn start_command(action: varos_app::start::StartAction) -> Option<AppCommand> {
+    use varos_app::start::StartAction as A;
+    Some(match action {
+        A::New => AppCommand::NewDocument,
+        A::Open => AppCommand::OpenDialog,
+        A::OpenRecent(p) => AppCommand::OpenRecent(p),
+        A::Locate(p) => AppCommand::LocateRecent(p),
+        A::RemoveRecent(p) => AppCommand::RemoveRecent(p),
+        A::ClearRecent => AppCommand::ClearRecent,
+        A::Recover(_) | A::DiscardRecovery(_) | A::Later => return None,
+    })
+}
+
 /// The keyboard as the window holds it — the host's ONE truth for the held keys, never a document
 /// tab's: the modifiers (Ctrl or ⌘, ⇧, ⌥) as winit's `ModifiersChanged` last reported them, Space (the
 /// pan / A9 reposition key), and which keys went down AS A COMMAND. winit reports a modifier only when
@@ -437,20 +451,23 @@ pub fn run_lifecycle(
     keys: &Keyboard,
 ) -> Ran {
     debug_assert!(!matches!(cmd, AppCommand::Window(_)), "window commands are the host's");
-    if matches!(cmd, AppCommand::ActivateDocument(id) if ws.active_id() == Some(id)) {
+    if ws.on_home() && matches!(cmd, AppCommand::Save(_) | AppCommand::SaveAs(_)) {
+        return Ran::default();
+    }
+    if !ws.on_home() && matches!(cmd, AppCommand::ActivateDocument(id) if ws.active_id() == Some(id)) {
         return Ran::default();
     }
     if let Some(s) = ws.active_mut() {
         ui.settle(&mut s.editor);
         s.settle();
     }
-    let before = ws.active_id();
+    let before = (ws.active_id(), ws.on_home());
     let effect = Lifecycle { ws: &mut *ws, dialogs, store }.run(cmd);
     if let Some(s) = ws.active_mut() {
         keys.mirror(&mut s.editor);
     }
     ui.document_switched();
-    Ran { exit: effect.exit, ran: true, switched: ws.active_id() != before }
+    Ran { exit: effect.exit, ran: true, switched: (ws.active_id(), ws.on_home()) != before }
 }
 
 #[cfg(test)]

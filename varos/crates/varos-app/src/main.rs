@@ -35,6 +35,7 @@ mod lifecycle;
 mod mac_caption;
 #[cfg(target_os = "macos")]
 mod mac_menu;
+mod recent_files;
 mod single_instance;
 mod ui;
 mod workspace;
@@ -568,7 +569,7 @@ fn doc_key(ed: &mut Editor, view: &mut View, canvas: egui::Rect, code: KeyCode, 
 /// Apply a tab's owed fit (`DocumentSession::fit_pending`: a new / opened / re-maximized document)
 /// once the Board box is known. Returns `true` when it was applied.
 fn take_pending_fit(fit: &mut Option<f32>, ed: &Editor, view: &mut View, gui: &ui::Ui, window: &Window) -> bool {
-    if gui.splashing() || gui.board_px.is_none() {
+    if gui.board_px.is_none() {
         return false;
     }
     let Some(k) = fit.take() else {
@@ -631,6 +632,9 @@ fn run_action(
     match action {
         host::HostAction::App(cmd) => host::run_lifecycle(cmd, ws, ui, dialogs, store, keys),
         host::HostAction::Doc(a) => {
+            if ws.on_home() {
+                return host::Ran::default();
+            }
             if let Some(s) = ws.active_mut() {
                 run_doc_action(a, &mut s.editor, &mut s.view, canvas);
             }
@@ -757,19 +761,19 @@ fn main() {
     };
     // DFS S1: every tab is its own document (editor + view + file + saved checkpoint); the host
     // always works on the ACTIVE session (never empty in S1: it starts as a pristine Untitled-1).
-    let mut ws = workspace::Workspace::new();
+    let mut ws = workspace::Workspace::start_page();
     // The ONE FIFO action queue (review P1): the lifecycle / window commands (keys, native menu, tab
     // strip, burger, window controls, OS close, files handed in) queue here and run through `dispatch`
     // once the loop is about to wait; a document action a key or a menu row raises runs at once only
     // when nothing is waiting, else it queues behind (`raise_doc`) — so they all run in event order.
     // Pointer input and panel edits act on the editor directly. The first instance opens its OWN file
-    // argument, once, after the first framed frame (F13).
+    // argument, once, through the same lifecycle before the first UI frame.
     let mut pending = host::ActionQueue::default();
     // the held modifiers: ONE truth for the whole window (a tab switch must not forget a held Control)
     let mut keyboard = host::Keyboard::default();
-    let mut startup_open = host::open_paths_command(file_arg.into_iter().collect(), OpenOrigin::CommandLine);
+    let startup_open = host::open_paths_command(file_arg.into_iter().collect(), OpenOrigin::CommandLine);
     // the lifecycle's ports: native dialogs + the disk
-    let (mut dialogs, mut store) = (file_ports::RfdDialogs, file_ports::DiskStore);
+    let (mut dialogs, mut store) = (file_ports::RfdDialogs, recent_files::RecentStore::new(file_ports::DiskStore));
     #[cfg(not(target_os = "macos"))]
     let event_loop = EventLoop::new();
     // macOS: winit's own default menu (app name only) is replaced by our menu bar (MAC_CHROME.md §C).
@@ -785,12 +789,11 @@ fn main() {
     let saved = load_win_state(); // remembered geometry from last session (None on first run)
                                   // winit 0.30 removed WindowBuilder — WindowAttributes carries the identical with_* methods
     let mut attrs = Window::default_attributes()
-        .with_title(ws.active().map_or_else(|| "Varos".into(), |s| host::window_title(&s.display_name(), false)))
+        .with_title(varos_app::start::START_TITLE)
         .with_window_icon(load_icon())
         .with_visible(false) // created hidden — no visible flash at all
-        .with_transparent(true) // lets the startup splash card float over the desktop
-        .with_decorations(false) // borderless during the splash → no window shadow; the
-        // editor frame (decorations + shadow + snap) is applied once the splash finishes, below.
+        .with_transparent(false)
+        .with_decorations(true)
         .with_min_inner_size(winit::dpi::LogicalSize::new(800.0, 560.0)); // floor: never a degenerate layout
     #[cfg(windows)]
     {
@@ -822,7 +825,7 @@ fn main() {
     match saved {
         // re-open exactly where it was last time …
         Some((_, x, y, _, _)) => window.set_outer_position(PhysicalPosition::new(x, y)),
-        // … or, first run, centre on the primary monitor (the splash card lands mid-screen)
+        // … or, first run, centre on the primary monitor
         None => {
             if let Some(mon) = window.primary_monitor() {
                 let (ms, mp, ws) = (mon.size(), mon.position(), window.outer_size());
@@ -834,7 +837,7 @@ fn main() {
         }
     }
     let size = window.inner_size();
-    // Cloak the window the instant it exists (before the slow GPU/webview setup) so the OS never
+    // Cloak the window the instant it exists (before the slow GPU setup) so the OS never
     // composites it — kills the startup white flash and the native-caption flash. Un-cloaked after
     // frame 0 below.
     let hwnd: isize = {
@@ -879,9 +882,19 @@ fn main() {
     let scale = window.scale_factor();
 
     let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
-    gui.set_tabs(ws.tabs(), ws.active_id());
+    if let Some(cmd) = startup_open {
+        host::run_lifecycle(cmd, &mut ws, &mut gui, &mut dialogs, &mut store, &keyboard);
+    }
+    if !ws.on_home() {
+        if let Some(s) = ws.active() {
+            window.set_title(&host::window_title(&s.display_name(), s.is_dirty()));
+        }
+    }
+    gui.set_tabs(ws.visible_tabs(), ws.document_target());
+    gui.set_home(ws.on_home(), store.model(), store.warning.clone());
 
-    let installed = cursors::install(hwnd); // subclass live; custom_frame is deferred until the splash ends
+    let installed = cursors::install(hwnd);
+    cursors::custom_frame(hwnd);
     cursors::set_dark_class_brush(hwnd); // any OS background fill is now #141313, never white
 
     // The Varos cursor set v1.1 (embedded), built once per platform: Win32 HCURSORs / macOS Retina
@@ -937,11 +950,11 @@ fn main() {
     // startup Untitled-1); the pre-shell fit above centres on the whole window, so one box-aware pass
     // corrects it.
     let mut last_title = String::new();
-    let mut drawn_tabs = ws.tabs();
+    let mut drawn_tabs = ws.visible_tabs();
 
     // Paint frame 0 imperatively while cloaked, then reveal — the first pixels on screen are our dark
-    // UI + splash (never a white flash, never the native caption).
-    gui.start_splash();
+    // UI (never a white flash, never a timed splash).
+    let initial_home = ws.on_home();
     {
         // custom_frame stripped the caption → the client area grew; sync the surface before rendering.
         let sz0 = window.inner_size();
@@ -951,8 +964,8 @@ fn main() {
             let ed = &mut s.editor;
             ed.ppu = view.zoom;
             let (jobs, tdelta, screen) = gui.run(&window, ed, scale as f32, view, cursors::is_maximized(hwnd));
-            if gui.splashing() {
-                renderer.render_splash(&jobs, &tdelta, &screen);
+            if initial_home {
+                renderer.render_ui(&Default::default(), view, &jobs, &tdelta, &screen);
             } else {
                 let world = build_scene_in_view(ed, view, [sz0.width, sz0.height]);
                 renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
@@ -961,8 +974,9 @@ fn main() {
     }
     cursors::set_cloaked(hwnd, false);
 
-    let mut editor_framed = false; // becomes true when we switch the splash → the framed editor window
+    let mut editor_framed = false; // restore maximized geometry after the initial frame
     let mut last_scene_signature: Option<u64> = None;
+    let mut surface_retries = 0u8;
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
@@ -970,17 +984,31 @@ fn main() {
             if let Some(menu) = &mac_menu {
                 if matches!(&event, Event::NewEvents(winit::event::StartCause::Init)) {
                     menu.install();
+                    menu.sync_documents(!ws.on_home());
+                    if let Err(e) = menu.sync_recent(&store.recents) {
+                        eprintln!("Recent menu unavailable: {e}");
+                    }
                 }
                 // a menu row (clicked, or its ⌘ key): every row queues into the one FIFO queue — File /
                 // Quit / Window rows as commands, the other rows as the SAME document action their key
                 // queues — except a ⌘-row while typing, which goes to the focused field
-                for cmd in menu.drain() {
+                for action in menu.drain() {
+                    let cmd = match action {
+                        mac_menu::NativeAction::App(cmd) => {
+                            pending.push(host::HostAction::App(cmd));
+                            window.request_redraw();
+                            continue;
+                        }
+                        mac_menu::NativeAction::Menu(cmd) => cmd,
+                    };
                     use host::{DocAction as D, HostAction as A, MenuRoute as R};
                     let canvas = canvas_px(&gui, &window);
-                    match host::menu_route(cmd, ws.active_id()) {
+                    match host::menu_route(cmd, ws.document_target()) {
                         Some(R::App(c)) => pending.push(A::App(c)),
                         Some(R::Key(k)) => {
-                            if gui.wants_keyboard() {
+                            if ws.on_home() {
+                                // Start owns all non-lifecycle keys.
+                            } else if gui.wants_keyboard() {
                                 // typing in a field: the key belongs to egui, as on the keyboard path
                                 if let Some(key) = chrome::egui_key(k.code) {
                                     gui.forward_shortcut(key, k.shift, k.alt);
@@ -995,7 +1023,7 @@ fn main() {
                         }
                         // a click-only row (Edit ▸ Delete): the plain key's path, never while typing
                         Some(R::Plain(code)) => {
-                            if !gui.wants_keyboard() {
+                            if !ws.on_home() && !gui.wants_keyboard() {
                                 if let Some(s) = ws.active_mut() {
                                     let d = D::Key(code, Mods::default());
                                     raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas);
@@ -1003,6 +1031,9 @@ fn main() {
                             }
                         }
                         Some(R::Snap { grid }) => {
+                            if ws.on_home() {
+                                continue;
+                            }
                             if let Some(s) = ws.active_mut() {
                                 raise_doc(&mut pending, D::Snap { grid }, &mut s.editor, &mut s.view, canvas);
                             }
@@ -1027,6 +1058,7 @@ fn main() {
                         let (ds, keys) = (&mut dialogs, &keyboard);
                         let ran = dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, ds, &mut store, keys);
                         if ran.ran {
+                            surface_retries = 0;
                             last_scene_signature = None; // the drawn document may be another one now
                         }
                         if ran.switched {
@@ -1040,9 +1072,28 @@ fn main() {
                             return;
                         }
                     }
-                    drawn_tabs = ws.tabs();
-                    gui.set_tabs(drawn_tabs.clone(), ws.active_id());
+                    drawn_tabs = ws.visible_tabs();
+                    gui.set_tabs(drawn_tabs.clone(), ws.document_target());
+                    gui.set_home(ws.on_home(), store.model(), store.warning.clone());
+                    #[cfg(target_os = "macos")]
+                    if let Some(menu) = &mac_menu {
+                        menu.sync_documents(!ws.on_home());
+                        if let Err(e) = menu.sync_recent(&store.recents) {
+                            eprintln!("Recent menu unavailable: {e}");
+                        }
+                    }
                     window.request_redraw();
+                }
+            }
+            if matches!(&event, Event::AboutToWait) {
+                match gui.repaint_at {
+                    Some(at) if at <= Instant::now() => {
+                        gui.repaint_at = None;
+                        window.request_redraw();
+                        elwt.set_control_flow(ControlFlow::Wait);
+                    }
+                    Some(at) => elwt.set_control_flow(ControlFlow::WaitUntil(at)),
+                    None => elwt.set_control_flow(ControlFlow::Wait),
                 }
             }
             if let Event::WindowEvent { event, window_id } = event {
@@ -1074,7 +1125,7 @@ fn main() {
                     WindowEvent::KeyboardInput { event: k, .. } => match k.physical_key {
                         PhysicalKey::Code(c) => {
                             let pressed = k.state == ElementState::Pressed;
-                            command_key(&mut pending, &mut keyboard, c, ws.active_id(), pressed, k.repeat)
+                            command_key(&mut pending, &mut keyboard, c, ws.document_target(), pressed, k.repeat)
                         }
                         _ => false,
                     },
@@ -1090,7 +1141,11 @@ fn main() {
                     pending.pointer_button(*state == ElementState::Released);
                     window.request_redraw();
                 }
-                let over_panel = gui.wants_pointer();
+                let home = ws.on_home();
+                if home && matches!(event, WindowEvent::Focused(true)) {
+                    gui.set_home(true, store.model(), store.warning.clone());
+                }
+                let over_panel = home || gui.wants_pointer();
                 let Some(s) = ws.active_mut() else { return };
                 let (ed, view) = (&mut s.editor, &mut s.view);
                 if egui_consumed {
@@ -1139,7 +1194,7 @@ fn main() {
                         window.request_redraw();
                     }
                     // macOS: an opaque window that was covered gets no redraws (AppKit skips drawing an
-                    // occluded view), so a splash that started behind another window would sit there
+                    // occluded view), so a view that started behind another window would sit there
                     // until the next input event — repaint the moment it is uncovered.
                     #[cfg(target_os = "macos")]
                     WindowEvent::Occluded(false) => window.request_redraw(),
@@ -1160,13 +1215,13 @@ fn main() {
                     WindowEvent::CursorMoved { position, .. } => {
                         let PhysicalPosition { x, y } = position;
                         screen_cursor = [x as f32, y as f32];
-                        if panning {
+                        if !home && panning {
                             view.pan = [
                                 view.pan[0] + screen_cursor[0] - pan_last[0],
                                 view.pan[1] + screen_cursor[1] - pan_last[1],
                             ];
                             pan_last = screen_cursor;
-                        } else if !over_panel || canvas_gesture {
+                        } else if !home && (!over_panel || canvas_gesture) {
                             // a gesture that began on the canvas keeps tracking even under a panel (C5)
                             ed.ppu = view.zoom;
                             ed.pointer_move(view.s2w(screen_cursor));
@@ -1184,7 +1239,7 @@ fn main() {
                         match button {
                             MouseButton::Left => match state {
                                 ElementState::Pressed => {
-                                    if keyboard.space() {
+                                    if !home && keyboard.space() {
                                         #[cfg(target_os = "macos")]
                                         caption_clicks.reset_after_drag();
                                         if ed.mods.ctrl {
@@ -1258,11 +1313,12 @@ fn main() {
                                 }
                             },
                             MouseButton::Middle => match state {
-                                ElementState::Pressed => {
+                                ElementState::Pressed if !home => {
                                     panning = true;
                                     pan_last = screen_cursor;
                                 }
                                 ElementState::Released => panning = false,
+                                _ => {}
                             },
                             _ => {}
                         }
@@ -1271,7 +1327,7 @@ fn main() {
                     WindowEvent::MouseWheel { delta, .. } => {
                         // a panel is a hard scroll boundary: if the pointer is over egui chrome (e.g. the
                         // Layers list), the wheel scrolls THAT — it must never leak to canvas pan/zoom.
-                        if gui.wants_pointer() {
+                        if home || gui.wants_pointer() {
                             window.request_redraw();
                             return;
                         }
@@ -1297,7 +1353,7 @@ fn main() {
                         // commands, queued above (`command_key`) BEFORE the text-field check — so ⌘S
                         // inside a field saves on every platform, as the Mac menu's key equivalent
                         // already does. Such a key goes nowhere else.
-                        if command_key_event {
+                        if command_key_event || home {
                             return;
                         }
                         // Only skip canvas shortcuts when a text field is actually focused — NOT on egui's
@@ -1337,7 +1393,9 @@ fn main() {
                         let perf_start = Instant::now();
                         // a new / opened tab's owed fit, BEFORE its first frame is drawn (the Board box is
                         // known from the previous frame)
-                        take_pending_fit(&mut s.fit_pending, ed, view, &gui, &window);
+                        if !home {
+                            take_pending_fit(&mut s.fit_pending, ed, view, &gui, &window);
+                        }
                         ed.ppu = view.zoom;
                         // Native UI runs FIRST (the rail may switch the tool), THEN we build the scene from
                         // the updated editor so the change shows this same frame.
@@ -1373,19 +1431,21 @@ fn main() {
                                 *view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
                             }
                         }
-                        // Stage 4: the first non-splash frame knows the Board box — refit the startup
+                        // Stage 4: the first document frame knows the Board box — refit the startup
                         // view INTO it once (the pre-shell fit centred on the whole window).
-                        if take_pending_fit(&mut s.fit_pending, ed, view, &gui, &window) {
+                        if !home && take_pending_fit(&mut s.fit_pending, ed, view, &gui, &window) {
                             window.request_redraw();
                         }
                         // Cursor: over chrome show the UI's OWN cursor (egui's icon mapped to the
                         // Win32 set — seam-resize arrows on box splitters, ↔ on a scrubbed field,
                         // arrow elsewhere); over the canvas show the tool's cursor. It was hardwired
                         // to Select here, which broke the new box seams' arrows (Ahmed 07-07).
-                        let ck =
-                            resolve_ck(panning, keyboard.space(), gui.wants_pointer().then(|| gui.chrome_ck()), || {
-                                desired_ck(ed, view.s2w(screen_cursor))
-                            });
+                        let ck = resolve_ck(
+                            panning,
+                            keyboard.space(),
+                            (home || gui.wants_pointer()).then(|| gui.chrome_ck()),
+                            || desired_ck(ed, view.s2w(screen_cursor)),
+                        );
                         // Runs AFTER gui.run (egui's platform output is already applied), so on non-Windows
                         // the re-assert each frame wins over egui-winit's own cursor write.
                         if cursor_apply_needed(last_ck, ck, REASSERT_CURSOR_EACH_FRAME) {
@@ -1404,9 +1464,9 @@ fn main() {
                                 format!("hwnd={hw}\ninstalled={ins}\nsetcursor_hits={hits}\ncurrent_hcursor={cur}\n"),
                             );
                         }
-                        if gui.splashing() {
-                            renderer.render_splash(&jobs, &tdelta, &screen);
-                        // floating card on a transparent surface
+                        let rendered = if home {
+                            last_scene_signature = None;
+                            renderer.render_ui(&Default::default(), *view, &jobs, &tdelta, &screen)
                         } else {
                             // keyed by WHICH tab too: equal signatures of two tabs must never share art
                             let signature = host::scene_key(s.id, scene_signature(ed, *view, [psz.width, psz.height]));
@@ -1429,15 +1489,18 @@ fn main() {
                                     perf_start.elapsed().as_secs_f64() * 1_000.0
                                 );
                             }
+                            rendered
+                        };
+                        // An outdated/lost drawable can skip a frame. Retry briefly so an idle Home
+                        // transition cannot leave the old canvas on screen; do not spin while occluded.
+                        if rendered {
+                            surface_retries = 0;
+                        } else if surface_retries < 3 {
+                            surface_retries += 1;
+                            gui.repaint_at = Some(Instant::now() + std::time::Duration::from_millis(16));
                         }
-                        // AFTER rendering this frame (so no mid-frame size change), switch the borderless splash
-                        // window into the framed editor; the resulting Resized event syncs the surface next frame.
-                        if !gui.splashing() && !editor_framed {
-                            // macOS is decorated from creation (set_decorations would drop the full-size
-                            // content view — MAC_CHROME.md §A)
-                            #[cfg(not(target_os = "macos"))]
-                            window.set_decorations(true);
-                            cursors::custom_frame(hwnd);
+                        // Restore maximized geometry after rendering, never resize mid-frame.
+                        if !editor_framed {
                             if saved.is_some_and(|(m, ..)| m) {
                                 // re-open maximized if it was last time
                                 cursors::maximize(hwnd);
@@ -1451,8 +1514,6 @@ fn main() {
                                 refit_pending = false;
                             }
                             editor_framed = true;
-                            // the first instance opens its OWN file argument now (F13), through the dispatch
-                            pending.extend(startup_open.take().map(host::HostAction::App));
                             window.request_redraw();
                         }
                         // Zoom needs no follow-up frames; idle when egui has no work.
@@ -1460,8 +1521,9 @@ fn main() {
                             window.request_redraw();
                         }
                         // the tab strip + window title follow the documents (name, unsaved dot / `*`)
-                        let (name, dirty) = (s.display_name(), s.is_dirty());
-                        let title = host::window_title(&name, dirty);
+                        let (name, dirty) = (s.display_name(), !home && s.is_dirty());
+                        let title =
+                            if home { varos_app::start::START_TITLE.into() } else { host::window_title(&name, dirty) };
                         if title != last_title {
                             window.set_title(&title);
                             #[cfg(target_os = "macos")]
@@ -1473,10 +1535,10 @@ fn main() {
                         }
                         // the one per-frame snapshot; handed to the strip only when it changed (a
                         // dispatch in `AboutToWait` already handed over its own result)
-                        let tabs = ws.tabs();
+                        let tabs = ws.visible_tabs();
                         if tabs != drawn_tabs {
                             window.request_redraw(); // repaint once more so the strip shows the change
-                            gui.set_tabs(tabs.clone(), ws.active_id());
+                            gui.set_tabs(tabs.clone(), ws.document_target());
                             drawn_tabs = tabs;
                         }
                     }
@@ -1884,6 +1946,38 @@ mod action_queue_tests {
         fn exists(&self, _: &Path) -> bool {
             false
         }
+    }
+
+    #[test]
+    fn home_click_before_undo_and_save_blocks_background_document_actions() {
+        let (mut ws, id) = saved_then_edited();
+        let store = run_batch(
+            &mut ws,
+            vec![
+                Raised::Pointer(false),
+                Raised::Pointer(true),
+                undo(),
+                app(AppCommand::Save(id)),
+                Raised::UiFrame(vec![AppCommand::Home]),
+            ],
+        );
+        assert!(ws.on_home());
+        assert!(store.saved.is_none());
+        assert_eq!(ws.active().unwrap().editor.doc.artboards.len(), 2);
+        assert!(ws.active().unwrap().is_dirty_exact());
+        let mut ui = FakeUi;
+        let mut dialogs = NoDialogs;
+        let mut store = RecordingStore::default();
+        // Returning to the same active tab from Home must not take S1's old no-op fast path.
+        let ran = host::run_lifecycle(
+            AppCommand::ActivateDocument(id),
+            &mut ws,
+            &mut ui,
+            &mut dialogs,
+            &mut store,
+            &host::Keyboard::default(),
+        );
+        assert!(ran.switched && !ws.on_home());
     }
 
     const UNDO: KeyCode = KeyCode::KeyZ;

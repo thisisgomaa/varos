@@ -49,6 +49,12 @@ pub enum WindowCmd {
 pub enum AppCommand {
     /// ⌘N / `+` / File ▸ New — a fresh, clean, boardless `Untitled-N` tab.
     NewDocument,
+    /// Show Start while retaining every open document.
+    Home,
+    OpenRecent(PathBuf),
+    LocateRecent(PathBuf),
+    RemoveRecent(PathBuf),
+    ClearRecent,
     /// ⌘O / File ▸ Open… — show the Open dialog, then open what was picked.
     OpenDialog,
     /// Open these files (an already-open file is focused, never reloaded).

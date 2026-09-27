@@ -141,3 +141,8 @@ core/editor لا يتشارك بين U3-T وU5 وF5. F5/F6 تحت الميثاق
 ### Minimum U0-B/C implementation — 2026-09-27
 
 [عقد المكونات ودليل الاختبار](../foundation/work_orders/UI_U0_BC_KIT.md): مكتبة `shell::kit` فيها action/icon button، Home محايد، list row، heading وnotice فقط. المفاتيح والمساعدة والحالة تأتي من المستدعي؛ الرد `activated` يُستهلك مرة واحدة، ومع keyboard dispatch في Start يُستخدم `pointer_only` لمنع التكرار. اختبارات CPU على 1×/2× ونافذة Mac تجريبية؛ ده مش ربط E2 ولا قبول screen-reader أو العربي. التالي E2، والمراجعة المستقلة مجمّعة آخر القعدة.
+
+
+### E2 implementation — 2026-09-27
+
+[سجل الربط وحدوده](../foundation/work_orders/DFS_S2_E2_START_INTEGRATION.md): Start/Home/Recent اتربطوا بمسار فتح واحد وadapter واحد من StartAction إلى AppCommand. Home يحجب أوامر المستند مع حفظ التبويبات وحالتها، وWorkspace يحتفظ بالـplaceholder الداخلي. الرسم بلا I/O؛ نموذج Recent يتحدث عند حدود lifecycle والتركيز. شاشة الانتظار اتشالت، ومسار فشل GPU محفوظ. اختبارات CPU وتجربة Mac لا تعني قبولًا مستقلًا أو دعمًا كاملًا للعربي/قارئ الشاشة؛ بيانات الاسترجاع الحقيقية والحفظ المتين للمستند في F1/F2. التالي F1، والمراجعة مجمّعة آخر القعدة.

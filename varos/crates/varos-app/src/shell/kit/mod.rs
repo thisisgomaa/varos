@@ -102,7 +102,7 @@ fn paint_control(ui: &mut Ui, c: Control<'_>, detail: Option<&str>, icon_only: b
             if detail.is_some() { t::KIT_ROW_H } else { t::KIT_CONTROL_H },
         );
         let (_, rect) = ui.allocate_space(size);
-        let response = ui.interact(rect, c.id, Sense::click());
+        let response = ui.interact(rect, c.id, if c.pointer_only { Sense::CLICK } else { Sense::click() });
         let hover = enabled && (response.hovered() || response.is_pointer_button_down_on());
         let fill = if !enabled {
             t::PANEL
