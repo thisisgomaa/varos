@@ -18,13 +18,15 @@
 use std::path::Path as FsPath;
 
 use varos_core::file::write_atomic;
-use varos_core::format::{decode_model, Limits};
+use varos_core::format::Limits;
 use varos_core::model::Document;
 
 // The write side lives in `write.rs` (the shared page loop + the native container) and `export.rs`
-// (the pure PDF export: planning + a model-free writer). This file keeps the public entry points and
-// the read side.
+// (the pure PDF export: planning + a model-free writer). The bounded read side lives in read.rs;
+// this file keeps the compatible public entry points.
 mod export;
+mod read;
+pub use read::{load_vrs_bytes, load_vrs_checked};
 mod write;
 pub use export::{
     default_scope, export_pdf_bytes, has_embedded_model, plan_pdf_export, ExportError, ExportPlan, ExportScope,
@@ -45,80 +47,9 @@ pub fn load_vrs(path: &FsPath) -> Result<Document, String> {
     load_vrs_with_notice(path).map(|(doc, _)| doc)
 }
 
-/// Load through the same reader, retaining the migration notice for the application's open flow.
-/// PDF parsing is not yet bounded here: S5-D owns that separate reader change.
+/// Load with the migration notice retained for the application's open flow.
 pub fn load_vrs_with_notice(path: &FsPath) -> Result<(Document, Option<&'static str>), String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("read failed: {e}"))?;
-    let model = if bytes.starts_with(b"%PDF-") { extract_model(&bytes)?.into_bytes() } else { bytes };
-    let loaded = decode_model(&model, None, &Limits::DEFAULT).map_err(|e| e.to_string())?;
+    let loaded = load_vrs_checked(path, &Limits::DEFAULT).map_err(|e| e.to_string())?;
     let notice = loaded.notice();
     Ok((loaded.doc, notice))
-}
-
-// ───────────────────────────── read: PDF bytes → model blob ─────────────────────────────
-
-fn extract_model(bytes: &[u8]) -> Result<String, String> {
-    let doc = lopdf::Document::load_mem(bytes).map_err(|e| format!("not a readable PDF: {e}"))?;
-    let catalog = doc.catalog().map_err(|e| format!("no PDF catalog: {e}"))?;
-
-    let stream_bytes = |obj: &lopdf::Object| -> Result<Vec<u8>, String> {
-        let (_, o) = doc.dereference(obj).map_err(|e| e.to_string())?;
-        let s = o.as_stream().map_err(|e| e.to_string())?;
-        Ok(s.decompressed_content().unwrap_or_else(|_| s.content.clone()))
-    };
-
-    // fast path: the private catalog key Varos writes
-    if let Ok(obj) = catalog.get(b"VAROS_Model") {
-        let data = stream_bytes(obj)?;
-        return String::from_utf8(data).map_err(|_| "embedded model is not UTF-8".into());
-    }
-    // fallback: /Names → /EmbeddedFiles name tree → FileSpec /EF /F (survives third-party re-saves better)
-    fn collect(doc: &lopdf::Document, node: &lopdf::Dictionary, out: &mut Vec<lopdf::Object>) {
-        if let Ok(pairs) = node.get(b"Names") {
-            if let Ok((_, o)) = doc.dereference(pairs) {
-                if let Ok(arr) = o.as_array() {
-                    for kv in arr.chunks(2) {
-                        if let [_k, v] = kv {
-                            out.push(v.clone());
-                        }
-                    }
-                }
-            }
-        } else if let Ok(kids) = node.get(b"Kids") {
-            if let Ok((_, o)) = doc.dereference(kids) {
-                if let Ok(arr) = o.as_array() {
-                    for kid in arr {
-                        if let Ok((_, kd)) = doc.dereference(kid) {
-                            if let Ok(d) = kd.as_dict() {
-                                collect(doc, d, out);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let names = catalog
-        .get_deref(b"Names", &doc)
-        .and_then(|o| o.as_dict())
-        .map_err(|_| "no embedded Varos model in this PDF".to_string())?;
-    let root = names
-        .get_deref(b"EmbeddedFiles", &doc)
-        .and_then(|o| o.as_dict())
-        .map_err(|_| "no embedded Varos model in this PDF".to_string())?;
-    let mut specs = Vec::new();
-    collect(&doc, root, &mut specs);
-    for spec in specs {
-        let Ok((_, so)) = doc.dereference(&spec) else { continue };
-        let Ok(sd) = so.as_dict() else { continue };
-        let Ok(ef) = sd.get_deref(b"EF", &doc).and_then(|o| o.as_dict()) else { continue };
-        if let Ok(f) = ef.get(b"F").or_else(|_| ef.get(b"UF")) {
-            if let Ok(data) = stream_bytes(f) {
-                if let Ok(s) = String::from_utf8(data) {
-                    return Ok(s);
-                }
-            }
-        }
-    }
-    Err("no embedded Varos model in this PDF".into())
 }
