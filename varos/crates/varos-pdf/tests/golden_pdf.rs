@@ -47,6 +47,9 @@ fn frozen_v1_pdf_corpus_round_trips_on_disk_by_content() {
             loaded.content_eq(&reloaded),
             "{name}: load -> save -> load through the PDF container must preserve authored content"
         );
+        assert_eq!(loaded, reloaded, "{name}: complete document survives migration and save");
+        let bytes_a = std::fs::read(&p).unwrap();
+        assert_eq!(varos_pdf::write_pdf(&reloaded).unwrap(), bytes_a, "{name}: consecutive saves are byte-stable");
         let _ = std::fs::remove_file(&p);
     }
 }

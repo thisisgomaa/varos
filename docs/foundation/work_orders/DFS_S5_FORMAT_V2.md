@@ -10,9 +10,9 @@
 | S5-B | Merged; `format/mod.rs` writes v2, structural/version checks and migration are present | Reuse this spine; do not restart it. |
 | S5-C | Implemented on `codex/ui-system-plan`, not merged/reviewed yet: semantic validator, pre-normalization authored checks and focused tests | Independent review batched at the owner’s request; see implementation amendment below. |
 | S5-D | Implemented on the work branch, not merged/reviewed: `varos-pdf/src/read.rs`, checked file/byte APIs, preflight and bounded traversal | Batched independent review, personal corpus and Preview acceptance remain pending; S5-E finalization follows. |
-| S5-E | v1 fixtures, golden tests and harness merged | Final v2 fixtures, C/D refusal coverage and real-file corpus/old-binary acceptance remain open. |
+| S5-E | Automated slice implemented on the work branch: frozen v2/repair/refusal fixtures, strengthened golden law, active old-gate checks and fail-closed corpus harness | Personal corpus, real-window/old-binary/Preview acceptance and batched independent review remain open. |
 
-**S5 as a system is incomplete.** Passing format-v2 tests does not establish semantic validation or bounded PDF loading. The [wire contract](../../reference/VRS_FORMAT.md) now separates implemented checks from pending C/D checks.
+**S5 release acceptance is incomplete.** C/D/E now have headless evidence on the work branch. Personal-file and real-application checks remain separate; independent review and merge have not happened. The [wire contract](../../reference/VRS_FORMAT.md) records the implemented checks and remaining acceptance.
 
 Owner amendment (2026-09-24): an old file with a broken clip mask should open with the mask released and a notice. The work branch now releases only broken Clip references on v1 Group nodes before structural checking/id allocation, retains a notice and surfaces it after successful app Open. Shared normalization and current-format validation remain strict. The original `v1_invalid_clip_refused_not_demoted` test requirement below is superseded for that owner-approved recoverable case. Do not weaken unrelated corruption checks or silently discard art.
 
@@ -36,6 +36,16 @@ The same max_pdf_depth (default 64) also caps direct PDF dictionary/array and li
 
 The filter relies on the pinned reader's outer Some/None decision and retains the original object without cloning stream bytes; the regression test checks both dropped ObjStm and unchanged normal streams. Recheck this contract on a lopdf upgrade. The checked profile is deliberately stricter than arbitrary PDF import, which remains out of scope. The ignored large-array test measures rejection before allocation; it is not a claim of a universal heap/file ratio or whole-file latency at every cap. Evidence and limits are in GATE_LOG; no independent review or merge in this slice.
 
+### S5-E implementation amendment — 2026-09-27
+
+Frozen positive fixtures come from the writer at `6b6f41e`: raw/PDF masked+rotated and boardless twins, plus a synthetic v1 broken-mask repair example. Eighteen frozen refusals cover version, shape, semantic and container failures. READMEs record exact construction and SHA256SUMS pin initial bytes. Existing v1/ancient/native PDF fixtures are untouched. Raw golden tests include the new cohort; PDF v1 tests now prove the full Document and A==B save law, not only content_eq. V2 tests check exact frozen bytes, mask/hole/rotation/Arabic board values, repair notices, byte/disk refusal parity and small-limit failures.
+
+The old-reader gate tests are active in the default suite, with fresh and frozen v2 output and a v1 acceptance control. Source inspection clarifies an old documentation overstatement: this is an adaptation with old `VRS_VERSION` replaced by literal 1, not a verbatim binary/extractor copy. The refusal logic is preserved; PDF extraction uses current lopdf test plumbing. Running an old application remains a separate pending hand check.
+
+The read-only personal-corpus harness now fails for unset configuration, missing/unreadable/empty directories or any refusal. It walks iteratively, reports/skips symlinks and includes regular `.vrs`/`.json` files case-insensitively. Point it at a **dedicated personal-document folder**, not an entire code workspace whose JSON configs and intentional refusal fixtures are not personal Varos files. Synthetic tests verify the harness without claiming personal-corpus acceptance. The owner was asked for the personal-file directory; no real-file run or absence-of-files assumption is recorded.
+
+Local evidence: 753 passed, 0 failed, 4 intentionally ignored; Mac/Windows-target clippy and format checks pass. Details in GATE_LOG. No source/runtime change or independent review in E. Continue minimum U0 while the requested batch review and real-file/application acceptance remain explicitly open; do not merge S5 without its preconditions.
+
 The pieces below retain their original baseline/API context; “Proposed ADR” and “start at base” are no longer current execution instructions. Current queue: [PLAN](../../PLAN.md).
 
 Date: 2026-09-24 · Base: `ecf67f5` on `claude/sweet-cerf-1sg30t` · Scope: `varos-core` (model/format) + `varos-pdf` (container read side) + docs. **No `varos-app` edits.** Parallel-safe with S1, because S5 does not touch the app loop and keeps every existing public signature the app uses.
@@ -52,10 +62,10 @@ Date: 2026-09-24 · Base: `ecf67f5` on `claude/sweet-cerf-1sg30t` · Scope: `var
 - (e) Limits are enforced inside the PDF read path (no unbounded inflation).
 
 **Ahmed's hand test (Mac, batched after merge):**
-0. **Before merge to `main`, a precondition, not a batched item:** `VAROS_CORPUS_DIR=~/Documents cargo test -p varos-pdf --test corpus_check -- --ignored --nocapture`. Send the output. Any refusal of one of your own files blocks the merge.
-1. Open the old fixtures (`varos/crates/varos-core/tests/fixtures/*.vrs` and `varos/crates/varos-pdf/tests/fixtures/v1_*`), including the populated masked v1 file. Save, then reopen: same editable content, masks still clip, rotation kept.
+0. **Before merge to `main`, a precondition, not a batched item:** `VAROS_CORPUS_DIR="/path/to/personal-varos-documents" cargo test -p varos-pdf --test corpus_check -- --ignored --nocapture`. Send the output. Any refusal of one of your own files blocks the merge.
+1. Open the old fixtures (`varos/crates/varos-core/tests/fixtures/*.vrs` and `varos/crates/varos-core/tests/fixtures/v1/*_pdf.vrs`), including the populated masked v1 file. Save, then reopen: same editable content, masks still clip, rotation kept.
 2. Keep document A dirty, then try `v3_future.vrs`, `cycle_nodes.vrs` and an oversized file (`mkfile -n 300m ~/Desktop/big.vrs`). Each gives a readable refusal, and A, its history and its path stay untouched.
-3. Open a v2 file with a pre-S5 build (`main` today). It refuses with "saved by a newer Varos (v2)".
+3. Open a v2 file with a pre-S5 build (for example the `ecf67f5` era; current main already writes v2). It refuses with "saved by a newer Varos (v2)".
 4. Re-save a v2 `.vrs` in macOS Preview and reopen it in Varos. Record whether it opens or is refused with the "re-saved by another app" reason (see Risk R2).
 
 ## 2. Current-code findings (evidence read at `ecf67f5`)

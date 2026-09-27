@@ -1,0 +1,8 @@
+# Frozen bytes: never normalize line endings; these named fixtures are PDF containers.
+*.vrs -text
+filtered_model.vrs binary
+future_pdf.vrs binary
+incremental.vrs binary
+missing_model.vrs binary
+version_mismatch.vrs binary
+xref_stream.vrs binary
