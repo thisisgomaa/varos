@@ -1,4 +1,4 @@
-//! Headless E2 rendering/interaction, including F2's future recovery slots.
+//! Headless E2 rendering/interaction, including F2 recovery rows and disabled/busy actions.
 use egui::{Context, Event, Id, Key, Modifiers, Pos2, RawInput, Rect};
 use varos_app::{
     shell::{fonts, tokens},
@@ -76,6 +76,8 @@ fn recovery_slots_and_recent_actions_follow_the_pure_models_focus_order() {
                 name: "Recovered design".into(),
                 original_dir: None,
                 saved_at_text: "saved 14:32".into(),
+                problem: None,
+                busy: false,
             }],
         ));
         let (_, out) = frame(&ctx, &mut page, ppp, vec![]);
@@ -173,6 +175,71 @@ fn recent_rows_and_actions_fit_narrow_and_wide_workspaces() {
                 .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text()) } else { None })
                 .collect();
             assert!(text.contains("Locate…") && text.contains("Remove from Recent"), "missing-file menu is visible");
+        }
+    }
+}
+
+#[test]
+fn unavailable_and_busy_recovery_actions_cannot_be_activated_by_keyboard_or_pointer() {
+    for ppp in [1.0, 2.0] {
+        for busy in [false, true] {
+            let ctx = context();
+            let mut page = StartPage::new(StartModel::build(
+                &Recents::default(),
+                0,
+                |_| false,
+                vec![RecoveryRow {
+                    rid: "copy".into(),
+                    name: "A long document title that must wrap safely inside the recovery section.vrs".into(),
+                    original_dir: Some("/a/long/folder/path".into()),
+                    saved_at_text: "Saved 14:32".into(),
+                    problem: (!busy).then(|| "This recovery copy is damaged. The file is kept.".into()),
+                    busy,
+                }],
+            ));
+            let (_, out) = frame(&ctx, &mut page, ppp, vec![]);
+            if !busy {
+                assert!(out
+                    .shapes
+                    .iter()
+                    .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text().contains("damaged"))));
+            }
+            page.model.set_focus(2);
+            assert!(frame(&ctx, &mut page, ppp, vec![key(Key::Enter, false)]).0.is_empty());
+            let response = ctx.read_response(Id::new(("start-recovery", "copy", 0usize))).unwrap();
+            assert!(!response.enabled());
+            let pos = response.rect.center();
+            for pressed in [true, false] {
+                let events = vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ];
+                assert!(frame(&ctx, &mut page, ppp, events).0.is_empty());
+            }
+            let _ = frame(
+                &ctx,
+                &mut page,
+                ppp,
+                vec![Event::Key {
+                    key: Key::Enter,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+            );
+            page.model.set_focus(3);
+            let actions = frame(&ctx, &mut page, ppp, vec![key(Key::Enter, false)]).0;
+            if busy {
+                assert!(actions.is_empty());
+            } else {
+                assert_eq!(actions, [StartAction::DiscardRecovery("copy".into())]);
+            }
         }
     }
 }

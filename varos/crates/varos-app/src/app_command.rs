@@ -57,6 +57,12 @@ pub enum AppCommand {
     ClearRecent,
     SetRecoveryEnabled(bool),
     RetryRecovery(SessionId),
+    ReviewRecovery,
+    Recover(String),
+    DiscardRecovery(String),
+    DeferRecovery,
+    /// Worker result, installed through the normal FIFO/settle boundary.
+    InstallRecovered(Box<crate::workspace::RecoveredDocument>),
     /// ⌘O / File ▸ Open… — show the Open dialog, then open what was picked.
     OpenDialog,
     /// Open these files (an already-open file is focused, never reloaded).

@@ -43,6 +43,9 @@ pub enum ExternalChoice {
 }
 
 pub trait Dialogs {
+    fn confirm_discard_recovery(&mut self, _name: &str) -> bool {
+        false
+    }
     fn external_change(&mut self, _name: &str) -> ExternalChoice {
         ExternalChoice::Cancel
     }
@@ -113,8 +116,15 @@ impl Lifecycle<'_> {
     /// Run one command. `AppCommand::Window(_)` is ignored here (host-owned).
     pub fn run(&mut self, cmd: AppCommand) -> Effect {
         match cmd {
-            AppCommand::SetRecoveryEnabled(_) | AppCommand::RetryRecovery(_) => {} // host-owned
-            AppCommand::Home => self.ws.show_home(),
+            AppCommand::SetRecoveryEnabled(_)
+            | AppCommand::RetryRecovery(_)
+            | AppCommand::Recover(_)
+            | AppCommand::DiscardRecovery(_)
+            | AppCommand::DeferRecovery => {} // host-owned
+            AppCommand::InstallRecovered(copy) => {
+                self.ws.add_recovered(*copy);
+            }
+            AppCommand::Home | AppCommand::ReviewRecovery => self.ws.show_home(),
             AppCommand::OpenRecent(path) => {
                 if self.store.exists(&path) {
                     self.open_one(path, None);
@@ -268,8 +278,17 @@ impl Lifecycle<'_> {
     /// refused (two writers for one file). A refusal returns to the dialog; `None` = cancelled.
     fn choose_save_path(&mut self, id: SessionId) -> Option<PathBuf> {
         let s = self.ws.get(id)?;
-        let suggested = format!("{}.vrs", stem_of(s.path.as_deref(), &s.display_name()));
-        let dir = s.path.as_deref().and_then(Path::parent).map(Path::to_path_buf);
+        let (suggested, dir) = if let Some(source) = &s.recovered {
+            (
+                format!("{}-recovered.vrs", stem_of(Some(Path::new(&source.name)), &source.name)),
+                source.original_path.as_deref().and_then(Path::parent).map(Path::to_path_buf),
+            )
+        } else {
+            (
+                format!("{}.vrs", stem_of(s.path.as_deref(), &s.display_name())),
+                s.path.as_deref().and_then(Path::parent).map(Path::to_path_buf),
+            )
+        };
         loop {
             let picked = self.dialogs.pick_save(&suggested, dir.as_deref())?;
             let (dest, appended) = if is_vrs(&picked) { (picked, false) } else { (with_vrs(picked), true) };
@@ -308,6 +327,7 @@ impl Lifecycle<'_> {
                 s.key = Some(key);
                 s.untitled = None;
                 s.save_unconfirmed = true;
+                s.recovered = None; // explicit write adopted this path; uncertainty still forces dirty
             }
             s.source_fingerprint = self.store.fingerprint(dest);
         }

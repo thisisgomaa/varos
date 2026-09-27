@@ -80,7 +80,7 @@ pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<
     }
 }
 
-/// The only Start presentation-to-host adapter. Recovery remains F2 and has no fake action.
+/// The only Start presentation-to-host adapter.
 pub fn start_command(action: varos_app::start::StartAction) -> Option<AppCommand> {
     use varos_app::start::StartAction as A;
     Some(match action {
@@ -90,7 +90,9 @@ pub fn start_command(action: varos_app::start::StartAction) -> Option<AppCommand
         A::Locate(p) => AppCommand::LocateRecent(p),
         A::RemoveRecent(p) => AppCommand::RemoveRecent(p),
         A::ClearRecent => AppCommand::ClearRecent,
-        A::Recover(_) | A::DiscardRecovery(_) | A::Later => return None,
+        A::Recover(rid) => AppCommand::Recover(rid),
+        A::DiscardRecovery(rid) => AppCommand::DiscardRecovery(rid),
+        A::Later => AppCommand::DeferRecovery,
     })
 }
 
@@ -746,6 +748,42 @@ mod tests {
 
     fn run_keys(ws: &mut Workspace, ui: &mut FakeUi, cmd: AppCommand, keys: &Keyboard) -> Ran {
         run_lifecycle(cmd, ws, ui, &mut NoDialogs, &mut NoStore, keys)
+    }
+
+    #[test]
+    fn recovered_result_settles_outgoing_gesture_and_mirrors_held_keys() {
+        let mut ws = Workspace::new();
+        let first = ws.active_id().unwrap();
+        let ed = &mut ws.active_mut().unwrap().editor;
+        ed.set_tool(ToolKind::Rect);
+        ed.pointer_down([0.0, 0.0]);
+        ed.pointer_move([80.0, 60.0]);
+        let copy = crate::workspace::RecoveredDocument {
+            doc: Document::default(),
+            rid: "claim".into(),
+            source: crate::workspace::RecoveredSource {
+                name: "Logo".into(),
+                original_path: None,
+                saved_at: 1,
+                fell_back: false,
+            },
+            generation: varos_app::storage::recovery::Generation {
+                seq: 1,
+                file: "snap-1.json".into(),
+                bytes: 0,
+                crc32: 0,
+                saved_at: 1,
+            },
+        };
+        let mut ui = FakeUi::default();
+        let ran = run_held(&mut ws, &mut ui, AppCommand::InstallRecovered(Box::new(copy)), m(true, false, false));
+        assert!(ran.switched);
+        assert_eq!(ui.log, ["settle", "switched"]);
+        assert!(!ws.get(first).unwrap().editor.transaction_open());
+        assert_eq!(ws.get(first).unwrap().editor.doc.paths.len(), 1);
+        assert!(ws.active().unwrap().editor.mods.ctrl);
+        assert!(ws.active().unwrap().is_dirty_exact());
+        assert_ne!(ws.active_id(), Some(first));
     }
 
     #[test]

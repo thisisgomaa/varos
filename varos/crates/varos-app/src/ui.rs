@@ -1374,6 +1374,7 @@ impl Ui {
                 false,
                 cfg!(target_os = "macos"),
             );
+            build_recovery_strip(root, recovery, &mut app_cmds);
             build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request, &recovery.status);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
             // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
@@ -3726,8 +3727,49 @@ fn corner_voids(p: &egui::Painter, rect: egui::Rect) {
     }
 }
 
-/// Stage 1 (§3.5): the status strip — void chrome like the app bar (h 25, seam, 11px faint).
-/// Left = the beginner shortcut hints; right = artboard i/n · Fit (clickable) · zoom %.
+/// Recovery choices live on Start; these neutral strips lead there or to Save As.
+fn build_recovery_strip(
+    root: &mut egui::Ui,
+    recovery: &crate::recovery_host::RecoveryUi,
+    commands: &mut Vec<AppCommand>,
+) {
+    if !recovery.banner && recovery.recovered_notice.is_none() {
+        return;
+    }
+    use varos_app::shell::{
+        kit::{self, Control},
+        tokens as t,
+    };
+    egui::Panel::top("recovery-strip").frame(egui::Frame::NONE.fill(t::SEAM).inner_margin(t::KIT_PAD)).show(
+        root,
+        |ui| {
+            if recovery.banner {
+                kit::notice(ui, "Varos closed unexpectedly. Recovery copies are available.");
+                kit::notice(ui, "Review copies from your last session before continuing.");
+                ui.horizontal_wrapped(|ui| {
+                    if kit::action(ui, Control::new(egui::Id::new("review-recovery"), "Review Recovery"), false)
+                        .activated
+                    {
+                        commands.push(AppCommand::ReviewRecovery);
+                    }
+                    if kit::action(ui, Control::new(egui::Id::new("defer-recovery"), "Later"), false).activated {
+                        commands.push(AppCommand::DeferRecovery);
+                    }
+                });
+            }
+            if let Some(notice) = &recovery.recovered_notice {
+                kit::notice(ui, notice);
+                if let Some(id) = recovery.sid {
+                    if kit::action(ui, Control::new(egui::Id::new("save-recovered"), "Save As…"), false).activated {
+                        commands.push(AppCommand::SaveAs(id));
+                    }
+                }
+            }
+        },
+    );
+}
+
+/// Status mirror: recovery state on the left; artboard, Fit and zoom on the right.
 fn build_statusbar(
     root: &mut egui::Ui,
     ab_active: usize,
@@ -8106,5 +8148,59 @@ mod window_focus_tests {
         assert_eq!(frame(vec![], false), None, "a frame later the buffer must still hold the X");
         let committed = frame(vec![enter], false).expect("Enter commits the buffer");
         assert!(committed.contains('X') && committed.len() == "Artboard".len() + 1, "committed {committed:?}");
+    }
+}
+
+#[cfg(test)]
+mod recovery_strip_tests {
+    use super::*;
+    #[test]
+    fn recovery_strip_actions_target_review_later_and_the_recovered_tab() {
+        for ppp in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            varos_app::shell::fonts::install(&ctx);
+            varos_app::shell::tokens::apply(&ctx);
+            let recovery = crate::recovery_host::RecoveryUi { banner: true, sid: Some(SessionId(42)), recovered_notice: Some("Recovered a long document name. Save this copy to keep it. Your original file has not been changed.".into()), ..Default::default() };
+            let frame = |events| {
+                let mut cmds = Vec::new();
+                let mut input = egui::RawInput {
+                    events,
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320.0, 600.0))),
+                    ..Default::default()
+                };
+                input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().native_pixels_per_point = Some(ppp);
+                let _ = ctx.run_ui(input, |ui| build_recovery_strip(ui, &recovery, &mut cmds));
+                cmds
+            };
+            assert!(frame(vec![]).is_empty());
+            assert!(frame(vec![]).is_empty());
+            for (id, expected) in [
+                ("review-recovery", AppCommand::ReviewRecovery),
+                ("defer-recovery", AppCommand::DeferRecovery),
+                ("save-recovered", AppCommand::SaveAs(SessionId(42))),
+            ] {
+                let rect = ctx.read_response(egui::Id::new(id)).unwrap().rect;
+                assert!(rect.left() >= 0.0 && rect.right() <= 320.0);
+                let pos = rect.center();
+                let pointer = |pressed| {
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ]
+                };
+                assert!(frame(pointer(true)).is_empty());
+                assert_eq!(
+                    frame(pointer(false)),
+                    [expected],
+                    "{id} ppp={ppp} before={rect:?} after={:?}",
+                    ctx.read_response(egui::Id::new(id)).unwrap().rect
+                );
+            }
+        }
     }
 }

@@ -7,6 +7,14 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 
 
 
+## 2026-09-27 — F2 recovery read-side integration
+
+- **Scope:** `codex/ui-system-plan`, baseline `6f50eab`; [F2 integration](work_orders/DFS_S3_F2_INTEGRATION.md). Background launch cleanup/scan, claimed recovery loading, explicit discard, Later, Start row states and editor strips; pathless dirty recovered sessions and separate Save As defaults. Completed loads use the normal host FIFO/settle path. No dependency or renderer changes.
+- **Defect addressed:** checksum-valid snapshots can fail model decoding. Added a model-agnostic decoded-load seam that falls back to the earlier generation; invalid data with no usable generation stays listed with its reason and untouched bytes.
+- **Local gates:** **793 passed, 0 failed, 5 ignored**, twelve new tests; Mac build, Mac/Windows-target all-target clippy (`-D warnings`), format, architecture gate + seven checker tests, documentation links and diff checks PASS. Tests prove original bytes/mtime preservation, exclusive claims, empty-copy dirty state, duplicate-job rejection, fallback, Save As/retirement, Later/relaunch, discard safety, unavailable storage, lifecycle settlement and CPU UI actions at 1×/2×. No automated Renderer/EventLoop.
+- **Native limit:** final isolated bundle launched, but the window still captured only background. Disposable native dialog probe timed out before an accessible dialog was available; stopped and source removed. Cancel-first ordering and explicit-result mapping are implemented/tested; real Enter/Escape behavior, visible controls and complete native recovery flow remain unverified. Installed Varos untouched. Windows compile-only.
+- **Verdict:** implementation gates pass; native acceptance, independent session-end review and merge pending. Existing hosted-CI billing limitation unchanged; no new CI success claimed. Next: S4/S6, including the measured asynchronous-Save follow-up.
+
 ## 2026-09-27 — F1 durable Save and recovery writer integration
 
 - **Scope:** `codex/ui-system-plan`, baseline `2fd8a23`; [F1 integration](work_orders/DFS_S3_F1_INTEGRATION.md). Durable real Save, dirty retention after unconfirmed replacement, external-change warning with explicit replacement confirmation, scoped stale-temp cleanup, app-owned background recovery writer, deadline wake/completion wiring, Document controls and status-bar mirror. F2 read/recover remains next.
