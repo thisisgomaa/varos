@@ -136,3 +136,8 @@ core/editor لا يتشارك بين U3-T وU5 وF5. F5/F6 تحت الميثاق
 ### U0-A implementation — 2026-09-27
 
 [سجل الخطوط والاختبار](../foundation/work_orders/UI_U0_A_FONTS.md): Plex Sans/Mono مضمّنان بأوزان Regular، مع Noto Symbols لتغطية اختصارات Mac ورخص ومصادر وhashes محفوظة. المقاسات الخمسة الحالية انتقلت إلى tokens دون تغيير. Plex Arabic مضمّن كعائلة اختبار مسماة فقط؛ تجربة egui 0.35 كشفت خللًا في RTL clusters/caret وترتيب الكلمات، فلا يدخل fallback الحقول قبل إصلاح هذا الحد. ده قيد صريح وفق K5، وليس إعلان نجاح دعم العربي أو تغيير النص المخزن. فحص نافذة Mac للخط اللاتيني نجح؛ المراجعة المستقلة مؤجلة لآخر القعدة. التالي minimum U0-B/C ثم E2، مع إبقاء إصلاح العربي مفتوحًا.
+
+
+### Minimum U0-B/C implementation — 2026-09-27
+
+[عقد المكونات ودليل الاختبار](../foundation/work_orders/UI_U0_BC_KIT.md): مكتبة `shell::kit` فيها action/icon button، Home محايد، list row، heading وnotice فقط. المفاتيح والمساعدة والحالة تأتي من المستدعي؛ الرد `activated` يُستهلك مرة واحدة، ومع keyboard dispatch في Start يُستخدم `pointer_only` لمنع التكرار. اختبارات CPU على 1×/2× ونافذة Mac تجريبية؛ ده مش ربط E2 ولا قبول screen-reader أو العربي. التالي E2، والمراجعة المستقلة مجمّعة آخر القعدة.
