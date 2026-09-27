@@ -80,10 +80,25 @@ fn sentence(reason: &str) -> String {
     }
 }
 
+// First/default button is Cancel. Escape, dismissal and unknown results never discard.
+fn discard_recovery_from(result: &MessageDialogResult) -> bool {
+    matches!(result, MessageDialogResult::Custom(label) if label == "Discard")
+}
+
 /// Native dialogs (rfd). Blocking: the event loop waits while one is up.
 pub struct RfdDialogs;
 
 impl Dialogs for RfdDialogs {
+    fn confirm_discard_recovery(&mut self, name: &str) -> bool {
+        discard_recovery_from(
+            &MessageDialog::new()
+                .set_level(MessageLevel::Warning)
+                .set_title(format!("Discard recovery copy of “{name}”?"))
+                .set_description("Unsaved changes in this copy will be lost.")
+                .set_buttons(MessageButtons::OkCancelCustom(CANCEL.into(), "Discard".into()))
+                .show(),
+        )
+    }
     fn external_change(&mut self, name: &str) -> crate::lifecycle::ExternalChoice {
         use crate::lifecycle::ExternalChoice as C;
         let result = MessageDialog::new()
@@ -586,5 +601,18 @@ mod tests {
         for p in [&live, &other, &unknown] {
             assert_eq!(std::fs::read(p).unwrap(), b"keep");
         }
+    }
+    #[test]
+    fn discard_only_accepts_the_explicit_custom_button() {
+        for answer in [
+            MessageDialogResult::Ok,
+            MessageDialogResult::Cancel,
+            MessageDialogResult::Yes,
+            MessageDialogResult::No,
+            MessageDialogResult::Custom("Cancel".into()),
+        ] {
+            assert!(!discard_recovery_from(&answer));
+        }
+        assert!(discard_recovery_from(&MessageDialogResult::Custom("Discard".into())));
     }
 }

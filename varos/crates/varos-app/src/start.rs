@@ -1,17 +1,8 @@
-//! Start page — pure view model (work order `DFS_S2_S3_START_RECENTS_RECOVERY.md` §3.7, piece
-//! **E1**, model only).
-//!
-//! E1 is this pure model and nothing else. Drawing (`start_ui.rs`: recovery/action rendering,
-//! token-only styling, the headless accent-use test) and host wiring moved to piece **E2**
-//! (pending; after S1 and the UI-system kit U0), so nothing here touches `egui`, `main.rs`,
-//! `ui.rs` or `chrome.rs`. [`StartModel`] is built from [`crate::storage::recents::Recents`] plus
-//! a caller-supplied "is this file missing" probe (S3-B design: missing is computed once, at build
-//! time, not per frame) and an optional list of [`RecoveryRow`]s (the data shape F2 will fill
-//! from `storage::recovery::OrphanEntry`; empty until then). It also carries the keyboard-focus
-//! model of §3.7: Tab/Shift+Tab traverse every action and row (wrapping), ↑/↓ move only inside
-//! the current list and stop at its ends, Enter activates, Delete removes the focused recent row.
-//! Escape is deliberately absent: the work order gives Start no Escape behaviour, so the host
-//! owns that policy.
+//! Pure Start view model: Recent rows, optional claimed Recovery rows and keyboard navigation.
+//! The host supplies file-existence probes and F2 recovery state outside paint; `start_ui` renders
+//! the model. Disabled or busy recovery actions never emit commands through keyboard activation.
+//! Tab/Shift+Tab traverse actions, arrows move within a list, Enter activates and Delete removes
+//! a focused Recent entry. Escape policy belongs to the host.
 use std::path::{Path, PathBuf};
 
 use crate::storage::recents::Recents;
@@ -59,6 +50,8 @@ pub struct RecoveryRow {
     /// Pre-formatted "saved 14:32" text (left to the caller — F2 knows whether to use
     /// `time_text::clock_hhmm` or a relative form).
     pub saved_at_text: String,
+    pub problem: Option<String>,
+    pub busy: bool,
 }
 
 /// What activating the currently focused Start element means. The host (E2) turns this into the
@@ -107,8 +100,8 @@ pub struct StartModel {
 }
 
 impl StartModel {
-    /// Build from Recents + a per-path "is it missing" probe, with recovery rows (empty until F2
-    /// wires the real scan). `now`/`last_opened` are unix seconds, matching [`Recents`].
+    /// Build from Recents + a per-path "is it missing" probe, with recovery rows (supplied by F2
+    /// after the launch scan). `now`/`last_opened` are unix seconds, matching [`Recents`].
     pub fn build(
         recents: &Recents,
         now: u64,
@@ -145,7 +138,7 @@ impl StartModel {
         Self { rows, recovery, focus: 0, focus_order }
     }
 
-    /// Convenience for a build with no recovery rows (the common case until F2 lands).
+    /// Convenience for a build with no recovery rows (launches without recovery copies).
     pub fn without_recovery(recents: &Recents, now: u64, missing: impl FnMut(&Path) -> bool) -> Self {
         Self::build(recents, now, missing, Vec::new())
     }
@@ -155,7 +148,7 @@ impl StartModel {
         &self.rows
     }
 
-    /// The Recovery rows (read-only; empty until F2).
+    /// The Recovery rows (read-only).
     pub fn recovery(&self) -> &[RecoveryRow] {
         &self.recovery
     }
@@ -255,8 +248,20 @@ impl StartModel {
         Some(match target {
             FocusTarget::NewDocument => StartAction::New,
             FocusTarget::Open => StartAction::Open,
-            FocusTarget::Recover(i) => StartAction::Recover(self.recovery.get(i)?.rid.clone()),
-            FocusTarget::Discard(i) => StartAction::DiscardRecovery(self.recovery.get(i)?.rid.clone()),
+            FocusTarget::Recover(i) => {
+                let row = self.recovery.get(i)?;
+                if row.busy || row.problem.is_some() {
+                    return None;
+                }
+                StartAction::Recover(row.rid.clone())
+            }
+            FocusTarget::Discard(i) => {
+                let row = self.recovery.get(i)?;
+                if row.busy {
+                    return None;
+                }
+                StartAction::DiscardRecovery(row.rid.clone())
+            }
             FocusTarget::RecoveryLater => StartAction::Later,
             FocusTarget::Recent(i) => StartAction::OpenRecent(self.rows.get(i)?.path.clone()),
             FocusTarget::ClearRecentFooter => StartAction::ClearRecent,
@@ -418,6 +423,8 @@ mod tests {
             name: "Untitled-1".to_string(),
             original_dir: None,
             saved_at_text: "saved 14:32".to_string(),
+            problem: None,
+            busy: false,
         }];
         let mut model = StartModel::build(&recents, 200, |_| false, recovery);
         // Order: New(0), Open(1), Recover(2), Discard(3), Later(4), Recent(5), ClearRecent(6).
@@ -443,6 +450,8 @@ mod tests {
             name: format!("Untitled-{n}"),
             original_dir: None,
             saved_at_text: "saved 14:32".to_string(),
+            problem: None,
+            busy: false,
         };
         let mut model = StartModel::build(&Recents::default(), 200, |_| false, vec![row(1), row(2)]);
         // Order: New(0), Open(1), Recover(0)(2), Discard(0)(3), Recover(1)(4), Discard(1)(5), Later(6).
@@ -483,6 +492,8 @@ mod tests {
             name: "Untitled-1".to_string(),
             original_dir: None,
             saved_at_text: "saved 14:32".to_string(),
+            problem: None,
+            busy: false,
         }];
         let mut model = StartModel::build(&recents, 200, |_| false, recovery);
 
@@ -517,6 +528,8 @@ mod tests {
             name: "Untitled-1".to_string(),
             original_dir: None,
             saved_at_text: "saved 14:32".to_string(),
+            problem: None,
+            busy: false,
         }];
         let mut model = StartModel::build(&recents, 200, |_| false, recovery);
         // Focus Recover(0) (index 2), then empty both collections behind the cached order.

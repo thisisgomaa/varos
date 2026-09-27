@@ -44,6 +44,22 @@ impl FileKey {
     }
 }
 
+/// Origin of a pathless recovery copy; cleared when an explicit Save adopts a destination.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoveredSource {
+    pub name: String,
+    pub original_path: Option<PathBuf>,
+    pub saved_at: u64,
+    pub fell_back: bool,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecoveredDocument {
+    pub doc: Document,
+    pub source: RecoveredSource,
+    pub rid: String,
+    pub generation: varos_app::storage::recovery::Generation,
+}
+
 /// One open document (one tab).
 pub struct DocumentSession {
     pub id: SessionId,
@@ -60,6 +76,7 @@ pub struct DocumentSession {
     pub fit_pending: Option<f32>,
     pub source_fingerprint: Option<varos_app::storage::durable::Fingerprint>,
     pub save_unconfirmed: bool,
+    pub recovered: Option<RecoveredSource>,
     pub recovery: varos_app::storage::scheduler::SessionRecovery,
     /// The saved-content checkpoint (a clone taken at New, open and save).
     saved: Document,
@@ -83,6 +100,7 @@ impl DocumentSession {
             memo: Cell::new(None),
             source_fingerprint: None,
             save_unconfirmed: false,
+            recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
         }
     }
@@ -102,6 +120,7 @@ impl DocumentSession {
             memo: Cell::new(None),
             source_fingerprint: None,
             save_unconfirmed: false,
+            recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
         }
     }
@@ -110,6 +129,9 @@ impl DocumentSession {
     pub fn display_name(&self) -> String {
         if let Some(name) = self.path.as_ref().and_then(|p| p.file_name()) {
             return name.to_string_lossy().into_owned();
+        }
+        if let Some(source) = &self.recovered {
+            return format!("{} (Recovered)", source.name);
         }
         match self.untitled {
             Some(n) => format!("Untitled-{n}"),
@@ -124,7 +146,7 @@ impl DocumentSession {
     /// would be missed by the memo only until the next `rev` change, which is why
     /// every Save / Close / Quit decision uses `is_dirty_exact` instead. `mark_saved` resets the memo.
     pub fn is_dirty(&self) -> bool {
-        if self.save_unconfirmed {
+        if self.save_unconfirmed || self.recovered.is_some() {
             return true;
         }
         let ed = &self.editor;
@@ -142,7 +164,7 @@ impl DocumentSession {
     /// Unsaved changes, compared fresh (ignores the memo). Every Save / Close / Quit decision uses this.
     pub fn is_dirty_exact(&self) -> bool {
         let ed = &self.editor;
-        self.save_unconfirmed || self.content_dirty() || (ed.transaction_open() && ed.dirty)
+        self.save_unconfirmed || self.recovered.is_some() || self.content_dirty() || (ed.transaction_open() && ed.dirty)
     }
 
     /// Nothing to lose and nowhere saved: an Open may replace this tab instead of adding one.
@@ -154,6 +176,7 @@ impl DocumentSession {
     /// content (clean), and it stops being `Untitled-n`.
     pub fn mark_saved(&mut self, path: PathBuf, key: FileKey) {
         self.save_unconfirmed = false;
+        self.recovered = None;
         self.path = Some(path);
         self.key = Some(key);
         self.untitled = None;
@@ -358,6 +381,25 @@ impl Workspace {
     pub fn add_loaded(&mut self, doc: Document, path: PathBuf, key: FileKey) -> SessionId {
         let id = self.alloc_id();
         let s = DocumentSession::loaded(id, doc, path, key);
+        match self.active_index() {
+            Some(i) if self.sessions[i].is_pristine() => self.replace_at(i, s),
+            _ => {
+                self.sessions.push(s);
+                self.activate(id);
+                id
+            }
+        }
+    }
+
+    /// Install a claimed recovery copy without associating it with the original file.
+    pub fn add_recovered(&mut self, copy: RecoveredDocument) -> SessionId {
+        let id = self.alloc_id();
+        let mut s = DocumentSession::untitled(id, 0);
+        s.untitled = None;
+        s.editor.replace_doc(copy.doc);
+        s.recovery = varos_app::storage::scheduler::SessionRecovery::adopted(copy.rid, copy.generation, s.editor.rev);
+        s.recovered = Some(copy.source);
+        s.fit_pending = Some(0.9);
         match self.active_index() {
             Some(i) if self.sessions[i].is_pristine() => self.replace_at(i, s),
             _ => {

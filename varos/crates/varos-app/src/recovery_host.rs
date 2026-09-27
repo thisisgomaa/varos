@@ -12,7 +12,7 @@ use varos_app::storage::{
     durable::{RealFs, WriteOutcome},
     io_worker::IoWorker,
     paths::{self, AppLayout},
-    recovery::{RecoveryStore, SessionMeta},
+    recovery::{OrphanEntry, OrphanState, RecoveryStore, SessionMeta},
     scheduler::{Action, Completion, Done, Probe, Scheduler, SessionRecovery},
     settings::{self, Settings},
     time_text,
@@ -26,10 +26,16 @@ pub struct RecoveryUi {
     pub last_copy: String,
     pub retry: bool,
     pub sid: Option<SessionId>,
+    pub banner: bool,
+    pub recovered_notice: Option<String>,
 }
 enum Finished {
     Recovery(Completion<SessionId>),
     Settings(Result<(), String>),
+    Scanned(Vec<OrphanEntry>),
+    ScanFailed,
+    Loaded(String, Result<Box<crate::workspace::RecoveredDocument>, String>),
+    Discarded(String, Result<(), String>),
 }
 pub struct RecoveryHost {
     scheduler: Scheduler,
@@ -37,14 +43,31 @@ pub struct RecoveryHost {
     store: Option<Arc<RecoveryStore>>,
     settings_path: Option<PathBuf>,
     pub warning: Option<String>,
+    orphans: Vec<OrphanEntry>,
+    busy: std::collections::HashSet<String>,
+    ready: Vec<crate::workspace::RecoveredDocument>,
+    deferred: bool,
+    changed: bool,
 }
 impl RecoveryHost {
     pub fn new(wake: Box<dyn Fn() + Send>) -> Self {
-        Self::at(paths::data_root().map(|root| AppLayout { root }), wake)
+        let mut host = Self::at(paths::data_root().map(|root| AppLayout { root }), wake);
+        host.begin_scan();
+        host
     }
     fn at(layout: Option<AppLayout>, wake: Box<dyn Fn() + Send>) -> Self {
-        let mut host =
-            Self { scheduler: Scheduler::default(), worker: None, store: None, settings_path: None, warning: None };
+        let mut host = Self {
+            scheduler: Scheduler::default(),
+            worker: None,
+            store: None,
+            settings_path: None,
+            warning: None,
+            orphans: Vec::new(),
+            busy: Default::default(),
+            ready: Vec::new(),
+            deferred: false,
+            changed: false,
+        };
         let Some(layout) = layout else {
             host.warning = Some("Recovery unavailable: the app data folder is unavailable.".into());
             return host;
@@ -67,6 +90,134 @@ impl RecoveryHost {
             Err(e) => host.warning = Some(format!("Recovery writer unavailable: {e}")),
         }
         host
+    }
+    /// One launch scan, on the same FIFO as the writer; its store holds all orphan claims.
+    fn begin_scan(&mut self) {
+        let (Some(store), Some(worker)) = (&self.store, &self.worker) else {
+            return;
+        };
+        let store = Arc::clone(store);
+        let job = Box::new(move || {
+            store.cleanup_completed();
+            Finished::Scanned(store.scan())
+        });
+        if worker.submit(job, Finished::ScanFailed).is_err() {
+            self.warning = Some("Recovery scan unavailable.".into());
+        }
+    }
+    pub fn rows(&self) -> Vec<varos_app::start::RecoveryRow> {
+        self.orphans
+            .iter()
+            .map(|row| varos_app::start::RecoveryRow {
+                rid: row.rid.clone(),
+                name: row.display_name.clone(),
+                original_dir: row
+                    .original_path
+                    .as_deref()
+                    .and_then(std::path::Path::parent)
+                    .map(|p| p.display().to_string()),
+                saved_at_text: row
+                    .saved_at
+                    .map(|t| format!("Saved {}", time_text::clock_hhmm(t)))
+                    .unwrap_or_else(|| "Save time unavailable".into()),
+                problem: match &row.state {
+                    OrphanState::Ready => None,
+                    OrphanState::Damaged(reason) => Some(reason.clone()),
+                    OrphanState::NewerFormat(_) => Some("This copy needs a newer version of Varos.".into()),
+                },
+                busy: self.busy.contains(&row.rid),
+            })
+            .collect()
+    }
+    pub fn start_warning(&self, recent: Option<&str>) -> Option<String> {
+        match (recent, self.warning.as_deref()) {
+            (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+            (a, b) => a.or(b).map(str::to_owned),
+        }
+    }
+    pub fn take_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
+    }
+    pub fn take_recovered(&mut self) -> Vec<crate::workspace::RecoveredDocument> {
+        std::mem::take(&mut self.ready)
+    }
+    fn row_error(&mut self, rid: &str, reason: String) {
+        if let Some(row) = self.orphans.iter_mut().find(|row| row.rid == rid) {
+            row.state = OrphanState::Damaged(reason);
+        }
+    }
+    pub fn handle_read(&mut self, cmd: &AppCommand, dialogs: &mut dyn crate::lifecycle::Dialogs) -> bool {
+        match cmd {
+            AppCommand::ReviewRecovery => {
+                self.deferred = false;
+                false
+            } // lifecycle settles and shows Home
+            AppCommand::DeferRecovery => {
+                self.deferred = true;
+                self.changed = true;
+                true
+            }
+            AppCommand::Recover(rid) | AppCommand::DiscardRecovery(rid) => {
+                let Some(row) = self.orphans.iter().find(|row| &row.rid == rid).cloned() else {
+                    return true;
+                };
+                if self.busy.contains(rid) {
+                    return true;
+                }
+                let discard = matches!(cmd, AppCommand::DiscardRecovery(_));
+                if discard {
+                    if !dialogs.confirm_discard_recovery(&row.display_name) {
+                        return true;
+                    }
+                } else if !matches!(row.state, OrphanState::Ready) {
+                    return true;
+                }
+                let (Some(store), Some(worker)) = (&self.store, &self.worker) else {
+                    return true;
+                };
+                let store = Arc::clone(store);
+                let rid = rid.clone();
+                let panic_result = if discard {
+                    Finished::Discarded(rid.clone(), Err("Couldn't discard this copy.".into()))
+                } else {
+                    Finished::Loaded(rid.clone(), Err("Couldn't read this copy.".into()))
+                };
+                self.busy.insert(rid.clone());
+                self.changed = true;
+                let job = Box::new(move || {
+                    if discard {
+                        return Finished::Discarded(rid.clone(), store.retire(&rid).map_err(|e| e.reason()));
+                    }
+                    let result = store
+                        .load_best_decoded(&rid, |blob| {
+                            let text =
+                                std::str::from_utf8(blob).map_err(|_| "This recovery copy is damaged.".to_string())?;
+                            varos_core::file::doc_from_blob(text)
+                        })
+                        .map_err(|e| e.reason())
+                        .map(|(loaded, doc)| {
+                            Box::new(crate::workspace::RecoveredDocument {
+                                doc,
+                                rid: rid.clone(),
+                                generation: loaded.generation.clone(),
+                                source: crate::workspace::RecoveredSource {
+                                    name: row.display_name,
+                                    original_path: row.original_path,
+                                    saved_at: loaded.generation.saved_at,
+                                    fell_back: loaded.fell_back,
+                                },
+                            })
+                        });
+                    Finished::Loaded(rid, result)
+                });
+                if worker.submit(job, panic_result).is_err() {
+                    self.busy.remove(&row.rid);
+                    self.row_error(&row.rid, "Recovery worker stopped. Your copy is kept.".into());
+                }
+                true
+            }
+            _ => false,
+        }
     }
     pub fn next_wake(&self) -> Option<Instant> {
         self.scheduler.next_wake()
@@ -101,9 +252,37 @@ impl RecoveryHost {
         }
     }
     pub fn observe(&mut self, ws: &mut Workspace, now: Instant) {
-        if let Some(worker) = &self.worker {
-            for done in worker.try_completions() {
+        {
+            let completed = self.worker.as_ref().map(|w| w.try_completions()).unwrap_or_default();
+            for done in completed {
                 match done {
+                    Finished::ScanFailed => {
+                        self.warning = Some("Recovery scan failed. Existing copies are kept.".into());
+                        self.changed = true;
+                    }
+                    Finished::Scanned(rows) => {
+                        self.orphans = rows;
+                        self.changed = true;
+                    }
+                    Finished::Loaded(rid, result) => {
+                        self.busy.remove(&rid);
+                        match result {
+                            Ok(copy) => {
+                                self.orphans.retain(|row| row.rid != rid);
+                                self.ready.push(*copy);
+                            }
+                            Err(reason) => self.row_error(&rid, reason),
+                        }
+                        self.changed = true;
+                    }
+                    Finished::Discarded(rid, result) => {
+                        self.busy.remove(&rid);
+                        match result {
+                            Ok(()) => self.orphans.retain(|row| row.rid != rid),
+                            Err(reason) => self.row_error(&rid, reason),
+                        }
+                        self.changed = true;
+                    }
                     Finished::Recovery(done) => {
                         if let Some(s) = ws.get_mut(done.sid) {
                             self.scheduler.on_complete(now, s.id, &mut s.recovery, done);
@@ -149,11 +328,14 @@ impl RecoveryHost {
                 };
                 let meta = SessionMeta {
                     rid,
-                    display_name: s.display_name(),
+                    display_name: s.recovered.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| s.display_name()),
                     untitled_number: s.untitled,
-                    original_path: s.path.clone(),
+                    original_path: s
+                        .path
+                        .clone()
+                        .or_else(|| s.recovered.as_ref().and_then(|r| r.original_path.clone())),
                     source_fingerprint: s.source_fingerprint,
-                    recovered: false,
+                    recovered: s.recovered.is_some(),
                 };
                 let doc = s.editor.doc.clone();
                 (
@@ -226,7 +408,20 @@ impl RecoveryHost {
         }
     }
     pub fn presentation(&self, session: Option<&DocumentSession>) -> RecoveryUi {
-        let mut ui = RecoveryUi { enabled: self.scheduler.enabled(), sid: session.map(|s| s.id), ..Default::default() };
+        let mut ui = RecoveryUi {
+            enabled: self.scheduler.enabled(),
+            sid: session.map(|s| s.id),
+            banner: !self.deferred && !self.orphans.is_empty(),
+            ..Default::default()
+        };
+        if let Some(source) = session.and_then(|s| s.recovered.as_ref()) {
+            ui.recovered_notice = Some(format!(
+                "Recovered “{}” from {}. Save this copy to keep it. Your original file has not been changed.{}",
+                source.name,
+                time_text::clock_hhmm(source.saved_at),
+                if source.fell_back { " The newest copy was damaged; the previous copy was used." } else { "" }
+            ));
+        }
         if let Some(warning) = &self.warning {
             ui.detail = warning.clone();
         }
@@ -416,5 +611,264 @@ mod tests {
         r.host.after_dispatch(before, &mut r.ws, false, r.now);
         r.host.shutdown();
         assert!(!r.layout.recovery().join(rid).exists());
+    }
+    #[derive(Default)]
+    struct Dialog {
+        discard: bool,
+        prompts: usize,
+        save: Option<PathBuf>,
+        suggestion: Option<(String, Option<PathBuf>)>,
+    }
+    impl crate::lifecycle::Dialogs for Dialog {
+        fn confirm_discard_recovery(&mut self, _: &str) -> bool {
+            self.prompts += 1;
+            self.discard
+        }
+        fn pick_open(&mut self) -> Vec<PathBuf> {
+            panic!("unexpected open")
+        }
+        fn pick_save(&mut self, name: &str, dir: Option<&std::path::Path>) -> Option<PathBuf> {
+            self.suggestion = Some((name.into(), dir.map(std::path::Path::to_path_buf)));
+            self.save.clone()
+        }
+        fn ask_save_changes(&mut self, _: &str, _: Option<(usize, usize)>) -> crate::lifecycle::SaveDecision {
+            crate::lifecycle::SaveDecision::Cancel
+        }
+        fn save_failed(&mut self, _: &str, reason: &str) -> crate::lifecycle::SaveFailChoice {
+            panic!("unexpected save error: {reason}")
+        }
+        fn open_failed(&mut self, _: &str, _: &str) {
+            panic!("unexpected open error")
+        }
+        fn confirm_replace(&mut self, _: &str) -> bool {
+            false
+        }
+        fn notice(&mut self, _: &str, _: &str) {}
+    }
+    impl Rig {
+        fn seed(&self, generations: u64, original: Option<PathBuf>) -> String {
+            let store = RecoveryStore::open(Arc::new(RealFs), self.layout.recovery()).unwrap();
+            let rid = varos_app::storage::recovery::fresh_rid();
+            let meta = SessionMeta {
+                rid: rid.clone(),
+                display_name: "Logo.vrs".into(),
+                original_path: original,
+                ..Default::default()
+            };
+            let blob = varos_core::file::doc_to_blob(&varos_core::model::Document::default()).unwrap();
+            for seq in 1..=generations {
+                store.write_generation(&meta, seq, blob.as_bytes(), 100 + seq).unwrap();
+            }
+            rid // dropping this store releases the simulated crashed process's claim
+        }
+        fn scan(&mut self) {
+            self.host.begin_scan();
+            self.complete();
+        }
+        fn recover(&mut self, rid: &str) -> SessionId {
+            let mut dialogs = Dialog::default();
+            self.host.handle_read(&AppCommand::Recover(rid.into()), &mut dialogs);
+            assert!(self.host.rows().iter().any(|row| row.rid == rid && row.busy));
+            // A second click during the job cannot queue a second installation.
+            self.host.handle_read(&AppCommand::Recover(rid.into()), &mut dialogs);
+            self.complete();
+            let mut copies = self.host.take_recovered();
+            assert_eq!(copies.len(), 1);
+            let copy = copies.pop().unwrap();
+            crate::lifecycle::Lifecycle {
+                ws: &mut self.ws,
+                dialogs: &mut dialogs,
+                store: &mut crate::file_ports::DiskStore,
+            }
+            .run(AppCommand::InstallRecovered(Box::new(copy)));
+            self.ws.active_id().unwrap()
+        }
+    }
+
+    #[test]
+    fn launch_claims_orphans_recovery_is_pathless_dirty_and_never_writes_original() {
+        let mut r = Rig::new();
+        let original = r.layout.root.join("Logo.vrs");
+        std::fs::write(&original, b"the original stays intact").unwrap();
+        let before = std::fs::metadata(&original).unwrap().modified().unwrap();
+        let rid = r.seed(1, Some(original.clone()));
+        r.scan();
+        assert_eq!(r.host.rows().len(), 1);
+        assert!(r.host.presentation(r.ws.active()).banner);
+        let other = RecoveryStore::open(Arc::new(RealFs), r.layout.recovery()).unwrap();
+        assert!(other.scan().is_empty(), "another process cannot claim these copies");
+        let id = r.recover(&rid);
+        let s = r.ws.get(id).unwrap();
+        assert!(s.path.is_none() && s.key.is_none() && s.is_dirty_exact() && !s.is_pristine());
+        assert_eq!(s.display_name(), "Logo.vrs (Recovered)");
+        assert_eq!(s.recovery.rid, rid);
+        assert!(r.host.rows().is_empty());
+        assert!(r
+            .host
+            .presentation(Some(s))
+            .recovered_notice
+            .unwrap()
+            .contains("Your original file has not been changed"));
+        assert_eq!(std::fs::read(&original).unwrap(), b"the original stays intact");
+        assert_eq!(std::fs::metadata(&original).unwrap().modified().unwrap(), before);
+        // Merely opening even an empty recovery copy must never retire it.
+        r.host.observe(&mut r.ws, r.now);
+        assert!(r.layout.recovery().join(&rid).exists());
+        assert!(r.ws.active().unwrap().recovery.in_flight.is_none());
+    }
+
+    #[test]
+    fn fallback_is_explained_and_new_edits_keep_the_claimed_session() {
+        let mut r = Rig::new();
+        let rid = r.seed(2, None);
+        std::fs::write(r.layout.recovery().join(&rid).join("snap-2.json"), b"damaged").unwrap();
+        r.scan();
+        r.recover(&rid);
+        assert!(r.host.presentation(r.ws.active()).recovered_notice.unwrap().contains("previous copy was used"));
+        assert_eq!(r.ws.active().unwrap().recovery.last_ok.as_ref().unwrap().seq, 1);
+        r.edit();
+        r.host.observe(&mut r.ws, r.now);
+        r.now += RECOVERY_INTERVAL;
+        r.host.observe(&mut r.ws, r.now);
+        r.complete();
+        assert_eq!(r.ws.active().unwrap().recovery.rid, rid);
+        assert!(r.ws.active().unwrap().recovery.last_ok.as_ref().unwrap().seq > 2);
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(r.layout.recovery().join(&rid).join("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["recovered"], true);
+        assert_eq!(manifest["display_name"], "Logo.vrs");
+    }
+
+    #[test]
+    fn recovered_save_as_suggests_safe_name_and_retires_only_after_durable_save() {
+        let mut r = Rig::new();
+        let original = r.layout.root.join("Logo.vrs");
+        std::fs::write(&original, b"original").unwrap();
+        let rid = r.seed(1, Some(original.clone()));
+        r.scan();
+        let id = r.recover(&rid);
+        let mut dialog = Dialog::default();
+        crate::lifecycle::Lifecycle { ws: &mut r.ws, dialogs: &mut dialog, store: &mut crate::file_ports::DiskStore }
+            .run(AppCommand::Save(id));
+        assert_eq!(dialog.suggestion, Some(("Logo-recovered.vrs".into(), Some(r.layout.root.clone()))));
+        assert!(r.ws.get(id).unwrap().is_dirty_exact());
+        let dest = r.layout.root.join("Logo-recovered.vrs");
+        dialog.save = Some(dest.clone());
+        crate::lifecycle::Lifecycle { ws: &mut r.ws, dialogs: &mut dialog, store: &mut crate::file_ports::DiskStore }
+            .run(AppCommand::Save(id));
+        assert!(!r.ws.get(id).unwrap().is_dirty_exact());
+        assert!(r.ws.get(id).unwrap().recovered.is_none());
+        r.host.observe(&mut r.ws, r.now);
+        r.complete();
+        assert!(!r.layout.recovery().join(rid).exists());
+        assert!(varos_pdf::load_vrs(&dest).is_ok());
+        assert_eq!(std::fs::read(original).unwrap(), b"original");
+    }
+
+    #[test]
+    fn later_retains_copies_and_relaunch_offers_again() {
+        let mut r = Rig::new();
+        let rid = r.seed(1, None);
+        r.scan();
+        r.host.handle_read(&AppCommand::DeferRecovery, &mut Dialog::default());
+        assert!(!r.host.presentation(r.ws.active()).banner);
+        assert_eq!(r.host.rows().len(), 1, "Home still owns the choices");
+        let before = RecoveryHost::before_close(&r.ws);
+        r.host.after_dispatch(before, &mut r.ws, true, r.now);
+        r.host.shutdown();
+        r.host.store.take();
+        assert!(r.layout.recovery().join(rid).exists());
+        let (tx, rx) = mpsc::channel();
+        r.host = RecoveryHost::at(
+            Some(r.layout.clone()),
+            Box::new(move || {
+                let _ = tx.send(());
+            }),
+        );
+        r.wake = rx;
+        r.scan();
+        assert_eq!(r.host.rows().len(), 1);
+        assert!(r.host.presentation(r.ws.active()).banner);
+    }
+
+    #[test]
+    fn damaged_and_newer_copies_stay_listed_and_discard_requires_confirmation() {
+        let mut r = Rig::new();
+        let damaged = r.seed(1, None);
+        let newer = r.seed(1, None);
+        std::fs::write(r.layout.recovery().join(&damaged).join("snap-1.json"), b"bad").unwrap();
+        std::fs::write(r.layout.recovery().join(&newer).join("manifest.json"), br#"{"manifest_version":999}"#).unwrap();
+        r.scan();
+        assert_eq!(r.host.rows().len(), 2);
+        assert!(r.host.rows().iter().all(|row| row.problem.is_some()));
+        let mut dialog = Dialog::default();
+        r.host.handle_read(&AppCommand::Recover(damaged.clone()), &mut dialog);
+        assert!(r.host.take_recovered().is_empty());
+        r.host.handle_read(&AppCommand::DiscardRecovery(damaged.clone()), &mut dialog);
+        assert_eq!(dialog.prompts, 1);
+        assert_eq!(r.host.rows().len(), 2);
+        assert!(r.layout.recovery().join(&damaged).exists());
+        dialog.discard = true;
+        r.host.handle_read(&AppCommand::DiscardRecovery(damaged.clone()), &mut dialog);
+        r.complete();
+        assert_eq!(r.host.rows().len(), 1);
+        assert!(!r.layout.recovery().join(damaged).exists());
+        assert!(r.layout.recovery().join(newer).exists());
+    }
+
+    #[test]
+    fn failed_discard_keeps_row_and_bytes_with_reason() {
+        use varos_app::storage::durable::{Fault, FaultFs, Step};
+        let mut r = Rig::new();
+        let rid = r.seed(1, None);
+        r.host.store = Some(Arc::new(
+            RecoveryStore::open(Arc::new(FaultFs::new(vec![Fault::at(Step::Rename)])), r.layout.recovery()).unwrap(),
+        ));
+        r.scan();
+        let before = std::fs::read(r.layout.recovery().join(&rid).join("snap-1.json")).unwrap();
+        let mut dialog = Dialog { discard: true, ..Default::default() };
+        r.host.handle_read(&AppCommand::DiscardRecovery(rid.clone()), &mut dialog);
+        r.complete();
+        assert_eq!(r.host.rows().len(), 1);
+        assert!(r.host.rows()[0].problem.is_some());
+        assert_eq!(std::fs::read(r.layout.recovery().join(rid).join("snap-1.json")).unwrap(), before);
+    }
+
+    #[test]
+    fn unavailable_storage_does_not_block_new_documents() {
+        let host = RecoveryHost::at(None, Box::new(|| {}));
+        let mut ws = Workspace::new();
+        ws.new_untitled();
+        assert!(host.rows().is_empty());
+        assert!(host.start_warning(None).unwrap().contains("unavailable"));
+        assert!(host.presentation(ws.active()).status.contains("unavailable"));
+        assert!(ws.active().is_some());
+    }
+    #[test]
+    fn valid_checksum_invalid_model_falls_back_or_stays_listed_with_reason() {
+        for has_previous in [false, true] {
+            let mut r = Rig::new();
+            let rid = if has_previous { r.seed(1, None) } else { varos_app::storage::recovery::fresh_rid() };
+            {
+                let store = RecoveryStore::open(Arc::new(RealFs), r.layout.recovery()).unwrap();
+                let meta = SessionMeta { rid: rid.clone(), display_name: "Logo.vrs".into(), ..Default::default() };
+                store.write_generation(&meta, 2, br#"{"varos":2,"doc":{"paths":"invalid"}}"#, 200).unwrap();
+            }
+            r.scan();
+            r.host.handle_read(&AppCommand::Recover(rid.clone()), &mut Dialog::default());
+            r.complete();
+            let loaded = r.host.take_recovered();
+            if has_previous {
+                assert_eq!(loaded.len(), 1);
+                assert!(loaded[0].source.fell_back);
+                assert_eq!(loaded[0].generation.seq, 1);
+            } else {
+                assert!(loaded.is_empty());
+                assert_eq!(r.host.rows().len(), 1);
+                assert!(r.host.rows()[0].problem.is_some());
+            }
+            assert!(r.layout.recovery().join(rid).exists());
+        }
     }
 }

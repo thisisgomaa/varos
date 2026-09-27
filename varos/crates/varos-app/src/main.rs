@@ -896,7 +896,7 @@ fn main() {
         }
     }
     gui.set_tabs(ws.visible_tabs(), ws.document_target());
-    gui.set_home(ws.on_home(), store.model(), store.warning.clone());
+    gui.set_home(ws.on_home(), store.model(recovery.rows()), recovery.start_warning(store.warning.as_deref()));
 
     let installed = cursors::install(hwnd);
     cursors::custom_frame(hwnd);
@@ -1061,7 +1061,8 @@ fn main() {
                     let canvas = canvas_px(&gui, &window);
                     for action in ready {
                         if let host::HostAction::App(cmd) = &action {
-                            if recovery.handle(cmd, &mut ws, Instant::now()) {
+                            if recovery.handle_read(cmd, &mut dialogs) || recovery.handle(cmd, &mut ws, Instant::now())
+                            {
                                 continue;
                             }
                         }
@@ -1087,7 +1088,11 @@ fn main() {
                     }
                     drawn_tabs = ws.visible_tabs();
                     gui.set_tabs(drawn_tabs.clone(), ws.document_target());
-                    gui.set_home(ws.on_home(), store.model(), store.warning.clone());
+                    gui.set_home(
+                        ws.on_home(),
+                        store.model(recovery.rows()),
+                        recovery.start_warning(store.warning.as_deref()),
+                    );
                     #[cfg(target_os = "macos")]
                     if let Some(menu) = &mac_menu {
                         menu.sync_documents(!ws.on_home());
@@ -1100,6 +1105,23 @@ fn main() {
             }
             if matches!(&event, Event::AboutToWait) {
                 recovery.observe(&mut ws, Instant::now());
+                let recovered = recovery.take_recovered();
+                if !recovered.is_empty() {
+                    pending.extend(
+                        recovered
+                            .into_iter()
+                            .map(|copy| host::HostAction::App(AppCommand::InstallRecovered(Box::new(copy)))),
+                    );
+                    window.request_redraw();
+                }
+                if recovery.take_changed() {
+                    gui.set_home(
+                        ws.on_home(),
+                        store.model(recovery.rows()),
+                        recovery.start_warning(store.warning.as_deref()),
+                    );
+                    window.request_redraw();
+                }
                 let recovery_ui = recovery.presentation(ws.active());
                 if gui.recovery != recovery_ui {
                     gui.recovery = recovery_ui;
@@ -1166,7 +1188,7 @@ fn main() {
                 }
                 let home = ws.on_home();
                 if home && matches!(event, WindowEvent::Focused(true)) {
-                    gui.set_home(true, store.model(), store.warning.clone());
+                    gui.set_home(true, store.model(recovery.rows()), recovery.start_warning(store.warning.as_deref()));
                 }
                 let over_panel = home || gui.wants_pointer();
                 let Some(s) = ws.active_mut() else { return };

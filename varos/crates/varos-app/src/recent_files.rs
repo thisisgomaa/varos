@@ -35,8 +35,8 @@ impl<S: DocStore> RecentStore<S> {
         let destination = if warning.is_some() { None } else { destination };
         Self { inner, recents, warning, destination }
     }
-    pub fn model(&self) -> StartModel {
-        StartModel::without_recovery(&self.recents, now(), |p| !self.inner.exists(p))
+    pub fn model(&self, recovery: Vec<varos_app::start::RecoveryRow>) -> StartModel {
+        StartModel::build(&self.recents, now(), |p| !self.inner.exists(p), recovery)
     }
     fn persist(&mut self) {
         let Some(path) = &self.destination else {
@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(rows.len(), 10);
         assert_eq!(
             rows.iter().map(|(_, p)| p).collect::<Vec<_>>(),
-            store.model().rows().iter().take(10).map(|r| &r.path).collect::<Vec<_>>()
+            store.model(Vec::new()).rows().iter().take(10).map(|r| &r.path).collect::<Vec<_>>()
         );
         let old = store.recents.entries()[5].path.clone();
         let new = dir.0.join("found.vrs");

@@ -235,6 +235,9 @@ impl StartPage {
                 ui,
                 &format!("{} · {}", row.original_dir.as_deref().unwrap_or("Not saved yet"), row.saved_at_text),
             );
+            if let Some(reason) = &row.problem {
+                kit::notice(ui, reason);
+            }
             ui.horizontal(|ui| {
                 for (offset, label, action) in [
                     (0, "Recover", StartAction::Recover(row.rid.clone())),
@@ -242,6 +245,13 @@ impl StartPage {
                 ] {
                     let index = 2 + i * 2 + offset;
                     let mut c = Control::new(Id::new(("start-recovery", &row.rid, offset)), label);
+                    if row.busy {
+                        c.availability = kit::Availability::Busy("Working…");
+                    } else if offset == 0 {
+                        if let Some(reason) = &row.problem {
+                            c.availability = kit::Availability::Disabled(reason);
+                        }
+                    }
                     c.pointer_only = true;
                     c.focused = self.keyboard_focus && self.model.focus() == index;
                     if kit::action(ui, c, false).activated {
