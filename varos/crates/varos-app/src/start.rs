@@ -18,8 +18,7 @@ use crate::storage::recents::Recents;
 use crate::storage::time_text;
 
 /// Window/heading title shown while Start is the active view (work order §3.7/§3.9: "Window
-/// title \"Varos\" on Start."). No consumer yet: E2's `start_ui.rs` heading and `main.rs` window
-/// title use it.
+/// title \"Varos\" on Start."). E2's heading and host window title share this value.
 pub const START_TITLE: &str = "Varos";
 /// Exact empty-Recent copy (work order §3.7).
 pub const EMPTY_RECENT_COPY: &str = "No recent documents. Create a document or open a .vrs file.";

@@ -799,6 +799,7 @@ pub struct Ui {
     ctx: egui::Context,
     state: egui_winit::State,
     pub repaint: bool,
+    pub repaint_at: Option<Instant>,
     tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
     shapes: Vec<ToolBtn>,   // the shape tools, collapsed into one rail slot (right-click → flyout)
     shape_active: ToolKind, // which shape the shapes slot currently represents
@@ -828,10 +829,10 @@ pub struct Ui {
     // chrome raised this frame (host ← `take_app_commands`).
     doc_tabs: Vec<TabView>,
     doc_active: Option<SessionId>,
+    home: bool,
+    start_page: varos_app::start_ui::StartPage,
+    recent_warning: Option<String>,
     app_cmds: Vec<AppCommand>,
-    logo: Option<egui::TextureHandle>,
-    splash_start: Option<Instant>,   // startup loading screen; None once it has faded out
-    last_splash: bool,               // did this frame draw the splash (host renders it transparent)?
     color_modal: Option<ColorModal>, // the Color Picker modal, when open
     layer_icons: LayerIcons,
     lay_collapsed: std::collections::HashSet<u32>, // collapsed container node ids (UI-only)
@@ -1021,15 +1022,6 @@ impl Ui {
             x: load_icon(&ctx, "tb-x", IC_X),
             magnet: load_icon(&ctx, "tb-magnet", IC_MAGNET),
         };
-        let logo = image::load_from_memory(include_bytes!("../icon.png")).ok().map(|im| {
-            let rgba = im.into_rgba8();
-            let (w, h) = rgba.dimensions();
-            ctx.load_texture(
-                "logo",
-                egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], rgba.as_raw()),
-                egui::TextureOptions::LINEAR,
-            )
-        });
         let layer_icons = LayerIcons {
             eye: load_icon(&ctx, "l-eye", IC_L_EYE),
             eye_off: load_icon(&ctx, "l-eyeoff", IC_L_EYEOFF),
@@ -1044,6 +1036,7 @@ impl Ui {
             ctx,
             state,
             repaint: false,
+            repaint_at: None,
             tools,
             shapes,
             shape_active: ToolKind::Rect,
@@ -1071,10 +1064,14 @@ impl Ui {
             show_dock: true,
             doc_tabs: vec![],
             doc_active: None,
+            home: false,
+            start_page: varos_app::start_ui::StartPage::new(varos_app::start::StartModel::without_recovery(
+                &Default::default(),
+                0,
+                |_| false,
+            )),
+            recent_warning: None,
             app_cmds: vec![],
-            logo,
-            splash_start: Some(Instant::now()),
-            last_splash: false,
             color_modal: None,
             layer_icons,
             lay_collapsed: std::collections::HashSet::new(),
@@ -1099,7 +1096,7 @@ impl Ui {
         #[cfg(not(windows))]
         {
             let response = self.state.on_window_event(window, ev);
-            if response.repaint {
+            if response.repaint && !matches!(ev, WindowEvent::RedrawRequested) {
                 window.request_redraw();
             }
             response.consumed
@@ -1119,7 +1116,7 @@ impl Ui {
         match self.ctx.layer_id_at(pos) {
             None => false,
             Some(l) if l.order == egui::Order::Background => !self.board_hole.is_some_and(|b| b.contains(pos)),
-            Some(_) => true, // hands / menus / modal / splash float above the tree
+            Some(_) => true, // hands / menus / modal float above the tree
         }
     }
     /// Empty background bar space can drag the macOS window; floating UI always owns its area.
@@ -1157,6 +1154,14 @@ impl Ui {
         self.color_modal.as_ref().is_some_and(|m| m.eyedropping)
     }
     /// DFS S1: the host hands the workspace's tabs over every frame.
+    pub fn set_home(&mut self, home: bool, model: varos_app::start::StartModel, warning: Option<String>) {
+        if self.home != home {
+            egui::Popup::close_all(&self.ctx);
+        }
+        self.home = home;
+        self.start_page.replace(model);
+        self.recent_warning = warning;
+    }
     pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
         self.doc_tabs = tabs;
         self.doc_active = active;
@@ -1200,17 +1205,71 @@ impl Ui {
             _ => CK::Select,
         }
     }
-    /// (Re)start the startup splash timer — call right before revealing the window.
-    pub fn start_splash(&mut self) {
-        self.splash_start = Some(Instant::now());
-    }
-    /// Did the last `run` build the splash? (host renders it on a transparent surface, over the desktop)
-    pub fn splashing(&self) -> bool {
-        self.last_splash
+    /// Editor-free Start pass: no Snap, EditCommand, document panels, or canvas overlays.
+    fn run_home(
+        &mut self,
+        window: &Window,
+        maximized: bool,
+    ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
+        let raw = self.state.egui_input_mut();
+        raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
+        let input = self.state.take_egui_input(window);
+        if !egui::Popup::is_any_open(&self.ctx) {
+            self.ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+        }
+        let out = self.ctx.run_ui(input, |root| {
+            build_topbar(
+                root,
+                &self.top,
+                &mut self.shell,
+                &mut self.win_action,
+                &self.doc_tabs,
+                None,
+                &mut self.app_cmds,
+                &mut self.show_rail,
+                &mut self.show_dock,
+                &mut Default::default(),
+                maximized,
+                true,
+                cfg!(target_os = "macos"),
+            );
+            self.app_cmds.extend(
+                self.start_page
+                    .draw(root, self.recent_warning.as_deref())
+                    .into_iter()
+                    .filter_map(crate::host::start_command),
+            );
+        });
+
+        self.board_hole = None;
+        self.board_px = None;
+        self.cursor = out.platform_output.cursor_icon;
+        #[cfg(target_os = "macos")]
+        let out = {
+            let mut out = out;
+            out.platform_output.cursor_icon = egui::CursorIcon::Default;
+            out
+        };
+        self.state.handle_platform_output(window, out.platform_output);
+        self.repaint_at =
+            out.viewport_output.get(&egui::ViewportId::ROOT).and_then(|v| Instant::now().checked_add(v.repaint_delay));
+        self.repaint = out.viewport_output.get(&egui::ViewportId::ROOT).is_some_and(|v| v.repaint_delay.is_zero());
+        let jobs = self.ctx.tessellate(out.shapes, out.pixels_per_point);
+        let size = window.inner_size();
+        (
+            jobs,
+            out.textures_delta,
+            egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [size.width, size.height],
+                pixels_per_point: out.pixels_per_point,
+            },
+        )
     }
 
-    /// Build + lay out the panels; user changes are applied straight to the editor. Returns egui's
-    /// tessellated output for `Renderer::render_ui`.
     pub fn run(
         &mut self,
         window: &Window,
@@ -1219,6 +1278,9 @@ impl Ui {
         view: View,
         maximized: bool,
     ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
+        if self.home {
+            return self.run_home(window, maximized);
+        }
         // host seed of egui's focus flag from winit (startup, activation, un-occlusion alike) — see
         // `egui_focus_seed`
         let raw = self.state.egui_input_mut();
@@ -1289,148 +1351,130 @@ impl Ui {
         // an accumulating queue: nothing drains it until S1-D wires `take_app_commands` into the host,
         // so this frame's clicks are APPENDED to whatever earlier frames already queued.
         let mut app_cmds = std::mem::take(&mut self.app_cmds);
-        let splash = self.splash_start.map(|t| t.elapsed().as_secs_f32());
-        let splashing = splash.is_some_and(|e| e < SPLASH_DUR);
-        let logo = &self.logo;
         let mut color_modal = std::mem::take(&mut self.color_modal);
         // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
         let out = self.ctx.run_ui(input, |root| {
             let ctx = root.ctx().clone();
             let ctx = &ctx;
-            if splashing {
-                if let Some(e) = splash {
-                    build_splash(ctx, e, logo);
-                } // only the floating card
-            } else {
-                build_topbar(
-                    root,
-                    top,
-                    &mut *shell,
-                    &mut win_action,
-                    &doc_tabs,
-                    doc_active,
-                    &mut app_cmds,
-                    &mut show_rail,
-                    &mut show_dock,
-                    &mut snap_cfg,
-                    maximized,
-                );
-                build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request);
-                // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
-                // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
-                // frame's hole (one-frame lag on resize, healed by the request_repaint below). ──
-                {
-                    let mid = root.available_rect_before_wrap();
-                    paint_void_underlay(root.painter(), mid, prev_hole);
-                    let mut host = |panel: varos_app::shell::PanelId, ui: &mut egui::Ui| -> bool {
-                        use varos_app::shell::PanelId as P;
-                        match panel {
-                            P::Board => {
-                                let rect = ui.max_rect();
-                                let p = ui.painter().clone();
-                                // a normal box on the void: hairline border, rounded corners patched
-                                // with seam so the scene never pokes past the radius
-                                corner_voids(&p, rect);
-                                p.rect_stroke(
-                                    rect,
-                                    CornerRadius::same(RBOX),
-                                    Stroke::new(1.0, BORDER),
-                                    StrokeKind::Inside,
-                                );
-                                let mut inner = rect.shrink(1.0);
-                                if show_rulers {
-                                    board_rulers(ui, inner, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops);
-                                    inner = egui::Rect::from_min_max(inner.min + egui::vec2(RULER, RULER), inner.max);
-                                }
-                                if show_rail {
-                                    board_rail(ui.ctx(), inner, tools, shapes, &mut shape_active, &snap, &mut ops);
-                                }
-                                if show_dock {
-                                    board_ctlbar(
-                                        ui.ctx(),
-                                        inner,
-                                        &snap,
-                                        &absnap,
-                                        &icons,
-                                        ic_fit,
-                                        align_target,
-                                        &mut ops,
-                                        &mut fit_request,
-                                    );
-                                }
-                                new_hole = Some(inner);
-                                true
+            build_topbar(
+                root,
+                top,
+                &mut *shell,
+                &mut win_action,
+                &doc_tabs,
+                doc_active,
+                &mut app_cmds,
+                &mut show_rail,
+                &mut show_dock,
+                &mut snap_cfg,
+                maximized,
+                false,
+                cfg!(target_os = "macos"),
+            );
+            build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request);
+            // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
+            // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
+            // frame's hole (one-frame lag on resize, healed by the request_repaint below). ──
+            {
+                let mid = root.available_rect_before_wrap();
+                paint_void_underlay(root.painter(), mid, prev_hole);
+                let mut host = |panel: varos_app::shell::PanelId, ui: &mut egui::Ui| -> bool {
+                    use varos_app::shell::PanelId as P;
+                    match panel {
+                        P::Board => {
+                            let rect = ui.max_rect();
+                            let p = ui.painter().clone();
+                            // a normal box on the void: hairline border, rounded corners patched
+                            // with seam so the scene never pokes past the radius
+                            corner_voids(&p, rect);
+                            p.rect_stroke(rect, CornerRadius::same(RBOX), Stroke::new(1.0, BORDER), StrokeKind::Inside);
+                            let mut inner = rect.shrink(1.0);
+                            if show_rulers {
+                                board_rulers(ui, inner, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops);
+                                inner = egui::Rect::from_min_max(inner.min + egui::vec2(RULER, RULER), inner.max);
                             }
-                            P::Properties => {
-                                if snap.tool == ToolKind::Artboard {
-                                    panel_artboard(ui, &absnap, &ab_icons, &mut ab_lock, &mut ops, &mut fit_request);
-                                } else {
-                                    panel_properties(ui, &snap, &icons, &mut refpt, &mut lock, &mut ops);
-                                }
-                                true
+                            if show_rail {
+                                board_rail(ui.ctx(), inner, tools, shapes, &mut shape_active, &snap, &mut ops);
                             }
-                            P::Layers => {
-                                panel_layers(
-                                    ui,
-                                    layer_rows,
-                                    layer_icons,
-                                    &mut lay_search,
-                                    &mut lay_rename,
-                                    &mut lay_collapsed,
-                                    &mut lay_drag,
-                                    &mut lay_anchor,
+                            if show_dock {
+                                board_ctlbar(
+                                    ui.ctx(),
+                                    inner,
+                                    &snap,
+                                    &absnap,
+                                    &icons,
+                                    ic_fit,
+                                    align_target,
                                     &mut ops,
+                                    &mut fit_request,
                                 );
-                                true
                             }
-                            P::Align => {
-                                panel_align(ui, &icons, &mut align_target, &mut ops);
-                                true
-                            }
-                            P::Pathfinder => {
-                                panel_pathfinder(ui, &mut ops);
-                                true
-                            }
-                            _ => false,
+                            new_hole = Some(inner);
+                            true
                         }
-                    };
-                    // the boxes FLOAT in the void (Ahmed 07-07): an outer breath of HALF the
-                    // box-to-box seam on the sides/top; the bottom breath lives INSIDE the taller
-                    // statusbar so its text centres in the visual strip
-                    let g = varos_app::shell::tokens::SEAM_GAP * 0.5;
-                    let tree_rect =
-                        egui::Rect::from_min_max(mid.min + egui::vec2(g, g), egui::pos2(mid.right() - g, mid.bottom()));
-                    root.scope_builder(egui::UiBuilder::new().max_rect(tree_rect), |ui| shell.ui_hosted(ui, &mut host));
-                }
-                // on-canvas overlays are CONFINED to the Board hole (Ahmed 07-07): page chrome, snap
-                // HUD and origin crosshair clip/cull at its edges instead of roaming the window
-                let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
-                build_ab_chrome(
-                    ctx,
-                    view,
-                    ppp,
-                    hole,
-                    &abs,
-                    absnap.active,
-                    snap.tool == ToolKind::Artboard,
-                    absnap.count,
-                    &mut ops,
-                    &mut ab_name_edit,
-                    &mut fit_request,
-                );
-                build_snap_hud(ctx, view, ppp, hole, &snap_hud);
-                build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
-                build_color_modal(ctx, &mut color_modal, &snap, ic_pipette, &mut ops);
-                // over everything
+                        P::Properties => {
+                            if snap.tool == ToolKind::Artboard {
+                                panel_artboard(ui, &absnap, &ab_icons, &mut ab_lock, &mut ops, &mut fit_request);
+                            } else {
+                                panel_properties(ui, &snap, &icons, &mut refpt, &mut lock, &mut ops);
+                            }
+                            true
+                        }
+                        P::Layers => {
+                            panel_layers(
+                                ui,
+                                layer_rows,
+                                layer_icons,
+                                &mut lay_search,
+                                &mut lay_rename,
+                                &mut lay_collapsed,
+                                &mut lay_drag,
+                                &mut lay_anchor,
+                                &mut ops,
+                            );
+                            true
+                        }
+                        P::Align => {
+                            panel_align(ui, &icons, &mut align_target, &mut ops);
+                            true
+                        }
+                        P::Pathfinder => {
+                            panel_pathfinder(ui, &mut ops);
+                            true
+                        }
+                        _ => false,
+                    }
+                };
+                // the boxes FLOAT in the void (Ahmed 07-07): an outer breath of HALF the
+                // box-to-box seam on the sides/top; the bottom breath lives INSIDE the taller
+                // statusbar so its text centres in the visual strip
+                let g = varos_app::shell::tokens::SEAM_GAP * 0.5;
+                let tree_rect =
+                    egui::Rect::from_min_max(mid.min + egui::vec2(g, g), egui::pos2(mid.right() - g, mid.bottom()));
+                root.scope_builder(egui::UiBuilder::new().max_rect(tree_rect), |ui| shell.ui_hosted(ui, &mut host));
             }
+            // on-canvas overlays are CONFINED to the Board hole (Ahmed 07-07): page chrome, snap
+            // HUD and origin crosshair clip/cull at its edges instead of roaming the window
+            let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
+            build_ab_chrome(
+                ctx,
+                view,
+                ppp,
+                hole,
+                &abs,
+                absnap.active,
+                snap.tool == ToolKind::Artboard,
+                absnap.count,
+                &mut ops,
+                &mut ab_name_edit,
+                &mut fit_request,
+            );
+            build_snap_hud(ctx, view, ppp, hole, &snap_hud);
+            build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
+            build_color_modal(ctx, &mut color_modal, &snap, ic_pipette, &mut ops);
+            // over everything
         });
         self.color_modal = color_modal;
-        self.last_splash = splashing;
-        if let Some(e) = splash {
-            if e >= SPLASH_DUR {
-                self.splash_start = None;
-            }
-        }
         self.refpt = refpt;
         self.lock = lock;
         self.ab_lock = ab_lock;
@@ -1507,8 +1551,9 @@ impl Ui {
                 (r.max.to_vec2() * out.pixels_per_point).to_pos2(),
             )
         });
-        self.repaint = out.viewport_output.get(&egui::ViewportId::ROOT).is_some_and(|v| v.repaint_delay.is_zero())
-            || splash.is_some_and(|e| e < SPLASH_DUR); // keep animating the splash
+        self.repaint_at =
+            out.viewport_output.get(&egui::ViewportId::ROOT).and_then(|v| Instant::now().checked_add(v.repaint_delay));
+        self.repaint = out.viewport_output.get(&egui::ViewportId::ROOT).is_some_and(|v| v.repaint_delay.is_zero());
         let jobs = self.ctx.tessellate(out.shapes, out.pixels_per_point);
         let sz = window.inner_size();
         let screen = egui_wgpu::ScreenDescriptor {
@@ -2962,146 +3007,8 @@ fn divider(ui: &mut egui::Ui) {
     ui.add_space(3.0);
 }
 
-// ───────────────────────────── startup splash ─────────────────────────────
-
-const SPLASH_DUR: f32 = 1.55; // total seconds on screen (STATIC — no fade in/out, no animation; Ahmed 07-08)
-
 fn with_a(c: Color32, a: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a * 255.0).clamp(0.0, 255.0) as u8)
-}
-fn rgba_a(r: u8, g: u8, b: u8, a: f32) -> Color32 {
-    Color32::from_rgba_unmultiplied(r, g, b, (a * 255.0).clamp(0.0, 255.0) as u8)
-}
-
-/// Photoshop-style startup splash: a centered card (logo + wordmark + version + tagline + progress +
-/// an abstract "vector" art panel) on a dark scrim, drawn on a Foreground layer. Fades into the editor.
-fn build_splash(ctx: &egui::Context, _e: f32, logo: &Option<egui::TextureHandle>) {
-    // STATIC splash (Ahmed 07-08): full opacity the whole time, gone instantly at SPLASH_DUR — no
-    // fade, no ease, no animation. `ca` stays only so the shared alpha helpers read cleanly; it is 1.0.
-    let ca = 1.0f32;
-
-    // The card floats on the window's transparent surface (no dark scrim) → it sits over the desktop.
-    let scr = ctx.content_rect();
-    // macOS: the window is opaque (MAC_CHROME.md §B) — the card sits on the warm-black board instead.
-    if crate::chrome::OPAQUE_WINDOW {
-        ctx.layer_painter(egui::LayerId::background()).rect_filled(
-            scr,
-            CornerRadius::ZERO,
-            varos_app::shell::tokens::BG,
-        );
-    }
-    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("splash")));
-    let card = egui::Rect::from_center_size(scr.center() + egui::vec2(0.0, 2.0), egui::vec2(520.0, 300.0));
-    // rule 2 — NOT ONE SHADOW: the 1px hairline below is the only separation ("الفصل بخط شعرة، مش ضل")
-    p.rect_filled(card, CornerRadius::same(16), with_a(SOLID_PANEL, ca));
-    p.rect_stroke(card, CornerRadius::same(16), Stroke::new(1.0, with_a(BORDER, ca)), StrokeKind::Middle);
-    p.line_segment(
-        [card.left_top() + egui::vec2(16.0, 1.0), card.right_top() + egui::vec2(-16.0, 1.0)],
-        Stroke::new(1.0, rgba_a(255, 255, 255, 0.04 * ca)),
-    );
-
-    let (l, t) = (card.left(), card.top());
-    // logo + wordmark
-    if let Some(tex) = logo {
-        p.image(
-            tex.id(),
-            egui::Rect::from_center_size(egui::pos2(l + 45.0, t + 52.0), egui::vec2(34.0, 34.0)),
-            UV01(),
-            rgba_a(255, 255, 255, ca),
-        );
-    }
-    p.text(egui::pos2(l + 72.0, t + 47.0), Align2::LEFT_CENTER, "Varos", FontId::proportional(26.0), with_a(TEXT, ca));
-    p.text(
-        egui::pos2(l + 73.0, t + 69.0),
-        Align2::LEFT_CENTER,
-        "\u{3b1} \u{b7} pre-alpha",
-        FontId::monospace(11.5),
-        with_a(MUTED, ca),
-    );
-    p.text(
-        egui::pos2(l + 28.0, t + 104.0),
-        Align2::LEFT_TOP,
-        "Arabic-first vector design.",
-        FontId::proportional(13.5),
-        with_a(TEXT, 0.82 * ca),
-    );
-    p.hline((l + 28.0)..=(l + 282.0), t + 150.0, Stroke::new(1.0, with_a(BORDER, ca)));
-    p.text(
-        egui::pos2(l + 28.0, card.bottom() - 22.0),
-        Align2::LEFT_BOTTOM,
-        "\u{a9} 2026 Varos \u{b7} pre-alpha \u{b7} built with wgpu + egui",
-        FontId::proportional(10.5),
-        rgba_a(0x60, 0x60, 0x64, ca),
-    );
-
-    // ── abstract "vector editor" art panel (right) ──
-    let a = egui::Rect::from_min_max(
-        egui::pos2(card.right() - 224.0, t + 28.0),
-        egui::pos2(card.right() - 28.0, card.bottom() - 28.0),
-    );
-    p.rect_filled(a, CornerRadius::same(10), with_a(BG_SURFACE, ca));
-    p.rect_stroke(a, CornerRadius::same(10), Stroke::new(1.0, with_a(BORDER, ca)), StrokeKind::Middle);
-    let pa = p.with_clip_rect(a);
-    // two ghosted "artboards" (warm-white ghosts — azure is a scalpel, never splash decoration)
-    let ab = |x: f32, y: f32| egui::Rect::from_min_size(egui::pos2(a.left() + x, a.top() + y), egui::vec2(116.0, 92.0));
-    pa.rect_filled(ab(30.0, 44.0), CornerRadius::same(8), rgba_a(255, 255, 255, 0.03 * ca));
-    pa.rect_stroke(
-        ab(30.0, 44.0),
-        CornerRadius::same(8),
-        Stroke::new(1.0, rgba_a(255, 255, 255, 0.07 * ca)),
-        StrokeKind::Middle,
-    );
-    pa.rect_filled(ab(56.0, 84.0), CornerRadius::same(8), rgba_a(255, 255, 255, 0.045 * ca));
-    pa.rect_stroke(
-        ab(56.0, 84.0),
-        CornerRadius::same(8),
-        Stroke::new(1.0, rgba_a(255, 255, 255, 0.1 * ca)),
-        StrokeKind::Middle,
-    );
-    // ghost "V" monogram
-    let vc = a.center();
-    pa.line_segment(
-        [vc + egui::vec2(-42.0, -38.0), vc + egui::vec2(0.0, 44.0)],
-        Stroke::new(10.0, rgba_a(255, 255, 255, 0.055 * ca)),
-    );
-    pa.line_segment(
-        [vc + egui::vec2(42.0, -38.0), vc + egui::vec2(0.0, 44.0)],
-        Stroke::new(10.0, rgba_a(255, 255, 255, 0.055 * ca)),
-    );
-    // a pen-tool cubic Bézier with anchors + handles (the "this is a vector editor" tell)
-    let (p0, p1, p2, p3) = (
-        egui::pos2(a.left() + 26.0, a.bottom() - 54.0),
-        egui::pos2(a.left() + 66.0, a.top() + 58.0),
-        egui::pos2(a.right() - 66.0, a.bottom() - 30.0),
-        egui::pos2(a.right() - 26.0, a.top() + 70.0),
-    );
-    let cub = |s: f32| {
-        let u = 1.0 - s;
-        egui::pos2(
-            u * u * u * p0.x + 3.0 * u * u * s * p1.x + 3.0 * u * s * s * p2.x + s * s * s * p3.x,
-            u * u * u * p0.y + 3.0 * u * u * s * p1.y + 3.0 * u * s * s * p2.y + s * s * s * p3.y,
-        )
-    };
-    let curve: Vec<egui::Pos2> = (0..=24).map(|i| cub(i as f32 / 24.0)).collect();
-    pa.add(egui::Shape::line(curve, Stroke::new(2.0, rgba_a(255, 255, 255, 0.34 * ca))));
-    pa.line_segment([p0, p1], Stroke::new(1.0, rgba_a(255, 255, 255, 0.16 * ca)));
-    pa.line_segment([p3, p2], Stroke::new(1.0, rgba_a(255, 255, 255, 0.16 * ca)));
-    for cp in [p1, p2] {
-        pa.circle_stroke(cp, 2.5, Stroke::new(1.0, rgba_a(255, 255, 255, 0.34 * ca)));
-    }
-    for an in [p0, p3] {
-        pa.rect_filled(
-            egui::Rect::from_center_size(an, egui::vec2(6.0, 6.0)),
-            CornerRadius::same(1),
-            rgba_a(255, 255, 255, 0.34 * ca),
-        );
-        pa.rect_stroke(
-            egui::Rect::from_center_size(an, egui::vec2(6.0, 6.0)),
-            CornerRadius::same(1),
-            Stroke::new(1.0, rgba_a(255, 255, 255, 0.78 * ca)),
-            StrokeKind::Middle,
-        );
-    }
 }
 
 // ───────────────────────────── custom title bar ─────────────────────────────
@@ -3503,6 +3410,8 @@ fn build_topbar(
     show_dock: &mut bool,
     snap: &mut varos_core::model::SnapConfig,
     maximized: bool,
+    home: bool,
+    native_home: bool,
 ) {
     let h = crate::chrome::TOPBAR.height;
     // Stage 1 (BOX_SYSTEM_PLAN §3.5): the app bar IS the void — seam fill, no hairline; the doc tabs
@@ -3541,44 +3450,67 @@ fn build_topbar(
         // magnet = the Snapping quick-menu (Illustrator layout)
         let magnet_id = ui.make_persistent_id("snap_menu");
         let magnet_r = layout.magnet;
-        let magnet_active = menu_open(ui, magnet_id) || snap.smart || snap.grid;
-        let magr = topbtn(ui, &p, magnet_r, &top.magnet, "tb-magnet", magnet_active);
-        if magr.clicked() {
-            menu_toggle(ui, magnet_id);
-        }
-        // Window — every panel one click away, landing in an AUTOMATIC spot (Ahmed 07-07; replaces
-        // the old layout/panels buttons)
-        let winb = bar_btn(ui, &p, layout.window, "Window", true);
-        if winb.clicked() {
-            menu_toggle(ui, window_id);
-        }
-        // Export / Share honesty (DFS S1 §3.6, review nit F15/P3-15): neither has a home yet, so both
-        // look and behave disabled instead of being "enabled dead buttons" (spec §2 forbids those).
-        bar_btn_disabled(ui, &p, layout.share, "Share", "Share isn't available yet.\nSave keeps an editable .vrs.");
-        bar_btn_disabled(
-            ui,
-            &p,
-            layout.export,
-            "Export",
-            "Export isn't available yet \u{2014} PDF export comes in a later update.\nSave keeps an editable .vrs.",
-        );
-        // search pill: 🔍 Search — a surface capsule on the void (visual mirror; no function yet, QW7)
-        let kpill_r = layout.search;
-        search_pill(ui, &p, kpill_r, &top.search);
+        let (magr, winb) = if !home {
+            let magnet_active = menu_open(ui, magnet_id) || snap.smart || snap.grid;
+            let magr = topbtn(ui, &p, magnet_r, &top.magnet, "tb-magnet", magnet_active);
+            if magr.clicked() {
+                menu_toggle(ui, magnet_id);
+            }
+            // Window — every panel one click away, landing in an AUTOMATIC spot (Ahmed 07-07; replaces
+            // the old layout/panels buttons)
+            let winb = bar_btn(ui, &p, layout.window, "Window", true);
+            if winb.clicked() {
+                menu_toggle(ui, window_id);
+            }
+            // Export / Share honesty (DFS S1 §3.6, review nit F15/P3-15): neither has a home yet, so both
+            // look and behave disabled instead of being "enabled dead buttons" (spec §2 forbids those).
+            bar_btn_disabled(ui, &p, layout.share, "Share", "Share isn't available yet.\nSave keeps an editable .vrs.");
+            bar_btn_disabled(
+                ui,
+                &p,
+                layout.export,
+                "Export",
+                "Export isn't available yet \u{2014} PDF export comes in a later update.\nSave keeps an editable .vrs.",
+            );
+            // search pill: 🔍 Search — a surface capsule on the void (visual mirror; no function yet, QW7)
+            let kpill_r = layout.search;
+            search_pill(ui, &p, kpill_r, &top.search);
+            (magr, winb)
+        } else {
+            (
+                ui.interact(layout.magnet, ui.id().with("hidden-magnet"), egui::Sense::hover()),
+                ui.interact(layout.window, ui.id().with("hidden-window-menu"), egui::Sense::hover()),
+            )
+        };
 
         // burger — a flush 36×40 void cell at the far left (§3.5)
         let menu_r = layout.menu;
-        let mr = ui.interact(menu_r, ui.id().with("tb-menu"), egui::Sense::click());
-        let mopen = menu_open(ui, menu_id);
-        if mopen || mr.hovered() {
-            p.rect_filled(menu_r, CornerRadius::ZERO, HOVER);
-        }
-        if let Some(t) = &top.menu {
-            let col = if mopen || mr.hovered() { TEXT } else { MUTED };
-            p.image(t.id(), egui::Rect::from_center_size(menu_r.center(), egui::vec2(17.0, 17.0)), UV01(), col);
-        }
-        if mr.clicked() {
-            menu_toggle(ui, menu_id);
+        let mr = ui.interact(menu_r, ui.id().with("file-menu-anchor"), egui::Sense::hover());
+        if native_home || home {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(menu_r.shrink(2.0)), |ui| {
+                use varos_app::shell::kit::{self, Control, Icon};
+                let mut c = Control::new(ui.id().with("home-chip"), "Home");
+                c.icon = Some(Icon::Home);
+                c.selected = home;
+                c.pointer_only = home;
+                c.help = "Home";
+                if kit::action(ui, c, true).activated {
+                    cmds.push(AppCommand::Home);
+                }
+            });
+        } else {
+            let mr = ui.interact(menu_r, ui.id().with("tb-menu"), egui::Sense::click());
+            let mopen = menu_open(ui, menu_id);
+            if mopen || mr.hovered() {
+                p.rect_filled(menu_r, CornerRadius::ZERO, HOVER);
+            }
+            if let Some(t) = &top.menu {
+                let col = if mopen || mr.hovered() { TEXT } else { MUTED };
+                p.image(t.id(), egui::Rect::from_center_size(menu_r.center(), egui::vec2(17.0, 17.0)), UV01(), col);
+            }
+            if mr.clicked() {
+                menu_toggle(ui, menu_id);
+            }
         }
 
         // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5).
@@ -3653,64 +3585,69 @@ fn build_topbar(
                 "Export\u{2026}",
                 "Export isn't available yet \u{2014} PDF export comes in a later update.\nSave keeps an editable .vrs.",
             );
+            if menu_row(ui, "Home", "") {
+                cmds.push(AppCommand::Home);
+                hit = true;
+            }
             if hit {
                 menu_set(ui, menu_id, false);
             }
         });
         // the Window menu: chrome toggles up top, then EVERY dockable panel — ✓ = it's in the
         // layout; click = open in an automatic spot / surface its tab / close (boxtree::toggle_panel)
-        menu_below(ui, window_id, &winb, flush, |ui| {
-            ui.set_width(200.0);
-            let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
-            if check_row(ui, "Tool rail", *show_rail) {
-                *show_rail = !*show_rail;
-                hit = true;
-            }
-            if check_row(ui, "Control bar", *show_dock) {
-                *show_dock = !*show_dock;
-                hit = true;
-            }
-            menu_sep(ui);
-            for pnl in varos_app::shell::PanelId::DOCKABLE {
-                if check_row(ui, pnl.title(), shell.is_open(pnl)) {
-                    shell.toggle_panel(pnl);
+        if !home {
+            menu_below(ui, window_id, &winb, flush, |ui| {
+                ui.set_width(200.0);
+                let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
+                if check_row(ui, "Tool rail", *show_rail) {
+                    *show_rail = !*show_rail;
                     hit = true;
                 }
-            }
-            if hit {
-                menu_set(ui, window_id, false);
-            }
-        });
-        // Snapping quick-menu (Illustrator "Snapping" popover)
-        menu_below(ui, magnet_id, &magr, flush, |ui| {
-            ui.set_width(216.0);
-            let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
-            if check_row(ui, "Snap to Grid", snap.grid) {
-                snap.grid = !snap.grid;
-                hit = true;
-            }
-            if check_row(ui, "Snap to Point", snap.key_points) {
-                snap.key_points = !snap.key_points;
-                hit = true;
-            }
-            menu_sep(ui);
-            if check_row(ui, &format!("Smart Guides  ({})", shortcut_label("U")), snap.smart) {
-                toggle_smart_guides(snap);
-                hit = true;
-            }
-            if check_row(ui, "    Alignment Guides", snap.alignment_guides) {
-                snap.alignment_guides = !snap.alignment_guides;
-                hit = true;
-            }
-            if check_row(ui, "    Geometric Guides", snap.object_geometry) {
-                snap.object_geometry = !snap.object_geometry;
-                hit = true;
-            }
-            if hit {
-                menu_set(ui, magnet_id, false);
-            }
-        });
-
+                if check_row(ui, "Control bar", *show_dock) {
+                    *show_dock = !*show_dock;
+                    hit = true;
+                }
+                menu_sep(ui);
+                for pnl in varos_app::shell::PanelId::DOCKABLE {
+                    if check_row(ui, pnl.title(), shell.is_open(pnl)) {
+                        shell.toggle_panel(pnl);
+                        hit = true;
+                    }
+                }
+                if hit {
+                    menu_set(ui, window_id, false);
+                }
+            });
+            // Snapping quick-menu (Illustrator "Snapping" popover)
+            menu_below(ui, magnet_id, &magr, flush, |ui| {
+                ui.set_width(216.0);
+                let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
+                if check_row(ui, "Snap to Grid", snap.grid) {
+                    snap.grid = !snap.grid;
+                    hit = true;
+                }
+                if check_row(ui, "Snap to Point", snap.key_points) {
+                    snap.key_points = !snap.key_points;
+                    hit = true;
+                }
+                menu_sep(ui);
+                if check_row(ui, &format!("Smart Guides  ({})", shortcut_label("U")), snap.smart) {
+                    toggle_smart_guides(snap);
+                    hit = true;
+                }
+                if check_row(ui, "    Alignment Guides", snap.alignment_guides) {
+                    snap.alignment_guides = !snap.alignment_guides;
+                    hit = true;
+                }
+                if check_row(ui, "    Geometric Guides", snap.object_geometry) {
+                    snap.object_geometry = !snap.object_geometry;
+                    hit = true;
+                }
+                if hit {
+                    menu_set(ui, magnet_id, false);
+                }
+            });
+        }
         // publish caption height + interactive (non-drag) rects, in physical px — ONE list, the
         // layout's own `interactive_rects` (every control and FULL tab slot drawn above), so the OS /
         // macOS caption band can never disagree with the strip about what a press belongs to (P15).
@@ -6783,7 +6720,21 @@ mod tab_strip_tests {
         let mut win_action = None;
         let mut cmds = Vec::new();
         let _ = ctx.run_ui(input, |root| {
-            build_topbar(root, top, shell, &mut win_action, tabs, active, &mut cmds, show_rail, show_dock, snap, false);
+            build_topbar(
+                root,
+                top,
+                shell,
+                &mut win_action,
+                tabs,
+                active,
+                &mut cmds,
+                show_rail,
+                show_dock,
+                snap,
+                false,
+                false,
+                false,
+            );
         });
         cmds
     }
@@ -7128,7 +7079,21 @@ mod tab_strip_tests {
             let (tabs, active) = (&self.tabs, self.active);
             let (shell, rail, dock, snap) = (&mut self.shell, &mut self.rail, &mut self.dock, &mut self.snap);
             let out = self.ctx.run_ui(input, |root| {
-                build_topbar(root, &icons(), shell, &mut win_action, tabs, active, &mut cmds, rail, dock, snap, false);
+                build_topbar(
+                    root,
+                    &icons(),
+                    shell,
+                    &mut win_action,
+                    tabs,
+                    active,
+                    &mut cmds,
+                    rail,
+                    dock,
+                    snap,
+                    false,
+                    false,
+                    false,
+                );
             });
             (cmds, out.shapes)
         }
@@ -7591,6 +7556,8 @@ mod tab_strip_tests {
                     &mut dock,
                     &mut snap,
                     false,
+                    false,
+                    false,
                 );
             });
             out.shapes.iter().any(|cs| {
@@ -7685,6 +7652,8 @@ mod dead_control_tests {
                     &mut self.rail,
                     &mut self.dock,
                     &mut self.snap,
+                    false,
+                    false,
                     false,
                 );
             });

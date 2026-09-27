@@ -5,6 +5,18 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 
 
 
+
+## 2026-09-27 — E2 Start/Home/Recent integration
+
+- **Scope:** `codex/ui-system-plan`, baseline `c27b8a4`; [integration contract](work_orders/DFS_S2_E2_START_INTEGRATION.md). Start presentation, internal placeholder/Home state, one Start-to-host adapter and shared open pipeline, successful-only Recent persistence, missing Locate/Remove/Clear, Mac native Recent mirror and Home document-command isolation. Timed splash removed; GPU failure dialog retained. No core/renderer/dependency changes, installed app replacement or recovery implementation.
+- **Defects found and addressed:** native verification exposed an existing repaint loop caused by treating `RedrawRequested` as a request for another redraw. Excluded that event and connected delayed egui repaint deadlines to the event loop. Added bounded presentation retries. Kept caption exclusions published on Home and prevented kit keyboard handling from duplicating Start's model-owned activation.
+- **Local gates:** `cargo test --locked --workspace -j 4 --quiet` — **772 passed, 0 failed, 5 ignored**, 54 summaries. macOS and `x86_64-pc-windows-msvc` all-target clippy with `-D warnings` — PASS. macOS app build and `cargo fmt --all --check` — PASS. Portable architecture checker and its **7 tests** — PASS. Twelve new tests cover lifecycle/FIFO, metadata safety, native-menu projection and CPU-only Start controls at 1×/2×. No test constructs a Renderer or EventLoop.
+- **Native evidence:** temporary `/tmp/Varos-E2.app`, isolated app data and a copied repository fixture. Before final splash removal: Start/New/Home, native Open, persisted Recent, native Recent reopen and Home-disabled Save/Save As/Close were observed. Idle CPU sampling after the repaint correction reached 0%; spot observation only.
+- **Final native limit:** the splash-free binary accepted New and updated its title, but final screenshots remained at the window background. Temporary logging identified `CurrentSurfaceTexture::Occluded`, not a successful presentation, on every attempt. Raise/zoom did not clear that state. Asked the owner to wake/show the display; visible-surface confirmation remains pending. All temporary instrumentation was removed before final gates. Earlier native evidence must not be presented as acceptance of this last change.
+- **Documentation/static checks:** PLAN, STATUS, UI spec and S2/S3 order reconciled; temporary documentation checker: 134 documents, 245 relative links and 62 anchors, no failures. Scoped Impeccable detector reported no findings; Rust static scanning is not an accessibility or visual audit. `git diff --check` — PASS.
+- **Verdict:** local implementation gates PASS; **final native presentation confirmation, independent batch review, owner acceptance and merge pending**. Windows compile-only; recovery and durable document Save remain F1/F2. No hosted CI success claimed; billing policy unchanged.
+
+
 ## 2026-09-27 — Minimum U0-B/C Start controls
 
 - **Scope:** `codex/ui-system-plan`, baseline `04dd7f2`; library-only action/icon button, neutral Home state, recent-file row, heading/notice, shared vector icons and size/stroke tokens. Stable caller IDs, explicit availability reasons and a single activation result; no application commands, Editor access, file I/O, Start host wiring, document-tab migration or new dependencies. Contract: [U0-B/C](work_orders/UI_U0_BC_KIT.md).
