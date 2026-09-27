@@ -1,7 +1,7 @@
 > **Status:** current — first implementation slice of the project review accepted by Ahmed on 2026-09-27.
 # Project health: current state and platform gates
 
-Branch: `codex/project-health`. Baseline: `5ee21d4`. Product behavior is unchanged.
+Branch: `codex/project-health`. Baseline: `5ee21d4`. **Merged:** [PR #1](https://github.com/thisisgomaa/varos/pull/1) at `601fd7c`, 2026-09-27, after independent approval. Product behavior is unchanged.
 
 ## Problem and outcome
 

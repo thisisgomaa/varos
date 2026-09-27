@@ -10,6 +10,8 @@
 - Owner amendments: when the source document is a `.pdf`, the default export name is `<name> export.pdf`; Home replaces the burger beside tabs on Mac, so route export through its home and native File menu instead of recreating the removed burger.
 - Windows stays compile-only; Windows runtime acceptance is explicitly pending. S6-B needs S3-F1; full acceptance also needs S2/S3 and the remaining S5 checks.
 
+**UI v2 boundary (planning, 2026-09-27):** S6 extends the existing AppCommand/host FIFO and consumes only the shared controls its actual export flow needs; it does not wait for U1's generic command table. The later U1 migration must preserve this single path. Keep the existing S6 cancellation contract: Cancel must reach a real cancellation mechanism; a decorative button does not satisfy acceptance. Readability follows recorded QW6/contrast decisions, not v1 mockup literals.
+
 Follow [PLAN](../../PLAN.md) for sequencing. Findings and merge windows below describe the original branch, not an instruction to restart merged pieces.
 
 Date: 2026-09-24 · Branch baseline: `claude/sweet-cerf-1sg30t` · Planning only: nothing below has been built or run.
