@@ -17,7 +17,8 @@
 
 use std::path::Path as FsPath;
 
-use varos_core::file::{doc_from_blob, write_atomic};
+use varos_core::file::write_atomic;
+use varos_core::format::{decode_model, Limits};
 use varos_core::model::Document;
 
 // The write side lives in `write.rs` (the shared page loop + the native container) and `export.rs`
@@ -41,13 +42,17 @@ pub fn save_vrs(doc: &Document, path: &FsPath) -> Result<(), String> {
 /// Load a `.vrs`: a PDF container (the model blob is recovered from inside), or a legacy raw-JSON
 /// `.vrs` from the first slice (sniffed by the missing `%PDF-` header).
 pub fn load_vrs(path: &FsPath) -> Result<Document, String> {
+    load_vrs_with_notice(path).map(|(doc, _)| doc)
+}
+
+/// Load through the same reader, retaining the migration notice for the application's open flow.
+/// PDF parsing is not yet bounded here: S5-D owns that separate reader change.
+pub fn load_vrs_with_notice(path: &FsPath) -> Result<(Document, Option<&'static str>), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read failed: {e}"))?;
-    if bytes.starts_with(b"%PDF-") {
-        doc_from_blob(&extract_model(&bytes)?)
-    } else {
-        let s = String::from_utf8(bytes).map_err(|_| "not a valid .vrs".to_string())?;
-        doc_from_blob(&s)
-    }
+    let model = if bytes.starts_with(b"%PDF-") { extract_model(&bytes)?.into_bytes() } else { bytes };
+    let loaded = decode_model(&model, None, &Limits::DEFAULT).map_err(|e| e.to_string())?;
+    let notice = loaded.notice();
+    Ok((loaded.doc, notice))
 }
 
 // ───────────────────────────── read: PDF bytes → model blob ─────────────────────────────

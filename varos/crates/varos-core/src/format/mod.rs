@@ -57,11 +57,17 @@ pub struct Loaded {
     pub source_version: u32,
     /// True when an older format was migrated up in memory (the file on disk is untouched).
     pub migrated: bool,
+    /// Broken v1 clips released in memory; the caller must surface notice().
+    pub released_legacy_masks: bool,
 }
 impl Loaded {
     /// The notice to show after opening, if any.
     pub fn notice(&self) -> Option<&'static str> {
-        self.migrated.then_some(MIGRATION_NOTICE)
+        if self.released_legacy_masks {
+            Some("Opened an older file with broken clipping masks released. All remaining artwork was kept. The original file has not been changed; saving will update it.")
+        } else {
+            self.migrated.then_some(MIGRATION_NOTICE)
+        }
     }
 }
 
@@ -112,8 +118,10 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
         }
     }
     let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
-    let doc = file.doc;
+    let mut doc = file.doc;
+    let released_legacy_masks = version == 1 && migrate::release_broken_clips(&mut doc);
     check_structure(&doc, limits)?;
+    validate::authored(&doc)?;
     let migrated = version < FORMAT_VERSION;
     let doc = if migrated {
         let doc = migrate::migrate(doc, version, FORMAT_VERSION, limits)?;
@@ -124,7 +132,7 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
         validate(&doc, limits)?;
         canonical(doc)?
     };
-    Ok(Loaded { doc, source_version: version, migrated })
+    Ok(Loaded { doc, source_version: version, migrated, released_legacy_masks })
 }
 
 /// Current-format input must already be in the form this build's writer produces: the normalizer may
@@ -158,11 +166,12 @@ fn canonical(doc: Document) -> Result<Document, LoadError> {
 
 /// Serialize a document as the current format. Runs `check_structure`, normalizes a CLONE (a clip
 /// the normalizer would demote is refused), re-checks the structure and runs `validate` on that clone,
-/// enforces the model size cap, and checks serde can read the bytes back (today the only guard against
-/// a non-finite float, which serde writes as `null`; S5-C's finiteness rule names the object). `doc` is
+/// enforces the model size cap, and checks serde can read the bytes back as a final backstop.
+/// Authored values are also checked before normalization, with object-specific diagnostics. `doc` is
 /// never mutated.
 pub fn encode_model(doc: &Document, limits: &Limits) -> Result<String, SaveRefused> {
     check_structure(doc, limits).map_err(SaveRefused)?;
+    validate::authored(doc).map_err(|e| SaveRefused(e.into()))?;
     let norm = migrate::normalize(doc.clone()).map_err(SaveRefused)?;
     check_structure(&norm, limits).map_err(SaveRefused)?; // adoption may add nodes
     validate(&norm, limits).map_err(|i| SaveRefused(i.into()))?;

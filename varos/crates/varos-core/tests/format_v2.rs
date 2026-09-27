@@ -565,24 +565,34 @@ fn broken_clip() -> (Document, u32) {
 }
 
 #[test]
-fn v1_invalid_clip_refused_not_demoted() {
+fn broken_v1_clip_released_with_notice_but_v2_and_save_refuse() {
     let (d, clip) = broken_clip();
     let want = Invalid::BadMask { group: clip, reason: "its mask shape is no longer inside it" };
-    assert_eq!(invalid(dec_value(&blob_as_raw(&d, 1))), want, "v1: refused, never silently demoted");
+    let loaded = dec_value(&blob_as_raw(&d, 1)).unwrap();
+    assert!(loaded.released_legacy_masks);
+    assert!(loaded.notice().unwrap().contains("broken clipping masks released"));
+    assert_eq!(loaded.doc.node(clip).unwrap().role, GroupRole::Normal);
+    assert_eq!(loaded.doc.paths, d.paths);
+    assert!(
+        decode_model(encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().as_bytes(), None, &Limits::DEFAULT).is_ok()
+    );
     assert_eq!(invalid(dec_value(&blob_as_raw(&d, 2))), want, "v2: refused too");
     // a mask id that names no node at all
     let mut v = blob_as_raw(&d, 1);
     let ci = d.nodes.iter().position(|n| n.id == clip).unwrap();
     v["doc"]["nodes"][ci]["mask_child"] = json!(4242);
     let dangling = Invalid::Dangling { from: "node", id: clip, missing: 4242 };
-    assert_eq!(invalid(dec_value(&v)), dangling, "refused by the structure check, before any migration");
+    assert!(dec_value(&v).unwrap().released_legacy_masks);
     // review P3-1: with a tree-less path to adopt, the migration would otherwise hand out node 4242 to it
     // and the clip would silently bind to an arbitrary shape
     let mut v2 = blob_as_raw(&d, 1);
     v2["doc"]["nodes"][ci]["mask_child"] = json!(4242);
     v2["doc"]["ids"] = json!(4241);
     v2["doc"]["paths"].as_array_mut().unwrap().push(serde_json::to_value(tri(9, 0.0, 0.0)).unwrap());
-    assert_eq!(invalid(dec_value(&v2)), dangling);
+    let repaired = dec_value(&v2).unwrap();
+    assert!(repaired.released_legacy_masks);
+    assert_eq!(repaired.doc.node(clip).unwrap().mask_child, None);
+    assert_eq!(repaired.doc.paths.len(), d.paths.len() + 1);
     let mut sd = d.clone();
     sd.nodes[ci].mask_child = Some(4242);
     assert_eq!(save_invalid(&sd), dangling, "save refuses it too");
@@ -620,7 +630,7 @@ fn sync_tree_is_noop_on_canonical_v2() {
     // v2 input the writer could not have produced is refused, not repaired
     let mut raw_push = doc_with(1);
     raw_push.paths.push(tri(2, 0.0, 0.0)); // no leaf
-    assert_eq!(invalid(dec_value(&blob_as_raw(&raw_push, 2))), Invalid::NotCanonical { what: "layer tree" });
+    assert_eq!(invalid(dec_value(&blob_as_raw(&raw_push, 2))), Invalid::NotCanonical { what: "path ownership" });
     assert!(dec_value(&blob_as_raw(&raw_push, 1)).is_ok(), "v1: adopting tree-less paths is a documented migration");
     let mut empty_group = doc_with(1);
     empty_group.nodes.push(group_node(100, Some(1), vec![]));
@@ -769,7 +779,7 @@ fn user_messages_hide_parser_internals() {
     assert!(messages[0].ends_with("(line 1, column 19)."), "{}", messages[0]);
     assert_eq!(
         messages.last().unwrap(),
-        "This document can't be saved: a number in this document has a value that is not a finite number. It is still open."
+        "This document can't be saved: path 1: anchor position has a value that is not a finite number. It is still open."
     );
     // the raw parser text is still kept for logs
     match dec(r#"{"varos":2,"doc":42}"#) {

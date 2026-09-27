@@ -8,13 +8,23 @@
 |---|---|---|
 | S5-A | ADR-0008 **Accepted** (2026-09-24) | Do not re-request its acceptance; preserve the immutable ADR. |
 | S5-B | Merged; `format/mod.rs` writes v2, structural/version checks and migration are present | Reuse this spine; do not restart it. |
-| S5-C | **Pending:** `format/validate.rs` still returns `Ok(())` unconditionally | Semantic validation and its focused tests. Existing structural checks and save decode-backstop are real but do not replace this piece. |
+| S5-C | Implemented on `codex/ui-system-plan`, not merged/reviewed yet: semantic validator, pre-normalization authored checks and focused tests | Independent review batched at the owner’s request; see implementation amendment below. |
 | S5-D | **Pending:** PDF still uses `std::fs::read` and `lopdf::Document::load_mem` in `varos-pdf/src/lib.rs` | Bounded container reader, version propagation, bounded name-tree traversal; proposed `read.rs` is absent. |
 | S5-E | v1 fixtures, golden tests and harness merged | Final v2 fixtures, C/D refusal coverage and real-file corpus/old-binary acceptance remain open. |
 
 **S5 as a system is incomplete.** Passing format-v2 tests does not establish semantic validation or bounded PDF loading. The [wire contract](../../reference/VRS_FORMAT.md) now separates implemented checks from pending C/D checks.
 
-Owner amendment (2026-09-24): an old file with a broken clip mask should open with the mask released and a notice. Current `format/migrate.rs::normalize` still refuses a changed/broken clip. Reconcile that explicit v1 migration exception with structural checks, warnings and fixtures before implementing C; keep strict current-format validation. The original `v1_invalid_clip_refused_not_demoted` test requirement below is superseded for that owner-approved recoverable case. Do not weaken unrelated corruption checks or silently discard art.
+Owner amendment (2026-09-24): an old file with a broken clip mask should open with the mask released and a notice. The work branch now releases only broken Clip references on v1 Group nodes before structural checking/id allocation, retains a notice and surfaces it after successful app Open. Shared normalization and current-format validation remain strict. The original `v1_invalid_clip_refused_not_demoted` test requirement below is superseded for that owner-approved recoverable case. Do not weaken unrelated corruption checks or silently discard art.
+
+### S5-C implementation amendment — 2026-09-27
+
+The owner asked to proceed and batch independent review at the end of the session. This slice includes the validator and the smallest end-to-end seam required by the already-approved legacy-mask decision: `format/mod.rs`/`migrate.rs`, the notice-retaining PDF load wrapper, and additive `DocStore::load_with_notice` plus disk/lifecycle wiring. This explicitly expands the original two-file/no-app ownership below; it does not implement S5-D or alter the document schema. Existing public load/save signatures remain available. No new crates or dependencies.
+
+Validation runs on authored values before normalization as well as on canonical content afterwards: a pruned group, identity transform omitted by serde, or healed nested transform cannot hide invalid floats/roles. All persisted floats, including node colors and hole handles, are checked. Errors identify the path/node/board and field. Current v2 inputs and saves never use the v1 mask repair. The repair clears only a Group's Clip role/reference when the mask is absent or not a direct child; unrelated dangling links/cycles/invalid values still refuse. Original file bytes are unchanged, and the app issues the notice only after successful first Open.
+
+**Two planned restrictions intentionally not added:** `Document::move_is_legal` / `move_node_to` allow root-level Path/Group through Before/After drops, so “roots must be Layers” would reject editor-produced work. Tests preserve those live operations. `snap.candidate_max` has a default but no reader/editor bound or active consumer; an arbitrary new upper cap would not enforce an existing invariant. It remains representable as usize, without a new format restriction. Layer-inside-Group and children-inside-Path remain refused; Layers inside Layers remain allowed. Artboard zero dimensions are accepted as planned. Normalizer/canonical checks continue to own registry/empty-group/nested-transform canonicalization.
+
+Invariants are backed by model `move_is_legal`, `clip_group`, `release_clip`, `sync_tree`; editor `set_opacity`, `ab_set_rect`; command `set_stroke_width`; typed geometry/color/ppi field contracts. No editor API is claimed to prevent arbitrary caller-supplied NaN: refusing those values at the file boundary is the purpose of this slice. Test/gate evidence goes in GATE_LOG. Real-window notice verification, personal corpus, bounded PDF parsing and final frozen v2 fixtures remain separately pending; no merge is performed here.
 
 The pieces below retain their original baseline/API context; “Proposed ADR” and “start at base” are no longer current execution instructions. Current queue: [PLAN](../../PLAN.md).
 

@@ -1,7 +1,7 @@
 > **Status:** current — single current-state page, governed by [FOUNDATION_CHARTER](FOUNDATION_CHARTER.md) §3.
 # Varos — current state
 
-Updated 2026-09-27. Code baseline: `601fd7c` on `main`, merging [PR #1](https://github.com/thisisgomaa/varos/pull/1). Current work: documentation-only `codex/ui-system-plan` (not merged).
+Updated 2026-09-27. Code baseline: `601fd7c` on `main`, merging [PR #1](https://github.com/thisisgomaa/varos/pull/1). Current work: `codex/ui-system-plan` now includes UI planning and S5-C semantic validation; independent review batched at the owner’s request, not merged.
 
 ## Product and platform
 
@@ -15,7 +15,7 @@ Keep the four-crate architecture: pure `varos-core`, scene renderer `varos-rende
 |---|---|
 | Drawing | Shapes, Pen/Direct editing, boolean operations, layers, transforms, snapping and artboard clipping are implemented. Mask model/render/PDF foundations exist; creation/release gestures are pending. Edge cases remain in the pain log. |
 | Documents | Independent tabs, dirty tracking, undo/redo, save/close/quit guards and `.vrs` v2 save/open are integrated. |
-| File format | `.vrs` remains a PDF containing editable document data. Core v2 version/structure checks, migration and v1 fixtures are implemented; ADR-0008 is accepted. S5-C semantic validation is a stub; S5-D bounded PDF reading and final S5-E acceptance remain pending. |
+| File format | `.vrs` remains a PDF containing editable document data. Core v2 version/structure checks, migration and v1 fixtures are implemented; ADR-0008 is accepted. S5-C semantic validation and v1 broken-mask notices are implemented on the work branch, not merged. S5-D bounded PDF reading and final S5-E acceptance remain pending. |
 | Start and recent files | Pure Start model and recent-file storage are tested. Start drawing and host integration (E2) are pending. |
 | Recovery | Durable writer, snapshot store, scheduler and I/O worker are tested modules. Automatic recovery writing and recovery UI (F1/F2) are not wired into the running app. Existing Save still uses `varos_pdf::save_vrs`. |
 | Export | Pure-PDF export exists in the library; the complete app export flow is pending. SVG/PNG interchange is pending. |
@@ -26,16 +26,16 @@ Keep the four-crate architecture: pure `varos-core`, scene renderer `varos-rende
 The single execution map is [PLAN](../PLAN.md). Start there for completed work, the queue and unresolved decisions.
 
 1. Project-health/planning changes merged in PR #1 at `601fd7c`, after independent approval. UI v2 planning is now drafted separately; its scope is in the [UI planning work order](work_orders/UI_SYSTEM_V2_PLAN_2026-09-27.md).
-2. Review the UI v2 proposal, then finish S5-C/D/E. Then minimum U0 → E2 Start/recents → F1/F2 recovery, reusing the modules already built.
+2. Batch-review UI v2 and S5-C at session end; continue S5-D/E. Then minimum U0 → E2 Start/recents → F1/F2 recovery, reusing the modules already built.
 3. Complete S4/S6 association/export, then the remaining UI/Editor extraction in behavior-preserving pieces. Deferred product features remain recorded in PLAN.
 
 ## Verification
 
 | Check | Latest evidence |
 |---|---|
-| Workspace tests | 708 passed, 0 failed, 4 intentionally ignored; macOS rerun for the documentation-only UI planning revision based on `601fd7c`, 2026-09-27. |
+| Workspace tests | 723 passed, 0 failed, 5 intentionally ignored; fresh S5-C work-branch run, 2026-09-27. |
 | Build, clippy and format | macOS build, macOS and Windows-target clippy with `-D warnings`, and `fmt --check`: PASS, 2026-09-27 implementation checks. |
-| Explicit old-reader checks | 2 passed when run with `--ignored`, 2026-09-27; not included in the default 708 count. |
+| Explicit old-reader checks | 2 passed when run with `--ignored`, 2026-09-27; not included in the default 723 count. |
 | Architecture checker | Portable gate and 7 checker tests PASS; real-source negative probe rejected as expected. |
 | Independent review | PR #1 only: APPROVE after one documentation-policy correction; separate Codex reviewer, 2026-09-27. Full scope and limitations in GATE_LOG. |
 | CI configuration | Full macOS gates and Windows compile-only checks configured. [Run 36300014830](https://github.com/thisisgomaa/varos/actions/runs/36300014830) failed before either job started: account locked due to a billing issue; no test steps executed. |

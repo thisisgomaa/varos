@@ -51,6 +51,10 @@ pub trait Dialogs {
 /// Every file operation the lifecycle performs.
 pub trait DocStore {
     fn load(&mut self, path: &Path) -> Result<Document, String>;
+    /// Additive notice seam; existing stores need not produce migration notices.
+    fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
+        self.load(path).map(|doc| (doc, None))
+    }
     fn save(&mut self, doc: &Document, path: &Path) -> Result<(), String>;
     /// The file's identity: absolute + canonical path (the parent canonicalised for a file that does
     /// not exist yet), plus device/inode on unix.
@@ -125,12 +129,15 @@ impl Lifecycle<'_> {
                 self.ws.activate(id);
                 continue;
             }
-            match self.store.load(&path) {
+            match self.store.load_with_notice(&path) {
                 // The tab takes the store's normalised path (absolute, symlinks resolved), so a later
                 // Save replaces the real file, never a symlink standing in for it.
-                Ok(doc) => {
+                Ok((doc, notice)) => {
                     let at = key.path.clone();
                     self.ws.add_loaded(doc, at, key);
+                    if let Some(message) = notice {
+                        self.dialogs.notice(&format!("Opened “{}”", file_name(&path)), message);
+                    }
                 }
                 Err(reason) => self.dialogs.open_failed(&file_name(&path), &reason),
             }
@@ -395,6 +402,7 @@ mod tests {
         fail_save: HashMap<PathBuf, u32>,
         loads: Vec<PathBuf>,
         saves: Vec<PathBuf>,
+        notices: HashMap<PathBuf, &'static str>,
     }
     impl FakeStore {
         fn target(&self, p: &Path) -> PathBuf {
@@ -414,6 +422,10 @@ mod tests {
         }
     }
     impl DocStore for FakeStore {
+        fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
+            let doc = self.load(path)?;
+            Ok((doc, self.notices.get(&self.target(path)).copied()))
+        }
         fn load(&mut self, path: &Path) -> Result<Document, String> {
             let t = self.target(path);
             self.loads.push(t.clone());
@@ -577,6 +589,24 @@ mod tests {
         r.run(AppCommand::OpenDialog);
         assert_eq!(r.prompts(), ["open"]);
         assert_eq!(r.ids(), [first, a]);
+    }
+
+    #[test]
+    fn migration_notice_only_after_successful_first_open() {
+        let mut r = Rig::new();
+        r.s.put("old.vrs", Document::default());
+        r.s.notices.insert(PathBuf::from("old.vrs"), "Broken clipping mask released.");
+        r.open("old.vrs");
+        assert_eq!(r.prompts(), vec!["notice Opened “old.vrs”"]);
+        r.open("old.vrs");
+        assert!(r.prompts().is_empty(), "already-open files are not reloaded or re-notified");
+        r.s.put("bad.vrs", Document::default());
+        r.s.notices.insert(PathBuf::from("bad.vrs"), "must not be shown");
+        r.s.fail_load.insert(PathBuf::from("bad.vrs"));
+        r.open("bad.vrs");
+        let prompts = r.prompts();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].starts_with("open-failed"));
     }
 
     #[test]
