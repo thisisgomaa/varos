@@ -131,6 +131,17 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style_of(egui::Theme::Light, style);
 }
 
+// Minimum Start/Recovery kit, in logical points. No runtime colour/size literals in controls.
+pub const KIT_MIN_TARGET: f32 = 24.0;
+pub const KIT_CONTROL_H: f32 = 32.0;
+pub const KIT_ROW_H: f32 = 56.0;
+pub const KIT_ICON: f32 = 16.0;
+pub const KIT_PAD: f32 = 8.0;
+pub const KIT_GAP: f32 = 8.0;
+pub const KIT_TEXT_GAP: f32 = 4.0;
+pub const KIT_STROKE: f32 = 1.0;
+pub const KIT_FOCUS_STROKE: f32 = 2.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

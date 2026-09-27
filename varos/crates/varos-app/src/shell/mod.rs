@@ -4,6 +4,7 @@
 //! [`ShellState::ui`] (they were prototyped in an eframe sandbox, now retired).
 pub mod boxtree;
 pub mod fonts;
+pub mod kit;
 pub mod registry;
 pub mod tokens;
 
