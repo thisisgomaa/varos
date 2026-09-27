@@ -1,6 +1,19 @@
 > **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
 # Masks / Clipping — STAGED implementation plan
 
+## Reconciled state — 2026-09-27
+
+The core clip model (`Document::clip_group`, `release_clip`, `GroupRole`), scene/GPU support, and PDF clipping support are present. **Creation/release gestures are still pending:** the application has no `LayerClip`/Make Mask command or `make_clip_selection` handler. Artboard clipping is a separate, already available feature. Do not label masks as a fully reachable app feature from model/render tests alone.
+
+- Stage 1 model and Stage 2 renderer foundations: implemented; retain tests.
+- Stage 3 creation/release gestures: pending.
+- Stage 4 mask-aware selection/bounds and Stage 6 nested/interaction coverage: incomplete; re-check against the real editor before closure.
+- Stage 5 PDF clip support: present in `varos-pdf/src/write.rs`; full acceptance still includes canvas/export agreement.
+- Known renderer limitations remain recorded in [P11.2](foundation/P11_2_PERF.md): opacity/translucent stroke behavior inside masks needs real-window verification and targeted fixes.
+- The old §1.2 “No format bump” rule is superseded by accepted ADR-0008: every writer-visible schema change requires the documented versioning process. The current writer is v2.
+
+Current timing is in [PLAN](PLAN.md). “Where we are today” and line numbers below describe the original pre-mask baseline.
+
 > **Feature:** clipping masks (Ahmed's word: **"Mask"**). The next major feature after the pain sweep + A7.
 > **Design of record:** `LAYERS_VISION.md` §3 (the canonical model + the two gestures) and §5–§7 (the
 > `paint_list` insurance). This doc turns that design into a code-grounded, stage-by-stage build order.

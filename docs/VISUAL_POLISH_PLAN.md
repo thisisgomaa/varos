@@ -1,5 +1,11 @@
-> **Status:** current — Active project document, governed by the authority ladder in `docs/foundation/FOUNDATION_CHARTER.md` §3.
+> **Status:** reference — dated visual audit and residual backlog; execution consolidated into UI_SYSTEM and [PLAN](PLAN.md).
 # Varos — Visual Polish Plan (A16 icons · A17 colour picker · A14 control bar)
+
+## Routing update — 2026-09-27
+
+This is a dated visual audit/backlog, **not a separate active implementation queue**. The safe mechanical wave was recorded as shipped (`5684231` in the earlier plan map); do not reapply it from the old line numbers. Remaining typography, controls, picker and icon work is owned by [UI_SYSTEM](specs/UI_SYSTEM.md), with the icon study as reference. Owner-specific visual decisions remain distinguishable from reviewer proposals there.
+
+QW6 sizes/FAINT→MUTED, bundled Plex fonts, no glide/ease and the Home-button direction are newer decisions. Start from [PLAN](PLAN.md) and the UI reconciliation section; keep this audit as design evidence.
 
 > **Status:** DESIGN PROPOSAL (read-only session, 2026-07-09). No code changed. A future session
 > executes this; Ahmed reviews visually.

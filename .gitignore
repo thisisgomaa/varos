@@ -13,6 +13,7 @@ err.txt
 out.txt
 *.log
 *.tmp
+__pycache__/
 ~ai-*
 
 # ---- Adobe Illustrator cursors (proprietary, TEMP local-dev only — never commit/ship) ----

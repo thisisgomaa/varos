@@ -1,29 +1,47 @@
-# VAROS CI — ENGINEERING_REVIEW.md §5.1 (corrected YAML), backlog #1.
-# Guards the 90 headless tests + lint on every push/PR. Invariant (§3.1): no test may
-# construct a GPU `Renderer` or an `EventLoop` — the suite is CPU-pure by design; a GPU
-# integration test would hang headless CI. Gate such tests behind `#[ignore]` if ever added.
+# The product targets macOS; Windows remains a compile-only compatibility gate.
+# Tests stay headless: no GPU Renderer or EventLoop is constructed.
 name: ci
-# Automatic on every push and pull request; manual dispatch remains available for reruns.
-# GitHub account billing verification and required-check branch protection remain external settings.
 on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
 jobs:
   check:
-    runs-on: windows-latest        # matches the real target (Win32/WebView2/wgpu)
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: varos    # Cargo workspace sits one level below git root
+        working-directory: varos
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-        with: { workspaces: varos } # REQUIRED — manifest is not at repo root, or the cache no-ops
+        with:
+          workspaces: varos
+      - name: Test architecture checker
+        run: python -m unittest discover -s ../tools/tests -v
       - name: Enforce dependency directions
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File ../tools/check_dep_directions.ps1
-      - run: cargo fmt --all --check           # the fmt commit landed with rustfmt.toml (f46d25f)
-      - run: cargo clippy --workspace --all-targets -- -D warnings   # cleaned to 0 in 609e4af → real gate from day one
-      - run: cargo test --workspace            # safe while no test builds a Renderer/EventLoop (§3.1)
-      - run: cargo build --workspace
-      - run: cargo install cargo-audit --locked && cargo audit
-        continue-on-error: true                # triage advisories first, then make it a gate
+        run: python ../tools/check_dep_directions.py
+      - name: Check formatting
+        if: runner.os == 'macOS'
+        run: cargo fmt --all --check
+      - name: Check all targets
+        run: cargo clippy --locked --workspace --all-targets -j 4 -- -D warnings
+      - name: Test macOS
+        if: runner.os == 'macOS'
+        run: cargo test --locked --workspace -j 4
+      - name: Build macOS
+        if: runner.os == 'macOS'
+        run: cargo build --locked --workspace -j 4
+      - name: Audit dependencies (advisory)
+        if: runner.os == 'macOS'
+        run: cargo install cargo-audit --locked && cargo audit
+        continue-on-error: true

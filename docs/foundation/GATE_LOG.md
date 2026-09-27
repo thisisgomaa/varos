@@ -3,6 +3,40 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-09-27 — Project-health publication and independent review follow-up
+
+- **Published:** `0e68a6a` on `codex/project-health`; [PR #1](https://github.com/thisisgomaa/varos/pull/1) created as a draft through the owner's signed-in Brave session. No merge performed.
+- **Hosted evidence:** [push run 36300014830](https://github.com/thisisgomaa/varos/actions/runs/36300014830), jobs `108565816076` (macOS) and `108565816165` (Windows), both failed with no steps. Both annotations state: "The job was not started because your account is locked due to a billing issue." This is not a failing Rust test or evidence that the workflow passed. The account's specific billing remedy is unknown; no account settings or payment details were accessed or changed.
+- **Implementer review:** compared the Python gate with the former PowerShell implementation; reviewed workflow paths/platform conditions and the reconciled plan/work-order claims against the current file-loading and format boundaries. No additional code defect identified in this pass. Updated README, CONTRIBUTING and STATUS to replace the unverified-hosted-state wording with the observed billing hold and link the draft PR.
+- **Local recheck on the publication follow-up:** `cargo test --locked --workspace -j 4 --quiet` — 708 passed, 0 failed, 4 ignored; `cargo fmt --all --check`, host clippy and Windows-target clippy with `--locked --workspace --all-targets -j 4 -- -D warnings` — PASS. Python architecture checker and its 7 tests — PASS. The same temporary documentation checker reported 125 files, 209 relative links and 62 anchors with no failures; `git diff --check` — PASS. Rust, workflow and checker source remain unchanged from `0e68a6a` in this follow-up.
+- **Independent review finding addressed:** the proposed billing follow-up incorrectly made hosted CI a new prerequisite for merge. The owner's [2026-07-11 decision](../history/STATUS_THROUGH_2026-09-26.md#external-action-items-outside-the-repo) already defers billing indefinitely and makes local gates authoritative. CONTRIBUTING and STATUS now preserve that decision. Independent approval is still required; hosted CI remains unverified and should be rerun on the current branch tip when available.
+- **Independent final verdict:** APPROVE — separate Codex agent `review_project_health`, authorized by the owner, reviewed `5ee21d4..0e68a6a` and the four-file documentation follow-up, then rechecked the P2 correction. No remaining actionable findings. Reviewer independently ran the 7 Python tests and actual architecture gate, compared both historical bodies exactly, and checked that Rust/vendor/accepted ADRs were untouched. The final record update only transcribes that verdict and the final link totals.
+- **Limits:** hosted CI, PowerShell compatibility execution and GPU/window behavior remain unverified. The reviewer did not rerun Cargo; the implementation session's fresh local gates are recorded above. Approval applies to this reviewed scope, not later feature work. No account changes or merge are included in this follow-up.
+- Sign-off: independent Codex reviewer (`review_project_health`) — PASS — 2026-09-27
+
+## 2026-09-27 — Project health: current state and platform gates
+
+- **Branch:** `codex/project-health`, based on `5ee21d4`; branch changes, not merged. **Implementer:** Codex. **Independent review:** pending.
+- **Scope:** CI, portable dependency checker and its tests, README/CONTRIBUTING, concise STATUS with the original body preserved in a historical snapshot, and the work order. No Rust source, vendor code, lockfile or document fixture changes.
+- **Local checks (macOS):**
+  - `cargo test --locked --workspace -j 4 --quiet`: **708 passed, 0 failed, 4 intentionally ignored**.
+  - `cargo clippy --locked --workspace --all-targets -j 4 -- -D warnings`: PASS.
+  - Same clippy command with `--target x86_64-pc-windows-msvc`: PASS (compile check, not Windows execution).
+  - `cargo fmt --all --check` and `cargo build --locked --workspace -j 4`: PASS.
+  - `python3 tools/check_dep_directions.py`: PASS; also passed from `/tmp` using the absolute script path.
+  - `python3 -m unittest discover -s tools/tests -v`: **7 passed**, including reverse-edge, target-specific platform dependency, forbidden Winit, missing member and adapter-confinement regressions.
+  - Real-source negative probe: temporary unused `.rs` file under app source importing `egui_tiles` was rejected with exit 1 and its filename; deleting that probe restored PASS. No production file was modified by this check.
+  - CI YAML parsed with Ruby YAML; both platform entries and macOS-only test/build conditions verified. Python setup follows the [official setup-python action](https://github.com/actions/setup-python).
+  - Status history body compared to `git show HEAD:docs/foundation/STATUS.md`: byte-for-byte equivalent after the status banner. All 15 local Markdown link targets in edited/new entry-point docs resolve.
+  - `git diff --check`: PASS.
+- **Limits:** hosted CI was not run; account settings were not inspected. PowerShell is unavailable locally, so its compatibility wrapper was reviewed but not executed. This was a scoped link-target check, not the repository-wide PowerShell link/anchor checker. No GPU/window or fresh vulnerability audit was run.
+- **Owner-requested plan reconciliation:** added the single `docs/PLAN.md` entry point; updated stage status on S1, S2/S3, S4/S6, S5 and quick wins; routed old masks/polish/foundation plans to their current owners. Recorded existing UI owner decisions and remaining v2 review blockers without claiming v2 approval. Accepted ADRs remain untouched; the old plan-map body is preserved exactly after its status banner.
+- **Additional verified gaps:** S5-C is an unconditional validator stub, S5-D is not the app PDF reader yet, mask creation/release gestures are absent from the UI, and v2 frozen fixtures remain pending. README/STATUS and the wire contract now say so explicitly.
+- **Additional check:** `cargo test --locked -p varos-pdf --test old_reader_harness -- --ignored`: **2 passed**. The old “fails until v2” documentation was corrected; test annotations were not changed. These two are additional to the default 708 passes.
+- **Documentation validation:** temporary Python check following the existing checker's line-based fence handling and anchor rules: **125 first-party Markdown/HTML files, 206 relative links, 59 anchors, no failures** (includes new docs; vendor excluded). The earlier broad inline-code regex produced false failures in ELEMENTS_CATALOG; matching the existing line-based behavior resolved them. No reference content was edited to silence the checker.
+- **Result:** project-health and plan-reconciliation slices complete on this branch; E2/F1/F2 file integration and UI extraction remain subsequent slices. Independent review is still required before merging to `main`.
+- Sign-off: implementer — PASS (local validation only; not merge approval) — 2026-09-27
+
 ## F1 — Inventory & classification
 
 - **Date:** 2026-07-11. **Branch:** `codex/f1-inventory` (range `1aff281..2aa1c2f`, i.e. commits `74fdad7`, `cf59527`, `d3bbc17`, `96deeaf`, `2aa1c2f`). **Reviewer:** planner.
