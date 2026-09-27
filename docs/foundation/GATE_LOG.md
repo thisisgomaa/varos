@@ -7,6 +7,14 @@ Every work-order gate review is recorded here (charter §4). Format: order, bran
 
 
 
+## 2026-09-27 — F1 durable Save and recovery writer integration
+
+- **Scope:** `codex/ui-system-plan`, baseline `2fd8a23`; [F1 integration](work_orders/DFS_S3_F1_INTEGRATION.md). Durable real Save, dirty retention after unconfirmed replacement, external-change warning with explicit replacement confirmation, scoped stale-temp cleanup, app-owned background recovery writer, deadline wake/completion wiring, Document controls and status-bar mirror. F2 read/recover remains next.
+- **Local gates:** workspace **781 passed, 0 failed, 5 ignored**; eight new tests cover failure/close/cancel/off/worker/retirement boundaries. macOS build, macOS and Windows-target all-target clippy (`-D warnings`), format, portable architecture gate and seven checker tests PASS. No automated Renderer/EventLoop. Documentation links and diff checks pass.
+- **Performance:** release `recovery_perf`, scene B ×10 / 5,000 rectangles / 100 clones: median **0.097 ms**, p95 **0.118 ms**. Single PDF encode + durable Save for 20,000 rectangles / 12,633,959 bytes: **2,375.781 ms**. Threshold exceeded; asynchronous manual Save recorded as S6 follow-up. No claim that manual Save is nonblocking.
+- **Native limit:** updated isolated `/tmp/Varos-E2.app` launched and New updated its title; screenshot still contained only background, consistent with the earlier occluded-surface issue. F1 controls and recovery runtime acceptance remain pending; no successful visual evidence claimed. Installed Varos untouched. Windows compile-only.
+- **Verdict:** implementation gates pass; native acceptance, independent session-end batch review and merge pending at the owner's request. No new hosted-CI success claimed; existing billing limitation remains documented separately.
+
 ## 2026-09-27 — Recent hierarchy and duplicate Home action refinement
 
 - **Scope:** `codex/ui-system-plan`, baseline `28db957`; owner called Recent visually weak and identified the duplicate top-bar plus. Centered bounded Start layout, launch column on wide windows/stacked narrow layout, clear heading hierarchy, document/path/date rows, visible actions menus and empty-state guidance. Plus hidden on Home; unchanged beside document tabs. Palette, fonts, lifecycle, persistence and recovery scope unchanged. Direction recorded in [E2](work_orders/DFS_S2_E2_START_INTEGRATION.md).

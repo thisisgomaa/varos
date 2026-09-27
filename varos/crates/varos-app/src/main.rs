@@ -36,6 +36,7 @@ mod mac_caption;
 #[cfg(target_os = "macos")]
 mod mac_menu;
 mod recent_files;
+mod recovery_host;
 mod single_instance;
 mod ui;
 mod workspace;
@@ -786,6 +787,10 @@ fn main() {
         Ok(el) => el,
         Err(e) => fatal("Varos couldn't connect to the Windows desktop.", &e.to_string()),
     };
+    let recovery_proxy = event_loop.create_proxy();
+    let mut recovery = recovery_host::RecoveryHost::new(Box::new(move || {
+        let _ = recovery_proxy.send_event(());
+    }));
     let saved = load_win_state(); // remembered geometry from last session (None on first run)
                                   // winit 0.30 removed WindowBuilder — WindowAttributes carries the identical with_* methods
     let mut attrs = Window::default_attributes()
@@ -1055,8 +1060,15 @@ fn main() {
                 if !ready.is_empty() {
                     let canvas = canvas_px(&gui, &window);
                     for action in ready {
+                        if let host::HostAction::App(cmd) = &action {
+                            if recovery.handle(cmd, &mut ws, Instant::now()) {
+                                continue;
+                            }
+                        }
+                        let before = recovery_host::RecoveryHost::before_close(&ws);
                         let (ds, keys) = (&mut dialogs, &keyboard);
                         let ran = dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, ds, &mut store, keys);
+                        recovery.after_dispatch(before, &mut ws, ran.exit, Instant::now());
                         if ran.ran {
                             surface_retries = 0;
                             last_scene_signature = None; // the drawn document may be another one now
@@ -1067,6 +1079,7 @@ fn main() {
                             panning = false;
                         }
                         if ran.exit {
+                            recovery.shutdown();
                             save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
                             elwt.exit();
                             return;
@@ -1086,7 +1099,17 @@ fn main() {
                 }
             }
             if matches!(&event, Event::AboutToWait) {
-                match gui.repaint_at {
+                recovery.observe(&mut ws, Instant::now());
+                let recovery_ui = recovery.presentation(ws.active());
+                if gui.recovery != recovery_ui {
+                    gui.recovery = recovery_ui;
+                    window.request_redraw();
+                }
+                let wake = match (gui.repaint_at, recovery.next_wake()) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+                match wake {
                     Some(at) if at <= Instant::now() => {
                         gui.repaint_at = None;
                         window.request_redraw();
@@ -1936,9 +1959,9 @@ mod action_queue_tests {
         fn load(&mut self, _: &Path) -> Result<Document, String> {
             unreachable!()
         }
-        fn save(&mut self, doc: &Document, _: &Path) -> Result<(), String> {
+        fn save(&mut self, doc: &Document, _: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
             self.saved = Some(doc.clone());
-            Ok(())
+            Ok(crate::lifecycle::SaveOutcome::Durable)
         }
         fn key(&self, path: &Path) -> FileKey {
             FileKey { path: path.to_path_buf(), dev_ino: None }

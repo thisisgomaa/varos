@@ -66,8 +66,11 @@ impl<S: DocStore> DocStore for RecentStore<S> {
     fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
         self.inner.load_with_notice(path)
     }
-    fn save(&mut self, doc: &Document, path: &Path) -> Result<(), String> {
+    fn save(&mut self, doc: &Document, path: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
         self.inner.save(doc, path)
+    }
+    fn fingerprint(&self, path: &Path) -> Option<varos_app::storage::durable::Fingerprint> {
+        self.inner.fingerprint(path)
     }
     fn key(&self, path: &Path) -> FileKey {
         self.inner.key(path)
