@@ -9,14 +9,14 @@ for *why*, this for *what byte, what key, what number*.
 
 ## Implementation status — 2026-09-27
 
-The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; S5-C is implemented on the work branch with review pending; **S5-D remains unimplemented**.
+The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; S5-C/D are implemented on the work branch with independent review pending; S5-E final acceptance remains open.
 
 | Boundary | Enforced today | Pending |
 |---|---|---|
 | Core JSON (`format::decode_model`) | Model byte/depth caps, version-first gate, strict fields, structural/count checks, migration/canonical checks | S5-C is implemented on the current work branch (not merged): semantic kinds/masks/ranges, all persisted floats, authored checks before normalization; independent review pending. Save retains the decode-backstop. |
-| Container version | Core checks a supplied `container_version` | Current PDF reader does not extract/pass `/VAROS_SchemaVersion`; end-to-end mismatch refusal needs S5-D. |
-| App file loading | Extracted model goes through the core spine | App uses `varos_pdf::load_vrs_with_notice` on the work branch (the same reader as `load_vrs`), which reads the whole file before parsing. The bounded raw helper in core is not this app path. |
-| PDF parsing | Existing legacy extraction works on the regression fixtures | Byte/object/decompressed-stream/name-tree bounds, strict PDF profile and exact fallback filename checks need S5-D. |
+| Container version | Work branch extracts `/VAROS_SchemaVersion`, validates its type/range and supplies it to the core version gate before model decoding | Batched independent review. |
+| App file loading | Work branch routes both compatibility wrappers through checked bounded file/byte APIs; preserves migration notices | Personal corpus and real-window acceptance. |
+| PDF parsing | Work branch enforces the strict native profile below: preflight before lopdf, no stream inflation, bounded name-tree traversal, exact fallback filename | Independent review; third-party Preview re-save acceptance unverified. |
 | Legacy broken mask | Work branch: recoverable v1 Group clip references released in memory, with notice retained through PDF/disk/lifecycle Open; current v2/save stay strict | Real-window verification and batched independent review; no on-disk repair during Open. |
 
 Source: `varos-core/src/format/{mod,validate,migrate,limits}.rs`, `varos-pdf/src/lib.rs`, `varos-app/src/file_ports.rs`. Work ownership: [S5](../foundation/work_orders/DFS_S5_FORMAT_V2.md). Sections below distinguish target rules from current enforcement.
@@ -154,12 +154,12 @@ declared) and lowered two after measuring (ADR-0008 R4: lowered after measuremen
 
 | limit | proposed (ADR-0008 §6) | declared value / actual enforcement |
 |---|---|---|
-| file bytes | 256 MiB | 256 MiB in the core bounded-file helper; **not applied by the app PDF/raw load path yet** (S5-D). |
+| file bytes | 256 MiB | 256 MiB on checked disk reads and byte input, including the app wrappers on this branch. |
 | JSON model bytes | 32 MiB | 32 MiB |
 | JSON nesting depth | 128 (serde_json's built-in limit — no separate scanner) | 128 (serde_json built-in; no `Limits` field) |
-| PDF objects | 100,000 | 100,000 — declared; S5-D enforcement pending |
-| decoded PDF stream bytes | 64 MiB | 64 MiB — declared; S5-D enforcement pending |
-| PDF name-tree depth | 64 | 64 — declared; S5-D enforcement pending |
+| PDF objects | 100,000 | 100,000 — xref entries including free slots, loaded objects and name-tree visit budget |
+| decoded PDF stream bytes | 64 MiB | 64 MiB — raw extracted model budget; filtered models refused, no inflation performed |
+| PDF name-tree depth | 64 | 64 — name-tree depth and preflight direct-container/string nesting |
 | nodes (legacy registry groups count here too) | 100,000 | **40,000** |
 | paths | 100,000 | **40,000** |
 | anchors (outer + holes, total) | 1,000,000 | 1,000,000 — in practice never reached: the 32 MiB model cap binds first, at about 350,000 anchors (~92 bytes per anchor with handles) |
@@ -172,7 +172,7 @@ Why 40,000 (2026-09-24, S5-B measurement, release build, cloud Linux): loading i
 order's bar is "about 2 s at the cap" (R4). Optimising `sync_tree` is out of S5; raising the number
 afterwards needs the owner.
 
-Enforced core limits refuse input with the number exceeded, never truncate it. Declared PDF bounds do not yet constrain the app reader; see the implementation-status table.
+Limits refuse rather than truncate. The PDF preflight also limits xref lines to 64 bytes, the trailer to 64 KiB, and total direct-object tokens to 16 × max_pdf_objects (1.6 million by default), excluding stream contents. This derived complexity budget prevents a single array from bypassing the indirect-object count; it is not a new serialized field.
 
 ## 9. Refusal messages (user-facing copy, ADR-0008 §4 / spec §4)
 
@@ -184,16 +184,34 @@ Enforced core limits refuse input with the number exceeded, never truncate it. D
 | a re-saved PDF using object/xref streams, incremental updates or encryption | "This file was re-saved by another app in a form Varos can't read safely yet. Open the original .vrs." (ADR-0008 R2 — not yet enforced; today's reader has no such gate.) |
 | a save that would violate its own limits or validity | "This document can't be saved: {reason}. It is still open." — the document stays dirty in memory; nothing on disk changes. |
 
-Core typed errors now exist in `format/error.rs`. Semantic refusals are implemented on the S5-C branch; PDF profile-specific refusals remain an S5-D deliverable; app `file_ports.rs` also translates errors to plain messages. The table describes the shared target copy, not proof that each app path emits it today.
+Core typed errors now exist in `format/error.rs`. Semantic refusals are implemented on the S5-C branch; PDF profile-specific refusals are implemented on the S5-D branch; app `file_ports.rs` also translates errors to plain messages. The table describes the shared target copy, not proof that each app path emits it today.
 
-## 10. Supported PDF profile (S5-D's deliverable)
+## 10. Supported PDF profile (S5-D work branch)
 
-Once S5-D lands, a `.vrs` PDF container must be: a classic (non-compressed) cross-reference table, no
-`/Prev`/`/XRefStm` (no incremental updates, no hybrid xref), no `/Encrypt`, and the model stream either
-raw or refused as `UnsupportedPdf`. Varos never writes any of the refused shapes itself; the risk is
-third-party re-saves (ADR-0008 §Consequences, R2/R7). **Until S5-D merges, PDF reading is unbounded**
-(`varos-pdf/src/lib.rs::extract_model` calls `lopdf::Document::load_mem` with no options and no byte
-cap) — this is a known, tracked gap, not yet closed by this piece.
+Native Varos PDFs use a classic cross-reference table, direct stream lengths and an unfiltered
+editable model. The reader checks the actual xref rows/IDs/offsets/object boundaries, not just the
+advertised count, and requires one unambiguous terminal startxref/EOF. Before lopdf it rejects
+compressed cross-references, Prev (incremental updates), XRefStm (hybrid references), Encrypt and
+oversized/over-complex structures. Escaped PDF names are decoded; strings and comments are not
+mistaken for forbidden keys. Indirect stream Length and extra material between referenced objects
+are outside this native profile. Accepted direct stream extents cannot overlap another object.
+
+lopdf uses a filter that drops ObjStm before inflation. Ordinary filtered page streams remain
+compressed and are not rendered/decompressed during loading. The model stream must have no Filter
+key (including an empty array or null); no fallback from a failed decoder to raw bytes is allowed.
+Its bytes obey both max_model_bytes and max_decoded_stream_bytes before JSON decoding.
+
+The private VAROS_Model reference wins; an invalid private reference is an error, not permission to
+try another candidate. If absent, iterative Names/EmbeddedFiles traversal checks depth, visited
+references and a node/entry budget, accepts exactly model.varos.json and refuses duplicate matches.
+Catalog version is optional for legacy compatibility; when present it must be an integer in
+1..=u32::MAX and match the model version through the core gate. Every existing load wrapper uses
+this reader; the notice-retaining wrapper continues to surface S5-C migration outcomes.
+
+All eight frozen v1 native PDFs and current writer output pass the checked path. This does not
+establish support for Preview/other third-party re-saves: those may be refused with the unsupported
+profile reason. No PDF import or new compression dependency is introduced. Independent review,
+personal-file corpus and Preview hand checks remain pending before S5 release acceptance.
 
 ## 11. Examples
 
