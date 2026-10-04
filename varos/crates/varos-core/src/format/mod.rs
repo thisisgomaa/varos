@@ -32,6 +32,9 @@ pub const FORMAT_VERSION: u32 = 2;
 pub const MIN_READ_VERSION: u32 = 1;
 /// Shown after opening a file that was migrated from an older format.
 pub const MIGRATION_NOTICE: &str = "Opened an older file. Saving will update its format.";
+/// The notice for a v1 file whose broken clipping masks were released in memory. Unlike a plain
+/// migration this is a CONTENT change, so the app opens such a tab dirty (A4) and Save writes v2.
+pub const RELEASED_MASKS_NOTICE: &str = "Opened an older file with broken clipping masks released. All remaining artwork was kept. The original file has not been changed; saving will update it.";
 
 /// The on-disk envelope `{"varos": N, "doc": {…}}`.
 #[derive(Deserialize)]
@@ -64,7 +67,7 @@ impl Loaded {
     /// The notice to show after opening, if any.
     pub fn notice(&self) -> Option<&'static str> {
         if self.released_legacy_masks {
-            Some("Opened an older file with broken clipping masks released. All remaining artwork was kept. The original file has not been changed; saving will update it.")
+            Some(RELEASED_MASKS_NOTICE)
         } else {
             self.migrated.then_some(MIGRATION_NOTICE)
         }

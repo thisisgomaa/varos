@@ -1,8 +1,9 @@
 //! Pure Start view model: Recent rows, optional claimed Recovery rows and keyboard navigation.
 //! The host supplies file-existence probes and F2 recovery state outside paint; `start_ui` renders
 //! the model. Disabled or busy recovery actions never emit commands through keyboard activation.
-//! Tab/Shift+Tab traverse actions, arrows move within a list, Enter activates and Delete removes
-//! a focused Recent entry. Escape policy belongs to the host.
+//! Tab/Shift+Tab traverse actions, arrows move within a list, Enter activates and Delete (or Mac
+//! delete, which arrives as Backspace) removes a focused Recent entry. Escape policy belongs to the
+//! host.
 use std::path::{Path, PathBuf};
 
 use crate::storage::recents::Recents;
@@ -223,6 +224,37 @@ impl StartModel {
         }
     }
 
+    /// After a rebuild, keep focus on the same element of `old` by its key (Recent path, recovery
+    /// id, or the fixed control). When that element is gone (e.g. its Recent row was removed), focus
+    /// lands on the item now in its place in the same list (clamped), else on the nearest index.
+    pub fn carry_focus_from(&mut self, old: &StartModel) {
+        let Some(target) = old.focus_order.get(old.focus).copied() else {
+            return;
+        };
+        let rid = |i: usize| old.recovery.get(i).map(|r| r.rid.as_str());
+        let same = match target {
+            FocusTarget::Recent(i) => {
+                old.rows.get(i).and_then(|r| self.rows.iter().position(|n| n.path == r.path)).map(FocusTarget::Recent)
+            }
+            FocusTarget::Recover(i) => {
+                rid(i).and_then(|id| self.recovery.iter().position(|n| n.rid == id)).map(FocusTarget::Recover)
+            }
+            FocusTarget::Discard(i) => {
+                rid(i).and_then(|id| self.recovery.iter().position(|n| n.rid == id)).map(FocusTarget::Discard)
+            }
+            other => Some(other),
+        };
+        let clamped = |len: usize, i: usize| (len > 0).then(|| i.min(len - 1));
+        let fallback = match target {
+            FocusTarget::Recent(i) => clamped(self.rows.len(), i).map(FocusTarget::Recent),
+            FocusTarget::Recover(i) => clamped(self.recovery.len(), i).map(FocusTarget::Recover),
+            FocusTarget::Discard(i) => clamped(self.recovery.len(), i).map(FocusTarget::Discard),
+            _ => None,
+        };
+        let find = |t: Option<FocusTarget>| t.and_then(|t| self.focus_order.iter().position(|o| *o == t));
+        self.focus = find(same).or_else(|| find(fallback)).unwrap_or(old.focus.min(self.focus_order.len() - 1));
+    }
+
     /// Enter: what the focused element does (`None` only if its target no longer resolves).
     pub fn activate(&self) -> Option<StartAction> {
         self.focus_order.get(self.focus).and_then(|t| self.action_for(*t))
@@ -266,6 +298,27 @@ impl StartModel {
             FocusTarget::Recent(i) => StartAction::OpenRecent(self.rows.get(i)?.path.clone()),
             FocusTarget::ClearRecentFooter => StartAction::ClearRecent,
         })
+    }
+}
+
+/// When the host must rebuild Start's model: only while Home is showing, and only when one of the
+/// inputs it is built from moved (Recent, recovery rows, existence answers — the host's generation
+/// counters), or Home was just entered. Never after an ordinary edit batch in a document.
+#[derive(Default)]
+pub struct StartRefresh {
+    built: Option<[u64; 3]>,
+}
+impl StartRefresh {
+    pub fn should_rebuild(&mut self, home: bool, inputs: [u64; 3]) -> bool {
+        if !home {
+            self.built = None; // returning to Home rebuilds once (fresh probe answers)
+            return false;
+        }
+        if self.built == Some(inputs) {
+            return false;
+        }
+        self.built = Some(inputs);
+        true
     }
 }
 
@@ -540,6 +593,41 @@ mod tests {
         model.rows.clear();
         assert_eq!(model.activate(), None);
         assert_eq!(model.delete_focused(), None, "stale Recent target resolves to None");
+    }
+
+    #[test]
+    fn start_refresh_skips_documents_and_unchanged_inputs() {
+        let mut refresh = StartRefresh::default();
+        assert!(refresh.should_rebuild(true, [0, 0, 0]), "first Home frame builds");
+        assert!(!refresh.should_rebuild(true, [0, 0, 0]), "nothing changed: no rebuild");
+        for _ in 0..3 {
+            assert!(!refresh.should_rebuild(false, [7, 7, 7]), "never while a document is active");
+        }
+        assert!(refresh.should_rebuild(true, [7, 7, 7]), "re-entering Home builds once");
+        assert!(!refresh.should_rebuild(true, [7, 7, 7]));
+        assert!(refresh.should_rebuild(true, [8, 7, 7]), "a Recent change rebuilds");
+        assert!(refresh.should_rebuild(true, [8, 7, 8]), "a probe answer rebuilds");
+    }
+
+    #[test]
+    fn focus_survives_rebuilds_and_lands_in_place_after_a_remove() {
+        let mut recents = Recents::default();
+        for (i, name) in ["/d/c.vrs", "/d/b.vrs", "/d/a.vrs"].iter().enumerate() {
+            recents.record(Path::new(name), None, 100 + i as u64); // a newest → rows a, b, c
+        }
+        let mut old = StartModel::without_recovery(&recents, 300, |_| false);
+        assert!(old.set_focus(3)); // Recent(b)
+        let mut same = StartModel::without_recovery(&recents, 300, |_| true);
+        same.carry_focus_from(&old);
+        assert_eq!(same.activate(), Some(StartAction::OpenRecent("/d/b.vrs".into())), "same row by path");
+        recents.remove(Path::new("/d/b.vrs"));
+        let mut removed = StartModel::without_recovery(&recents, 300, |_| false);
+        removed.carry_focus_from(&old);
+        assert_eq!(removed.activate(), Some(StartAction::OpenRecent("/d/c.vrs".into())), "next row takes its place");
+        assert!(old.set_focus(1));
+        let mut empty = StartModel::without_recovery(&Recents::default(), 300, |_| false);
+        empty.carry_focus_from(&old);
+        assert_eq!(empty.activate(), Some(StartAction::Open));
     }
 
     #[test]

@@ -43,11 +43,13 @@ fn start_only_uses_accent_for_focus_and_keyboard_emits_once_at_both_scales() {
         assert!(!out.shapes.iter().any(
             |s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == tokens::ACCENT || r.stroke.color == tokens::ACCENT)
         ));
+        // The first Tab lands on the first control (New) and the ring shows at once.
         let (_, out) = frame(&ctx, &mut page, ppp, vec![key(Key::Tab, false)]);
         assert!(out.shapes.iter().any(
             |s| matches!(&s.shape, egui::Shape::Rect(r) if r.stroke.color == tokens::ACCENT && r.fill != tokens::ACCENT)
         ));
-        assert_eq!(frame(&ctx, &mut page, ppp, vec![key(Key::Enter, false)]).0, [StartAction::Open]);
+        assert!(page.keyboard_focus());
+        assert_eq!(frame(&ctx, &mut page, ppp, vec![key(Key::Enter, false)]).0, [StartAction::New]);
         assert!(frame(&ctx, &mut page, ppp, vec![key(Key::Enter, true)]).0.is_empty());
         assert!(frame(&ctx, &mut page, ppp, vec![]).0.is_empty());
         let pos = ctx.read_response(Id::new(("start-action", 0))).unwrap().rect.center();
@@ -114,6 +116,123 @@ fn recovery_slots_and_recent_actions_follow_the_pure_models_focus_order() {
             frame(&ctx, &mut page, ppp, vec![key(Key::Delete, false)]).0,
             [StartAction::RemoveRecent("/missing.vrs".into())]
         );
+    }
+}
+
+fn release(key: Key) -> Event {
+    Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE }
+}
+fn ring(out: &egui::FullOutput) -> bool {
+    out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.stroke.color == tokens::ACCENT))
+}
+fn recents(paths: &[&str]) -> Recents {
+    let mut recents = Recents::default();
+    for (i, path) in paths.iter().rev().enumerate() {
+        recents.record(std::path::Path::new(path), None, 1 + i as u64); // first path = newest
+    }
+    recents
+}
+
+#[test]
+fn mac_delete_backspace_and_delete_both_remove_the_focused_recent() {
+    for remove in [Key::Backspace, Key::Delete] {
+        let ctx = context();
+        let mut page = StartPage::new(StartModel::without_recovery(&recents(&["/a.vrs"]), 2, |_| false));
+        page.model.set_focus(2);
+        assert_eq!(
+            frame(&ctx, &mut page, 1.0, vec![key(remove, false)]).0,
+            [StartAction::RemoveRecent("/a.vrs".into())],
+            "{remove:?}"
+        );
+        assert!(frame(&ctx, &mut page, 1.0, vec![key(remove, false)]).0.is_empty(), "held key: no repeat removal");
+    }
+}
+
+#[test]
+fn any_key_shows_the_ring_on_new_before_the_first_tab() {
+    let ctx = context();
+    let mut page = StartPage::new(StartModel::without_recovery(&Recents::default(), 0, |_| false));
+    assert!(!ring(&frame(&ctx, &mut page, 1.0, vec![]).1));
+    let (_, out) = frame(&ctx, &mut page, 1.0, vec![key(Key::ArrowDown, false)]);
+    assert!(ring(&out), "the ring shows as soon as the keyboard is used");
+    assert_eq!(page.model.focus(), 0, "resting on New");
+    let _ = frame(&ctx, &mut page, 1.0, vec![key(Key::Tab, false)]);
+    assert_eq!(page.model.focus(), 0, "the first Tab lands on New");
+    let _ = frame(&ctx, &mut page, 1.0, vec![key(Key::Tab, false)]);
+    assert_eq!(page.model.focus(), 1, "the next Tab moves on");
+    page.reset_focus();
+    assert!(!page.keyboard_focus() && page.model.focus() == 0);
+}
+
+#[test]
+fn keyboard_focus_survives_rebuilds_and_a_remove() {
+    let ctx = context();
+    let paths = ["/a.vrs", "/b.vrs", "/c.vrs"];
+    let mut page = StartPage::new(StartModel::without_recovery(&recents(&paths), 2, |_| false));
+    let _ = frame(&ctx, &mut page, 1.0, vec![key(Key::Tab, false), release(Key::Tab)]);
+    for _ in 0..3 {
+        let _ = frame(&ctx, &mut page, 1.0, vec![key(Key::Tab, false), release(Key::Tab)]);
+    }
+    assert_eq!(page.model.activate(), Some(StartAction::OpenRecent("/b.vrs".into())));
+    // An unrelated rebuild (a probe answer) keeps the same row and the visible ring.
+    page.replace(StartModel::without_recovery(&recents(&paths), 3, |p| p.ends_with("a.vrs")));
+    assert_eq!(page.model.activate(), Some(StartAction::OpenRecent("/b.vrs".into())));
+    assert!(page.keyboard_focus());
+    // Remove b: focus lands on the row now in its place, ring still visible.
+    page.replace(StartModel::without_recovery(&recents(&["/a.vrs", "/c.vrs"]), 3, |_| false));
+    assert!(page.keyboard_focus());
+    let (_, out) = frame(&ctx, &mut page, 1.0, vec![]);
+    assert!(ring(&out));
+    assert_eq!(frame(&ctx, &mut page, 1.0, vec![key(Key::Enter, false)]).0, [StartAction::OpenRecent("/c.vrs".into())]);
+}
+
+#[test]
+fn recent_row_menu_is_a_kit_menu_driven_by_arrows_enter_and_escape() {
+    for ppp in [1.0, 2.0] {
+        let ctx = context();
+        let path = std::path::PathBuf::from("/gone.vrs");
+        let mut page = StartPage::new(StartModel::without_recovery(&recents(&["/gone.vrs"]), 2, |_| true));
+        let _ = frame(&ctx, &mut page, ppp, vec![]);
+        let more = ctx.read_response(Id::new(("start-more", &path))).unwrap().rect.center();
+        let click = |pressed| {
+            vec![
+                Event::PointerMoved(more),
+                Event::PointerButton {
+                    pos: more,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                },
+            ]
+        };
+        let open = |page: &mut StartPage| {
+            let _ = frame(&ctx, page, ppp, click(true));
+            assert!(frame(&ctx, page, ppp, click(false)).0.is_empty());
+            let _ = frame(&ctx, page, ppp, vec![]);
+            assert!(varos_app::shell::kit::menu_open(&ctx));
+            assert!(!egui::Popup::is_any_open(&ctx), "no egui default popup");
+        };
+        open(&mut page);
+        // Esc closes; Start's own keys work again afterwards.
+        assert!(frame(&ctx, &mut page, ppp, vec![key(Key::Escape, false), release(Key::Escape)]).0.is_empty());
+        assert!(!varos_app::shell::kit::menu_open(&ctx));
+        // ↓ Enter → Locate…; ↓ ↓ Enter → Remove from Recent (the separator is skipped).
+        for (downs, expected) in [(1, StartAction::Locate(path.clone())), (2, StartAction::RemoveRecent(path.clone()))]
+        {
+            open(&mut page);
+            let mut keys = vec![];
+            for _ in 0..downs {
+                keys.extend([key(Key::ArrowDown, false), release(Key::ArrowDown)]);
+            }
+            assert!(frame(&ctx, &mut page, ppp, keys).0.is_empty(), "arrows only move inside the menu");
+            assert_eq!(frame(&ctx, &mut page, ppp, vec![key(Key::Enter, false), release(Key::Enter)]).0, [expected]);
+            assert!(!varos_app::shell::kit::menu_open(&ctx));
+        }
+        // Clicking More again closes the open menu (toggle).
+        open(&mut page);
+        let _ = frame(&ctx, &mut page, ppp, click(true));
+        let _ = frame(&ctx, &mut page, ppp, click(false));
+        assert!(!varos_app::shell::kit::menu_open(&ctx));
     }
 }
 

@@ -48,6 +48,9 @@ pub struct RecoveryHost {
     ready: Vec<crate::workspace::RecoveredDocument>,
     deferred: bool,
     changed: bool,
+    /// Why the Recovery switch cannot be persisted (settings unreadable / no data folder): a
+    /// change then applies to this session only, and the user is told so.
+    settings_unsaved: Option<String>,
 }
 impl RecoveryHost {
     pub fn new(wake: Box<dyn Fn() + Send>) -> Self {
@@ -67,9 +70,11 @@ impl RecoveryHost {
             ready: Vec::new(),
             deferred: false,
             changed: false,
+            settings_unsaved: None,
         };
         let Some(layout) = layout else {
             host.warning = Some("Recovery unavailable: the app data folder is unavailable.".into());
+            host.settings_unsaved = Some("the app data folder is unavailable.".into());
             return host;
         };
         let (settings, warning) = settings::load(&RealFs, &layout.settings());
@@ -77,6 +82,7 @@ impl RecoveryHost {
         if warning.is_none() {
             host.settings_path = Some(layout.settings());
         }
+        host.settings_unsaved.clone_from(&warning);
         host.warning = warning;
         match RecoveryStore::open(Arc::new(RealFs), layout.recovery()) {
             Ok(store) => host.store = Some(Arc::new(store)),
@@ -152,6 +158,13 @@ impl RecoveryHost {
                 self.deferred = false;
                 false
             } // lifecycle settles and shows Home
+            AppCommand::SetRecoveryEnabled(_) => {
+                if let Some(reason) = &self.settings_unsaved {
+                    // The switch still applies for this session (`handle`); say it won't persist.
+                    dialogs.notice("Recovery", &format!("Recovery setting could not be saved: {reason}"));
+                }
+                false
+            }
             AppCommand::DeferRecovery => {
                 self.deferred = true;
                 self.changed = true;
@@ -192,6 +205,9 @@ impl RecoveryHost {
                         .load_best_decoded(&rid, |blob| {
                             let text =
                                 std::str::from_utf8(blob).map_err(|_| "This recovery copy is damaged.".to_string())?;
+                            // No format notice is dropped here: recovery copies are always written by
+                            // this build's `doc_to_blob` (current v2), so no migration or released-mask
+                            // repair — and therefore no notice — can arise when one is read back.
                             varos_core::file::doc_from_blob(text)
                         })
                         .map_err(|e| e.reason())
@@ -540,6 +556,50 @@ mod tests {
     }
 
     #[test]
+    fn save_with_recovery_switched_off_still_retires_the_sessions_copies() {
+        let mut r = Rig::new();
+        let source = r.layout.root.join("original.vrs");
+        std::fs::write(&source, b"original bytes").unwrap();
+        r.ws.active_mut().unwrap().path = Some(source.clone());
+        let rid = r.snapshot();
+        r.host.handle(&AppCommand::SetRecoveryEnabled(false), &mut r.ws, r.now);
+        r.complete(); // the settings write
+        assert!(r.layout.recovery().join(&rid).exists(), "switching off keeps existing copies");
+        let s = r.ws.active_mut().unwrap();
+        s.mark_saved(source.clone(), crate::file_ports::file_key(&source));
+        r.host.observe(&mut r.ws, r.now);
+        r.complete();
+        assert!(!r.layout.recovery().join(&rid).exists(), "a clean save retires the stale copy");
+        r.edit();
+        r.now += RECOVERY_INTERVAL;
+        r.host.observe(&mut r.ws, r.now);
+        assert!(r.ws.active().unwrap().recovery.in_flight.is_none(), "but no NEW copy while off");
+    }
+
+    #[test]
+    fn unreadable_settings_switch_applies_for_the_session_and_says_it_was_not_saved() {
+        let layout = AppLayout { root: std::env::temp_dir().join(format!("varos-f1-{}", new_nonce())) };
+        std::fs::create_dir_all(layout.settings().parent().unwrap()).unwrap();
+        std::fs::write(layout.settings(), br#"{"version":99,"recovery_enabled":true}"#).unwrap();
+        let mut host = RecoveryHost::at(Some(layout.clone()), Box::new(|| {}));
+        assert!(host.warning.is_some());
+        let mut ws = Workspace::new();
+        let mut dialogs = Dialog::default();
+        let cmd = AppCommand::SetRecoveryEnabled(false);
+        assert!(!host.handle_read(&cmd, &mut dialogs) && host.handle(&cmd, &mut ws, Instant::now()));
+        assert!(!host.presentation(ws.active()).enabled, "the switch still applies to this session");
+        assert_eq!(dialogs.notices.len(), 1);
+        assert!(dialogs.notices[0].starts_with("Recovery setting could not be saved: "), "{:?}", dialogs.notices);
+        assert_eq!(
+            std::fs::read(layout.settings()).unwrap(),
+            br#"{"version":99,"recovery_enabled":true}"#,
+            "the unreadable file is not overwritten"
+        );
+        host.shutdown();
+        let _ = std::fs::remove_dir_all(&layout.root);
+    }
+
+    #[test]
     fn canceled_quit_keeps_copy_committed_discard_and_quit_retire_even_when_disabled() {
         for quit in [false, true] {
             let mut r = Rig::new();
@@ -618,6 +678,7 @@ mod tests {
         prompts: usize,
         save: Option<PathBuf>,
         suggestion: Option<(String, Option<PathBuf>)>,
+        notices: Vec<String>,
     }
     impl crate::lifecycle::Dialogs for Dialog {
         fn confirm_discard_recovery(&mut self, _: &str) -> bool {
@@ -643,7 +704,9 @@ mod tests {
         fn confirm_replace(&mut self, _: &str) -> bool {
             false
         }
-        fn notice(&mut self, _: &str, _: &str) {}
+        fn notice(&mut self, _: &str, body: &str) {
+            self.notices.push(body.into());
+        }
     }
     impl Rig {
         fn seed(&self, generations: u64, original: Option<PathBuf>) -> String {
