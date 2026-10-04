@@ -4009,6 +4009,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sha2",
  "ttf-parser",
  "unicode-normalization",
  "varos-core",
@@ -4026,6 +4027,7 @@ dependencies = [
  "i_overlay",
  "serde",
  "serde_json",
+ "unicode-normalization",
 ]
 
 [[package]]

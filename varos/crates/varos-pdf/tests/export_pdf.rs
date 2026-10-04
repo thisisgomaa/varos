@@ -136,7 +136,9 @@ fn fixture(name: &str) -> PathBuf {
 /// `write_pdf` is fully deterministic (pdf-writer writes no timestamp, no /ID and no /Info; the model
 /// blob is serde JSON of a document whose only map field, the legacy `group_of`, is empty), so the
 /// whole file is compared byte for byte. Re-bless ONLY for an intentional native-format change (e.g.
-/// S5's schema version bump) and say so in that PR.
+/// S5's schema version bump) and say so in that PR. Re-blessed 2026-10-04 for format 3 (board
+/// metadata, Start v2 lane L2): the only differences are the model stream (`"varos":3` plus the empty
+/// `name`/`description`/`tags` keys), its /Length, `/VAROS_SchemaVersion 3` and the shifted xref offsets.
 #[test]
 fn native_write_is_byte_identical_to_fixture() {
     let bless = std::env::var_os("VAROS_BLESS_PDF_FIXTURES").is_some();

@@ -36,6 +36,21 @@ and `xref_stream` are pinned to their exact reasons ("incremental update", "comp
 cross-reference"), and `frozen_fixture_bytes_match_their_sha256sums` enforces `SHA256SUMS`
 (2026-10-04 batch review fixes, A2/A3).
 
+## Addendum — format 3 (2026-10-04, board metadata)
+
+The eighteen files above are unchanged. Format 3 became current, so `v3_future.vrs` and
+`future_pdf.vrs` are no longer "newer": both now pass the version gate and are refused by the typed
+decode (`"doc":42` is not a document → Malformed). Their bytes stay frozen; only the expected
+reason changed. The NewerVersion proof moved to two new files, and two format-3 refusals were added
+(appended to `SHA256SUMS`; no existing line changed):
+
+| Fixture | Exact mutation / expected refusal |
+|---|---|
+| `v4_future.vrs` | `{"varos":4,"doc":42}`; NewerVersion { found 4, supported 3 } before typed decoding. |
+| `future_v4_pdf.vrs` | `future_pdf.vrs` with its two `3` bytes (catalog `/VAROS_SchemaVersion` and model `"varos"`) changed to `4`, same length so xref offsets hold; NewerVersion { 4, 3 }. |
+| `v2_board_name.vrs` | `../v2/v2_masked_rotated.vrs` with `"name":"Logo",` inserted first in `doc`; a format-2 file carrying a format-3 key → `Invalid::FieldNotInFormat { field: "name", version: 2 }`. |
+| `board_duplicate_tag.vrs` | `../v3/v3_board_meta.vrs` with tags `["client","Client"]`; `Invalid::Board(DuplicateTag "Client")` — tags are deduplicated case-insensitively, so a writer never emits this. |
+
 `varos-pdf/tests/frozen_v2.rs` asserts typed errors through both bytes and disk APIs and
 checks that originals are unchanged. Oversize cases use these small positive fixtures with
 lowered Limits instead of committing huge files. Broader generated hostile-input coverage

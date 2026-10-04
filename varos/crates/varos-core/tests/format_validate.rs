@@ -19,8 +19,15 @@ fn document() -> Document {
     d.nodes[0].color = Some([0.1, 0.2, 0.3, 1.0]);
     d
 }
+/// `d` stamped as `version`; below format 3 without the board keys (that era never wrote them).
 fn raw(d: &Document, version: u32) -> Vec<u8> {
-    serde_json::to_vec(&json!({"varos":version,"doc":d})).unwrap()
+    let mut v = json!({"varos":version,"doc":d});
+    if version < 3 {
+        for key in ["name", "description", "tags"] {
+            v["doc"].as_object_mut().unwrap().remove(key);
+        }
+    }
+    serde_json::to_vec(&v).unwrap()
 }
 fn roundtrip(d: &Document) {
     let a = encode_model(d, &Limits::DEFAULT).unwrap();
@@ -154,7 +161,11 @@ fn invalid_nested_transform_cannot_be_normalized_away() {
 #[test]
 fn ranges_refused_on_load_and_save_without_mutation() {
     let base = document();
-    let mut value = json!({"varos":2,"doc":base});
+    let mut value = json!({"varos":3,"doc":base});
+    // empty board keys dropped so the same blob is a valid v1, v2 and v3 file (v3 defaults them)
+    for key in ["name", "description", "tags"] {
+        value["doc"].as_object_mut().unwrap().remove(key);
+    }
     let paths = [
         "/doc/paths/0/stroke_width",
         "/doc/paths/0/opacity",
@@ -202,7 +213,7 @@ fn ranges_refused_on_load_and_save_without_mutation() {
                 "{path}"
             );
             assert_eq!(d, before);
-            for version in [1, 2] {
+            for version in [1, 2, 3] {
                 value["varos"] = json!(version);
                 assert!(
                     matches!(
@@ -338,7 +349,7 @@ fn every_broken_clip_reference_is_legacy_only_and_reports_notice() {
 
 #[test]
 fn json_float_overflow_reports_affected_geometry_on_load() {
-    let mut v = json!({"varos":2,"doc":document()});
+    let mut v = json!({"varos":3,"doc":document()});
     v["doc"]["paths"][0]["holes"][0][0]["hout"][1] = serde_json::from_str("1e39").unwrap();
     let error = decode_model(&serde_json::to_vec(&v).unwrap(), None, &Limits::DEFAULT).unwrap_err();
     assert!(

@@ -78,7 +78,7 @@ rm -rf "$ICONSET"
 # Redistribute the copyright/OFL notices with the fonts embedded in the executable.
 FONT_ASSETS="$WORKSPACE/crates/varos-app/assets/fonts"
 mkdir -p "$APP/Contents/Resources/Licenses/Fonts"
-cp "$FONT_ASSETS/"*-LICENSE.txt "$FONT_ASSETS/manifest.json" "$APP/Contents/Resources/Licenses/Fonts/"
+cp "$FONT_ASSETS/"*-LICENSE.txt "$FONT_ASSETS/"*-OFL.txt "$FONT_ASSETS/manifest.json" "$APP/Contents/Resources/Licenses/Fonts/"
 
 # ---- 5. binary ----
 cp "$BIN" "$APP/Contents/MacOS/varos"
@@ -170,6 +170,11 @@ LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServic
 if [[ -x "$LSREG" ]]; then
   "$LSREG" -f "$DEST" >/dev/null 2>&1 || true
 fi
+
+# One Varos on this Mac: the staging bundle in the build folder is a second "Varos.app" that
+# Spotlight and Launchpad would list next to the installed one (owner report 2026-10-04:
+# "several copies on the Mac"). Remove it once the install is verified.
+rm -rf "$APP"
 
 echo "==> installed: $DEST"
 echo "    check the .vrs association: Finder ▸ Get Info on a .vrs file shows \"Open with: Varos\","

@@ -7,7 +7,7 @@ use varos_app::{
     storage::{
         durable::{FsPort, RealFs},
         paths::{self, AppLayout},
-        recents::{self, Recents},
+        recents::{self, BoardSummary, Recents},
     },
 };
 use varos_core::model::Document;
@@ -72,7 +72,10 @@ impl<S: DocStore> RecentStore<S> {
     }
 }
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+    unix_secs(std::time::SystemTime::now())
+}
+fn unix_secs(t: std::time::SystemTime) -> u64 {
+    t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 impl<S: DocStore> DocStore for RecentStore<S> {
     fn load(&mut self, path: &Path) -> Result<Document, String> {
@@ -100,7 +103,7 @@ impl<S: DocStore> DocStore for RecentStore<S> {
     fn read_existing(&mut self, path: &Path) -> Option<Vec<u8>> {
         self.inner.read_existing(path)
     }
-    fn remember(&mut self, path: &Path, old: Option<&Path>) {
+    fn remember(&mut self, path: &Path, old: Option<&Path>, board: Option<&BoardSummary>) {
         let key = self.key(path);
         if let Some(old) = old {
             // Preserve the broken entry's position, even when Locate chooses an already-recent file.
@@ -122,6 +125,11 @@ impl<S: DocStore> DocStore for RecentStore<S> {
             }
         } else {
             self.recents.record(&key.path, key.dev_ino, now());
+        }
+        if let Some(board) = board {
+            // a lifecycle boundary (never paint): one metadata read for the card's date
+            let modified = self.inner.fingerprint(&key.path).and_then(|f| f.modified).map_or_else(now, unix_secs);
+            self.recents.set_board(&key.path, board.clone(), modified);
         }
         self.persist();
     }
@@ -162,9 +170,9 @@ mod tests {
         std::fs::write(&a, b"document a").unwrap();
         std::fs::write(&b, b"document b").unwrap();
         let mut store = RecentStore::at(DiskStore, Some(dest.clone()));
-        store.remember(&a, None);
-        store.remember(&b, None);
-        store.remember(&a, None);
+        store.remember(&a, None, None);
+        store.remember(&b, None, None);
+        store.remember(&a, None, None);
         assert!(store.warning.is_none());
         let mut store = RecentStore::at(DiskStore, Some(dest.clone()));
         assert_eq!(store.recents.entries().len(), 2);
@@ -183,14 +191,14 @@ mod tests {
         let future = br#"{"version":99,"items":[]}"#;
         std::fs::write(&dest, future).unwrap();
         let mut store = RecentStore::at(DiskStore, Some(dest.clone()));
-        store.remember(&dir.0.join("a.vrs"), None);
+        store.remember(&dir.0.join("a.vrs"), None, None);
         assert!(store.warning.is_some());
         assert_eq!(store.recents.entries().len(), 1);
         assert_eq!(std::fs::read(&dest).unwrap(), future);
         let parent = dir.0.join("not-a-directory");
         std::fs::write(&parent, b"keep").unwrap();
         let mut store = RecentStore::at(DiskStore, Some(parent.join("recent.json")));
-        store.remember(&dir.0.join("b.vrs"), None);
+        store.remember(&dir.0.join("b.vrs"), None, None);
         assert!(store.warning.is_some());
         assert_eq!(store.recents.entries().len(), 1);
         assert_eq!(std::fs::read(parent).unwrap(), b"keep");
@@ -200,7 +208,7 @@ mod tests {
         let dir = Temp::new();
         let mut store = RecentStore::at(DiskStore, None);
         for i in 0..20 {
-            store.remember(&dir.0.join(format!("{i}.vrs")), None);
+            store.remember(&dir.0.join(format!("{i}.vrs")), None, None);
         }
         let rows = crate::chrome::recent_menu(&store.recents);
         assert_eq!(rows.len(), 10);
@@ -210,7 +218,7 @@ mod tests {
         );
         let old = store.recents.entries()[5].path.clone();
         let new = dir.0.join("found.vrs");
-        store.remember(&new, Some(&old));
+        store.remember(&new, Some(&old), None);
         assert_eq!(store.recents.entries()[5].path, new);
         assert_eq!(store.recents.entries().len(), 20);
     }
