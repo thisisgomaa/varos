@@ -287,10 +287,14 @@ pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconSt
             );
             painter.rect_filled(mark, egui::CornerRadius::ZERO, t::ACCENT);
         }
-        if enabled && response.has_focus() && keyboard {
-            // Over an azure block the ring would vanish: it switches to TEXT there (K5 focus overlay).
-            let ring = if block { t::TEXT } else { t::ACCENT };
-            painter.rect_stroke(rect, t::r_ctrl(), Stroke::new(t::KIT_FOCUS_STROKE, ring), StrokeKind::Inside);
+        if response.has_focus() && keyboard {
+            // K5: focus-visible is the same overlay in every state — an azure ring OUTSIDE the target,
+            // separated from it by a 1 px panel-colour gap so it still reads against an azure block.
+            let outer = ui.painter().with_clip_rect(ui.clip_rect());
+            let gap = rect.expand(t::KIT_FOCUS_GAP / 2.0);
+            outer.rect_stroke(gap, t::r_ctrl(), Stroke::new(t::KIT_FOCUS_GAP, t::PANEL), StrokeKind::Middle);
+            let ring = rect.expand(t::KIT_FOCUS_GAP);
+            outer.rect_stroke(ring, t::r_ctrl(), Stroke::new(t::KIT_FOCUS_STROKE, t::ACCENT), StrokeKind::Outside);
         }
         response
             .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, block || bar, help.as_str()));

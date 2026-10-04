@@ -502,6 +502,9 @@ impl ShellBehavior<'_> {
         let owner = ui.id().with(("panel-menu", tile_id));
         // The open menu runs FIRST: it owns ↑/↓/Enter/Space/Esc while open, so Enter picks a row instead
         // of re-pressing the still-focused ☰ (which would just close the menu again).
+        let button = owner.with("button");
+        let was_open = kit::is_menu_open(ui.ctx(), owner);
+        let pointer_pressed = ui.input(|i| i.pointer.any_pressed());
         let entries: Vec<kit::MenuEntry<'_>> =
             PanelId::DOCKABLE.iter().map(|p| kit::MenuEntry::Item(p.title())).collect();
         if let Some(i) = kit::menu(ui.ctx(), owner, &entries) {
@@ -510,7 +513,7 @@ impl ShellBehavior<'_> {
         let pressed = ui
             .scope_builder(UiBuilder::new().max_rect(menu_rect), |ui| {
                 let state = kit::IconState::Action;
-                kit::icon_button(ui, owner.with("button"), kit::Icon::Menu, PANEL_MENU_TIP, state).activated
+                kit::icon_button(ui, button, kit::Icon::Menu, PANEL_MENU_TIP, state).activated
             })
             .inner;
         #[cfg(test)]
@@ -518,6 +521,15 @@ impl ShellBehavior<'_> {
         if pressed {
             kit::toggle_menu_below(ui.ctx(), owner, menu_rect);
             ui.ctx().request_repaint(); // the menu draws on the next pass — show it at once
+        }
+        // Keyboard focus belongs to the ☰ while its menu is open (egui would move it on ↑/↓, which the
+        // menu uses for its highlight) and comes back to it when Esc or Enter closes the menu. A pointer
+        // press this frame (a row click or a click away) leaves focus where the pointer put it.
+        if was_open && !pointer_pressed {
+            ui.memory_mut(|m| {
+                m.request_focus(button);
+                m.move_focus(egui::FocusDirection::None); // cancel egui's own arrow-key focus move
+            });
         }
         menu_rect.left() - 8.0
     }
@@ -1047,6 +1059,84 @@ mod tests {
             );
             assert!(!kit::is_menu_open(&ctx, owner));
         }
+    }
+
+    /// The ☰ menu's ways out (UI_SYSTEM K5 / kit menu contract): Esc closes it, picks nothing and hands
+    /// focus back to the ☰; a click away closes it and picks nothing; and while it is open from the
+    /// keyboard the ☰ keeps its focus (↑/↓ move the menu's row highlight, not egui focus).
+    #[test]
+    fn panel_menu_esc_and_click_away_close_without_switching_and_focus_stays_on_the_button() {
+        let ctx = egui::Context::default();
+        super::T::apply(&ctx);
+        let mut shell = ShellState::standard();
+        let mut t = 1.0;
+        let mut run = |shell: &mut ShellState, events: Vec<egui::Event>| {
+            t += 1.0 / 60.0;
+            MENU_PROBE.with(|p| p.borrow_mut().clear());
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+                time: Some(t),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| shell.ui(ui));
+        };
+        let stroke = |k: egui::Key| {
+            let ev = |pressed| egui::Event::Key {
+                key: k,
+                physical_key: Some(k),
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            };
+            vec![ev(true), ev(false)]
+        };
+        let press = |p: Pos2, pressed| egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(&mut shell, vec![]);
+        let props = find_pane(&shell.tree, PanelId::Properties).expect("standard layout has Properties");
+        let (_, owner, rect) = MENU_PROBE
+            .with(|p| p.borrow().iter().find(|(tile, _, _)| *tile == props).copied())
+            .expect("the Properties box header draws its ☰");
+        let button = owner.with("button");
+        let focused = |ctx: &egui::Context| ctx.memory(|m| m.focused()) == Some(button);
+        let unchanged =
+            |shell: &ShellState| matches!(shell.tree.tiles.get(props), Some(Tile::Pane(PanelId::Properties)));
+
+        // keyboard: open, move the highlight — the ☰ keeps focus — then Esc
+        ctx.memory_mut(|m| m.request_focus(button));
+        run(&mut shell, vec![]);
+        run(&mut shell, stroke(egui::Key::Enter));
+        run(&mut shell, vec![]);
+        assert!(kit::is_menu_open(&ctx, owner), "Enter on the focused ☰ opens the menu");
+        assert!(focused(&ctx), "opening the menu keeps focus on the ☰");
+        run(&mut shell, stroke(egui::Key::ArrowDown));
+        run(&mut shell, stroke(egui::Key::ArrowDown));
+        assert!(focused(&ctx), "↓ moves the menu highlight, not egui focus");
+        run(&mut shell, stroke(egui::Key::Escape));
+        run(&mut shell, vec![]);
+        assert!(!kit::is_menu_open(&ctx, owner), "Esc closes the menu");
+        assert!(unchanged(&shell), "Esc picks nothing");
+        assert!(focused(&ctx), "Esc hands focus back to the ☰");
+
+        // pointer: open with a click, then click away on empty board — closes, picks nothing
+        let c = rect.center();
+        run(&mut shell, vec![egui::Event::PointerMoved(c)]);
+        run(&mut shell, vec![press(c, true)]);
+        run(&mut shell, vec![press(c, false)]);
+        run(&mut shell, vec![]);
+        assert!(kit::is_menu_open(&ctx, owner), "a click on the ☰ opens the menu");
+        let away = pos2(400.0, 450.0);
+        run(&mut shell, vec![egui::Event::PointerMoved(away)]);
+        run(&mut shell, vec![press(away, true)]);
+        run(&mut shell, vec![press(away, false)]);
+        run(&mut shell, vec![]);
+        assert!(!kit::is_menu_open(&ctx, owner), "a click away closes the menu");
+        assert!(unchanged(&shell), "a click away picks nothing");
     }
 
     #[test]

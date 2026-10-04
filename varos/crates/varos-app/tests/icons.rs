@@ -112,6 +112,40 @@ fn disabled_icon_button_never_activates_and_explains_why() {
     assert_eq!(kit::icon_tooltip("Flip horizontal", IconState::Action), "Flip horizontal");
 }
 
+/// UI_SYSTEM K5: focus-visible is ONE overlay for every state — an azure ring outside the target, with a
+/// 1 px panel-colour gap between them (so it still reads around an azure tool block); never inside.
+#[test]
+fn focus_ring_is_the_same_azure_overlay_outside_the_target_in_every_state() {
+    for ppp in [1.0, 2.0] {
+        for state in [IconState::Action, IconState::Toggle(true), IconState::Tool(true), IconState::Toggle(false)] {
+            let ctx = context(ppp);
+            let (r, _) = frame(&ctx, vec![], state);
+            r.response.request_focus();
+            let (r, out) = frame(&ctx, vec![key(Key::A, false)], state); // any key → keyboard modality
+            let target = r.response.rect;
+            let all = rects(&out);
+            let rings: Vec<_> = all.iter().filter(|s| s.stroke.color == tokens::ACCENT).collect();
+            assert_eq!(rings.len(), 1, "{state:?}: exactly one azure ring");
+            let ring = rings[0];
+            assert_eq!(ring.stroke.width, tokens::KIT_FOCUS_STROKE);
+            assert_eq!(ring.stroke_kind, egui::StrokeKind::Outside, "{state:?}: the ring is drawn outside");
+            assert_eq!(ring.rect, target.expand(tokens::KIT_FOCUS_GAP), "{state:?}: one gap away from the target");
+            let gap = all.iter().any(|s| {
+                s.stroke.color == tokens::PANEL
+                    && s.stroke.width == tokens::KIT_FOCUS_GAP
+                    && s.rect == target.expand(tokens::KIT_FOCUS_GAP / 2.0)
+            });
+            assert!(gap, "{state:?}: a panel-colour gap separates the ring from the target");
+            assert!(!all.iter().any(|s| s.stroke.color == tokens::TEXT), "{state:?}: no TEXT ring inside the block");
+        }
+        // Without keyboard modality (a mouse click) there is no ring at all.
+        let ctx = context(ppp);
+        let (r, _) = frame(&ctx, vec![], IconState::Tool(true));
+        let (_, out) = frame(&ctx, pointer(r.response.rect.center(), true), IconState::Tool(true));
+        assert!(!rects(&out).iter().any(|s| s.stroke.color == tokens::ACCENT));
+    }
+}
+
 #[test]
 fn tool_is_an_azure_block_and_toggle_is_a_small_azure_bar() {
     let ctx = context(1.0);
