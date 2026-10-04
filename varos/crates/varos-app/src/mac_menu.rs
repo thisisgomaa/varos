@@ -216,7 +216,10 @@ fn fill(
                             MenuCmd::Key(_)
                                 | MenuCmd::Plain(_)
                                 | MenuCmd::File(
-                                    chrome::FileCmd::Save | chrome::FileCmd::SaveAs | chrome::FileCmd::CloseTab
+                                    chrome::FileCmd::Save
+                                        | chrome::FileCmd::SaveAs
+                                        | chrome::FileCmd::Export
+                                        | chrome::FileCmd::CloseTab
                                 )
                         ) {
                             document_items.push(item.clone());

@@ -1,148 +1,278 @@
-> **Status:** proposed — UI System v2 planning revision, 2026-09-27, reconciled against `601fd7c`. Not implementation evidence or independent approval; accepted ADRs and the charter remain authoritative.
-# Varos UI System v2
+> **Status:** proposed — UI System **v3**, 2026-10-04, revised in place from v2 (2026-09-27) after the independent review's REQUEST CHANGES ("contracts without values"). Reconciled against `main` @ `221310f`. Every "today" value cites `file:line` at that commit (re-check before a piece starts). Not implementation evidence or independent approval; accepted ADRs and the charter remain authoritative. [`UI_DIRECTION`](../UI_DIRECTION.md) is the visual law; this spec makes it measurable.
+# Varos UI System v3
 
-## المقصود من الدفعة
+## ملخص للمالك
 
-نبدأ بالمكونات اللي شاشة البداية محتاجاها فعلًا، ونوصل فتح الملفات والاسترجاع قبل إعادة بناء البانلات. نفس بنية البرنامج الحالية، ومسار واحد للأوامر، وصاحب واحد لكل تعديل في المستند. دفعة التخطيط دي لا تغيّر شكل البرنامج أو سلوكه.
+- ده «دستور الواجهة» بالأرقام: كل لون ومقاس وزرار له قيمة واحدة، ونقدر نختبرها بالإيد وبالاختبارات.
+- القرارات اللي إنت خدتها بقت قانون ومش هتتسأل تاني (الجدول تحت): Home بدل ☰ على الماك، أيقونات بدل الكلام (الكلام في التلميح)، خطوط Plex، مفيش أي حركة أو توهج، وشكل «الشغّال» لكل نوع زرار.
+- أهم قاعدة جديدة: **أي خانة بتكتب فيها تتحفظ لما تسيبها** (Enter أو Tab أو تضغط برّه أو تبدّل تبويب أو تحفظ)، و**Esc يرجّع القديم**. ده بيقفل مشكلة اسم الأرتبورد اللي بيضيع لما تضغط برّه.
+- ملف الواجهة الكبير (`ui.rs`، ٨٢١٥ سطر) هيتقسم لملفات صغيرة، نقل بس من غير تغيير سلوك، وفيه عدّاد يمنع إنه يكبر تاني.
+- قسنا المخالفات النهارده: ٧٥ مقاس خط مكتوب بإيد، ٤٥ لون مكتوب بإيد، ٢٦ تدوير زوايا بإيد، و٣٩ أيقونة متعرّفة جوه `ui.rs` بعيد عن سجل الأيقونات. العدّاد ده هينزل بس، عمره ما يطلع.
+- العربي: الخط موجود بس الكتابة العربية في الخانات لسه مكسورة في egui؛ ده قطعة مستقلة ليك تختار فيها طريق الإصلاح.
+- أول ٣ قطع: (١) الورقة دي، (٢) قانون حفظ الخانات + إصلاح خانة الاسم، (٣) أول تقسيم لـ`ui.rs` + سجل أيقونات واحد + FAINT→MUTED + مقاسات QW6 + العدّادات.
 
-ترتيب التنفيذ في [PLAN](../PLAN.md) فقط: S5-C/D/E → الحد الأدنى U0 → E2 → F1/F2 → S4/S6، وبعدهم باقي الواجهة على أجزاء. S5 لا ينتظر الواجهة. U1–U6 حدود مستقبلية، وليست شرطًا لشاشة البداية أو وعدًا بزمن تنفيذ.
+## 0. Owner law (decided — not re-opened)
 
-هذه النسخة تستبدل الخطة التشغيلية في [v1 المحفوظة](../history/UI_SYSTEM_V1_THROUGH_2026-09-27.md). [جدول التصرفات](../foundation/work_orders/reviews/UI_SYSTEM.v2.disposition.md) يربط كل finding بالرد وصاحب التنفيذ. «عولج في التصميم» لا يعني «اتصلح في الكود» أو موافقة مستقلة على النسخة الجديدة.
+Sources: [decision record 24/25 Sep](../history/STATUS_THROUGH_2026-09-26.md), [UI_DIRECTION](../UI_DIRECTION.md), CLAUDE.md, moderator ruling 2026-10-04.
 
-## القرارات السارية
-
-مصدر قرارات المالك: [سجل 24/25 سبتمبر](../history/STATUS_THROUGH_2026-09-26.md). لا يعاد طلبها أو تغيير ADR مقبول ضمن هذه الخطة.
-
-| محسوم | أثره |
-|---|---|
-| Mac-first؛ Home بدل burger بجوار التبويبات؛ native menus باقية | E2 يضيف Home؛ الأيقونات تحمل أسماء واضحة للمساعدة وإتاحة الوصول. |
-| تضمين IBM Plex Sans/Mono/Arabic | U0-A يتحقق من الرخصة والتغطية ويجرب أسماء عربية ومختلطة. |
-| إزالة glide/ease/azure glow؛ direction bar باقٍ | U4-M يحتاج ADR superseding لـ0006 قبل تعديل fork؛ رقم 0008 مستخدم بالفعل. |
-| on states مختلفة | tool = azure block؛ icon toggle = شريط azure صغير بلا fill؛ tab/segment = surface fill بلا azure. |
-| FAINT→MUTED ومقاسات QW6 | لا عودة لمقترحات 9.5/16؛ المرجع المقبول micro 10.5/icon 18، والتباين على الخلفية الفعلية. |
-| layout persistence مؤجل؛ Reset Workspace في Window فقط | لا ملف layout/workspace جديد الآن؛ Reset لا يمس المستندات أو التبويبات أو نافذة النظام. |
-| v1 broken mask: release + notice؛ تصدير اسم .pdf: `<name> export.pdf` | يملكه S5/S6، بلا قارئ أو export مكرر داخل UI. |
-
-Tab وcommit-before-save وsmart zoom والتفاصيل غير المسجلة تبقى مقترحات تحتاج قرارًا عند القطعة المعنية. لا تعطل E2، ولا تُعتمد ضمنيًا من الموافقة على ترتيب الخطة.
-
-## K1 — حدود المكتبة والأوامر
-
-`lib.rs` يصدّر shell/start/storage؛ AppCommand وSessionId وhost/workspace/ui في binary. لذلك kit في `shell/kit` مستقل عن أوامر التطبيق: يأخذ widget key، label/icon، state، enablement وسبب التعطيل، ويعيد Response أو حدث قيمة. لا يستورد CommandId/Request/HomeId من binary، ولا ينفذ I/O أو يعدّل Editor؛ help نص محلول من المستدعي.
-
-E2 يترجم StartAction مرة واحدة في binary إلى AppCommand/lifecycle الحالي. Open/Recent/Locate تستخدم نفس الفتح. `start_ui.rs` يملك الرسم؛ `start.rs` يبقى نموذجًا بلا egui أو I/O. نضيف variants عند الحاجة ونحفظ ToggleDock وS1 signatures. لا dispatcher ثانٍ ولا نقل S1 كله إلى lib.
-
-لاحقًا U1-A يعرّف CommandId/Request/CmdCtx قبل المستهلكين. Request له Edit/App فقط؛ CmdCtx قيمة مملوكة صغيرة مشتقة من workspace والفوكس وStart/modal/popup وselection/history/transaction/platform، لا استعارة من Snap. resolver يعمل خارج frame ومن native menu. أوامر ذات path/parameters تمر بالمسار الحالي ولا تُحشر في جدول مفاتيح ثابت. transient setters تتبع عقد F4 الحالي حتى تعديل ruling صراحة في F4_DESIGN؛ لا تعتبر هذه الخطة التعديل مقبولًا بالفعل.
-
-## K2 — الفوكس ومسار التنفيذ
-
-نمد `host::ActionQueue` الحالي: FIFO واحد وdrain في AboutToWait. DocAction inline مشروط بخلو الطابور وعدم pointer مؤجل. بعض pointer/panel mutations لا تزال مباشرة؛ نقلها تدريجي، فلا ندعي أن كل التعديلات queued اليوم.
-
-| السياق | صاحب الحدث والعقد المستهدف |
-|---|---|
-| text field | Copy/Cut/Paste/Undo/Redo/Select All/Delete لمحرر النص أولًا، keyboard أو native menu؛ لا تعدل الرسم خلفه. File/Window تستخدم K3. |
-| modal/popup | Escape/Enter والتنقل لصاحب النافذة أولًا؛ modal يمنع أوامر المستند غير المسموحة عند التنفيذ. |
-| Start | StartModel الحالي: Tab/Shift-Tab، أسهم داخل القوائم، Enter وDelete لـRecent؛ لا اختصارات رسم أو Escape جديد. |
-| canvas | S1 باقٍ حتى U5؛ اقتراح Tab بلا فعل على الكانفاس، وللتنقل بين الحقول أثناء التحرير، يحتاج قرارًا؛ المراجعة القديمة رصدت انتقاله إلى أزرار تلتقط Space/Enter. لا Ctrl-F6 افتراضي محجوز على Mac. |
-
-كل source يعيد فحص enablement عند drain؛ menu قد يعرض حالة قديمة. pointer capture منفصل عن modal. لا حذف لـMenuCmd::Key قبل إثبات مسار تحرير النص، لأن native accelerator قد لا ينتج Winit keyboard event. اطلب repaint بعد command يغيّر العرض.
-
-المفاتيح physical KeyCode، مع فصل primary عن physical Control وAlt/Shift؛ المنصة في adapter. اختبارات collisions/reserved chords ونطاق الفوكس، ولا native accelerators للمفاتيح العادية بلا primary. جدول hints لاحقًا واحد، بترتيب Control/Option/Shift/Command على Mac؛ لا اسم أداة في عنوان النافذة. احفظ S1 chords؛ اختبر تبديل tabs ضد ترتيب الطبقات قبل أي تغيير. repeats للنقل الدقيق/zoom فقط بعد التحقق من incumbent behavior.
-
-U5 يستقبل InputEvent مملوكًا بسيطًا من Winit adapter؛ لا إنشاء Winit KeyEvent الخاص في tests. clear held keys عند focus loss، ولا release يتسرب خلال tab switch. canvas physical pixels/native scale، egui points حسب pixels_per_point الذي يشمل zoom_factor؛ تحويل مرة واحدة. الاختبارات تستخدم Platform fixture صريحًا، ولا platform cfg داخل control logic.
-
-## K3 — الحقول والتراجع
-
-**الحالي:** Ui::settle يلغي picker preview ويتخلص من rename/typed buffers قبل lifecycle؛ buffers مملحة بـSessionId بالفعل. E2/F1/F2 تحافظ على S1 وتذكر القيد في القبول؛ تغيير التأكيد قطعة U3-T مستقلة.
-
-**مقترح يحتاج قرارًا قبل U3-T:** buffer يستطيع host قراءته مع document/generation/field/original/last-valid. Save أو tab switch يؤكد النص الصحيح أولًا. النص غير الصالح يمنع الطلب مع رسالة ويحفظ الفوكس؛ Escape يرجع الأصل. Close/Quit يؤكد الصحيح قبل حساب dirty وعرض الخيارات؛ Don't Save يتخلص منه فقط بعد اختيار المستخدم. يُحدث أمر S1 واختباراته في نفس القطعة. يمكن للمالك إبقاء سياسة discard الحالية بدل هذا المقترح؛ لا يعتبر الحل الجديد معتمدًا الآن.
-
-Core وحده يملك transaction: begin(owner)/update(owner, edit)/commit(owner)/cancel(owner)، وهي API مقترحة لا موجودة. begin من owner آخر يرفض بلا overwrite في release أيضًا. الأوامر ذات begin/commit داخلي تشارك المعاملة المملوكة أو ترفض قبل التعديل؛ لا undo داخلي. update لا يغير saved checkpoint؛ commit لتغيير فعلي = undo واحد، cancel يعيد الأصل بلا تاريخ. scrub واحد أو picker Apply = undo واحد. اختبر nested begin وforeign edit أثناء preview وno-op وcancel بعد updates وsave/dirty/undo.
-
-UI يحتفظ بتوكن الملكية وبفر الحقل لا pending document ثانٍ. canvas gesture يبقى في core؛ picker القديم adapter حتى انتقاله. focus loss يلغي preview غير المؤكد ويمسح المفاتيح؛ modal يحسم Apply/Cancel قبل foreign edit. لا dispatch لتعديل لا يملك transaction المفتوحة. سياسة التسوية النهائية تختبر قبل توصيل المستهلكين.
-
-Editor::constrain_wh مصدر واحد للقفل؛ bounds command يحمل reference point بالفعل، فتستخدمه المرايا بلا keep_ratio مكرر. tool/view بلا undo؛ إعدادات المستند تتبع checkpoint S1. نحتفظ بسياسة nudge الحالية حتى قرار مستقل.
-
-## K4 — الحالة والقراءات والأداء
-
-U2-D يختار DocUi في set_tabs(active_id)، ويحذف الحالة عند إغلاق التبويب. document_switched يُستدعى بعد Save أيضًا؛ ليس مكان اختيار الهوية أو مسح search/collapse. افصل temporary invalidation عن حالة المستخدم. widget IDs مملحة بـSessionId؛ استبدال مستند داخل pristine session بنفس id يحتاج generation جديدة، لا reset مع كل حفظ.
-
-U2-P يقيس release الحالي على Mac: صغير و10k عنصر، تحديد واحد/الكل، drag حي، idle وtab switch؛ زمن القراءة وp95 وrebuild counts والجهاز والعينة والأوامر. 360ms بالمراجعة قياس تاريخي، وP11 لا يثبت سرعة كل UI read. لا تنسخ المستند كاملًا كل frame ولا تعد بـ1ms/zero allocation بلا قياس.
-
-invalidation يشمل session+generation وcommitted revision وselection وlive geometry. topology/labels حسب تغييراتها؛ selected rows حسب selection؛ thumbnails/الأبعاد حسب live geometry. fingerprint موثق ممكن أولًا؛ لا O(1) index cache قبل حصر mutations. القبول: اختبارات stale reads، rebuild counters ثابتة في idle، الحقول تواكب drag، ولا regression خارج تشتت baseline المقاس. budget رقمي إضافي يُثبت مع الجهاز قبل optimization. لا تجمع القياس والتحسين ونقل state في diff واحد.
-
-## K5 — الحد الأدنى للـkit والخطوط
-
-shell/tokens.rs مصدر قيم runtime الوحيد؛ لا tests لتزامن Markdown/mockup مع Rust. inventory للألوان error/warning/none/guide والمقاسات والأوزان والمسافات قبل تغييرها؛ لا palette أو seam جديد من v1. labels الجديدة في مصدر صغير مشترك خارج painter؛ لا إطار i18n كامل. Mono للأرقام لا الأسماء؛ casing في العرض.
-
-| U0 minimum | المستهلك |
-|---|---|
-| action/icon button مع label/help/disabled reason | New/Open وRecent ثم F2 |
-| list row وsection heading | Recent والحالة الفارغة؛ F2 يمدها للاسترجاع |
-| Home/tab chip | Home فقط؛ نقل document tabs لاحقًا باختبارات drag/focus |
-| text/notice/error/busy presentation | empty/missing/open failure؛ dialogs الحالية، بلا search field جديد |
-
-لا switch/num_field/swatch/menu عامة قبل مستهلك محدد؛ U3-K يقدم كل control قبل بانله. disabled له سبب وsemantics؛ busy يمنع التكرار، Cancel فقط لو العملية قابلة للإلغاء؛ حدث واحد لكل إجراء ولا فعل من paint أو ghost.
-
-الحالات: disabled يسبق on ثم pressed/hover، وfocus-visible overlay مستقل واضح فوق azure، keyboard لا لمجرد click. اختبر selected+disabled/hover/focus. switch/HUD/caret/drop تفصيلها مع مستهلكها، لا نسخ tool-on. hit target 24pt أو استثناء موثق بمسافات آمنة. النص العادي 4.5:1 والفوكس/المكونات غير النصية 3:1 على الخلفية المركبة الفعلية؛ hover/selection قد يحتاج TEXT بدل MUTED. لا FAINT لمعلومة لازمة.
-
-U0-A يثبت نسخة fonts ومصدر IBM/checksum/OFL؛ يحفظ الرخصة ويتجنب subsetting غير المتوافق مع Reserved Font Names. لا بحث في fonts النظام. يفحص الأوزان والأرقام و⌘⌥⇧⌃ وباقي glyphs؛ الناقص icon أو fallback مرخص ومضمّن. إزالة default_fonts بعد إثبات التغطية وقياس binary فقط. spike على egui المثبت للشكل/bidi/caret/selection/clipboard/graphemes: أسماء عربية متعددة الكلمات ومختلطة وpath طويل. وجود glyphs لا يثبت bidi أو التحرير؛ failure يمنع إعلان نجاح الدعم ويعود بإصلاح محدود أو قيد صريح، دون تغيير النص المخزن أو فتح مشروع RTL كامل.
-
-CPU testkit: warm-up بعد set_fonts، hook key→rect، alpha باسم token ونسبته، ppp=1/2، scripted hover/press/focus. goldens قليلة للمكونات؛ panels semantic/event tests بدل rect لكل حرف. widget_info/semantics حسب دعم egui الحالي؛ AccessKit في lockfile لا يثبت screen-reader support. gallery صغيرة وفحص نافذة Mac للخط/القص/الفوكس؛ لا GPU Renderer/EventLoop في headless tests ولا ادعاء أن shapes تثبت الشكل.
-
-## K6 — البانلات والحجم والحركة
-
-registry metadata واحد وmatch للرسم بلا Panel trait مكرر. domain له section-home؛ مرآته تفتح container وتظهر وتوسع section. overflow يحتفظ بوجهة كل domain. Window tick يعني visible/frontmost؛ اختيار hidden يفتحه ويركزه، واختيار visible يبدل ظهوره وفق قواعده. Board واحد دائم لا يغلق أو يتبوب. Start surface يحجب doc panels/shortcuts مع بقاء workspace never-empty؛ العودة تحفظ tabs/selection/dirty.
-
-U4-S يحدد pre-layout logical points: min/preferred/max ومكان Fill واحد يحتوي Board أو آخر طفل، والتحويل إلى shares داخل boxtree فقط. Properties resizable؛ 274 و800×560 أمثلة v1 غير معتمدة. قِس chrome/rulers/recovery strip والشاشة الفعلية؛ عند نقص المساحة تطوى مناطق اختيارية مع وصول من Window. board rect يستبعد rulers؛ لا minimum أكبر من مساحة الشاشة ولا placement redesign أثناء extraction.
-
-U3-B يملك slot table/fold order للـbar؛ U4-P placement/clamp/Fit فقط. Fit من occlusion rectangles للـbar/rail الفعليين بدل bands منافسة لـQW8. tree normalization عند mutation لا كل frame؛ ghost مع disabled input وscratch output يُرمى بلا requests.
-
-U4-M يفصل ghost easing/fork glide/glow عن direction bar الباقي؛ ADR superseding ثم patch ledger/hash verification قبل تعديل fork. gate الحالي يثبت confinement لا patch drift. styling يضبط scroll_animation إلى none؛ line-wheel smoothing المتبقي يُقاس ويُذكر دون ادعاء صفر حركة في egui. E2 يزيل splash مع حفظ GPU startup failure. أي تعديل UI_DIRECTION معه قرار صريح؛ spec لا يعلو عليه.
-
-Workspaces مؤجلة بعد size model: app-owned versioned schema والتحويل محصور في boxtree؛ حماية corrupt/newer files، debounced worker/flush، اختبارات clamp/monitor/Reset. لا serialize fork ولا ملف layout منافس. Accessibility لاحقة للـfull RTL وbox focus shortcuts؛ bidi أسماء U0 لا ينتظرها. double-click يستخدم egui InputOptions وقيمة OS مشتركة؛ custom helper للكانفاس/caption فقط ضمن U5، لا dependency جديدة مفترضة.
-
-## القطع وملكية الملفات
-
-المسارات داخل app/src إلا core المذكور. قطعة واحدة تمسك الملفات المشتركة في كل مرة؛ هذه ليست دعوة لتنفيذ متوازٍ أو تقديرات agent-days. كل قطعة تعيد فحص baseline قبل البدء.
-
-| القطعة | الملكية والترتيب | دليل الإقفال |
+| # | Law | Measurable form |
 |---|---|---|
-| U0-A | shell/tokens.rs، font loader/assets/manifest عند الحاجة | inventory/license/coverage وbidi spike ونافذة Mac قبل تعميم الخط |
-| U0-B ثم C | shell/kit وshell/mod.rs ثم test hooks/gallery؛ بعد A | minimum controls فقط؛ lib مستقل؛ scripts 1/2ppp وفحص بصري |
-| E2 | start_ui.rs، ui.rs، main.rs، host.rs، app_command.rs وrecents؛ بعد minimum U0 وS5 حسب PLAN | قبول S2/S3: launch/Home/Recent/Locate/last-tab، مسار فتح واحد، remove/clear لا يحذف ملفات |
-| F1 ثم F2 | host/lifecycle/workspace/UI حسب أمر S2/S3؛ لا U1 متزامن | durable Save/recovery writing ثم recover-as-copy |
-| S4 ثم S6 | host/menu/lifecycle/export UI حسب أمرهما | association/export عبر AppCommand الحالي بلا انتظار framework |
-| U1-A ثم B ثم C | types/request/context ثم menu table ثم keyboard adapter؛ app_command/host/menu/main/ui بالتتابع | responder/FIFO/modal/dispatch/repaint tests، الحفاظ على S1 |
-| U2-O | ui.rs وrequest adapter؛ بعد U1 types وقبل panels | Op→Request ميكانيكيًا، typed drop/rename/picker targets، transient setters كما K1 |
-| U2-P ثم D | Snap measurements/cache، ثم frame/DocUi extraction؛ ui/workspace وأقل core probes | K4؛ لا دمج optimization وstate migration في diff واحد |
-| U3-T | core editor.rs/command.rs أولًا ثم ui field host؛ بعد قرار K3 | live span release-safe وundo/cancel/settle قبل المستهلك |
-| U3-K ثم A ثم B ثم C | controls حسب الاستهلاك، Properties ثم bar mirrors ثم Layers/picker كل على حدة؛ owner واحد لـui.rs | mirrors من نفس القيم؛ rename/selection/picker tests؛ picker بعد live span |
-| U4-S ثم M ثم P | size ثم ADR/vendor motion ثم placement؛ boxtree/registry/host | K6؛ clamp/Fit/tests + Mac؛ storage مؤجل |
-| U5-A ثم B | router extraction بسلوك محفوظ، ثم input fixes؛ main/host/core editor | K2/cancel gesture؛ لا focus engine جديد. pinch اختياري لاحق: finite delta، clamp ≤−1، yield فوق chrome؛ smart zoom دون فعل إلى قرار |
-| U6 | تنظيف بعد ثبوت المستهلكين | icon set موحد بالتدريج؛ grep word-boundary فلا يطابق Op داخل Option؛ لا doc-token parsers أو vendor-neutral standard قبل V1 |
+| L1 | Home replaces the ☰ burger on Mac; native menus stay | Mac app bar cell = kit Home chip (`ui.rs:3510-3520`); ☰ cell only on the compile-only Windows path (`ui.rs:3521+`). |
+| L2 | Icons, not text labels, on chrome buttons | Every icon-only control has a tooltip naming it (+ shortcut); visible text only in menus, lists, fields, dialogs. |
+| L3 | IBM Plex Sans/Mono bundled; Arabic gated | `shell/fonts.rs:12-34`; Plex Arabic is a named diagnostic family only until §8 passes. Mono = numbers only. |
+| L4 | No animation ever; no glide/ease/glow; direction bar stays | `animation_time = 0` (`tokens.rs:90`); no time-based interpolation in chrome code (tab drag: `chrome.rs:220` "no time, no interpolation"). |
+| L5 | "On" looks | tool = azure block + white icon; icon toggle = small azure bar (10×2, BOX_SYSTEM_PLAN §3.5), no fill; tab/segment = SURFACE fill, no azure. |
+| L6 | FAINT → MUTED with QW6 sizes | Informational text never FAINT; panel icon glyph 18 pt in the 26×24 chip; micro-labels 10.5 pt. |
+| L7 | Layout persistence deferred; Reset Workspace only in the Window menu | No layout file; Reset (not built yet) touches UI state only, never documents/tabs/OS window. |
+| L8 | Tab drag: the tab follows the pointer, others reflow instantly, no drop line | `chrome.rs:208-221` geometry; Esc / focus loss / list change cancels (`ui.rs:3318-3345`). |
+| L9 | Field edits commit on blur (Illustrator/Figma convention) | K3 table. |
+| L10 | Shortcuts equal Illustrator's | Any new chord is checked against Illustrator before binding. |
 
-core/editor لا يتشارك بين U3-T وU5 وF5. F5/F6 تحت الميثاق: reconciliation لفرع codex/p6-header وOWNERSHIP_MAP قبل extraction. التشخيص والأداء والflags تحت F7، بلا telemetry أو تغيير flags هنا.
+## K1 — Library and command boundary
 
-## قبول التخطيط والخطوة التالية
+1. `shell/kit` (lib) knows no binary type: it takes widget key, label/icon, state, availability (+reason) and returns a `ControlResponse`/value (`shell/kit/mod.rs:13-53`). No `AppCommand`, no I/O, no `Editor` mutation in kit.
+2. The binary translates kit results to `AppCommand` once (E2 adapter for Start; `app_command.rs`). Open/Recent/Locate/OS-open use one open path (`AppCommand::OpenPaths`).
+3. Later U1-A adds `CommandId/Request/CmdCtx` (Edit/App only; owned context, resolved outside the egui frame and from the native menu). Until then the current `AppCommand` + `host::DocAction` remain the contract; transient setters follow F4.
 
-- جسم v1 والمراجعات القديمة محفوظة؛ كل finding له تصرف وقطعة.
-- STATUS/PLAN وأوامر E2/S6 متفقة على minimum U0؛ لا framework أو persistence كشرط خفي للاسترجاع.
-- روابط وdiff وgates محلية قبل commit؛ تعديل Markdown لا ينتج runtime أو visual approval.
-- المراجعة الذاتية ليست مستقلة؛ merge يحتاج independent review وفق القواعد. فوترة GitHub لا تستحدث شرط hosted CI جديدًا.
+## K2 — Responder and keyboard law
 
-تحديث تنفيذ 2026-09-27: S5-C/D واختبارات وfixtures S5-E اتنفذوا على فرع العمل مع مراجعة مجمّعة مؤجلة بطلب المالك؛ قبول الملفات الشخصية والنافذة باقي، والتالي U0-A بحسب PLAN. قرارات K3/Tab وتفاصيل HUD/switch تُعرض مع مثال عند بدء القطعة المعنية؛ لا نعيد أسئلة Home والخطوط.
+**Precedence** (first owner wins; the key goes nowhere else):
 
+| # | Context (who owns it) | Keys it takes | Today on main | Shortcuts yield? |
+|---|---|---|---|---|
+| 1 | Command keys — `host::Keyboard::key` | ⌘N ⌘O ⌘S ⇧⌘S ⌘W ⌘Q, Ctrl+Tab: press → `AppCommand` queued; repeats + release swallowed | `host.rs:117-125,179-197`; `main.rs:683-699`; runs BEFORE the field check (`main.rs:1438-1444`, guard at `:1442`) | Never — ⌘S inside a field saves (after the K3 commit). |
+| 2 | Home / Start — `StartModel` | Tab/⇧Tab, ↑↓ in lists, Enter/Space, Delete + Backspace on a Recent row | `start.rs:93+`; native-menu keys dropped on Home (`main.rs:1050-1051`) | All document shortcuts yield. |
+| 3 | Open kit menu — `kit::menu` | ↑↓ move, Enter/Space choose, Esc close; also consumes Tab | `shell/kit/mod.rs:291-335` | Everything behind it yields. |
+| 4 | Focused text/number field — `gui.wants_keyboard()` | All non-command keys (text undo/copy/paste/select-all go to the field) | `main.rs:1449`; native ⌘-rows forwarded to egui (`main.rs:1052-1056`); Plain rows (Edit ▸ Delete) never while typing (`main.rs:1066-1067`) | Canvas shortcuts yield. |
+| 5 | Colour picker (floating modal) | Esc = Cancel, Enter = OK only | `main.rs:1450-1453` | Only Esc/Enter yield; canvas stays live. |
+| 6 | Live tab drag | Esc = cancel drag (nothing committed) | `main.rs:1454`; `ui.rs:3318-3345` | Esc does not also deselect. |
+| 7 | Canvas — `DocAction::Key` | Space = pan/reposition (`main.rs:1456-1462`); other presses → `raise_doc` (`main.rs:1463-1466`) | S1 router in `main.rs` until U5 | — |
+| 8 | Native menu (Mac) — `host::menu_route` | `App` → queue; `Key` → rows 2/4/7 above; `Plain` → canvas only; `Snap` → view | `host.rs:357`; `main.rs:1040-1075` | Same precedence as the keyboard path. |
 
-### U0-A implementation — 2026-09-27
+**Rules**
 
-[سجل الخطوط والاختبار](../foundation/work_orders/UI_U0_A_FONTS.md): Plex Sans/Mono مضمّنان بأوزان Regular، مع Noto Symbols لتغطية اختصارات Mac ورخص ومصادر وhashes محفوظة. المقاسات الخمسة الحالية انتقلت إلى tokens دون تغيير. Plex Arabic مضمّن كعائلة اختبار مسماة فقط؛ تجربة egui 0.35 كشفت خللًا في RTL clusters/caret وترتيب الكلمات، فلا يدخل fallback الحقول قبل إصلاح هذا الحد. ده قيد صريح وفق K5، وليس إعلان نجاح دعم العربي أو تغيير النص المخزن. فحص نافذة Mac للخط اللاتيني نجح؛ المراجعة المستقلة مؤجلة لآخر القعدة. التالي minimum U0-B/C ثم E2، مع إبقاء إصلاح العربي مفتوحًا.
+1. `host::Keyboard` (`host.rs:108-115`) is the ONE record of held modifiers, Space and command keys down. It is mirrored into the active tab's `Editor::mods/space` and cleared on `WindowEvent::Focused(false)` (`main.rs:1191-1196` → `Keyboard::focus_lost`, `host.rs:143`); a release never leaks into the next tab.
+2. macOS egui focus seed: `egui_focus_seed(window_key, egui_focused) = egui_focused || window_key` (`ui.rs:3315-3317`) only RAISES egui's focus; losing focus stays winit's `Focused(false)` path. Test `window_focus_tests` (`ui.rs:8106`).
+3. `host::ActionQueue` (`host.rs:236-290`) is the ONLY dispatcher: FIFO; every pointer press/release leaves a mark; a Ui-frame command is inserted at its release mark (`chrome_frame`); drained at `AboutToWait`. A `DocAction` may run inline only when the queue is empty and no pointer mark is pending. No second queue, no direct dispatch from paint code.
+4. Every source re-checks enablement at drain; a menu may show stale state, the drain decides. Request a repaint after any command that changes what is shown.
+5. Keys are physical `KeyCode`; primary (⌘/Ctrl), physical Control, Alt and Shift stay distinct; the platform lives in the adapter. Mac hint order ⌃⌥⇧⌘. No native accelerator for plain keys.
+6. Canvas Tab is reserved for Illustrator's Hide/Show Panels; until built it does nothing and must not move egui focus onto a button (audit 04). Fix owner: piece P5.
+7. Test fixtures build a simple owned `InputEvent`; never a private Winit `KeyEvent`, never an `EventLoop`.
 
+## K3 — Field edit transaction law
 
-### Minimum U0-B/C implementation — 2026-09-27
+Applies to every text and number field: `num_field` (`ui.rs:1762-1939`), `name_field` (`ui.rs:5342-5376`), Layers rename (`ui.rs` panel_layers), picker hex, Layers search (search commits nothing to the document).
 
-[عقد المكونات ودليل الاختبار](../foundation/work_orders/UI_U0_BC_KIT.md): مكتبة `shell::kit` فيها action/icon button، Home محايد، list row، heading وnotice فقط. المفاتيح والمساعدة والحالة تأتي من المستدعي؛ الرد `activated` يُستهلك مرة واحدة، ومع keyboard dispatch في Start يُستخدم `pointer_only` لمنع التكرار. اختبارات CPU على 1×/2× ونافذة Mac تجريبية؛ ده مش ربط E2 ولا قبول screen-reader أو العربي. التالي E2، والمراجعة المستقلة مجمّعة آخر القعدة.
+| Event while a field has focus | Valid text | Invalid text |
+|---|---|---|
+| Enter | Commit → ONE undo step; field blurs | Keep focus; inline reason under the field |
+| Tab / ⇧Tab | Commit; focus to next/previous field of the same panel (wraps; never a button) | Keep focus; reason |
+| Click elsewhere (blur) | Commit | Keep focus; reason; the click is not delivered |
+| Tab switch / Save / Close / Quit | Commit first, then the command (Close computes dirty after the commit) | Command does not run; focus + reason stay |
+| Selection change removes the field | Commit to the object it was editing, then switch | Revert silently (the field is gone; no trap) |
+| Esc | Revert to the value at focus-in; no history; blur | Same |
+| Arrows / scrub inside the field | Live preview; the whole focus session = ONE undo step | — |
 
+1. Unchanged text commits nothing: no undo step, no dirty (closes audit 01 B6: unchanged artboard rename marks dirty).
+2. Invalid = number text that does not parse; a name that is empty after trim. Out-of-range numbers clamp (today's behaviour, `ui.rs:1878`), they are not invalid.
+3. Reason text uses token `ERROR` (to add, §K5) at `T_SMALL`; it is cleared by the next valid keystroke or Esc.
+4. The buffer is keyed by `SessionId` + field (`doc_id`, `ui.rs:1738`); the host can read it to commit before lifecycle commands. `settle_field_edits` (`ui.rs:1746-1755`) changes from **discard** to **commit-valid**.
+5. Core owns the transaction (U3-T: `begin/update/commit/cancel(owner)`, foreign `begin` refused, no nested pending). P2 may ship rules 1-4 on today's `EditCommand`s; the one-undo arrow/scrub session needs U3-T.
 
-### E2 implementation — 2026-09-27
+**Live bugs this closes** (read from code; each gets a red test first): (a) `name_field` computes `editing = has_focus(id)` at frame start (`ui.rs:5344`); on the click-away frame focus is already gone, so `buf` is rebuilt from `value` and `lost_focus()` returns the ORIGINAL text — typed text dropped (PAINS_LOG "name-field click-away"). (b) Every blur commits even unchanged text (B6). (c) Esc in `num_field`: egui surrenders focus, which reaches the `lost_focus()` commit branch (`ui.rs:1870`) — Esc commits instead of reverting.
 
-[سجل الربط وحدوده](../foundation/work_orders/DFS_S2_E2_START_INTEGRATION.md): Start/Home/Recent اتربطوا بمسار فتح واحد وadapter واحد من StartAction إلى AppCommand. Home يحجب أوامر المستند مع حفظ التبويبات وحالتها، وWorkspace يحتفظ بالـplaceholder الداخلي. الرسم بلا I/O؛ نموذج Recent يتحدث عند حدود lifecycle والتركيز. شاشة الانتظار اتشالت، ومسار فشل GPU محفوظ. اختبارات CPU وتجربة Mac لا تعني قبولًا مستقلًا أو دعمًا كاملًا للعربي/قارئ الشاشة؛ بيانات الاسترجاع الحقيقية والحفظ المتين للمستند في F1/F2. التالي F1، والمراجعة مجمّعة آخر القعدة.
+**Owner hand test (P2):** select an artboard → type a new name → click the empty canvas: the name stays. ⌘Z: the old name returns in one step. Type again, press Esc: old name, no `*`. Type in W, press ⌘S: the file saves with the new width. Clear the name and press Enter: the field keeps focus and says why.
+
+## K4 — State, reads and performance budgets
+
+1. `DocUi` state is chosen in `set_tabs(active_id)` and dropped on tab close; widget ids are salted by `SessionId`; same-id document replacement needs a new generation (U2-D).
+2. Invalidation keys: session+generation, committed revision, selection, live geometry. Layers rows already reuse on pointer-only frames (`ui.rs:1334-1340`, `LayerRowsCache` `ui.rs:308`).
+3. No measurement + optimisation + state move in one diff.
+
+**Measurement protocol (U2-P)**
+
+| Item | Value |
+|---|---|
+| Machine | The owner's Apple-Silicon Mac; record model, chip, RAM, macOS, display scale, refresh rate |
+| Build | `--release`, `VAROS_PERF=1` (prints `scene_path` / `full_frame`, `main.rs:1569-1576`); U2-P adds `ui_build` (egui `run` + tessellation) and per-panel rebuild counters |
+| Scene | Generated fixture of 10,000 paths on 1 artboard (generator + hash committed with U2-P), plus a 10-path small file |
+| Runs | Idle 10 s · ⌘A once · drag selection 5 s · tab switch ×20 · Layers open/closed; 3 runs each, ≥ 300 frames |
+| Report | p50 / p95 / max per metric, frame count, rebuild counts, device line — appended to GATE_LOG |
+
+**Targets — provisional until U2-P measures**
+
+| Metric | Target |
+|---|---|
+| `ui_build` p95, 10k scene, every run | ≤ 8 ms |
+| Panel rebuilds while idle | 0 per frame |
+| Heap allocations per idle frame in panels | 0 (counting allocator, perf build only) |
+| Regression vs U2-P baseline | none beyond measured run-to-run spread |
+
+Every later UI piece reports these numbers (or "not affected: why") in its GATE_LOG block.
+
+## K5 — Tokens, components, icons, accessibility
+
+`shell/tokens.rs` is the only runtime source; no doc↔Rust sync parsers. Contrast = WCAG 2.x ratio, computed on the real (composited) background; text ≥ 4.5:1, icons/focus/UI parts ≥ 3:1.
+
+**Colours**
+
+| Token | Value | Used for | Contrast on its background | Status |
+|---|---|---|---|---|
+| `SEAM` | #0e0d0d | void: seams, app bar, status | TEXT 15.6 · MUTED 5.68 | `tokens.rs:45` |
+| `BG` | #141313 | board base | TEXT 14.9 · MUTED 5.43 | `tokens.rs:27` |
+| `INPUT_WELL` | #171515 | focused number field | TEXT 14.6 | `tokens.rs:37` |
+| `RULER_BG` | #181616 | rulers | MUTED 5.28 | `tokens.rs:50` |
+| `PANEL` | #1b1919 | boxes, active doc tab, disabled kit fill | TEXT 14.1 · MUTED 5.12 · FAINT **3.26 ✗** | `tokens.rs:28`; alias `SOLID_PANEL` (`ui.rs:24`) → remove |
+| `SURFACE` | #242121 | fields, controls, active panel pill, popups | TEXT 12.9 · MUTED 4.68 · FAINT **2.98 ✗** | `tokens.rs:29`; aliases `BG_SURFACE`, `SWATCH_WELL` (`ui.rs:25`) → remove |
+| `ROW_HOVER` | #262323 | list-row hover | MUTED 4.56 (thin) | `tokens.rs:36` |
+| `HOVER` | #2b2828 | hover/pressed fill | TEXT 11.8 · MUTED **4.28 ✗** → text on HOVER is TEXT | `tokens.rs:30` |
+| `ACCENT_TINT` | azure α34 → #192835 on PANEL | selected row | TEXT 12.1 · MUTED **4.40 ✗** → TEXT | `tokens.rs:43` |
+| `LINE` | #2c2929 | 1 px hairline (separation only) | 1.21 on PANEL — decorative, never the only cue | `tokens.rs:31`; alias `BORDER` → remove |
+| `LINE2` | #3b3735 | stronger hairline, kit control border | 1.49 on PANEL | `tokens.rs:32`; alias `BORDER_2` → remove |
+| `TEXT` | #e9e6e3 | primary text, icons on hover/on | ≥ 11.8 on every chrome fill | `tokens.rs:33` |
+| `MUTED` | #8f8a86 | secondary text, icons at rest | 4.56-5.68 on SEAM…ROW_HOVER | `tokens.rs:34` |
+| `FAINT` | #6e6a66 | disabled text / placeholder ONLY | 2.73-3.62 (text-exempt only when disabled) | `tokens.rs:35`; → rename `DISABLED` once informational uses = 0 |
+| `ACCENT` | #0c8ce9 | selection, active, focus | 4.95 on PANEL · 4.14 on HOVER (UI ✓) · white icon on it 3.53 (UI ✓, **text ✗**) | `tokens.rs:38` |
+| `ACCENT_HOVER` | #2b9df4 | hovered primary button | white text **2.90 ✗** | `tokens.rs:39` |
+| `ACCENT_SEL` | azure α60 | text selection | — | `tokens.rs:42` |
+| `GUIDE` | #ff54a8 | smart guides (reserved) | 5.91 on PANEL | `tokens.rs:44` |
+| `CLOSE_RED` | #c42b1c | window-close hover | white 5.66 | `tokens.rs:51` |
+| `NONE_RED` | #e05c5c | "none" paint slash | 4.88 on PANEL | `tokens.rs:52` |
+| `ERROR` | #e05c5c (same value) | field reason, failure notice | 4.88 on PANEL · 4.45 on SURFACE → reason sits on PANEL | **to add** (P2) |
+| `AMBER`, `NAVY`, `DOT_GRID`, `VOID_HOVER` | see file | samples / grid / void hover (white α.04 on SEAM = #181717) | — | `tokens.rs:48-54` |
+| Picker/thumbnail greys | `from_gray(24…242)`, black/white α | checkerboard, knobs over artwork, thumbs | over user colour: exempt, must be tokens | literals `ui.rs:2093-2351, 4272-4815` → `CHECKER_*`, `KNOB_*`, `THUMB_*` |
+
+**Sizes, radii, spacing, type**
+
+| Token | Value | Used for | Status |
+|---|---|---|---|
+| `R` / `RBOX` / `RCAP` | 3 / 8 / 11 | controls & menu rows / boxes, popup frames (kit menu `kit/mod.rs:352`; legacy `MENU_R` 4 `ui.rs:3235` → owner Q1), doc tab chips / capsules (panel tab pills, scroll chevrons, switch track) | `tokens.rs:57-59`; `R`'s comment says "tabs" → fix; 26 literal radii in `ui.rs` (2×12, 3×7, 4×5, 5×2) → map to R |
+| `SEAM_GAP` | 12 | equal void between boxes | `tokens.rs:60` (owner 07-04) |
+| `KIT_MIN_TARGET` | 24 | minimum hit target | `tokens.rs:148` |
+| `KIT_CONTROL_H` / `KIT_ROW_H` | 32 / 56 | kit button height / two-line row | `tokens.rs:149-150` |
+| `ICON` (new) | 18 | panel icon glyph in 26×24 chip (QW6) | to add; today 14-17 literals (`ui.rs:1989,2006,4379,3116`) |
+| `ICON_SMALL` (= `KIT_ICON`) | 16 | kit, rail, menus | `tokens.rs:151` → rename |
+| `ICON_RASTER` | 32 | raster size of every Lucide icon | `tokens.rs:159` |
+| `KIT_PAD` / `KIT_GAP` / `KIT_TEXT_GAP` | 8 / 8 / 4 | the 4/8 beat | `tokens.rs:152-154`; literals `MENU_ROW_H 26`, `MENU_GUTTER 28`, `RULER 18`, row 26 (`ui.rs:3232-3235,5741,4453`) → tokens |
+| `KIT_STROKE` / `KIT_FOCUS_STROKE` | 1 / 2 | hairline / focus ring | `tokens.rs:155-156` |
+| Scrollbar | 8 bar · 6 floating · 24 min handle | overlay bars | `tokens.rs:94-97` |
+| Type roles | Heading 13.5 · Body 13 · Button 12.5 · Small 11 · Mono 12.5 | egui text styles | `tokens.rs:77-81` |
+| `T_MICRO` (new) | 10.5 | section micro-labels (QW6; today `.size(10.0)` ×10) | to add |
+| Start sizes | 26 / 20 / 14 | Start title / section / file | `tokens.rs:139-141` |
+
+**Offenders today and the ratchet** (counted by grep at `221310f`; P3 adds `shell/ratchet_tests.rs`, which reads files with `include_str!` and asserts `count <= CEILING`; a piece that removes offenders lowers the ceiling in the same commit; raising a ceiling is a review failure):
+
+| Pattern | `ui.rs` | other files |
+|---|---|---|
+| `FontId::proportional/monospace(<number>)` | 41 (9 distinct sizes 9.5-14) | boxtree 8 · registry 7 |
+| `.size(<number>)` on `RichText` | 34 | — |
+| raw `Color32` (`from_rgb*`, `from_gray`, `from_*_alpha`, `WHITE`, `BLACK`) | 45 (TRANSPARENT not counted) | boxtree 3 |
+| `CornerRadius::same(<number>)` | 26 | boxtree 5 · registry 1 |
+| inline Lucide `const IC_*` | 39 (`ui.rs:26-83`) | kit registry holds 6 |
+| `FAINT` uses | 26 | — |
+| token aliases (`LINE as BORDER` …) | 5 (`ui.rs:22-25`) | — |
+| `ui.rs` total lines | 8215 | — |
+
+**Component inventory** (one row per component; a11y gate = target ≥ 24 pt · text 4.5:1 · UI 3:1 · focus visible · tooltip on icon-only)
+
+| Component | Rest | Hover / pressed | On | Disabled (+reason tooltip) | Focus-visible | Size · hit | A11y gate today | Lives today · kit? |
+|---|---|---|---|---|---|---|---|---|
+| Button (text) | SURFACE + LINE2 border, TEXT | HOVER / HOVER | SURFACE, no border | PANEL, MUTED, reason ✓ | 2 px ACCENT inset, keyboard only | h 32 · ≥ 24 | ✓ | `kit::action` (`kit/mod.rs:53,83-216`) · kit |
+| Icon button | as button, icon MUTED→TEXT | HOVER | — | as button | as button | 32×32 kit; 26×24 legacy | kit ✓; legacy no focus ring ✗ | kit `action(icon_only)`; legacy `icon_btn` `ui.rs:1998` · ad hoc |
+| Tool button (rail) | none, MUTED icon | HOVER | ACCENT block, white icon (3.53 UI ✓) | — | ✗ none | 30×30 | ✗ focus, ✗ tooltip check | `icon_button` `ui.rs:3006` · ad hoc |
+| Icon toggle | none, MUTED | HOVER | **today ACCENT block → law: 10×2 ACCENT bar** | — | ✗ | 24×24 | ✗ focus | `icon_toggle` `ui.rs:1979` · ad hoc |
+| Switch | track SURFACE | row HOVER | track ACCENT | — | ✗ | 32×18 track in 26 row | ✗ focus | `toggle_row` `ui.rs:5378` · ad hoc |
+| Segment | SURFACE, MUTED 11 | HOVER | **today ACCENT + white text (3.53 ✗) → law: SURFACE fill, TEXT** | — | ✗ | h 22 ✗ (< 24) | ✗ | `seg_btn` `ui.rs:5170` · ad hoc |
+| Doc tab chip (+ live drag) | bare MUTED 12 | VOID_HOVER | PANEL block, TEXT, RBOX | — | ✗ | h 28 | ✗ focus | `tab_item` `ui.rs:3180`; drag `ui.rs:3318-3421`, `chrome.rs:208+` · ad hoc |
+| Panel tab pill | bare MUTED | HOVER | SURFACE pill, RCAP | — | ✗ | h 22 ✗ | ✗ | `shell/boxtree.rs:584` · ad hoc |
+| Home chip | as icon button | HOVER | SURFACE (on Home) | — | ✓ | 36×40 cell | ✓ | kit (`ui.rs:3510-3520`) |
+| List row | PANEL, TEXT + MUTED detail | HOVER, detail→TEXT | SURFACE | PANEL, MUTED | ✓ | h 56 / 72 | ✓ | `kit::list_row`, `document_row` · kit |
+| Layers row | none | ROW_HOVER | ACCENT_TINT + 2 px ACCENT bar | — | ✗ | h 26 | MUTED on tint 4.40 ✗ | `panel_layers` `ui.rs:4394-4910` · ad hoc |
+| Menu row | none, TEXT | HOVER full-bleed | ✓ mark | MUTED/FAINT + reason | kit ✓ / legacy ✗ | h 32 kit · 26 legacy | legacy ✗ | `kit::menu_row` `kit/mod.rs:392`; legacy `menu_row` `ui.rs:3238-3313` · both |
+| Numeric field | SURFACE, value 13 centred, label FAINT 11.5 ✗ | — (✗ none) | editing: INPUT_WELL + 1 px ACCENT | ✗ none | ACCENT border | h 25 | label ✗ (FAINT) | `num_field` `ui.rs:1762` · ad hoc |
+| Text field | SURFACE + LINE | ✗ none | editing: ACCENT border | ✗ none | ACCENT border | h 26 | ✓ text | `name_field` `ui.rs:5342`; search/rename/hex vary · ad hoc |
+| Colour swatch | colour + LINE2 | white border | ACCENT ring (active target) | — | ✗ | 15-17 ✗ (< 24 hit) | ✗ target | `swatch_strip` `ui.rs:2122`, `ctl_chip` `ui.rs:4095` · ad hoc |
+| Section heading / panel header | MUTED micro 10 `.strong()` | — | — | — | — | — | MUTED ✓; size → 10.5 | `kit::section_heading`; inline `ui.rs:4950,5051,5061` · both |
+| Scrollbar | invisible until body hover | 6→8 px handle | — | — | — | 24 min handle | egui | `tokens.rs:94-97` · egui |
+| Notice / strip | MUTED text; strip on SEAM | — | — | — | — | — | ✓ | `kit::notice` `kit/mod.rs:232`; recovery strip `ui.rs:3740` |
+| Native dialogs (Open/Save/Save changes?/errors) | **native by law** (rfd + OS sheets) | OS | OS | OS | OS | OS | OS | `file_ports.rs`, `main.rs` · native, never re-drawn in egui |
+
+**State rules**: precedence disabled > on > pressed > hover > rest; focus-visible is an overlay drawn on top of any state (also on ACCENT: ring outside the block). Text on HOVER or ACCENT_TINT is TEXT. Every disabled control says why in its tooltip. A row marked ✗ is closed when it moves into kit (U3-K), not by local patching.
+
+**Icon rules**
+
+1. One registry: `shell/kit/icons.rs` (`Icon` enum, `kit/icons.rs:8-29`). P3 moves the 39 `IC_*` strings and `lucide()/load_icon` (`ui.rs:26-83, 871-895, 1590-1605`) into it; nothing else defines SVG text.
+2. Lucide first (ISC licence beside `assets/icons/`). When Lucide lacks a glyph, draw an original on the 24-grid, 2 px stroke, round caps — from scratch, never traced from another product. Cursors keep their own rule (no hand-drawn cursors).
+3. Raster once at `ICON_RASTER`, white, tinted at paint; draw size only from `ICON` / `ICON_SMALL`.
+4. Every icon-only control has a tooltip (name + shortcut via `shortcut_label`).
+
+**Fonts**: U0-A is done (`shell/fonts.rs`, [record](../foundation/work_orders/UI_U0_A_FONTS.md)); all faces Regular; Mono for numbers only; casing at render. Arabic: §8.
+
+## K6 — Panels, size and motion
+
+1. One registry + `match` for panels (`shell/registry.rs`), no `Panel` trait. Every domain has one Section home; bar/menu items are mirrors that open, reveal and expand that home.
+2. Board exactly once, never closable or tabbable. Window-menu ticks mean visible/frontmost.
+3. U4-S size model: min/preferred/max in logical points, one Fill slot; tree normalised on mutation, not per frame; board rect excludes rulers.
+4. Motion: none (L4). U4-M removes ghost easing/glide/glow under an ADR superseding ADR-0006 with a vendor patch ledger; `scroll_animation` none; wheel smoothing residue is measured, not denied.
+5. Workspaces/persistence stay deferred (L7); Reset Workspace is the only layout command and lives in the Window menu.
+
+## 7. `ui.rs` split plan
+
+Target: `varos-app/src/ui/` (binary crate first; moving to lib needs U1 types). Ranges at `221310f`, recomputed before each move.
+
+| Module | Moves (current lines) |
+|---|---|
+| `ui/mod.rs` | `Op` 95-156, `Ui` + frame 798-1586, `apply_ops` 5985-6070 |
+| `shell/kit/icons.rs` | `IC_*` 26-83, `TopIcons` 257, `LayerIcons` + `load_icon*` 855-895, `lucide*` 1590-1605, `DockIcons` 4345, `AbIcons` 5333, `dump_tool_icons` 6071 |
+| `ui/style.rs` | fonts/style/zoom 1606-1630 |
+| `ui/menus.rs` | legacy dropdown 1636-1714, menu rows 3229-3313 (later replaced by `kit::menu`) |
+| `ui/controls.rs` | `Lab`, `doc_id`, `mini_btn`, `refpoint`, `icon_toggle`, `icon_btn`, `hsep` 1716-2030; `info_row/action_row/seg_btn` 5126-5192; `toggle_row/pill_btn` 5378-5420 |
+| `ui/fields.rs` | `settle_field_edits` 1746-1755, `num_field` 1762-1939, `dim_field` 4077, `name_field` 5342-5376 |
+| `ui/picker.rs` | `MTarget/Chan/MTab/Harmony/ColorModal` 161-256, HSV + swatches + modal 2031-3003 |
+| `ui/rail.rs` | `icon_button/divider` 3006-3034, `board_rail` 3851-3900 |
+| `ui/topbar.rs` (tab strip) | caption buttons 3039-3228, focus seed + `TabDrag` 3315-3421, `build_topbar` 3422-3685, void/recovery/status 3692-3850 |
+| `ui/ctlbar.rs` | `board_ctlbar` 3901-4076, chips/fill-stroke/shape slot 4089-4342 |
+| `ui/layers.rs` | rows + cache + thumbs 265-624, `col_toggle` 4359, `panel_layers` 4394-4924 |
+| `ui/properties.rs` | properties/document 4925-5125, align/pathfinder 5193-5330, artboard 5421-5738 |
+| `ui/snap.rs` · `ui/rulers.rs` | `Snap/AbSnap/AbInfo` 625-797 · rulers/crosshair/HUD 5739-5982 |
+| tests | each `mod *_tests` (6130-8215) moves with the code it tests |
+
+1. One extraction = one **move-only** commit: `git diff --color-moved=zebra` shows only moved blocks plus `mod`/`use`/visibility lines; gates green (`cargo test --workspace`, clippy Mac + Windows target, fmt).
+2. No behaviour, rename or style change rides in a move commit.
+3. No new feature may add lines to `ui.rs`; new code goes to its target module or kit. Ratchet test `ui_rs_only_shrinks` (ceiling 8215, lowered with every move).
+4. One owner of `ui.rs` at a time; moves never run parallel to a piece editing the same range.
+
+## 8. Arabic / RTL gate (owner piece)
+
+Fact: egui 0.35 shapes Arabic into wrong clusters (`لوحة أولى`: 9 scalars → 14 glyph records), wrong caret mapping and word order (U0-A record). Only `egui_tiles` is vendored today.
+
+| Path | What | Cost / risk |
+|---|---|---|
+| A — patch egui | Vendor `epaint` text layout; add bidi (UBA) + HarfBuzz-class shaping; patch ledger + hash check like `tools/check_vendor_patches.ps1` | Smallest UI change; carries a fork through every egui upgrade |
+| B — own shaping layer | Our shaper (bidi + shaping crate) produces galleys for labels; our own text field for editing | No fork; we own caret, selection, IME and clipboard — larger build |
+
+Acceptance names (both paths): `arabic_name_shapes_joined_clusters`, `mixed_bidi_visual_order_matches_uba` ("Logo شعار v2"), `rtl_caret_moves_by_grapheme`, `arabic_selection_copy_paste_roundtrip`, `stored_text_unchanged`; owner hand check: type an Arabic and a mixed name in Layers rename, artboard name and Save As, and read them in tabs and Recent. **Off until it passes**: Plex Arabic in any field/label fallback; any claim of Arabic UI support; canvas Arabic text tool.
+
+## 9. Pieces (in order)
+
+| # | Piece | Owns | Acceptance (owner one sentence + tests) | Defers |
+|---|---|---|---|---|
+| P1 | This spec v3 + UI_DIRECTION reconciliation | `docs/` only | Owner reads the summary; independent review APPROVE | — |
+| P2 | Field commit law + `name_field` fix | `ui.rs` fields, `settle_field_edits`, `host` settle, `tokens.rs` `ERROR` | K3 hand test; tests `name_field_commits_typed_text_on_click_away`, `esc_reverts_without_history`, `unchanged_commit_is_not_dirty`, `invalid_keeps_focus_with_reason`, `save_and_tab_switch_commit_first`, `selection_change_commits_to_old_target` | one-undo arrow/scrub session (U3-T) |
+| P3 | Ratchets + single icon registry + first move-only split + FAINT→MUTED + QW6 sizes | `shell/ratchet_tests.rs`, `kit/icons.rs`, `ui/fields.rs`, `tokens.rs` (`ICON`, `T_MICRO`) | "Panel icons look bigger and grey labels are readable, nothing moved"; ratchets at measured ceilings then lowered; move commit diff is move-only | other modules |
+| P4 | On-state + radius conformance | `icon_toggle`, `seg_btn`, radius literals, `R` comment | "Toggles show a small blue bar, segments a grey block"; tests on fills per state | — |
+| P5 | K2 fixes: canvas Tab no-op, focus rings on legacy controls | `main.rs` router, `ui/controls.rs` | "Tab on the canvas does nothing"; key-routing tests | Hide Panels |
+| P6 | U2-P measure | perf counters, fixture generator | K4 table filled with real numbers | any cache work |
+| P7 | Remaining moves (§7), one module per commit | `ui/*` | "Nothing changed"; `ui_rs_only_shrinks` lowered each time | — |
+| P8 | Arabic gate (§8) | owner chooses path A/B | §8 names + owner hand check | full RTL layout |
+| then | U1-A/B/C → U2-O/D → U3-T/K/A/B/C → U4-S/M/P → U5-A/B → U6 (v2 order) | per v2 ownership; one owner per shared file | piece tests + owner window check | Workspaces, size-model persistence, pinch zoom, cache optimisation before P6, screen reader, vendor-neutral standard |
+
+## Spec history (kept in place)
+
+| Date | Change |
+|---|---|
+| 2026-09-27 | v2: K1-K6 contracts; v1 kept in [history](../history/UI_SYSTEM_V1_THROUGH_2026-09-27.md); [disposition](../foundation/work_orders/reviews/UI_SYSTEM.v2.disposition.md). |
+| 2026-09-27 | U0-A fonts ([record](../foundation/work_orders/UI_U0_A_FONTS.md)): Plex Sans/Mono + Noto Symbols, sizes moved to tokens unchanged, Arabic diagnostic only. |
+| 2026-09-27 | U0-B/C kit ([record](../foundation/work_orders/UI_U0_BC_KIT.md)): action/icon button, Home, list row, heading, notice; CPU tests 1×/2×. |
+| 2026-09-27 | E2 ([record](../foundation/work_orders/DFS_S2_E2_START_INTEGRATION.md)): Start/Home/Recent on one open path; splash removed, GPU failure path kept. |
+| 2026-10-04 | Batch review: kit menu + Lucide kit icons merged to main (GATE_LOG 2026-10-04). v3: values, tables, ratchets, K3 commit-on-blur law, split plan, pieces. |
