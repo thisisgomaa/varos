@@ -67,8 +67,41 @@ This ADR complements both and edits neither text. ADR-0003's container stays. AD
 - Every load and save pays for validation; limits must be measured at the caps and lowered if too slow.
 - Enforcement: headless tests (new saves write 2; every refusal has a typed error; cyclic input terminates), an old-reader harness that proves pre-S5 reader logic refuses v2 before decode, the charter round-trip law over frozen v1 and v2 fixtures, and the owner's hand tests (`DFS_S5_FORMAT_V2.md` §1).
 
+## Amendment — 2026-10-04: format 3 (board metadata)
+
+**What changed.** The owner decided on 2026-10-04 that a document is a **Board** with a name, a short
+description and tags (`docs/foundation/work_orders/START_V2_BOARDS.md`, lane L2). That adds three keys
+the writer emits — `doc.name`, `doc.description`, `doc.tags` — so rule 3 (the bump rule) applies:
+`FORMAT_VERSION` 2 → **3**. Nothing else in the model changed. The decision text above is unchanged;
+this section only records the bump it governs.
+
+**Why a bump, not a defaulted field.** A v2 build would refuse an unknown key — but only because v2
+added `deny_unknown_fields`. Rule 3 bumps on any writer-side change regardless, so a v2 build refuses a
+v3 file at the version gate with its readable "needs a newer Varos" message before any decode, and can
+never open a board, drop its name and tags, and save the loss.
+
+**Migration row.**
+
+| from → to | step | what it does |
+|---|---|---|
+| 2 → 3 | `format::migrate_v2_to_v3` | runs after the v2 canonical check; `name` = `""` (meaning "use the file stem"), `description` = `""`, `tags` = `[]`; nothing else changes. v1 files run 1 → 2 → 3. The ordinary migration notice is shown; the file is untouched until Save. |
+
+**Contract additions.** Bounds — name ≤ 120 characters, description ≤ 500, ≤ 16 tags of ≤ 32, no
+control characters, tags clean and unique case-insensitively — are checked on load, on save and on
+edit (one module, `varos_core::board`). A file claiming format 1 or 2 that carries any of the three
+keys is refused (`Invalid::FieldNotInFormat`) — the unknown-field rule, made explicit because the typed
+decoder defaults these keys. Shipped with the bump: the named migration, frozen v3 fixtures
+(`fixtures/v3/`), new rejection fixtures (`refused/v4_future`, `future_v4_pdf`, `v2_board_name`,
+`board_duplicate_tag`), a frozen v2-reader gate in the old-reader harness, and the
+`docs/reference/VRS_FORMAT.md` update (§5 version table, §6b). The save-time reopen guarantee
+(`write_pdf_checked`) is unchanged: the same `validate` runs on save.
+
+**Consequence.** Builds up to `f21c20e` (format 2) refuse every file this build saves, even one whose
+board has no name, description or tags (rule 3, Consequences ¶1). No downgrade-save.
+
 ## Status
 
-Accepted — product owner (Ahmed), 2026-09-24.
+Accepted — product owner (Ahmed), 2026-09-24. Amended 2026-10-04 (format 3, board metadata — owner's
+Board decision in `START_V2_BOARDS.md`; the amendment itself awaits independent review).
 
 **Number note:** 0008 is taken by this ADR because it is filed first. The MCP study (`docs/studies/2026-09-23-MCP_CONTROL_STUDY.md`) and the Online study (`docs/studies/2026-09-23-ONLINE_AND_MAC_STUDY.md`) also propose "ADR-0008"; they take the next free numbers when their ADRs are drafted.

@@ -522,6 +522,17 @@ pub struct Guide {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
+    /// BOARD METADATA (format 3, `crate::board`): the board's name. Empty = "use the file stem"
+    /// (`board::display_name`). Older formats load with all three fields empty (`#[serde(default)]`);
+    /// the format gate refuses these keys in a file that claims format 1 or 2.
+    #[serde(default)]
+    pub name: String,
+    /// A short description (≤ 500 characters, one line).
+    #[serde(default)]
+    pub description: String,
+    /// Tags: clean, case-insensitively unique, order kept (`board::normalize_tags`).
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub paths: Vec<Path>,
     /// LEGACY registry (pre-tree files). Deserialized for compatibility, converted by
     /// `migrate_legacy()`, then stays empty. New code never writes it.
@@ -577,6 +588,9 @@ impl Default for Document {
         // a fresh document opens with one empty "Layer 1" and NO artboards — a free canvas (A8a);
         // the user creates a page with the Artboard tool when they want one.
         Document {
+            name: String::new(),
+            description: String::new(),
+            tags: vec![],
             paths: vec![],
             groups: vec![],
             group_of: HashMap::new(),
@@ -619,6 +633,7 @@ impl Document {
     ///
     /// | field              | column     | why |
     /// |--------------------|------------|-----|
+    /// | `name`, `description`, `tags` | content | the board metadata (format 3) — edited with undo, saved, shown on Start |
     /// | `paths`            | content    | geometry, fill/stroke/weight, opacity, holes, path hide/lock and path names (Layers rename) |
     /// | `groups`, `group_of` | content  | the legacy group registry (empty after `migrate_legacy`, compared for completeness) |
     /// | `nodes`            | content    | the scene tree: layer/group names, parents/children order, node hide/lock, layer colour, `clip_exempt`, live transform `xform`, clip `role` + `mask_child` |
@@ -640,6 +655,9 @@ impl Document {
     /// ever produce a false *dirty*, never a false *clean*.
     pub fn content_eq(&self, other: &Document) -> bool {
         let Document {
+            name,
+            description,
+            tags,
             paths,
             groups,
             group_of,
@@ -661,6 +679,9 @@ impl Document {
         // cheap, discriminating fields first
         paths.len() == other.paths.len()
             && nodes.len() == other.nodes.len()
+            && name == &other.name
+            && description == &other.description
+            && tags == &other.tags
             && ppi == other.units.ppi
             && roots == &other.roots
             && artboards == &other.artboards

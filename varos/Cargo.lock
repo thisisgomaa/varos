@@ -4027,6 +4027,7 @@ dependencies = [
  "i_overlay",
  "serde",
  "serde_json",
+ "unicode-normalization",
 ]
 
 [[package]]

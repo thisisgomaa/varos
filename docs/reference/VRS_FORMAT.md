@@ -7,6 +7,14 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
+## Implementation status — 2026-10-04 (format 3)
+
+The writer emits **v3** (board metadata: `doc.name`, `doc.description`, `doc.tags` — Start v2 lane
+L2, ADR-0008 amendment 2026-10-04). It reads v2 through the v2→v3 migration (§6b) and v1 through
+v1→v2→v3. Everything below about v2 strictness still holds; a v2 file is now an older format and
+opens with the migration notice. Work-branch status: implemented with headless tests; independent
+review and owner hand test pending.
+
 ## Implementation status — 2026-09-27
 
 The writer emits **v2**; it reads v1 through migration. ADR-0008 is accepted. S5-B and the v1 fixture work are merged; S5-C/D and the automated S5-E fixture/harness slice are implemented on the work branch with independent review pending; real-application acceptance remains open. The owner reports no personal documents; the scoped scan found only fixtures.
@@ -39,7 +47,7 @@ what a file means (ADR-0003, ADR-0008 §1).
 ## 2. The JSON envelope
 
 ```json
-{"varos": 1, "doc": { /* the full Document, see varos-core/src/model.rs */ }}
+{"varos": 3, "doc": { "name": "…", "description": "…", "tags": ["…"], /* the rest of the Document, see varos-core/src/model.rs */ }}
 ```
 
 | key | meaning |
@@ -89,7 +97,8 @@ S5-B now supplies the version-first gate through `format::decode_model`, includi
 | version | status | written by | notes |
 |---|---|---|---|
 | 1 | **legacy, readable through migration** | every `.vrs`-capable build since `7a5b3c8` (2026-07-02) | a *family* of eras, all stamped `1` — raw JSON, pre-artboards, legacy group registry, pre-`Paint` enum, pre-tree, and (the hole) masks/rotation added under this same number. See ADR-0008 §Context. |
-| 2 | **current writer** since S5-B | current build | same `Document` shape as 1; the reader contract tightens (§6, §9). No schema change — see ADR-0008 §"v2 is the same model with a stricter reader". |
+| 2 | **legacy, readable through migration** (since 2026-10-04) | S5-B builds up to `f21c20e` | same `Document` shape as 1; the reader contract tightens (§6, §9). No schema change — see ADR-0008 §"v2 is the same model with a stricter reader". |
+| 3 | **current writer** since 2026-10-04 | current build | v2 plus three `doc` keys: `name` (string), `description` (string), `tags` (array of strings) — board metadata, bounded (§6b). A v1/v2 file carrying any of them is refused. |
 
 ## 6. Migration v1 → v2
 
@@ -126,6 +135,46 @@ duplicate owners; Layers cannot nest in Groups; Clip only belongs to Group and r
 mask child; Normal has no mask_child and reserved soft masks are refused. Root-level paths/groups
 remain legal because the live model supports them. candidate_max has no invented upper cap (no
 current editor invariant or active consumer). Canonical-only invariants retain their existing gate.
+
+## 6b. Migration v2 → v3 (2026-10-04, board metadata)
+
+`format::migrate_v2_to_v3` — pure, deterministic, runs once on a v2 input after the v2 canonical
+check (so a v2 file keeps exactly the strictness it had when v2 was current). A v2 file has no board
+keys, so the typed decode already defaulted them; the step changes nothing else:
+
+| key | migrated value | meaning |
+|---|---|---|
+| `name` | `""` | "use the file stem" — `varos_core::board::display_name`: board name, else file stem, else `Untitled-N` |
+| `description` | `""` | no description |
+| `tags` | `[]` | no tags |
+
+A v1 file runs v1→v2 (§6) then v2→v3. The migrated file opens with the ordinary migration notice;
+no bytes change until the user saves (which writes v3).
+
+**Bounds (validated on load, on save and on edit — `varos_core::board`):** name ≤ 120 characters,
+description ≤ 500 characters, ≤ 16 tags of ≤ 32 characters each (characters = Unicode scalar
+values; Arabic and Latin share the budget); no control characters (line breaks, tabs, NUL…) in any of
+them. Stored tags are clean: edge-trimmed (whitespace and invisible direction marks), non-empty, and
+unique case-insensitively, order kept — the editor normalizes typed tags (first spelling kept) before
+storing, so a stored list that breaks this was not written by Varos and is refused. Text is stored as
+UTF-8; NFC normalization is not required.
+
+**Text rules (product behaviour, 2026-10-04 review).** Bounds count Unicode scalar values, not
+grapheme clusters (a family emoji `👨‍👩‍👧` is 5 scalars toward a tag's 32). Control characters
+(general category Cc) are refused. Format characters are allowed INSIDE text — ZWNJ/ZWJ
+(U+200C/U+200D, which Arabic and Persian need for correct joining) and the bidi marks, embeddings and
+isolates — and are trimmed only at the edges, together with whitespace. Tags compare through one fold,
+`varos_core::board::fold` (NFC, then upper-then-lower full case fold, so `Straße` = `STRASSE` and
+`σς` = `ΣΣ`; Arabic is unchanged): dedupe on edit, the duplicate check on load, and Start's tag filter,
+tag counts and search all use it. Edits go through the checked `Editor::try_set_board_*`, which returns
+the plain-English reason and changes nothing when input breaks a rule.
+
+**Older formats must not carry the board keys.** The typed decoder would default the three keys, so a
+keys-only scan (`format::refuse_newer_keys`, v1/v2 input only) runs right after the version gate and
+BEFORE any typed decode: it reads the top-level keys of `doc`, skipping every value, and refuses a file
+that claims format 1 or 2 but has `name`, `description` or `tags` — whatever the value (`42`, `null`, a
+nested object) — with `Invalid::FieldNotInFormat`, the same fail-closed rule as any unknown field. A v3 file may omit them (reader relaxation: they
+default to empty); this build's writer always emits all three.
 
 ## 7. v2 required keys and the unknown-field policy
 
@@ -183,6 +232,8 @@ Limits refuse rather than truncate. The PDF preflight also limits xref lines to 
 | PDF with no embedded model | "This PDF has no editable Varos document. Open the original .vrs file. Importing other PDFs is not available yet." |
 | a re-saved PDF using object/xref streams, incremental updates or encryption | "This file was re-saved by another app in a form Varos can't read safely yet. Open the original .vrs." (ADR-0008 R2 — not yet enforced; today's reader has no such gate.) |
 | a save that would violate its own limits or validity | "This document can't be saved: {reason}. It is still open." — the document stays dirty in memory; nothing on disk changes. |
+| board metadata over a bound / control character / unclean tag (v3) | "This document is damaged: the board name is 121 characters long; the limit is 120." (and the matching sentence per field; on save the same reason inside the save sentence) |
+| a v1/v2 file carrying a board key | "This document is damaged: it has a board name, which format 2 files cannot contain, so it may have been edited by another app." |
 
 Core typed errors now exist in `format/error.rs`. Semantic refusals are implemented on the S5-C branch; PDF profile-specific refusals are implemented on the S5-D branch; app `file_ports.rs` also translates errors to plain messages. The table describes the shared target copy, not proof that each app path emits it today.
 
@@ -273,6 +324,18 @@ via `Document::content_eq` — load → save → reload must preserve every auth
 test, `raw_and_pdf_twins_load_to_the_same_content`, checks the two containers of the same scenario
 agree.
 
+### Frozen v3 corpus (2026-10-04)
+
+`varos-core/tests/fixtures/v3/README.md` records the first v3 writer, construction and SHA256SUMS:
+`v3_board_meta` (the v2 masked/rotated board migrated, then named `شعار المقهى — Café logo` with an
+Arabic+Latin description and tags `client`, `عربي`, `logo`) and `v3_boardless` (the v2 boardless
+file migrated: what a v2 file saves as), each as raw + PDF twins. Four refusal inputs were appended
+to `fixtures/refused/` (README addendum): `v4_future`, `future_v4_pdf` (NewerVersion 4/3),
+`v2_board_name` (FieldNotInFormat) and `board_duplicate_tag` (Board DuplicateTag). Since v3 is
+current, the frozen `v3_future` / `future_pdf` now pass the gate and fail the typed decode
+(Malformed); their bytes are unchanged. The native writer byte fixtures `varos-pdf/tests/fixtures/
+native_{demo,rich}.pdf` were re-blessed once for the bump (model stream + version + offsets only).
+
 ### Frozen v2 and refusal corpus (S5-E)
 
 `varos-core/tests/fixtures/v2/README.md` records the writer baseline (`6b6f41e`), exact
@@ -297,8 +360,13 @@ outputs must receive the exact old newer-version refusal; a frozen v1 control mu
 
 ```bash
 cargo test --locked -p varos-pdf --test old_reader_harness
-# 3 passed, 0 failed; included in the default workspace suite
+# 5 passed, 0 failed; included in the default workspace suite
 ```
+
+Format 3 adds a second frozen gate, `v2_gate`: the format-2 reader's `peek_version` from
+`f21c20e:varos/crates/varos-core/src/format/mod.rs` with `FORMAT_VERSION` = 2 and its `NewerVersion`
+text inlined. Fresh and frozen v3 raw/PDF output must receive exactly "This file needs a newer Varos.
+It uses file format 3; this build supports up to 2. …"; frozen v1 and v2 headers pass it (5 tests).
 
 These tests prove the old gate logic, not execution of an old application binary. Personal
 files, real-window behavior, an actual pre-S5 build and Preview re-saving remain unverified.

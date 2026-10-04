@@ -1,6 +1,12 @@
 //! Pure Start view model: Recent rows, optional claimed Recovery rows and keyboard navigation.
 //! The host supplies file-existence probes and F2 recovery state outside paint; `start_ui` renders
 //! the model. Disabled or busy recovery actions never emit commands through keyboard activation.
+//!
+//! Start v2 (work order `START_V2_BOARDS.md`, the L2↔L4 interface): every Recent entry is also a
+//! [`BoardCard`] built from Recent's cached board summary (Home never parses a `.vrs`), with a tag
+//! list + counts ([`StartModel::tags`]) and pure filtering ([`StartFilter`]: tag, search, grid/list).
+//! The filter decides which Recent rows keyboard traversal visits; with the default (empty) filter
+//! the traversal is exactly the Start v1 contract.
 //! Tab/Shift+Tab traverse actions, arrows move within a list, Enter activates and Delete (or Mac
 //! delete, which arrives as Backspace) removes a focused Recent entry. Escape policy belongs to the
 //! host.
@@ -8,12 +14,15 @@ use std::path::{Path, PathBuf};
 
 use crate::storage::recents::Recents;
 use crate::storage::time_text;
+use varos_core::board::{fold, PresetId};
 
 /// Window/heading title shown while Start is the active view (work order §3.7/§3.9: "Window
 /// title \"Varos\" on Start."). E2's heading and host window title share this value.
 pub const START_TITLE: &str = "Varos";
 /// Exact empty-Recent copy (work order §3.7).
 pub const EMPTY_RECENT_COPY: &str = "No recent documents. Create a document or open a .vrs file.";
+/// Shown when Recent has boards but the tag filter / search hides all of them.
+pub const NO_MATCH_COPY: &str = "No boards match. Clear the search or choose All.";
 /// Tag shown next to a recent row whose file can't be found on disk (work order §3.7). No consumer
 /// yet: E2's `start_ui.rs` draws it beside a row whose [`StartRow::missing`] is true.
 pub const MISSING_TAG: &str = "Missing";
@@ -39,6 +48,105 @@ pub struct StartRow {
     pub missing: bool,
 }
 
+/// The thumbnail cache key of a board card (filled by the thumbnail lane, L3).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ThumbKey(pub String);
+
+/// One board card (Start v2): what a card or a list-table row draws, precomputed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoardCard {
+    /// Stable identity for UI ids (the path, as text).
+    pub key: String,
+    /// The display name (`varos_core::board::display_name`: board name, else the file stem).
+    pub name: String,
+    /// The board's description, `None` when it has none.
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    /// Artboards on the board (0 = a free canvas; also 0 while [`Self::cached`] is false).
+    pub artboards: u32,
+    pub path: PathBuf,
+    /// The file's modified time at its last successful open/save (unix seconds).
+    pub modified: u64,
+    /// The build-time probe says the file can't be found (the card stays; Locate / Remove).
+    pub missing: bool,
+    pub thumb: Option<ThumbKey>,
+    // ── additions beyond the frozen interface, precomputed so nothing is derived per frame ──
+    /// Parent folder, middle-elided to [`DIR_ELIDE_MAX_CHARS`] (full path in a tooltip).
+    pub folder: String,
+    /// `modified` as relative text ("3 min ago", "12 Sep").
+    pub modified_text: String,
+    /// False for an entry Recent has not cached a board summary for yet (a list kept from before
+    /// Start v2): tags/description/artboards are unknown, not empty — draw no count.
+    pub cached: bool,
+}
+
+/// Grid of cards or the numbered list table.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum StartView {
+    #[default]
+    Grid,
+    List,
+}
+
+/// One tag of the filter row with how many boards carry it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagCount {
+    pub tag: String,
+    pub count: usize,
+}
+
+/// The Start filter state: tag (`None` = All), search text, view. Pure; applied by
+/// [`StartModel::apply`] and carried across model rebuilds.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StartFilter {
+    pub tag: Option<String>,
+    pub search: String,
+    pub view: StartView,
+}
+impl StartFilter {
+    /// Does `card` pass? Every comparison goes through the ONE core fold (`varos_core::board::fold`:
+    /// NFC + full case fold, so ß/SS and σ/ς meet). Tag: folded equality with one of its tags.
+    /// Search: every whitespace-separated term must appear (folded substring) in the name, the
+    /// description, a tag or the folder path.
+    pub fn matches(&self, card: &BoardCard) -> bool {
+        if let Some(tag) = &self.tag {
+            let tag = fold(tag);
+            if !card.tags.iter().any(|t| fold(t) == tag) {
+                return false;
+            }
+        }
+        let search = fold(&self.search);
+        let terms: Vec<&str> = search.split_whitespace().collect();
+        if terms.is_empty() {
+            return true;
+        }
+        let folder = parent_dir_display(&card.path);
+        let fields: Vec<String> = [card.name.as_str(), card.description.as_deref().unwrap_or(""), folder.as_str()]
+            .into_iter()
+            .chain(card.tags.iter().map(String::as_str))
+            .map(fold)
+            .collect();
+        terms.iter().all(|term| fields.iter().any(|f| f.contains(term)))
+    }
+    /// Apply a filter action (`SetTagFilter`, `SetView`, `Search`); `true` when the state changed.
+    /// Every other action is not a filter action and returns `false`.
+    pub fn apply(&mut self, action: &StartAction) -> bool {
+        let changed = match action {
+            StartAction::SetTagFilter(tag) => self.tag != *tag,
+            StartAction::SetView(view) => self.view != *view,
+            StartAction::Search(text) => self.search != *text,
+            _ => return false,
+        };
+        match action {
+            StartAction::SetTagFilter(tag) => self.tag.clone_from(tag),
+            StartAction::SetView(view) => self.view = *view,
+            StartAction::Search(text) => self.search.clone_from(text),
+            _ => {}
+        }
+        changed
+    }
+}
+
 /// One row in the optional Recovery section (work order §3.7: name · original folder · "saved
 /// 14:32" · Recover/Discard). The real data (`rid`, folder, saved time) comes from F2's
 /// `storage::recovery::OrphanEntry` scan; this type is defined here so E1 has something concrete
@@ -61,7 +169,17 @@ pub struct RecoveryRow {
 /// `locate_validates_before_relocating`), which is outside this pure model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartAction {
+    /// Start v1's "New document"; kept so the current `start_ui.rs` compiles — the host maps it to
+    /// exactly what [`StartAction::NewBoard`] does. L4 switches to `NewBoard` and may remove it.
     New,
+    /// "New board" (⌘N): a free canvas with zero artboards.
+    NewBoard,
+    /// "…or start with an artboard": one artboard from the core preset table.
+    NewWithPreset(PresetId),
+    /// Filter actions — handled by [`StartModel::apply`], never sent to the host.
+    SetTagFilter(Option<String>),
+    SetView(StartView),
+    Search(String),
     Open,
     OpenRecent(PathBuf),
     Locate(PathBuf),
@@ -92,6 +210,12 @@ enum FocusTarget {
 /// with them; rebuild the model (from fresh `Recents`/recovery data) to change what it shows.
 pub struct StartModel {
     rows: Vec<StartRow>,
+    /// One card per row, same order (Start v2).
+    cards: Vec<BoardCard>,
+    tags: Vec<TagCount>,
+    filter: StartFilter,
+    /// Indices into `rows`/`cards` that pass `filter`, newest first.
+    visible: Vec<usize>,
     recovery: Vec<RecoveryRow>,
     /// Index into the flat focus order (New, Open, [Recover/Discard per recovery row, then one
     /// trailing Later], [one entry per recent row, then a Clear-Recent footer]). Always in
@@ -109,34 +233,113 @@ impl StartModel {
         mut missing: impl FnMut(&Path) -> bool,
         recovery: Vec<RecoveryRow>,
     ) -> Self {
-        let rows: Vec<StartRow> = recents
-            .entries()
-            .iter()
-            .map(|e| StartRow {
+        let mut rows = Vec::with_capacity(recents.entries().len());
+        let mut cards = Vec::with_capacity(recents.entries().len());
+        for e in recents.entries() {
+            let is_missing = missing(&e.path);
+            let folder = elide_middle(&parent_dir_display(&e.path), DIR_ELIDE_MAX_CHARS);
+            rows.push(StartRow {
                 path: e.path.clone(),
                 name: e.name.clone(),
-                dir_elided: elide_middle(&parent_dir_display(&e.path), DIR_ELIDE_MAX_CHARS),
+                dir_elided: folder.clone(),
                 when_text: time_text::relative(now, e.last_opened),
-                missing: missing(&e.path),
-            })
-            .collect();
+                missing: is_missing,
+            });
+            let board = e.board.as_ref();
+            cards.push(BoardCard {
+                key: e.path.to_string_lossy().into_owned(),
+                name: e.name.clone(),
+                description: board.map(|b| b.description.clone()).filter(|d| !d.is_empty()),
+                tags: board.map(|b| b.tags.clone()).unwrap_or_default(),
+                artboards: board.map_or(0, |b| b.artboards),
+                path: e.path.clone(),
+                modified: e.modified,
+                missing: is_missing,
+                thumb: e.thumb.clone().map(ThumbKey),
+                folder,
+                modified_text: time_text::relative(now, e.modified),
+                cached: board.is_some(),
+            });
+        }
+        let tags = tag_counts(&cards);
+        let mut model = Self {
+            rows,
+            cards,
+            tags,
+            filter: StartFilter::default(),
+            visible: Vec::new(),
+            recovery,
+            focus: 0,
+            focus_order: Vec::new(),
+        };
+        model.refilter();
+        model
+    }
 
+    /// Recompute the visible rows and the traversal order after a filter change, keeping focus on
+    /// the same element when it is still visible (else the nearest index).
+    fn refilter(&mut self) {
+        let current = self.focus_order.get(self.focus).copied();
+        self.visible = (0..self.cards.len()).filter(|&i| self.filter.matches(&self.cards[i])).collect();
         let mut focus_order = vec![FocusTarget::NewDocument, FocusTarget::Open];
-        for i in 0..recovery.len() {
+        for i in 0..self.recovery.len() {
             focus_order.push(FocusTarget::Recover(i));
             focus_order.push(FocusTarget::Discard(i));
         }
-        if !recovery.is_empty() {
+        if !self.recovery.is_empty() {
             focus_order.push(FocusTarget::RecoveryLater);
         }
-        for i in 0..rows.len() {
+        for &i in &self.visible {
             focus_order.push(FocusTarget::Recent(i));
         }
-        if !rows.is_empty() {
+        if !self.rows.is_empty() {
             focus_order.push(FocusTarget::ClearRecentFooter);
         }
+        self.focus = current
+            .and_then(|t| focus_order.iter().position(|o| *o == t))
+            .unwrap_or(self.focus.min(focus_order.len() - 1));
+        self.focus_order = focus_order;
+    }
 
-        Self { rows, recovery, focus: 0, focus_order }
+    /// Every board card, newest first (unfiltered; one per [`Self::rows`] entry).
+    pub fn cards(&self) -> &[BoardCard] {
+        &self.cards
+    }
+
+    /// The cards that pass the current filter, newest first.
+    pub fn visible_cards(&self) -> impl Iterator<Item = &BoardCard> + '_ {
+        self.visible.iter().map(|&i| &self.cards[i])
+    }
+
+    /// How many cards pass the current filter ("Recent boards 10").
+    pub fn visible_count(&self) -> usize {
+        self.visible.len()
+    }
+
+    /// The tag filter row: each tag (first spelling seen, newest board first) with its board count,
+    /// most-used first, then alphabetical (case-insensitive). Counts ignore the current filter.
+    pub fn tags(&self) -> &[TagCount] {
+        &self.tags
+    }
+
+    /// The current filter state.
+    pub fn filter(&self) -> &StartFilter {
+        &self.filter
+    }
+
+    /// Apply a filter action (`SetTagFilter`, `SetView`, `Search`). `true` when the state changed;
+    /// any other action returns `false` and changes nothing.
+    pub fn apply(&mut self, action: &StartAction) -> bool {
+        if !self.filter.apply(action) {
+            return false;
+        }
+        self.refilter();
+        true
+    }
+
+    /// The copy for "Recent has boards but none pass the filter", else `None`.
+    pub fn no_match_copy(&self) -> Option<&'static str> {
+        (!self.rows.is_empty() && self.visible.is_empty()).then_some(NO_MATCH_COPY)
     }
 
     /// Convenience for a build with no recovery rows (launches without recovery copies).
@@ -210,7 +413,14 @@ impl StartModel {
             return;
         };
         let wanted = match current {
-            FocusTarget::Recent(i) => i.checked_add_signed(delta).map(FocusTarget::Recent),
+            // Recent steps through the VISIBLE (filtered) boards, not raw row indices
+            FocusTarget::Recent(i) => self
+                .visible
+                .iter()
+                .position(|&v| v == i)
+                .and_then(|at| at.checked_add_signed(delta))
+                .and_then(|at| self.visible.get(at))
+                .map(|&v| FocusTarget::Recent(v)),
             FocusTarget::Recover(i) => i.checked_add_signed(delta).map(FocusTarget::Recover),
             FocusTarget::Discard(i) => i.checked_add_signed(delta).map(FocusTarget::Discard),
             FocusTarget::NewDocument
@@ -228,6 +438,10 @@ impl StartModel {
     /// id, or the fixed control). When that element is gone (e.g. its Recent row was removed), focus
     /// lands on the item now in its place in the same list (clamped), else on the nearest index.
     pub fn carry_focus_from(&mut self, old: &StartModel) {
+        if self.filter != old.filter {
+            self.filter = old.filter.clone(); // a rebuild keeps the user's tag / search / view
+            self.refilter();
+        }
         let Some(target) = old.focus_order.get(old.focus).copied() else {
             return;
         };
@@ -322,6 +536,23 @@ impl StartRefresh {
     }
 }
 
+/// Tag counts over every card: grouped by the core fold (first spelling seen wins, cards newest
+/// first), most-used first, ties by folded spelling.
+fn tag_counts(cards: &[BoardCard]) -> Vec<TagCount> {
+    let mut out: Vec<(String, TagCount)> = Vec::new();
+    for card in cards {
+        for tag in &card.tags {
+            let folded = fold(tag);
+            match out.iter_mut().find(|(f, _)| *f == folded) {
+                Some((_, t)) => t.count += 1,
+                None => out.push((folded, TagCount { tag: tag.clone(), count: 1 })),
+            }
+        }
+    }
+    out.sort_by(|(fa, a), (fb, b)| b.count.cmp(&a.count).then_with(|| fa.cmp(fb)));
+    out.into_iter().map(|(_, t)| t).collect()
+}
+
 fn parent_dir_display(path: &Path) -> String {
     path.parent().map(|p| p.to_string_lossy().into_owned()).filter(|s| !s.is_empty()).unwrap_or_default()
 }
@@ -386,9 +617,9 @@ mod tests {
         let model = StartModel::without_recovery(&recents, 300, |p| p.ends_with("missing.vrs"));
 
         assert_eq!(model.rows().len(), 2, "the missing row stays in the list");
-        let missing_row = model.rows().iter().find(|r| r.name == "missing.vrs").unwrap();
+        let missing_row = model.rows().iter().find(|r| r.name == "missing").unwrap();
         assert!(missing_row.missing);
-        let present_row = model.rows().iter().find(|r| r.name == "present.vrs").unwrap();
+        let present_row = model.rows().iter().find(|r| r.name == "present").unwrap();
         assert!(!present_row.missing);
     }
 
@@ -628,6 +859,157 @@ mod tests {
         let mut empty = StartModel::without_recovery(&Recents::default(), 300, |_| false);
         empty.carry_focus_from(&old);
         assert_eq!(empty.activate(), Some(StartAction::Open));
+    }
+
+    use crate::storage::recents::BoardSummary;
+
+    /// Four boards, newest first: c (client, logo), b (personal), a (Client, عربي), d (not cached).
+    fn boards() -> Recents {
+        let mut r = Recents::default();
+        let summary = |name: &str, description: &str, tags: &[&str], artboards: u32| BoardSummary {
+            name: name.into(),
+            description: description.into(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            artboards,
+        };
+        r.record(Path::new("/old/d.vrs"), None, 50); // upgraded from store v1: no summary cached
+        r.record_board(
+            Path::new("/work/client/a.vrs"),
+            None,
+            100,
+            summary("شعار المقهى", "", &["Client", "عربي"], 2),
+            90,
+        );
+        r.record_board(Path::new("/home/b.vrs"), None, 200, summary("", "Birthday card", &["personal"], 0), 190);
+        r.record_board(
+            Path::new("/work/client/c.vrs"),
+            None,
+            300,
+            summary("Cafe Logo", "Round two", &["client", "logo"], 1),
+            290,
+        );
+        r
+    }
+    fn names(model: &StartModel) -> Vec<&str> {
+        model.visible_cards().map(|c| c.name.as_str()).collect()
+    }
+
+    #[test]
+    fn board_cards_come_from_the_recent_cache() {
+        let model = StartModel::without_recovery(&boards(), 400, |p| p.ends_with("d.vrs"));
+        let c = &model.cards()[0];
+        assert_eq!(c.name, "Cafe Logo");
+        assert_eq!(c.description.as_deref(), Some("Round two"));
+        assert_eq!(c.tags, ["client", "logo"]);
+        assert_eq!((c.artboards, c.modified, c.cached, c.missing), (1, 290, true, false));
+        assert_eq!(c.key, "/work/client/c.vrs");
+        assert_eq!(c.folder, "/work/client");
+        assert_eq!(c.modified_text, time_text::relative(400, 290));
+        let b = &model.cards()[1];
+        assert_eq!((b.name.as_str(), b.artboards), ("b", 0), "no board name → file stem; 0 = a free canvas");
+        let d = &model.cards()[3];
+        assert_eq!((d.name.as_str(), d.cached, d.missing, d.description.clone()), ("d", false, true, None));
+        assert_eq!(model.cards().len(), model.rows().len(), "one card per Recent row");
+        assert_eq!(model.visible_count(), 4);
+    }
+
+    #[test]
+    fn tag_counts_group_case_insensitively_most_used_first() {
+        let model = StartModel::without_recovery(&boards(), 400, |_| false);
+        let tags: Vec<(&str, usize)> = model.tags().iter().map(|t| (t.tag.as_str(), t.count)).collect();
+        assert_eq!(tags, [("client", 2), ("logo", 1), ("personal", 1), ("عربي", 1)], "newest spelling first seen wins");
+    }
+
+    #[test]
+    fn tag_filter_and_search_are_pure_and_case_insensitive() {
+        let mut model = StartModel::without_recovery(&boards(), 400, |_| false);
+        assert!(model.apply(&StartAction::SetTagFilter(Some("CLIENT".into()))));
+        assert_eq!(names(&model), ["Cafe Logo", "شعار المقهى"]);
+        assert!(!model.apply(&StartAction::SetTagFilter(Some("CLIENT".into()))), "unchanged → false");
+        assert!(model.apply(&StartAction::Search("logo".into())));
+        assert_eq!(names(&model), ["Cafe Logo"], "tag AND search");
+        model.apply(&StartAction::SetTagFilter(None));
+        for (search, want) in [
+            ("", vec!["Cafe Logo", "b", "شعار المقهى", "d"]),
+            ("ROUND", vec!["Cafe Logo"]),                      // description
+            ("birthday", vec!["b"]),                           // description
+            ("عربي", vec!["شعار المقهى"]),                     // tag
+            ("المقهى", vec!["شعار المقهى"]),                   // Arabic name
+            ("/old", vec!["d"]),                               // folder
+            ("work client", vec!["Cafe Logo", "شعار المقهى"]), // every term, any field
+            ("work personal", vec![]),
+            ("   ", vec!["Cafe Logo", "b", "شعار المقهى", "d"]),
+        ] {
+            model.apply(&StartAction::Search(search.into()));
+            assert_eq!(names(&model), want, "search {search:?}");
+        }
+        assert_eq!(model.no_match_copy(), None);
+        model.apply(&StartAction::Search("nothing like it".into()));
+        assert_eq!(model.no_match_copy(), Some(NO_MATCH_COPY));
+        assert_eq!(model.visible_count(), 0);
+        // view toggle is state only
+        assert!(model.apply(&StartAction::SetView(StartView::List)));
+        assert_eq!(model.filter().view, StartView::List);
+        // non-filter actions are not applied
+        assert!(!model.apply(&StartAction::NewBoard));
+        assert!(!model.apply(&StartAction::OpenRecent("/x".into())));
+    }
+
+    #[test]
+    fn keyboard_traversal_visits_only_visible_boards_and_filters_survive_rebuilds() {
+        let mut model = StartModel::without_recovery(&boards(), 400, |_| false);
+        // Order unfiltered: New, Open, c, b, a, d, Clear — the v1 contract
+        assert_eq!(model.focus_count(), 7);
+        assert!(model.set_focus(4)); // a
+        model.apply(&StartAction::SetTagFilter(Some("client".into())));
+        // Order: New, Open, c, a, Clear — focus stays on a
+        assert_eq!(model.focus_count(), 5);
+        assert_eq!(model.activate(), Some(StartAction::OpenRecent("/work/client/a.vrs".into())));
+        model.arrow_up();
+        assert_eq!(model.activate(), Some(StartAction::OpenRecent("/work/client/c.vrs".into())));
+        model.arrow_up();
+        assert_eq!(model.activate(), Some(StartAction::OpenRecent("/work/client/c.vrs".into())), "list end");
+        // filtering away the focused board moves focus to the nearest index, never out of range
+        model.apply(&StartAction::SetTagFilter(Some("personal".into())));
+        assert!(model.focus() < model.focus_count());
+        assert!(model.activate().is_some());
+        // a rebuilt model (Recent changed) keeps the filter and the focused board
+        let mut rebuilt = StartModel::without_recovery(&boards(), 500, |_| true);
+        rebuilt.carry_focus_from(&model);
+        assert_eq!(rebuilt.filter(), model.filter());
+        assert_eq!(names(&rebuilt), ["b"]);
+        assert_eq!(rebuilt.activate(), model.activate());
+    }
+
+    #[test]
+    fn filter_counts_and_search_use_the_one_core_fold() {
+        let mut r = Recents::default();
+        let board = |tags: &[&str]| BoardSummary {
+            name: "Café".into(),
+            description: String::new(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            artboards: 0,
+        };
+        r.record_board(Path::new("/d/a.vrs"), None, 1, board(&["Straße", "σς"]), 1);
+        r.record_board(Path::new("/d/b.vrs"), None, 2, board(&["STRASSE", "ΣΣ", "عربي"]), 2);
+        let mut model = StartModel::without_recovery(&r, 3, |_| false);
+        let counts: Vec<(&str, usize)> = model.tags().iter().map(|t| (t.tag.as_str(), t.count)).collect();
+        assert_eq!(counts, [("STRASSE", 2), ("ΣΣ", 2), ("عربي", 1)], "ß/SS and σς/ΣΣ count as one tag");
+        model.apply(&StartAction::SetTagFilter(Some("straße".into())));
+        assert_eq!(model.visible_count(), 2);
+        model.apply(&StartAction::SetTagFilter(None));
+        model.apply(&StartAction::Search("CAFE\u{301}".into())); // NFD + upper case finds "Café"
+        assert_eq!(model.visible_count(), 2);
+    }
+
+    #[test]
+    fn new_board_actions_and_filter_actions_are_distinct() {
+        use varos_core::board::PresetId;
+        let mut filter = StartFilter::default();
+        assert!(!filter.apply(&StartAction::NewWithPreset(PresetId::A4)));
+        assert!(!filter.apply(&StartAction::New));
+        assert!(filter.apply(&StartAction::Search("x".into())));
+        assert_eq!(filter, StartFilter { tag: None, search: "x".into(), view: StartView::Grid });
     }
 
     #[test]
