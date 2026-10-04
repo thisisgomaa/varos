@@ -44,6 +44,22 @@ impl FileKey {
     }
 }
 
+/// Origin of a pathless recovery copy; cleared when an explicit Save adopts a destination.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoveredSource {
+    pub name: String,
+    pub original_path: Option<PathBuf>,
+    pub saved_at: u64,
+    pub fell_back: bool,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecoveredDocument {
+    pub doc: Document,
+    pub source: RecoveredSource,
+    pub rid: String,
+    pub generation: varos_app::storage::recovery::Generation,
+}
+
 /// One open document (one tab).
 pub struct DocumentSession {
     pub id: SessionId,
@@ -58,6 +74,13 @@ pub struct DocumentSession {
     /// A fit the host still owes this tab (the `View::fit` pad factor), applied once the Board box
     /// size is known; the host takes it (`= None`) when applied.
     pub fit_pending: Option<f32>,
+    pub source_fingerprint: Option<varos_app::storage::durable::Fingerprint>,
+    pub save_unconfirmed: bool,
+    /// Opening changed the content in memory (A4: broken v1 clipping masks were released). The tab
+    /// is dirty from the start — dot, asterisk, Close/Quit prompt — until a Save writes the repair.
+    pub repaired_on_open: bool,
+    pub recovered: Option<RecoveredSource>,
+    pub recovery: varos_app::storage::scheduler::SessionRecovery,
     /// The saved-content checkpoint (a clone taken at New, open and save).
     saved: Document,
     /// `is_dirty` memo: `(editor.rev, content differs)`, only ever written while no transaction is open.
@@ -78,6 +101,11 @@ impl DocumentSession {
             fit_pending: Some(0.45),
             saved,
             memo: Cell::new(None),
+            source_fingerprint: None,
+            save_unconfirmed: false,
+            repaired_on_open: false,
+            recovered: None,
+            recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
         }
     }
     fn loaded(id: SessionId, doc: Document, path: PathBuf, key: FileKey) -> Self {
@@ -94,6 +122,11 @@ impl DocumentSession {
             fit_pending: Some(0.9),
             saved,
             memo: Cell::new(None),
+            source_fingerprint: None,
+            save_unconfirmed: false,
+            repaired_on_open: false,
+            recovered: None,
+            recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
         }
     }
 
@@ -101,6 +134,9 @@ impl DocumentSession {
     pub fn display_name(&self) -> String {
         if let Some(name) = self.path.as_ref().and_then(|p| p.file_name()) {
             return name.to_string_lossy().into_owned();
+        }
+        if let Some(source) = &self.recovered {
+            return format!("{} (Recovered)", source.name);
         }
         match self.untitled {
             Some(n) => format!("Untitled-{n}"),
@@ -115,6 +151,9 @@ impl DocumentSession {
     /// would be missed by the memo only until the next `rev` change, which is why
     /// every Save / Close / Quit decision uses `is_dirty_exact` instead. `mark_saved` resets the memo.
     pub fn is_dirty(&self) -> bool {
+        if self.save_unconfirmed || self.repaired_on_open || self.recovered.is_some() {
+            return true;
+        }
         let ed = &self.editor;
         if ed.transaction_open() && ed.dirty {
             return true; // a changed gesture still in flight
@@ -130,7 +169,11 @@ impl DocumentSession {
     /// Unsaved changes, compared fresh (ignores the memo). Every Save / Close / Quit decision uses this.
     pub fn is_dirty_exact(&self) -> bool {
         let ed = &self.editor;
-        self.content_dirty() || (ed.transaction_open() && ed.dirty)
+        self.save_unconfirmed
+            || self.repaired_on_open
+            || self.recovered.is_some()
+            || self.content_dirty()
+            || (ed.transaction_open() && ed.dirty)
     }
 
     /// Nothing to lose and nowhere saved: an Open may replace this tab instead of adding one.
@@ -141,6 +184,9 @@ impl DocumentSession {
     /// A save to `path` succeeded: the tab takes that path/name, the checkpoint becomes the current
     /// content (clean), and it stops being `Untitled-n`.
     pub fn mark_saved(&mut self, path: PathBuf, key: FileKey) {
+        self.save_unconfirmed = false;
+        self.repaired_on_open = false;
+        self.recovered = None;
         self.path = Some(path);
         self.key = Some(key);
         self.untitled = None;
@@ -210,14 +256,16 @@ fn pair_mut(v: &mut [DocumentSession], a: usize, b: usize) -> (&mut DocumentSess
 
 /// All open documents in tab order, plus which one is active.
 ///
-/// The active document is an `Option` in the API (S2's Start page will allow an empty workspace), but
-/// in S1 the workspace is NEVER empty: `new` starts with `Untitled-1` and closing the last tab leaves
-/// a fresh `Untitled-N`. So in S1 `active_id()` / `active()` / `active_mut()` are always `Some`.
+/// The workspace stays internally nonempty. E2's Home is a view over the sessions;
+/// a private pristine placeholder is hidden from `visible_tabs` after launch/last close.
+/// Input routing uses `document_target`, not the retained active editor while Home is showing.
 pub struct Workspace {
     sessions: Vec<DocumentSession>,
     active: Option<SessionId>,
     next_id: u64,
     next_untitled: u32,
+    home: bool,
+    placeholder: bool,
 }
 
 impl Default for Workspace {
@@ -230,9 +278,41 @@ impl Workspace {
     /// Exactly one pristine `Untitled-1` (boardless, clean), with an initial fit pending (0.45).
     pub fn new() -> Self {
         let first = DocumentSession::untitled(SessionId(1), 1);
-        Workspace { sessions: vec![first], active: Some(SessionId(1)), next_id: 2, next_untitled: 2 }
+        Workspace {
+            sessions: vec![first],
+            active: Some(SessionId(1)),
+            next_id: 2,
+            next_untitled: 2,
+            home: false,
+            placeholder: false,
+        }
     }
 
+    /// Start retains a private pristine session to preserve the never-empty host invariant.
+    pub fn start_page() -> Self {
+        Self { home: true, placeholder: true, ..Self::new() }
+    }
+    pub fn on_home(&self) -> bool {
+        self.home
+    }
+    pub fn show_home(&mut self) {
+        self.home = true;
+    }
+    /// Only an exposed canvas can receive document shortcuts/menu actions.
+    pub fn document_target(&self) -> Option<SessionId> {
+        if self.home {
+            None
+        } else {
+            self.active
+        }
+    }
+    pub fn visible_tabs(&self) -> Vec<TabView> {
+        if self.placeholder {
+            vec![]
+        } else {
+            self.tabs()
+        }
+    }
     /// The active tab's id (always `Some` in S1).
     pub fn active_id(&self) -> Option<SessionId> {
         self.active
@@ -252,6 +332,9 @@ impl Workspace {
         self.sessions.iter_mut().find(|s| s.id == id)
     }
     /// The sessions in tab order.
+    pub fn sessions_mut(&mut self) -> &mut [DocumentSession] {
+        &mut self.sessions
+    }
     pub fn sessions(&self) -> &[DocumentSession] {
         &self.sessions
     }
@@ -281,11 +364,18 @@ impl Workspace {
         let id = incoming.id;
         self.sessions[i] = incoming;
         self.active = Some(id);
+        self.home = false;
+        self.placeholder = false;
         id
     }
 
     /// A new clean, boardless `Untitled-N` tab, appended and activated. Numbers are never reused.
     pub fn new_untitled(&mut self) -> SessionId {
+        if self.placeholder {
+            self.placeholder = false;
+            self.home = false;
+            return self.active.expect("placeholder has a session");
+        }
         let s = self.alloc_untitled();
         let id = s.id;
         self.sessions.push(s);
@@ -311,6 +401,25 @@ impl Workspace {
         }
     }
 
+    /// Install a claimed recovery copy without associating it with the original file.
+    pub fn add_recovered(&mut self, copy: RecoveredDocument) -> SessionId {
+        let id = self.alloc_id();
+        let mut s = DocumentSession::untitled(id, 0);
+        s.untitled = None;
+        s.editor.replace_doc(copy.doc);
+        s.recovery = varos_app::storage::scheduler::SessionRecovery::adopted(copy.rid, copy.generation, s.editor.rev);
+        s.recovered = Some(copy.source);
+        s.fit_pending = Some(0.9);
+        match self.active_index() {
+            Some(i) if self.sessions[i].is_pristine() => self.replace_at(i, s),
+            _ => {
+                self.sessions.push(s);
+                self.activate(id);
+                id
+            }
+        }
+    }
+
     /// The open tab holding this file, if any (`FileKey::same_file`).
     // Frozen S1-A API with no caller in the S1 binary yet (the lifecycle re-keys every tab fresh,
     // `lifecycle::open_tab_of`); its tests use it, and S2/S3 are its planned callers.
@@ -326,6 +435,10 @@ impl Workspace {
         let Some(to) = self.index_of(id) else {
             return false;
         };
+        if self.placeholder {
+            return false;
+        }
+        self.home = false;
         if self.active == Some(id) {
             return true;
         }
@@ -351,6 +464,9 @@ impl Workspace {
         };
         let to = (cur as isize + step).rem_euclid(n as isize) as usize;
         if to == cur {
+            if self.home && !self.placeholder {
+                return self.activate(self.sessions[cur].id);
+            }
             return false;
         }
         self.activate(self.sessions[to].id)
@@ -380,18 +496,22 @@ impl Workspace {
     /// Close tab `id` (the caller has already resolved unsaved changes). Closing the active tab
     /// activates its right neighbour, else its left one, handing the clipboard (and tool, recent
     /// colours) over first. S1: closing the LAST tab leaves a fresh pristine `Untitled-N`, or, when
-    /// that last tab already was pristine, does nothing (S2's Start page will change this to an empty
-    /// workspace). Returns `true` when a tab was removed or replaced.
+    /// that last tab already was pristine, retains it as a private placeholder. Both show Start and
+    /// hide the placeholder. Returns `true` when a session was removed or replaced.
     pub fn remove(&mut self, id: SessionId) -> bool {
         let Some(i) = self.index_of(id) else {
             return false;
         };
         if self.sessions.len() == 1 {
             if self.sessions[0].is_pristine() {
+                self.home = true;
+                self.placeholder = true;
                 return false;
             }
             let fresh = self.alloc_untitled();
             self.replace_at(0, fresh);
+            self.home = true;
+            self.placeholder = true;
             return true;
         }
         if self.active == Some(id) {

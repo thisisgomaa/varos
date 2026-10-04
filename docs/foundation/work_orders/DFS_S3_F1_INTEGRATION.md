@@ -1,0 +1,19 @@
+> **Status:** implemented on `codex/ui-system-plan`; independent review and merge pending.
+# DFS S3-F1 — Durable Save and recovery writing
+
+2026-09-27, baseline `2fd8a23`. Implements [F1](DFS_S2_S3_START_RECENTS_RECOVERY.md) in the existing native app; no new framework or background thread beyond the existing generic I/O worker.
+
+The real Save adapter serializes PDF and uses the tested durable replacement port. Only confirmed durability advances the checkpoint. Unconfirmed replacement adopts the written path/fingerprint, retains dirty/recovery protection and reports the uncertainty. External file changes require Save As or explicit replacement confirmation. Recovery writes cloned, settled document data to app storage on the existing 30-second scheduler; it never writes the document path. Close retirement follows a committed close/quit, never a canceled quit. Settings and status stay app-owned; the Document section owns the controls, with a status-bar mirror. F2 remains responsible for offering recovery copies on launch.
+
+Tests use fake dialogs/clock/filesystem and real worker jobs with isolated temporary directories; no Renderer or EventLoop in automated tests. Review/owner acceptance remain batched at the owner's request. Mac runtime evidence and Windows compile-only checks are recorded separately.
+
+## Implementation and evidence
+
+- `RecoveryHost` owns one I/O worker, scheduler and store; all session probes are observed together. Deadline wakes share the event loop with delayed UI repaint. Owned document clones and metadata cross the worker boundary; serialization and durable recovery writes run there.
+- Save returns `Durable` or `ReplacedUnconfirmed`; pre-replacement errors leave old bytes intact. External-change checks also recognize aliases. Only durable Save advances the checkpoint/Recent. Exact stale sibling temps are cleaned after durable success, with a 24-hour grace period; ambiguous truncated/near-limit names and symlinks are skipped.
+- The Document section owns the app-wide switch, copy details and Retry/Save actions; the status bar mirrors the active session. Disabling stops new jobs and keeps existing copies. Closed sessions and committed quit retire through FIFO after any in-flight snapshot; canceled quit does not retire dirty sessions.
+- Eight new automated tests cover writer faults/cleanup, external-change routing, unconfirmed close protection, real worker integration with a fake clock, save/edit retirement, off/cancel/discard/quit, gesture waiting/retry and closing during a snapshot. Existing lifecycle/scheduler tests remain the supporting gate.
+- Workspace: **781 passed, 0 failed, 5 intentionally ignored**. Mac/Windows all-target clippy, formatting, architecture gate and its seven tests pass. No test constructs a Renderer or EventLoop.
+- Release CPU/disk probe `cargo run -p varos-app --example recovery_perf --release`: scene B ×10 (5,000 rectangles), 100 clones, median **0.097 ms**, p95 **0.118 ms**. One synchronous PDF encode + durable save of 20,000 rectangles / **12,633,959 bytes** took **2,375.781 ms** on this Mac. This exceeds the planned 100 ms threshold; asynchronous manual Save is now an explicit S6 follow-up. This timing excludes dialogs and the saved-checkpoint clone; it is a spot measurement, not a cross-machine guarantee.
+- Native candidate launched in the isolated test bundle and accepted New (title changed). Its surface again captured only background; this is not visual acceptance of the controls or end-to-end recovery. Recent refinement, F1 native acceptance and the session-end independent review remain pending. The installed application was not changed.
+- F2 remains next: scan orphan copies and offer Recover/Discard/Later. F1 writing alone must not be presented as a completed crash-recovery user flow.

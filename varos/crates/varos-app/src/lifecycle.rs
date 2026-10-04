@@ -30,9 +30,33 @@ pub enum SaveFailChoice {
 
 /// Every question the lifecycle asks the user. Blocking; the host implements it with native
 /// dialogs, tests with a scripted queue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SaveOutcome {
+    Durable,
+    ReplacedUnconfirmed(String),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExternalChoice {
+    SaveAs,
+    Replace,
+    Cancel,
+}
+
 pub trait Dialogs {
+    fn confirm_discard_recovery(&mut self, _name: &str) -> bool {
+        false
+    }
+    fn external_change(&mut self, _name: &str) -> ExternalChoice {
+        ExternalChoice::Cancel
+    }
     /// The Open dialog (multi-select). Empty = cancelled.
     fn pick_open(&mut self) -> Vec<PathBuf>;
+    fn pick_locate(&mut self) -> Option<PathBuf> {
+        self.pick_open().into_iter().next()
+    }
+    fn locate_missing(&mut self, _path: &Path) -> bool {
+        false
+    }
     /// The Save dialog, pre-filled with `suggested` in `dir`. `None` = cancelled.
     fn pick_save(&mut self, suggested: &str, dir: Option<&Path>) -> Option<PathBuf>;
     /// “Save changes to “name”?” — `progress` = `Some((i, n))` during Quit (“Document i of n”).
@@ -51,11 +75,22 @@ pub trait Dialogs {
 /// Every file operation the lifecycle performs.
 pub trait DocStore {
     fn load(&mut self, path: &Path) -> Result<Document, String>;
-    fn save(&mut self, doc: &Document, path: &Path) -> Result<(), String>;
+    /// Additive notice seam; existing stores need not produce migration notices.
+    fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
+        self.load(path).map(|doc| (doc, None))
+    }
+    fn save(&mut self, doc: &Document, path: &Path) -> Result<SaveOutcome, String>;
     /// The file's identity: absolute + canonical path (the parent canonicalised for a file that does
     /// not exist yet), plus device/inode on unix.
     fn key(&self, path: &Path) -> FileKey;
     fn exists(&self, path: &Path) -> bool;
+    fn fingerprint(&self, _path: &Path) -> Option<varos_app::storage::durable::Fingerprint> {
+        None
+    }
+    /// Only successful lifecycle outcomes reach Recent. Default preserves small fake stores.
+    fn remember(&mut self, _path: &Path, _relocated_from: Option<&Path>) {}
+    fn remove_recent(&mut self, _path: &Path) {}
+    fn clear_recent(&mut self) {}
 }
 
 /// What the host must do after a command.
@@ -81,6 +116,25 @@ impl Lifecycle<'_> {
     /// Run one command. `AppCommand::Window(_)` is ignored here (host-owned).
     pub fn run(&mut self, cmd: AppCommand) -> Effect {
         match cmd {
+            AppCommand::SetRecoveryEnabled(_)
+            | AppCommand::RetryRecovery(_)
+            | AppCommand::Recover(_)
+            | AppCommand::DiscardRecovery(_)
+            | AppCommand::DeferRecovery => {} // host-owned
+            AppCommand::InstallRecovered(copy) => {
+                self.ws.add_recovered(*copy);
+            }
+            AppCommand::Home | AppCommand::ReviewRecovery => self.ws.show_home(),
+            AppCommand::OpenRecent(path) => {
+                if self.store.exists(&path) {
+                    self.open_one(path, None);
+                } else if self.dialogs.locate_missing(&path) {
+                    self.locate(path);
+                }
+            }
+            AppCommand::LocateRecent(path) => self.locate(path),
+            AppCommand::RemoveRecent(path) => self.store.remove_recent(&path),
+            AppCommand::ClearRecent => self.store.clear_recent(),
             AppCommand::NewDocument => {
                 self.ws.new_untitled();
             }
@@ -120,20 +174,36 @@ impl Lifecycle<'_> {
     /// active `Untitled`); failure → “Couldn't open …”, and no tab, path, selection or history changes.
     fn open_paths(&mut self, paths: Vec<PathBuf>) {
         for path in paths {
-            let key = self.store.key(&path);
-            if let Some(id) = self.open_tab_of(&key, None) {
-                self.ws.activate(id);
-                continue;
-            }
-            match self.store.load(&path) {
-                // The tab takes the store's normalised path (absolute, symlinks resolved), so a later
-                // Save replaces the real file, never a symlink standing in for it.
-                Ok(doc) => {
-                    let at = key.path.clone();
-                    self.ws.add_loaded(doc, at, key);
+            self.open_one(path, None);
+        }
+    }
+    fn locate(&mut self, old: PathBuf) {
+        if let Some(path) = self.dialogs.pick_locate() {
+            self.open_one(path, Some(&old));
+        }
+    }
+    fn open_one(&mut self, path: PathBuf, old: Option<&Path>) {
+        let key = self.store.key(&path);
+        if let Some(id) = self.open_tab_of(&key, None) {
+            self.ws.activate(id);
+            self.store.remember(&key.path, old);
+            return;
+        }
+        match self.store.load_with_notice(&path) {
+            Ok((doc, notice)) => {
+                let at = key.path.clone();
+                let id = self.ws.add_loaded(doc, at.clone(), key);
+                if let Some(s) = self.ws.get_mut(id) {
+                    s.source_fingerprint = self.store.fingerprint(&at);
+                    // A4: the released-mask repair changed the content → the tab opens dirty.
+                    s.repaired_on_open = notice == Some(varos_core::format::RELEASED_MASKS_NOTICE);
                 }
-                Err(reason) => self.dialogs.open_failed(&file_name(&path), &reason),
+                self.store.remember(&at, old);
+                if let Some(message) = notice {
+                    self.dialogs.notice(&format!("Opened “{}”", file_name(&path)), message);
+                }
             }
+            Err(reason) => self.dialogs.open_failed(&file_name(&path), &reason),
         }
     }
 
@@ -170,8 +240,25 @@ impl Lifecycle<'_> {
                     None => return false, // Save As cancelled
                 },
             };
+            let changed = self.ws.get(id).is_some_and(|s| {
+                (s.path.as_deref() == Some(dest.as_path())
+                    || s.key.as_ref().is_some_and(|key| key.same_file(&self.store.key(&dest))))
+                    && s.source_fingerprint != self.store.fingerprint(&dest)
+            });
+            if changed {
+                match self.dialogs.external_change(&self.name_of(id)) {
+                    ExternalChoice::Cancel => return false,
+                    ExternalChoice::SaveAs => continue,
+                    // The external-change prompt's "Replace Anyway" is the one confirmation.
+                    ExternalChoice::Replace => {}
+                }
+            }
             match self.write(id, &dest) {
-                Ok(()) => return true,
+                Ok(SaveOutcome::Durable) => return true,
+                Ok(SaveOutcome::ReplacedUnconfirmed(reason)) => {
+                    self.dialogs.notice("Save needs confirmation", &format!("Saved, but Varos couldn't confirm the disk finished writing. Your document stays open with unsaved changes. Existing recovery copies are kept.\n{reason}"));
+                    return false;
+                }
                 Err(reason) => {
                     let name = self.name_of(id);
                     match self.dialogs.save_failed(&name, &reason) {
@@ -190,8 +277,17 @@ impl Lifecycle<'_> {
     /// refused (two writers for one file). A refusal returns to the dialog; `None` = cancelled.
     fn choose_save_path(&mut self, id: SessionId) -> Option<PathBuf> {
         let s = self.ws.get(id)?;
-        let suggested = format!("{}.vrs", stem_of(s.path.as_deref(), &s.display_name()));
-        let dir = s.path.as_deref().and_then(Path::parent).map(Path::to_path_buf);
+        let (suggested, dir) = if let Some(source) = &s.recovered {
+            (
+                format!("{}-recovered.vrs", stem_of(Some(Path::new(&source.name)), &source.name)),
+                source.original_path.as_deref().and_then(Path::parent).map(Path::to_path_buf),
+            )
+        } else {
+            (
+                format!("{}.vrs", stem_of(s.path.as_deref(), &s.display_name())),
+                s.path.as_deref().and_then(Path::parent).map(Path::to_path_buf),
+            )
+        };
         loop {
             let picked = self.dialogs.pick_save(&suggested, dir.as_deref())?;
             let (dest, appended) = if is_vrs(&picked) { (picked, false) } else { (with_vrs(picked), true) };
@@ -218,14 +314,26 @@ impl Lifecycle<'_> {
     /// Write tab `id` to `dest`. Only after the store succeeded does the tab take the path, the name
     /// and the new checkpoint, with a key recomputed AFTER the write (an atomic save replaces the
     /// file's inode).
-    fn write(&mut self, id: SessionId, dest: &Path) -> Result<(), String> {
+    fn write(&mut self, id: SessionId, dest: &Path) -> Result<SaveOutcome, String> {
         let s = self.ws.get(id).ok_or_else(|| "The document is no longer open.".to_string())?;
-        self.store.save(&s.editor.doc, dest)?;
+        let outcome = self.store.save(&s.editor.doc, dest)?;
         let key = self.store.key(dest);
         if let Some(s) = self.ws.get_mut(id) {
-            s.mark_saved(dest.to_path_buf(), key);
+            if outcome == SaveOutcome::Durable {
+                s.mark_saved(dest.to_path_buf(), key);
+            } else {
+                s.path = Some(dest.to_path_buf());
+                s.key = Some(key);
+                s.untitled = None;
+                s.save_unconfirmed = true;
+                s.recovered = None; // explicit write adopted this path; uncertainty still forces dirty
+            }
+            s.source_fingerprint = self.store.fingerprint(dest);
         }
-        Ok(())
+        if outcome == SaveOutcome::Durable {
+            self.store.remember(dest, None);
+        }
+        Ok(outcome)
     }
 
     /// Close tab `id`. Clean → closed at once. Dirty → ask about THAT tab by name without activating
@@ -322,6 +430,8 @@ mod tests {
         Decide(SaveDecision),
         Fail(SaveFailChoice),
         Replace(bool),
+        Locate(bool),
+        External(ExternalChoice),
     }
 
     #[derive(Default)]
@@ -338,6 +448,18 @@ mod tests {
         }
     }
     impl Dialogs for FakeDialogs {
+        fn external_change(&mut self, name: &str) -> ExternalChoice {
+            match self.next(format!("external {name}")) {
+                Ans::External(choice) => choice,
+                a => panic!("unexpected {a:?}"),
+            }
+        }
+        fn locate_missing(&mut self, _: &Path) -> bool {
+            match self.next("missing".into()) {
+                Ans::Locate(answer) => answer,
+                a => panic!("unexpected {a:?}"),
+            }
+        }
         fn pick_open(&mut self) -> Vec<PathBuf> {
             match self.next("open".into()) {
                 Ans::Open(v) => v,
@@ -389,12 +511,16 @@ mod tests {
         files: HashMap<PathBuf, Document>,
         inodes: HashMap<PathBuf, u64>,
         next_ino: u64,
+        fingerprints: HashMap<PathBuf, varos_app::storage::durable::Fingerprint>,
+        unconfirmed: bool,
         aliases: HashMap<PathBuf, PathBuf>,
         fail_load: HashSet<PathBuf>,
         /// Save failures still to come per path (`u32::MAX` = always).
         fail_save: HashMap<PathBuf, u32>,
         loads: Vec<PathBuf>,
         saves: Vec<PathBuf>,
+        notices: HashMap<PathBuf, &'static str>,
+        recent: varos_app::storage::recents::Recents,
     }
     impl FakeStore {
         fn target(&self, p: &Path) -> PathBuf {
@@ -414,6 +540,20 @@ mod tests {
         }
     }
     impl DocStore for FakeStore {
+        fn fingerprint(&self, path: &Path) -> Option<varos_app::storage::durable::Fingerprint> {
+            self.fingerprints.get(path).copied()
+        }
+        fn remember(&mut self, path: &Path, old: Option<&Path>) {
+            if let Some(old) = old {
+                self.recent.relocate(old, path, None, 50);
+            } else {
+                self.recent.record(path, None, 50);
+            }
+        }
+        fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
+            let doc = self.load(path)?;
+            Ok((doc, self.notices.get(&self.target(path)).copied()))
+        }
         fn load(&mut self, path: &Path) -> Result<Document, String> {
             let t = self.target(path);
             self.loads.push(t.clone());
@@ -422,7 +562,7 @@ mod tests {
             }
             self.files.get(&t).cloned().ok_or_else(|| "No such file".into())
         }
-        fn save(&mut self, doc: &Document, path: &Path) -> Result<(), String> {
+        fn save(&mut self, doc: &Document, path: &Path) -> Result<SaveOutcome, String> {
             let t = self.target(path);
             if let Some(left) = self.fail_save.get_mut(&t) {
                 if *left > 0 {
@@ -436,7 +576,11 @@ mod tests {
             self.files.insert(t.clone(), doc.clone());
             self.next_ino += 1;
             self.inodes.insert(t, self.next_ino);
-            Ok(())
+            Ok(if self.unconfirmed {
+                SaveOutcome::ReplacedUnconfirmed("disk sync failed".into())
+            } else {
+                SaveOutcome::Durable
+            })
         }
         fn key(&self, path: &Path) -> FileKey {
             let t = self.target(path);
@@ -577,6 +721,41 @@ mod tests {
         r.run(AppCommand::OpenDialog);
         assert_eq!(r.prompts(), ["open"]);
         assert_eq!(r.ids(), [first, a]);
+    }
+
+    #[test]
+    fn migration_notice_only_after_successful_first_open() {
+        let mut r = Rig::new();
+        r.s.put("old.vrs", Document::default());
+        r.s.notices.insert(PathBuf::from("old.vrs"), "Broken clipping mask released.");
+        r.open("old.vrs");
+        assert_eq!(r.prompts(), vec!["notice Opened “old.vrs”"]);
+        r.open("old.vrs");
+        assert!(r.prompts().is_empty(), "already-open files are not reloaded or re-notified");
+        r.s.put("bad.vrs", Document::default());
+        r.s.notices.insert(PathBuf::from("bad.vrs"), "must not be shown");
+        r.s.fail_load.insert(PathBuf::from("bad.vrs"));
+        r.open("bad.vrs");
+        let prompts = r.prompts();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].starts_with("open-failed"));
+    }
+
+    #[test]
+    fn released_mask_repair_opens_dirty_and_save_makes_it_clean() {
+        let mut r = Rig::new();
+        r.s.put("old.vrs", art(RED));
+        r.s.put("migrated.vrs", art(BLUE));
+        r.s.notices.insert(PathBuf::from("old.vrs"), varos_core::format::RELEASED_MASKS_NOTICE);
+        r.s.notices.insert(PathBuf::from("migrated.vrs"), varos_core::format::MIGRATION_NOTICE);
+        let plain = r.open("migrated.vrs");
+        assert!(!r.get(plain).is_dirty_exact(), "a plain format migration is not a content change");
+        let id = r.open("old.vrs");
+        let _ = r.prompts();
+        assert!(r.get(id).is_dirty() && r.get(id).is_dirty_exact(), "the repair is a content change");
+        r.run(AppCommand::Save(id));
+        assert_eq!(r.s.saves, vec![p("old.vrs")]);
+        assert!(!r.get(id).is_dirty_exact(), "Save wrote the repair");
     }
 
     #[test]
@@ -1198,5 +1377,169 @@ mod tests {
         assert_eq!(r.ids(), [c, a, b]);
         assert_eq!(r.active(), c);
         assert!(r.prompts().is_empty());
+    }
+    #[test]
+    fn launch_and_new_from_start_preserve_the_internal_session_without_a_phantom_tab() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        assert!(r.ws.on_home());
+        assert!(r.ws.visible_tabs().is_empty());
+        assert_eq!(r.ws.sessions().len(), 1);
+        r.run(AppCommand::NewDocument);
+        assert!(!r.ws.on_home());
+        assert_eq!(r.ws.visible_tabs().len(), 1);
+        assert_eq!(r.ws.active().unwrap().display_name(), "Untitled-1");
+        assert!(r.ws.active().unwrap().editor.doc.artboards.is_empty());
+        assert!(!r.ws.active().unwrap().is_dirty_exact());
+        r.run(AppCommand::CloseDocument(r.active()));
+        assert!(r.ws.on_home());
+        assert!(r.ws.visible_tabs().is_empty());
+    }
+    #[test]
+    fn file_intent_opens_canvas_and_successful_recent_open_records_once() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        r.s.put("/d/a.vrs", art(BLUE));
+        r.s.put("/d/b.vrs", art(RED));
+        let a = r.open("/d/a.vrs");
+        assert!(!r.ws.on_home());
+        assert_eq!(r.ws.visible_tabs().len(), 1);
+        r.open("/d/b.vrs");
+        r.run(AppCommand::Home);
+        r.run(AppCommand::OpenRecent(p("/d/a.vrs")));
+        assert_eq!(r.active(), a);
+        assert!(!r.ws.on_home());
+        assert_eq!(
+            r.s.recent.entries().iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
+            [p("/d/a.vrs"), p("/d/b.vrs")]
+        );
+        assert_eq!(r.s.loads.len(), 2, "already-open recent is focused, never reloaded");
+    }
+    #[test]
+    fn home_and_return_keep_documents_selection_view_and_dirty_state() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(BLUE));
+        let a = r.open("/d/a.vrs");
+        r.ws.active_mut().unwrap().view = varos_core::geom::View { zoom: 3.0, pan: [31.0, 42.0] };
+        let document = r.get(a).editor.doc.clone();
+        let selection = r.get(a).editor.selected.clone();
+        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::ActivateDocument(a));
+        r.run(AppCommand::Home);
+        assert_eq!(r.ws.document_target(), None);
+        assert_eq!(r.ws.visible_tabs().len(), 2);
+        r.run(AppCommand::ActivateDocument(a));
+        assert_eq!(r.ws.document_target(), Some(a));
+        assert!(r.get(a).editor.doc.content_eq(&document));
+        assert_eq!(r.get(a).editor.selected, selection);
+        assert_eq!(r.get(a).view.zoom, 3.0);
+        assert_eq!(r.get(a).view.pan, [31.0, 42.0]);
+        assert!(!r.get(a).is_dirty_exact());
+    }
+    #[test]
+    fn failed_open_and_cancelled_missing_leave_start_recents_and_sessions_unchanged() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        r.s.recent.record(Path::new("/gone.vrs"), None, 1);
+        let recent = r.s.recent.clone();
+        let ids = r.ids();
+        r.script([Ans::Locate(false)]);
+        r.run(AppCommand::OpenRecent(p("/gone.vrs")));
+        assert_eq!(r.s.recent, recent);
+        assert_eq!(r.ids(), ids);
+        assert!(r.ws.on_home());
+        r.s.put("/bad.vrs", art(BLUE));
+        r.s.fail_load.insert(p("/bad.vrs"));
+        r.run(AppCommand::OpenRecent(p("/bad.vrs")));
+        assert_eq!(r.s.recent, recent);
+        assert_eq!(r.ids(), ids);
+        assert!(r.ws.on_home());
+    }
+    #[test]
+    fn locate_validates_before_relocating_and_cancel_changes_nothing() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        r.s.recent.record(Path::new("/gone.vrs"), None, 1);
+        let original = r.s.recent.clone();
+        r.script([Ans::Open(vec![])]);
+        r.run(AppCommand::LocateRecent(p("/gone.vrs")));
+        assert_eq!(r.s.recent, original);
+        r.script([Ans::Open(vec![p("/bad.vrs")])]);
+        r.run(AppCommand::LocateRecent(p("/gone.vrs")));
+        assert_eq!(r.s.recent, original);
+        assert!(r.ws.on_home());
+        r.s.put("/found.vrs", art(BLUE));
+        r.script([Ans::Open(vec![p("/found.vrs")])]);
+        r.run(AppCommand::LocateRecent(p("/gone.vrs")));
+        assert_eq!(r.s.recent.entries().len(), 1);
+        assert_eq!(r.s.recent.entries()[0].path, p("/found.vrs"));
+        assert!(!r.ws.on_home());
+    }
+    #[test]
+    fn only_a_successful_save_records_a_recent() {
+        let mut r = Rig::new();
+        let id = r.active();
+        r.script([Ans::Pick(None)]);
+        r.run(AppCommand::Save(id));
+        assert!(r.s.recent.entries().is_empty());
+        r.s.fail_save.insert(p("/fail.vrs"), u32::MAX);
+        r.script([Ans::Pick(Some(p("/fail.vrs"))), Ans::Fail(SaveFailChoice::Cancel)]);
+        r.run(AppCommand::Save(id));
+        assert!(r.s.recent.entries().is_empty());
+        r.script([Ans::Pick(Some(p("/ok.vrs")))]);
+        r.run(AppCommand::Save(id));
+        assert_eq!(r.s.recent.entries()[0].path, p("/ok.vrs"));
+    }
+    #[test]
+    fn external_change_cancel_save_as_and_explicit_replace() {
+        use varos_app::storage::durable::Fingerprint;
+        for choice in [ExternalChoice::Cancel, ExternalChoice::SaveAs, ExternalChoice::Replace] {
+            let mut r = Rig::new();
+            r.s.put("a.vrs", art(RED));
+            r.s.fingerprints.insert(p("a.vrs"), Fingerprint { len: 10, modified: None });
+            let id = r.open("a.vrs");
+            draw(r.ed(id), BLUE);
+            // Includes external deletion: an existing fingerprint becomes unavailable.
+            r.s.fingerprints.remove(&p("a.vrs"));
+            r.script([Ans::External(choice)]);
+            match choice {
+                ExternalChoice::SaveAs => r.script([Ans::Pick(Some(p("copy.vrs")))]),
+                // "Replace Anyway" IS the confirmation: no second "Replace?" dialog follows.
+                ExternalChoice::Replace | ExternalChoice::Cancel => {}
+            }
+            r.run(AppCommand::Save(id));
+            assert!(r.prompts().iter().any(|s| s.starts_with("external")));
+            assert!(!r.prompts().iter().any(|s| s.starts_with("replace")), "one confirmation only");
+            match choice {
+                ExternalChoice::Cancel => {
+                    assert!(r.s.saves.is_empty());
+                    assert!(r.get(id).is_dirty_exact());
+                }
+                ExternalChoice::SaveAs => {
+                    assert_eq!(r.s.saves, vec![p("copy.vrs")]);
+                    assert_eq!(r.s.doc("a.vrs"), &art(RED));
+                }
+                ExternalChoice::Replace => assert_eq!(r.s.saves, vec![p("a.vrs")]),
+            }
+        }
+    }
+
+    #[test]
+    fn unconfirmed_save_adopts_path_keeps_dirty_and_cancels_close() {
+        let mut r = Rig::new();
+        let id = r.active();
+        draw(r.ed(id), RED);
+        r.s.unconfirmed = true;
+        r.script([Ans::Decide(SaveDecision::Save), Ans::Pick(Some(p("new.vrs")))]);
+        r.run(AppCommand::CloseDocument(id));
+        let s = r.get(id);
+        assert_eq!(s.path, Some(p("new.vrs")));
+        assert!(s.is_dirty_exact() && s.is_dirty());
+        assert!(s.save_unconfirmed);
+        assert!(r.s.recent.entries().is_empty());
+        assert!(r.prompts().iter().any(|s| s.contains("Save needs confirmation")));
+        r.s.unconfirmed = false;
+        r.run(AppCommand::Save(id));
+        assert!(!r.get(id).is_dirty_exact());
     }
 }

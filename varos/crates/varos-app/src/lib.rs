@@ -7,5 +7,6 @@
 pub mod shell;
 /// Start page pure view model (DFS S2 piece E1) — no `egui`, no I/O.
 pub mod start;
+pub mod start_ui;
 /// App-owned storage: data-root resolver, durable writer, checksums, time text (DFS S2/S3).
 pub mod storage;

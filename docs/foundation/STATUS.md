@@ -1,7 +1,7 @@
 > **Status:** current — single current-state page, governed by [FOUNDATION_CHARTER](FOUNDATION_CHARTER.md) §3.
 # Varos — current state
 
-Updated 2026-09-27. Code baseline: `5ee21d4` on `main`. Current work: `codex/project-health`, published as [draft PR #1](https://github.com/thisisgomaa/varos/pull/1) (not merged).
+Updated 2026-09-27. Code baseline: `601fd7c` on `main`, merging [PR #1](https://github.com/thisisgomaa/varos/pull/1). Current work: `codex/ui-system-plan` now includes UI planning, S5-C semantic validation S5-D bounded PDF reading and S5-E frozen fixtures/harnesses and U0-A bundled Latin/numeric fonts plus minimum U0-B/C controls and E2 Start/Home/Recent plus F1/F2 durable Save/recovery integration; independent review batched at the owner’s request, not merged.
 
 ## Product and platform
 
@@ -15,32 +15,32 @@ Keep the four-crate architecture: pure `varos-core`, scene renderer `varos-rende
 |---|---|
 | Drawing | Shapes, Pen/Direct editing, boolean operations, layers, transforms, snapping and artboard clipping are implemented. Mask model/render/PDF foundations exist; creation/release gestures are pending. Edge cases remain in the pain log. |
 | Documents | Independent tabs, dirty tracking, undo/redo, save/close/quit guards and `.vrs` v2 save/open are integrated. |
-| File format | `.vrs` remains a PDF containing editable document data. Core v2 version/structure checks, migration and v1 fixtures are implemented; ADR-0008 is accepted. S5-C semantic validation is a stub; S5-D bounded PDF reading and final S5-E acceptance remain pending. |
-| Start and recent files | Pure Start model and recent-file storage are tested. Start drawing and host integration (E2) are pending. |
-| Recovery | Durable writer, snapshot store, scheduler and I/O worker are tested modules. Automatic recovery writing and recovery UI (F1/F2) are not wired into the running app. Existing Save still uses `varos_pdf::save_vrs`. |
+| File format | `.vrs` remains a PDF containing editable document data. Core v2 version/structure checks, migration and v1 fixtures are implemented; ADR-0008 is accepted. S5-C semantic validation and v1 broken-mask notices are implemented on the work branch, not merged. S5-D bounded PDF reading is also implemented on this branch; S5-E frozen v2/refusal fixtures and old-gate checks are implemented; owner reports no personal files and the scoped read-only scan found only fixtures; real-application acceptance remains pending. |
+| Start and recent files | [E2](work_orders/DFS_S2_E2_START_INTEGRATION.md) is integrated on the work branch: immediate Start, Home retaining tabs, successful-only Recent persistence, Locate/Remove/Clear and native Open Recent. Independent review and merge pending. |
+| Recovery | [F1](work_orders/DFS_S3_F1_INTEGRATION.md) is integrated on the work branch: durable Save, external-change prompts, automatic separate recovery copies, app-wide switch and status. [F2](work_orders/DFS_S3_F2_INTEGRATION.md) now wires launch scanning, Recover/Discard/Later, pathless dirty copies and safe Save As defaults; coordinator tests pass. Native end-to-end acceptance remains pending. |
 | Export | Pure-PDF export exists in the library; the complete app export flow is pending. SVG/PNG interchange is pending. |
-| UI system | Current panels work. UI System spec v1 is a proposal with reviews; v2 and the minimal shared controls needed by Start are pending. |
+| UI system | Current panels work. [UI System v2](../specs/UI_SYSTEM.md) is a bounded planning proposal with a finding-by-finding response; independent acceptance is pending. U0-A embeds Plex Sans/Mono and symbol fallbacks; Arabic remains diagnostic-only after a failed RTL/caret probe. [Minimum Start controls](work_orders/UI_U0_BC_KIT.md) are library-ready with CPU interaction tests and a native gallery; E2 consumes these controls in the running app. |
 
 ## Next steps
 
 The single execution map is [PLAN](../PLAN.md). Start there for completed work, the queue and unresolved decisions.
 
-1. Project-health/planning review passed after the billing-policy correction; PR #1 remains a draft and is not merged. Its scope and evidence are in the [work order](work_orders/PROJECT_HEALTH_2026-09-27.md) and GATE_LOG.
-2. Reconcile UI v2 contracts and finish S5-C/D/E. Then minimum U0 → E2 Start/recents → F1/F2 recovery, reusing the modules already built.
-3. Complete S4/S6 association/export, then the remaining UI/Editor extraction in behavior-preserving pieces. Deferred product features remain recorded in PLAN.
+1. Project-health/planning changes merged in PR #1 at `601fd7c`, after independent approval. UI v2 planning is now drafted separately; its scope is in the [UI planning work order](work_orders/UI_SYSTEM_V2_PLAN_2026-09-27.md).
+2. Batch-review UI v2 and S5-C/D/E at session end; no personal corpus exists in the scanned scope; application acceptance remains open. Minimum U0-B/C and E2 are built; F1/F2 are implemented; native acceptance and independent batch review remain, then S4/S6.
+3. Complete S4/S6 association/export and asynchronous manual Save (12.6 MB encode + durable save measured 2.38 s), then the remaining UI/Editor extraction in behavior-preserving pieces. Deferred product features remain recorded in PLAN.
 
 ## Verification
 
 | Check | Latest evidence |
 |---|---|
-| Workspace tests | 708 passed, 0 failed, 4 intentionally ignored; macOS, 2026-09-27 review at `5ee21d4`. |
+| Workspace tests | 793 passed, 0 failed, 5 intentionally ignored; fresh F2 work-branch run, 2026-09-27. |
 | Build, clippy and format | macOS build, macOS and Windows-target clippy with `-D warnings`, and `fmt --check`: PASS, 2026-09-27 implementation checks. |
-| Explicit old-reader checks | 2 passed when run with `--ignored`, 2026-09-27; not included in the default 708 count. |
+| Explicit old-reader checks | 3 passed in the default suite, 2026-09-27; fresh/frozen v2 refused and frozen v1 gate control accepted. Old binary not tested. |
 | Architecture checker | Portable gate and 7 checker tests PASS; real-source negative probe rejected as expected. |
-| Independent review | APPROVE after one documentation-policy correction; separate Codex reviewer, 2026-09-27. Full scope and limitations in GATE_LOG. |
+| Independent review | PR #1 only: APPROVE after one documentation-policy correction; separate Codex reviewer, 2026-09-27. Full scope and limitations in GATE_LOG. |
 | CI configuration | Full macOS gates and Windows compile-only checks configured. [Run 36300014830](https://github.com/thisisgomaa/varos/actions/runs/36300014830) failed before either job started: account locked due to a billing issue; no test steps executed. |
-| Source size | `ui.rs`: 8,111 lines (tests begin at 6,120); `editor.rs`: 5,057 lines, measured 2026-09-27. |
-| GPU/window interaction | Not tested in the 2026-09-27 architecture review; headless tests do not establish visual correctness. |
+| Source size | `ui.rs`: 8,206 lines; `editor.rs`: 5,057 lines, measured 2026-09-27. |
+| GPU/window interaction | U0-A native Mac candidate/final font windows checked, 2026-09-27; Arabic candidate failed ordering/caret readiness. U0-B/C native Retina gallery checked for layout and keyboard activation. E2 Start/Open/Home/native Recent checked with isolated data and a copied fixture before final splash removal; the splash-free E2 surface was later observed. Owner-requested Recent refinement adds a responsive layout and visible row menus; its final native visual confirmation is pending due to occlusion. F1 launched and accepted New, but its controls and recovery runtime flow likewise remain visually unverified. The F2 candidate also launched with only background captured; native discard default-button/Enter/Escape behavior remains unverified. No general UI or S5 acceptance claimed; owner batch testing remains pending. |
 
 Fresh implementation validation is recorded in [GATE_LOG](GATE_LOG.md). Historical measurements are not current results.
 

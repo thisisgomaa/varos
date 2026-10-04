@@ -48,6 +48,15 @@ impl Limits {
     };
 }
 
+impl Limits {
+    /// Direct-object tokens the PDF reader lexes across all indirect objects and the trailer (stream
+    /// data excluded). One source for the reader's refusal and the writer's save-time count (A1).
+    pub const PDF_TOKENS_PER_OBJECT: usize = 16;
+    pub fn max_pdf_tokens(&self) -> usize {
+        self.max_pdf_objects.saturating_mul(Self::PDF_TOKENS_PER_OBJECT)
+    }
+}
+
 impl Default for Limits {
     fn default() -> Self {
         Limits::DEFAULT

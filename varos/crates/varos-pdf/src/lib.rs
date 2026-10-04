@@ -17,13 +17,16 @@
 
 use std::path::Path as FsPath;
 
-use varos_core::file::{doc_from_blob, write_atomic};
+use varos_core::file::write_atomic;
+use varos_core::format::Limits;
 use varos_core::model::Document;
 
 // The write side lives in `write.rs` (the shared page loop + the native container) and `export.rs`
-// (the pure PDF export: planning + a model-free writer). This file keeps the public entry points and
-// the read side.
+// (the pure PDF export: planning + a model-free writer). The bounded read side lives in read.rs;
+// this file keeps the compatible public entry points.
 mod export;
+mod read;
+pub use read::{load_vrs_bytes, load_vrs_checked};
 mod write;
 pub use export::{
     default_scope, export_pdf_bytes, has_embedded_model, plan_pdf_export, ExportError, ExportPlan, ExportScope,
@@ -35,85 +38,108 @@ pub use write::write_pdf;
 
 /// Save the document as a `.vrs` PDF container, atomically.
 pub fn save_vrs(doc: &Document, path: &FsPath) -> Result<(), String> {
-    write_atomic(path, &write_pdf(doc)?)
+    write_atomic(path, &write_pdf_checked(doc, &Limits::DEFAULT)?)
+}
+
+/// The save-side gate (A1): a file Varos writes can always be reopened under the SAME `limits` the
+/// reader enforces (one source — `Limits::DEFAULT` in the app), and it is decided before anything
+/// reaches the disk. A refusal is a plain sentence.
+pub fn write_pdf_checked(doc: &Document, limits: &Limits) -> Result<Vec<u8>, String> {
+    write_pdf_checked_report(doc, limits).map(|(bytes, _)| bytes).map_err(|e| e.reason)
+}
+
+/// What the save gate measured. `decoded` = the full reopen (`load_vrs_bytes`) ran because a
+/// count came within [`SAVE_CHECK_MARGIN`] of its limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SaveCheck {
+    pub objects: usize,
+    pub tokens: usize,
+    /// Length of the embedded model stream (unfiltered: also its decoded length).
+    pub model_bytes: usize,
+    pub decoded: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SaveCheckError {
+    pub reason: String,
+    pub decoded: bool,
+}
+
+/// A count at or above this fraction of its limit triggers the full reopen check (10 % headroom).
+pub const SAVE_CHECK_MARGIN: f64 = 0.9;
+
+/// [`write_pdf_checked`] with its measurements, for tests and diagnostics.
+///
+/// Cheap by design: the model is encoded under `limits` (model-level limits refuse here); the
+/// writer counts the indirect objects it emits; the direct-object tokens are counted by the reader's
+/// own preflight lexer on the emitted dictionaries (no lopdf parse, no model decode). Anything over
+/// a limit is refused from those counts. Only when a count is within 10 % of its limit does the full
+/// `load_vrs_bytes` decode run as the final word — rare, and never on an ordinary save.
+///
+/// Every refusal the reader (`read.rs` + `varos_core::format::decode_model`) can raise, and where the
+/// writer mirrors it:
+///
+/// | Reader refusal | Writer-side check |
+/// |---|---|
+/// | `FileBytes` (`max_file_bytes`) | `bytes.len()` here; ≥ 90 % → full decode |
+/// | `PdfObjects`: xref entries (preflight), lopdf object count | writer's own object count + 1 (free entry 0) here; ≥ 90 % → full decode |
+/// | direct object complexity (`max_pdf_tokens`) | reader's preflight lexer (`read::pdf_tokens`) here; ≥ 90 % → full decode |
+/// | `PdfDepth`, footer/xref/trailer shape, `/Prev` `/XRefStm` `/Encrypt`, indirect or wrong stream `/Length`, oversized trailer/xref lines | the same preflight (`read::pdf_tokens` runs it with only the object/token budgets lifted) |
+/// | `ModelBytes` (`max_model_bytes`) | `encode_model(doc, limits)` (exact blob length); ≥ 90 % → full decode |
+/// | `DecodedStreams` (`max_decoded_stream_bytes`, the model stream) | model length here; ≥ 90 % → full decode |
+/// | model `/Filter` ("model encoding") | never emitted: the writer stores the model unfiltered |
+/// | missing catalog / `VAROS_Model` / `NoEmbeddedModel`, embedded-files tree budget | never emitted: the writer always writes the catalog with `/VAROS_Model` (the name-tree walk is a fallback the reader never reaches for our files) |
+/// | `InvalidVersion`, `VersionMismatch`, `NewerVersion` | writer emits `VRS_VERSION` in both catalog and model |
+/// | `Nodes`, `Paths`, `Anchors`, `Artboards`, `TreeDepth`, `Invalid(..)`, malformed JSON | `encode_model(doc, limits)`: the same structure check + validation on the normalized model, plus a serde read-back |
+/// | lopdf strict parse failure (malformed structure) | not a limit: `pdf-writer` output is well-formed; any such bug is caught by the near-limit decode and the round-trip tests |
+pub fn write_pdf_checked_report(doc: &Document, limits: &Limits) -> Result<(Vec<u8>, SaveCheck), SaveCheckError> {
+    use varos_core::format::{LimitKind, LoadError, SaveRefused};
+    let refuse = |e: LoadError, decoded| SaveCheckError { reason: SaveRefused(e).to_string(), decoded };
+    let too_large =
+        |limit, found: usize, max: usize| LoadError::TooLarge { limit, found: found as u64, max: max as u64 };
+    let (bytes, objects, model_bytes) =
+        write::write_native_counted(doc, limits).map_err(|reason| SaveCheckError { reason, decoded: false })?;
+    // The reader counts the xref table, whose entry 0 is the free head: objects + 1.
+    let entries = objects + 1;
+    if entries > limits.max_pdf_objects {
+        return Err(refuse(too_large(LimitKind::PdfObjects, entries, limits.max_pdf_objects), false));
+    }
+    if bytes.len() as u64 > limits.max_file_bytes {
+        let e =
+            LoadError::TooLarge { limit: LimitKind::FileBytes, found: bytes.len() as u64, max: limits.max_file_bytes };
+        return Err(refuse(e, false));
+    }
+    // The reader bounds the model stream by both the model cap (enforced by `encode_model`) and the
+    // decoded-stream budget.
+    if model_bytes > limits.max_decoded_stream_bytes {
+        let e = too_large(LimitKind::DecodedStreams, model_bytes, limits.max_decoded_stream_bytes);
+        return Err(refuse(e, false));
+    }
+    let tokens = read::pdf_tokens(&bytes, limits).map_err(|e| refuse(e, false))?;
+    if tokens > limits.max_pdf_tokens() {
+        let e = LoadError::UnsupportedPdf("direct object complexity limit".into());
+        return Err(refuse(e, false));
+    }
+    let near = |found: f64, max: f64| found >= max * SAVE_CHECK_MARGIN;
+    let decoded = near(entries as f64, limits.max_pdf_objects as f64)
+        || near(tokens as f64, limits.max_pdf_tokens() as f64)
+        || near(bytes.len() as f64, limits.max_file_bytes as f64)
+        || near(model_bytes as f64, limits.max_model_bytes as f64)
+        || near(model_bytes as f64, limits.max_decoded_stream_bytes as f64);
+    if decoded {
+        load_vrs_bytes(&bytes, limits).map_err(|e| refuse(e, true))?;
+    }
+    Ok((bytes, SaveCheck { objects, tokens, model_bytes, decoded }))
 }
 
 /// Load a `.vrs`: a PDF container (the model blob is recovered from inside), or a legacy raw-JSON
 /// `.vrs` from the first slice (sniffed by the missing `%PDF-` header).
 pub fn load_vrs(path: &FsPath) -> Result<Document, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("read failed: {e}"))?;
-    if bytes.starts_with(b"%PDF-") {
-        doc_from_blob(&extract_model(&bytes)?)
-    } else {
-        let s = String::from_utf8(bytes).map_err(|_| "not a valid .vrs".to_string())?;
-        doc_from_blob(&s)
-    }
+    load_vrs_with_notice(path).map(|(doc, _)| doc)
 }
 
-// ───────────────────────────── read: PDF bytes → model blob ─────────────────────────────
-
-fn extract_model(bytes: &[u8]) -> Result<String, String> {
-    let doc = lopdf::Document::load_mem(bytes).map_err(|e| format!("not a readable PDF: {e}"))?;
-    let catalog = doc.catalog().map_err(|e| format!("no PDF catalog: {e}"))?;
-
-    let stream_bytes = |obj: &lopdf::Object| -> Result<Vec<u8>, String> {
-        let (_, o) = doc.dereference(obj).map_err(|e| e.to_string())?;
-        let s = o.as_stream().map_err(|e| e.to_string())?;
-        Ok(s.decompressed_content().unwrap_or_else(|_| s.content.clone()))
-    };
-
-    // fast path: the private catalog key Varos writes
-    if let Ok(obj) = catalog.get(b"VAROS_Model") {
-        let data = stream_bytes(obj)?;
-        return String::from_utf8(data).map_err(|_| "embedded model is not UTF-8".into());
-    }
-    // fallback: /Names → /EmbeddedFiles name tree → FileSpec /EF /F (survives third-party re-saves better)
-    fn collect(doc: &lopdf::Document, node: &lopdf::Dictionary, out: &mut Vec<lopdf::Object>) {
-        if let Ok(pairs) = node.get(b"Names") {
-            if let Ok((_, o)) = doc.dereference(pairs) {
-                if let Ok(arr) = o.as_array() {
-                    for kv in arr.chunks(2) {
-                        if let [_k, v] = kv {
-                            out.push(v.clone());
-                        }
-                    }
-                }
-            }
-        } else if let Ok(kids) = node.get(b"Kids") {
-            if let Ok((_, o)) = doc.dereference(kids) {
-                if let Ok(arr) = o.as_array() {
-                    for kid in arr {
-                        if let Ok((_, kd)) = doc.dereference(kid) {
-                            if let Ok(d) = kd.as_dict() {
-                                collect(doc, d, out);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let names = catalog
-        .get_deref(b"Names", &doc)
-        .and_then(|o| o.as_dict())
-        .map_err(|_| "no embedded Varos model in this PDF".to_string())?;
-    let root = names
-        .get_deref(b"EmbeddedFiles", &doc)
-        .and_then(|o| o.as_dict())
-        .map_err(|_| "no embedded Varos model in this PDF".to_string())?;
-    let mut specs = Vec::new();
-    collect(&doc, root, &mut specs);
-    for spec in specs {
-        let Ok((_, so)) = doc.dereference(&spec) else { continue };
-        let Ok(sd) = so.as_dict() else { continue };
-        let Ok(ef) = sd.get_deref(b"EF", &doc).and_then(|o| o.as_dict()) else { continue };
-        if let Ok(f) = ef.get(b"F").or_else(|_| ef.get(b"UF")) {
-            if let Ok(data) = stream_bytes(f) {
-                if let Ok(s) = String::from_utf8(data) {
-                    return Ok(s);
-                }
-            }
-        }
-    }
-    Err("no embedded Varos model in this PDF".into())
+/// Load with the migration notice retained for the application's open flow.
+pub fn load_vrs_with_notice(path: &FsPath) -> Result<(Document, Option<&'static str>), String> {
+    let loaded = load_vrs_checked(path, &Limits::DEFAULT).map_err(|e| e.to_string())?;
+    let notice = loaded.notice();
+    Ok((loaded.doc, notice))
 }

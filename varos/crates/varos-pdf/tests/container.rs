@@ -160,3 +160,27 @@ fn legacy_raw_json_vrs_still_opens() {
     assert_eq!(loaded, doc);
     let _ = std::fs::remove_file(&p);
 }
+
+#[test]
+fn legacy_pdf_repair_notice_survives_container_read_without_rewriting_file() {
+    // Mutate the frozen v1 payload, then let lopdf regenerate only this temporary test container.
+    let bytes = include_bytes!("../../varos-core/tests/fixtures/v1/v1_masked_pdf.vrs");
+    let mut pdf = lopdf::Document::load_mem(bytes).unwrap();
+    let model_id = pdf.catalog().unwrap().get(b"VAROS_Model").unwrap().as_reference().unwrap();
+    let stream = pdf.get_object_mut(model_id).unwrap().as_stream_mut().unwrap();
+    let mut model: serde_json::Value = serde_json::from_slice(&stream.content).unwrap();
+    let clip = model["doc"]["nodes"].as_array_mut().unwrap().iter_mut().find(|n| n["role"] == "Clip").unwrap();
+    let clip_id = clip["id"].as_u64().unwrap() as u32;
+    clip["mask_child"] = serde_json::json!(999999);
+    stream.set_content(serde_json::to_vec(&model).unwrap());
+    let mut damaged = Vec::new();
+    pdf.save_to(&mut damaged).unwrap();
+    let path = tmp("v1-repair-notice.vrs");
+    std::fs::write(&path, &damaged).unwrap();
+    let (doc, notice) = varos_pdf::load_vrs_with_notice(&path).unwrap();
+    assert!(notice.unwrap().contains("broken clipping masks released"));
+    assert_eq!(doc.node(clip_id).unwrap().role, varos_core::model::GroupRole::Normal);
+    assert_eq!(doc.paths.len(), model["doc"]["paths"].as_array().unwrap().len());
+    assert_eq!(std::fs::read(&path).unwrap(), damaged);
+    std::fs::remove_file(path).unwrap();
+}

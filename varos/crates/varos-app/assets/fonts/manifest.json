@@ -1,0 +1,69 @@
+{
+  "source": "https://github.com/IBM/plex",
+  "revision": "763c36ef9117782905ae010056dfbe8fd2653a25",
+  "files": [
+    {
+      "file": "IBMPlexSans-Regular.ttf",
+      "source": "https://raw.githubusercontent.com/IBM/plex/763c36ef9117782905ae010056dfbe8fd2653a25/packages/plex-sans/fonts/complete/ttf/IBMPlexSans-Regular.ttf",
+      "package_version": "1.1.0",
+      "bytes": 200500,
+      "sha256": "975dcda37d80f038dcd143c22e33ca2d97a0cc5a929aace1c749153b0fe1afa5"
+    },
+    {
+      "file": "plex-sans-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/IBM/plex/763c36ef9117782905ae010056dfbe8fd2653a25/packages/plex-sans/LICENSE.txt",
+      "package_version": "1.1.0",
+      "bytes": 4456,
+      "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da"
+    },
+    {
+      "file": "IBMPlexMono-Regular.ttf",
+      "source": "https://raw.githubusercontent.com/IBM/plex/763c36ef9117782905ae010056dfbe8fd2653a25/packages/plex-mono/fonts/complete/ttf/IBMPlexMono-Regular.ttf",
+      "package_version": "2.5.0",
+      "bytes": 173052,
+      "sha256": "7c6fbddca4b700be918f5f6183d9bd4464fa427fe435f0b480d77fe2bb8c5a43"
+    },
+    {
+      "file": "plex-mono-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/IBM/plex/763c36ef9117782905ae010056dfbe8fd2653a25/packages/plex-mono/LICENSE.txt",
+      "package_version": "2.5.0",
+      "bytes": 4456,
+      "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da"
+    },
+    {
+      "file": "IBMPlexSansArabic-Regular.ttf",
+      "source": "https://raw.githubusercontent.com/IBM/plex/763c36ef9117782905ae010056dfbe8fd2653a25/packages/plex-sans-arabic/fonts/complete/ttf/IBMPlexSansArabic-Regular.ttf",
+      "package_version": "1.1.0",
+      "bytes": 236708,
+      "sha256": "8e0f1046c736bf939d4939ee3ae0116acf61cbcd6592deae7656761627080981"
+    },
+    {
+      "file": "plex-sans-arabic-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/IBM/plex/763c36ef9117782905ae010056dfbe8fd2653a25/packages/plex-sans-arabic/LICENSE.txt",
+      "package_version": "1.1.0",
+      "bytes": 4456,
+      "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da"
+    },
+    {
+      "file": "NotoSansSymbols2-Regular.ttf",
+      "source": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansSymbols2/NotoSansSymbols2-Regular.ttf",
+      "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+      "bytes": 656852,
+      "sha256": "630846d528dbe4c4981370a4d0a9475a1fd1491a129bb411f8e157cdb5de13c6"
+    },
+    {
+      "file": "noto-symbols-LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/LICENSE",
+      "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+      "bytes": 4377,
+      "sha256": "0dab92d0544f7b233403f14b84a663bdbfa746982eda629e7f4f9ffe1b036feb"
+    },
+    {
+      "file": "NotoSansSymbols-Regular.ttf",
+      "source": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansSymbols/NotoSansSymbols-Regular.ttf",
+      "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+      "bytes": 258156,
+      "sha256": "8f02f31959bbdf6061547a188248e13f84dc5fdd940326ec494675f453f072bb"
+    }
+  ]
+}

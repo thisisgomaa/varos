@@ -10,6 +10,8 @@
 - Owner amendments: when the source document is a `.pdf`, the default export name is `<name> export.pdf`; Home replaces the burger beside tabs on Mac, so route export through its home and native File menu instead of recreating the removed burger.
 - Windows stays compile-only; Windows runtime acceptance is explicitly pending. S6-B needs S3-F1; full acceptance also needs S2/S3 and the remaining S5 checks.
 
+**UI v2 boundary (planning, 2026-09-27):** S6 extends the existing AppCommand/host FIFO and consumes only the shared controls its actual export flow needs; it does not wait for U1's generic command table. The later U1 migration must preserve this single path. Keep the existing S6 cancellation contract: Cancel must reach a real cancellation mechanism; a decorative button does not satisfy acceptance. Readability follows recorded QW6/contrast decisions, not v1 mockup literals.
+
 Follow [PLAN](../../PLAN.md) for sequencing. Findings and merge windows below describe the original branch, not an instruction to restart merged pieces.
 
 Date: 2026-09-24 · Branch baseline: `claude/sweet-cerf-1sg30t` · Planning only: nothing below has been built or run.
@@ -360,3 +362,7 @@ PNG and SVG engines and their settings; batch export; Export for Screens; a Sele
 
 ## Needs Ahmed (from review)
 1. **Default export name for a document opened from a `.pdf`.** The spec's default is `<name>.pdf`, which is the open file itself, so the destination guard (§3.3, "an open Varos document" refusal) would always refuse it. **Working assumption:** suggest `<name> export.pdf` in that one case only.
+
+## 2026-09-27 — F1 performance follow-up for S6
+
+F1's release probe measured synchronous PDF encoding plus durable Save at **2,375.781 ms** for **12,633,959 bytes** / 20,000 rectangles on the development Mac. This exceeds S2/S3's 100 ms threshold. Add asynchronous manual Save to S6's worker integration: capture a settled document revision, serialize and write in the worker, advance only that captured checkpoint, preserve later edits, and keep close/quit pending until the requested save result is resolved. Preserve the external-change and unconfirmed-write protections. This remains queued, not implemented by F1. See [F1 evidence](DFS_S3_F1_INTEGRATION.md).
