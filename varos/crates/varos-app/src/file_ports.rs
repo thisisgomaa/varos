@@ -209,6 +209,18 @@ impl Dialogs for RfdDialogs {
         d.save_file()
     }
 
+    fn keep_waiting_for_save(&mut self, name: &str, place: &str) -> bool {
+        let (title, body) = still_saving_copy(name, place);
+        let r = MessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title(title)
+            .set_description(body)
+            .set_buttons(MessageButtons::OkCancelCustom(KEEP_WAITING.into(), CANCEL.into()))
+            .show();
+        // only an explicit Keep Waiting (or Ok on plain backends) keeps waiting; anything else cancels
+        matches!(r, MessageDialogResult::Ok) || matches!(r, MessageDialogResult::Custom(ref l) if l == KEEP_WAITING)
+    }
+
     fn confirm_export_replace(&mut self, name: &str) -> bool {
         let (title, body) = export_replace_copy(name);
         let r = MessageDialog::new()
@@ -219,6 +231,17 @@ impl Dialogs for RfdDialogs {
             .show();
         replace_from(&r)
     }
+}
+
+const KEEP_WAITING: &str = "Keep Waiting";
+
+/// “Varos is still saving …” — (title, body) after a Close / Save As / Quit waited 10 s for a save.
+fn still_saving_copy(name: &str, place: &str) -> (String, String) {
+    let place = if place.is_empty() { "the disk".to_string() } else { place.to_string() };
+    (
+        format!("Varos is still saving “{name}” to {place}."),
+        "Keep Waiting, or Cancel to go back to the document. It stays open with unsaved changes while the save finishes; your previous file is never left half-written.".into(),
+    )
 }
 
 /// “… contains an editable Varos document.” — (title, body) of the export's second confirmation.
@@ -394,12 +417,49 @@ pub fn file_key(path: &Path) -> FileKey {
             _ => abs.clone(),
         });
         let dev_ino = std::fs::metadata(&canon).ok().map(|m| (m.dev(), m.ino()));
-        FileKey { path: canon, dev_ino }
+        let name_id = canon.parent().zip(canon.file_name()).and_then(|(dir, name)| {
+            let m = std::fs::metadata(dir).ok()?;
+            Some(((m.dev(), m.ino()), volume_name(&name.to_string_lossy(), case_sensitive(dir))))
+        });
+        FileKey { path: canon, dev_ino, name_id }
     }
     #[cfg(not(unix))]
     {
-        FileKey { path: abs, dev_ino: None }
+        // Windows volumes compare case-insensitively: the whole absolute path, folded (compile-only).
+        let name_id = Some(((0, 0), volume_name(&abs.to_string_lossy(), Some(false))));
+        FileKey { path: abs, dev_ino: None, name_id }
     }
+}
+
+/// A file name the way a volume compares it: NFC-normalised (APFS / HFS+ ignore normalisation), and
+/// case-folded unless the volume is KNOWN to be case-sensitive. Unknown counts as case-insensitive:
+/// refusing a second file that differs only by case is the safe side.
+pub fn volume_name(name: &str, case_sensitive: Option<bool>) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let nfc: String = name.nfc().collect();
+    if case_sensitive == Some(true) {
+        nfc
+    } else {
+        // Full case FOLDING, not just lowercasing: upper then lower maps the pairs lowercasing
+        // alone keeps apart (Greek σ/ς, ß/SS…), so two spellings a case-insensitive volume treats
+        // as one entry always get one key (over-matching is the safe side).
+        nfc.to_uppercase().to_lowercase().nfc().collect()
+    }
+}
+
+/// Does the volume holding `dir` compare names case-sensitively? macOS asks the volume
+/// (`pathconf(_PC_CASE_SENSITIVE)`); elsewhere, or when it cannot answer: unknown.
+#[cfg(target_os = "macos")]
+pub fn case_sensitive(dir: &Path) -> Option<bool> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `c` is a valid NUL-terminated path for the duration of the call; pathconf only reads it.
+    let r = unsafe { libc::pathconf(c.as_ptr(), libc::_PC_CASE_SENSITIVE) };
+    (r >= 0).then_some(r > 0)
+}
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn case_sensitive(_dir: &Path) -> Option<bool> {
+    None
 }
 
 #[cfg(test)]
@@ -582,7 +642,8 @@ mod tests {
         let canon_dir = std::fs::canonicalize(&dir.0).unwrap();
         #[cfg(not(unix))]
         let canon_dir = std::path::absolute(&dir.0).unwrap(); // Windows: the absolute path only (S4)
-        assert_eq!(new_key, FileKey { path: canon_dir.join("Logo.vrs"), dev_ino: None });
+        assert_eq!((&new_key.path, new_key.dev_ino), (&canon_dir.join("Logo.vrs"), None));
+        assert!(new_key.name_id.is_some(), "a new file is identified by its folder + volume-compared name");
         store.save(&doc, &path).expect("save");
         assert!(store.exists(&path));
         let back = store.load(&path).expect("load");
@@ -704,5 +765,37 @@ mod tests {
             assert!(!discard_recovery_from(&answer));
         }
         assert!(discard_recovery_from(&MessageDialogResult::Custom("Discard".into())));
+    }
+
+    #[test]
+    fn volume_name_folds_case_unless_the_volume_is_known_case_sensitive_and_always_normalises() {
+        let (nfc, nfd) = ("caf\u{e9}.vrs", "cafe\u{301}.vrs");
+        assert_eq!(volume_name(nfc, Some(true)), volume_name(nfd, Some(true)), "NFC = NFD, any volume");
+        assert_eq!(volume_name("Logo.vrs", Some(true)), "Logo.vrs", "a case-sensitive volume keeps case");
+        assert_eq!(volume_name("Logo.vrs", Some(false)), "logo.vrs");
+        assert_eq!(volume_name("Logo.vrs", None), "logo.vrs", "unknown counts as case-insensitive (safe side)");
+        assert_eq!(volume_name("CAF\u{c9}.vrs", None), volume_name(nfd, None));
+        // full folding, not lowercasing: final sigma and sharp s fold with their pairs
+        assert_eq!(volume_name("\u{3c3}\u{3c2}.vrs", None), volume_name("\u{3a3}\u{3a3}.vrs", None), "σς = ΣΣ");
+        assert_eq!(volume_name("stra\u{df}e.vrs", None), volume_name("STRASSE.vrs", None), "ß = SS");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn not_yet_existing_names_compare_the_way_their_volume_does() {
+        let dir = Scratch::new("case-key");
+        let (upper, lower) = (file_key(&dir.0.join("A.vrs")), file_key(&dir.0.join("a.vrs")));
+        assert!(upper.dev_ino.is_none() && lower.dev_ino.is_none(), "neither file exists yet");
+        let canon = std::fs::canonicalize(&dir.0).unwrap();
+        let insensitive = case_sensitive(&canon) != Some(true);
+        assert_eq!(upper.same_file(&lower), insensitive, "A.vrs vs a.vrs follows the volume");
+        // NFC vs NFD spellings of one name are one file on every Mac volume
+        let nfc = file_key(&dir.0.join("caf\u{e9}.vrs"));
+        let nfd = file_key(&dir.0.join("cafe\u{301}.vrs"));
+        assert!(nfc.same_file(&nfd));
+        // the same name in another folder is another file
+        std::fs::create_dir_all(dir.0.join("other")).unwrap();
+        assert!(!upper.same_file(&file_key(&dir.0.join("other").join("A.vrs"))));
+        assert!(!upper.same_file(&file_key(&dir.0.join("other").join("a.vrs"))));
     }
 }

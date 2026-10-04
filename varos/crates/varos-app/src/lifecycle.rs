@@ -81,6 +81,11 @@ pub trait Dialogs {
     fn confirm_export_replace(&mut self, _name: &str) -> bool {
         false
     }
+    /// “Varos is still saving “name” to place.” — Keep Waiting (`true`) or Cancel. Asked when a
+    /// Close / Save As / Quit has waited [`crate::host::SAVE_WAIT_ASK`] for an in-flight save.
+    fn keep_waiting_for_save(&mut self, _name: &str, _place: &str) -> bool {
+        true
+    }
 }
 
 /// Every file operation the lifecycle performs.
@@ -242,13 +247,21 @@ impl Lifecycle<'_> {
     /// The open tab (other than `except`) holding the file `key` names. Each tab's key is computed
     /// FRESH from its path (one stat per tab): a stored key's inode goes stale when another app
     /// rewrites the file atomically, and an alias opened after that would otherwise slip past.
+    ///
+    /// A file a tab is SAVING to counts as that tab's from the moment its background job is created
+    /// until the result lands or fails (`DocumentSession::saving`): the one claimed-paths rule every
+    /// destination check (Save As, Export) and every open (⌘O, Recent, the OS hand-off) consults, so
+    /// two tabs can never both write one new file, an open focuses the tab still saving it, and an
+    /// export never overwrites it.
     fn open_tab_of(&self, key: &FileKey, except: Option<SessionId>) -> Option<SessionId> {
         let store = &*self.store;
+        let names =
+            |s: &crate::workspace::DocumentSession, p: &Path| store.key(p).same_file(key) && Some(s.id) != except;
         self.ws
             .sessions()
             .iter()
-            .filter(|s| Some(s.id) != except)
-            .find(|s| s.path.as_deref().is_some_and(|p| store.key(p).same_file(key)))
+            .find(|s| s.path.as_deref().is_some_and(|p| names(s, p)))
+            .or_else(|| self.ws.sessions().iter().find(|s| s.saving.as_ref().is_some_and(|f| names(s, &f.dest))))
             .map(|s| s.id)
     }
 
@@ -466,13 +479,21 @@ impl Lifecycle<'_> {
 
     /// An export finished: say so (“Exported name.pdf”), or why not; a destination holding an editable
     /// Varos document is replaced only after one more explicit Replace.
+    ///
+    /// The tab may have closed meanwhile: then the result is inert — a written PDF is reported once,
+    /// neutrally; a failure or a pending "replace the editable document?" question about a document
+    /// that is no longer open is dropped (nothing is asked, nothing is queued).
     fn export_done(&mut self, done: ExportDone) {
-        if let Some(s) = self.ws.get_mut(done.job.sid) {
-            if !s.exports.is_empty() {
-                s.exports.remove(0);
-            }
-        }
         let name = file_name(&done.job.dest);
+        let Some(s) = self.ws.get_mut(done.job.sid) else {
+            if done.result == ExportResult::Exported {
+                self.dialogs.notice(&format!("Exported {name}"), "");
+            }
+            return;
+        };
+        if !s.exports.is_empty() {
+            s.exports.remove(0);
+        }
         match done.result {
             ExportResult::Exported => {
                 self.dialogs.notice(&format!("Exported {name}"), "Your document has not changed.")
@@ -831,7 +852,7 @@ mod tests {
         }
         fn key(&self, path: &Path) -> FileKey {
             let t = self.target(path);
-            FileKey { path: path.to_path_buf(), dev_ino: self.inodes.get(&t).map(|i| (7, *i)) }
+            FileKey { path: path.to_path_buf(), dev_ino: self.inodes.get(&t).map(|i| (7, *i)), name_id: None }
         }
         fn exists(&self, path: &Path) -> bool {
             let t = self.target(path);
@@ -2180,5 +2201,145 @@ mod tests {
         assert_eq!(r.prompts(), ["open-failed bad.vrs: The file is damaged"]);
         assert_eq!(r.names(), ["a.vrs", "ملف عربي مع مسافات.vrs"]);
         assert!(r.get(a).is_dirty_exact());
+    }
+
+    // ───────────── review fixes: claimed paths (P0) and inert results for closed tabs (P2) ─────────────
+
+    #[test]
+    fn two_untitled_tabs_cannot_both_save_to_one_new_file() {
+        let mut r = Rig::new();
+        let a = r.active();
+        draw(r.ed(a), RED);
+        r.script([Ans::Pick(Some(p("/d/same.vrs")))]);
+        let job = one(r.bg(AppCommand::Save(a)).1);
+        r.prompts();
+        r.run(AppCommand::NewDocument);
+        let b = r.active();
+        draw(r.ed(b), BLUE);
+        // the file Untitled-1 is still writing is claimed: the existing "open in another tab" refusal
+        r.script([Ans::Pick(Some(p("/d/same.vrs"))), Ans::Pick(None)]);
+        assert!(r.bg(AppCommand::Save(b)).1.is_empty());
+        assert_eq!(
+            r.prompts(),
+            [
+                "save-as Untitled-2.vrs in -",
+                "notice “Untitled-1” is open in another tab.",
+                "save-as Untitled-2.vrs in -"
+            ]
+        );
+        // opening that file (⌘O / Recent / Finder) focuses the tab still saving it; nothing loads
+        r.run(AppCommand::OpenPaths(vec![p("/d/same.vrs")], OpenOrigin::OsHandoff));
+        assert_eq!(r.active(), a);
+        assert!(r.s.loads.is_empty());
+        // the save fails: the claim is released, so tab B may use the name now
+        r.s.fail_save.insert(p("/d/same.vrs"), 1);
+        r.script([Ans::Fail(SaveFailChoice::Cancel)]);
+        r.land(job);
+        r.prompts();
+        assert!(r.get(a).saving.is_none() && r.get(a).path.is_none());
+        r.script([Ans::Pick(Some(p("/d/same.vrs")))]);
+        assert_eq!(r.bg(AppCommand::Save(b)).1.len(), 1, "free again after the failure");
+    }
+
+    #[test]
+    fn export_onto_a_file_a_tab_is_still_saving_is_refused() {
+        use varos_pdf::ExportScope;
+        let mut r = Rig::new();
+        let a = two_boards(&mut r, "/d/a.vrs");
+        r.run(AppCommand::NewDocument);
+        let b = r.active();
+        let doc = Arc::new(r.get(b).editor.doc.clone());
+        r.ws.get_mut(b).unwrap().saving = Some(SaveInFlight {
+            ticket: 1,
+            dest: p("/out/claimed.pdf"),
+            doc,
+            follow_up: false,
+            started: std::time::Instant::now(),
+        });
+        r.script([Ans::Pick(Some(p("/out/claimed.pdf"))), Ans::Pick(None)]);
+        assert!(r.bg(AppCommand::ExportPdf(a, ExportScope::AllVisibleArtboards)).1.is_empty());
+        assert_eq!(r.prompts(), ["export a.pdf in /d", "notice Choose another name.", "export a.pdf in /d"]);
+    }
+
+    #[test]
+    fn a_closed_tabs_export_result_is_inert_but_a_written_pdf_is_reported_once() {
+        use varos_pdf::ExportScope;
+        let mut r = Rig::new();
+        // pending "replace the editable document?" for a closed tab: nothing asked, nothing queued
+        let a = two_boards(&mut r, "/d/a.vrs");
+        r.s.raw.insert(p("/out/old.pdf"), varos_pdf::write_pdf(&art(BLUE)).unwrap());
+        r.script([Ans::Pick(Some(p("/out/old.pdf")))]);
+        let job = one(r.bg(AppCommand::ExportPdf(a, ExportScope::AllVisibleArtboards)).1);
+        r.script([Ans::Decide(SaveDecision::DontSave)]);
+        r.run(AppCommand::CloseDocument(a));
+        r.prompts();
+        let (_, jobs) = r.land(job);
+        assert!(jobs.is_empty() && r.prompts().is_empty() && r.s.exported.is_empty());
+        // a failure for a closed tab: silent
+        let b = two_boards(&mut r, "/d/b.vrs");
+        r.s.fail_export = true;
+        r.script([Ans::Pick(Some(p("/out/b.pdf")))]);
+        let job = one(r.bg(AppCommand::ExportPdf(b, ExportScope::AllVisibleArtboards)).1);
+        r.script([Ans::Decide(SaveDecision::DontSave)]);
+        r.run(AppCommand::CloseDocument(b));
+        r.prompts();
+        r.land(job);
+        assert!(r.prompts().is_empty());
+        // a PDF that WAS written: one neutral notice
+        r.s.fail_export = false;
+        let c = two_boards(&mut r, "/d/c.vrs");
+        r.script([Ans::Pick(Some(p("/out/c.pdf")))]);
+        let job = one(r.bg(AppCommand::ExportPdf(c, ExportScope::AllVisibleArtboards)).1);
+        r.script([Ans::Decide(SaveDecision::DontSave)]);
+        r.run(AppCommand::CloseDocument(c));
+        r.prompts();
+        r.land(job);
+        assert_eq!(r.prompts(), ["notice Exported c.pdf"]);
+        assert!(r.s.exported.contains_key(&p("/out/c.pdf")));
+    }
+
+    /// Round 2: the claim uses the ONE file key, so on the real disk a destination that differs only
+    /// by case (on a case-insensitive volume) is the same claimed file; another folder is not.
+    #[test]
+    fn a_claimed_new_file_refuses_its_case_variant_on_the_real_disk() {
+        use crate::file_ports::DiskStore;
+        let dir = std::env::temp_dir().join(format!("varos-claim-{}", varos_app::storage::checksum::new_nonce()));
+        std::fs::create_dir_all(dir.join("other")).unwrap();
+        let (upper, lower, elsewhere) = (dir.join("A.vrs"), dir.join("a.vrs"), dir.join("other").join("a.vrs"));
+        #[cfg(unix)]
+        let canon = std::fs::canonicalize(&dir).unwrap();
+        // the expectation comes from the volume itself (pathconf), not from the key under test
+        #[cfg(unix)]
+        let same_on_this_volume = crate::file_ports::case_sensitive(&canon) != Some(true);
+        #[cfg(not(unix))]
+        let same_on_this_volume = true;
+        let mut ws = Workspace::new();
+        let a = ws.active_id().unwrap();
+        draw(&mut ws.get_mut(a).unwrap().editor, RED);
+        let b = ws.new_untitled();
+        draw(&mut ws.get_mut(b).unwrap().editor, BLUE);
+        let mut d = FakeDialogs::default();
+        let mut jobs = Vec::new();
+        let run = |ws: &mut Workspace, d: &mut FakeDialogs, jobs: &mut Vec<FileJob>, cmd| {
+            Lifecycle { ws, dialogs: d, store: &mut DiskStore, jobs: Some(jobs) }.run(cmd);
+        };
+        d.answers.push_back(Ans::Pick(Some(upper.clone())));
+        run(&mut ws, &mut d, &mut jobs, AppCommand::Save(a));
+        assert_eq!(jobs.len(), 1, "A.vrs claimed; nothing written yet");
+        d.answers.extend([Ans::Pick(Some(lower.clone())), Ans::Pick(None)]);
+        run(&mut ws, &mut d, &mut jobs, AppCommand::Save(b));
+        let refused = d.log.iter().any(|l| l == "notice “Untitled-1” is open in another tab.");
+        assert_eq!(refused, same_on_this_volume, "{:?}", d.log);
+        if same_on_this_volume {
+            assert_eq!(jobs.len(), 1, "the case variant is refused: one writer");
+        }
+        d.log.clear();
+        d.answers.clear();
+        d.answers.push_back(Ans::Pick(Some(elsewhere)));
+        if ws.get(b).unwrap().saving.is_none() {
+            run(&mut ws, &mut d, &mut jobs, AppCommand::Save(b));
+            assert!(ws.get(b).unwrap().saving.is_some(), "another folder is another file: allowed");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
