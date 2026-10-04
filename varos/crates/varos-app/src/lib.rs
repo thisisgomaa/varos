@@ -7,6 +7,9 @@
 pub mod shell;
 /// Start page pure view model (DFS S2 piece E1) — no `egui`, no I/O.
 pub mod start;
+/// Start v2 — Boards (lane L4): the view-model and the page drawn from it. Not wired into the app yet.
+pub mod start_page;
 pub mod start_ui;
+pub mod start_view;
 /// App-owned storage: data-root resolver, durable writer, checksums, time text (DFS S2/S3).
 pub mod storage;

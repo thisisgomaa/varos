@@ -20,5 +20,8 @@
 Interface between L2 and L4 (fixed now so both can work): the Start view consumes
 `BoardCard { key, name, description: Option<String>, tags: Vec<String>, artboards: u32, path: PathBuf, modified, missing: bool, thumb: Option<ThumbKey> }` and emits the existing `StartAction`s plus `NewBoard`, `NewWithPreset(PresetId)`, `SetTagFilter(Option<String>)`, `SetView(Grid|List)`, `Search(String)`.
 
+## Lane status
+- **L4 Start UI — built, not wired (2026-10-04).** New `start_view.rs` (view-model + intents), `start_page.rs` (page, pure layout, keyboard), `shell/kit/board.rs` (kit controls), `examples/start_gallery.rs`, `tests/start_page.rs` (15 tests); `start_ui.rs` left as is. The moderator switches the app over after L2 with the adapter sketched in `start_view.rs`. Text roles wait for L1 (`start_page::style`). Gate record: [GATE_LOG 2026-10-04 — Start v2 Boards, lane L4](../GATE_LOG.md).
+
 ## Acceptance
 Owner hand check: launch → the Start page matches `inter-empty.png`; with recents it matches `inter-recent.png`; New board opens a free canvas; a preset opens with that artboard; name/description/tags typed in the editor show on the card after save; list view; tag filter; Missing; Recovered. Tests per lane; gates on macOS; cross-review before merge.

@@ -40,9 +40,24 @@ pub enum Icon {
     Landscape,
     FlipH,
     FlipV,
+    // ── Start v2 — Boards (L4) ──
+    /// Recent boards: grid view.
+    Grid,
+    /// Recent boards: list view.
+    List,
+    /// The Recovered band.
+    History,
+    /// The status line's "Recovery on".
+    Shield,
+    /// A Missing board's well ("File not found").
+    FileQuestion,
+    /// The Custom… preset.
+    Plus,
+    /// The top bar's "Search boards".
+    Search,
 }
 impl Icon {
-    pub const ALL: [Icon; 18] = [
+    pub const ALL: [Icon; 25] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -61,6 +76,13 @@ impl Icon {
         Self::Landscape,
         Self::FlipH,
         Self::FlipV,
+        Self::Grid,
+        Self::List,
+        Self::History,
+        Self::Shield,
+        Self::FileQuestion,
+        Self::Plus,
+        Self::Search,
     ];
 
     /// The Lucide icon name and its embedded upstream SVG.
@@ -89,6 +111,13 @@ impl Icon {
             Self::Landscape => svg!("rectangle-horizontal"),
             Self::FlipH => svg!("square-centerline-dashed-horizontal"),
             Self::FlipV => svg!("square-centerline-dashed-vertical"),
+            Self::Grid => svg!("layout-grid"),
+            Self::List => svg!("list"),
+            Self::History => svg!("history"),
+            Self::Shield => svg!("shield-check"),
+            Self::FileQuestion => svg!("file-question-mark"),
+            Self::Plus => svg!("plus"),
+            Self::Search => svg!("search"),
         }
     }
 

@@ -147,6 +147,150 @@ pub const START_DATE_W: f32 = 112.0;
 pub const START_DATE_BREAK: f32 = 480.0;
 pub const START_EMPTY_PAD: f32 = 48.0;
 
+// ── Start v2 — Boards (lane L4, 2026-10-04). `SB_` = Start · Boards. Every number below is read off the
+// design of record, design-reference/mockups/start-v2/src.html (its CSS is the spec; NOTES.md there
+// explains the grid). CSS border-box paddings that sit inside a 1 px border are written border-inclusive
+// (e.g. the box's "padding: 31px 39px" + 1 px border = 32 / 40). Text sizes live in
+// `start_page::style` until lane L1's type tokens land. ──
+/// The primary (inverted, TEXT-filled) button's secondary text and shortcut (NOTES "Tokens").
+pub const ON_TEXT_MUTED: Color32 = rgb(0x5c5753);
+/// The card well's dot grid: white α .07 (src.html `.dots`), premultiplied — proven in tests/start_page.rs.
+pub const WELL_DOT: Color32 = Color32::from_rgba_premultiplied(18, 18, 18, 18);
+// page frame: the BG box sits SEAM_GAP inside the area under the bar; the status line is the void below it
+pub const SB_STATUS_H: f32 = 32.0;
+pub const SB_STATUS_INSET: f32 = 24.0;
+pub const SB_STATUS_ICON_GAP: f32 = 8.0;
+pub const SB_PAD_TOP: f32 = 32.0;
+pub const SB_PAD_X: f32 = 40.0;
+pub const SB_PAD_BOTTOM: f32 = 28.0;
+// the column grid (responsive rule: start_page::grid_columns)
+pub const SB_COL: f32 = 272.0;
+pub const SB_COL_MAX: f32 = 320.0;
+pub const SB_GUTTER: f32 = SEAM_GAP;
+pub const SB_COLS_MIN: usize = 3;
+pub const SB_COLS_MAX: usize = 6;
+/// The content column never grows past six maximum columns; beyond it, it is centred in the box.
+pub const SB_CONTENT_MAX: f32 = SB_COL_MAX * SB_COLS_MAX as f32 + SB_GUTTER * (SB_COLS_MAX - 1) as f32;
+// hero: actions (cols 1–2) + the preset panel (cols 3–5); stacks when the panel would drop under its minimum
+pub const SB_HERO_H: f32 = 152.0;
+pub const SB_BIG_W: f32 = SB_COL;
+pub const SB_BIG_H: f32 = 64.0;
+pub const SB_ACTIONS_W: f32 = SB_BIG_W * 2.0 + SB_GUTTER;
+pub const SB_PRESETS_W: f32 = 840.0;
+pub const SB_PRESETS_MIN_W: f32 = 560.0;
+/// Content width under which the hero stacks (actions above the preset panel): 556 + 12 + 560.
+pub const SB_HERO_STACK_W: f32 = SB_ACTIONS_W + SB_GUTTER + SB_PRESETS_MIN_W;
+pub const SB_BIG_PAD_L: f32 = 18.0;
+pub const SB_BIG_PAD_R: f32 = 16.0;
+pub const SB_BIG_GAP: f32 = 14.0;
+pub const SB_BIG_SUB_GAP: f32 = 3.0;
+/// The hero buttons' and the Recovered band's glyph (src.html `svg.i.lg`).
+pub const SB_ICON_HERO: f32 = 20.0;
+/// Small glyphs: view toggle, Custom… plus, status shield, search (src.html `svg.i.sm`).
+pub const SB_ICON_SMALL: f32 = 14.0;
+pub const SB_LEDE_GAP: f32 = 18.0;
+pub const SB_LEDE_W: f32 = 500.0;
+pub const SB_KEYS_GAP: f32 = 16.0;
+pub const SB_KBD_GAP: f32 = 6.0;
+pub const SB_KBD_H: f32 = 18.0;
+pub const SB_KBD_PAD: f32 = 4.0;
+// the preset panel ("…or start with an artboard — true proportions")
+pub const SB_PANEL_HEAD_H: f32 = 32.0;
+pub const SB_PANEL_PAD_X: f32 = 16.0;
+pub const SB_PANEL_HEAD_GAP: f32 = 8.0;
+pub const SB_PRESET_TOP: f32 = 12.0;
+pub const SB_PRESET_PV: f32 = 56.0;
+pub const SB_PRESET_NAME_GAP: f32 = 10.0;
+pub const SB_PRESET_SIZE_GAP: f32 = 3.0;
+/// One shared scale for every preset outline: 1920 document units = 56 px, on one baseline.
+pub const SB_PRESET_SCALE: f32 = SB_PRESET_PV / 1920.0;
+pub const SB_CUSTOM_W: f32 = 44.0;
+pub const SB_CUSTOM_H: f32 = 28.0;
+pub const SB_DASH: f32 = 3.0;
+pub const SB_DASH_GAP: f32 = 2.0;
+// vertical rhythm under the hero
+pub const SB_SECTION_GAP: f32 = 28.0;
+pub const SB_RECOV_H: f32 = 52.0;
+pub const SB_RECOV_PAD_L: f32 = 20.0;
+pub const SB_RECOV_PAD_R: f32 = 12.0;
+pub const SB_RECOV_ICON_GAP: f32 = 14.0;
+pub const SB_RECOV_TEXT_GAP: f32 = 12.0;
+pub const SB_BTN_H: f32 = 28.0;
+pub const SB_BTN_PAD: f32 = 14.0;
+pub const SB_HEAD_H: f32 = 28.0;
+pub const SB_HEAD_GAP: f32 = 16.0;
+pub const SB_COUNT_GAP: f32 = 8.0;
+pub const SB_FILTERS_GAP: f32 = 32.0;
+pub const SB_FILTER_PAD: f32 = 8.0;
+pub const SB_FILTER_INNER: f32 = 6.0;
+pub const SB_FILTER_SPACING: f32 = 2.0;
+pub const SB_FILTER_BAR: f32 = 2.0;
+pub const SB_FILTER_BAR_R: u8 = 1;
+pub const SB_SEG_BTN_W: f32 = 28.0;
+pub const SB_SEG_BTN_H: f32 = 22.0;
+pub const SB_SEG_PAD: f32 = 1.0;
+pub const SB_SEG_R: u8 = 2;
+// board cards
+pub const SB_CARD_H: f32 = 266.0;
+pub const SB_WELL_H: f32 = 123.0;
+pub const SB_WELL_R: u8 = RBOX - 1;
+pub const SB_CARD_PAD_X: f32 = 14.0;
+pub const SB_CARD_PAD_TOP: f32 = 11.0;
+pub const SB_CARD_PAD_BOTTOM: f32 = 12.0;
+pub const SB_DATE_GAP: f32 = 10.0;
+pub const SB_DESC_GAP: f32 = 5.0;
+pub const SB_TAGS_GAP: f32 = 10.0;
+pub const SB_PILL_H: f32 = 20.0;
+pub const SB_PILL_PAD: f32 = 8.0;
+pub const SB_PILL_GAP: f32 = 4.0;
+pub const SB_FACTS_GAP: f32 = 12.0;
+pub const SB_THUMB_W: f32 = 244.0;
+pub const SB_THUMB_H: f32 = 99.0;
+/// A thumbnail whose aspect is within this of the well's is a whole-well image (lane L3's 544×246).
+pub const SB_THUMB_WELL_TOLERANCE: f32 = 0.08;
+pub const SB_DOT_STEP: f32 = 12.0;
+pub const SB_DOT_R: f32 = 0.75;
+pub const SB_CHIP: f32 = 24.0;
+pub const SB_CHIP_INSET: f32 = 9.0;
+pub const SB_MENU_W: f32 = 184.0;
+pub const SB_MENU_ROW_H: f32 = 28.0;
+pub const SB_MENU_PAD: f32 = 10.0;
+pub const SB_MISS_X: f32 = 14.0;
+pub const SB_MISS_Y: f32 = 12.0;
+pub const SB_MISS_GAP: f32 = 8.0;
+pub const SB_MISS_PILL_H: f32 = 18.0;
+pub const SB_MISS_PILL_PAD: f32 = 7.0;
+/// The typographic placeholder (no thumbnail yet): an outline per artboard (≤ 3, offset) or a dashed
+/// "free" outline, with the board's initials.
+pub const SB_PH_W: f32 = 88.0;
+pub const SB_PH_H: f32 = 56.0;
+pub const SB_PH_STACK: f32 = 6.0;
+pub const SB_PH_MAX: usize = 3;
+// the list view (numbered table: # · Name + description · Tags · Folder · Modified)
+pub const SB_TH_H: f32 = 32.0;
+pub const SB_ROW_H: f32 = 50.0;
+pub const SB_COL_NUM: f32 = 40.0;
+pub const SB_COL_WIDE: f32 = 300.0;
+pub const SB_COL_WIDE_MIN: f32 = 160.0;
+/// The Tags and Folder columns each take this share of what the fixed columns leave (300 at 1408).
+pub const SB_COL_WIDE_SHARE: f32 = 0.26;
+pub const SB_COL_DATE: f32 = 132.0;
+pub const SB_COL_GAP: f32 = 16.0;
+pub const SB_NUM_PAD: f32 = 4.0;
+pub const SB_LIST_DESC_GAP: f32 = 1.0;
+// empty / first launch (centred block)
+pub const SB_FIRST_LEDE_GAP: f32 = 12.0;
+pub const SB_FIRST_LEDE_W: f32 = 520.0;
+pub const SB_FIRST_BTNS_GAP: f32 = 32.0;
+pub const SB_FIRST_KEYS_GAP: f32 = 20.0;
+pub const SB_FIRST_PRESETS_GAP: f32 = 56.0;
+pub const SB_FIRST_PAD_BOTTOM: f32 = 24.0;
+// the top bar's "Search boards" pill
+pub const SB_SEARCH_W: f32 = 200.0;
+pub const SB_SEARCH_H: f32 = 24.0;
+pub const SB_SEARCH_PAD: f32 = 10.0;
+pub const SB_SEARCH_GAP: f32 = 6.0;
+
 // Minimum Start/Recovery kit, in logical points. No runtime colour/size literals in controls.
 pub const KIT_MIN_TARGET: f32 = 24.0;
 pub const KIT_CONTROL_H: f32 = 32.0;
