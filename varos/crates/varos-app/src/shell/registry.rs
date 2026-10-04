@@ -89,7 +89,7 @@ fn fake_field(ui: &mut egui::Ui, letter: &str, value: &str, w: f32) {
         p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, letter, FontId::proportional(9.5), T::FAINT);
         x += 13.0;
     }
-    p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, value, FontId::monospace(11.0), T::TEXT);
+    p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, value, T::numeric_value(11.0), T::TEXT);
 }
 
 /// A 26×24 hand-painted icon button (glyph placeholder — real Lucide icons arrive in Stage 4).
