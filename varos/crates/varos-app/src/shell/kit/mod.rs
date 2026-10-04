@@ -1,4 +1,5 @@
-//! Minimum Start/Recovery controls. No host commands, editor access, or I/O.
+//! Minimum Start/Recovery controls, plus THE icon button (`icon_button`, icon stage 1) and the icon
+//! registry (`Icon`). No host commands, editor access, or I/O.
 //!
 //! Callers own stable IDs, resolved shortcut/help text and enabled reasons. Consume
 //! `activated` once. A host that handles Enter/Space itself must use `pointer_only`;
@@ -153,7 +154,7 @@ fn paint_control(
         let mut x = rect.left() + t::KIT_PAD;
         if let Some(icon) = c.icon {
             let center = if icon_only { rect.center() } else { egui::pos2(x + t::KIT_ICON / 2.0, rect.center().y) };
-            icon.paint(&painter, center, text);
+            icon.paint(&painter, center, t::KIT_ICON, text);
             x += icon_space;
         }
         if date.is_some() {
@@ -192,24 +193,109 @@ fn paint_control(
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, c.selected, accessible_label.as_str())
         });
-        let (activation_key, first_press) = ui.input(|i| {
-            let mut any = false;
-            let mut first = false;
-            for event in &i.events {
-                if let Event::Key { key: Key::Enter | Key::Space, pressed: true, repeat, modifiers, .. } = event {
-                    any = true;
-                    first |= !repeat && modifiers.is_none();
-                }
-            }
-            (any, first)
-        });
-        let pointer = response.clicked_by(PointerButton::Primary);
-        let keyboard_or_accessibility =
-            !c.pointer_only && ((response.has_focus() && first_press) || (!activation_key && response.clicked()));
-        let activated = enabled && (pointer || keyboard_or_accessibility);
+        let activated = enabled && activation(ui, &response, c.pointer_only);
         let help = reason.unwrap_or(c.help);
         let response =
             if help.is_empty() { response } else { response.on_hover_text(help).on_disabled_hover_text(help) };
+        ControlResponse { response, activated }
+    })
+    .inner
+}
+
+/// One activation per press: the primary pointer click, the first (non-repeat, unmodified) Enter/Space
+/// while focused, or an accessibility click. `pointer_only` hosts own Enter/Space themselves.
+fn activation(ui: &Ui, response: &Response, pointer_only: bool) -> bool {
+    let (activation_key, first_press) = ui.input(|i| {
+        let mut any = false;
+        let mut first = false;
+        for event in &i.events {
+            if let Event::Key { key: Key::Enter | Key::Space, pressed: true, repeat, modifiers, .. } = event {
+                any = true;
+                first |= !repeat && modifiers.is_none();
+            }
+        }
+        (any, first)
+    });
+    let pointer = response.clicked_by(PointerButton::Primary);
+    let keyboard_or_accessibility =
+        !pointer_only && ((response.has_focus() && first_press) || (!activation_key && response.clicked()));
+    pointer || keyboard_or_accessibility
+}
+
+/// How an icon button shows its state. Owner decision (UI_SYSTEM "on states"): a tool is an azure
+/// block, a toggle is a small azure bar with no fill; a plain action has neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IconState<'a> {
+    /// A one-shot action (Add, Duplicate, Flip…).
+    Action,
+    /// A tool: an azure block while it is the active one.
+    Tool(bool),
+    /// An on/off toggle: a small azure bar under the glyph while on.
+    Toggle(bool),
+    /// Not available now; the reason is added to the tooltip, the button never activates.
+    Disabled(&'a str),
+}
+
+/// The hover text an icon button shows: its label (the old text, plus its shortcut), and for a disabled
+/// button the reason too. Labels move to tooltips — they never disappear.
+pub fn icon_tooltip(tooltip: &str, state: IconState<'_>) -> String {
+    match state {
+        IconState::Disabled(reason) if !reason.is_empty() => format!("{tooltip} — {reason}"),
+        _ => tooltip.to_string(),
+    }
+}
+
+/// THE icon button: a registry glyph at `t::ICON_LG` in a `t::ICON_BTN_W` × `t::ICON_BTN_H` target
+/// (≥ 24 pt), 3 px corners, HOVER fill on hover, the state marks of [`IconState`], the azure focus
+/// ring for keyboard focus only, and a tooltip that is never empty. Activation is the same single
+/// event as [`action`]: pointer release, the first Enter/Space while focused, or an accessibility click.
+pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconState<'_>) -> ControlResponse {
+    debug_assert!(!tooltip.is_empty(), "an icon button carries its old text label as a tooltip");
+    let keyboard = keyboard_visible(ui);
+    let disabled = matches!(state, IconState::Disabled(_));
+    let help = icon_tooltip(tooltip, state);
+    let opacity = ui.painter().opacity();
+    ui.add_enabled_ui(!disabled, |ui| {
+        ui.set_opacity(opacity); // we own the disabled colours; keep any ghosted ancestor's opacity
+        let enabled = ui.is_enabled();
+        let (_, rect) = ui.allocate_space(egui::vec2(t::ICON_BTN_W, t::ICON_BTN_H));
+        let response = ui.interact(rect, id, Sense::click());
+        let hover = enabled && (response.hovered() || response.is_pointer_button_down_on());
+        let (block, bar) = match state {
+            IconState::Tool(on) => (on, false),
+            IconState::Toggle(on) => (false, on),
+            IconState::Action | IconState::Disabled(_) => (false, false),
+        };
+        let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+        if block && enabled {
+            painter.rect_filled(rect, t::r_ctrl(), t::ACCENT);
+        } else if hover {
+            painter.rect_filled(rect, t::r_ctrl(), t::HOVER);
+        }
+        let ink = if !enabled {
+            t::FAINT
+        } else if block || bar || hover {
+            t::TEXT
+        } else {
+            t::MUTED
+        };
+        icon.paint(&painter, rect.center(), t::ICON_LG, ink);
+        if bar && enabled {
+            let mark = egui::Rect::from_center_size(
+                egui::pos2(rect.center().x, rect.bottom() - t::ICON_BAR_H / 2.0),
+                egui::vec2(t::ICON_BAR_W, t::ICON_BAR_H),
+            );
+            painter.rect_filled(mark, egui::CornerRadius::ZERO, t::ACCENT);
+        }
+        if enabled && response.has_focus() && keyboard {
+            // Over an azure block the ring would vanish: it switches to TEXT there (K5 focus overlay).
+            let ring = if block { t::TEXT } else { t::ACCENT };
+            painter.rect_stroke(rect, t::r_ctrl(), Stroke::new(t::KIT_FOCUS_STROKE, ring), StrokeKind::Inside);
+        }
+        response
+            .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, block || bar, help.as_str()));
+        let activated = enabled && activation(ui, &response, false);
+        let response = response.on_hover_text(help.as_str()).on_disabled_hover_text(help.as_str());
         ControlResponse { response, activated }
     })
     .inner
@@ -408,7 +494,7 @@ pub fn menu_row(ui: &mut Ui, c: Control<'_>) -> ControlResponse {
     let text = if enabled { t::TEXT } else { t::MUTED };
     let mut x = rect.left() + t::KIT_PAD;
     if let Some(icon) = c.icon {
-        icon.paint(&painter, egui::pos2(x + t::KIT_ICON / 2.0, rect.center().y), text);
+        icon.paint(&painter, egui::pos2(x + t::KIT_ICON / 2.0, rect.center().y), t::KIT_ICON, text);
         x += t::KIT_ICON + t::KIT_GAP;
     }
     let width = (rect.right() - t::KIT_PAD - x).max(0.0);
