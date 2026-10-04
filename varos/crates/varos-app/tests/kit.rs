@@ -2,7 +2,7 @@
 use egui::{Context, Event, Id, Key, Modifiers, PointerButton, Pos2, RawInput, Rect};
 use varos_app::shell::{
     fonts,
-    kit::{self, Availability, Control, ControlResponse, Icon},
+    kit::{self, Availability, Control, ControlResponse, Icon, MenuEntry},
     tokens,
 };
 
@@ -171,4 +171,108 @@ fn text_and_focus_contrast_meet_the_minimum_kit_contract() {
     for background in [tokens::PANEL, tokens::SURFACE] {
         assert!(contrast(tokens::MUTED, background) >= 4.5);
     }
+}
+
+fn release(key: Key) -> Event {
+    Event::Key { key, physical_key: Some(key), pressed: false, repeat: false, modifiers: Modifiers::NONE }
+}
+fn menu_frame(ctx: &Context, events: Vec<Event>) -> (Option<usize>, egui::FullOutput) {
+    let mut chosen = None;
+    let entries = [MenuEntry::Item("Locate…"), MenuEntry::Separator, MenuEntry::Item("Remove from Recent")];
+    let out = ctx.run_ui(input(ctx.pixels_per_point(), events), |ui| {
+        let _ = ui.label("host");
+        chosen = kit::menu(ui.ctx(), Id::new("owner"), &entries);
+    });
+    (chosen, out)
+}
+
+#[test]
+fn kit_menu_keyboard_pointer_escape_and_hairline_separator() {
+    for ppp in [1.0, 2.0] {
+        let ctx = context(ppp);
+        let owner = Id::new("owner");
+        kit::open_menu(&ctx, owner, Pos2::new(40.0, 40.0), None);
+        let _ = menu_frame(&ctx, vec![]); // egui sizes a new Area invisibly for one frame
+        let (chosen, out) = menu_frame(&ctx, vec![]);
+        assert!(chosen.is_none() && kit::is_menu_open(&ctx, owner));
+        assert!(!focus_outline(&out), "pointer-opened menu shows no ring until the keyboard is used");
+        assert!(
+            out.shapes
+                .iter()
+                .any(|s| matches!(&s.shape, egui::Shape::LineSegment { stroke, .. } if stroke.color == tokens::LINE)),
+            "kit separator is a LINE hairline"
+        );
+        assert!(!out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == tokens::ACCENT)));
+        // ↓ focuses the first item (ring), ↓ again skips the separator, ↓ at the end stays, Enter picks it.
+        let (_, out) = menu_frame(&ctx, vec![key(Key::ArrowDown, false)]);
+        assert!(focus_outline(&out));
+        let (chosen, _) = menu_frame(&ctx, vec![key(Key::ArrowDown, false), key(Key::ArrowDown, false)]);
+        assert!(chosen.is_none());
+        let (chosen, _) = menu_frame(&ctx, vec![key(Key::Enter, false), release(Key::Enter)]);
+        assert_eq!(chosen, Some(2));
+        assert!(!kit::menu_open(&ctx), "activation closes the menu");
+        // ↑ from nothing lands on the last item; ↑ again on the first; Enter → 0.
+        kit::open_menu(&ctx, owner, Pos2::new(40.0, 40.0), None);
+        let _ = menu_frame(&ctx, vec![key(Key::ArrowUp, false), key(Key::ArrowUp, false)]);
+        assert_eq!(menu_frame(&ctx, vec![key(Key::Enter, false), release(Key::Enter)]).0, Some(0));
+        // Esc closes without a choice.
+        kit::open_menu(&ctx, owner, Pos2::new(40.0, 40.0), None);
+        let _ = menu_frame(&ctx, vec![]);
+        assert_eq!(menu_frame(&ctx, vec![key(Key::Escape, false)]).0, None);
+        assert!(!kit::menu_open(&ctx));
+        // Pointer: press + release on an item activates once; a press outside closes.
+        kit::open_menu(&ctx, owner, Pos2::new(40.0, 40.0), None);
+        let _ = menu_frame(&ctx, vec![]);
+        let row = ctx.read_response(owner.with(("menu-item", 2usize))).unwrap().rect;
+        assert!(row.height() >= tokens::KIT_MIN_TARGET);
+        assert!(menu_frame(&ctx, pointer(row.center(), true)).0.is_none());
+        assert_eq!(menu_frame(&ctx, pointer(row.center(), false)).0, Some(2));
+        kit::open_menu(&ctx, owner, Pos2::new(40.0, 40.0), None);
+        let _ = menu_frame(&ctx, vec![]);
+        let _ = menu_frame(&ctx, pointer(Pos2::new(350.0, 470.0), true));
+        assert!(!kit::menu_open(&ctx), "a press outside closes the menu");
+    }
+}
+
+#[test]
+fn kit_menu_row_is_a_kit_control_with_a_keyboard_ring_only() {
+    let ctx = context(1.0);
+    let row = |focused: bool, events| {
+        let mut result = None;
+        let out = ctx.run_ui(input(1.0, events), |ui| {
+            let mut c = Control::new(Id::new("row"), "Remove from Recent");
+            c.pointer_only = true;
+            c.focused = focused;
+            result = Some(kit::menu_row(ui, c));
+        });
+        (result.unwrap(), out)
+    };
+    let (r, out) = row(false, vec![]);
+    assert!(!focus_outline(&out) && r.response.rect.height() == tokens::KIT_CONTROL_H);
+    let (r, out) = row(true, vec![key(Key::Enter, false)]);
+    assert!(focus_outline(&out) && !r.activated, "a pointer-only row leaves Enter to its menu");
+    let pos = r.response.rect.center();
+    assert!(!row(false, pointer(pos, true)).0.activated);
+    assert!(row(false, pointer(pos, false)).0.activated);
+}
+
+#[test]
+fn kit_icons_are_embedded_lucide_svgs_rendered_to_textures() {
+    let names: Vec<_> = Icon::ALL.iter().map(|i| i.lucide().0).collect();
+    assert_eq!(names, ["house", "file-plus", "folder-open", "x", "file", "ellipsis"]);
+    for icon in Icon::ALL {
+        let (name, svg) = icon.lucide();
+        assert!(svg.contains(&format!("lucide-{name}")) && svg.contains("stroke=\"currentColor\""), "{name}");
+        let (rgba, w, h) = icon.rasterize().unwrap_or_else(|| panic!("{name} must parse"));
+        assert_eq!((w, h), (tokens::ICON_RASTER, tokens::ICON_RASTER));
+        assert!(rgba.chunks(4).any(|px| px[3] > 0 && px[0] == 255), "{name} renders white ink");
+    }
+    // Painted as a texture image (a mesh), never as hand-placed line shapes.
+    let ctx = context(1.0);
+    let (_, out) = frame(&ctx, vec![], Availability::Enabled, false, false);
+    assert!(out
+        .shapes
+        .iter()
+        .any(|s| matches!(&s.shape, egui::Shape::Mesh(m) if m.texture_id != egui::TextureId::default())));
+    assert!(!out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Path(_))));
 }

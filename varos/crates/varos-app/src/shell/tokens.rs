@@ -154,6 +154,12 @@ pub const KIT_GAP: f32 = 8.0;
 pub const KIT_TEXT_GAP: f32 = 4.0;
 pub const KIT_STROKE: f32 = 1.0;
 pub const KIT_FOCUS_STROKE: f32 = 2.0;
+/// Lucide icons rasterize at 32 px, close to their 13–18 pt draw size: egui-wgpu textures carry no
+/// mipmaps, so a large raster shown small eats thin strokes (Ahmed 2026-07-11). Toolbar and kit share it.
+pub const ICON_RASTER: u32 = 32;
+/// Kit menus: minimum popup width and the gap between the anchor and the popup.
+pub const KIT_MENU_MIN_W: f32 = 176.0;
+pub const KIT_MENU_GAP: f32 = 4.0;
 
 #[cfg(test)]
 mod tests {

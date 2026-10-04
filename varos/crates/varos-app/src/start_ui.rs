@@ -1,7 +1,7 @@
 //! Start presentation only. The host caches/rebuilds the pure model outside paint.
 use crate::{
     shell::{
-        kit::{self, Control, Icon},
+        kit::{self, Control, Icon, MenuEntry},
         tokens as t,
     },
     start::{StartAction, StartModel, EMPTY_RECENT_COPY, START_TITLE},
@@ -10,43 +10,70 @@ use egui::{Event, Id, Key};
 
 pub struct StartPage {
     pub model: StartModel,
+    /// The focus ring is visible (keyboard modality); a pointer press hides it.
     keyboard_focus: bool,
+    /// Focus has been placed by the user (a Tab or a click). Until then focus rests on New and the
+    /// first Tab only reveals it there, so the first Tab lands on the first control.
+    entered: bool,
+    /// The Recent row whose kit menu (Locate… / Remove from Recent) is open.
+    menu_for: Option<std::path::PathBuf>,
 }
 impl StartPage {
     pub fn new(model: StartModel) -> Self {
-        Self { model, keyboard_focus: false }
+        Self { model, keyboard_focus: false, entered: false, menu_for: None }
     }
+    /// A rebuilt model (Recent changed, a probe finished). Keyboard focus and its visibility
+    /// survive: the same element by key, or the row now in a removed row's place.
     pub fn replace(&mut self, model: StartModel) {
-        self.model = model;
+        let old = std::mem::replace(&mut self.model, model);
+        self.model.carry_focus_from(&old);
+        if self.menu_for.as_ref().is_some_and(|p| !self.model.rows().iter().any(|r| &r.path == p)) {
+            self.menu_for = None;
+        }
+    }
+    /// Home was (re)entered: start fresh, focus resting on New with no ring until the keyboard is used.
+    pub fn reset_focus(&mut self) {
+        self.model.set_focus(0);
         self.keyboard_focus = false;
+        self.entered = false;
+        self.menu_for = None;
+    }
+    /// Is the focus ring currently shown (keyboard modality)?
+    pub fn keyboard_focus(&self) -> bool {
+        self.keyboard_focus
     }
     pub fn draw(&mut self, ui: &mut egui::Ui, warning: Option<&str>) -> Vec<StartAction> {
         let mut actions = vec![];
         let mut focus_moved = false;
         // The pure model owns traversal. Consume navigation so egui does not also move focus.
-        let events = if egui::Popup::is_any_open(ui.ctx()) { vec![] } else { ui.input(|i| i.events.clone()) };
+        // While a menu is open it owns the keyboard (arrows / Enter / Esc).
+        let blocked = egui::Popup::is_any_open(ui.ctx()) || kit::menu_open(ui.ctx());
+        let events = if blocked { vec![] } else { ui.input(|i| i.events.clone()) };
         for event in events {
             match event {
                 Event::PointerButton { pressed: true, .. } => self.keyboard_focus = false,
                 Event::Key { key, pressed: true, repeat, modifiers, .. }
                     if !modifiers.command && !modifiers.ctrl && !modifiers.alt =>
                 {
+                    // Any key reveals the ring at once — no hidden first press.
+                    self.keyboard_focus = true;
                     match key {
                         Key::Tab => {
                             if modifiers.shift {
                                 self.model.tab_prev();
-                            } else {
+                            } else if self.entered {
                                 self.model.tab_next();
                             }
+                            self.entered = true;
                         }
                         Key::ArrowUp => self.model.arrow_up(),
                         Key::ArrowDown => self.model.arrow_down(),
                         Key::Enter | Key::Space if !repeat => actions.extend(self.model.activate()),
-                        Key::Delete if !repeat => actions.extend(self.model.delete_focused()),
+                        // Mac "delete" arrives as Backspace; both remove (same as the editor).
+                        Key::Delete | Key::Backspace if !repeat => actions.extend(self.model.delete_focused()),
                         _ => continue,
                     }
                     focus_moved = true;
-                    self.keyboard_focus = true;
                     ui.input_mut(|i| {
                         i.consume_key(modifiers, key);
                     });
@@ -117,6 +144,7 @@ impl StartPage {
                 let r = kit::action(ui, c, false);
                 if r.activated {
                     self.model.set_focus(index);
+                    self.entered = true;
                     actions.push(action);
                 }
                 ui.label(egui::RichText::new(hint.as_str()).small().color(t::MUTED));
@@ -140,7 +168,7 @@ impl StartPage {
         ui.label(egui::RichText::new("Recent documents").size(t::START_SECTION_SIZE).color(t::TEXT));
         ui.add_space(t::KIT_GAP);
         if self.model.rows().is_empty() {
-            ui.separator();
+            kit::separator(ui);
             ui.add_space(t::START_EMPTY_PAD);
             ui.label(egui::RichText::new("Your next document starts here.").size(t::START_FILE_SIZE).color(t::TEXT));
             kit::notice(ui, EMPTY_RECENT_COPY);
@@ -165,9 +193,10 @@ impl StartPage {
                 });
             }
         });
-        ui.separator();
+        kit::separator(ui);
         let recent_start = 2 + if self.model.recovery().is_empty() { 0 } else { 2 * self.model.recovery().len() + 1 };
         let mut clicked = None;
+        let mut open_menu = None;
         for (i, row) in self.model.rows().iter().enumerate() {
             let full_path = row.path.to_string_lossy();
             let mut c = Control::new(Id::new(("start-recent", &row.path)), &row.name);
@@ -197,20 +226,32 @@ impl StartPage {
                             clicked = Some(i + recent_start);
                             actions.push(StartAction::OpenRecent(row.path.clone()));
                         }
-                        r.response.context_menu(|ui| recent_menu(ui, row, actions));
+                        if r.response.secondary_clicked() {
+                            let at = r.response.interact_pointer_pos().unwrap_or(r.response.rect.center());
+                            kit::open_menu(ui.ctx(), menu_owner(&row.path), at, None);
+                            open_menu = Some(row.path.clone());
+                        }
                     },
                 );
-                let mut more = Control::new(Id::new(("start-more", &row.path)), "Document actions");
+                let mut more = Control::new(menu_owner(&row.path), "Document actions");
                 more.icon = Some(Icon::More);
                 more.help = "Locate or remove from Recent";
                 more.pointer_only = true;
                 let r = kit::action(ui, more, true);
-                egui::Popup::menu(&r.response).show(|ui| recent_menu(ui, row, actions));
+                if r.activated {
+                    kit::toggle_menu_below(ui.ctx(), menu_owner(&row.path), r.response.rect);
+                    open_menu = Some(row.path.clone());
+                }
             });
         }
         if let Some(index) = clicked {
             self.model.set_focus(index);
+            self.entered = true;
         }
+        if open_menu.is_some() {
+            self.menu_for = open_menu;
+        }
+        self.recent_menu(ui.ctx(), actions);
         ui.add_space(t::START_GAP);
         ui.horizontal(|ui| {
             let mut c = Control::new(Id::new("start-clear"), "Clear Recent");
@@ -271,18 +312,44 @@ impl StartPage {
         }
         if let Some(index) = clicked {
             self.model.set_focus(index);
+            self.entered = true;
         }
         ui.add_space(t::START_GAP);
     }
+
+    /// The open Recent row's kit menu: Locate… (missing files only), a hairline, Remove from Recent.
+    fn recent_menu(&mut self, ctx: &egui::Context, actions: &mut Vec<StartAction>) {
+        let Some(path) = self.menu_for.clone() else {
+            return;
+        };
+        let owner = menu_owner(&path);
+        let row = self.model.rows().iter().find(|r| r.path == path);
+        let (Some(row), true) = (row, kit::is_menu_open(ctx, owner)) else {
+            if kit::is_menu_open(ctx, owner) {
+                kit::close_menu(ctx);
+            }
+            self.menu_for = None;
+            return;
+        };
+        let entries: &[MenuEntry<'_>] = if row.missing {
+            &[MenuEntry::Item(LOCATE), MenuEntry::Separator, MenuEntry::Item(REMOVE)]
+        } else {
+            &[MenuEntry::Item(REMOVE)]
+        };
+        if let Some(index) = kit::menu(ctx, owner, entries) {
+            actions.push(match entries[index] {
+                MenuEntry::Item(LOCATE) => StartAction::Locate(path),
+                _ => StartAction::RemoveRecent(path),
+            });
+            self.menu_for = None;
+        }
+    }
 }
 
-fn recent_menu(ui: &mut egui::Ui, row: &crate::start::StartRow, actions: &mut Vec<StartAction>) {
-    if row.missing && ui.button("Locate…").clicked() {
-        actions.push(StartAction::Locate(row.path.clone()));
-        ui.close();
-    }
-    if ui.button("Remove from Recent").clicked() {
-        actions.push(StartAction::RemoveRecent(row.path.clone()));
-        ui.close();
-    }
+const LOCATE: &str = "Locate…";
+const REMOVE: &str = "Remove from Recent";
+
+/// The row's "Document actions" control id doubles as its menu owner.
+fn menu_owner(path: &std::path::Path) -> Id {
+    Id::new(("start-more", path))
 }

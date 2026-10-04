@@ -17,6 +17,8 @@ pub struct RecentStore<S> {
     pub recents: Recents,
     pub warning: Option<String>,
     destination: Option<PathBuf>,
+    /// Bumps on every Recent change; part of Start's rebuild key (rebuild only when it moved).
+    generation: u64,
 }
 impl<S: DocStore> RecentStore<S> {
     pub fn new(inner: S) -> Self {
@@ -33,12 +35,25 @@ impl<S: DocStore> RecentStore<S> {
         });
         // Unknown versions/read errors/corruption are never overwritten after a warning.
         let destination = if warning.is_some() { None } else { destination };
-        Self { inner, recents, warning, destination }
+        Self { inner, recents, warning, destination, generation: 0 }
     }
-    pub fn model(&self, recovery: Vec<varos_app::start::RecoveryRow>) -> StartModel {
-        StartModel::build(&self.recents, now(), |p| !self.inner.exists(p), recovery)
+    /// Start's model. `missing` is the host's cached, non-blocking probe (never a UI-thread stat).
+    pub fn model(
+        &self,
+        recovery: Vec<varos_app::start::RecoveryRow>,
+        missing: impl FnMut(&Path) -> bool,
+    ) -> StartModel {
+        StartModel::build(&self.recents, now(), missing, recovery)
+    }
+    /// The paths currently in Recent (the existence probe prunes to these).
+    pub fn recent_paths(&self) -> Vec<PathBuf> {
+        self.recents.entries().iter().map(|e| e.path.clone()).collect()
+    }
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
     fn persist(&mut self) {
+        self.generation += 1;
         let Some(path) = &self.destination else {
             return;
         };
@@ -184,7 +199,7 @@ mod tests {
         assert_eq!(rows.len(), 10);
         assert_eq!(
             rows.iter().map(|(_, p)| p).collect::<Vec<_>>(),
-            store.model(Vec::new()).rows().iter().take(10).map(|r| &r.path).collect::<Vec<_>>()
+            store.model(Vec::new(), |_| false).rows().iter().take(10).map(|r| &r.path).collect::<Vec<_>>()
         );
         let old = store.recents.entries()[5].path.clone();
         let new = dir.0.join("found.vrs");

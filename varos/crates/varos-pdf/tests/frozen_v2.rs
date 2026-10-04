@@ -11,6 +11,36 @@ fn bytes(relative: &str) -> Vec<u8> {
     std::fs::read(fixture(relative)).unwrap()
 }
 
+/// A2: the frozen corpus is enforced, not just documented. Every `.vrs` in each folder must be listed
+/// in its `SHA256SUMS` with the exact hash, and every listed file must exist (no missing, no extra).
+#[test]
+fn frozen_fixture_bytes_match_their_sha256sums() {
+    use sha2::{Digest, Sha256};
+    for folder in ["v2", "refused"] {
+        let dir = fixture(folder);
+        let sums = std::fs::read_to_string(dir.join("SHA256SUMS")).unwrap();
+        let mut listed = std::collections::BTreeMap::new();
+        for line in sums.lines().filter(|l| !l.trim().is_empty()) {
+            let (hash, name) = line.split_once("  ").unwrap_or_else(|| panic!("{folder}: bad line {line:?}"));
+            assert!(listed.insert(name.to_string(), hash.to_string()).is_none(), "{folder}: {name} listed twice");
+        }
+        let mut present = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            if name.ends_with(".vrs") {
+                present.insert(name);
+            }
+        }
+        let names: std::collections::BTreeSet<_> = listed.keys().cloned().collect();
+        assert_eq!(present, names, "{folder}: fixtures and SHA256SUMS must list the same files");
+        for (name, want) in &listed {
+            let got: String =
+                Sha256::digest(std::fs::read(dir.join(name)).unwrap()).iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(&got, want, "{folder}/{name}: frozen bytes changed");
+        }
+    }
+}
+
 #[test]
 fn frozen_v2_twins_are_exact_and_byte_stable() {
     for scenario in ["masked_rotated", "boardless"] {
@@ -112,7 +142,8 @@ fn frozen_refusals_keep_their_typed_reason_on_bytes_and_disk() {
             }
             "version_mismatch" => err == LoadError::VersionMismatch { container: 1, model: 2 },
             "filtered_model" => err == LoadError::UnsupportedPdf("model encoding".into()),
-            "incremental" | "xref_stream" => matches!(err, LoadError::UnsupportedPdf(_)),
+            "incremental" => err == LoadError::UnsupportedPdf("incremental update".into()),
+            "xref_stream" => err == LoadError::UnsupportedPdf("compressed cross-reference".into()),
             "missing_model" => err == LoadError::NoEmbeddedModel,
             _ => unreachable!(),
         };

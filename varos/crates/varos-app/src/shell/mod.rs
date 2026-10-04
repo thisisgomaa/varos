@@ -6,6 +6,7 @@ pub mod boxtree;
 pub mod fonts;
 pub mod kit;
 pub mod registry;
+pub mod svg;
 pub mod tokens;
 
 pub use boxtree::ShellState;

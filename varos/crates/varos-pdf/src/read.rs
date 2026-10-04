@@ -170,7 +170,16 @@ fn words(line: &[u8]) -> Vec<&[u8]> {
     line.split(|b| ws(*b)).filter(|w| !w.is_empty()).collect()
 }
 
-fn preflight(bytes: &[u8], limits: &Limits) -> Result<(), LoadError> {
+/// The preflight's direct-object token count of `bytes` (the same lexer and rules the reader applies),
+/// with the object/token budgets lifted so the caller compares against its own limits. No lopdf
+/// parse, no model decode: a linear scan of the dictionaries, skipping stream data by /Length.
+pub(crate) fn pdf_tokens(bytes: &[u8], limits: &Limits) -> Result<usize, LoadError> {
+    let open = Limits { max_pdf_objects: usize::MAX / (2 * Limits::PDF_TOKENS_PER_OBJECT), ..*limits };
+    preflight(bytes, &open)
+}
+
+/// Returns the direct-object token count (trailer + every indirect object, stream data excluded).
+fn preflight(bytes: &[u8], limits: &Limits) -> Result<usize, LoadError> {
     // Require one unambiguous terminal footer. This agrees with lopdf's last-EOF/25-byte search;
     // a stray startxref after EOF or earlier alternative cannot evade our gate.
     let end = bytes.iter().rposition(|b| !ws(*b)).map(|i| i + 1).ok_or_else(|| malformed("empty PDF"))?;
@@ -266,7 +275,7 @@ fn preflight(bytes: &[u8], limits: &Limits) -> Result<(), LoadError> {
         }
         scan_value(&mut lex, limits, &mut token_count, false)?;
     }
-    Ok(())
+    Ok(token_count)
 }
 
 #[derive(Debug, PartialEq)]
@@ -390,7 +399,7 @@ fn scan_value(lex: &mut Lexer<'_>, limits: &Limits, count: &mut usize, trailer: 
     let mut first = true;
     while let Some(t) = lex.next()? {
         *count = count.saturating_add(1);
-        if *count > limits.max_pdf_objects.saturating_mul(16) {
+        if *count > limits.max_pdf_tokens() {
             return Err(unsupported("direct object complexity limit"));
         }
         if trailer && first && t != Token::Open(b'<') {
