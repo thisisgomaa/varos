@@ -5,8 +5,8 @@
 use super::error::{Invalid, LoadError};
 use super::limits::Limits;
 use super::structure::max_used_id;
-use crate::model::{Document, GroupRole};
-use std::collections::HashMap;
+use crate::model::{Document, GroupRole, NodeKind};
+use std::collections::{HashMap, HashSet};
 
 /// A migration step: format `from` → `from + 1`.
 pub type Step = fn(Document, &Limits) -> Result<Document, LoadError>;
@@ -28,8 +28,9 @@ pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result
 /// v1 → v2. The v2 model is the v1 model, so this only performs the documented v1 normalizations
 /// (`sync_tree`): the legacy group registry becomes tree nodes with z order kept, tree-less paths are
 /// adopted by the active layer, empty groups are pruned, nested live transforms are healed. It never
-/// repairs authored mask meaning: a clip group that `sync_tree` would demote is refused
-/// (`Invalid::BadMask`). The id counter is raised to cover every id in use.
+/// repairs additional mask meaning: decode_model already releases the explicitly allowed broken-v1
+/// clips, retaining a notice. Any further clip change here is refused (`Invalid::BadMask`).
+/// The id counter is raised to cover every id in use.
 ///
 /// Requires a document that passed `check_structure` (`decode_model` runs it first): the tree walks in
 /// `sync_tree` assume an acyclic, depth-bounded tree.
@@ -60,4 +61,23 @@ pub(crate) fn normalize(mut doc: Document) -> Result<Document, LoadError> {
         }
     }
     Ok(doc)
+}
+
+/// Owner-approved v1 exception: clear only a Group's broken clip reference, before structural
+/// checking/id allocation. Never adopt a dangling mask id or repair another kind of corruption.
+/// This pass performs no tree traversal; all other references still pass the strict precheck.
+pub(crate) fn release_broken_clips(doc: &mut Document) -> bool {
+    let ids: HashSet<u32> = doc.nodes.iter().map(|n| n.id).collect();
+    let mut released = false;
+    for n in &mut doc.nodes {
+        if n.kind == NodeKind::Group
+            && n.role == GroupRole::Clip
+            && !n.mask_child.is_some_and(|id| ids.contains(&id) && n.children.contains(&id))
+        {
+            n.role = GroupRole::Normal;
+            n.mask_child = None;
+            released = true;
+        }
+    }
+    released
 }

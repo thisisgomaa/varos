@@ -3,7 +3,10 @@
 //! so these modules are context-agnostic — the real app (custom wgpu boot) just calls
 //! [`ShellState::ui`] (they were prototyped in an eframe sandbox, now retired).
 pub mod boxtree;
+pub mod fonts;
+pub mod kit;
 pub mod registry;
+pub mod svg;
 pub mod tokens;
 
 pub use boxtree::ShellState;

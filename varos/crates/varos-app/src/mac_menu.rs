@@ -2,10 +2,16 @@
 //! background. See docs/foundation/MAC_CHROME.md. Nothing here decides behaviour — a click becomes
 //! a `chrome::MenuCmd` that `main.rs` runs through the SAME paths the keyboard / buttons use.
 
+use crate::app_command::AppCommand;
 use crate::chrome::{self, Check, Entry, MenuCmd, Native};
 use muda::accelerator::{Accelerator, Code, Modifiers};
 use muda::{AboutMetadata, CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use std::collections::HashMap;
+use std::{cell::RefCell, path::PathBuf};
+pub enum NativeAction {
+    Menu(MenuCmd),
+    App(AppCommand),
+}
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Mutex;
 use winit::event_loop::EventLoopProxy;
@@ -59,6 +65,10 @@ pub struct MacMenu {
     cmds: HashMap<MenuId, MenuCmd>,
     checks: Vec<(Check, CheckMenuItem)>,
     rx: Receiver<MenuId>,
+    recent: Submenu,
+    recent_paths: RefCell<Vec<PathBuf>>,
+    recent_commands: RefCell<HashMap<MenuId, AppCommand>>,
+    document_items: Vec<MenuItem>,
 }
 
 impl MacMenu {
@@ -76,16 +86,28 @@ impl MacMenu {
         let mut cmds = HashMap::new();
         let mut checks = Vec::new();
         let mut window_menu = None;
+        let mut recent = None;
+        let mut document_items = vec![];
         for (title, entries) in chrome::menus() {
             let sub = Submenu::new(title, true);
-            fill(&sub, &entries, &mut cmds, &mut checks)?;
+            fill(&sub, &entries, &mut cmds, &mut checks, &mut recent, &mut document_items)?;
             menu.append(&sub)?;
             if title == "Window" {
                 window_menu = Some(sub);
             }
         }
         let window_menu = window_menu.expect("the table has a Window menu (tested)");
-        Ok(Self { menu, window_menu, cmds, checks, rx })
+        Ok(Self {
+            menu,
+            window_menu,
+            cmds,
+            checks,
+            rx,
+            recent: recent.expect("Recent submenu"),
+            recent_paths: RefCell::new(vec![]),
+            recent_commands: RefCell::new(HashMap::new()),
+            document_items,
+        })
     }
 
     /// Make it the app's menu bar. Call once the app has finished launching (first `NewEvents`).
@@ -95,8 +117,55 @@ impl MacMenu {
     }
 
     /// The commands clicked (or ⌘-keyed) since the last call.
-    pub fn drain(&self) -> Vec<MenuCmd> {
-        self.rx.try_iter().filter_map(|id| self.cmds.get(&id).copied()).collect()
+    pub fn drain(&self) -> Vec<NativeAction> {
+        let recent = self.recent_commands.borrow();
+        self.rx
+            .try_iter()
+            .filter_map(|id| {
+                recent
+                    .get(&id)
+                    .cloned()
+                    .map(NativeAction::App)
+                    .or_else(|| self.cmds.get(&id).copied().map(NativeAction::Menu))
+            })
+            .collect()
+    }
+    pub fn sync_documents(&self, active: bool) {
+        for item in &self.document_items {
+            if item.is_enabled() != active {
+                item.set_enabled(active);
+            }
+        }
+        for (check, item) in &self.checks {
+            let enabled = active || matches!(check, Check::Rail | Check::Dock | Check::Panel(_));
+            if item.is_enabled() != enabled {
+                item.set_enabled(enabled);
+            }
+        }
+    }
+    pub fn sync_recent(&self, recents: &varos_app::storage::recents::Recents) -> Result<(), muda::Error> {
+        let rows = chrome::recent_menu(recents);
+        let paths: Vec<_> = rows.iter().map(|(_, p)| p.clone()).collect();
+        if *self.recent_paths.borrow() == paths && !self.recent.items().is_empty() {
+            return Ok(());
+        }
+        while self.recent.remove_at(0).is_some() {}
+        let mut commands = self.recent_commands.borrow_mut();
+        commands.clear();
+        for (label, path) in rows {
+            let item = MenuItem::new(label, true, None);
+            commands.insert(item.id().clone(), AppCommand::OpenRecent(path));
+            self.recent.append(&item)?;
+        }
+        if paths.is_empty() {
+            self.recent.append(&MenuItem::new("No recent documents", false, None))?;
+        }
+        self.recent.append(&PredefinedMenuItem::separator())?;
+        let clear = MenuItem::new("Clear Menu", !paths.is_empty(), None);
+        commands.insert(clear.id().clone(), AppCommand::ClearRecent);
+        self.recent.append(&clear)?;
+        *self.recent_paths.borrow_mut() = paths;
+        Ok(())
     }
 
     /// Write each check mark from the real state (only the ones that differ).
@@ -115,6 +184,8 @@ fn fill(
     entries: &[Entry],
     cmds: &mut HashMap<MenuId, MenuCmd>,
     checks: &mut Vec<(Check, CheckMenuItem)>,
+    recent: &mut Option<Submenu>,
+    document_items: &mut Vec<MenuItem>,
 ) -> Result<(), muda::Error> {
     for e in entries {
         match e {
@@ -122,7 +193,10 @@ fn fill(
             Entry::Native(n) => sub.append(&native(*n))?,
             Entry::Sub { label, items } => {
                 let s = Submenu::new(*label, true);
-                fill(&s, items, cmds, checks)?;
+                fill(&s, items, cmds, checks, recent, document_items)?;
+                if *label == "Open Recent" {
+                    *recent = Some(s.clone());
+                }
                 sub.append(&s)?;
             }
             Entry::Item { id, label, accel, cmd, check } => {
@@ -135,7 +209,20 @@ fn fill(
                         checks.push((*c, ci.clone()));
                         Box::new(ci)
                     }
-                    None => Box::new(MenuItem::with_id(mid, *label, true, acc)),
+                    None => {
+                        let item = MenuItem::with_id(mid, *label, true, acc);
+                        if matches!(
+                            cmd,
+                            MenuCmd::Key(_)
+                                | MenuCmd::Plain(_)
+                                | MenuCmd::File(
+                                    chrome::FileCmd::Save | chrome::FileCmd::SaveAs | chrome::FileCmd::CloseTab
+                                )
+                        ) {
+                            document_items.push(item.clone());
+                        }
+                        Box::new(item)
+                    }
                 };
                 sub.append(it.as_ref())?;
             }

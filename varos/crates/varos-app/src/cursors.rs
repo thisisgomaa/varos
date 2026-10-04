@@ -9,6 +9,7 @@
 
 use resvg::{tiny_skia, usvg};
 use std::sync::OnceLock;
+use varos_app::shell::svg::unpremultiply;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum CK {
@@ -214,19 +215,6 @@ pub fn v1(ck: CK) -> &'static V1Cursor {
 /// A cursor bitmap: (straight-alpha RGBA, width, height, hotspot_x, hotspot_y) in bitmap pixels.
 pub type CursorBitmap = (Vec<u8>, u16, u16, u16, u16);
 
-/// tiny-skia renders premultiplied RGBA; every cursor consumer (the Win32 DIB builder, winit
-/// `CustomCursor`, the macOS PNG → NSBitmapImageRep path) takes straight alpha. In place.
-fn unpremultiply(d: &mut [u8]) {
-    for px in d.chunks_mut(4) {
-        let a = px[3] as u32;
-        if a > 0 && a < 255 {
-            px[0] = ((px[0] as u32 * 255) / a) as u8;
-            px[1] = ((px[1] as u32 * 255) / a) as u8;
-            px[2] = ((px[2] as u32 * 255) / a) as u8;
-        }
-    }
-}
-
 /// Render a cursor SVG into a `px`×`px` straight-alpha RGBA bitmap, its viewBox fitted to the square
 /// (32 for v1, 64 for the @2x Illustrator reference files). None if the SVG does not parse.
 fn rasterize(svg: &str, px: u32) -> Option<Vec<u8>> {
@@ -332,53 +320,8 @@ pub fn summary_line(overrides: usize) -> String {
     format!("[varos] cursors: {} v1 (+ {overrides} reference overrides)", v1_table().len())
 }
 
-/// Render an arbitrary SVG string to straight-alpha RGBA, fit into a `size`×`size` box.
-/// Used for the UI icons and the dev `--preview` mode. `force_black` recolors
-/// everything to solid black (many icon sets use currentColor / theme fills).
-pub fn render_svg(svg: &str, size: u32, force_black: bool) -> Option<(Vec<u8>, u32, u32)> {
-    let svg = if force_black {
-        // strip explicit fills/strokes so our wrapper color wins; cheap textual nudge
-        svg.replace("currentColor", "#000").replace("fill=\"none\"", "")
-    } else {
-        svg.to_string()
-    };
-    let wrapped = if force_black {
-        format!("<g fill=\"#000\" stroke=\"none\">{}</g>", inner_of(&svg)).replacen(
-            "<g",
-            &format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{}\"><g", viewbox_of(&svg)),
-            1,
-        ) + "</svg>"
-    } else {
-        svg.clone()
-    };
-    let tree = usvg::Tree::from_str(&wrapped, &usvg::Options::default())
-        .or_else(|_| usvg::Tree::from_str(&svg, &usvg::Options::default()))
-        .ok()?;
-    let ts = tree.size();
-    let sc = (size as f32 / ts.width().max(ts.height())).max(0.01);
-    let (w, h) = (((ts.width() * sc).ceil() as u32).max(1), ((ts.height() * sc).ceil() as u32).max(1));
-    let mut pm = tiny_skia::Pixmap::new(w, h)?;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(sc, sc), &mut pm.as_mut());
-    let mut d = pm.data().to_vec();
-    unpremultiply(&mut d);
-    Some((d, w, h))
-}
-fn viewbox_of(svg: &str) -> String {
-    if let Some(i) = svg.find("viewBox=\"") {
-        let r = &svg[i + 9..];
-        if let Some(j) = r.find('"') {
-            return r[..j].to_string();
-        }
-    }
-    "0 0 24 24".into()
-}
-fn inner_of(svg: &str) -> String {
-    if let (Some(a), Some(b)) = (svg.find('>'), svg.rfind("</svg>")) {
-        svg[a + 1..b].to_string()
-    } else {
-        svg.to_string()
-    }
-}
+/// The one SVG → straight-alpha RGBA path (now in the library so the kit icons share it).
+pub use varos_app::shell::svg::render_svg;
 
 /// Build every Windows HCURSOR once (32-px bitmaps — the standard Windows cursor size) and log the
 /// summary. A reference bitmap Win32 refuses retries with v1; a handle of 0 (Win32 refused both)

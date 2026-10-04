@@ -80,6 +80,22 @@ pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<
     }
 }
 
+/// The only Start presentation-to-host adapter.
+pub fn start_command(action: varos_app::start::StartAction) -> Option<AppCommand> {
+    use varos_app::start::StartAction as A;
+    Some(match action {
+        A::New => AppCommand::NewDocument,
+        A::Open => AppCommand::OpenDialog,
+        A::OpenRecent(p) => AppCommand::OpenRecent(p),
+        A::Locate(p) => AppCommand::LocateRecent(p),
+        A::RemoveRecent(p) => AppCommand::RemoveRecent(p),
+        A::ClearRecent => AppCommand::ClearRecent,
+        A::Recover(rid) => AppCommand::Recover(rid),
+        A::DiscardRecovery(rid) => AppCommand::DiscardRecovery(rid),
+        A::Later => AppCommand::DeferRecovery,
+    })
+}
+
 /// The keyboard as the window holds it — the host's ONE truth for the held keys, never a document
 /// tab's: the modifiers (Ctrl or ⌘, ⇧, ⌥) as winit's `ModifiersChanged` last reported them, Space (the
 /// pan / A9 reposition key), and which keys went down AS A COMMAND. winit reports a modifier only when
@@ -437,20 +453,23 @@ pub fn run_lifecycle(
     keys: &Keyboard,
 ) -> Ran {
     debug_assert!(!matches!(cmd, AppCommand::Window(_)), "window commands are the host's");
-    if matches!(cmd, AppCommand::ActivateDocument(id) if ws.active_id() == Some(id)) {
+    if ws.on_home() && matches!(cmd, AppCommand::Save(_) | AppCommand::SaveAs(_)) {
+        return Ran::default();
+    }
+    if !ws.on_home() && matches!(cmd, AppCommand::ActivateDocument(id) if ws.active_id() == Some(id)) {
         return Ran::default();
     }
     if let Some(s) = ws.active_mut() {
         ui.settle(&mut s.editor);
         s.settle();
     }
-    let before = ws.active_id();
+    let before = (ws.active_id(), ws.on_home());
     let effect = Lifecycle { ws: &mut *ws, dialogs, store }.run(cmd);
     if let Some(s) = ws.active_mut() {
         keys.mirror(&mut s.editor);
     }
     ui.document_switched();
-    Ran { exit: effect.exit, ran: true, switched: ws.active_id() != before }
+    Ran { exit: effect.exit, ran: true, switched: (ws.active_id(), ws.on_home()) != before }
 }
 
 #[cfg(test)]
@@ -705,7 +724,7 @@ mod tests {
         fn load(&mut self, _: &Path) -> Result<Document, String> {
             unreachable!()
         }
-        fn save(&mut self, _: &Document, _: &Path) -> Result<(), String> {
+        fn save(&mut self, _: &Document, _: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
             unreachable!()
         }
         fn key(&self, p: &Path) -> crate::workspace::FileKey {
@@ -729,6 +748,42 @@ mod tests {
 
     fn run_keys(ws: &mut Workspace, ui: &mut FakeUi, cmd: AppCommand, keys: &Keyboard) -> Ran {
         run_lifecycle(cmd, ws, ui, &mut NoDialogs, &mut NoStore, keys)
+    }
+
+    #[test]
+    fn recovered_result_settles_outgoing_gesture_and_mirrors_held_keys() {
+        let mut ws = Workspace::new();
+        let first = ws.active_id().unwrap();
+        let ed = &mut ws.active_mut().unwrap().editor;
+        ed.set_tool(ToolKind::Rect);
+        ed.pointer_down([0.0, 0.0]);
+        ed.pointer_move([80.0, 60.0]);
+        let copy = crate::workspace::RecoveredDocument {
+            doc: Document::default(),
+            rid: "claim".into(),
+            source: crate::workspace::RecoveredSource {
+                name: "Logo".into(),
+                original_path: None,
+                saved_at: 1,
+                fell_back: false,
+            },
+            generation: varos_app::storage::recovery::Generation {
+                seq: 1,
+                file: "snap-1.json".into(),
+                bytes: 0,
+                crc32: 0,
+                saved_at: 1,
+            },
+        };
+        let mut ui = FakeUi::default();
+        let ran = run_held(&mut ws, &mut ui, AppCommand::InstallRecovered(Box::new(copy)), m(true, false, false));
+        assert!(ran.switched);
+        assert_eq!(ui.log, ["settle", "switched"]);
+        assert!(!ws.get(first).unwrap().editor.transaction_open());
+        assert_eq!(ws.get(first).unwrap().editor.doc.paths.len(), 1);
+        assert!(ws.active().unwrap().editor.mods.ctrl);
+        assert!(ws.active().unwrap().is_dirty_exact());
+        assert_ne!(ws.active_id(), Some(first));
     }
 
     #[test]

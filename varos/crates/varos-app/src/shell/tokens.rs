@@ -1,4 +1,5 @@
-//! Design tokens — transcribed VERBATIM from `docs/UI_VISION_MOCKUP.html` `:root` (the visual law).
+//! Runtime design tokens — the warm palette and current UI text roles.
+//! Historical mockups are visual references, not a second machine-synchronized token source.
 //! This is the ONLY place raw colour / radius / spacing numbers live in the shell.
 //! (BOX_SYSTEM_PLAN §3 + ruling 1 "tokens from the mockup" + ruling 4 "azure is a scalpel".)
 use egui::{Color32, CornerRadius, Stroke};
@@ -68,6 +69,20 @@ pub fn hairline() -> Stroke {
     Stroke::new(1.0, LINE)
 }
 
+/// Existing dense desktop text ramp, centralized without changing sizes in U0-A.
+/// Names use Proportional; numeric fields use Monospace. All bundled faces are Regular (400).
+pub fn text_styles() -> std::collections::BTreeMap<egui::TextStyle, egui::FontId> {
+    use egui::{FontId, TextStyle};
+    [
+        (TextStyle::Heading, FontId::proportional(13.5)),
+        (TextStyle::Body, FontId::proportional(13.0)),
+        (TextStyle::Button, FontId::proportional(12.5)),
+        (TextStyle::Small, FontId::proportional(11.0)),
+        (TextStyle::Monospace, FontId::monospace(12.5)),
+    ]
+    .into()
+}
+
 /// Apply the constitution's base look to a context: warm-dark visuals + INSTANT (no animation).
 /// Idempotent — safe to call every frame.
 pub fn apply(ctx: &egui::Context) {
@@ -115,6 +130,36 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style_of(egui::Theme::Dark, style.clone());
     ctx.set_style_of(egui::Theme::Light, style);
 }
+
+pub const START_PAD: f32 = 32.0;
+pub const START_GAP: f32 = 24.0;
+pub const START_WIDTH: f32 = 1040.0;
+pub const START_SIDEBAR: f32 = 208.0;
+pub const START_WIDE: f32 = 760.0;
+pub const START_TITLE_SIZE: f32 = 26.0;
+pub const START_SECTION_SIZE: f32 = 20.0;
+pub const START_FILE_SIZE: f32 = 14.0;
+pub const START_ROW_H: f32 = 72.0;
+pub const START_DATE_W: f32 = 112.0;
+pub const START_DATE_BREAK: f32 = 480.0;
+pub const START_EMPTY_PAD: f32 = 48.0;
+
+// Minimum Start/Recovery kit, in logical points. No runtime colour/size literals in controls.
+pub const KIT_MIN_TARGET: f32 = 24.0;
+pub const KIT_CONTROL_H: f32 = 32.0;
+pub const KIT_ROW_H: f32 = 56.0;
+pub const KIT_ICON: f32 = 16.0;
+pub const KIT_PAD: f32 = 8.0;
+pub const KIT_GAP: f32 = 8.0;
+pub const KIT_TEXT_GAP: f32 = 4.0;
+pub const KIT_STROKE: f32 = 1.0;
+pub const KIT_FOCUS_STROKE: f32 = 2.0;
+/// Lucide icons rasterize at 32 px, close to their 13–18 pt draw size: egui-wgpu textures carry no
+/// mipmaps, so a large raster shown small eats thin strokes (Ahmed 2026-07-11). Toolbar and kit share it.
+pub const ICON_RASTER: u32 = 32;
+/// Kit menus: minimum popup width and the gap between the anchor and the popup.
+pub const KIT_MENU_MIN_W: f32 = 176.0;
+pub const KIT_MENU_GAP: f32 = 4.0;
 
 #[cfg(test)]
 mod tests {

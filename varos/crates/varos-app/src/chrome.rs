@@ -312,11 +312,6 @@ pub(crate) fn visible_drop_slot(
     (0..=n).min_by_key(|&slot| score(slot)).unwrap_or(dragged)
 }
 
-/// Is the window opaque from the first frame? macOS: yes — a transparent NSWindow let the title strip
-/// show the desktop through (Ahmed 2026-09-23), so the splash card sits on the dark window instead of
-/// floating over the desktop. Windows keeps its transparent floating splash.
-pub const OPAQUE_WINDOW: bool = cfg!(target_os = "macos");
-
 /// Is physical-px point (x, y) inside the caption band of height `h` and NOT on one of the bar's
 /// interactive rects (`[l, t, r, b]`, physical px, as `cursors::set_caption` receives them)?
 pub fn caption_hit(h: i32, excl: &[[i32; 4]], x: i32, y: i32) -> bool {
@@ -476,6 +471,7 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
             vec![
                 file_key("file.new", "New", cmd(K::KeyN), FileCmd::New),
                 file_key("file.open", "Open\u{2026}", cmd(K::KeyO), FileCmd::Open),
+                Entry::Sub { label: "Open Recent", items: vec![] },
                 Entry::Sep,
                 file_key("file.close", "Close Tab", cmd(K::KeyW), FileCmd::CloseTab),
                 file_key("file.save", "Save", cmd(K::KeyS), FileCmd::Save),
@@ -547,6 +543,22 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
 }
 
 /// Every clickable item in the bar (depth-first) — the table checks in the tests walk it.
+/// Native Recent is a capped mirror, never a separately maintained list.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn recent_menu(recents: &varos_app::storage::recents::Recents) -> Vec<(String, std::path::PathBuf)> {
+    recents
+        .entries()
+        .iter()
+        .take(10)
+        .map(|e| {
+            (
+                format!("{} — {}", e.name, e.path.parent().map_or_else(String::new, |p| p.display().to_string())),
+                e.path.clone(),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub fn flat_items(menus: &[(&'static str, Vec<Entry>)]) -> Vec<Entry> {
     fn walk(v: &[Entry], out: &mut Vec<Entry>) {

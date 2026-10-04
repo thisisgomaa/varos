@@ -489,6 +489,28 @@ impl RecoveryStore {
         self.best(&dir, &manifest)
     }
 
+    /// Load the newest generation whose bytes AND caller's model decoder accept it.
+    /// A checksum-valid but structurally invalid model must not hide a usable older copy.
+    /// The store remains model-agnostic; the host supplies the normal document load pipeline.
+    pub fn load_best_decoded<T>(
+        &self,
+        rid: &str,
+        decode: impl Fn(&[u8]) -> Result<T, String>,
+    ) -> Result<(Loaded, T), SnapError> {
+        let dir = self.session_dir(rid)?;
+        let manifest = self.read_manifest(&dir)?.ok_or(SnapError::NotFound)?;
+        let mut reason = "No usable recovery copy was found.".to_string();
+        for (i, generation) in manifest.generations.iter().enumerate() {
+            match self.verify(&dir, generation).and_then(|blob| decode(&blob).map(|model| (blob, model))) {
+                Ok((blob, model)) => {
+                    return Ok((Loaded { blob, generation: generation.clone(), fell_back: i > 0 }, model))
+                }
+                Err(error) => reason = error,
+            }
+        }
+        Err(SnapError::Damaged(reason))
+    }
+
     /// Orphans left by dead sessions, each claimed by this process (its lock stays held until
     /// Recover writes into it, [`Self::retire`] discards it, or the store is dropped). Folders locked
     /// elsewhere (live sessions) and this process's own live sessions are skipped; orphans claimed by
