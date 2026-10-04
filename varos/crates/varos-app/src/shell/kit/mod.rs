@@ -7,6 +7,7 @@
 use egui::{Color32, Event, Id, Key, PointerButton, Response, Sense, Stroke, StrokeKind, TextStyle, Ui};
 
 use super::tokens as t;
+pub mod field;
 mod icons;
 pub use icons::Icon;
 

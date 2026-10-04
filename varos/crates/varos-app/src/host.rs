@@ -426,15 +426,32 @@ pub fn route_left_release(pressed_on_canvas: bool, panning: bool, over_panel: bo
 
 /// The Ui side of a lifecycle command (the real `ui::Ui`; a recorder in tests).
 pub trait DocUi {
-    /// Close every Ui-side edit still open on the outgoing document (colour picker, rename buffers).
-    fn settle(&mut self, ed: &mut Editor);
+    /// Close every Ui-side edit still open on the outgoing document: the open text / number field
+    /// commits (K3), the colour picker cancels. `false` = the field's text does not parse — it keeps the
+    /// keyboard and its reason, and a user command must not run ([`waits_for_fields`]).
+    fn settle(&mut self, ed: &mut Editor) -> bool;
+    /// K3 before a DOCUMENT action (a key, a menu row): commit the open field to what it was editing.
+    /// `false` = its text does not parse; the action is held ([`Ran::held`]).
+    fn settle_fields(&mut self, ed: &mut Editor) -> bool {
+        self.settle(ed)
+    }
+    /// A text / number field is being edited: ⌘Z / ⇧⌘Z belong to its own text, not to the document.
+    fn field_has_focus(&self) -> bool {
+        false
+    }
     /// Drop the Ui's per-document caches (layer rows, drag, collapse, search).
     fn document_switched(&mut self);
 }
 
 impl DocUi for crate::ui::Ui {
-    fn settle(&mut self, ed: &mut Editor) {
+    fn settle(&mut self, ed: &mut Editor) -> bool {
         crate::ui::Ui::settle(self, ed)
+    }
+    fn settle_fields(&mut self, ed: &mut Editor) -> bool {
+        self.commit_fields(ed)
+    }
+    fn field_has_focus(&self) -> bool {
+        self.editing_field()
     }
     fn document_switched(&mut self) {
         crate::ui::Ui::document_switched(self)
@@ -501,7 +518,11 @@ pub fn run_lifecycle(
         return Ran { follow_up_saves: effect.follow_up_saves, ..Ran::default() };
     }
     if let Some(s) = ws.active_mut() {
-        ui.settle(&mut s.editor);
+        if !ui.settle(&mut s.editor) && waits_for_fields(&cmd) {
+            // K3: invalid field text — the command waits at the head of the queue (with everything
+            // behind it) until the text is fixed or Esc reverts it; focus + reason stay
+            return Ran { held: true, ..Ran::default() };
+        }
         s.settle();
     }
     let before = (ws.active_id(), ws.on_home());
@@ -517,6 +538,31 @@ pub fn run_lifecycle(
         follow_up_saves: effect.follow_up_saves,
         held: false,
     }
+}
+
+/// K3: the user's own document commands an unparsable field holds back (Save, Close, Quit, a tab
+/// switch, …): HELD at the head of the queue, never dropped. A file result, a recovery answer, a
+/// Recent-list chore or a file the OS hands in always runs; the invalid field then reverts silently if
+/// its panel goes away.
+fn waits_for_fields(cmd: &AppCommand) -> bool {
+    use AppCommand as C;
+    matches!(
+        cmd,
+        C::Save(_)
+            | C::SaveAs(_)
+            | C::ShowExport(_)
+            | C::ExportPdf(..)
+            | C::NewDocument
+            | C::Home
+            | C::OpenDialog
+            | C::OpenRecent(_)
+            | C::OpenPaths(_, OpenOrigin::Dialog)
+            | C::CloseDocument(_)
+            | C::Quit
+            | C::ActivateDocument(_)
+            | C::ActivateNext
+            | C::ActivatePrevious
+    )
 }
 
 /// The host's side of the background file jobs (the real one is `recovery_host::RecoveryHost`, which
@@ -880,11 +926,14 @@ mod tests {
     struct FakeUi {
         log: Vec<&'static str>,
         gesture_open_at_settle: Option<bool>,
+        /// A field holds text that does not parse (K3).
+        invalid_field: bool,
     }
     impl DocUi for FakeUi {
-        fn settle(&mut self, ed: &mut Editor) {
+        fn settle(&mut self, ed: &mut Editor) -> bool {
             self.log.push("settle");
             self.gesture_open_at_settle = Some(ed.transaction_open());
+            !self.invalid_field
         }
         fn document_switched(&mut self) {
             self.log.push("switched");
@@ -1003,6 +1052,25 @@ mod tests {
         assert!(!old.transaction_open() && matches!(old.drag, Drag::None), "the drag was finished…");
         assert_eq!(old.doc.paths.len(), 1, "…into the tab it was drawn on");
         assert!(ws.active().unwrap().editor.doc.paths.is_empty(), "the new tab is clean and boardless");
+    }
+
+    /// K3: a field holding text that does not parse holds the user's own commands back (nothing runs,
+    /// the field keeps the keyboard and its reason); with valid text the same command runs.
+    #[test]
+    fn an_invalid_field_holds_user_commands_back() {
+        let mut ws = Workspace::new();
+        let first = ws.active_id().unwrap();
+        let mut ui = FakeUi { invalid_field: true, ..FakeUi::default() };
+        for cmd in
+            [AppCommand::NewDocument, AppCommand::Quit, AppCommand::CloseDocument(first), AppCommand::ActivateNext]
+        {
+            assert_eq!(run(&mut ws, &mut ui, cmd), Ran { held: true, ..Ran::default() }, "held, did not run");
+        }
+        assert_eq!(ws.active_id(), Some(first), "no tab was opened, closed or switched");
+        assert!(ui.log.iter().all(|l| *l == "settle"), "nothing was reset either: {:?}", ui.log);
+        ui.invalid_field = false;
+        let ran = run(&mut ws, &mut ui, AppCommand::NewDocument);
+        assert!(ran.ran && ran.switched, "valid text: the command runs");
     }
 
     #[test]
@@ -1205,7 +1273,9 @@ mod background_tests {
 
     struct QuietUi;
     impl DocUi for QuietUi {
-        fn settle(&mut self, _: &mut Editor) {}
+        fn settle(&mut self, _: &mut Editor) -> bool {
+            true
+        }
         fn document_switched(&mut self) {}
     }
 

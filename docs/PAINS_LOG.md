@@ -5,7 +5,9 @@
 
 This file preserves dated reports, fixes and owner wording; repeated old “open” labels are not a current work queue. Start with [PLAN](PLAN.md) and the updated [quick-wins status](foundation/work_orders/QUICK_WINS_2026-09-24.md).
 
-Still relevant: P12 Pen anchor-delete semantics; P21 mask/selection edge decisions; name-field click-away commit; QW6 readability and QW8 Fit placement; window memory and screen eyedropper. P14–P20 have merged fixes (`d1d8ee3`, `19eed19`); retain regressions and distinguish P16's fixed drag behavior from pending visual redesign. Do not reopen completed S1/tab work from an earlier report. Mask creation gestures and file integration are separate systems, tracked in their own work orders.
+Still relevant: P12 Pen anchor-delete semantics; P21 mask/selection edge decisions; QW6 readability and QW8 Fit placement; window memory and screen eyedropper. P14–P20 have merged fixes (`d1d8ee3`, `19eed19`); retain regressions and distinguish P16's fixed drag behavior from pending visual redesign. Do not reopen completed S1/tab work from an earlier report. Mask creation gestures and file integration are separate systems, tracked in their own work orders.
+
+**✅ 2026-10-04 — خانة الاسم بتضيّع اللي اتكتب لما تدوس برّه (name-field click-away) — اتصلحت (UI_SYSTEM P2، مستنية تجربة أحمد):** كل خانات الكتابة والأرقام بقت ماشية بقانون واحد (`shell/kit/field.rs`): Enter / Tab / كليك برّه / تبديل التاب / ⌘S / Close بيحفظوا اللي اتكتب **خطوة undo واحدة**؛ Esc بيرجّع القديم من غير ما يسجّل حاجة؛ لو مفيش تغيير مفيش خطوة ولا نجمة `*`؛ اسم فاضي أو رقم غلط الخانة بتفضل مفتوحة وبتقول السبب تحتها. السبب القديم: الخانة كانت بتبني نصها من الموديل في نفس الفريم اللي الكليك برّه بيوصل فيه، فبتحفظ الاسم القديم فوق الجديد. تست `name_field_commits_typed_text_on_click_away` (كان بيفشل قبل الإصلاح). وأزرار الدمج (Pathfinder) بقت تبان معطّلة ومعاها السبب لما يكون المختار أقل من شكلين مقفولين.
 
 سجل حيّ لكل حاجة بتضايق في الاستخدام. أحمد بيلعب في البرنامج ويكتب الوجع خام؛ التخطيط بيفرز ويحوّل لموجات للبروداكشن. الترتيب هنا مش أولوية — الأولوية بتتحدد وقت الفرز.
 
