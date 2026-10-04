@@ -3,8 +3,16 @@
 #
 #   tools/mac/bundle.sh            # build release (cargo no-ops if already fresh), bundle, sign, install
 #   SKIP_BUILD=1 tools/mac/bundle.sh   # reuse varos/target/release/varos as-is
+#   NO_INSTALL=1 OUT_DIR=/tmp/x tools/mac/bundle.sh   # build the bundle into /tmp/x only: nothing is
+#                                  # copied to /Applications and Launch Services is not told
+#   BIN=path/to/varos ...          # bundle this binary instead of target/release/varos (implies SKIP_BUILD)
 #
-# Build outputs go under varos/target/mac/ (ignored via `target/`). Nothing here needs sudo.
+# Build outputs go under varos/target/mac/ (ignored via `target/`) unless OUT_DIR says otherwise.
+# Nothing here needs sudo.
+#
+# File association (DFS S4): the Info.plist below declares `.vrs` (role Editor, rank Owner) and
+# exports its UTI. That only ROUTES the file to Varos; the app receives it through the
+# open-documents bridge in varos-app/src/mac_open.rs. Varos does not claim `.pdf`.
 # The bundle is ad-hoc signed for LOCAL use only — it is not notarized and not for distribution.
 set -euo pipefail
 
@@ -15,9 +23,21 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKSPACE="$REPO_ROOT/varos"
-BIN="$WORKSPACE/target/release/varos"
-OUT_DIR="$WORKSPACE/target/mac"
+if [[ -n "${BIN:-}" ]]; then
+  SKIP_BUILD=1
+else
+  BIN="$WORKSPACE/target/release/varos"
+fi
+OUT_DIR="${OUT_DIR:-$WORKSPACE/target/mac}"
 APP="$OUT_DIR/Varos.app"
+# NO_INSTALL must never touch the live install: building straight into /Applications would
+# delete and replace /Applications/Varos.app in step 3 (Codex review 2026-10-04).
+if [[ "${NO_INSTALL:-0}" == "1" ]]; then
+  OUT_REAL="$(cd "$OUT_DIR" 2>/dev/null && pwd -P || printf '%s' "$OUT_DIR")"
+  case "$OUT_REAL" in
+    /Applications|/Applications/*) echo "bundle.sh: NO_INSTALL=1 refuses OUT_DIR under /Applications ($OUT_DIR)" >&2; exit 1 ;;
+  esac
+fi
 ICON_SRC="$REPO_ROOT/icon.png"
 APP_CARGO="$WORKSPACE/crates/varos-app/Cargo.toml"
 
@@ -112,11 +132,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
+# the association keys must survive any future edit of the heredoc above
+plist_get() { plutil -extract "$1" raw -o - "$APP/Contents/Info.plist"; }
+[[ "$(plist_get CFBundleDocumentTypes.0.CFBundleTypeExtensions.0)" == "vrs" \
+  && "$(plist_get CFBundleDocumentTypes.0.CFBundleTypeRole)" == "Editor" \
+  && "$(plist_get CFBundleDocumentTypes.0.LSHandlerRank)" == "Owner" \
+  && "$(plist_get CFBundleDocumentTypes.0.LSItemContentTypes.0)" == "$DOC_UTI" \
+  && "$(plist_get UTExportedTypeDeclarations.0.UTTypeIdentifier)" == "$DOC_UTI" ]] \
+  || { echo "bundle.sh: Info.plist lost the .vrs document type / UTI declaration" >&2; exit 1; }
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # ---- 7. ad-hoc sign (local use only; not notarized) ----
 codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP"
+
+if [[ "${NO_INSTALL:-0}" == "1" ]]; then
+  echo "==> built (not installed): $APP"
+  exit 0
+fi
 
 # ---- 8. install: /Applications if writable without sudo, else ~/Applications ----
 if [[ -w /Applications ]]; then
@@ -139,3 +172,6 @@ if [[ -x "$LSREG" ]]; then
 fi
 
 echo "==> installed: $DEST"
+echo "    check the .vrs association: Finder ▸ Get Info on a .vrs file shows \"Open with: Varos\","
+echo "    or run: $LSREG -dump | grep -c $DOC_UTI"
+echo "    then double-click a .vrs (Varos closed, and again with Varos open) — it opens as a tab."

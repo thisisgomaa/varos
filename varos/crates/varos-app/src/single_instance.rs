@@ -30,7 +30,9 @@ where
             let _ = args.next();
             continue;
         }
-        if arg.to_string_lossy().starts_with("--") {
+        // `--flags`, and the `-psn_0_12345` process-serial argument older macOS adds to a Finder
+        // launch (DFS S4: it is not a file — opening it would show a false "Couldn't open").
+        if arg.to_string_lossy().starts_with("--") || arg.to_string_lossy().starts_with("-psn_") {
             continue;
         }
         return Some(PathBuf::from(arg));
@@ -294,6 +296,13 @@ mod tests {
     fn first_file_arg_ignores_flags() {
         let args = [OsString::from("--ignored"), OsString::from("C:\\work\\one.vrs")];
         assert_eq!(first_file_arg(args), Some(PathBuf::from("C:\\work\\one.vrs")));
+    }
+
+    #[test]
+    fn first_file_arg_skips_the_macos_process_serial_argument() {
+        let args = [OsString::from("-psn_0_1234567"), OsString::from("/Users/a/b.vrs")];
+        assert_eq!(first_file_arg(args), Some(PathBuf::from("/Users/a/b.vrs")));
+        assert_eq!(first_file_arg([OsString::from("-psn_0_42")]), None);
     }
 
     #[test]

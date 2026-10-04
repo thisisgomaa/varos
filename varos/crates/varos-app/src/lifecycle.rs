@@ -2040,4 +2040,145 @@ mod tests {
         assert_eq!(r.prompts(), ["export a.pdf in /d", "replace-editable old.pdf", "notice Exported old.pdf"]);
         assert!(!varos_pdf::has_embedded_model(&r.s.exported[&p("/out/old.pdf")]));
     }
+
+    // ───────────── S4: files the OS hands us (Finder / Dock / `open`) ─────────────
+    //
+    // The host's path, minus AppKit: paths land in `os_open`'s queue, the `AboutToWait` drain turns
+    // them into ONE `OpenPaths` (`os_open::route`), and the lifecycle runs it like any other open.
+
+    /// What the host does at `AboutToWait`: drain → route → run. `false` = nothing was waiting.
+    fn drain_os_opens(r: &mut Rig, q: &mut crate::os_open::OsOpenQueue) -> bool {
+        match crate::os_open::route(q) {
+            Some(batch) => {
+                assert!(batch.raise_window, "an OS open always brings the window forward");
+                r.run(batch.command);
+                true
+            }
+            None => false,
+        }
+    }
+
+    #[test]
+    fn s4_cold_os_open_replaces_start_with_the_file_and_no_untitled() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        r.s.put("/d/b.vrs", art(BLUE));
+        let mut q = crate::os_open::OsOpenQueue::default();
+        q.push(p("/d/b.vrs"));
+        assert!(drain_os_opens(&mut r, &mut q));
+        assert!(!r.ws.on_home(), "the file shows instead of Start");
+        assert_eq!(r.names(), ["b.vrs"], "no empty Untitled tab is created");
+        assert_eq!(r.ws.visible_tabs().len(), 1);
+        assert_eq!(fills(&r.get(r.active()).editor), [Some(BLUE)]);
+        assert_eq!(r.s.recent.entries().len(), 1, "recorded in Recent like any open");
+        assert!(r.prompts().is_empty());
+    }
+
+    #[test]
+    fn s4_paths_arriving_before_the_host_is_ready_are_buffered_and_drained_once() {
+        // the open event comes first (inside `run()`, before the first frame) …
+        let mut q = crate::os_open::OsOpenQueue::default();
+        q.push(p("/d/b.vrs"));
+        // … then the host exists
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        r.s.put("/d/b.vrs", art(BLUE));
+        assert!(drain_os_opens(&mut r, &mut q));
+        assert!(!drain_os_opens(&mut r, &mut q), "the next drain finds nothing");
+        assert_eq!(r.names(), ["b.vrs"]);
+        assert_eq!(r.s.loads, [p("/d/b.vrs")], "read exactly once");
+    }
+
+    #[test]
+    fn s4_warm_os_open_adds_a_tab_and_the_dirty_tab_survives() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(RED));
+        r.s.put("/d/b.vrs", art(BLUE));
+        let a = r.open("/d/a.vrs");
+        draw(r.ed(a), BLUE);
+        let a_rev = r.get(a).editor.rev;
+        let mut q = crate::os_open::OsOpenQueue::default();
+        q.push(p("/d/b.vrs"));
+        drain_os_opens(&mut r, &mut q);
+        assert_eq!(r.names(), ["a.vrs", "b.vrs"]);
+        let b = r.active();
+        assert_ne!(b, a, "the new file is the active tab");
+        assert!(r.get(a).is_dirty_exact(), "A keeps its unsaved changes");
+        assert_eq!(r.get(a).editor.rev, a_rev, "A is not touched");
+        assert!(!r.get(b).is_dirty_exact());
+        assert!(r.prompts().is_empty(), "nothing is replaced, so nothing is asked");
+    }
+
+    #[test]
+    fn s4_already_open_file_focuses_its_tab_without_reloading() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(RED));
+        r.s.put("/d/b.vrs", art(BLUE));
+        let a = r.open("/d/a.vrs");
+        draw(r.ed(a), BLUE); // dirty: a reload would lose this
+        r.open("/d/b.vrs");
+        let (ids, loads, a_rev) = (r.ids(), r.s.loads.len(), r.get(a).editor.rev);
+        let mut q = crate::os_open::OsOpenQueue::default();
+        q.push(p("/d/a.vrs"));
+        drain_os_opens(&mut r, &mut q);
+        assert_eq!(r.active(), a, "focused");
+        assert_eq!(r.ids(), ids, "no new tab");
+        assert_eq!(r.s.loads.len(), loads, "never reloaded");
+        assert_eq!(r.get(a).editor.rev, a_rev);
+        assert!(r.get(a).is_dirty_exact());
+        assert!(r.prompts().is_empty());
+    }
+
+    #[test]
+    fn s4_several_files_open_as_tabs_in_order() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        for (f, c) in [("/d/c.vrs", RED), ("/d/a.vrs", BLUE), ("/d/b.vrs", RED)] {
+            r.s.put(f, art(c));
+        }
+        let mut q = crate::os_open::OsOpenQueue::default();
+        for f in ["/d/c.vrs", "/d/a.vrs", "/d/c.vrs", "/d/b.vrs"] {
+            q.push(p(f));
+        }
+        drain_os_opens(&mut r, &mut q);
+        assert_eq!(r.names(), ["c.vrs", "a.vrs", "b.vrs"], "Finder's order, each file once, no Untitled");
+        assert_eq!(r.ws.get(r.active()).unwrap().display_name(), "b.vrs", "the last one is in front");
+        assert_eq!(r.s.loads.len(), 3);
+        assert!(r.prompts().is_empty());
+    }
+
+    #[test]
+    fn s4_refused_file_shows_the_notice_and_start_stays_start() {
+        let mut r = Rig::new();
+        r.ws = Workspace::start_page();
+        r.s.put("/d/bad.vrs", art(BLUE));
+        r.s.fail_load.insert(p("/d/bad.vrs"));
+        let ids = r.ids();
+        let mut q = crate::os_open::OsOpenQueue::default();
+        q.push(p("/d/bad.vrs"));
+        drain_os_opens(&mut r, &mut q);
+        assert_eq!(r.prompts(), ["open-failed bad.vrs: The file is damaged"]);
+        assert!(r.ws.on_home(), "Start stays Start");
+        assert!(r.ws.visible_tabs().is_empty(), "no blank tab");
+        assert_eq!(r.ids(), ids);
+        assert!(r.s.recent.entries().is_empty(), "a refused file is not recorded in Recent");
+    }
+
+    #[test]
+    fn s4_bad_file_among_good_ones_opens_the_rest_and_leaves_the_dirty_tab_alone() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(RED));
+        r.s.put("/d/bad.vrs", art(RED));
+        r.s.fail_load.insert(p("/d/bad.vrs"));
+        r.s.put("/d/ملف عربي مع مسافات.vrs", art(BLUE));
+        let a = r.open("/d/a.vrs");
+        draw(r.ed(a), BLUE);
+        let mut q = crate::os_open::OsOpenQueue::default();
+        q.push(p("/d/bad.vrs"));
+        q.push(p("/d/ملف عربي مع مسافات.vrs"));
+        drain_os_opens(&mut r, &mut q);
+        assert_eq!(r.prompts(), ["open-failed bad.vrs: The file is damaged"]);
+        assert_eq!(r.names(), ["a.vrs", "ملف عربي مع مسافات.vrs"]);
+        assert!(r.get(a).is_dirty_exact());
+    }
 }
