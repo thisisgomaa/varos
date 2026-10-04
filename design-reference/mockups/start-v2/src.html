@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Varos Start — Workbench v2</title>
+<style>
+/*FONTS*/
+:root {
+  --bg: #141313; --panel: #1b1919; --surface: #242121; --hover: #2b2828; --row-hover: #262323;
+  --line: #2c2929; --line2: #3b3735; --seam: #0e0d0d; --well: #171515;
+  --text: #e9e6e3; --muted: #8f8a86; --faint: #6e6a66;
+  --accent: #0c8ce9; --accent-tint: rgba(12,140,233,.133);
+  --r-ctl: 3px; --r-box: 8px; --r-pill: 11px;
+  /* type: overridden per family below */
+  --sans: "Inter"; --mono: "JetBrains Mono";
+  --f-h1: 30px; --f-h2: 18px; --f-btn: 15px; --f-name: 14px; --f-body: 13px; --f-sm: 12px; --f-xs: 11px; --f-mono: 11px;
+  --ls-h: -0.02em; --ls-b: -0.003em;
+}
+body.f-geist { --sans: "Geist"; --mono: "Geist Mono"; --ls-h: -0.025em; --ls-b: 0em; }
+body.f-plex  { --sans: "IBM Plex Sans"; --mono: "IBM Plex Mono"; --f-h1: 32px; --f-h2: 19px; --f-btn: 16px; --f-name: 15px;
+  --f-body: 13.5px; --f-sm: 12.5px; --f-xs: 11.5px; --f-mono: 11.5px; --ls-h: -0.015em; --ls-b: 0em; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1512px; height: 982px; overflow: hidden; background: var(--seam); }
+body { font-family: var(--sans), sans-serif; color: var(--text); font-size: var(--f-body); line-height: 1; letter-spacing: var(--ls-b);
+  -webkit-font-smoothing: antialiased; font-feature-settings: "tnum" 0; }
+.mono { font-family: var(--mono), monospace; font-size: var(--f-mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.num { font-variant-numeric: tabular-nums; }
+svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: none; display: block; }
+svg.i.lg { width: 20px; height: 20px; }
+svg.i.sm { width: 14px; height: 14px; }
+.focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.art-t { font-family: "IBM Plex Sans"; }
+
+/* ---------- top bar (unchanged from v1 = the app's bar) ---------- */
+.bar { position: absolute; left: 0; top: 0; width: 1512px; height: 28px; background: var(--seam); }
+.lights { position: absolute; left: 14px; top: 8px; display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.home { position: absolute; left: 78px; top: 0; width: 36px; height: 28px; border-radius: var(--r-ctl);
+  display: flex; align-items: center; justify-content: center; background: var(--surface); color: var(--text); }
+.tabs { position: absolute; left: 122px; top: 0; height: 28px; display: flex; gap: 4px; }
+.tab { height: 28px; padding: 0 4px 0 12px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.tab .x { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; }
+.tab .x svg { width: 12px; height: 12px; }
+.plus { width: 32px; height: 28px; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.right { position: absolute; right: 6px; top: 0; height: 28px; display: flex; align-items: center; gap: 8px; }
+.search { width: 200px; height: 24px; border-radius: var(--r-pill); background: var(--panel);
+  display: flex; align-items: center; gap: 6px; padding: 0 10px; color: var(--muted); font-size: 12px; }
+.search .q { color: var(--text); }
+.tbtn { height: 26px; padding: 0 12px; display: flex; align-items: center; font-size: 12px; color: var(--text); }
+.tbtn.off { color: var(--faint); }
+.mark { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+
+/* ---------- board box + status seam ---------- */
+.main { position: absolute; left: 12px; top: 40px; width: 1488px; height: 910px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: var(--r-box); padding: 31px 39px 27px; display: flex; flex-direction: column; }
+.status { position: absolute; left: 24px; right: 24px; top: 950px; height: 32px; display: flex; align-items: center; justify-content: space-between;
+  font-size: var(--f-xs); color: var(--muted); }
+.status .on { display: flex; align-items: center; gap: 8px; }
+
+/* hero: cols 1–2 (556) actions · cols 3–5 (840) artboard presets */
+.hero { height: 152px; display: flex; gap: 12px; flex: none; }
+.act { width: 556px; display: flex; flex-direction: column; }
+.btns { display: flex; gap: 12px; }
+.big { width: 272px; height: 64px; border-radius: var(--r-ctl); display: flex; align-items: center; gap: 14px; padding: 0 16px 0 18px; }
+.big .tx { flex: 1; }
+.big .t1 { font-size: var(--f-btn); font-weight: 600; line-height: 20px; letter-spacing: var(--ls-h); }
+.big .t2 { font-size: var(--f-sm); line-height: 16px; margin-top: 3px; }
+.big .kb { font-size: var(--f-mono); }
+.big.primary { background: var(--text); color: #141313; }
+.big.primary .t2, .big.primary .kb { color: #5c5753; }
+.big.secondary { background: var(--surface); border: 1px solid var(--line2); color: var(--text); }
+.big.secondary .t1 { font-weight: 500; }
+.big.secondary .t2, .big.secondary .kb { color: var(--muted); }
+.lede { margin-top: 18px; font-size: var(--f-body); line-height: 20px; color: var(--muted); max-width: 500px; }
+.keys { margin-top: auto; display: flex; gap: 16px; align-items: center; font-size: var(--f-sm); color: var(--muted); }
+.keys span { display: inline-flex; align-items: center; gap: 6px; }
+kbd { font-family: var(--mono), monospace; font-size: var(--f-xs); color: var(--text); border: 1px solid var(--line2); border-radius: var(--r-ctl);
+  height: 18px; min-width: 18px; padding: 0 4px; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+
+.pnl { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-box); }
+.pnl-h { height: 32px; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--line); font-size: var(--f-sm); color: var(--muted); gap: 8px; }
+.pnl-h b { font-weight: 500; color: var(--text); }
+.presets { width: 840px; height: 152px; display: flex; flex-direction: column; }
+.pr-row { flex: 1; display: grid; grid-template-columns: repeat(5, 1fr); }
+.pr { display: flex; flex-direction: column; align-items: center; padding-top: 12px; }
+.pr + .pr { border-left: 1px solid var(--line); }
+.pr .pv { height: 56px; display: flex; align-items: flex-end; justify-content: center; }
+.pr .ab { border: 1px solid var(--muted); background: var(--bg); }
+.pr .ab.dash { border: 1px dashed var(--muted); background: none; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.pr .nm { margin-top: 10px; font-size: var(--f-body); font-weight: 500; line-height: 16px; }
+.pr .sz { margin-top: 3px; color: var(--muted); line-height: 15px; }
+
+/* recovered */
+.recov { flex: none; margin-top: 28px; height: 52px; border: 1px solid var(--line2); border-radius: var(--r-box); background: var(--panel);
+  display: flex; align-items: center; padding: 0 11px 0 19px; gap: 14px; }
+.recov .tx { flex: 1; display: flex; align-items: baseline; gap: 12px; font-size: var(--f-body); }
+.recov .tx b { font-weight: 500; }
+.recov .tx .m { color: var(--muted); }
+.btn { height: 28px; padding: 0 14px; display: inline-flex; align-items: center; gap: 8px; border-radius: var(--r-ctl); font-size: var(--f-sm); color: var(--text); font-weight: 500; }
+.btn.ghost { color: var(--muted); }
+.btn.solid { background: var(--surface); border: 1px solid var(--line2); }
+
+/* recent head + tag filter */
+.rhead { flex: none; margin-top: 28px; height: 28px; display: flex; align-items: center; }
+.rhead h2 { font-size: var(--f-h2); font-weight: 600; letter-spacing: var(--ls-h); }
+.rhead .cnt { margin-left: 8px; color: var(--muted); padding-top: 2px; }
+.filters { margin-left: 32px; display: flex; gap: 2px; height: 28px; }
+.flt { position: relative; height: 28px; padding: 0 8px; display: flex; align-items: center; gap: 6px; font-size: var(--f-body); color: var(--muted); }
+.flt .c { color: var(--muted); font-size: var(--f-xs); }
+.flt.on { color: var(--text); }
+.flt.on::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px; border-radius: 1px; background: var(--accent); }
+.rhead .sp { flex: 1; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 1px; gap: 1px; }
+.seg span { width: 28px; height: 22px; display: flex; align-items: center; justify-content: center; color: var(--muted); border-radius: 2px; }
+.seg span.on { background: var(--hover); color: var(--text); }
+
+/* grid: 5 × 272, gap 12 */
+.grid { flex: none; margin-top: 16px; display: grid; grid-template-columns: repeat(5, 272px); gap: 12px; }
+.bc { height: 266px; background: var(--panel); border: 1px solid var(--panel); border-radius: var(--r-box); position: relative; display: flex; flex-direction: column; }
+.bc .well { height: 123px; flex: none; border-radius: 7px 7px 0 0; border-bottom: 1px solid var(--line); position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; background: var(--bg); }
+.bc .well .dots { position: absolute; inset: 0; }
+.bc .well svg.art { position: relative; display: block; }
+.bc .meta { flex: 1; padding: 11px 13px 11px; display: flex; flex-direction: column; }
+.bc .r1 { display: flex; align-items: baseline; gap: 10px; height: 20px; }
+.bc .nm { font-size: var(--f-name); font-weight: 600; line-height: 20px; letter-spacing: var(--ls-h); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bc .dt { color: var(--muted); white-space: nowrap; }
+.bc .ds { margin-top: 5px; font-size: var(--f-sm); line-height: 17px; color: var(--muted); height: 34px; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tags { display: flex; gap: 4px; flex-wrap: nowrap; }
+.tg { height: 20px; padding: 0 8px; border-radius: var(--r-pill); background: var(--surface); color: var(--muted); font-size: var(--f-xs);
+  display: inline-flex; align-items: center; white-space: nowrap; }
+.bc .tags { margin-top: 10px; }
+.bc .r3 { margin-top: auto; display: flex; align-items: baseline; gap: 12px; }
+.bc .fx { margin-left: auto; align-self: center; color: var(--muted); white-space: nowrap; }
+.bc .pa { color: var(--muted); line-height: 16px; white-space: nowrap; }
+.bc .more { position: absolute; right: 8px; top: 8px; width: 24px; height: 24px; border-radius: var(--r-ctl); background: var(--surface);
+  border: 1px solid var(--line2); display: none; align-items: center; justify-content: center; color: var(--text); z-index: 2; }
+.bc.hov { background: var(--row-hover); border-color: var(--line2); }
+.bc.hov .more, .bc.menu .more { display: flex; }
+.bc.menu .more { background: var(--hover); }
+.bc.missing .nm { color: var(--muted); }
+.pill-miss { height: 18px; padding: 0 7px; border: 1px solid var(--line2); border-radius: var(--r-pill); font-size: var(--f-xs); color: var(--muted); display: inline-flex; align-items: center; }
+.miss { position: absolute; left: 14px; top: 12px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--f-sm); z-index: 1; }
+.menu-pop { position: absolute; width: 184px; background: var(--surface); border: 1px solid var(--line2); border-radius: var(--r-box); padding: 4px; z-index: 5; }
+.menu-pop div { height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: var(--r-ctl); font-size: var(--f-body); }
+.menu-pop div.hi { background: var(--hover); }
+.menu-pop hr { border: 0; border-top: 1px solid var(--line2); margin: 4px 0; }
+
+/* list: numbered table (from B) */
+.tbl { flex: none; margin-top: 16px; }
+.tr { display: grid; grid-template-columns: 40px 1fr 300px 300px 132px; align-items: center; column-gap: 16px; border-bottom: 1px solid var(--line); }
+.tr.th { height: 32px; color: var(--muted); font-size: var(--f-xs); }
+.tr.th .r, .tr .r { text-align: right; }
+.tr.row { height: 50px; }
+.tr .n { color: var(--muted); padding-left: 4px; }
+.tr .nm { font-size: var(--f-name); font-weight: 600; line-height: 19px; letter-spacing: var(--ls-h); }
+.tr .ds { font-size: var(--f-sm); color: var(--muted); line-height: 16px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr .fo, .tr .dt { color: var(--muted); }
+.tr .dt { color: var(--text); }
+
+/* empty / first launch */
+.first { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-bottom: 24px; }
+.first h1 { font-size: var(--f-h1); font-weight: 600; letter-spacing: var(--ls-h); line-height: 40px; }
+.first .lede { text-align: center; max-width: 520px; margin-top: 12px; font-size: calc(var(--f-body) + 2px); line-height: 24px; }
+.first .btns { margin-top: 32px; }
+.first .keys { margin-top: 20px; }
+.first .presets { margin-top: 56px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const Q = new URLSearchParams(location.search);
+const STATE = Q.get('state') || 'recent', FONT = Q.get('font') || 'inter';
+document.body.className = 'f-' + FONT;
+const EMPTY = STATE === 'empty', HOVER = STATE === 'hover', LIST = STATE === 'list';
+
+const P = {
+  house: '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  squarePlus: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.34-4.34"/>',
+  folderOpen: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
+  ellipsis: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  grid: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
+  list: '<path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/>',
+  history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  fileQ: '<path d="M12 17h.01"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M9.1 9a3 3 0 0 1 5.82 1c0 2-3 3-3 3"/>',
+};
+const ic = (k, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24">${P[k]}</svg>`;
+const MARK = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+  <path d="M3.5 4 9 14 14.5 4"/><rect x="2" y="2.5" width="3" height="3" fill="#0e0d0d"/><rect x="13" y="2.5" width="3" height="3" fill="#0e0d0d"/><rect x="7.5" y="12.5" width="3" height="3" fill="#0e0d0d"/></svg>`;
+
+/* ---------- artwork (user content, document units; text in a fixed face so it never changes with the UI font) ---------- */
+const T = 'class="art-t"';
+const ART = {
+  ramadan: [1080, 1350, `<rect width="1080" height="1350" fill="#16233d"/>
+    <circle cx="700" cy="360" r="170" fill="#e9c46a"/><circle cx="772" cy="310" r="152" fill="#16233d"/>
+    <g fill="#e9d8a6"><circle cx="210" cy="180" r="7"/><circle cx="930" cy="610" r="6"/><circle cx="520" cy="140" r="5"/><circle cx="150" cy="560" r="6"/></g>
+    <path d="M300 0v250" stroke="#e9c46a" stroke-width="6"/><path d="M250 250h100l20 40H230z" fill="#e9c46a"/>
+    <rect x="240" y="290" width="120" height="190" rx="24" fill="#c9853d"/><rect x="270" y="320" width="60" height="130" rx="14" fill="#f3d48a"/>
+    <text x="110" y="900" ${T} font-size="150" fill="#f3ead8" letter-spacing="-4">Ramadan</text>
+    <text x="110" y="1050" ${T} font-size="150" fill="#e9c46a" letter-spacing="-4">Kareem</text>
+    <rect x="110" y="1170" width="860" height="3" fill="#3a4a6b"/>`],
+  ramadanStory: [1080, 1920, `<rect width="1080" height="1920" fill="#16233d"/>
+    <circle cx="560" cy="560" r="260" fill="#e9c46a"/><circle cx="670" cy="480" r="232" fill="#16233d"/>
+    <text x="110" y="1300" ${T} font-size="170" fill="#f3ead8" letter-spacing="-5">Ramadan</text>
+    <text x="110" y="1480" ${T} font-size="170" fill="#e9c46a" letter-spacing="-5">Kareem</text>
+    <rect x="110" y="1680" width="420" height="80" rx="40" fill="#e9c46a"/>`],
+  poster: [842, 1191, `<rect width="842" height="1191" fill="#ece4d6"/><circle cx="530" cy="420" r="290" fill="#e4572e"/>
+    <rect x="70" y="660" width="470" height="440" fill="#141313"/><text x="104" y="1030" ${T} font-size="190" fill="#ece4d6" letter-spacing="-8">Form</text>
+    <path d="M70 120h700M70 150h420" stroke="#141313" stroke-width="6"/>`],
+  story: [1080, 1920, `<rect width="1080" height="1920" fill="#e8553f"/><circle cx="540" cy="760" r="380" fill="#f6e7d2"/><circle cx="540" cy="760" r="170" fill="#1b1919"/>
+    <text x="100" y="1420" ${T} font-size="230" fill="#1b1919" letter-spacing="-8">New in</text><text x="100" y="1640" ${T} font-size="230" fill="#f6e7d2" letter-spacing="-8">store</text>`],
+  cardFront: [1050, 600, `<rect width="1050" height="600" fill="#2a2321"/><circle cx="230" cy="300" r="140" fill="none" stroke="#e7d3b0" stroke-width="10"/>
+    <text x="150" y="350" ${T} font-size="140" fill="#e7d3b0" letter-spacing="-6">AC</text>
+    <text x="480" y="262" ${T} font-size="64" fill="#f3ead8">Atlas Coffee</text><rect x="480" y="320" width="420" height="3" fill="#5a4e47"/>`],
+  cardBack: [1050, 600, `<rect width="1050" height="600" fill="#e7d3b0"/><text x="80" y="200" ${T} font-size="54" fill="#2a2321">Samir Haddad</text>
+    <text x="80" y="260" ${T} font-size="32" fill="#7a6a5a">Head roaster</text><rect x="80" y="420" width="380" height="8" fill="#2a2321"/><rect x="80" y="460" width="300" height="8" fill="#b8a488"/>`],
+  invoice: [595, 842, `<rect width="595" height="842" fill="#ffffff"/><rect x="48" y="56" width="36" height="36" fill="#1b1919"/>
+    <text x="48" y="150" ${T} font-size="38" fill="#1b1919">Invoice</text>
+    <g fill="#d8d3cd">${[0,1,2,3,4,5].map(i=>`<rect x="48" y="${230+i*48}" width="${i%2?300:360}" height="8"/><rect x="487" y="${230+i*48}" width="60" height="8"/>`).join('')}</g>
+    <path d="M48 200h499M48 530h499" stroke="#1b1919" stroke-width="2"/><rect x="347" y="560" width="200" height="56" fill="#1b1919"/>`],
+  eid: [1080, 1080, `<rect width="1080" height="1080" fill="#1f4d3a"/>
+    <g transform="translate(540 430)" fill="#e3b04b"><rect x="-170" y="-170" width="340" height="340"/><rect x="-170" y="-170" width="340" height="340" transform="rotate(45)"/></g>
+    <circle cx="540" cy="430" r="120" fill="#1f4d3a"/>
+    <text x="540" y="880" text-anchor="middle" ${T} font-size="120" fill="#f3ead8" letter-spacing="-3">Eid Mubarak</text>`],
+};
+/* free boards (no artboards): artwork straight on the canvas — bounds = the artwork */
+const FREE = {
+  logos: [2600, 640, `<g>
+    <circle cx="300" cy="320" r="250" fill="#ece6dc"/><circle cx="380" cy="240" r="96" fill="#141313"/>
+    <path d="M960 70 1230 570H690z" fill="#d0623f"/><path d="M960 300 1075 520H845z" fill="#141313"/>
+    <circle cx="1620" cy="320" r="210" fill="none" stroke="#ece6dc" stroke-width="70"/><rect x="1575" y="275" width="90" height="90" fill="#d0623f"/>
+    <rect x="2040" y="130" width="520" height="100" rx="50" fill="#ece6dc"/><rect x="2040" y="290" width="380" height="100" rx="50" fill="#ece6dc"/><rect x="2040" y="450" width="240" height="100" rx="50" fill="#d0623f"/></g>`],
+  icons: [1150, 430, `<g fill="none" stroke="#d6d0c8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" transform="translate(-120 -150)">
+      <circle cx="195" cy="225" r="55"/><rect x="345" y="170" width="110" height="110" rx="20"/><path d="M615 165l60 115H555z"/><path d="M825 170v110M770 225h110"/><path d="M980 270l45-55 35 30 55-75"/><path d="M1195 170l18 37 41 6-30 29 7 41-36-19-36 19 7-41-30-29 41-6z"/>
+      <path d="M140 465h110M140 505h110M140 545h70"/><path d="M350 465h100v100H350zM350 515h100"/><circle cx="615" cy="505" r="55"/><path d="M615 470v35l25 20"/><path d="M780 560l45-110 45 110M795 525h60"/><path d="M990 450h70l40 40v70h-110z"/><path d="M1165 505h90M1215 460l45 45-45 45"/></g>`],
+  pattern: [1500, 900, (() => { let s = ''; const cells = [[0,0],[1,0],[2,0],[3,0],[4,0],[0,1],[1,1],[2,1],[0,2],[1,2]];
+      cells.forEach(([c, r], i) => { const a = (r + c) % 2 === 0, x = c * 300, y = r * 300, bg = a ? '#2f6f6a' : '#e7d3b0', fg = a ? '#e7d3b0' : '#2f6f6a';
+        const k = (r * 3 + c) % 4, cx = x + (k === 1 || k === 2 ? 300 : 0), cy = y + (k >= 2 ? 300 : 0);
+        s += `<rect x="${x}" y="${y}" width="300" height="300" fill="${bg}"/><clipPath id="pt${i}"><rect x="${x}" y="${y}" width="300" height="300"/></clipPath><circle clip-path="url(#pt${i})" cx="${cx}" cy="${cy}" r="300" fill="${fg}"/>`; });
+      return s; })()],
+  type: [1700, 700, `<text x="0" y="560" ${T} font-size="660" fill="#ece6dc" letter-spacing="-30">Aa</text>
+    <text x="830" y="200" ${T} font-size="110" fill="#ece6dc" letter-spacing="-2">Specimen</text>
+    <text x="830" y="350" ${T} font-size="72" fill="#8f8a86">ABCDEFGHIJKLM</text>
+    <text x="830" y="460" ${T} font-size="72" fill="#8f8a86">abcdefghijklm</text>
+    <text x="830" y="570" ${T} font-size="72" fill="#d0623f">0123456789</text>`],
+};
+const GAP = 160;
+function thumb(b, maxW = 244, maxH = 99) {
+  let W, H, body;
+  if (b.free) { [W, H, body] = FREE[b.free]; }
+  else {
+    let x = 0; H = 0; body = '';
+    b.boards.forEach(k => { const [w, h, s] = ART[k]; body += `<svg x="${x}" y="0" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${s}</svg>`; x += w + GAP; H = Math.max(H, h); });
+    W = x - GAP;
+  }
+  const s = Math.min(maxW / W, maxH / H);
+  return `<svg class="art" width="${Math.round(W * s)}" height="${Math.round(H * s)}" viewBox="0 0 ${W} ${H}">${body}</svg>`;
+}
+const DOTS = `<svg class="dots" width="100%" height="100%"><defs><pattern id="dg" width="12" height="12" patternUnits="userSpaceOnUse"><circle cx="6" cy="6" r="0.75" fill="rgba(255,255,255,.07)"/></pattern></defs><rect width="100%" height="100%" fill="url(#dg)"/></svg>`;
+
+const BOARDS = [
+  { n: 'Ramadan campaign', d: 'Key visual for Noor Foods — the portrait poster and its story cut-down.', t: ['client', 'ramadan', 'social'], p: '~/Design/Clients/…/Ramadan 2026', dt: 'Today 14:32', boards: ['ramadan', 'ramadanStory'] },
+  { n: 'Logo marks v3', d: 'Third round of marks for Atlas Coffee. Free board, no artboards yet.', t: ['client', 'logo'], p: '~/Design/…/Atlas Coffee/Identity', dt: 'Today 10:05', free: 'logos' },
+  { n: 'Form poster', d: '', t: ['personal', 'print'], p: '~/Design/Personal/Posters', dt: 'Yesterday 22:41', boards: ['poster'] },
+  { n: 'Icon set 24', d: '24 px outline icons, 1.5 stroke, for the product app.', t: ['product'], p: '~/Work/Product/Icons', dt: 'Yesterday 16:10', free: 'icons' },
+  { n: 'Story launch', d: '', t: ['client', 'social'], p: '~/Design/…/Noor Foods/Social', dt: '2 Oct', boards: ['story'] },
+  { n: 'Business card', d: 'Front and back, 85 × 55 mm.', t: ['client', 'print'], p: '~/Design/…/Atlas Coffee/Print', dt: '30 Sep', boards: ['cardFront', 'cardBack'] },
+  { n: 'Pattern tiles', d: 'Quarter-circle tiles, still exploring the repeat.', t: ['personal'], p: '~/Design/Explorations', dt: '28 Sep', free: 'pattern' },
+  { n: 'Invoice template', d: '', t: ['studio', 'print'], p: '~/Documents/Studio/Admin', dt: '21 Sep', boards: ['invoice'] },
+  { n: 'Eid greetings', d: 'Square post for Eid al-Adha, two colourways.', t: ['client', 'social'], p: '~/Design/…/Noor Foods/Social', dt: '17 Sep', boards: ['eid'] },
+  { n: 'Type specimen', d: 'Display sizes and figures for the studio site.', t: ['personal', 'type'], p: '~/Design/Explorations/Type', dt: '9 Sep', free: 'type' },
+];
+const TAGS = {}; BOARDS.forEach(b => b.t.forEach(t => TAGS[t] = (TAGS[t] || 0) + 1));
+const TAG_ORDER = Object.entries(TAGS).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+/* presets: one shared scale, 56 px = 1920 units, on one baseline */
+const SC = 56 / 1920;
+const PRESETS = [['Square', 1080, 1080, 'px'], ['Portrait', 1080, 1350, 'px'], ['Story', 1080, 1920, 'px'], ['A4', 595, 842, 'pt']];
+function presetPanel() {
+  const tiles = PRESETS.map(([n, w, h, u]) => `<div class="pr"><div class="pv"><div class="ab" style="width:${(w*SC).toFixed(1)}px;height:${(h*SC).toFixed(1)}px"></div></div>
+      <div class="nm">${n}</div><div class="sz mono">${w} × ${h} ${u}</div></div>`).join('') +
+    `<div class="pr"><div class="pv"><div class="ab dash" style="width:44px;height:28px">${ic('plus', 'sm')}</div></div><div class="nm">Custom…</div><div class="sz mono">any size</div></div>`;
+  return `<div class="pnl presets"><div class="pnl-h"><b>…or start with an artboard</b><span>— true proportions</span></div><div class="pr-row">${tiles}</div></div>`;
+}
+function actions() {
+  return `<div class="btns">
+      <div class="big primary">${ic('squarePlus', 'lg')}<div class="tx"><div class="t1">New board</div><div class="t2">Free canvas, no size needed</div></div><span class="kb mono">⌘N</span></div>
+      <div class="big secondary${HOVER ? ' focus' : ''}">${ic('folderOpen', 'lg')}<div class="tx"><div class="t1">Open…</div><div class="t2">A .vrs file from disk</div></div><span class="kb mono">⌘O</span></div>
+    </div>`;
+}
+const KEYS = `<div class="keys"><span><kbd>↑</kbd><kbd>↓</kbd>Move</span><span><kbd>Return</kbd>Open board</span><span><kbd>Delete</kbd>Remove from Recent</span></div>`;
+const LEDE = 'A board is a free canvas with a name, a short description and tags. Artboards inside are optional — add one when a piece needs a fixed size.';
+
+function bar() {
+  const tabs = EMPTY ? '' : `<div class="tab">Untitled-1<span class="x">${ic('x')}</span></div><div class="tab">poster.vrs*<span class="x">${ic('x')}</span></div>`;
+  return `<header class="bar"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+    <div class="home">${ic('house')}</div><div class="tabs">${tabs}<div class="plus">${ic('plus')}</div></div>
+    <div class="right"><div class="search">${ic('search', 'sm')}<span>Search boards</span></div>
+      <div class="tbtn off">Export</div><div class="tbtn off">Share</div><div class="tbtn">Window</div><div class="mark">${MARK}</div></div></header>`;
+}
+
+const facts = b => b.free ? 'free' : b.boards.length + (b.boards.length > 1 ? ' artboards' : ' artboard');
+function card(b, i) {
+  let cls = '', well = DOTS + thumb(b), right = `<span class="dt mono">${b.dt}</span>`, extra = '';
+  if (HOVER && i === 6) cls = 'hov';
+  if (HOVER && i === 3) {
+    cls = 'missing menu'; well = DOTS + `<div class="miss">${ic('fileQ')}File not found</div>`; right = `<span class="pill-miss">Missing</span>`;
+    extra = `<div class="menu-pop" style="left:${272 - 184 - 8}px; top:36px"><div>Locate…</div><hr><div class="hi">Remove from Recent</div></div>`;
+  }
+  return `<div class="bc ${cls}"><div class="well">${well}</div><div class="meta">
+      <div class="r1"><span class="nm">${b.n}</span>${right}</div>
+      ${b.d ? `<div class="ds">${b.d}</div>` : ''}
+      <div class="tags">${b.t.map(t => `<span class="tg">${t}</span>`).join('')}<span class="fx mono">${facts(b)}</span></div>
+      <div class="r3"><span class="pa mono">${b.p}</span></div></div><div class="more">${ic('ellipsis')}</div>${extra}</div>`;
+}
+function table() {
+  const rows = BOARDS.map((b, i) => `<div class="tr row"><span class="n mono">${i + 1}</span>
+      <div><div class="nm">${b.n}</div>${b.d ? `<div class="ds">${b.d}</div>` : ''}</div>
+      <div class="tags">${b.t.map(t => `<span class="tg">${t}</span>`).join('')}</div>
+      <span class="fo mono">${b.p}</span><span class="dt mono r">${b.dt}</span></div>`).join('');
+  return `<div class="tbl"><div class="tr th"><span class="n">#</span><span>Name</span><span>Tags</span><span>Folder</span><span class="r">Modified</span></div>${rows}</div>`;
+}
+
+function main() {
+  if (EMPTY) return `<main class="main"><div class="first">
+      <h1>Start with a board</h1><p class="lede">${LEDE}</p>${actions()}${KEYS.replace('<span><kbd>↑</kbd><kbd>↓</kbd>Move</span>', '').replace('<span><kbd>Delete</kbd>Remove from Recent</span>', '').replace('Return</kbd>Open board', 'Return</kbd>New board')}
+      ${presetPanel()}</div></main>`;
+  const filters = [['All', BOARDS.length], ...TAG_ORDER].map(([t, c], i) => `<span class="flt${i === 0 ? ' on' : ''}">${t}<span class="c mono">${c}</span></span>`).join('');
+  return `<main class="main">
+    <section class="hero"><div class="act">${actions()}<p class="lede">${LEDE}</p>${KEYS}</div>${presetPanel()}</section>
+    <section class="recov">${ic('history', 'lg')}<div class="tx"><b>Recovered — Menu card</b><span class="m">unsaved changes from 11:48 today</span><span class="m mono">~/Design/Clients/Noor Foods/Menu</span></div>
+      <span class="btn ghost">Discard</span><span class="btn solid">Recover</span></section>
+    <div class="rhead"><h2>Recent boards</h2><span class="cnt mono">${BOARDS.length}</span><div class="filters">${filters}</div><span class="sp"></span>
+      <div class="seg"><span class="${LIST ? '' : 'on'}">${ic('grid', 'sm')}</span><span class="${LIST ? 'on' : ''}">${ic('list', 'sm')}</span></div></div>
+    ${LIST ? table() : `<div class="grid">${BOARDS.map(card).join('')}</div>`}
+  </main>`;
+}
+const status = `<footer class="status"><span>Varos 0.1 α</span><span class="on">${ic('shield', 'sm')}Recovery on · copies every 30 seconds</span></footer>`;
+document.getElementById('app').innerHTML = bar() + main() + status;
+</script>
+</body>
+</html>
