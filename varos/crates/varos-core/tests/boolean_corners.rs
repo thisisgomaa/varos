@@ -52,6 +52,104 @@ fn uniting_two_rectangles_yields_only_corner_points() {
     assert_area(&ed, 2400.0 + 2400.0 - 600.0, "rect ∪ rect");
 }
 
+#[test]
+fn direct_anchor_selection_enables_and_runs_pathfinder_as_one_object_result() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    ed.doc.paths.push(rect(100, 1, 0.0, 0.0, 60.0, 40.0));
+    ed.doc.paths.push(rect(200, 10, 30.0, 20.0, 90.0, 60.0));
+    ed.doc.ids = 1000;
+    ed.set_tool(varos_core::editor::ToolKind::Direct);
+    ed.select_all();
+    assert_eq!(ed.pathfinder_enabled(), Ok(()));
+    let before = ed.doc.clone();
+    ed.pathfinder(BoolOp::Unite);
+    assert_eq!(ed.doc.paths.len(), 1);
+    assert!(ed.selected.is_empty(), "the boolean result is selected as an object");
+    assert_eq!(ed.objsel.len(), 1);
+    ed.undo();
+    assert_eq!(ed.doc, before, "one undo restores both boolean inputs");
+}
+
+#[test]
+fn every_pathfinder_operation_accepts_direct_selected_owners() {
+    for (name, op) in [
+        ("Unite", BoolOp::Unite),
+        ("MinusFront", BoolOp::MinusFront),
+        ("Intersect", BoolOp::Intersect),
+        ("Exclude", BoolOp::Exclude),
+    ] {
+        let mut ed = Editor::new();
+        ed.doc.paths.clear();
+        ed.doc.paths.push(rect(100, 1, 0.0, 0.0, 60.0, 40.0));
+        ed.doc.paths.push(rect(200, 10, 30.0, 20.0, 90.0, 60.0));
+        ed.doc.ids = 1000;
+        ed.set_tool(varos_core::editor::ToolKind::Direct);
+        ed.selected.extend([1, 10]);
+        let before = ed.doc.clone();
+        ed.pathfinder(op);
+        assert!(ed.doc.paths.iter().all(|p| p.id != 100 && p.id != 200), "{name} must consume both owners");
+        assert!(ed.selected.is_empty() && !ed.objsel.is_empty(), "{name} result is object-selected");
+        ed.undo();
+        assert_eq!(ed.doc, before, "{name} is one undo step");
+    }
+}
+
+#[test]
+fn pathfinder_enabled_requires_two_distinct_closed_owning_objects() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    ed.doc.paths.push(rect(100, 1, 0.0, 0.0, 60.0, 40.0));
+    ed.doc.ids = 1000;
+    ed.selected.extend([1, 2]);
+    assert_eq!(ed.pathfinder_enabled(), Err("Pathfinder needs two or more closed shapes"));
+}
+
+#[test]
+fn pathfinder_enabled_explains_that_selected_open_paths_are_ineligible() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    ed.doc.paths.push(rect(100, 1, 0.0, 0.0, 60.0, 40.0));
+    let mut open = rect(200, 10, 30.0, 20.0, 90.0, 60.0);
+    open.closed = false;
+    ed.doc.paths.push(open);
+    ed.objsel.extend([100, 200]);
+    assert_eq!(ed.pathfinder_enabled(), Err("Pathfinder needs two or more closed shapes"));
+}
+
+#[test]
+fn pathfinder_runs_on_two_closed_shapes_and_leaves_a_selected_open_path_untouched() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    ed.doc.paths.push(rect(100, 1, 0.0, 0.0, 60.0, 40.0));
+    ed.doc.paths.push(rect(200, 10, 30.0, 20.0, 90.0, 60.0));
+    let mut open = rect(300, 20, 120.0, 0.0, 160.0, 40.0);
+    open.closed = false;
+    let open_before = open.clone();
+    ed.doc.paths.push(open);
+    ed.doc.ids = 1000;
+    ed.objsel.extend([100, 200, 300]);
+    assert_eq!(ed.pathfinder_enabled(), Ok(()));
+    ed.pathfinder(BoolOp::Unite);
+    assert_eq!(ed.doc.paths.iter().find(|p| p.id == 300), Some(&open_before), "the open path is untouched");
+    assert!(ed.objsel.contains(&300), "the ignored open path stays selected");
+    assert_eq!(ed.objsel.len(), 2, "open path plus one boolean result are selected");
+}
+
+#[test]
+fn pathfinder_promotes_a_direct_path_level_selection_without_selected_anchors() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    ed.doc.paths.push(rect(100, 1, 0.0, 0.0, 60.0, 40.0));
+    ed.doc.paths.push(rect(200, 10, 30.0, 20.0, 90.0, 60.0));
+    ed.doc.ids = 1000;
+    ed.objsel.insert(100);
+    ed.dsel_path = Some(200);
+    assert_eq!(ed.pathfinder_enabled(), Ok(()));
+    ed.pathfinder(BoolOp::Unite);
+    assert_eq!(ed.doc.paths.len(), 1, "both the object and Direct path-level owner participate");
+}
+
 // ---------- evidence helpers: prove a Pathfinder op actually executed ----------
 
 /// The op consumed its inputs and produced exactly `paths` NEW paths (ids minted after `ids_before`)
