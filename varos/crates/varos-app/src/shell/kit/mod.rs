@@ -7,6 +7,7 @@
 use egui::{Color32, Event, Id, Key, PointerButton, Response, Sense, Stroke, StrokeKind, TextStyle, Ui};
 
 use super::tokens as t;
+pub mod board;
 pub mod field;
 mod icons;
 pub use icons::Icon;
@@ -376,10 +377,39 @@ pub fn is_menu_open(ctx: &egui::Context, owner: Id) -> bool {
     menu_state(ctx).is_some_and(|s| s.owner == owner)
 }
 
+/// How a kit menu is sized: the default is the dense shell menu; Start v2 asks for the mockup's
+/// 184-wide popup with 28-tall 13 pt rows and a LINE2 separator (src.html `.menu-pop`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MenuLook {
+    /// Minimum width of the rows (the popup adds its 4 px padding and 1 px border on each side).
+    pub min_width: f32,
+    pub row_h: f32,
+    pub pad_x: f32,
+    /// Row text size; `None` = the Button text style.
+    pub text_size: Option<f32>,
+    pub separator: Color32,
+}
+impl Default for MenuLook {
+    fn default() -> Self {
+        Self {
+            min_width: t::KIT_MENU_MIN_W,
+            row_h: t::KIT_CONTROL_H,
+            pad_x: t::KIT_PAD,
+            text_size: None,
+            separator: t::LINE,
+        }
+    }
+}
+
 /// Draw `owner`'s menu if it is the open one; returns the activated entry index (into `entries`).
 /// Keyboard while open: ↑/↓ move between items (stop at the ends), Enter/Space activate, Esc closes.
 /// The menu owns those keys (they are consumed). A press outside closes it. No shadow, no animation.
 pub fn menu(ctx: &egui::Context, owner: Id, entries: &[MenuEntry<'_>]) -> Option<usize> {
+    menu_with(ctx, owner, entries, MenuLook::default())
+}
+
+/// [`menu`] with an explicit [`MenuLook`].
+pub fn menu_with(ctx: &egui::Context, owner: Id, entries: &[MenuEntry<'_>], look: MenuLook) -> Option<usize> {
     let mut state = menu_state(ctx).filter(|s| s.owner == owner)?;
     let items: Vec<usize> =
         entries.iter().enumerate().filter(|(_, e)| matches!(e, MenuEntry::Item(_))).map(|(i, _)| i).collect();
@@ -429,13 +459,14 @@ pub fn menu(ctx: &egui::Context, owner: Id, entries: &[MenuEntry<'_>]) -> Option
         close_menu(ctx);
         return None;
     }
-    let font = TextStyle::Button.resolve(&ctx.global_style());
+    let font =
+        look.text_size.map_or_else(|| TextStyle::Button.resolve(&ctx.global_style()), egui::FontId::proportional);
     let widest = entries
         .iter()
         .filter_map(|e| if let MenuEntry::Item(label) = e { Some(*label) } else { None })
         .map(|label| ctx.fonts_mut(|f| f.layout_no_wrap(label.into(), font.clone(), t::TEXT).size().x))
         .fold(0.0, f32::max);
-    let width = (widest + t::KIT_PAD * 2.0).max(t::KIT_MENU_MIN_W);
+    let width = (widest + look.pad_x * 2.0).max(look.min_width);
     let area = egui::Area::new(menu_key()).order(egui::Order::Foreground).fixed_pos(state.pos).show(ctx, |ui| {
         egui::Frame::new()
             .fill(t::SURFACE)
@@ -449,13 +480,13 @@ pub fn menu(ctx: &egui::Context, owner: Id, entries: &[MenuEntry<'_>]) -> Option
                 for (index, entry) in entries.iter().enumerate() {
                     match entry {
                         MenuEntry::Separator => {
-                            separator(ui);
+                            separator_colored(ui, look.separator);
                         }
                         MenuEntry::Item(label) => {
                             let mut c = Control::new(owner.with(("menu-item", index)), label);
                             c.pointer_only = true;
                             c.focused = state.keyboard && state.focus == Some(ordinal);
-                            let r = menu_row(ui, c);
+                            let r = menu_row_with(ui, c, &look);
                             if r.response.hovered() && !state.keyboard {
                                 state.focus = Some(ordinal);
                             }
@@ -481,12 +512,16 @@ pub fn menu(ctx: &egui::Context, owner: Id, entries: &[MenuEntry<'_>]) -> Option
 /// for keyboard focus. Activation is the pointer (or a focused accessibility click); hosts that own
 /// Enter pass `pointer_only` and `focused`.
 pub fn menu_row(ui: &mut Ui, c: Control<'_>) -> ControlResponse {
+    menu_row_with(ui, c, &MenuLook::default())
+}
+
+fn menu_row_with(ui: &mut Ui, c: Control<'_>, look: &MenuLook) -> ControlResponse {
     let reason = match c.availability {
         Availability::Enabled => None,
         Availability::Disabled(reason) | Availability::Busy(reason) => Some(reason),
     };
     let enabled = reason.is_none() && ui.is_enabled();
-    let (_, rect) = ui.allocate_space(egui::vec2(ui.available_width().max(t::KIT_MIN_TARGET), t::KIT_CONTROL_H));
+    let (_, rect) = ui.allocate_space(egui::vec2(ui.available_width().max(t::KIT_MIN_TARGET), look.row_h));
     let response = ui.interact(rect, c.id, if c.pointer_only { Sense::CLICK } else { Sense::click() });
     let hover = enabled && (response.hovered() || response.is_pointer_button_down_on());
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -497,13 +532,14 @@ pub fn menu_row(ui: &mut Ui, c: Control<'_>) -> ControlResponse {
         painter.rect_stroke(rect, t::r_ctrl(), Stroke::new(t::KIT_FOCUS_STROKE, t::ACCENT), StrokeKind::Inside);
     }
     let text = if enabled { t::TEXT } else { t::MUTED };
-    let mut x = rect.left() + t::KIT_PAD;
+    let mut x = rect.left() + look.pad_x;
     if let Some(icon) = c.icon {
         icon.paint(&painter, egui::pos2(x + t::KIT_ICON / 2.0, rect.center().y), t::KIT_ICON, text);
         x += t::KIT_ICON + t::KIT_GAP;
     }
-    let width = (rect.right() - t::KIT_PAD - x).max(0.0);
-    let galley = elided(ui, c.label, TextStyle::Button.resolve(ui.style()), text, width);
+    let width = (rect.right() - look.pad_x - x).max(0.0);
+    let font = look.text_size.map_or_else(|| TextStyle::Button.resolve(ui.style()), egui::FontId::proportional);
+    let galley = elided(ui, c.label, font, text, width);
     painter.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, text);
     let label = reason.map_or_else(|| c.label.to_string(), |r| format!("{} — {r}", c.label));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label.as_str()));
@@ -513,7 +549,11 @@ pub fn menu_row(ui: &mut Ui, c: Control<'_>) -> ControlResponse {
 
 /// A kit hairline separator (LINE, 1 px) with KIT_GAP of vertical room; never egui's `ui.separator()`.
 pub fn separator(ui: &mut Ui) -> Response {
+    separator_colored(ui, t::LINE)
+}
+
+fn separator_colored(ui: &mut Ui, color: Color32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), t::KIT_GAP), Sense::hover());
-    ui.painter().hline(rect.x_range(), rect.center().y, t::hairline());
+    ui.painter().hline(rect.x_range(), rect.center().y, Stroke::new(t::KIT_STROKE, color));
     response
 }
