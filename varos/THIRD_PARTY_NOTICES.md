@@ -9,7 +9,11 @@ Awesome Free's `pen-nib` icon, CC BY 4.0; that glyph is no longer shipped.)
 
 ## Lucide (icons)
 
-UI panel icons (tool rail, control bar) are from **Lucide**.
+UI panel icons (tool rail, control bar) are from **Lucide**. The icon registry's SVG files
+(`crates/varos-app/assets/icons/`, used by `shell/kit/icons.rs`) are upstream Lucide glyphs: the six
+Start icons from lucide-static 1.51.0, the twelve added on 2026-10-04 (icon stage 1) built byte-for-byte
+in lucide-static's layout from the icon nodes of lucide 1.8.0; each file keeps its licence header, and
+the folder carries this LICENSE (with the Feather MIT notice).
 
 - Source: https://lucide.dev — https://github.com/lucide-icons/lucide
 - License: **ISC**; **MIT** for icons derived from Feather (listed below).

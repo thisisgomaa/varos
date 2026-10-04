@@ -24,6 +24,9 @@ use varos_app::shell::tokens::{
     LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
     SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
 };
+// Icon stage 1: one icon registry + one icon button (shell::kit), one set of icon sizes (tokens).
+use varos_app::shell::kit::{self, Icon};
+use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 const IC_SELECT: &str = r#"<path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>"#;
@@ -40,8 +43,6 @@ const IC_L_LOCK: &str =
     r#"<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>"#;
 const IC_L_UNLOCK: &str =
     r#"<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>"#;
-const IC_L_GROUP: &str = r#"<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#;
-const IC_L_TRASH: &str = r#"<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>"#;
 const IC_L_SEARCH: &str = r#"<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>"#;
 
 // field-label icons (Illustrator-style, gray): rotation · opacity · stroke weight
@@ -52,9 +53,6 @@ const IC_OPACITY: &str =
     r#"<circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20z" fill="white" stroke="none"/>"#;
 const IC_STROKEW: &str = r#"<path d="M3 7h18" stroke-width="1.3"/><path d="M3 12h18" stroke-width="2.4"/><path d="M3 17h18" stroke-width="3.8"/>"#;
 // transform-row icons: constrain (link) · flip horizontal · flip vertical
-const IC_LINK: &str = r#"<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>"#;
-const IC_FLIPH: &str = r#"<path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/>"#;
-const IC_FLIPV: &str = r#"<path d="M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/>"#;
 // object-alignment icons: align L / centre-H / R · T / middle / B, then distribute H / V.
 // FILLED glyphs — law-verbatim from UI_VISION_MOCKUP.html:176–181 (a solid guide bar + two solid bars);
 // loaded through `load_icon_filled` (white fill, no stroke) so they read bold at 16px like the mockup.
@@ -78,8 +76,6 @@ const IC_MAGNET: &str = r#"<path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13
 // portrait/landscape page · "fit in window" frame
 const IC_ARTBOARD: &str = r#"<path d="M22 6H2"/><path d="M22 18H2"/><path d="M6 2v20"/><path d="M18 2v20"/>"#;
 const IC_POLYGON: &str = r#"<path d="M21 16.05V7.95a2 2 0 0 0-1-1.73l-7-4.04a2 2 0 0 0-2 0l-7 4.04A2 2 0 0 0 3 7.95v8.1a2 2 0 0 0 1 1.73l7 4.04a2 2 0 0 0 2 0l7-4.04a2 2 0 0 0 1-1.73Z"/>"#;
-const IC_PORTRAIT: &str = r#"<rect x="7" y="3" width="10" height="18" rx="1"/>"#;
-const IC_LANDSCAPE: &str = r#"<rect x="3" y="7" width="18" height="10" rx="1"/>"#;
 const IC_FIT: &str = r#"<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>"#;
 // ⋮ on-canvas artboard menu — FILLED dots (own svg; lucide() forces stroke-only)
 /// Page-size presets shown in the artboard panel: (label, w, h) in world points (px == pt @72ppi).
@@ -146,6 +142,96 @@ enum Op {
     ToggleGuides,   // show/hide ruler guides — the guides-visibility view pref (mirrors Ctrl+;)
     ToggleRulers,   // show/hide rulers — the rulers view pref (mirrors Ctrl+R)
 }
+
+// ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
+
+/// A shortcut hint shown in an icon button's tooltip.
+#[derive(Clone, Copy)]
+enum Hint {
+    None,
+    /// The platform primary modifier + key (⌘G on Mac, Ctrl+G elsewhere).
+    Primary(&'static str),
+    /// A plain key name.
+    Key(&'static str),
+}
+
+/// One panel icon button: its stable key, its registry glyph, the text label it used to show (now its
+/// tooltip) and its shortcut. Every icon button in the panels is drawn from [`ICON_ACTIONS`], so the
+/// tooltip test covers all of them (ICON_LIBRARY_STUDY §4; owner: "icons instead of text").
+#[derive(Clone, Copy)]
+struct IconAction {
+    key: &'static str,
+    icon: Icon,
+    label: &'static str,
+    hint: Hint,
+}
+impl IconAction {
+    /// The label plus its shortcut — what the button says on hover.
+    fn tooltip(&self) -> String {
+        match self.hint {
+            Hint::None => self.label.to_string(),
+            Hint::Primary(k) => format!("{} ({})", self.label, shortcut_label(k)),
+            Hint::Key(k) => format!("{} ({k})", self.label),
+        }
+    }
+    /// Draw it through the one kit control; true once on activation (pointer or Enter/Space).
+    fn show(&self, ui: &mut egui::Ui, state: kit::IconState<'_>) -> bool {
+        let id = ui.make_persistent_id(("icon-action", self.key));
+        let r = kit::icon_button(ui, id, self.icon, &self.tooltip(), state);
+        #[cfg(test)]
+        icon_action_tests::PROBE.with(|p| p.borrow_mut().push((self.key, id, r.response.rect)));
+        r.activated
+    }
+}
+
+const IA_LAYER_GROUP: IconAction =
+    IconAction { key: "layer-group", icon: Icon::Group, label: "Group the selection", hint: Hint::Primary("G") };
+const IA_LAYER_DELETE: IconAction =
+    IconAction { key: "layer-delete", icon: Icon::Trash, label: "Delete the selection", hint: Hint::Key("Delete") };
+const IA_AB_ADD: IconAction =
+    IconAction { key: "ab-add", icon: Icon::ArtboardAdd, label: "Add artboard", hint: Hint::None };
+const IA_AB_DUP: IconAction =
+    IconAction { key: "ab-dup", icon: Icon::Duplicate, label: "Duplicate artboard", hint: Hint::None };
+const IA_AB_DEL: IconAction =
+    IconAction { key: "ab-del", icon: Icon::Trash, label: "Delete artboard", hint: Hint::None };
+const IA_AB_LINK: IconAction =
+    IconAction { key: "ab-link", icon: Icon::Link, label: "Constrain W/H", hint: Hint::None };
+const IA_AB_PORTRAIT: IconAction =
+    IconAction { key: "ab-portrait", icon: Icon::Portrait, label: "Portrait", hint: Hint::None };
+const IA_AB_LANDSCAPE: IconAction =
+    IconAction { key: "ab-landscape", icon: Icon::Landscape, label: "Landscape", hint: Hint::None };
+const IA_AB_FIT: IconAction =
+    IconAction { key: "ab-fit", icon: Icon::Fit, label: "Fit in window", hint: Hint::Primary("0") };
+const IA_PROP_LINK: IconAction =
+    IconAction { key: "prop-link", icon: Icon::Link, label: "Constrain W/H proportions", hint: Hint::None };
+const IA_FLIP_H: IconAction =
+    IconAction { key: "flip-h", icon: Icon::FlipH, label: "Flip horizontal", hint: Hint::None };
+const IA_FLIP_V: IconAction = IconAction { key: "flip-v", icon: Icon::FlipV, label: "Flip vertical", hint: Hint::None };
+const IA_NO_FILL: IconAction = IconAction { key: "no-fill", icon: Icon::Remove, label: "No paint", hint: Hint::None };
+const IA_NO_STROKE: IconAction =
+    IconAction { key: "no-stroke", icon: Icon::Remove, label: "No paint", hint: Hint::None };
+const IA_PICKER_CLOSE: IconAction =
+    IconAction { key: "picker-close", icon: Icon::Remove, label: "Close", hint: Hint::Key("Esc") };
+
+/// Every panel icon action, for the tooltip/emission tests.
+#[cfg(test)]
+const ICON_ACTIONS: [IconAction; 15] = [
+    IA_LAYER_GROUP,
+    IA_LAYER_DELETE,
+    IA_AB_ADD,
+    IA_AB_DUP,
+    IA_AB_DEL,
+    IA_AB_LINK,
+    IA_AB_PORTRAIT,
+    IA_AB_LANDSCAPE,
+    IA_AB_FIT,
+    IA_PROP_LINK,
+    IA_FLIP_H,
+    IA_FLIP_V,
+    IA_NO_FILL,
+    IA_NO_STROKE,
+    IA_PICKER_CLOSE,
+];
 
 /// A window action the custom title bar asks the host (winit) to perform.
 pub enum WinAction {
@@ -814,11 +900,6 @@ pub struct Ui {
     ic_rotate: Option<egui::TextureHandle>,
     ic_opacity: Option<egui::TextureHandle>,
     ic_strokew: Option<egui::TextureHandle>,
-    ic_link: Option<egui::TextureHandle>,
-    ic_fliph: Option<egui::TextureHandle>,
-    ic_flipv: Option<egui::TextureHandle>,
-    ic_portrait: Option<egui::TextureHandle>,
-    ic_landscape: Option<egui::TextureHandle>,
     ic_fit: Option<egui::TextureHandle>,
     ic_pipette: Option<egui::TextureHandle>, // real Lucide pipette (IC_EYE) for the picker eyedropper (A16.2)
     align_icons: [Option<egui::TextureHandle>; 8], // align L/CH/R · T/M/B · distribute H/V
@@ -864,8 +945,6 @@ struct LayerIcons {
     eye_off: Option<egui::TextureHandle>,
     lock: Option<egui::TextureHandle>,
     unlock: Option<egui::TextureHandle>,
-    grp: Option<egui::TextureHandle>,
-    trash: Option<egui::TextureHandle>,
     search: Option<egui::TextureHandle>,
 }
 
@@ -1004,11 +1083,6 @@ impl Ui {
         let ic_rotate = load_icon(&ctx, "lbl-rot", IC_ROTATE);
         let ic_opacity = load_icon(&ctx, "lbl-op", IC_OPACITY);
         let ic_strokew = load_icon(&ctx, "lbl-sw", IC_STROKEW);
-        let ic_link = load_icon(&ctx, "lbl-link", IC_LINK);
-        let ic_fliph = load_icon(&ctx, "lbl-fh", IC_FLIPH);
-        let ic_flipv = load_icon(&ctx, "lbl-fv", IC_FLIPV);
-        let ic_portrait = load_icon(&ctx, "lbl-portrait", IC_PORTRAIT);
-        let ic_landscape = load_icon(&ctx, "lbl-landscape", IC_LANDSCAPE);
         let ic_fit = load_icon(&ctx, "lbl-fit", IC_FIT);
         // A16.2: reuse the real Lucide pipette (IC_EYE) for the picker's in-picker eyedropper.
         let ic_pipette = load_icon(&ctx, "lbl-pipette", IC_EYE);
@@ -1035,8 +1109,6 @@ impl Ui {
             eye_off: load_icon(&ctx, "l-eyeoff", IC_L_EYEOFF),
             lock: load_icon(&ctx, "l-lock", IC_L_LOCK),
             unlock: load_icon(&ctx, "l-unlock", IC_L_UNLOCK),
-            grp: load_icon(&ctx, "l-group", IC_L_GROUP),
-            trash: load_icon(&ctx, "l-trash", IC_L_TRASH),
             search: load_icon(&ctx, "l-search", IC_L_SEARCH),
         };
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, None, None, None);
@@ -1056,11 +1128,6 @@ impl Ui {
             ic_rotate,
             ic_opacity,
             ic_strokew,
-            ic_link,
-            ic_fliph,
-            ic_flipv,
-            ic_portrait,
-            ic_landscape,
             ic_fit,
             ic_pipette,
             align_icons,
@@ -1332,16 +1399,7 @@ impl Ui {
             rotate: &self.ic_rotate,
             opacity: &self.ic_opacity,
             strokew: &self.ic_strokew,
-            link: &self.ic_link,
-            fliph: &self.ic_fliph,
-            flipv: &self.ic_flipv,
             align: &self.align_icons,
-        };
-        let ab_icons = AbIcons {
-            link: &self.ic_link,
-            portrait: &self.ic_portrait,
-            landscape: &self.ic_landscape,
-            fit: &self.ic_fit,
         };
         let recovery = &self.recovery;
         let ic_fit = &self.ic_fit; // the status strip's Fit control shares the artboard panel's icon
@@ -1463,7 +1521,7 @@ impl Ui {
                         }
                         P::Properties => {
                             if snap.tool == ToolKind::Artboard {
-                                panel_artboard(ui, &absnap, &ab_icons, &mut ab_lock, &mut ops, &mut fit_request);
+                                panel_artboard(ui, &absnap, &mut ab_lock, &mut ops, &mut fit_request);
                             } else {
                                 panel_properties(
                                     ui,
@@ -1828,7 +1886,7 @@ fn num_field(
                 t.id(),
                 egui::Rect::from_center_size(
                     egui::pos2(row.left() + labw - 11.0, row.center().y),
-                    egui::vec2(14.0, 14.0),
+                    egui::Vec2::splat(ICON_SM),
                 ),
                 UV01(),
                 MUTED,
@@ -1974,16 +2032,6 @@ fn num_field(
     out
 }
 
-/// Tiny hand-painted glyph button (e.g. the clear-paint ×). Returns true on click.
-fn mini_btn(ui: &mut egui::Ui, glyph: &str, tip: &str) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
-    }
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(14.0), MUTED);
-    resp.on_hover_text(tip).clicked()
-}
-
 /// The 9-point transform reference widget (3×3 dots). Click a dot to set the reference (ax, ay).
 fn refpoint(ui: &mut egui::Ui, sz: f32, refpt: &mut (f32, f32)) {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(sz, sz), egui::Sense::click());
@@ -2013,35 +2061,17 @@ fn refpoint(ui: &mut egui::Ui, sz: f32, refpt: &mut (f32, f32)) {
     }
 }
 
-/// Small icon toggle (e.g. the constrain-proportions link). Accent when on.
-fn icon_toggle(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, on: bool, tip: &str) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
-    if on {
-        ui.painter().rect_filled(rect, CornerRadius::same(R), ACCENT);
-    } else if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
-    }
-    if let Some(t) = tex {
-        ui.painter().image(
-            t.id(),
-            egui::Rect::from_center_size(rect.center(), egui::vec2(15.0, 15.0)),
-            UV01(),
-            if on { Color32::WHITE } else { MUTED },
-        );
-    }
-    resp.on_hover_text(tip).clicked()
-}
-
-/// Small icon action button (e.g. flip). White on hover.
+/// Icon chip for the hand-made filled glyphs that are not in the registry yet (Align / Distribute and
+/// the control-bar mirrors). Same target and glyph size as `kit::icon_button` (QW6: 18 in 26 × 24).
 fn icon_btn(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 24.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ICON_BTN_W, ICON_BTN_H), egui::Sense::click());
     if resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
     }
     if let Some(t) = tex {
         ui.painter().image(
             t.id(),
-            egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
+            egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_LG)),
             UV01(),
             if resp.hovered() { Color32::WHITE } else { MUTED },
         );
@@ -2236,7 +2266,11 @@ fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &
         ui.add_space(8.0);
         ui.label(RichText::new(color.map(hex_of).unwrap_or_else(|| "None".into())).color(TEXT).monospace().size(12.0));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if mini_btn(ui, "×", "No paint") {
+            let clear = match target {
+                PaintTarget::Fill => IA_NO_FILL,
+                PaintTarget::Stroke => IA_NO_STROKE,
+            };
+            if clear.show(ui, kit::IconState::Action) {
                 ops.push(Op::Paint(target, None));
             }
         });
@@ -2516,7 +2550,7 @@ fn eyedropper_btn(ui: &mut egui::Ui, pipette: &Option<egui::TextureHandle>, arme
         if let Some(t) = pipette {
             ui.painter().image(
                 t.id(),
-                egui::Rect::from_center_size(r.center(), egui::vec2(14.0, 14.0)),
+                egui::Rect::from_center_size(r.center(), egui::Vec2::splat(ICON_SM)),
                 UV01(),
                 MUTED.gamma_multiply(0.4),
             );
@@ -2534,7 +2568,7 @@ fn eyedropper_btn(ui: &mut egui::Ui, pipette: &Option<egui::TextureHandle>, arme
     if let Some(t) = pipette {
         ui.painter().image(
             t.id(),
-            egui::Rect::from_center_size(r.center(), egui::vec2(14.0, 14.0)),
+            egui::Rect::from_center_size(r.center(), egui::Vec2::splat(ICON_SM)),
             UV01(),
             if armed { Color32::WHITE } else { MUTED },
         );
@@ -2674,7 +2708,7 @@ fn build_color_modal(
                             }
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if mini_btn(ui, "×", "Close (Esc)") {
+                            if IA_PICKER_CLOSE.show(ui, kit::IconState::Action) {
                                 cancel = true;
                             }
                             if eyedropper_btn(ui, pipette, m.eyedropping) {
@@ -3053,7 +3087,7 @@ fn icon_button(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, active: boo
         painter.rect_filled(rect, rounding, HOVER);
     }
     if let Some(t) = tex {
-        let ir = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0));
+        let ir = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_MD));
         painter.image(t.id(), ir, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
     }
     resp
@@ -3872,7 +3906,7 @@ fn build_statusbar(
         if let Some(t) = fit_icon {
             p.image(
                 t.id(),
-                egui::Rect::from_center_size(egui::pos2(fit_r.left() + 6.5, cy), egui::vec2(13.0, 13.0)),
+                egui::Rect::from_center_size(egui::pos2(fit_r.left() + 6.5, cy), egui::Vec2::splat(ICON_SM)),
                 UV01(),
                 fcol,
             );
@@ -4352,7 +4386,7 @@ fn shape_slot(ui: &mut egui::Ui, shapes: &[ToolBtn], shape_active: &mut ToolKind
     if let Some(t) = &cur.tex {
         ui.painter().image(
             t.id(),
-            egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
+            egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_MD)),
             UV01(),
             Color32::WHITE,
         );
@@ -4394,9 +4428,6 @@ struct DockIcons<'a> {
     rotate: &'a Option<egui::TextureHandle>,
     opacity: &'a Option<egui::TextureHandle>,
     strokew: &'a Option<egui::TextureHandle>,
-    link: &'a Option<egui::TextureHandle>,
-    fliph: &'a Option<egui::TextureHandle>,
-    flipv: &'a Option<egui::TextureHandle>,
     align: &'a [Option<egui::TextureHandle>; 8],
 }
 
@@ -4424,7 +4455,7 @@ fn col_toggle(
         if let Some(t) = tex {
             ui.painter().image(
                 t.id(),
-                egui::Rect::from_center_size(rect.center(), egui::vec2(14.0, 14.0)),
+                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_SM)),
                 UV01(),
                 col,
             );
@@ -4475,7 +4506,7 @@ fn panel_layers(
                         t.id(),
                         egui::Rect::from_center_size(
                             egui::pos2(sr.left() + 14.0, sr.center().y),
-                            egui::vec2(13.0, 13.0),
+                            egui::Vec2::splat(ICON_SM),
                         ),
                         UV01(),
                         MUTED,
@@ -4929,25 +4960,10 @@ fn panel_layers(
             ui.add_space(3.0);
             ui.horizontal(|ui| {
                 ui.add_space(11.0);
-                let fbtn = |ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip: &str| -> bool {
-                    let (rr, rp) = ui.allocate_exact_size(egui::vec2(30.0, 24.0), egui::Sense::click());
-                    if rp.hovered() {
-                        ui.painter().rect_filled(rr, CornerRadius::same(R), HOVER);
-                    }
-                    if let Some(t) = tex {
-                        ui.painter().image(
-                            t.id(),
-                            egui::Rect::from_center_size(rr.center(), egui::vec2(15.0, 15.0)),
-                            UV01(),
-                            if rp.hovered() { TEXT } else { MUTED },
-                        );
-                    }
-                    rp.on_hover_text(tip).clicked()
-                };
-                if fbtn(ui, &ic.grp, &format!("Group the selection ({})", shortcut_label("G"))) {
+                if IA_LAYER_GROUP.show(ui, kit::IconState::Action) {
                     ops.push(Op::LayerGroup);
                 }
-                if fbtn(ui, &ic.trash, "Delete") {
+                if IA_LAYER_DELETE.show(ui, kit::IconState::Action) {
                     ops.push(Op::LayerDeleteSel);
                 }
             });
@@ -5038,7 +5054,7 @@ fn panel_properties(
                         }
                     });
                 });
-                if icon_toggle(ui, ic.link, *lock, "Constrain W/H proportions") {
+                if IA_PROP_LINK.show(ui, kit::IconState::Toggle(*lock)) {
                     *lock = !*lock;
                 }
             });
@@ -5058,10 +5074,10 @@ fn panel_properties(
                     {
                         ops.push(Op::SetRot(v));
                     }
-                    if icon_btn(ui, ic.fliph, "Flip horizontal") {
+                    if IA_FLIP_H.show(ui, kit::IconState::Action) {
                         ops.push(Op::Flip(true));
                     }
-                    if icon_btn(ui, ic.flipv, "Flip vertical") {
+                    if IA_FLIP_V.show(ui, kit::IconState::Action) {
                         ops.push(Op::Flip(false));
                     }
                 });
@@ -5378,13 +5394,6 @@ fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str, compact
 
 // ───────────────────────────── artboard inspector ─────────────────────────────
 
-struct AbIcons<'a> {
-    link: &'a Option<egui::TextureHandle>,
-    portrait: &'a Option<egui::TextureHandle>,
-    landscape: &'a Option<egui::TextureHandle>,
-    fit: &'a Option<egui::TextureHandle>,
-}
-
 /// A single-line text field bound to an external value (artboard name). While unfocused it tracks the
 /// model value; once focused it edits a temp buffer; commits the buffer on focus loss (returns it).
 fn name_field(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str) -> Option<String> {
@@ -5443,33 +5452,10 @@ fn toggle_row(ui: &mut egui::Ui, w: f32, label: &str, on: bool) -> bool {
     resp.clicked()
 }
 
-/// A small text button (Add / Duplicate / Delete). `disabled` greys it out and swallows clicks.
-fn pill_btn(ui: &mut egui::Ui, label: &str, disabled: bool) -> bool {
-    let w = ui.available_width().clamp(40.0, 64.0);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
-    let hot = resp.hovered() && !disabled;
-    ui.painter().rect(
-        rect,
-        CornerRadius::same(R),
-        if hot { HOVER } else { BG_SURFACE },
-        Stroke::new(1.0, BORDER),
-        StrokeKind::Middle,
-    );
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        FontId::proportional(12.0),
-        if disabled { FAINT } else { TEXT },
-    );
-    resp.clicked() && !disabled
-}
-
 /// The Artboard inspector (Stage 4: the Properties pane's body while the Artboard tool is active).
 fn panel_artboard(
     ui: &mut egui::Ui,
     s: &AbSnap,
-    ic: &AbIcons,
     ab_lock: &mut bool,
     ops: &mut Vec<Op>,
     fit_request: &mut Option<usize>,
@@ -5509,11 +5495,11 @@ fn panel_artboard(
                 FontId::proportional(12.5),
                 TEXT,
             );
-            ui.painter().text(
-                egui::pos2(prect.right() - 10.0, prect.center().y),
-                Align2::RIGHT_CENTER,
-                "\u{25be}",
-                FontId::proportional(11.0),
+            // the dropdown's disclosure mark: the registry chevron, not a "▾" font character (T19)
+            Icon::ChevronDown.paint(
+                ui.painter(),
+                egui::pos2(prect.right() - 10.0 - ICON_SM / 2.0, prect.center().y),
+                ICON_SM,
                 MUTED,
             );
             if presp.clicked() {
@@ -5545,21 +5531,21 @@ fn panel_artboard(
                         ops.push(Op::AbRect(i, None, None, None, Some(v)));
                     }
                 }
-                if icon_toggle(ui, ic.link, *ab_lock, "Constrain W/H") {
+                if IA_AB_LINK.show(ui, kit::IconState::Toggle(*ab_lock)) {
                     *ab_lock = !*ab_lock;
                 }
             });
             // orientation + fit
             ui.horizontal(|ui| {
                 let portrait = s.h >= s.w;
-                if icon_toggle(ui, ic.portrait, portrait, "Portrait") && !portrait {
+                if IA_AB_PORTRAIT.show(ui, kit::IconState::Toggle(portrait)) && !portrait {
                     ops.push(Op::AbOrient(i));
                 }
-                if icon_toggle(ui, ic.landscape, !portrait, "Landscape") && portrait {
+                if IA_AB_LANDSCAPE.show(ui, kit::IconState::Toggle(!portrait)) && portrait {
                     ops.push(Op::AbOrient(i));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if icon_btn(ui, ic.fit, "Fit in window") {
+                    if IA_AB_FIT.show(ui, kit::IconState::Action) {
                         *fit_request = Some(i);
                     }
                 });
@@ -5631,14 +5617,21 @@ fn panel_artboard(
             }
 
             hsep(ui, inner);
+            // Add · Duplicate · Delete — icon buttons (icon stage 1: they were "+ Add" / "Duplicate" /
+            // "Delete" text pills, ICON_LIBRARY_STUDY T23–T25; the words are their tooltips now).
             ui.horizontal(|ui| {
-                if pill_btn(ui, "+ Add", false) {
+                if IA_AB_ADD.show(ui, kit::IconState::Action) {
                     ops.push(Op::AbAdd);
                 }
-                if pill_btn(ui, "Duplicate", false) {
+                if IA_AB_DUP.show(ui, kit::IconState::Action) {
                     ops.push(Op::AbDup(i));
                 }
-                if pill_btn(ui, "Delete", s.count <= 1) {
+                let del = if s.count <= 1 {
+                    kit::IconState::Disabled("the last artboard can't be deleted")
+                } else {
+                    kit::IconState::Action
+                };
+                if IA_AB_DEL.show(ui, del) {
                     ops.push(Op::AbDel(i));
                 }
             });
@@ -6117,21 +6110,8 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
 /// Dev-only: composite the rail to a PNG so the icon rasterization can be eyeballed without the
 /// native window. `varos.exe --dump-tool-icons <path>`.
 pub fn dump_tool_icons(path: &str) {
-    let icons = [
-        IC_SELECT,
-        IC_DIRECT,
-        IC_PEN,
-        IC_RECT,
-        IC_ELLIPSE,
-        IC_TRIANGLE,
-        IC_EYE,
-        IC_ROTATE,
-        IC_OPACITY,
-        IC_STROKEW,
-        IC_LINK,
-        IC_FLIPH,
-        IC_FLIPV,
-    ];
+    let icons =
+        [IC_SELECT, IC_DIRECT, IC_PEN, IC_RECT, IC_ELLIPSE, IC_TRIANGLE, IC_EYE, IC_ROTATE, IC_OPACITY, IC_STROKEW];
     let n = icons.len() as u32;
     let (pad, btn, gap, icon) = (7u32, 40u32, 4u32, 24u32);
     let w = btn + pad * 2;
@@ -6433,7 +6413,7 @@ mod layer_rename_tests {
     }
 
     fn no_icons() -> LayerIcons {
-        LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, grp: None, trash: None, search: None }
+        LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, search: None }
     }
 
     /// One Layers panel in a bare context, plus the state `Ui` keeps for it between frames.
@@ -8069,15 +8049,7 @@ mod pathfinder_click_tests {
             let snap = Snap::read(ed);
             let none = None;
             let align = [None, None, None, None, None, None, None, None];
-            let icons = DockIcons {
-                rotate: &none,
-                opacity: &none,
-                strokew: &none,
-                link: &none,
-                fliph: &none,
-                flipv: &none,
-                align: &align,
-            };
+            let icons = DockIcons { rotate: &none, opacity: &none, strokew: &none, align: &align };
             let (mut refpt, mut lock) = ((0.0, 0.0), false);
             let mut ops: Vec<Op> = vec![];
             let shell = &mut self.shell;
@@ -8277,5 +8249,348 @@ mod recovery_strip_tests {
                 );
             }
         }
+    }
+}
+
+/// Icon stage 1 (ICON_LIBRARY_STUDY §4, owner: "icons instead of text"): every converted panel button
+/// still emits exactly what its text predecessor emitted — by pointer AND by keyboard (focus + Enter) —
+/// every icon action carries a tooltip with its old label, and no file that draws icons types a raw
+/// icon size. CPU-only: bare egui contexts, no window, no GPU.
+#[cfg(test)]
+mod icon_action_tests {
+    use super::{
+        build_color_modal, panel_artboard, panel_layers, panel_properties, AbSnap, Chan, ColorModal, DockIcons,
+        Harmony, IconAction, LayerIcons, MTab, MTarget, Op, Snap, ICON_ACTIONS,
+    };
+    use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
+    use std::cell::RefCell;
+    use varos_core::editor::{Editor, PaintTarget, ToolKind};
+
+    thread_local! {
+        /// Where `IconAction::show` drew each action in the last frame: (key, widget id, rect).
+        pub(super) static PROBE: RefCell<Vec<(&'static str, egui::Id, egui::Rect)>> = const { RefCell::new(vec![]) };
+    }
+
+    /// The emissions the tests compare (`Op` is neither `Clone` nor `Debug`). Per-frame bookkeeping ops
+    /// such as the picker's live preview are not button emissions and are skipped.
+    fn describe(op: &Op) -> Option<String> {
+        Some(match op {
+            Op::LayerGroup => "LayerGroup".into(),
+            Op::LayerDeleteSel => "LayerDeleteSel".into(),
+            Op::AbAdd => "AbAdd".into(),
+            Op::AbDup(i) => format!("AbDup({i})"),
+            Op::AbDel(i) => format!("AbDel({i})"),
+            Op::AbOrient(i) => format!("AbOrient({i})"),
+            Op::Flip(h) => format!("Flip({h})"),
+            Op::Paint(PaintTarget::Fill, None) => "Paint(Fill, None)".into(),
+            Op::Paint(PaintTarget::Stroke, None) => "Paint(Stroke, None)".into(),
+            Op::PickerCancel => "PickerCancel".into(),
+            _ => return None,
+        })
+    }
+
+    /// Which panel a case draws, with the state the panel keeps between frames.
+    #[derive(Clone, Copy)]
+    enum Scene {
+        Layers,
+        /// The artboard inspector with `count` artboards; `portrait` picks the page shape.
+        Artboard {
+            count: usize,
+            portrait: bool,
+        },
+        Properties,
+        Picker,
+    }
+
+    struct Rig {
+        ctx: egui::Context,
+        t: f64,
+        scene: Scene,
+        ed: Editor,
+        lock: bool,
+        fit: Option<usize>,
+        modal: Option<ColorModal>,
+    }
+
+    impl Rig {
+        fn new(scene: Scene) -> Self {
+            let mut ed = Editor::new();
+            ed.ppu = 1.0;
+            ed.set_tool(ToolKind::Rect);
+            ed.pointer_down([100.0, 100.0]);
+            ed.pointer_move([200.0, 260.0]);
+            ed.pointer_up();
+            ed.set_tool(ToolKind::Object);
+            ed.select_all();
+            let modal = Some(ColorModal {
+                target: MTarget::Paint(PaintTarget::Fill),
+                orig: None,
+                hsva: [0.0, 0.0, 1.0, 1.0],
+                chan: Chan::H,
+                tab: MTab::Picker,
+                harmony: Harmony::None,
+                eyedropping: false,
+                eyedrop_prev_down: false,
+                eyedrop_return: [0.0, 0.0, 1.0, 1.0],
+            });
+            let mut rig = Rig { ctx: egui::Context::default(), t: 1.0, scene, ed, lock: false, fit: None, modal };
+            rig.frame(vec![]); // egui hit-tests against the previous pass: lay out once
+            rig
+        }
+
+        /// One frame; returns the described emissions (ops + the panel-state flips the old buttons made).
+        fn frame(&mut self, events: Vec<Event>) -> Vec<String> {
+            self.t += 1.0 / 60.0;
+            PROBE.with(|p| p.borrow_mut().clear());
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1200.0, 1600.0))),
+                time: Some(self.t),
+                events,
+                ..Default::default()
+            };
+            let mut ops: Vec<Op> = vec![];
+            let (lock0, fit0) = (self.lock, self.fit);
+            let snap = Snap::read(&self.ed);
+            let Rig { ctx, scene, lock, fit, modal, .. } = self;
+            let _ = ctx.run_ui(input, |ui| match *scene {
+                Scene::Layers => {
+                    let ic = LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, search: None };
+                    let (mut search, mut rename, mut collapsed, mut drag, mut anchor) =
+                        (String::new(), None, Default::default(), None, None);
+                    panel_layers(
+                        ui,
+                        &[],
+                        &ic,
+                        &mut search,
+                        &mut rename,
+                        &mut collapsed,
+                        &mut drag,
+                        &mut anchor,
+                        &mut ops,
+                    );
+                }
+                Scene::Artboard { count, portrait } => {
+                    let (w, h) = if portrait { (595.0, 842.0) } else { (842.0, 595.0) };
+                    let s = AbSnap {
+                        count,
+                        active: 0,
+                        name: "Artboard 1".into(),
+                        x: 0.0,
+                        y: 0.0,
+                        w,
+                        h,
+                        color: None,
+                        clip: true,
+                        move_art: true,
+                    };
+                    panel_artboard(ui, &s, lock, &mut ops, fit);
+                }
+                Scene::Properties => {
+                    let none = None;
+                    let align = [None, None, None, None, None, None, None, None];
+                    let ic = DockIcons { rotate: &none, opacity: &none, strokew: &none, align: &align };
+                    let mut refpt = (0.0, 0.0);
+                    panel_properties(ui, &snap, &ic, &mut refpt, lock, &mut ops, (&Default::default(), &mut vec![]));
+                }
+                Scene::Picker => build_color_modal(ui.ctx(), modal, &snap, &None, &mut ops),
+            });
+            let mut out: Vec<String> = ops.iter().filter_map(describe).collect();
+            if self.lock != lock0 {
+                out.push(format!("lock={}", self.lock));
+            }
+            if self.fit != fit0 {
+                out.push(format!("fit={:?}", self.fit));
+            }
+            out
+        }
+
+        fn probe(&self, key: &str) -> (egui::Id, egui::Rect) {
+            PROBE
+                .with(|p| p.borrow().iter().find(|(k, _, _)| *k == key).map(|(_, id, r)| (*id, *r)))
+                .unwrap_or_else(|| panic!("icon action {key} was not drawn"))
+        }
+
+        fn click(&mut self, key: &str) -> Vec<String> {
+            let (_, rect) = self.probe(key);
+            let p = rect.center();
+            let btn = |pressed| Event::PointerButton {
+                pos: p,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            let mut out = self.frame(vec![Event::PointerMoved(p)]);
+            out.extend(self.frame(vec![btn(true)]));
+            out.extend(self.frame(vec![btn(false)]));
+            out.extend(self.frame(vec![]));
+            out
+        }
+
+        fn enter(&mut self, key: &str) -> Vec<String> {
+            let (id, _) = self.probe(key);
+            self.ctx.memory_mut(|m| m.request_focus(id));
+            let mut out = self.frame(vec![]);
+            out.extend(self.frame(vec![Event::Key {
+                key: Key::Enter,
+                physical_key: Some(Key::Enter),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }]));
+            out.extend(self.frame(vec![]));
+            out
+        }
+    }
+
+    /// (action, scene, what the old TEXT/glyph button emitted). The right column is read from the
+    /// pre-stage-1 code: "+ Add" → AbAdd, "Duplicate" → AbDup(i), "Delete" → AbDel(i) (inert with one
+    /// artboard), "×" → Paint(target, None) / the picker's cancel, the footer → LayerGroup/LayerDeleteSel…
+    fn table() -> Vec<(IconAction, Scene, Vec<&'static str>)> {
+        use super::*;
+        let two = Scene::Artboard { count: 2, portrait: true };
+        vec![
+            (IA_LAYER_GROUP, Scene::Layers, vec!["LayerGroup"]),
+            (IA_LAYER_DELETE, Scene::Layers, vec!["LayerDeleteSel"]),
+            (IA_AB_ADD, two, vec!["AbAdd"]),
+            (IA_AB_DUP, two, vec!["AbDup(0)"]),
+            (IA_AB_DEL, two, vec!["AbDel(0)"]),
+            (IA_AB_DEL, Scene::Artboard { count: 1, portrait: true }, vec![]),
+            (IA_AB_LINK, two, vec!["lock=true"]),
+            (IA_AB_PORTRAIT, Scene::Artboard { count: 2, portrait: false }, vec!["AbOrient(0)"]),
+            (IA_AB_PORTRAIT, two, vec![]),
+            (IA_AB_LANDSCAPE, two, vec!["AbOrient(0)"]),
+            (IA_AB_FIT, two, vec!["fit=Some(0)"]),
+            (IA_PROP_LINK, Scene::Properties, vec!["lock=true"]),
+            (IA_FLIP_H, Scene::Properties, vec!["Flip(true)"]),
+            (IA_FLIP_V, Scene::Properties, vec!["Flip(false)"]),
+            (IA_NO_FILL, Scene::Properties, vec!["Paint(Fill, None)"]),
+            (IA_NO_STROKE, Scene::Properties, vec!["Paint(Stroke, None)"]),
+            (IA_PICKER_CLOSE, Scene::Picker, vec!["PickerCancel"]),
+        ]
+    }
+
+    #[test]
+    fn converted_icon_buttons_emit_what_their_text_buttons_emitted() {
+        for (action, scene, want) in table() {
+            let got = Rig::new(scene).click(action.key);
+            assert_eq!(got, want, "{} by pointer", action.key);
+            let got = Rig::new(scene).enter(action.key);
+            assert_eq!(got, want, "{} by keyboard (focus + Enter)", action.key);
+        }
+    }
+
+    #[test]
+    fn every_icon_action_is_drawn_and_carries_its_label_as_a_tooltip() {
+        use super::{IA_AB_DEL, IA_AB_FIT, IA_LAYER_GROUP};
+        let drawn: Vec<&str> = table().iter().map(|(a, _, _)| a.key).collect();
+        let mut keys = std::collections::HashSet::new();
+        for a in ICON_ACTIONS {
+            assert!(keys.insert(a.key), "duplicate icon action key {}", a.key);
+            assert!(!a.label.trim().is_empty(), "{}: empty label", a.key);
+            let tip = a.tooltip();
+            assert!(tip.starts_with(a.label), "{}: the tooltip must lead with the old label", a.key);
+            assert!(drawn.contains(&a.key), "{} is not covered by the emission table", a.key);
+        }
+        assert!(IA_LAYER_GROUP.tooltip().contains(&varos_app::shell::tokens::shortcut_label("G")));
+        assert!(IA_AB_FIT.tooltip().contains(&varos_app::shell::tokens::shortcut_label("0")));
+        let reason = varos_app::shell::kit::icon_tooltip(
+            &IA_AB_DEL.tooltip(),
+            varos_app::shell::kit::IconState::Disabled("the last artboard can't be deleted"),
+        );
+        assert!(reason.starts_with("Delete artboard") && reason.contains("last artboard"));
+    }
+
+    /// Every icon draw in `src` — a texture `.image(…)` or a registry `Icon::….paint(…)` — as
+    /// (enclosing fn, call, drawn at a raw numeric size?).
+    fn icon_draws(src: &str) -> Vec<(String, String, bool)> {
+        let numeric = |s: &str| s.starts_with(|c: char| c.is_ascii_digit());
+        let mut out = vec![];
+        for pattern in [".image(", ".paint("] {
+            let mut from = 0;
+            while let Some(at) = src[from..].find(pattern) {
+                let start = from + at;
+                let open = start + pattern.len() - 1;
+                // the balanced argument list and its top-level arguments (whitespace dropped)
+                let (mut depth, mut end, mut args, mut arg) = (0, open, vec![], String::new());
+                for (i, ch) in src[open..].char_indices() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = open + i;
+                                break;
+                            }
+                        }
+                        ',' if depth == 1 => {
+                            args.push(std::mem::take(&mut arg));
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    if !(depth == 1 && ch == '(') && !ch.is_whitespace() {
+                        arg.push(ch);
+                    }
+                }
+                args.push(arg);
+                let call: String = src[start..=end].chars().filter(|c| !c.is_whitespace()).collect();
+                let sized = ["vec2(", "splat("]
+                    .iter()
+                    .any(|f| call.match_indices(f).any(|(i, _)| numeric(&call[i + f.len()..])));
+                let bare = pattern == ".paint(" && args.iter().any(|a| numeric(a));
+                let func = src[..start].rsplit("fn ").next().unwrap().split('(').next().unwrap().trim();
+                out.push((func.to_string(), call, sized || bare));
+                from = end.max(start + 1);
+            }
+        }
+        out
+    }
+
+    /// The lint the study asked for (§7 note): in every file that draws icons, every icon draw takes its
+    /// size from a token. The top-bar draws are left for the top-bar owner this stage, each function
+    /// capped at the number of raw-size draws it has today — a cap may only go down, never up.
+    #[test]
+    fn icon_sizes_come_from_tokens() {
+        const TOP_BAR_CAPS: [(&str, usize); 4] =
+            [("topbtn", 1), ("search_pill", 1), ("tab_item", 1), ("build_topbar", 1)];
+        let files = [
+            ("ui.rs", include_str!("ui.rs")),
+            ("chrome.rs", include_str!("chrome.rs")),
+            ("start_ui.rs", include_str!("start_ui.rs")),
+            ("boxtree.rs", include_str!("shell/boxtree.rs")),
+            ("kit/mod.rs", include_str!("shell/kit/mod.rs")),
+            ("kit/icons.rs", include_str!("shell/kit/icons.rs")),
+        ];
+        let mut raw: std::collections::HashMap<String, usize> = Default::default();
+        let mut scanned = 0;
+        for (name, src) in files {
+            let src = src.split("\n#[cfg(test)]\nmod icon_action_tests").next().unwrap();
+            for (func, call, is_raw) in icon_draws(src) {
+                scanned += 1;
+                if is_raw {
+                    let capped = TOP_BAR_CAPS.iter().any(|(f, _)| *f == func);
+                    assert!(capped, "{name}: `{func}` draws an icon at a raw size: {call}");
+                    *raw.entry(func).or_default() += 1;
+                }
+            }
+        }
+        assert!(scanned >= 15, "the scan must see the app's icon draws (saw {scanned})");
+        for (func, cap) in TOP_BAR_CAPS {
+            let n = raw.get(func).copied().unwrap_or(0);
+            assert!(n <= cap, "`{func}` has {n} raw-size icon draws; its cap is {cap} and may only shrink");
+        }
+    }
+
+    /// The scanner itself catches a raw size in both draw forms and passes token sizes.
+    #[test]
+    fn icon_size_scanner_catches_both_draw_forms() {
+        let src = "fn a() { Icon::Fit.paint(&p, c, 16.0, MUTED); }\n\
+                   fn b() { p.image(t.id(), egui::Rect::from_center_size(c, egui::vec2(15.0, 15.0)), UV01(), col); }\n\
+                   fn c() { Icon::Fit.paint(ui.painter(), egui::pos2(x - 4.0, y), ICON_SM, MUTED); }\n\
+                   fn d() { p.image(t.id(), egui::Rect::from_center_size(c, egui::Vec2::splat(ICON_MD)), UV01(), col); }";
+        let draws = icon_draws(src);
+        let raw: Vec<&str> = draws.iter().filter(|d| d.2).map(|d| d.0.as_str()).collect();
+        assert_eq!(draws.len(), 4);
+        assert_eq!(raw, ["b", "a"], "image(vec2 literal) and paint(bare literal) are raw; tokens are not");
     }
 }

@@ -621,6 +621,21 @@ Icons land **with** their system (catalog rule: "always ship a tool WITH its dri
 
 *Hand test:* per slice, inside that system's own gate.
 
+### Stage 1 — done / left (2026-10-04)
+
+Owner decision "icons instead of text on buttons" (PLAN.md). Built as one system; the §4 line numbers above are from `bb80641` and have moved.
+
+**Done (code, not yet hand-tested):**
+- **One registry:** `shell/kit/icons.rs` — `Icon` enum → embedded Lucide SVG file in `assets/icons/` (18 icons, LICENSE with the Feather notice beside them), one raster (`ICON_RASTER`), `Icon::paint(…, size, tint)`.
+- **One size set** in `tokens.rs`: `ICON_SM 13` (inline), `ICON_MD 16` (rail, kit rows), `ICON_LG 18` (icon buttons — QW6), `ICON_BTN_W×H 26×24`. Panel, rail and status-bar draws now read them; a source-scan test fails on a raw icon size. The four top-bar draws (17 / 13 / 11 / 17 px) were left alone this stage because another piece owns the top bar.
+- **One control:** `kit::icon_button(ui, id, icon, tooltip, IconState)` — ≥ 24 pt target, 3 px corners, Tool = azure block, Toggle = small azure bar, Disabled = faint glyph + the reason in the tooltip, keyboard-only focus ring, single activation by click or Enter/Space. Every panel icon button is an `IconAction` (key, glyph, old label, shortcut) so its tooltip is "old label (shortcut)".
+- **Text → icon (6):** box header "☰" (T35, now with a kit menu instead of egui's stock menu); Artboard "+ Add" (T23, `square-plus`), "Duplicate" (T24, `copy`), "Delete" (T25, `trash-2`, disabled with a reason when only one artboard is left); Presets "▾" (T19, `chevron-down`); the two "×" glyphs — Fill/Stroke "No paint" (T8, `x` for now) and the picker Close (T31).
+- **Moved into the one control (8):** Layers footer Group/Delete (group glyph stays Lucide `folder` — D4 still open), Constrain W/H in Properties and Artboard, Portrait/Landscape (now Lucide `rectangle-vertical/horizontal`), Fit, Flip H/V. The on look changed with the owner's rule: Constrain and Portrait/Landscape show the small azure bar instead of a filled azure block.
+
+**Left — one registry (ruled out of stage 1 by the moderator, 2026-10-04):** `ui.rs` still defines 32 `IC_*` consts (31 SVG path literals + the `IC_SEARCH` alias) with its own `lucide()/load_icon` loader, so `shell/kit/icons.rs` is not yet the only icon source. Moving them is UI_SYSTEM spec pieces P3/P4 (move-only split, then the single registry).
+
+**Left (needs original glyphs, §6.3, or another owner):** T1/T21 Clip to page, T2/T22 Move artwork, T10 Clip to artboard, T20 Transparent page, T17 Align To ×3, T33 harmony ×8, the real None glyph for T8, T12 Guides — so T11 Snapping and T13 Rulers (Lucide `magnet`, `ruler` exist) stay text too, to convert the Document trio together; T14 grid (a read-only row, not a button). Control bar/status bar items T3–T7, T27 and the top bar were outside this stage's files. T37 New layer has no command to call yet; T38 Arrange waits on D5. Not done from S1: per-scale rasterisation (W3), absolute stroke (D1), filled Selection (W1), Pathfinder/Align glyphs into the family (W4), flip redraw (W5). The twelve new SVGs were built from lucide 1.8.0's icon nodes (the builder reproduces the six lucide-static 1.51.0 files byte-for-byte); re-pin them to 1.51.0 when the package can be fetched.
+
 ---
 
 ## 8. Decisions for Ahmed
