@@ -105,13 +105,13 @@ impl Dialogs for RfdDialogs {
             .set_level(MessageLevel::Warning)
             .set_title(format!("“{name}” was changed by another app."))
             .set_description("Saving now would replace those changes.")
-            .set_buttons(MessageButtons::YesNoCancelCustom(SAVE_AS.into(), "Replace Anyway…".into(), CANCEL.into()))
+            .set_buttons(MessageButtons::YesNoCancelCustom(SAVE_AS.into(), "Replace Anyway".into(), CANCEL.into()))
             .show();
         match result {
             MessageDialogResult::Yes => C::SaveAs,
             MessageDialogResult::No => C::Replace,
             MessageDialogResult::Custom(ref label) if label == SAVE_AS => C::SaveAs,
-            MessageDialogResult::Custom(ref label) if label == "Replace Anyway…" => C::Replace,
+            MessageDialogResult::Custom(ref label) if label == "Replace Anyway" => C::Replace,
             _ => C::Cancel,
         }
     }
@@ -233,6 +233,10 @@ fn plain_reason(raw: &str, fallback: &str) -> String {
     if raw.contains("newer Varos") {
         return NEWER_VAROS.into();
     }
+    // `SaveRefused` is already written for the user ("This document can't be saved: … It is still open.").
+    if raw.starts_with("This document can't be saved:") {
+        return raw.into();
+    }
     fallback.into()
 }
 
@@ -248,7 +252,7 @@ impl DocStore for DiskStore {
         varos_pdf::load_vrs(path).map_err(|e| plain_reason(&e, NOT_VAROS))
     }
     fn save(&mut self, doc: &Document, path: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
-        durable_save(&varos_app::storage::durable::RealFs, doc, path)
+        durable_save(&varos_app::storage::durable::RealFs, doc, path, &varos_core::format::Limits::DEFAULT)
     }
     fn fingerprint(&self, path: &Path) -> Option<varos_app::storage::durable::Fingerprint> {
         varos_app::storage::durable::fingerprint(&varos_app::storage::durable::RealFs, path)
@@ -265,13 +269,17 @@ fn durable_save(
     fs: &dyn varos_app::storage::durable::FsPort,
     doc: &Document,
     path: &Path,
+    limits: &varos_core::format::Limits,
 ) -> Result<crate::lifecycle::SaveOutcome, String> {
     use crate::lifecycle::SaveOutcome;
     use varos_app::storage::{
         checksum::new_nonce,
         durable::{io_reason, write_replace, WriteOutcome},
     };
-    let bytes = varos_pdf::write_pdf(doc).map_err(|e| plain_reason(&e, NOT_WRITTEN))?;
+    // A1: decided BEFORE anything replaces the file — a save never produces a file Varos later refuses.
+    // Cheap: writer-side object/token counts against the reader's own limits; the full reopen decode
+    // runs only within 10 % of a limit (`varos_pdf::write_pdf_checked_report`).
+    let bytes = varos_pdf::write_pdf_checked(doc, limits).map_err(|e| plain_reason(&e, NOT_WRITTEN))?;
     match write_replace(fs, path, &bytes, &new_nonce()).map_err(|e| e.reason())? {
         WriteOutcome::Durable => {
             cleanup_stale_save_temps(fs, path);
@@ -354,6 +362,7 @@ mod tests {
     use super::*;
     use rfd::MessageDialogResult as R;
     use varos_core::editor::Editor;
+    use varos_core::format::Limits;
     use varos_core::model::{Anchor, Artboard, Path as VPath};
 
     /// A scratch directory under the system temp dir, removed on drop.
@@ -477,6 +486,22 @@ mod tests {
     }
 
     #[test]
+    fn frozen_v1_broken_mask_saves_as_v2_and_reopens_clean_without_notice() {
+        use varos_app::storage::durable::RealFs;
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../varos-core/tests/fixtures/v2/v1_broken_mask.vrs");
+        let dir = Scratch::new("v1-repair");
+        let path = dir.0.join("old.vrs");
+        std::fs::copy(&fixture, &path).unwrap();
+        let (doc, notice) = DiskStore.load_with_notice(&path).unwrap();
+        assert_eq!(notice, Some(varos_core::format::RELEASED_MASKS_NOTICE));
+        durable_save(&RealFs, &doc, &path, &Limits::DEFAULT).unwrap();
+        let loaded = varos_pdf::load_vrs_checked(&path, &Limits::DEFAULT).unwrap();
+        assert_eq!(loaded.source_version, 2);
+        assert_eq!(loaded.notice(), None);
+        assert_eq!(loaded.doc, doc);
+    }
+
+    #[test]
     fn disk_store_keeps_legacy_repair_notice_and_original_bytes() {
         use varos_core::model::GroupRole;
         let dir = Scratch::new("legacy-notice");
@@ -572,11 +597,31 @@ mod tests {
         let path = dir.0.join("design.vrs");
         for step in [Step::Write { after: 7 }, Step::Sync, Step::Rename] {
             std::fs::write(&path, b"old bytes").unwrap();
-            assert!(durable_save(&FaultFs::new(vec![Fault::at(step)]), &doc_with_art(), &path).is_err());
+            assert!(
+                durable_save(&FaultFs::new(vec![Fault::at(step)]), &doc_with_art(), &path, &Limits::DEFAULT).is_err()
+            );
             assert_eq!(std::fs::read(&path).unwrap(), b"old bytes");
         }
-        let result = durable_save(&FaultFs::new(vec![Fault::at(Step::SyncDir)]), &doc_with_art(), &path).unwrap();
+        let result =
+            durable_save(&FaultFs::new(vec![Fault::at(Step::SyncDir)]), &doc_with_art(), &path, &Limits::DEFAULT)
+                .unwrap();
         assert!(matches!(result, SaveOutcome::ReplacedUnconfirmed(_)));
+        assert!(varos_pdf::load_vrs(&path).is_ok());
+    }
+
+    #[test]
+    fn a_save_the_reader_would_refuse_fails_before_touching_the_file() {
+        use varos_app::storage::durable::RealFs;
+        let dir = Scratch::new("save-budget");
+        let path = dir.0.join("design.vrs");
+        std::fs::write(&path, b"old bytes").unwrap();
+        let tight = Limits { max_pdf_objects: 3, ..Limits::DEFAULT };
+        let err = durable_save(&RealFs, &doc_with_art(), &path, &tight).unwrap_err();
+        assert!(err.starts_with("This document can't be saved:") && err.contains("limit"), "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"old bytes", "the user's file is untouched");
+        assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 1, "no temp file left behind");
+        // Under the shipped limits the same document saves and reopens.
+        durable_save(&RealFs, &doc_with_art(), &path, &Limits::DEFAULT).unwrap();
         assert!(varos_pdf::load_vrs(&path).is_ok());
     }
 
@@ -596,7 +641,7 @@ mod tests {
         for p in [&old, &other, &unknown] {
             std::fs::File::options().write(true).open(p).unwrap().set_modified(old_time).unwrap();
         }
-        durable_save(&RealFs, &doc_with_art(), &path).unwrap();
+        durable_save(&RealFs, &doc_with_art(), &path, &Limits::DEFAULT).unwrap();
         assert!(!old.exists());
         for p in [&live, &other, &unknown] {
             assert_eq!(std::fs::read(p).unwrap(), b"keep");

@@ -12,6 +12,7 @@ use pdf_writer::types::{AssociationKind, LineCapStyle, LineJoinStyle};
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 use varos_core::file::{doc_to_blob, VRS_VERSION};
 use varos_core::flatten::{control_bbox, Rect as WRect};
+use varos_core::format::{encode_model, Limits};
 use varos_core::model::{Anchor, Artboard, Document, Path, Xform};
 use varos_core::Rgba;
 
@@ -39,8 +40,37 @@ struct Knock {
     r: Ref,
     content: Vec<u8>,
     bbox: [f32; 4],
-    gs_fill: (Ref, f32),
-    gs_stroke: (Ref, f32),
+    /// The knockout's own fill / stroke ExtGStates: `(ref, alpha, first use on this page)`. They are
+    /// pooled per page by quantized alpha (A1): one object per distinct alpha, written right after the
+    /// first XObject that uses it — so a page of 40,000 knockouts costs ~1 object each, not 3, and a
+    /// page with one knockout is byte-identical to the unpooled writer.
+    gs_fill: (Ref, f32, bool),
+    gs_stroke: (Ref, f32, bool),
+}
+/// Per-page pool of the knockout-internal ExtGStates, keyed by (is_stroke, quantized alpha).
+type KnockGs = Vec<(bool, f32, Ref)>;
+fn knock_gs(pool: &mut KnockGs, ids: &mut Alloc, stroke: bool, alpha: f32) -> (Ref, f32, bool) {
+    let q = (alpha * 1000.0).round() / 1000.0;
+    match pool.iter().find(|(s, a, _)| *s == stroke && *a == q) {
+        Some(&(_, _, r)) => (r, q, false),
+        None => {
+            let r = ids.next();
+            pool.push((stroke, q, r));
+            (r, q, true) // the pooled object carries the quantized key, so every user gets the same value
+        }
+    }
+}
+
+/// The native container written with the model encoded under `limits` (model-level refusals happen
+/// here, before any PDF is built), plus the writer's own indirect-object count.
+/// The third value is the embedded model's length (stored unfiltered, so it is also the stream's
+/// decoded length the reader bounds).
+pub(crate) fn write_native_counted(doc: &Document, limits: &Limits) -> Result<(Vec<u8>, usize, usize), String> {
+    let blob = encode_model(doc, limits).map_err(|e| e.to_string())?;
+    let never = AtomicBool::new(false);
+    let (bytes, objects) =
+        write_pages_counted(doc, &native_pages(doc), Some(&blob), &never).map_err(|e| e.to_string())?;
+    Ok((bytes, objects, blob.len()))
 }
 
 /// The native `.vrs` container: one page per visible board + the embedded editable model.
@@ -149,6 +179,17 @@ pub(crate) fn write_pages(
     model: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, ExportError> {
+    write_pages_counted(doc, pages, model, cancel).map(|(bytes, _)| bytes)
+}
+
+/// [`write_pages`], also returning the number of indirect objects it emitted (the writer's own
+/// count, exact: every object is allocated through `Alloc`).
+pub(crate) fn write_pages_counted(
+    doc: &Document,
+    pages: &[PageSpec],
+    model: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<(Vec<u8>, usize), ExportError> {
     let mut ids = Alloc(0);
     let cat_id = ids.next();
     let tree_id = ids.next();
@@ -170,6 +211,7 @@ pub(crate) fn write_pages(
         c.set_line_cap(LineCapStyle::RoundCap).set_line_join(LineJoinStyle::RoundJoin); // screen parity
         let mut gss: Vec<Gs> = Vec::new();
         let mut knocks: Vec<Knock> = Vec::new();
+        let mut knock_pool: KnockGs = Vec::new();
 
         // page background (transparent pages emit nothing — viewers show their own backdrop, like .ai)
         if let Some(bg) = ab.background {
@@ -196,7 +238,7 @@ pub(crate) fn write_pages(
             i += run_len;
             let Some(cg) = clip else {
                 for d in run {
-                    paint(&mut c, &mut gss, &mut knocks, &mut ids, d, &t);
+                    paint(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t);
                 }
                 continue;
             };
@@ -219,7 +261,7 @@ pub(crate) fn write_pages(
             }
             c.clip_even_odd().end_path();
             for d in members {
-                paint(&mut c, &mut gss, &mut knocks, &mut ids, d, &t);
+                paint(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t);
             }
             c.restore_state();
         }
@@ -249,17 +291,53 @@ pub(crate) fn write_pages(
         for g in &gss {
             pdf.ext_graphics(g.r).non_stroking_alpha(g.ca).stroking_alpha(g.cap);
         }
+        // A1: a page with MANY knockouts shares one indirect /Group dictionary and one /Resources
+        // dictionary per (Gf, Gk) pair, so each XObject costs a few PDF tokens instead of ~40 and the
+        // largest allowed document stays inside the reader's own budget. A single knockout keeps its
+        // inline dictionaries (the pinned native bytes do not move).
+        let share = knocks.len() > 1;
+        let group = share.then(|| {
+            let r = ids.next();
+            let mut g = pdf.indirect(r).dict();
+            g.pair(Name(b"Type"), Name(b"Group")).pair(Name(b"S"), Name(b"Transparency"));
+            g.pair(Name(b"I"), true).pair(Name(b"K"), true);
+            r
+        });
+        let mut shared_res: Vec<(Ref, Ref, Ref)> = Vec::new();
         for k in &knocks {
+            let res = share.then(|| {
+                let pair = (k.gs_fill.0, k.gs_stroke.0);
+                if let Some(&(_, _, r)) = shared_res.iter().find(|(f, s, _)| (*f, *s) == pair) {
+                    return r;
+                }
+                let r = ids.next();
+                pdf.indirect(r)
+                    .dict()
+                    .insert(Name(b"ExtGState"))
+                    .dict()
+                    .pair(Name(b"Gf"), pair.0)
+                    .pair(Name(b"Gk"), pair.1);
+                shared_res.push((pair.0, pair.1, r));
+                r
+            });
             let mut x = pdf.form_xobject(k.r, &k.content);
             x.bbox(Rect::new(k.bbox[0], k.bbox[1], k.bbox[2], k.bbox[3]));
-            {
-                let mut g = x.group();
-                g.transparency().isolated(true).knockout(true);
+            match (group, res) {
+                (Some(group), Some(res)) => {
+                    x.pair(Name(b"Group"), group).pair(Name(b"Resources"), res);
+                }
+                _ => {
+                    x.group().transparency().isolated(true).knockout(true);
+                    x.resources().ext_g_states().pair(Name(b"Gf"), k.gs_fill.0).pair(Name(b"Gk"), k.gs_stroke.0);
+                }
             }
-            x.resources().ext_g_states().pair(Name(b"Gf"), k.gs_fill.0).pair(Name(b"Gk"), k.gs_stroke.0);
             x.finish();
-            pdf.ext_graphics(k.gs_fill.0).non_stroking_alpha(k.gs_fill.1);
-            pdf.ext_graphics(k.gs_stroke.0).stroking_alpha(k.gs_stroke.1);
+            if k.gs_fill.2 {
+                pdf.ext_graphics(k.gs_fill.0).non_stroking_alpha(k.gs_fill.1);
+            }
+            if k.gs_stroke.2 {
+                pdf.ext_graphics(k.gs_stroke.0).stroking_alpha(k.gs_stroke.1);
+            }
         }
         page_ids.push(page_id);
     }
@@ -292,7 +370,7 @@ pub(crate) fn write_pages(
         }
     }
 
-    Ok(pdf.finish())
+    Ok((pdf.finish(), ids.0 as usize))
 }
 
 /// One path's paint ops (knockout XObject or in-place fill/stroke), appended to the page content.
@@ -300,6 +378,7 @@ fn paint(
     c: &mut Content,
     gss: &mut Vec<Gs>,
     knocks: &mut Vec<Knock>,
+    knock_pool: &mut KnockGs,
     ids: &mut Alloc,
     d: &Drawn,
     t: &impl Fn([f32; 2]) -> (f32, f32),
@@ -314,8 +393,8 @@ fn paint(
         let (fill, stroke) = (fill.unwrap(), stroke.unwrap());
         let mut ic = Content::new();
         ic.set_line_cap(LineCapStyle::RoundCap).set_line_join(LineJoinStyle::RoundJoin);
-        let gf = ids.next();
-        let gk = ids.next();
+        let gf = knock_gs(knock_pool, ids, false, fill[3]);
+        let gk = knock_gs(knock_pool, ids, true, stroke[3]);
         ic.save_state().set_parameters(Name(b"Gf")).set_fill_rgb(fill[0], fill[1], fill[2]);
         emit_rings(&mut ic, p, &xf, t);
         ic.fill_even_odd().restore_state();
@@ -332,13 +411,7 @@ fn paint(
         c.save_state().set_parameters(Name(n.as_bytes()));
         c.x_object(Name(format!("Fx{}", knocks.len()).as_bytes()));
         c.restore_state();
-        knocks.push(Knock {
-            r: xr,
-            content: ic.finish().to_vec(),
-            bbox: bb,
-            gs_fill: (gf, fill[3]),
-            gs_stroke: (gk, stroke[3]),
-        });
+        knocks.push(Knock { r: xr, content: ic.finish().to_vec(), bbox: bb, gs_fill: gf, gs_stroke: gk });
     } else {
         c.save_state();
         let n = gs_name(gss, ids, fa, sa);

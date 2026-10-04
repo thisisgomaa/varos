@@ -371,6 +371,24 @@ fn fit_rect(ed: &Editor) -> (f32, f32, f32, f32) {
 
 /// The CANVAS area (the visible drawing region) in physical px — the Board box's interior when the
 /// shell reports one (Stage 4), else the whole window.
+/// Home flag + warning every time (cheap); Start's model only when `StartRefresh` says its inputs
+/// moved while Home is showing. The model reads cached existence answers, never the disk.
+fn sync_home(
+    gui: &mut ui::Ui,
+    home: bool,
+    store: &recent_files::RecentStore<file_ports::DiskStore>,
+    recovery: &recovery_host::RecoveryHost,
+    probe: &mut varos_app::storage::exists_probe::ExistsProbe,
+    refresh: &mut varos_app::start::StartRefresh,
+    recovery_gen: u64,
+) {
+    gui.set_home(home, recovery.start_warning(store.warning.as_deref()));
+    if refresh.should_rebuild(home, [store.generation(), recovery_gen, probe.generation()]) {
+        probe.retain(&store.recent_paths()); // only the current Recent list is cached or queued
+        gui.set_start_model(store.model(recovery.rows(), |p| probe.missing(p)));
+    }
+}
+
 fn canvas_px(gui: &ui::Ui, window: &Window) -> egui::Rect {
     let sz = window.inner_size();
     gui.board_px
@@ -896,7 +914,18 @@ fn main() {
         }
     }
     gui.set_tabs(ws.visible_tabs(), ws.document_target());
-    gui.set_home(ws.on_home(), store.model(recovery.rows()), recovery.start_warning(store.warning.as_deref()));
+    // B3: Start's model rebuilds only on Home and only when Recent, recovery rows or an existence
+    // answer changed; existence is probed off the UI thread (a network volume can stall a stat).
+    let probe_proxy = event_loop.create_proxy();
+    let mut probe = varos_app::storage::exists_probe::ExistsProbe::spawn(
+        |p| p.exists(),
+        Box::new(move || {
+            let _ = probe_proxy.send_event(());
+        }),
+    );
+    let mut start_refresh = varos_app::start::StartRefresh::default();
+    let mut recovery_gen = 0u64;
+    sync_home(&mut gui, ws.on_home(), &store, &recovery, &mut probe, &mut start_refresh, recovery_gen);
 
     let installed = cursors::install(hwnd);
     cursors::custom_frame(hwnd);
@@ -1088,11 +1117,7 @@ fn main() {
                     }
                     drawn_tabs = ws.visible_tabs();
                     gui.set_tabs(drawn_tabs.clone(), ws.document_target());
-                    gui.set_home(
-                        ws.on_home(),
-                        store.model(recovery.rows()),
-                        recovery.start_warning(store.warning.as_deref()),
-                    );
+                    sync_home(&mut gui, ws.on_home(), &store, &recovery, &mut probe, &mut start_refresh, recovery_gen);
                     #[cfg(target_os = "macos")]
                     if let Some(menu) = &mac_menu {
                         menu.sync_documents(!ws.on_home());
@@ -1114,12 +1139,10 @@ fn main() {
                     );
                     window.request_redraw();
                 }
-                if recovery.take_changed() {
-                    gui.set_home(
-                        ws.on_home(),
-                        store.model(recovery.rows()),
-                        recovery.start_warning(store.warning.as_deref()),
-                    );
+                let recovery_changed = recovery.take_changed();
+                recovery_gen += recovery_changed as u64;
+                if recovery_changed | probe.poll() {
+                    sync_home(&mut gui, ws.on_home(), &store, &recovery, &mut probe, &mut start_refresh, recovery_gen);
                     window.request_redraw();
                 }
                 let recovery_ui = recovery.presentation(ws.active());
@@ -1188,7 +1211,8 @@ fn main() {
                 }
                 let home = ws.on_home();
                 if home && matches!(event, WindowEvent::Focused(true)) {
-                    gui.set_home(true, store.model(recovery.rows()), recovery.start_warning(store.warning.as_deref()));
+                    // re-check the current Recent list in the background; answers arrive via AboutToWait
+                    probe.refresh(&store.recent_paths());
                 }
                 let over_panel = home || gui.wants_pointer();
                 let Some(s) = ws.active_mut() else { return };

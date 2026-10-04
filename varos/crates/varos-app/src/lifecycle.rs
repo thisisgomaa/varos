@@ -195,6 +195,8 @@ impl Lifecycle<'_> {
                 let id = self.ws.add_loaded(doc, at.clone(), key);
                 if let Some(s) = self.ws.get_mut(id) {
                     s.source_fingerprint = self.store.fingerprint(&at);
+                    // A4: the released-mask repair changed the content → the tab opens dirty.
+                    s.repaired_on_open = notice == Some(varos_core::format::RELEASED_MASKS_NOTICE);
                 }
                 self.store.remember(&at, old);
                 if let Some(message) = notice {
@@ -247,11 +249,8 @@ impl Lifecycle<'_> {
                 match self.dialogs.external_change(&self.name_of(id)) {
                     ExternalChoice::Cancel => return false,
                     ExternalChoice::SaveAs => continue,
-                    ExternalChoice::Replace => {
-                        if !self.dialogs.confirm_replace(&file_name(&dest)) {
-                            return false;
-                        }
-                    }
+                    // The external-change prompt's "Replace Anyway" is the one confirmation.
+                    ExternalChoice::Replace => {}
                 }
             }
             match self.write(id, &dest) {
@@ -740,6 +739,23 @@ mod tests {
         let prompts = r.prompts();
         assert_eq!(prompts.len(), 1);
         assert!(prompts[0].starts_with("open-failed"));
+    }
+
+    #[test]
+    fn released_mask_repair_opens_dirty_and_save_makes_it_clean() {
+        let mut r = Rig::new();
+        r.s.put("old.vrs", art(RED));
+        r.s.put("migrated.vrs", art(BLUE));
+        r.s.notices.insert(PathBuf::from("old.vrs"), varos_core::format::RELEASED_MASKS_NOTICE);
+        r.s.notices.insert(PathBuf::from("migrated.vrs"), varos_core::format::MIGRATION_NOTICE);
+        let plain = r.open("migrated.vrs");
+        assert!(!r.get(plain).is_dirty_exact(), "a plain format migration is not a content change");
+        let id = r.open("old.vrs");
+        let _ = r.prompts();
+        assert!(r.get(id).is_dirty() && r.get(id).is_dirty_exact(), "the repair is a content change");
+        r.run(AppCommand::Save(id));
+        assert_eq!(r.s.saves, vec![p("old.vrs")]);
+        assert!(!r.get(id).is_dirty_exact(), "Save wrote the repair");
     }
 
     #[test]
@@ -1488,11 +1504,12 @@ mod tests {
             r.script([Ans::External(choice)]);
             match choice {
                 ExternalChoice::SaveAs => r.script([Ans::Pick(Some(p("copy.vrs")))]),
-                ExternalChoice::Replace => r.script([Ans::Replace(true)]),
-                ExternalChoice::Cancel => {}
+                // "Replace Anyway" IS the confirmation: no second "Replace?" dialog follows.
+                ExternalChoice::Replace | ExternalChoice::Cancel => {}
             }
             r.run(AppCommand::Save(id));
             assert!(r.prompts().iter().any(|s| s.starts_with("external")));
+            assert!(!r.prompts().iter().any(|s| s.starts_with("replace")), "one confirmation only");
             match choice {
                 ExternalChoice::Cancel => {
                     assert!(r.s.saves.is_empty());

@@ -4034,6 +4034,7 @@ dependencies = [
  "pdf-writer",
  "serde",
  "serde_json",
+ "sha2",
  "varos-core",
 ]
 
