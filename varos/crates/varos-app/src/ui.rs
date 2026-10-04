@@ -8500,51 +8500,97 @@ mod icon_action_tests {
         assert!(reason.starts_with("Delete artboard") && reason.contains("last artboard"));
     }
 
-    /// The lint the study asked for (§7 note): in every file that draws icons, an `.image(` call takes
-    /// its size from a token. The four top-bar draws are left for the top-bar owner this stage.
-    #[test]
-    fn icon_sizes_come_from_tokens() {
-        const TOP_BAR: [&str; 4] = ["topbtn", "search_pill", "tab_item", "build_topbar"];
-        let files = [
-            ("ui.rs", include_str!("ui.rs")),
-            ("boxtree.rs", include_str!("shell/boxtree.rs")),
-            ("kit/mod.rs", include_str!("shell/kit/mod.rs")),
-            ("kit/icons.rs", include_str!("shell/kit/icons.rs")),
-            ("start_ui.rs", include_str!("start_ui.rs")),
-        ];
-        let mut skipped = 0;
-        for (name, src) in files {
-            let src = src.split("\n#[cfg(test)]\nmod icon_action_tests").next().unwrap();
+    /// Every icon draw in `src` — a texture `.image(…)` or a registry `Icon::….paint(…)` — as
+    /// (enclosing fn, call, drawn at a raw numeric size?).
+    fn icon_draws(src: &str) -> Vec<(String, String, bool)> {
+        let numeric = |s: &str| s.starts_with(|c: char| c.is_ascii_digit());
+        let mut out = vec![];
+        for pattern in [".image(", ".paint("] {
             let mut from = 0;
-            while let Some(at) = src[from..].find(".image(") {
+            while let Some(at) = src[from..].find(pattern) {
                 let start = from + at;
-                let mut depth = 0;
-                let mut end = start;
-                for (i, ch) in src[start..].char_indices() {
+                let open = start + pattern.len() - 1;
+                // the balanced argument list and its top-level arguments (whitespace dropped)
+                let (mut depth, mut end, mut args, mut arg) = (0, open, vec![], String::new());
+                for (i, ch) in src[open..].char_indices() {
                     match ch {
                         '(' => depth += 1,
                         ')' => {
                             depth -= 1;
                             if depth == 0 {
-                                end = start + i;
+                                end = open + i;
                                 break;
                             }
                         }
+                        ',' if depth == 1 => {
+                            args.push(std::mem::take(&mut arg));
+                            continue;
+                        }
                         _ => {}
                     }
+                    if !(depth == 1 && ch == '(') && !ch.is_whitespace() {
+                        arg.push(ch);
+                    }
                 }
+                args.push(arg);
                 let call: String = src[start..=end].chars().filter(|c| !c.is_whitespace()).collect();
-                let raw = ["vec2(", "splat("].iter().any(|f| {
-                    call.match_indices(f).any(|(i, _)| call[i + f.len()..].starts_with(|c: char| c.is_ascii_digit()))
-                });
-                if raw {
-                    let func = src[..start].rsplit("fn ").next().unwrap().split('(').next().unwrap().trim();
-                    assert!(TOP_BAR.contains(&func), "{name}: `{func}` draws an icon at a raw size: {call}");
-                    skipped += 1;
-                }
+                let sized = ["vec2(", "splat("]
+                    .iter()
+                    .any(|f| call.match_indices(f).any(|(i, _)| numeric(&call[i + f.len()..])));
+                let bare = pattern == ".paint(" && args.iter().any(|a| numeric(a));
+                let func = src[..start].rsplit("fn ").next().unwrap().split('(').next().unwrap().trim();
+                out.push((func.to_string(), call, sized || bare));
                 from = end.max(start + 1);
             }
         }
-        assert!(skipped <= TOP_BAR.len(), "the top-bar exception list may only shrink ({skipped})");
+        out
+    }
+
+    /// The lint the study asked for (§7 note): in every file that draws icons, every icon draw takes its
+    /// size from a token. The top-bar draws are left for the top-bar owner this stage, each function
+    /// capped at the number of raw-size draws it has today — a cap may only go down, never up.
+    #[test]
+    fn icon_sizes_come_from_tokens() {
+        const TOP_BAR_CAPS: [(&str, usize); 4] =
+            [("topbtn", 1), ("search_pill", 1), ("tab_item", 1), ("build_topbar", 1)];
+        let files = [
+            ("ui.rs", include_str!("ui.rs")),
+            ("chrome.rs", include_str!("chrome.rs")),
+            ("start_ui.rs", include_str!("start_ui.rs")),
+            ("boxtree.rs", include_str!("shell/boxtree.rs")),
+            ("kit/mod.rs", include_str!("shell/kit/mod.rs")),
+            ("kit/icons.rs", include_str!("shell/kit/icons.rs")),
+        ];
+        let mut raw: std::collections::HashMap<String, usize> = Default::default();
+        let mut scanned = 0;
+        for (name, src) in files {
+            let src = src.split("\n#[cfg(test)]\nmod icon_action_tests").next().unwrap();
+            for (func, call, is_raw) in icon_draws(src) {
+                scanned += 1;
+                if is_raw {
+                    let capped = TOP_BAR_CAPS.iter().any(|(f, _)| *f == func);
+                    assert!(capped, "{name}: `{func}` draws an icon at a raw size: {call}");
+                    *raw.entry(func).or_default() += 1;
+                }
+            }
+        }
+        assert!(scanned >= 15, "the scan must see the app's icon draws (saw {scanned})");
+        for (func, cap) in TOP_BAR_CAPS {
+            let n = raw.get(func).copied().unwrap_or(0);
+            assert!(n <= cap, "`{func}` has {n} raw-size icon draws; its cap is {cap} and may only shrink");
+        }
+    }
+
+    /// The scanner itself catches a raw size in both draw forms and passes token sizes.
+    #[test]
+    fn icon_size_scanner_catches_both_draw_forms() {
+        let src = "fn a() { Icon::Fit.paint(&p, c, 16.0, MUTED); }\n\
+                   fn b() { p.image(t.id(), egui::Rect::from_center_size(c, egui::vec2(15.0, 15.0)), UV01(), col); }\n\
+                   fn c() { Icon::Fit.paint(ui.painter(), egui::pos2(x - 4.0, y), ICON_SM, MUTED); }\n\
+                   fn d() { p.image(t.id(), egui::Rect::from_center_size(c, egui::Vec2::splat(ICON_MD)), UV01(), col); }";
+        let draws = icon_draws(src);
+        let raw: Vec<&str> = draws.iter().filter(|d| d.2).map(|d| d.0.as_str()).collect();
+        assert_eq!(draws.len(), 4);
+        assert_eq!(raw, ["b", "a"], "image(vec2 literal) and paint(bare literal) are raw; tokens are not");
     }
 }
