@@ -1,0 +1,3 @@
+# Frozen bytes: never normalize line endings; PDF offsets include their original whitespace.
+*.vrs -text
+*_pdf.vrs binary

@@ -1357,12 +1357,13 @@ impl Ui {
                 cfg!(target_os = "macos"),
                 &mut None,
             );
-            self.app_cmds.extend(
-                self.start_page
-                    .draw(root, self.recent_warning.as_deref())
-                    .into_iter()
-                    .filter_map(crate::host::start_command),
-            );
+            // Start v2: filter actions (tag / search / view) change the Start model, never the host
+            let actions = self.start_page.draw(root, self.recent_warning.as_deref());
+            for action in actions {
+                if !self.start_page.model.apply(&action) {
+                    self.app_cmds.extend(crate::host::start_command(action));
+                }
+            }
         });
 
         // K3: no field is drawn on Home — an edit left open (an invalid one a non-user command passed)
@@ -3444,7 +3445,7 @@ fn build_topbar(
         }
         if let Some(plus_r) = layout.plus.filter(|_| !home) {
             if topbtn(ui, &p, plus_r, &top.plus, "tb-plus", false).clicked() {
-                cmds.push(AppCommand::NewDocument);
+                cmds.push(AppCommand::NewBoard);
             }
         }
 
@@ -3456,7 +3457,7 @@ fn build_topbar(
             ui.set_width(210.0);
             let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
             if menu_row(ui, "New", &shortcut_label("N")) {
-                cmds.push(AppCommand::NewDocument);
+                cmds.push(AppCommand::NewBoard);
                 hit = true;
             }
             if menu_row(ui, "Open\u{2026}", &shortcut_label("O")) {
@@ -5209,7 +5210,9 @@ fn panel_artboard(
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Artboard").color(TEXT).size(13.0).strong());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(format!("{} / {}", i + 1, s.count)).color(MUTED).size(11.5));
+                    // a free canvas (New board) has no artboard: "0 / 0", not "1 / 0"
+                    let at = if s.count == 0 { 0 } else { i + 1 };
+                    ui.label(RichText::new(format!("{at} / {}", s.count)).color(MUTED).size(11.5));
                 });
             });
             fields::name(ui, inner, &s.name, "dock", ops, |v| Op::AbName(i, v));
@@ -5352,7 +5355,12 @@ fn panel_artboard(
                 if IA_AB_ADD.show(ui, kit::IconState::Action) {
                     ops.push(Op::AbAdd);
                 }
-                if IA_AB_DUP.show(ui, kit::IconState::Action) {
+                let dup = if s.count == 0 {
+                    kit::IconState::Disabled("there is no artboard to duplicate")
+                } else {
+                    kit::IconState::Action
+                };
+                if IA_AB_DUP.show(ui, dup) {
                     ops.push(Op::AbDup(i));
                 }
                 let del = if s.count <= 1 {
@@ -6736,7 +6744,7 @@ mod tab_strip_tests {
             &mut dock,
             &mut snap,
         );
-        assert_eq!(cmds, [AppCommand::NewDocument]);
+        assert_eq!(cmds, [AppCommand::NewBoard]);
     }
 
     #[test]
@@ -7562,7 +7570,7 @@ mod dead_control_tests {
     fn burger_rows_either_emit_a_command_or_are_disabled() {
         const SEP_H: f32 = 9.0; // menu_sep: add_space(4) + a 1px line + add_space(4)
         let rows = [
-            ("New", Some(AppCommand::NewDocument)),
+            ("New", Some(AppCommand::NewBoard)),
             ("Open", Some(AppCommand::OpenDialog)),
             ("Save", Some(AppCommand::Save(SessionId(1)))),
             ("Save As", Some(AppCommand::SaveAs(SessionId(1)))),
@@ -8139,6 +8147,8 @@ mod icon_action_tests {
             (IA_LAYER_DELETE, Scene::Layers, vec!["LayerDeleteSel"]),
             (IA_AB_ADD, two, vec!["AbAdd"]),
             (IA_AB_DUP, two, vec!["AbDup(0)"]),
+            // Start v2: a New board has zero artboards — Duplicate is disabled, never a silent no-op
+            (IA_AB_DUP, Scene::Artboard { count: 0, portrait: true }, vec![]),
             (IA_AB_DEL, two, vec!["AbDel(0)"]),
             (IA_AB_DEL, Scene::Artboard { count: 1, portrait: true }, vec![]),
             (IA_AB_LINK, two, vec!["lock=true"]),

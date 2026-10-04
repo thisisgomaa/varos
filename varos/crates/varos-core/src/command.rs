@@ -3,6 +3,7 @@
 //! This closed enum is application plumbing, not a stable plugin or AI protocol. Adapters,
 //! versioning, permissions, compatibility, and query contracts require separate decisions.
 
+use crate::board;
 use crate::boolean::BoolOp;
 use crate::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, ZOrder};
 use crate::geom::{Pt, Rgba};
@@ -132,6 +133,14 @@ pub enum EditCommand {
     ToggleSnapping,
     ToggleGuidesLocked,
     ToggleSmartGuides,
+    /// Board metadata (format 3, `crate::board`). Each is ONE undo step and dirties the document. The
+    /// text is edge-cleaned (`board::clean_text`; tags through `board::normalize_tags`); an unchanged
+    /// value is a no-op (no undo step, the document stays clean). Input over a bound or with a control
+    /// character is refused as a no-op too — the field validates first with `board::check_*` and shows
+    /// that reason, so a refused edit never silently truncates.
+    SetBoardName(String),
+    SetBoardDescription(String),
+    SetBoardTags(Vec<String>),
     Undo,
     Redo,
 }
@@ -204,6 +213,24 @@ impl EditCommand {
             Self::ToggleSnapping => ed.doc.snap.enabled = !ed.doc.snap.enabled,
             Self::ToggleGuidesLocked => ed.doc.guides_locked = !ed.doc.guides_locked,
             Self::ToggleSmartGuides => ed.doc.snap.smart = !ed.doc.snap.smart,
+            Self::SetBoardName(name) => {
+                let name = board::clean_text(&name);
+                if board::check_name(&name).is_ok() && name != ed.doc.name {
+                    edit_board(ed, |d| d.name = name);
+                }
+            }
+            Self::SetBoardDescription(text) => {
+                let text = board::clean_text(&text);
+                if board::check_description(&text).is_ok() && text != ed.doc.description {
+                    edit_board(ed, |d| d.description = text);
+                }
+            }
+            Self::SetBoardTags(tags) => {
+                let tags = board::normalize_tags(tags);
+                if board::check_tags(&tags).is_ok() && tags != ed.doc.tags {
+                    edit_board(ed, |d| d.tags = tags);
+                }
+            }
             Self::Undo => ed.undo(),
             Self::Redo => ed.redo(),
         }
@@ -249,6 +276,14 @@ pub fn clean_name(name: &str) -> &str {
         c.is_whitespace()
             || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{061C}' | '\u{FEFF}')
     })
+}
+
+/// One board-metadata change as one undo step (the callers have already ruled out a no-op).
+fn edit_board(ed: &mut Editor, change: impl FnOnce(&mut crate::model::Document)) {
+    ed.begin();
+    change(&mut ed.doc);
+    ed.dirty = true;
+    ed.commit();
 }
 
 /// `RenamePath`: only a real change becomes an edit. `Editor::rename_path` itself always opens an undo
