@@ -93,6 +93,13 @@ impl<S: DocStore> DocStore for RecentStore<S> {
     fn exists(&self, path: &Path) -> bool {
         self.inner.exists(path)
     }
+    // An export is never a Recent entry: both pass straight through, nothing is recorded.
+    fn write_export(&mut self, path: &Path, bytes: &[u8]) -> Result<(), String> {
+        self.inner.write_export(path, bytes)
+    }
+    fn read_existing(&mut self, path: &Path) -> Option<Vec<u8>> {
+        self.inner.read_existing(path)
+    }
     fn remember(&mut self, path: &Path, old: Option<&Path>) {
         let key = self.key(path);
         if let Some(old) = old {
