@@ -50,6 +50,9 @@ pub const AMBER: Color32 = rgb(0xf0b429);
 pub const RULER_BG: Color32 = rgb(0x181616);
 pub const CLOSE_RED: Color32 = rgb(0xc42b1c);
 pub const NONE_RED: Color32 = rgb(0xe05c5c);
+/// A field's refused-commit reason and failure notices (UI_SYSTEM K5; same value as `NONE_RED`):
+/// 4.88:1 on PANEL, so the reason sits on PANEL.
+pub const ERROR: Color32 = rgb(0xe05c5c);
 pub const DOT_GRID: Color32 = Color32::from_rgba_premultiplied(11, 11, 11, 11); // rgba(255,255,255,.045)
 pub const VOID_HOVER: Color32 = Color32::from_rgba_premultiplied(10, 10, 10, 10); // rgba(255,255,255,.04)
 
@@ -177,6 +180,15 @@ pub const ICON_BTN_H: f32 = KIT_MIN_TARGET;
 /// A toggle's "on" mark (owner decision: toggle = a small azure bar, no fill; tool = an azure block).
 pub const ICON_BAR_W: f32 = 10.0;
 pub const ICON_BAR_H: f32 = 2.0;
+/// Fields (K3, piece P2 — `kit::field`): the number-field row and its label column, the text-field
+/// box, the value text size and the label letter size, and the text inset inside a box.
+pub const FIELD_H: f32 = 25.0;
+pub const TEXT_FIELD_H: f32 = 26.0;
+pub const FIELD_LABEL_W: f32 = 22.0;
+pub const FIELD_TEXT: f32 = 13.0;
+pub const FIELD_LABEL_TEXT: f32 = 11.5;
+pub const FIELD_INSET_X: f32 = 8.0;
+pub const FIELD_INSET_Y: f32 = 3.0;
 /// Kit menus: minimum popup width and the gap between the anchor and the popup.
 pub const KIT_MENU_MIN_W: f32 = 176.0;
 pub const KIT_MENU_GAP: f32 = 4.0;
