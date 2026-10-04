@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::storage::recents::Recents;
 use crate::storage::time_text;
-use varos_core::board::PresetId;
+use varos_core::board::{fold, PresetId};
 
 /// Window/heading title shown while Start is the active view (work order §3.7/§3.9: "Window
 /// title \"Varos\" on Start."). E2's heading and host window title share this value.
@@ -104,17 +104,18 @@ pub struct StartFilter {
     pub view: StartView,
 }
 impl StartFilter {
-    /// Does `card` pass? Tag: case-insensitive equality with one of its tags. Search: every
-    /// whitespace-separated term must appear (case-insensitive substring) in the name, the
+    /// Does `card` pass? Every comparison goes through the ONE core fold (`varos_core::board::fold`:
+    /// NFC + full case fold, so ß/SS and σ/ς meet). Tag: folded equality with one of its tags.
+    /// Search: every whitespace-separated term must appear (folded substring) in the name, the
     /// description, a tag or the folder path.
     pub fn matches(&self, card: &BoardCard) -> bool {
         if let Some(tag) = &self.tag {
-            let tag = tag.to_lowercase();
-            if !card.tags.iter().any(|t| t.to_lowercase() == tag) {
+            let tag = fold(tag);
+            if !card.tags.iter().any(|t| fold(t) == tag) {
                 return false;
             }
         }
-        let search = self.search.to_lowercase();
+        let search = fold(&self.search);
         let terms: Vec<&str> = search.split_whitespace().collect();
         if terms.is_empty() {
             return true;
@@ -123,7 +124,7 @@ impl StartFilter {
         let fields: Vec<String> = [card.name.as_str(), card.description.as_deref().unwrap_or(""), folder.as_str()]
             .into_iter()
             .chain(card.tags.iter().map(String::as_str))
-            .map(str::to_lowercase)
+            .map(fold)
             .collect();
         terms.iter().all(|term| fields.iter().any(|f| f.contains(term)))
     }
@@ -535,13 +536,13 @@ impl StartRefresh {
     }
 }
 
-/// Tag counts over every card: grouped case-insensitively (first spelling seen wins, cards newest
-/// first), most-used first, ties alphabetical (case-insensitive).
+/// Tag counts over every card: grouped by the core fold (first spelling seen wins, cards newest
+/// first), most-used first, ties by folded spelling.
 fn tag_counts(cards: &[BoardCard]) -> Vec<TagCount> {
     let mut out: Vec<(String, TagCount)> = Vec::new();
     for card in cards {
         for tag in &card.tags {
-            let folded = tag.to_lowercase();
+            let folded = fold(tag);
             match out.iter_mut().find(|(f, _)| *f == folded) {
                 Some((_, t)) => t.count += 1,
                 None => out.push((folded, TagCount { tag: tag.clone(), count: 1 })),
@@ -978,6 +979,27 @@ mod tests {
         assert_eq!(rebuilt.filter(), model.filter());
         assert_eq!(names(&rebuilt), ["b"]);
         assert_eq!(rebuilt.activate(), model.activate());
+    }
+
+    #[test]
+    fn filter_counts_and_search_use_the_one_core_fold() {
+        let mut r = Recents::default();
+        let board = |tags: &[&str]| BoardSummary {
+            name: "Café".into(),
+            description: String::new(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            artboards: 0,
+        };
+        r.record_board(Path::new("/d/a.vrs"), None, 1, board(&["Straße", "σς"]), 1);
+        r.record_board(Path::new("/d/b.vrs"), None, 2, board(&["STRASSE", "ΣΣ", "عربي"]), 2);
+        let mut model = StartModel::without_recovery(&r, 3, |_| false);
+        let counts: Vec<(&str, usize)> = model.tags().iter().map(|t| (t.tag.as_str(), t.count)).collect();
+        assert_eq!(counts, [("STRASSE", 2), ("ΣΣ", 2), ("عربي", 1)], "ß/SS and σς/ΣΣ count as one tag");
+        model.apply(&StartAction::SetTagFilter(Some("straße".into())));
+        assert_eq!(model.visible_count(), 2);
+        model.apply(&StartAction::SetTagFilter(None));
+        model.apply(&StartAction::Search("CAFE\u{301}".into())); // NFD + upper case finds "Café"
+        assert_eq!(model.visible_count(), 2);
     }
 
     #[test]

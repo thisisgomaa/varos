@@ -144,20 +144,83 @@ fn set_board_description_and_tags_are_undoable_single_steps() {
 }
 
 #[test]
-fn over_bound_edits_are_refused_without_an_undo_step() {
+fn checked_edits_return_the_reason_and_change_nothing() {
     let mut ed = editor();
-    ed.execute(EditCommand::SetBoardName("a".repeat(121)));
-    ed.execute(EditCommand::SetBoardName(s("line\nbreak")));
-    ed.execute(EditCommand::SetBoardDescription("d".repeat(501)));
-    ed.execute(EditCommand::SetBoardTags((0..17).map(|i| format!("t{i}")).collect()));
-    ed.execute(EditCommand::SetBoardTags(vec!["x".repeat(33)]));
+    let cases: Vec<(Result<(), board::Reject>, MetaError)> = vec![
+        (ed.try_set_board_name(&"a".repeat(121)), MetaError::NameTooLong { found: 121 }),
+        (ed.try_set_board_name("line\nbreak"), MetaError::ControlCharacter { field: "name" }),
+        (ed.try_set_board_description(&"d".repeat(501)), MetaError::DescriptionTooLong { found: 501 }),
+        (ed.try_set_board_description("a\tb"), MetaError::ControlCharacter { field: "description" }),
+        (ed.try_set_board_tags((0..17).map(|i| format!("t{i}")).collect()), MetaError::TooManyTags { found: 17 }),
+        (ed.try_set_board_tags(vec!["x".repeat(33)]), MetaError::TagTooLong { tag: "x".repeat(33), found: 33 }),
+        (ed.try_set_board_tags(vec![s("ok\u{7}")]), MetaError::ControlCharacter { field: "tags" }),
+    ];
+    for (got, want) in cases {
+        assert_eq!(got, Err(want.clone()));
+        assert!(!want.to_string().is_empty(), "a plain-English reason for the field");
+    }
     assert_eq!(ed.rev, 0, "nothing landed, nothing to undo");
     assert_eq!(ed.doc, new_board());
+    assert_eq!(
+        ed.try_set_board_name(&"a".repeat(121)).unwrap_err().to_string(),
+        "the board name is 121 characters long; the limit is 120"
+    );
+}
+
+#[test]
+fn checked_edits_with_valid_input_are_one_undo_step_each() {
+    let mut ed = editor();
+    assert_eq!(ed.try_set_board_name("  Logo  "), Ok(()));
+    assert_eq!((ed.doc.name.as_str(), ed.rev), ("Logo", 1));
+    assert_eq!(ed.try_set_board_name("Logo"), Ok(()), "unchanged is accepted…");
+    assert_eq!(ed.rev, 1, "…as a no-op without an undo step");
+    assert_eq!(ed.try_set_board_description("Round two"), Ok(()));
+    assert_eq!(ed.rev, 2);
     // 17 typed tags that clean down to 16 are fine (bounds apply AFTER cleaning)
     let mut typed: Vec<String> = (0..16).map(|i| format!("t{i}")).collect();
     typed.push(s("T0"));
-    ed.execute(EditCommand::SetBoardTags(typed));
-    assert_eq!(ed.doc.tags.len(), 16);
+    assert_eq!(ed.try_set_board_tags(typed), Ok(()));
+    assert_eq!((ed.doc.tags.len(), ed.rev), (16, 3));
+    ed.execute(EditCommand::Undo);
+    assert!(ed.doc.tags.is_empty());
+    assert_eq!(ed.doc.description, "Round two");
+}
+
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "SetBoard* carried an invalid value")]
+fn the_replay_command_only_carries_valid_values() {
+    editor().execute(EditCommand::SetBoardName("a".repeat(121)));
+}
+
+#[test]
+fn tags_fold_fully_and_leave_arabic_alone() {
+    assert_eq!(board::fold("Straße"), board::fold("STRASSE"), "ß = SS");
+    assert_eq!(board::fold("σς"), board::fold("ΣΣ"), "σ/ς = Σ");
+    assert_eq!(board::fold("café"), board::fold("CAFE\u{301}"), "NFC: é = e + combining acute");
+    assert_eq!(board::fold("عربي"), "عربي", "Arabic has no case: unchanged");
+    assert_ne!(board::fold("عربي"), board::fold("عربى"), "different Arabic letters stay different");
+    assert_eq!(normalize_tags(tags(&["Straße", "STRASSE", "ΣΣ", "σς", "عربي"])), tags(&["Straße", "ΣΣ", "عربي"]));
+    assert_eq!(check_tags(&tags(&["Straße", "STRASSE"])), Err(MetaError::DuplicateTag { tag: s("STRASSE") }));
+}
+
+#[test]
+fn joiners_and_bidi_marks_are_allowed_inside_and_trimmed_only_at_the_edges() {
+    // Persian "می‌خواهم" needs ZWNJ (U+200C) between می and خواهم; a family emoji is a ZWJ sequence
+    let zwnj_name = "می\u{200C}خواهم";
+    let family = "👨\u{200D}👩\u{200D}👧";
+    let mut ed = editor();
+    assert_eq!(ed.try_set_board_name(&format!("\u{200F} {zwnj_name}\u{200C} ")), Ok(()));
+    assert_eq!(ed.doc.name, zwnj_name, "inner ZWNJ kept; edge marks and spaces trimmed");
+    assert_eq!(ed.try_set_board_tags(vec![family.to_string(), s("\u{200E}rtl\u{200F}mark")]), Ok(()));
+    assert_eq!(ed.doc.tags, [family, "rtl\u{200F}mark"], "inner ZWJ / RLM kept");
+    // bounds count scalar values, not graphemes: the family emoji is 5 scalars
+    assert_eq!(family.chars().count(), 5);
+    let seven = std::iter::repeat_n(family, 7).collect::<String>(); // 35 scalars, 7 graphemes
+    assert_eq!(check_tags(std::slice::from_ref(&seven)), Err(MetaError::TagTooLong { tag: seven, found: 35 }));
+    // round-trip through the file
+    let back = doc_from_blob(&doc_to_blob(&ed.doc).unwrap()).unwrap();
+    assert_eq!((back.name, back.tags), (ed.doc.name.clone(), ed.doc.tags.clone()));
 }
 
 // ───────────────────────────── display name ─────────────────────────────
@@ -300,6 +363,15 @@ fn board_keys_in_a_v1_or_v2_file_are_refused_as_unknown() {
                     assert_eq!((field, found), (key, version));
                 }
                 other => panic!("v{version} {key}: expected FieldNotInFormat, got {other:?}"),
+            }
+            // the refusal comes BEFORE typed decoding: a wrong-typed or deeply nested value is still
+            // "this format cannot carry the key", never a generic "damaged"
+            for value in [json!(42), json!(null), json!({"a": [1, {"b": [[], {"c": "deep"}]}], "z": true})] {
+                v["doc"][key] = value.clone();
+                match dec(&v) {
+                    Err(LoadError::Invalid(Invalid::FieldNotInFormat { field, .. })) => assert_eq!(field, key),
+                    other => panic!("v{version} {key}={value}: expected FieldNotInFormat, got {other:?}"),
+                }
             }
         }
         // the same keys absent: an ordinary older file

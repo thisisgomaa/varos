@@ -3,8 +3,8 @@
 //! checks. Pure: bytes in, `Document` out (and back). The PDF container lives in `varos-pdf`.
 //!
 //! Load pipeline (`decode_model`): model size cap → version gate (header-only parse, before any typed
-//! decode) → strict typed decode (`deny_unknown_fields`; serde_json's 128-level depth limit) → newer-
-//! format keys refused in older files → `check_structure` → `validate` → canonical check (format 2+) →
+//! decode) → newer-format keys refused in older files (keys-only scan) → strict typed decode
+//! (`deny_unknown_fields`; serde_json's 128-level depth limit) → `check_structure` → `validate` → canonical check (format 2+) →
 //! migration (older formats) → `validate`.
 //! Save (`encode_model`) runs `check_structure` → the same normalizer on a CLONE → `validate` → size
 //! cap, so this build never writes a file it would refuse to read. The caller's document is never
@@ -124,10 +124,10 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
             return Err(LoadError::VersionMismatch { container, model: version });
         }
     }
-    let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     if version < BOARD_META_VERSION {
-        refuse_newer_keys(json, version)?;
+        refuse_newer_keys(json, version)?; // keys only, before any typed decode
     }
+    let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     let mut doc = file.doc;
     let released_legacy_masks = version == 1 && migrate::release_broken_clips(&mut doc);
     check_structure(&doc, limits)?;
@@ -158,35 +158,73 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
 
 /// A file that claims a format older than [`BOARD_META_VERSION`] must not carry the board keys: no
 /// writer of that format emitted them, so their presence is an unknown field (ADR-0008: unknown fields
-/// fail closed), not data to keep. The typed decode alone cannot tell — it defaults them — so this
-/// second, keys-only pass runs for older files only (the document has already decoded, so it is an
-/// object; values are skipped, not built).
+/// fail closed), not data to keep — whatever its value (`"name": 42`, `null`, a nested object). The
+/// typed decode would default them (or fail on a wrong type as merely "damaged"), so this keys-only
+/// scan runs right after the version gate, BEFORE any typed decode, for older files only. It reads
+/// the top-level keys of `doc` and skips every value (serde's `IgnoredAny`, inside serde_json's
+/// 128-level depth limit, after the model byte cap) — nothing is built. A `doc` that is not an object
+/// is left for the typed decode to refuse.
 fn refuse_newer_keys(json: &[u8], version: u32) -> Result<(), LoadError> {
-    use serde::de::IgnoredAny;
-    #[derive(Deserialize)]
-    struct Keys {
-        #[serde(default)]
-        name: Option<IgnoredAny>,
-        #[serde(default)]
-        description: Option<IgnoredAny>,
-        #[serde(default)]
-        tags: Option<IgnoredAny>,
+    use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
+    use std::fmt;
+
+    /// The first board key found in `doc`, if any.
+    #[derive(Default)]
+    struct DocKeys(Option<&'static str>);
+    impl<'de> Deserialize<'de> for DocKeys {
+        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = DocKeys;
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("any JSON value")
+                }
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<DocKeys, A::Error> {
+                    let mut found = None;
+                    while let Some(key) = map.next_key::<std::borrow::Cow<'de, str>>()? {
+                        map.next_value::<IgnoredAny>()?;
+                        if found.is_none() {
+                            found = ["name", "description", "tags"].into_iter().find(|k| *k == key);
+                        }
+                    }
+                    Ok(DocKeys(found))
+                }
+                fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<DocKeys, A::Error> {
+                    while seq.next_element::<IgnoredAny>()?.is_some() {}
+                    Ok(DocKeys(None))
+                }
+                fn visit_bool<E>(self, _: bool) -> Result<DocKeys, E> {
+                    Ok(DocKeys(None))
+                }
+                fn visit_i64<E>(self, _: i64) -> Result<DocKeys, E> {
+                    Ok(DocKeys(None))
+                }
+                fn visit_u64<E>(self, _: u64) -> Result<DocKeys, E> {
+                    Ok(DocKeys(None))
+                }
+                fn visit_f64<E>(self, _: f64) -> Result<DocKeys, E> {
+                    Ok(DocKeys(None))
+                }
+                fn visit_str<E>(self, _: &str) -> Result<DocKeys, E> {
+                    Ok(DocKeys(None))
+                }
+                fn visit_unit<E>(self) -> Result<DocKeys, E> {
+                    Ok(DocKeys(None))
+                }
+            }
+            d.deserialize_any(V)
+        }
     }
     #[derive(Deserialize)]
     struct Head {
-        doc: Keys,
-    }
+        #[serde(default)]
+        doc: DocKeys,
+    } // no deny_unknown_fields: `varos` and anything else are skipped here; the typed decode is strict
     let head: Head = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
-    let field = if head.doc.name.is_some() {
-        "name"
-    } else if head.doc.description.is_some() {
-        "description"
-    } else if head.doc.tags.is_some() {
-        "tags"
-    } else {
-        return Ok(());
-    };
-    Err(Invalid::FieldNotInFormat { field, version }.into())
+    match head.doc.0 {
+        Some(field) => Err(Invalid::FieldNotInFormat { field, version }.into()),
+        None => Ok(()),
+    }
 }
 
 /// Current-format input must already be in the form this build's writer produces: the normalizer may
