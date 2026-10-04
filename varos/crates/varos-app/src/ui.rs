@@ -20,9 +20,9 @@ use winit::window::Window;
 // (R ≥ G ≥ B, tokens.rs = UI_VISION_MOCKUP's :root). The old cool-gray names alias their warm
 // successors so this 4k-line file needs no body edits; Stage 4's re-cut chrome uses the law names.
 use varos_app::shell::tokens::{
-    shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, LINE as BORDER, LINE2 as BORDER_2,
-    MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM, SURFACE as BG_SURFACE,
-    SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
+    numeric_value, shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, LINE as BORDER,
+    LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
+    SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
 };
 // Icon stage 1: one icon registry + one icon button (shell::kit), one set of icon sizes (tokens).
 use varos_app::shell::kit::field::Label as Lab;
@@ -3679,7 +3679,7 @@ fn build_statusbar(
         let p = ui.painter().clone();
         let cy = bar.center().y;
         let f11 = FontId::proportional(11.0);
-        let m11 = FontId::monospace(11.0);
+        let m11 = numeric_value(11.0);
         let status_rect = egui::Rect::from_min_max(
             bar.min + egui::vec2(10.0, 0.0),
             egui::pos2((bar.right() - 240.0).max(bar.left() + 10.0), bar.bottom()),
@@ -5212,7 +5212,7 @@ fn panel_artboard(
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     // a free canvas (New board) has no artboard: "0 / 0", not "1 / 0"
                     let at = if s.count == 0 { 0 } else { i + 1 };
-                    ui.label(RichText::new(format!("{at} / {}", s.count)).color(MUTED).size(11.5));
+                    ui.label(RichText::new(format!("{at} / {}", s.count)).color(MUTED).font(numeric_value(11.5)));
                 });
             });
             fields::name(ui, inner, &s.name, "dock", ops, |v| Op::AbName(i, v));
@@ -5439,8 +5439,7 @@ fn build_ab_chrome(
                         ui.label(
                             RichText::new(format!("{:.0} \u{00d7} {:.0}", ab.w, ab.h))
                                 .color(FAINT)
-                                .monospace()
-                                .size(10.0),
+                                .font(numeric_value(10.0)),
                         );
                     });
                 });
@@ -5536,7 +5535,7 @@ fn board_rulers(
     reset: [f32; 2],
     ops: &mut Vec<Op>,
 ) {
-    let num_font = FontId::proportional(9.5);
+    let num_font = numeric_value(9.5);
     let dec = ruler_dec(grid);
     // label every Nth grid-tick so numbers stay ~70 pts apart at ANY zoom (dense, never a vast gap). N is a
     // grid multiple, so labels still land on dots; small N → rounder numbers (×2 = 250s, not ×5 = 625s).

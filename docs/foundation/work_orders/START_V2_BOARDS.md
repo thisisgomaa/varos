@@ -9,6 +9,8 @@
 - The Varos **V mark** at the right end of the top bar stays as it is.
 
 ## Lanes (parallel, disjoint files; author ≠ reviewer)
+
+**Lane status (2026-10-04): L1 Fonts DONE; local gates PASS.** Independent review and owner hand check remain; L2–L5 stay with their owners.
 | Lane | What | Owns |
 |---|---|---|
 | L1 Fonts | Inter 400/500/600 + JetBrains Mono static cuts, manifest, licences, weight-aware text styles in `shell/tokens.rs` (`TextStyle`-like tokens: h1 30/600, h2 18/600, button 15/500, name 14/600, body 13/400, small 12/400, tag 11/500, mono 11/400), fallback chain; Plex removed from UI chain | `assets/fonts/`, `shell/fonts.rs`, `shell/tokens.rs` (type section), `tests/fonts.rs` |

@@ -460,7 +460,7 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
         egui::TextEdit::singleline(&mut buf)
             .id(id)
             .frame(egui::Frame::NONE)
-            .font(FontId::proportional(t::FIELD_TEXT))
+            .font(t::numeric_value(t::FIELD_TEXT))
             .text_color(t::TEXT),
     );
     if ctx.memory(|m| m.has_focus(id)) {
@@ -519,7 +519,7 @@ fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut E
     } else {
         p.rect_filled(bx, t::r_ctrl(), t::SURFACE);
     }
-    p.text(bx.center(), Align2::CENTER_CENTER, shown, FontId::proportional(t::FIELD_TEXT), t::TEXT);
+    p.text(bx.center(), Align2::CENTER_CENTER, shown, t::numeric_value(t::FIELD_TEXT), t::TEXT);
     if resp.dragged() {
         let dx = resp.drag_delta().x;
         if dx != 0.0 {
