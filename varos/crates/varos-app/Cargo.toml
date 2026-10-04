@@ -46,3 +46,5 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gd
 [dev-dependencies]
 # Already locked transitively; inspect actual cmaps rather than egui 0.35 has_glyph false negatives.
 ttf-parser = "0.25.1"
+# Already locked through varos-pdf; tests parse the PDFs the Export path writes (DFS S6).
+lopdf = "0.43"

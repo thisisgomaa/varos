@@ -3998,6 +3998,7 @@ dependencies = [
  "egui_tiles",
  "image",
  "libc",
+ "lopdf",
  "muda",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",

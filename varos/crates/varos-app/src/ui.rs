@@ -801,6 +801,13 @@ pub struct Ui {
     pub repaint: bool,
     pub repaint_at: Option<Instant>,
     pub recovery: crate::recovery_host::RecoveryUi,
+    /// Background save / export status for the status bar (`file_jobs::status_text`); when set it
+    /// takes the recovery status's place.
+    pub file_status: String,
+    /// DFS S6: the open Export PDF sheet, the Export button it hangs from, and each tab's last scope.
+    export_sheet: Option<crate::export_ui::ExportSheet>,
+    export_anchor: Option<egui::Rect>,
+    export_scopes: std::collections::HashMap<SessionId, varos_pdf::ExportScope>,
     tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
     shapes: Vec<ToolBtn>,   // the shape tools, collapsed into one rail slot (right-click → flyout)
     shape_active: ToolKind, // which shape the shapes slot currently represents
@@ -1039,6 +1046,10 @@ impl Ui {
             repaint: false,
             repaint_at: None,
             recovery: Default::default(),
+            file_status: String::new(),
+            export_sheet: None,
+            export_anchor: None,
+            export_scopes: Default::default(),
             tools,
             shapes,
             shape_active: ToolKind::Rect,
@@ -1177,6 +1188,12 @@ impl Ui {
         self.doc_tabs = tabs;
         self.doc_active = active;
     }
+    /// DFS S6: `AppCommand::ShowExport(id)` — open the Export PDF sheet for tab `id` over `doc` (its
+    /// rows and page counts are planned now, once).
+    pub fn show_export(&mut self, id: SessionId, doc: &varos_core::model::Document) {
+        let remembered = self.export_scopes.get(&id).copied();
+        self.export_sheet = Some(crate::export_ui::ExportSheet::new(id, doc, remembered));
+    }
     /// DFS S1: the lifecycle commands the chrome (tab strip, burger rows) raised since the last call.
     pub fn take_app_commands(&mut self) -> Vec<AppCommand> {
         std::mem::take(&mut self.app_cmds)
@@ -1232,6 +1249,7 @@ impl Ui {
                 }
             });
         }
+        self.export_sheet = None; // Home has no document to export
         let out = self.ctx.run_ui(input, |root| {
             build_topbar(
                 root,
@@ -1247,6 +1265,7 @@ impl Ui {
                 maximized,
                 true,
                 cfg!(target_os = "macos"),
+                &mut None,
             );
             self.app_cmds.extend(
                 self.start_page
@@ -1364,6 +1383,11 @@ impl Ui {
         // so this frame's clicks are APPENDED to whatever earlier frames already queued.
         let mut app_cmds = std::mem::take(&mut self.app_cmds);
         let mut color_modal = std::mem::take(&mut self.color_modal);
+        // the Export sheet belongs to one tab: another tab (or none) closes it
+        let mut export_sheet = self.export_sheet.take().filter(|s| Some(s.sid) == doc_active);
+        let mut export_anchor = self.export_anchor;
+        let export_scopes = &mut self.export_scopes;
+        let status = if self.file_status.is_empty() { &self.recovery.status } else { &self.file_status };
         // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
         let out = self.ctx.run_ui(input, |root| {
             let ctx = root.ctx().clone();
@@ -1382,9 +1406,21 @@ impl Ui {
                 maximized,
                 false,
                 cfg!(target_os = "macos"),
+                &mut export_anchor,
             );
+            if let Some(sheet) = export_sheet.as_mut() {
+                match crate::export_ui::draw(ctx, sheet, export_anchor) {
+                    crate::export_ui::SheetAction::Stay => {}
+                    crate::export_ui::SheetAction::Close => export_sheet = None,
+                    crate::export_ui::SheetAction::Export(id, scope) => {
+                        export_scopes.insert(id, scope);
+                        app_cmds.push(AppCommand::ExportPdf(id, scope));
+                        export_sheet = None;
+                    }
+                }
+            }
             build_recovery_strip(root, recovery, &mut app_cmds);
-            build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request, &recovery.status);
+            build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request, status);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
             // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
             // frame's hole (one-frame lag on resize, healed by the request_repaint below). ──
@@ -1516,6 +1552,8 @@ impl Ui {
         self.show_dock = show_dock;
         self.doc_tabs = doc_tabs;
         self.app_cmds = app_cmds;
+        self.export_sheet = export_sheet;
+        self.export_anchor = export_anchor;
         ed.execute(EditCommand::SetSnapConfig(snap_cfg)); // non-undoable mode flag, now core-owned
         ed.set_constrain_wh(lock); // A12: mirror the Properties W/H lock so canvas scale drags honour it too
                                    // OpenPicker is a UI op (it opens the modal, seeded from the target's colour) — intercept it here
@@ -3433,8 +3471,11 @@ fn build_topbar(
     maximized: bool,
     home: bool,
     native_home: bool,
+    export_anchor: &mut Option<egui::Rect>,
 ) {
     let h = crate::chrome::TOPBAR.height;
+    // DFS S6: Export (button, burger row, File ▸ Export ▸ PDF…) is ONE command through the one mapper
+    let export_cmd = crate::host::to_app_command(crate::chrome::FileCmd::Export, active);
     // Stage 1 (BOX_SYSTEM_PLAN §3.5): the app bar IS the void — seam fill, no hairline; the doc tabs
     // are Brave-style chips floating in it and the window caps are flush 42px void cells.
     let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
@@ -3483,16 +3524,19 @@ fn build_topbar(
             if winb.clicked() {
                 menu_toggle(ui, window_id);
             }
-            // Export / Share honesty (DFS S1 §3.6, review nit F15/P3-15): neither has a home yet, so both
-            // look and behave disabled instead of being "enabled dead buttons" (spec §2 forbids those).
+            // Share honesty (DFS S1 §3.6, review nit F15/P3-15): no home yet, so it looks and behaves
+            // disabled instead of being an "enabled dead button" (spec §2 forbids those).
             bar_btn_disabled(ui, &p, layout.share, "Share", "Share isn't available yet.\nSave keeps an editable .vrs.");
-            bar_btn_disabled(
-                ui,
-                &p,
-                layout.export,
-                "Export",
-                "Export isn't available yet \u{2014} PDF export comes in a later update.\nSave keeps an editable .vrs.",
-            );
+            // Export (DFS S6): opens the Export PDF sheet, which hangs from this button
+            *export_anchor = Some(layout.export);
+            match &export_cmd {
+                Some(cmd) => {
+                    if bar_btn(ui, &p, layout.export, "Export", true).on_hover_text("Export PDF").clicked() {
+                        cmds.push(cmd.clone());
+                    }
+                }
+                None => bar_btn_disabled(ui, &p, layout.export, "Export", "Open a document to export it."),
+            }
             // search pill: 🔍 Search — a surface capsule on the void (visual mirror; no function yet, QW7)
             let kpill_r = layout.search;
             search_pill(ui, &p, kpill_r, &top.search);
@@ -3601,11 +3645,15 @@ fn build_topbar(
                 }
             }
             menu_sep(ui);
-            menu_row_disabled(
-                ui,
-                "Export\u{2026}",
-                "Export isn't available yet \u{2014} PDF export comes in a later update.\nSave keeps an editable .vrs.",
-            );
+            match &export_cmd {
+                Some(cmd) => {
+                    if menu_row(ui, "Export\u{2026}", "") {
+                        cmds.push(cmd.clone());
+                        hit = true;
+                    }
+                }
+                None => menu_row_disabled(ui, "Export\u{2026}", "Open a document to export it."),
+            }
             if menu_row(ui, "Home", "") {
                 cmds.push(AppCommand::Home);
                 hit = true;
@@ -6826,6 +6874,7 @@ mod tab_strip_tests {
                 false,
                 false,
                 false,
+                &mut None,
             );
         });
         cmds
@@ -7185,6 +7234,7 @@ mod tab_strip_tests {
                     false,
                     false,
                     false,
+                    &mut None,
                 );
             });
             (cmds, out.shapes)
@@ -7650,6 +7700,7 @@ mod tab_strip_tests {
                     false,
                     false,
                     false,
+                    &mut None,
                 );
             });
             out.shapes.iter().any(|cs| {
@@ -7747,6 +7798,7 @@ mod dead_control_tests {
                     false,
                     false,
                     false,
+                    &mut None,
                 );
             });
             cmds
@@ -7789,9 +7841,10 @@ mod dead_control_tests {
         }
     }
 
-    /// New / Open… / Save / Save As… each raise their `AppCommand`; Export… is drawn disabled and
-    /// raises none. Row geometry: `MENU_ROW_H` tall, contiguous (`menu_below` zeroes row spacing),
-    /// then one `menu_sep` (4 + 1 + 4 px) before the disabled Export row.
+    /// New / Open… / Save / Save As… each raise their `AppCommand`; Export… raises the same
+    /// `ShowExport` as File ▸ Export ▸ PDF… and the top-bar button (DFS S6). Row geometry:
+    /// `MENU_ROW_H` tall, contiguous (`menu_below` zeroes row spacing), then one `menu_sep`
+    /// (4 + 1 + 4 px) before the Export row.
     #[test]
     fn burger_rows_either_emit_a_command_or_are_disabled() {
         const SEP_H: f32 = 9.0; // menu_sep: add_space(4) + a 1px line + add_space(4)
@@ -7809,23 +7862,36 @@ mod dead_control_tests {
             let cmds = bar.click(pos);
             assert_eq!(cmds, want.iter().cloned().collect::<Vec<_>>(), "row {name}");
         }
-        // Export…, past the separator after the 4 rows above — click raises nothing (disabled: FAINT
-        // text, `Sense::hover` only, tooltip carries the reason — never an "enabled dead button").
+        // Export…, past the separator after the 4 rows above — the one Export command (DFS S6)
         let mut bar = Bar::new();
         let top_left = bar.open_burger();
         let y = top_left.y + 4.0 * MENU_ROW_H + SEP_H + MENU_ROW_H / 2.0;
         let pos = egui::pos2(top_left.x + 100.0, y);
         let cmds = bar.click(pos);
-        assert!(cmds.is_empty(), "the disabled Export row must never raise a command");
+        let menu = crate::host::to_app_command(crate::chrome::FileCmd::Export, Some(SessionId(1)));
+        assert_eq!(cmds, vec![AppCommand::ShowExport(SessionId(1))]);
+        assert_eq!(cmds.first(), menu.as_ref(), "the burger row = File ▸ Export ▸ PDF…'s command");
     }
 
-    /// Share / Export (top bar) and the search pill are `Sense::hover`-only (never clickable at all —
-    /// the strongest form of "not an enabled dead button"), each with a tooltip.
+    /// DFS S6: the top-bar Export button raises exactly the command File ▸ Export ▸ PDF… maps to
+    /// (`host::to_app_command(FileCmd::Export, active)`), for the active tab.
     #[test]
-    fn share_export_and_search_pill_never_raise_a_command() {
+    fn export_button_and_file_menu_raise_the_same_command() {
         let mut bar = Bar::new();
         let layout = bar.layout();
-        for rect in [layout.share, layout.export, layout.search] {
+        let cmds = bar.click(layout.export.center());
+        let menu = crate::host::to_app_command(crate::chrome::FileCmd::Export, Some(SessionId(1)));
+        assert_eq!(menu, Some(AppCommand::ShowExport(SessionId(1))));
+        assert_eq!(cmds, menu.into_iter().collect::<Vec<_>>());
+    }
+
+    /// Share (top bar) and the search pill are `Sense::hover`-only (never clickable at all — the
+    /// strongest form of "not an enabled dead button"), each with a tooltip.
+    #[test]
+    fn share_and_search_pill_never_raise_a_command() {
+        let mut bar = Bar::new();
+        let layout = bar.layout();
+        for rect in [layout.share, layout.search] {
             let cmds = bar.click(rect.center());
             assert!(cmds.is_empty(), "{rect:?} must not raise a command (disabled / not wired yet)");
         }
