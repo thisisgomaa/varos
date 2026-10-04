@@ -171,6 +171,11 @@ if [[ -x "$LSREG" ]]; then
   "$LSREG" -f "$DEST" >/dev/null 2>&1 || true
 fi
 
+# One Varos on this Mac: the staging bundle in the build folder is a second "Varos.app" that
+# Spotlight and Launchpad would list next to the installed one (owner report 2026-10-04:
+# "several copies on the Mac"). Remove it once the install is verified.
+rm -rf "$APP"
+
 echo "==> installed: $DEST"
 echo "    check the .vrs association: Finder ▸ Get Info on a .vrs file shows \"Open with: Varos\","
 echo "    or run: $LSREG -dump | grep -c $DOC_UTI"
