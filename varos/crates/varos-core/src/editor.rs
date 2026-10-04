@@ -740,8 +740,11 @@ impl Editor {
         }
     }
     fn objsel_base(&self) -> Vec<(u32, Pt, Option<Pt>, Option<Pt>)> {
+        self.objsel_base_for(self.objsel.iter().copied())
+    }
+    fn objsel_base_for(&self, pids: impl IntoIterator<Item = u32>) -> Vec<(u32, Pt, Option<Pt>, Option<Pt>)> {
         let mut base = vec![];
-        for &pid in &self.objsel {
+        for pid in pids {
             if let Some(pi) = self.doc.pidx(pid) {
                 for a in self.doc.paths[pi].anchors.iter().chain(self.doc.paths[pi].holes.iter().flatten()) {
                     base.push((a.id, a.p, a.hin, a.hout));
@@ -1013,8 +1016,11 @@ impl Editor {
     /// WORLD anchors of the object selection (each mapped through its unit transform) — the base for
     /// world-space transform gestures (Scale). Paired with `write_anchor_world` for the write-back.
     fn objsel_base_world(&self) -> Vec<(u32, Pt, Option<Pt>, Option<Pt>)> {
+        self.objsel_base_world_for(self.objsel.iter().copied())
+    }
+    fn objsel_base_world_for(&self, pids: impl IntoIterator<Item = u32>) -> Vec<(u32, Pt, Option<Pt>, Option<Pt>)> {
         let mut base = vec![];
-        for &pid in &self.objsel {
+        for pid in pids {
             if let Some(pi) = self.doc.pidx(pid) {
                 let xf = self.doc.unit_xform(pid);
                 for a in self.doc.paths[pi].anchors.iter().chain(self.doc.paths[pi].holes.iter().flatten()) {
@@ -1030,9 +1036,17 @@ impl Editor {
     /// untouched and the world result is exact.
     #[allow(clippy::type_complexity)]
     pub(crate) fn object_move_base(&self) -> (Vec<(u32, Pt, Option<Pt>, Option<Pt>)>, Vec<Pt>, Vec<(u32, Xform)>) {
+        self.object_move_base_for(self.objsel.iter().copied())
+    }
+    #[allow(clippy::type_complexity)]
+    fn object_move_base_for(
+        &self,
+        pids: impl IntoIterator<Item = u32>,
+    ) -> (Vec<(u32, Pt, Option<Pt>, Option<Pt>)>, Vec<Pt>, Vec<(u32, Xform)>) {
         let mut base = vec![];
         let mut base_world = vec![];
-        for &pid in &self.objsel {
+        let mut units = vec![];
+        for pid in pids {
             if let Some(pi) = self.doc.pidx(pid) {
                 let xf = self.doc.unit_xform(pid);
                 for a in self.doc.paths[pi].anchors.iter().chain(self.doc.paths[pi].holes.iter().flatten()) {
@@ -1040,8 +1054,17 @@ impl Editor {
                     base_world.push(xf.apply(a.p));
                 }
             }
+            if let Some(unit) = self.doc.unit_of(pid) {
+                if !units.contains(&unit) {
+                    units.push(unit);
+                }
+            }
         }
-        let piv_base = self.objsel_units_xform().into_iter().filter(|(_, xf)| !xf.is_identity()).collect();
+        let piv_base = units
+            .into_iter()
+            .map(|unit| (unit, self.doc.node_xform(unit)))
+            .filter(|(_, xf)| !xf.is_identity())
+            .collect();
         (base, base_world, piv_base)
     }
     /// Axis-aligned bbox of a set of world points (for object-move snapping).
@@ -1255,14 +1278,31 @@ impl Editor {
         }
         out
     }
+    fn pathfinder_objects(&self) -> HashSet<u32> {
+        self.objsel
+            .iter()
+            .copied()
+            .chain(self.selected.iter().filter_map(|&aid| self.doc.pid_of_anchor(aid)))
+            .chain(self.dsel_path)
+            .filter(|&pid| self.doc.pidx(pid).is_some() && !self.doc.eff_hidden(pid) && !self.doc.eff_locked(pid))
+            .collect()
+    }
+    pub fn pathfinder_enabled(&self) -> Result<(), &'static str> {
+        let objects = self.pathfinder_objects();
+        let closed = objects.iter().filter(|&&pid| {
+            self.doc.pidx(pid).is_some_and(|pi| self.doc.paths[pi].closed && self.doc.paths[pi].anchors.len() >= 3)
+        });
+        (closed.count() >= 2).then_some(()).ok_or("Pathfinder needs two or more closed shapes")
+    }
     pub fn pathfinder(&mut self, op: BoolOp) {
-        if self.objsel.len() < 2 {
+        if self.pathfinder_enabled().is_err() {
             return;
         }
+        let objects = self.pathfinder_objects();
         // participants: closed paths with area, in document (z) order — bottom→top
         let sel: Vec<usize> = (0..self.doc.paths.len())
             .filter(|&pi| {
-                self.objsel.contains(&self.doc.paths[pi].id)
+                objects.contains(&self.doc.paths[pi].id)
                     && self.doc.paths[pi].closed
                     && self.doc.paths[pi].anchors.len() >= 3
             })
@@ -1280,6 +1320,7 @@ impl Editor {
         let result: Vec<ResultShape> = run_boolean_curves(op, &shapes);
         self.begin();
         let del: HashSet<u32> = sel.iter().map(|&pi| self.doc.paths[pi].id).collect();
+        let ignored: Vec<u32> = objects.iter().copied().filter(|pid| !del.contains(pid)).collect();
         self.doc.paths.retain(|p| !del.contains(&p.id));
         let mut new_ids = vec![];
         for rs in &result {
@@ -1301,7 +1342,7 @@ impl Editor {
             self.doc.paths.push(Path { holes, ..Path::new(id, anchors, true, fill, stroke, sw) });
             new_ids.push(id);
         }
-        self.objsel = new_ids.into_iter().collect();
+        self.objsel = new_ids.into_iter().chain(ignored).collect();
         self.group_sel.clear();
         self.tool = ToolKind::Object; // land in the selection tool with the result framed & ready to move
         self.selected.clear();
@@ -1870,12 +1911,16 @@ impl Editor {
             return;
         }
         self.begin();
-        if was_copy {
-            let srcs = self.structural_object_paths();
+        let carried = if was_copy {
+            let srcs = self.copy_object_paths();
             let cids = self.doc.dup_paths(&srcs); // copies inherit each unit's live rotation (A7)
-            self.objsel = cids.into_iter().collect();
-            self.group_sel = self.objsel.iter().filter_map(|&pid| self.doc.top_group_of_path(pid)).collect();
-        }
+            self.group_sel = cids.iter().filter_map(|&pid| self.doc.top_group_of_path(pid)).collect();
+            self.objsel =
+                cids.iter().copied().filter(|&pid| !self.doc.eff_hidden(pid) && !self.doc.eff_locked(pid)).collect();
+            Some(cids)
+        } else {
+            None
+        };
         // A7: replay in the SAME representation each op uses live — Move carries pivots, Rotate COMPOSES
         // into the units' transforms (so rotate-a-copy + Ctrl+D… builds a radial pattern that stays live),
         // Scale bakes then scales the world geometry.
@@ -1900,7 +1945,9 @@ impl Editor {
             }
             TfAgain::Scale { pivot, sx, sy } => {
                 self.bake_selected_units();
-                let base = self.objsel_base();
+                let base = carried
+                    .as_ref()
+                    .map_or_else(|| self.objsel_base(), |cids| self.objsel_base_for(cids.iter().copied()));
                 let f = |p: Pt| [pivot[0] + (p[0] - pivot[0]) * sx, pivot[1] + (p[1] - pivot[1]) * sy];
                 for (aid, p0, hin0, hout0) in &base {
                     if let Some(a) = self.doc.anchor_mut(*aid) {
@@ -3300,7 +3347,7 @@ impl Editor {
         self.selected.remove(&aid);
         if let AnchorRing::Hole(hi) = address.ring {
             self.doc.paths[address.path].holes[hi].remove(address.index);
-            if self.doc.paths[address.path].holes[hi].is_empty() {
+            if self.doc.paths[address.path].holes[hi].len() < 3 {
                 self.doc.paths[address.path].holes.remove(hi);
             }
             return;
@@ -3344,6 +3391,36 @@ impl Editor {
         self.doc.paths.retain(|p| !p.anchors.is_empty());
         if self.active.is_some_and(|ap| gone.contains(&ap)) {
             self.active = None;
+        }
+    }
+
+    /// Pen/Delete Anchor Point removes a point while preserving a continuous closed contour.
+    pub(crate) fn delete_anchor_reconnect(&mut self, aid: u32) {
+        let Some(address) = self.doc.anchor_address(aid) else { return };
+        self.selected.remove(&aid);
+        match address.ring {
+            AnchorRing::Outer => {
+                let pid = self.doc.paths[address.path].id;
+                if self.doc.paths[address.path].anchors.len() <= 2 {
+                    self.doc.paths.remove(address.path);
+                    self.objsel.remove(&pid);
+                    self.selected.retain(|&selected| self.doc.pid_of_anchor(selected).is_some());
+                    if self.dsel_path == Some(pid) {
+                        self.dsel_path = None;
+                    }
+                    if self.active == Some(pid) {
+                        self.active = None;
+                    }
+                    return;
+                }
+                self.doc.paths[address.path].anchors.remove(address.index);
+            }
+            AnchorRing::Hole(hi) => {
+                self.doc.paths[address.path].holes[hi].remove(address.index);
+                if self.doc.paths[address.path].holes[hi].len() < 3 {
+                    self.doc.paths[address.path].holes.remove(hi);
+                }
+            }
         }
     }
     pub fn add_anchor(&mut self, pi: usize, i: usize, t: f32) -> u32 {
@@ -3921,12 +3998,13 @@ impl Editor {
                         self.objsel.clear();
                         self.group_sel.clear();
                         for &cid in &cids {
-                            self.objsel.insert(cid);
+                            if !self.doc.eff_hidden(cid) && !self.doc.eff_locked(cid) {
+                                self.objsel.insert(cid);
+                            }
                         }
-                        self.group_sel =
-                            self.objsel.iter().filter_map(|&pid| self.doc.top_group_of_path(pid)).collect();
+                        self.group_sel = cids.iter().filter_map(|&pid| self.doc.top_group_of_path(pid)).collect();
                         self.refresh_obj_angle(); // the copies inherit the source rotation → frame follows
-                        let (base, base_world, piv_base) = self.object_move_base();
+                        let (base, base_world, piv_base) = self.object_move_base_for(cids.iter().copied());
                         self.drag = Drag::Object { down, base, base_world, piv_base };
                     } else {
                         self.group_sel.clear();
@@ -4054,22 +4132,33 @@ impl Editor {
             }
             Drag::TfPending { pivot, down } => {
                 if dist(pos, down) >= DRAG_THRESH {
-                    if self.mods.alt {
+                    let carried = if self.mods.alt {
                         // Alt-drag transforms a COPY (Illustrator)
-                        let srcs = self.structural_object_paths();
+                        let srcs = self.copy_object_paths();
                         let cids = self.doc.dup_paths(&srcs);
                         self.gesture_copy = true;
                         self.objsel.clear();
                         self.group_sel.clear();
-                        for cid in cids {
-                            self.objsel.insert(cid);
+                        for &cid in &cids {
+                            if !self.doc.eff_hidden(cid) && !self.doc.eff_locked(cid) {
+                                self.objsel.insert(cid);
+                            }
                         }
-                        self.group_sel =
-                            self.objsel.iter().filter_map(|&pid| self.doc.top_group_of_path(pid)).collect();
-                    }
+                        self.group_sel = cids.iter().filter_map(|&pid| self.doc.top_group_of_path(pid)).collect();
+                        Some(cids)
+                    } else {
+                        None
+                    };
                     self.drag = match self.tool {
                         // A7: ScaleLive works in WORLD; write-back keeps each unit's θ.
-                        ToolKind::Scale => Drag::ScaleLive { pivot, down, base: self.objsel_base_world() },
+                        ToolKind::Scale => Drag::ScaleLive {
+                            pivot,
+                            down,
+                            base: carried.as_ref().map_or_else(
+                                || self.objsel_base_world(),
+                                |cids| self.objsel_base_world_for(cids.iter().copied()),
+                            ),
+                        },
                         _ => {
                             let start = (down[1] - pivot[1]).atan2(down[0] - pivot[0]);
                             // A7: rotate composes into the units' stored transforms (no bake).
@@ -4308,23 +4397,51 @@ impl Editor {
     pub fn set_clipboard(&mut self, clipboard: Clipboard) {
         self.clipboard = clipboard;
     }
-    /// Editable paths targeted directly plus hidden unlocked descendants carried by an explicitly
-    /// selected group. Lock always wins; hidden direct selections never become edit targets.
-    pub(crate) fn structural_object_paths(&self) -> Vec<u32> {
+    /// Whole-group intent has one source of truth: an explicit group signal, or at least two visible,
+    /// unlocked members all selected. One selected Layers leaf never implies its hidden/locked siblings.
+    fn selected_groups(&self) -> HashSet<u32> {
+        let mut groups = self.group_sel.clone();
+        groups.extend(
+            self.doc.nodes.iter().filter(|node| matches!(node.kind, crate::model::NodeKind::Group)).filter_map(
+                |node| {
+                    let editable: Vec<u32> = self
+                        .doc
+                        .node_paths(node.id)
+                        .into_iter()
+                        .filter(|&pid| !self.doc.eff_hidden(pid) && !self.doc.eff_locked(pid))
+                        .collect();
+                    (editable.len() >= 2 && editable.iter().all(|pid| self.objsel.contains(pid))).then_some(node.id)
+                },
+            ),
+        );
+        groups
+    }
+    fn structural_object_paths_with_locks(&self, carry_locked: bool) -> Vec<u32> {
+        let groups = self.selected_groups();
         let mut included: HashSet<u32> = self
             .objsel
             .iter()
             .copied()
             .filter(|&pid| self.doc.pidx(pid).is_some() && !self.doc.eff_hidden(pid) && !self.doc.eff_locked(pid))
             .collect();
-        for &group in &self.group_sel {
-            included.extend(self.doc.node_paths(group).into_iter().filter(|&pid| !self.doc.eff_locked(pid)));
+        for group in groups {
+            included.extend(
+                self.doc.node_paths(group).into_iter().filter(|&pid| carry_locked || !self.doc.eff_locked(pid)),
+            );
         }
         self.doc.paths.iter().filter(|path| included.contains(&path.id)).map(|path| path.id).collect()
     }
+    /// Editable paths targeted directly plus hidden unlocked descendants carried by a whole group.
+    /// Lock always wins; hidden direct selections never become edit targets.
+    pub(crate) fn structural_object_paths(&self) -> Vec<u32> {
+        self.structural_object_paths_with_locks(false)
+    }
+    pub(crate) fn copy_object_paths(&self) -> Vec<u32> {
+        self.structural_object_paths_with_locks(true)
+    }
     /// What Copy / Cut take. A bare anchor selection copies nothing (partial-path copy is not built).
-    fn clipboard_sources(&self) -> Vec<u32> {
-        let mut included: HashSet<u32> = self.structural_object_paths().into_iter().collect();
+    fn clipboard_sources(&self, carry_locked: bool) -> Vec<u32> {
+        let mut included: HashSet<u32> = self.structural_object_paths_with_locks(carry_locked).into_iter().collect();
         if let Some(pid) = self
             .dsel_path
             .filter(|&pid| self.doc.pidx(pid).is_some() && !self.doc.eff_hidden(pid) && !self.doc.eff_locked(pid))
@@ -4337,14 +4454,14 @@ impl Editor {
     /// on the in-app clipboard. The document is untouched — no history entry, no `rev` bump. With
     /// nothing selected the clipboard keeps its previous content (Illustrator).
     pub fn copy_selection(&mut self) {
-        let pids = self.clipboard_sources();
+        let pids = self.clipboard_sources(true);
         if !pids.is_empty() {
             self.clipboard = Clipboard::capture(&self.doc, &pids);
         }
     }
     /// Edit ▸ Cut (⌘X): Copy, then delete the selection — ONE undo step. No-op with nothing selected.
     pub fn cut_selection(&mut self) {
-        let pids = self.clipboard_sources();
+        let pids = self.clipboard_sources(false);
         if pids.is_empty() {
             return;
         }
