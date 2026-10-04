@@ -866,7 +866,7 @@ struct LayerIcons {
 /// UI icons rasterize at 32px — close to their 13–18px draw size. egui-wgpu builds every texture with
 /// `mip_level_count: 1` (NO mipmaps), so a 96px raster shown at 15px is a 6× bilinear downscale that
 /// EATS thin strokes — the trash lid / folder lip vanished and icons read "clipped" (Ahmed 2026-07-11).
-const ICON_RASTER: u32 = 32;
+const ICON_RASTER: u32 = varos_app::shell::tokens::ICON_RASTER;
 
 fn load_icon(ctx: &egui::Context, name: &str, svg_inner: &str) -> Option<egui::TextureHandle> {
     crate::cursors::render_svg(&lucide(svg_inner), ICON_RASTER, false).map(|(rgba, w, h)| {
@@ -1156,13 +1156,22 @@ impl Ui {
         self.color_modal.as_ref().is_some_and(|m| m.eyedropping)
     }
     /// DFS S1: the host hands the workspace's tabs over every frame.
-    pub fn set_home(&mut self, home: bool, model: varos_app::start::StartModel, warning: Option<String>) {
+    /// Home on/off. Entering Home starts Start's focus fresh (resting on New, ring hidden).
+    pub fn set_home(&mut self, home: bool, warning: Option<String>) {
         if self.home != home {
             egui::Popup::close_all(&self.ctx);
+            varos_app::shell::kit::close_menu(&self.ctx);
+            if home {
+                self.start_page.reset_focus();
+            }
         }
         self.home = home;
-        self.start_page.replace(model);
         self.recent_warning = warning;
+    }
+    /// A rebuilt Start model (the host rebuilds only on Home and only when its inputs changed);
+    /// keyboard focus survives by key.
+    pub fn set_start_model(&mut self, model: varos_app::start::StartModel) {
+        self.start_page.replace(model);
     }
     pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
         self.doc_tabs = tabs;

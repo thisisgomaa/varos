@@ -30,6 +30,12 @@ All original v1 fixtures and their hashes remain untouched.
 | `missing_model.vrs` | Remove catalog VAROS_Model and Names; NoEmbeddedModel. |
 | `future_pdf.vrs` | Catalog version=3; model bytes `{"varos":3,"doc":42}`; NewerVersion. |
 
+`v3_future.vrs` and `future_pdf.vrs` share the same NewerVersion refusal on purpose: one is the raw
+JSON model, the other the PDF container, so both entry shapes prove the version gate. `incremental`
+and `xref_stream` are pinned to their exact reasons ("incremental update", "compressed
+cross-reference"), and `frozen_fixture_bytes_match_their_sha256sums` enforces `SHA256SUMS`
+(2026-10-04 batch review fixes, A2/A3).
+
 `varos-pdf/tests/frozen_v2.rs` asserts typed errors through both bytes and disk APIs and
 checks that originals are unchanged. Oversize cases use these small positive fixtures with
 lowered Limits instead of committing huge files. Broader generated hostile-input coverage

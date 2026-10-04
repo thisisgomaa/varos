@@ -76,6 +76,9 @@ pub struct DocumentSession {
     pub fit_pending: Option<f32>,
     pub source_fingerprint: Option<varos_app::storage::durable::Fingerprint>,
     pub save_unconfirmed: bool,
+    /// Opening changed the content in memory (A4: broken v1 clipping masks were released). The tab
+    /// is dirty from the start — dot, asterisk, Close/Quit prompt — until a Save writes the repair.
+    pub repaired_on_open: bool,
     pub recovered: Option<RecoveredSource>,
     pub recovery: varos_app::storage::scheduler::SessionRecovery,
     /// The saved-content checkpoint (a clone taken at New, open and save).
@@ -100,6 +103,7 @@ impl DocumentSession {
             memo: Cell::new(None),
             source_fingerprint: None,
             save_unconfirmed: false,
+            repaired_on_open: false,
             recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
         }
@@ -120,6 +124,7 @@ impl DocumentSession {
             memo: Cell::new(None),
             source_fingerprint: None,
             save_unconfirmed: false,
+            repaired_on_open: false,
             recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
         }
@@ -146,7 +151,7 @@ impl DocumentSession {
     /// would be missed by the memo only until the next `rev` change, which is why
     /// every Save / Close / Quit decision uses `is_dirty_exact` instead. `mark_saved` resets the memo.
     pub fn is_dirty(&self) -> bool {
-        if self.save_unconfirmed || self.recovered.is_some() {
+        if self.save_unconfirmed || self.repaired_on_open || self.recovered.is_some() {
             return true;
         }
         let ed = &self.editor;
@@ -164,7 +169,11 @@ impl DocumentSession {
     /// Unsaved changes, compared fresh (ignores the memo). Every Save / Close / Quit decision uses this.
     pub fn is_dirty_exact(&self) -> bool {
         let ed = &self.editor;
-        self.save_unconfirmed || self.recovered.is_some() || self.content_dirty() || (ed.transaction_open() && ed.dirty)
+        self.save_unconfirmed
+            || self.repaired_on_open
+            || self.recovered.is_some()
+            || self.content_dirty()
+            || (ed.transaction_open() && ed.dirty)
     }
 
     /// Nothing to lose and nowhere saved: an Open may replace this tab instead of adding one.
@@ -176,6 +185,7 @@ impl DocumentSession {
     /// content (clean), and it stops being `Untitled-n`.
     pub fn mark_saved(&mut self, path: PathBuf, key: FileKey) {
         self.save_unconfirmed = false;
+        self.repaired_on_open = false;
         self.recovered = None;
         self.path = Some(path);
         self.key = Some(key);

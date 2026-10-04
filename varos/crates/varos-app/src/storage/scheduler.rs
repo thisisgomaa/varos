@@ -21,7 +21,8 @@
 //!   [`Scheduler::retry_now`] (the Retry button) lifts the back-off at once.
 //! - After a successful copy, if the document moved on meanwhile, the next copy is due 30 s after
 //!   the previous one was issued.
-//! - Disabled ⇒ no actions at all (existing copies stay); completions are still recorded.
+//! - Disabled ⇒ no NEW copies (existing copies of unsaved work stay); a session that becomes clean
+//!   still retires its old copies (2026-10-04 review C1); completions are still recorded.
 //! - [`Scheduler::next_wake`] is the earliest moment an action could become due, for
 //!   `ControlFlow::WaitUntil`. It never reports a session that is waiting on a gesture or on a job
 //!   (those wake the loop through input / the worker's wake), so the loop never spins on a past
@@ -181,7 +182,8 @@ impl Scheduler {
         Scheduler { interval, enabled: true, wake: None }
     }
 
-    /// The Recovery on/off setting. Turning it off stops new jobs and keeps existing copies.
+    /// The Recovery on/off setting. Turning it off stops new copies and keeps existing ones of unsaved
+    /// work; a session that becomes clean (saved) still retires its stale copies.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
@@ -202,14 +204,13 @@ impl Scheduler {
     ) -> Vec<Action<K>> {
         self.wake = None;
         let mut out = Vec::new();
-        if !self.enabled {
-            return out;
-        }
+        // The switch only stops NEW copies: a session that became clean (saved) still retires the
+        // copies it already has, or the next launch would offer a stale one.
         for p in probes {
             let r = p.recovery;
             if let Some(job) = &r.in_flight {
                 // A change during a retire starts its deadline now, not when the retire completes.
-                if job.kind == JobKind::Retire && !p.clean && r.last_snapshot_rev != Some(p.rev) {
+                if self.enabled && job.kind == JobKind::Retire && !p.clean && r.last_snapshot_rev != Some(p.rev) {
                     r.next_deadline.get_or_insert(now + self.interval);
                 }
                 continue; // one job per session; its completion wakes the loop
@@ -224,6 +225,11 @@ impl Scheduler {
                         None => out.push(r.issue(JobKind::Retire, p.sid, p.rev, now)),
                     }
                 }
+                continue;
+            }
+            if !self.enabled {
+                r.next_deadline = None;
+                r.waiting = false;
                 continue;
             }
             if r.last_snapshot_rev == Some(p.rev) {
@@ -563,21 +569,24 @@ mod tests {
     }
 
     #[test]
-    fn disabled_emits_nothing() {
+    fn disabled_makes_no_new_copies_but_a_clean_session_still_retires_its_old_ones() {
         let t0 = Instant::now();
         let mut s = Scheduler::default();
         let (mut dirty, mut clean) = (Sess::new(1), Sess::new(2));
         clean.rec.has_copies = true; // copies from before the switch was turned off
         dirty.edit();
         s.set_enabled(false);
-        for sec in [0, 30, 60, 3600] {
+        // 2026-10-04 review C1: the switch only stops NEW copies; a saved (clean) session's stale
+        // copies are still retired, or the next launch would offer them.
+        let acts = observe(&mut s, t0, &mut [&mut dirty, &mut clean]);
+        assert!(matches!(acts[..], [Action::Retire { sid: 2, .. }]), "{acts:?}");
+        for sec in [30, 60, 3600] {
             assert!(observe(&mut s, t0 + sec * S, &mut [&mut dirty, &mut clean]).is_empty());
             assert_eq!(s.next_wake(), None);
         }
-        assert!(clean.rec.has_copies, "existing copies stay");
-        assert!(dirty.rec.in_flight.is_none() && dirty.rec.next_deadline.is_none());
+        assert!(dirty.rec.in_flight.is_none() && dirty.rec.next_deadline.is_none(), "no new copy while off");
         s.set_enabled(true);
-        assert_eq!(observe(&mut s, t0 + 3601 * S, &mut [&mut dirty, &mut clean]).len(), 1, "clean one retires");
+        assert!(observe(&mut s, t0 + 3601 * S, &mut [&mut dirty, &mut clean]).is_empty(), "retire still in flight");
         assert_eq!(s.next_wake(), Some(t0 + 3631 * S), "dirty one starts a fresh 30 s");
     }
 
