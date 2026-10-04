@@ -19,7 +19,7 @@ Sources: [decision record 24/25 Sep](../history/STATUS_THROUGH_2026-09-26.md), [
 |---|---|---|
 | L1 | Home replaces the ☰ burger on Mac; native menus stay | Mac app bar cell = kit Home chip (`ui.rs:3510-3520`); ☰ cell only on the compile-only Windows path (`ui.rs:3521+`). |
 | L2 | Icons, not text labels, on chrome buttons | Every icon-only control has a tooltip naming it (+ shortcut); visible text only in menus, lists, fields, dialogs. |
-| L3 | IBM Plex Sans/Mono bundled; Arabic gated | `shell/fonts.rs:12-34`; Plex Arabic is a named diagnostic family only until §8 passes. Mono = numbers only. |
+| L3 | Inter 400/500/600 + JetBrains Mono 400 bundled; Arabic gated | `shell/fonts.rs`; Plex Arabic is a named diagnostic family only until §8 passes. Mono = numbers, sizes, paths and dates. |
 | L4 | No animation ever; no glide/ease/glow; direction bar stays | `animation_time = 0` (`tokens.rs:90`); no time-based interpolation in chrome code (tab drag: `chrome.rs:220` "no time, no interpolation"). |
 | L5 | "On" looks | tool = azure block + white icon; icon toggle = small azure bar (10×2, BOX_SYSTEM_PLAN §3.5), no fill; tab/segment = SURFACE fill, no azure. |
 | L6 | FAINT → MUTED with QW6 sizes | Informational text never FAINT; panel icon glyph 18 pt in the 26×24 chip; micro-labels 10.5 pt. |
@@ -206,7 +206,12 @@ Every later UI piece reports these numbers (or "not affected: why") in its GATE_
 3. Raster once at `ICON_RASTER`, white, tinted at paint; draw size only from `ICON` / `ICON_SMALL`.
 4. Every icon-only control has a tooltip (name + shortcut via `shortcut_label`).
 
-**Fonts**: U0-A is done (`shell/fonts.rs`, [record](../foundation/work_orders/UI_U0_A_FONTS.md)); all faces Regular; Mono for numbers only; casing at render. Arabic: §8.
+**Fonts**: Start v2 L1 supersedes U0-A's Latin chain: static Inter Regular 400 / Medium 500 /
+SemiBold 600 (`ui-400`, `ui-500`, `ui-600`) and JetBrains Mono Regular 400 (`mono-400`).
+Proportional defaults to Inter Regular; Monospace defaults to JetBrains Mono; both retain the
+Noto symbol fallbacks for ⌘⌥⇧⌃ and arrows. Semantic constructors in `shell/tokens.rs` are the
+one home for h1 30/600, h2 18/600, button 15/500, name 14/600, body 13/400, small 12/400,
+tag 11/500 and mono 11/400. IBM Plex Sans Arabic remains named-diagnostic-only behind §8.
 
 ## K6 — Panels, size and motion
 

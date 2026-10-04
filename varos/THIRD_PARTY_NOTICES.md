@@ -7,6 +7,17 @@ The tool cursors are the Varos cursor set v1 (`crates/varos-app/assets/cursors/v
 this project — no third-party artwork. (Until 2026-09-23 the Pen cursor was derived from Font
 Awesome Free's `pen-nib` icon, CC BY 4.0; that glyph is no longer shipped.)
 
+## Fonts
+
+The UI bundles static instances of **Inter** (Regular 400, Medium 500, SemiBold 600) and
+**JetBrains Mono** (Regular 400), both under the SIL Open Font License 1.1. Sources are the
+Google Fonts repositories at `ofl/inter` and `ofl/jetbrainsmono`; the unmodified OFL notices,
+instancing commands, exact byte lengths and SHA-256 hashes are in `assets/fonts/`.
+
+**IBM Plex Sans Arabic** remains bundled under OFL 1.1 as a gated diagnostic face. **Noto Sans
+Symbols** and **Noto Sans Symbols 2** remain bundled under OFL 1.1 as UI-symbol fallbacks. Their
+original notices and pinned source revisions are also in `assets/fonts/manifest.json`.
+
 ## Lucide (icons)
 
 UI panel icons (tool rail, control bar) are from **Lucide**. The icon registry's SVG files
