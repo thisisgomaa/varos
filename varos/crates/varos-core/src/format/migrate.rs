@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 pub type Step = fn(Document, &Limits) -> Result<Document, LoadError>;
 
 /// The sequential table. Loading format N runs every step from N up to `FORMAT_VERSION`, in order.
-pub const MIGRATIONS: &[(u32, Step)] = &[(1, migrate_v1_to_v2)];
+pub const MIGRATIONS: &[(u32, Step)] = &[(1, migrate_v1_to_v2), (2, migrate_v2_to_v3)];
 
 /// Run the migrations that take a format-`from` document to format `to`, in order.
 pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result<Document, LoadError> {
@@ -36,6 +36,15 @@ pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result
 /// `sync_tree` assume an acyclic, depth-bounded tree.
 pub fn migrate_v1_to_v2(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     normalize(doc)
+}
+
+/// v2 → v3 (2026-10-04, board metadata). Format 3 adds `doc.name`, `doc.description` and `doc.tags`; a
+/// v2 file has none of them (`decode_model` refuses the keys in a v2 file), so the typed decode already
+/// gave them their defaults: empty name (= "use the file stem", `board::display_name`), empty
+/// description, no tags. Nothing else changes; the input already passed the v2 canonical check.
+pub fn migrate_v2_to_v3(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
+    debug_assert!(doc.name.is_empty() && doc.description.is_empty() && doc.tags.is_empty());
+    Ok(doc)
 }
 
 /// The shared normalizer: migration of v1 files, and the save-side pass on a clone of the editor's

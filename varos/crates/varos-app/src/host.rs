@@ -63,7 +63,7 @@ pub fn tab_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<AppC
 /// tab; with no active tab (Home, S2's empty workspace) they mean nothing (`None`).
 pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppCommand> {
     Some(match cmd {
-        FileCmd::New => AppCommand::NewDocument,
+        FileCmd::New => AppCommand::NewBoard,
         FileCmd::Open => AppCommand::OpenDialog,
         FileCmd::Save => AppCommand::Save(active?),
         FileCmd::SaveAs => AppCommand::SaveAs(active?),
@@ -86,7 +86,10 @@ pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<
 pub fn start_command(action: varos_app::start::StartAction) -> Option<AppCommand> {
     use varos_app::start::StartAction as A;
     Some(match action {
-        A::New => AppCommand::NewDocument,
+        A::New | A::NewBoard => AppCommand::NewBoard,
+        A::NewWithPreset(preset) => AppCommand::NewWithPreset(preset),
+        // filter actions are applied to the Start model by the page itself
+        A::SetTagFilter(_) | A::SetView(_) | A::Search(_) => return None,
         A::Open => AppCommand::OpenDialog,
         A::OpenRecent(p) => AppCommand::OpenRecent(p),
         A::Locate(p) => AppCommand::LocateRecent(p),
@@ -552,7 +555,8 @@ fn waits_for_fields(cmd: &AppCommand) -> bool {
             | C::SaveAs(_)
             | C::ShowExport(_)
             | C::ExportPdf(..)
-            | C::NewDocument
+            | C::NewBoard
+            | C::NewWithPreset(_)
             | C::Home
             | C::OpenDialog
             | C::OpenRecent(_)
@@ -765,9 +769,21 @@ mod tests {
     }
 
     #[test]
+    fn start_board_actions_map_to_new_board_commands_and_filters_stay_on_the_page() {
+        use varos_app::start::{StartAction as A, StartView};
+        use varos_core::board::PresetId;
+        assert_eq!(start_command(A::NewBoard), Some(AppCommand::NewBoard));
+        assert_eq!(start_command(A::New), Some(AppCommand::NewBoard), "v1's New is the same command");
+        assert_eq!(start_command(A::NewWithPreset(PresetId::Story)), Some(AppCommand::NewWithPreset(PresetId::Story)));
+        for filter in [A::SetTagFilter(Some("client".into())), A::SetView(StartView::List), A::Search("x".into())] {
+            assert_eq!(start_command(filter), None);
+        }
+    }
+
+    #[test]
     fn to_app_command_targets_the_active_tab() {
         let a = Some(ID);
-        assert_eq!(to_app_command(FileCmd::New, a), Some(AppCommand::NewDocument));
+        assert_eq!(to_app_command(FileCmd::New, a), Some(AppCommand::NewBoard));
         assert_eq!(to_app_command(FileCmd::Open, a), Some(AppCommand::OpenDialog));
         assert_eq!(to_app_command(FileCmd::Save, a), Some(AppCommand::Save(ID)));
         assert_eq!(to_app_command(FileCmd::SaveAs, a), Some(AppCommand::SaveAs(ID)));
@@ -1044,7 +1060,7 @@ mod tests {
             assert!(ed.transaction_open() && !matches!(ed.drag, Drag::None));
         }
         let mut ui = FakeUi::default();
-        let ran = run(&mut ws, &mut ui, AppCommand::NewDocument);
+        let ran = run(&mut ws, &mut ui, AppCommand::NewBoard);
         assert_eq!(ran, Ran { exit: false, ran: true, switched: true, ..Ran::default() });
         assert_eq!(ui.log, ["settle", "switched"], "Ui settle first, caches reset after");
         assert_eq!(ui.gesture_open_at_settle, Some(true), "the Ui settles BEFORE the gesture is finished");
@@ -1061,15 +1077,14 @@ mod tests {
         let mut ws = Workspace::new();
         let first = ws.active_id().unwrap();
         let mut ui = FakeUi { invalid_field: true, ..FakeUi::default() };
-        for cmd in
-            [AppCommand::NewDocument, AppCommand::Quit, AppCommand::CloseDocument(first), AppCommand::ActivateNext]
+        for cmd in [AppCommand::NewBoard, AppCommand::Quit, AppCommand::CloseDocument(first), AppCommand::ActivateNext]
         {
             assert_eq!(run(&mut ws, &mut ui, cmd), Ran { held: true, ..Ran::default() }, "held, did not run");
         }
         assert_eq!(ws.active_id(), Some(first), "no tab was opened, closed or switched");
         assert!(ui.log.iter().all(|l| *l == "settle"), "nothing was reset either: {:?}", ui.log);
         ui.invalid_field = false;
-        let ran = run(&mut ws, &mut ui, AppCommand::NewDocument);
+        let ran = run(&mut ws, &mut ui, AppCommand::NewBoard);
         assert!(ran.ran && ran.switched, "valid text: the command runs");
     }
 
@@ -1246,8 +1261,8 @@ mod tests {
         q.chrome_frame([(at, activate(2))]);
         assert_eq!(names(&q.take_ready()), ["ActivateDocument(SessionId(2))", "Key(KeyZ)", "Save(SessionId(1))"]);
         // a command with no pointer event behind it goes to the tail
-        q.chrome_frame([(None, HostAction::App(AppCommand::NewDocument))]);
-        assert_eq!(names(&q.take_ready()), ["NewDocument"]);
+        q.chrome_frame([(None, HostAction::App(AppCommand::NewBoard))]);
+        assert_eq!(names(&q.take_ready()), ["NewBoard"]);
         assert!(q.is_empty());
     }
 }
@@ -1420,11 +1435,11 @@ mod background_tests {
         r.edit(a);
         assert!(r.run(AppCommand::CloseDocument(a)).held);
         assert!(r.log().is_empty() && r.ws.get(a).is_some(), "held: nothing decided yet");
-        assert_eq!(r.worker.wait.status().as_deref(), Some("Finishing save of “a.vrs”…"));
+        assert_eq!(r.worker.wait.status().as_deref(), Some("Finishing save of “a”…"));
         r.land();
         r.dlg.answers.push_back(SaveDecision::DontSave);
         assert!(!r.run(AppCommand::CloseDocument(a)).held);
-        assert_eq!(r.log(), ["ask a.vrs"], "asked only after the save landed");
+        assert_eq!(r.log(), ["ask a"], "asked only after the save landed");
         assert_eq!(r.boards_on_disk("a.vrs"), 2, "the snapshot taken at ⌘S");
         assert!(r.ws.get(a).is_none());
         assert!(r.worker.wait.status().is_none(), "the wait ends with the command");
@@ -1481,7 +1496,7 @@ mod background_tests {
         r.waited_long();
         r.dlg.keep_waiting.push_back(true);
         assert!(r.run(AppCommand::CloseDocument(a)).held);
-        assert_eq!(r.log(), ["still-saving a.vrs to /Volumes/Slow"]);
+        assert_eq!(r.log(), ["still-saving a to /Volumes/Slow"]);
         assert!(r.run(AppCommand::CloseDocument(a)).held);
         assert!(r.log().is_empty(), "Keep Waiting restarted the wait");
         // Cancel: back to the app — the tab stays open and dirty, the save carries on
@@ -1489,7 +1504,7 @@ mod background_tests {
         r.dlg.keep_waiting.push_back(false);
         let ran = r.run(AppCommand::CloseDocument(a));
         assert!(!ran.held && !ran.exit);
-        assert_eq!(r.log(), ["still-saving a.vrs to /Volumes/Slow"]);
+        assert_eq!(r.log(), ["still-saving a to /Volumes/Slow"]);
         let s = r.ws.get(a).expect("Cancel keeps the tab");
         assert!(s.is_dirty_exact() && s.saving.is_some());
         assert!(r.worker.wait.status().is_none());
@@ -1528,7 +1543,7 @@ mod background_tests {
     #[test]
     fn a_held_action_and_everything_behind_it_drain_first_in_order() {
         let mut q = ActionQueue::default();
-        q.push(HostAction::App(AppCommand::NewDocument));
+        q.push(HostAction::App(AppCommand::NewBoard));
         let mut ready = q.take_ready().into_iter();
         let first = ready.next().unwrap();
         q.push(HostAction::App(AppCommand::OpenDialog)); // raised while the first was held
@@ -1536,7 +1551,7 @@ mod background_tests {
         assert!(!q.is_empty() && !q.doc_runs_now(), "a key raised now queues behind the held command");
         assert!(q.has_new());
         let order: Vec<_> =
-            q.take_ready().into_iter().map(|a| matches!(a, HostAction::App(AppCommand::NewDocument))).collect();
+            q.take_ready().into_iter().map(|a| matches!(a, HostAction::App(AppCommand::NewBoard))).collect();
         assert_eq!(order, [true, false], "held first, then what came after");
         q.hold([HostAction::App(AppCommand::Quit)]);
         assert!(!q.has_new(), "a held action alone never asks for another frame");

@@ -109,6 +109,7 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
     point(doc.ruler_origin, "document", "ruler origin")?;
     finite(doc.snap.radius_px, "snapping", "radius")?;
     finite(doc.snap.grid_spacing, "snapping", "grid spacing")?;
+    crate::board::check_document(doc).map_err(Invalid::Board)?;
     finite(doc.units.ppi, "document", "ppi")?;
     if doc.units.ppi <= 0.0 {
         return Err(range(doc.units.ppi, "document", "ppi"));

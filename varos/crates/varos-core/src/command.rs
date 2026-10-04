@@ -3,6 +3,7 @@
 //! This closed enum is application plumbing, not a stable plugin or AI protocol. Adapters,
 //! versioning, permissions, compatibility, and query contracts require separate decisions.
 
+use crate::board;
 use crate::boolean::BoolOp;
 use crate::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, ZOrder};
 use crate::geom::{Pt, Rgba};
@@ -132,6 +133,16 @@ pub enum EditCommand {
     ToggleSnapping,
     ToggleGuidesLocked,
     ToggleSmartGuides,
+    /// Board metadata (format 3, `crate::board`). Each is ONE undo step and dirties the document; an
+    /// unchanged value is a no-op (no undo step, the document stays clean). These variants only ever
+    /// carry VALID values: UI input goes through the checked path `Editor::try_set_board_name /
+    /// _description / _tags`, which returns the plain-English `board::Reject` (the field keeps focus
+    /// and shows it) and builds the command only from valid, cleaned input. The variant re-cleans
+    /// (idempotent) and asserts validity in debug builds; a release build still never stores an
+    /// invalid value (it is ignored).
+    SetBoardName(String),
+    SetBoardDescription(String),
+    SetBoardTags(Vec<String>),
     Undo,
     Redo,
 }
@@ -204,6 +215,24 @@ impl EditCommand {
             Self::ToggleSnapping => ed.doc.snap.enabled = !ed.doc.snap.enabled,
             Self::ToggleGuidesLocked => ed.doc.guides_locked = !ed.doc.guides_locked,
             Self::ToggleSmartGuides => ed.doc.snap.smart = !ed.doc.snap.smart,
+            Self::SetBoardName(name) => {
+                let name = board::clean_text(&name);
+                if valid_replay(board::check_name(&name)) && name != ed.doc.name {
+                    edit_board(ed, |d| d.name = name);
+                }
+            }
+            Self::SetBoardDescription(text) => {
+                let text = board::clean_text(&text);
+                if valid_replay(board::check_description(&text)) && text != ed.doc.description {
+                    edit_board(ed, |d| d.description = text);
+                }
+            }
+            Self::SetBoardTags(tags) => {
+                let tags = board::normalize_tags(tags);
+                if valid_replay(board::check_tags(&tags)) && tags != ed.doc.tags {
+                    edit_board(ed, |d| d.tags = tags);
+                }
+            }
             Self::Undo => ed.undo(),
             Self::Redo => ed.redo(),
         }
@@ -238,6 +267,40 @@ impl Editor {
     pub fn toggle_rulers_visibility(&mut self) {
         self.show_rulers = !self.show_rulers;
     }
+
+    /// The CHECKED board-name edit the UI field calls: the typed text is edge-cleaned, then bounded.
+    /// `Err(reason)` changes nothing (the field shows the reason and keeps focus); `Ok` applies it as one
+    /// undo step through `EditCommand::SetBoardName` (no step when unchanged).
+    pub fn try_set_board_name(&mut self, typed: &str) -> Result<(), board::Reject> {
+        let name = board::clean_text(typed);
+        board::check_name(&name)?;
+        self.execute(EditCommand::SetBoardName(name));
+        Ok(())
+    }
+
+    /// The checked board-description edit (see [`Editor::try_set_board_name`]).
+    pub fn try_set_board_description(&mut self, typed: &str) -> Result<(), board::Reject> {
+        let text = board::clean_text(typed);
+        board::check_description(&text)?;
+        self.execute(EditCommand::SetBoardDescription(text));
+        Ok(())
+    }
+
+    /// The checked tag-list edit: typed tags are cleaned and deduplicated (`board::normalize_tags`,
+    /// first spelling kept), THEN bounded, so 17 typed tags that clean down to 16 are accepted.
+    pub fn try_set_board_tags(&mut self, typed: Vec<String>) -> Result<(), board::Reject> {
+        let tags = board::normalize_tags(typed);
+        board::check_tags(&tags)?;
+        self.execute(EditCommand::SetBoardTags(tags));
+        Ok(())
+    }
+}
+
+/// `EditCommand::SetBoard*` carry only valid values (built by the checked `try_set_board_*`): a
+/// debug build stops on a violation; a release build ignores it rather than store an invalid value.
+fn valid_replay(check: Result<(), board::Reject>) -> bool {
+    debug_assert!(check.is_ok(), "SetBoard* carried an invalid value: {check:?}");
+    check.is_ok()
 }
 
 /// A user-typed object name with its invisible edges removed: whitespace AND the zero-width
@@ -249,6 +312,14 @@ pub fn clean_name(name: &str) -> &str {
         c.is_whitespace()
             || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{061C}' | '\u{FEFF}')
     })
+}
+
+/// One board-metadata change as one undo step (the callers have already ruled out a no-op).
+fn edit_board(ed: &mut Editor, change: impl FnOnce(&mut crate::model::Document)) {
+    ed.begin();
+    change(&mut ed.doc);
+    ed.dirty = true;
+    ed.commit();
 }
 
 /// `RenamePath`: only a real change becomes an edit. `Editor::rename_path` itself always opens an undo

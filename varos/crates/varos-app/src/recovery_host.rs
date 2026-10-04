@@ -253,9 +253,11 @@ impl RecoveryHost {
                         .load_best_decoded(&rid, |blob| {
                             let text =
                                 std::str::from_utf8(blob).map_err(|_| "This recovery copy is damaged.".to_string())?;
-                            // No format notice is dropped here: recovery copies are always written by
-                            // this build's `doc_to_blob` (current v2), so no migration or released-mask
-                            // repair — and therefore no notice — can arise when one is read back.
+                            // Recovery copies are written by `doc_to_blob` (the current format). A copy
+                            // left by an older build (e.g. format 2 before 2026-10-04) migrates here and
+                            // its plain migration notice is dropped on purpose: a recovered tab is dirty
+                            // and saving it writes the current format anyway. Released-mask repair is
+                            // v1-only and no build writes v1 recovery copies.
                             varos_core::file::doc_from_blob(text)
                         })
                         .map_err(|e| e.reason())

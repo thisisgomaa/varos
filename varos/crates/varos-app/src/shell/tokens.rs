@@ -72,8 +72,7 @@ pub fn hairline() -> Stroke {
     Stroke::new(1.0, LINE)
 }
 
-/// Existing dense desktop text ramp, centralized without changing sizes in U0-A.
-/// Names use Proportional; numeric fields use Monospace. All bundled faces are Regular (400).
+/// Compatibility mapping for existing call sites. New UI uses the semantic constructors below.
 pub fn text_styles() -> std::collections::BTreeMap<egui::TextStyle, egui::FontId> {
     use egui::{FontId, TextStyle};
     [
@@ -84,6 +83,51 @@ pub fn text_styles() -> std::collections::BTreeMap<egui::TextStyle, egui::FontId
         (TextStyle::Monospace, FontId::monospace(12.5)),
     ]
     .into()
+}
+
+/// Start v2 type scale (points / static weight / family).
+///
+/// | Constructor | Size | Weight | Family |
+/// |---|---:|---:|---|
+/// | `h1` | 30 | 600 | Inter |
+/// | `h2` | 18 | 600 | Inter |
+/// | `button` | 15 | 500 | Inter |
+/// | `name` | 14 | 600 | Inter |
+/// | `body` | 13 | 400 | Inter |
+/// | `small` | 12 | 400 | Inter |
+/// | `tag` | 11 | 500 | Inter |
+/// | `mono` | 11 | 400 | JetBrains Mono |
+fn weighted(size: f32, family: &'static str) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(family.into()))
+}
+pub fn h1() -> egui::FontId {
+    weighted(30.0, super::fonts::UI_600)
+}
+pub fn h2() -> egui::FontId {
+    weighted(18.0, super::fonts::UI_600)
+}
+pub fn button() -> egui::FontId {
+    weighted(15.0, super::fonts::UI_500)
+}
+pub fn name() -> egui::FontId {
+    weighted(14.0, super::fonts::UI_600)
+}
+pub fn body() -> egui::FontId {
+    weighted(13.0, super::fonts::UI_400)
+}
+pub fn small() -> egui::FontId {
+    weighted(12.0, super::fonts::UI_400)
+}
+pub fn tag() -> egui::FontId {
+    weighted(11.0, super::fonts::UI_500)
+}
+pub fn mono() -> egui::FontId {
+    weighted(11.0, super::fonts::MONO_400)
+}
+
+/// Tabular numeric values/readouts at the caller's size; labels remain proportional Inter.
+pub fn numeric_value(size: f32) -> egui::FontId {
+    egui::FontId::monospace(size)
 }
 
 /// Apply the constitution's base look to a context: warm-dark visuals + INSTANT (no animation).
