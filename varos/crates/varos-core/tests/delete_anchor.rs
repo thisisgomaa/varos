@@ -115,6 +115,102 @@ fn deleting_an_open_endpoint_just_trims_it() {
     assert_eq!(p.anchors.iter().map(|a| a.id).collect::<Vec<_>>(), vec![1, 2], "only C was trimmed");
 }
 
+#[test]
+fn deleting_from_a_hole_drops_it_before_it_can_become_degenerate() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    let mut p = square(100, [1, 2, 3, 4]);
+    p.holes.push(vec![corner(10, 2.0, 2.0), corner(11, 8.0, 2.0), corner(12, 5.0, 8.0)]);
+    ed.doc.paths.push(p);
+    ed.doc.ids = 500;
+    ed.set_tool(ToolKind::Direct);
+    ed.selected.insert(10);
+    ed.execute(EditCommand::DeleteSelected);
+    assert!(ed.doc.paths[0].holes.is_empty(), "a hole with fewer than three anchors is removed");
+    assert!(ed.doc.paths[0].closed, "deleting a hole anchor never opens the outer path");
+}
+
+#[test]
+fn pen_delete_reconnects_outer_ring_but_direct_delete_opens_it() {
+    let mut pen = Editor::new();
+    pen.doc.paths.clear();
+    pen.doc.paths.push(square(100, [1, 2, 3, 4]));
+    pen.doc.ids = 500;
+    pen.objsel.insert(100);
+    pen.set_tool(ToolKind::Pen);
+    let before = pen.doc.clone();
+    pen.pointer_down([10.0, 0.0]);
+    pen.pointer_up();
+    assert!(pen.doc.paths[0].closed, "Pen delete reconnects the neighbours");
+    assert_eq!(pen.doc.paths[0].anchors.len(), 3);
+    pen.undo();
+    assert_eq!(pen.doc, before, "Pen anchor delete is one undo step");
+
+    let mut direct = Editor::new();
+    direct.doc.paths.clear();
+    direct.doc.paths.push(square(100, [1, 2, 3, 4]));
+    direct.doc.ids = 500;
+    direct.set_tool(ToolKind::Direct);
+    direct.selected.insert(2);
+    direct.execute(EditCommand::DeleteSelected);
+    assert!(!direct.doc.paths[0].closed, "Direct+Delete keeps the A32 opening behavior");
+}
+
+#[test]
+fn pen_delete_keeps_a_two_anchor_result_closed() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    let mut triangle = square(100, [1, 2, 3, 4]);
+    triangle.anchors.pop();
+    ed.doc.paths.push(triangle);
+    ed.doc.ids = 500;
+    ed.objsel.insert(100);
+    ed.set_tool(ToolKind::Pen);
+    ed.pointer_down([10.0, 0.0]);
+    ed.pointer_up();
+    assert_eq!(ed.doc.paths[0].anchors.len(), 2);
+    assert!(ed.doc.paths[0].closed, "Pen keeps the reconnected two-point path closed");
+}
+
+#[test]
+fn pen_delete_from_a_closed_two_anchor_path_removes_it_and_clears_active() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    let mut two = square(100, [1, 2, 3, 4]);
+    two.anchors.truncate(2);
+    ed.doc.paths.push(two);
+    ed.doc.ids = 500;
+    ed.objsel.insert(100);
+    ed.set_tool(ToolKind::Pen);
+    ed.active = Some(100);
+    let before = ed.doc.clone();
+    ed.pointer_down([10.0, 0.0]);
+    ed.pointer_up();
+    assert!(ed.doc.paths.is_empty(), "a one-anchor remainder is removed");
+    assert_eq!(ed.active, None);
+    assert!(!ed.objsel.contains(&100));
+    ed.undo();
+    assert_eq!(ed.doc, before, "Pen delete is one undo step");
+}
+
+#[test]
+fn pen_delete_reconnects_a_hole_until_the_ring_would_be_degenerate() {
+    let mut ed = Editor::new();
+    ed.doc.paths.clear();
+    let mut p = square(100, [1, 2, 3, 4]);
+    p.holes.push(vec![corner(10, 2.0, 2.0), corner(11, 8.0, 2.0), corner(12, 8.0, 8.0), corner(13, 2.0, 8.0)]);
+    ed.doc.paths.push(p);
+    ed.doc.ids = 500;
+    ed.objsel.insert(100);
+    ed.set_tool(ToolKind::Pen);
+    ed.pointer_down([2.0, 2.0]);
+    ed.pointer_up();
+    assert_eq!(ed.doc.paths[0].holes[0].len(), 3, "Pen reconnects the closed hole ring");
+    ed.pointer_down([8.0, 2.0]);
+    ed.pointer_up();
+    assert!(ed.doc.paths[0].holes.is_empty(), "a hole is removed instead of becoming a two-anchor ring");
+}
+
 /// FB2 — an OPEN compound path (outer + hole, e.g. a donut A32 already opened) whose outer is split by
 /// deleting an interior anchor: each hole must travel to the fragment whose area actually holds it.
 /// Left lobe = triangle (1,2,3); right lobe = triangle (5,6,7); anchor 4 bridges them and is deleted.
