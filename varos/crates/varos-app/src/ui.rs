@@ -20,12 +20,15 @@ use winit::window::Window;
 // (R ≥ G ≥ B, tokens.rs = UI_VISION_MOCKUP's :root). The old cool-gray names alias their warm
 // successors so this 4k-line file needs no body edits; Stage 4's re-cut chrome uses the law names.
 use varos_app::shell::tokens::{
-    shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, INPUT_WELL, LINE as BORDER,
-    LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
-    SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
+    shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, FAINT, HOVER, LINE as BORDER, LINE2 as BORDER_2,
+    MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM, SURFACE as BG_SURFACE,
+    SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
 };
 // Icon stage 1: one icon registry + one icon button (shell::kit), one set of icon sizes (tokens).
+use varos_app::shell::kit::field::Label as Lab;
 use varos_app::shell::kit::{self, Icon};
+
+mod fields;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
@@ -141,6 +144,9 @@ enum Op {
     ToggleSnapping, // doc.snap.enabled master switch (a non-undoable mode flag, like the magnet menu)
     ToggleGuides,   // show/hide ruler guides — the guides-visibility view pref (mirrors Ctrl+;)
     ToggleRulers,   // show/hide rulers — the rulers view pref (mirrors Ctrl+R)
+    // ---- K3 field law (`ui/fields.rs`) ----
+    Field(Box<Op>),                  // a field's commit: applied before the frame's other ops
+    FieldPending(egui::Id, Box<Op>), // what the open field would commit now (kept by `Ui`, never applied)
 }
 
 // ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
@@ -737,6 +743,7 @@ struct Snap {
     snap_enabled: bool,
     guides_on: bool, // ruler guides visible (= !guides_hidden)
     rulers_on: bool,
+    pathfinder: Result<(), &'static str>, // the boolean buttons' availability + reason (core decides)
 }
 impl Snap {
     fn read(ed: &Editor) -> Self {
@@ -806,6 +813,7 @@ impl Snap {
             snap_enabled: ed.doc.snap.enabled,
             guides_on: !ed.guides_hidden,
             rulers_on: ed.show_rulers,
+            pathfinder: ed.pathfinder_enabled(),
         }
     }
 }
@@ -908,7 +916,7 @@ pub struct Ui {
     lock: bool,                              // constrain W/H proportions
     ab_lock: bool,                           // constrain artboard W/H proportions
     align_target: AlignTarget,               // A4: Auto (smart) | Selection | Artboard — the align reference pref
-    ab_name_edit: Option<(usize, String)>,   // inline rename in progress (artboard index + buffer)
+    ab_name_edit: Option<(usize, String)>,   // on-canvas rename open: artboard index + the name it opened with
     pub fit_request: Option<usize>,          // an artboard asked to be fit in the window (host applies it)
     top: TopIcons,
     pub win_action: Option<WinAction>, // a window control was clicked this frame (host acts on it)
@@ -926,7 +934,7 @@ pub struct Ui {
     layer_icons: LayerIcons,
     lay_collapsed: std::collections::HashSet<u32>, // collapsed container node ids (UI-only)
     lay_search: String,
-    lay_rename: Option<(u32, String)>, // inline rename in progress (node id + buffer)
+    lay_rename: Option<(u32, String)>, // inline rename open: node id + the name it opened with (K3 session holds the text)
     lay_drag: Option<(u32, u32)>,      // Layers row being dragged: (node id, SOURCE section) — the
     // section decides same-section reorder vs cross-board move
     lay_anchor: Option<(u32, u32)>, // Shift-range anchor: (node id, SECTION) — mirror rows share an
@@ -937,6 +945,7 @@ pub struct Ui {
     shell: varos_app::shell::ShellState, // the box tree; panel bodies render through the host hook
     board_hole: Option<egui::Rect>,      // the Board pane's interior (logical pts) — the wgpu canvas hole
     pub board_px: Option<egui::Rect>,    // same, in PHYSICAL px — main.rs fits the view to it
+    field_pending: Option<fields::Pending>, // K3: what the open field would commit now
 }
 
 /// The Layers-panel icon set (rasterized Lucide, white).
@@ -1164,6 +1173,7 @@ impl Ui {
             shell: varos_app::shell::ShellState::standard(),
             board_hole: None,
             board_px: None,
+            field_pending: None,
         }
     }
 
@@ -1265,16 +1275,29 @@ impl Ui {
     pub fn take_app_commands(&mut self) -> Vec<AppCommand> {
         std::mem::take(&mut self.app_cmds)
     }
-    /// DFS S1: before any lifecycle command, close every Ui-side edit still open on `ed` — an open colour
-    /// picker is CANCELLED (its live preview is not a commit), and unsaved inline rename buffers (layer,
-    /// artboard) and the focused text field's typed buffer (`settle_field_edits`) are discarded.
-    pub fn settle(&mut self, ed: &mut Editor) {
-        settle_field_edits(&self.ctx);
+    /// DFS S1 + K3: before any lifecycle command, close every Ui-side edit still open on `ed` — the open
+    /// field COMMITS first (`fields::settle`; unchanged text commits nothing), then an open colour picker
+    /// is CANCELLED (its live preview is not a commit). `false` = the field's text does not parse: it
+    /// keeps the keyboard and its reason, nothing was touched, and the command must not run.
+    pub fn settle(&mut self, ed: &mut Editor) -> bool {
+        if !self.commit_fields(ed) {
+            return false;
+        }
         if self.color_modal.take().is_some() {
             ed.execute(EditCommand::PickerCancel);
         }
         self.lay_rename = None;
         self.ab_name_edit = None;
+        true
+    }
+    /// K3: commit the open field into `ed` now (before a canvas press, which may change the selection
+    /// the field edits). `false` = its text does not parse — it keeps the keyboard; drop the press.
+    pub fn commit_fields(&mut self, ed: &mut Editor) -> bool {
+        fields::settle(&self.ctx, self.doc_active, &mut self.field_pending, ed)
+    }
+    /// A text / number field is being edited right now.
+    pub fn editing_field(&self) -> bool {
+        kit::field::any_open(&self.ctx)
     }
     /// DFS S1: the active document changed — drop the Ui state that belongs to the previous document
     /// (the Layers rows cache, drag, Shift-range anchor, collapsed rows and search).
@@ -1342,6 +1365,10 @@ impl Ui {
             );
         });
 
+        // K3: no field is drawn on Home — an edit left open (an invalid one a non-user command passed)
+        // is closed here, never kept indefinitely; there is no document to commit into
+        let _ = kit::field::end_frame(&self.ctx);
+        self.field_pending = None;
         self.board_hole = None;
         self.board_px = None;
         self.cursor = out.platform_output.cursor_icon;
@@ -1487,7 +1514,8 @@ impl Ui {
                 paint_void_underlay(root.painter(), mid, prev_hole);
                 let mut host = |panel: varos_app::shell::PanelId, ui: &mut egui::Ui| -> bool {
                     use varos_app::shell::PanelId as P;
-                    match panel {
+                    // K3: each panel's fields form one Tab ring
+                    kit::field::group(ui, panel, |ui| match panel {
                         P::Board => {
                             let rect = ui.max_rect();
                             let p = ui.painter().clone();
@@ -1554,11 +1582,11 @@ impl Ui {
                             true
                         }
                         P::Pathfinder => {
-                            panel_pathfinder(ui, &mut ops);
+                            panel_pathfinder(ui, snap.pathfinder, &mut ops);
                             true
                         }
                         _ => false,
-                    }
+                    })
                 };
                 // the boxes FLOAT in the void (Ahmed 07-07): an outer breath of HALF the
                 // box-to-box seam on the sides/top; the bottom breath lives INSIDE the taller
@@ -1615,6 +1643,8 @@ impl Ui {
         ed.execute(EditCommand::SetSnapConfig(snap_cfg)); // non-undoable mode flag, now core-owned
         ed.set_constrain_wh(lock); // A12: mirror the Properties W/H lock so canvas scale drags honour it too
                                    // OpenPicker is a UI op (it opens the modal, seeded from the target's colour) — intercept it here
+                                   // K3: field commits first; while a field holds invalid text the frame's presses are dropped
+        fields::finish_frame(&self.ctx, self.doc_active, &mut ops, &mut self.field_pending);
         ops.retain(|op| {
             if let Op::OpenPicker(t) = op {
                 let seed = match *t {
@@ -1810,12 +1840,6 @@ fn panel_frame(margin: i8) -> egui::Frame {
 
 // ───────────────────────────── shared primitives ─────────────────────────────
 
-/// A field's prefix: a compact letter (X/Y/W/H) or a small gray icon (rotation/opacity/stroke).
-enum Lab<'a> {
-    Letter(&'a str),
-    Icon(Option<&'a egui::TextureHandle>),
-}
-
 const UV01: fn() -> egui::Rect = || egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
 
 /// The egui temp key that holds the ACTIVE document's id for the frames being laid out.
@@ -1834,202 +1858,6 @@ pub(crate) fn set_doc_salt(ctx: &egui::Context, doc: Option<SessionId>) {
 fn doc_id(ui: &egui::Ui, src: impl Hash + std::fmt::Debug) -> egui::Id {
     let doc = ui.ctx().data(|d| d.get_temp::<Option<SessionId>>(doc_salt_key())).flatten();
     ui.make_persistent_id((src, doc))
-}
-
-/// Close the text-field edit that holds keyboard focus, BEFORE a lifecycle command (tab switch, close,
-/// save, quit) — the same rule as the other Ui-side edits in `Ui::settle`: its typed buffer is
-/// discarded, never applied to whichever document is active next.
-pub(crate) fn settle_field_edits(ctx: &egui::Context) {
-    let Some(id) = ctx.memory(|m| m.focused()) else { return };
-    ctx.memory_mut(|m| m.surrender_focus(id));
-    // `num_field` / `name_field` keep their buffer, "just clicked" flag and nudge accumulator here
-    ctx.data_mut(|d| {
-        d.remove::<String>(id);
-        d.remove::<bool>(id);
-        d.remove::<f32>(id.with("acc"));
-    });
-}
-
-/// Number field. A dim label column, then a rounded box holding the value CENTERED. The WHOLE box is
-/// one interactive target via `ui.interact` (the exact mechanism the tool-rail buttons use): drag it to
-/// scrub (↔ cursor), single-click to type (value pre-selected). Returns Some(new) on change.
-/// (Blender ‹ › steppers come back once the core drag/type is confirmed.)
-#[allow(clippy::too_many_arguments)] // hand-painted widget: geometry + behaviour knobs, split deferred with ui.rs
-fn num_field(
-    ui: &mut egui::Ui,
-    w: f32,
-    lab: Lab,
-    tip: &str,
-    value: f32,
-    decimals: usize,
-    _step: f32,
-    speed: f32,
-    range: std::ops::RangeInclusive<f32>,
-) -> Option<f32> {
-    let mut out = None;
-    let (lo, hi) = (*range.start(), *range.end());
-    let (row, _) = ui.allocate_exact_size(egui::vec2(w, 25.0), egui::Sense::hover());
-    let p = ui.painter().clone();
-    let labw = 22.0;
-    match lab {
-        Lab::Letter(s) => {
-            p.text(
-                egui::pos2(row.left() + labw - 5.0, row.center().y),
-                Align2::RIGHT_CENTER,
-                s,
-                FontId::proportional(11.5),
-                FAINT,
-            );
-        }
-        Lab::Icon(Some(t)) => {
-            p.image(
-                t.id(),
-                egui::Rect::from_center_size(
-                    egui::pos2(row.left() + labw - 11.0, row.center().y),
-                    egui::Vec2::splat(ICON_SM),
-                ),
-                UV01(),
-                MUTED,
-            );
-        }
-        Lab::Icon(None) => {}
-    }
-    let bx = egui::Rect::from_min_max(egui::pos2(row.left() + labw + 2.0, row.top()), row.max);
-    let id = doc_id(ui, ("numf", tip));
-    let r5 = CornerRadius::same(R);
-    // 'just entered' flag (set on click) survives the one frame until the TextEdit claims focus.
-    let just = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
-    let editing = just || ui.memory(|m| m.has_focus(id));
-    if editing {
-        p.rect(bx, r5, INPUT_WELL, Stroke::new(1.0, ACCENT), StrokeKind::Middle); // dark "input well"
-        let mut buf = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| format!("{value:.decimals$}"));
-        let te = ui.put(
-            bx.shrink2(egui::vec2(8.0, 3.0)),
-            egui::TextEdit::singleline(&mut buf)
-                .id(id)
-                .frame(egui::Frame::NONE)
-                .font(egui::FontId::proportional(13.0))
-                .text_color(TEXT),
-        );
-        if just {
-            te.request_focus();
-            ui.data_mut(|d| d.remove::<bool>(id));
-        }
-        ui.data_mut(|d| d.insert_temp(id, buf.clone()));
-        // arrow nudge while focused: ↑/↓ = ±1 · Shift+↑/↓ = ±10 (Illustrator) — applies live
-        let dv = ui.input_mut(|i| {
-            let mut d = 0.0;
-            // A20: Shift = 10 leap · Ctrl = fine (0.1) · plain = 1 - a clear keyboard step ladder
-            if i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowUp) {
-                d += 10.0;
-            }
-            if i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowDown) {
-                d -= 10.0;
-            }
-            if i.consume_key(egui::Modifiers::CTRL, egui::Key::ArrowUp) {
-                d += 0.1;
-            }
-            if i.consume_key(egui::Modifiers::CTRL, egui::Key::ArrowDown) {
-                d -= 0.1;
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
-                d += 1.0;
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
-                d -= 1.0;
-            }
-            d
-        });
-        if dv != 0.0 {
-            // FB4: accumulate the nudge on a PRECISE stored value, not on the (rounded) field text. On a
-            // 0-decimal field "42" + Ctrl(±0.1) formats straight back to "42", so the fine step vanished
-            // every press. Keep an f32 accumulator that's trusted as long as it still renders to what's shown
-            // (else the user just typed something new, and the text wins).
-            let acc_id = id.with("acc");
-            let base = ui
-                .data(|d| d.get_temp::<f32>(acc_id))
-                .filter(|a| format!("{a:.decimals$}") == buf)
-                .unwrap_or_else(|| buf.trim().parse::<f32>().unwrap_or(value));
-            let nv = (base + dv).clamp(lo, hi);
-            let s = format!("{nv:.decimals$}");
-            ui.data_mut(|d| d.insert_temp(acc_id, nv));
-            // keep the text selected so the next keystroke still replaces (same as click-to-type)
-            let mut st = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
-            st.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(s.chars().count()),
-            )));
-            st.store(ui.ctx(), id);
-            ui.data_mut(|d| d.insert_temp(id, s));
-            out = Some(nv);
-        }
-        if te.lost_focus() {
-            if let Ok(typed) = buf.trim().parse::<f32>() {
-                // commit the precise accumulator if it still matches what's shown, so fine nudges (FB4)
-                // survive the blur instead of snapping back to the rounded display value.
-                let v = ui
-                    .data(|d| d.get_temp::<f32>(id.with("acc")))
-                    .filter(|a| format!("{a:.decimals$}") == buf)
-                    .unwrap_or(typed);
-                out = Some(v.clamp(lo, hi));
-            }
-            ui.data_mut(|d| {
-                d.remove::<String>(id);
-                d.remove::<bool>(id);
-                d.remove::<f32>(id.with("acc"));
-            });
-        }
-    } else {
-        let resp = ui.interact(bx, id.with("box"), egui::Sense::click_and_drag());
-        let hot = resp.hovered() || resp.dragged();
-        if hot {
-            p.rect(bx, r5, HOVER, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
-        } else {
-            p.rect_filled(bx, r5, BG_SURFACE);
-        }
-        p.text(bx.center(), Align2::CENTER_CENTER, format!("{value:.decimals$}"), FontId::proportional(13.0), TEXT);
-        if hot {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-        }
-        if resp.dragged() {
-            let dx = resp.drag_delta().x;
-            if dx != 0.0 {
-                // A20: give the MOUSE its own modifier feel — Shift scrubs coarse (×5), Ctrl fine (÷5),
-                // so mouse and keyboard read differently and precise values are reachable by drag.
-                let mods = ui.input(|i| i.modifiers);
-                let mult = if mods.shift {
-                    5.0
-                } else if mods.ctrl {
-                    0.2
-                } else {
-                    1.0
-                };
-                out = Some((value + dx * speed * mult).clamp(lo, hi));
-            }
-        }
-        if resp.clicked() {
-            let s = format!("{value:.decimals$}");
-            // pre-select all so typing replaces the value (Blender behavior)
-            let mut st = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
-            let n = s.chars().count();
-            st.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(n),
-            )));
-            st.store(ui.ctx(), id);
-            ui.data_mut(|d| {
-                d.insert_temp(id, s);
-                d.insert_temp(id, true);
-                d.remove::<f32>(id.with("acc")); // fresh entry starts from the shown text, never a leaked acc (FB4)
-            });
-            ui.memory_mut(|m| m.request_focus(id));
-        }
-        if !tip.is_empty() {
-            // disabled fields carry their REASON in `tip`, so show it in both states
-            resp.on_hover_text(tip).on_disabled_hover_text(tip);
-        }
-    }
-    out
 }
 
 /// The 9-point transform reference widget (3×3 dots). Click a dot to set the reference (ax, ay).
@@ -2912,43 +2740,24 @@ fn build_color_modal(
                             // hex + alpha
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("#").color(FAINT).monospace().size(12.5));
-                                let hid = egui::Id::new("cm-hex");
                                 let rgbc = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
-                                let mut buf = ui.data_mut(|d| d.get_temp::<String>(hid)).unwrap_or_else(|| {
-                                    hex_of([rgbc[0], rgbc[1], rgbc[2], 1.0]).trim_start_matches('#').to_string()
-                                });
-                                let te = ui.add(
-                                    egui::TextEdit::singleline(&mut buf)
-                                        .desired_width(64.0)
-                                        .font(egui::FontId::monospace(12.5))
-                                        .text_color(TEXT),
-                                );
+                                let shown = hex_of([rgbc[0], rgbc[1], rgbc[2], 1.0]);
                                 // commit on Enter/blur only — no colour-jumping through 3-digit parses mid-typing
-                                if te.lost_focus() {
-                                    if let Some(c2) = parse_hex(&buf) {
-                                        let h = rgb_to_hsv(c2);
-                                        if h[1] > 0.001 {
-                                            m.hsva[0] = h[0];
-                                        }
-                                        m.hsva[1] = h[1];
-                                        m.hsva[2] = h[2];
-                                        m.hsva[3] = c2[3];
+                                if let Some(c2) = fields::hex(ui, 64.0, shown.trim_start_matches('#')) {
+                                    let h = rgb_to_hsv(c2);
+                                    if h[1] > 0.001 {
+                                        m.hsva[0] = h[0];
                                     }
-                                    ui.data_mut(|d| d.remove::<String>(hid));
-                                } else if te.has_focus() {
-                                    ui.data_mut(|d| d.insert_temp(hid, buf.clone()));
-                                } else {
-                                    ui.data_mut(|d| d.remove::<String>(hid));
+                                    m.hsva[1] = h[1];
+                                    m.hsva[2] = h[2];
+                                    m.hsva[3] = c2[3];
                                 }
-                                if let Some(v) = num_field(
+                                if let Some(v) = fields::num_value(
                                     ui,
                                     60.0,
                                     Lab::Letter("A"),
                                     "cm-a",
                                     m.hsva[3] * 100.0,
-                                    0,
-                                    1.0,
-                                    1.0,
                                     0.0..=100.0,
                                 ) {
                                     m.hsva[3] = v / 100.0;
@@ -2965,8 +2774,7 @@ fn build_color_modal(
                                     if radio_dot(ui, m.chan == chan) {
                                         m.chan = chan;
                                     }
-                                    if let Some(v) =
-                                        num_field(ui, 76.0, Lab::Letter(lab), tip, val, 0, 1.0, 1.0, 0.0..=max)
+                                    if let Some(v) = fields::num_value(ui, 76.0, Lab::Letter(lab), tip, val, 0.0..=max)
                                     {
                                         match chan {
                                             Chan::H => m.hsva[0] = (v / 360.0).min(0.9999),
@@ -2988,17 +2796,9 @@ fn build_color_modal(
                                     if radio_dot(ui, m.chan == chan) {
                                         m.chan = chan;
                                     }
-                                    if let Some(v) = num_field(
-                                        ui,
-                                        76.0,
-                                        Lab::Letter(lab),
-                                        tip,
-                                        rgbv[i] * 255.0,
-                                        0,
-                                        1.0,
-                                        1.0,
-                                        0.0..=255.0,
-                                    ) {
+                                    if let Some(v) =
+                                        fields::num_value(ui, 76.0, Lab::Letter(lab), tip, rgbv[i] * 255.0, 0.0..=255.0)
+                                    {
                                         let mut c2 = rgbv;
                                         c2[i] = v / 255.0;
                                         let h = rgb_to_hsv([c2[0], c2[1], c2[2], 1.0]);
@@ -4018,22 +3818,18 @@ fn board_ctlbar(
                         ui.label(RichText::new(&ab.name).color(TEXT).size(11.5));
                         bar_sep(ui);
                         let fw = 64.0;
-                        if let Some(v) =
-                            num_field(ui, fw, Lab::Letter("X"), "X position", ab.x, 0, 1.0, 1.0, full.clone())
-                        {
-                            ops.push(Op::AbRect(i, Some(v), None, None, None));
-                        }
-                        if let Some(v) =
-                            num_field(ui, fw, Lab::Letter("Y"), "Y position", ab.y, 0, 1.0, 1.0, full.clone())
-                        {
-                            ops.push(Op::AbRect(i, None, Some(v), None, None));
-                        }
-                        if let Some(v) = num_field(ui, fw, Lab::Letter("W"), "Width", ab.w, 0, 1.0, 1.0, 1.0..=1.0e6) {
-                            ops.push(Op::AbRect(i, None, None, Some(v), None));
-                        }
-                        if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", ab.h, 0, 1.0, 1.0, 1.0..=1.0e6) {
-                            ops.push(Op::AbRect(i, None, None, None, Some(v)));
-                        }
+                        fields::num(ui, fw, Lab::Letter("X"), "X position", ab.x, 0, 1.0, full.clone(), ops, |v| {
+                            Op::AbRect(i, Some(v), None, None, None)
+                        });
+                        fields::num(ui, fw, Lab::Letter("Y"), "Y position", ab.y, 0, 1.0, full.clone(), ops, |v| {
+                            Op::AbRect(i, None, Some(v), None, None)
+                        });
+                        fields::num(ui, fw, Lab::Letter("W"), "Width", ab.w, 0, 1.0, 1.0..=1.0e6, ops, |v| {
+                            Op::AbRect(i, None, None, Some(v), None)
+                        });
+                        fields::num(ui, fw, Lab::Letter("H"), "Height", ab.h, 0, 1.0, 1.0..=1.0e6, ops, |v| {
+                            Op::AbRect(i, None, None, None, Some(v))
+                        });
                         bar_sep(ui);
                         ctl_ab_color(ui, ab.color, i, ops);
                         if toggle_row(ui, 114.0, "Clip to page", ab.clip) {
@@ -4055,51 +3851,46 @@ fn board_ctlbar(
                         // the stale object's props hid the "Drawing path…" status (FB6).
                         ui.label(RichText::new(&s.name).color(MUTED).size(11.5));
                         let fw = 64.0;
-                        if let Some(v) =
-                            num_field(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, 1.0, full.clone())
-                        {
-                            ops.push(Op::SetBBox(Some(v), None, None, None, 0.0, 0.0));
-                        }
-                        if let Some(v) =
-                            num_field(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, 1.0, full.clone())
-                        {
-                            ops.push(Op::SetBBox(None, Some(v), None, None, 0.0, 0.0));
-                        }
-                        if let Some(v) = num_field(ui, fw, Lab::Letter("W"), "Width", s.w, 0, 1.0, 1.0, 0.0..=1.0e6) {
-                            ops.push(Op::SetBBox(None, None, Some(v), None, 0.0, 0.0));
-                        }
-                        if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 1.0, 0.0..=1.0e6) {
-                            ops.push(Op::SetBBox(None, None, None, Some(v), 0.0, 0.0));
-                        }
-                        if let Some(v) = num_field(
+                        fields::num(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, full.clone(), ops, |v| {
+                            Op::SetBBox(Some(v), None, None, None, 0.0, 0.0)
+                        });
+                        fields::num(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, full.clone(), ops, |v| {
+                            Op::SetBBox(None, Some(v), None, None, 0.0, 0.0)
+                        });
+                        fields::num(ui, fw, Lab::Letter("W"), "Width", s.w, 0, 1.0, 0.0..=1.0e6, ops, |v| {
+                            Op::SetBBox(None, None, Some(v), None, 0.0, 0.0)
+                        });
+                        fields::num(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 0.0..=1.0e6, ops, |v| {
+                            Op::SetBBox(None, None, None, Some(v), 0.0, 0.0)
+                        });
+                        // the real rotation icon, matching the Properties dock (A14c)
+                        fields::num(
                             ui,
                             62.0,
-                            Lab::Icon(ic.rotate.as_ref()), // real rotation icon, matching the Properties dock (A14c)
+                            Lab::Icon(ic.rotate.as_ref()),
                             "Rotation",
                             s.rot,
                             1,
-                            1.0,
                             0.5,
                             full.clone(),
-                        ) {
-                            ops.push(Op::SetRot(v));
-                        }
+                            ops,
+                            Op::SetRot,
+                        );
                         bar_sep(ui);
                         ctl_chip(ui, s.fill, PaintTarget::Fill, ops);
                         ctl_chip(ui, s.stroke, PaintTarget::Stroke, ops);
-                        if let Some(v) = num_field(
+                        fields::num(
                             ui,
                             74.0,
                             Lab::Letter("Op"),
                             "Opacity %",
                             s.opacity * 100.0,
                             0,
-                            1.0,
                             0.5,
                             0.0..=100.0,
-                        ) {
-                            ops.push(Op::SetOpacity(v / 100.0));
-                        }
+                            ops,
+                            |v| Op::SetOpacity(v / 100.0),
+                        );
                         bar_sep(ui);
                         let al = [
                             (0usize, AlignMode::Left, "Align left"),
@@ -4113,7 +3904,7 @@ fn board_ctlbar(
                             }
                         }
                         bar_sep(ui);
-                        pathfinder_row(ui, ops, true); // compact bar mirror — the essential shape modes, in reach (Ahmed 07-07)
+                        pathfinder_row(ui, ops, true, s.pathfinder); // compact bar mirror — the essential shape modes, in reach (Ahmed 07-07)
                     } else if s.direct && !s.drawing {
                         // Astra F07: a Direct selection with no object selection (e.g. an anchor grabbed
                         // straight off a deselected path) — name it and show its REAL bounds. Only controls
@@ -4122,22 +3913,14 @@ fn board_ctlbar(
                         // work on objects, so they stay in the object branch above.
                         ui.label(RichText::new(&s.name).color(MUTED).size(11.5));
                         let fw = 64.0;
-                        if let Some(v) =
-                            num_field(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, 1.0, full.clone())
-                        {
-                            ops.push(Op::SetBBox(Some(v), None, None, None, 0.0, 0.0));
-                        }
-                        if let Some(v) =
-                            num_field(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, 1.0, full.clone())
-                        {
-                            ops.push(Op::SetBBox(None, Some(v), None, None, 0.0, 0.0));
-                        }
-                        if let Some(v) = dim_field(ui, fw, true, s.w, true) {
-                            ops.push(Op::SetBBox(None, None, Some(v), None, 0.0, 0.0));
-                        }
-                        if let Some(v) = dim_field(ui, fw, false, s.h, true) {
-                            ops.push(Op::SetBBox(None, None, None, Some(v), 0.0, 0.0));
-                        }
+                        fields::num(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, full.clone(), ops, |v| {
+                            Op::SetBBox(Some(v), None, None, None, 0.0, 0.0)
+                        });
+                        fields::num(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, full.clone(), ops, |v| {
+                            Op::SetBBox(None, Some(v), None, None, 0.0, 0.0)
+                        });
+                        dim_field(ui, fw, true, s.w, true, ops, |v| Op::SetBBox(None, None, Some(v), None, 0.0, 0.0));
+                        dim_field(ui, fw, false, s.h, true, ops, |v| Op::SetBBox(None, None, None, Some(v), 0.0, 0.0));
                         bar_sep(ui);
                         ctl_chip(ui, s.fill, PaintTarget::Fill, ops);
                         ctl_chip(ui, s.stroke, PaintTarget::Stroke, ops);
@@ -4156,7 +3939,15 @@ fn board_ctlbar(
 /// A W (`width` = true) or H numeric field. For a Direct selection (`direct`) with a ZERO extent — one
 /// anchor, or a purely horizontal/vertical run of anchors — there is nothing to scale, so the field is
 /// shown disabled with that reason as its tooltip instead of silently ignoring the edit (Astra F07).
-fn dim_field(ui: &mut egui::Ui, fw: f32, width: bool, value: f32, direct: bool) -> Option<f32> {
+fn dim_field(
+    ui: &mut egui::Ui,
+    fw: f32,
+    width: bool,
+    value: f32,
+    direct: bool,
+    ops: &mut Vec<Op>,
+    mk: impl Fn(f32) -> Op,
+) {
     let (lab, tip, why) = if width {
         ("W", "Width", "Width: nothing to scale (the selected anchors have no horizontal extent)")
     } else {
@@ -4164,7 +3955,7 @@ fn dim_field(ui: &mut egui::Ui, fw: f32, width: bool, value: f32, direct: bool) 
     };
     let enabled = !direct || value > 1e-3; // same zero-extent threshold as `Editor::set_direct_bbox`
     let tip = if enabled { tip } else { why };
-    ui.add_enabled_ui(enabled, |ui| num_field(ui, fw, Lab::Letter(lab), tip, value, 0, 1.0, 1.0, 0.0..=1.0e6)).inner
+    ui.add_enabled_ui(enabled, |ui| fields::num(ui, fw, Lab::Letter(lab), tip, value, 0, 1.0, 0.0..=1.0e6, ops, mk));
 }
 
 /// 1×16 vertical hairline separator inside the control bar (§3.5 vsep).
@@ -4512,15 +4303,8 @@ fn panel_layers(
                         MUTED,
                     );
                 }
-                ui.put(
-                    egui::Rect::from_min_max(egui::pos2(sr.left() + 28.0, sr.top()), sr.max)
-                        .shrink2(egui::vec2(2.0, 3.0)),
-                    egui::TextEdit::singleline(search)
-                        .frame(egui::Frame::NONE)
-                        .hint_text("Search")
-                        .font(egui::FontId::proportional(12.5))
-                        .text_color(TEXT),
-                );
+                let at = egui::Rect::from_min_max(egui::pos2(sr.left() + 28.0, sr.top()), sr.max);
+                fields::search(ui, at.shrink2(egui::vec2(2.0, 3.0)), search);
             });
             ui.add_space(8.0);
             hairline(ui);
@@ -4769,43 +4553,22 @@ fn panel_layers(
                         let renaming = !rename_shown && rename.as_ref().is_some_and(|(id, _)| *id == row.id);
                         if renaming {
                             rename_shown = true;
-                            // Illustrator's inline rename (QW3): Enter or a click elsewhere commits, Escape
-                            // cancels, an empty or unchanged name changes nothing. The field's id is explicit
-                            // (never an auto id that shifts with what the rows above allocate).
+                            // Illustrator's inline rename (QW3) under the K3 law (`fields::rename`). The field's
+                            // id is explicit (never an auto id that shifts with what the rows above allocate).
                             let te_id = doc_id(ui, ("lay-rename", row.id));
-                            let buf = &mut rename.as_mut().unwrap().1;
-                            let te = ui.put(
+                            let (board, id) = (row.kind == LKind::Board, row.id);
+                            let mk = |v| if board { Op::AbName(row.sec as usize, v) } else { Op::LayerRename(id, v) };
+                            if fields::rename(
+                                ui,
+                                te_id,
                                 name_rect.shrink2(egui::vec2(2.0, 4.0)),
-                                egui::TextEdit::singleline(buf)
-                                    .id(te_id)
-                                    .frame(egui::Frame::NONE)
-                                    .font(egui::FontId::proportional(12.5))
-                                    .text_color(TEXT),
-                            );
-                            let focused = ui.memory(|m| m.has_focus(te_id));
-                            if te.lost_focus() {
-                                let v = varos_core::command::clean_name(&std::mem::take(buf)).to_string();
-                                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                                if !cancel && !v.is_empty() && v != row.name {
-                                    ops.push(if row.kind == LKind::Board {
-                                        Op::AbName(row.sec as usize, v)
-                                    } else {
-                                        Op::LayerRename(row.id, v)
-                                    });
-                                }
+                                &row.name,
+                                12.5,
+                                false,
+                                ops,
+                                mk,
+                            ) {
                                 *rename = None;
-                            } else if !focused {
-                                // the frame it opens: take focus ONCE with the whole old name selected, so
-                                // typing replaces it. (Re-requesting focus every frame — the old code — also
-                                // re-grabbed it after Escape or a click elsewhere: the field never closed.)
-                                te.request_focus();
-                                let all = egui::text::CCursorRange::two(
-                                    egui::text::CCursor::new(0),
-                                    egui::text::CCursor::new(buf.chars().count()),
-                                );
-                                let mut st = egui::text_edit::TextEditState::load(ui.ctx(), te_id).unwrap_or_default();
-                                st.cursor.set_char_range(Some(all));
-                                st.store(ui.ctx(), te_id);
                             }
                         } else {
                             let auto = row.name.starts_with('<');
@@ -5025,33 +4788,23 @@ fn panel_properties(
                         // (s.w) — on a rotated object those differ and only the world dim gives the true
                         // on-screen reference-point position. `set_obj_bbox` reads/writes the same point.
                         let dx = s.x + ax * s.world_w;
-                        if let Some(v) =
-                            num_field(ui, fw, Lab::Letter("X"), "X position", dx, 0, 1.0, 1.0, full.clone())
-                        {
-                            ops.push(Op::SetBBox(Some(v), None, None, None, ax, ay));
-                        }
-                        if let Some(v) = dim_field(ui, fw, true, s.w, s.direct) {
-                            if *lock && s.w > 0.0 {
-                                ops.push(Op::SetBBox(None, None, Some(v), Some(s.h * v / s.w), ax, ay));
-                            } else {
-                                ops.push(Op::SetBBox(None, None, Some(v), None, ax, ay));
-                            }
-                        }
+                        fields::num(ui, fw, Lab::Letter("X"), "X position", dx, 0, 1.0, full.clone(), ops, |v| {
+                            Op::SetBBox(Some(v), None, None, None, ax, ay)
+                        });
+                        let linked = *lock;
+                        dim_field(ui, fw, true, s.w, s.direct, ops, |v| {
+                            Op::SetBBox(None, None, Some(v), (linked && s.w > 0.0).then(|| s.h * v / s.w), ax, ay)
+                        });
                     });
                     ui.horizontal(|ui| {
                         let dy = s.y + ay * s.world_h; // A7: world AABB height, matching the X field above
-                        if let Some(v) =
-                            num_field(ui, fw, Lab::Letter("Y"), "Y position", dy, 0, 1.0, 1.0, full.clone())
-                        {
-                            ops.push(Op::SetBBox(None, Some(v), None, None, ax, ay));
-                        }
-                        if let Some(v) = dim_field(ui, fw, false, s.h, s.direct) {
-                            if *lock && s.h > 0.0 {
-                                ops.push(Op::SetBBox(None, None, Some(s.w * v / s.h), Some(v), ax, ay));
-                            } else {
-                                ops.push(Op::SetBBox(None, None, None, Some(v), ax, ay));
-                            }
-                        }
+                        fields::num(ui, fw, Lab::Letter("Y"), "Y position", dy, 0, 1.0, full.clone(), ops, |v| {
+                            Op::SetBBox(None, Some(v), None, None, ax, ay)
+                        });
+                        let linked = *lock;
+                        dim_field(ui, fw, false, s.h, s.direct, ops, |v| {
+                            Op::SetBBox(None, None, (linked && s.h > 0.0).then(|| s.w * v / s.h), Some(v), ax, ay)
+                        });
                     });
                 });
                 if IA_PROP_LINK.show(ui, kit::IconState::Toggle(*lock)) {
@@ -5069,11 +4822,18 @@ fn panel_properties(
                     } else {
                         ("Rotation", s.rot)
                     };
-                    if let Some(v) =
-                        num_field(ui, 150.0, Lab::Icon(ic.rotate.as_ref()), rot_tip, rot, 1, 1.0, 0.5, full.clone())
-                    {
-                        ops.push(Op::SetRot(v));
-                    }
+                    fields::num(
+                        ui,
+                        150.0,
+                        Lab::Icon(ic.rotate.as_ref()),
+                        rot_tip,
+                        rot,
+                        1,
+                        0.5,
+                        full.clone(),
+                        ops,
+                        Op::SetRot,
+                    );
                     if IA_FLIP_H.show(ui, kit::IconState::Action) {
                         ops.push(Op::Flip(true));
                     }
@@ -5086,35 +4846,41 @@ fn panel_properties(
             hsep(ui, inner);
 
             // Appearance: opacity
-            if let Some(v) = num_field(
+            fields::num(
                 ui,
                 inner,
                 Lab::Icon(ic.opacity.as_ref()),
                 "Opacity %",
                 s.opacity * 100.0,
                 0,
-                1.0,
                 0.5,
                 0.0..=100.0,
-            ) {
-                ops.push(Op::SetOpacity(v / 100.0));
-            }
+                ops,
+                |v| Op::SetOpacity(v / 100.0),
+            );
 
             hsep(ui, inner);
 
             // Fill / Stroke swatches + stroke weight
             paint_row(ui, PaintTarget::Fill, s.fill, ops);
             paint_row(ui, PaintTarget::Stroke, s.stroke, ops);
-            if let Some(v) =
-                num_field(ui, inner, Lab::Icon(ic.strokew.as_ref()), "Stroke weight", s.sw, 1, 0.5, 0.2, 0.0..=400.0)
-            {
-                ops.push(Op::SetStrokeW(v));
-            }
+            fields::num(
+                ui,
+                inner,
+                Lab::Icon(ic.strokew.as_ref()),
+                "Stroke weight",
+                s.sw,
+                1,
+                0.2,
+                0.0..=400.0,
+                ops,
+                Op::SetStrokeW,
+            );
 
             hsep(ui, inner);
             ui.label(RichText::new("SHAPE").color(MUTED).size(10.0).strong());
             ui.add_space(2.0);
-            pathfinder_row(ui, ops, false); // a MIRROR of the Pathfinder home (the mockup's Shape section) — roomy dock size
+            pathfinder_row(ui, ops, false, s.pathfinder); // a MIRROR of the Pathfinder home (the mockup's Shape section) — roomy dock size
 
             // A30 — per-element release from artboard clip. Shown only when an object is selected AND
             // some board clips (otherwise the toggle would do nothing visible). ON = clipped to the
@@ -5315,12 +5081,12 @@ fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut AlignTarget
 }
 
 /// The Pathfinder pane body — THE home of the boolean ops (the i_overlay engine via `Editor::pathfinder`).
-fn panel_pathfinder(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
+fn panel_pathfinder(ui: &mut egui::Ui, pf: Result<(), &'static str>, ops: &mut Vec<Op>) {
     egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
         ui.label(RichText::new("SHAPE MODES").color(MUTED).size(10.0).strong());
         ui.add_space(2.0);
-        pathfinder_row(ui, ops, false); // the roomier dock home
+        pathfinder_row(ui, ops, false, pf); // the roomier dock home
         ui.add_space(4.0);
         ui.label(RichText::new("Unite \u{b7} Minus Front \u{b7} Intersect \u{b7} Exclude").color(FAINT).size(10.5));
     });
@@ -5329,7 +5095,8 @@ fn panel_pathfinder(ui: &mut egui::Ui, ops: &mut Vec<Op>) {
 /// The four boolean buttons (Unite / Minus Front / Intersect / Exclude) — hand-painted glyphs:
 /// two overlapping squares with the op's region filled. Shared by the Pathfinder home + Shape mirror.
 /// `compact` = the control-bar mirror (26×26, sized to the other bar controls); false = the roomier dock.
-fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>, compact: bool) {
+/// `pf` = `Editor::pathfinder_enabled`: on `Err` every button is drawn disabled with the reason.
+fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>, compact: bool, pf: Result<(), &'static str>) {
     use varos_core::boolean::BoolOp;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -5339,7 +5106,7 @@ fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>, compact: bool) {
             (BoolOp::Intersect, "Intersect"),
             (BoolOp::Exclude, "Exclude"),
         ] {
-            if pf_btn(ui, op, tip, compact) {
+            if pf_btn(ui, op, tip, compact, pf.err()) {
                 ops.push(Op::Bool(op));
             }
         }
@@ -5348,19 +5115,27 @@ fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>, compact: bool) {
 
 /// One pathfinder button. Dock: 34×28 chip, 14px squares. Bar mirror (`compact`): 26×26 chip, 12px
 /// squares — so it no longer towers over the 24–26px bar controls (A14.1). WHITE-on-hover / MUTED at rest
-/// so the boolean icons read as clearly as the SVG align/rail icons.
-fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str, compact: bool) -> bool {
+/// so the boolean icons read as clearly as the SVG align/rail icons. `off` = the kit disabled state:
+/// FAINT glyph, no hover, the reason in the tooltip, never clicks.
+fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str, compact: bool, off: Option<&str>) -> bool {
     use varos_core::boolean::BoolOp;
     let chip = if compact { egui::vec2(26.0, 26.0) } else { egui::vec2(34.0, 28.0) };
-    let (rect, resp) = ui.allocate_exact_size(chip, egui::Sense::click());
+    let (rect, resp) = ui.add_enabled_ui(off.is_none(), |ui| ui.allocate_exact_size(chip, egui::Sense::click())).inner;
     #[cfg(test)]
-    pathfinder_click_tests::PF_RECTS.with(|r| r.borrow_mut().push((op, rect)));
+    pathfinder_click_tests::PF_RECTS.with(|r| r.borrow_mut().push((op, rect, off.map(str::to_string))));
     let p = ui.painter();
-    if resp.hovered() {
+    let hot = off.is_none() && resp.hovered();
+    if hot {
         p.rect_filled(rect, CornerRadius::same(3), HOVER);
     }
     // match the align/rail icon contrast exactly: pure white on hover, MUTED at rest (not the dimmer TEXT)
-    let col = if resp.hovered() { Color32::WHITE } else { MUTED };
+    let col = if off.is_some() {
+        FAINT
+    } else if hot {
+        Color32::WHITE
+    } else {
+        MUTED
+    };
     // two overlapping squares; `oa`/`ob` are symmetric about the centre so the pair stays centred in the chip
     let sq = if compact { 12.0 } else { 14.0 };
     let (oax, oay) = if compact { (9.5, 7.75) } else { (11.0, 9.0) };
@@ -5389,47 +5164,12 @@ fn pf_btn(ui: &mut egui::Ui, op: varos_core::boolean::BoolOp, tip: &str, compact
             p.rect_filled(a.intersect(b), CornerRadius::ZERO, SOLID_PANEL);
         }
     }
-    resp.on_hover_text(tip).clicked()
+    let state = off.map_or(kit::IconState::Action, kit::IconState::Disabled);
+    let help = kit::icon_tooltip(tip, state);
+    off.is_none() & resp.on_hover_text(&help).on_disabled_hover_text(&help).clicked()
 }
 
 // ───────────────────────────── artboard inspector ─────────────────────────────
-
-/// A single-line text field bound to an external value (artboard name). While unfocused it tracks the
-/// model value; once focused it edits a temp buffer; commits the buffer on focus loss (returns it).
-fn name_field(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str) -> Option<String> {
-    let id = doc_id(ui, ("abname", id_src));
-    let editing = ui.memory(|m| m.has_focus(id));
-    let mut buf = if editing {
-        ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| value.to_string())
-    } else {
-        value.to_string()
-    };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::hover());
-    ui.painter().rect(
-        rect,
-        CornerRadius::same(R),
-        BG_SURFACE,
-        Stroke::new(1.0, if editing { ACCENT } else { BORDER }),
-        StrokeKind::Middle,
-    );
-    let te = ui.put(
-        rect.shrink2(egui::vec2(8.0, 3.0)),
-        egui::TextEdit::singleline(&mut buf)
-            .id(id)
-            .frame(egui::Frame::NONE)
-            .font(FontId::proportional(13.0))
-            .text_color(TEXT),
-    );
-    if te.has_focus() {
-        ui.data_mut(|d| d.insert_temp(id, buf.clone()));
-    }
-    let mut out = None;
-    if te.lost_focus() {
-        out = Some(buf.clone());
-        ui.data_mut(|d| d.remove::<String>(id));
-    }
-    out
-}
 
 /// A label + a hand-painted pill switch (the Clip / transparent / move-with toggles). Returns true on click.
 fn toggle_row(ui: &mut egui::Ui, w: f32, label: &str, on: bool) -> bool {
@@ -5472,9 +5212,7 @@ fn panel_artboard(
                     ui.label(RichText::new(format!("{} / {}", i + 1, s.count)).color(MUTED).size(11.5));
                 });
             });
-            if let Some(v) = name_field(ui, inner, &s.name, "dock") {
-                ops.push(Op::AbName(i, v));
-            }
+            fields::name(ui, inner, &s.name, "dock", ops, |v| Op::AbName(i, v));
 
             ui.add_space(2.0);
             ui.label(RichText::new("SIZE").color(MUTED).size(10.0).strong());
@@ -5517,20 +5255,13 @@ fn panel_artboard(
             // W / H + constrain
             ui.horizontal(|ui| {
                 let fw = 70.0;
-                if let Some(v) = num_field(ui, fw, Lab::Letter("W"), "Width", s.w, 0, 1.0, 1.0, 1.0..=1.0e6) {
-                    if *ab_lock && s.w > 0.0 {
-                        ops.push(Op::AbRect(i, None, None, Some(v), Some(s.h * v / s.w)));
-                    } else {
-                        ops.push(Op::AbRect(i, None, None, Some(v), None));
-                    }
-                }
-                if let Some(v) = num_field(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 1.0, 1.0..=1.0e6) {
-                    if *ab_lock && s.h > 0.0 {
-                        ops.push(Op::AbRect(i, None, None, Some(s.w * v / s.h), Some(v)));
-                    } else {
-                        ops.push(Op::AbRect(i, None, None, None, Some(v)));
-                    }
-                }
+                let lock = *ab_lock;
+                fields::num(ui, fw, Lab::Letter("W"), "Width", s.w, 0, 1.0, 1.0..=1.0e6, ops, |v| {
+                    Op::AbRect(i, None, None, Some(v), (lock && s.w > 0.0).then(|| s.h * v / s.w))
+                });
+                fields::num(ui, fw, Lab::Letter("H"), "Height", s.h, 0, 1.0, 1.0..=1.0e6, ops, |v| {
+                    Op::AbRect(i, None, None, (lock && s.h > 0.0).then(|| s.w * v / s.h), Some(v))
+                });
                 if IA_AB_LINK.show(ui, kit::IconState::Toggle(*ab_lock)) {
                     *ab_lock = !*ab_lock;
                 }
@@ -5553,12 +5284,12 @@ fn panel_artboard(
             // X / Y
             ui.horizontal(|ui| {
                 let fw = 70.0;
-                if let Some(v) = num_field(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, 1.0, full.clone()) {
-                    ops.push(Op::AbRect(i, Some(v), None, None, None));
-                }
-                if let Some(v) = num_field(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, 1.0, full.clone()) {
-                    ops.push(Op::AbRect(i, None, Some(v), None, None));
-                }
+                fields::num(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, full.clone(), ops, |v| {
+                    Op::AbRect(i, Some(v), None, None, None)
+                });
+                fields::num(ui, fw, Lab::Letter("Y"), "Y position", s.y, 0, 1.0, full.clone(), ops, |v| {
+                    Op::AbRect(i, None, Some(v), None, None)
+                });
             });
 
             hsep(ui, inner);
@@ -5604,11 +5335,9 @@ fn panel_artboard(
             }
 
             hsep(ui, inner);
-            if let Some(v) =
-                num_field(ui, inner, Lab::Letter("#"), "Artboard count", s.count as f32, 0, 1.0, 0.1, 1.0..=200.0)
-            {
-                ops.push(Op::AbCount(v.round().max(1.0) as usize));
-            }
+            fields::num(ui, inner, Lab::Letter("#"), "Artboard count", s.count as f32, 0, 0.1, 1.0..=200.0, ops, |v| {
+                Op::AbCount(v.round().max(1.0) as usize)
+            });
             if toggle_row(ui, inner, "Clip to page", s.clip) {
                 ops.push(Op::AbClip(i));
             }
@@ -5687,18 +5416,11 @@ fn build_ab_chrome(
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         if renaming {
-                            if let Some((_, buf)) = name_edit.as_mut() {
-                                let te = ui.add(
-                                    egui::TextEdit::singleline(buf)
-                                        .desired_width(110.0)
-                                        .font(FontId::proportional(11.5))
-                                        .text_color(TEXT),
-                                );
-                                if te.lost_focus() {
-                                    ops.push(Op::AbName(ab.i, buf.clone()));
+                            if let Some((_, seed)) = name_edit.as_ref() {
+                                let (rect, _) = ui.allocate_exact_size(egui::vec2(110.0, 22.0), egui::Sense::hover());
+                                let id = doc_id(ui, ("ab-chrome-name", ab.i));
+                                if fields::rename(ui, id, rect, seed, 11.5, true, ops, |v| Op::AbName(ab.i, v)) {
                                     clear_edit = true;
-                                } else {
-                                    te.request_focus();
                                 }
                             }
                         } else {
@@ -6103,6 +5825,8 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::ToggleSnapping => ed.execute(EditCommand::ToggleSnapping),
             Op::ToggleGuides => ed.toggle_guides_visibility(),
             Op::ToggleRulers => ed.toggle_rulers_visibility(),
+            Op::Field(op) => apply_ops(ed, vec![*op]),
+            Op::FieldPending(..) => {} // intercepted by `fields::finish_frame`
         }
     }
 }
@@ -6383,7 +6107,7 @@ mod characterization_tests {
 /// `egui::Context` with synthetic pointer/keyboard input — no window, no GPU.
 #[cfg(test)]
 mod layer_rename_tests {
-    use super::{apply_ops, build_layer_rows, panel_layers, LKind, LRow, LayerIcons, Op, Snap};
+    use super::{apply_ops, build_layer_rows, kit, panel_layers, LKind, LRow, LayerIcons, Op, Snap};
     use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
     use std::collections::{HashMap, HashSet};
     use varos_core::editor::{Editor, ToolKind};
@@ -6497,9 +6221,11 @@ mod layer_rename_tests {
         }
     }
 
-    /// `Op` is not `Clone`; the log keeps only the kinds these tests inspect.
+    /// `Op` is not `Clone`; the log keeps only the kinds these tests inspect. A field's commit
+    /// (`Op::Field`, K3) is logged as the op it carries.
     fn clone_op(op: &Op) -> Option<Op> {
         match op {
+            Op::Field(op) => clone_op(op),
             Op::LayerRename(id, s) => Some(Op::LayerRename(*id, s.clone())),
             Op::LayerSelectSet(v) => Some(Op::LayerSelectSet(v.clone())),
             Op::AbName(i, s) => Some(Op::AbName(*i, s.clone())),
@@ -6651,6 +6377,8 @@ mod layer_rename_tests {
         assert_eq!(renames(&p.ops), vec![(3, "Mark".to_string())], "the old name is selected on open");
     }
 
+    /// K3: an empty name is invalid — Enter keeps the editor open and focused (with its reason) instead
+    /// of silently closing; Esc then leaves the old name.
     #[test]
     fn emptied_name_keeps_the_old_one() {
         let mut p = open_editor(&[path_row(3, "Logo")], 3);
@@ -6664,6 +6392,11 @@ mod layer_rename_tests {
         }]);
         p.key(Key::Backspace);
         p.key(Key::Enter);
+        p.frame(vec![]);
+        assert!(p.rename.is_some() && p.focused(), "an empty name keeps the editor and the keyboard");
+        let id = p.ctx.memory(|m| m.focused()).unwrap();
+        assert_eq!(kit::field::reason(&p.ctx, id), Some(kit::field::EMPTY_NAME), "…and says why");
+        p.key(Key::Escape);
         p.frame(vec![]);
         assert!(p.rename.is_none());
         assert!(renames(&p.ops).is_empty(), "an empty name must keep the old one (no rename)");
@@ -7895,86 +7628,6 @@ mod dead_control_tests {
     }
 }
 
-/// DFS S1 review P1: a number field being typed into on one tab must never commit into another tab.
-#[cfg(test)]
-mod field_settle_tests {
-    use super::{num_field, set_doc_salt, settle_field_edits, Lab};
-    use crate::app_command::SessionId;
-    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
-
-    /// One pass of the Properties X field showing `value`. Returns (what the field committed, where
-    /// its box sits).
-    fn frame(ctx: &egui::Context, events: Vec<Event>, value: f32) -> (Option<f32>, Pos2) {
-        let (mut out, mut at) = (None, Pos2::ZERO);
-        let input = RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))),
-            events,
-            ..Default::default()
-        };
-        let _ = ctx.run_ui(input, |ui| {
-            // the field's box starts 24 px right of the row (the label column) and is 25 px tall
-            at = ui.cursor().min + egui::vec2(80.0, 12.0);
-            out = num_field(ui, 150.0, Lab::Letter("X"), "X position", value, 0, 1.0, 1.0, -1.0e6..=1.0e6);
-        });
-        (out, at)
-    }
-    fn button(pos: Pos2, pressed: bool) -> Vec<Event> {
-        vec![
-            Event::PointerMoved(pos),
-            Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE },
-        ]
-    }
-
-    /// Tab A: object A's X is 10 — click the field and type 999 (the value is pre-selected).
-    fn type_999_on_tab_a(ctx: &egui::Context, a: SessionId) {
-        set_doc_salt(ctx, Some(a));
-        let (_, field) = frame(ctx, vec![], 10.0);
-        frame(ctx, button(field, true), 10.0);
-        frame(ctx, button(field, false), 10.0);
-        frame(ctx, vec![], 10.0); // the text edit claims focus
-        let (typed, _) = frame(ctx, vec![Event::Text("999".into())], 10.0);
-        assert_eq!(typed, None, "premise: typing alone commits nothing");
-        assert!(ctx.memory(|m| m.focused().is_some()), "premise: the field is being edited");
-    }
-    /// Tab B: object B's X is 5 — the user clicks elsewhere (a blur). Returns every commit seen.
-    fn blur_on_tab_b(ctx: &egui::Context, b: SessionId) -> Vec<Option<f32>> {
-        set_doc_salt(ctx, Some(b));
-        let away = Pos2::new(600.0, 500.0);
-        let mut got = vec![frame(ctx, vec![], 5.0).0];
-        got.push(frame(ctx, button(away, true), 5.0).0);
-        got.push(frame(ctx, button(away, false), 5.0).0);
-        got.push(frame(ctx, vec![], 5.0).0);
-        got
-    }
-
-    #[test]
-    fn a_typed_number_never_crosses_into_the_next_tab() {
-        let (a, b) = (SessionId(1), SessionId(2));
-        let ctx = egui::Context::default();
-        type_999_on_tab_a(&ctx, a);
-        // Ctrl+Tab: the lifecycle key bypasses egui; the host settles the Ui BEFORE switching
-        settle_field_edits(&ctx);
-        assert!(ctx.memory(|m| m.focused().is_none()), "settle closes the focused edit");
-        assert_eq!(blur_on_tab_b(&ctx, b), [None; 4], "B must never receive A's typed 999");
-        assert!(ctx.memory(|m| m.focused().is_none()), "no field is left focused on B");
-        // back on A: the discarded edit does not come back or commit either
-        set_doc_salt(&ctx, Some(a));
-        let away = Pos2::new(600.0, 500.0);
-        assert_eq!(frame(&ctx, vec![], 10.0).0, None);
-        assert_eq!(frame(&ctx, button(away, true), 10.0).0, None);
-        assert_eq!(frame(&ctx, button(away, false), 10.0).0, None);
-    }
-
-    /// The second wall: even an edit that was NOT settled (a future path that forgets to) lives under
-    /// A's id only, so B's field of the same name cannot inherit it.
-    #[test]
-    fn field_state_is_scoped_to_its_document() {
-        let ctx = egui::Context::default();
-        type_999_on_tab_a(&ctx, SessionId(1));
-        assert_eq!(blur_on_tab_b(&ctx, SessionId(2)), [None; 4], "B must never receive A's typed 999");
-    }
-}
-
 /// PAINS_LOG P16 (owner 2026-09-25): "the Pathfinder buttons do nothing". Two overlapping shapes drawn
 /// with the real Rectangle gestures, selected, then each boolean button CLICKED — in the real box tree
 /// (`ShellState::standard`) hosting the real panel bodies exactly as `Ui::run` does, the frame's ops
@@ -7989,8 +7642,8 @@ mod pathfinder_click_tests {
     use varos_core::editor::{Editor, ToolKind};
 
     thread_local! {
-        /// Where `pf_btn` put each boolean button in the last frame (test-only probe).
-        pub(super) static PF_RECTS: RefCell<Vec<(BoolOp, egui::Rect)>> = const { RefCell::new(vec![]) };
+        /// Where `pf_btn` put each boolean button in the last frame, and its disabled reason (test probe).
+        pub(super) static PF_RECTS: RefCell<Vec<(BoolOp, egui::Rect, Option<String>)>> = const { RefCell::new(vec![]) };
     }
 
     const OPS: [(BoolOp, &str); 4] = [
@@ -8070,7 +7723,7 @@ mod pathfinder_click_tests {
                             true
                         }
                         PanelId::Pathfinder => {
-                            panel_pathfinder(ui, &mut ops);
+                            panel_pathfinder(ui, snap.pathfinder, &mut ops);
                             true
                         }
                         _ => false,
@@ -8083,7 +7736,7 @@ mod pathfinder_click_tests {
         fn button_at(&mut self, ed: &mut Editor, op: BoolOp) -> Pos2 {
             self.frame(ed, vec![]);
             let rects = PF_RECTS.with(|r| r.borrow().clone());
-            rects.iter().find(|(o, _)| same(*o, op)).map(|(_, r)| r.center()).expect("the button is drawn")
+            rects.iter().find(|(o, ..)| same(*o, op)).map(|(_, r, _)| r.center()).expect("the button is drawn")
         }
         /// A mouse click (press and release in separate frames), or a trackpad tap (`tap`: press and
         /// release arrive in ONE frame's events, as a fast macOS tap-to-click delivers them).
@@ -8132,6 +7785,33 @@ mod pathfinder_click_tests {
         click_each_op(PanelId::Properties, false);
         click_each_op(PanelId::Properties, true);
     }
+
+    /// `Editor::pathfinder_enabled` drives both homes: fewer than two closed shapes → every button is
+    /// drawn disabled with the core's reason, and a click emits nothing; two → enabled, no reason.
+    #[test]
+    fn buttons_are_disabled_with_the_reason_below_two_closed_shapes() {
+        for front in [PanelId::Pathfinder, PanelId::Properties] {
+            let mut ed = two_selected();
+            let reason = {
+                let keep = ed.doc.paths[0].id;
+                ed.objsel.retain(|p| *p == keep);
+                ed.pathfinder_enabled().expect_err("premise: one shape is not enough")
+            };
+            let mut app = App::new(front);
+            app.frame(&mut ed, vec![]);
+            let rects = PF_RECTS.with(|r| r.borrow().clone());
+            assert!(!rects.is_empty() && rects.len().is_multiple_of(4), "{front:?}: all four buttons are drawn");
+            assert!(rects.iter().all(|(.., why)| why.as_deref() == Some(reason)), "{front:?}: disabled + reason");
+            let (rev, at) = (ed.rev, rects[0].1.center());
+            app.click(&mut ed, at, false);
+            assert_eq!((ed.rev, ed.doc.paths.len()), (rev, 2), "{front:?}: a disabled button does nothing");
+            // two closed shapes: enabled, no reason
+            ed.select_all();
+            app.frame(&mut ed, vec![]);
+            let rects = PF_RECTS.with(|r| r.borrow().clone());
+            assert!(rects.iter().all(|(.., why)| why.is_none()), "{front:?}: enabled");
+        }
+    }
 }
 
 /// P16 owner re-test / Codex review: egui-winit starts `RawInput::focused` at `false` and on macOS only
@@ -8154,7 +7834,7 @@ mod window_focus_tests {
         assert!(egui_focus_seed(false, true), "never lowers: losing focus stays winit's Focused(false) path");
     }
 
-    /// The artboard-name field (`name_field`) on a key window whose egui-winit flag never became
+    /// The artboard-name field (`fields::name`) on a key window whose egui-winit flag never became
     /// true: with the host seed the typed text survives across frames and is committed on blur.
     #[test]
     fn a_text_field_keeps_its_typed_buffer_once_the_host_seeds_window_focus() {
@@ -8172,15 +7852,21 @@ mod window_focus_tests {
             r
         };
         let frame = |events: Vec<Event>, focus: bool| {
-            let mut out = None;
+            let mut ops = vec![];
             let _ = ctx.run_ui(raw(events), |ui| {
                 if focus {
-                    let id = doc_id(ui, ("abname", "t"));
+                    let id = doc_id(ui, ("abname", kit::field::home(ui), "t"));
                     ui.memory_mut(|m| m.request_focus(id));
                 }
-                out = name_field(ui, 160.0, "Artboard", "t");
+                fields::name(ui, 160.0, "Artboard", "t", &mut ops, |v| Op::AbName(0, v));
             });
-            out
+            ops.into_iter().find_map(|op| match op {
+                Op::Field(op) => match *op {
+                    Op::AbName(_, v) => Some(v),
+                    _ => None,
+                },
+                _ => None,
+            })
         };
         let enter = Event::Key {
             key: egui::Key::Enter,

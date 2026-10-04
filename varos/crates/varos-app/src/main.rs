@@ -630,6 +630,14 @@ fn dispatch(
             host::Ran::default()
         }
         host::HostAction::App(AppCommand::Window(w)) => {
+            // K3: a layout command (Window ▸ rail / dock / panel) may hide the field being edited —
+            // valid text commits to what it edits first; invalid text reverts the frame its field is
+            // no longer drawn (`kit::field::end_frame`), so nothing stays held
+            if !matches!(w, WindowCmd::Minimize | WindowCmd::ToggleMaximize) && !ws.on_home() {
+                if let Some(s) = ws.active_mut() {
+                    let _ = gui.commit_fields(&mut s.editor);
+                }
+            }
             match w {
                 WindowCmd::Minimize => window.set_minimized(true),
                 WindowCmd::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
@@ -673,11 +681,29 @@ fn run_action(
                 return host::Ran::default();
             }
             if let Some(s) = ws.active_mut() {
-                run_doc_action(a, &mut s.editor, &mut s.view, canvas);
+                if !run_doc(a, &mut s.editor, &mut s.view, canvas, ui) {
+                    return host::Ran { held: true, ..host::Ran::default() }; // K3: an invalid field holds it
+                }
             }
             host::Ran::default()
         }
     }
+}
+
+/// THE one door for document actions (keys, menu rows), K3: while a text / number field is being
+/// edited, ⌘Z / ⇧⌘Z / ⌘Y belong to the field's own text undo and never reach the document; any other
+/// action first commits the open field to what it was editing (its own undo step), then runs. `false`
+/// = the field's text does not parse: nothing ran, the action must be held.
+fn run_doc(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: egui::Rect, ui: &mut dyn host::DocUi) -> bool {
+    let history = matches!(a, host::DocAction::Key(KeyCode::KeyZ | KeyCode::KeyY, m) if m.ctrl);
+    if history && ui.field_has_focus() {
+        return true;
+    }
+    if !ui.settle_fields(ed) {
+        return false;
+    }
+    run_doc_action(a, ed, view, canvas);
+    true
 }
 
 /// A document action on one tab: a shortcut key's path, or a magnet quick-menu row.
@@ -717,16 +743,16 @@ fn command_key(
 /// earlier is still waiting (`ActionQueue::doc_runs_now` — no command, no click whose command is still
 /// to come), else it joins the queue behind it — so the queue order is the event order (review P1: a
 /// ⌘Z after a queued ⌘S runs after the Save; a ⌘Z after a click on tab B runs on B).
+/// It goes through [`run_doc`]; one an invalid field holds joins the queue (where it is held).
 fn raise_doc(
     pending: &mut host::ActionQueue,
     a: host::DocAction,
     ed: &mut Editor,
     view: &mut View,
     canvas: egui::Rect,
+    ui: &mut dyn host::DocUi,
 ) {
-    if pending.doc_runs_now() {
-        run_doc_action(a, ed, view, canvas);
-    } else {
+    if !(pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
         pending.push(host::HostAction::Doc(a));
     }
 }
@@ -1073,7 +1099,9 @@ fn main() {
                                 let m = Mods { ctrl: true, shift: k.shift, alt: k.alt };
                                 match host::key_action(k.code, m, Some(s.id)) {
                                     A::App(c) => pending.push(A::App(c)),
-                                    A::Doc(d) => raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas),
+                                    A::Doc(d) => {
+                                        raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas, &mut gui)
+                                    }
                                 }
                             }
                         }
@@ -1082,7 +1110,7 @@ fn main() {
                             if !ws.on_home() && !gui.wants_keyboard() {
                                 if let Some(s) = ws.active_mut() {
                                     let d = D::Key(code, Mods::default());
-                                    raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas);
+                                    raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas, &mut gui);
                                 }
                             }
                         }
@@ -1091,7 +1119,7 @@ fn main() {
                                 continue;
                             }
                             if let Some(s) = ws.active_mut() {
-                                raise_doc(&mut pending, D::Snap { grid }, &mut s.editor, &mut s.view, canvas);
+                                raise_doc(&mut pending, D::Snap { grid }, &mut s.editor, &mut s.view, canvas, &mut gui);
                             }
                         }
                         None => {}
@@ -1143,7 +1171,7 @@ fn main() {
                     let (mut ready, mut ran_any) = (ready.into_iter(), false);
                     while let Some(action) = ready.next() {
                         // a Close / Save As / Quit that must wait for an in-flight save comes back here
-                        let retry = matches!(action, host::HostAction::App(_)).then(|| action.clone());
+                        let retry = Some(action.clone()); // a held key / menu row waits too (K3)
                         if let host::HostAction::App(cmd) = &action {
                             if recovery.handle_read(cmd, &mut dialogs) || recovery.handle(cmd, &mut ws, Instant::now())
                             {
@@ -1441,6 +1469,13 @@ fn main() {
                                                 .sqrt()
                                                 < 6.0
                                     });
+                                    // K3: the open field commits to what it was editing BEFORE the press can
+                                    // change the selection; text that does not parse keeps the keyboard and
+                                    // the press is not delivered
+                                    if !gui.commit_fields(ed) {
+                                        window.request_redraw();
+                                        return;
+                                    }
                                     last_click = Some((now, screen_cursor));
                                     ed.ppu = view.zoom;
                                     let wp = view.s2w(screen_cursor);
@@ -1533,7 +1568,8 @@ fn main() {
                         } else if event.state == ElementState::Pressed {
                             // runs now, or waits behind a command raised earlier in this batch (FIFO)
                             let d = host::DocAction::Key(code, keyboard.held());
-                            raise_doc(&mut pending, d, ed, view, canvas_px(&gui, &window));
+                            let canvas = canvas_px(&gui, &window);
+                            raise_doc(&mut pending, d, ed, view, canvas, &mut gui);
                             window.request_redraw();
                         }
                     }
@@ -2054,7 +2090,9 @@ mod action_queue_tests {
     #[derive(Default)]
     struct FakeUi;
     impl host::DocUi for FakeUi {
-        fn settle(&mut self, _: &mut Editor) {}
+        fn settle(&mut self, _: &mut Editor) -> bool {
+            true
+        }
         fn document_switched(&mut self) {}
     }
 
@@ -2173,7 +2211,7 @@ mod action_queue_tests {
                 Raised::Action(host::HostAction::App(c)) => pending.push(host::HostAction::App(c)),
                 Raised::Action(host::HostAction::Doc(d)) => {
                     let s = ws.active_mut().unwrap();
-                    raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas);
+                    raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas, &mut FakeUi);
                 }
                 Raised::Pointer(release) => {
                     pending.pointer_button(release);
@@ -2199,6 +2237,97 @@ mod action_queue_tests {
 
     fn undo() -> Raised {
         Raised::Action(host::HostAction::Doc(host::DocAction::Key(UNDO, CMD)))
+    }
+
+    /// A Ui whose open field holds text that does not parse (K3) while `invalid`.
+    struct FieldUi {
+        invalid: bool,
+    }
+    impl host::DocUi for FieldUi {
+        fn settle(&mut self, _: &mut Editor) -> bool {
+            !self.invalid
+        }
+        fn document_switched(&mut self) {}
+    }
+
+    /// Answers every “Save changes?” with Cancel, counting the questions.
+    #[derive(Default)]
+    struct AskCancel {
+        asked: usize,
+    }
+    impl Dialogs for AskCancel {
+        fn pick_open(&mut self) -> Vec<PathBuf> {
+            unreachable!()
+        }
+        fn pick_save(&mut self, _: &str, _: Option<&Path>) -> Option<PathBuf> {
+            unreachable!()
+        }
+        fn ask_save_changes(&mut self, _: &str, _: Option<(usize, usize)>) -> SaveDecision {
+            self.asked += 1;
+            SaveDecision::Cancel
+        }
+        fn save_failed(&mut self, _: &str, _: &str) -> SaveFailChoice {
+            unreachable!()
+        }
+        fn open_failed(&mut self, _: &str, _: &str) {
+            unreachable!()
+        }
+        fn confirm_replace(&mut self, _: &str) -> bool {
+            unreachable!()
+        }
+        fn notice(&mut self, _: &str, _: &str) {
+            unreachable!()
+        }
+    }
+
+    /// One `AboutToWait` drain as the event loop runs it: a held action goes back to the head of the
+    /// queue with everything behind it. Returns what ran.
+    fn drain(
+        pending: &mut host::ActionQueue,
+        ws: &mut workspace::Workspace,
+        ui: &mut dyn host::DocUi,
+        dialogs: &mut dyn Dialogs,
+    ) -> Vec<host::Ran> {
+        let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (mut store, jobs) = (RecordingStore::default(), &mut host::NoWorker::default());
+        let (mut ready, mut out) = (pending.take_ready().into_iter(), vec![]);
+        while let Some(action) = ready.next() {
+            let retry = action.clone();
+            let ran = run_action(action, ws, ui, canvas, dialogs, &mut store, &host::Keyboard::default(), jobs);
+            if ran.held {
+                pending.hold(std::iter::once(retry).chain(ready.by_ref()));
+                break;
+            }
+            out.push(ran);
+        }
+        out
+    }
+
+    /// K3 review H2: a user command raised while a field holds text that does not parse is HELD at the
+    /// head of the queue with everything behind it — never dropped, never overtaken. Esc (the field
+    /// reverts, valid again) lets it run, then what was behind it.
+    #[test]
+    fn an_invalid_field_holds_quit_and_undo_until_esc() {
+        let (mut ws, _) = saved_then_edited();
+        let boards = |ws: &workspace::Workspace| ws.active().unwrap().editor.doc.artboards.len();
+        let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (mut ui, mut dialogs) = (FieldUi { invalid: true }, AskCancel::default());
+        let mut pending = host::ActionQueue::default();
+        pending.push(host::HostAction::App(AppCommand::Quit)); // ⌘Q
+        {
+            let s = ws.active_mut().unwrap(); // ⌘Z
+            raise_doc(&mut pending, host::DocAction::Key(UNDO, CMD), &mut s.editor, &mut s.view, canvas, &mut ui);
+        }
+        for _ in 0..3 {
+            assert!(drain(&mut pending, &mut ws, &mut ui, &mut dialogs).is_empty(), "nothing runs");
+        }
+        assert_eq!((dialogs.asked, boards(&ws)), (0, 2), "no Quit question, no Undo");
+        assert!(!pending.is_empty(), "held, not dropped");
+        ui.invalid = false; // Esc: the field reverted
+        drain(&mut pending, &mut ws, &mut ui, &mut dialogs);
+        assert_eq!(dialogs.asked, 1, "the Quit flow ran first (Save changes? → Cancel)");
+        assert_eq!(boards(&ws), 1, "then the Undo");
+        assert!(pending.is_empty());
     }
 
     #[test]

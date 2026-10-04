@@ -6,7 +6,7 @@ use egui::{vec2, Align2, FontId, RichText, Sense, StrokeKind, Vec2};
 
 /// Every panel the shell knows. `Board` is special (its body is the canvas + the two floating hands,
 /// drawn by `boxtree`); the rest are dockable dummy panels for the sandbox.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum PanelId {
     Board,
     Align,
