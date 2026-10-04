@@ -1,4 +1,8 @@
 //! F1: host-owned recovery coordination. The worker only receives owned documents and metadata.
+//!
+//! The host also owns THE one background I/O worker for the whole app: S6's manual saves and PDF
+//! exports (`file_jobs`) run on the same FIFO thread as the recovery copies (`Finished::File`), so a
+//! Quit's drain (`shutdown`) finishes an in-flight export exactly like a recovery copy.
 use crate::{
     app_command::{AppCommand, SessionId},
     workspace::{DocumentSession, Workspace},
@@ -36,6 +40,8 @@ enum Finished {
     ScanFailed,
     Loaded(String, Result<Box<crate::workspace::RecoveredDocument>, String>),
     Discarded(String, Result<(), String>),
+    /// A manual save / PDF export (`file_jobs`), handed to the lifecycle as `AppCommand::FileDone`.
+    File(crate::file_jobs::FileDone),
 }
 pub struct RecoveryHost {
     scheduler: Scheduler,
@@ -51,6 +57,12 @@ pub struct RecoveryHost {
     /// Why the Recovery switch cannot be persisted (settings unreadable / no data folder): a
     /// change then applies to this session only, and the user is told so.
     settings_unsaved: Option<String>,
+    /// File-job results received but not yet applied (oldest first).
+    file_done: std::collections::VecDeque<crate::file_jobs::FileDone>,
+    /// Recovery results received while the host waited for a file job; `observe` handles them first.
+    held: Vec<Finished>,
+    /// The command held back for an in-flight save (`host::run_command`).
+    pub save_wait: crate::host::SaveWait,
 }
 impl RecoveryHost {
     pub fn new(wake: Box<dyn Fn() + Send>) -> Self {
@@ -71,6 +83,17 @@ impl RecoveryHost {
             deferred: false,
             changed: false,
             settings_unsaved: None,
+            file_done: Default::default(),
+            held: Vec::new(),
+            save_wait: Default::default(),
+        };
+        // The worker runs whether or not recovery storage is available: saves and exports use it too.
+        let worker_error = match IoWorker::spawn(wake) {
+            Ok(worker) => {
+                host.worker = Some(worker);
+                None
+            }
+            Err(e) => Some(format!("Recovery writer unavailable: {e}")),
         };
         let Some(layout) = layout else {
             host.warning = Some("Recovery unavailable: the app data folder is unavailable.".into());
@@ -91,11 +114,36 @@ impl RecoveryHost {
                 return host;
             }
         }
-        match IoWorker::spawn(wake) {
-            Ok(worker) => host.worker = Some(worker),
-            Err(e) => host.warning = Some(format!("Recovery writer unavailable: {e}")),
+        if worker_error.is_some() {
+            host.warning = worker_error;
         }
         host
+    }
+
+    /// Pull every finished job off the worker without blocking: file-job results go to the file
+    /// queue ([`Self::take_file_done`]), the rest wait for `observe`.
+    fn pump(&mut self) {
+        let Some(worker) = &self.worker else {
+            return;
+        };
+        for done in worker.try_completions() {
+            self.sort(done);
+        }
+    }
+    fn sort(&mut self, done: Finished) {
+        match done {
+            Finished::File(d) => self.file_done.push_back(d),
+            other => self.held.push(other),
+        }
+    }
+    /// The file-job results received so far (oldest first), for the host to apply.
+    pub fn take_file_done(&mut self) -> Vec<crate::file_jobs::FileDone> {
+        self.pump();
+        self.file_done.drain(..).collect()
+    }
+    /// A file-job result is waiting to be applied.
+    pub fn has_file_done(&self) -> bool {
+        !self.file_done.is_empty()
     }
     /// One launch scan, on the same FIFO as the writer; its store holds all orphan claims.
     fn begin_scan(&mut self) {
@@ -269,9 +317,11 @@ impl RecoveryHost {
     }
     pub fn observe(&mut self, ws: &mut Workspace, now: Instant) {
         {
-            let completed = self.worker.as_ref().map(|w| w.try_completions()).unwrap_or_default();
+            self.pump();
+            let completed = std::mem::take(&mut self.held);
             for done in completed {
                 match done {
+                    Finished::File(d) => self.file_done.push_back(d), // `pump` sorted these already
                     Finished::ScanFailed => {
                         self.warning = Some("Recovery scan failed. Existing copies are kept.".into());
                         self.changed = true;
@@ -414,6 +464,8 @@ impl RecoveryHost {
             }
         }
     }
+    /// Quit: close the worker's queue and run everything already on it — the final recovery retires
+    /// AND any in-flight PDF export (Quit waits for it) — then join the thread.
     pub fn shutdown(&mut self) {
         if let Some(worker) = self.worker.take() {
             for done in worker.shutdown() {
@@ -474,6 +526,31 @@ impl RecoveryHost {
         ui
     }
 }
+impl crate::host::FileJobs for RecoveryHost {
+    fn submit(&mut self, job: crate::file_jobs::FileJob) -> Result<(), crate::file_jobs::FileJob> {
+        let Some(worker) = &self.worker else {
+            return Err(job);
+        };
+        let if_panicked = Finished::File(crate::file_jobs::FileDone::panicked(&job));
+        // Shared with the job so a stopped worker hands the job back for an inline run.
+        let slot = Arc::new(std::sync::Mutex::new(Some(job)));
+        let mine = Arc::clone(&slot);
+        let run = Box::new(move || {
+            let job = mine.lock().ok().and_then(|mut j| j.take()).expect("the job runs once");
+            // The plain disk store: the Recent entry of a save is recorded when its result is applied.
+            Finished::File(crate::file_jobs::execute(job, &mut crate::file_ports::DiskStore))
+        });
+        match worker.submit(run, if_panicked) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(slot.lock().ok().and_then(|mut j| j.take()).expect("a refused job never ran")),
+        }
+    }
+
+    fn save_wait(&mut self) -> &mut crate::host::SaveWait {
+        &mut self.save_wait
+    }
+}
+
 fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
@@ -742,6 +819,7 @@ mod tests {
                 ws: &mut self.ws,
                 dialogs: &mut dialogs,
                 store: &mut crate::file_ports::DiskStore,
+                jobs: None,
             }
             .run(AppCommand::InstallRecovered(Box::new(copy)));
             self.ws.active_id().unwrap()
@@ -812,14 +890,24 @@ mod tests {
         r.scan();
         let id = r.recover(&rid);
         let mut dialog = Dialog::default();
-        crate::lifecycle::Lifecycle { ws: &mut r.ws, dialogs: &mut dialog, store: &mut crate::file_ports::DiskStore }
-            .run(AppCommand::Save(id));
+        crate::lifecycle::Lifecycle {
+            ws: &mut r.ws,
+            dialogs: &mut dialog,
+            store: &mut crate::file_ports::DiskStore,
+            jobs: None,
+        }
+        .run(AppCommand::Save(id));
         assert_eq!(dialog.suggestion, Some(("Logo-recovered.vrs".into(), Some(r.layout.root.clone()))));
         assert!(r.ws.get(id).unwrap().is_dirty_exact());
         let dest = r.layout.root.join("Logo-recovered.vrs");
         dialog.save = Some(dest.clone());
-        crate::lifecycle::Lifecycle { ws: &mut r.ws, dialogs: &mut dialog, store: &mut crate::file_ports::DiskStore }
-            .run(AppCommand::Save(id));
+        crate::lifecycle::Lifecycle {
+            ws: &mut r.ws,
+            dialogs: &mut dialog,
+            store: &mut crate::file_ports::DiskStore,
+            jobs: None,
+        }
+        .run(AppCommand::Save(id));
         assert!(!r.ws.get(id).unwrap().is_dirty_exact());
         assert!(r.ws.get(id).unwrap().recovered.is_none());
         r.host.observe(&mut r.ws, r.now);
@@ -933,5 +1021,90 @@ mod tests {
             }
             assert!(r.layout.recovery().join(rid).exists());
         }
+    }
+
+    /// A two-board document and an export job for it to `dest` (all visible boards).
+    fn export_job(dest: PathBuf) -> crate::file_jobs::FileJob {
+        let mut doc = varos_core::model::Document::default();
+        for x in [0.0, 300.0] {
+            doc.artboards.push(varos_core::model::Artboard {
+                x,
+                y: 0.0,
+                w: 200.0,
+                h: 100.0,
+                name: "B".into(),
+                ..Default::default()
+            });
+        }
+        let plan = varos_pdf::plan_pdf_export(&doc, varos_pdf::ExportScope::AllVisibleArtboards).unwrap();
+        crate::file_jobs::FileJob::Export(crate::file_jobs::ExportJob {
+            sid: SessionId(1),
+            dest,
+            doc: Arc::new(doc),
+            plan,
+            replace_confirmed: false,
+        })
+    }
+
+    #[test]
+    fn export_runs_on_the_shared_worker_even_without_recovery_storage() {
+        use crate::host::FileJobs;
+        let dir = std::env::temp_dir().join(format!("varos-s6-{}", new_nonce()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("Logo.pdf");
+        let mut host = RecoveryHost::at(None, Box::new(|| {}));
+        assert!(
+            FileJobs::submit(&mut host, export_job(dest.clone())).is_ok(),
+            "the worker exists without a data folder"
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut got = host.take_file_done();
+        while got.is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+            got = host.take_file_done();
+        }
+        assert_eq!(got.len(), 1, "the export's result arrives through the worker");
+        let done = got.remove(0);
+        assert!(
+            matches!(&done, crate::file_jobs::FileDone::Exported(d) if d.result == crate::file_jobs::ExportResult::Exported),
+            "{done:?}"
+        );
+        let bytes = std::fs::read(&dest).unwrap();
+        assert_eq!(lopdf::Document::load_mem(&bytes).unwrap().get_pages().len(), 2, "one page per board");
+        assert!(!varos_pdf::has_embedded_model(&bytes));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quit_waits_for_an_in_flight_export() {
+        use crate::host::FileJobs;
+        let dir = std::env::temp_dir().join(format!("varos-s6-{}", new_nonce()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("Late.pdf");
+        let mut host = RecoveryHost::at(None, Box::new(|| {}));
+        // a slow job ahead keeps the export queued while Quit begins
+        let (release, gate) = mpsc::channel::<()>();
+        host.worker
+            .as_ref()
+            .unwrap()
+            .submit(
+                Box::new(move || {
+                    let _ = gate.recv_timeout(Duration::from_secs(10));
+                    Finished::ScanFailed
+                }),
+                Finished::ScanFailed,
+            )
+            .unwrap();
+        FileJobs::submit(&mut host, export_job(dest.clone())).unwrap();
+        let opener = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            let _ = release.send(());
+        });
+        assert!(!dest.exists(), "still queued when Quit starts");
+        host.shutdown();
+        opener.join().unwrap();
+        let bytes = std::fs::read(&dest).expect("Quit waited for the export to finish");
+        assert_eq!(lopdf::Document::load_mem(&bytes).unwrap().get_pages().len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
