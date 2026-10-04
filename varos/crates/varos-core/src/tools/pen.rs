@@ -40,7 +40,7 @@ impl Tool for Pen {
             }
             // middle anchor -> delete (only if the path is selected/active)
             if ed.is_editable(pid) {
-                ed.delete_anchor(aid);
+                ed.delete_anchor_reconnect(aid);
                 ed.dirty = true;
             }
             return;

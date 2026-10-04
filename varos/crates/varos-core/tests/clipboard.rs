@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use varos_core::editor::{Editor, ToolKind};
+use varos_core::editor::{Editor, PaintTarget, ToolKind};
 use varos_core::model::{Anchor, GroupRole, Node, NodeKind, Path, Xform};
 use varos_core::EditCommand;
 
@@ -500,6 +500,188 @@ fn copy_of_a_direct_group_member_does_not_carry_a_hidden_sibling() {
     ed.layer_select_set(&[direct_leaf]);
     ed.execute(EditCommand::Copy);
     assert_eq!(ed.clipboard().len(), 1, "a directly selected leaf is not a whole-group structural selection");
+}
+
+#[test]
+fn deleting_a_single_layers_leaf_leaves_its_hidden_group_sibling() {
+    let mut ed = two_squares();
+    ed.doc.group(&[10, 11]).unwrap();
+    let hidden_leaf = ed.doc.node_of_path(11).unwrap();
+    ed.execute(EditCommand::ToggleNodeHidden(hidden_leaf));
+    let direct_leaf = ed.doc.node_of_path(10).unwrap();
+    ed.layer_select_set(&[direct_leaf]);
+    ed.execute(EditCommand::DeleteSelected);
+    assert!(!path_exists(&ed, 10));
+    assert!(path_exists(&ed, 11), "a hidden sibling survives deletion of one Layers leaf");
+}
+
+#[test]
+fn copying_a_single_layers_leaf_does_not_carry_its_locked_group_sibling() {
+    let mut ed = two_squares();
+    ed.doc.group(&[10, 11]).unwrap();
+    let locked_leaf = ed.doc.node_of_path(11).unwrap();
+    ed.execute(EditCommand::ToggleNodeLocked(locked_leaf));
+    let direct_leaf = ed.doc.node_of_path(10).unwrap();
+    ed.layer_select_set(&[direct_leaf]);
+    ed.execute(EditCommand::Copy);
+    assert_eq!(ed.clipboard().len(), 1, "a locked sibling is not implied by one selected leaf");
+}
+
+#[test]
+fn copy_of_a_clip_group_carries_its_locked_mask_without_touching_the_original() {
+    let mut ed = two_squares();
+    let clip = ed.doc.clip_group(&[10, 11], 11).unwrap();
+    ed.layer_select_set(&[clip]);
+    let mask_leaf = ed.doc.node_of_path(11).unwrap();
+    ed.execute(EditCommand::ToggleNodeLocked(mask_leaf));
+    let original = ed.doc.clone();
+
+    ed.execute(EditCommand::Copy);
+    assert_eq!(ed.doc, original, "Copy never changes the source document");
+    ed.execute(EditCommand::Paste { offset: Some([0.0, 100.0]) });
+
+    let copied_clip = ed.objsel.iter().find_map(|&pid| ed.doc.clip_group_of(pid)).expect("copy stays clipped");
+    let copied_mask = ed.doc.node(copied_clip).unwrap().mask_child.unwrap();
+    assert!(ed.doc.node(copied_mask).unwrap().locked, "copied mask keeps its lock flag");
+}
+
+#[test]
+fn cut_of_a_clip_group_leaves_the_locked_mask_in_place() {
+    let mut ed = two_squares();
+    let clip = ed.doc.clip_group(&[10, 11], 11).unwrap();
+    ed.layer_select_set(&[clip]);
+    let mask_leaf = ed.doc.node_of_path(11).unwrap();
+    ed.execute(EditCommand::ToggleNodeLocked(mask_leaf));
+    ed.execute(EditCommand::Cut);
+    assert!(path_exists(&ed, 11), "Cut must leave the locked mask");
+    assert!(!path_exists(&ed, 10), "Cut removes the editable content");
+}
+
+#[test]
+fn alt_drag_and_transform_again_carry_a_locked_clip_mask() {
+    let mut ed = two_squares();
+    ed.ppu = 1.0;
+    let clip = ed.doc.clip_group(&[10, 11], 11).unwrap();
+    ed.layer_select_set(&[clip]);
+    let mask_leaf = ed.doc.node_of_path(11).unwrap();
+    ed.execute(EditCommand::ToggleNodeLocked(mask_leaf));
+    let mask_fill = ed.doc.paths[ed.doc.pidx(11).unwrap()].fill;
+    ed.mods.alt = true;
+    ed.pointer_down([5.0, 5.0]);
+    ed.pointer_move([65.0, 5.0]);
+    ed.pointer_up();
+    assert_eq!(ed.doc.nodes.iter().filter(|n| n.role == varos_core::model::GroupRole::Clip).count(), 2);
+    let copied_clip =
+        ed.doc.nodes.iter().filter(|n| n.role == GroupRole::Clip && n.id != clip).map(|n| n.id).next().unwrap();
+    let copied_mask_node = ed.doc.node(copied_clip).unwrap().mask_child.unwrap();
+    let copied_mask = ed.doc.node_paths(copied_mask_node)[0];
+    assert!(!ed.objsel.contains(&copied_mask), "the locked copied mask is not object-selected");
+    let copied_mask_world = ed.doc.unit_xform(copied_mask).apply(first_anchor(&ed, copied_mask));
+    assert!(
+        near(copied_mask_world, [160.0, 0.0]),
+        "the Alt-dragged mask moves with its clip unit: {copied_mask_world:?}"
+    );
+    ed.execute(EditCommand::ApplyPaint { target: PaintTarget::Fill, color: Some([1.0, 0.0, 0.0, 1.0]) });
+    assert_eq!(ed.doc.paths[ed.doc.pidx(copied_mask).unwrap()].fill, mask_fill, "fill skips the locked mask copy");
+    ed.mods.alt = false;
+    ed.execute(EditCommand::TransformAgain);
+    assert_eq!(
+        ed.doc.nodes.iter().filter(|n| n.role == varos_core::model::GroupRole::Clip).count(),
+        3,
+        "Ctrl+D repeats the clip-group copy rather than demoting it"
+    );
+    let repeated_clip = ed.doc.nodes.iter().filter(|n| n.role == GroupRole::Clip).max_by_key(|n| n.id).unwrap().id;
+    let repeated_mask_node = ed.doc.node(repeated_clip).unwrap().mask_child.unwrap();
+    let repeated_mask = ed.doc.node_paths(repeated_mask_node)[0];
+    assert!(!ed.objsel.contains(&repeated_mask), "the locked Ctrl+D mask is not object-selected");
+    assert!(
+        near(ed.doc.unit_xform(repeated_mask).apply(first_anchor(&ed, repeated_mask)), [220.0, 0.0]),
+        "the Ctrl+D mask repeats the unit move"
+    );
+    ed.execute(EditCommand::ApplyPaint { target: PaintTarget::Fill, color: Some([0.0, 0.0, 1.0, 1.0]) });
+    assert_eq!(ed.doc.paths[ed.doc.pidx(repeated_mask).unwrap()].fill, mask_fill, "fill skips the Ctrl+D mask");
+    for group in ed.doc.nodes.iter().filter(|n| n.role == varos_core::model::GroupRole::Clip) {
+        let mask = group.mask_child.unwrap();
+        assert!(ed.doc.node(mask).unwrap().locked, "every duplicate retains the mask lock flag");
+    }
+    ed.undo(); // blue fill
+    ed.undo(); // Ctrl+D
+    assert_eq!(ed.doc.nodes.iter().filter(|n| n.role == varos_core::model::GroupRole::Clip).count(), 2);
+    ed.undo(); // red fill
+    ed.undo(); // Alt-drag
+    assert_eq!(
+        ed.doc.nodes.iter().filter(|n| n.role == varos_core::model::GroupRole::Clip).count(),
+        1,
+        "Alt-drag and Ctrl+D are one undo step apiece"
+    );
+}
+
+#[test]
+fn scale_copy_and_transform_again_carry_inert_clip_masks_without_selecting_them() {
+    for locked in [true, false] {
+        let mut ed = two_squares();
+        ed.ppu = 1.0;
+        let clip = ed.doc.clip_group(&[10, 11], 11).unwrap();
+        ed.layer_select_set(&[clip]);
+        let mask_leaf = ed.doc.node_of_path(11).unwrap();
+        if locked {
+            ed.execute(EditCommand::ToggleNodeLocked(mask_leaf));
+        } else {
+            ed.execute(EditCommand::ToggleNodeHidden(mask_leaf));
+        }
+        let mask_fill = ed.doc.paths[ed.doc.pidx(11).unwrap()].fill;
+        ed.set_tool(ToolKind::Scale);
+        ed.mods.alt = true;
+        ed.pointer_down([40.0, 40.0]);
+        ed.pointer_move([60.0, 60.0]);
+        ed.pointer_up();
+
+        let copied_clip =
+            ed.doc.nodes.iter().filter(|n| n.role == GroupRole::Clip && n.id != clip).max_by_key(|n| n.id).unwrap().id;
+        let copied_mask = ed.doc.node_paths(ed.doc.node(copied_clip).unwrap().mask_child.unwrap())[0];
+        let copied_world = ed.doc.unit_xform(copied_mask).apply(first_anchor(&ed, copied_mask));
+        assert!(near(copied_world, [180.0, -20.0]), "locked={locked}: Alt-scale carries mask: {copied_world:?}");
+        assert!(!ed.objsel.contains(&copied_mask));
+        ed.execute(EditCommand::ApplyPaint { target: PaintTarget::Fill, color: Some([1.0, 0.0, 0.0, 1.0]) });
+        assert_eq!(ed.doc.paths[ed.doc.pidx(copied_mask).unwrap()].fill, mask_fill);
+
+        ed.mods.alt = false;
+        ed.execute(EditCommand::TransformAgain);
+        let repeated_clip = ed.doc.nodes.iter().filter(|n| n.role == GroupRole::Clip).max_by_key(|n| n.id).unwrap().id;
+        let repeated_mask = ed.doc.node_paths(ed.doc.node(repeated_clip).unwrap().mask_child.unwrap())[0];
+        let repeated_world = ed.doc.unit_xform(repeated_mask).apply(first_anchor(&ed, repeated_mask));
+        assert!(near(repeated_world, [340.0, -60.0]), "locked={locked}: Ctrl+D carries mask: {repeated_world:?}");
+        assert!(!ed.objsel.contains(&repeated_mask));
+        ed.execute(EditCommand::ApplyPaint { target: PaintTarget::Fill, color: Some([0.0, 0.0, 1.0, 1.0]) });
+        assert_eq!(ed.doc.paths[ed.doc.pidx(repeated_mask).unwrap()].fill, mask_fill);
+    }
+}
+
+#[test]
+fn whole_group_intent_is_derived_after_direct_to_object_marquee_and_select_all() {
+    for route in 0..3 {
+        let mut ed = two_squares();
+        ed.ppu = 1.0;
+        ed.doc.group(&[10, 11]).unwrap();
+        let hidden_leaf = ed.doc.node_of_path(11).unwrap();
+        ed.execute(EditCommand::ToggleNodeHidden(hidden_leaf));
+        match route {
+            0 => {
+                ed.set_tool(varos_core::editor::ToolKind::Direct);
+                ed.selected.insert(100);
+                ed.set_tool(varos_core::editor::ToolKind::Object);
+            }
+            1 => {
+                ed.set_tool(varos_core::editor::ToolKind::Object);
+                ed.pointer_down([-5.0, -5.0]);
+                ed.pointer_move([45.0, 45.0]);
+                ed.pointer_up();
+            }
+            _ => ed.select_all(),
+        }
+        ed.execute(EditCommand::Copy);
+        assert_eq!(ed.clipboard().len(), 2, "route {route} must carry the hidden group member");
+    }
 }
 
 #[test]

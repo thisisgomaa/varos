@@ -15,11 +15,7 @@ impl Tool for Object {
             if ed.mods.alt {
                 // duplicate the whole selection if the clicked group is part of a multi-selection
                 let in_sel = members.iter().any(|m| ed.objsel.contains(m));
-                let srcs: Vec<u32> = if in_sel && ed.objsel.len() > 1 {
-                    ed.structural_object_paths()
-                } else {
-                    members.into_iter().filter(|&member| !ed.doc.eff_locked(member)).collect()
-                };
+                let srcs: Vec<u32> = if in_sel && ed.objsel.len() > 1 { ed.copy_object_paths() } else { members };
                 ed.drag = Drag::DupPending { srcs, down: pos, object: true };
                 return;
             }
