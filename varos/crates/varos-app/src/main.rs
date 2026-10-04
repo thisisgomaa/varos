@@ -37,6 +37,9 @@ mod lifecycle;
 mod mac_caption;
 #[cfg(target_os = "macos")]
 mod mac_menu;
+#[cfg(target_os = "macos")]
+mod mac_open;
+mod os_open;
 mod recent_files;
 mod recovery_host;
 mod single_instance;
@@ -820,6 +823,10 @@ fn main() {
         Ok(el) => el,
         Err(e) => fatal("Varos couldn't connect to the Windows desktop.", &e.to_string()),
     };
+    // macOS (DFS S4): Finder / Dock / `open` hand files to the app delegate — hook it now, before
+    // `run()`, because a cold-launch open arrives inside `run()` before the first frame is handled.
+    #[cfg(target_os = "macos")]
+    mac_open::install(event_loop.create_proxy());
     let recovery_proxy = event_loop.create_proxy();
     let mut recovery = recovery_host::RecoveryHost::new(Box::new(move || {
         let _ = recovery_proxy.send_event(());
@@ -1098,6 +1105,16 @@ fn main() {
                     host::open_paths_command(single_instance::take_pending_file_paths(), OpenOrigin::OsHandoff)
                         .map(host::HostAction::App),
                 );
+                // Finder / Dock / `open` (macOS, DFS S4): everything that arrived since the last drain —
+                // cold-launch events included — joins the ONE FIFO queue as one `OpenPaths`, and the
+                // window comes forward (un-minimized) so the user sees the file they asked for.
+                if let Some(batch) = os_open::take_batch() {
+                    pending.push(host::HostAction::App(batch.command));
+                    if batch.raise_window {
+                        window.set_minimized(false);
+                        window.focus_window();
+                    }
+                }
                 // background saves / exports that finished: applied BEFORE the queue, so a Close or a
                 // Quit waiting there decides on the landed result (DFS S6, `file_jobs`)
                 let finished = recovery.take_file_done();
