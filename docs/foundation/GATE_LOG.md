@@ -3,6 +3,13 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-10-04 — Icon library stage 1 (icons instead of text on panel buttons)
+
+- **Scope:** worktree branch off `main` `221310f`, uncommitted; [icon study §4 / Stage 1](../studies/2026-09-23-ICON_LIBRARY_STUDY.md#stage-1--done--left-2026-10-04). One registry (`shell/kit/icons.rs`, 18 Lucide SVGs), one control (`kit::icon_button` + `IconState` Action/Tool/Toggle/Disabled), icon sizes as tokens (`ICON_SM 13 / ICON_MD 16 / ICON_LG 18`, `ICON_BTN_W×H 26×24`, toggle bar `10×2`). Converted: box-header ☰, Artboard Add/Duplicate/Delete + Presets ▾, both "×" (No paint, picker Close); moved into the one control: Layers footer Group/Delete, Constrain W/H ×2, Portrait/Landscape, Fit, Flip H/V.
+- **Local gates:** workspace **840 passed, 0 failed, 6 ignored** (nine new tests: `ui::icon_action_tests` ×3, `boxtree::tests::panel_menu_icon_switches_the_panel_by_pointer_and_keyboard`, `tests/icons.rs` ×5); macOS and Windows-target all-target clippy (`-D warnings`) and `cargo fmt --check` clean. Contact sheet of every registry icon at 1×/2× on `#141313` rendered by `tests/icons.rs` (`VAROS_ICON_SHEET=<png>`).
+- **Ordering rule:** the box header runs the open kit menu before its ☰ button in the frame, so Enter/Space reach the menu (which consumes them) and never re-press the still-focused ☰.
+- **Verdict:** implementation gates pass; native window not launched (owner using the Mac), so the look (18 px glyphs, toggle bars) awaits the owner's hand test. Independent review and merge pending.
+
 
 
 

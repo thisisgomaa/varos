@@ -148,7 +148,7 @@ pub const START_EMPTY_PAD: f32 = 48.0;
 pub const KIT_MIN_TARGET: f32 = 24.0;
 pub const KIT_CONTROL_H: f32 = 32.0;
 pub const KIT_ROW_H: f32 = 56.0;
-pub const KIT_ICON: f32 = 16.0;
+pub const KIT_ICON: f32 = ICON_MD;
 pub const KIT_PAD: f32 = 8.0;
 pub const KIT_GAP: f32 = 8.0;
 pub const KIT_TEXT_GAP: f32 = 4.0;
@@ -157,6 +157,23 @@ pub const KIT_FOCUS_STROKE: f32 = 2.0;
 /// Lucide icons rasterize at 32 px, close to their 13–18 pt draw size: egui-wgpu textures carry no
 /// mipmaps, so a large raster shown small eats thin strokes (Ahmed 2026-07-11). Toolbar and kit share it.
 pub const ICON_RASTER: u32 = 32;
+
+// ── Icon display sizes (icon stage 1, 2026-10-04). The study found six ad-hoc sizes (11/13/14/15/16/17,
+// ICON_LIBRARY_STUDY §2.3); they collapse to these three. 13 and 16 are the study's §6.5 inline/default
+// sizes; 18 is the owner-accepted QW6 icon-button size (UI_SYSTEM "micro 10.5 / icon 18"). No widget
+// types a raw icon size again — a source-scan test holds the files that draw icons to these tokens. ──
+/// Inline glyphs: search fields, field labels, the Layers eye/lock column, the status-bar Fit.
+pub const ICON_SM: f32 = 13.0;
+/// Default glyphs: the tool rail, the shape slot, kit rows and menus.
+pub const ICON_MD: f32 = 16.0;
+/// Icon buttons (`kit::icon_button`, the Align/Pathfinder chips): 18 inside the 26 × 24 target (QW6).
+pub const ICON_LG: f32 = 18.0;
+/// The icon button's hit target — never below `KIT_MIN_TARGET` in either direction.
+pub const ICON_BTN_W: f32 = 26.0;
+pub const ICON_BTN_H: f32 = KIT_MIN_TARGET;
+/// A toggle's "on" mark (owner decision: toggle = a small azure bar, no fill; tool = an azure block).
+pub const ICON_BAR_W: f32 = 10.0;
+pub const ICON_BAR_H: f32 = 2.0;
 /// Kit menus: minimum popup width and the gap between the anchor and the popup.
 pub const KIT_MENU_MIN_W: f32 = 176.0;
 pub const KIT_MENU_GAP: f32 = 4.0;
