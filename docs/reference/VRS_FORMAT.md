@@ -159,10 +159,21 @@ unique case-insensitively, order kept — the editor normalizes typed tags (firs
 storing, so a stored list that breaks this was not written by Varos and is refused. Text is stored as
 UTF-8; NFC normalization is not required.
 
-**Older formats must not carry the board keys.** The typed decoder defaults the three keys, so a
-second, keys-only pass (`format::refuse_newer_keys`, v1/v2 input only) refuses a file that claims
-format 1 or 2 but has `name`, `description` or `tags` in `doc` — the same fail-closed rule as any
-unknown field (`Invalid::FieldNotInFormat`). A v3 file may omit them (reader relaxation: they
+**Text rules (product behaviour, 2026-10-04 review).** Bounds count Unicode scalar values, not
+grapheme clusters (a family emoji `👨‍👩‍👧` is 5 scalars toward a tag's 32). Control characters
+(general category Cc) are refused. Format characters are allowed INSIDE text — ZWNJ/ZWJ
+(U+200C/U+200D, which Arabic and Persian need for correct joining) and the bidi marks, embeddings and
+isolates — and are trimmed only at the edges, together with whitespace. Tags compare through one fold,
+`varos_core::board::fold` (NFC, then upper-then-lower full case fold, so `Straße` = `STRASSE` and
+`σς` = `ΣΣ`; Arabic is unchanged): dedupe on edit, the duplicate check on load, and Start's tag filter,
+tag counts and search all use it. Edits go through the checked `Editor::try_set_board_*`, which returns
+the plain-English reason and changes nothing when input breaks a rule.
+
+**Older formats must not carry the board keys.** The typed decoder would default the three keys, so a
+keys-only scan (`format::refuse_newer_keys`, v1/v2 input only) runs right after the version gate and
+BEFORE any typed decode: it reads the top-level keys of `doc`, skipping every value, and refuses a file
+that claims format 1 or 2 but has `name`, `description` or `tags` — whatever the value (`42`, `null`, a
+nested object) — with `Invalid::FieldNotInFormat`, the same fail-closed rule as any unknown field. A v3 file may omit them (reader relaxation: they
 default to empty); this build's writer always emits all three.
 
 ## 7. v2 required keys and the unknown-field policy

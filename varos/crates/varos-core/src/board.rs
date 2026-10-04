@@ -3,8 +3,15 @@
 //! that metadata (bounds, cleaning, validation), the one display-name rule every surface uses, and the
 //! one table of new-board presets. Pure: no I/O, no UI.
 //!
-//! Bounds are counted in Unicode scalar values (`char`s), so Arabic and Latin text get the same budget.
-//! Text is stored as typed (UTF-8); NFC normalization is not required.
+//! **Text rules (product behaviour, `docs/reference/VRS_FORMAT.md` §6b):**
+//! - Bounds count Unicode scalar values (`char`s), NOT grapheme clusters: Arabic and Latin share one
+//!   budget, and an emoji ZWJ sequence counts every scalar in it.
+//! - Control characters (general category Cc: line breaks, tabs, NUL…) are refused.
+//! - Format characters are ALLOWED inside text: ZWNJ/ZWJ (U+200C/U+200D — Arabic and Persian need
+//!   them for correct joining) and the bidi marks/embeddings/isolates. They are trimmed only at the
+//!   EDGES, together with whitespace ([`clean_text`]).
+//! - Text is stored as typed (UTF-8); NFC normalization is not required for storage. Tags COMPARE
+//!   through [`fold`] (NFC + full case fold) everywhere: dedupe, Start's tag filter, counts, search.
 
 use crate::model::{Artboard, Document};
 use crate::units::Unit;
@@ -80,6 +87,18 @@ pub fn clean_text(s: &str) -> String {
     crate::command::clean_name(s).to_string()
 }
 
+/// THE comparison key for tags and Start search: NFC, then a full case-fold approximation (upper then
+/// lower, so ß/SS and σ/ς/Σ meet), NFC again — the same rule as the app's volume-name keys
+/// (`file_ports::volume_name`). Over-matching is the safe side for "the same tag".
+pub fn fold(s: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let nfc: String = s.nfc().collect();
+    nfc.to_uppercase().to_lowercase().nfc().collect()
+}
+
+/// What a checked board edit refuses, with its plain-English reason (`Display`).
+pub type Reject = MetaError;
+
 /// Clean a typed tag list: each tag edge-cleaned, empty tags dropped, case-insensitive duplicates
 /// dropped (the FIRST spelling is kept), order preserved. Bounds are NOT applied here — see
 /// [`check_tags`].
@@ -91,7 +110,7 @@ pub fn normalize_tags(tags: Vec<String>) -> Vec<String> {
         if tag.is_empty() {
             continue;
         }
-        let folded = tag.to_lowercase();
+        let folded = fold(&tag);
         if seen.contains(&folded) {
             continue;
         }
@@ -138,7 +157,7 @@ pub fn check_tags(tags: &[String]) -> Result<(), MetaError> {
         if found > MAX_TAG_CHARS {
             return Err(MetaError::TagTooLong { tag: tag.clone(), found });
         }
-        let folded = tag.to_lowercase();
+        let folded = fold(tag);
         if seen.contains(&folded) {
             return Err(MetaError::DuplicateTag { tag: tag.clone() });
         }
