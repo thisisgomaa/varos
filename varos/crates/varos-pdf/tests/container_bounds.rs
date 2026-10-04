@@ -42,10 +42,10 @@ fn spec(pdf: &Pdf) -> Object {
 }
 
 #[test]
-fn native_v2_and_all_frozen_v1_containers_load_through_checked_bytes() {
+fn native_current_and_all_frozen_v1_containers_load_through_checked_bytes() {
     let bytes = native();
     let first = load(&bytes).unwrap();
-    assert_eq!(first.source_version, 2);
+    assert_eq!(first.source_version, varos_core::format::FORMAT_VERSION);
     assert!(!first.migrated);
     assert_eq!(write_pdf(&first.doc).unwrap(), bytes);
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../varos-core/tests/fixtures/v1");
@@ -80,14 +80,14 @@ fn catalog_version_is_checked_before_model_decoding() {
         assert!(matches!(load(&save(&mut pdf)), Err(LoadError::InvalidVersion(_))));
     }
     catalog_mut(&mut pdf).remove(b"VAROS_SchemaVersion");
-    pdf.get_object_mut(id).unwrap().as_stream_mut().unwrap().set_content(br#"{"varos":3,"doc":42}"#.to_vec());
-    assert!(matches!(load(&save(&mut pdf)), Err(LoadError::NewerVersion { found: 3, .. })));
+    pdf.get_object_mut(id).unwrap().as_stream_mut().unwrap().set_content(br#"{"varos":4,"doc":42}"#.to_vec());
+    assert!(matches!(load(&save(&mut pdf)), Err(LoadError::NewerVersion { found: 4, supported: 3 })));
 }
 #[test]
 fn missing_catalog_version_is_legacy_compatible() {
     let mut pdf = parsed();
     catalog_mut(&mut pdf).remove(b"VAROS_SchemaVersion");
-    assert_eq!(load(&save(&mut pdf)).unwrap().source_version, 2);
+    assert_eq!(load(&save(&mut pdf)).unwrap().source_version, varos_core::format::FORMAT_VERSION);
 }
 #[test]
 fn plain_pdf_has_no_editable_model() {

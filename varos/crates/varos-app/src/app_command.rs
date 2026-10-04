@@ -54,8 +54,14 @@ pub enum AppCommand {
     ExportPdf(SessionId, varos_pdf::ExportScope),
     /// A background save / export finished (`file_jobs::FileDone`), applied on the UI thread.
     FileDone(Box<crate::file_jobs::FileDone>),
-    /// ⌘N / `+` / File ▸ New — a fresh, clean, boardless `Untitled-N` tab.
-    NewDocument,
+    /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free
+    /// canvas with ZERO artboards (`varos_core::board::new_board`).
+    NewBoard,
+    /// Start's "…or start with an artboard": a fresh, clean `Untitled-N` board with one artboard from
+    /// the core preset table (`varos_core::board::new_board_with_preset`). `Custom` uses the last
+    /// custom size this run (the size dialog is a later piece; until then it opens the table's
+    /// fallback square — see `lifecycle::Lifecycle::new_with_preset`).
+    NewWithPreset(varos_core::board::PresetId),
     /// Show Start while retaining every open document.
     Home,
     OpenRecent(PathBuf),

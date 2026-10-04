@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use varos_app::storage::recents::BoardSummary;
 use varos_core::model::Document;
 
 use crate::app_command::{AppCommand, SessionId};
@@ -104,7 +105,10 @@ pub trait DocStore {
         None
     }
     /// Only successful lifecycle outcomes reach Recent. Default preserves small fake stores.
-    fn remember(&mut self, _path: &Path, _relocated_from: Option<&Path>) {}
+    /// `board` = the summary of the document as it now is ON DISK (just loaded or just written), which
+    /// Recent caches so Home never parses files; `None` = nothing new was read or written (an open that
+    /// only focused an already-open tab), so the cached summary stays.
+    fn remember(&mut self, _path: &Path, _relocated_from: Option<&Path>, _board: Option<&BoardSummary>) {}
     fn remove_recent(&mut self, _path: &Path) {}
     fn clear_recent(&mut self) {}
     /// Replace `path` with the exported PDF `bytes`, durably. An export is never a Recent entry.
@@ -167,8 +171,13 @@ impl Lifecycle<'_> {
             AppCommand::LocateRecent(path) => self.locate(path),
             AppCommand::RemoveRecent(path) => self.store.remove_recent(&path),
             AppCommand::ClearRecent => self.store.clear_recent(),
-            AppCommand::NewDocument => {
+            AppCommand::NewBoard => {
+                // `Editor::new()` holds `board::new_board()`: a free canvas with zero artboards
                 self.ws.new_untitled();
+            }
+            AppCommand::NewWithPreset(preset) => {
+                let size = self.ws.custom_board_size();
+                self.ws.new_untitled_with(varos_core::board::new_board_with_preset(preset, size));
             }
             AppCommand::OpenDialog => {
                 let picked = self.dialogs.pick_open();
@@ -223,11 +232,12 @@ impl Lifecycle<'_> {
         let key = self.store.key(&path);
         if let Some(id) = self.open_tab_of(&key, None) {
             self.ws.activate(id);
-            self.store.remember(&key.path, old);
+            self.store.remember(&key.path, old, None);
             return;
         }
         match self.store.load_with_notice(&path) {
             Ok((doc, notice)) => {
+                let board = BoardSummary::of(&doc);
                 let at = key.path.clone();
                 let id = self.ws.add_loaded(doc, at.clone(), key);
                 if let Some(s) = self.ws.get_mut(id) {
@@ -235,7 +245,7 @@ impl Lifecycle<'_> {
                     // A4: the released-mask repair changed the content → the tab opens dirty.
                     s.repaired_on_open = notice == Some(varos_core::format::RELEASED_MASKS_NOTICE);
                 }
-                self.store.remember(&at, old);
+                self.store.remember(&at, old, Some(&board));
                 if let Some(message) = notice {
                     self.dialogs.notice(&format!("Opened “{}”", file_name(&path)), message);
                 }
@@ -396,6 +406,7 @@ impl Lifecycle<'_> {
             Ok(SaveOutcome::Durable) => {
                 let key = self.store.key(&dest);
                 let fingerprint = self.store.fingerprint(&dest);
+                let board = BoardSummary::of(&flight.doc); // the snapshot that was written
                 if let Some(s) = self.ws.get_mut(id) {
                     s.mark_saved_snapshot(dest.clone(), key, Arc::unwrap_or_clone(flight.doc));
                     s.source_fingerprint = fingerprint;
@@ -403,7 +414,7 @@ impl Lifecycle<'_> {
                         effect.follow_up_saves.push(id);
                     }
                 }
-                self.store.remember(&dest, None);
+                self.store.remember(&dest, None, Some(&board));
             }
             Ok(SaveOutcome::ReplacedUnconfirmed(reason)) => {
                 let key = self.store.key(&dest);
@@ -559,6 +570,7 @@ impl Lifecycle<'_> {
     fn write(&mut self, id: SessionId, dest: &Path) -> Result<SaveOutcome, String> {
         let s = self.ws.get(id).ok_or_else(|| "The document is no longer open.".to_string())?;
         let outcome = self.store.save(&s.editor.doc, dest)?;
+        let board = BoardSummary::of(&s.editor.doc);
         let key = self.store.key(dest);
         if let Some(s) = self.ws.get_mut(id) {
             if outcome == SaveOutcome::Durable {
@@ -573,7 +585,7 @@ impl Lifecycle<'_> {
             s.source_fingerprint = self.store.fingerprint(dest);
         }
         if outcome == SaveOutcome::Durable {
-            self.store.remember(dest, None);
+            self.store.remember(dest, None, Some(&board));
         }
         Ok(outcome)
     }
@@ -646,7 +658,13 @@ fn with_vrs(p: PathBuf) -> PathBuf {
 
 /// The Save As suggestion's stem: the file's stem (`Logo.pdf` → `Logo`), else the tab name.
 fn stem_of(path: Option<&Path>, display_name: &str) -> String {
-    path.and_then(Path::file_stem).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| display_name.into())
+    path.and_then(Path::file_stem).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| file_safe(display_name))
+}
+
+/// A board name used as a suggested file name: path separators and `:` become `-` (a board can be
+/// named "Logo / v2" but a file cannot); the Save dialog still lets the user change it.
+fn file_safe(name: &str) -> String {
+    name.chars().map(|c| if matches!(c, '/' | '\\' | ':') { '-' } else { c }).collect()
 }
 
 /// The name a prompt shows for a path (its file name, else the whole path).
@@ -811,11 +829,14 @@ mod tests {
         fn fingerprint(&self, path: &Path) -> Option<varos_app::storage::durable::Fingerprint> {
             self.fingerprints.get(path).copied()
         }
-        fn remember(&mut self, path: &Path, old: Option<&Path>) {
+        fn remember(&mut self, path: &Path, old: Option<&Path>, board: Option<&BoardSummary>) {
             if let Some(old) = old {
                 self.recent.relocate(old, path, None, 50);
             } else {
                 self.recent.record(path, None, 50);
+            }
+            if let Some(board) = board {
+                self.recent.set_board(path, board.clone(), 50);
             }
         }
         fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
@@ -973,11 +994,122 @@ mod tests {
     // ───────────── New / Open ─────────────
 
     #[test]
+    fn new_board_is_a_clean_free_canvas_and_presets_open_with_their_artboard() {
+        use varos_core::board::PresetId;
+        let mut r = Rig::new();
+        r.run(AppCommand::NewBoard);
+        let board = r.active();
+        assert!(r.get(board).editor.doc.artboards.is_empty(), "New board = zero artboards");
+        assert!(!r.get(board).is_dirty_exact());
+        for (preset, w, h) in [
+            (PresetId::Square, 1080.0, 1080.0),
+            (PresetId::Portrait, 1080.0, 1350.0),
+            (PresetId::Story, 1080.0, 1920.0),
+            (PresetId::A4, 595.0, 842.0),
+            (PresetId::Custom, 1080.0, 1080.0), // no custom size remembered yet → the table fallback
+        ] {
+            r.run(AppCommand::NewWithPreset(preset));
+            let id = r.active();
+            let s = r.get(id);
+            assert_eq!(s.editor.doc.artboards.len(), 1, "{preset:?}");
+            let ab = &s.editor.doc.artboards[0];
+            assert_eq!((ab.w, ab.h), (w, h), "{preset:?}");
+            assert!(!s.is_dirty_exact() && s.path.is_none(), "{preset:?}: a clean Untitled board");
+            r.ed(id).execute(EditCommand::Undo);
+            assert_eq!(r.get(id).editor.doc.artboards.len(), 1, "{preset:?}: undo cannot remove the preset page");
+        }
+        r.ws.set_custom_board_size((300.0, 250.0));
+        r.run(AppCommand::NewWithPreset(PresetId::Custom));
+        let ab = &r.get(r.active()).editor.doc.artboards[0];
+        assert_eq!((ab.w, ab.h), (300.0, 250.0), "Custom = the last-used custom size");
+        let names = r.names();
+        assert_eq!(names.len(), 8, "each New is its own tab: {names:?}");
+        assert!(names.iter().all(|n| n.starts_with("Untitled-")), "{names:?}");
+    }
+
+    #[test]
+    fn the_board_name_is_the_tab_name_and_the_suggested_file_name() {
+        let mut r = Rig::new();
+        let id = r.active();
+        assert_eq!(r.names(), ["Untitled-1"]);
+        r.ed(id).execute(EditCommand::SetBoardName("شعار / v2".into()));
+        assert_eq!(r.names(), ["شعار / v2"], "a named, unsaved board shows its name at once");
+        assert_eq!(crate::host::window_title(&r.get(id).display_name(), r.get(id).is_dirty()), "شعار / v2* — Varos");
+        r.script([Ans::Pick(None)]);
+        r.run(AppCommand::Save(id));
+        assert_eq!(r.prompts(), ["save-as شعار - v2.vrs in -"], "the name suggests a safe file name");
+        r.script([Ans::Pick(Some(p("/d/logo.vrs")))]);
+        r.run(AppCommand::Save(id));
+        assert_eq!(r.prompts(), ["save-as شعار - v2.vrs in -"]);
+        assert_eq!(r.names(), ["شعار / v2"], "the board name still wins over the file stem");
+        r.ed(id).execute(EditCommand::SetBoardName(String::new()));
+        assert_eq!(r.names(), ["logo"], "no board name → the file stem");
+    }
+
+    #[test]
+    fn recent_caches_the_board_summary_only_on_successful_open_and_save() {
+        use varos_app::storage::recents::BoardSummary;
+        let mut r = Rig::new();
+        let mut doc = art(RED);
+        doc.name = "Logo".into();
+        doc.description = "Round two".into();
+        doc.tags = vec!["client".into(), "عربي".into()];
+        r.s.put("/d/a.vrs", doc);
+        let a = r.open("/d/a.vrs");
+        let cached = |r: &Rig| r.s.recent.entries()[0].board.clone();
+        let want = BoardSummary {
+            name: "Logo".into(),
+            description: "Round two".into(),
+            tags: vec!["client".into(), "عربي".into()],
+            artboards: 1,
+        };
+        assert_eq!(cached(&r), Some(want.clone()), "open caches what is on disk");
+        assert_eq!(r.s.recent.entries()[0].name, "Logo");
+
+        // an unsaved edit never reaches Recent, not even when the open tab is focused again
+        r.ed(a).execute(EditCommand::SetBoardTags(vec!["draft".into()]));
+        r.ed(a).execute(EditCommand::AddArtboard);
+        r.open("/d/a.vrs");
+        assert_eq!(cached(&r), Some(want.clone()), "focusing an open tab keeps the on-disk summary");
+
+        // a failed save leaves the cache alone; the successful retry updates it
+        r.s.fail_save.insert(p("/d/a.vrs"), 1);
+        r.script([Ans::Fail(SaveFailChoice::TryAgain)]);
+        r.run(AppCommand::Save(a));
+        r.prompts();
+        let saved = BoardSummary { tags: vec!["draft".into()], artboards: 2, ..want };
+        assert_eq!(cached(&r), Some(saved), "only the landed save is cached");
+
+        // a failed open never reaches Recent at all
+        r.s.put("/d/bad.vrs", art(BLUE));
+        r.s.fail_load.insert(p("/d/bad.vrs"));
+        r.open("/d/bad.vrs");
+        assert!(r.s.recent.entries().iter().all(|e| e.path != p("/d/bad.vrs")));
+    }
+
+    #[test]
+    fn a_background_save_caches_the_snapshot_it_wrote_not_later_edits() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(RED));
+        let a = r.open("/d/a.vrs");
+        r.ed(a).execute(EditCommand::SetBoardName("Written".into()));
+        let (_, jobs) = r.bg(AppCommand::Save(a));
+        r.ed(a).execute(EditCommand::SetBoardName("Typed after".into())); // while the save is on the worker
+        for job in jobs {
+            r.land(job);
+        }
+        let e = &r.s.recent.entries()[0];
+        assert_eq!(e.board.as_ref().map(|b| b.name.as_str()), Some("Written"));
+        assert_eq!(e.name, "Written");
+        assert!(r.get(a).is_dirty_exact(), "the later rename is still unsaved");
+    }
+
+    #[test]
     fn new_command_adds_clean_boardless_untitled() {
         let mut r = Rig::new();
         let first = r.active();
         draw(r.ed(first), RED);
-        assert_eq!(r.run(AppCommand::NewDocument), Effect::default());
+        assert_eq!(r.run(AppCommand::NewBoard), Effect::default());
         let b = r.active();
         assert_ne!(b, first);
         assert_eq!(r.names(), ["Untitled-1", "Untitled-2"]);
@@ -987,7 +1119,7 @@ mod tests {
         assert_eq!(r.get(first).editor.doc.paths.len(), 1, "New never clears the other tab");
         // close it and ⌘N again: the number is never reused
         r.run(AppCommand::CloseDocument(b));
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         assert_eq!(r.names(), ["Untitled-1", "Untitled-3"]);
         assert!(r.prompts().is_empty(), "New and closing a clean tab ask nothing");
     }
@@ -1001,7 +1133,7 @@ mod tests {
         r.script([Ans::Open(vec![p("/d/a.vrs")])]);
         r.run(AppCommand::OpenDialog);
         assert_eq!(r.prompts(), ["open"], "no discard prompt: nothing is replaced");
-        assert_eq!(r.names(), ["Untitled-1", "a.vrs"]);
+        assert_eq!(r.names(), ["Untitled-1", "a"]);
         let a = r.active();
         assert_ne!(a, first);
         assert_eq!(fills(&r.get(a).editor), [Some(BLUE)]);
@@ -1056,7 +1188,7 @@ mod tests {
         let mut r = Rig::new();
         r.s.put("/d/a.vrs", art(BLUE));
         let a = r.open("/d/a.vrs");
-        assert_eq!(r.names(), ["a.vrs"], "the untouched Untitled-1 was replaced, not kept");
+        assert_eq!(r.names(), ["a"], "the untouched Untitled-1 was replaced, not kept");
         assert_eq!(r.ids(), [a]);
         assert!(!r.get(a).is_dirty_exact());
         assert!(r.prompts().is_empty());
@@ -1070,7 +1202,7 @@ mod tests {
         draw(r.ed(a), RED); // dirty
         let rev = r.get(a).editor.rev;
         let other = {
-            r.run(AppCommand::NewDocument);
+            r.run(AppCommand::NewBoard);
             r.active()
         };
         assert_eq!(r.s.loads.len(), 1);
@@ -1145,7 +1277,7 @@ mod tests {
         r.script([Ans::Open(vec![p("/d/a.vrs"), p("/d/bad.vrs"), p("/d/b.pdf"), p("/d/a.vrs")])]);
         r.run(AppCommand::OpenDialog);
         assert_eq!(r.prompts(), ["open", "open-failed bad.vrs: The file is damaged"]);
-        assert_eq!(r.names(), ["a.vrs", "b.pdf"], "the pristine Untitled-1 took the first file");
+        assert_eq!(r.names(), ["a", "b"], "the pristine Untitled-1 took the first file");
         assert_eq!(r.s.loads.len(), 3, "the repeated a.vrs was focused, not loaded twice");
         assert_eq!(r.active(), r.ids()[0], "…and ends up active");
         assert!(r.ws.sessions().iter().all(|s| !s.is_dirty_exact()));
@@ -1163,7 +1295,7 @@ mod tests {
         assert_eq!(r.prompts(), ["save-as Untitled-1.vrs in -"]);
         let s = r.get(id);
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/Logo.vrs")));
-        assert_eq!((s.display_name().as_str(), s.untitled), ("Logo.vrs", None));
+        assert_eq!((s.display_name().as_str(), s.untitled), ("Logo", None));
         assert!(!s.is_dirty_exact());
         assert!(r.s.doc("/d/Logo.vrs").content_eq(&s.editor.doc));
         assert_eq!(s.key, Some(r.s.key(Path::new("/d/Logo.vrs"))), "the key is taken after the write");
@@ -1188,7 +1320,7 @@ mod tests {
         assert!(r.get(a).is_dirty_exact());
         assert!(r.s.saves.is_empty());
         // an Untitled whose first Save is cancelled stays Untitled and dirty
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         let u = r.active();
         draw(r.ed(u), RED);
         r.script([Ans::Pick(None)]);
@@ -1208,14 +1340,14 @@ mod tests {
         r.s.fail_save.insert(p("/d/a.vrs"), 2);
         r.script([Ans::Fail(SaveFailChoice::Cancel)]);
         r.run(AppCommand::Save(a));
-        assert_eq!(r.prompts(), ["failed a.vrs: The disk is not writable"]);
+        assert_eq!(r.prompts(), ["failed a: The disk is not writable"]);
         assert!(r.get(a).is_dirty_exact(), "a failed save keeps the tab dirty");
         assert_eq!(r.get(a).path.as_deref(), Some(Path::new("/d/a.vrs")));
         assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE)], "the old file is intact");
         // fails once more, then Try Again succeeds
         r.script([Ans::Fail(SaveFailChoice::TryAgain)]);
         r.run(AppCommand::Save(a));
-        assert_eq!(r.prompts(), ["failed a.vrs: The disk is not writable"]);
+        assert_eq!(r.prompts(), ["failed a: The disk is not writable"]);
         assert!(!r.get(a).is_dirty_exact());
         assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE), Some(RED)]);
     }
@@ -1229,7 +1361,7 @@ mod tests {
         draw(r.ed(a), RED);
         r.script([Ans::Fail(SaveFailChoice::SaveAs), Ans::Pick(Some(p("/d/copy.vrs")))]);
         r.run(AppCommand::Save(a));
-        assert_eq!(r.prompts(), ["failed a.vrs: The disk is not writable", "save-as a.vrs in /ro"]);
+        assert_eq!(r.prompts(), ["failed a: The disk is not writable", "save-as a.vrs in /ro"]);
         let s = r.get(a);
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/copy.vrs")));
         assert!(!s.is_dirty_exact());
@@ -1247,7 +1379,7 @@ mod tests {
         r.s.fail_save.insert(p("/d/b.vrs"), 1);
         r.script([Ans::Pick(Some(p("/d/b.vrs"))), Ans::Fail(SaveFailChoice::Cancel)]);
         r.run(AppCommand::SaveAs(a));
-        assert_eq!(r.prompts(), ["save-as a.vrs in /d", "failed a.vrs: The disk is not writable"]);
+        assert_eq!(r.prompts(), ["save-as a.vrs in /d", "failed a: The disk is not writable"]);
         let s = r.get(a);
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/a.vrs")), "a failed Save As keeps the old path");
         assert_eq!(s.key, old_key);
@@ -1256,13 +1388,13 @@ mod tests {
         r.run(AppCommand::SaveAs(a));
         assert_eq!(r.prompts(), ["save-as a.vrs in /d"]);
         let s = r.get(a);
-        assert_eq!((s.path.as_deref(), s.display_name().as_str()), (Some(Path::new("/d/b.vrs")), "b.vrs"));
+        assert_eq!((s.path.as_deref(), s.display_name().as_str()), (Some(Path::new("/d/b.vrs")), "b"));
         assert!(!s.is_dirty_exact());
         assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE)], "the old file is left intact");
         assert_eq!(file_fills(&r.s, "/d/b.vrs"), [Some(BLUE), Some(RED)]);
         // the old file is no longer "open": opening it adds a tab
         r.open("/d/a.vrs");
-        assert_eq!(r.names(), ["b.vrs", "a.vrs"]);
+        assert_eq!(r.names(), ["b", "a"]);
     }
 
     #[test]
@@ -1287,11 +1419,11 @@ mod tests {
             r.prompts(),
             [
                 "save-as b.vrs in /d",
-                "notice “a.vrs” is open in another tab.",
+                "notice “a” is open in another tab.",
                 "save-as b.vrs in /d",
-                "notice “a.vrs” is open in another tab.",
+                "notice “a” is open in another tab.",
                 "save-as b.vrs in /d",
-                "notice “a.vrs” is open in another tab.",
+                "notice “a” is open in another tab.",
                 "save-as b.vrs in /d",
             ]
         );
@@ -1359,7 +1491,7 @@ mod tests {
         let after = r.get(a).key.clone().unwrap();
         assert_ne!(before.dev_ino, after.dev_ino, "the save replaced the inode");
         assert_eq!(after, r.s.key(Path::new("/d/a.vrs")), "the tab's key was refreshed after the save");
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         r.open("/d/a.vrs");
         assert_eq!(r.active(), a, "the same path after a save is the same tab");
         r.run(AppCommand::ActivateNext);
@@ -1400,7 +1532,7 @@ mod tests {
         let mut r = Rig::new();
         let a = r.active();
         draw(r.ed(a), RED);
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         let b = r.active();
         draw(r.ed(b), BLUE);
         let rev_b = r.get(b).editor.rev;
@@ -1451,19 +1583,19 @@ mod tests {
         // Cancel → kept, dirty
         r.script([Ans::Decide(SaveDecision::Cancel)]);
         r.run(AppCommand::CloseDocument(b));
-        assert_eq!(r.prompts(), ["ask b.vrs"]);
+        assert_eq!(r.prompts(), ["ask b"]);
         assert_eq!(r.ids(), [a, b]);
         assert!(r.get(b).is_dirty_exact());
         // Save → written, then closed
         r.script([Ans::Decide(SaveDecision::Save)]);
         r.run(AppCommand::CloseDocument(b));
-        assert_eq!(r.prompts(), ["ask b.vrs"]);
+        assert_eq!(r.prompts(), ["ask b"]);
         assert_eq!(r.ids(), [a]);
         assert_eq!(file_fills(&r.s, "/d/b.vrs"), [Some(BLUE), Some(RED)]);
         // Don't Save → closed, nothing written
         r.script([Ans::Decide(SaveDecision::DontSave)]);
         r.run(AppCommand::CloseDocument(a));
-        assert_eq!(r.prompts(), ["ask a.vrs"]);
+        assert_eq!(r.prompts(), ["ask a"]);
         assert_eq!(r.names(), ["Untitled-2"]);
         assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE)]);
         assert_eq!(r.s.saves, [p("/d/b.vrs")]);
@@ -1481,7 +1613,7 @@ mod tests {
         assert_eq!(r.active(), b);
         r.script([Ans::Decide(SaveDecision::Save)]);
         r.run(AppCommand::CloseDocument(a));
-        assert_eq!(r.prompts(), ["ask a.vrs"], "the prompt names the tab being closed");
+        assert_eq!(r.prompts(), ["ask a"], "the prompt names the tab being closed");
         assert_eq!(r.s.saves, [p("/d/a.vrs")], "that tab is the one saved");
         assert_eq!(r.ids(), [b]);
         assert_eq!(r.active(), b, "the active tab never changed");
@@ -1493,7 +1625,7 @@ mod tests {
         let mut r = Rig::new();
         let u = r.active();
         draw(r.ed(u), RED);
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         r.run(AppCommand::ActivateDocument(u));
         r.script([Ans::Decide(SaveDecision::Save), Ans::Pick(None)]);
         r.run(AppCommand::CloseDocument(u));
@@ -1518,7 +1650,7 @@ mod tests {
         let mut r = Rig::new();
         let one = r.active();
         draw(r.ed(one), RED);
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         let two = r.active();
         draw(r.ed(two), BLUE);
         r.script([Ans::Decide(SaveDecision::Save), Ans::Pick(Some(p("/d/one.vrs")))]);
@@ -1536,7 +1668,7 @@ mod tests {
         let mut r = Rig::new();
         r.s.put("/d/a.vrs", art(BLUE));
         r.open("/d/a.vrs");
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         assert_eq!(r.run(AppCommand::Quit), Effect { exit: true, ..Effect::default() });
         assert!(r.prompts().is_empty() && r.s.saves.is_empty());
     }
@@ -1555,7 +1687,7 @@ mod tests {
         assert_eq!(r.active(), c, "the clean tab is active when ⌘Q is pressed");
         r.script([Ans::Decide(SaveDecision::Save), Ans::Decide(SaveDecision::Cancel)]);
         assert_eq!(r.run(AppCommand::Quit), Effect { exit: false, ..Effect::default() });
-        assert_eq!(r.prompts(), ["ask a.vrs 1/2", "ask b.vrs 2/2"], "tab order, Document i of n");
+        assert_eq!(r.prompts(), ["ask a 1/2", "ask b 2/2"], "tab order, Document i of n");
         assert_eq!(r.ids(), [a, b, c], "Cancel keeps every tab");
         assert!(!r.get(a).is_dirty_exact(), "the first document stays saved");
         assert!(r.get(b).is_dirty_exact(), "the second is still dirty");
@@ -1573,7 +1705,7 @@ mod tests {
         draw(r.ed(a), RED);
         r.script([Ans::Decide(SaveDecision::DontSave), Ans::Decide(SaveDecision::DontSave)]);
         assert_eq!(r.run(AppCommand::Quit), Effect { exit: true, ..Effect::default() });
-        assert_eq!(r.prompts(), ["ask Untitled-1 1/2", "ask a.vrs 2/2"]);
+        assert_eq!(r.prompts(), ["ask Untitled-1 1/2", "ask a 2/2"]);
         assert!(r.s.saves.is_empty(), "Don't Save writes nothing");
         assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE)]);
         assert_eq!(r.ids(), [u, a], "no tab is destroyed by the lifecycle: the host exits");
@@ -1591,7 +1723,7 @@ mod tests {
         draw(r.ed(b), RED);
         r.script([Ans::Decide(SaveDecision::Save), Ans::Fail(SaveFailChoice::Cancel)]);
         assert_eq!(r.run(AppCommand::Quit), Effect { exit: false, ..Effect::default() });
-        assert_eq!(r.prompts(), ["ask a.vrs 1/2", "failed a.vrs: The disk is not writable"], "b is never asked");
+        assert_eq!(r.prompts(), ["ask a 1/2", "failed a: The disk is not writable"], "b is never asked");
         assert!(r.get(a).is_dirty_exact() && r.get(b).is_dirty_exact());
         assert!(r.s.saves.is_empty());
         // Try Again that keeps failing, then Save As elsewhere, lets the quit continue
@@ -1606,11 +1738,11 @@ mod tests {
         assert_eq!(
             r.prompts(),
             [
-                "ask a.vrs 1/2",
-                "failed a.vrs: The disk is not writable",
-                "failed a.vrs: The disk is not writable",
+                "ask a 1/2",
+                "failed a: The disk is not writable",
+                "failed a: The disk is not writable",
                 "save-as a.vrs in /ro",
-                "ask b.vrs 2/2",
+                "ask b 2/2",
             ]
         );
         assert_eq!(r.s.saves, [p("/d/a.vrs")]);
@@ -1639,7 +1771,7 @@ mod tests {
             ed.objsel = ed.doc.paths.iter().map(|p| p.id).collect();
             ed.execute(EditCommand::Copy);
         }
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         let b = r.active();
         assert_eq!(r.get(b).editor.clipboard().len(), 1, "the clipboard follows a tab switch");
         r.run(AppCommand::ActivateDocument(a));
@@ -1656,9 +1788,9 @@ mod tests {
     fn switch_reorder_and_window_commands_route_to_the_workspace() {
         let mut r = Rig::new();
         let a = r.active();
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         let b = r.active();
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         let c = r.active();
         r.run(AppCommand::ActivateNext);
         assert_eq!(r.active(), a, "Ctrl+Tab wraps around");
@@ -1678,7 +1810,7 @@ mod tests {
         assert!(r.ws.on_home());
         assert!(r.ws.visible_tabs().is_empty());
         assert_eq!(r.ws.sessions().len(), 1);
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         assert!(!r.ws.on_home());
         assert_eq!(r.ws.visible_tabs().len(), 1);
         assert_eq!(r.ws.active().unwrap().display_name(), "Untitled-1");
@@ -1716,7 +1848,7 @@ mod tests {
         r.ws.active_mut().unwrap().view = varos_core::geom::View { zoom: 3.0, pan: [31.0, 42.0] };
         let document = r.get(a).editor.doc.clone();
         let selection = r.get(a).editor.selected.clone();
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         r.run(AppCommand::ActivateDocument(a));
         r.run(AppCommand::Home);
         assert_eq!(r.ws.document_target(), None);
@@ -1923,7 +2055,7 @@ mod tests {
         let job = one(r.bg(AppCommand::Save(a)).1);
         r.script([Ans::Fail(SaveFailChoice::TryAgain)]);
         let (_, jobs) = r.land(job);
-        assert_eq!(r.prompts(), ["failed a.vrs: The disk is not writable"]);
+        assert_eq!(r.prompts(), ["failed a: The disk is not writable"]);
         assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE)], "the old file is intact");
         assert!(r.get(a).is_dirty_exact(), "a failed save keeps the tab dirty");
         let retry = one(jobs);
@@ -1950,7 +2082,7 @@ mod tests {
         r.s.fingerprints.insert(p("/d/a.vrs"), varos_app::storage::durable::Fingerprint { len: 1, modified: None });
         r.script([Ans::External(ExternalChoice::Cancel)]);
         let (_, jobs) = r.bg(AppCommand::Save(a));
-        assert_eq!(r.prompts(), ["external a.vrs"]);
+        assert_eq!(r.prompts(), ["external a"]);
         assert!(jobs.is_empty() && r.get(a).saving.is_none(), "cancelled before anything was queued");
     }
 
@@ -2088,7 +2220,7 @@ mod tests {
         q.push(p("/d/b.vrs"));
         assert!(drain_os_opens(&mut r, &mut q));
         assert!(!r.ws.on_home(), "the file shows instead of Start");
-        assert_eq!(r.names(), ["b.vrs"], "no empty Untitled tab is created");
+        assert_eq!(r.names(), ["b"], "no empty Untitled tab is created");
         assert_eq!(r.ws.visible_tabs().len(), 1);
         assert_eq!(fills(&r.get(r.active()).editor), [Some(BLUE)]);
         assert_eq!(r.s.recent.entries().len(), 1, "recorded in Recent like any open");
@@ -2106,7 +2238,7 @@ mod tests {
         r.s.put("/d/b.vrs", art(BLUE));
         assert!(drain_os_opens(&mut r, &mut q));
         assert!(!drain_os_opens(&mut r, &mut q), "the next drain finds nothing");
-        assert_eq!(r.names(), ["b.vrs"]);
+        assert_eq!(r.names(), ["b"]);
         assert_eq!(r.s.loads, [p("/d/b.vrs")], "read exactly once");
     }
 
@@ -2121,7 +2253,7 @@ mod tests {
         let mut q = crate::os_open::OsOpenQueue::default();
         q.push(p("/d/b.vrs"));
         drain_os_opens(&mut r, &mut q);
-        assert_eq!(r.names(), ["a.vrs", "b.vrs"]);
+        assert_eq!(r.names(), ["a", "b"]);
         let b = r.active();
         assert_ne!(b, a, "the new file is the active tab");
         assert!(r.get(a).is_dirty_exact(), "A keeps its unsaved changes");
@@ -2162,8 +2294,8 @@ mod tests {
             q.push(p(f));
         }
         drain_os_opens(&mut r, &mut q);
-        assert_eq!(r.names(), ["c.vrs", "a.vrs", "b.vrs"], "Finder's order, each file once, no Untitled");
-        assert_eq!(r.ws.get(r.active()).unwrap().display_name(), "b.vrs", "the last one is in front");
+        assert_eq!(r.names(), ["c", "a", "b"], "Finder's order, each file once, no Untitled");
+        assert_eq!(r.ws.get(r.active()).unwrap().display_name(), "b", "the last one is in front");
         assert_eq!(r.s.loads.len(), 3);
         assert!(r.prompts().is_empty());
     }
@@ -2199,7 +2331,7 @@ mod tests {
         q.push(p("/d/ملف عربي مع مسافات.vrs"));
         drain_os_opens(&mut r, &mut q);
         assert_eq!(r.prompts(), ["open-failed bad.vrs: The file is damaged"]);
-        assert_eq!(r.names(), ["a.vrs", "ملف عربي مع مسافات.vrs"]);
+        assert_eq!(r.names(), ["a", "ملف عربي مع مسافات"]);
         assert!(r.get(a).is_dirty_exact());
     }
 
@@ -2213,7 +2345,7 @@ mod tests {
         r.script([Ans::Pick(Some(p("/d/same.vrs")))]);
         let job = one(r.bg(AppCommand::Save(a)).1);
         r.prompts();
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         let b = r.active();
         draw(r.ed(b), BLUE);
         // the file Untitled-1 is still writing is claimed: the existing "open in another tab" refusal
@@ -2246,7 +2378,7 @@ mod tests {
         use varos_pdf::ExportScope;
         let mut r = Rig::new();
         let a = two_boards(&mut r, "/d/a.vrs");
-        r.run(AppCommand::NewDocument);
+        r.run(AppCommand::NewBoard);
         let b = r.active();
         let doc = Arc::new(r.get(b).editor.doc.clone());
         r.ws.get_mut(b).unwrap().saving = Some(SaveInFlight {

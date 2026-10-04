@@ -3,8 +3,9 @@
 //! checks. Pure: bytes in, `Document` out (and back). The PDF container lives in `varos-pdf`.
 //!
 //! Load pipeline (`decode_model`): model size cap → version gate (header-only parse, before any typed
-//! decode) → strict typed decode (`deny_unknown_fields`; serde_json's 128-level depth limit) →
-//! `check_structure` → migration (older formats) → `validate` → canonical check (current format).
+//! decode) → strict typed decode (`deny_unknown_fields`; serde_json's 128-level depth limit) → newer-
+//! format keys refused in older files → `check_structure` → `validate` → canonical check (format 2+) →
+//! migration (older formats) → `validate`.
 //! Save (`encode_model`) runs `check_structure` → the same normalizer on a CLONE → `validate` → size
 //! cap, so this build never writes a file it would refuse to read. The caller's document is never
 //! mutated, and a refusal never touches the file on disk.
@@ -17,7 +18,7 @@ pub mod validate;
 
 pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
-pub use migrate::migrate_v1_to_v2;
+pub use migrate::{migrate_v1_to_v2, migrate_v2_to_v3};
 pub use structure::check_structure;
 pub use validate::validate;
 
@@ -27,13 +28,16 @@ use std::io::Read;
 use std::path::Path;
 
 /// The format this build writes (the wrapper key `varos` and the PDF catalog's `/VAROS_SchemaVersion`).
-pub const FORMAT_VERSION: u32 = 2;
+/// 3 (2026-10-04): board metadata — `doc.name`, `doc.description`, `doc.tags` (ADR-0008 amendment).
+pub const FORMAT_VERSION: u32 = 3;
+/// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
+pub const BOARD_META_VERSION: u32 = 3;
 /// The oldest format this build reads (older ones are migrated up in memory).
 pub const MIN_READ_VERSION: u32 = 1;
 /// Shown after opening a file that was migrated from an older format.
 pub const MIGRATION_NOTICE: &str = "Opened an older file. Saving will update its format.";
 /// The notice for a v1 file whose broken clipping masks were released in memory. Unlike a plain
-/// migration this is a CONTENT change, so the app opens such a tab dirty (A4) and Save writes v2.
+/// migration this is a CONTENT change, so the app opens such a tab dirty (A4) and Save writes the current format.
 pub const RELEASED_MASKS_NOTICE: &str = "Opened an older file with broken clipping masks released. All remaining artwork was kept. The original file has not been changed; saving will update it.";
 
 /// The on-disk envelope `{"varos": N, "doc": {…}}`.
@@ -121,21 +125,68 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
         }
     }
     let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
+    if version < BOARD_META_VERSION {
+        refuse_newer_keys(json, version)?;
+    }
     let mut doc = file.doc;
     let released_legacy_masks = version == 1 && migrate::release_broken_clips(&mut doc);
     check_structure(&doc, limits)?;
     validate::authored(&doc)?;
     let migrated = version < FORMAT_VERSION;
-    let doc = if migrated {
+    let doc = if version == 1 {
+        // v1 is the one non-canonical era: its documented normalizations ARE the v1→v2 migration.
         let doc = migrate::migrate(doc, version, FORMAT_VERSION, limits)?;
         check_structure(&doc, limits)?; // what migration produced must be saveable as-is
         validate(&doc, limits)?;
         doc
     } else {
+        // v2 and later were written canonical by Varos: check that BEFORE migrating, so a v2 file gets
+        // exactly the strictness it had when v2 was current.
         validate(&doc, limits)?;
-        canonical(doc)?
+        let doc = canonical(doc)?;
+        if migrated {
+            let doc = migrate::migrate(doc, version, FORMAT_VERSION, limits)?;
+            check_structure(&doc, limits)?;
+            validate(&doc, limits)?;
+            doc
+        } else {
+            doc
+        }
     };
     Ok(Loaded { doc, source_version: version, migrated, released_legacy_masks })
+}
+
+/// A file that claims a format older than [`BOARD_META_VERSION`] must not carry the board keys: no
+/// writer of that format emitted them, so their presence is an unknown field (ADR-0008: unknown fields
+/// fail closed), not data to keep. The typed decode alone cannot tell — it defaults them — so this
+/// second, keys-only pass runs for older files only (the document has already decoded, so it is an
+/// object; values are skipped, not built).
+fn refuse_newer_keys(json: &[u8], version: u32) -> Result<(), LoadError> {
+    use serde::de::IgnoredAny;
+    #[derive(Deserialize)]
+    struct Keys {
+        #[serde(default)]
+        name: Option<IgnoredAny>,
+        #[serde(default)]
+        description: Option<IgnoredAny>,
+        #[serde(default)]
+        tags: Option<IgnoredAny>,
+    }
+    #[derive(Deserialize)]
+    struct Head {
+        doc: Keys,
+    }
+    let head: Head = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
+    let field = if head.doc.name.is_some() {
+        "name"
+    } else if head.doc.description.is_some() {
+        "description"
+    } else if head.doc.tags.is_some() {
+        "tags"
+    } else {
+        return Ok(());
+    };
+    Err(Invalid::FieldNotInFormat { field, version }.into())
 }
 
 /// Current-format input must already be in the form this build's writer produces: the normalizer may
