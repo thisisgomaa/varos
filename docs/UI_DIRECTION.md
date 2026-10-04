@@ -5,9 +5,22 @@
 
 This document retains the visual direction. `BOX_SYSTEM_PLAN` is implementation background, not the current build queue. Later owner decisions (Home instead of the Mac burger, icons instead of text buttons, bundled fonts, no drag easing/glide, deferred layout persistence) are collected in [UI_SYSTEM](specs/UI_SYSTEM.md). The mockup illustrates layout; runtime values live in `shell/tokens.rs`. Follow [PLAN](PLAN.md) for execution order; no new visual choice is approved by this navigation update.
 
+## Reconciliation — 2026-10-04 (UI System v3)
+
+This text disagreed with the code and with later owner decisions in four places (app-bar cell, seams, tab radius, panel corners) and never recorded two later decisions (on looks, motion). Each is settled below by the owner's recorded decision or CLAUDE.md; where the CODE is wrong, the fix is a piece in [UI_SYSTEM §9](specs/UI_SYSTEM.md), not an edit of this law.
+
+| Topic | Was here | Code on `main` (`221310f`) | Law now | Code change needed |
+|---|---|---|---|---|
+| App-bar left cell | ☰ app menu | Mac: kit Home chip (`ui.rs:3510-3520`); ☰ only on the compile-only Windows path | **Home** on Mac (owner, Sep 24/25); native menu bar owns File/Edit/…; Windows ☰ revisited with Windows | none |
+| Seams | ~6 px | `SEAM_GAP = 12` (`tokens.rs:60`, owner 07-04 "boxes breathe") | **12 px** equal void; the mockup's 6 px is an illustration | none |
+| Tab radius | doc tab 4 px; panel tabs "pill" | doc tab chip `RBOX` 8 (`ui.rs:3192`, BOX_SYSTEM_PLAN §3.5); panel tab pill `RCAP` 11 (`shell/boxtree.rs:584`, owner 07-08 "one capsule radius"); `tokens.rs:57` comment wrongly lists tabs under `R` 3 | **doc tab chip 8 · panel tab pill 11** | fix the `R` comment (P4) |
+| Panel corners | "0–4 px max, controls only; panels sit square" | boxes `RBOX` 8 (`tokens.rs:58`, owner 07-04); 26 stray literals 2/3/4/5 in `ui.rs` | **three radii only: 3 controls & menu rows · 8 boxes, popup frames, doc tab chips · 11 capsules** (CLAUDE.md "3px controls / 8px boxes") | literals → tokens (P4) |
+| "On" looks | (not stated) | `icon_toggle` on = ACCENT block (`ui.rs:1982`); `seg_btn` on = ACCENT + white text (`ui.rs:5172`, white on azure 3.53:1 fails text contrast) | tool = azure block · toggle = small azure bar · tab/segment = SURFACE fill (owner, Sep 24/25) | P4 |
+| Motion | (rule absent) | `animation_time = 0` (`tokens.rs:90`) | **No animation, glide, ease or glow, ever**; the direction bar stays | U4-M removes glide/glow under a superseding ADR |
+
 > ✅ **APPROVED by Ahmed 2026-07-03 ("برفكتو").** The living visual reference =
 > **`docs/reference/UI_VISION_MOCKUP.html`** (open it in a browser — it demonstrates every rule below:
-> void frame, box workspace with equal 6px seams, chip tabs, floating hands, warm-black ramp).
+> void frame, box workspace with equal seams — 12 px at runtime, see Reconciliation —, chip tabs, floating hands, warm-black ramp).
 
 > **This file is the visual law.** Any new panel/bar/control is measured against it.
 > Supersedes the *floating-shell* look in `UI_FIGMA_SPEC.md` / `PANELS_PRO_SPEC.md` (their **palette stays valid**).
@@ -27,7 +40,7 @@ This document retains the visual direction. `BOX_SYSTEM_PLAN` is implementation 
    The two HANDS — the **tool rail** (floating, left) and the **contextual control bar** (floating, top of
    the board) — float near the work. Nothing else floats (tear-off comes later). *(البيوت مرصوصة والإيدين عايمة.)*
 2. **Not one shadow in the whole app.** Separation = 1px hairlines + 2–3 surface tone steps. *(الفصل بخط شعرة، مش ضل.)*
-3. **Near-sharp corners.** 0–4px max, controls only; panels sit square to the edge. *(الحدة = الجدية.)*
+3. **Near-sharp corners — three radii only.** 3 px controls and menu rows · 8 px boxes, popup frames and doc tab chips · 11 px capsules (panel tab pills, scroll chevrons, switch track). Nothing else (2026-10-04 reconciliation). *(الحدة = الجدية.)*
 4. **Azure is a scalpel, not paint.** `#0c8ce9` appears ONLY on selection / active / focus. *(الأزرق مشرط.)*
 5. **Typography is the only decoration.** Spaced uppercase micro-labels, tabular mono numerals, clear names. *(الخط هو الزينة.)*
 6. **Illustrator density, breathing rhythm.** Everything at hand, on a fixed 4/8px spacing beat. *(كثافة بتتنفس.)*
@@ -53,17 +66,17 @@ floating hands live over it. Boxes stack under/above/beside each other freely.
 
 - **One layout system:** the screen = a tree of uniform boxes (exactly Blender's editor-areas — Ahmed named
   Blender himself). No box is special-cased in code — the board is a box whose content is the canvas.
-- **The ONLY fixed chrome = the APP BAR** (Ahmed 07-03): ☰ menu + doc tabs + global actions + window buttons.
+- **The ONLY fixed chrome = the APP BAR** (Ahmed 07-03): Home (Mac; ☰ only on the deferred Windows build) + doc tabs + global actions + window buttons.
   It has nothing to do with the board. Everything else lives inside boxes.
 - **The app bar (and status strip) are NOT panels — they are the VOID itself** (Ahmed 07-03, from Brave's
   tab bar): background = the seam colour `#0e0d0d`, no fill, no hairline. **Doc tabs = chips floating in the
-  void** — active tab = a filled block (`--panel`, 4px radius, like Brave/Claude), inactive = bare muted text.
+  void** — active tab = a filled block (`PANEL`, 8 px `RBOX` radius, like Brave/Claude), inactive = bare muted text.
   So the whole shell reads as: one dark void, boxes floating in it, chips floating on its bar.
-- **Seams: EQUAL GAPS everywhere** (~6px of near-black `#0e0d0d`, darker than the board) between ALL boxes —
+- **Seams: EQUAL GAPS everywhere** (12 px `SEAM_GAP` of near-black `#0e0d0d`, darker than the board) between ALL boxes —
   including around the board box. The equal rhythm is what makes it read as one system (his 3 reference
   layouts / the Claude-Code panes look). Never shadows.
 - **Multiple panels in one box → they become TABS automatically** — Claude-style pill tabs
-  ([ Chat | Cowork | Code ] pattern): active = filled surface pill, inactive = muted text. One panel alone
+  ([ Chat | Cowork | Code ] pattern): active = filled `SURFACE` pill (11 px `RCAP`), inactive = muted text. One panel alone
   in a box = no tab row, just its content.
 - **Boxes resize freely; the box adapts to its panel type** (min sizes per panel). 
 - **Engineering consequence (build it this way from day ONE):** the STANDARD layout is laid out AS a box
@@ -73,7 +86,7 @@ floating hands live over it. Boxes stack under/above/beside each other freely.
 
 ## The STANDARD layout (now; user customization comes later)
 ```
-TOP:    App bar, docked (☰ app menu · doc tabs · quick actions right · window buttons)
+TOP:    App bar, docked (Home on Mac · doc tabs · quick actions right · window buttons)
 FLOAT:  CONTROL BAR — a floating strip at the TOP OF THE BOARD (margins, not edge-to-edge);
         contextual mirrors of the selection's homes (mini X/Y/W/H · fill/stroke chips ·
         weight · opacity · quick align · snap magnet · insertion target · "…"-to-home)
