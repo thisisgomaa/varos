@@ -339,7 +339,8 @@ const fn cmd_alt(code: KeyCode) -> Option<Accel> {
 /// dispatch through `MenuCmd::File`, never through `MenuCmd::Key`'s synthetic-keystroke path (spec
 /// §4: "Menus and physical keys dispatch once through command IDs, not synthetic key events") — a
 /// focused text field must not swallow ⌘S. S1-D's `to_app_command` is the one place that turns a
-/// `FileCmd` into an `AppCommand`; S6-C later adds `Export` to this same enum.
+/// `FileCmd` into an `AppCommand`; S6-C added `Export` (File ▸ Export ▸ PDF…, no shortcut — the
+/// spec lists none, work order R6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileCmd {
     New,
@@ -347,6 +348,7 @@ pub enum FileCmd {
     CloseTab,
     Save,
     SaveAs,
+    Export,
     Quit,
 }
 
@@ -425,6 +427,10 @@ fn file_key(id: &str, label: &'static str, a: Option<Accel>, cmd: FileCmd) -> En
     let accel = a.expect("a shortcut item has a key");
     Entry::Item { id: id.into(), label, accel: Some(accel), cmd: MenuCmd::File(cmd), check: None }
 }
+/// A File-menu row with NO shortcut (File ▸ Export ▸ PDF…): still a `MenuCmd::File` command row.
+fn file_row(id: &str, label: &'static str, cmd: FileCmd) -> Entry {
+    Entry::Item { id: id.into(), label, accel: None, cmd: MenuCmd::File(cmd), check: None }
+}
 fn toggle(id: &str, label: &'static str, cmd: MenuCmd, check: Check) -> Entry {
     Entry::Item { id: id.into(), label, accel: None, cmd, check: Some(check) }
 }
@@ -476,6 +482,11 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
                 file_key("file.close", "Close Tab", cmd(K::KeyW), FileCmd::CloseTab),
                 file_key("file.save", "Save", cmd(K::KeyS), FileCmd::Save),
                 file_key("file.saveas", "Save As\u{2026}", cmd_shift(K::KeyS), FileCmd::SaveAs),
+                Entry::Sep,
+                Entry::Sub {
+                    label: "Export",
+                    items: vec![file_row("file.export.pdf", "PDF\u{2026}", FileCmd::Export)],
+                },
             ],
         ),
         (
@@ -1113,12 +1124,17 @@ mod tests {
         // longer both folded into one "Close Window" path).
         assert!(has(MenuCmd::File(FileCmd::Quit)), "Varos ▸ Quit is File(FileCmd::Quit)");
         assert!(has(MenuCmd::File(FileCmd::CloseTab)), "File ▸ Close Tab is File(FileCmd::CloseTab)");
-        // mirrors only: no Export row until it has a path (S6). The clipboard keys got their path in
-        // Astra F04 (`every_clipboard_row_is_its_shortcut`), ⌘A / ⇧⌘A in QW5
-        // (`edit_menu_mirrors_select_all_deselect_delete`), and KeyN is File ▸ New's real key (DFS S1).
+        // DFS S6: File ▸ Export ▸ PDF… is the Export command row, with no shortcut (spec: none, R6)
+        let export: Vec<&Entry> =
+            items.iter().filter(|e| matches!(e, Entry::Item { id, .. } if id.contains("export"))).collect();
+        assert_eq!(export.len(), 1, "one Export row");
         assert!(
-            !items.iter().any(|e| matches!(e, Entry::Item { id, .. } if id.contains("export"))),
-            "Export has no path yet — it must not be in the menu"
+            matches!(
+                export[0],
+                Entry::Item { label: "PDF\u{2026}", accel: None, cmd: MenuCmd::File(FileCmd::Export), .. }
+            ),
+            "{:?}",
+            export[0]
         );
     }
 

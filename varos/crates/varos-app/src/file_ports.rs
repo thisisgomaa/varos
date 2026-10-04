@@ -199,6 +199,34 @@ impl Dialogs for RfdDialogs {
             .set_buttons(MessageButtons::Ok)
             .show();
     }
+
+    fn pick_export(&mut self, suggested: &str, dir: Option<&Path>) -> Option<PathBuf> {
+        let mut d =
+            FileDialog::new().set_title("Export PDF").add_filter("PDF (.pdf)", &["pdf"]).set_file_name(suggested);
+        if let Some(dir) = dir {
+            d = d.set_directory(dir);
+        }
+        d.save_file()
+    }
+
+    fn confirm_export_replace(&mut self, name: &str) -> bool {
+        let (title, body) = export_replace_copy(name);
+        let r = MessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title(title)
+            .set_description(body)
+            .set_buttons(MessageButtons::OkCancelCustom(REPLACE.into(), CANCEL.into()))
+            .show();
+        replace_from(&r)
+    }
+}
+
+/// “… contains an editable Varos document.” — (title, body) of the export's second confirmation.
+fn export_replace_copy(name: &str) -> (String, String) {
+    (
+        format!("“{name}” contains an editable Varos document."),
+        "Replacing it with an export removes the editable data.".into(),
+    )
 }
 
 const NEWER_VAROS: &str = "It was saved by a newer version of Varos. Update Varos to open it.";
@@ -263,6 +291,23 @@ impl DocStore for DiskStore {
     fn exists(&self, path: &Path) -> bool {
         path.exists()
     }
+    fn write_export(&mut self, path: &Path, bytes: &[u8]) -> Result<(), String> {
+        export_write(&varos_app::storage::durable::RealFs, path, bytes)
+    }
+    fn read_existing(&mut self, path: &Path) -> Option<Vec<u8>> {
+        let meta = std::fs::metadata(path).ok()?;
+        if !meta.is_file() || meta.len() > varos_pdf::HAS_MODEL_SCAN_CAP as u64 {
+            return None;
+        }
+        std::fs::read(path).ok()
+    }
+}
+
+/// The export's one durable replace (the same writer as Save: temp + sync + rename). A replace whose
+/// folder sync could not be confirmed still delivered the PDF, so it counts as exported.
+fn export_write(fs: &dyn varos_app::storage::durable::FsPort, path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use varos_app::storage::{checksum::new_nonce, durable::write_replace};
+    write_replace(fs, path, bytes, &new_nonce()).map(|_| ()).map_err(|e| e.reason())
 }
 
 fn durable_save(

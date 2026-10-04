@@ -24,6 +24,7 @@ use winit::keyboard::KeyCode;
 
 use crate::app_command::{AppCommand, OpenOrigin, SessionId, WindowCmd};
 use crate::chrome::{Accel, FileCmd, MenuCmd};
+use crate::file_jobs::{FileDone, FileJob};
 use crate::lifecycle::{Dialogs, DocStore, Lifecycle};
 use crate::ui::WinAction;
 use crate::workspace::Workspace;
@@ -57,15 +58,16 @@ pub fn tab_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<AppC
     })
 }
 
-/// The ONE mapper from a [`FileCmd`] (a native File row, a lifecycle key) to its [`AppCommand`].
-/// Save / Save As / Close Tab act on the active tab; with no active tab (S2's empty workspace) they
-/// mean nothing (`None`).
+/// The ONE mapper from a [`FileCmd`] (a native File row, a lifecycle key, the top-bar Export button,
+/// the burger's rows) to its [`AppCommand`]. Save / Save As / Export / Close Tab act on the active
+/// tab; with no active tab (Home, S2's empty workspace) they mean nothing (`None`).
 pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppCommand> {
     Some(match cmd {
         FileCmd::New => AppCommand::NewDocument,
         FileCmd::Open => AppCommand::OpenDialog,
         FileCmd::Save => AppCommand::Save(active?),
         FileCmd::SaveAs => AppCommand::SaveAs(active?),
+        FileCmd::Export => AppCommand::ShowExport(active?),
         FileCmd::CloseTab => AppCommand::CloseDocument(active?),
         FileCmd::Quit => AppCommand::Quit,
     })
@@ -430,6 +432,8 @@ pub struct Ran {
     pub ran: bool,
     /// The active tab changed: an in-flight canvas gesture / pan belongs to the old one.
     pub switched: bool,
+    /// A coalesced second ⌘S is due for these tabs: queue `Save(id)` behind what is waiting.
+    pub follow_up_saves: Vec<SessionId>,
 }
 
 /// Run ONE lifecycle command (any `AppCommand` but `Window`) the way work order §3.5 says:
@@ -444,6 +448,11 @@ pub struct Ran {
 ///    the Ui's per-document caches (an Open can replace a pristine tab in place).
 ///
 /// A click on the chip that is already active is not a lifecycle change: nothing is settled or reset.
+///
+/// `jobs`: `Some` = background mode — the file jobs the command queued (⌘S, Save As, Export) are
+/// pushed there for the worker ([`run_command`]); `None` = they run inline. A QUIET background result
+/// (a durable save: nothing to ask or tell) is applied without step 1 or the cache reset, so a save
+/// landing never ends the user's drag.
 pub fn run_lifecycle(
     cmd: AppCommand,
     ws: &mut Workspace,
@@ -451,25 +460,162 @@ pub fn run_lifecycle(
     dialogs: &mut dyn Dialogs,
     store: &mut dyn DocStore,
     keys: &Keyboard,
+    jobs: Option<&mut Vec<FileJob>>,
 ) -> Ran {
     debug_assert!(!matches!(cmd, AppCommand::Window(_)), "window commands are the host's");
-    if ws.on_home() && matches!(cmd, AppCommand::Save(_) | AppCommand::SaveAs(_)) {
+    if ws.on_home()
+        && matches!(
+            cmd,
+            AppCommand::Save(_) | AppCommand::SaveAs(_) | AppCommand::ShowExport(_) | AppCommand::ExportPdf(..)
+        )
+    {
         return Ran::default();
     }
     if !ws.on_home() && matches!(cmd, AppCommand::ActivateDocument(id) if ws.active_id() == Some(id)) {
         return Ran::default();
+    }
+    if matches!(&cmd, AppCommand::FileDone(done) if done.is_quiet()) {
+        let effect = Lifecycle { ws: &mut *ws, dialogs, store, jobs }.run(cmd);
+        return Ran { follow_up_saves: effect.follow_up_saves, ..Ran::default() };
     }
     if let Some(s) = ws.active_mut() {
         ui.settle(&mut s.editor);
         s.settle();
     }
     let before = (ws.active_id(), ws.on_home());
-    let effect = Lifecycle { ws: &mut *ws, dialogs, store }.run(cmd);
+    let effect = Lifecycle { ws: &mut *ws, dialogs, store, jobs }.run(cmd);
     if let Some(s) = ws.active_mut() {
         keys.mirror(&mut s.editor);
     }
     ui.document_switched();
-    Ran { exit: effect.exit, ran: true, switched: (ws.active_id(), ws.on_home()) != before }
+    Ran {
+        exit: effect.exit,
+        ran: true,
+        switched: (ws.active_id(), ws.on_home()) != before,
+        follow_up_saves: effect.follow_up_saves,
+    }
+}
+
+/// The host's side of the background file jobs (the real one is `recovery_host::RecoveryHost`, which
+/// owns the one I/O worker; tests use a scripted fake).
+pub trait FileJobs {
+    /// Queue `job` on the worker. `Err(job)` = no worker: the caller runs it inline.
+    fn submit(&mut self, job: FileJob) -> Result<(), FileJob>;
+    /// Block until the next file-job result (one already received first). `None` = the worker is
+    /// gone and nothing more will come.
+    fn wait_next(&mut self) -> Option<FileDone>;
+}
+
+/// No worker at all: every job runs inline where it was queued (the S1 behaviour). Used by headless
+/// tests that drive the host path without threads.
+#[cfg(test)]
+pub struct NoWorker;
+#[cfg(test)]
+impl FileJobs for NoWorker {
+    fn submit(&mut self, job: FileJob) -> Result<(), FileJob> {
+        Err(job)
+    }
+    fn wait_next(&mut self) -> Option<FileDone> {
+        None
+    }
+}
+
+/// The tabs whose in-flight background SAVE `cmd` must wait for before it runs: Close Tab and Save As
+/// of that tab, and Quit of every tab — they decide on the saved state, so they decide only after the
+/// save landed (or failed). ⌘S coalesces instead; an export never blocks anything (Quit's drain of
+/// the worker finishes it, like a recovery copy).
+pub fn save_barrier(cmd: &AppCommand, ws: &Workspace) -> Vec<SessionId> {
+    let saving = |id: SessionId| ws.get(id).is_some_and(|s| s.saving.is_some());
+    match cmd {
+        AppCommand::CloseDocument(id) | AppCommand::SaveAs(id) if saving(*id) => vec![*id],
+        AppCommand::Quit => ws.sessions().iter().filter(|s| s.saving.is_some()).map(|s| s.id).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// THE way the app runs a lifecycle command (background mode): first wait for the saves
+/// [`save_barrier`] names, applying each result as it lands (a failure asks its question then); then
+/// run the command; then hand the jobs it queued to the worker — or, with no worker, run them inline
+/// and apply their results at once. The returned [`Ran`] merges every step.
+#[allow(clippy::too_many_arguments)] // the event loop's own state, passed as-is
+pub fn run_command(
+    cmd: AppCommand,
+    ws: &mut Workspace,
+    ui: &mut dyn DocUi,
+    dialogs: &mut dyn Dialogs,
+    store: &mut dyn DocStore,
+    keys: &Keyboard,
+    jobs: &mut dyn FileJobs,
+) -> Ran {
+    let mut ran = Ran::default();
+    while !save_barrier(&cmd, ws).is_empty() {
+        let done = match jobs.wait_next() {
+            Some(done) => done,
+            // The worker is gone: every in-flight save failed (the old files are intact).
+            None => {
+                for id in save_barrier(&cmd, ws) {
+                    if let Some(flight) = ws.get(id).and_then(|s| s.saving.as_ref()) {
+                        let done = crate::file_jobs::SaveDone {
+                            sid: id,
+                            ticket: flight.ticket,
+                            dest: flight.dest.clone(),
+                            result: Err("The background writer stopped.".into()),
+                        };
+                        merge(&mut ran, apply(FileDone::Saved(done), ws, ui, dialogs, store, keys, jobs));
+                    }
+                }
+                continue;
+            }
+        };
+        merge(&mut ran, apply(done, ws, ui, dialogs, store, keys, jobs));
+    }
+    let mut queued = Vec::new();
+    merge(&mut ran, run_lifecycle(cmd, ws, ui, dialogs, store, keys, Some(&mut queued)));
+    merge(&mut ran, submit_all(queued, ws, ui, dialogs, store, keys, jobs));
+    ran
+}
+
+/// Apply one background result (through [`run_lifecycle`]) and submit what it queued (a retry).
+fn apply(
+    done: FileDone,
+    ws: &mut Workspace,
+    ui: &mut dyn DocUi,
+    dialogs: &mut dyn Dialogs,
+    store: &mut dyn DocStore,
+    keys: &Keyboard,
+    jobs: &mut dyn FileJobs,
+) -> Ran {
+    let mut queued = Vec::new();
+    let mut ran = run_lifecycle(AppCommand::FileDone(Box::new(done)), ws, ui, dialogs, store, keys, Some(&mut queued));
+    merge(&mut ran, submit_all(queued, ws, ui, dialogs, store, keys, jobs));
+    ran
+}
+
+/// Hand jobs to the worker; a job it cannot take runs inline here and its result is applied at once.
+fn submit_all(
+    queued: Vec<FileJob>,
+    ws: &mut Workspace,
+    ui: &mut dyn DocUi,
+    dialogs: &mut dyn Dialogs,
+    store: &mut dyn DocStore,
+    keys: &Keyboard,
+    jobs: &mut dyn FileJobs,
+) -> Ran {
+    let mut ran = Ran::default();
+    for job in queued {
+        if let Err(job) = jobs.submit(job) {
+            let done = crate::file_jobs::execute(job, &mut *store);
+            merge(&mut ran, apply(done, ws, ui, dialogs, store, keys, jobs));
+        }
+    }
+    ran
+}
+
+fn merge(into: &mut Ran, r: Ran) {
+    into.exit |= r.exit;
+    into.ran |= r.ran;
+    into.switched |= r.switched;
+    into.follow_up_saves.extend(r.follow_up_saves);
 }
 
 #[cfg(test)]
@@ -534,7 +680,9 @@ mod tests {
         assert_eq!(to_app_command(FileCmd::CloseTab, a), Some(AppCommand::CloseDocument(ID)));
         assert_eq!(to_app_command(FileCmd::Quit, a), Some(AppCommand::Quit));
         // no document: the document rows mean nothing; New / Open / Quit still work (S2's empty workspace)
-        for f in [FileCmd::Save, FileCmd::SaveAs, FileCmd::CloseTab] {
+        // DFS S6: File ▸ Export ▸ PDF…, the top-bar button and the burger row all map here
+        assert_eq!(to_app_command(FileCmd::Export, a), Some(AppCommand::ShowExport(ID)));
+        for f in [FileCmd::Save, FileCmd::SaveAs, FileCmd::Export, FileCmd::CloseTab] {
             assert_eq!(to_app_command(f, None), None, "{f:?}");
         }
         for f in [FileCmd::New, FileCmd::Open, FileCmd::Quit] {
@@ -747,7 +895,7 @@ mod tests {
     }
 
     fn run_keys(ws: &mut Workspace, ui: &mut FakeUi, cmd: AppCommand, keys: &Keyboard) -> Ran {
-        run_lifecycle(cmd, ws, ui, &mut NoDialogs, &mut NoStore, keys)
+        run_lifecycle(cmd, ws, ui, &mut NoDialogs, &mut NoStore, keys, None)
     }
 
     #[test]
@@ -800,7 +948,7 @@ mod tests {
         }
         let mut ui = FakeUi::default();
         let ran = run(&mut ws, &mut ui, AppCommand::NewDocument);
-        assert_eq!(ran, Ran { exit: false, ran: true, switched: true });
+        assert_eq!(ran, Ran { exit: false, ran: true, switched: true, ..Ran::default() });
         assert_eq!(ui.log, ["settle", "switched"], "Ui settle first, caches reset after");
         assert_eq!(ui.gesture_open_at_settle, Some(true), "the Ui settles BEFORE the gesture is finished");
         let old = &ws.get(first).unwrap().editor;
@@ -821,7 +969,7 @@ mod tests {
         assert!(ws.active().unwrap().editor.mods.ctrl, "untouched");
         // Ctrl+Tab with one tab: no switch, but the command ran — the editor now reads what the keyboard holds
         let ran = run_held(&mut ws, &mut ui, AppCommand::ActivateNext, m(true, false, false));
-        assert_eq!(ran, Ran { exit: false, ran: true, switched: false });
+        assert_eq!(ran, Ran { exit: false, ran: true, switched: false, ..Ran::default() });
         let mods = ws.active().unwrap().editor.mods;
         assert!(mods.ctrl && !mods.shift, "Control is still held; the stale ⇧ is gone");
         // a command after the keys were released (e.g. under a native dialog): nothing reads as held
@@ -985,5 +1133,216 @@ mod tests {
         q.chrome_frame([(None, HostAction::App(AppCommand::NewDocument))]);
         assert_eq!(names(&q.take_ready()), ["NewDocument"]);
         assert!(q.is_empty());
+    }
+}
+
+/// DFS S6 / F1 follow-up: Close / Quit / Save As wait for an in-flight background save, and only then
+/// decide. A scripted worker runs a job only when the host waits for it, so the order is observable.
+#[cfg(test)]
+mod background_tests {
+    use super::*;
+    use crate::file_jobs::{execute, FileDone, FileJob};
+    use crate::lifecycle::{SaveDecision, SaveFailChoice, SaveOutcome};
+    use crate::workspace::FileKey;
+    use std::cell::RefCell;
+    use std::collections::{HashMap, VecDeque};
+    use std::path::{Path, PathBuf};
+    use std::rc::Rc;
+    use varos_core::model::Document;
+    use varos_core::EditCommand;
+
+    type Log = Rc<RefCell<Vec<String>>>;
+
+    struct QuietUi;
+    impl DocUi for QuietUi {
+        fn settle(&mut self, _: &mut Editor) {}
+        fn document_switched(&mut self) {}
+    }
+
+    struct Dlg {
+        log: Log,
+        answers: VecDeque<SaveDecision>,
+    }
+    impl Dialogs for Dlg {
+        fn pick_open(&mut self) -> Vec<PathBuf> {
+            unreachable!()
+        }
+        fn pick_save(&mut self, suggested: &str, _: Option<&Path>) -> Option<PathBuf> {
+            self.log.borrow_mut().push(format!("save-as {suggested}"));
+            None
+        }
+        fn ask_save_changes(&mut self, name: &str, _: Option<(usize, usize)>) -> SaveDecision {
+            self.log.borrow_mut().push(format!("ask {name}"));
+            self.answers.pop_front().expect("a scripted answer")
+        }
+        fn save_failed(&mut self, _: &str, _: &str) -> SaveFailChoice {
+            unreachable!()
+        }
+        fn open_failed(&mut self, _: &str, _: &str) {
+            unreachable!()
+        }
+        fn confirm_replace(&mut self, _: &str) -> bool {
+            unreachable!()
+        }
+        fn notice(&mut self, title: &str, _: &str) {
+            self.log.borrow_mut().push(format!("notice {title}"));
+        }
+    }
+
+    #[derive(Default)]
+    struct Disk {
+        files: HashMap<PathBuf, Document>,
+    }
+    impl DocStore for Disk {
+        fn load(&mut self, _: &Path) -> Result<Document, String> {
+            unreachable!()
+        }
+        fn save(&mut self, doc: &Document, path: &Path) -> Result<SaveOutcome, String> {
+            self.files.insert(path.to_path_buf(), doc.clone());
+            Ok(SaveOutcome::Durable)
+        }
+        fn key(&self, path: &Path) -> FileKey {
+            FileKey { path: path.to_path_buf(), dev_ino: None }
+        }
+        fn exists(&self, path: &Path) -> bool {
+            self.files.contains_key(path)
+        }
+    }
+
+    /// Holds submitted jobs; runs the oldest only when the host waits (`wait_next`).
+    struct Worker {
+        queue: VecDeque<FileJob>,
+        disk: Disk,
+        log: Log,
+    }
+    impl FileJobs for Worker {
+        fn submit(&mut self, job: FileJob) -> Result<(), FileJob> {
+            self.queue.push_back(job);
+            Ok(())
+        }
+        fn wait_next(&mut self) -> Option<FileDone> {
+            let job = self.queue.pop_front()?;
+            self.log.borrow_mut().push("worker ran".into());
+            Some(execute(job, &mut self.disk))
+        }
+    }
+
+    struct Rig {
+        ws: Workspace,
+        dlg: Dlg,
+        store: Disk,
+        worker: Worker,
+        log: Log,
+    }
+    impl Rig {
+        fn new() -> Self {
+            let log: Log = Default::default();
+            Rig {
+                ws: Workspace::new(),
+                dlg: Dlg { log: log.clone(), answers: VecDeque::new() },
+                store: Disk::default(),
+                worker: Worker { queue: VecDeque::new(), disk: Disk::default(), log: log.clone() },
+                log,
+            }
+        }
+        fn run(&mut self, cmd: AppCommand) -> Ran {
+            let keys = Keyboard::default();
+            run_command(cmd, &mut self.ws, &mut QuietUi, &mut self.dlg, &mut self.store, &keys, &mut self.worker)
+        }
+        /// A tab saved at `name` with one artboard, then edited to two (dirty).
+        fn saved_tab(&mut self, name: &str) -> SessionId {
+            let id = self.ws.new_untitled();
+            let s = self.ws.get_mut(id).unwrap();
+            s.editor.execute(EditCommand::AddArtboard);
+            s.mark_saved(PathBuf::from(name), FileKey { path: PathBuf::from(name), dev_ino: None });
+            s.editor.execute(EditCommand::AddArtboard);
+            id
+        }
+        fn edit(&mut self, id: SessionId) {
+            self.ws.get_mut(id).unwrap().editor.execute(EditCommand::AddArtboard);
+        }
+        fn log(&self) -> Vec<String> {
+            std::mem::take(&mut *self.log.borrow_mut())
+        }
+        fn boards_on_disk(&self, name: &str) -> usize {
+            self.worker.disk.files[Path::new(name)].artboards.len()
+        }
+    }
+
+    #[test]
+    fn close_during_an_in_flight_save_waits_for_it_and_only_then_decides() {
+        // edited after ⌘S: the save lands first, then the tab is still dirty → asked
+        let mut r = Rig::new();
+        let a = r.saved_tab("a.vrs");
+        r.run(AppCommand::Save(a));
+        assert_eq!(r.worker.queue.len(), 1, "⌘S queued its job; nothing ran on the UI thread");
+        r.edit(a);
+        r.dlg.answers.push_back(SaveDecision::DontSave);
+        r.run(AppCommand::CloseDocument(a));
+        assert_eq!(r.log(), ["worker ran", "ask a.vrs"], "the save landed BEFORE Close decided");
+        assert_eq!(r.boards_on_disk("a.vrs"), 2, "the snapshot taken at ⌘S");
+        assert!(r.ws.get(a).is_none());
+        // not edited after ⌘S: the landed save makes it clean, so Close asks nothing
+        let b = r.saved_tab("b.vrs");
+        r.run(AppCommand::Save(b));
+        r.run(AppCommand::CloseDocument(b));
+        assert_eq!(r.log(), ["worker ran"]);
+        assert!(r.ws.get(b).is_none());
+        assert_eq!(r.boards_on_disk("b.vrs"), 2);
+    }
+
+    #[test]
+    fn quit_waits_for_every_in_flight_save() {
+        let mut r = Rig::new();
+        let (a, b) = (r.saved_tab("a.vrs"), r.saved_tab("b.vrs"));
+        r.run(AppCommand::Save(a));
+        r.run(AppCommand::Save(b));
+        let ran = r.run(AppCommand::Quit);
+        assert!(ran.exit, "both saves landed: nothing left to ask");
+        assert_eq!(r.log(), ["worker ran", "worker ran"]);
+        assert_eq!((r.boards_on_disk("a.vrs"), r.boards_on_disk("b.vrs")), (2, 2));
+    }
+
+    #[test]
+    fn save_as_waits_for_the_in_flight_save_and_a_second_cmd_s_does_not() {
+        let mut r = Rig::new();
+        let a = r.saved_tab("a.vrs");
+        r.run(AppCommand::Save(a));
+        r.edit(a);
+        let ran = r.run(AppCommand::Save(a));
+        assert!(r.log().is_empty() && r.worker.queue.len() == 1, "⌘S coalesces: no wait, no second job");
+        assert!(ran.follow_up_saves.is_empty());
+        r.run(AppCommand::SaveAs(a));
+        assert_eq!(r.log(), ["worker ran", "save-as a.vrs"], "Save As asks only after the save landed");
+        assert!(r.ws.get(a).unwrap().is_dirty_exact());
+    }
+
+    #[test]
+    fn the_landed_save_reports_its_follow_up_for_the_queue() {
+        let mut r = Rig::new();
+        let a = r.saved_tab("a.vrs");
+        r.run(AppCommand::Save(a));
+        r.edit(a);
+        r.run(AppCommand::Save(a));
+        let done = r.worker.wait_next().unwrap();
+        let ran = r.run(AppCommand::FileDone(Box::new(done)));
+        assert_eq!(ran.follow_up_saves, [a]);
+        assert!(!ran.ran, "a quiet result never settles or resets the active tab");
+        r.run(AppCommand::Save(a));
+        let done = r.worker.wait_next().unwrap();
+        r.run(AppCommand::FileDone(Box::new(done)));
+        assert!(!r.ws.get(a).unwrap().is_dirty_exact());
+        assert_eq!(r.boards_on_disk("a.vrs"), 3);
+    }
+
+    #[test]
+    fn without_a_worker_the_jobs_run_inline() {
+        let mut r = Rig::new();
+        let a = r.saved_tab("a.vrs");
+        let keys = Keyboard::default();
+        run_command(AppCommand::Save(a), &mut r.ws, &mut QuietUi, &mut r.dlg, &mut r.store, &keys, &mut NoWorker);
+        assert!(r.ws.get(a).unwrap().saving.is_none());
+        assert!(!r.ws.get(a).unwrap().is_dirty_exact());
+        assert_eq!(r.store.files[Path::new("a.vrs")].artboards.len(), 2);
     }
 }

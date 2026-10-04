@@ -81,6 +81,10 @@ pub struct DocumentSession {
     pub repaired_on_open: bool,
     pub recovered: Option<RecoveredSource>,
     pub recovery: varos_app::storage::scheduler::SessionRecovery,
+    /// A manual save running on the background worker (`file_jobs`), until its result is applied.
+    pub saving: Option<crate::file_jobs::SaveInFlight>,
+    /// Start times of this tab's PDF exports still on the worker (oldest first) — status text only.
+    pub exports: Vec<std::time::Instant>,
     /// The saved-content checkpoint (a clone taken at New, open and save).
     saved: Document,
     /// `is_dirty` memo: `(editor.rev, content differs)`, only ever written while no transaction is open.
@@ -106,6 +110,8 @@ impl DocumentSession {
             repaired_on_open: false,
             recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
+            saving: None,
+            exports: Vec::new(),
         }
     }
     fn loaded(id: SessionId, doc: Document, path: PathBuf, key: FileKey) -> Self {
@@ -127,6 +133,8 @@ impl DocumentSession {
             repaired_on_open: false,
             recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
+            saving: None,
+            exports: Vec::new(),
         }
     }
 
@@ -178,7 +186,7 @@ impl DocumentSession {
 
     /// Nothing to lose and nowhere saved: an Open may replace this tab instead of adding one.
     pub fn is_pristine(&self) -> bool {
-        self.path.is_none() && !self.is_dirty_exact() && !self.editor.transaction_open()
+        self.path.is_none() && !self.is_dirty_exact() && !self.editor.transaction_open() && self.saving.is_none()
     }
 
     /// A save to `path` succeeded: the tab takes that path/name, the checkpoint becomes the current
@@ -192,6 +200,20 @@ impl DocumentSession {
         self.untitled = None;
         self.saved = self.editor.doc.clone();
         self.memo.set((!self.editor.transaction_open()).then_some((self.editor.rev, false)));
+    }
+
+    /// A BACKGROUND save of `snapshot` to `path` landed durably: like [`Self::mark_saved`], but the
+    /// checkpoint becomes the snapshot that was written, not the current content — an edit or undo
+    /// made while the save was on the worker keeps the tab dirty.
+    pub fn mark_saved_snapshot(&mut self, path: PathBuf, key: FileKey, snapshot: Document) {
+        self.save_unconfirmed = false;
+        self.repaired_on_open = false;
+        self.recovered = None;
+        self.path = Some(path);
+        self.key = Some(key);
+        self.untitled = None;
+        self.saved = snapshot;
+        self.memo.set(None);
     }
 
     /// Store a freshly computed file key for this tab's path (e.g. `store.key(path)` right after a

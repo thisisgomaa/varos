@@ -76,6 +76,13 @@ impl<T: Send + 'static> IoWorker<T> {
         self.done.try_iter().collect()
     }
 
+    /// Block until the next completion arrives. `None` = the worker has stopped and every completion
+    /// was already taken. Only call it while a submitted job's completion is still to come (a host
+    /// waiting for one specific job buffers the others it receives meanwhile).
+    pub fn wait_completion(&self) -> Option<T> {
+        self.done.recv().ok()
+    }
+
     /// Close the queue, run everything already submitted, join the thread, and return the
     /// completions not yet collected.
     pub fn shutdown(mut self) -> Vec<T> {
