@@ -33,14 +33,23 @@ use crate::app_command::{SessionId, TabView};
 pub struct FileKey {
     pub path: PathBuf,
     pub dev_ino: Option<(u64, u64)>,
+    /// The name as its VOLUME compares names: the folder's device/inode plus the file name, Unicode
+    /// NFC-normalised and — unless the volume is known to be case-sensitive — case-folded. This is
+    /// what identifies a file that does NOT exist yet (a Save As / export destination, a claimed
+    /// path): `A.vrs` and `a.vrs` in one folder of a case-insensitive APFS volume are one file.
+    pub name_id: Option<((u64, u64), String)>,
 }
 impl FileKey {
     /// Same file on disk: the (canonical) paths are equal, OR both keys carry a device/inode and
-    /// those are equal. Path first, because every save replaces the inode (`write_atomic` writes a
-    /// temp file and renames it over the target), so a key taken before a save and one taken after
-    /// it still match by path; the inode catches aliases (symlinks, case variants) of a live file.
+    /// those are equal, OR both name the same entry of the same folder as the volume compares names.
+    /// Path first, because every save replaces the inode (`write_atomic` writes a temp file and
+    /// renames it over the target), so a key taken before a save and one taken after it still match
+    /// by path; the inode catches aliases (symlinks, case variants) of a live file; `name_id` catches
+    /// case / normalisation variants of a file that does not exist yet.
     pub fn same_file(&self, o: &FileKey) -> bool {
-        self.path == o.path || matches!((self.dev_ino, o.dev_ino), (Some(a), Some(b)) if a == b)
+        self.path == o.path
+            || matches!((self.dev_ino, o.dev_ino), (Some(a), Some(b)) if a == b)
+            || matches!((&self.name_id, &o.name_id), (Some(a), Some(b)) if a == b)
     }
 }
 
@@ -612,7 +621,7 @@ mod tests {
     }
 
     fn key(p: &str) -> FileKey {
-        FileKey { path: PathBuf::from(p), dev_ino: None }
+        FileKey { path: PathBuf::from(p), dev_ino: None, name_id: None }
     }
 
     fn open(ws: &mut Workspace, p: &str) -> SessionId {
@@ -845,16 +854,16 @@ mod tests {
         let x = ws.add_loaded(
             doc_with_art(),
             PathBuf::from("/docs/x.vrs"),
-            FileKey { path: PathBuf::from("/docs/x.vrs"), dev_ino: Some((1, 42)) },
+            FileKey { path: PathBuf::from("/docs/x.vrs"), dev_ino: Some((1, 42)), name_id: None },
         );
-        let alias = FileKey { path: PathBuf::from("/link/X.VRS"), dev_ino: Some((1, 42)) };
+        let alias = FileKey { path: PathBuf::from("/link/X.VRS"), dev_ino: Some((1, 42)), name_id: None };
         assert_eq!(ws.find_file(&alias), Some(x), "same device + inode = the same file under another name");
         // ⌘S replaced the file (temp + rename ⇒ a new inode): the same path is still the same file
-        let after_save = FileKey { path: PathBuf::from("/docs/x.vrs"), dev_ino: Some((1, 43)) };
+        let after_save = FileKey { path: PathBuf::from("/docs/x.vrs"), dev_ino: Some((1, 43)), name_id: None };
         assert_eq!(ws.find_file(&after_save), Some(x), "a new inode at the same path is the same file");
         assert_ne!(after_save, ws.get(x).unwrap().key.clone().unwrap(), "(which is why `==` must not be used)");
         assert_eq!(ws.find_file(&key("/docs/x.vrs")), Some(x), "no inode on one side → compare paths");
-        let elsewhere = FileKey { path: PathBuf::from("/docs/y.vrs"), dev_ino: Some((1, 99)) };
+        let elsewhere = FileKey { path: PathBuf::from("/docs/y.vrs"), dev_ino: Some((1, 99)), name_id: None };
         assert_eq!(ws.find_file(&elsewhere), None, "another path with another inode is another file");
         assert_eq!(ws.find_file(&key("/docs/y.vrs")), None);
         assert!(key("/a").same_file(&key("/a")) && !key("/a").same_file(&key("/b")));
@@ -876,7 +885,7 @@ mod tests {
         let key_of = |p: &std::path::Path| {
             let canon = std::fs::canonicalize(p).unwrap();
             let m = std::fs::metadata(&canon).unwrap();
-            FileKey { path: canon, dev_ino: Some((m.dev(), m.ino())) }
+            FileKey { path: canon, dev_ino: Some((m.dev(), m.ino())), name_id: None }
         };
         std::fs::write(&path, b"one").unwrap();
         let before = key_of(&path);
@@ -890,7 +899,11 @@ mod tests {
         // a symlink alias of the live file matches by inode even though the path differs
         let link = dir.join("alias.vrs");
         std::os::unix::fs::symlink(&path, &link).unwrap();
-        let alias = FileKey { path: link.clone(), dev_ino: std::fs::metadata(&link).ok().map(|m| (m.dev(), m.ino())) };
+        let alias = FileKey {
+            path: link.clone(),
+            dev_ino: std::fs::metadata(&link).ok().map(|m| (m.dev(), m.ino())),
+            name_id: None,
+        };
         assert!(alias.same_file(&after), "a symlink to the file is the same file");
         let _ = std::fs::remove_dir_all(&dir);
     }

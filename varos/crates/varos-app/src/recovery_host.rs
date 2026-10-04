@@ -61,8 +61,8 @@ pub struct RecoveryHost {
     file_done: std::collections::VecDeque<crate::file_jobs::FileDone>,
     /// Recovery results received while the host waited for a file job; `observe` handles them first.
     held: Vec<Finished>,
-    /// File jobs submitted whose result has not been received yet.
-    file_jobs_out: usize,
+    /// The command held back for an in-flight save (`host::run_command`).
+    pub save_wait: crate::host::SaveWait,
 }
 impl RecoveryHost {
     pub fn new(wake: Box<dyn Fn() + Send>) -> Self {
@@ -85,7 +85,7 @@ impl RecoveryHost {
             settings_unsaved: None,
             file_done: Default::default(),
             held: Vec::new(),
-            file_jobs_out: 0,
+            save_wait: Default::default(),
         };
         // The worker runs whether or not recovery storage is available: saves and exports use it too.
         let worker_error = match IoWorker::spawn(wake) {
@@ -132,10 +132,7 @@ impl RecoveryHost {
     }
     fn sort(&mut self, done: Finished) {
         match done {
-            Finished::File(d) => {
-                self.file_jobs_out = self.file_jobs_out.saturating_sub(1);
-                self.file_done.push_back(d);
-            }
+            Finished::File(d) => self.file_done.push_back(d),
             other => self.held.push(other),
         }
     }
@@ -544,21 +541,13 @@ impl crate::host::FileJobs for RecoveryHost {
             Finished::File(crate::file_jobs::execute(job, &mut crate::file_ports::DiskStore))
         });
         match worker.submit(run, if_panicked) {
-            Ok(()) => {
-                self.file_jobs_out += 1;
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(_) => Err(slot.lock().ok().and_then(|mut j| j.take()).expect("a refused job never ran")),
         }
     }
 
-    fn wait_next(&mut self) -> Option<crate::file_jobs::FileDone> {
-        self.pump();
-        while self.file_done.is_empty() && self.file_jobs_out > 0 {
-            let done = self.worker.as_ref()?.wait_completion()?;
-            self.sort(done);
-        }
-        self.file_done.pop_front()
+    fn save_wait(&mut self) -> &mut crate::host::SaveWait {
+        &mut self.save_wait
     }
 }
 
@@ -1068,12 +1057,18 @@ mod tests {
             FileJobs::submit(&mut host, export_job(dest.clone())).is_ok(),
             "the worker exists without a data folder"
         );
-        let done = host.wait_next().expect("the export's result");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut got = host.take_file_done();
+        while got.is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+            got = host.take_file_done();
+        }
+        assert_eq!(got.len(), 1, "the export's result arrives through the worker");
+        let done = got.remove(0);
         assert!(
             matches!(&done, crate::file_jobs::FileDone::Exported(d) if d.result == crate::file_jobs::ExportResult::Exported),
             "{done:?}"
         );
-        assert!(host.wait_next().is_none(), "nothing more is outstanding: never blocks");
         let bytes = std::fs::read(&dest).unwrap();
         assert_eq!(lopdf::Document::load_mem(&bytes).unwrap().get_pages().len(), 2, "one page per board");
         assert!(!varos_pdf::has_embedded_model(&bytes));
