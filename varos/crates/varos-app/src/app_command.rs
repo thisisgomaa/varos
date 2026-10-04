@@ -43,10 +43,17 @@ pub enum WindowCmd {
     TogglePanel(PanelId),
 }
 
-/// Every document-lifecycle request. There is deliberately no Export command until S6: Export is
-/// shown disabled. In S1, Close Window = `Quit` (one window).
+/// Every document-lifecycle request. In S1, Close Window = `Quit` (one window).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppCommand {
+    /// DFS S6: File ▸ Export ▸ PDF…, the top-bar Export button and the burger's Export… row — show
+    /// the Export PDF sheet (page-scope choice) for this tab. Host-owned: it opens the sheet only.
+    ShowExport(SessionId),
+    /// The Export sheet's Export… — the Export PDF save panel for this tab and scope, then a
+    /// background export job (`file_jobs`). Never touches the tab's path, dirty state or Recent.
+    ExportPdf(SessionId, varos_pdf::ExportScope),
+    /// A background save / export finished (`file_jobs::FileDone`), applied on the UI thread.
+    FileDone(Box<crate::file_jobs::FileDone>),
     /// ⌘N / `+` / File ▸ New — a fresh, clean, boardless `Untitled-N` tab.
     NewDocument,
     /// Show Start while retaining every open document.

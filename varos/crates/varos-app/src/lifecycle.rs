@@ -6,10 +6,12 @@
 //! API frozen by S1-A; the rule bodies of `Lifecycle::run` are S1-B's.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use varos_core::model::Document;
 
 use crate::app_command::{AppCommand, SessionId};
+use crate::file_jobs::{self, ExportDone, ExportJob, ExportResult, FileDone, FileJob, SaveDone, SaveInFlight, SaveJob};
 use crate::workspace::{FileKey, Workspace};
 
 /// The answer to “Save changes to “name”?”. Escape / closing the prompt = `Cancel`.
@@ -70,6 +72,20 @@ pub trait Dialogs {
     fn confirm_replace(&mut self, name: &str) -> bool;
     /// A plain notice (e.g. “… is open in another tab…”).
     fn notice(&mut self, title: &str, body: &str);
+    /// The Export PDF save panel, pre-filled with `suggested` in `dir`. `None` = cancelled.
+    fn pick_export(&mut self, _suggested: &str, _dir: Option<&Path>) -> Option<PathBuf> {
+        None
+    }
+    /// “… contains an editable Varos document. Replacing it with an export removes the editable
+    /// data.” — `true` only for an explicit Replace.
+    fn confirm_export_replace(&mut self, _name: &str) -> bool {
+        false
+    }
+    /// “Varos is still saving “name” to place.” — Keep Waiting (`true`) or Cancel. Asked when a
+    /// Close / Save As / Quit has waited [`crate::host::SAVE_WAIT_ASK`] for an in-flight save.
+    fn keep_waiting_for_save(&mut self, _name: &str, _place: &str) -> bool {
+        true
+    }
 }
 
 /// Every file operation the lifecycle performs.
@@ -91,6 +107,15 @@ pub trait DocStore {
     fn remember(&mut self, _path: &Path, _relocated_from: Option<&Path>) {}
     fn remove_recent(&mut self, _path: &Path) {}
     fn clear_recent(&mut self) {}
+    /// Replace `path` with the exported PDF `bytes`, durably. An export is never a Recent entry.
+    fn write_export(&mut self, _path: &Path, _bytes: &[u8]) -> Result<(), String> {
+        Err("Varos couldn't write the PDF.".into())
+    }
+    /// An existing export destination's bytes, for the embedded-model check — only for a readable
+    /// file of at most `varos_pdf::HAS_MODEL_SCAN_CAP` bytes. Runs on the worker.
+    fn read_existing(&mut self, _path: &Path) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// What the host must do after a command.
@@ -98,6 +123,9 @@ pub trait DocStore {
 pub struct Effect {
     /// Every tab was resolved by a Quit — save the window state and exit.
     pub exit: bool,
+    /// Tabs whose coalesced second ⌘S is due now (their first background save landed): the host
+    /// queues `Save(id)` for each, behind whatever is already waiting.
+    pub follow_up_saves: Vec<SessionId>,
 }
 
 /// One lifecycle command run over the workspace and the ports.
@@ -110,6 +138,10 @@ pub struct Lifecycle<'a> {
     pub ws: &'a mut Workspace,
     pub dialogs: &'a mut dyn Dialogs,
     pub store: &'a mut dyn DocStore,
+    /// `Some` = background mode (the app): ⌘S / Save As / Export queue a [`FileJob`] here for the
+    /// host's worker, and the result returns as `AppCommand::FileDone`. `None` = everything runs
+    /// inline on this thread (the S1 behaviour; Close/Quit's own "Save" always does).
+    pub jobs: Option<&'a mut Vec<FileJob>>,
 }
 
 impl Lifecycle<'_> {
@@ -143,14 +175,19 @@ impl Lifecycle<'_> {
                 self.open_paths(picked);
             }
             AppCommand::OpenPaths(paths, _origin) => self.open_paths(paths),
+            AppCommand::Save(id) if self.jobs.is_some() => self.save_in_background(id, false),
+            AppCommand::SaveAs(id) if self.jobs.is_some() => self.save_in_background(id, true),
             AppCommand::Save(id) => {
                 self.save(id, false);
             }
             AppCommand::SaveAs(id) => {
                 self.save(id, true);
             }
+            AppCommand::ShowExport(_) => {} // host-owned: it opens the Export sheet
+            AppCommand::ExportPdf(id, scope) => return self.export(id, scope),
+            AppCommand::FileDone(done) => return self.file_done(*done),
             AppCommand::CloseDocument(id) => self.close(id),
-            AppCommand::Quit => return Effect { exit: self.quit() },
+            AppCommand::Quit => return Effect { exit: self.quit(), ..Effect::default() },
             AppCommand::ActivateDocument(id) => {
                 self.ws.activate(id);
             }
@@ -210,13 +247,21 @@ impl Lifecycle<'_> {
     /// The open tab (other than `except`) holding the file `key` names. Each tab's key is computed
     /// FRESH from its path (one stat per tab): a stored key's inode goes stale when another app
     /// rewrites the file atomically, and an alias opened after that would otherwise slip past.
+    ///
+    /// A file a tab is SAVING to counts as that tab's from the moment its background job is created
+    /// until the result lands or fails (`DocumentSession::saving`): the one claimed-paths rule every
+    /// destination check (Save As, Export) and every open (⌘O, Recent, the OS hand-off) consults, so
+    /// two tabs can never both write one new file, an open focuses the tab still saving it, and an
+    /// export never overwrites it.
     fn open_tab_of(&self, key: &FileKey, except: Option<SessionId>) -> Option<SessionId> {
         let store = &*self.store;
+        let names =
+            |s: &crate::workspace::DocumentSession, p: &Path| store.key(p).same_file(key) && Some(s.id) != except;
         self.ws
             .sessions()
             .iter()
-            .filter(|s| Some(s.id) != except)
-            .find(|s| s.path.as_deref().is_some_and(|p| store.key(p).same_file(key)))
+            .find(|s| s.path.as_deref().is_some_and(|p| names(s, p)))
+            .or_else(|| self.ws.sessions().iter().find(|s| s.saving.as_ref().is_some_and(|f| names(s, &f.dest))))
             .map(|s| s.id)
     }
 
@@ -227,32 +272,11 @@ impl Lifecycle<'_> {
         let Some(s) = self.ws.get(id) else {
             return false;
         };
-        // Save writes native `.vrs` only: a `.pdf`-opened or never-saved document goes through Save As.
-        let mut target = match (&s.path, save_as) {
-            (Some(p), false) if is_vrs(p) => Some(p.clone()),
-            _ => None,
-        };
+        let mut target = save_target(s, save_as);
         loop {
-            let dest = match target.take() {
-                Some(p) => p,
-                None => match self.choose_save_path(id) {
-                    Some(p) => p,
-                    None => return false, // Save As cancelled
-                },
+            let Some(dest) = self.prepare_dest(id, target.take()) else {
+                return false; // Save As / the external-change prompt cancelled
             };
-            let changed = self.ws.get(id).is_some_and(|s| {
-                (s.path.as_deref() == Some(dest.as_path())
-                    || s.key.as_ref().is_some_and(|key| key.same_file(&self.store.key(&dest))))
-                    && s.source_fingerprint != self.store.fingerprint(&dest)
-            });
-            if changed {
-                match self.dialogs.external_change(&self.name_of(id)) {
-                    ExternalChoice::Cancel => return false,
-                    ExternalChoice::SaveAs => continue,
-                    // The external-change prompt's "Replace Anyway" is the one confirmation.
-                    ExternalChoice::Replace => {}
-                }
-            }
             match self.write(id, &dest) {
                 Ok(SaveOutcome::Durable) => return true,
                 Ok(SaveOutcome::ReplacedUnconfirmed(reason)) => {
@@ -266,6 +290,224 @@ impl Lifecycle<'_> {
                         SaveFailChoice::SaveAs => {} // `target` stays None → the Save dialog again
                         SaveFailChoice::Cancel => return false,
                     }
+                }
+            }
+        }
+    }
+
+    /// Where a save of tab `id` goes: `target` (else the Save As dialog), after the external-change
+    /// prompt when that file was changed by another app since Varos last read or wrote it. `None` =
+    /// the user cancelled. Shared by the inline and the background save.
+    fn prepare_dest(&mut self, id: SessionId, mut target: Option<PathBuf>) -> Option<PathBuf> {
+        loop {
+            let dest = match target.take() {
+                Some(p) => p,
+                None => self.choose_save_path(id)?,
+            };
+            let changed = self.ws.get(id).is_some_and(|s| {
+                (s.path.as_deref() == Some(dest.as_path())
+                    || s.key.as_ref().is_some_and(|key| key.same_file(&self.store.key(&dest))))
+                    && s.source_fingerprint != self.store.fingerprint(&dest)
+            });
+            if changed {
+                match self.dialogs.external_change(&self.name_of(id)) {
+                    ExternalChoice::Cancel => return None,
+                    ExternalChoice::SaveAs => continue,
+                    // The external-change prompt's "Replace Anyway" is the one confirmation.
+                    ExternalChoice::Replace => {}
+                }
+            }
+            return Some(dest);
+        }
+    }
+
+    /// ⌘S / Save As in background mode. The questions (Save As dialog, external-change prompt) are
+    /// asked here, on the UI thread; then the document is SNAPSHOTTED and the encode + durable write
+    /// go to the worker. A ⌘S while this tab's save is still in flight coalesces into ONE follow-up
+    /// save (run as a normal ⌘S after the first lands). The host makes Save As wait for an in-flight
+    /// save first (`host::save_barrier`), so it never meets one here.
+    fn save_in_background(&mut self, id: SessionId, save_as: bool) {
+        let Some(s) = self.ws.get_mut(id) else {
+            return;
+        };
+        if let Some(flight) = s.saving.as_mut() {
+            if !save_as {
+                flight.follow_up = true;
+            }
+            return;
+        }
+        let target = save_target(s, save_as);
+        self.start_save(id, target);
+    }
+
+    /// Ask what a save needs, snapshot, and queue the job. Nothing changes when the user cancels.
+    fn start_save(&mut self, id: SessionId, target: Option<PathBuf>) {
+        let Some(dest) = self.prepare_dest(id, target) else {
+            return;
+        };
+        let Some(s) = self.ws.get_mut(id) else {
+            return;
+        };
+        let doc = Arc::new(s.editor.doc.clone());
+        let ticket = file_jobs::next_ticket();
+        s.saving = Some(SaveInFlight {
+            ticket,
+            dest: dest.clone(),
+            doc: doc.clone(),
+            follow_up: false,
+            started: std::time::Instant::now(),
+        });
+        self.queue(FileJob::Save(SaveJob { sid: id, ticket, dest, doc }));
+    }
+
+    /// Hand `job` to the host's worker. Inline mode (no worker) runs it here and applies its result
+    /// at once; a follow-up that produces is dropped there (inline saves never coalesce).
+    fn queue(&mut self, job: FileJob) {
+        if let Some(jobs) = self.jobs.as_deref_mut() {
+            jobs.push(job);
+            return;
+        }
+        let done = file_jobs::execute(job, &mut *self.store);
+        let _ = self.file_done(done);
+    }
+
+    /// A background job finished: apply it to its tab (a closed tab is ignored, a stale ticket too).
+    fn file_done(&mut self, done: FileDone) -> Effect {
+        match done {
+            FileDone::Saved(done) => self.save_done(done),
+            FileDone::Exported(done) => {
+                self.export_done(done);
+                Effect::default()
+            }
+        }
+    }
+
+    /// A background save landed. Durable: the tab takes the path and its checkpoint becomes the
+    /// snapshot that was written (later edits keep it dirty), and the coalesced follow-up is due if
+    /// there is something left to save. Unconfirmed: as the inline save. Failed: “Couldn't save” —
+    /// the tab stays dirty, the old file is intact; Try Again / Save As start a fresh save.
+    fn save_done(&mut self, done: SaveDone) -> Effect {
+        let mut effect = Effect::default();
+        let Some(flight) = self.ws.get_mut(done.sid).and_then(|s| s.saving.take_if(|f| f.ticket == done.ticket)) else {
+            return effect;
+        };
+        let (id, dest) = (done.sid, done.dest);
+        match done.result {
+            Ok(SaveOutcome::Durable) => {
+                let key = self.store.key(&dest);
+                let fingerprint = self.store.fingerprint(&dest);
+                if let Some(s) = self.ws.get_mut(id) {
+                    s.mark_saved_snapshot(dest.clone(), key, Arc::unwrap_or_clone(flight.doc));
+                    s.source_fingerprint = fingerprint;
+                    if flight.follow_up && s.is_dirty_exact() {
+                        effect.follow_up_saves.push(id);
+                    }
+                }
+                self.store.remember(&dest, None);
+            }
+            Ok(SaveOutcome::ReplacedUnconfirmed(reason)) => {
+                let key = self.store.key(&dest);
+                let fingerprint = self.store.fingerprint(&dest);
+                if let Some(s) = self.ws.get_mut(id) {
+                    s.path = Some(dest.clone());
+                    s.key = Some(key);
+                    s.untitled = None;
+                    s.save_unconfirmed = true;
+                    s.recovered = None;
+                    s.source_fingerprint = fingerprint;
+                }
+                self.dialogs.notice("Save needs confirmation", &format!("Saved, but Varos couldn't confirm the disk finished writing. Your document stays open with unsaved changes. Existing recovery copies are kept.\n{reason}"));
+            }
+            Err(reason) => {
+                let name = self.name_of(id);
+                match self.dialogs.save_failed(&name, &reason) {
+                    SaveFailChoice::TryAgain => self.start_save(id, Some(dest)),
+                    SaveFailChoice::SaveAs => self.start_save(id, None),
+                    SaveFailChoice::Cancel => {}
+                }
+            }
+        }
+        effect
+    }
+
+    /// Export PDF (the sheet's Export…): plan the pages on a snapshot, ask for the destination with
+    /// the Export save panel (`.pdf` forced), refuse an open document's own file, then queue the
+    /// pure-PDF job. Nothing about the tab changes — path, checkpoint, dirty state, Recent.
+    fn export(&mut self, id: SessionId, scope: varos_pdf::ExportScope) -> Effect {
+        let Some(s) = self.ws.get(id) else {
+            return Effect::default();
+        };
+        let doc = Arc::new(s.editor.doc.clone());
+        let plan = match varos_pdf::plan_pdf_export(&doc, scope) {
+            Ok(plan) => plan,
+            Err(why) => {
+                self.dialogs
+                    .notice("Couldn't export PDF.", &format!("{} Your document has not changed.", why.reason()));
+                return Effect::default();
+            }
+        };
+        let suggested = file_jobs::default_export_name(s);
+        let dir = s
+            .path
+            .as_deref()
+            .or_else(|| s.recovered.as_ref().and_then(|r| r.original_path.as_deref()))
+            .and_then(Path::parent)
+            .map(Path::to_path_buf);
+        let dest = loop {
+            let Some(picked) = self.dialogs.pick_export(&suggested, dir.as_deref()) else {
+                return Effect::default(); // cancelled: nothing happens
+            };
+            let (dest, appended) = file_jobs::with_pdf(picked);
+            // An open document's own file (a `.pdf`-opened tab) is never overwritten by an export.
+            if self.open_tab_of(&self.store.key(&dest), None).is_some() {
+                self.dialogs
+                    .notice("Choose another name.", &format!("“{}” is an open Varos document.", file_name(&dest)));
+                continue;
+            }
+            // The panel asked about the name the user typed; only a name WE changed needs its own ask.
+            if appended && self.store.exists(&dest) && !self.dialogs.confirm_replace(&file_name(&dest)) {
+                continue;
+            }
+            break dest;
+        };
+        if let Some(s) = self.ws.get_mut(id) {
+            s.exports.push(std::time::Instant::now());
+        }
+        self.queue(FileJob::Export(ExportJob { sid: id, dest, doc, plan, replace_confirmed: false }));
+        Effect::default()
+    }
+
+    /// An export finished: say so (“Exported name.pdf”), or why not; a destination holding an editable
+    /// Varos document is replaced only after one more explicit Replace.
+    ///
+    /// The tab may have closed meanwhile: then the result is inert — a written PDF is reported once,
+    /// neutrally; a failure or a pending "replace the editable document?" question about a document
+    /// that is no longer open is dropped (nothing is asked, nothing is queued).
+    fn export_done(&mut self, done: ExportDone) {
+        let name = file_name(&done.job.dest);
+        let Some(s) = self.ws.get_mut(done.job.sid) else {
+            if done.result == ExportResult::Exported {
+                self.dialogs.notice(&format!("Exported {name}"), "");
+            }
+            return;
+        };
+        if !s.exports.is_empty() {
+            s.exports.remove(0);
+        }
+        match done.result {
+            ExportResult::Exported => {
+                self.dialogs.notice(&format!("Exported {name}"), "Your document has not changed.")
+            }
+            ExportResult::Failed(reason) => {
+                let reason = reason.trim().trim_end_matches('.');
+                self.dialogs.notice("Couldn't export PDF.", &format!("{reason}. Your document has not changed."));
+            }
+            ExportResult::NeedsReplaceConfirm => {
+                if self.dialogs.confirm_export_replace(&name) {
+                    if let Some(s) = self.ws.get_mut(done.job.sid) {
+                        s.exports.push(std::time::Instant::now());
+                    }
+                    self.queue(FileJob::Export(ExportJob { replace_confirmed: true, ..done.job }));
                 }
             }
         }
@@ -378,6 +620,15 @@ impl Lifecycle<'_> {
 
     fn name_of(&self, id: SessionId) -> String {
         self.ws.get(id).map(|s| s.display_name()).unwrap_or_default()
+    }
+}
+
+/// Save writes native `.vrs` only: a `.pdf`-opened or never-saved document (and Save As) goes
+/// through the Save As dialog (`None`).
+fn save_target(s: &crate::workspace::DocumentSession, save_as: bool) -> Option<PathBuf> {
+    match (&s.path, save_as) {
+        (Some(p), false) if is_vrs(p) => Some(p.clone()),
+        _ => None,
     }
 }
 
@@ -501,6 +752,19 @@ mod tests {
         fn notice(&mut self, title: &str, _body: &str) {
             self.log.push(format!("notice {title}"));
         }
+        fn pick_export(&mut self, suggested: &str, dir: Option<&Path>) -> Option<PathBuf> {
+            let dir = dir.map_or("-".into(), |d| d.display().to_string());
+            match self.next(format!("export {suggested} in {dir}")) {
+                Ans::Pick(p) => p,
+                a => panic!("the Export panel got {a:?}"),
+            }
+        }
+        fn confirm_export_replace(&mut self, name: &str) -> bool {
+            match self.next(format!("replace-editable {name}")) {
+                Ans::Replace(b) => b,
+                a => panic!("“contains an editable Varos document” got {a:?}"),
+            }
+        }
     }
 
     /// An in-memory disk. Keys are `(path, (7, inode))`; every save gives the file a NEW inode
@@ -521,6 +785,10 @@ mod tests {
         saves: Vec<PathBuf>,
         notices: HashMap<PathBuf, &'static str>,
         recent: varos_app::storage::recents::Recents,
+        /// Exported PDFs by destination (the real export bytes), and other raw files on the disk.
+        exported: HashMap<PathBuf, Vec<u8>>,
+        raw: HashMap<PathBuf, Vec<u8>>,
+        fail_export: bool,
     }
     impl FakeStore {
         fn target(&self, p: &Path) -> PathBuf {
@@ -584,10 +852,22 @@ mod tests {
         }
         fn key(&self, path: &Path) -> FileKey {
             let t = self.target(path);
-            FileKey { path: path.to_path_buf(), dev_ino: self.inodes.get(&t).map(|i| (7, *i)) }
+            FileKey { path: path.to_path_buf(), dev_ino: self.inodes.get(&t).map(|i| (7, *i)), name_id: None }
         }
         fn exists(&self, path: &Path) -> bool {
-            self.files.contains_key(&self.target(path))
+            let t = self.target(path);
+            self.files.contains_key(&t) || self.raw.contains_key(&t) || self.exported.contains_key(&t)
+        }
+        fn write_export(&mut self, path: &Path, bytes: &[u8]) -> Result<(), String> {
+            if self.fail_export {
+                return Err("The disk is full.".into());
+            }
+            self.exported.insert(self.target(path), bytes.to_vec());
+            Ok(())
+        }
+        fn read_existing(&mut self, path: &Path) -> Option<Vec<u8>> {
+            let t = self.target(path);
+            self.raw.get(&t).or_else(|| self.exported.get(&t)).cloned()
         }
     }
 
@@ -603,7 +883,20 @@ mod tests {
             Rig { ws: Workspace::new(), d: FakeDialogs::default(), s: FakeStore::default() }
         }
         fn run(&mut self, cmd: AppCommand) -> Effect {
-            Lifecycle { ws: &mut self.ws, dialogs: &mut self.d, store: &mut self.s }.run(cmd)
+            Lifecycle { ws: &mut self.ws, dialogs: &mut self.d, store: &mut self.s, jobs: None }.run(cmd)
+        }
+        /// Background mode (the app): the command's jobs come back instead of running.
+        fn bg(&mut self, cmd: AppCommand) -> (Effect, Vec<FileJob>) {
+            let mut jobs = Vec::new();
+            let effect =
+                Lifecycle { ws: &mut self.ws, dialogs: &mut self.d, store: &mut self.s, jobs: Some(&mut jobs) }
+                    .run(cmd);
+            (effect, jobs)
+        }
+        /// The worker runs `job` on the fake disk; its result is applied as the host applies it.
+        fn land(&mut self, job: FileJob) -> (Effect, Vec<FileJob>) {
+            let done = file_jobs::execute(job, &mut self.s);
+            self.bg(AppCommand::FileDone(Box::new(done)))
         }
         fn script(&mut self, answers: impl IntoIterator<Item = Ans>) {
             self.d.answers.extend(answers);
@@ -1091,7 +1384,7 @@ mod tests {
         r.ed(a).execute(EditCommand::Undo);
         assert!(!r.get(a).is_dirty() && !r.ws.tabs()[0].dirty, "undo back to the saved content: no dot");
         // …so Close and Quit ask nothing
-        assert_eq!(r.run(AppCommand::Quit), Effect { exit: true });
+        assert_eq!(r.run(AppCommand::Quit), Effect { exit: true, ..Effect::default() });
         r.run(AppCommand::CloseDocument(a));
         assert!(r.prompts().is_empty());
         assert_eq!(
@@ -1244,7 +1537,7 @@ mod tests {
         r.s.put("/d/a.vrs", art(BLUE));
         r.open("/d/a.vrs");
         r.run(AppCommand::NewDocument);
-        assert_eq!(r.run(AppCommand::Quit), Effect { exit: true });
+        assert_eq!(r.run(AppCommand::Quit), Effect { exit: true, ..Effect::default() });
         assert!(r.prompts().is_empty() && r.s.saves.is_empty());
     }
 
@@ -1261,7 +1554,7 @@ mod tests {
         draw(r.ed(a), RED);
         assert_eq!(r.active(), c, "the clean tab is active when ⌘Q is pressed");
         r.script([Ans::Decide(SaveDecision::Save), Ans::Decide(SaveDecision::Cancel)]);
-        assert_eq!(r.run(AppCommand::Quit), Effect { exit: false });
+        assert_eq!(r.run(AppCommand::Quit), Effect { exit: false, ..Effect::default() });
         assert_eq!(r.prompts(), ["ask a.vrs 1/2", "ask b.vrs 2/2"], "tab order, Document i of n");
         assert_eq!(r.ids(), [a, b, c], "Cancel keeps every tab");
         assert!(!r.get(a).is_dirty_exact(), "the first document stays saved");
@@ -1279,7 +1572,7 @@ mod tests {
         let a = r.open("/d/a.vrs");
         draw(r.ed(a), RED);
         r.script([Ans::Decide(SaveDecision::DontSave), Ans::Decide(SaveDecision::DontSave)]);
-        assert_eq!(r.run(AppCommand::Quit), Effect { exit: true });
+        assert_eq!(r.run(AppCommand::Quit), Effect { exit: true, ..Effect::default() });
         assert_eq!(r.prompts(), ["ask Untitled-1 1/2", "ask a.vrs 2/2"]);
         assert!(r.s.saves.is_empty(), "Don't Save writes nothing");
         assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE)]);
@@ -1297,7 +1590,7 @@ mod tests {
         draw(r.ed(a), RED);
         draw(r.ed(b), RED);
         r.script([Ans::Decide(SaveDecision::Save), Ans::Fail(SaveFailChoice::Cancel)]);
-        assert_eq!(r.run(AppCommand::Quit), Effect { exit: false });
+        assert_eq!(r.run(AppCommand::Quit), Effect { exit: false, ..Effect::default() });
         assert_eq!(r.prompts(), ["ask a.vrs 1/2", "failed a.vrs: The disk is not writable"], "b is never asked");
         assert!(r.get(a).is_dirty_exact() && r.get(b).is_dirty_exact());
         assert!(r.s.saves.is_empty());
@@ -1309,7 +1602,7 @@ mod tests {
             Ans::Pick(Some(p("/d/a.vrs"))),
             Ans::Decide(SaveDecision::DontSave),
         ]);
-        assert_eq!(r.run(AppCommand::Quit), Effect { exit: true });
+        assert_eq!(r.run(AppCommand::Quit), Effect { exit: true, ..Effect::default() });
         assert_eq!(
             r.prompts(),
             [
@@ -1329,7 +1622,7 @@ mod tests {
         let u = r.active();
         draw(r.ed(u), RED);
         r.script([Ans::Decide(SaveDecision::Save), Ans::Pick(None)]);
-        assert_eq!(r.run(AppCommand::Quit), Effect { exit: false });
+        assert_eq!(r.run(AppCommand::Quit), Effect { exit: false, ..Effect::default() });
         assert_eq!(r.prompts(), ["ask Untitled-1 1/1", "save-as Untitled-1.vrs in -"]);
         assert!(r.get(u).is_dirty_exact() && r.get(u).path.is_none());
     }
@@ -1543,6 +1836,232 @@ mod tests {
         assert!(!r.get(id).is_dirty_exact());
     }
 
+    // ───────────── DFS S6 / F1 follow-up: background Save and Export ─────────────
+
+    fn one(jobs: Vec<FileJob>) -> FileJob {
+        assert_eq!(jobs.len(), 1, "{jobs:?}");
+        jobs.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn background_save_writes_the_snapshot_taken_at_cmd_s_and_a_later_edit_stays_dirty() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(BLUE));
+        let a = r.open("/d/a.vrs");
+        draw(r.ed(a), RED);
+        let (_, jobs) = r.bg(AppCommand::Save(a));
+        let job = one(jobs);
+        assert!(r.s.saves.is_empty(), "nothing is written on the UI thread");
+        assert!(r.get(a).saving.is_some());
+        // ⌘S then ⌘Z (S1 FIFO rule): the file gets the pre-undo state, the tab stays dirty
+        r.ed(a).undo();
+        assert_eq!(fills(&r.get(a).editor), [Some(BLUE)]);
+        r.land(job);
+        assert_eq!(r.prompts(), Vec::<String>::new());
+        assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE), Some(RED)], "the snapshot taken at ⌘S");
+        assert!(r.get(a).saving.is_none());
+        assert!(r.get(a).is_dirty_exact(), "the undo after ⌘S is not in the file");
+        // redo back to what was saved: clean (the checkpoint is the written snapshot)
+        r.ed(a).redo();
+        assert!(!r.get(a).is_dirty_exact());
+        assert_eq!(r.s.recent.entries().len(), 1, "a landed save is recorded in Recent once");
+    }
+
+    #[test]
+    fn background_save_of_an_untitled_tab_asks_first_and_adopts_the_path_only_when_it_lands() {
+        let mut r = Rig::new();
+        let a = r.active();
+        draw(r.ed(a), RED);
+        r.script([Ans::Pick(Some(p("/d/new.vrs")))]);
+        let (_, jobs) = r.bg(AppCommand::Save(a));
+        assert_eq!(r.prompts(), ["save-as Untitled-1.vrs in -"]);
+        let job = one(jobs);
+        assert_eq!(r.get(a).path, None, "still Untitled while the save is on the worker");
+        assert!(!r.get(a).is_pristine(), "a tab being saved is never replaced by an Open");
+        r.land(job);
+        assert_eq!(r.get(a).path.as_deref(), Some(Path::new("/d/new.vrs")));
+        assert!(!r.get(a).is_dirty_exact());
+    }
+
+    #[test]
+    fn second_cmd_s_while_one_is_in_flight_coalesces_into_one_follow_up() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(BLUE));
+        let a = r.open("/d/a.vrs");
+        draw(r.ed(a), RED);
+        let job = one(r.bg(AppCommand::Save(a)).1);
+        draw(r.ed(a), BLUE);
+        for _ in 0..3 {
+            let (effect, jobs) = r.bg(AppCommand::Save(a));
+            assert!(jobs.is_empty() && effect == Effect::default(), "no second writer while one is in flight");
+        }
+        let (effect, jobs) = r.land(job);
+        assert!(jobs.is_empty());
+        assert_eq!(effect.follow_up_saves, [a], "ONE follow-up, due now");
+        assert!(r.get(a).is_dirty_exact());
+        // the host queues it as a normal ⌘S: a fresh snapshot with the later edit
+        let job = one(r.bg(AppCommand::Save(a)).1);
+        let (effect, _) = r.land(job);
+        assert!(effect.follow_up_saves.is_empty());
+        assert!(!r.get(a).is_dirty_exact());
+        assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE), Some(RED), Some(BLUE)]);
+        assert_eq!(r.s.saves.len(), 2, "two writes for four ⌘S presses");
+        // a repeated ⌘S with nothing new after it needs no follow-up
+        draw(r.ed(a), RED);
+        let job = one(r.bg(AppCommand::Save(a)).1);
+        r.bg(AppCommand::Save(a));
+        assert!(r.land(job).0.follow_up_saves.is_empty(), "nothing left to save");
+    }
+
+    #[test]
+    fn background_save_failure_keeps_dirty_and_the_old_file_then_try_again_saves() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(BLUE));
+        let a = r.open("/d/a.vrs");
+        draw(r.ed(a), RED);
+        r.s.fail_save.insert(p("/d/a.vrs"), 1);
+        let job = one(r.bg(AppCommand::Save(a)).1);
+        r.script([Ans::Fail(SaveFailChoice::TryAgain)]);
+        let (_, jobs) = r.land(job);
+        assert_eq!(r.prompts(), ["failed a.vrs: The disk is not writable"]);
+        assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE)], "the old file is intact");
+        assert!(r.get(a).is_dirty_exact(), "a failed save keeps the tab dirty");
+        let retry = one(jobs);
+        assert!(r.get(a).saving.is_some(), "Try Again is a fresh background save");
+        r.land(retry);
+        assert!(!r.get(a).is_dirty_exact());
+        assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE), Some(RED)]);
+        // Cancel: nothing else happens
+        draw(r.ed(a), BLUE);
+        r.s.fail_save.insert(p("/d/a.vrs"), 1);
+        let job = one(r.bg(AppCommand::Save(a)).1);
+        r.script([Ans::Fail(SaveFailChoice::Cancel)]);
+        assert!(r.land(job).1.is_empty());
+        assert!(r.get(a).is_dirty_exact() && r.get(a).saving.is_none());
+        assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE), Some(RED)]);
+    }
+
+    #[test]
+    fn background_save_still_asks_about_an_external_change_before_writing() {
+        let mut r = Rig::new();
+        r.s.put("/d/a.vrs", art(BLUE));
+        let a = r.open("/d/a.vrs");
+        draw(r.ed(a), RED);
+        r.s.fingerprints.insert(p("/d/a.vrs"), varos_app::storage::durable::Fingerprint { len: 1, modified: None });
+        r.script([Ans::External(ExternalChoice::Cancel)]);
+        let (_, jobs) = r.bg(AppCommand::Save(a));
+        assert_eq!(r.prompts(), ["external a.vrs"]);
+        assert!(jobs.is_empty() && r.get(a).saving.is_none(), "cancelled before anything was queued");
+    }
+
+    /// A two-board document opened from `path` (dirty after one more square).
+    fn two_boards(r: &mut Rig, path: &str) -> SessionId {
+        let mut doc = art(BLUE);
+        doc.artboards.push(Artboard { x: 200.0, y: 0.0, w: 50.0, h: 80.0, name: "B".into(), ..Artboard::default() });
+        r.s.put(path, doc);
+        let a = r.open(path);
+        draw(r.ed(a), RED);
+        a
+    }
+
+    #[test]
+    fn export_writes_a_pure_pdf_and_leaves_path_dirty_recents_and_the_vrs_untouched() {
+        use varos_pdf::ExportScope;
+        let mut r = Rig::new();
+        let a = two_boards(&mut r, "/d/a.vrs");
+        let recents_before = r.s.recent.entries().len();
+        let (rev, saves) = (r.get(a).editor.rev, r.s.saves.len());
+        r.script([Ans::Pick(Some(p("/out/a.pdf")))]);
+        let (_, jobs) = r.bg(AppCommand::ExportPdf(a, ExportScope::AllVisibleArtboards));
+        assert_eq!(r.prompts(), ["export a.pdf in /d"]);
+        let job = one(jobs);
+        r.land(job);
+        assert_eq!(r.prompts(), ["notice Exported a.pdf"]);
+        let s = r.get(a);
+        assert_eq!(s.path.as_deref(), Some(Path::new("/d/a.vrs")), "the path never changes");
+        assert!(s.is_dirty_exact(), "the dot stays: an export is not a save");
+        assert_eq!(s.editor.rev, rev);
+        assert!(s.exports.is_empty());
+        assert_eq!(r.s.saves.len(), saves, "the .vrs is never written");
+        assert_eq!(file_fills(&r.s, "/d/a.vrs"), [Some(BLUE)]);
+        assert_eq!(r.s.recent.entries().len(), recents_before, "an export is never a Recent entry");
+        // the PDF itself: one page per visible board, no editable model inside
+        let bytes = &r.s.exported[&p("/out/a.pdf")];
+        let pdf = lopdf::Document::load_mem(bytes).expect("a real PDF");
+        assert_eq!(pdf.get_pages().len(), 2, "page count = artboards");
+        assert!(!varos_pdf::has_embedded_model(bytes), "no embedded model");
+        assert!(
+            varos_pdf::load_vrs_bytes(bytes, &varos_core::format::Limits::DEFAULT).is_err(),
+            "Varos refuses to open its own export as a document"
+        );
+    }
+
+    #[test]
+    fn export_of_a_pdf_document_suggests_name_export_and_refuses_its_own_file() {
+        use varos_pdf::ExportScope;
+        let mut r = Rig::new();
+        let a = two_boards(&mut r, "/d/Poster.pdf");
+        // the owner decision: `<name> export.pdf`; picking the open document's own file is refused
+        r.script([Ans::Pick(Some(p("/d/Poster.pdf"))), Ans::Pick(None)]);
+        let (_, jobs) = r.bg(AppCommand::ExportPdf(a, ExportScope::ActiveArtboard));
+        assert_eq!(
+            r.prompts(),
+            ["export Poster export.pdf in /d", "notice Choose another name.", "export Poster export.pdf in /d"]
+        );
+        assert!(jobs.is_empty(), "cancelled: nothing queued");
+        assert!(r.s.exported.is_empty() && r.get(a).exports.is_empty());
+        // a typed name without .pdf gets it (and is asked about when that file exists)
+        r.s.raw.insert(p("/out/flyer.pdf"), b"%PDF-1.7 someone else's".to_vec());
+        r.script([Ans::Pick(Some(p("/out/flyer"))), Ans::Replace(true)]);
+        let job = one(r.bg(AppCommand::ExportPdf(a, ExportScope::ActiveArtboard)).1);
+        assert_eq!(r.prompts(), ["export Poster export.pdf in /d", "replace flyer.pdf"]);
+        r.land(job);
+        let pdf = lopdf::Document::load_mem(&r.s.exported[&p("/out/flyer.pdf")]).unwrap();
+        assert_eq!(pdf.get_pages().len(), 1, "the active artboard only");
+    }
+
+    #[test]
+    fn export_cancel_and_failure_write_nothing_and_say_so() {
+        use varos_pdf::ExportScope;
+        let mut r = Rig::new();
+        let a = two_boards(&mut r, "/d/a.vrs");
+        r.script([Ans::Pick(None)]);
+        assert!(r.bg(AppCommand::ExportPdf(a, ExportScope::AllVisibleArtboards)).1.is_empty());
+        assert_eq!(r.prompts(), ["export a.pdf in /d"]);
+        // a failing disk: a plain notice, nothing written, the document unchanged
+        r.s.fail_export = true;
+        r.script([Ans::Pick(Some(p("/out/a.pdf")))]);
+        let job = one(r.bg(AppCommand::ExportPdf(a, ExportScope::AllVisibleArtboards)).1);
+        r.land(job);
+        assert_eq!(r.prompts(), ["export a.pdf in /d", "notice Couldn't export PDF."]);
+        assert!(r.s.exported.is_empty());
+        assert!(r.get(a).is_dirty_exact() && r.get(a).exports.is_empty());
+        // a scope that cannot export says why before any panel
+        let (_, jobs) = r.bg(AppCommand::ExportPdf(a, ExportScope::ArtworkBounds));
+        assert!(jobs.is_empty());
+        assert_eq!(r.prompts(), ["notice Couldn't export PDF."]);
+    }
+
+    #[test]
+    fn export_over_an_editable_varos_pdf_asks_once_more_before_replacing_it() {
+        use varos_pdf::ExportScope;
+        let mut r = Rig::new();
+        let a = two_boards(&mut r, "/d/a.vrs");
+        let native = varos_pdf::write_pdf(&art(BLUE)).unwrap();
+        r.s.raw.insert(p("/out/old.pdf"), native.clone());
+        r.script([Ans::Pick(Some(p("/out/old.pdf"))), Ans::Replace(false)]);
+        let job = one(r.bg(AppCommand::ExportPdf(a, ExportScope::AllVisibleArtboards)).1);
+        let (_, jobs) = r.land(job);
+        assert_eq!(r.prompts(), ["export a.pdf in /d", "replace-editable old.pdf"]);
+        assert!(jobs.is_empty() && r.s.exported.is_empty(), "Cancel keeps the editable file");
+        r.script([Ans::Pick(Some(p("/out/old.pdf"))), Ans::Replace(true)]);
+        let job = one(r.bg(AppCommand::ExportPdf(a, ExportScope::AllVisibleArtboards)).1);
+        let confirmed = one(r.land(job).1);
+        r.land(confirmed);
+        assert_eq!(r.prompts(), ["export a.pdf in /d", "replace-editable old.pdf", "notice Exported old.pdf"]);
+        assert!(!varos_pdf::has_embedded_model(&r.s.exported[&p("/out/old.pdf")]));
+    }
+
     // ───────────── S4: files the OS hands us (Finder / Dock / `open`) ─────────────
     //
     // The host's path, minus AppKit: paths land in `os_open`'s queue, the `AboutToWait` drain turns
@@ -1682,5 +2201,145 @@ mod tests {
         assert_eq!(r.prompts(), ["open-failed bad.vrs: The file is damaged"]);
         assert_eq!(r.names(), ["a.vrs", "ملف عربي مع مسافات.vrs"]);
         assert!(r.get(a).is_dirty_exact());
+    }
+
+    // ───────────── review fixes: claimed paths (P0) and inert results for closed tabs (P2) ─────────────
+
+    #[test]
+    fn two_untitled_tabs_cannot_both_save_to_one_new_file() {
+        let mut r = Rig::new();
+        let a = r.active();
+        draw(r.ed(a), RED);
+        r.script([Ans::Pick(Some(p("/d/same.vrs")))]);
+        let job = one(r.bg(AppCommand::Save(a)).1);
+        r.prompts();
+        r.run(AppCommand::NewDocument);
+        let b = r.active();
+        draw(r.ed(b), BLUE);
+        // the file Untitled-1 is still writing is claimed: the existing "open in another tab" refusal
+        r.script([Ans::Pick(Some(p("/d/same.vrs"))), Ans::Pick(None)]);
+        assert!(r.bg(AppCommand::Save(b)).1.is_empty());
+        assert_eq!(
+            r.prompts(),
+            [
+                "save-as Untitled-2.vrs in -",
+                "notice “Untitled-1” is open in another tab.",
+                "save-as Untitled-2.vrs in -"
+            ]
+        );
+        // opening that file (⌘O / Recent / Finder) focuses the tab still saving it; nothing loads
+        r.run(AppCommand::OpenPaths(vec![p("/d/same.vrs")], OpenOrigin::OsHandoff));
+        assert_eq!(r.active(), a);
+        assert!(r.s.loads.is_empty());
+        // the save fails: the claim is released, so tab B may use the name now
+        r.s.fail_save.insert(p("/d/same.vrs"), 1);
+        r.script([Ans::Fail(SaveFailChoice::Cancel)]);
+        r.land(job);
+        r.prompts();
+        assert!(r.get(a).saving.is_none() && r.get(a).path.is_none());
+        r.script([Ans::Pick(Some(p("/d/same.vrs")))]);
+        assert_eq!(r.bg(AppCommand::Save(b)).1.len(), 1, "free again after the failure");
+    }
+
+    #[test]
+    fn export_onto_a_file_a_tab_is_still_saving_is_refused() {
+        use varos_pdf::ExportScope;
+        let mut r = Rig::new();
+        let a = two_boards(&mut r, "/d/a.vrs");
+        r.run(AppCommand::NewDocument);
+        let b = r.active();
+        let doc = Arc::new(r.get(b).editor.doc.clone());
+        r.ws.get_mut(b).unwrap().saving = Some(SaveInFlight {
+            ticket: 1,
+            dest: p("/out/claimed.pdf"),
+            doc,
+            follow_up: false,
+            started: std::time::Instant::now(),
+        });
+        r.script([Ans::Pick(Some(p("/out/claimed.pdf"))), Ans::Pick(None)]);
+        assert!(r.bg(AppCommand::ExportPdf(a, ExportScope::AllVisibleArtboards)).1.is_empty());
+        assert_eq!(r.prompts(), ["export a.pdf in /d", "notice Choose another name.", "export a.pdf in /d"]);
+    }
+
+    #[test]
+    fn a_closed_tabs_export_result_is_inert_but_a_written_pdf_is_reported_once() {
+        use varos_pdf::ExportScope;
+        let mut r = Rig::new();
+        // pending "replace the editable document?" for a closed tab: nothing asked, nothing queued
+        let a = two_boards(&mut r, "/d/a.vrs");
+        r.s.raw.insert(p("/out/old.pdf"), varos_pdf::write_pdf(&art(BLUE)).unwrap());
+        r.script([Ans::Pick(Some(p("/out/old.pdf")))]);
+        let job = one(r.bg(AppCommand::ExportPdf(a, ExportScope::AllVisibleArtboards)).1);
+        r.script([Ans::Decide(SaveDecision::DontSave)]);
+        r.run(AppCommand::CloseDocument(a));
+        r.prompts();
+        let (_, jobs) = r.land(job);
+        assert!(jobs.is_empty() && r.prompts().is_empty() && r.s.exported.is_empty());
+        // a failure for a closed tab: silent
+        let b = two_boards(&mut r, "/d/b.vrs");
+        r.s.fail_export = true;
+        r.script([Ans::Pick(Some(p("/out/b.pdf")))]);
+        let job = one(r.bg(AppCommand::ExportPdf(b, ExportScope::AllVisibleArtboards)).1);
+        r.script([Ans::Decide(SaveDecision::DontSave)]);
+        r.run(AppCommand::CloseDocument(b));
+        r.prompts();
+        r.land(job);
+        assert!(r.prompts().is_empty());
+        // a PDF that WAS written: one neutral notice
+        r.s.fail_export = false;
+        let c = two_boards(&mut r, "/d/c.vrs");
+        r.script([Ans::Pick(Some(p("/out/c.pdf")))]);
+        let job = one(r.bg(AppCommand::ExportPdf(c, ExportScope::AllVisibleArtboards)).1);
+        r.script([Ans::Decide(SaveDecision::DontSave)]);
+        r.run(AppCommand::CloseDocument(c));
+        r.prompts();
+        r.land(job);
+        assert_eq!(r.prompts(), ["notice Exported c.pdf"]);
+        assert!(r.s.exported.contains_key(&p("/out/c.pdf")));
+    }
+
+    /// Round 2: the claim uses the ONE file key, so on the real disk a destination that differs only
+    /// by case (on a case-insensitive volume) is the same claimed file; another folder is not.
+    #[test]
+    fn a_claimed_new_file_refuses_its_case_variant_on_the_real_disk() {
+        use crate::file_ports::DiskStore;
+        let dir = std::env::temp_dir().join(format!("varos-claim-{}", varos_app::storage::checksum::new_nonce()));
+        std::fs::create_dir_all(dir.join("other")).unwrap();
+        let (upper, lower, elsewhere) = (dir.join("A.vrs"), dir.join("a.vrs"), dir.join("other").join("a.vrs"));
+        #[cfg(unix)]
+        let canon = std::fs::canonicalize(&dir).unwrap();
+        // the expectation comes from the volume itself (pathconf), not from the key under test
+        #[cfg(unix)]
+        let same_on_this_volume = crate::file_ports::case_sensitive(&canon) != Some(true);
+        #[cfg(not(unix))]
+        let same_on_this_volume = true;
+        let mut ws = Workspace::new();
+        let a = ws.active_id().unwrap();
+        draw(&mut ws.get_mut(a).unwrap().editor, RED);
+        let b = ws.new_untitled();
+        draw(&mut ws.get_mut(b).unwrap().editor, BLUE);
+        let mut d = FakeDialogs::default();
+        let mut jobs = Vec::new();
+        let run = |ws: &mut Workspace, d: &mut FakeDialogs, jobs: &mut Vec<FileJob>, cmd| {
+            Lifecycle { ws, dialogs: d, store: &mut DiskStore, jobs: Some(jobs) }.run(cmd);
+        };
+        d.answers.push_back(Ans::Pick(Some(upper.clone())));
+        run(&mut ws, &mut d, &mut jobs, AppCommand::Save(a));
+        assert_eq!(jobs.len(), 1, "A.vrs claimed; nothing written yet");
+        d.answers.extend([Ans::Pick(Some(lower.clone())), Ans::Pick(None)]);
+        run(&mut ws, &mut d, &mut jobs, AppCommand::Save(b));
+        let refused = d.log.iter().any(|l| l == "notice “Untitled-1” is open in another tab.");
+        assert_eq!(refused, same_on_this_volume, "{:?}", d.log);
+        if same_on_this_volume {
+            assert_eq!(jobs.len(), 1, "the case variant is refused: one writer");
+        }
+        d.log.clear();
+        d.answers.clear();
+        d.answers.push_back(Ans::Pick(Some(elsewhere)));
+        if ws.get(b).unwrap().saving.is_none() {
+            run(&mut ws, &mut d, &mut jobs, AppCommand::Save(b));
+            assert!(ws.get(b).unwrap().saving.is_some(), "another folder is another file: allowed");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

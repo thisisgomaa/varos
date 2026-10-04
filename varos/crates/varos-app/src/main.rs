@@ -28,6 +28,8 @@ use winit::{
 mod app_command;
 mod chrome;
 mod cursors;
+mod export_ui;
+mod file_jobs;
 mod file_ports;
 mod host;
 mod lifecycle;
@@ -615,8 +617,18 @@ fn dispatch(
     dialogs: &mut dyn lifecycle::Dialogs,
     store: &mut dyn lifecycle::DocStore,
     keys: &host::Keyboard,
+    jobs: &mut dyn host::FileJobs,
 ) -> host::Ran {
     match action {
+        // DFS S6: Export (button, burger row, File ▸ Export ▸ PDF…) opens the Export PDF sheet
+        host::HostAction::App(AppCommand::ShowExport(id)) => {
+            if !ws.on_home() {
+                if let Some(s) = ws.get(id) {
+                    gui.show_export(id, &s.editor.doc);
+                }
+            }
+            host::Ran::default()
+        }
         host::HostAction::App(AppCommand::Window(w)) => {
             match w {
                 WindowCmd::Minimize => window.set_minimized(true),
@@ -633,7 +645,7 @@ fn dispatch(
             }
             host::Ran::default()
         }
-        action => run_action(action, ws, gui, canvas, dialogs, store, keys),
+        action => run_action(action, ws, gui, canvas, dialogs, store, keys, jobs),
     }
 }
 
@@ -641,7 +653,9 @@ fn dispatch(
 /// settle the active tab, run the rules over the ports, reset what a dialog or a switch left stale),
 /// or a document action on whichever tab is active by then. No window: the FIFO test drives it
 /// headless. `canvas` = the visible drawing area (`canvas_px`); `keys` = the keys held right now
-/// (`host::Keyboard`), mirrored into the tab active after a command.
+/// (`host::Keyboard`), mirrored into the tab active after a command; `jobs` = the background worker
+/// (⌘S / Save As / Export run there — `host::run_command`).
+#[allow(clippy::too_many_arguments)] // the event loop's own state, passed as-is
 fn run_action(
     action: host::HostAction,
     ws: &mut workspace::Workspace,
@@ -650,9 +664,10 @@ fn run_action(
     dialogs: &mut dyn lifecycle::Dialogs,
     store: &mut dyn lifecycle::DocStore,
     keys: &host::Keyboard,
+    jobs: &mut dyn host::FileJobs,
 ) -> host::Ran {
     match action {
-        host::HostAction::App(cmd) => host::run_lifecycle(cmd, ws, ui, dialogs, store, keys),
+        host::HostAction::App(cmd) => host::run_command(cmd, ws, ui, dialogs, store, keys, jobs),
         host::HostAction::Doc(a) => {
             if ws.on_home() {
                 return host::Ran::default();
@@ -913,7 +928,7 @@ fn main() {
 
     let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
     if let Some(cmd) = startup_open {
-        host::run_lifecycle(cmd, &mut ws, &mut gui, &mut dialogs, &mut store, &keyboard);
+        host::run_lifecycle(cmd, &mut ws, &mut gui, &mut dialogs, &mut store, &keyboard, None);
     }
     if !ws.on_home() {
         if let Some(s) = ws.active() {
@@ -1100,12 +1115,35 @@ fn main() {
                         window.focus_window();
                     }
                 }
+                // background saves / exports that finished: applied BEFORE the queue, so a Close or a
+                // Quit waiting there decides on the landed result (DFS S6, `file_jobs`)
+                let finished = recovery.take_file_done();
+                let any_finished = !finished.is_empty();
+                for done in finished {
+                    let (ds, keys) = (&mut dialogs, &keyboard);
+                    let cmd = AppCommand::FileDone(Box::new(done));
+                    let ran = host::run_command(cmd, &mut ws, &mut gui, ds, &mut store, keys, &mut recovery);
+                    pending.extend(ran.follow_up_saves.iter().map(|&id| host::HostAction::App(AppCommand::Save(id))));
+                    if ran.ran {
+                        last_scene_signature = None;
+                    }
+                    if ran.switched {
+                        canvas_gesture = false;
+                        panning = false;
+                    }
+                }
+                if any_finished {
+                    window.request_redraw();
+                }
                 // THE one dispatch: every queued action, in the order it was raised (FIFO) — up to a
                 // click the Ui frame has not turned into its command yet
                 let ready = pending.take_ready();
                 if !ready.is_empty() {
                     let canvas = canvas_px(&gui, &window);
-                    for action in ready {
+                    let (mut ready, mut ran_any) = (ready.into_iter(), false);
+                    while let Some(action) = ready.next() {
+                        // a Close / Save As / Quit that must wait for an in-flight save comes back here
+                        let retry = matches!(action, host::HostAction::App(_)).then(|| action.clone());
                         if let host::HostAction::App(cmd) = &action {
                             if recovery.handle_read(cmd, &mut dialogs) || recovery.handle(cmd, &mut ws, Instant::now())
                             {
@@ -1114,8 +1152,20 @@ fn main() {
                         }
                         let before = recovery_host::RecoveryHost::before_close(&ws);
                         let (ds, keys) = (&mut dialogs, &keyboard);
-                        let ran = dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, ds, &mut store, keys);
+                        let jobs = &mut recovery;
+                        let ran =
+                            dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, ds, &mut store, keys, jobs);
+                        if ran.held {
+                            // held at the head with everything behind it (FIFO); retried when a save
+                            // lands or the Keep Waiting question is due — never a busy loop
+                            pending.hold(retry.into_iter().chain(ready.by_ref()));
+                            break;
+                        }
+                        ran_any = true;
                         recovery.after_dispatch(before, &mut ws, ran.exit, Instant::now());
+                        // a coalesced second ⌘S runs as a normal ⌘S, behind what is already waiting
+                        pending
+                            .extend(ran.follow_up_saves.iter().map(|&id| host::HostAction::App(AppCommand::Save(id))));
                         if ran.ran {
                             surface_retries = 0;
                             last_scene_signature = None; // the drawn document may be another one now
@@ -1142,7 +1192,9 @@ fn main() {
                             eprintln!("Recent menu unavailable: {e}");
                         }
                     }
-                    window.request_redraw();
+                    if ran_any {
+                        window.request_redraw();
+                    }
                 }
             }
             if matches!(&event, Event::AboutToWait) {
@@ -1167,10 +1219,27 @@ fn main() {
                     gui.recovery = recovery_ui;
                     window.request_redraw();
                 }
-                let wake = match (gui.repaint_at, recovery.next_wake()) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                };
+                // a background result `observe` picked up is applied at the next turn: make one happen
+                if recovery.has_file_done() || pending.has_new() {
+                    window.request_redraw();
+                }
+                // "Finishing save of “name”…" while a command waits for it; else "Saving “name”…" /
+                // "Exporting PDF…" only after 300 ms (no flicker) — plain text
+                let now = Instant::now();
+                let file_status = recovery.save_wait.status().unwrap_or_else(|| file_jobs::status_text(&ws, now));
+                if gui.file_status != file_status {
+                    gui.file_status = file_status;
+                    window.request_redraw();
+                }
+                let wake = [
+                    gui.repaint_at,
+                    recovery.next_wake(),
+                    file_jobs::next_status_wake(&ws, now),
+                    recovery.save_wait.next_ask(),
+                ]
+                .into_iter()
+                .flatten()
+                .min();
                 match wake {
                     Some(at) if at <= Instant::now() => {
                         gui.repaint_at = None;
@@ -1495,7 +1564,7 @@ fn main() {
                         // egui reports at most one click per frame, decided at the latest release
                         let at = pending.last_release();
                         pending.chrome_frame(raised.map(|c| (at, host::HostAction::App(c))));
-                        if !pending.is_empty() {
+                        if pending.has_new() {
                             window.request_redraw();
                         }
                         // macOS menu bar: every ✓ is read back from the real state (only changes are written)
@@ -2027,7 +2096,7 @@ mod action_queue_tests {
             Ok(crate::lifecycle::SaveOutcome::Durable)
         }
         fn key(&self, path: &Path) -> FileKey {
-            FileKey { path: path.to_path_buf(), dev_ino: None }
+            FileKey { path: path.to_path_buf(), dev_ino: None, name_id: None }
         }
         fn exists(&self, _: &Path) -> bool {
             false
@@ -2062,6 +2131,7 @@ mod action_queue_tests {
             &mut dialogs,
             &mut store,
             &host::Keyboard::default(),
+            None,
         );
         assert!(ran.switched && !ws.on_home());
     }
@@ -2076,7 +2146,7 @@ mod action_queue_tests {
         let path = PathBuf::from("ordered.vrs");
         let session = ws.active_mut().unwrap();
         session.editor.execute(EditCommand::AddArtboard);
-        session.mark_saved(path.clone(), FileKey { path, dev_ino: None });
+        session.mark_saved(path.clone(), FileKey { path, dev_ino: None, name_id: None });
         session.editor.execute(EditCommand::AddArtboard);
         assert_eq!(session.editor.doc.artboards.len(), 2);
         assert!(session.is_dirty_exact());
@@ -2115,8 +2185,9 @@ mod action_queue_tests {
             }
         }
         let (mut ui, mut dialogs, mut store) = (FakeUi, NoDialogs, RecordingStore::default());
+        let jobs = &mut host::NoWorker::default(); // the background jobs run inline here: same order, no thread
         for action in pending.take_ready() {
-            run_action(action, ws, &mut ui, canvas, &mut dialogs, &mut store, &host::Keyboard::default());
+            run_action(action, ws, &mut ui, canvas, &mut dialogs, &mut store, &host::Keyboard::default(), jobs);
         }
         assert!(pending.is_empty(), "the batch drained completely");
         store
@@ -2204,7 +2275,16 @@ mod action_queue_tests {
             let id = ws.active_id();
             assert!(command_key(&mut pending, keyboard, KeyCode::Tab, id, true, false), "a command, never egui's");
             for action in pending.take_ready() {
-                run_action(action, ws, &mut ui, canvas, &mut dialogs, &mut store, keyboard);
+                run_action(
+                    action,
+                    ws,
+                    &mut ui,
+                    canvas,
+                    &mut dialogs,
+                    &mut store,
+                    keyboard,
+                    &mut host::NoWorker::default(),
+                );
             }
             assert!(command_key(&mut pending, keyboard, KeyCode::Tab, id, false, false), "its release too");
             assert!(pending.is_empty(), "a release queues nothing");
