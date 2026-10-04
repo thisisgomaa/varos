@@ -57,6 +57,10 @@ fn sample_doc() -> Document {
     group_of.insert(11u32, 100u32);
 
     Document {
+        // board metadata (format 3), Arabic included, so the round-trip proves UTF-8 survives
+        name: "شعار المقهى".to_string(),
+        description: "Logo board — نسخة أولى".to_string(),
+        tags: vec!["client".to_string(), "عربي".to_string()],
         paths: vec![body, mark],
         // deliberately LEGACY-shaped: registry populated, tree empty — load paths migrate it
         groups: vec![Group { id: 100, name: "Logo".to_string(), parent: None }],

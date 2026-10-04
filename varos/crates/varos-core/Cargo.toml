@@ -15,3 +15,6 @@ flo_curves = "0.8"
 serde = { version = "1", features = ["derive"] }
 # .vrs (the 🔖 slice) = versioned JSON of the model — the same blob the future PDF container embeds (§4).
 serde_json = "1"
+# Board tags compare by ONE fold rule (NFC + full case fold, `board::fold`) — the same rule as the app's
+# volume-name keys. Pure Rust, already in the workspace lock (varos-app uses it).
+unicode-normalization = "0.1.25"
