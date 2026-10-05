@@ -340,6 +340,26 @@ pub fn text_field<T: PartialEq>(
     f: TextField<'_>,
     parse: impl Fn(&str) -> Result<T, &'static str>,
 ) -> Edit<T> {
+    edit_text(ui, f, 1, parse)
+}
+
+/// A wrapping text box `rows` lines tall (the board description) under the same K3 law. Its text holds
+/// no line breaks, so Enter commits exactly as in [`text_field`]; long text wraps inside the box.
+pub fn text_area<T: PartialEq>(
+    ui: &mut Ui,
+    f: TextField<'_>,
+    rows: usize,
+    parse: impl Fn(&str) -> Result<T, &'static str>,
+) -> Edit<T> {
+    edit_text(ui, f, rows.max(1), parse)
+}
+
+fn edit_text<T: PartialEq>(
+    ui: &mut Ui,
+    f: TextField<'_>,
+    rows: usize,
+    parse: impl Fn(&str) -> Result<T, &'static str>,
+) -> Edit<T> {
     let ctx = ui.ctx().clone();
     let id = f.id;
     if !f.open {
@@ -361,12 +381,22 @@ pub fn text_field<T: PartialEq>(
     }
     let mut buf = sess.as_ref().map_or_else(|| f.value.to_string(), |s| s.buf.clone());
     let inner = if f.framed { f.rect.shrink2(egui::vec2(t::FIELD_INSET_X, t::FIELD_INSET_Y)) } else { f.rect };
-    let mut te =
-        egui::TextEdit::singleline(&mut buf).id(id).frame(egui::Frame::NONE).font(f.font.clone()).text_color(t::TEXT);
+    // a multi-row box: Enter is the commit key (it would otherwise insert a line break the text may not hold)
+    let enter =
+        rows > 1 && ctx.memory(|m| m.has_focus(id)) && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
+    let te = if rows > 1 {
+        egui::TextEdit::multiline(&mut buf).desired_rows(rows).desired_width(inner.width())
+    } else {
+        egui::TextEdit::singleline(&mut buf)
+    };
+    let mut te = te.id(id).frame(egui::Frame::NONE).font(f.font.clone()).text_color(t::TEXT);
     if !f.hint.is_empty() {
         te = te.hint_text(f.hint);
     }
     ui.put(inner, te);
+    if enter {
+        ctx.memory_mut(|m| m.surrender_focus(id));
+    }
     let sess = match sess {
         Some(s) => Some(s),
         // egui gave the field the keyboard (a click into it): the session starts from the shown value

@@ -449,4 +449,79 @@ mod tests {
         eprintln!("2,000-path thumbnail: {elapsed:?}");
         assert!(elapsed.as_secs_f32() < 1.5, "{elapsed:?}");
     }
+
+    /// For the Start snapshot only: `VAROS_START_THUMBS=<dir>` writes real thumbnails (this rasteriser,
+    /// the cache's 544 × 246) for four of the demo boards as `<index>.png`. Not a gate.
+    #[test]
+    fn start_snapshot_thumbnails() {
+        let Some(dir) = std::env::var_os("VAROS_START_THUMBS") else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let navy = [0.086, 0.137, 0.239, 1.0];
+        let amber = [0.914, 0.769, 0.416, 1.0];
+        let cream = [0.925, 0.894, 0.839, 1.0];
+        let orange = [0.894, 0.341, 0.180, 1.0];
+        let ink = [0.078, 0.075, 0.075, 1.0];
+        let green = [0.122, 0.302, 0.227, 1.0];
+        let gold = [0.890, 0.690, 0.294, 1.0];
+        type Boards = Vec<([f32; 2], [f32; 2])>;
+        type Rects = Vec<([f32; 2], [f32; 2], Rgba)>;
+        let boards: [(usize, Boards, Rects); 4] = [
+            (
+                0,
+                vec![([0.0, 0.0], [1080.0, 1350.0]), ([1240.0, 0.0], [1080.0, 1920.0])],
+                vec![
+                    ([0.0, 0.0], [1080.0, 1350.0], navy),
+                    ([560.0, 220.0], [300.0, 300.0], amber),
+                    ([110.0, 820.0], [700.0, 120.0], cream),
+                    ([1240.0, 0.0], [1080.0, 1920.0], navy),
+                    ([1700.0, 360.0], [420.0, 420.0], amber),
+                    ([1350.0, 1680.0], [420.0, 80.0], amber),
+                ],
+            ),
+            (
+                1,
+                vec![],
+                vec![
+                    ([50.0, 70.0], [500.0, 500.0], cream),
+                    ([690.0, 70.0], [540.0, 500.0], orange),
+                    ([1410.0, 110.0], [420.0, 420.0], cream),
+                    ([2040.0, 130.0], [520.0, 100.0], cream),
+                    ([2040.0, 290.0], [380.0, 100.0], cream),
+                    ([2040.0, 450.0], [240.0, 100.0], orange),
+                ],
+            ),
+            (
+                2,
+                vec![([0.0, 0.0], [842.0, 1191.0])],
+                vec![
+                    ([0.0, 0.0], [842.0, 1191.0], cream),
+                    ([300.0, 160.0], [480.0, 480.0], orange),
+                    ([70.0, 660.0], [470.0, 440.0], ink),
+                ],
+            ),
+            (
+                8,
+                vec![([0.0, 0.0], [1080.0, 1080.0])],
+                vec![
+                    ([0.0, 0.0], [1080.0, 1080.0], green),
+                    ([370.0, 260.0], [340.0, 340.0], gold),
+                    ([260.0, 820.0], [560.0, 90.0], cream),
+                ],
+            ),
+        ];
+        for (index, artboards, rects) in boards {
+            let mut d = Document::default();
+            for (xy, wh) in artboards {
+                d.artboards.push(Artboard { x: xy[0], y: xy[1], w: wh[0], h: wh[1], ..Artboard::default() });
+            }
+            for (i, (xy, wh, color)) in rects.into_iter().enumerate() {
+                d.paths.push(rect(2 + i as u32, xy, wh, color));
+            }
+            let r = rasterize(Arc::new(d), [WIDTH, HEIGHT]);
+            std::fs::write(dir.join(format!("{index}.png")), r.encode_png().unwrap()).unwrap();
+        }
+    }
 }
