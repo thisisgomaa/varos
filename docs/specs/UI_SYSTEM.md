@@ -160,7 +160,11 @@ Every later UI piece reports these numbers (or "not affected: why") in its GATE_
 | `T_MICRO` (new) | 10.5 | section micro-labels (QW6; today `.size(10.0)` ×10) | to add |
 | Start sizes | 26 / 20 / 14 | Start title / section / file | `tokens.rs:139-141` |
 
-**Offenders today and the ratchet** (counted by grep at `221310f`; P3 adds `shell/ratchet_tests.rs`, which reads files with `include_str!` and asserts `count <= CEILING`; a piece that removes offenders lowers the ceiling in the same commit; raising a ceiling is a review failure):
+**Offenders today and the ratchet** (baseline counted by grep at `221310f`; P3's
+`shell/ratchet_tests.rs` discovers production `ui.rs` + `ui/**/*.rs` with `read_dir` at test
+time, excludes files named `tests.rs`, and asserts `count <= CEILING`; a piece that removes
+offenders lowers the ceiling in the same commit; inline `#[cfg(test)]` helpers remain counted;
+raising a ceiling is a review failure):
 
 | Pattern | `ui.rs` | other files |
 |---|---|---|
@@ -264,7 +268,7 @@ Acceptance names (both paths): `arabic_name_shapes_joined_clusters`, `mixed_bidi
 |---|---|---|---|---|
 | P1 | This spec v3 + UI_DIRECTION reconciliation | `docs/` only | Owner reads the summary; independent review APPROVE | — |
 | P2 | Field commit law + `name_field` fix | `ui.rs` fields, `settle_field_edits`, `host` settle, `tokens.rs` `ERROR` | K3 hand test; tests `name_field_commits_typed_text_on_click_away`, `esc_reverts_without_history`, `unchanged_commit_is_not_dirty`, `invalid_keeps_focus_with_reason`, `save_and_tab_switch_commit_first`, `selection_change_commits_to_old_target` | one-undo arrow/scrub session (U3-T) **Built 2026-10-04, unmerged** (GATE_LOG): one session in `shell/kit/field.rs`, app glue `ui/fields.rs`, all six tests green; owner hand test + review pending. |
-| P3 | Ratchets + single icon registry + first move-only split + FAINT→MUTED + QW6 sizes | `shell/ratchet_tests.rs`, `kit/icons.rs`, `ui/fields.rs`, `tokens.rs` (`ICON`, `T_MICRO`) | "Panel icons look bigger and grey labels are readable, nothing moved"; ratchets at measured ceilings then lowered; move commit diff is move-only | other modules |
+| P3 | Ratchets + single icon registry + first move-only split + FAINT→MUTED + QW6 sizes | `shell/ratchet_tests.rs`, `kit/icons.rs`, `ui/fields.rs`, `tokens.rs` (`ICON`, `T_MICRO`) | "Panel icons look bigger and grey labels are readable, nothing moved"; split, registry consolidation, FAINT rename, and exact ratchets are implemented in the uncommitted worktree. **Open:** QW6 `ICON = 18`, `T_MICRO = 10.5`, and the ten `.size(10.0)` replacements; owner hand test and landing review. | other modules |
 | P4 | On-state + radius conformance | `icon_toggle`, `seg_btn`, radius literals, `R` comment | "Toggles show a small blue bar, segments a grey block"; tests on fills per state | — |
 | P5 | K2 fixes: canvas Tab no-op, focus rings on legacy controls | `main.rs` router, `ui/controls.rs` | "Tab on the canvas does nothing"; key-routing tests | Hide Panels |
 | P6 | U2-P measure | perf counters, fixture generator | K4 table filled with real numbers | any cache work |
@@ -282,3 +286,4 @@ Acceptance names (both paths): `arabic_name_shapes_joined_clusters`, `mixed_bidi
 | 2026-09-27 | E2 ([record](../foundation/work_orders/DFS_S2_E2_START_INTEGRATION.md)): Start/Home/Recent on one open path; splash removed, GPU failure path kept. |
 | 2026-10-04 | Batch review: kit menu + Lucide kit icons merged to main (GATE_LOG 2026-10-04). v3: values, tables, ratchets, K3 commit-on-blur law, split plan, pieces. |
 | 2026-10-04 | P2 built: K3 in `kit::field` (one edit session for every text/number field), `ui/fields.rs` glue, `ERROR` + field tokens; Pathfinder buttons disabled with the core's reason. Known gaps in GATE_LOG. |
+| 2026-10-05 | P3 worktree status after independent review: `ui.rs` 8,507→979 lines; real modules use `bar.rs` / `control_bar.rs` rather than the plan's `topbar.rs` / `ctlbar.rs`; tests remain consolidated in the real child module `ui/tests.rs`. `TopIcons`, `LayerIcons`, `DockIcons`, and `dump_tool_icons` remain outside `kit/icons.rs`; no separate `AbIcons` type exists on this branch. Legacy SVG sources are consolidated in `shell/kit/icons.rs` and raster/cache routes through `shell/svg.rs`. This owner-scoped piece necessarily lands the FAINT→MUTED/DISABLED rename and icon token substitutions beside the otherwise move-only split; keeping those requested visible changes separate would leave the intermediate tree inconsistent with P3 acceptance. Measured production-code ceilings (tests excluded): FontId 26, RichText size 33, raw colour 42, corner radius 26, `ui.rs` 979; `IC_` identifiers are forbidden outside the registry. QW6 `ICON`/`T_MICRO` work remains open. |

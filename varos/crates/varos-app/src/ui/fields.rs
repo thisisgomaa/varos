@@ -16,7 +16,7 @@ use super::{apply_ops, doc_id, Op};
 use crate::app_command::SessionId;
 
 /// The open field's pending commit, kept between frames.
-pub(super) struct Pending {
+pub(crate) struct Pending {
     doc: Option<SessionId>,
     id: egui::Id,
     op: Op,
@@ -50,7 +50,7 @@ fn number<'a>(ui: &egui::Ui, w: f32, label: Label<'a>, tip: &'a str, value: f32,
 /// A document number field: its edits become `mk(value)`. `tip` names the field (and, when the field is
 /// disabled, says why); `speed` = scrub value per point; out-of-range values clamp.
 #[allow(clippy::too_many_arguments)] // a field's look + behaviour knobs, as the kit takes them
-pub(super) fn num(
+pub(crate) fn num(
     ui: &mut egui::Ui,
     w: f32,
     label: Label<'_>,
@@ -71,7 +71,7 @@ pub(super) fn num(
 
 /// A number field inside the colour picker: its value goes to the picker (whose OK/Cancel is the
 /// document step), so a step, a scrub and a commit all just return the new value.
-pub(super) fn num_value(
+pub(crate) fn num_value(
     ui: &mut egui::Ui,
     w: f32,
     label: Label<'_>,
@@ -94,7 +94,7 @@ fn parse_name(s: &str) -> Result<String, &'static str> {
 }
 
 /// A boxed name field bound to a model name (the artboard name in the Properties pane).
-pub(super) fn name(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str, ops: &mut Vec<Op>, mk: impl Fn(String) -> Op) {
+pub(crate) fn name(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str, ops: &mut Vec<Op>, mk: impl Fn(String) -> Op) {
     let id = doc_id(ui, ("abname", kf::home(ui), id_src));
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, t::TEXT_FIELD_H), egui::Sense::hover());
     let font = egui::FontId::proportional(t::FIELD_TEXT);
@@ -107,7 +107,7 @@ pub(super) fn name(ui: &mut egui::Ui, w: f32, value: &str, id_src: &str, ops: &m
 /// A transient rename editor (a Layers row, the on-canvas artboard name) seeded with `seed`: it
 /// opens editing, all selected; returns true once it closed (commit, unchanged, Esc).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn rename(
+pub(crate) fn rename(
     ui: &mut egui::Ui,
     id: egui::Id,
     rect: egui::Rect,
@@ -127,7 +127,7 @@ pub(super) fn rename(
 /// The reason a board field shows when the core refuses its text (`varos_core::board`'s checks — the
 /// same ones `Editor::try_set_board_*` runs). Static text; the limits are the core's constants (a test
 /// holds them equal).
-pub(super) fn board_reason(e: &varos_core::board::MetaError) -> &'static str {
+pub(crate) fn board_reason(e: &varos_core::board::MetaError) -> &'static str {
     use varos_core::board::MetaError as E;
     match e {
         E::NameTooLong { .. } => BOARD_NAME_TOO_LONG,
@@ -137,11 +137,11 @@ pub(super) fn board_reason(e: &varos_core::board::MetaError) -> &'static str {
         E::ControlCharacter { .. } | E::UncleanTag { .. } | E::DuplicateTag { .. } => BOARD_CONTROL,
     }
 }
-pub(super) const BOARD_NAME_TOO_LONG: &str = "A board name is at most 120 characters";
-pub(super) const BOARD_DESCRIPTION_TOO_LONG: &str = "A description is at most 500 characters";
-pub(super) const BOARD_TOO_MANY_TAGS: &str = "A board has at most 16 tags";
-pub(super) const BOARD_TAG_TOO_LONG: &str = "A tag is at most 32 characters";
-pub(super) const BOARD_CONTROL: &str = "No line breaks or tabs";
+pub(crate) const BOARD_NAME_TOO_LONG: &str = "A board name is at most 120 characters";
+pub(crate) const BOARD_DESCRIPTION_TOO_LONG: &str = "A description is at most 500 characters";
+pub(crate) const BOARD_TOO_MANY_TAGS: &str = "A board has at most 16 tags";
+pub(crate) const BOARD_TAG_TOO_LONG: &str = "A tag is at most 32 characters";
+pub(crate) const BOARD_CONTROL: &str = "No line breaks or tabs";
 
 fn board_text(
     typed: &str,
@@ -153,7 +153,7 @@ fn board_text(
 }
 
 /// The Board section's Name: empty is allowed (the board then shows its file name).
-pub(super) fn board_name(ui: &mut egui::Ui, w: f32, value: &str, ops: &mut Vec<Op>) {
+pub(crate) fn board_name(ui: &mut egui::Ui, w: f32, value: &str, ops: &mut Vec<Op>) {
     let id = doc_id(ui, ("board-name", kf::home(ui)));
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, t::TEXT_FIELD_H), egui::Sense::hover());
     let f = TextField {
@@ -171,7 +171,7 @@ pub(super) fn board_name(ui: &mut egui::Ui, w: f32, value: &str, ops: &mut Vec<O
 }
 
 /// The Board section's Description: three wrapping rows; Enter commits (the text has no line breaks).
-pub(super) fn board_description(ui: &mut egui::Ui, w: f32, value: &str, ops: &mut Vec<Op>) {
+pub(crate) fn board_description(ui: &mut egui::Ui, w: f32, value: &str, ops: &mut Vec<Op>) {
     let id = doc_id(ui, ("board-description", kf::home(ui)));
     let rows = t::BOARD_DESC_ROWS;
     let h = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(t::FIELD_TEXT))) * rows as f32
@@ -197,7 +197,7 @@ pub(super) fn board_description(ui: &mut egui::Ui, w: f32, value: &str, ops: &mu
 /// deduped by the core fold), so adding a tag the board already has is "unchanged" and adds nothing.
 /// A comma in the typed text, or Enter, adds the tag and keeps the keyboard for the next one;
 /// Backspace in an empty input removes the last tag; a chip's × removes that tag.
-pub(super) fn board_tags(ui: &mut egui::Ui, w: f32, tags: &[String], ops: &mut Vec<Op>) {
+pub(crate) fn board_tags(ui: &mut egui::Ui, w: f32, tags: &[String], ops: &mut Vec<Op>) {
     use varos_app::shell::kit::board as kb;
     let id = doc_id(ui, ("board-tags", kf::home(ui)));
     let ctx = ui.ctx().clone();
@@ -314,7 +314,7 @@ pub(super) fn board_tags(ui: &mut egui::Ui, w: f32, tags: &[String], ops: &mut V
 }
 
 /// The colour picker's hex field: a colour on commit, the reason while the text is not one.
-pub(super) fn hex(ui: &mut egui::Ui, w: f32, shown: &str) -> Option<varos_core::geom::Rgba> {
+pub(crate) fn hex(ui: &mut egui::Ui, w: f32, shown: &str) -> Option<varos_core::geom::Rgba> {
     let id = doc_id(ui, "cm-hex");
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, t::FIELD_H), egui::Sense::hover());
     let font = egui::TextStyle::Monospace.resolve(ui.style());
@@ -325,14 +325,14 @@ pub(super) fn hex(ui: &mut egui::Ui, w: f32, shown: &str) -> Option<varos_core::
 }
 
 /// The Layers search: live, commits nothing to the document; Esc restores the text it had.
-pub(super) fn search(ui: &mut egui::Ui, rect: egui::Rect, text: &mut String) {
+pub(crate) fn search(ui: &mut egui::Ui, rect: egui::Rect, text: &mut String) {
     let id = doc_id(ui, "lay-search");
     kf::search_field(ui, id, rect, text, egui::TextStyle::Button.resolve(ui.style()), "Search");
 }
 
 /// After `Ui::run`'s frame: keep this frame's pending commit, commit a field that was not drawn
 /// (selection / panel changed) from its last pending value, and put field commits first.
-pub(super) fn finish_frame(
+pub(crate) fn finish_frame(
     ctx: &egui::Context,
     doc: Option<SessionId>,
     ops: &mut Vec<Op>,
@@ -361,7 +361,7 @@ pub(super) fn finish_frame(
 /// K3 before a lifecycle command or a canvas press: commit the open field into `ed` (its last pending
 /// value; unchanged text just closes). `false` = its text does not parse: it keeps the keyboard and
 /// its reason, nothing ran, and the command must not run either.
-pub(super) fn settle(
+pub(crate) fn settle(
     ctx: &egui::Context,
     doc: Option<SessionId>,
     pending: &mut Option<Pending>,
@@ -383,4 +383,4 @@ pub(super) fn settle(
 }
 
 #[cfg(test)]
-pub(super) mod tests;
+pub(crate) mod tests;
