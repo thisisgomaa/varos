@@ -735,3 +735,12 @@ Base `codex/ui-system-plan` @ `8853d7a`; two independent reviews approved with n
 - **UI_DIRECTION contradictions resolved:** ☰ → Home on Mac (code already right); seams 6 → 12 px (`SEAM_GAP`, owner 07-04); tab radius 4 → doc chip 8 (`RBOX`, BOX_SYSTEM_PLAN §3.5) / panel pill 11 (`RCAP`, owner 07-08), stale `tokens.rs:57` comment listed as code fix P4; "panels square" → boxes 8 (CLAUDE.md, owner 07-04), three radii only, 26 stray literals listed as code fix P4. On-state mismatches (`icon_toggle`, `seg_btn`) listed as P4, not written into the law.
 - **Checks run:** grep counts and a contrast script only; Markdown only, no cargo run.
 - **Verdict:** proposed; independent review of v3 pending.
+
+## 2026-10-05 — UI P3: `ui.rs` split into real modules + icon registry + ratchets
+
+- **Scope:** branch `refactor/ui-p3-split`, baseline `6405dc9` (main). `ui.rs` 8,507 → 979 lines; code moved to `ui/{bar,canvas_overlay,control_bar,controls,menus,ops,picker,rail,snap,style,tests}.rs` and `ui/panels/*` as real `mod`s. 32 legacy `IC_*` SVG sources moved into `shell/kit/icons.rs` (byte-identical); `FAINT` retired → `MUTED` for informational text, `DISABLED` (same value as old `FAINT`) for disabled controls, resize grips and resting section headers; `shell/ratchet_tests.rs` added.
+- **Deviation from UI_SYSTEM §7 rules 1–2 (recorded, moderator decision):** move, rename and the L6 token change land in one commit; reviewed item-by-item against main instead.
+- **Author:** Codex Sol. **Review:** Opus, two rounds. Round 1 REQUEST CHANGES (disabled controls rendered as enabled; icon-size lint scanning the stub; `include!`d files invisible to rustfmt; ratchet slack). Round 2 APPROVE: every item identical to main except visibility, the renames and the listed token sites; ratchet ceilings equal measured counts (FontId 26, `.size` 33, raw colours 42, radii 26).
+- **Local gates (Mac, moderator-run):** `cargo test --workspace -j 4` **1011 passed / 0 failed / 8 ignored**; clippy `--all-targets -D warnings` Mac and `x86_64-pc-windows-msvc` clean; `cargo fmt --all --check` clean and now covering all `ui/**` files.
+- **Visible change:** informational grey text (placeholders, captions, X/Y/W/H letters, status-bar labels) is one step brighter (#6e6a66 → #8f8a86). Not verified in the real window.
+- **Open:** QW6 (`ICON` 18, `T_MICRO`, ten `.size(10.0)`); `DISABLED` token name used for non-disabled grips/headers.

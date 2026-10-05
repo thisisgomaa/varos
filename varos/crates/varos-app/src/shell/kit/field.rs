@@ -456,7 +456,7 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
     match f.label {
         Label::Letter(s) => {
             let at = egui::pos2(row.left() + labw - 5.0, row.center().y);
-            p.text(at, Align2::RIGHT_CENTER, s, FontId::proportional(t::FIELD_LABEL_TEXT), t::FAINT);
+            p.text(at, Align2::RIGHT_CENTER, s, FontId::proportional(t::FIELD_LABEL_TEXT), t::MUTED);
         }
         Label::Icon(Some(tex)) => {
             let at = egui::pos2(row.left() + labw - 11.0, row.center().y);

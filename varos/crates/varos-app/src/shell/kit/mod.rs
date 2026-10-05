@@ -9,7 +9,7 @@ use egui::{Color32, Event, Id, Key, PointerButton, Response, Sense, Stroke, Stro
 use super::tokens as t;
 pub mod board;
 pub mod field;
-mod icons;
+pub mod icons;
 pub use icons::Icon;
 
 #[derive(Clone, Copy, Default)]
@@ -275,7 +275,7 @@ pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconSt
             painter.rect_filled(rect, t::r_ctrl(), t::HOVER);
         }
         let ink = if !enabled {
-            t::FAINT
+            t::DISABLED
         } else if block || bar || hover {
             t::TEXT
         } else {

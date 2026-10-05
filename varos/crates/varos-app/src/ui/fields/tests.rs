@@ -17,7 +17,7 @@ thread_local! {
     /// Where each field sat in the last frame, by its name (`tip` / `id_src`).
     static PROBE: RefCell<Vec<(String, egui::Rect)>> = const { RefCell::new(vec![]) };
 }
-pub(super) fn probe(name: &str, rect: egui::Rect) {
+pub(crate) fn probe(name: &str, rect: egui::Rect) {
     PROBE.with(|p| p.borrow_mut().push((name.to_string(), rect)));
 }
 
