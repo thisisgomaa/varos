@@ -39,7 +39,7 @@ pub(crate) fn board_ctlbar(
                         // page mirrors: name · X/Y/W/H · count · Fit
                         let i = ab.active;
                         ui.label(RichText::new("Artboard").color(MUTED).size(11.5));
-                        ui.label(RichText::new(&ab.name).color(TEXT).size(11.5));
+                        control_bar_name(ui, &ab.name, TEXT);
                         bar_sep(ui);
                         let fw = 64.0;
                         fields::num(ui, fw, Lab::Letter("X"), "X position", ab.x, 0, 1.0, full.clone(), ops, |v| {
@@ -73,7 +73,7 @@ pub(crate) fn board_ctlbar(
                         // …unless the Pen is mid-draft: an active path OWNS the bar even if the old
                         // selection lingered (select an object → press P → draw). Without `!s.drawing`
                         // the stale object's props hid the "Drawing path…" status (FB6).
-                        ui.label(RichText::new(&s.name).color(MUTED).size(11.5));
+                        control_bar_name(ui, &s.name, MUTED);
                         let fw = 64.0;
                         fields::num(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, full.clone(), ops, |v| {
                             Op::SetBBox(Some(v), None, None, None, 0.0, 0.0)
@@ -135,7 +135,7 @@ pub(crate) fn board_ctlbar(
                         // that act on a Direct selection are mirrored here: X/Y/W/H (moves / scales the
                         // selected anchors via `SetObjectBounds`) and paint. Rotation, align and pathfinder
                         // work on objects, so they stay in the object branch above.
-                        ui.label(RichText::new(&s.name).color(MUTED).size(11.5));
+                        control_bar_name(ui, &s.name, MUTED);
                         let fw = 64.0;
                         fields::num(ui, fw, Lab::Letter("X"), "X position", s.x, 0, 1.0, full.clone(), ops, |v| {
                             Op::SetBBox(Some(v), None, None, None, 0.0, 0.0)
@@ -158,6 +158,26 @@ pub(crate) fn board_ctlbar(
                 });
             });
         });
+}
+
+/// Fixed-width, left-aligned control-bar name. Long names elide in-place and retain the full tooltip.
+pub(crate) fn control_bar_name(ui: &mut egui::Ui, name: &str, color: Color32) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(CONTROL_BAR_NAME_W, CONTROL_BAR_NAME_H), egui::Sense::hover());
+    let font = FontId::proportional(CONTROL_BAR_NAME_TEXT);
+    let fits = |text: &str| ui.painter().layout_no_wrap(text.to_owned(), font.clone(), color).size().x <= rect.width();
+    let mut shown = name.to_owned();
+    if !fits(&shown) {
+        while !shown.is_empty() {
+            shown.pop();
+            let candidate = format!("{shown}…");
+            if fits(&candidate) {
+                shown = candidate;
+                break;
+            }
+        }
+    }
+    ui.painter().text(rect.left_center(), Align2::LEFT_CENTER, shown, font, color);
+    resp.on_hover_text(name);
 }
 /// 1×16 vertical hairline separator inside the control bar (§3.5 vsep).
 pub(crate) fn bar_sep(ui: &mut egui::Ui) {
@@ -386,14 +406,14 @@ pub(crate) fn shape_slot(
             t.id(),
             egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_MD)),
             UV01(),
-            Color32::WHITE,
+            icon_ink(is_active, resp.hovered()),
         );
     }
     // tiny flyout marker — a corner triangle bottom-right, like Illustrator's grouped tools
     let c = rect.right_bottom() + egui::vec2(-3.5, -3.5);
     ui.painter().add(egui::Shape::convex_polygon(
         vec![c, c + egui::vec2(-4.5, 0.0), c + egui::vec2(0.0, -4.5)],
-        if is_active { Color32::WHITE } else { MUTED },
+        icon_ink(is_active, resp.hovered()),
         Stroke::NONE,
     ));
     if resp.clicked() {

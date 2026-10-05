@@ -2,7 +2,11 @@
 use egui::{Context, Event, Id, Key, Modifiers, PointerButton, Pos2, RawInput, Rect};
 use varos_app::shell::{
     fonts,
-    kit::{self, Availability, Control, ControlResponse, Icon, MenuEntry},
+    kit::{
+        self,
+        field::{self, Edit, Label, NumberField},
+        Availability, Control, ControlResponse, Icon, MenuEntry,
+    },
     tokens,
 };
 
@@ -54,6 +58,107 @@ fn frame(
 }
 fn focus_outline(out: &egui::FullOutput) -> bool {
     out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.stroke.color == tokens::ACCENT))
+}
+
+fn number(id: &'static str, disabled: bool) -> NumberField<'static> {
+    NumberField {
+        id: Id::new(id),
+        width: 80.0,
+        label: Label::Letter(id),
+        tip: if disabled { "Nothing to scale" } else { id },
+        value: 12.0,
+        decimals: 0,
+        speed: 1.0,
+        range: 0.0..=100.0,
+        disabled,
+    }
+}
+
+fn number_frame(ctx: &Context, events: Vec<Event>, time: f64) -> (Vec<Edit<f32>>, egui::FullOutput) {
+    let mut raw = input(ctx.pixels_per_point(), events);
+    raw.time = Some(time);
+    let mut edits = vec![];
+    let out = ctx.run_ui(raw, |ui| {
+        field::group(ui, "numbers", |ui| {
+            edits.push(field::number_field(ui, number("A", false)));
+            edits.push(field::number_field(ui, number("Disabled", true)));
+            edits.push(field::number_field(ui, number("B", false)));
+        });
+    });
+    (edits, out)
+}
+
+#[test]
+fn disabled_number_field_is_inert_skipped_transparent_and_explains_why() {
+    let ctx = context(1.0);
+    for theme in [egui::Theme::Dark, egui::Theme::Light] {
+        ctx.style_mut_of(theme, |style| style.interaction.tooltip_delay = 0.0);
+    }
+    let (edits, out) = number_frame(&ctx, vec![], 1.0);
+    let disabled = edits[1].rect;
+    let painted_box =
+        |shape: &egui::epaint::ClippedShape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.rect == disabled);
+    assert!(out.shapes.iter().any(|shape| {
+        matches!(&shape.shape, egui::Shape::Rect(rect)
+            if rect.rect == disabled && rect.fill == egui::Color32::TRANSPARENT && rect.stroke.color == tokens::LINE)
+    }));
+    assert!(!out.shapes.iter().any(|shape| {
+        painted_box(shape) && matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill != egui::Color32::TRANSPARENT)
+    }));
+
+    let at = disabled.center();
+    for (events, time) in [
+        (pointer(at, true), 2.0),
+        (vec![Event::PointerMoved(at + egui::vec2(24.0, 0.0))], 3.0),
+        (pointer(at + egui::vec2(24.0, 0.0), false), 4.0),
+    ] {
+        let (edits, _) = number_frame(&ctx, events, time);
+        assert!(!edits[1].editing && edits[1].live.is_none() && edits[1].commit.is_none());
+        assert!(!field::any_open(&ctx), "a disabled click/drag must not start a field session");
+    }
+
+    let mut tooltip_seen = false;
+    for time in [5.0, 6.0] {
+        let (_, out) = number_frame(&ctx, vec![Event::PointerMoved(at)], time);
+        tooltip_seen |= out.shapes.iter().any(
+            |shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("Nothing to scale")),
+        );
+    }
+    assert!(tooltip_seen, "the disabled field must retain its reason tooltip");
+}
+
+#[test]
+fn segmented_control_paints_one_track_outline() {
+    let ctx = context(1.0);
+    let mut track = Rect::NOTHING;
+    let mut rects = vec![];
+    let out = ctx.run_ui(input(1.0, vec![]), |ui| {
+        let segment = egui::vec2(tokens::SEG_W, tokens::SEG_BTN_H);
+        let size = kit::board::segmented_size(3, segment);
+        (track, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        rects = kit::board::segmented_frame(
+            ui,
+            Id::new("measured-segment"),
+            track,
+            &["Auto", "Selection", "Artboard"],
+            0,
+            segment,
+            None,
+        )
+        .rects;
+    });
+    assert_eq!(track.height(), 24.0);
+    assert!(rects.iter().all(|rect| rect.size() == egui::vec2(60.0, 20.0)));
+    assert_eq!(rects[1].left() - rects[0].right(), 1.0);
+    let outlines = out
+        .shapes
+        .iter()
+        .filter(|shape| {
+            matches!(&shape.shape, egui::Shape::Rect(rect)
+                if rect.stroke.color == tokens::LINE && rect.stroke.width == 1.0)
+        })
+        .count();
+    assert_eq!(outlines, 1, "all segments share exactly one LINE track outline");
 }
 
 #[test]
