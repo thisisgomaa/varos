@@ -73,7 +73,8 @@ pub struct BoardCard {
     // ── additions beyond the frozen interface, precomputed so nothing is derived per frame ──
     /// Parent folder, middle-elided to [`DIR_ELIDE_MAX_CHARS`] (full path in a tooltip).
     pub folder: String,
-    /// `modified` as relative text ("3 min ago", "12 Sep").
+    /// `modified` as the card's date (`time_text::board_date`: "Today 14:32", "Yesterday 22:41",
+    /// "2 Oct", "17 Sep 2025"; local time).
     pub modified_text: String,
     /// False for an entry Recent has not cached a board summary for yet (a list kept from before
     /// Start v2): tags/description/artboards are unknown, not empty — draw no count.
@@ -219,7 +220,13 @@ pub struct StartModel {
     /// bounds: New and Open make the order never empty, and every setter keeps it in range.
     focus: usize,
     focus_order: Vec<FocusTarget>,
+    /// A process-unique stamp, renewed by every build and every change of what is visible: the page
+    /// keys its derived text (elided paths, counts) on it, so identical frames rebuild nothing.
+    generation: u64,
 }
+
+/// The source of [`StartModel::generation`] stamps.
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl StartModel {
     /// Build from Recents + a per-path "is it missing" probe, with recovery rows (supplied by F2
@@ -254,7 +261,7 @@ impl StartModel {
                 missing: is_missing,
                 thumb: e.thumb.clone().map(ThumbKey),
                 folder,
-                modified_text: time_text::relative(now, e.modified),
+                modified_text: time_text::board_date(now, e.modified),
                 cached: board.is_some(),
             });
         }
@@ -268,6 +275,7 @@ impl StartModel {
             recovery,
             focus: 0,
             focus_order: Vec::new(),
+            generation: 0,
         };
         model.refilter();
         model
@@ -276,6 +284,7 @@ impl StartModel {
     /// Recompute the visible rows and the traversal order after a filter change, keeping focus on
     /// the same element when it is still visible (else the nearest index).
     fn refilter(&mut self) {
+        self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let current = self.focus_order.get(self.focus).copied();
         self.visible = (0..self.cards.len()).filter(|&i| self.filter.matches(&self.cards[i])).collect();
         let mut focus_order = vec![FocusTarget::NewDocument, FocusTarget::Open];
@@ -296,6 +305,11 @@ impl StartModel {
             .and_then(|t| focus_order.iter().position(|o| *o == t))
             .unwrap_or(self.focus.min(focus_order.len() - 1));
         self.focus_order = focus_order;
+    }
+
+    /// The model's stamp: it changes whenever the cards, the filter or what is visible changed.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Every board card, newest first (unfiltered; one per [`Self::rows`] entry).
@@ -901,7 +915,7 @@ mod tests {
         assert_eq!((c.artboards, c.modified, c.cached, c.missing), (1, 290, true, false));
         assert_eq!(c.key, "/work/client/c.vrs");
         assert_eq!(c.folder, "/work/client");
-        assert_eq!(c.modified_text, time_text::relative(400, 290));
+        assert_eq!(c.modified_text, time_text::board_date(400, 290));
         let b = &model.cards()[1];
         assert_eq!((b.name.as_str(), b.artboards), ("b", 0), "no board name → file stem; 0 = a free canvas");
         let d = &model.cards()[3];

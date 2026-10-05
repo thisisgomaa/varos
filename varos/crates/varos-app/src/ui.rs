@@ -1276,6 +1276,14 @@ impl Ui {
     }
     /// A rebuilt Start model (the host rebuilds only on Home and only when its inputs changed);
     /// keyboard focus survives by key.
+    /// Start v2 thumbnails: where Home's page looks them up (startup).
+    pub fn set_thumb_source(&mut self, source: std::sync::Arc<dyn varos_app::start_page::ThumbSource>) {
+        self.start_page.set_thumb_source(source);
+    }
+    /// A thumbnail render landed (or its file went): Home asks the cache again for `key`.
+    pub fn thumb_updated(&mut self, key: &varos_app::start::ThumbKey) {
+        self.start_page.thumb_updated(key);
+    }
     pub fn set_start_model(&mut self, model: varos_app::start::StartModel) {
         let mut model = model;
         model.carry_focus_from(&self.start_model); // keeps the user's tag / search / view

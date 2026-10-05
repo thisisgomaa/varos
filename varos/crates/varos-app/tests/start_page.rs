@@ -158,7 +158,11 @@ fn painted_controls_sit_on_the_mockup_rects_at_1x_and_2x() {
         assert_near("Story", p.rect(ids::preset(PresetId::Story)), story);
         assert_near("card 1", p.rect(ids::card(&key(0))), r(52.0, 376.0, 272.0, 266.0));
         assert_near("card 10", p.rect(ids::card(&key(9))), r(1188.0, 654.0, 272.0, 266.0));
-        assert_near("grid seg", p.rect(ids::view_segment(StartView::Grid)), r(1401.0, 334.0, 28.0, 22.0));
+        assert_near(
+            "grid seg (24-tall hit rect)",
+            p.rect(ids::view_segment(StartView::Grid)),
+            r(1401.0, 334.0, 28.0, 24.0),
+        );
         let recover = p.rect(ids::recover(RID));
         assert_eq!((recover.right(), recover.height()), (1448.0, 28.0), "Recover: 12 in from the band's right edge");
         let all = p.rect(ids::filter(None));
@@ -331,14 +335,14 @@ fn a_disabled_or_busy_recover_never_fires_and_leaves_the_tab_ring() {
     let mut p = Page::new(1.0, egui::vec2(W, H));
     p.frame(&m, vec![]);
     assert!(p.click(&m, ids::recover(RID)).is_empty());
-    let order = start_page::tab_order(&m, usize::MAX);
+    let order = start_page::tab_order(&m, None);
     assert!(order.contains(&Slot::Discard(RID.into())));
     assert!(!order.contains(&Slot::Recover(RID.into())));
     assert_eq!(start_page::activate(&Slot::Recover(RID.into()), &m), None, "keyboard cannot recover it either");
     row.busy = true;
     let m = build(row);
     assert!(p.click(&m, ids::discard(RID)).is_empty());
-    assert!(!start_page::tab_order(&m, usize::MAX).iter().any(|s| matches!(s, Slot::Discard(_))));
+    assert!(!start_page::tab_order(&m, None).iter().any(|s| matches!(s, Slot::Discard(_))));
 }
 
 #[test]
@@ -380,7 +384,7 @@ fn keyboard_ring_order_activation_and_2d_grid_moves() {
             Slot::Preset(_) => "preset",
             Slot::Discard(_) => "discard",
             Slot::Recover(_) => "recover",
-            Slot::Filter(_) => "filter",
+            Slot::Filter(_) | Slot::MoreFilters => "filter",
             Slot::View(_) => "view",
             Slot::Card(_) => "card",
         })
@@ -535,7 +539,7 @@ fn first_launch_is_the_centred_empty_page() {
     assert!(!text.iter().any(|t| t == "Recent boards" || t == "Move"));
     assert_near("New board painted", p.rect(ids::new_board()), l.new_board);
     assert_eq!(p.press(&m, Key::Enter), [StartAction::NewBoard], "Return on the untouched page = New board");
-    assert_eq!(start_page::tab_order(&m, usize::MAX).len(), 7);
+    assert_eq!(start_page::tab_order(&m, None).len(), 7);
 }
 
 #[test]
@@ -601,12 +605,198 @@ fn only_tokens_colours_and_azure_only_for_focus_and_the_filter_bar() {
     assert!(!accent_stroke(&out));
 }
 
-/// The thumbnail seam is one function and returns nothing until L3: every card draws its placeholder.
+/// Every Start control's HIT rect is at least the kit minimum (24 pt) both ways — the view toggle's
+/// 22-tall segments and the 24-square "…" chips included (review fix 1/2).
 #[test]
-fn thumbnails_go_through_one_seam_that_is_empty_until_l3() {
-    let mut page = StartPage::new();
-    let ctx = context(1.0);
-    assert_eq!(page.thumb_texture(&ctx, &varos_app::start::ThumbKey("k".into())), None);
+fn every_start_control_hit_target_is_at_least_24pt() {
+    let mut m = recent_model();
+    let mut p = Page::new(1.0, egui::vec2(W, H));
+    p.frame(&m, vec![]);
+    let card = p.rect(ids::card(&key(6)));
+    p.frame(&m, vec![Event::PointerMoved(card.center())]);
+    let mut ids_to_check = vec![ids::new_board(), ids::open(), ids::discard(RID), ids::recover(RID), ids::filter(None)];
+    ids_to_check.extend([PresetId::Square, PresetId::A4, PresetId::Custom].map(ids::preset));
+    ids_to_check.extend([StartView::Grid, StartView::List].map(ids::view_segment));
+    ids_to_check.extend(m.tags().iter().take(3).map(|tc| ids::filter(Some(tc.tag.as_str()))));
+    ids_to_check.extend([ids::card(&key(0)), ids::chip(&key(6))]);
+    for id in &ids_to_check {
+        let r = p.rect(*id);
+        assert!(r.width() >= 24.0 && r.height() >= 24.0, "{id:?} hit rect {r:?} is under 24 pt");
+    }
+    m.apply(&StartAction::SetView(StartView::List));
+    p.frame(&m, vec![]);
+    let row = p.rect(ids::row(&key(2)));
+    p.frame(&m, vec![Event::PointerMoved(row.center())]);
+    for id in [ids::row(&key(2)), ids::chip(&key(2))] {
+        let r = p.rect(id);
+        assert!(r.width() >= 24.0 && r.height() >= 24.0, "{id:?} hit rect {r:?} is under 24 pt");
+    }
+}
+
+/// At a narrow window the filters that do not fit go behind "+N" (a kit menu with counts); the
+/// selected filter is always shown, even when it would not fit (review fix 3).
+#[test]
+fn filters_that_do_not_fit_go_behind_plus_n_and_the_selected_one_stays_visible() {
+    let size = egui::vec2(900.0, 900.0);
+    let mut m = recent_model();
+    let mut p = Page::new(1.0, size);
+    p.frame(&m, vec![]);
+    let plan = p.page.filter_plan().clone();
+    assert!(!plan.hidden.is_empty(), "900 wide: some tags do not fit ({plan:?})");
+    assert_eq!(plan.shown[0].0, None, "All is always first");
+    let more = p.rect(ids::more_filters());
+    assert!(more.right() <= start_page::layout(area(size), &Shape::of(&m)).head.right(), "the +N tab fits the row");
+    // choose the LAST hidden tag from the +N menu
+    let last = plan.hidden.last().unwrap().clone();
+    assert!(p.click(&m, ids::more_filters()).is_empty());
+    assert!(kit::is_menu_open(&p.ctx, ids::more_filters()));
+    for _ in 0..plan.hidden.len() {
+        p.press(&m, Key::ArrowDown);
+    }
+    assert_eq!(p.press(&m, Key::Enter), [StartAction::SetTagFilter(Some(last.clone()))]);
+    m.apply(&StartAction::SetTagFilter(Some(last.clone())));
+    p.frame(&m, vec![]);
+    let plan = p.page.filter_plan().clone();
+    assert!(plan.shown.iter().any(|(t, _)| t.as_deref() == Some(last.as_str())), "the selected tag is shown: {plan:?}");
+    let bar = rects(&p.frame(&m, vec![]).1).into_iter().filter(|r| r.fill == t::ACCENT).map(|r| r.rect).next();
+    assert!(bar.is_some_and(|b| p.rect(ids::filter(Some(last.as_str()))).contains_rect(b)), "its azure bar is visible");
+    // the "+N" tab is a keyboard stop too: Enter opens its menu
+    p.page.reset_focus();
+    for _ in 0..40 {
+        p.press(&m, Key::Tab);
+        if p.page.focus() == &Slot::MoreFilters {
+            break;
+        }
+    }
+    assert_eq!(p.page.focus(), &Slot::MoreFilters);
+    p.press(&m, Key::Enter);
+    assert!(kit::is_menu_open(&p.ctx, ids::more_filters()), "Enter on +N opens its menu");
+}
+
+/// Derived text (elided paths, counts, dates, the HOME prefix) is rebuilt only when the model or the
+/// width changed: identical frames rebuild nothing (review fix 4).
+#[test]
+fn identical_frames_rebuild_no_derived_text() {
+    let mut m = recent_model();
+    let mut p = Page::new(1.0, egui::vec2(W, H));
+    p.frame(&m, vec![]);
+    let builds = p.page.derived_builds();
+    for _ in 0..3 {
+        p.frame(&m, vec![]);
+    }
+    assert_eq!(p.page.derived_builds(), builds, "identical frames: no rebuild");
+    let pos = p.rect(ids::card(&key(1))).center();
+    p.frame(&m, vec![Event::PointerMoved(pos)]);
+    assert_eq!(p.page.derived_builds(), builds, "a hover is not a model change");
+    m.apply(&StartAction::SetTagFilter(Some("client".into())));
+    p.frame(&m, vec![]);
+    assert_eq!(p.page.derived_builds(), builds + 1, "a filter change rebuilds once");
+    p.frame(&m, vec![]);
+    assert_eq!(p.page.derived_builds(), builds + 1);
+    p.size = egui::vec2(1300.0, H);
+    p.frame(&m, vec![]);
+    assert_eq!(p.page.derived_builds(), builds + 2, "a new width rebuilds once");
+}
+
+/// ⇧F10 on a focused card opens its "…" menu (egui reports no Menu key); the chip shows while the card
+/// has the ring; list rows get the same chip on hover and focus (review fix 8).
+#[test]
+fn shift_f10_opens_a_focused_cards_menu_and_list_rows_have_the_chip() {
+    let mut m = recent_model();
+    let mut p = Page::new(1.0, egui::vec2(W, H));
+    p.frame(&m, vec![]);
+    p.tab_to_cards(&m);
+    p.press(&m, Key::ArrowRight);
+    p.press(&m, Key::ArrowRight);
+    p.press(&m, Key::ArrowRight);
+    assert_eq!(p.page.focus(), &Slot::Card(key(3)));
+    p.frame(&m, vec![]);
+    assert!(p.ctx.read_response(ids::chip(&key(3))).is_some(), "the focused card shows its chip");
+    p.key(&m, Key::F10, Modifiers::SHIFT);
+    p.frame(&m, vec![]);
+    assert!(kit::is_menu_open(&p.ctx, start_page::menu_owner(&key(3))), "⇧F10 opened the menu");
+    p.press(&m, Key::ArrowDown);
+    assert_eq!(p.press(&m, Key::Enter), [StartAction::Locate(path(3))], "↓ Enter: Locate… (Missing)");
+    // list rows: the chip on focus, ⇧F10 too
+    m.apply(&StartAction::SetView(StartView::List));
+    p.frame(&m, vec![]);
+    p.press(&m, Key::ArrowDown);
+    let focused = match p.page.focus() {
+        Slot::Card(k) => k.clone(),
+        other => panic!("{other:?}"),
+    };
+    p.frame(&m, vec![]);
+    assert!(p.ctx.read_response(ids::chip(&focused)).is_some(), "the focused row shows its chip");
+    p.key(&m, Key::F10, Modifiers::SHIFT);
+    p.frame(&m, vec![]);
+    assert!(kit::is_menu_open(&p.ctx, start_page::menu_owner(&focused)));
+    p.press(&m, Key::Escape);
+    p.page.reset_focus();
+    let row = p.rect(ids::row(&key(5)));
+    p.frame(&m, vec![Event::PointerMoved(row.center())]);
+    assert!(p.ctx.read_response(ids::chip(&key(5))).is_some(), "a hovered row shows its chip");
+    assert!(p.click(&m, ids::chip(&key(5))).is_empty());
+    assert!(kit::is_menu_open(&p.ctx, start_page::menu_owner(&key(5))), "the row's chip opens its menu");
+}
+
+/// A test thumbnail source: board `i`'s key → a real PNG written once in a temp dir.
+struct PngSource {
+    dir: std::path::PathBuf,
+    asked: std::sync::Mutex<Vec<String>>,
+}
+impl start_page::ThumbSource for PngSource {
+    fn find(&self, key: &varos_app::start::ThumbKey, _modified: u64) -> Option<(std::path::PathBuf, bool)> {
+        self.asked.lock().unwrap().push(key.0.clone());
+        let file = self.dir.join("thumb.png");
+        (key.0 == key_of(0) || key.0 == key_of(1)).then_some((file, true))
+    }
+}
+fn key_of(i: usize) -> String {
+    key(i)
+}
+
+/// The seam: the first frame draws the placeholder (never waits on disk), the worker decodes the PNG,
+/// the texture appears; cards without a thumbnail keep the placeholder; textures are bounded and the
+/// ones of removed boards are freed (review item 5).
+#[test]
+fn thumbnails_decode_off_the_ui_thread_and_appear_when_ready() {
+    let dir = std::env::temp_dir().join(format!("varos-start-thumbs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    image::RgbaImage::from_pixel(544, 246, image::Rgba([200, 60, 40, 255])).save(dir.join("thumb.png")).unwrap();
+    let source = std::sync::Arc::new(PngSource { dir: dir.clone(), asked: Default::default() });
+    let m = recent_model();
+    let mut p = Page::new(1.0, egui::vec2(W, H));
+    p.page.set_thumb_source(source.clone());
+    let (_, out) = p.frame(&m, vec![]);
+    assert!(!textured(&out), "the first frame draws placeholders, no texture yet");
+    let mut seen = false;
+    for _ in 0..200 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let (_, out) = p.frame(&m, vec![]);
+        if textured(&out) {
+            seen = true;
+            break;
+        }
+    }
+    assert!(seen, "the decoded thumbnail is drawn once ready");
+    assert_eq!(p.page.thumb_textures(), 2, "two boards have thumbnails; the rest stay placeholders");
+    let asked = source.asked.lock().unwrap().len();
+    p.frame(&m, vec![]);
+    assert_eq!(source.asked.lock().unwrap().len(), asked, "a board is looked up once, not every frame");
+    // a removed board's texture is freed
+    let mut recents = demo::recents(&home());
+    recents.remove(&path(0));
+    let after = StartModel::build(&recents, demo::NOW, |p| p == path(3), vec![demo::recovered()]);
+    p.frame(&after, vec![]);
+    assert_eq!(p.page.thumb_textures(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+/// A card-sized textured rect (a thumbnail; icons are textured too, but 13–20 pt).
+fn textured(out: &egui::FullOutput) -> bool {
+    out.shapes.iter().any(|s| match &s.shape {
+        egui::Shape::Rect(r) => r.brush.is_some() && r.rect.width() > 100.0,
+        _ => false,
+    })
 }
 
 /// Ratchet: the new files hand-paint with the kit — no egui default widgets, no literal colours, no
@@ -753,6 +943,10 @@ fn snapshot_the_mockup_states_on_the_cpu() {
             m.apply(&StartAction::SetView(StartView::List));
         }
         let mut p = Page::new(2.0, egui::vec2(W, H));
+        // real thumbnails (L3's rasteriser, written by `thumbs::raster` tests with VAROS_START_THUMBS)
+        if let Some(thumbs) = std::env::var_os("VAROS_START_THUMBS") {
+            p.page.set_thumb_source(std::sync::Arc::new(DirSource(thumbs.into())));
+        }
         let mut atlas = std::collections::HashMap::new();
         let mut events = vec![];
         let (_, out) = p.frame(&m, vec![]);
@@ -778,6 +972,12 @@ fn snapshot_the_mockup_states_on_the_cpu() {
         }
         let (_, out) = p.frame(&m, events);
         apply_textures(&mut atlas, &out);
+        for _ in 0..50 {
+            // let the decode worker land (textures upload in a later frame)
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            let (_, out) = p.frame(&m, vec![]);
+            apply_textures(&mut atlas, &out);
+        }
         let (_, out) = p.frame(&m, vec![]);
         apply_textures(&mut atlas, &out);
         let img = rasterize(&p.ctx, out, &atlas, 2.0);
@@ -865,4 +1065,109 @@ fn rasterize(
         let d = px[(y * w + x) as usize];
         image::Rgba([(d[0] * 255.0) as u8, (d[1] * 255.0) as u8, (d[2] * 255.0) as u8, 255])
     })
+}
+
+/// Snapshot thumbnails: demo board `i`'s key → `<dir>/<i>.png` when that file exists.
+struct DirSource(std::path::PathBuf);
+impl start_page::ThumbSource for DirSource {
+    fn find(&self, key: &varos_app::start::ThumbKey, _modified: u64) -> Option<(std::path::PathBuf, bool)> {
+        let i = (0..demo::BOARDS.len()).find(|&i| key.0 == key_of(i))?;
+        let file = self.0.join(format!("{i}.png"));
+        file.is_file().then_some((file, true))
+    }
+}
+
+/// The decode is bounded: an oversize file is not read, a huge-dimension header is refused before any
+/// pixel buffer exists, a truncated or corrupt PNG is refused — the placeholder, never a panic.
+#[test]
+fn thumbnail_decode_refuses_oversize_huge_and_corrupt_files() {
+    let dir = std::env::temp_dir().join(format!("varos-thumb-bounds-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ok = dir.join("ok.png");
+    image::RgbaImage::from_pixel(544, 246, image::Rgba([1, 2, 3, 255])).save(&ok).unwrap();
+    assert!(start_page::decode_thumbnail(&ok).is_some(), "the expected size decodes");
+    // over 2 MB on disk
+    let big = dir.join("big.png");
+    std::fs::write(&big, vec![0u8; start_page::THUMB_MAX_BYTES as usize + 1]).unwrap();
+    assert!(start_page::decode_thumbnail(&big).is_none());
+    // a small file whose header claims 60000 × 60000 (would be ~14 GB of RGBA)
+    let mut huge = std::fs::read(&ok).unwrap();
+    huge[16..20].copy_from_slice(&60_000u32.to_be_bytes()); // IHDR width
+    huge[20..24].copy_from_slice(&60_000u32.to_be_bytes()); // IHDR height
+    let huge_path = dir.join("huge.png");
+    std::fs::write(&huge_path, &huge).unwrap();
+    assert!(start_page::decode_thumbnail(&huge_path).is_none());
+    // a real PNG just over the bound (1089 wide)
+    let wide = dir.join("wide.png");
+    image::RgbaImage::new(start_page::THUMB_MAX_W + 1, 10).save(&wide).unwrap();
+    assert!(start_page::decode_thumbnail(&wide).is_none());
+    // truncated, and plain garbage
+    let bytes = std::fs::read(&ok).unwrap();
+    let cut = dir.join("cut.png");
+    std::fs::write(&cut, &bytes[..bytes.len() / 2]).unwrap();
+    assert!(start_page::decode_thumbnail(&cut).is_none());
+    let junk = dir.join("junk.png");
+    std::fs::write(&junk, b"not a png at all").unwrap();
+    assert!(start_page::decode_thumbnail(&junk).is_none());
+    assert!(start_page::decode_thumbnail(&dir.join("absent.png")).is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// At the window's minimum width (800) with a 32-character selected tag, the selected tab is shown,
+/// fits (elided, full name in its tooltip) and overlaps neither "+N" nor the view toggle.
+#[test]
+fn a_maximum_length_selected_tag_never_overlaps_at_the_minimum_width() {
+    let long = "a".repeat(varos_core::board::MAX_TAG_CHARS);
+    let mut recents = demo::recents(&home());
+    let mut tags: Vec<String> = ["client", "ramadan", "social", "print", "logo"].map(String::from).to_vec();
+    tags.push(long.clone());
+    let summary = varos_app::storage::recents::BoardSummary {
+        name: "Long".into(),
+        description: String::new(),
+        tags,
+        artboards: 1,
+    };
+    recents.record_board(&home().join("Long.vrs"), None, demo::NOW, summary, demo::NOW);
+    for size in [egui::vec2(800.0, 560.0), egui::vec2(560.0, 560.0)] {
+        let mut m = StartModel::build(&recents, demo::NOW, |_| false, vec![]);
+        m.apply(&StartAction::SetTagFilter(Some(long.clone())));
+        let mut p = Page::new(1.0, size);
+        p.frame(&m, vec![]);
+        p.frame(&m, vec![]);
+        let plan = p.page.filter_plan().clone();
+        assert!(plan.shown.iter().any(|(t, _)| t.as_deref() == Some(long.as_str())), "{size:?}: selected shown");
+        let sel = p.rect(ids::filter(Some(long.as_str())));
+        let seg = p.rect(ids::view_segment(StartView::Grid));
+        let mut right = sel.right();
+        if !plan.hidden.is_empty() {
+            let more = p.rect(ids::more_filters());
+            assert!(sel.right() <= more.left() + 0.01, "{size:?}: selected {sel:?} overlaps +N {more:?}");
+            right = more.right();
+        }
+        assert!(right <= seg.left() - t::SB_FILTERS_GAP + 0.01, "{size:?}: the row runs into the toggle");
+    }
+}
+
+/// A decode that lands after its board left Recent is dropped (never uploaded).
+#[test]
+fn a_decode_landing_after_its_board_was_removed_is_dropped() {
+    let dir = std::env::temp_dir().join(format!("varos-start-thumbs-late-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    image::RgbaImage::from_pixel(544, 246, image::Rgba([9, 9, 9, 255])).save(dir.join("thumb.png")).unwrap();
+    let source = std::sync::Arc::new(PngSource { dir: dir.clone(), asked: Default::default() });
+    let m = recent_model();
+    let mut recents = demo::recents(&home());
+    recents.remove(&path(0));
+    recents.remove(&path(1));
+    let without = StartModel::build(&recents, demo::NOW, |p| p == path(3), vec![demo::recovered()]);
+    let mut p = Page::new(1.0, egui::vec2(W, H));
+    p.page.set_thumb_source(source.clone());
+    p.frame(&m, vec![]); // asks for boards 0 and 1
+    p.frame(&without, vec![]); // both leave Recent before their decodes are uploaded
+    for _ in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        p.frame(&without, vec![]);
+    }
+    assert_eq!(p.page.thumb_textures(), 0, "late decodes for removed boards are not uploaded");
+    let _ = std::fs::remove_dir_all(dir);
 }

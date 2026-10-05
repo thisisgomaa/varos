@@ -994,3 +994,20 @@ fn board_reasons_quote_the_core_limits() {
     assert!(super::BOARD_TOO_MANY_TAGS.ends_with(&format!("at most {MAX_TAGS} tags")));
     assert!(super::BOARD_TAG_TOO_LONG.ends_with(&format!("at most {MAX_TAG_CHARS} characters")));
 }
+
+/// The Board section's controls are kit targets: every field and every tag chip's × is at least
+/// 24 pt both ways (review fix 2; the × is drawn small, its hit square is not).
+#[test]
+fn board_section_hit_targets_are_at_least_24pt() {
+    let mut ed = Editor::new();
+    ed.doc.tags = vec!["client".into(), "ramadan".into()];
+    let mut b = Bench::new(ed, View::Properties);
+    b.frame(vec![]);
+    let rects: Vec<(String, egui::Rect)> = PROBE.with(|p| p.borrow().clone());
+    let mut chips = 0;
+    for (name, r) in rects.iter().filter(|(n, _)| n.starts_with("board") || n == "tag chip ×") {
+        assert!(r.width() >= 24.0 && r.height() >= 24.0, "{name}: {r:?} is under 24 pt");
+        chips += (name == "tag chip ×") as usize;
+    }
+    assert_eq!(chips, 2, "one × per tag");
+}
