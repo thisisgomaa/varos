@@ -41,6 +41,8 @@ pub enum WindowCmd {
     ToggleRail,
     ToggleDock,
     TogglePanel(PanelId),
+    /// The band's V mark (4b): the native About panel — the same one Varos ▸ About opens.
+    About,
 }
 
 /// Every document-lifecycle request. In S1, Close Window = `Quit` (one window).

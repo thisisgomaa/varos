@@ -140,7 +140,7 @@ entire safety guarantee.
 | `faint` | `#6e6a66` | tertiary / micro-labels |
 | `accent` | `#0c8ce9` | **azure scalpel** — selection / active / focus ONLY (rule 4) |
 | `guide` | `#ff54a8` | smart guides |
-| `seam` | `#0e0d0d` | **the VOID** — app bar bg, status bg, and every seam between boxes (darker than `bg`) |
+| `seam` | `#000000` (4b; was `#0e0d0d`) | **the VOID** — app bar bg, status bg, and every seam between boxes (darker than `bg`) |
 
 ### 3.2 Secondary palette (content/samples — NOT chrome)
 | token | value | role |
@@ -166,7 +166,10 @@ entire safety guarantee.
 - `mono` = `"Cascadia Code", Consolas, monospace` — **tabular numerals** for every number on screen.
 
 ### 3.5 Measurements (lifted from the mockup — the box-system needs these in Stage 2/4)
-- **App bar (void chrome):** height `40`. Burger `36×40`. Doc tab: h`28`, pad `0 12`, gap `4`, radius `rbox`;
+- **4b (owner 2026-10-05) supersedes the app-bar numbers below on macOS:** one 52-pt band (12 + 28 + 12) on
+  the `#000` backdrop; Home 28×28, tabs 28 tall / 88–176 wide / gap 2 / r3, "+N ⌄", `+`, Search + V over the
+  panel column; Export / Share / Window / magnet moved to the native menu bar. See `docs/foundation/MAC_CHROME.md` §A′.
+- **App bar (void chrome, pre-4b):** height `40`. Burger `36×40`. Doc tab: h`28`, pad `0 12`, gap `4`, radius `rbox`;
   active = filled `panel` block, inactive = bare `muted` text, hover = `void_hover`. Tab-add `32` wide.
   Right cluster: search pill pad `4 9` radius `r`; buttons pad `5 12` radius `r`; window caps `42` wide
   (close hover = `close_red`).

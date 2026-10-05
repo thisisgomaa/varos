@@ -223,8 +223,9 @@ pub fn list_wide_column(width: f32) -> f32 {
 
 /// Lay the page out in `area` (the region under the top bar).
 pub fn layout(area: Rect, shape: &Shape) -> PageLayout {
+    // 4b: the band above already holds the top 12 — the box starts right at `area`'s top
     let board = Rect::from_min_max(
-        area.min + egui::vec2(t::SEAM_GAP, t::SEAM_GAP),
+        area.min + egui::vec2(t::SEAM_GAP, 0.0),
         egui::pos2(area.right() - t::SEAM_GAP, area.bottom() - t::SB_STATUS_H),
     );
     let status = Rect::from_min_max(
@@ -893,7 +894,8 @@ impl StartPage {
         self.draw_in(ui, area, model, warning)
     }
 
-    /// The top bar's "Search boards" pill at `rect` (the host places it; mockup 200 × 24). Emits
+    /// The top band's "Search boards" field at `rect` (the host places it: the band's right zone, 28
+    /// tall — 4b). Emits
     /// `Search` on every change; Esc restores the text it had when it took the keyboard.
     pub fn search_box(&mut self, ui: &mut Ui, rect: Rect, model: &StartModel) -> Option<StartAction> {
         let id = ids::search();

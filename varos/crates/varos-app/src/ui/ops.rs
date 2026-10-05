@@ -61,6 +61,14 @@ pub(crate) enum Op {
     Field(Box<Op>),                  // a field's commit: applied before the frame's other ops
     FieldPending(egui::Id, Box<Op>), // what the open field would commit now (kept by `Ui`, never applied)
 }
+/// The end of a frame (`Ui::run`): the snapping flags the band edited this frame (the Windows
+/// burger's View rows) are written back FIRST, then the panels' ops — so a panel's `ToggleSnapping`
+/// in the same frame wins over the band's snapshot. A non-undoable mode flag (`SetSnapConfig`).
+pub(crate) fn apply_frame(ed: &mut Editor, snap: varos_core::model::SnapConfig, ops: Vec<Op>) {
+    ed.execute(EditCommand::SetSnapConfig(snap));
+    apply_ops(ed, ops);
+}
+
 pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
     for op in ops {
         match op {

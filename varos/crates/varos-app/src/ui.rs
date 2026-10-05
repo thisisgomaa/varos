@@ -22,16 +22,15 @@ use winit::window::Window;
 use varos_app::shell::tokens::{
     numeric_value, shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, DISABLED, HOVER, LINE as BORDER,
     LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
-    SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, VOID_HOVER,
+    SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT,
 };
 // Icon stage 1: one icon registry + one icon button (shell::kit), one set of icon sizes (tokens).
 use varos_app::shell::kit::field::Label as Lab;
 use varos_app::shell::kit::icons::{
     legacy_texture, LEGACY_AL_B, LEGACY_AL_CH, LEGACY_AL_L, LEGACY_AL_M, LEGACY_AL_R, LEGACY_AL_T, LEGACY_ARTBOARD,
     LEGACY_DIRECT, LEGACY_DIST_H, LEGACY_DIST_V, LEGACY_ELLIPSE, LEGACY_EYE, LEGACY_FIT, LEGACY_L_EYE, LEGACY_L_EYEOFF,
-    LEGACY_L_LOCK, LEGACY_L_SEARCH, LEGACY_L_UNLOCK, LEGACY_MAGNET, LEGACY_MENU, LEGACY_OPACITY, LEGACY_PEN,
-    LEGACY_PLUS, LEGACY_POLYGON, LEGACY_RECT, LEGACY_ROTATE, LEGACY_SCALE, LEGACY_SEARCH, LEGACY_SELECT,
-    LEGACY_STROKEW, LEGACY_TRIANGLE, LEGACY_X,
+    LEGACY_L_LOCK, LEGACY_L_SEARCH, LEGACY_L_UNLOCK, LEGACY_MENU, LEGACY_OPACITY, LEGACY_PEN, LEGACY_POLYGON,
+    LEGACY_RECT, LEGACY_ROTATE, LEGACY_SCALE, LEGACY_SELECT, LEGACY_STROKEW, LEGACY_TRIANGLE,
 };
 use varos_app::shell::kit::{self, Icon};
 
@@ -162,6 +161,8 @@ pub enum WinAction {
     Minimize,
     ToggleMaximize,
     Close,
+    /// The band's V mark (4b, macOS): the native About panel.
+    About,
 }
 
 struct ToolBtn {
@@ -180,9 +181,10 @@ pub struct Ui {
     /// Background save / export status for the status bar (`file_jobs::status_text`); when set it
     /// takes the recovery status's place.
     pub file_status: String,
-    /// DFS S6: the open Export PDF sheet, the Export button it hangs from, and each tab's last scope.
+    /// DFS S6: the open Export PDF sheet and each tab's last scope; 4b: the panel column's x-span as
+    /// last laid out (the band's Search + V zone, and the sheet's right edge — one frame late).
     export_sheet: Option<crate::export_ui::ExportSheet>,
-    export_anchor: Option<egui::Rect>,
+    panel_column: Option<egui::Rangef>,
     export_scopes: std::collections::HashMap<SessionId, varos_pdf::ExportScope>,
     tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
     shapes: Vec<ToolBtn>,   // the shape tools, collapsed into one rail slot (right-click → flyout)
@@ -286,22 +288,6 @@ impl Ui {
     }
 }
 
-/// The egui event a ⌘-clipboard key means to a focused text field — the same mapping egui-winit
-/// applies to real key presses (`is_copy_command` & co.). `None` = not a clipboard key (forward the
-/// key itself); `Some(None)` = ⌘V with nothing pasteable (egui-winit then sends nothing either).
-/// `clipboard` is only read for ⌘V.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the caller is the macOS menu hand-off
-fn text_clipboard_event(key: egui::Key, clipboard: impl FnOnce() -> Option<String>) -> Option<Option<egui::Event>> {
-    match key {
-        egui::Key::C => Some(Some(egui::Event::Copy)),
-        egui::Key::X => Some(Some(egui::Event::Cut)),
-        egui::Key::V => {
-            Some(clipboard().map(|t| t.replace("\r\n", "\n")).filter(|t| !t.is_empty()).map(egui::Event::Paste))
-        }
-        _ => None,
-    }
-}
-
 impl Ui {
     pub fn new(window: &Window) -> Self {
         let ctx = egui::Context::default();
@@ -362,13 +348,7 @@ impl Ui {
             legacy_texture(&ctx, "dist-h", LEGACY_DIST_H, true),
             legacy_texture(&ctx, "dist-v", LEGACY_DIST_V, true),
         ];
-        let top = TopIcons {
-            menu: legacy_texture(&ctx, "tb-menu", LEGACY_MENU, false),
-            search: legacy_texture(&ctx, "tb-search", LEGACY_SEARCH, false),
-            plus: legacy_texture(&ctx, "tb-plus", LEGACY_PLUS, false),
-            x: legacy_texture(&ctx, "tb-x", LEGACY_X, false),
-            magnet: legacy_texture(&ctx, "tb-magnet", LEGACY_MAGNET, false),
-        };
+        let top = TopIcons { menu: legacy_texture(&ctx, "tb-menu", LEGACY_MENU, false) };
         let layer_icons = LayerIcons {
             eye: legacy_texture(&ctx, "l-eye", LEGACY_L_EYE, false),
             eye_off: legacy_texture(&ctx, "l-eyeoff", LEGACY_L_EYEOFF, false),
@@ -385,7 +365,7 @@ impl Ui {
             recovery: Default::default(),
             file_status: String::new(),
             export_sheet: None,
-            export_anchor: None,
+            panel_column: None,
             export_scopes: Default::default(),
             tools,
             shapes,
@@ -616,10 +596,10 @@ impl Ui {
                 &mut self.show_rail,
                 &mut self.show_dock,
                 &mut Default::default(),
+                None,
                 maximized,
                 true,
                 cfg!(target_os = "macos"),
-                &mut None,
             );
             home_body(
                 root,
@@ -726,7 +706,7 @@ impl Ui {
         let mut win_action = None;
         let mut show_rail = self.show_rail;
         let mut show_dock = self.show_dock;
-        let mut snap_cfg = ed.doc.snap; // the magnet menu edits this; written back after layout (mode flag)
+        let mut snap_cfg = ed.doc.snap; // the Windows burger's snapping rows edit this (non-undoable mode flag)
         let doc_tabs = std::mem::take(&mut self.doc_tabs);
         let doc_active = self.doc_active;
         // an accumulating queue: nothing drains it until S1-D wires `take_app_commands` into the host,
@@ -735,7 +715,8 @@ impl Ui {
         let mut color_modal = std::mem::take(&mut self.color_modal);
         // the Export sheet belongs to one tab: another tab (or none) closes it
         let mut export_sheet = self.export_sheet.take().filter(|s| Some(s.sid) == doc_active);
-        let mut export_anchor = self.export_anchor;
+        let panel_column = self.panel_column; // last frame's — the band is built before the tree
+        let mut new_column = None;
         let export_scopes = &mut self.export_scopes;
         let status = if self.file_status.is_empty() { &self.recovery.status } else { &self.file_status };
         // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
@@ -753,13 +734,13 @@ impl Ui {
                 &mut show_rail,
                 &mut show_dock,
                 &mut snap_cfg,
+                panel_column,
                 maximized,
                 false,
                 cfg!(target_os = "macos"),
-                &mut export_anchor,
             );
             if let Some(sheet) = export_sheet.as_mut() {
-                match crate::export_ui::draw(ctx, sheet, export_anchor) {
+                match crate::export_ui::draw(ctx, sheet, panel_column) {
                     crate::export_ui::SheetAction::Stay => {}
                     crate::export_ui::SheetAction::Close => export_sheet = None,
                     crate::export_ui::SheetAction::Export(id, scope) => {
@@ -853,13 +834,9 @@ impl Ui {
                         _ => false,
                     })
                 };
-                // the boxes FLOAT in the void (Ahmed 07-07): an outer breath of HALF the
-                // box-to-box seam on the sides/top; the bottom breath lives INSIDE the taller
-                // statusbar so its text centres in the visual strip
-                let g = varos_app::shell::tokens::SEAM_GAP * 0.5;
-                let tree_rect =
-                    egui::Rect::from_min_max(mid.min + egui::vec2(g, g), egui::pos2(mid.right() - g, mid.bottom()));
+                let tree_rect = editor_tree_rect(mid); // 4b: the boxes start at the band's bottom
                 root.scope_builder(egui::UiBuilder::new().max_rect(tree_rect), |ui| shell.ui_hosted(ui, &mut host));
+                new_column = shell.side_column_span();
             }
             // on-canvas overlays are CONFINED to the Board hole (Ahmed 07-07): page chrome, snap
             // HUD and origin crosshair clip/cull at its edges instead of roaming the window
@@ -904,8 +881,10 @@ impl Ui {
         self.doc_tabs = doc_tabs;
         self.app_cmds = app_cmds;
         self.export_sheet = export_sheet;
-        self.export_anchor = export_anchor;
-        ed.execute(EditCommand::SetSnapConfig(snap_cfg)); // non-undoable mode flag, now core-owned
+        if new_column != self.panel_column {
+            self.ctx.request_repaint(); // the band's right zone catches up next frame
+        }
+        self.panel_column = new_column;
         ed.set_constrain_wh(lock); // A12: mirror the Properties W/H lock so canvas scale drags honour it too
                                    // OpenPicker is a UI op (it opens the modal, seeded from the target's colour) — intercept it here
                                    // K3: field commits first; while a field holds invalid text the frame's presses are dropped
@@ -938,7 +917,7 @@ impl Ui {
                 true
             }
         });
-        apply_ops(ed, ops);
+        apply_frame(ed, snap_cfg, ops); // the band's snapping rows, then the panels' ops
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
 
         // macOS: cursors.rs owns the OS cursor (Retina NSCursor, re-set every frame from `chrome_ck` /

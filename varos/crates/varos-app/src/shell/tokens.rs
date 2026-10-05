@@ -42,7 +42,7 @@ pub const ACCENT_HOVER: Color32 = rgb(0x2b9df4); // hovered accent button — on
 pub const ACCENT_SEL: Color32 = Color32::from_rgba_premultiplied(3, 33, 55, 60); // text-selection fill
 pub const ACCENT_TINT: Color32 = Color32::from_rgba_premultiplied(2, 19, 31, 34); // faint azure wash (selected row)
 pub const GUIDE: Color32 = rgb(0xff54a8); // reserved for smart guides (not yet wired — keep, Ahmed 07-08)
-pub const SEAM: Color32 = rgb(0x0e0d0d); // the VOID — seams, app bar, status (darker than BG)
+pub const SEAM: Color32 = rgb(0x000000); // the VOID — band, seams, status (one flat backdrop, 4b 2026-10-05)
 
 // ── secondary palette (content / samples, NOT chrome) ──
 pub const NAVY: Color32 = rgb(0x12263a);
@@ -61,6 +61,53 @@ pub const R: u8 = 3; // controls: fields, chips, buttons, tabs
 pub const RBOX: u8 = 8; // boxes / panels (rounder / fancier — Ahmed 07-04)
 pub const RCAP: u8 = 11; // pill / capsule radius — tab pills + scroll chevrons, one "Claude bubble" look (Ahmed 07-08)
 pub const SEAM_GAP: f32 = 12.0; // equal void between all boxes (wider +20% so boxes breathe — Ahmed 07-04)
+
+// ── the 4b top band (owner-approved 2026-10-05, docs/foundation/MAC_CHROME.md §"4b band"): one 52-pt
+// band = 12 + 28 + 12, every control 28 tall on the one centre line y 26 (the traffic lights' too).
+// Boxes start at the band's bottom; the 12 above/below a chip is the same 12 as the seams. ──
+/// The band's height (macOS); boxes start right under it.
+pub const BAND_H: f32 = 52.0;
+/// Every control in the band: Home, tabs, `+`, `+N`, Search, the V mark.
+pub const BAND_CHIP_H: f32 = 28.0;
+/// The void above (and below) a chip — the seam rhythm.
+pub const BAND_PAD_Y: f32 = SEAM_GAP;
+/// The right zone (Search + V) when no panel column is docked, and on Home: this wide, ending
+/// `SEAM_GAP` before the window's right edge.
+pub const BAND_RIGHT_ZONE_W: f32 = 288.0;
+/// The V mark's square button and the mark painted inside it.
+pub const BAND_BRAND: f32 = 28.0;
+pub const BAND_BRAND_MARK: f32 = 18.0;
+/// Search ↔ V, Home ↔ the first tab.
+pub const BAND_GAP: f32 = 8.0;
+/// The "+N ⌄" button (hidden tabs) and its gap to its neighbours.
+pub const BAND_OVERFLOW_W: f32 = 40.0;
+pub const BAND_OVERFLOW_GAP: f32 = 4.0;
+/// "+N" sits this far in; the chevron's left edge this far in.
+pub const BAND_OVERFLOW_TEXT_X: f32 = 8.0;
+pub const BAND_OVERFLOW_CHEV_X: f32 = 24.0;
+/// The count's size (Inter 11.5) and the chevron glyph.
+pub const BAND_OVERFLOW_TEXT: f32 = 11.5;
+pub const BAND_OVERFLOW_CHEV: f32 = 12.0;
+/// Search never gets narrower than this (it grows left when the panel column is narrower).
+pub const BAND_SEARCH_MIN_W: f32 = 120.0;
+/// The tabs leave at least this much void before the right zone (the drag handle).
+pub const BAND_TABS_END_GAP: f32 = SEAM_GAP;
+/// The dashed landing-slot outline while a tab is dragged: dash and gap lengths.
+pub const BAND_DASH: f32 = 3.0;
+pub const BAND_DASH_GAP: f32 = 2.0;
+/// A tab chip: width = clamp(TAB_PAD_L + name width (Inter 500 12) + TAB_TRAIL, TAB_W_MIN, TAB_W_MAX).
+pub const TAB_W_MIN: f32 = 88.0;
+pub const TAB_W_MAX: f32 = 176.0;
+pub const TAB_PAD_L: f32 = 12.0;
+pub const TAB_TRAIL: f32 = 30.0;
+/// The name's box (from `TAB_PAD_L`) is this much narrower than the chip (room for the dot / ×).
+pub const TAB_NAME_CLIP: f32 = 42.0;
+/// The dirty dot (diameter) and the dot / × centre's distance from the chip's right edge.
+pub const TAB_DOT: f32 = 6.0;
+pub const TAB_MARK_INSET: f32 = 16.0;
+/// The × hit square, and the × glyph inside it.
+pub const TAB_CLOSE_HIT: f32 = 18.0;
+pub const TAB_CLOSE_ICON: f32 = 12.0;
 
 pub fn r_ctrl() -> CornerRadius {
     CornerRadius::same(R)
@@ -223,7 +270,10 @@ pub const WELL_DOT: Color32 = Color32::from_rgba_premultiplied(18, 18, 18, 18);
 pub const SB_STATUS_H: f32 = 32.0;
 pub const SB_STATUS_INSET: f32 = 24.0;
 pub const SB_STATUS_ICON_GAP: f32 = 8.0;
-pub const SB_PAD_TOP: f32 = 32.0;
+/// The box's top padding: the mockup's 32 (box at y 40 under a 28 bar) minus the 12 the 4b band now
+/// holds above the box (box at y 52) — so the approved content stays at window y 72 and the two card
+/// rows still fit at 1512 × 982 (review 2026-10-05).
+pub const SB_PAD_TOP: f32 = 32.0 - SEAM_GAP;
 pub const SB_PAD_X: f32 = 40.0;
 pub const SB_PAD_BOTTOM: f32 = 28.0;
 // the column grid (responsive rule: start_page::grid_columns)
@@ -361,9 +411,8 @@ pub const SB_FIRST_BTNS_GAP: f32 = 32.0;
 pub const SB_FIRST_KEYS_GAP: f32 = 20.0;
 pub const SB_FIRST_PRESETS_GAP: f32 = 56.0;
 pub const SB_FIRST_PAD_BOTTOM: f32 = 24.0;
-// the top bar's "Search boards" pill
-pub const SB_SEARCH_W: f32 = 200.0;
-pub const SB_SEARCH_H: f32 = 24.0;
+// the band's Search field ("Search boards" on Home): glyph inset and the glyph → text gap (4b sizes it
+// from the band's right zone — `chrome::topbar_layout` — so it has no width / height token of its own)
 pub const SB_SEARCH_PAD: f32 = 10.0;
 pub const SB_SEARCH_GAP: f32 = 6.0;
 

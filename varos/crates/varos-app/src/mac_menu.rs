@@ -256,6 +256,22 @@ fn native(n: Native) -> PredefinedMenuItem {
     }
 }
 
+/// The band's V mark (4b): run Varos ▸ About — muda's own predefined item, so the panel is the same
+/// one by construction. `chrome::menus()` puts `Native::About` first in the first (application) menu
+/// (test `about_is_the_first_application_menu_row`), so it is item 0 of the app menu's submenu.
+pub fn show_about() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let app = NSApplication::sharedApplication(mtm);
+    let Some(app_menu) = app.mainMenu().and_then(|m| m.itemAtIndex(0)).and_then(|i| i.submenu()) else {
+        return;
+    };
+    if app_menu.numberOfItems() > 0 {
+        app_menu.performActionForItemAtIndex(0);
+    }
+}
+
 /// Paint the NSWindow's own background `rgb` (sRGB), so nothing behind the window ever shows through
 /// — not the title strip, not the frame before the GPU's first present, not a live-resize edge.
 pub fn set_window_background(window: &Window, rgb: [u8; 3]) {

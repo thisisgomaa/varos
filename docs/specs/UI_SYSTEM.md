@@ -118,7 +118,7 @@ Every later UI piece reports these numbers (or "not affected: why") in its GATE_
 
 | Token | Value | Used for | Contrast on its background | Status |
 |---|---|---|---|---|
-| `SEAM` | #0e0d0d | void: seams, app bar, status | TEXT 15.6 · MUTED 5.68 | `tokens.rs:45` |
+| `SEAM` | #000000 (4b, 2026-10-05; was #0e0d0d) | the one backdrop: band, seams, status line, Start's void, NSWindow background | TEXT 16.9 · MUTED 6.15 · DISABLED 3.92 | `tokens.rs` |
 | `BG` | #141313 | board base | TEXT 14.9 · MUTED 5.43 | `tokens.rs:27` |
 | `INPUT_WELL` | #171515 | focused number field | TEXT 14.6 | `tokens.rs:37` |
 | `RULER_BG` | #181616 | rulers | MUTED 5.28 | `tokens.rs:50` |
