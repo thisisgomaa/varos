@@ -111,6 +111,11 @@ pub trait DocStore {
     fn remember(&mut self, _path: &Path, _relocated_from: Option<&Path>, _board: Option<&BoardSummary>) {}
     fn remove_recent(&mut self, _path: &Path) {}
     fn clear_recent(&mut self) {}
+    /// Start v2 thumbnails: `snapshot` is the board as it was just written to `path` — the background
+    /// save's own `Arc<Document>`, shared, never cloned; the store may render its Home thumbnail off the
+    /// UI thread. Opening a board, or the synchronous save path, renders nothing: its thumbnail comes
+    /// with the next background save. Default: none.
+    fn rendered(&mut self, _path: &Path, _snapshot: Arc<Document>) {}
     /// Replace `path` with the exported PDF `bytes`, durably. An export is never a Recent entry.
     fn write_export(&mut self, _path: &Path, _bytes: &[u8]) -> Result<(), String> {
         Err("Varos couldn't write the PDF.".into())
@@ -407,6 +412,7 @@ impl Lifecycle<'_> {
                 let key = self.store.key(&dest);
                 let fingerprint = self.store.fingerprint(&dest);
                 let board = BoardSummary::of(&flight.doc); // the snapshot that was written
+                let written = flight.doc.clone(); // the same snapshot renders the Home thumbnail
                 if let Some(s) = self.ws.get_mut(id) {
                     s.mark_saved_snapshot(dest.clone(), key, Arc::unwrap_or_clone(flight.doc));
                     s.source_fingerprint = fingerprint;
@@ -415,6 +421,7 @@ impl Lifecycle<'_> {
                     }
                 }
                 self.store.remember(&dest, None, Some(&board));
+                self.store.rendered(&dest, written);
             }
             Ok(SaveOutcome::ReplacedUnconfirmed(reason)) => {
                 let key = self.store.key(&dest);
@@ -585,6 +592,8 @@ impl Lifecycle<'_> {
             s.source_fingerprint = self.store.fingerprint(dest);
         }
         if outcome == SaveOutcome::Durable {
+            // no shared snapshot exists on this synchronous path: the thumbnail waits for the next
+            // background save (whose flight already holds the `Arc<Document>`) — never a deep clone here
             self.store.remember(dest, None, Some(&board));
         }
         Ok(outcome)

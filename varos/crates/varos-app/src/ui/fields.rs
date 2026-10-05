@@ -271,7 +271,10 @@ pub(super) fn board_tags(ui: &mut egui::Ui, w: f32, tags: &[String], ops: &mut V
     for (i, ((g, cw), (cx, r))) in chips.into_iter().zip(spots).enumerate() {
         let top = origin.y + r as f32 * line + (line - t::SB_PILL_H) / 2.0;
         let chip = egui::Rect::from_min_size(egui::pos2(origin.x + cx, top), egui::vec2(cw, t::SB_PILL_H));
-        if kb::tag_chip(ui, id.with(("chip", i)), chip, g, &tags[i]).activated {
+        let x = kb::tag_chip(ui, id.with(("chip", i)), chip, g, &tags[i]);
+        #[cfg(test)]
+        tests::probe("tag chip ×", x.response.rect);
+        if x.activated {
             let mut rest = tags.to_vec();
             rest.remove(i);
             ops.push(Op::BoardTags(rest));

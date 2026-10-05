@@ -18,10 +18,14 @@
 //! actions → tag filters → view toggle → cards (the first Tab lands on New board); ←/→ move inside a
 //! row (hero buttons, presets, a Recovered band, filters, toggle, grid), ↑/↓ move by a grid row (2D) or a
 //! list row; Enter / Space activate; Delete / Backspace on a card = Remove from Recent; Esc closes the
-//! "…" menu. The ring is the kit's 2 px azure outside ring with a 1 px gap, shown for keyboard only.
+//! "…" menu; ⇧F10 on a focused card or list row opens its "…" menu (egui reports no Menu key; the chip
+//! also shows while a card has the ring), then ↑/↓ Enter Esc inside it. Tag filters that do not fit sit
+//! behind a "+N" tab (a kit menu with counts); the selected filter is always shown. The ring is the
+//! kit's 2 px azure outside ring with a 1 px gap, shown for keyboard only.
 //! ⌘N / ⌘O belong to the host (K2 row 1); [`StartPage::command_keys`] is for the example gallery.
-use std::path::Path;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc};
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align, Color32, Event, FontId, Galley, Id, Key, Rect, Sense, TextureId, Ui};
@@ -107,6 +111,10 @@ pub mod ids {
     }
     pub fn chip(key: &str) -> Id {
         Id::new(("start-v2-chip", key))
+    }
+    /// The "+N" tab holding the tag filters that do not fit.
+    pub fn more_filters() -> Id {
+        Id::new("start-v2-more-filters")
     }
     /// The top bar's "Search boards" field (Home only).
     pub fn search() -> Id {
@@ -490,6 +498,8 @@ pub enum Slot {
     Discard(String),
     Recover(String),
     Filter(Option<String>),
+    /// The "+N" tab (the filters that do not fit).
+    MoreFilters,
     View(StartView),
     Card(String),
 }
@@ -500,15 +510,16 @@ impl Slot {
             Slot::New | Slot::Open => (0, ""),
             Slot::Preset(_) => (1, ""),
             Slot::Discard(id) | Slot::Recover(id) => (2, id),
-            Slot::Filter(_) => (3, ""),
+            Slot::Filter(_) | Slot::MoreFilters => (3, ""),
             Slot::View(_) => (4, ""),
             Slot::Card(_) => (5, ""),
         }
     }
 }
 
-/// The page's Tab order (disabled actions are skipped; only the filters that fit are visited).
-pub fn tab_order(model: &StartModel, visible_filters: usize) -> Vec<Slot> {
+/// The page's Tab order (disabled actions are skipped). `plan` = the filter tabs drawn (the "+N" tab
+/// after them when some do not fit); `None` = every filter, as if all fit.
+pub fn tab_order(model: &StartModel, plan: Option<&FilterPlan>) -> Vec<Slot> {
     let mut slots = vec![Slot::New, Slot::Open];
     slots.extend(PRESETS.iter().map(|p| Slot::Preset(p.id)));
     if is_first_launch(model) {
@@ -522,8 +533,18 @@ pub fn tab_order(model: &StartModel, visible_filters: usize) -> Vec<Slot> {
             }
         }
     }
-    let filters = std::iter::once(None).chain(model.tags().iter().map(|tc| Some(tc.tag.clone())));
-    slots.extend(filters.take(visible_filters.max(1)).map(Slot::Filter));
+    match plan {
+        Some(plan) => {
+            slots.extend(plan.shown.iter().map(|(tag, _)| Slot::Filter(tag.clone())));
+            if !plan.hidden.is_empty() {
+                slots.push(Slot::MoreFilters);
+            }
+        }
+        None => {
+            slots.push(Slot::Filter(None));
+            slots.extend(model.tags().iter().map(|tc| Slot::Filter(Some(tc.tag.clone()))));
+        }
+    }
     slots.extend([Slot::View(StartView::Grid), Slot::View(StartView::List)]);
     slots.extend(model.visible_cards().map(|c| Slot::Card(c.key.clone())));
     slots
@@ -544,6 +565,7 @@ pub fn activate(slot: &Slot, model: &StartModel) -> Option<StartAction> {
             StartAction::Recover(id.clone())
         }
         Slot::Filter(tag) => StartAction::SetTagFilter(tag.clone()),
+        Slot::MoreFilters => return None, // opens its menu (the page does that)
         Slot::View(v) => StartAction::SetView(*v),
         Slot::Card(k) => StartAction::OpenRecent(card_path(model, k)?),
     })
@@ -553,15 +575,227 @@ fn card_path(model: &StartModel, key: &str) -> Option<std::path::PathBuf> {
     model.cards().iter().find(|c| c.key == key).map(|c| c.path.clone())
 }
 
+/// Where Home's thumbnails come from (lane L3's cache; the host implements it). Called on the page's
+/// decode worker, never on the UI thread.
+pub trait ThumbSource: Send + Sync {
+    /// The cached thumbnail file for `key` and whether it is current for a board modified at
+    /// `modified` (unix seconds). `None` = no thumbnail: the typographic placeholder.
+    fn find(&self, key: &ThumbKey, modified: u64) -> Option<(PathBuf, bool)>;
+}
+
+/// Thumbnail textures kept beyond the ones drawn this frame (a small LRU).
+const THUMB_SPARE: usize = 24;
+
+type ThumbId = (String, u64);
+struct Decoded {
+    id: ThumbId,
+    image: Option<egui::ColorImage>,
+}
+
+/// The page's thumbnail textures: looked up and decoded on one worker thread (never a frame on disk),
+/// uploaded on the UI thread when ready (the worker asks for a repaint — an event, not animation),
+/// bounded to the cards drawn plus [`THUMB_SPARE`].
+#[derive(Default)]
+struct ThumbCache {
+    source: Option<Arc<dyn ThumbSource>>,
+    jobs: Option<mpsc::Sender<(ThumbKey, u64)>>,
+    done: Option<mpsc::Receiver<Decoded>>,
+    textures: HashMap<ThumbId, (egui::TextureHandle, u64)>,
+    asked: HashSet<ThumbId>,
+    frame: u64,
+    drawn: usize,
+}
+impl ThumbCache {
+    fn begin(&mut self, ctx: &egui::Context, model: &StartModel) {
+        self.frame += 1;
+        self.drawn = 0;
+        let Some(done) = &self.done else {
+            return;
+        };
+        for d in done.try_iter() {
+            // a decode that lands after its board left Recent is dropped, never uploaded
+            if !board_has_key(model, &d.id.0) {
+                self.asked.remove(&d.id);
+                continue;
+            }
+            if let Some(image) = d.image {
+                let tex = ctx.load_texture(format!("start-thumb-{}", d.id.0), image, egui::TextureOptions::LINEAR);
+                self.textures.insert(d.id, (tex, self.frame));
+            }
+        }
+    }
+    fn get(&mut self, ctx: &egui::Context, key: &ThumbKey, modified: u64) -> Option<TextureId> {
+        let id = (key.0.clone(), modified);
+        if let Some((tex, used)) = self.textures.get_mut(&id) {
+            *used = self.frame;
+            self.drawn += 1;
+            return Some(tex.id());
+        }
+        if self.source.is_some() && self.asked.insert(id) {
+            if self.jobs.is_none() {
+                self.spawn(ctx);
+            }
+            if let Some(jobs) = &self.jobs {
+                let _ = jobs.send((key.clone(), modified));
+            }
+        }
+        None
+    }
+    fn spawn(&mut self, ctx: &egui::Context) {
+        let Some(source) = self.source.clone() else {
+            return;
+        };
+        let (jobs, rx) = mpsc::channel::<(ThumbKey, u64)>();
+        let (tx, done) = mpsc::channel();
+        let ctx = ctx.clone();
+        let worker = std::thread::Builder::new().name("varos-start-thumbs".into()).spawn(move || {
+            for (key, modified) in rx {
+                let image = source.find(&key, modified).and_then(|(path, _fresh)| decode_thumbnail(&path));
+                if tx.send(Decoded { id: (key.0, modified), image }).is_err() {
+                    return;
+                }
+                ctx.request_repaint();
+            }
+        });
+        if worker.is_ok() {
+            (self.jobs, self.done) = (Some(jobs), Some(done));
+        }
+    }
+    /// Keep the textures drawn this frame plus a few spares; free the rest.
+    fn end(&mut self) {
+        let keep = self.drawn + THUMB_SPARE;
+        while self.textures.len() > keep {
+            let oldest = self
+                .textures
+                .iter()
+                .filter(|(_, (_, used))| *used < self.frame)
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(id, _)| id.clone());
+            match oldest {
+                Some(id) => {
+                    self.textures.remove(&id);
+                }
+                None => break,
+            }
+        }
+    }
+    /// The cache rewrote `key`'s pixels (or deleted them): drop what the page holds so it asks again.
+    fn forget(&mut self, key: &str) {
+        self.textures.retain(|(k, _), _| k != key);
+        self.asked.retain(|(k, _)| k != key);
+    }
+    /// Free the textures of boards no longer in Recent.
+    fn retain_boards(&mut self, model: &StartModel) {
+        self.textures.retain(|(k, _), _| board_has_key(model, k));
+        self.asked.retain(|(k, _)| board_has_key(model, k));
+    }
+}
+
+/// Is `key` a thumbnail key of a board in Recent (its cached key, or its own path — L3's key rule)?
+fn board_has_key(model: &StartModel, key: &str) -> bool {
+    model.cards().iter().any(|c| c.key == key || c.thumb.as_ref().is_some_and(|t| t.0 == key))
+}
+
+/// The largest thumbnail file the page reads (L3 writes ~544 × 246 PNGs, a few hundred KB at most).
+pub const THUMB_MAX_BYTES: u64 = 2 * 1024 * 1024;
+/// The largest thumbnail the page decodes: twice L3's 544 × 246.
+pub const THUMB_MAX_W: u32 = 1088;
+pub const THUMB_MAX_H: u32 = 492;
+/// The decoder's allocation ceiling (the largest allowed image's RGBA plus headroom).
+const THUMB_MAX_ALLOC: u64 = 4 * 1024 * 1024;
+
+/// Read and decode one cached thumbnail, bounded: a file over [`THUMB_MAX_BYTES`] is not read, a header
+/// larger than [`THUMB_MAX_W`] × [`THUMB_MAX_H`] is refused before any pixel buffer exists, and the
+/// decoder runs under an allocation limit — so a corrupt or planted PNG can never take more than a few
+/// MB. Any refusal = `None` (the placeholder), logged once; never a panic.
+#[doc(hidden)]
+pub fn decode_thumbnail(path: &Path) -> Option<egui::ColorImage> {
+    let refuse = |why: &str| {
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("start thumbnail refused ({why}): {}", path.display());
+        }
+        None
+    };
+    match std::fs::metadata(path) {
+        Ok(m) if m.len() <= THUMB_MAX_BYTES => {}
+        Ok(_) => return refuse("file too large"),
+        Err(_) => return None,
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return None;
+    };
+    let reader = || image::ImageReader::with_format(std::io::Cursor::new(&bytes), image::ImageFormat::Png);
+    match reader().into_dimensions() {
+        Ok((w, h)) if w <= THUMB_MAX_W && h <= THUMB_MAX_H => {}
+        Ok(_) => return refuse("dimensions too large"),
+        Err(_) => return refuse("not a PNG"),
+    }
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(THUMB_MAX_W);
+    limits.max_image_height = Some(THUMB_MAX_H);
+    limits.max_alloc = Some(THUMB_MAX_ALLOC);
+    let mut decoder = reader();
+    decoder.limits(limits);
+    let Ok(decoded) = decoder.decode() else {
+        return refuse("corrupt PNG");
+    };
+    let rgba = decoded.to_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    Some(egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
+}
+
+/// The tag filter row as drawn: the tabs that fit (with their widths) and the tags behind "+N".
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FilterPlan {
+    /// `(tag, width)`; `None` = All. The selected tag is always among them.
+    pub shown: Vec<(Option<String>, f32)>,
+    /// The tags behind the "+N" tab, in the model's order.
+    pub hidden: Vec<String>,
+}
+
+/// Text derived from the model and the content width, rebuilt only when either changed (keyed by
+/// `StartModel::generation`): identical frames format, measure and elide nothing again.
+#[derive(Default)]
+struct Derived {
+    key: Option<(u64, u32)>,
+    /// Card key → its folder, `~`-relative and middle-elided to the card (grid) or column (list).
+    folders: HashMap<String, String>,
+    /// Card key → "2 artboards" / "free".
+    facts: HashMap<String, String>,
+    numbers: Vec<String>,
+    visible: String,
+    /// "All" + each tag: (label, count).
+    filters: Vec<(String, String)>,
+    plan: FilterPlan,
+    more_label: String,
+    /// The "+N" menu's rows ("studio  1").
+    more_rows: Vec<String>,
+    /// Recovered rows: (name line, folder).
+    recovered: Vec<(String, Option<String>)>,
+    shortcuts: [String; 2],
+    preset_labels: Vec<String>,
+    preset_sizes: Vec<String>,
+    version: String,
+}
+
 /// The Start page state: keyboard focus and its visibility, the open "…" menu, the search buffer.
 pub struct StartPage {
     focus: Slot,
     ring: bool,
     entered: bool,
     menu_for: Option<String>,
+    /// ⇧F10 asked for this card's "…" menu: opened where its chip is drawn this frame.
+    menu_request: Option<String>,
+    /// Enter / Space on the "+N" tab: its menu opens where the tab is drawn this frame.
+    more_request: bool,
     last_card: usize,
-    visible_filters: usize,
     search: String,
+    thumbs: ThumbCache,
+    derived: Derived,
+    derived_builds: u64,
+    seen_generation: u64,
+    home: Option<PathBuf>,
     /// The Search field held the keyboard at the end of the last frame (egui drops a field's focus at
     /// the start of a Tab pass, so the page reads this instead of egui's memory).
     search_typing: bool,
@@ -577,7 +811,6 @@ impl Default for StartPage {
 
 struct Frame<'a> {
     model: &'a StartModel,
-    cards: Vec<&'a BoardCard>,
     actions: Vec<StartAction>,
     clicked: Option<Slot>,
     focused_rect: Option<Rect>,
@@ -591,9 +824,15 @@ impl StartPage {
             ring: false,
             entered: false,
             menu_for: None,
+            menu_request: None,
+            more_request: false,
             last_card: 0,
-            visible_filters: usize::MAX,
             search: String::new(),
+            thumbs: ThumbCache::default(),
+            derived: Derived::default(),
+            derived_builds: 0,
+            seen_generation: 0,
+            home: home_dir(),
             search_typing: false,
             command_keys: false,
         }
@@ -617,12 +856,34 @@ impl StartPage {
         self.menu_for.as_deref()
     }
 
-    /// THE thumbnail seam: the texture for a card's [`ThumbKey`], or `None` for the typographic
-    /// placeholder. Today always `None`.
-    ///
-    /// L3: lookup(key, mtime) → load PNG → cached texture; refresh on ThumbDone.
-    pub fn thumb_texture(&mut self, _ctx: &egui::Context, _key: &ThumbKey) -> Option<TextureId> {
-        None
+    /// THE thumbnail seam: the texture for a card's [`ThumbKey`] at the board's cached `modified` time,
+    /// or `None` for the typographic placeholder. L3: the source's lookup (key, mtime) → the PNG is
+    /// decoded on the page's worker → uploaded once and cached per key + mtime; a Stale file shows its
+    /// old pixels (the host re-renders it at the board's next open or save — Home never parses files);
+    /// the host calls [`Self::thumb_updated`] on every `ThumbDone`. Never blocks: the first frame draws
+    /// the placeholder, the texture appears when its decode lands.
+    pub fn thumb_texture(&mut self, ctx: &egui::Context, key: &ThumbKey, modified: u64) -> Option<TextureId> {
+        self.thumbs.get(ctx, key, modified)
+    }
+    /// Where thumbnails come from (startup). Without one every card shows its placeholder.
+    pub fn set_thumb_source(&mut self, source: Arc<dyn ThumbSource>) {
+        self.thumbs.source = Some(source);
+    }
+    /// A render landed for `key` (or its file was deleted): the next frame asks the cache again.
+    pub fn thumb_updated(&mut self, key: &ThumbKey) {
+        self.thumbs.forget(&key.0);
+    }
+    /// How many thumbnail textures the page holds (tests: the LRU bound).
+    pub fn thumb_textures(&self) -> usize {
+        self.thumbs.textures.len()
+    }
+    /// How many times the derived text was rebuilt (tests: identical frames rebuild nothing).
+    pub fn derived_builds(&self) -> u64 {
+        self.derived_builds
+    }
+    /// The filter row as last laid out.
+    pub fn filter_plan(&self) -> &FilterPlan {
+        &self.derived.plan
     }
 
     /// Draw into everything `ui` has left (the app: the root under the top bar). `warning` is the
@@ -647,22 +908,21 @@ impl StartPage {
     /// Draw the page in `area`.
     pub fn draw_in(&mut self, ui: &mut Ui, area: Rect, model: &StartModel, warning: Option<&str>) -> Vec<StartAction> {
         let lay = layout(area, &Shape::of(model));
-        self.carry_focus(model);
-        let mut f = Frame {
-            model,
-            cards: model.visible_cards().collect(),
-            actions: vec![],
-            clicked: None,
-            focused_rect: None,
-            warning,
-        };
+        self.thumbs.begin(ui.ctx(), model);
+        if self.seen_generation != model.generation() {
+            self.seen_generation = model.generation();
+            self.thumbs.retain_boards(model);
+            self.carry_focus(model);
+        }
+        self.derive(ui, &lay, model);
+        let mut f = Frame { model, actions: vec![], clicked: None, focused_rect: None, warning };
         let moved = self.keyboard(ui, &lay, &mut f);
         ui.allocate_rect(area, Sense::hover());
         let p = ui.painter().clone();
         p.rect_filled(area, egui::CornerRadius::ZERO, t::SEAM);
         p.rect_filled(lay.board, t::r_box(), t::BG);
         p.rect_stroke(lay.board, t::r_box(), t::hairline(), egui::StrokeKind::Inside);
-        status(ui, &lay, f.warning);
+        status(ui, &lay, &self.derived.version, f.warning);
         let inner = lay.board.shrink(t::KIT_STROKE);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(Align::Min)));
         egui::ScrollArea::vertical().id_salt("start-v2-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
@@ -678,16 +938,24 @@ impl StartPage {
             }
         });
         self.card_menu(ui.ctx(), &mut f);
+        self.more_menu(ui.ctx(), &mut f);
+        self.thumbs.end();
         if let Some(slot) = f.clicked.take() {
             self.focus = slot;
             self.entered = true;
+        }
+        // where the focused card sits, so a rebuild that removes it can focus the card now in its place
+        if let Slot::Card(k) = &self.focus {
+            if let Some(i) = model.visible_cards().position(|c| &c.key == k) {
+                self.last_card = i;
+            }
         }
         f.actions
     }
 
     /// A rebuilt model: keep focus on the same element by key, or the card now in its place.
     fn carry_focus(&mut self, model: &StartModel) {
-        let order = tab_order(model, self.visible_filters);
+        let order = tab_order(model, Some(&self.derived.plan));
         if self.menu_for.as_ref().is_some_and(|k| !model.visible_cards().any(|c| &c.key == k)) {
             self.menu_for = None;
         }
@@ -701,9 +969,92 @@ impl StartPage {
         self.focus = match &self.focus {
             Slot::Card(_) if !cards.is_empty() => Slot::Card(cards[self.last_card.min(cards.len() - 1)].key.clone()),
             Slot::Card(_) => Slot::View(model.filter().view),
-            Slot::Filter(_) => Slot::Filter(None),
+            Slot::Filter(_) | Slot::MoreFilters => Slot::Filter(None),
             _ => Slot::New,
         };
+    }
+
+    /// Rebuild the derived text when the model or the content width changed.
+    fn derive(&mut self, ui: &Ui, lay: &PageLayout, model: &StartModel) {
+        let key = (model.generation(), lay.content.width().to_bits());
+        if self.derived.key == Some(key) {
+            return;
+        }
+        self.derived_builds += 1;
+        let home = self.home.as_deref();
+        let d = &mut self.derived;
+        d.key = Some(key);
+        let list = model.filter().view == StartView::List;
+        let folder_w = if list { list_wide_column(lay.content.width()) } else { lay.card_w - t::SB_CARD_PAD_X * 2.0 };
+        d.folders.clear();
+        d.facts.clear();
+        for card in model.visible_cards() {
+            let folder = folder_text(&card.path, home);
+            let fitted = elide_middle(&folder, |c| width_of(ui, c, roles::MONO) <= folder_w);
+            d.folders.insert(card.key.clone(), fitted);
+            d.facts.insert(card.key.clone(), facts(card.artboards));
+        }
+        d.numbers = (1..=model.visible_count()).map(|n| n.to_string()).collect();
+        d.visible = model.visible_count().to_string();
+        d.filters = std::iter::once(("All".to_string(), model.cards().len().to_string()))
+            .chain(model.tags().iter().map(|tc| (tc.tag.clone(), tc.count.to_string())))
+            .collect();
+        d.recovered =
+            model.recovery().iter().map(|r| (format!("Recovered — {}", r.name), r.original_dir.clone())).collect();
+        d.shortcuts = [t::shortcut_label("N"), t::shortcut_label("O")];
+        d.preset_labels = PRESETS.iter().map(|p| format!("New board with a {} artboard", p.label)).collect();
+        d.preset_sizes = PRESETS.iter().map(|p| preset_size_text(p.id)).collect();
+        d.version = version_text();
+        // the filter row: what fits between the count and the view toggle
+        let head = lay.head;
+        let title_w = width_of(ui, "Recent boards", roles::H2);
+        let start = title_w + t::SB_COUNT_GAP + width_of(ui, &d.visible, roles::MONO) + t::SB_FILTERS_GAP;
+        let seg_w = (t::SB_SEG_BTN_W + t::SB_SEG_PAD) * 2.0 + t::SB_SEG_PAD + t::KIT_STROKE * 2.0;
+        let avail = head.width() - seg_w - t::SB_FILTERS_GAP - start;
+        let tab_w = |label: &str, count: &str| {
+            t::SB_FILTER_PAD * 2.0
+                + width_of(ui, label, roles::BODY)
+                + t::SB_FILTER_INNER
+                + width_of(ui, count, roles::MONO)
+        };
+        let mut widths: Vec<f32> = d.filters.iter().map(|(l, c)| tab_w(l, c)).collect();
+        let selected = model.filter().tag.as_deref().map(varos_core::board::fold);
+        let is_selected =
+            |i: usize| i > 0 && selected.as_deref() == Some(varos_core::board::fold(&d.filters[i].0).as_str());
+        let all_fit =
+            widths.iter().sum::<f32>() + t::SB_FILTER_SPACING * widths.len().saturating_sub(1) as f32 <= avail;
+        let mut show = vec![all_fit; widths.len()];
+        if !all_fit {
+            let more_w = t::SB_FILTER_PAD * 2.0 + width_of(ui, &format!("+{}", widths.len()), roles::BODY);
+            let room = avail - more_w - t::SB_FILTER_SPACING;
+            show[0] = true;
+            let mut used = widths[0];
+            for i in 1..widths.len() {
+                if is_selected(i) {
+                    // the selected tab is always shown; when it does not fit it shrinks to what is left
+                    // (its label elides, the full name is its tooltip) — it never overlaps "+N" or the toggle
+                    widths[i] = widths[i].min((room - used - t::SB_FILTER_SPACING).max(0.0));
+                    show[i] = true;
+                    used += t::SB_FILTER_SPACING + widths[i];
+                }
+            }
+            for i in 1..widths.len() {
+                if !show[i] && used + t::SB_FILTER_SPACING + widths[i] <= room {
+                    show[i] = true;
+                    used += t::SB_FILTER_SPACING + widths[i];
+                }
+            }
+        }
+        let tag = |i: usize| (i > 0).then(|| d.filters[i].0.clone());
+        d.plan = FilterPlan {
+            shown: (0..widths.len()).filter(|&i| show[i]).map(|i| (tag(i), widths[i])).collect(),
+            hidden: (1..widths.len()).filter(|&i| !show[i]).map(|i| d.filters[i].0.clone()).collect(),
+        };
+        d.more_label = format!("+{}", d.plan.hidden.len());
+        d.more_rows = (1..widths.len())
+            .filter(|&i| !show[i])
+            .map(|i| format!("{}  {}", d.filters[i].0, d.filters[i].1))
+            .collect();
     }
 
     /// The page's keyboard (K2 row 2). Returns whether focus moved (to scroll it into view). The page
@@ -711,8 +1062,11 @@ impl StartPage {
     fn keyboard(&mut self, ui: &mut Ui, lay: &PageLayout, f: &mut Frame<'_>) -> bool {
         let ctx = ui.ctx().clone();
         let events = ui.input(|i| i.events.clone());
+        if events.is_empty() {
+            return false;
+        }
         let blocked = kit::menu_open(&ctx) || self.search_typing || ctx.memory(|m| m.has_focus(ids::search()));
-        let order = tab_order(f.model, self.visible_filters);
+        let order = tab_order(f.model, Some(&self.derived.plan));
         let mut moved = false;
         for event in events {
             match event {
@@ -763,7 +1117,16 @@ impl StartPage {
                             true
                         }
                         Key::Enter | Key::Space if !repeat => {
+                            if self.focus == Slot::MoreFilters {
+                                self.more_request = true;
+                            }
                             f.actions.extend(activate(&self.focus, f.model));
+                            true
+                        }
+                        Key::F10 if modifiers.shift && !repeat => {
+                            if let Slot::Card(k) = &self.focus {
+                                self.menu_request = Some(k.clone());
+                            }
                             true
                         }
                         Key::Delete | Key::Backspace if !repeat => {
@@ -789,11 +1152,12 @@ impl StartPage {
 
     /// ↑/↓: a grid row (2D) or a list row; from outside the cards they enter the first card.
     fn vertical(&mut self, f: &Frame<'_>, lay: &PageLayout, d: isize) {
-        if f.cards.is_empty() {
+        let count = f.model.visible_count();
+        if count == 0 {
             return;
         }
         let at = match &self.focus {
-            Slot::Card(k) => f.cards.iter().position(|c| &c.key == k),
+            Slot::Card(k) => f.model.visible_cards().position(|c| &c.key == k),
             _ => None,
         };
         let next = match at {
@@ -801,14 +1165,17 @@ impl StartPage {
             Some(i) => {
                 let span = if f.model.filter().view == StartView::Grid { lay.cols as isize } else { 1 };
                 let j = i as isize + d * span;
-                if j < 0 || j >= f.cards.len() as isize {
+                if j < 0 || j >= count as isize {
                     i
                 } else {
                     j as usize
                 }
             }
         };
-        self.focus = Slot::Card(f.cards[next].key.clone());
+        let Some(card) = f.model.visible_cards().nth(next) else {
+            return;
+        };
+        self.focus = Slot::Card(card.key.clone());
         self.last_card = next;
         self.entered = true;
     }
@@ -842,11 +1209,11 @@ impl StartPage {
         p.galley(l.lede.min, lede, t::MUTED);
         keys(ui, l.keys, &[(&["↑", "↓"], "Move"), (&["Return"], "Open board"), (&["Delete"], REMOVE)], false);
         self.presets(ui, l, f);
-        for (row, rect) in f.model.recovery().iter().zip(&l.recovered) {
-            self.recovered(ui, row, *rect, f);
+        for (i, (row, rect)) in f.model.recovery().iter().zip(&l.recovered).enumerate() {
+            self.recovered(ui, i, row, *rect, f);
         }
         self.head(ui, l, f);
-        if f.cards.is_empty() {
+        if f.model.visible_count() == 0 {
             let copy = f.model.no_match_copy().unwrap_or(NO_RECENT_COPY);
             let g = text(ui, copy, roles::BODY);
             kb::galley_in_line(&p, l.content.left(), l.head.bottom() + t::SB_HEAD_GAP, roles::BODY.line, g, t::MUTED);
@@ -854,9 +1221,9 @@ impl StartPage {
         }
         match f.model.filter().view {
             StartView::Grid => {
-                let cards = f.cards.clone();
-                for (card, rect) in cards.into_iter().zip(l.cards.clone()) {
-                    self.card(ui, card, rect, f);
+                let model = f.model;
+                for (card, rect) in model.visible_cards().zip(&l.cards) {
+                    self.card(ui, card, *rect, f);
                 }
             }
             StartView::List => self.table(ui, l, f),
@@ -871,17 +1238,17 @@ impl StartPage {
                 Icon::ArtboardAdd,
                 "New board",
                 "Free canvas, no size needed",
-                "N",
+                0,
                 true,
                 StartAction::NewBoard,
             ),
-            (Slot::Open, l.open, Icon::Open, "Open…", "A .vrs file from disk", "O", false, StartAction::Open),
+            (Slot::Open, l.open, Icon::Open, "Open…", "A .vrs file from disk", 1, false, StartAction::Open),
         ] {
             let b = kb::BigButton {
                 icon,
                 title: text(ui, title, if primary { roles::BUTTON_PRIMARY } else { roles::BUTTON }),
                 sub: text(ui, sub, roles::SMALL),
-                shortcut: text(ui, &t::shortcut_label(key), roles::MONO),
+                shortcut: text(ui, &self.derived.shortcuts[key], roles::MONO),
                 primary,
                 focused: self.ring_on(&slot),
             };
@@ -922,14 +1289,14 @@ impl StartPage {
             let name = text(ui, preset.label, roles::BODY_MEDIUM);
             let name_y = name_top + (roles::BODY_MEDIUM.line - name.size().y) / 2.0;
             let size_top = name_top + roles::BODY_MEDIUM.line + t::SB_PRESET_SIZE_GAP;
-            let size = text(ui, &preset_size_text(preset.id), roles::MONO);
+            let size = text(ui, &self.derived.preset_sizes[i], roles::MONO);
             let size_line = roles::MONO.line - t::KIT_STROKE;
             let size_y = size_top + (size_line - size.size().y) / 2.0;
             let slot = Slot::Preset(preset.id);
-            let label = format!("New board with a {} artboard", preset.label);
             let focused = self.ring_on(&slot);
             let id = ids::preset(preset.id);
-            let r = kb::preset_cell(ui, id, *cell, preview, (name, name_y), (size, size_y), focused, &label);
+            let label = &self.derived.preset_labels[i];
+            let r = kb::preset_cell(ui, id, *cell, preview, (name, name_y), (size, size_y), focused, label);
             self.mark(f, &slot, *cell);
             if r.activated {
                 f.actions.push(StartAction::NewWithPreset(preset.id));
@@ -940,7 +1307,7 @@ impl StartPage {
         p.rect_stroke(panel, t::r_box(), t::hairline(), egui::StrokeKind::Inside);
     }
 
-    fn recovered(&mut self, ui: &mut Ui, row: &RecoveryRow, rect: Rect, f: &mut Frame<'_>) {
+    fn recovered(&mut self, ui: &mut Ui, index: usize, row: &RecoveryRow, rect: Rect, f: &mut Frame<'_>) {
         let p = ui.painter().clone();
         p.rect_filled(rect, t::r_box(), t::PANEL);
         p.rect_stroke(rect, t::r_box(), egui::Stroke::new(t::KIT_STROKE, t::LINE2), egui::StrokeKind::Inside);
@@ -982,7 +1349,8 @@ impl StartPage {
         // text: name · when (or the problem) · folder, on one baseline; the folder is elided to fit
         let x = icon_x + t::SB_ICON_HERO + t::SB_RECOV_ICON_GAP;
         let right = discard.left() - t::SB_RECOV_ICON_GAP;
-        let name = text_elided(ui, &format!("Recovered — {}", row.name), roles::BODY_MEDIUM, (right - x).max(0.0));
+        let (title, folder) = self.derived.recovered.get(index).cloned().unwrap_or_default();
+        let name = text_elided(ui, &title, roles::BODY_MEDIUM, (right - x).max(0.0));
         let nw = name.size().x;
         let line = roles::BODY_MEDIUM.line;
         let nr = kb::galley_in_line(&p, x, rect.center().y - line / 2.0, line, name.clone(), t::TEXT);
@@ -995,7 +1363,7 @@ impl StartPage {
             kb::galley_at_baseline(&p, cx, baseline, g, t::MUTED);
             cx += w + t::SB_RECOV_TEXT_GAP;
         }
-        if let Some(folder) = row.original_dir.as_deref().filter(|_| cx < right) {
+        if let Some(folder) = folder.as_deref().filter(|_| cx < right) {
             let g = path_galley(ui, folder, right - cx);
             kb::galley_at_baseline(&p, cx, baseline, g, t::MUTED);
         }
@@ -1007,7 +1375,7 @@ impl StartPage {
         let title = text(ui, "Recent boards", roles::H2);
         let tw = title.size().x;
         kb::galley_in_line(&p, h.left(), h.top(), h.height(), title, t::TEXT);
-        let count = text(ui, &f.model.visible_count().to_string(), roles::MONO);
+        let count = text(ui, &self.derived.visible, roles::MONO);
         let cnt_w = count.size().x;
         let cnt_x = h.left() + tw + t::SB_COUNT_GAP;
         // `.cnt { padding-top: 2px }` inside a centred row: one pixel lower than centre
@@ -1030,36 +1398,53 @@ impl StartPage {
             f.actions.push(StartAction::SetView(v));
             f.clicked = Some(Slot::View(v));
         }
-        // the tag filter: All N · tag n …, as many as fit before the toggle
+        // the tag filter (`derive` decided what fits): All N · tag n … · "+N"
         let mut x = cnt_x + cnt_w + t::SB_FILTERS_GAP;
-        let limit = seg.left() - t::SB_FILTERS_GAP;
-        let total = f.model.cards().len();
-        let entries: Vec<(Option<&str>, usize)> = std::iter::once((None, total))
-            .chain(f.model.tags().iter().map(|tc| (Some(tc.tag.as_str()), tc.count)))
-            .collect();
         let selected_tag = f.model.filter().tag.as_deref().map(varos_core::board::fold);
-        let mut shown = 0;
-        for (tag, n) in entries {
-            let label = text(ui, tag.unwrap_or("All"), roles::BODY);
-            let count = text(ui, &n.to_string(), roles::MONO);
-            let w = t::SB_FILTER_PAD * 2.0 + label.size().x + t::SB_FILTER_INNER + count.size().x;
-            if x + w > limit {
-                break;
-            }
+        for k in 0..self.derived.plan.shown.len() {
+            let (tag, w) = self.derived.plan.shown[k].clone();
+            let i = tag.as_ref().map_or(0, |t| self.derived.filters.iter().position(|(l, _)| l == t).unwrap_or(0));
+            let (label_s, count_s) = &self.derived.filters[i];
+            let count = text(ui, count_s, roles::MONO);
+            let label_room = (w - t::SB_FILTER_PAD * 2.0 - t::SB_FILTER_INNER - count.size().x).max(0.0);
+            let truncated = width_of(ui, label_s, roles::BODY) > label_room;
+            let label = text_elided(ui, label_s, roles::BODY, label_room);
             let rect = Rect::from_min_size(egui::pos2(x, h.top()), egui::vec2(w, h.height()));
-            let slot = Slot::Filter(tag.map(str::to_string));
-            let selected = selected_tag.as_deref() == tag.map(varos_core::board::fold).as_deref();
-            let name = tag.unwrap_or("All").to_string();
-            let r = kb::filter_tab(ui, ids::filter(tag), rect, label, count, selected, self.ring_on(&slot), &name);
+            let slot = Slot::Filter(tag.clone());
+            let selected = selected_tag.as_deref() == tag.as_deref().map(varos_core::board::fold).as_deref();
+            let id = ids::filter(tag.as_deref());
+            let r = kb::filter_tab(ui, id, rect, label, count, selected, self.ring_on(&slot), label_s);
+            let r = if truncated {
+                kit::ControlResponse { response: r.response.on_hover_text(label_s.as_str()), activated: r.activated }
+            } else {
+                r
+            };
             self.mark(f, &slot, rect);
             if r.activated {
-                f.actions.push(StartAction::SetTagFilter(tag.map(str::to_string)));
+                f.actions.push(StartAction::SetTagFilter(tag));
                 f.clicked = Some(slot);
             }
             x += w + t::SB_FILTER_SPACING;
-            shown += 1;
         }
-        self.visible_filters = shown;
+        if !self.derived.plan.hidden.is_empty() {
+            let label = text(ui, &self.derived.more_label, roles::BODY);
+            let w = t::SB_FILTER_PAD * 2.0 + label.size().x;
+            let rect = Rect::from_min_size(egui::pos2(x, h.top()), egui::vec2(w, h.height()));
+            let empty = text(ui, "", roles::MONO);
+            let focused = self.ring_on(&Slot::MoreFilters);
+            let r = kb::filter_tab(ui, ids::more_filters(), rect, label, empty, false, focused, "More tags");
+            self.mark(f, &Slot::MoreFilters, rect);
+            if r.activated || std::mem::take(&mut self.more_request) {
+                let owner = ids::more_filters();
+                if kit::is_menu_open(ui.ctx(), owner) {
+                    kit::close_menu(ui.ctx());
+                } else {
+                    let pos = egui::pos2(rect.left(), rect.bottom() + t::KIT_MENU_GAP);
+                    kit::open_menu(ui.ctx(), owner, pos, Some(rect));
+                }
+                f.clicked = Some(Slot::MoreFilters);
+            }
+        }
     }
 
     fn card(&mut self, ui: &mut Ui, card: &BoardCard, rect: Rect, f: &mut Frame<'_>) {
@@ -1082,7 +1467,10 @@ impl StartPage {
             kb::galley_in_line(&wp, ix + t::ICON_MD + t::SB_MISS_GAP, row_top, t::ICON_MD, g, t::MUTED);
         } else {
             well_dots(&wp, well);
-            match card.thumb.as_ref().and_then(|k| self.thumb_texture(ui.ctx(), k)) {
+            // Recent's key when it has one, else the board's own path (the cache's key rule): a Stale
+            // image shows while its refresh renders
+            let key = card.thumb.clone().unwrap_or_else(|| ThumbKey(card.key.clone()));
+            match self.thumb_texture(ui.ctx(), &key, card.modified) {
                 Some(tex) => thumbnail(ui, &wp, well, tex),
                 None => placeholder(ui, &wp, well, card),
             }
@@ -1121,7 +1509,7 @@ impl StartPage {
         let tags_top = y + t::SB_TAGS_GAP;
         // an entry Recent has no board summary for yet: its artboard count is unknown, not 0
         let fw = if card.cached {
-            let g = text(ui, &facts(card.artboards), roles::MONO);
+            let g = text(ui, self.derived.facts.get(&card.key).map_or("", String::as_str), roles::MONO);
             let fw = g.size().x;
             kb::galley_in_line(&p, x1 - fw, tags_top, t::SB_PILL_H, g, t::MUTED);
             fw + t::SB_FACTS_GAP
@@ -1130,8 +1518,8 @@ impl StartPage {
         };
         pills(ui, &p, &card.tags, x0, tags_top, x1 - fw);
         let path_top = rect.bottom() - t::SB_CARD_PAD_BOTTOM - roles::MONO.line;
-        let folder = folder_text(&card.path, home_dir().as_deref());
-        let g = path_galley(ui, &folder, x1 - x0);
+        let folder = self.derived.folders.get(&card.key).map_or("", String::as_str);
+        let g = text(ui, folder, roles::MONO);
         kb::galley_in_line(&p, x0, path_top, roles::MONO.line, g, t::MUTED);
         kb::card_border(ui, rect, lit, focused);
         if r.activated {
@@ -1144,13 +1532,35 @@ impl StartPage {
             self.menu_for = Some(card.key.clone());
             f.clicked = Some(slot.clone());
         }
-        if lit {
-            let chip = card_chip(rect);
-            let c = kb::more_chip(ui, ids::chip(&card.key), chip, menu_open);
+        self.chip(ui, card, card_chip(rect), lit || focused, menu_open, &slot, f);
+    }
+
+    /// The "…" chip (on hover, keyboard focus or an open menu) and ⇧F10's request for its menu.
+    #[allow(clippy::too_many_arguments)]
+    fn chip(
+        &mut self,
+        ui: &mut Ui,
+        card: &BoardCard,
+        chip: Rect,
+        show: bool,
+        open: bool,
+        slot: &Slot,
+        f: &mut Frame<'_>,
+    ) {
+        let requested = self.menu_request.as_deref() == Some(card.key.as_str());
+        if requested {
+            self.menu_request = None;
+            let owner = menu_owner(&card.key);
+            let pos = egui::pos2(chip.right() - t::SB_MENU_W, chip.bottom() + t::KIT_MENU_GAP);
+            kit::open_menu(ui.ctx(), owner, pos, Some(chip));
+            self.menu_for = Some(card.key.clone());
+        }
+        if show || requested {
+            let c = kb::more_chip(ui, ids::chip(&card.key), chip, open || requested);
             if c.activated {
                 toggle_card_menu(ui.ctx(), &card.key, chip);
                 self.menu_for = Some(card.key.clone());
-                f.clicked = Some(slot);
+                f.clicked = Some(slot.clone());
             }
         }
     }
@@ -1174,12 +1584,23 @@ impl StartPage {
         let w = g.size().x;
         kb::galley_in_line(&p, right - w, th.top(), th.height(), g, t::MUTED);
         p.hline(th.x_range(), th.bottom() - t::KIT_STROKE / 2.0, t::hairline());
-        let cards = f.cards.clone();
-        for (i, (card, rect)) in cards.into_iter().zip(l.rows.clone()).enumerate() {
+        let model = f.model;
+        for (i, (card, rect)) in model.visible_cards().zip(&l.rows).enumerate() {
+            let rect = *rect;
             let slot = Slot::Card(card.key.clone());
-            let r = kb::table_row(ui, ids::row(&card.key), rect, self.ring_on(&slot), &card.name);
+            let focused = self.ring_on(&slot);
+            let r = kb::table_row(ui, ids::row(&card.key), rect, focused, &card.name);
             self.mark(f, &slot, rect);
-            let n = text(ui, &(i + 1).to_string(), roles::MONO);
+            let owner = menu_owner(&card.key);
+            let open = self.menu_for.as_deref() == Some(card.key.as_str()) && kit::is_menu_open(ui.ctx(), owner);
+            let chip_shown = r.response.contains_pointer() || focused || open;
+            // the "…" chip at the row's right end; the date / Missing pill steps left of it
+            let chip = Rect::from_min_size(
+                egui::pos2(x + cw - t::SB_CHIP, rect.center().y - t::SB_CHIP / 2.0),
+                egui::Vec2::splat(t::SB_CHIP),
+            );
+            let right = if chip_shown { chip.left() - t::SB_DATE_GAP } else { right };
+            let n = text(ui, self.derived.numbers.get(i).map_or("", String::as_str), roles::MONO);
             kb::galley_in_line(&p, x + t::SB_NUM_PAD, rect.top(), rect.height(), n, t::MUTED);
             let ink = if card.missing { t::MUTED } else { t::TEXT };
             let name = text_elided(ui, &card.name, roles::LIST_NAME, fr);
@@ -1197,8 +1618,8 @@ impl StartPage {
                 }
             }
             pills(ui, &p, &card.tags, tags_x, rect.center().y - t::SB_PILL_H / 2.0, tags_x + wide);
-            let folder = folder_text(&card.path, home_dir().as_deref());
-            let g = path_galley(ui, &folder, wide);
+            let folder = self.derived.folders.get(&card.key).map_or("", String::as_str);
+            let g = text(ui, folder, roles::MONO);
             kb::galley_in_line(&p, folder_x, rect.top(), rect.height(), g, t::MUTED);
             if card.missing {
                 let g = text(ui, "Missing", roles::TAG);
@@ -1219,10 +1640,23 @@ impl StartPage {
             }
             if r.response.secondary_clicked() {
                 let at = r.response.interact_pointer_pos().unwrap_or(rect.center());
-                kit::open_menu(ui.ctx(), menu_owner(&card.key), at, None);
+                kit::open_menu(ui.ctx(), owner, at, None);
                 self.menu_for = Some(card.key.clone());
-                f.clicked = Some(slot);
+                f.clicked = Some(slot.clone());
             }
+            self.chip(ui, card, chip, chip_shown, open, &slot, f);
+        }
+    }
+
+    /// The "+N" tab's kit menu: the tags that do not fit, with their counts.
+    fn more_menu(&mut self, ctx: &egui::Context, f: &mut Frame<'_>) {
+        let owner = ids::more_filters();
+        if !kit::is_menu_open(ctx, owner) {
+            return;
+        }
+        let entries: Vec<MenuEntry<'_>> = self.derived.more_rows.iter().map(|r| MenuEntry::Item(r.as_str())).collect();
+        if let Some(i) = kit::menu_with(ctx, owner, &entries, menu_look()) {
+            f.actions.push(StartAction::SetTagFilter(self.derived.plan.hidden.get(i).cloned()));
         }
     }
 
@@ -1241,14 +1675,7 @@ impl StartPage {
             return;
         };
         let entries = menu_entries(card.missing);
-        let look = MenuLook {
-            min_width: t::SB_MENU_W - (t::KIT_TEXT_GAP + t::KIT_STROKE) * 2.0,
-            row_h: t::SB_MENU_ROW_H,
-            pad_x: t::SB_MENU_PAD,
-            font: Some(t::body()),
-            separator: t::LINE2,
-        };
-        if let Some(index) = kit::menu_with(ctx, owner, entries, look) {
+        if let Some(index) = kit::menu_with(ctx, owner, entries, menu_look()) {
             f.actions.push(match entries[index] {
                 MenuEntry::Item(LOCATE) => StartAction::Locate(card.path.clone()),
                 _ => StartAction::RemoveRecent(card.path.clone()),
@@ -1291,10 +1718,10 @@ fn keys(ui: &Ui, rect: Rect, groups: &[(&[&str], &str)], center: bool) {
 }
 
 /// The status line: version left; the Recent list's load warning after it; recovery right.
-fn status(ui: &Ui, l: &PageLayout, warning: Option<&str>) {
+fn status(ui: &Ui, l: &PageLayout, version: &str, warning: Option<&str>) {
     let p = ui.painter().clone();
     let s = l.status;
-    let left = text(ui, &version_text(), roles::MICRO);
+    let left = text(ui, version, roles::MICRO);
     let lw = left.size().x;
     kb::galley_in_line(&p, s.left(), s.top(), s.height(), left, t::MUTED);
     let right = text(ui, RECOVERY_STATUS, roles::MICRO);
@@ -1307,6 +1734,17 @@ fn status(ui: &Ui, l: &PageLayout, warning: Option<&str>) {
         let room = ix - t::SB_ICON_SMALL - t::SB_FILTERS_GAP - x;
         let g = text_elided(ui, w, roles::MICRO, room.max(0.0));
         kb::galley_in_line(&p, x, s.top(), s.height(), g, t::ERROR);
+    }
+}
+
+/// The Start page's kit menus: the mockup's 184-wide popup, 28-tall 13 pt rows, LINE2 separator.
+fn menu_look() -> MenuLook {
+    MenuLook {
+        min_width: t::SB_MENU_W - (t::KIT_TEXT_GAP + t::KIT_STROKE) * 2.0,
+        row_h: t::SB_MENU_ROW_H,
+        pad_x: t::SB_MENU_PAD,
+        font: Some(t::body()),
+        separator: t::LINE2,
     }
 }
 

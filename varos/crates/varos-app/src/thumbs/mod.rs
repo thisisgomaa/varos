@@ -119,15 +119,17 @@ impl ThumbService {
     }
 
     /// Returns cached pixels immediately; stale pixels remain displayable while Home requests refresh.
+    /// (The app reads through [`ThumbService::index`] — Home looks up on its decode worker — so only
+    /// the tests call this one.)
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn lookup(&self, key: &ThumbKey, source_mtime: SystemTime) -> Option<Lookup> {
-        let path = cache_path(&self.root, key);
-        if !path.is_file() {
-            return None;
-        }
-        match read_mtime(&mtime_path(&self.root, key)) {
-            Some(stored) if stored == mtime_value(source_mtime) => Some(Lookup::Fresh(path)),
-            _ => Some(Lookup::Stale(path)),
-        }
+        self.index().lookup(key, source_mtime)
+    }
+
+    /// A cheap, `Send` handle that only answers [`ThumbService::lookup`] — for the Start page's decode
+    /// worker, which looks files up off the UI thread.
+    pub fn index(&self) -> ThumbIndex {
+        ThumbIndex { root: self.root.clone() }
     }
 
     pub fn try_completions(&self) -> Vec<ThumbDone> {
@@ -161,6 +163,38 @@ impl Drop for ThumbService {
         self.wake = None;
         self.thread.take(); // detach: a current render may finish; queued renders cannot start
     }
+}
+
+/// The cache's read side (see [`ThumbService::index`]).
+#[derive(Clone, Debug)]
+pub struct ThumbIndex {
+    root: PathBuf,
+}
+impl ThumbIndex {
+    pub fn lookup(&self, key: &ThumbKey, source_mtime: SystemTime) -> Option<Lookup> {
+        let path = cache_path(&self.root, key);
+        if !path.is_file() {
+            return None;
+        }
+        match read_mtime(&mtime_path(&self.root, key)) {
+            Some(stored) if stored == mtime_value(source_mtime) => Some(Lookup::Fresh(path)),
+            _ => Some(Lookup::Stale(path)),
+        }
+    }
+}
+/// Home's thumbnails come from here: the card's key (the board path, as Recent stores it) and its
+/// cached modified time (unix seconds — the same clock `RecentStore` hands `request`).
+impl varos_app::start_page::ThumbSource for ThumbIndex {
+    fn find(&self, key: &varos_app::start::ThumbKey, modified: u64) -> Option<(PathBuf, bool)> {
+        match self.lookup(&ThumbKey(key.0.clone()), unix(modified))? {
+            Lookup::Fresh(path) => Some((path, true)),
+            Lookup::Stale(path) => Some((path, false)),
+        }
+    }
+}
+/// Recent's cached modified time (unix seconds) as the cache's mtime stamp.
+pub fn unix(secs: u64) -> SystemTime {
+    UNIX_EPOCH + std::time::Duration::from_secs(secs)
 }
 
 /// In `Lifecycle::save_done`, call after `fingerprint` and before `mark_saved_snapshot`:

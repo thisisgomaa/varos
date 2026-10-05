@@ -221,7 +221,9 @@ pub fn segmented(
     for (i, (icon, name)) in segments.iter().enumerate() {
         let x = inner.left() + i as f32 * (t::SB_SEG_BTN_W + t::SB_SEG_PAD);
         let seg = Rect::from_min_size(egui::pos2(x, inner.top()), egui::vec2(t::SB_SEG_BTN_W, t::SB_SEG_BTN_H));
-        let r = interact(ui, id.with(i), seg, name, true);
+        // the painted segment is the mockup's 22 tall; its hit target reaches the kit minimum
+        let lift = ((t::KIT_MIN_TARGET - seg.height()) / 2.0).max(0.0);
+        let r = interact(ui, id.with(i), seg.expand2(egui::vec2(0.0, lift)), name, true);
         let on = i == selected;
         let hover = hovered(&r);
         let p = ui.painter();
@@ -383,19 +385,16 @@ pub fn tag_chip_width(label: &Galley) -> f32 {
 
 /// A removable tag chip (the Board section's tag field): the tag pill's look (SURFACE capsule, MUTED
 /// 11/500) with an × at its end. `activated` = the × was clicked (remove this tag). The × glyph is a
-/// registry icon; its hit target is the chip's full height.
+/// registry icon; its hit target is a `KIT_MIN_TARGET` square around it.
 pub fn tag_chip(ui: &mut Ui, id: Id, rect: Rect, label: Arc<Galley>, name: &str) -> ControlResponse {
-    let x_rect = Rect::from_min_max(
-        egui::pos2(rect.right() - t::SB_CHIP_PAD_R - t::SB_CHIP_X - t::SB_CHIP_GAP / 2.0, rect.top()),
-        rect.right_bottom(),
-    );
-    let r = interact(ui, id, x_rect, name, true);
+    let x_center = egui::pos2(rect.right() - t::SB_CHIP_PAD_R - t::SB_CHIP_X / 2.0, rect.center().y);
+    // the × is drawn small; its hit target is the kit minimum square around it
+    let r = interact(ui, id, Rect::from_center_size(x_center, egui::Vec2::splat(t::KIT_MIN_TARGET)), name, true);
     let hover = hovered(&r);
     let p = ui.painter();
     p.rect_filled(rect, t::RCAP, t::SURFACE);
     let text_pos = egui::pos2(rect.left() + t::SB_PILL_PAD, rect.center().y - label.size().y / 2.0);
     p.galley(text_pos, label, t::MUTED);
-    let x_center = egui::pos2(rect.right() - t::SB_CHIP_PAD_R - t::SB_CHIP_X / 2.0, rect.center().y);
     Icon::Remove.paint(p, x_center, t::SB_CHIP_X, if hover { t::TEXT } else { t::MUTED });
     let response = r.response.on_hover_text(format!("Remove {name}"));
     ControlResponse { response, activated: r.activated }
