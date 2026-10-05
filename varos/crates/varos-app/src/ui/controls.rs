@@ -76,7 +76,7 @@ pub(crate) fn icon_btn(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip
             t.id(),
             egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_LG)),
             UV01(),
-            if resp.hovered() { Color32::WHITE } else { MUTED },
+            icon_ink(false, resp.hovered()),
         );
     }
     resp.on_hover_text(tip).clicked()
@@ -84,10 +84,30 @@ pub(crate) fn icon_btn(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip
 
 /// A short, full-width hairline divider.
 pub(crate) fn hsep(ui: &mut egui::Ui, w: f32) {
-    ui.add_space(9.0);
+    ui.add_space(SECTION_GAP_HALF);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
     ui.painter().hline(rect.left()..=rect.right(), rect.center().y, Stroke::new(1.0, BORDER));
-    ui.add_space(9.0);
+    ui.add_space(SECTION_GAP_HALF);
+}
+
+/// Add only the unaccounted portion of a requested visible vertical gap. `egui` inserts its current
+/// item spacing between the surrounding widgets, so adding the full target here would double-count it.
+pub(crate) fn visible_gap(ui: &mut egui::Ui, target: f32) {
+    ui.add_space((target - ui.spacing().item_spacing.y).max(0.0));
+}
+
+pub(crate) fn label_gap(ui: &mut egui::Ui) {
+    visible_gap(ui, LABEL_GAP);
+}
+
+pub(crate) fn icon_ink(active: bool, hot: bool) -> Color32 {
+    if active {
+        Color32::WHITE
+    } else if hot {
+        TEXT
+    } else {
+        MUTED
+    }
 }
 
 pub(crate) fn icon_button(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, active: bool) -> egui::Response {
@@ -103,7 +123,12 @@ pub(crate) fn icon_button(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, 
     }
     if let Some(t) = tex {
         let ir = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_MD));
-        painter.image(t.id(), ir, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        painter.image(
+            t.id(),
+            ir,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            icon_ink(active, resp.hovered()),
+        );
     }
     resp
 }
@@ -133,9 +158,9 @@ pub(crate) fn dim_field(
     };
     let enabled = !direct || value > 1e-3; // same zero-extent threshold as `Editor::set_direct_bbox`
     let tip = if enabled { tip } else { why };
-    ui.add_enabled_ui(enabled, |ui| fields::num(ui, fw, Lab::Letter(lab), tip, value, 0, 1.0, 0.0..=1.0e6, ops, mk));
+    fields::num_disabled(ui, fw, Lab::Letter(lab), tip, value, 0, 1.0, 0.0..=1.0e6, !enabled, ops, mk);
 }
-/// A read-only "label … value" settings row (Document panel): label left (MUTED), value right (MUTED).
+/// A read-only "label … value" settings row (Document panel): steady label, secondary value.
 pub(crate) fn info_row(ui: &mut egui::Ui, w: f32, label: &str, value: &str) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::hover());
     ui.painter().text(
@@ -143,7 +168,7 @@ pub(crate) fn info_row(ui: &mut egui::Ui, w: f32, label: &str, value: &str) {
         Align2::LEFT_CENTER,
         label,
         FontId::proportional(12.5),
-        MUTED,
+        TEXT,
     );
     ui.painter().text(
         egui::pos2(rect.right() - 4.0, rect.center().y),
@@ -160,44 +185,54 @@ pub(crate) fn action_row(ui: &mut egui::Ui, w: f32, label: &str, value: &str) ->
     if resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
     }
-    let col = if resp.hovered() { TEXT } else { MUTED };
     ui.painter().text(
         egui::pos2(rect.left() + 4.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
         FontId::proportional(12.5),
-        col,
+        TEXT,
     );
     ui.painter().text(
         egui::pos2(rect.right() - 4.0, rect.center().y),
         Align2::RIGHT_CENTER,
         value,
         FontId::proportional(12.5),
-        col,
+        if resp.hovered() { TEXT } else { MUTED },
     );
     resp.clicked()
 }
 
-/// One segment of the compact "ALIGN TO" switch (A4). Selected → azure fill + white text; else the
-/// inset-field fill, MUTED, HOVER on hover — the same active/rest read as `icon_toggle`.
-pub(crate) fn seg_btn(ui: &mut egui::Ui, w: f32, label: &str, on: bool, tip: &str) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 22.0), egui::Sense::click());
-    let bg = if on {
-        ACCENT
-    } else if resp.hovered() {
-        HOVER
+pub(crate) fn seg_ink(on: bool, hot: bool) -> Color32 {
+    if on || hot {
+        TEXT
     } else {
-        BG_SURFACE
-    };
-    ui.painter().rect_filled(rect, CornerRadius::same(R), bg);
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        FontId::proportional(11.0),
-        if on { Color32::WHITE } else { MUTED },
-    );
-    resp.on_hover_text(tip).clicked()
+        MUTED
+    }
+}
+
+/// One shared grey `.seg` track with visible text labels. Labels are not repeated as tooltips.
+pub(crate) fn segmented_text(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    segment_w: f32,
+    labels: &[&str],
+    help: Option<&[&str]>,
+    selected: usize,
+) -> Option<usize> {
+    let segment = egui::vec2(segment_w, varos_app::shell::tokens::SEG_BTN_H);
+    let size = kit::board::segmented_size(labels.len(), segment);
+    let (track, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let frame = kit::board::segmented_frame(ui, id, track, labels, selected, segment, help);
+    for (i, label) in labels.iter().enumerate() {
+        ui.painter().text(
+            frame.rects[i].center(),
+            Align2::CENTER_CENTER,
+            *label,
+            FontId::proportional(SEG_TEXT),
+            seg_ink(i == selected, frame.hot[i]),
+        );
+    }
+    frame.chosen
 }
 // ───────────────────────────── artboard inspector ─────────────────────────────
 
@@ -212,12 +247,28 @@ pub(crate) fn toggle_row(ui: &mut egui::Ui, w: f32, label: &str, on: bool) -> bo
         Align2::LEFT_CENTER,
         label,
         FontId::proportional(12.5),
-        if on { TEXT } else { MUTED },
+        TEXT,
     );
     let pill =
         egui::Rect::from_min_size(egui::pos2(rect.right() - 36.0, rect.center().y - 9.0), egui::vec2(32.0, 18.0));
-    ui.painter().rect_filled(pill, CornerRadius::same(RCAP), if on { ACCENT } else { BG_SURFACE }); // capsule = one token (tabs + toggles)
+    ui.painter().rect_filled(pill, CornerRadius::same(RCAP), toggle_track(on)); // capsule = one token (tabs + toggles)
     let knob = egui::pos2(if on { pill.right() - 9.0 } else { pill.left() + 9.0 }, pill.center().y);
-    ui.painter().circle_filled(knob, 6.5, Color32::WHITE);
+    ui.painter().circle_filled(knob, 6.5, toggle_knob(on));
     resp.clicked()
+}
+
+pub(crate) fn toggle_track(on: bool) -> Color32 {
+    if on {
+        ACCENT
+    } else {
+        LINE2
+    }
+}
+
+pub(crate) fn toggle_knob(on: bool) -> Color32 {
+    if on {
+        TEXT
+    } else {
+        MUTED
+    }
 }

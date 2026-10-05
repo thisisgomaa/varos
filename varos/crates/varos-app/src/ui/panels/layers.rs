@@ -715,7 +715,7 @@ pub(crate) fn panel_layers(
                                 te_id,
                                 name_rect.shrink2(egui::vec2(2.0, 4.0)),
                                 &row.name,
-                                12.5,
+                                12.0,
                                 false,
                                 ops,
                                 mk,
@@ -724,18 +724,18 @@ pub(crate) fn panel_layers(
                             }
                         } else {
                             let auto = row.name.starts_with('<');
-                            let (size, base) = match row.kind {
-                                LKind::Board => (12.5, TEXT),
-                                LKind::Layer => (12.5, TEXT),
-                                _ if auto => (12.0, MUTED),
-                                _ => (12.0, Color32::from_gray(208)),
+                            let font = if matches!(row.kind, LKind::Board | LKind::Layer) {
+                                varos_app::shell::tokens::small_medium()
+                            } else {
+                                varos_app::shell::tokens::small()
                             };
-                            let s = elide(&row.name, name_rect.width(), size);
+                            let base = if row.selected || !auto { TEXT } else { MUTED };
+                            let s = elide(&row.name, name_rect.width(), font.size);
                             p.text(
                                 egui::pos2(name_rect.left(), rect.center().y),
                                 Align2::LEFT_CENTER,
                                 s,
-                                FontId::proportional(size),
+                                font,
                                 with_a(base, dim),
                             );
                         }

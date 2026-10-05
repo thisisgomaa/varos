@@ -440,6 +440,8 @@ pub struct NumberField<'a> {
     pub speed: f32,
     /// Out-of-range numbers clamp; they are not invalid (K3 rule 2).
     pub range: RangeInclusive<f32>,
+    /// Explicit kit disabled state: no egui opacity fade, focus, click or scrub; `tip` remains visible.
+    pub disabled: bool,
 }
 
 /// THE number field: a label column, then a box holding the value centred. The whole box is one target:
@@ -448,34 +450,37 @@ pub struct NumberField<'a> {
 pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
     let ctx = ui.ctx().clone();
     let id = f.id;
-    register(ui, id);
+    if !f.disabled {
+        register(ui, id);
+    }
     let (lo, hi) = (*f.range.start(), *f.range.end());
     let (row, _) = ui.allocate_exact_size(egui::vec2(f.width, t::FIELD_H), Sense::hover());
     let p = ui.painter().clone();
     let labw = t::FIELD_LABEL_W;
+    let ink = if f.disabled { t::DISABLED } else { t::MUTED };
     match f.label {
         Label::Letter(s) => {
-            let at = egui::pos2(row.left() + labw - 5.0, row.center().y);
-            p.text(at, Align2::RIGHT_CENTER, s, FontId::proportional(t::FIELD_LABEL_TEXT), t::MUTED);
+            let at = egui::pos2(row.left() + labw - t::NUM_LABEL_RIGHT_INSET, row.center().y);
+            p.text(at, Align2::RIGHT_CENTER, s, FontId::proportional(t::FIELD_LABEL_TEXT), ink);
         }
         Label::Icon(Some(tex)) => {
-            let at = egui::pos2(row.left() + labw - 11.0, row.center().y);
+            let at = egui::pos2(row.left() + t::NUM_ICON_CENTER_X, row.center().y);
             let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-            p.image(tex.id(), Rect::from_center_size(at, egui::Vec2::splat(t::ICON_SM)), uv, t::MUTED);
+            p.image(tex.id(), Rect::from_center_size(at, egui::Vec2::splat(t::ICON_SM)), uv, ink);
         }
         Label::Icon(None) => {}
     }
-    let bx = Rect::from_min_max(egui::pos2(row.left() + labw + 2.0, row.top()), row.max);
+    let bx = Rect::from_min_max(egui::pos2(row.left() + labw + t::FIELD_LABEL_BOX_GAP, row.top()), row.max);
     let mut out = Edit::new(id, bx);
     let decimals = f.decimals;
     let fmt = move |v: f32| format!("{v:.decimals$}");
     let shown = fmt(f.value);
     let mut sess = load(&ctx, id);
-    if sess.is_some() && escaped(ui) {
+    if sess.is_some() && (f.disabled || escaped(ui)) {
         end(&ctx, id);
         sess = None;
         out.closed = true;
-    } else if sess.is_none() && ui.is_enabled() && take_tab_to(&ctx, id) {
+    } else if sess.is_none() && !f.disabled && take_tab_to(&ctx, id) {
         sess = begin(&ctx, id, &shown);
     }
     let Some(mut s) = sess else {
@@ -486,11 +491,11 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
     p.rect(bx, t::r_ctrl(), t::INPUT_WELL, Stroke::new(t::KIT_STROKE, t::ACCENT), StrokeKind::Middle); // the dark input well
     let mut buf = s.buf.clone();
     ui.put(
-        bx.shrink2(egui::vec2(t::FIELD_INSET_X, t::FIELD_INSET_Y)),
+        bx.shrink2(egui::vec2(t::NUM_INSET_X, t::FIELD_INSET_Y)),
         egui::TextEdit::singleline(&mut buf)
             .id(id)
             .frame(egui::Frame::NONE)
-            .font(t::numeric_value(t::FIELD_TEXT))
+            .font(t::numeric_value(t::NUM_TEXT))
             .text_color(t::TEXT),
     );
     if ctx.memory(|m| m.has_focus(id)) {
@@ -541,7 +546,16 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
 fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut Edit<f32>) {
     let (lo, hi) = (*f.range.start(), *f.range.end());
     let p = ui.painter().clone();
-    let resp: Response = ui.interact(bx, f.id.with("box"), Sense::click_and_drag());
+    let sense = if f.disabled { Sense::hover() } else { Sense::click_and_drag() };
+    let resp: Response = ui.interact(bx, f.id.with("box"), sense);
+    if f.disabled {
+        p.rect(bx, t::r_ctrl(), egui::Color32::TRANSPARENT, Stroke::new(t::KIT_STROKE, t::LINE), StrokeKind::Middle);
+        p.text(bx.center(), Align2::CENTER_CENTER, shown, t::numeric_value(t::NUM_TEXT), t::DISABLED);
+        if !f.tip.is_empty() {
+            resp.on_hover_text(f.tip).on_disabled_hover_text(f.tip);
+        }
+        return;
+    }
     let hot = resp.hovered() || resp.dragged();
     if hot {
         p.rect(bx, t::r_ctrl(), t::HOVER, Stroke::new(t::KIT_STROKE, t::LINE2), StrokeKind::Middle);
@@ -549,7 +563,7 @@ fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut E
     } else {
         p.rect_filled(bx, t::r_ctrl(), t::SURFACE);
     }
-    p.text(bx.center(), Align2::CENTER_CENTER, shown, t::numeric_value(t::FIELD_TEXT), t::TEXT);
+    p.text(bx.center(), Align2::CENTER_CENTER, shown, t::numeric_value(t::NUM_TEXT), t::TEXT);
     if resp.dragged() {
         let dx = resp.drag_delta().x;
         if dx != 0.0 {
@@ -680,4 +694,61 @@ pub fn blocked(ctx: &egui::Context) -> bool {
 /// an edit session.
 pub fn home(ui: &Ui) -> Id {
     ui.data(|d| d.get_temp::<Id>(group_key())).unwrap_or(Id::NULL)
+}
+
+#[cfg(test)]
+mod disabled_tests {
+    use super::*;
+
+    fn field(id: &'static str, disabled: bool) -> NumberField<'static> {
+        NumberField {
+            id: Id::new(id),
+            width: 80.0,
+            label: Label::Letter(id),
+            tip: id,
+            value: 12.0,
+            decimals: 0,
+            speed: 1.0,
+            range: 0.0..=100.0,
+            disabled,
+        }
+    }
+
+    fn draw(ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<Edit<f32>> {
+        let mut edits = vec![];
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320.0, 240.0))),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            group(ui, "disabled-tab", |ui| {
+                edits.push(number_field(ui, field("A", false)));
+                edits.push(number_field(ui, field("Disabled", true)));
+                edits.push(number_field(ui, field("B", false)));
+            });
+        });
+        edits
+    }
+
+    #[test]
+    fn tab_ring_skips_a_disabled_number_field() {
+        let ctx = egui::Context::default();
+        crate::shell::fonts::install(&ctx);
+        crate::shell::tokens::apply(&ctx);
+        let _ = draw(&ctx, vec![]);
+        assert!(begin(&ctx, Id::new("A"), "12").is_some());
+        let _ = draw(&ctx, vec![]);
+        let edits = draw(
+            &ctx,
+            vec![egui::Event::Key {
+                key: Key::Tab,
+                physical_key: Some(Key::Tab),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert!(!edits[1].editing && edits[2].editing, "Tab must bypass Disabled and open B");
+    }
 }

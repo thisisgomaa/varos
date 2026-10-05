@@ -21,6 +21,16 @@ pub(crate) fn probe(name: &str, rect: egui::Rect) {
     PROBE.with(|p| p.borrow_mut().push((name.to_string(), rect)));
 }
 
+pub(crate) fn probed_rect(name: &str, index: usize) -> egui::Rect {
+    PROBE
+        .with(|p| p.borrow().iter().filter(|(field, _)| field == name).nth(index).map(|(_, rect)| *rect))
+        .unwrap_or_else(|| panic!("field {name:?} #{index} was not laid out"))
+}
+
+pub(crate) fn clear_probes() {
+    PROBE.with(|p| p.borrow_mut().clear());
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum View {
     Artboard,

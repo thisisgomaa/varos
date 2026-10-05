@@ -206,6 +206,58 @@ pub fn filter_tab(
 
 /// The segmented view toggle (src.html `.seg`): a LINE outline holding icon segments; the selected
 /// segment has a HOVER fill and TEXT glyph, the others MUTED. Returns the activated segment.
+pub struct SegmentedFrame {
+    pub chosen: Option<usize>,
+    pub rects: Vec<Rect>,
+    pub hot: Vec<bool>,
+}
+
+/// The outside size of one `.seg` track. The stroke and one-point pad surround the segments; the
+/// same one-point token separates adjacent segments.
+pub fn segmented_size(count: usize, segment: egui::Vec2) -> egui::Vec2 {
+    let gaps = count.saturating_sub(1) as f32 * t::SB_SEG_PAD;
+    egui::vec2(
+        count as f32 * segment.x + gaps + (t::KIT_STROKE + t::SB_SEG_PAD) * 2.0,
+        segment.y + (t::KIT_STROKE + t::SB_SEG_PAD) * 2.0,
+    )
+}
+
+/// Paint and interact with the one shared `.seg` track. Hosts paint their icon/text content into the
+/// returned segment rects. `help` is reserved for icon-only segments or useful explanations; visible
+/// text labels must not be repeated as tooltips.
+pub fn segmented_frame(
+    ui: &mut Ui,
+    id: Id,
+    rect: Rect,
+    names: &[&str],
+    selected: usize,
+    segment: egui::Vec2,
+    help: Option<&[&str]>,
+) -> SegmentedFrame {
+    ui.painter().rect_stroke(rect, CornerRadius::same(t::R), Stroke::new(t::KIT_STROKE, t::LINE), StrokeKind::Inside);
+    let mut chosen = None;
+    let mut rects = Vec::with_capacity(names.len());
+    let mut hot = Vec::with_capacity(names.len());
+    let inner = rect.shrink(t::KIT_STROKE + t::SB_SEG_PAD);
+    for (i, name) in names.iter().enumerate() {
+        let x = inner.left() + i as f32 * (segment.x + t::SB_SEG_PAD);
+        let seg = Rect::from_min_size(egui::pos2(x, inner.top()), segment);
+        let lift = ((t::KIT_MIN_TARGET - seg.height()) / 2.0).max(0.0);
+        let r = interact(ui, id.with(i), seg.expand2(egui::vec2(0.0, lift)), name, true);
+        let is_hot = hovered(&r);
+        if i == selected || is_hot {
+            ui.painter().rect_filled(seg, CornerRadius::same(t::SB_SEG_R), t::HOVER);
+        }
+        let response = help.map_or(r.response.clone(), |tips| r.response.on_hover_text(tips[i]));
+        if response.clicked_by(PointerButton::Primary) {
+            chosen = Some(i);
+        }
+        rects.push(seg);
+        hot.push(is_hot);
+    }
+    SegmentedFrame { chosen, rects, hot }
+}
+
 pub fn segmented(
     ui: &mut Ui,
     id: Id,
@@ -214,33 +266,20 @@ pub fn segmented(
     selected: usize,
     focused: Option<usize>,
 ) -> (Option<usize>, Vec<Rect>) {
-    ui.painter().rect_stroke(rect, t::r_ctrl(), Stroke::new(t::KIT_STROKE, t::LINE), StrokeKind::Inside);
-    let mut chosen = None;
-    let mut rects = vec![];
-    let inner = rect.shrink(t::KIT_STROKE + t::SB_SEG_PAD);
-    for (i, (icon, name)) in segments.iter().enumerate() {
-        let x = inner.left() + i as f32 * (t::SB_SEG_BTN_W + t::SB_SEG_PAD);
-        let seg = Rect::from_min_size(egui::pos2(x, inner.top()), egui::vec2(t::SB_SEG_BTN_W, t::SB_SEG_BTN_H));
-        // the painted segment is the mockup's 22 tall; its hit target reaches the kit minimum
-        let lift = ((t::KIT_MIN_TARGET - seg.height()) / 2.0).max(0.0);
-        let r = interact(ui, id.with(i), seg.expand2(egui::vec2(0.0, lift)), name, true);
+    let names = segments.iter().map(|(_, name)| *name).collect::<Vec<_>>();
+    let frame =
+        segmented_frame(ui, id, rect, &names, selected, egui::vec2(t::SB_SEG_BTN_W, t::SB_SEG_BTN_H), Some(&names));
+    for (i, (icon, _)) in segments.iter().enumerate() {
+        let seg = frame.rects[i];
         let on = i == selected;
-        let hover = hovered(&r);
+        let hover = frame.hot[i];
         let p = ui.painter();
-        if on || hover {
-            p.rect_filled(seg, CornerRadius::same(t::SB_SEG_R), t::HOVER);
-        }
         icon.paint(p, seg.center(), t::SB_ICON_SMALL, if on || hover { t::TEXT } else { t::MUTED });
         if focused == Some(i) {
             focus_ring(&ui.painter().with_clip_rect(ui.clip_rect()), seg, t::SB_SEG_R, t::BG);
         }
-        let r = r.response.on_hover_text(*name);
-        if r.clicked_by(PointerButton::Primary) {
-            chosen = Some(i);
-        }
-        rects.push(seg);
     }
-    (chosen, rects)
+    (frame.chosen, frame.rects)
 }
 
 /// The preview a preset cell draws: an outline at the shared scale, or Custom's dashed box with a plus.
