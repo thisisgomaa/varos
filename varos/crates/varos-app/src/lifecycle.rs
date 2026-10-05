@@ -1087,6 +1087,54 @@ mod tests {
         assert!(r.s.recent.entries().iter().all(|e| e.path != p("/d/bad.vrs")));
     }
 
+    /// Start v2 end to end: a board named, described and tagged in the editor and saved shows on
+    /// Home's card with exactly that — read from Recent's cache, never by parsing the file.
+    #[test]
+    fn a_saved_named_tagged_board_shows_its_card_on_home() {
+        use varos_app::start::StartModel;
+        use varos_app::start_page::{ids, StartPage};
+        let mut r = Rig::new();
+        r.run(AppCommand::NewBoard);
+        let id = r.active();
+        assert!(r.get(id).editor.doc.artboards.is_empty(), "New board: a free canvas");
+        r.ed(id).try_set_board_name("Ramadan campaign").unwrap();
+        r.ed(id).try_set_board_description("Key visual for Noor Foods.").unwrap();
+        r.ed(id).try_set_board_tags(vec!["client".into(), "social".into()]).unwrap();
+        r.script([Ans::Pick(Some(p("/d/ramadan.vrs")))]);
+        r.run(AppCommand::Save(id));
+        r.prompts();
+        // Home: the host builds the model from Recent only (a fresh store would hold no file at all)
+        r.s.fail_load.insert(p("/d/ramadan.vrs"));
+        let model = StartModel::without_recovery(&r.s.recent, 0, |_| false);
+        let card = &model.cards()[0];
+        assert_eq!(card.name, "Ramadan campaign");
+        assert_eq!(card.description.as_deref(), Some("Key visual for Noor Foods."));
+        assert_eq!(card.tags, ["client", "social"]);
+        assert_eq!(card.artboards, 0);
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        let mut page = StartPage::new();
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1512.0, 982.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input(), |ui| {
+            page.draw(ui, &model, None);
+        });
+        let out = ctx.run_ui(input(), |ui| {
+            page.draw(ui, &model, None);
+        });
+        let texts: Vec<String> = out
+            .shapes
+            .iter()
+            .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text().to_string()) } else { None })
+            .collect();
+        for want in ["Ramadan campaign", "Key visual for Noor Foods.", "client", "social", "free"] {
+            assert!(texts.iter().any(|t| t == want), "the card shows {want:?}: {texts:?}");
+        }
+        assert!(ctx.read_response(ids::card(&card.key)).is_some(), "drawn as a board card");
+    }
+
     #[test]
     fn a_background_save_caches_the_snapshot_it_wrote_not_later_edits() {
         let mut r = Rig::new();

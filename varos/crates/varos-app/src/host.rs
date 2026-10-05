@@ -86,7 +86,7 @@ pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<
 pub fn start_command(action: varos_app::start::StartAction) -> Option<AppCommand> {
     use varos_app::start::StartAction as A;
     Some(match action {
-        A::New | A::NewBoard => AppCommand::NewBoard,
+        A::NewBoard => AppCommand::NewBoard,
         A::NewWithPreset(preset) => AppCommand::NewWithPreset(preset),
         // filter actions are applied to the Start model by the page itself
         A::SetTagFilter(_) | A::SetView(_) | A::Search(_) => return None,
@@ -773,7 +773,6 @@ mod tests {
         use varos_app::start::{StartAction as A, StartView};
         use varos_core::board::PresetId;
         assert_eq!(start_command(A::NewBoard), Some(AppCommand::NewBoard));
-        assert_eq!(start_command(A::New), Some(AppCommand::NewBoard), "v1's New is the same command");
         assert_eq!(start_command(A::NewWithPreset(PresetId::Story)), Some(AppCommand::NewWithPreset(PresetId::Story)));
         for filter in [A::SetTagFilter(Some("client".into())), A::SetView(StartView::List), A::Search("x".into())] {
             assert_eq!(start_command(filter), None);

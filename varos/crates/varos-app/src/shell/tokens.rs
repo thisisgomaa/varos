@@ -124,6 +124,25 @@ pub fn tag() -> egui::FontId {
 pub fn mono() -> egui::FontId {
     weighted(11.0, super::fonts::MONO_400)
 }
+// ── Start v2 extra roles (lane L4): the mockup's other size/weight pairs, built on the same families.
+// | `button_strong` 15/600 (primary hero title) · `lede` 15/400 (first-launch lede) · `body_medium` 13/500
+// | (preset name, Recovered name, menu) · `small_medium` 12/500 (panel heading, text buttons) · `micro`
+// | 11/400 (status line, table header).
+pub fn button_strong() -> egui::FontId {
+    weighted(15.0, super::fonts::UI_600)
+}
+pub fn lede() -> egui::FontId {
+    weighted(15.0, super::fonts::UI_400)
+}
+pub fn body_medium() -> egui::FontId {
+    weighted(13.0, super::fonts::UI_500)
+}
+pub fn small_medium() -> egui::FontId {
+    weighted(12.0, super::fonts::UI_500)
+}
+pub fn micro() -> egui::FontId {
+    weighted(11.0, super::fonts::UI_400)
+}
 
 /// Tabular numeric values/readouts at the caller's size; labels remain proportional Inter.
 pub fn numeric_value(size: f32) -> egui::FontId {
@@ -287,7 +306,20 @@ pub const SB_TAGS_GAP: f32 = 10.0;
 pub const SB_PILL_H: f32 = 20.0;
 pub const SB_PILL_PAD: f32 = 8.0;
 pub const SB_PILL_GAP: f32 = 4.0;
-pub const SB_FACTS_GAP: f32 = 12.0;
+/// The Board section's removable tag chip: the gap before its ×, the × glyph, the padding after it.
+pub const SB_CHIP_GAP: f32 = 4.0;
+pub const SB_CHIP_X: f32 = 10.0;
+pub const SB_CHIP_PAD_R: f32 = 6.0;
+/// The Board section (Properties, nothing selected): a label line, the description box's rows, the
+/// tag field's line height and inner padding, the gap after each field.
+pub const BOARD_LABEL_H: f32 = 18.0;
+pub const BOARD_DESC_ROWS: usize = 3;
+pub const BOARD_TAG_LINE: f32 = 24.0;
+pub const BOARD_TAG_PAD: f32 = 4.0;
+pub const BOARD_TAG_INPUT_MIN: f32 = 72.0;
+pub const BOARD_GAP: f32 = 8.0;
+/// The least gap before "2 artboards" (it sits in the tags row: `.tags { gap: 4px }`, `margin-left: auto`).
+pub const SB_FACTS_GAP: f32 = SB_PILL_GAP;
 pub const SB_THUMB_W: f32 = 244.0;
 pub const SB_THUMB_H: f32 = 99.0;
 /// A thumbnail whose aspect is within this of the well's is a whole-well image (lane L3's 544×246).

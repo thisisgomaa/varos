@@ -139,6 +139,10 @@ enum Op {
     RulerOrigin(Option<varos_core::geom::Pt>), // Some = set zero-point (snapped) + show crosshair; None = end drag
     GuidePreview(bool, varos_core::geom::Pt),  // ruler drag-out: (vertical, world) → live snapped guide preview
     GuideCommit,                               // drop the previewed guide into the document
+    // ---- the Board section (Start v2 L5: name / description / tags; one undo step each, dirty) ----
+    BoardName(String),
+    BoardDescription(String),
+    BoardTags(Vec<String>),
     // ---- document settings (Pain A15: Properties dock when nothing is selected) ----
     CycleUnits,     // step the document display unit (undoable — mutates the serialized doc.units)
     ToggleSnapping, // doc.snap.enabled master switch (a non-undoable mode flag, like the magnet menu)
@@ -737,6 +741,10 @@ struct Snap {
     recent: Vec<Rgba>,
     doc_colors: Vec<Rgba>, // the picker's swatch strips (MRU + derived document scan)
     has_paint: bool, // a representative path exists (object OR Direct/anchor selection) → show paint, not Document
+    // ── the Board section (Start v2 L5) ──
+    board_name: String,
+    board_description: String,
+    board_tags: Vec<String>,
     // ── Document settings (shown when there is truly nothing to inspect — Pain A15) ──
     units_label: &'static str,
     artboards: usize,
@@ -808,6 +816,9 @@ impl Snap {
             recent: ed.recent_colors.clone(),
             doc_colors: ed.document_colors(),
             has_paint: repr.is_some(),
+            board_name: ed.doc.name.clone(),
+            board_description: ed.doc.description.clone(),
+            board_tags: ed.doc.tags.clone(),
             units_label: ed.doc.units.display.label(),
             artboards: ed.doc.artboards.len(),
             snap_enabled: ed.doc.snap.enabled,
@@ -927,7 +938,9 @@ pub struct Ui {
     doc_tabs: Vec<TabView>,
     doc_active: Option<SessionId>,
     home: bool,
-    start_page: varos_app::start_ui::StartPage,
+    start_page: varos_app::start_page::StartPage,
+    /// The pure Start model the page draws (L2); rebuilt by the host, filter applied here.
+    start_model: varos_app::start::StartModel,
     recent_warning: Option<String>,
     app_cmds: Vec<AppCommand>,
     color_modal: Option<ColorModal>, // the Color Picker modal, when open
@@ -1154,11 +1167,8 @@ impl Ui {
             doc_tabs: vec![],
             doc_active: None,
             home: false,
-            start_page: varos_app::start_ui::StartPage::new(varos_app::start::StartModel::without_recovery(
-                &Default::default(),
-                0,
-                |_| false,
-            )),
+            start_page: varos_app::start_page::StartPage::new(),
+            start_model: varos_app::start::StartModel::without_recovery(&Default::default(), 0, |_| false),
             recent_warning: None,
             app_cmds: vec![],
             color_modal: None,
@@ -1251,6 +1261,14 @@ impl Ui {
             varos_app::shell::kit::close_menu(&self.ctx);
             if home {
                 self.start_page.reset_focus();
+                // entering Home drops a document field's keyboard once; Home itself keeps egui focus
+                // (its Search field) — canvas keys never reach a document behind it anyway
+                // (`Workspace::document_target`)
+                self.ctx.memory_mut(|m| {
+                    if let Some(id) = m.focused() {
+                        m.surrender_focus(id);
+                    }
+                });
             }
         }
         self.home = home;
@@ -1259,7 +1277,9 @@ impl Ui {
     /// A rebuilt Start model (the host rebuilds only on Home and only when its inputs changed);
     /// keyboard focus survives by key.
     pub fn set_start_model(&mut self, model: varos_app::start::StartModel) {
-        self.start_page.replace(model);
+        let mut model = model;
+        model.carry_focus_from(&self.start_model); // keeps the user's tag / search / view
+        self.start_model = model;
     }
     pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
         self.doc_tabs = tabs;
@@ -1332,13 +1352,6 @@ impl Ui {
         let raw = self.state.egui_input_mut();
         raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
         let input = self.state.take_egui_input(window);
-        if !egui::Popup::is_any_open(&self.ctx) {
-            self.ctx.memory_mut(|m| {
-                if let Some(id) = m.focused() {
-                    m.surrender_focus(id);
-                }
-            });
-        }
         self.export_sheet = None; // Home has no document to export
         let out = self.ctx.run_ui(input, |root| {
             build_topbar(
@@ -1357,17 +1370,17 @@ impl Ui {
                 cfg!(target_os = "macos"),
                 &mut None,
             );
-            // Start v2: filter actions (tag / search / view) change the Start model, never the host
-            let actions = self.start_page.draw(root, self.recent_warning.as_deref());
-            for action in actions {
-                if !self.start_page.model.apply(&action) {
-                    self.app_cmds.extend(crate::host::start_command(action));
-                }
-            }
+            home_body(
+                root,
+                &mut self.start_page,
+                &mut self.start_model,
+                self.recent_warning.as_deref(),
+                &mut self.app_cmds,
+            );
         });
 
-        // K3: no field is drawn on Home — an edit left open (an invalid one a non-user command passed)
-        // is closed here, never kept indefinitely; there is no document to commit into
+        // K3: Home draws only its live Search field (it commits nothing); any other edit left open (an
+        // invalid one a non-user command passed) is closed here — there is no document to commit into
         let _ = kit::field::end_frame(&self.ctx);
         self.field_pending = None;
         self.board_hole = None;
@@ -3027,6 +3040,33 @@ fn search_pill_width(p: &egui::Painter) -> f32 {
     9.0 + 13.0 + 6.0 + sw + 9.0
 }
 
+/// Home's body under the top bar: THE Start page plus the bar's live "Search boards" field. Filter
+/// actions (tag / search / view) change the Start model; every other action becomes its `AppCommand`
+/// through the one adapter (`host::start_command`).
+fn home_body(
+    root: &mut egui::Ui,
+    page: &mut varos_app::start_page::StartPage,
+    model: &mut varos_app::start::StartModel,
+    warning: Option<&str>,
+    cmds: &mut Vec<AppCommand>,
+) {
+    let mut actions = page.draw(root, model, warning);
+    if let Some(rect) = root.ctx().data(|d| d.get_temp::<egui::Rect>(home_search_rect_id())) {
+        actions.extend(page.search_box(root, rect, model));
+    }
+    for action in actions {
+        if !model.apply(&action) {
+            cmds.extend(crate::host::start_command(action));
+        }
+    }
+}
+
+/// Where the top bar left Home's "Search boards" field this frame (egui temp data, written by
+/// `build_topbar` on Home, read by `run_home`).
+fn home_search_rect_id() -> egui::Id {
+    egui::Id::new("varos-home-search-rect")
+}
+
 /// Paint the search pill inside its shared top-bar layout rectangle. QW7: just "Search", muted — the
 /// pill has no function yet, so it must not claim a ⌘K it doesn't run.
 fn search_pill(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, icon: &Option<egui::TextureHandle>) {
@@ -3322,11 +3362,16 @@ fn build_topbar(
         let tab_widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
         let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
         let button_widths = [text_width("Window"), text_width("Share"), text_width("Export")];
-        let search_width = search_pill_width(&p);
+        // Home: the search slot is Start's live "Search boards" field (200 wide, the mockup), placed by
+        // `run_home` at the rect left in `HOME_SEARCH_RECT`; in a document it is today's pill
+        let search_width = if home { varos_app::shell::tokens::SB_SEARCH_W } else { search_pill_width(&p) };
         let layout_for = |widths: &[f32], active: Option<usize>| {
             crate::chrome::topbar_layout(bar, crate::chrome::TOPBAR, button_widths, search_width, widths, active)
         };
         let layout = layout_for(&tab_widths, active_index);
+        if home {
+            ui.ctx().data_mut(|d| d.insert_temp(home_search_rect_id(), layout.search));
+        }
 
         // window controls (min · max · close), absent on macOS
         if let Some([min_r, max_r, close_r]) = layout.caps {
@@ -4909,6 +4954,8 @@ fn document_section(
     ops: &mut Vec<Op>,
     recovery: (&crate::recovery_host::RecoveryUi, &mut Vec<AppCommand>),
 ) {
+    board_section(ui, s, w, ops);
+    hsep(ui, w);
     ui.label(RichText::new("DOCUMENT").color(MUTED).size(10.0).strong());
     ui.add_space(2.0);
     if action_row(ui, w, "Units", s.units_label) {
@@ -4950,6 +4997,35 @@ fn document_section(
                 commands.push(AppCommand::Save(id));
             }
         });
+    }
+}
+
+/// The Board section (Start v2 L5) — the ONE home for the board's own metadata, at the top of the
+/// Document settings (nothing selected): Name, Description (3 wrapping rows), Tags (removable chips +
+/// an inline input; comma or Enter adds, Backspace on an empty input removes the last). Every field is
+/// a kit field under the K3 law (commit on blur / Enter / Tab, Esc reverts, the reason inline when the
+/// core refuses the text); each commit is one undo step and makes the document dirty. Labels MUTED 12,
+/// values 13 — the Start card's tag pills on the Properties rows.
+fn board_section(ui: &mut egui::Ui, s: &Snap, w: f32, ops: &mut Vec<Op>) {
+    ui.label(RichText::new("BOARD").color(MUTED).size(10.0).strong());
+    ui.add_space(2.0);
+    for (label, field) in [("Name", 0), ("Description", 1), ("Tags", 2)] {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(w, varos_app::shell::tokens::BOARD_LABEL_H), egui::Sense::hover());
+        ui.painter().text(
+            egui::pos2(rect.left(), rect.center().y),
+            Align2::LEFT_CENTER,
+            label,
+            // the proportional family is Inter 400 (lane L1): the `small` role, without needing a named face
+            FontId::proportional(varos_app::shell::tokens::small().size),
+            MUTED,
+        );
+        match field {
+            0 => fields::board_name(ui, w, &s.board_name, ops),
+            1 => fields::board_description(ui, w, &s.board_description, ops),
+            _ => fields::board_tags(ui, w, &s.board_tags, ops),
+        }
+        ui.add_space(varos_app::shell::tokens::BOARD_GAP);
     }
 }
 
@@ -5827,6 +5903,17 @@ fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::RulerOrigin(None) => ed.clear_ruler_origin_preview(),
             Op::GuidePreview(vertical, p) => ed.set_guide_preview(vertical, p),
             Op::GuideCommit => ed.execute(EditCommand::CommitGuide),
+            // the field parsed with the same core checks, so a refusal here cannot happen; if it did, the
+            // checked setter changes nothing (no undo step, not dirty)
+            Op::BoardName(name) => {
+                let _ = ed.try_set_board_name(&name);
+            }
+            Op::BoardDescription(text) => {
+                let _ = ed.try_set_board_description(&text);
+            }
+            Op::BoardTags(tags) => {
+                let _ = ed.try_set_board_tags(tags);
+            }
             Op::CycleUnits => ed.execute(EditCommand::CycleUnits),
             // Applied after SetSnapConfig so the panel toggle is not clobbered by the frame snapshot.
             Op::ToggleSnapping => ed.execute(EditCommand::ToggleSnapping),
@@ -8251,7 +8338,8 @@ mod icon_action_tests {
         let files = [
             ("ui.rs", include_str!("ui.rs")),
             ("chrome.rs", include_str!("chrome.rs")),
-            ("start_ui.rs", include_str!("start_ui.rs")),
+            ("start_page.rs", include_str!("start_page.rs")),
+            ("kit/board.rs", include_str!("shell/kit/board.rs")),
             ("boxtree.rs", include_str!("shell/boxtree.rs")),
             ("kit/mod.rs", include_str!("shell/kit/mod.rs")),
             ("kit/icons.rs", include_str!("shell/kit/icons.rs")),
@@ -8287,5 +8375,125 @@ mod icon_action_tests {
         let raw: Vec<&str> = draws.iter().filter(|d| d.2).map(|d| d.0.as_str()).collect();
         assert_eq!(draws.len(), 4);
         assert_eq!(raw, ["b", "a"], "image(vec2 literal) and paint(bare literal) are raw; tokens are not");
+    }
+}
+
+/// Start v2 mounted: Home's body is THE Start page plus the bar's live "Search boards" field; its
+/// actions reach the host as `AppCommand`s through the one adapter, filter actions stay on the model.
+#[cfg(test)]
+mod home_page_tests {
+    use super::*;
+    use crate::app_command::AppCommand;
+    use egui::{Event, PointerButton, Pos2, RawInput};
+    use varos_app::start::{StartAction, StartModel};
+    use varos_app::start_page::{demo, ids, StartPage};
+    use varos_core::board::PresetId;
+
+    const SIZE: egui::Vec2 = egui::vec2(1512.0, 982.0);
+    struct Home {
+        ctx: egui::Context,
+        shell: varos_app::shell::ShellState,
+        page: StartPage,
+        model: StartModel,
+    }
+    impl Home {
+        fn new() -> Self {
+            let ctx = egui::Context::default();
+            varos_app::shell::fonts::install(&ctx);
+            varos_app::shell::tokens::apply(&ctx);
+            let home = std::path::PathBuf::from("/Users/designer");
+            let mut h = Self {
+                ctx,
+                shell: varos_app::shell::ShellState::standard(),
+                page: StartPage::new(),
+                model: demo::model(&home, Some(3)),
+            };
+            h.frame(vec![]);
+            h
+        }
+        fn frame(&mut self, events: Vec<Event>) -> Vec<AppCommand> {
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, SIZE)),
+                events,
+                ..Default::default()
+            };
+            let mut cmds = vec![];
+            let icons = TopIcons { menu: None, search: None, plus: None, x: None, magnet: None };
+            let (mut win, mut rail, mut dock) = (None, true, true);
+            let _ = self.ctx.run_ui(input, |root| {
+                let mut snap = Default::default();
+                build_topbar(
+                    root,
+                    &icons,
+                    &mut self.shell,
+                    &mut win,
+                    &[],
+                    None,
+                    &mut cmds,
+                    &mut rail,
+                    &mut dock,
+                    &mut snap,
+                    false,
+                    true,
+                    true,
+                    &mut None,
+                );
+                home_body(root, &mut self.page, &mut self.model, None, &mut cmds);
+            });
+            cmds
+        }
+        fn rect(&self, id: egui::Id) -> egui::Rect {
+            self.ctx.read_response(id).unwrap_or_else(|| panic!("{id:?} not drawn")).rect
+        }
+        fn click(&mut self, id: egui::Id) -> Vec<AppCommand> {
+            let pos = self.rect(id).center();
+            let e = |pressed| Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            let mut out = self.frame(vec![Event::PointerMoved(pos)]);
+            out.extend(self.frame(vec![e(true)]));
+            out.extend(self.frame(vec![e(false)]));
+            out
+        }
+    }
+
+    #[test]
+    fn home_draws_the_start_page_with_search_boards_in_the_bar() {
+        let mut h = Home::new();
+        h.frame(vec![]);
+        let bar = crate::chrome::TOPBAR.height;
+        let new_board = h.rect(ids::new_board());
+        assert_eq!(new_board.size(), egui::vec2(272.0, 64.0), "the mockup's hero button");
+        assert_eq!(new_board.top(), bar + 12.0 + 32.0, "the box sits a seam under the bar, padding 32");
+        let search = h.rect(ids::search());
+        assert!(search.bottom() <= bar && search.width() > 150.0, "Search boards lives in the bar: {search:?}");
+    }
+
+    #[test]
+    fn home_actions_become_app_commands_and_filters_stay_on_the_model() {
+        let mut h = Home::new();
+        assert_eq!(h.click(ids::new_board()), [AppCommand::NewBoard]);
+        assert_eq!(h.click(ids::preset(PresetId::Story)), [AppCommand::NewWithPreset(PresetId::Story)]);
+        assert_eq!(h.click(ids::open()), [AppCommand::OpenDialog]);
+        assert!(h.click(ids::filter(Some("print"))).is_empty(), "a filter is not a host command");
+        assert_eq!(h.model.filter().tag.as_deref(), Some("print"));
+        assert_eq!(h.model.visible_count(), 3);
+        // two frames with the filtered cards before aiming at one (egui reads widget rects a pass late)
+        h.frame(vec![]);
+        h.frame(vec![]);
+        let card = h.model.visible_cards().next().unwrap().clone();
+        assert_eq!(h.click(ids::card(&card.key)), [AppCommand::OpenRecent(card.path.clone())]);
+        // typing in the bar's Search boards filters the cards, and the field keeps the keyboard across
+        // frames (Home no longer surrenders egui focus every frame)
+        h.model.apply(&StartAction::SetTagFilter(None));
+        h.click(ids::search());
+        h.frame(vec![Event::Text("ramadan".into())]);
+        h.frame(vec![]);
+        assert!(h.ctx.memory(|m| m.has_focus(ids::search())), "the field keeps the keyboard");
+        assert_eq!(h.model.filter().search, "ramadan");
+        assert_eq!(h.model.visible_count(), 1);
     }
 }
