@@ -236,6 +236,8 @@ pub enum IconState<'a> {
     Toggle(bool),
     /// Not available now; the reason is added to the tooltip, the button never activates.
     Disabled(&'a str),
+    /// Not available now; the supplied reason is the complete tooltip.
+    DisabledReason(&'a str),
 }
 
 /// The hover text an icon button shows: its label (the old text, plus its shortcut), and for a disabled
@@ -243,6 +245,7 @@ pub enum IconState<'a> {
 pub fn icon_tooltip(tooltip: &str, state: IconState<'_>) -> String {
     match state {
         IconState::Disabled(reason) if !reason.is_empty() => format!("{tooltip} — {reason}"),
+        IconState::DisabledReason(reason) => reason.to_string(),
         _ => tooltip.to_string(),
     }
 }
@@ -254,7 +257,7 @@ pub fn icon_tooltip(tooltip: &str, state: IconState<'_>) -> String {
 pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconState<'_>) -> ControlResponse {
     debug_assert!(!tooltip.is_empty(), "an icon button carries its old text label as a tooltip");
     let keyboard = keyboard_visible(ui);
-    let disabled = matches!(state, IconState::Disabled(_));
+    let disabled = matches!(state, IconState::Disabled(_) | IconState::DisabledReason(_));
     let help = icon_tooltip(tooltip, state);
     let opacity = ui.painter().opacity();
     ui.add_enabled_ui(!disabled, |ui| {
@@ -266,7 +269,7 @@ pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconSt
         let (block, bar) = match state {
             IconState::Tool(on) => (on, false),
             IconState::Toggle(on) => (false, on),
-            IconState::Action | IconState::Disabled(_) => (false, false),
+            IconState::Action | IconState::Disabled(_) | IconState::DisabledReason(_) => (false, false),
         };
         let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
         if block && enabled {

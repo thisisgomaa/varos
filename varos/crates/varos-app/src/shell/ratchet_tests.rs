@@ -64,8 +64,8 @@ fn identifier_words(source: &str) -> impl Iterator<Item = &str> {
 #[test]
 fn ui_source_ratchets_only_tighten() {
     let source = production_ui_source();
-    assert!(numeric_calls(&source, &["FontId::new(", "FontId::proportional(", "FontId::monospace("]) <= 20);
-    assert!(numeric_calls(&source, &[".size("]) <= 33);
+    assert!(numeric_calls(&source, &["FontId::new(", "FontId::proportional(", "FontId::monospace("]) <= 16);
+    assert!(numeric_calls(&source, &[".size("]) <= 18);
     let raw_colours = [
         "Color32::from_rgb(",
         "Color32::from_rgba_unmultiplied(",
@@ -78,15 +78,15 @@ fn ui_source_ratchets_only_tighten() {
     .iter()
     .map(|needle| source.matches(needle).count())
     .sum::<usize>();
-    assert!(raw_colours <= 42);
-    assert!(numeric_calls(&source, &["CornerRadius::same("]) <= 22);
+    assert!(raw_colours <= 31);
+    assert!(numeric_calls(&source, &["CornerRadius::same("]) <= 20);
 }
 
 #[test]
 fn ui_rs_only_shrinks_and_icons_have_one_home() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let ui_rs = std::fs::read_to_string(src.join("ui.rs")).expect("read ui.rs");
-    assert!(ui_rs.lines().count() <= 958);
+    assert!(ui_rs.lines().count() <= 957);
     let source = rust_source_outside_icon_registry();
     let legacy_prefix = ["IC", "_"].concat();
     assert!(
