@@ -43,6 +43,8 @@ mod os_open;
 mod recent_files;
 mod recovery_host;
 mod single_instance;
+#[allow(dead_code)] // Wired by the Start-v2 moderator at the documented save-landed call site.
+mod thumbs;
 mod ui;
 mod workspace;
 use app_command::{AppCommand, OpenOrigin, SessionId, WindowCmd};

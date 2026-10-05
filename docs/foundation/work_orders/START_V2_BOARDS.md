@@ -22,3 +22,14 @@ Interface between L2 and L4 (fixed now so both can work): the Start view consume
 
 ## Acceptance
 Owner hand check: launch → the Start page matches `inter-empty.png`; with recents it matches `inter-recent.png`; New board opens a free canvas; a preset opens with that artboard; name/description/tags typed in the editor show on the card after save; list view; tag filter; Missing; Recovered. Tests per lane; gates on macOS; cross-review before merge.
+
+## Lane status
+- **L3 Thumbnails — implemented + review fixes 2026-10-04; moderator integration pending.** CPU rasteriser, newest-wins bounded worker, nonblocking shutdown, freshness sidecars, privacy deletion, fixture samples and headless coverage are complete. The save-landed hook is intentionally not placed in `lifecycle.rs` because that file belongs to L2.
+
+<!-- GATE_LOG 2026-10-04 L3
+PASS cargo test --workspace -j 4 (workspace green; L3: 15 passed, 2 ignored artifact/perf probes)
+PASS cargo clippy --workspace --all-targets -- -D warnings
+PASS cargo fmt --all --check
+PASS cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+PERF release ignored probe: 2,000 paths in 34.409917 ms (< 1.5 s)
+-->

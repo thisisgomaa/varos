@@ -114,6 +114,11 @@ impl AppLayout {
     pub fn recovery(&self) -> PathBuf {
         self.root.join("Recovery")
     }
+
+    /// CPU-rendered Start-card thumbnails (never stored beside the user's document).
+    pub fn thumbs(&self) -> PathBuf {
+        self.root.join("Thumbs")
+    }
 }
 
 #[cfg(test)]
