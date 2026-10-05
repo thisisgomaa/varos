@@ -101,7 +101,7 @@ pub enum ButtonKind {
     /// SURFACE fill + LINE2 border, TEXT (Recover).
     Solid,
 }
-/// A 28-tall text button (src.html `.btn`). Disabled / busy: FAINT text, never activates, the reason
+/// A 28-tall text button (src.html `.btn`). Disabled / busy: DISABLED text, never activates, the reason
 /// is the tooltip.
 #[allow(clippy::too_many_arguments)]
 pub fn text_button(
@@ -132,7 +132,7 @@ pub fn text_button(
         ButtonKind::Ghost => {}
     }
     let ink = match (reason, kind, hover) {
-        (Some(_), _, _) => t::FAINT,
+        (Some(_), _, _) => t::DISABLED,
         (None, ButtonKind::Ghost, false) => t::MUTED,
         _ => t::TEXT,
     };

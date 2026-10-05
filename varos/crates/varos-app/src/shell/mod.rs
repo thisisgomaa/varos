@@ -5,6 +5,8 @@
 pub mod boxtree;
 pub mod fonts;
 pub mod kit;
+#[cfg(test)]
+mod ratchet_tests;
 pub mod registry;
 pub mod svg;
 pub mod tokens;

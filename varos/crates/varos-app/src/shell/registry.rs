@@ -75,7 +75,7 @@ pub fn render_panel(id: PanelId, ui: &mut egui::Ui) {
 
 fn micro(ui: &mut egui::Ui, s: &str) {
     ui.add_space(3.0);
-    ui.label(RichText::new(s).color(T::FAINT).size(9.5).strong());
+    ui.label(RichText::new(s).color(T::MUTED).size(9.5).strong());
     ui.add_space(4.0);
 }
 
@@ -86,7 +86,7 @@ fn fake_field(ui: &mut egui::Ui, letter: &str, value: &str, w: f32) {
     p.rect(rect, T::r_ctrl(), T::SURFACE, T::hairline(), StrokeKind::Middle);
     let mut x = rect.left() + 7.0;
     if !letter.is_empty() {
-        p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, letter, FontId::proportional(9.5), T::FAINT);
+        p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, letter, FontId::proportional(9.5), T::MUTED);
         x += 13.0;
     }
     p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, value, T::numeric_value(11.0), T::TEXT);
@@ -233,13 +233,13 @@ fn section(ui: &mut egui::Ui, key: &str, title: &str, body: impl FnOnce(&mut egu
     } else {
         vec![egui::pos2(cx - 2.0, cy - 4.0), egui::pos2(cx - 2.0, cy + 4.0), egui::pos2(cx + 3.0, cy)]
     };
-    p.add(egui::Shape::convex_polygon(tri, if resp.hovered() { T::MUTED } else { T::FAINT }, egui::Stroke::NONE));
+    p.add(egui::Shape::convex_polygon(tri, if resp.hovered() { T::MUTED } else { T::DISABLED }, egui::Stroke::NONE));
     p.text(
         egui::pos2(rect.left() + 15.0, rect.center().y),
         Align2::LEFT_CENTER,
         title,
         FontId::proportional(9.5),
-        if resp.hovered() { T::MUTED } else { T::FAINT },
+        if resp.hovered() { T::MUTED } else { T::DISABLED },
     );
     if open {
         ui.add_space(4.0);
