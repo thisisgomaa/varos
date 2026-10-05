@@ -57,8 +57,10 @@ struct Bench {
 
 impl Bench {
     fn new(ed: Editor, view: View) -> Self {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx); // the tag chips set in the named Inter 500 face
         let mut b = Bench {
-            ctx: egui::Context::default(),
+            ctx,
             ed,
             doc: Some(SessionId(1)),
             pending: None,
@@ -837,4 +839,175 @@ fn an_invalid_edit_reverts_even_when_the_field_vanishes_in_a_second_pass() {
     assert!(!kf::blocked(&b.ctx) && !kf::any_open(&b.ctx), "reverted in that frame");
     assert!(b.settle(), "nothing held");
     assert_eq!((b.ab_name().as_str(), b.ed.rev), ("Artboard 1", rev));
+}
+
+// ── the Board section (Start v2 L5): name / description / tags in Properties, nothing selected ──
+
+fn board() -> Bench {
+    let b = Bench::new(Editor::new(), View::Properties);
+    assert!(b.ed.doc.name.is_empty() && b.ed.doc.tags.is_empty(), "premise: a fresh board");
+    b
+}
+
+#[test]
+fn board_name_commits_on_blur_and_enter_esc_reverts_and_undo_is_one_step() {
+    let mut b = board();
+    let rev = b.ed.rev;
+    b.edit("board name");
+    b.type_text("Ramadan campaign");
+    b.click_away();
+    assert_eq!((b.ed.doc.name.as_str(), b.ed.rev), ("Ramadan campaign", rev + 1), "blur commits once");
+    b.edit("board name");
+    b.retype("Draft");
+    b.key(Key::Escape);
+    b.frame(vec![]);
+    assert_eq!((b.ed.doc.name.as_str(), b.ed.rev), ("Ramadan campaign", rev + 1), "Esc reverts, no step");
+    b.edit("board name");
+    b.retype("  Eid greetings  ");
+    b.key(Key::Enter);
+    b.frame(vec![]);
+    assert_eq!(b.ed.doc.name, "Eid greetings", "Enter commits the cleaned text");
+    b.ed.undo();
+    assert_eq!(b.ed.doc.name, "Ramadan campaign", "⌘Z: one step back");
+}
+
+#[test]
+fn board_fields_over_the_limit_keep_the_keyboard_with_the_reason() {
+    let mut b = board();
+    let rev = b.ed.rev;
+    b.edit("board name");
+    b.type_text(&"n".repeat(varos_core::board::MAX_NAME_CHARS + 1));
+    b.key(Key::Enter);
+    b.frame(vec![]);
+    assert!(b.focused(), "an over-long name keeps the keyboard");
+    assert_eq!(b.reason(), Some(super::BOARD_NAME_TOO_LONG));
+    assert!(!b.settle(), "⌘S / Close wait for it");
+    b.key(Key::Escape);
+    b.frame(vec![]);
+    assert_eq!((b.ed.doc.name.as_str(), b.ed.rev), ("", rev), "nothing changed");
+    b.edit("board description");
+    b.type_text(&"d".repeat(varos_core::board::MAX_DESCRIPTION_CHARS + 1));
+    b.click_away();
+    assert!(b.focused());
+    assert_eq!(b.reason(), Some(super::BOARD_DESCRIPTION_TOO_LONG));
+    b.key(Key::Escape);
+    b.frame(vec![]);
+    b.edit("board tags");
+    b.type_text(&"t".repeat(varos_core::board::MAX_TAG_CHARS + 1));
+    b.key(Key::Enter);
+    b.frame(vec![]);
+    assert_eq!(b.reason(), Some(super::BOARD_TAG_TOO_LONG));
+    b.key(Key::Escape);
+    b.frame(vec![]);
+    assert_eq!(b.ed.rev, rev, "no refused edit reached the document");
+}
+
+#[test]
+fn the_description_wraps_three_rows_and_enter_commits() {
+    let mut b = board();
+    let rev = b.ed.rev;
+    b.edit("board description");
+    b.type_text("Key visual for Noor Foods — the portrait poster and its story cut-down, for Ramadan.");
+    b.key(Key::Enter);
+    b.frame(vec![]);
+    assert!(!b.focused(), "Enter ends the edit (no line break)");
+    assert_eq!(b.ed.rev, rev + 1);
+    assert!(b.ed.doc.description.starts_with("Key visual") && !b.ed.doc.description.contains('\n'));
+    let rows = PROBE.with(|p| p.borrow().iter().find(|(n, _)| n == "board description").map(|(_, r)| r.height()));
+    let name = PROBE.with(|p| p.borrow().iter().find(|(n, _)| n == "board name").map(|(_, r)| r.height()));
+    assert!(rows.unwrap() > name.unwrap() * 2.0, "three rows tall");
+}
+
+#[test]
+fn tags_add_by_enter_and_comma_dedupe_remove_by_backspace_and_chip_and_undo() {
+    let mut b = board();
+    let rev = b.ed.rev;
+    b.edit("board tags");
+    b.type_text("client");
+    b.key(Key::Enter);
+    b.frame(vec![]);
+    assert_eq!(b.ed.doc.tags, ["client"]);
+    assert!(b.focused(), "Enter adds and keeps the keyboard for the next tag");
+    b.frame(vec![]);
+    b.type_text("social,");
+    b.frame(vec![]);
+    b.frame(vec![]);
+    assert_eq!(b.ed.doc.tags, ["client", "social"], "a comma adds too");
+    assert_eq!(b.ed.rev, rev + 2, "one step per tag");
+    // a tag the board already has (by the core fold) adds nothing
+    b.frame(vec![]);
+    b.type_text("CLIENT");
+    b.key(Key::Enter);
+    b.frame(vec![]);
+    assert_eq!((b.ed.doc.tags.len(), b.ed.rev), (2, rev + 2), "deduped: unchanged, no step");
+    // Backspace in the empty input removes the last tag
+    b.edit("board tags");
+    b.key(Key::Backspace);
+    b.frame(vec![]);
+    assert_eq!(b.ed.doc.tags, ["client"]);
+    // typing then Backspace edits the text, not the tags
+    b.type_text("ab");
+    b.frame(vec![]);
+    b.key(Key::Backspace);
+    b.frame(vec![]);
+    assert_eq!(b.ed.doc.tags, ["client"], "Backspace deleted a character");
+    b.key(Key::Escape);
+    b.frame(vec![]);
+    // a chip's × removes that tag
+    b.frame(vec![]);
+    let x = chip_x();
+    b.click(x);
+    b.frame(vec![]);
+    assert!(b.ed.doc.tags.is_empty(), "× removed it");
+    b.ed.undo();
+    assert_eq!(b.ed.doc.tags, ["client"], "⌘Z brings it back in one step");
+}
+
+/// The × of the first tag chip: the right end of the first chip in the tag box.
+fn chip_x() -> Pos2 {
+    let input = PROBE.with(|p| p.borrow().iter().find(|(n, _)| n == "board tags").map(|(_, r)| *r)).unwrap();
+    // the chip sits left of the input on the same line; its × is just before the input's left edge
+    egui::pos2(input.left() - varos_app::shell::tokens::SB_PILL_GAP - 10.0, input.center().y)
+}
+
+#[test]
+fn too_many_tags_is_refused_with_the_reason() {
+    let mut ed = Editor::new();
+    ed.doc.tags = (0..varos_core::board::MAX_TAGS).map(|i| format!("t{i}")).collect();
+    let mut b = Bench::new(ed, View::Properties);
+    let rev = b.ed.rev;
+    b.edit("board tags");
+    b.type_text("one more");
+    b.key(Key::Enter);
+    b.frame(vec![]);
+    assert_eq!(b.reason(), Some(super::BOARD_TOO_MANY_TAGS));
+    b.key(Key::Escape);
+    b.frame(vec![]);
+    assert_eq!((b.ed.doc.tags.len(), b.ed.rev), (varos_core::board::MAX_TAGS, rev));
+}
+
+#[test]
+fn board_reasons_quote_the_core_limits() {
+    use varos_core::board::{MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS, MAX_TAGS, MAX_TAG_CHARS};
+    assert!(super::BOARD_NAME_TOO_LONG.ends_with(&format!("at most {MAX_NAME_CHARS} characters")));
+    assert!(super::BOARD_DESCRIPTION_TOO_LONG.ends_with(&format!("at most {MAX_DESCRIPTION_CHARS} characters")));
+    assert!(super::BOARD_TOO_MANY_TAGS.ends_with(&format!("at most {MAX_TAGS} tags")));
+    assert!(super::BOARD_TAG_TOO_LONG.ends_with(&format!("at most {MAX_TAG_CHARS} characters")));
+}
+
+/// The Board section's controls are kit targets: every field and every tag chip's × is at least
+/// 24 pt both ways (review fix 2; the × is drawn small, its hit square is not).
+#[test]
+fn board_section_hit_targets_are_at_least_24pt() {
+    let mut ed = Editor::new();
+    ed.doc.tags = vec!["client".into(), "ramadan".into()];
+    let mut b = Bench::new(ed, View::Properties);
+    b.frame(vec![]);
+    let rects: Vec<(String, egui::Rect)> = PROBE.with(|p| p.borrow().clone());
+    let mut chips = 0;
+    for (name, r) in rects.iter().filter(|(n, _)| n.starts_with("board") || n == "tag chip ×") {
+        assert!(r.width() >= 24.0 && r.height() >= 24.0, "{name}: {r:?} is under 24 pt");
+        chips += (name == "tag chip ×") as usize;
+    }
+    assert_eq!(chips, 2, "one × per tag");
 }

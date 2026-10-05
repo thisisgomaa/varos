@@ -43,7 +43,6 @@ mod os_open;
 mod recent_files;
 mod recovery_host;
 mod single_instance;
-#[allow(dead_code)] // Wired by the Start-v2 moderator at the documented save-landed call site.
 mod thumbs;
 mod ui;
 mod workspace;
@@ -846,6 +845,8 @@ fn main() {
     let startup_open = host::open_paths_command(file_arg.into_iter().collect(), OpenOrigin::CommandLine);
     // the lifecycle's ports: native dialogs + the disk
     let (mut dialogs, mut store) = (file_ports::RfdDialogs, recent_files::RecentStore::new(file_ports::DiskStore));
+    // Start v2 thumbnails (L3): one worker + cache under the app-data dir; none = placeholders only
+    store.set_thumbs(thumbs::ThumbService::new());
     #[cfg(not(target_os = "macos"))]
     let event_loop = EventLoop::new();
     // macOS: winit's own default menu (app name only) is replaced by our menu bar (MAC_CHROME.md §C).
@@ -962,6 +963,9 @@ fn main() {
     let scale = window.scale_factor();
 
     let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
+    if let Some(index) = store.thumb_index() {
+        gui.set_thumb_source(std::sync::Arc::new(index)); // Home decodes thumbnails off the UI thread
+    }
     if let Some(cmd) = startup_open {
         host::run_lifecycle(cmd, &mut ws, &mut gui, &mut dialogs, &mut store, &keyboard, None);
     }
@@ -1247,7 +1251,13 @@ fn main() {
                 }
                 let recovery_changed = recovery.take_changed();
                 recovery_gen += recovery_changed as u64;
-                if recovery_changed | probe.poll() {
+                // landed thumbnails: Recent caches their key (its generation moves → Home rebuilds) and the
+                // page drops any texture it held for that key
+                let thumbs_landed = store.poll_thumbs();
+                for key in &thumbs_landed {
+                    gui.thumb_updated(key);
+                }
+                if recovery_changed | probe.poll() | !thumbs_landed.is_empty() {
                     sync_home(&mut gui, ws.on_home(), &store, &recovery, &mut probe, &mut start_refresh, recovery_gen);
                     window.request_redraw();
                 }

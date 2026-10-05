@@ -1,5 +1,5 @@
 //! Pure Start view model: Recent rows, optional claimed Recovery rows and keyboard navigation.
-//! The host supplies file-existence probes and F2 recovery state outside paint; `start_ui` renders
+//! The host supplies file-existence probes and F2 recovery state outside paint; `start_page` renders
 //! the model. Disabled or busy recovery actions never emit commands through keyboard activation.
 //!
 //! Start v2 (work order `START_V2_BOARDS.md`, the L2↔L4 interface): every Recent entry is also a
@@ -24,12 +24,12 @@ pub const EMPTY_RECENT_COPY: &str = "No recent documents. Create a document or o
 /// Shown when Recent has boards but the tag filter / search hides all of them.
 pub const NO_MATCH_COPY: &str = "No boards match. Clear the search or choose All.";
 /// Tag shown next to a recent row whose file can't be found on disk (work order §3.7). No consumer
-/// yet: E2's `start_ui.rs` draws it beside a row whose [`StartRow::missing`] is true.
+/// yet: the Start page draws it beside a row whose [`StartRow::missing`] is true.
 pub const MISSING_TAG: &str = "Missing";
 
 /// How many characters a recent row's parent-folder text is elided to before the file-path
 /// tooltip is the only place to see the full path (work order §3.7: "parent folder MUTED
-/// (middle-elided, full path tooltip)"; the exact width is a layout detail left to `start_ui.rs`,
+/// (middle-elided, full path tooltip)"; the exact width is a layout detail left to `start_page.rs`,
 /// so this is a reasonable default the host may override by calling [`elide_middle`] itself).
 pub const DIR_ELIDE_MAX_CHARS: usize = 40;
 
@@ -73,7 +73,8 @@ pub struct BoardCard {
     // ── additions beyond the frozen interface, precomputed so nothing is derived per frame ──
     /// Parent folder, middle-elided to [`DIR_ELIDE_MAX_CHARS`] (full path in a tooltip).
     pub folder: String,
-    /// `modified` as relative text ("3 min ago", "12 Sep").
+    /// `modified` as the card's date (`time_text::board_date`: "Today 14:32", "Yesterday 22:41",
+    /// "2 Oct", "17 Sep 2025"; local time).
     pub modified_text: String,
     /// False for an entry Recent has not cached a board summary for yet (a list kept from before
     /// Start v2): tags/description/artboards are unknown, not empty — draw no count.
@@ -169,9 +170,6 @@ pub struct RecoveryRow {
 /// `locate_validates_before_relocating`), which is outside this pure model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartAction {
-    /// Start v1's "New document"; kept so the current `start_ui.rs` compiles — the host maps it to
-    /// exactly what [`StartAction::NewBoard`] does. L4 switches to `NewBoard` and may remove it.
-    New,
     /// "New board" (⌘N): a free canvas with zero artboards.
     NewBoard,
     /// "…or start with an artboard": one artboard from the core preset table.
@@ -203,7 +201,7 @@ enum FocusTarget {
     ClearRecentFooter,
 }
 
-/// The Start page's pure view model: everything `start_ui.rs` will need to draw, and everything
+/// The Start page's pure view model: everything `start_page.rs` needs to draw, and everything
 /// its key handling will need to decide what Tab/arrows/Enter/Delete do — with no `egui` in sight.
 ///
 /// The collections and focus are private so the cached focus order can never drift out of step
@@ -222,7 +220,13 @@ pub struct StartModel {
     /// bounds: New and Open make the order never empty, and every setter keeps it in range.
     focus: usize,
     focus_order: Vec<FocusTarget>,
+    /// A process-unique stamp, renewed by every build and every change of what is visible: the page
+    /// keys its derived text (elided paths, counts) on it, so identical frames rebuild nothing.
+    generation: u64,
 }
+
+/// The source of [`StartModel::generation`] stamps.
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl StartModel {
     /// Build from Recents + a per-path "is it missing" probe, with recovery rows (supplied by F2
@@ -257,7 +261,7 @@ impl StartModel {
                 missing: is_missing,
                 thumb: e.thumb.clone().map(ThumbKey),
                 folder,
-                modified_text: time_text::relative(now, e.modified),
+                modified_text: time_text::board_date(now, e.modified),
                 cached: board.is_some(),
             });
         }
@@ -271,6 +275,7 @@ impl StartModel {
             recovery,
             focus: 0,
             focus_order: Vec::new(),
+            generation: 0,
         };
         model.refilter();
         model
@@ -279,6 +284,7 @@ impl StartModel {
     /// Recompute the visible rows and the traversal order after a filter change, keeping focus on
     /// the same element when it is still visible (else the nearest index).
     fn refilter(&mut self) {
+        self.generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let current = self.focus_order.get(self.focus).copied();
         self.visible = (0..self.cards.len()).filter(|&i| self.filter.matches(&self.cards[i])).collect();
         let mut focus_order = vec![FocusTarget::NewDocument, FocusTarget::Open];
@@ -299,6 +305,11 @@ impl StartModel {
             .and_then(|t| focus_order.iter().position(|o| *o == t))
             .unwrap_or(self.focus.min(focus_order.len() - 1));
         self.focus_order = focus_order;
+    }
+
+    /// The model's stamp: it changes whenever the cards, the filter or what is visible changed.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Every board card, newest first (unfiltered; one per [`Self::rows`] entry).
@@ -492,7 +503,7 @@ impl StartModel {
     /// Resolve a focus target with checked indexing: a target whose row is gone yields `None`.
     fn action_for(&self, target: FocusTarget) -> Option<StartAction> {
         Some(match target {
-            FocusTarget::NewDocument => StartAction::New,
+            FocusTarget::NewDocument => StartAction::NewBoard,
             FocusTarget::Open => StartAction::Open,
             FocusTarget::Recover(i) => {
                 let row = self.recovery.get(i)?;
@@ -633,7 +644,7 @@ mod tests {
         // Order: New(0), Open(1), Recent(b)(2), Recent(a)(3), ClearRecentFooter(4).
         assert_eq!(model.focus_count(), 5);
         assert_eq!(model.focus(), 0);
-        assert_eq!(model.activate(), Some(StartAction::New));
+        assert_eq!(model.activate(), Some(StartAction::NewBoard));
 
         model.tab_next();
         assert_eq!(model.focus(), 1);
@@ -672,7 +683,7 @@ mod tests {
         assert_eq!(model.activate(), Some(StartAction::ClearRecent));
         model.tab_next();
         assert_eq!(model.focus(), 0);
-        assert_eq!(model.activate(), Some(StartAction::New));
+        assert_eq!(model.activate(), Some(StartAction::NewBoard));
     }
 
     #[test]
@@ -904,7 +915,7 @@ mod tests {
         assert_eq!((c.artboards, c.modified, c.cached, c.missing), (1, 290, true, false));
         assert_eq!(c.key, "/work/client/c.vrs");
         assert_eq!(c.folder, "/work/client");
-        assert_eq!(c.modified_text, time_text::relative(400, 290));
+        assert_eq!(c.modified_text, time_text::board_date(400, 290));
         let b = &model.cards()[1];
         assert_eq!((b.name.as_str(), b.artboards), ("b", 0), "no board name → file stem; 0 = a free canvas");
         let d = &model.cards()[3];
@@ -1007,7 +1018,7 @@ mod tests {
         use varos_core::board::PresetId;
         let mut filter = StartFilter::default();
         assert!(!filter.apply(&StartAction::NewWithPreset(PresetId::A4)));
-        assert!(!filter.apply(&StartAction::New));
+        assert!(!filter.apply(&StartAction::NewBoard));
         assert!(filter.apply(&StartAction::Search("x".into())));
         assert_eq!(filter, StartFilter { tag: None, search: "x".into(), view: StartView::Grid });
     }

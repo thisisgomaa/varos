@@ -111,6 +111,11 @@ pub trait DocStore {
     fn remember(&mut self, _path: &Path, _relocated_from: Option<&Path>, _board: Option<&BoardSummary>) {}
     fn remove_recent(&mut self, _path: &Path) {}
     fn clear_recent(&mut self) {}
+    /// Start v2 thumbnails: `snapshot` is the board as it was just written to `path` — the background
+    /// save's own `Arc<Document>`, shared, never cloned; the store may render its Home thumbnail off the
+    /// UI thread. Opening a board, or the synchronous save path, renders nothing: its thumbnail comes
+    /// with the next background save. Default: none.
+    fn rendered(&mut self, _path: &Path, _snapshot: Arc<Document>) {}
     /// Replace `path` with the exported PDF `bytes`, durably. An export is never a Recent entry.
     fn write_export(&mut self, _path: &Path, _bytes: &[u8]) -> Result<(), String> {
         Err("Varos couldn't write the PDF.".into())
@@ -407,6 +412,7 @@ impl Lifecycle<'_> {
                 let key = self.store.key(&dest);
                 let fingerprint = self.store.fingerprint(&dest);
                 let board = BoardSummary::of(&flight.doc); // the snapshot that was written
+                let written = flight.doc.clone(); // the same snapshot renders the Home thumbnail
                 if let Some(s) = self.ws.get_mut(id) {
                     s.mark_saved_snapshot(dest.clone(), key, Arc::unwrap_or_clone(flight.doc));
                     s.source_fingerprint = fingerprint;
@@ -415,6 +421,7 @@ impl Lifecycle<'_> {
                     }
                 }
                 self.store.remember(&dest, None, Some(&board));
+                self.store.rendered(&dest, written);
             }
             Ok(SaveOutcome::ReplacedUnconfirmed(reason)) => {
                 let key = self.store.key(&dest);
@@ -585,6 +592,8 @@ impl Lifecycle<'_> {
             s.source_fingerprint = self.store.fingerprint(dest);
         }
         if outcome == SaveOutcome::Durable {
+            // no shared snapshot exists on this synchronous path: the thumbnail waits for the next
+            // background save (whose flight already holds the `Arc<Document>`) — never a deep clone here
             self.store.remember(dest, None, Some(&board));
         }
         Ok(outcome)
@@ -1085,6 +1094,54 @@ mod tests {
         r.s.fail_load.insert(p("/d/bad.vrs"));
         r.open("/d/bad.vrs");
         assert!(r.s.recent.entries().iter().all(|e| e.path != p("/d/bad.vrs")));
+    }
+
+    /// Start v2 end to end: a board named, described and tagged in the editor and saved shows on
+    /// Home's card with exactly that — read from Recent's cache, never by parsing the file.
+    #[test]
+    fn a_saved_named_tagged_board_shows_its_card_on_home() {
+        use varos_app::start::StartModel;
+        use varos_app::start_page::{ids, StartPage};
+        let mut r = Rig::new();
+        r.run(AppCommand::NewBoard);
+        let id = r.active();
+        assert!(r.get(id).editor.doc.artboards.is_empty(), "New board: a free canvas");
+        r.ed(id).try_set_board_name("Ramadan campaign").unwrap();
+        r.ed(id).try_set_board_description("Key visual for Noor Foods.").unwrap();
+        r.ed(id).try_set_board_tags(vec!["client".into(), "social".into()]).unwrap();
+        r.script([Ans::Pick(Some(p("/d/ramadan.vrs")))]);
+        r.run(AppCommand::Save(id));
+        r.prompts();
+        // Home: the host builds the model from Recent only (a fresh store would hold no file at all)
+        r.s.fail_load.insert(p("/d/ramadan.vrs"));
+        let model = StartModel::without_recovery(&r.s.recent, 0, |_| false);
+        let card = &model.cards()[0];
+        assert_eq!(card.name, "Ramadan campaign");
+        assert_eq!(card.description.as_deref(), Some("Key visual for Noor Foods."));
+        assert_eq!(card.tags, ["client", "social"]);
+        assert_eq!(card.artboards, 0);
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        let mut page = StartPage::new();
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1512.0, 982.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input(), |ui| {
+            page.draw(ui, &model, None);
+        });
+        let out = ctx.run_ui(input(), |ui| {
+            page.draw(ui, &model, None);
+        });
+        let texts: Vec<String> = out
+            .shapes
+            .iter()
+            .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text().to_string()) } else { None })
+            .collect();
+        for want in ["Ramadan campaign", "Key visual for Noor Foods.", "client", "social", "free"] {
+            assert!(texts.iter().any(|t| t == want), "the card shows {want:?}: {texts:?}");
+        }
+        assert!(ctx.read_response(ids::card(&card.key)).is_some(), "drawn as a board card");
     }
 
     #[test]
