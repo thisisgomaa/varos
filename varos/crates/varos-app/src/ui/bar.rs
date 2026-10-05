@@ -67,69 +67,52 @@ pub(crate) fn winctl(
     resp.clicked()
 }
 
-/// A 34×30 top-bar icon button (menu/search/layout/panels). Returns its Response.
-pub(crate) fn topbtn(
+/// One 4b band button (Home, `+`, "+N", the V mark): no fill at rest, HOVER r3 on hover / press,
+/// SURFACE when `on`; the 2-px azure ring only while it holds keyboard focus. The caller paints the
+/// glyph (TEXT when hovered / on, else MUTED — `band_ink`).
+pub(crate) fn band_button(
     ui: &mut egui::Ui,
     p: &egui::Painter,
     rect: egui::Rect,
-    tex: &Option<egui::TextureHandle>,
     key: &str,
-    active: bool,
+    sense: egui::Sense,
+    on: bool,
 ) -> egui::Response {
-    let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click());
-    let rr = CornerRadius::same(3); // §3.5: control radius r
-    if active {
-        p.rect_filled(rect, rr, BG_SURFACE);
-    } else if resp.hovered() {
-        p.rect_filled(rect, rr, HOVER);
+    let resp = ui.interact(rect, ui.id().with(key), sense);
+    if on {
+        p.rect_filled(rect, CornerRadius::same(R), BG_SURFACE);
+    } else if resp.hovered() || resp.is_pointer_button_down_on() {
+        p.rect_filled(rect, CornerRadius::same(R), HOVER);
     }
-    let col = if active || resp.hovered() { TEXT } else { MUTED };
-    if let Some(t) = tex {
-        p.image(t.id(), egui::Rect::from_center_size(rect.center(), egui::vec2(17.0, 17.0)), UV01(), col);
+    if resp.has_focus() {
+        let ring = Stroke::new(varos_app::shell::tokens::KIT_FOCUS_STROKE, ACCENT);
+        p.rect_stroke(rect, CornerRadius::same(R), ring, StrokeKind::Inside);
     }
     resp
 }
 
-/// §3.5 app-bar text button (pad 5 12, radius r): solid = surface fill + line2 border;
-/// ghost = bare muted text that lights on hover. Uses the shared top-bar layout rectangle.
-pub(crate) fn bar_btn(
-    ui: &mut egui::Ui,
-    p: &egui::Painter,
-    rect: egui::Rect,
-    label: &str,
-    ghost: bool,
-) -> egui::Response {
-    let f = FontId::proportional(12.0);
-    let resp = ui.interact(rect, ui.id().with(("bar-btn", label)), egui::Sense::click());
-    let rr = CornerRadius::same(3);
-    if ghost {
-        if resp.hovered() {
-            p.rect_filled(rect, rr, HOVER);
-        }
+/// A band glyph's ink: TEXT when hovered or on, MUTED at rest.
+pub(crate) fn band_ink(resp: &egui::Response, on: bool) -> Color32 {
+    if on || resp.hovered() {
+        TEXT
     } else {
-        p.rect_filled(rect, rr, if resp.hovered() { HOVER } else { BG_SURFACE });
-        p.rect_stroke(rect, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+        MUTED
     }
-    let col = if ghost && !resp.hovered() { MUTED } else { TEXT };
-    p.text(rect.center(), Align2::CENTER_CENTER, label, f, col);
-    resp
 }
 
-/// A bar button that ISN'T available yet (Export / Share, DFS S1 §3.6): DISABLED text, no hover fill,
-/// `Sense::hover` only — it can never register a click, so it cannot become an "enabled dead button"
-/// (spec §2 forbids those). A tooltip carries the reason.
-pub(crate) fn bar_btn_disabled(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, label: &str, tip: &str) {
-    let f = FontId::proportional(12.0);
-    let resp = ui.interact(rect, ui.id().with(("bar-btn-disabled", label)), egui::Sense::hover());
-    p.text(rect.center(), Align2::CENTER_CENTER, label, f, DISABLED);
-    resp.on_hover_text(tip);
-}
-
-/// Width measurement for the shared top-bar layout (visual mirror; search has no home yet).
-/// QW7: no "⌘ K" badge — the pill must not advertise a shortcut it doesn't run.
-pub(crate) fn search_pill_width(p: &egui::Painter) -> f32 {
-    let sw = p.layout_no_wrap("Search".into(), FontId::proportional(11.5), MUTED).size().x;
-    9.0 + 13.0 + 6.0 + sw + 9.0
+/// The V mark (4b): hand-painted, no texture — its three squares are FILLED with the colour under
+/// them (`under`: the backdrop at rest, HOVER on hover), so the polyline reads as passing behind
+/// them. 18×18 design units centred in `rect` (src.html `mark`).
+pub(crate) fn paint_brand(p: &egui::Painter, rect: egui::Rect, under: Color32) {
+    use varos_app::shell::tokens as t;
+    let o = rect.center() - egui::Vec2::splat(t::BAND_BRAND_MARK / 2.0);
+    let at = |x: f32, y: f32| o + egui::vec2(x, y);
+    let ink = Stroke::new(1.5, MUTED);
+    p.add(egui::Shape::line(vec![at(3.5, 4.0), at(9.0, 14.0), at(14.5, 4.0)], ink));
+    for (x, y) in [(2.0, 2.5), (13.0, 2.5), (7.5, 12.5)] {
+        let sq = egui::Rect::from_min_size(at(x, y), egui::Vec2::splat(3.0));
+        p.rect(sq, CornerRadius::ZERO, under, ink, StrokeKind::Middle);
+    }
 }
 
 /// Home's body under the top bar: THE Start page plus the bar's live "Search boards" field. Filter
@@ -159,77 +142,75 @@ pub(crate) fn home_search_rect_id() -> egui::Id {
     egui::Id::new("varos-home-search-rect")
 }
 
-/// Paint the search pill inside its shared top-bar layout rectangle. QW7: just "Search", muted — the
-/// pill has no function yet, so it must not claim a ⌘K it doesn't run.
-pub(crate) fn search_pill(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect, icon: &Option<egui::TextureHandle>) {
-    let cy = rect.center().y;
-    let f = FontId::proportional(11.5);
-    // `Sense::hover` only (never clickable) — honest about having no function yet, with the reason
-    // in the tooltip (spec §2 forbids an "enabled dead button"; UI audit finding 1).
+/// The document's Search field in the band (4b): PANEL fill, 1-px LINE border, r3, search glyph and a
+/// MUTED "Search" — the same geometry as Home's live "Search boards" (`kit::board::search_pill`).
+/// `Sense::hover` only, never clickable: there is no command search yet, so the tooltip says so
+/// honestly (spec §2 forbids an "enabled dead button"; UI audit finding 1).
+pub(crate) fn search_pill(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect) {
+    use varos_app::shell::tokens as t;
     ui.interact(rect, ui.id().with("tb-kpill"), egui::Sense::hover()).on_hover_text("Search isn't available yet.");
-    let rr = CornerRadius::same(3);
-    p.rect_filled(rect, rr, BG_SURFACE);
-    p.rect_stroke(rect, rr, Stroke::new(1.0, BORDER), StrokeKind::Middle);
-    let mut x = rect.left() + 9.0;
-    if let Some(t) = icon {
-        p.image(t.id(), egui::Rect::from_center_size(egui::pos2(x + 6.5, cy), egui::vec2(13.0, 13.0)), UV01(), MUTED);
-    }
-    x += 13.0 + 6.0;
-    p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Search", f, MUTED);
+    let rr = CornerRadius::same(R);
+    p.rect_filled(rect, rr, SOLID_PANEL);
+    p.rect_stroke(rect, rr, Stroke::new(t::KIT_STROKE, BORDER), StrokeKind::Inside);
+    let icon_c = egui::pos2(rect.left() + t::SB_SEARCH_PAD + t::SB_ICON_SMALL / 2.0, rect.center().y);
+    Icon::Search.paint(p, icon_c, t::SB_ICON_SMALL, MUTED);
+    let x = rect.left() + t::SB_SEARCH_PAD + t::SB_ICON_SMALL + t::SB_SEARCH_GAP;
+    p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, "Search", t::small(), MUTED);
 }
 
-/// One document tab: dirty dot, name, tooltip, × on hover, painted at `rect` (its resting slot, or
-/// its lifted / reflowed rect during a drag — P16). `Sense::click_and_drag` so `tab_drag_update` can
-/// read this chip's drag start / stop from egui. Returns `(response, close_clicked)` — the caller
-/// reads `response.clicked()` / `.clicked_by(PointerButton::Middle)`.
+/// One document tab (4b), painted at `rect` (its resting slot, or its lifted / reflowed rect during
+/// a drag — P16): active = SURFACE chip with its name in TEXT 12/500; inactive = bare MUTED 12/400,
+/// HOVER on hover; `lifted` = SURFACE + a LINE2 border. The name starts `TAB_PAD_L` in, in a box
+/// `TAB_NAME_CLIP` narrower than the chip. On the right, centred `TAB_MARK_INSET` in: the dirty dot
+/// (TEXT on the active tab, MUTED elsewhere) — replaced by the × on hover; the × also shows on the
+/// active and the lifted chip. `Sense::click_and_drag` so `tab_drag_update` can read this chip's drag
+/// start / stop. Returns `(response, close_clicked)`.
 pub(crate) fn tab_item(
     ui: &mut egui::Ui,
     p: &egui::Painter,
     rect: egui::Rect,
     tab: &TabView,
     active: bool,
-    tex_x: &Option<egui::TextureHandle>,
+    lifted: bool,
     key: &str,
 ) -> (egui::Response, bool) {
-    // Brave chip in the void (§3.5): active = filled panel block; inactive = bare muted text,
-    // hover = a whisper of white. No accent — azure is a scalpel, not a tab decoration.
+    use varos_app::shell::tokens as t;
+    // No accent — azure is a scalpel, not a tab decoration.
     let resp = ui.interact(rect, ui.id().with(key), egui::Sense::click_and_drag());
-    let rr = CornerRadius::same(RBOX);
-    if active {
-        p.rect_filled(rect, rr, SOLID_PANEL);
-    } else if resp.hovered() {
-        p.rect_filled(rect, rr, VOID_HOVER);
-    }
-    let mut text_x = rect.left() + 12.0;
-    if tab.dirty {
-        // the neutral unsaved-changes dot — MUTED, never azure (azure is a scalpel: active/selection/
-        // focus only, spec's visual constitution).
-        p.circle_filled(egui::pos2(text_x + 2.0, rect.center().y), 2.5, MUTED);
-        text_x += 10.0;
-    }
-    p.text(
-        egui::pos2(text_x, rect.center().y),
-        Align2::LEFT_CENTER,
-        &tab.label,
-        FontId::proportional(12.0),
-        if active { TEXT } else { MUTED },
-    );
     let x_r = crate::chrome::tab_close_rect(rect);
     let xr = ui.interact(x_r, ui.id().with((key, "x")), egui::Sense::click());
-    if xr.hovered() {
-        p.rect_filled(x_r, CornerRadius::same(4), HOVER);
+    let hov = resp.hovered() || xr.hovered();
+    let rr = CornerRadius::same(R);
+    if lifted {
+        p.rect(rect, rr, BG_SURFACE, Stroke::new(t::KIT_STROKE, BORDER_2), StrokeKind::Inside);
+    } else if active {
+        p.rect_filled(rect, rr, BG_SURFACE);
+    } else if hov {
+        p.rect_filled(rect, rr, HOVER);
     }
-    if let Some(t) = tex_x {
-        p.image(
-            t.id(),
-            egui::Rect::from_center_size(x_r.center(), egui::vec2(11.0, 11.0)),
-            UV01(),
-            if xr.hovered() { TEXT } else { MUTED },
-        );
+    let lit = active || lifted;
+    let name_right = rect.left() + t::TAB_PAD_L + (rect.width() - t::TAB_NAME_CLIP).max(0.0);
+    let name_clip = egui::Rect::from_min_max(rect.min, egui::pos2(name_right, rect.bottom()));
+    p.with_clip_rect(name_clip.intersect(p.clip_rect())).text(
+        egui::pos2(rect.left() + t::TAB_PAD_L, rect.center().y),
+        Align2::LEFT_CENTER,
+        &tab.label,
+        if active { t::small_medium() } else { t::small() },
+        if lit { TEXT } else { MUTED },
+    );
+    if tab.dirty && !hov {
+        // the neutral unsaved-changes dot — never azure (azure is a scalpel)
+        p.circle_filled(x_r.center(), t::TAB_DOT / 2.0, if lit { TEXT } else { MUTED });
+    } else if lit || hov {
+        if xr.hovered() {
+            p.rect_filled(egui::Rect::from_center_size(x_r.center(), egui::Vec2::splat(t::TAB_CLOSE_HIT)), rr, HOVER);
+        }
+        Icon::Remove.paint(p, x_r.center(), t::TAB_CLOSE_ICON, if xr.hovered() { TEXT } else { MUTED });
     }
     let resp = resp.on_hover_text(tab.tooltip.clone());
     (resp, xr.clicked())
 }
+
 /// egui's window-focus flag for this frame, seeded by the host (P16 owner re-test, 2026-09-26).
 /// egui-winit starts `RawInput::focused` at `false` and on macOS only updates it on a winit `Focused`
 /// event — a bundle launched via `open` ran a whole session without one, so egui believed the window
@@ -340,10 +321,11 @@ pub(crate) fn tab_drag_update(
     Some((i, frame))
 }
 
-/// Custom top bar (the native caption is stripped in WM_NCCALCSIZE): menu · tabs · drag · right tools ·
-/// window controls. Interactive rects are published as exclusions so the OS hit-test makes them HTCLIENT
-/// (egui handles them) while the empty band is HTCAPTION (the OS drags/snaps the window).
-#[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state, split deferred with ui.rs
+/// The top band (4b, MAC_CHROME.md §A′): Home · tabs · "+N ⌄" · `+` · drag space · Search · V, all
+/// on one centre line, on the one black backdrop (Windows: burger · … · caps). Interactive rects are
+/// published as the caption exclusions so the OS / macOS caption hit-test makes them egui's while the
+/// empty band drags the window. `right_zone` = the panel column's x-span (last frame), `None` on Home.
+#[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state
 pub(crate) fn build_topbar(
     root: &mut egui::Ui,
     top: &TopIcons,
@@ -355,35 +337,28 @@ pub(crate) fn build_topbar(
     show_rail: &mut bool,
     show_dock: &mut bool,
     snap: &mut varos_core::model::SnapConfig,
+    right_zone: Option<egui::Rangef>,
     maximized: bool,
     home: bool,
     native_home: bool,
-    export_anchor: &mut Option<egui::Rect>,
 ) {
+    use varos_app::shell::tokens as t;
     let h = crate::chrome::TOPBAR.height;
-    // DFS S6: Export (button, burger row, File ▸ Export ▸ PDF…) is ONE command through the one mapper
+    // DFS S6: Export (burger row, File ▸ Export ▸ PDF…) is ONE command through the one mapper
     let export_cmd = crate::host::to_app_command(crate::chrome::FileCmd::Export, active);
-    // Stage 1 (BOX_SYSTEM_PLAN §3.5): the app bar IS the void — seam fill, no hairline; the doc tabs
-    // are Brave-style chips floating in it and the window caps are flush 42px void cells.
+    // the band IS the void — backdrop fill, no hairline, no step (4b: one flat #000)
     let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
-    // no separator line — the bar melts into the void below it (Ahmed 07-07 "في خط لسا موجود")
     egui::Panel::top("topbar").exact_size(h).frame(frame).show_separator_line(false).show(root, |ui| {
         let bar = ui.max_rect();
         let p = ui.painter().clone();
-        let text_width = |text: &str| p.layout_no_wrap(text.to_owned(), FontId::proportional(12.0), TEXT).size().x;
+        // every tab measured at 500 so a chip never changes width when it becomes active
+        let text_width = |text: &str| p.layout_no_wrap(text.to_owned(), t::small_medium(), TEXT).size().x;
         let tab_widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
         let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
-        let button_widths = [text_width("Window"), text_width("Share"), text_width("Export")];
-        // Home: the search slot is Start's live "Search boards" field (200 wide, the mockup), placed by
-        // `run_home` at the rect left in `HOME_SEARCH_RECT`; in a document it is today's pill
-        let search_width = if home { varos_app::shell::tokens::SB_SEARCH_W } else { search_pill_width(&p) };
         let layout_for = |widths: &[f32], active: Option<usize>| {
-            crate::chrome::topbar_layout(bar, crate::chrome::TOPBAR, button_widths, search_width, widths, active)
+            crate::chrome::topbar_layout(bar, crate::chrome::TOPBAR, right_zone, widths, active)
         };
-        let layout = layout_for(&tab_widths, active_index);
-        if home {
-            ui.ctx().data_mut(|d| d.insert_temp(home_search_rect_id(), layout.search));
-        }
+        let layout = band_layout(layout_for(&tab_widths, active_index), home);
 
         // window controls (min · max · close), absent on macOS
         if let Some([min_r, max_r, close_r]) = layout.caps {
@@ -398,63 +373,36 @@ pub(crate) fn build_topbar(
             }
         }
 
-        // right cluster (§3.5), right→left: window caps · [snapping] · Window · Share · Export · search pill
-        let window_id = ui.make_persistent_id("window_menu");
-        let menu_id = ui.make_persistent_id("app_menu");
-        // magnet = the Snapping quick-menu (Illustrator layout)
-        let magnet_id = ui.make_persistent_id("snap_menu");
-        let magnet_r = layout.magnet;
-        let (magr, winb) = if !home {
-            let magnet_active = menu_open(ui, magnet_id) || snap.smart || snap.grid;
-            let magr = topbtn(ui, &p, magnet_r, &top.magnet, "tb-magnet", magnet_active);
-            if magr.clicked() {
-                menu_toggle(ui, magnet_id);
-            }
-            // Window — every panel one click away, landing in an AUTOMATIC spot (Ahmed 07-07; replaces
-            // the old layout/panels buttons)
-            let winb = bar_btn(ui, &p, layout.window, "Window", true);
-            if winb.clicked() {
-                menu_toggle(ui, window_id);
-            }
-            // Share honesty (DFS S1 §3.6, review nit F15/P3-15): no home yet, so it looks and behaves
-            // disabled instead of being an "enabled dead button" (spec §2 forbids those).
-            bar_btn_disabled(ui, &p, layout.share, "Share", "Share isn't available yet.\nSave keeps an editable .vrs.");
-            // Export (DFS S6): opens the Export PDF sheet, which hangs from this button
-            *export_anchor = Some(layout.export);
-            match &export_cmd {
-                Some(cmd) => {
-                    if bar_btn(ui, &p, layout.export, "Export", true).on_hover_text("Export PDF").clicked() {
-                        cmds.push(cmd.clone());
-                    }
-                }
-                None => bar_btn_disabled(ui, &p, layout.export, "Export", "Open a document to export it."),
-            }
-            // search pill: 🔍 Search — a surface capsule on the void (visual mirror; no function yet, QW7)
-            let kpill_r = layout.search;
-            search_pill(ui, &p, kpill_r, &top.search);
-            (magr, winb)
+        // right zone: Search over the panel column, the V mark at its right edge
+        if home {
+            // Home: the slot is Start's live "Search boards" field, drawn by `home_body`
+            ui.ctx().data_mut(|d| d.insert_temp(home_search_rect_id(), layout.search));
         } else {
-            (
-                ui.interact(layout.magnet, ui.id().with("hidden-magnet"), egui::Sense::hover()),
-                ui.interact(layout.window, ui.id().with("hidden-window-menu"), egui::Sense::hover()),
-            )
-        };
+            search_pill(ui, &p, layout.search);
+        }
+        // V: the native About panel on macOS; Windows has no About panel to open, so hover-only
+        let mac = cfg!(target_os = "macos");
+        let sense = if mac { egui::Sense::click() } else { egui::Sense::hover() };
+        let vr = band_button(ui, &p, layout.brand, "tb-brand", sense, false);
+        paint_brand(&p, layout.brand, if vr.hovered() { HOVER } else { SEAM });
+        if vr.on_hover_text("Varos").clicked() && mac {
+            *win_action = Some(WinAction::About);
+        }
 
-        // burger — a flush 36×40 void cell at the far left (§3.5)
+        // Home (macOS, and Windows on Home) — or Windows' burger cell
+        let menu_id = ui.make_persistent_id("app_menu");
         let menu_r = layout.menu;
-        let mr = ui.interact(menu_r, ui.id().with("file-menu-anchor"), egui::Sense::hover());
-        if native_home || home {
-            ui.scope_builder(egui::UiBuilder::new().max_rect(menu_r.shrink(2.0)), |ui| {
-                use varos_app::shell::kit::{self, Control, Icon};
-                let mut c = Control::new(ui.id().with("home-chip"), "Home");
-                c.icon = Some(Icon::Home);
-                c.selected = home;
-                c.pointer_only = home;
-                c.help = "Home";
-                if kit::action(ui, c, true).activated {
-                    cmds.push(AppCommand::Home);
-                }
-            });
+        let mr = if native_home || home {
+            let chip = home_chip(menu_r);
+            // on Home Start owns Enter / Space: the chip is pointer-only there
+            let sense = if home { egui::Sense::CLICK } else { egui::Sense::click() };
+            let hr = band_button(ui, &p, chip, "home-chip", sense, home);
+            Icon::Home.paint(&p, chip.center(), ICON_MD, band_ink(&hr, home));
+            let hr = hr.on_hover_text("Home");
+            if hr.clicked() {
+                cmds.push(AppCommand::Home);
+            }
+            hr
         } else {
             let mr = ui.interact(menu_r, ui.id().with("tb-menu"), egui::Sense::click());
             let mopen = menu_open(ui, menu_id);
@@ -468,14 +416,15 @@ pub(crate) fn build_topbar(
             if mr.clicked() {
                 menu_toggle(ui, menu_id);
             }
-        }
+            mr
+        };
 
-        // doc tabs — Brave chips floating in the void: h28, gap 4, width fits the name (§3.5).
-        // `layout.tabs` carries each chip's ORIGINAL tab index — not always a 0..n prefix once the
-        // active tab has displaced the greedy fit's last slot on overflow (F7).
+        // doc tabs — chips in the void: 28 tall, gap 2, 88–176 wide (4b). `layout.tabs` carries each
+        // chip's ORIGINAL tab index — not always a 0..n prefix once the active tab has displaced the
+        // greedy fit's last slot on overflow (F7).
         // P16 — drag-to-reorder: past egui's drag threshold the chip is LIFTED (painted under the
-        // pointer, above the rest) and the other chips reflow live around a gap where it would land.
-        // All geometry is `chrome::tab_drag_frame`; this block only keeps the drag state and paints.
+        // pointer, above the rest) and the other chips reflow live around a gap where it would land,
+        // outlined dashed. All geometry is `chrome::tab_drag_frame`; this block keeps state and paints.
         let chip_key = |i: usize| format!("tab{i}");
         // which tabs this SAME layout would draw for a reordered full order (original indices) — the
         // release uses it to keep the dropped tab visible (`chrome::visible_drop_slot`)
@@ -487,30 +436,76 @@ pub(crate) fn build_topbar(
         let drag = tab_drag_update(ui, &layout, tabs, active, chip_key, drawn_after, cmds);
         let mut paint: Vec<(usize, egui::Rect)> = Vec::with_capacity(layout.tabs.len());
         match &drag {
-            // others first, the lifted chip last — drawn (and hit-tested) on top
-            Some((i, f)) => paint.extend(f.others.iter().copied().chain([(*i, f.lifted)])),
+            // the landing gap: a dashed LINE2 outline; others first, the lifted chip last (on top)
+            Some((i, f)) => {
+                let g = f.gap.shrink(0.5);
+                let ring = vec![g.left_top(), g.right_top(), g.right_bottom(), g.left_bottom(), g.left_top()];
+                p.extend(egui::Shape::dashed_line(
+                    &ring,
+                    Stroke::new(t::KIT_STROKE, BORDER_2),
+                    t::BAND_DASH,
+                    t::BAND_DASH_GAP,
+                ));
+                paint.extend(f.others.iter().copied().chain([(*i, f.lifted)]));
+            }
             None => paint.extend(layout.tabs.iter().copied()),
         }
+        let lifted = drag.as_ref().map(|&(i, _)| i);
         for (i, trect) in paint {
             let tab = &tabs[i];
-            let (resp, close) = tab_item(ui, &p, trect, tab, Some(tab.id) == active, &top.x, &chip_key(i));
+            let (resp, close) = tab_item(ui, &p, trect, tab, Some(tab.id) == active, lifted == Some(i), &chip_key(i));
             if close || resp.clicked_by(egui::PointerButton::Middle) {
                 cmds.push(AppCommand::CloseDocument(tab.id));
             } else if resp.clicked() {
                 cmds.push(AppCommand::ActivateDocument(tab.id));
             }
         }
-        if let Some(plus_r) = layout.plus.filter(|_| !home) {
-            if topbtn(ui, &p, plus_r, &top.plus, "tb-plus", false).clicked() {
+        // "+N ⌄": every hidden tab in one list; a row brings its tab forward (the active swap draws it)
+        if let Some(ov) = layout.overflow {
+            let owner = ui.id().with("tb-overflow");
+            let open = kit::is_menu_open(ui.ctx(), owner);
+            let orr = band_button(ui, &p, ov, "tb-overflow", egui::Sense::click(), open);
+            let ink = band_ink(&orr, open);
+            let count = format!("+{}", layout.hidden.len());
+            let font = egui::FontId::new(
+                t::BAND_OVERFLOW_TEXT,
+                egui::FontFamily::Name(varos_app::shell::fonts::UI_400.into()),
+            );
+            p.text(
+                egui::pos2(ov.left() + t::BAND_OVERFLOW_TEXT_X, ov.center().y),
+                Align2::LEFT_CENTER,
+                count,
+                font,
+                ink,
+            );
+            let chev = egui::pos2(ov.left() + t::BAND_OVERFLOW_CHEV_X + t::BAND_OVERFLOW_CHEV / 2.0, ov.center().y);
+            Icon::ChevronDown.paint(&p, chev, t::BAND_OVERFLOW_CHEV, ink);
+            if orr.on_hover_text("Hidden tabs").clicked() {
+                if open {
+                    kit::close_menu(ui.ctx());
+                } else {
+                    let at = egui::pos2(ov.left(), ov.bottom() + t::KIT_MENU_GAP);
+                    kit::open_menu(ui.ctx(), owner, at, Some(ov));
+                }
+            }
+            let rows: Vec<String> = layout.hidden.iter().map(|&i| overflow_row_label(&tabs[i])).collect();
+            let entries: Vec<kit::MenuEntry<'_>> = rows.iter().map(|r| kit::MenuEntry::Item(r)).collect();
+            if let Some(k) = kit::menu(ui.ctx(), owner, &entries) {
+                cmds.push(AppCommand::ActivateDocument(tabs[layout.hidden[k]].id));
+            }
+        }
+        if let Some(plus_r) = layout.plus {
+            let pr = band_button(ui, &p, plus_r, "tb-plus", egui::Sense::click(), false);
+            Icon::Plus.paint(&p, plus_r.center(), ICON_MD, band_ink(&pr, false));
+            if pr.on_hover_text("New board").clicked() {
                 cmds.push(AppCommand::NewBoard);
             }
         }
 
-        // dropdowns — the app-bar menus are FLUSH seam extensions of the bar (Ahmed 07-07): same
-        // colour, no separating line, hanging straight off its bottom edge. FIXED widths — measured,
-        // never elastic (the intrinsic-width try read the whole screen and blew the menus wide open).
-        let flush = Some(bar.bottom());
-        menu_below(ui, menu_id, &mr, flush, |ui| {
+        // Windows' burger — the only flush dropdown left (no native menu bar there): the File rows,
+        // then the Window rows (4b moved them out of the band; this keeps panel toggles reachable).
+        // FIXED width — measured, never elastic.
+        menu_below(ui, menu_id, &mr, Some(bar.bottom()), |ui| {
             ui.set_width(210.0);
             let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
             if menu_row(ui, "New", &shortcut_label("N")) {
@@ -550,65 +545,49 @@ pub(crate) fn build_topbar(
                 cmds.push(AppCommand::Home);
                 hit = true;
             }
+            // the View ▸ snapping rows (macOS has them in its native View menu): the same flags,
+            // the same transitions — Smart Guides is exactly what Ctrl+U does
+            menu_sep(ui);
+            if check_row(ui, &format!("Smart Guides  ({})", shortcut_label("U")), snap.smart) {
+                toggle_smart_guides(snap);
+                hit = true;
+            }
+            for (label, on) in
+                [("Alignment Guides", &mut snap.alignment_guides), ("Geometric Guides", &mut snap.object_geometry)]
+            {
+                if check_row(ui, label, *on) {
+                    *on = !*on;
+                    hit = true;
+                }
+            }
+            menu_sep(ui);
+            for (label, on) in [("Snap to Grid", &mut snap.grid), ("Snap to Point", &mut snap.key_points)] {
+                if check_row(ui, label, *on) {
+                    *on = !*on;
+                    hit = true;
+                }
+            }
+            // the Window rows: chrome toggles, then EVERY dockable panel — ✓ = it's in the layout;
+            // click = open in an automatic spot / surface its tab / close (boxtree::toggle_panel)
+            menu_sep(ui);
+            if check_row(ui, "Tool rail", *show_rail) {
+                *show_rail = !*show_rail;
+                hit = true;
+            }
+            if check_row(ui, "Control bar", *show_dock) {
+                *show_dock = !*show_dock;
+                hit = true;
+            }
+            for pnl in varos_app::shell::PanelId::DOCKABLE {
+                if check_row(ui, pnl.title(), shell.is_open(pnl)) {
+                    shell.toggle_panel(pnl);
+                    hit = true;
+                }
+            }
             if hit {
                 menu_set(ui, menu_id, false);
             }
         });
-        // the Window menu: chrome toggles up top, then EVERY dockable panel — ✓ = it's in the
-        // layout; click = open in an automatic spot / surface its tab / close (boxtree::toggle_panel)
-        if !home {
-            menu_below(ui, window_id, &winb, flush, |ui| {
-                ui.set_width(200.0);
-                let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
-                if check_row(ui, "Tool rail", *show_rail) {
-                    *show_rail = !*show_rail;
-                    hit = true;
-                }
-                if check_row(ui, "Control bar", *show_dock) {
-                    *show_dock = !*show_dock;
-                    hit = true;
-                }
-                menu_sep(ui);
-                for pnl in varos_app::shell::PanelId::DOCKABLE {
-                    if check_row(ui, pnl.title(), shell.is_open(pnl)) {
-                        shell.toggle_panel(pnl);
-                        hit = true;
-                    }
-                }
-                if hit {
-                    menu_set(ui, window_id, false);
-                }
-            });
-            // Snapping quick-menu (Illustrator "Snapping" popover)
-            menu_below(ui, magnet_id, &magr, flush, |ui| {
-                ui.set_width(216.0);
-                let mut hit = false; // a chosen item closes the menu (Illustrator; P7)
-                if check_row(ui, "Snap to Grid", snap.grid) {
-                    snap.grid = !snap.grid;
-                    hit = true;
-                }
-                if check_row(ui, "Snap to Point", snap.key_points) {
-                    snap.key_points = !snap.key_points;
-                    hit = true;
-                }
-                menu_sep(ui);
-                if check_row(ui, &format!("Smart Guides  ({})", shortcut_label("U")), snap.smart) {
-                    toggle_smart_guides(snap);
-                    hit = true;
-                }
-                if check_row(ui, "    Alignment Guides", snap.alignment_guides) {
-                    snap.alignment_guides = !snap.alignment_guides;
-                    hit = true;
-                }
-                if check_row(ui, "    Geometric Guides", snap.object_geometry) {
-                    snap.object_geometry = !snap.object_geometry;
-                    hit = true;
-                }
-                if hit {
-                    menu_set(ui, magnet_id, false);
-                }
-            });
-        }
         // publish caption height + interactive (non-drag) rects, in physical px — ONE list, the
         // layout's own `interactive_rects` (every control and FULL tab slot drawn above), so the OS /
         // macOS caption band can never disagree with the strip about what a press belongs to (P15).
@@ -623,8 +602,48 @@ pub(crate) fn build_topbar(
     });
 }
 
+/// The band as `build_topbar` paints AND publishes it: on Home there is no `+` (it is not painted
+/// there), so it is not published either — `interactive_rects` never lists a spot that neither acts
+/// nor drags the window.
+///
+/// Home's chip is the 28×28 square centred in the menu cell (macOS: the cell already is that square;
+/// Windows: the cell is the full-height 36-wide burger slot), so that square — not the cell — is
+/// what is published: the strips around it are empty band and drag the window.
+pub(crate) fn band_layout(mut layout: crate::chrome::TopbarLayout, home: bool) -> crate::chrome::TopbarLayout {
+    if home {
+        layout.plus = None;
+        layout.menu = home_chip(layout.menu);
+    }
+    layout
+}
+
+/// The Home chip inside the menu cell: a `BAND_CHIP_H` square on the cell's centre.
+pub(crate) fn home_chip(menu_cell: egui::Rect) -> egui::Rect {
+    egui::Rect::from_center_size(menu_cell.center(), egui::Vec2::splat(varos_app::shell::tokens::BAND_CHIP_H))
+}
+
+/// Smart Guides on / off — the same transition as the Ctrl / ⌘ U key (test
+/// `smart_guides_menu_and_shortcut_have_the_same_state_transition`).
 pub(crate) fn toggle_smart_guides(snap: &mut varos_core::model::SnapConfig) {
     snap.smart = !snap.smart;
+}
+
+/// A "+N" list row: the hidden tab's name, with the unsaved-changes dot after it when dirty.
+pub(crate) fn overflow_row_label(tab: &TabView) -> String {
+    if tab.dirty {
+        format!("{}  \u{2022}", tab.label)
+    } else {
+        tab.label.clone()
+    }
+}
+
+/// The box tree's rect inside `.mid` (the region between the band and the status line). The boxes
+/// FLOAT in the void (Ahmed 07-07): an outer breath of HALF the box-to-box seam on the sides; on top
+/// the 4b band already holds the 12 (boxes start at its bottom); the bottom breath lives INSIDE the
+/// taller status line so its text centres in the strip the eye sees.
+pub(crate) fn editor_tree_rect(mid: egui::Rect) -> egui::Rect {
+    let g = varos_app::shell::tokens::SEAM_GAP * 0.5;
+    egui::Rect::from_min_max(mid.min + egui::vec2(g, 0.0), egui::pos2(mid.right() - g, mid.bottom()))
 }
 
 /// Seam-fill the `.mid` region EXCEPT the canvas hole (the Board pane's interior, where the wgpu

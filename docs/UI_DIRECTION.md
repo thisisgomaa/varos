@@ -69,10 +69,12 @@ floating hands live over it. Boxes stack under/above/beside each other freely.
 - **The ONLY fixed chrome = the APP BAR** (Ahmed 07-03): Home (Mac; ☰ only on the deferred Windows build) + doc tabs + global actions + window buttons.
   It has nothing to do with the board. Everything else lives inside boxes.
 - **The app bar (and status strip) are NOT panels — they are the VOID itself** (Ahmed 07-03, from Brave's
-  tab bar): background = the seam colour `#0e0d0d`, no fill, no hairline. **Doc tabs = chips floating in the
-  void** — active tab = a filled block (`PANEL`, 8 px `RBOX` radius, like Brave/Claude), inactive = bare muted text.
+  tab bar): background = the seam colour — **`#000000` since 4b (owner, 2026-10-05; was `#0e0d0d`)**: one flat
+  backdrop for the band, every seam and the status line, no fill, no hairline, no step (MAC_CHROME.md §A′). **Doc tabs = chips floating in the
+  void** — active tab = a filled block (4b, 2026-10-05: `SURFACE`, 3 px `R` radius — was `PANEL` / 8 px `RBOX`),
+  inactive = bare muted text, hover = `HOVER`; 28 tall, 88–176 wide, gap 2 (MAC_CHROME.md §A′).
   So the whole shell reads as: one dark void, boxes floating in it, chips floating on its bar.
-- **Seams: EQUAL GAPS everywhere** (12 px `SEAM_GAP` of near-black `#0e0d0d`, darker than the board) between ALL boxes —
+- **Seams: EQUAL GAPS everywhere** (12 px `SEAM_GAP` of the backdrop — `#000000` since 4b, was `#0e0d0d` — darker than the board) between ALL boxes —
   including around the board box. The equal rhythm is what makes it read as one system (his 3 reference
   layouts / the Claude-Code panes look). Never shadows.
 - **Multiple panels in one box → they become TABS automatically** — Claude-style pill tabs

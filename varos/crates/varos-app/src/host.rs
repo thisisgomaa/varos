@@ -23,7 +23,7 @@ use varos_core::editor::{Editor, Mods};
 use winit::keyboard::KeyCode;
 
 use crate::app_command::{AppCommand, OpenOrigin, SessionId, WindowCmd};
-use crate::chrome::{Accel, FileCmd, MenuCmd};
+use crate::chrome::{Accel, FileCmd, MenuCmd, SnapRow};
 use crate::file_jobs::{FileDone, FileJob};
 use crate::lifecycle::{Dialogs, DocStore, Lifecycle};
 use crate::ui::WinAction;
@@ -221,9 +221,9 @@ pub enum HostAction {
 pub enum DocAction {
     /// A document shortcut key (`main.rs`'s `doc_key`) with the modifiers held when it was pressed.
     Key(KeyCode, Mods),
-    /// A magnet quick-menu row (grid = Snap to Grid, else Snap to Point).
+    /// A View-menu snapping row (formerly the magnet quick-menu's).
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // raised only by the macOS menu bar
-    Snap { grid: bool },
+    Snap(SnapRow),
 }
 
 /// A shortcut key meant for the document (not typed into a field): its lifecycle command, else the
@@ -345,6 +345,7 @@ pub fn win_action_command(a: WinAction) -> AppCommand {
         WinAction::Minimize => AppCommand::Window(WindowCmd::Minimize),
         WinAction::ToggleMaximize => AppCommand::Window(WindowCmd::ToggleMaximize),
         WinAction::Close => AppCommand::Quit,
+        WinAction::About => AppCommand::Window(WindowCmd::About),
     }
 }
 
@@ -368,8 +369,8 @@ pub enum MenuRoute {
     Key(Accel),
     /// A click-only plain-key row (Edit ▸ Delete): the key path, never while a text field is focused.
     Plain(KeyCode),
-    /// A magnet quick-menu row (grid = Snap to Grid, else Snap to Point).
-    Snap { grid: bool },
+    /// A View-menu snapping row (formerly the magnet quick-menu's).
+    Snap(SnapRow),
 }
 
 /// Route one native menu row. `None` = nothing to do (a document row with no document).
@@ -382,8 +383,7 @@ pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> 
         MenuCmd::ToggleRail => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleRail)),
         MenuCmd::ToggleDock => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleDock)),
         MenuCmd::TogglePanel(p) => MenuRoute::App(AppCommand::Window(WindowCmd::TogglePanel(p))),
-        MenuCmd::SnapGrid => MenuRoute::Snap { grid: true },
-        MenuCmd::SnapPoint => MenuRoute::Snap { grid: false },
+        MenuCmd::Snap(row) => MenuRoute::Snap(row),
     })
 }
 
@@ -837,6 +837,8 @@ mod tests {
         assert_eq!(win_action_command(WinAction::Minimize), AppCommand::Window(WindowCmd::Minimize));
         assert_eq!(win_action_command(WinAction::ToggleMaximize), AppCommand::Window(WindowCmd::ToggleMaximize));
         assert_eq!(win_action_command(WinAction::Close), AppCommand::Quit, "✕ = the Quit transaction");
+        // 4b: the band's V mark asks for the native About panel (Varos ▸ About)
+        assert_eq!(win_action_command(WinAction::About), AppCommand::Window(WindowCmd::About));
         // the Window menu rows are window commands; the other rows keep their own paths
         let p = varos_app::shell::PanelId::DOCKABLE[0];
         for (cmd, want) in [
@@ -844,8 +846,10 @@ mod tests {
             (MenuCmd::ToggleDock, MenuRoute::App(AppCommand::Window(WindowCmd::ToggleDock))),
             (MenuCmd::TogglePanel(p), MenuRoute::App(AppCommand::Window(WindowCmd::TogglePanel(p)))),
             (MenuCmd::Plain(KeyCode::Backspace), MenuRoute::Plain(KeyCode::Backspace)),
-            (MenuCmd::SnapGrid, MenuRoute::Snap { grid: true }),
-            (MenuCmd::SnapPoint, MenuRoute::Snap { grid: false }),
+            (MenuCmd::Snap(SnapRow::Grid), MenuRoute::Snap(SnapRow::Grid)),
+            (MenuCmd::Snap(SnapRow::Point), MenuRoute::Snap(SnapRow::Point)),
+            (MenuCmd::Snap(SnapRow::AlignGuides), MenuRoute::Snap(SnapRow::AlignGuides)),
+            (MenuCmd::Snap(SnapRow::GeomGuides), MenuRoute::Snap(SnapRow::GeomGuides)),
         ] {
             assert_eq!(menu_route(cmd, Some(ID)), Some(want), "{cmd:?}");
         }
@@ -1163,7 +1167,7 @@ mod tests {
             .map(|a| match a {
                 HostAction::App(c) => format!("{c:?}"),
                 HostAction::Doc(DocAction::Key(code, _)) => format!("Key({code:?})"),
-                HostAction::Doc(DocAction::Snap { grid }) => format!("Snap({grid})"),
+                HostAction::Doc(DocAction::Snap(row)) => format!("Snap({row:?})"),
             })
             .collect()
     }
