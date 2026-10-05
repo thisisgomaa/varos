@@ -39,6 +39,8 @@ mod mac_caption;
 mod mac_menu;
 #[cfg(target_os = "macos")]
 mod mac_open;
+#[cfg(target_os = "macos")]
+mod mac_titlebar;
 mod os_open;
 mod recent_files;
 mod recovery_host;
@@ -326,20 +328,25 @@ fn editor_check(ed: &Editor, c: chrome::Check) -> Option<bool> {
         C::SmartGuides => ed.doc.snap.smart,
         C::SnapGrid => ed.doc.snap.grid,
         C::SnapPoint => ed.doc.snap.key_points,
+        C::AlignGuides => ed.doc.snap.alignment_guides,
+        C::GeomGuides => ed.doc.snap.object_geometry,
         C::Rail | C::Dock | C::Panel(_) => return None,
     })
 }
 
-/// View ▸ Snap to Grid / Snap to Point — the magnet quick-menu's rows: flip the flag and commit it
-/// through the same non-undoable `SetSnapConfig` the magnet menu's frame commit uses.
+/// View ▸ Snap to Grid / Snap to Point / Alignment Guides / Geometric Guides (the old magnet
+/// quick-menu's rows): flip the one flag and commit it through the non-undoable `SetSnapConfig`.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn menu_snap_toggle(ed: &mut Editor, grid: bool) {
+fn menu_snap_toggle(ed: &mut Editor, row: chrome::SnapRow) {
+    use chrome::SnapRow as R;
     let mut s = ed.doc.snap;
-    if grid {
-        s.grid = !s.grid;
-    } else {
-        s.key_points = !s.key_points;
-    }
+    let flag = match row {
+        R::Grid => &mut s.grid,
+        R::Point => &mut s.key_points,
+        R::AlignGuides => &mut s.alignment_guides,
+        R::GeomGuides => &mut s.object_geometry,
+    };
+    *flag = !*flag;
     ed.execute(EditCommand::SetSnapConfig(s));
 }
 
@@ -641,7 +648,7 @@ fn dispatch(
             // K3: a layout command (Window ▸ rail / dock / panel) may hide the field being edited —
             // valid text commits to what it edits first; invalid text reverts the frame its field is
             // no longer drawn (`kit::field::end_frame`), so nothing stays held
-            if !matches!(w, WindowCmd::Minimize | WindowCmd::ToggleMaximize) && !ws.on_home() {
+            if !matches!(w, WindowCmd::Minimize | WindowCmd::ToggleMaximize | WindowCmd::About) && !ws.on_home() {
                 if let Some(s) = ws.active_mut() {
                     let _ = gui.commit_fields(&mut s.editor);
                 }
@@ -649,6 +656,11 @@ fn dispatch(
             match w {
                 WindowCmd::Minimize => window.set_minimized(true),
                 WindowCmd::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
+                // the V mark: the very panel Varos ▸ About opens (raised only on macOS)
+                WindowCmd::About => {
+                    #[cfg(target_os = "macos")]
+                    mac_menu::show_about();
+                }
                 #[cfg(target_os = "macos")]
                 WindowCmd::ToggleRail => gui.toggle_rail(),
                 #[cfg(target_os = "macos")]
@@ -714,11 +726,11 @@ fn run_doc(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: egui::R
     true
 }
 
-/// A document action on one tab: a shortcut key's path, or a magnet quick-menu row.
+/// A document action on one tab: a shortcut key's path, or a View-menu snapping row.
 fn run_doc_action(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: egui::Rect) {
     match a {
         host::DocAction::Key(code, m) => doc_key(ed, view, canvas, code, m),
-        host::DocAction::Snap { grid } => menu_snap_toggle(ed, grid),
+        host::DocAction::Snap(row) => menu_snap_toggle(ed, row),
     }
 }
 
@@ -935,11 +947,14 @@ fn main() {
     // first present, a live-resize edge) ever shows the desktop or a system gray (MAC_CHROME.md §B).
     #[cfg(target_os = "macos")]
     {
-        let bg = varos_app::shell::tokens::BG;
+        // 4b: the backdrop (band, seams, status) — so a live-resize edge matches the band
+        let bg = varos_app::shell::tokens::SEAM;
         mac_menu::set_window_background(&window, [bg.r(), bg.g(), bg.b()]);
         // P15: the title-bar strip over our content view is NOT a native drag region — a press on a
         // tab / button belongs to egui; only empty bar space drags (MAC_CHROME.md §A).
         mac_menu::forbid_native_titlebar_drag(&window);
+        // 4b: the traffic lights on the band's centre line (re-applied every redraw — idempotent)
+        mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "startup");
     }
     // macOS: the native menu bar; installed on the first NewEvents (after the app finished launching).
     #[cfg(target_os = "macos")]
@@ -953,6 +968,8 @@ fn main() {
     single_instance::install_file_open_handler(hwnd);
     cursors::set_cloaked(hwnd, true);
     window.set_visible(true); // now "shown" but cloaked → not composited (no flash), surface is presentable
+    #[cfg(target_os = "macos")]
+    mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "visible");
     let mut renderer = match pollster::block_on(Renderer::new(window.clone(), size.width, size.height)) {
         Ok(r) => r,
         Err(e) => {
@@ -972,6 +989,8 @@ fn main() {
     if !ws.on_home() {
         if let Some(s) = ws.active() {
             window.set_title(&host::window_title(&s.display_name(), s.is_dirty()));
+            #[cfg(target_os = "macos")]
+            mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "startup-title");
         }
     }
     gui.set_tabs(ws.visible_tabs(), ws.document_target());
@@ -1127,12 +1146,12 @@ fn main() {
                                 }
                             }
                         }
-                        Some(R::Snap { grid }) => {
+                        Some(R::Snap(row)) => {
                             if ws.on_home() {
                                 continue;
                             }
                             if let Some(s) = ws.active_mut() {
-                                raise_doc(&mut pending, D::Snap { grid }, &mut s.editor, &mut s.view, canvas, &mut gui);
+                                raise_doc(&mut pending, D::Snap(row), &mut s.editor, &mut s.view, canvas, &mut gui);
                             }
                         }
                         None => {}
@@ -1601,6 +1620,9 @@ fn main() {
                             return;
                         }
                         let perf_start = Instant::now();
+                        // 4b: AppKit re-lays the title bar on resize / fullscreen exit / Space change
+                        #[cfg(target_os = "macos")]
+                        mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "redraw");
                         // a new / opened tab's owed fit, BEFORE its first frame is drawn (the Board box is
                         // known from the previous frame)
                         if !home {
@@ -1739,6 +1761,8 @@ fn main() {
                             {
                                 use winit::platform::macos::WindowExtMacOS;
                                 window.set_document_edited(dirty);
+                                // both re-lay the title bar: put the lights back before this frame shows
+                                mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "title");
                             }
                             last_title = title;
                         }
@@ -2627,12 +2651,22 @@ mod menu_mirror_tests {
 
     #[test]
     fn snap_rows_flip_what_their_check_marks_read() {
-        for (grid, c) in [(true, Check::SnapGrid), (false, Check::SnapPoint)] {
+        use crate::chrome::SnapRow as R;
+        let rows = [
+            (R::Grid, Check::SnapGrid),
+            (R::Point, Check::SnapPoint),
+            (R::AlignGuides, Check::AlignGuides),
+            (R::GeomGuides, Check::GeomGuides),
+        ];
+        for (row, c) in rows {
             let mut ed = Editor::new();
             let before = editor_check(&ed, c).unwrap();
-            menu_snap_toggle(&mut ed, grid);
+            let others: Vec<_> = rows.iter().filter(|&&(_, o)| o != c).map(|&(_, o)| editor_check(&ed, o)).collect();
+            menu_snap_toggle(&mut ed, row);
             assert_eq!(editor_check(&ed, c), Some(!before), "{c:?}");
-            menu_snap_toggle(&mut ed, grid);
+            let after: Vec<_> = rows.iter().filter(|&&(_, o)| o != c).map(|&(_, o)| editor_check(&ed, o)).collect();
+            assert_eq!(others, after, "{c:?} flips only its own flag");
+            menu_snap_toggle(&mut ed, row);
             assert_eq!(editor_check(&ed, c), Some(before), "{c:?} toggles back");
         }
     }

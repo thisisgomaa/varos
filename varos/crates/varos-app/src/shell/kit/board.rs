@@ -364,11 +364,29 @@ pub fn table_row(ui: &mut Ui, id: Id, rect: Rect, focused: bool, label: &str) ->
     r
 }
 
-/// The top bar's "Search boards" pill (src.html `.search`): PANEL capsule, search glyph, and the kit's
-/// live search field (every keystroke is the value; Esc restores). Returns true when `text` changed.
+/// The top band's "Search boards" field (4b): r3, PANEL + 1-px LINE at rest; while it holds the
+/// keyboard SURFACE + LINE2 with the 2-px azure focus ring 1 px outside it. Search glyph, then the
+/// kit's live search field (every keystroke is the value; Esc restores). Returns true when `text`
+/// changed. The document's (inert) Search in the band paints the same rest look.
 pub fn search_pill(ui: &mut Ui, id: Id, rect: Rect, text: &mut String, font: egui::FontId, hint: &str) -> bool {
+    let focused = ui.ctx().memory(|m| m.has_focus(id));
     let p = ui.painter();
-    p.rect_filled(rect, t::RCAP, t::PANEL);
+    let (fill, line) = if focused { (t::SURFACE, t::LINE2) } else { (t::PANEL, t::LINE) };
+    p.rect_filled(rect, t::R, fill);
+    p.rect_stroke(rect, t::R, egui::Stroke::new(t::KIT_STROKE, line), egui::StrokeKind::Inside);
+    if focused {
+        // the focus overlay: a 2-px ring, KIT_FOCUS_GAP outside the field (UI_SYSTEM K5)
+        let ring = rect.expand(t::KIT_FOCUS_GAP + t::KIT_FOCUS_STROKE / 2.0);
+        let r = t::R + (t::KIT_FOCUS_GAP + t::KIT_FOCUS_STROKE / 2.0) as u8;
+        let stroke = egui::Stroke::new(t::KIT_FOCUS_STROKE, t::ACCENT);
+        ui.painter().with_clip_rect(ui.clip_rect().expand(t::KIT_FOCUS_STROKE * 2.0)).rect_stroke(
+            ring,
+            r,
+            stroke,
+            egui::StrokeKind::Middle,
+        );
+    }
+    let p = ui.painter();
     let icon_c = egui::pos2(rect.left() + t::SB_SEARCH_PAD + t::SB_ICON_SMALL / 2.0, rect.center().y);
     Icon::Search.paint(p, icon_c, t::SB_ICON_SMALL, t::MUTED);
     let x = rect.left() + t::SB_SEARCH_PAD + t::SB_ICON_SMALL + t::SB_SEARCH_GAP;
