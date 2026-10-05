@@ -1,7 +1,7 @@
 //! DFS S6-C: the Export PDF sheet — the minimal page-scope choice the work order requires before the
 //! save panel (`DFS_S4_S6_ASSOCIATION_EXPORT.md` §3.3: All visible artboards / Active artboard /
-//! Artwork bounds; a scope that cannot export is disabled and says why). File ▸ Export ▸ PDF…, the
-//! top-bar Export button and the burger's Export… row all send `AppCommand::ShowExport`, which opens
+//! Artwork bounds; a scope that cannot export is disabled and says why). File ▸ Export ▸ PDF… and the
+//! Windows burger's Export… row send `AppCommand::ShowExport` (4b removed the band's button), which opens
 //! this sheet; its Export… sends `AppCommand::ExportPdf(id, scope)` — the save panel and the job.
 //!
 //! Hand-painted from `shell::kit` (rows, notice, buttons) on kit tokens: no egui default widgets, no
@@ -102,14 +102,21 @@ pub enum SheetAction {
     Export(SessionId, ExportScope),
 }
 
-/// Paint the sheet hanging under `anchor` (the top-bar Export button), right-aligned to it; without
-/// an anchor, near the top of the window.
-pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, anchor: Option<egui::Rect>) -> SheetAction {
-    let screen = ctx.content_rect();
-    let pos = match anchor {
-        Some(a) => egui::pos2((a.right() - SHEET_W).max(screen.left()), a.bottom() + t::KIT_MENU_GAP),
-        None => egui::pos2(screen.center().x - SHEET_W / 2.0, screen.top() + t::START_PAD),
+/// Where the sheet's top-left goes (4b: the band has no Export button to hang from any more): its
+/// top `KIT_MENU_GAP` under the band, right-aligned to the Board box's right edge (one seam left of
+/// the panel column, `panel_column`); with no column, centred. Never off the window's left edge.
+pub fn sheet_pos(screen: egui::Rect, band_h: f32, panel_column: Option<egui::Rangef>) -> egui::Pos2 {
+    let top = screen.top() + band_h + t::KIT_MENU_GAP;
+    let left = match panel_column {
+        Some(col) => col.min - t::SEAM_GAP - SHEET_W,
+        None => screen.center().x - SHEET_W / 2.0,
     };
+    egui::pos2(left.max(screen.left()), top)
+}
+
+/// Paint the sheet under the band (`sheet_pos`).
+pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, panel_column: Option<egui::Rangef>) -> SheetAction {
+    let pos = sheet_pos(ctx.content_rect(), crate::chrome::TOPBAR.height, panel_column);
     let mut action = SheetAction::Stay;
     let pad = (t::KIT_PAD * 2.0) as i8;
     let area = egui::Area::new(Id::new("export-sheet")).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
@@ -159,7 +166,7 @@ pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, anchor: Option<egui::R
         let escape = i.key_pressed(egui::Key::Escape);
         let outside = i.events.iter().any(|e| {
             matches!(e, egui::Event::PointerButton { pressed: true, pos, .. }
-                if !rect.contains(*pos) && !anchor.is_some_and(|a| a.contains(*pos)))
+                if !rect.contains(*pos))
         });
         (escape, outside)
     });
@@ -218,6 +225,22 @@ mod tests {
         let empty = ExportSheet::new(SessionId(1), &Document::default(), None);
         assert!(!empty.can_export());
         assert_eq!(empty.reason(), Some("There is no visible artwork to export."));
+    }
+
+    /// 4b: with the Export button gone, the sheet opens under the 52-pt band (never inside it),
+    /// right-aligned to the Board box (a seam left of the panel column); centred without a column.
+    #[test]
+    fn export_sheet_opens_below_the_band() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1512.0, 982.0));
+        let band = varos_app::shell::tokens::BAND_H;
+        let col = egui::Rangef::new(1212.0, 1506.0);
+        let at = sheet_pos(screen, band, Some(col));
+        assert_eq!(at.y, band + t::KIT_MENU_GAP, "under the band");
+        assert_eq!(at.x + SHEET_W, col.min - t::SEAM_GAP, "right edge on the Board box's right edge");
+        let centred = sheet_pos(screen, band, None);
+        assert_eq!((centred.x + SHEET_W / 2.0, centred.y), (756.0, band + t::KIT_MENU_GAP));
+        // a column so far left the sheet would leave the window: clamped to the left edge
+        assert_eq!(sheet_pos(screen, band, Some(egui::Rangef::new(100.0, 400.0))).x, 0.0);
     }
 
     #[test]

@@ -48,11 +48,7 @@ pub const LEGACY_DIST_H: &str = r#"<rect x="3" y="6" width="3" height="12"/><rec
 pub const LEGACY_DIST_V: &str = r#"<rect x="6" y="3" width="12" height="3"/><rect x="6" y="10.5" width="12" height="3"/><rect x="6" y="18" width="12" height="3"/>"#;
 // top-bar icons: menu (☰). Window min/max/close are painted directly in `winctl` (crisp Win11 glyphs).
 pub const LEGACY_MENU: &str = r#"<path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/>"#;
-// top-bar content icons: search · layout · panels checklist · new-tab · tab-close · check
-pub const LEGACY_SEARCH: &str = LEGACY_L_SEARCH; // identical glyph to the Layers search — one source, no dup literal
-pub const LEGACY_PLUS: &str = r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#;
-pub const LEGACY_X: &str = r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#;
-pub const LEGACY_MAGNET: &str = r#"<path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15"/><path d="m5 8 4 4"/><path d="m12 15 4 4"/>"#;
+// (4b: the band's search / plus / × / magnet glyphs now come from the kit registry, `Icon`)
 // Artboard tool (Lucide "frame" — a bold # that reads clearly at 20px) · hexagon (polygon shape) ·
 // portrait/landscape page · "fit in window" frame
 pub const LEGACY_ARTBOARD: &str = r#"<path d="M22 6H2"/><path d="M22 18H2"/><path d="M6 2v20"/><path d="M18 2v20"/>"#;

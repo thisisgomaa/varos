@@ -144,3 +144,22 @@ pub(crate) fn menu_sep(ui: &mut egui::Ui) {
     ui.painter().hline(r.left()..=r.right(), r.center().y, Stroke::new(1.0, BORDER));
     ui.add_space(4.0);
 }
+
+/// The egui event a ⌘-clipboard key means to a focused text field — the same mapping egui-winit
+/// applies to real key presses (`is_copy_command` & co.). `None` = not a clipboard key (forward the
+/// key itself); `Some(None)` = ⌘V with nothing pasteable (egui-winit then sends nothing either).
+/// `clipboard` is only read for ⌘V.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the caller is the macOS menu hand-off
+pub(crate) fn text_clipboard_event(
+    key: egui::Key,
+    clipboard: impl FnOnce() -> Option<String>,
+) -> Option<Option<egui::Event>> {
+    match key {
+        egui::Key::C => Some(Some(egui::Event::Copy)),
+        egui::Key::X => Some(Some(egui::Event::Cut)),
+        egui::Key::V => {
+            Some(clipboard().map(|t| t.replace("\r\n", "\n")).filter(|t| !t.is_empty()).map(egui::Event::Paste))
+        }
+        _ => None,
+    }
+}

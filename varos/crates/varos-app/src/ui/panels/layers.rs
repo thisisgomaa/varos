@@ -1,11 +1,9 @@
 use super::super::*;
 
 pub(crate) struct TopIcons {
-    pub(crate) menu: Option<egui::TextureHandle>, // min/max/close are painted glyphs now (see `winctl`), not textures
-    pub(crate) search: Option<egui::TextureHandle>,
-    pub(crate) plus: Option<egui::TextureHandle>,
-    pub(crate) x: Option<egui::TextureHandle>,
-    pub(crate) magnet: Option<egui::TextureHandle>,
+    /// Windows' burger. min/max/close are painted glyphs (`winctl`); the 4b band's Home, `+`, "+N",
+    /// ×, Search glyphs come from the kit icon registry (`Icon`).
+    pub(crate) menu: Option<egui::TextureHandle>,
 }
 
 // ───────────────────────────── layers panel snapshot ─────────────────────────────

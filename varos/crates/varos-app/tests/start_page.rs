@@ -13,7 +13,10 @@ use varos_core::board::PresetId;
 
 const W: f32 = 1512.0;
 const H: f32 = 982.0;
-const BAR: f32 = 28.0;
+/// The 4b band (52 = 12 + 28 + 12): the Start box starts right at its bottom.
+const BAR: f32 = t::BAND_H;
+// 4b: the box starts at y 52 (was 40) and its top padding shrank by the same 12 (`SB_PAD_TOP`), so
+// every approved content position below is the Start-v2 mockup's own, unchanged.
 const RID: &str = "recovery-menu-card";
 
 fn home() -> std::path::PathBuf {
@@ -118,7 +121,7 @@ fn assert_near(what: &str, got: Rect, want: Rect) {
 #[test]
 fn layout_matches_the_mockup_at_1512_by_982() {
     let l = shape_layout(&recent_model(), egui::vec2(W, H));
-    assert_near("box", l.board, Rect::from_min_max(egui::pos2(12.0, 40.0), egui::pos2(1500.0, 950.0)));
+    assert_near("box", l.board, Rect::from_min_max(egui::pos2(12.0, 52.0), egui::pos2(1500.0, 950.0)));
     assert_near("status", l.status, Rect::from_min_max(egui::pos2(24.0, 950.0), egui::pos2(1488.0, 982.0)));
     assert_eq!((l.content.left(), l.content.width()), (52.0, 1408.0));
     assert!(!l.stacked);
@@ -143,6 +146,7 @@ fn layout_matches_the_mockup_at_1512_by_982() {
     }
     assert_eq!(l.cards[5].top() - l.cards[0].bottom(), 12.0);
     assert!(l.cards.last().unwrap().bottom() <= l.board.bottom() - t::SB_PAD_BOTTOM, "two rows fit the box");
+    assert_eq!(l.content_bottom, l.board.bottom(), "nothing to scroll at 1512 × 982");
 }
 
 /// The same rects as the real frame reports them (egui responses), at 1× and Retina 2×.
@@ -275,7 +279,7 @@ fn every_control_emits_its_action_by_pointer() {
     assert_eq!(p.click(&m, ids::card(&key(2))), [StartAction::OpenRecent(path(2))]);
     // the search pill emits Search on every change
     let mut got = None;
-    let bar = r(W - 300.0, 2.0, t::SB_SEARCH_W, t::SB_SEARCH_H);
+    let bar = Rect::from_min_size(egui::pos2(W - 300.0, t::BAND_PAD_Y), egui::vec2(252.0, t::BAND_CHIP_H)); // 4b's band field
     let press = |pressed| Event::PointerButton {
         pos: bar.center(),
         button: PointerButton::Primary,
@@ -304,7 +308,7 @@ fn the_search_field_owns_the_keyboard_while_it_types() {
     let m = recent_model();
     let ctx = context(1.0);
     let mut page = StartPage::new();
-    let bar = r(W - 300.0, 2.0, t::SB_SEARCH_W, t::SB_SEARCH_H);
+    let bar = Rect::from_min_size(egui::pos2(W - 300.0, t::BAND_PAD_Y), egui::vec2(252.0, t::BAND_CHIP_H)); // 4b's band field
     let run = |page: &mut StartPage, events: Vec<Event>| {
         let mut actions = vec![];
         let _ = ctx.run_ui(input(1.0, egui::vec2(W, H), events), |ui| {

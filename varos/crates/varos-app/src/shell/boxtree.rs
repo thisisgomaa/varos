@@ -135,6 +135,28 @@ impl ShellState {
         serde_json::to_string(&self.tree)
     }
 
+    /// The right panel column's x-span as last laid out (4b: the top band's Search + V zone sits
+    /// over it): the root is a horizontal split whose LAST child does not hold the Board → that
+    /// child's rect. `None` before the first layout, or when no such column exists (panels closed,
+    /// the Board last, a vertical root). Read-only — the layout is never touched.
+    pub fn side_column_span(&self) -> Option<egui::Rangef> {
+        let root = self.tree.root()?;
+        let Some(Tile::Container(Container::Linear(lin))) = self.tree.tiles.get(root) else { return None };
+        if lin.dir != LinearDir::Horizontal || lin.children.len() < 2 {
+            return None;
+        }
+        let last = *lin.children.last()?;
+        // walk up from the Board pane: does it live inside `last`?
+        let mut at = find_pane(&self.tree, PanelId::Board);
+        while let Some(id) = at {
+            if id == last {
+                return None;
+            }
+            at = self.tree.tiles.parent_of(id);
+        }
+        self.tree.tiles.rect(last).map(|r| r.x_range())
+    }
+
     /// Is a pane of this panel anywhere in the tree?
     pub fn is_open(&self, panel: PanelId) -> bool {
         find_pane(&self.tree, panel).is_some()
@@ -1137,6 +1159,45 @@ mod tests {
         run(&mut shell, vec![]);
         assert!(!kit::is_menu_open(&ctx, owner), "a click away closes the menu");
         assert!(unchanged(&shell), "a click away picks nothing");
+    }
+
+    /// Lay `shell` out a few frames in a 1400×900 screen (the rect ease settles).
+    fn lay_out(shell: &mut ShellState) {
+        let ctx = egui::Context::default();
+        super::T::apply(&ctx);
+        for k in 0..8 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+                time: Some(1.0 + k as f64),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| shell.ui(ui));
+        }
+    }
+
+    /// 4b: the top band's right zone sits over the panel column — the standard tree's right column.
+    #[test]
+    fn side_column_span_is_the_right_column_of_the_standard_tree() {
+        let mut shell = ShellState::standard();
+        assert_eq!(shell.side_column_span(), None, "nothing is laid out before the first frame");
+        lay_out(&mut shell);
+        let col = shell.side_column_span().expect("the standard tree has a right column");
+        let board = shell.tree.tiles.rect(find_pane(&shell.tree, PanelId::Board).unwrap()).unwrap();
+        assert!(col.min > board.right(), "the column is right of the Board: {col:?} vs {board:?}");
+        assert!((col.max - 1400.0).abs() <= 1.0, "it reaches the right edge: {col:?}");
+        assert!(col.span() > 150.0 && col.span() < 600.0, "about a fifth of the width: {col:?}");
+    }
+
+    #[test]
+    fn side_column_span_is_none_without_a_right_column() {
+        let mut shell = ShellState::standard();
+        for p in [PanelId::Align, PanelId::Pathfinder, PanelId::Properties, PanelId::Layers] {
+            while shell.is_open(p) {
+                shell.toggle_panel(p);
+            }
+        }
+        lay_out(&mut shell);
+        assert_eq!(shell.side_column_span(), None, "the Board alone has no side column");
     }
 
     #[test]

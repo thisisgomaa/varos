@@ -139,9 +139,8 @@ mod text_clipboard_tests {
 
 #[cfg(test)]
 mod characterization_tests {
-    use super::{apply_ops, toggle_smart_guides, Op};
+    use super::{apply_ops, Op};
     use varos_core::editor::{Editor, PaintTarget, ToolKind};
-    use varos_core::geom::View;
     use varos_core::model::{Anchor, Path};
 
     fn anchor(id: u32, x: f32, y: f32) -> Anchor {
@@ -208,19 +207,6 @@ mod characterization_tests {
 
         apply_ops(&mut ed, vec![Op::RulerOrigin(None)]);
         assert_eq!(ed.origin_preview, None);
-    }
-
-    #[test]
-    fn smart_guides_menu_and_shortcut_have_the_same_state_transition() {
-        let mut from_menu = Editor::new();
-        let mut from_shortcut = Editor::new();
-        let mut view = View::identity();
-
-        toggle_smart_guides(&mut from_menu.doc.snap);
-        crate::apply_key(&mut from_shortcut, &mut view, [0.0, 0.0], "KeyU", true, false, false);
-
-        assert_eq!(from_menu.doc.snap.smart, from_shortcut.doc.snap.smart);
-        assert_eq!(from_menu.doc.snap, from_shortcut.doc.snap);
     }
 }
 
@@ -641,7 +627,14 @@ mod tab_strip_tests {
     use egui::{Event, PointerButton, Pos2, RawInput};
 
     fn icons() -> TopIcons {
-        TopIcons { menu: None, search: None, plus: None, x: None, magnet: None }
+        TopIcons { menu: None }
+    }
+
+    /// A context with the app's fonts: the band paints Inter (`tokens::small` / `small_medium`).
+    fn ctx() -> egui::Context {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        ctx
     }
     fn tab(id: u64, label: &str, dirty: bool) -> TabView {
         TabView { id: SessionId(id), label: label.into(), dirty, tooltip: "Not saved yet".into() }
@@ -689,7 +682,6 @@ mod tab_strip_tests {
         active: Option<SessionId>,
         show_rail: &mut bool,
         show_dock: &mut bool,
-        snap: &mut varos_core::model::SnapConfig,
     ) -> Vec<AppCommand> {
         let mut win_action = None;
         let mut cmds = Vec::new();
@@ -704,36 +696,30 @@ mod tab_strip_tests {
                 &mut cmds,
                 show_rail,
                 show_dock,
-                snap,
+                &mut Default::default(),
+                None,
                 false,
                 false,
                 false,
-                &mut None,
             );
         });
         cmds
     }
 
-    /// The chip / `+` / Share / Export / search rects for these tabs — measured with the exact same
-    /// font call `build_topbar` makes, on the SAME `Context` (egui's built-in default font is stable
-    /// across frames), so the rects line up with what a real frame draws.
+    /// The chip / `+` / "+N" / Search / V rects for these tabs — measured with the exact same font
+    /// call `build_topbar` makes (Inter 500 12, `tokens::small_medium`), on the SAME `Context`, so the
+    /// rects line up with what a real frame draws.
     fn measure(ctx: &egui::Context, tabs: &[TabView], active: Option<SessionId>) -> crate::chrome::TopbarLayout {
         let bar = bar_rect();
         let mut out = None;
         let _ = ctx.run_ui(idle(), |ui| {
             let p = ui.painter().clone();
-            let text_width =
-                |t: &str| p.layout_no_wrap(t.to_owned(), FontId::proportional(12.0), Color32::WHITE).size().x;
+            let text_width = |t: &str| {
+                p.layout_no_wrap(t.to_owned(), varos_app::shell::tokens::small_medium(), Color32::WHITE).size().x
+            };
             let widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
             let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
-            out = Some(crate::chrome::topbar_layout(
-                bar,
-                crate::chrome::TOPBAR,
-                [text_width("Window"), text_width("Share"), text_width("Export")],
-                search_pill_width(&p),
-                &widths,
-                active_index,
-            ));
+            out = Some(crate::chrome::topbar_layout(bar, crate::chrome::TOPBAR, None, &widths, active_index));
         });
         out.unwrap()
     }
@@ -753,23 +739,21 @@ mod tab_strip_tests {
         active: Option<SessionId>,
         show_rail: &mut bool,
         show_dock: &mut bool,
-        snap: &mut varos_core::model::SnapConfig,
     ) -> Vec<AppCommand> {
-        let _ = frame(ctx, idle(), top, shell, tabs, active, show_rail, show_dock, snap);
-        let _ = frame(ctx, press(pos, button), top, shell, tabs, active, show_rail, show_dock, snap);
-        frame(ctx, release(pos, button), top, shell, tabs, active, show_rail, show_dock, snap)
+        let _ = frame(ctx, idle(), top, shell, tabs, active, show_rail, show_dock);
+        let _ = frame(ctx, press(pos, button), top, shell, tabs, active, show_rail, show_dock);
+        frame(ctx, release(pos, button), top, shell, tabs, active, show_rail, show_dock)
     }
 
     #[test]
     fn click_emits_activate_document() {
-        let ctx = egui::Context::default();
+        let ctx = ctx();
         let tabs = vec![tab(1, "A", false), tab(2, "B", false)];
         let layout = measure(&ctx, &tabs, Some(SessionId(1)));
         let (i, rect) = layout.tabs[1]; // the second placed chip
         assert_eq!(tabs[i].id, SessionId(2));
         let mut shell = varos_app::shell::ShellState::standard();
         let (mut rail, mut dock) = (true, true);
-        let mut snap = varos_core::model::SnapConfig::default();
         let pos = egui::pos2(rect.left() + 20.0, rect.center().y); // clear of the × in the corner
         let cmds = click_at(
             &ctx,
@@ -781,20 +765,18 @@ mod tab_strip_tests {
             Some(SessionId(1)),
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         assert_eq!(cmds, [AppCommand::ActivateDocument(SessionId(2))]);
     }
 
     #[test]
     fn middle_click_emits_close_document() {
-        let ctx = egui::Context::default();
+        let ctx = ctx();
         let tabs = vec![tab(1, "A", false)];
         let layout = measure(&ctx, &tabs, Some(SessionId(1)));
         let (_, rect) = layout.tabs[0];
         let mut shell = varos_app::shell::ShellState::standard();
         let (mut rail, mut dock) = (true, true);
-        let mut snap = varos_core::model::SnapConfig::default();
         let pos = egui::pos2(rect.left() + 20.0, rect.center().y);
         let cmds = click_at(
             &ctx,
@@ -806,20 +788,18 @@ mod tab_strip_tests {
             Some(SessionId(1)),
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         assert_eq!(cmds, [AppCommand::CloseDocument(SessionId(1))]);
     }
 
     #[test]
     fn close_x_emits_close_document() {
-        let ctx = egui::Context::default();
+        let ctx = ctx();
         let tabs = vec![tab(1, "A", false)];
         let layout = measure(&ctx, &tabs, Some(SessionId(1)));
         let (_, rect) = layout.tabs[0];
         let mut shell = varos_app::shell::ShellState::standard();
         let (mut rail, mut dock) = (true, true);
-        let mut snap = varos_core::model::SnapConfig::default();
         let pos = crate::chrome::tab_close_rect(rect).center();
         let cmds = click_at(
             &ctx,
@@ -831,20 +811,18 @@ mod tab_strip_tests {
             Some(SessionId(1)),
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         assert_eq!(cmds, [AppCommand::CloseDocument(SessionId(1))]);
     }
 
     #[test]
     fn plus_emits_new_document() {
-        let ctx = egui::Context::default();
+        let ctx = ctx();
         let tabs = vec![tab(1, "A", false)];
         let layout = measure(&ctx, &tabs, Some(SessionId(1)));
         let plus = layout.plus.expect("+ is always placed (F15)");
         let mut shell = varos_app::shell::ShellState::standard();
         let (mut rail, mut dock) = (true, true);
-        let mut snap = varos_core::model::SnapConfig::default();
         let cmds = click_at(
             &ctx,
             plus.center(),
@@ -855,26 +833,24 @@ mod tab_strip_tests {
             Some(SessionId(1)),
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         assert_eq!(cmds, [AppCommand::NewBoard]);
     }
 
     #[test]
     fn drag_reorder_emits_reorder_document_with_the_right_slot() {
-        let ctx = egui::Context::default();
+        let ctx = ctx();
         let tabs = vec![tab(1, "A", false), tab(2, "B", false), tab(3, "C", false)];
         let layout = measure(&ctx, &tabs, Some(SessionId(1)));
         let src_rect = layout.tabs[0].1; // chip A
         let dst_rect = layout.tabs[2].1; // chip C — drop past its centre = the end slot
         let mut shell = varos_app::shell::ShellState::standard();
         let (mut rail, mut dock) = (true, true);
-        let mut snap = varos_core::model::SnapConfig::default();
         let from = egui::pos2(src_rect.left() + 20.0, src_rect.center().y);
         let to = egui::pos2(dst_rect.right() - 4.0, dst_rect.center().y);
         // a warm-up frame (chips must exist in the PREVIOUS frame to be hit-tested — see `click_at`),
         // then press on A, drag past a real threshold, drop on C's right half → slot 3 (after every chip)
-        let _ = frame(&ctx, idle(), &icons(), &mut shell, &tabs, Some(SessionId(1)), &mut rail, &mut dock, &mut snap);
+        let _ = frame(&ctx, idle(), &icons(), &mut shell, &tabs, Some(SessionId(1)), &mut rail, &mut dock);
         let _ = frame(
             &ctx,
             press(from, PointerButton::Primary),
@@ -884,7 +860,6 @@ mod tab_strip_tests {
             Some(SessionId(1)),
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         let mid = egui::pos2(from.x + 30.0, from.y);
         let _ = frame(
@@ -896,7 +871,6 @@ mod tab_strip_tests {
             Some(SessionId(1)),
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         let _ = frame(
             &ctx,
@@ -907,7 +881,6 @@ mod tab_strip_tests {
             Some(SessionId(1)),
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         let cmds = frame(
             &ctx,
@@ -918,7 +891,6 @@ mod tab_strip_tests {
             Some(SessionId(1)),
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(1), 3)]);
     }
@@ -935,19 +907,18 @@ mod tab_strip_tests {
         shell: &mut varos_app::shell::ShellState,
         rail: &mut bool,
         dock: &mut bool,
-        snap: &mut varos_core::model::SnapConfig,
     ) -> Vec<AppCommand> {
         let moved = |p: Pos2| RawInput {
             screen_rect: Some(screen_rect()),
             events: vec![Event::PointerMoved(p)],
             ..Default::default()
         };
-        let _ = frame(ctx, idle(), &icons(), shell, tabs, active, rail, dock, snap);
-        let _ = frame(ctx, press(from, PointerButton::Primary), &icons(), shell, tabs, active, rail, dock, snap);
+        let _ = frame(ctx, idle(), &icons(), shell, tabs, active, rail, dock);
+        let _ = frame(ctx, press(from, PointerButton::Primary), &icons(), shell, tabs, active, rail, dock);
         let step = if to.x >= from.x { 30.0 } else { -30.0 };
-        let _ = frame(ctx, moved(egui::pos2(from.x + step, from.y)), &icons(), shell, tabs, active, rail, dock, snap);
-        let _ = frame(ctx, moved(to), &icons(), shell, tabs, active, rail, dock, snap);
-        frame(ctx, release(to, PointerButton::Primary), &icons(), shell, tabs, active, rail, dock, snap)
+        let _ = frame(ctx, moved(egui::pos2(from.x + step, from.y)), &icons(), shell, tabs, active, rail, dock);
+        let _ = frame(ctx, moved(to), &icons(), shell, tabs, active, rail, dock);
+        frame(ctx, release(to, PointerButton::Primary), &icons(), shell, tabs, active, rail, dock)
     }
 
     /// P15 (owner 2026-09-25: "dragging a tab moves the whole window"; Codex saw the order never
@@ -957,7 +928,7 @@ mod tab_strip_tests {
     /// active chip that overflow moved into the last drawn slot.
     #[test]
     fn eight_tab_overflow_drag_reorders_and_never_starts_a_window_drag() {
-        let ctx = egui::Context::default();
+        let ctx = ctx();
         let tabs: Vec<TabView> = (1..=8).map(|i| tab(i, &format!("Brand guidelines draft {i}"), false)).collect();
         let active = Some(SessionId(8));
         let layout = measure(&ctx, &tabs, active);
@@ -972,7 +943,6 @@ mod tab_strip_tests {
         }
         let mut shell = varos_app::shell::ShellState::standard();
         let (mut rail, mut dock) = (true, true);
-        let mut snap = varos_core::model::SnapConfig::default();
 
         // chip 0 lifted and dropped right onto its neighbour's slot (drawn slot 1) → the gap is after
         // chip 1 → full slot of drawn chip 2. P16: the drop spot is the LIFTED chip (grabbed 20 px in),
@@ -987,7 +957,6 @@ mod tab_strip_tests {
             &mut shell,
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(1), drawn[2])]);
 
@@ -1002,7 +971,6 @@ mod tab_strip_tests {
             &mut shell,
             &mut rail,
             &mut dock,
-            &mut snap,
         );
         assert_eq!(cmds, [AppCommand::ReorderDocument(SessionId(8), 0)]);
     }
@@ -1017,7 +985,6 @@ mod tab_strip_tests {
         shell: varos_app::shell::ShellState,
         rail: bool,
         dock: bool,
-        snap: varos_core::model::SnapConfig,
         /// `RawInput::focused` on every frame. egui-winit STARTS at `false` and on macOS only flips it
         /// when a winit `Focused` event arrives — which a real session may never deliver (observed:
         /// the app launched as a bundle ran a whole session with `focused == false`).
@@ -1029,13 +996,12 @@ mod tab_strip_tests {
             let tabs: Vec<TabView> = labels.iter().enumerate().map(|(i, l)| tab(i as u64 + 1, l, false)).collect();
             let active = Some(tabs[active].id);
             Strip {
-                ctx: egui::Context::default(),
+                ctx: ctx(),
                 tabs,
                 active,
                 shell: varos_app::shell::ShellState::standard(),
                 rail: true,
                 dock: true,
-                snap: varos_core::model::SnapConfig::default(),
                 focused: true,
             }
         }
@@ -1052,7 +1018,7 @@ mod tab_strip_tests {
             let mut win_action = None;
             let mut cmds = Vec::new();
             let (tabs, active) = (&self.tabs, self.active);
-            let (shell, rail, dock, snap) = (&mut self.shell, &mut self.rail, &mut self.dock, &mut self.snap);
+            let (shell, rail, dock) = (&mut self.shell, &mut self.rail, &mut self.dock);
             let out = self.ctx.run_ui(input, |root| {
                 build_topbar(
                     root,
@@ -1064,11 +1030,11 @@ mod tab_strip_tests {
                     &mut cmds,
                     rail,
                     dock,
-                    snap,
+                    &mut Default::default(),
+                    None,
                     false,
                     false,
                     false,
-                    &mut None,
                 );
             });
             (cmds, out.shapes)
@@ -1505,45 +1471,163 @@ mod tab_strip_tests {
         }
     }
 
-    /// The dirty dot (`tab_item`): a filled `MUTED` circle appears in the chip's clip rect only when
-    /// `TabView::dirty` is true — never azure (the visual constitution: azure is a scalpel).
-    #[test]
-    fn dirty_dot_is_drawn_only_when_dirty() {
-        fn has_dot(dirty: bool) -> bool {
-            let ctx = egui::Context::default();
-            let tabs = vec![tab(1, "A", dirty)];
-            let layout = measure(&ctx, &tabs, Some(SessionId(1)));
-            let rect = layout.tabs[0].1;
-            let mut shell = varos_app::shell::ShellState::standard();
-            let (mut rail, mut dock) = (true, true);
-            let mut snap = varos_core::model::SnapConfig::default();
+    /// One idle (or hovered) frame of a strip with these tabs; the painted shapes and the layout.
+    fn shapes_of(
+        tabs: &[TabView],
+        active: SessionId,
+        hover: Option<Pos2>,
+    ) -> (Vec<egui::epaint::ClippedShape>, crate::chrome::TopbarLayout) {
+        let ctx = ctx();
+        let layout = measure(&ctx, tabs, Some(active));
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock) = (true, true);
+        let mut out = vec![];
+        let inputs = match hover {
+            Some(p) => vec![idle(), RawInput { events: vec![Event::PointerMoved(p)], ..idle() }, idle()],
+            None => vec![idle()],
+        };
+        for input in inputs {
             let mut win_action = None;
             let mut cmds = Vec::new();
-            let out = ctx.run_ui(idle(), |root| {
-                build_topbar(
-                    root,
-                    &icons(),
-                    &mut shell,
-                    &mut win_action,
-                    &tabs,
-                    Some(SessionId(1)),
-                    &mut cmds,
-                    &mut rail,
-                    &mut dock,
-                    &mut snap,
-                    false,
-                    false,
-                    false,
-                    &mut None,
-                );
-            });
-            out.shapes.iter().any(|cs| {
-                matches!(&cs.shape, egui::Shape::Circle(c)
-                    if rect.contains(c.center) && c.fill == MUTED && c.radius > 0.0)
-            })
+            out = ctx
+                .run_ui(input, |root| {
+                    build_topbar(
+                        root,
+                        &icons(),
+                        &mut shell,
+                        &mut win_action,
+                        tabs,
+                        Some(active),
+                        &mut cmds,
+                        &mut rail,
+                        &mut dock,
+                        &mut Default::default(),
+                        None,
+                        false,
+                        false,
+                        false,
+                    );
+                })
+                .shapes;
         }
-        assert!(has_dot(true), "a dirty tab must draw its dot");
-        assert!(!has_dot(false), "a clean tab must not draw a dot");
+        (out, layout)
+    }
+    /// The dirty dots painted inside `rect`: (centre, radius, fill).
+    fn dots(shapes: &[egui::epaint::ClippedShape], rect: egui::Rect) -> Vec<(Pos2, f32, Color32)> {
+        shapes
+            .iter()
+            .filter_map(|cs| match &cs.shape {
+                egui::Shape::Circle(c) if rect.contains(c.center) && c.radius > 0.0 => {
+                    Some((c.center, c.radius, c.fill))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The dirty dot (`tab_item`, 4b): a 6-px dot on the RIGHT (centre right − 16, the band centre)
+    /// only when `TabView::dirty` — TEXT on the active tab, MUTED elsewhere, never azure.
+    #[test]
+    fn dirty_dot_is_drawn_only_when_dirty() {
+        let tabs = vec![tab(1, "A", true), tab(2, "B", true), tab(3, "C", false)];
+        let (shapes, layout) = shapes_of(&tabs, SessionId(1), None);
+        let rect = |i: usize| layout.tabs.iter().find(|&&(j, _)| j == i).unwrap().1;
+        let at = |r: egui::Rect| egui::pos2(r.right() - varos_app::shell::tokens::TAB_MARK_INSET, r.center().y);
+        assert_eq!(dots(&shapes, rect(0)), [(at(rect(0)), 3.0, TEXT)], "active + dirty: a TEXT dot");
+        assert_eq!(dots(&shapes, rect(1)), [(at(rect(1)), 3.0, MUTED)], "inactive + dirty: a MUTED dot");
+        assert!(dots(&shapes, rect(2)).is_empty(), "a clean tab draws no dot");
+    }
+
+    /// Hovering a dirty chip turns its dot into the × (the close mark), right where the dot was.
+    #[test]
+    fn hover_turns_the_dot_into_the_close_mark() {
+        let tabs = vec![tab(1, "A", false), tab(2, "B", true)];
+        let (rest, layout) = shapes_of(&tabs, SessionId(1), None);
+        let b = layout.tabs[1].1;
+        assert_eq!(dots(&rest, b).len(), 1, "setup: B shows its dot at rest");
+        let (hovered, _) = shapes_of(&tabs, SessionId(1), Some(egui::pos2(b.left() + 20.0, b.center().y)));
+        assert!(dots(&hovered, b).is_empty(), "hovered: the dot gives way");
+        let x = crate::chrome::tab_close_rect(b);
+        let has_mark = |shapes: &[egui::epaint::ClippedShape]| {
+            shapes
+                .iter()
+                .any(|cs| matches!(&cs.shape, egui::Shape::Mesh(m) if m.vertices.iter().all(|v| x.contains(v.pos))))
+        };
+        assert!(has_mark(&hovered), "hovered: the × is painted in the dot's place");
+        assert!(!has_mark(&rest), "at rest an inactive chip shows no ×");
+    }
+
+    /// Widths are measured at weight 500 for every tab: a chip never changes width when it becomes
+    /// active (only its fill and its name's weight / colour change).
+    #[test]
+    fn tab_width_ignores_active_state() {
+        let tabs = vec![tab(1, "Ramadan campaign", false), tab(2, "Logo marks v3", false)];
+        let ctx = ctx();
+        let a = measure(&ctx, &tabs, Some(SessionId(1)));
+        let b = measure(&ctx, &tabs, Some(SessionId(2)));
+        assert_eq!(a.tabs, b.tabs, "the same rects whichever tab is active");
+    }
+
+    /// "+N ⌄": its list holds every hidden tab; picking a row activates that tab (the active swap
+    /// then draws it in the strip).
+    #[test]
+    fn overflow_list_row_activates_its_tab() {
+        let names: Vec<String> = (1..=12).map(|i| format!("Brand guidelines draft {i}")).collect();
+        let tabs: Vec<TabView> = names.iter().enumerate().map(|(i, n)| tab(i as u64 + 1, n, i == 3)).collect();
+        let ctx = ctx();
+        let active = Some(SessionId(1));
+        let layout = measure(&ctx, &tabs, active);
+        let ov = layout.overflow.expect("setup: twelve long tabs overflow the 1400-pt band");
+        assert!(!layout.hidden.is_empty());
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock) = (true, true);
+        let none = click_at(
+            &ctx,
+            ov.center(),
+            PointerButton::Primary,
+            &icons(),
+            &mut shell,
+            &tabs,
+            active,
+            &mut rail,
+            &mut dock,
+        );
+        assert!(none.is_empty(), "opening the list raises nothing");
+        assert!(kit::menu_open(&ctx), "clicking +N opens its list");
+        // the list hangs under "+N", rows `KIT_CONTROL_H` tall after the popup's 4-px pad + 1-px border
+        let t = varos_app::shell::tokens::KIT_CONTROL_H;
+        let row = |k: f32| {
+            egui::pos2(ov.left() + 40.0, ov.bottom() + varos_app::shell::tokens::KIT_MENU_GAP + 5.0 + k * t + t / 2.0)
+        };
+        let k = 1; // the second hidden tab
+        let cmds = {
+            let p = row(k as f32);
+            let _ = frame(
+                &ctx,
+                RawInput { events: vec![Event::PointerMoved(p)], ..idle() },
+                &icons(),
+                &mut shell,
+                &tabs,
+                active,
+                &mut rail,
+                &mut dock,
+            );
+            let _ = frame(
+                &ctx,
+                press(p, PointerButton::Primary),
+                &icons(),
+                &mut shell,
+                &tabs,
+                active,
+                &mut rail,
+                &mut dock,
+            );
+            frame(&ctx, release(p, PointerButton::Primary), &icons(), &mut shell, &tabs, active, &mut rail, &mut dock)
+        };
+        assert_eq!(cmds, [AppCommand::ActivateDocument(tabs[layout.hidden[k]].id)]);
+        // the dirty hidden tab carries its dot in the list
+        assert_eq!(overflow_row_label(&tabs[3]), "Brand guidelines draft 4  \u{2022}");
+        assert_eq!(overflow_row_label(&tabs[4]), "Brand guidelines draft 5");
     }
 }
 
@@ -1558,7 +1642,14 @@ mod dead_control_tests {
     use egui::{Event, PointerButton, Pos2, RawInput};
 
     fn icons() -> TopIcons {
-        TopIcons { menu: None, search: None, plus: None, x: None, magnet: None }
+        TopIcons { menu: None }
+    }
+
+    /// A context with the app's fonts: the band paints Inter (`tokens::small` / `small_medium`).
+    fn ctx() -> egui::Context {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        ctx
     }
     fn one_tab() -> Vec<TabView> {
         vec![TabView { id: SessionId(1), label: "Untitled-1".into(), dirty: false, tooltip: "Not saved yet".into() }]
@@ -1600,39 +1691,44 @@ mod dead_control_tests {
         active: Option<SessionId>,
         rail: bool,
         dock: bool,
+        /// The window action the last frame raised (the V mark's About).
+        win: Option<WinAction>,
+        /// The document's snapping flags the burger's View rows edit (`Ui::run` writes them back).
         snap: varos_core::model::SnapConfig,
     }
     impl Bar {
         fn new() -> Self {
             Self {
-                ctx: egui::Context::default(),
+                ctx: ctx(),
                 shell: varos_app::shell::ShellState::standard(),
                 tabs: one_tab(),
                 active: Some(SessionId(1)),
                 rail: true,
                 dock: true,
+                win: None,
                 snap: varos_core::model::SnapConfig::default(),
             }
         }
         fn frame(&mut self, input: RawInput) -> Vec<AppCommand> {
-            let mut win_action = None;
             let mut cmds = Vec::new();
+            let win_action = &mut self.win;
+            *win_action = None;
             let _ = self.ctx.run_ui(input, |root| {
                 build_topbar(
                     root,
                     &icons(),
                     &mut self.shell,
-                    &mut win_action,
+                    win_action,
                     &self.tabs,
                     self.active,
                     &mut cmds,
                     &mut self.rail,
                     &mut self.dock,
                     &mut self.snap,
+                    None,
                     false,
                     false,
                     false,
-                    &mut None,
                 );
             });
             cmds
@@ -1651,20 +1747,21 @@ mod dead_control_tests {
             let mut out = None;
             let _ = self.ctx.run_ui(RawInput { screen_rect: Some(screen_rect()), ..Default::default() }, |ui| {
                 let p = ui.painter().clone();
-                let text_width =
-                    |t: &str| p.layout_no_wrap(t.to_owned(), FontId::proportional(12.0), Color32::WHITE).size().x;
+                let text_width = |t: &str| {
+                    p.layout_no_wrap(t.to_owned(), varos_app::shell::tokens::small_medium(), Color32::WHITE).size().x
+                };
                 let widths: Vec<f32> = tabs.iter().map(|t| text_width(&t.label)).collect();
                 let active_index = active.and_then(|id| tabs.iter().position(|t| t.id == id));
-                out = Some(crate::chrome::topbar_layout(
-                    bar,
-                    crate::chrome::TOPBAR,
-                    [text_width("Window"), text_width("Share"), text_width("Export")],
-                    search_pill_width(&p),
-                    &widths,
-                    active_index,
-                ));
+                out = Some(crate::chrome::topbar_layout(bar, crate::chrome::TOPBAR, None, &widths, active_index));
             });
             out.unwrap()
+        }
+        /// Open the burger and return the centre of row `k` (0-based) with `seps` separators above it.
+        fn burger_row(&mut self, k: usize, seps: usize) -> Pos2 {
+            const SEP_H: f32 = 9.0; // menu_sep: add_space(4) + a 1px line + add_space(4)
+            let top_left = self.open_burger();
+            let y = top_left.y + seps as f32 * SEP_H + k as f32 * MENU_ROW_H + MENU_ROW_H / 2.0;
+            egui::pos2(top_left.x + 100.0, y)
         }
         /// Open the burger menu (a press+release on its cell) and return its content's top-left —
         /// the geometry `menu_below`'s flush frame uses: `(menu.left(), bar.bottom() + MENU_PAD_V)`.
@@ -1707,45 +1804,350 @@ mod dead_control_tests {
         assert_eq!(cmds.first(), menu.as_ref(), "the burger row = File ▸ Export ▸ PDF…'s command");
     }
 
-    /// DFS S6: the top-bar Export button raises exactly the command File ▸ Export ▸ PDF… maps to
-    /// (`host::to_app_command(FileCmd::Export, active)`), for the active tab.
+    /// The band's Search is `Sense::hover`-only (never clickable at all — the strongest form of "not
+    /// an enabled dead button"), with its honest tooltip; no command search exists yet.
     #[test]
-    fn export_button_and_file_menu_raise_the_same_command() {
+    fn search_never_raises_a_command() {
         let mut bar = Bar::new();
         let layout = bar.layout();
-        let cmds = bar.click(layout.export.center());
-        let menu = crate::host::to_app_command(crate::chrome::FileCmd::Export, Some(SessionId(1)));
-        assert_eq!(menu, Some(AppCommand::ShowExport(SessionId(1))));
-        assert_eq!(cmds, menu.into_iter().collect::<Vec<_>>());
+        let cmds = bar.click(layout.search.center());
+        assert!(cmds.is_empty(), "Search must not raise a command (not wired yet)");
+        assert!(bar.win.is_none());
     }
 
-    /// Share (top bar) and the search pill are `Sense::hover`-only (never clickable at all — the
-    /// strongest form of "not an enabled dead button"), each with a tooltip.
+    /// The V mark: on macOS a click asks for the native About panel (the same one Varos ▸ About
+    /// opens); elsewhere it is hover-only — no command, no window action, never a dead button.
     #[test]
-    fn share_and_search_pill_never_raise_a_command() {
+    fn brand_click_asks_for_about() {
         let mut bar = Bar::new();
         let layout = bar.layout();
-        for rect in [layout.share, layout.search] {
-            let cmds = bar.click(rect.center());
-            assert!(cmds.is_empty(), "{rect:?} must not raise a command (disabled / not wired yet)");
+        let cmds = bar.click(layout.brand.center());
+        assert!(cmds.is_empty(), "V raises no document command");
+        if cfg!(target_os = "macos") {
+            assert!(matches!(bar.win, Some(WinAction::About)), "V = Varos ▸ About");
+        } else {
+            assert!(bar.win.is_none(), "V is hover-only off macOS");
         }
     }
 
-    /// Window and the magnet (Snapping) buttons are NOT dead: clicking them opens their dropdown,
-    /// which the very next frame renders (proven by the check-toggle rows becoming clickable — Tool
-    /// rail's row exists only while the Window menu is open). This is a real, observable effect
-    /// without an `AppCommand`, which is why they are excluded from the "must emit a command" rule.
+    /// 4b moved the Window rows out of the band: the Windows burger (the only menu there) carries them
+    /// now — after the File rows and a separator: Tool rail, Control bar, every dockable panel.
     #[test]
-    fn window_and_magnet_buttons_open_their_menu_instead_of_doing_nothing() {
+    fn burger_window_rows_toggle_the_rail_and_the_panels() {
+        // New · Open · Save · Save As | Export · Home | 3 guide rows | 2 snap rows | Tool rail · …
         let mut bar = Bar::new();
-        let layout = bar.layout();
-        let before_rail = bar.rail;
-        let _ = bar.click(layout.window.center());
-        // "Tool rail" is the Window menu's first row, right under the flush bar — clicking there
-        // only makes sense (and only flips `rail`) once the Window button's click actually opened it.
-        let y = bar_rect().bottom() + MENU_PAD_V as f32 + MENU_ROW_H / 2.0;
-        let _ = bar.click(egui::pos2(layout.window.left() + 50.0, y));
-        assert_ne!(bar.rail, before_rail, "Window ▸ Tool rail did not flip — the Window button was dead");
+        let at = bar.burger_row(11, 4);
+        let _ = bar.click(at);
+        assert!(!bar.rail, "burger ▸ Tool rail flips the rail");
+        let mut bar = Bar::new();
+        let at = bar.burger_row(12, 4);
+        let _ = bar.click(at);
+        assert!(!bar.dock, "burger ▸ Control bar flips the control bar");
+        let first = varos_app::shell::PanelId::DOCKABLE[0];
+        let mut bar = Bar::new();
+        let was = bar.shell.is_open(first);
+        let at = bar.burger_row(13, 4);
+        let _ = bar.click(at);
+        assert_ne!(bar.shell.is_open(first), was, "burger ▸ {} toggles it", first.title());
+    }
+
+    /// Windows has no native menu bar: the four snapping controls the magnet held (and Smart Guides)
+    /// live in its burger, each a check row on its own flag, flipping exactly that flag.
+    #[test]
+    fn burger_snapping_rows_flip_their_flags() {
+        type Flag = fn(&varos_core::model::SnapConfig) -> bool;
+        let rows: [(usize, usize, &str, Flag); 5] = [
+            (6, 2, "Smart Guides", |s| s.smart),
+            (7, 2, "Alignment Guides", |s| s.alignment_guides),
+            (8, 2, "Geometric Guides", |s| s.object_geometry),
+            (9, 3, "Snap to Grid", |s| s.grid),
+            (10, 3, "Snap to Point", |s| s.key_points),
+        ];
+        for (k, seps, name, flag) in rows {
+            let mut bar = Bar::new();
+            let before = bar.snap;
+            let at = bar.burger_row(k, seps);
+            let _ = bar.click(at);
+            assert_ne!(flag(&bar.snap), flag(&before), "burger ▸ {name} flips its flag");
+            let others = rows.iter().filter(|r| r.2 != name).all(|r| (r.3)(&bar.snap) == (r.3)(&before));
+            assert!(others, "burger ▸ {name} flips ONLY its flag");
+        }
+    }
+
+    /// End to end: the Smart Guides menu row and the ⌘U / Ctrl+U key produce the same state
+    /// transition (the menu row's flags reach the document through `SetSnapConfig`, as `Ui::run`
+    /// writes them back; the key runs `apply_key`). On macOS the View row IS the ⌘U key path.
+    #[test]
+    fn smart_guides_menu_and_shortcut_have_the_same_state_transition() {
+        use varos_core::{editor::Editor, geom::View};
+        // the menu row, committed exactly as `Ui::run` ends the frame (`apply_frame`)
+        let (mut from_menu, mut from_key) = (Editor::new(), Editor::new());
+        let mut bar = Bar::new();
+        bar.snap = from_menu.doc.snap;
+        let at = bar.burger_row(6, 2);
+        let _ = bar.click(at);
+        super::apply_frame(&mut from_menu, bar.snap, vec![]);
+        // …and the key
+        crate::apply_key(&mut from_key, &mut View::identity(), [0.0, 0.0], "KeyU", true, false, false);
+        assert_ne!(from_key.doc.snap.smart, Editor::new().doc.snap.smart, "setup: the key flipped it");
+        assert_eq!(from_menu.doc.snap, from_key.doc.snap, "the row and the key: the same transition");
+
+        // the write-back runs BEFORE the panels' ops: a panel's `ToggleSnapping` in the same frame
+        // still wins over the band's snapshot (and the band's change is not lost either)
+        let mut ed = Editor::new();
+        let before = ed.doc.snap;
+        let mut bar = Bar::new();
+        bar.snap = before;
+        let at = bar.burger_row(6, 2);
+        let _ = bar.click(at);
+        super::apply_frame(&mut ed, bar.snap, vec![super::Op::ToggleSnapping]);
+        assert_eq!(ed.doc.snap.enabled, !before.enabled, "the panel's ToggleSnapping wins");
+        assert_eq!(ed.doc.snap.smart, !before.smart, "the burger's Smart Guides change reaches the document");
+    }
+}
+
+/// 4b (MAC_CHROME.md §A′): the band → the boxes → the status line, on one black backdrop. Headless
+/// `Ui::run` composition (the band, the status line, the void underlay, the box tree in
+/// `editor_tree_rect`) — no window, no GPU.
+#[cfg(test)]
+mod band_backdrop_tests {
+    use super::*;
+    use egui::{Pos2, RawInput};
+
+    /// One frame of the editor's chrome as `Ui::run` stacks it; returns the Board box rect, the
+    /// painted shapes, and the panel column the tree published.
+    fn editor_frame(size: egui::Vec2) -> (egui::Rect, Vec<egui::epaint::ClippedShape>, Option<egui::Rangef>) {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        varos_app::shell::tokens::apply(&ctx);
+        let mut shell = varos_app::shell::ShellState::standard();
+        let (mut rail, mut dock, mut fit) = (true, true, None);
+        let mut board = egui::Rect::NOTHING;
+        let mut shapes = vec![];
+        for k in 0..4 {
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, size)),
+                time: Some(1.0 + f64::from(k)),
+                ..Default::default()
+            };
+            let (mut win, mut cmds) = (None, vec![]);
+            let column = shell.side_column_span();
+            let out = ctx.run_ui(input, |root| {
+                build_topbar(
+                    root,
+                    &TopIcons { menu: None },
+                    &mut shell,
+                    &mut win,
+                    &[],
+                    None,
+                    &mut cmds,
+                    &mut rail,
+                    &mut dock,
+                    &mut Default::default(),
+                    column,
+                    false,
+                    false,
+                    true,
+                );
+                build_statusbar(root, 0, 1, 1.0, &None, &mut fit, "");
+                let mid = root.available_rect_before_wrap();
+                paint_void_underlay(root.painter(), mid, None);
+                let mut host = |panel: varos_app::shell::PanelId, ui: &mut egui::Ui| {
+                    if panel == varos_app::shell::PanelId::Board {
+                        board = ui.max_rect();
+                        corner_voids(ui.painter(), board);
+                        return true;
+                    }
+                    false
+                };
+                root.scope_builder(egui::UiBuilder::new().max_rect(editor_tree_rect(mid)), |ui| {
+                    shell.ui_hosted(ui, &mut host)
+                });
+            });
+            shapes = out.shapes;
+        }
+        (board, shapes, shell.side_column_span())
+    }
+
+    /// The Board box starts exactly at the band's bottom (52), 6 in from the left as before.
+    #[test]
+    fn editor_tree_starts_at_the_band_bottom() {
+        let (board, _, column) = editor_frame(egui::vec2(1512.0, 982.0));
+        assert_eq!(crate::chrome::TOPBAR.height, if cfg!(target_os = "macos") { 52.0 } else { 46.0 });
+        assert_eq!(board.top(), crate::chrome::TOPBAR.height, "Board box top = band bottom: {board:?}");
+        assert_eq!(board.left(), 6.0, "editor side margins stay 6 (the box system is unchanged)");
+        let col = column.expect("the standard tree publishes its panel column");
+        assert!(col.min > board.right() && (col.max - 1506.0).abs() <= 0.5, "column {col:?}");
+    }
+
+    /// One flat backdrop: SEAM is #000, and the band, the status line, the void underlay and the
+    /// Board's corner wedges all fill it — no other dark fill anywhere outside the boxes.
+    #[test]
+    fn void_painters_use_the_one_backdrop() {
+        assert_eq!(SEAM, Color32::from_rgb(0, 0, 0), "4b: the backdrop is #000000");
+        let (board, shapes, _) = editor_frame(egui::vec2(1512.0, 982.0));
+        let band = crate::chrome::TOPBAR.height;
+        let fills: Vec<(egui::Rect, Color32)> = shapes
+            .iter()
+            .filter_map(|cs| match &cs.shape {
+                egui::Shape::Rect(r) => Some((r.rect, r.fill)),
+                _ => None,
+            })
+            .collect();
+        // the band: a full-width SEAM rect from the window top to 52
+        assert!(fills.iter().any(|&(r, c)| c == SEAM && r.top() <= 0.0 && r.bottom() >= band && r.width() >= 1512.0));
+        // the status line: a full-width SEAM rect reaching the window bottom
+        assert!(fills.iter().any(|&(r, c)| c == SEAM && r.bottom() >= 982.0 && r.width() >= 1512.0 && r.top() > 900.0));
+        // the void underlay (no canvas hole here): SEAM over the whole middle
+        assert!(fills.iter().any(|&(r, c)| c == SEAM && r.top() <= band && r.bottom() >= board.bottom()));
+        // the four corner wedges are SEAM too (no lighter specks at the box corners)
+        let wedges: Vec<Color32> = shapes
+            .iter()
+            .filter_map(|cs| match &cs.shape {
+                egui::Shape::Path(p) if p.closed && p.points.iter().any(|q| board.expand(0.5).contains(*q)) => {
+                    Some(p.fill)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(wedges.len(), 4, "four corner wedges");
+        assert!(wedges.iter().all(|&c| c == SEAM), "{wedges:?}");
+    }
+}
+
+/// Home's band publishes only what it paints: no `+` there, so no dead 28×28 spot that neither acts
+/// nor drags the window (review 2026-10-05).
+#[cfg(test)]
+mod home_band_tests {
+    use super::*;
+    use crate::app_command::{SessionId, TabView};
+    use egui::{Pos2, RawInput};
+
+    fn bar() -> egui::Rect {
+        egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1512.0, crate::chrome::TOPBAR.height))
+    }
+    fn layout(widths: &[f32], home: bool) -> crate::chrome::TopbarLayout {
+        band_layout(crate::chrome::topbar_layout(bar(), crate::chrome::TOPBAR, None, widths, None), home)
+    }
+    fn drags(l: &crate::chrome::TopbarLayout, p: Pos2) -> bool {
+        drags_with(l, crate::chrome::TOPBAR, 2.0, p)
+    }
+    fn drags_with(l: &crate::chrome::TopbarLayout, chrome: crate::chrome::TopbarChrome, ppp: f32, p: Pos2) -> bool {
+        let excl = crate::chrome::caption_exclusions(&l.interactive_rects(), ppp);
+        crate::chrome::caption_hit((chrome.height * ppp) as i32, &excl, (p.x * ppp) as i32, (p.y * ppp) as i32)
+    }
+
+    #[test]
+    fn home_publishes_no_plus_and_its_spot_drags_the_window() {
+        for widths in [vec![], vec![80.0, 120.0, 95.0]] {
+            let n = widths.len();
+            let editor = layout(&widths, false);
+            let plus = editor.plus.expect("the editor places +");
+            assert!(!drags(&editor, plus.center()), "{n} tabs: the editor's + is a control");
+            let home = layout(&widths, true);
+            assert!(home.plus.is_none(), "{n} tabs: Home has no +");
+            assert!(drags(&home, plus.center()), "{n} tabs: where + would be is empty band on Home");
+            for r in [home.menu, home.brand, home.search].into_iter().chain(home.tabs.iter().map(|&(_, r)| r)) {
+                assert!(!drags(&home, r.center()), "{n} tabs: painted control {r:?} never drags");
+            }
+        }
+    }
+
+    /// Home's chip is a 28×28 square; on Windows the menu CELL around it is 36 × 46. Only the chip is
+    /// published: its whole area (edges included) never drags, the strips around it in the old cell do.
+    #[test]
+    fn home_publishes_the_chip_not_the_menu_cell() {
+        use varos_app::shell::tokens as t;
+        for chrome in [crate::chrome::topbar_chrome(true), crate::chrome::topbar_chrome(false)] {
+            let bar = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1512.0, chrome.height));
+            for widths in [vec![], vec![80.0, 120.0]] {
+                let cell = crate::chrome::topbar_layout(bar, chrome, None, &widths, None).menu;
+                let home = band_layout(crate::chrome::topbar_layout(bar, chrome, None, &widths, None), true);
+                let chip = home.menu;
+                assert_eq!(chip.size(), egui::Vec2::splat(t::BAND_CHIP_H), "the published Home rect is the chip");
+                assert_eq!(chip.center(), cell.center(), "centred in its cell");
+                for ppp in [1.0, 2.0] {
+                    let i = chip.shrink(0.5);
+                    for p in [chip.center(), i.left_top(), i.right_top(), i.left_bottom(), i.right_bottom()] {
+                        assert!(!drags_with(&home, chrome, ppp, p), "chip at {p:?} (ppp {ppp}, h {})", chrome.height);
+                    }
+                    // the strips: above / below the chip (always), left / right of it inside the old cell
+                    let mut strips = vec![
+                        egui::pos2(chip.center().x, bar.top() + 1.0),
+                        egui::pos2(chip.center().x, chip.top() - 2.0),
+                        egui::pos2(chip.center().x, chip.bottom() + 2.0),
+                        egui::pos2(chip.center().x, bar.bottom() - 1.0),
+                    ];
+                    if cell.width() > chip.width() + 2.0 {
+                        strips.push(egui::pos2(chip.left() - 2.0, chip.center().y));
+                        strips.push(egui::pos2(chip.right() + 2.0, chip.center().y));
+                    }
+                    for p in strips {
+                        assert!(bar.top() <= p.y && p.y < bar.bottom(), "setup: {p:?} is in the band");
+                        assert!(
+                            drags_with(&home, chrome, ppp, p),
+                            "strip at {p:?} drags (ppp {ppp}, h {})",
+                            chrome.height
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The real Home frame paints nothing where `+` would be (zero tabs and some tabs).
+    #[test]
+    fn home_frame_paints_nothing_at_the_plus_spot() {
+        for n in [0u64, 3] {
+            let ctx = egui::Context::default();
+            varos_app::shell::fonts::install(&ctx);
+            let tabs: Vec<TabView> = (1..=n)
+                .map(|i| TabView {
+                    id: SessionId(i),
+                    label: format!("Board {i}"),
+                    dirty: false,
+                    tooltip: String::new(),
+                })
+                .collect();
+            let mut shell = varos_app::shell::ShellState::standard();
+            let (mut rail, mut dock) = (true, true);
+            let (mut shapes, mut widths) = (vec![], vec![]);
+            for _ in 0..2 {
+                let screen = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1512.0, 982.0));
+                let input = RawInput { screen_rect: Some(screen), ..Default::default() };
+                let (mut win, mut cmds) = (None, vec![]);
+                let out = ctx.run_ui(input, |root| {
+                    let p = root.painter().clone();
+                    let font = varos_app::shell::tokens::small_medium();
+                    widths =
+                        tabs.iter().map(|t| p.layout_no_wrap(t.label.clone(), font.clone(), TEXT).size().x).collect();
+                    build_topbar(
+                        root,
+                        &TopIcons { menu: None },
+                        &mut shell,
+                        &mut win,
+                        &tabs,
+                        None,
+                        &mut cmds,
+                        &mut rail,
+                        &mut dock,
+                        &mut Default::default(),
+                        None,
+                        false,
+                        true,
+                        true,
+                    );
+                });
+                shapes = out.shapes;
+            }
+            let plus = layout(&widths, false).plus.unwrap();
+            let painted_there = shapes.iter().any(|cs| match &cs.shape {
+                egui::Shape::Mesh(m) => !m.vertices.is_empty() && m.vertices.iter().all(|v| plus.contains(v.pos)),
+                egui::Shape::Rect(r) => plus.contains_rect(r.rect),
+                _ => false,
+            });
+            assert!(!painted_there, "{n} tabs: Home paints nothing at the + spot {plus:?}");
+        }
     }
 }
 
@@ -2367,8 +2769,8 @@ pub(super) mod icon_action_tests {
     /// capped at the number of raw-size draws it has today — a cap may only go down, never up.
     #[test]
     fn icon_sizes_come_from_tokens() {
-        const TOP_BAR_CAPS: [(&str, usize); 4] =
-            [("topbtn", 1), ("search_pill", 1), ("tab_item", 1), ("build_topbar", 1)];
+        // 4b: the band's glyphs are registry icons on token sizes now; only Windows' burger texture is left
+        const TOP_BAR_CAPS: [(&str, usize); 1] = [("build_topbar", 1)];
         fn production_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -2467,10 +2869,9 @@ mod home_page_tests {
                 ..Default::default()
             };
             let mut cmds = vec![];
-            let icons = TopIcons { menu: None, search: None, plus: None, x: None, magnet: None };
+            let icons = TopIcons { menu: None };
             let (mut win, mut rail, mut dock) = (None, true, true);
             let _ = self.ctx.run_ui(input, |root| {
-                let mut snap = Default::default();
                 build_topbar(
                     root,
                     &icons,
@@ -2481,11 +2882,11 @@ mod home_page_tests {
                     &mut cmds,
                     &mut rail,
                     &mut dock,
-                    &mut snap,
+                    &mut Default::default(),
+                    None,
                     false,
                     true,
                     true,
-                    &mut None,
                 );
                 home_body(root, &mut self.page, &mut self.model, None, &mut cmds);
             });
@@ -2516,7 +2917,9 @@ mod home_page_tests {
         let bar = crate::chrome::TOPBAR.height;
         let new_board = h.rect(ids::new_board());
         assert_eq!(new_board.size(), egui::vec2(272.0, 64.0), "the mockup's hero button");
-        assert_eq!(new_board.top(), bar + 12.0 + 32.0, "the box sits a seam under the bar, padding 32");
+        let pad = varos_app::shell::tokens::SB_PAD_TOP;
+        assert_eq!(new_board.top(), bar + pad, "4b: the box starts at the band's bottom");
+        assert_eq!(new_board.top(), 72.0, "…and the content sits where the owner approved it (y 72)");
         let search = h.rect(ids::search());
         assert!(search.bottom() <= bar && search.width() > 150.0, "Search boards lives in the bar: {search:?}");
     }

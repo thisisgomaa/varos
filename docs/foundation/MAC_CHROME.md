@@ -23,8 +23,9 @@ runs a path that already exists; no new editor behaviour.
   **drops** `FullSizeContentView` — `window_delegate.rs:1508-1522`). The splash-→-editor switch keeps
   only its Windows half.
 - Platform table `chrome::TOPBAR` (pure, tested): macOS = 78 pt left inset for the traffic lights,
-  no ─ ☐ ✕ caps, 6 pt right inset, 28 pt height (controls centred at the native 14 pt traffic-light
-  centre); Windows/other = the old numbers (4 pt, caps on, 46 pt height).
+  no ─ ☐ ✕ caps, ~~6 pt right inset, 28 pt height (controls centred at the native 14 pt traffic-light
+  centre)~~ **4b: 12 pt right inset, 52 pt height, centre y 26 (§A′)**; Windows/other = the old
+  numbers (4 pt, caps on, 46 pt height).
 - The window title string ("Untitled-1 · Varos α — Select (V)") is still set every change — hidden
   in the bar, but used by Mission Control, the Window menu and the Dock.
 - **Drag:** Windows drags through the OS hit-test (`HTCAPTION` on the empty bar). macOS mirrors it:
@@ -51,9 +52,59 @@ runs a path that already exists; no new editor behaviour.
   `overflow_slots_with_eight_tabs_are_still_covered`, `eight_tab_overflow_drag_reorders_and_never_starts_a_window_drag`,
   `content_view_class_never_lets_appkit_drag_the_window`. Real-window hand-test pending.
 
+## A′. The 4b band (owner-approved 2026-10-05)
+
+**Date:** 2026-10-05 · **Reason:** Ahmed approved top-bar option "4b" (design of record: the 4b
+mockups, `option-4b-black-window.png` / `-zoom.png` / `-states.png`): one flat black backdrop, one
+centred band, the window's actions in the native menu bar. **Supersedes** the 28 pt numbers in §A.
+
+- **One backdrop `#000000`** (`tokens::SEAM`, value changed, name kept): the band, every seam/void
+  around and between boxes, the status line, Start's void, and the NSWindow background (so a
+  live-resize edge matches). No divider line and no colour step anywhere. Boxes keep BG/PANEL + LINE.
+- **Band 52 = 12 + 28 + 12** (`tokens::BAND_H`, `TOPBAR.height` on macOS). Every band control is 28
+  tall at y 12–40 — one centre line **y 26**, the traffic lights' too. Boxes start at y 52 on both
+  pages. Editor side margins stay 6 (the box system is unchanged; only the top inset moved).
+- **Left → right:** traffic lights · Home 28×28 at x 78 · tabs (88–176 wide, gap 2) · `+N ⌄` (only
+  when tabs are hidden: a list of every hidden tab) · `+` · empty drag space · Search · V mark.
+- **Right zone** = the panel column's x-span (published by the box tree, one frame late like the
+  canvas hole); fallback 288 wide ending 12 before the window edge (Home, or no right column).
+  Search fills it up to the V mark − 8 (minimum 120); V is 28×28 at its right edge.
+- **Removed from the band:** Export (File ▸ Export ▸ PDF…), Window panel toggles (Window ▸ …),
+  Share (no feature yet), and the Snapping magnet: its Alignment Guides / Geometric Guides rows moved
+  into View (check rows under Smart Guides; the Windows build keeps its burger, which gains the Window
+  rows AND the five snapping rows — Smart Guides, Alignment / Geometric Guides, Snap to Grid / Point —
+  so panel toggles and snapping stay reachable there). V click = Varos ▸ About (the same native panel, via
+  `mac_menu::show_about`); on Windows V is hover-only.
+- **Traffic lights** (`mac_titlebar.rs`): the title-bar container grows to 52 and each standard
+  button's origin y is set so its centre sits on 26 (x never touched). Only the measured hierarchy
+  is touched (`NSTitlebarView` in `NSTitlebarContainerView`, checked by class name; main thread
+  only) — anything else is left alone. Every call first settles AppKit's pending title-bar layout
+  (`layoutSubtreeIfNeeded` on the frame view), then READS the frames and WRITES only what is off;
+  called at startup, after the window is shown, every redraw and right after `set_title` /
+  `set_document_edited`; skipped in fullscreen. No NSToolbar (it would sit over the band and take
+  tab presses for window drags — P15).
+- **Measured 2026-10-05 on Ahmed's Mac (Darwin 27, `VAROS_TITLEBAR_DEBUG=1`):** native title-bar
+  container **32 pt** tall, buttons 14×14 at y 9, centres **x 16 / 39 / 62, y 16** from the top
+  (not the 28/14 assumed before). After placement: container 52, buttons at y 19, centres **y 26**.
+- **What resets the placement — measured, not assumed** (`VAROS_TITLEBAR_PROBE=1`, same Mac): our
+  own write followed by a forced layout pass is KEPT (our write does not trigger a reset). AppKit
+  resets the container to its native 32 pt on its next layout pass after **`setTitle`**,
+  **`setDocumentEdited`** (both directions) and **any window resize** (`setFrame`, so live resize and
+  zoom too) — those calls only mark the title bar dirty; the reset lands when layout runs. The first
+  version checked right after `set_title` BEFORE that pass, so it saw nothing to fix and the next
+  redraw rewrote the frames (what the first logs showed). Settling the layout first makes the check
+  exact: in the probe, the check run right after each of those calls kept the placement, and **281
+  checks over 5 s with nothing changing wrote 0 times**. The steady state is zero writes; a write
+  happens once per AppKit-caused reset, in the same call that follows it.
+  Not measured: per-redraw counts with the window really on screen (the probe window was launched in
+  the background and behind other windows, so it got no redraws — 2 calls in 20 s). Ahmed's hand
+  test with `VAROS_TITLEBAR_DEBUG=1` prints "last 5 s: N calls, M writes" for that.
+  **Not yet proven:** clicks / drags in the lower half of the band, hover glyphs on the lights after
+  the move, live resize, fullscreen exit — Ahmed's hand test.
+
 ## B. Opaque
 - `with_transparent(true)` (for the floating splash) is **off on macOS**; the NSWindow background is
-  set to `#141313` (`tokens::BG`) through one small AppKit call, so nothing can show through — not
+  set to the backdrop (`tokens::SEAM`, `#000` since 4b; was `#141313` `tokens::BG`) through one small AppKit call, so nothing can show through — not
   the title strip, not the first frame before the GPU is ready, not a live-resize edge.
 - Consequence: on macOS the splash card sits centred on the dark window (painted by egui) instead of
   floating over the desktop. Windows keeps the floating card.
@@ -78,18 +129,16 @@ runs a path that already exists; no new editor behaviour.
 | Menu | Items (all existing paths) |
 |---|---|
 | Varos | About Varos (native panel, version from Cargo.toml) · Services · Hide ⌘H · Hide Others ⌥⌘H · Show All · Quit Varos ⌘Q (= the ✕ button path) |
-| File | Open… ⌘O · Save ⌘S · Save As… ⇧⌘S · Close Window ⌘W (= ✕ path) |
-| Edit | Undo ⌘Z · Redo ⇧⌘Z |
+| File | New ⌘N · Open… ⌘O · Open Recent ▸ (last 10 · Clear Menu) · Close Tab ⌘W · Save ⌘S · Save As… ⇧⌘S · Export ▸ PDF… |
+| Edit | Undo ⌘Z · Redo ⇧⌘Z · Cut ⌘X · Copy ⌘C · Paste ⌘V · Paste in Place ⇧⌘V · Delete (click-only, no key) · Select All ⌘A · Deselect ⇧⌘A |
 | Object | Transform Again ⌘D · Arrange ▸ (Bring to Front ⇧⌘] · Forward ⌘] · Backward ⌘[ · Send to Back ⇧⌘[) · Group ⌘G · Ungroup ⇧⌘G |
-| View | Fit in Window ⌘0 · Actual Size ⌘1 · ✓Rulers ⌘R · ✓Guides ⌘; · ✓Lock Guides ⌥⌘; · ✓Smart Guides ⌘U · ✓Snap to Grid · ✓Snap to Point (the magnet menu) · Toggle Full Screen |
+| View | Fit in Window ⌘0 · Actual Size ⌘1 · Zoom In ⌘= · Zoom Out ⌘− · ✓Rulers ⌘R · ✓Guides ⌘; · ✓Lock Guides ⌥⌘; · ✓Smart Guides ⌘U · ✓Alignment Guides · ✓Geometric Guides (4b: moved here from the magnet) · ✓Snap to Grid · ✓Snap to Point · Toggle Full Screen |
 | Window | Minimize ⌘M · Zoom · ✓Tool rail · ✓Control bar · ✓every dockable panel (the bar's Window menu) · Bring All to Front |
 
 Check marks are re-read from the real state every frame (only changed ones are written).
 
-**Omitted (no existing shortcut/path):** New ⌘N (the burger row is a label; the "+" tab is a fake
-tab, not a document) · Export… (burger row unwired) · Cut / Copy / Paste / Duplicate / Select All /
-Deselect · Zoom In / Zoom Out (only Alt+wheel and Space-click zoom exist) · Delete (Backspace as a
-menu key would steal it from text fields). Each lands when its home exists.
+(Table re-read from `chrome::menus()` on 2026-10-05.) Still omitted: Duplicate, Share (no feature
+yet), a Help menu.
 
 ## Shortcut labels (done 2026-09-24)
 
@@ -100,11 +149,11 @@ Dispatch and physical Ctrl support are unchanged. GPU-free test:
 `shortcut_labels_use_the_platform_primary_modifier`.
 
 The top bar now uses `chrome::TOPBAR.height` everywhere, including its drag band and menu edge.
-The Mac bar matches the native 28 pt title area instead of leaving its controls 9 pt too low;
-Windows retains 46 pt. `topbar_layout` computes the production control rectangles from the bar
-rect and measured text widths. GPU-free test `mac_topbar_controls_share_the_native_traffic_light_centre`
+The Mac band is 52 pt with every control and the traffic lights on y 26 (4b, §A′; it was 28 pt
+on y 14 until 2026-10-05). Windows retains 46 pt. `topbar_layout` computes the production control
+rectangles from the bar rect and measured text widths. GPU-free test `mac_topbar_controls_centre_on_26`
 checks every control, including tab close buttons, for containment and centring within ±1 pt of
-the traffic lights at three window widths and two bar origins.
+the traffic lights at three window widths and two bar origins; `band_is_12_chip_12` pins 12 + 28 + 12.
 
 Review follow-up verification (2026-09-24): workspace **306 passed, 0 failed** (one obsolete easing
 test removed); macOS and Windows-target Clippy with warnings denied and formatting all passed.

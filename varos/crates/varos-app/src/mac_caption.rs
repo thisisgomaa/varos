@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 /// Our answer to AppKit's `-[NSView mouseDownCanMoveWindow]`: always NO.
 ///
 /// P15 (owner 2026-09-25, "dragging a tab moves the whole window"): the window has a full-size
-/// content view under a transparent title bar (MAC_CHROME.md §A), so the top 28 pt of winit's
-/// content view sit in the title-bar area. A plain NSView is not opaque and therefore answers YES
+/// content view under a transparent title bar (MAC_CHROME.md §A), so the top of winit's content view
+/// (28 pt then; the 52-pt 4b band now, `mac_titlebar`) sits in the title-bar area. A plain NSView is not opaque and therefore answers YES
 /// here (measured 2026-09-25 on the dev Mac, Darwin 27: `isOpaque=false
 /// mouseDownCanMoveWindow=true`), and winit's view does not override it — so AppKit made the WHOLE top strip a native window-drag region, tabs and
 /// buttons included. A drag that started on a tab moved the window (in the window server, so egui
