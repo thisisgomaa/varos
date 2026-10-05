@@ -379,14 +379,14 @@ pub fn is_menu_open(ctx: &egui::Context, owner: Id) -> bool {
 
 /// How a kit menu is sized: the default is the dense shell menu; Start v2 asks for the mockup's
 /// 184-wide popup with 28-tall 13 pt rows and a LINE2 separator (src.html `.menu-pop`).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MenuLook {
     /// Minimum width of the rows (the popup adds its 4 px padding and 1 px border on each side).
     pub min_width: f32,
     pub row_h: f32,
     pub pad_x: f32,
-    /// Row text size; `None` = the Button text style.
-    pub text_size: Option<f32>,
+    /// Row font; `None` = the Button text style.
+    pub font: Option<egui::FontId>,
     pub separator: Color32,
 }
 impl Default for MenuLook {
@@ -395,7 +395,7 @@ impl Default for MenuLook {
             min_width: t::KIT_MENU_MIN_W,
             row_h: t::KIT_CONTROL_H,
             pad_x: t::KIT_PAD,
-            text_size: None,
+            font: None,
             separator: t::LINE,
         }
     }
@@ -459,8 +459,7 @@ pub fn menu_with(ctx: &egui::Context, owner: Id, entries: &[MenuEntry<'_>], look
         close_menu(ctx);
         return None;
     }
-    let font =
-        look.text_size.map_or_else(|| TextStyle::Button.resolve(&ctx.global_style()), egui::FontId::proportional);
+    let font = look.font.clone().unwrap_or_else(|| TextStyle::Button.resolve(&ctx.global_style()));
     let widest = entries
         .iter()
         .filter_map(|e| if let MenuEntry::Item(label) = e { Some(*label) } else { None })
@@ -538,7 +537,7 @@ fn menu_row_with(ui: &mut Ui, c: Control<'_>, look: &MenuLook) -> ControlRespons
         x += t::KIT_ICON + t::KIT_GAP;
     }
     let width = (rect.right() - look.pad_x - x).max(0.0);
-    let font = look.text_size.map_or_else(|| TextStyle::Button.resolve(ui.style()), egui::FontId::proportional);
+    let font = look.font.clone().unwrap_or_else(|| TextStyle::Button.resolve(ui.style()));
     let galley = elided(ui, c.label, font, text, width);
     painter.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, text);
     let label = reason.map_or_else(|| c.label.to_string(), |r| format!("{} — {r}", c.label));

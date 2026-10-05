@@ -1,22 +1,36 @@
-//! Start v2 — Boards (lane L4): layout against the mockup, intents by pointer and keyboard, the Missing
-//! menu, the empty and list states, and source rules. Real `egui::Context` frames, no GPU, no window.
+//! Start v2 — Boards: the Start page against the real `StartModel` (lane L2) — layout against the
+//! mockup, actions by pointer and keyboard, the Missing menu, the empty and list states, and source
+//! rules. Real `egui::Context` frames, no GPU, no window.
 //! `VAROS_START_SNAPSHOT=<dir>` also rasterizes the four mockup states on the CPU (tests only).
 use egui::{Context, Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect};
 use varos_app::{
-    shell::{fonts, tokens as t},
-    start_page::{self, ids, layout, Slot, StartPage},
-    start_view::{demo, PresetId, StartIntent, StartView, ViewMode},
+    shell::{fonts, kit, tokens as t},
+    start::{RecoveryRow, StartAction, StartModel, StartView},
+    start_page::{self, demo, ids, layout, Shape, Slot, StartPage},
+    storage::recents::Recents,
 };
+use varos_core::board::PresetId;
 
 const W: f32 = 1512.0;
 const H: f32 = 982.0;
 const BAR: f32 = 28.0;
+const RID: &str = "recovery-menu-card";
 
 fn home() -> std::path::PathBuf {
     std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_else(|| "/home/designer".into())
 }
-fn recent_view() -> StartView {
-    demo::view(&home(), Some(3), None, "")
+fn path(i: usize) -> std::path::PathBuf {
+    demo::path(&home(), i)
+}
+/// The card key of demo board `i` (the path, as text — L2's `BoardCard::key`).
+fn key(i: usize) -> String {
+    path(i).to_string_lossy().into_owned()
+}
+fn recent_model() -> StartModel {
+    demo::model(&home(), Some(3))
+}
+fn empty_model() -> StartModel {
+    StartModel::without_recovery(&Recents::default(), demo::NOW, |_| false)
 }
 fn context(ppp: f32) -> Context {
     let ctx = Context::default();
@@ -36,6 +50,9 @@ fn input(ppp: f32, size: egui::Vec2, events: Vec<Event>) -> RawInput {
 fn area(size: egui::Vec2) -> Rect {
     Rect::from_min_max(egui::pos2(0.0, BAR), size.to_pos2())
 }
+fn shape_layout(m: &StartModel, size: egui::Vec2) -> start_page::PageLayout {
+    layout(area(size), &Shape::of(m))
+}
 struct Page {
     ctx: Context,
     page: StartPage,
@@ -45,38 +62,45 @@ impl Page {
     fn new(ppp: f32, size: egui::Vec2) -> Self {
         Self { ctx: context(ppp), page: StartPage::new(), size }
     }
-    fn frame(&mut self, view: &StartView, events: Vec<Event>) -> (Vec<StartIntent>, egui::FullOutput) {
-        let mut intents = vec![];
+    fn frame(&mut self, m: &StartModel, events: Vec<Event>) -> (Vec<StartAction>, egui::FullOutput) {
+        let mut actions = vec![];
         let a = area(self.size);
         let out = self.ctx.run_ui(input(self.ctx.pixels_per_point(), self.size, events), |ui| {
-            intents = self.page.draw_in(ui, a, view);
+            actions = self.page.draw_in(ui, a, m, None);
         });
-        (intents, out)
+        (actions, out)
     }
     fn rect(&self, id: egui::Id) -> Rect {
         self.ctx.read_response(id).unwrap_or_else(|| panic!("no response for {id:?}")).rect
     }
     /// Press + release on `id`'s centre (hover first, so hover-only parts are drawn).
-    fn click(&mut self, view: &StartView, id: egui::Id) -> Vec<StartIntent> {
+    fn click(&mut self, m: &StartModel, id: egui::Id) -> Vec<StartAction> {
         let pos = self.rect(id).center();
-        self.click_at(view, pos, PointerButton::Primary)
+        self.click_at(m, pos, PointerButton::Primary)
     }
-    fn click_at(&mut self, view: &StartView, pos: Pos2, button: PointerButton) -> Vec<StartIntent> {
-        let mut all = self.frame(view, vec![Event::PointerMoved(pos)]).0;
-        all.extend(
-            self.frame(view, vec![Event::PointerButton { pos, button, pressed: true, modifiers: Modifiers::NONE }]).0,
-        );
-        all.extend(
-            self.frame(view, vec![Event::PointerButton { pos, button, pressed: false, modifiers: Modifiers::NONE }]).0,
-        );
+    fn click_at(&mut self, m: &StartModel, pos: Pos2, button: PointerButton) -> Vec<StartAction> {
+        let e = |pressed| Event::PointerButton { pos, button, pressed, modifiers: Modifiers::NONE };
+        let mut all = self.frame(m, vec![Event::PointerMoved(pos)]).0;
+        all.extend(self.frame(m, vec![e(true)]).0);
+        all.extend(self.frame(m, vec![e(false)]).0);
         all
     }
-    fn key(&mut self, view: &StartView, key: Key, modifiers: Modifiers) -> Vec<StartIntent> {
+    fn key(&mut self, m: &StartModel, key: Key, modifiers: Modifiers) -> Vec<StartAction> {
         let e = |pressed| Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers };
-        self.frame(view, vec![e(true), e(false)]).0
+        self.frame(m, vec![e(true), e(false)]).0
     }
-    fn press(&mut self, view: &StartView, key: Key) -> Vec<StartIntent> {
-        self.key(view, key, Modifiers::NONE)
+    fn press(&mut self, m: &StartModel, key: Key) -> Vec<StartAction> {
+        self.key(m, key, Modifiers::NONE)
+    }
+    /// Tab until a card has the focus.
+    fn tab_to_cards(&mut self, m: &StartModel) {
+        for _ in 0..40 {
+            self.press(m, Key::Tab);
+            if matches!(self.page.focus(), Slot::Card(_)) {
+                return;
+            }
+        }
+        panic!("Tab never reached a card");
     }
 }
 fn near(a: Rect, b: Rect) -> bool {
@@ -93,8 +117,7 @@ fn assert_near(what: &str, got: Rect, want: Rect) {
 /// The mockup's numbers (src.html at 1512 × 982): box, hero, presets, Recovered, head, 5 × 272 grid.
 #[test]
 fn layout_matches_the_mockup_at_1512_by_982() {
-    let v = recent_view();
-    let l = layout(area(egui::vec2(W, H)), &v);
+    let l = shape_layout(&recent_model(), egui::vec2(W, H));
     assert_near("box", l.board, Rect::from_min_max(egui::pos2(12.0, 40.0), egui::pos2(1500.0, 950.0)));
     assert_near("status", l.status, Rect::from_min_max(egui::pos2(24.0, 950.0), egui::pos2(1488.0, 982.0)));
     assert_eq!((l.content.left(), l.content.width()), (52.0, 1408.0));
@@ -104,11 +127,8 @@ fn layout_matches_the_mockup_at_1512_by_982() {
     assert_near("presets", l.presets, r(620.0, 72.0, 840.0, 152.0));
     assert_near("keys", l.keys, r(52.0, 206.0, 556.0, 18.0));
     assert_eq!(l.preset_cells.len(), 5);
-    assert_near(
-        "Square cell",
-        l.preset_cells[0],
-        Rect::from_min_max(egui::pos2(621.0, 105.0), egui::pos2(788.6, 223.0)),
-    );
+    let square = Rect::from_min_max(egui::pos2(621.0, 105.0), egui::pos2(788.6, 223.0));
+    assert_near("Square cell", l.preset_cells[0], square);
     assert_near("recovered", l.recovered[0], r(52.0, 252.0, 1408.0, 52.0));
     assert_near("head", l.head, r(52.0, 332.0, 1408.0, 28.0));
     assert_eq!((l.cols, l.card_w), (5, 272.0));
@@ -118,9 +138,8 @@ fn layout_matches_the_mockup_at_1512_by_982() {
     assert_near("card 6", l.cards[5], r(52.0, 654.0, 272.0, 266.0));
     assert_near("well", start_page::card_well(l.cards[0]), r(53.0, 377.0, 270.0, 123.0));
     assert_near("… chip", start_page::card_chip(l.cards[6]), r(575.0, 663.0, 24.0, 24.0));
-    // gutters are 12 everywhere in the grid
     for w in l.cards.windows(2).filter(|w| w[0].top() == w[1].top()) {
-        assert_eq!(w[1].left() - w[0].right(), 12.0);
+        assert_eq!(w[1].left() - w[0].right(), 12.0, "gutters are 12");
     }
     assert_eq!(l.cards[5].top() - l.cards[0].bottom(), 12.0);
     assert!(l.cards.last().unwrap().bottom() <= l.board.bottom() - t::SB_PAD_BOTTOM, "two rows fit the box");
@@ -130,31 +149,76 @@ fn layout_matches_the_mockup_at_1512_by_982() {
 #[test]
 fn painted_controls_sit_on_the_mockup_rects_at_1x_and_2x() {
     for ppp in [1.0, 2.0] {
-        let v = recent_view();
+        let m = recent_model();
         let mut p = Page::new(ppp, egui::vec2(W, H));
-        p.frame(&v, vec![]);
+        p.frame(&m, vec![]);
         assert_near("New board", p.rect(ids::new_board()), r(52.0, 72.0, 272.0, 64.0));
         assert_near("Open…", p.rect(ids::open()), r(336.0, 72.0, 272.0, 64.0));
-        assert_near(
-            "Story",
-            p.rect(ids::preset(PresetId::Story)),
-            Rect::from_min_max(egui::pos2(956.2, 105.0), egui::pos2(1123.8, 223.0)),
-        );
-        assert_near("card 1", p.rect(ids::card("board-0")), r(52.0, 376.0, 272.0, 266.0));
-        assert_near("card 10", p.rect(ids::card("board-9")), r(1188.0, 654.0, 272.0, 266.0));
-        assert_near("grid seg", p.rect(ids::view_segment(ViewMode::Grid)), r(1401.0, 334.0, 28.0, 22.0));
-        let recover = p.rect(ids::recover("recovery-menu-card"));
+        let story = Rect::from_min_max(egui::pos2(956.2, 105.0), egui::pos2(1123.8, 223.0));
+        assert_near("Story", p.rect(ids::preset(PresetId::Story)), story);
+        assert_near("card 1", p.rect(ids::card(&key(0))), r(52.0, 376.0, 272.0, 266.0));
+        assert_near("card 10", p.rect(ids::card(&key(9))), r(1188.0, 654.0, 272.0, 266.0));
+        assert_near("grid seg", p.rect(ids::view_segment(StartView::Grid)), r(1401.0, 334.0, 28.0, 22.0));
+        let recover = p.rect(ids::recover(RID));
         assert_eq!((recover.right(), recover.height()), (1448.0, 28.0), "Recover: 12 in from the band's right edge");
         let all = p.rect(ids::filter(None));
         assert_eq!((all.top(), all.height()), (332.0, 28.0));
     }
 }
 
+/// With the real Inter / JetBrains Mono: nothing that the mockup sets on one line wraps or is cut —
+/// hero titles/sub-labels, preset names and sizes, card names/dates/facts/paths, filter labels.
+#[test]
+fn real_fonts_keep_the_mockup_lines_whole() {
+    let m = recent_model();
+    let mut p = Page::new(2.0, egui::vec2(W, H));
+    p.frame(&m, vec![]);
+    let (_, out) = p.frame(&m, vec![]);
+    let galleys: Vec<_> = out
+        .shapes
+        .iter()
+        .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some((t.pos, t.galley.clone())) } else { None })
+        .collect();
+    let find = |s: &str| galleys.iter().find(|(_, g)| g.text() == s).unwrap_or_else(|| panic!("{s:?} not drawn"));
+    for s in [
+        "New board",
+        "Free canvas, no size needed",
+        "A .vrs file from disk",
+        "1080 × 1920 px",
+        "595 × 842 pt",
+        "Custom…",
+        "Recent boards",
+        "Recover",
+        "Ramadan campaign",
+        "Logo marks v3",
+        "ramadan",
+        "social",
+        "2 artboards",
+        "free",
+        "Recovery on · copies every 30 seconds",
+    ] {
+        let (_, g) = find(s);
+        assert_eq!(g.rows.len(), 1, "{s:?} wraps");
+        assert!(!g.text().contains('…') || s.contains('…'), "{s:?} is cut");
+    }
+    assert!(!galleys.iter().any(|(_, g)| g.text().starts_with('+')), "every card shows all its tags (no +n)");
+    // the hero sub-label fits inside its button, the shortcut too, with the mockup's paddings
+    let (pos, sub) = find("Free canvas, no size needed");
+    assert!(pos.x + sub.size().x <= 52.0 + 272.0 - 16.0 - 18.0, "sub-label runs into ⌘N");
+    // every preset size line fits its 167.6-wide cell
+    for s in ["1080 × 1080 px", "1080 × 1350 px", "1080 × 1920 px"] {
+        assert!(find(s).1.size().x < 160.0, "{s} too wide for its cell");
+    }
+    // the lede sets in two lines at 500 (the mockup's max-width)
+    let lede = galleys.iter().find(|(_, g)| g.text().starts_with("A board is")).unwrap();
+    assert_eq!(lede.1.rows.len(), 2);
+}
+
 /// The responsive rule at other window sizes: 3…6 columns, cards 272…320 from 3 columns up, the hero
 /// stacks under 1128 of content, nothing overlaps, everything stays inside the box's content column.
 #[test]
 fn responsive_rule_at_other_window_sizes() {
-    let v = recent_view();
+    let m = recent_model();
     for (w, h, cols, stacked) in [
         (1100.0, 800.0, 3, true),
         (1280.0, 800.0, 4, false),
@@ -162,7 +226,7 @@ fn responsive_rule_at_other_window_sizes() {
         (2400.0, 1400.0, 6, false),
         (900.0, 700.0, 3, true),
     ] {
-        let l = layout(area(egui::vec2(w, h)), &v);
+        let l = shape_layout(&m, egui::vec2(w, h));
         assert_eq!(l.cols, cols, "{w}: columns");
         assert_eq!(l.stacked, stacked, "{w}: stacked hero");
         if l.content.width() >= 3.0 * t::SB_COL + 2.0 * t::SB_GUTTER {
@@ -179,98 +243,130 @@ fn responsive_rule_at_other_window_sizes() {
                 assert!(!a.intersects(*b), "{w}: cards overlap");
             }
         }
-        let hero = [l.new_board, l.open, l.presets];
-        assert!(!hero[2].intersects(l.new_board) && !hero[2].intersects(l.open), "{w}: presets clear of the buttons");
+        assert!(!l.presets.intersects(l.new_board) && !l.presets.intersects(l.open), "{w}: presets clear");
         assert!(l.presets.right() <= l.content.right() + 0.01);
         assert!(l.recovered[0].top() >= l.presets.bottom() + t::SB_SECTION_GAP - 0.01);
         assert!(l.presets.width() >= t::SB_PRESETS_MIN_W.min(l.content.width()));
     }
-    // the gap ranges are honest: past 5 × 320 + 48, six columns only start at 6 × 272 + 60
     assert_eq!(start_page::grid_columns(1660.0), (5, 320.0));
     assert_eq!(start_page::grid_columns(1692.0).0, 6);
     assert_eq!(start_page::grid_columns(1408.0), (5, 272.0));
 }
 
 #[test]
-fn every_control_emits_its_intent_by_pointer() {
-    let v = recent_view();
+fn every_control_emits_its_action_by_pointer() {
+    let m = recent_model();
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    p.frame(&v, vec![]);
-    assert_eq!(p.click(&v, ids::new_board()), [StartIntent::NewBoard]);
-    assert_eq!(p.click(&v, ids::open()), [StartIntent::Open]);
-    for preset in PresetId::ALL {
-        assert_eq!(p.click(&v, ids::preset(preset)), [StartIntent::NewWithPreset(preset)]);
+    p.frame(&m, vec![]);
+    assert_eq!(p.click(&m, ids::new_board()), [StartAction::NewBoard]);
+    assert_eq!(p.click(&m, ids::open()), [StartAction::Open]);
+    for preset in [PresetId::Square, PresetId::Portrait, PresetId::Story, PresetId::A4, PresetId::Custom] {
+        assert_eq!(p.click(&m, ids::preset(preset)), [StartAction::NewWithPreset(preset)]);
     }
-    assert_eq!(p.click(&v, ids::discard("recovery-menu-card")), [StartIntent::Discard("recovery-menu-card".into())]);
-    assert_eq!(p.click(&v, ids::recover("recovery-menu-card")), [StartIntent::Recover("recovery-menu-card".into())]);
-    assert_eq!(p.click(&v, ids::filter(Some("client"))), [StartIntent::SetTagFilter(Some("client".into()))]);
-    assert_eq!(p.click(&v, ids::filter(None)), [StartIntent::SetTagFilter(None)]);
-    assert_eq!(p.click(&v, ids::view_segment(ViewMode::List)), [StartIntent::SetView(ViewMode::List)]);
-    assert_eq!(p.click(&v, ids::card("board-2")), [StartIntent::OpenBoard("board-2".into())]);
+    assert_eq!(p.click(&m, ids::discard(RID)), [StartAction::DiscardRecovery(RID.into())]);
+    assert_eq!(p.click(&m, ids::recover(RID)), [StartAction::Recover(RID.into())]);
+    assert_eq!(p.click(&m, ids::filter(Some("client"))), [StartAction::SetTagFilter(Some("client".into()))]);
+    assert_eq!(p.click(&m, ids::filter(None)), [StartAction::SetTagFilter(None)]);
+    assert_eq!(p.click(&m, ids::view_segment(StartView::List)), [StartAction::SetView(StartView::List)]);
+    assert_eq!(p.click(&m, ids::card(&key(2))), [StartAction::OpenRecent(path(2))]);
     // the search pill emits Search on every change
-    let mut ctx_intent = None;
+    let mut got = None;
     let bar = r(W - 300.0, 2.0, t::SB_SEARCH_W, t::SB_SEARCH_H);
+    let press = |pressed| Event::PointerButton {
+        pos: bar.center(),
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
     for events in [
         vec![],
-        vec![
-            Event::PointerMoved(bar.center()),
-            Event::PointerButton {
-                pos: bar.center(),
-                button: PointerButton::Primary,
-                pressed: true,
-                modifiers: Modifiers::NONE,
-            },
-        ],
-        vec![Event::PointerButton {
-            pos: bar.center(),
-            button: PointerButton::Primary,
-            pressed: false,
-            modifiers: Modifiers::NONE,
-        }],
+        vec![Event::PointerMoved(bar.center()), press(true)],
+        vec![press(false)],
         vec![Event::Text("ram".into())],
     ] {
         let ctx = p.ctx.clone();
         let _ = ctx.run_ui(input(1.0, egui::vec2(W, H), events), |ui| {
-            if let Some(i) = p.page.search_box(ui, bar, &v) {
-                ctx_intent = Some(i);
+            if let Some(a) = p.page.search_box(ui, bar, &m) {
+                got = Some(a);
             }
         });
     }
-    assert_eq!(ctx_intent, Some(StartIntent::Search("ram".into())));
+    assert_eq!(got, Some(StartAction::Search("ram".into())));
+}
+
+/// The page yields the keyboard to the Search field while it is typing (Tab / Delete stay in it).
+#[test]
+fn the_search_field_owns_the_keyboard_while_it_types() {
+    let m = recent_model();
+    let ctx = context(1.0);
+    let mut page = StartPage::new();
+    let bar = r(W - 300.0, 2.0, t::SB_SEARCH_W, t::SB_SEARCH_H);
+    let run = |page: &mut StartPage, events: Vec<Event>| {
+        let mut actions = vec![];
+        let _ = ctx.run_ui(input(1.0, egui::vec2(W, H), events), |ui| {
+            actions = page.draw_in(ui, area(egui::vec2(W, H)), &m, None);
+            actions.extend(page.search_box(ui, bar, &m));
+        });
+        actions
+    };
+    run(&mut page, vec![]);
+    ctx.memory_mut(|mem| mem.request_focus(ids::search()));
+    run(&mut page, vec![]);
+    let k =
+        |key, pressed| Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: Modifiers::NONE };
+    assert!(run(&mut page, vec![k(Key::Tab, true), k(Key::Tab, false)]).is_empty());
+    assert!(!page.ring_visible() && page.focus() == &Slot::New, "Tab stayed with the field");
+    ctx.memory_mut(|mem| mem.request_focus(ids::search()));
+    run(&mut page, vec![]);
+    assert!(run(&mut page, vec![k(Key::Delete, true), k(Key::Delete, false)]).is_empty());
+    assert!(!page.ring_visible(), "Delete stayed with the field");
 }
 
 #[test]
 fn a_disabled_or_busy_recover_never_fires_and_leaves_the_tab_ring() {
-    let mut v = recent_view();
-    v.recovered[0].problem = Some("The copy is damaged".into());
+    let mut row = demo::recovered();
+    row.problem = Some("The copy is damaged".into());
+    let build = |row: RecoveryRow| StartModel::build(&demo::recents(&home()), demo::NOW, |_| false, vec![row]);
+    let m = build(row.clone());
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    p.frame(&v, vec![]);
-    assert!(p.click(&v, ids::recover("recovery-menu-card")).is_empty());
-    let order = start_page::tab_order(&v, usize::MAX);
-    assert!(order.contains(&Slot::Discard("recovery-menu-card".into())));
-    assert!(!order.contains(&Slot::Recover("recovery-menu-card".into())));
-    v.recovered[0].busy = true;
-    assert!(p.click(&v, ids::discard("recovery-menu-card")).is_empty());
-    assert!(!start_page::tab_order(&v, usize::MAX).iter().any(|s| matches!(s, Slot::Discard(_))));
+    p.frame(&m, vec![]);
+    assert!(p.click(&m, ids::recover(RID)).is_empty());
+    let order = start_page::tab_order(&m, usize::MAX);
+    assert!(order.contains(&Slot::Discard(RID.into())));
+    assert!(!order.contains(&Slot::Recover(RID.into())));
+    assert_eq!(start_page::activate(&Slot::Recover(RID.into()), &m), None, "keyboard cannot recover it either");
+    row.busy = true;
+    let m = build(row);
+    assert!(p.click(&m, ids::discard(RID)).is_empty());
+    assert!(!start_page::tab_order(&m, usize::MAX).iter().any(|s| matches!(s, Slot::Discard(_))));
 }
 
 #[test]
 fn keyboard_ring_order_activation_and_2d_grid_moves() {
-    let v = recent_view();
+    let m = recent_model();
     let mut p = Page::new(2.0, egui::vec2(W, H));
-    let (_, out) = p.frame(&v, vec![]);
+    let (_, out) = p.frame(&m, vec![]);
     assert!(!accent_stroke(&out), "no ring before the keyboard is used");
-    // the first Tab lands on New board and the ring shows
-    p.press(&v, Key::Tab);
-    assert_eq!(p.page.focus(), &Slot::New);
-    let (_, out) = p.frame(&v, vec![]);
+    p.press(&m, Key::Tab);
+    assert_eq!(p.page.focus(), &Slot::New, "the first Tab lands on New board");
+    let (_, out) = p.frame(&m, vec![]);
     assert!(accent_stroke(&out));
-    assert_eq!(p.press(&v, Key::Enter), [StartIntent::NewBoard]);
-    assert_eq!(p.press(&v, Key::Space), [StartIntent::NewBoard]);
-    // the documented order
+    assert_eq!(p.press(&m, Key::Enter), [StartAction::NewBoard]);
+    assert_eq!(p.press(&m, Key::Space), [StartAction::NewBoard]);
+    // a held key (repeat) never activates twice: press, press again while down, release
+    let k = |pressed| Event::Key {
+        key: Key::Enter,
+        physical_key: Some(Key::Enter),
+        pressed,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    assert_eq!(p.frame(&m, vec![k(true)]).0, [StartAction::NewBoard]);
+    assert!(p.frame(&m, vec![k(true)]).0.is_empty(), "the auto-repeat press is ignored");
+    p.frame(&m, vec![k(false)]);
     let mut seen = vec![p.page.focus().clone()];
     for _ in 0..40 {
-        p.press(&v, Key::Tab);
+        p.press(&m, Key::Tab);
         seen.push(p.page.focus().clone());
         if matches!(p.page.focus(), Slot::Card(_)) {
             break;
@@ -293,147 +389,160 @@ fn keyboard_ring_order_activation_and_2d_grid_moves() {
     dedup.dedup();
     assert_eq!(dedup, ["new", "open", "preset", "discard", "recover", "filter", "view", "card"]);
     assert_eq!(kinds.iter().filter(|k| **k == "preset").count(), 5);
-    assert_eq!(p.page.focus(), &Slot::Card("board-0".into()));
-    assert_eq!(p.press(&v, Key::Enter), [StartIntent::OpenBoard("board-0".into())]);
-    p.press(&v, Key::ArrowRight);
-    assert_eq!(p.page.focus(), &Slot::Card("board-1".into()));
-    p.press(&v, Key::ArrowDown);
-    assert_eq!(p.page.focus(), &Slot::Card("board-6".into()), "↓ = one grid row (5 columns)");
-    p.press(&v, Key::ArrowDown);
-    assert_eq!(p.page.focus(), &Slot::Card("board-6".into()), "no row below: stays");
-    p.press(&v, Key::ArrowUp);
-    assert_eq!(p.page.focus(), &Slot::Card("board-1".into()));
-    p.press(&v, Key::ArrowLeft);
-    p.press(&v, Key::ArrowLeft);
-    assert_eq!(p.page.focus(), &Slot::Card("board-0".into()), "← stops at the row's start");
-    assert_eq!(p.press(&v, Key::Delete), [StartIntent::Remove("board-0".into())]);
-    assert_eq!(p.press(&v, Key::Backspace), [StartIntent::Remove("board-0".into())]);
-    // the model removed it: focus moves to the card now in its place
-    let mut after = v.clone();
-    after.cards.remove(0);
+    assert_eq!(p.page.focus(), &Slot::Card(key(0)));
+    assert_eq!(p.press(&m, Key::Enter), [StartAction::OpenRecent(path(0))]);
+    p.press(&m, Key::ArrowRight);
+    assert_eq!(p.page.focus(), &Slot::Card(key(1)));
+    p.press(&m, Key::ArrowDown);
+    assert_eq!(p.page.focus(), &Slot::Card(key(6)), "↓ = one grid row (5 columns)");
+    p.press(&m, Key::ArrowDown);
+    assert_eq!(p.page.focus(), &Slot::Card(key(6)), "no row below: stays");
+    p.press(&m, Key::ArrowUp);
+    assert_eq!(p.page.focus(), &Slot::Card(key(1)));
+    p.press(&m, Key::ArrowLeft);
+    p.press(&m, Key::ArrowLeft);
+    assert_eq!(p.page.focus(), &Slot::Card(key(0)), "← stops at the row's start");
+    // Delete and the Mac delete (Backspace) both remove the focused board
+    assert_eq!(p.press(&m, Key::Delete), [StartAction::RemoveRecent(path(0))]);
+    assert_eq!(p.press(&m, Key::Backspace), [StartAction::RemoveRecent(path(0))]);
+    // the host removed it and rebuilt the model: focus moves to the card now in its place
+    let mut recents = demo::recents(&home());
+    recents.remove(&path(0));
+    let after = StartModel::build(&recents, demo::NOW, |p| p == path(3), vec![demo::recovered()]);
     p.frame(&after, vec![]);
-    assert_eq!(p.page.focus(), &Slot::Card("board-1".into()));
-    // ⇧Tab walks back into the view toggle; ←/→ stay inside it
+    assert_eq!(p.page.focus(), &Slot::Card(key(1)));
     p.key(&after, Key::Tab, Modifiers::SHIFT);
-    assert_eq!(p.page.focus(), &Slot::View(ViewMode::List));
-    assert_eq!(p.press(&after, Key::Enter), [StartIntent::SetView(ViewMode::List)]);
+    assert_eq!(p.page.focus(), &Slot::View(StartView::List));
+    assert_eq!(p.press(&after, Key::Enter), [StartAction::SetView(StartView::List)]);
     p.press(&after, Key::ArrowLeft);
-    assert_eq!(p.page.focus(), &Slot::View(ViewMode::Grid));
+    assert_eq!(p.page.focus(), &Slot::View(StartView::Grid));
     p.press(&after, Key::ArrowLeft);
-    assert!(matches!(p.page.focus(), Slot::View(ViewMode::Grid)), "← does not leave the toggle");
-    // a pointer press hides the ring
+    assert_eq!(p.page.focus(), &Slot::View(StartView::Grid), "← does not leave the toggle");
     let pos = p.rect(ids::open()).center();
-    p.frame(
-        &after,
-        vec![Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE }],
-    );
-    assert!(!p.page.ring_visible());
+    let down = Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE };
+    p.frame(&after, vec![down]);
+    assert!(!p.page.ring_visible(), "a pointer press hides the ring");
 }
 
 #[test]
 fn presets_filters_and_recovered_by_keyboard() {
-    let v = recent_view();
+    let m = recent_model();
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    p.frame(&v, vec![]);
-    p.press(&v, Key::Tab);
-    p.press(&v, Key::Tab);
-    p.press(&v, Key::Tab);
-    assert_eq!(p.page.focus(), &Slot::Preset(PresetId::Square));
-    p.press(&v, Key::ArrowRight);
-    p.press(&v, Key::ArrowRight);
-    assert_eq!(p.press(&v, Key::Enter), [StartIntent::NewWithPreset(PresetId::Story)]);
+    p.frame(&m, vec![]);
     for _ in 0..3 {
-        p.press(&v, Key::Tab);
+        p.press(&m, Key::Tab);
     }
-    assert_eq!(p.page.focus(), &Slot::Discard("recovery-menu-card".into()));
-    p.press(&v, Key::ArrowRight);
-    assert_eq!(p.press(&v, Key::Space), [StartIntent::Recover("recovery-menu-card".into())]);
-    p.press(&v, Key::Tab);
+    assert_eq!(p.page.focus(), &Slot::Preset(PresetId::Square));
+    p.press(&m, Key::ArrowRight);
+    p.press(&m, Key::ArrowRight);
+    assert_eq!(p.press(&m, Key::Enter), [StartAction::NewWithPreset(PresetId::Story)]);
+    for _ in 0..3 {
+        p.press(&m, Key::Tab);
+    }
+    assert_eq!(p.page.focus(), &Slot::Discard(RID.into()));
+    p.press(&m, Key::ArrowRight);
+    assert_eq!(p.press(&m, Key::Space), [StartAction::Recover(RID.into())]);
+    p.press(&m, Key::Tab);
     assert_eq!(p.page.focus(), &Slot::Filter(None));
-    p.press(&v, Key::ArrowRight);
-    assert_eq!(p.press(&v, Key::Enter), [StartIntent::SetTagFilter(Some("client".into()))]);
+    p.press(&m, Key::ArrowRight);
+    assert_eq!(p.press(&m, Key::Enter), [StartAction::SetTagFilter(Some("client".into()))]);
+}
+
+#[test]
+fn filters_and_search_come_from_the_model() {
+    let mut m = recent_model();
+    assert!(m.apply(&StartAction::SetTagFilter(Some("print".into()))));
+    let mut p = Page::new(1.0, egui::vec2(W, H));
+    let (_, out) = p.frame(&m, vec![]);
+    let l = shape_layout(&m, egui::vec2(W, H));
+    assert_eq!(l.cards.len(), 3, "print: 3 boards");
+    let azure: Vec<Rect> = rects(&out).into_iter().filter(|r| r.fill == t::ACCENT).map(|r| r.rect).collect();
+    let print = p.rect(ids::filter(Some("print")));
+    assert!(azure.len() == 1 && print.contains_rect(azure[0]), "the bar sits under the selected tag");
+    m.apply(&StartAction::SetTagFilter(None));
+    m.apply(&StartAction::Search("zzz".into()));
+    let (_, out) = p.frame(&m, vec![]);
+    assert!(texts(&out).iter().any(|s| s.starts_with("No boards match")));
 }
 
 #[test]
 fn command_keys_only_when_the_page_owns_them() {
-    let v = recent_view();
+    let m = recent_model();
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    p.frame(&v, vec![]);
-    assert!(p.key(&v, Key::N, Modifiers::COMMAND).is_empty(), "the app's host owns ⌘N (K2 row 1)");
+    p.frame(&m, vec![]);
+    assert!(p.key(&m, Key::N, Modifiers::COMMAND).is_empty(), "the app's host owns ⌘N (K2 row 1)");
     p.page.command_keys = true;
-    assert_eq!(p.key(&v, Key::N, Modifiers::COMMAND), [StartIntent::NewBoard]);
-    assert_eq!(p.key(&v, Key::O, Modifiers::COMMAND), [StartIntent::Open]);
+    assert_eq!(p.key(&m, Key::N, Modifiers::COMMAND), [StartAction::NewBoard]);
+    assert_eq!(p.key(&m, Key::O, Modifiers::COMMAND), [StartAction::Open]);
 }
 
 #[test]
 fn missing_card_menu_has_locate_others_only_remove_and_esc_closes() {
-    let v = recent_view();
+    let m = recent_model();
     assert_eq!(start_page::menu_entries(false).len(), 1);
     assert_eq!(start_page::menu_entries(true).len(), 3);
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    p.frame(&v, vec![]);
-    // hover shows the "…" chip; clicking it opens the menu under it, right-aligned
-    let card = p.rect(ids::card("board-3"));
-    p.frame(&v, vec![Event::PointerMoved(card.center())]);
-    let chip = p.rect(ids::chip("board-3"));
-    assert_near("chip", chip, start_page::card_chip(card));
-    let got = p.click(&v, ids::chip("board-3"));
+    p.frame(&m, vec![]);
+    let card = p.rect(ids::card(&key(3)));
+    p.frame(&m, vec![Event::PointerMoved(card.center())]);
+    assert_near("chip", p.rect(ids::chip(&key(3))), start_page::card_chip(card));
+    let got = p.click(&m, ids::chip(&key(3)));
     assert!(got.is_empty(), "{got:?}");
-    assert_eq!(p.page.menu_for(), Some("board-3"));
-    assert!(varos_app::shell::kit::is_menu_open(&p.ctx, start_page::menu_owner("board-3")));
-    // keyboard inside the menu: ↓ Locate…, Enter
-    p.press(&v, Key::ArrowDown);
-    assert_eq!(p.press(&v, Key::Enter), [StartIntent::Locate("board-3".into())]);
-    assert!(!varos_app::shell::kit::menu_open(&p.ctx));
-    // reopen, Esc closes without an intent
-    let card6 = p.rect(ids::card("board-6"));
-    p.frame(&v, vec![Event::PointerMoved(card6.center())]);
-    p.click(&v, ids::chip("board-6"));
-    assert_eq!(p.page.menu_for(), Some("board-6"));
-    assert!(p.press(&v, Key::Escape).is_empty());
-    p.frame(&v, vec![]);
-    assert!(!varos_app::shell::kit::menu_open(&p.ctx));
-    // a non-missing card's menu is Remove only: ↓ Enter = Remove
-    let pos = p.rect(ids::card("board-6")).center();
-    p.click_at(&v, pos, PointerButton::Secondary);
-    p.press(&v, Key::ArrowDown);
-    assert_eq!(p.press(&v, Key::Enter), [StartIntent::Remove("board-6".into())]);
-    // a Missing card shows the pill, not its date
-    let (_, out) = p.frame(&v, vec![]);
+    assert_eq!(p.page.menu_for(), Some(key(3).as_str()));
+    assert!(kit::is_menu_open(&p.ctx, start_page::menu_owner(&key(3))));
+    p.press(&m, Key::ArrowDown);
+    assert_eq!(p.press(&m, Key::Enter), [StartAction::Locate(path(3))]);
+    assert!(!kit::menu_open(&p.ctx));
+    let card6 = p.rect(ids::card(&key(6)));
+    p.frame(&m, vec![Event::PointerMoved(card6.center())]);
+    p.click(&m, ids::chip(&key(6)));
+    assert_eq!(p.page.menu_for(), Some(key(6).as_str()));
+    assert!(p.press(&m, Key::Escape).is_empty());
+    p.frame(&m, vec![]);
+    assert!(!kit::menu_open(&p.ctx));
+    let pos = p.rect(ids::card(&key(6))).center();
+    p.click_at(&m, pos, PointerButton::Secondary);
+    p.press(&m, Key::ArrowDown);
+    assert_eq!(p.press(&m, Key::Enter), [StartAction::RemoveRecent(path(6))]);
+    let (_, out) = p.frame(&m, vec![]);
     let text = texts(&out);
     assert!(text.iter().any(|s| s == "Missing") && text.iter().any(|s| s == "File not found"));
-    assert!(!text.iter().any(|s| s == "Yesterday 16:10"), "the Missing card's date is replaced");
+    let card3 = &m.cards()[3];
+    let same_date = m.cards().iter().filter(|c| !c.missing && c.modified_text == card3.modified_text).count();
+    assert_eq!(
+        text.iter().filter(|s| **s == card3.modified_text).count(),
+        same_date,
+        "the Missing card's date is replaced"
+    );
 }
 
 #[test]
 fn first_launch_is_the_centred_empty_page() {
-    let v = StartView::default();
-    assert!(v.is_first_launch());
-    let l = layout(area(egui::vec2(W, H)), &v);
+    let m = empty_model();
+    assert!(start_page::is_first_launch(&m));
+    let l = shape_layout(&m, egui::vec2(W, H));
     assert!(l.first_launch && l.cards.is_empty() && l.recovered.is_empty());
     assert_near("title", l.title, r(52.0, 264.0, 1408.0, 40.0));
     assert_near("New board", l.new_board, r(478.0, 396.0, 272.0, 64.0));
     assert_near("Open…", l.open, r(762.0, 396.0, 272.0, 64.0));
     assert_near("presets", l.presets, r(336.0, 554.0, 840.0, 152.0));
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    let (_, out) = p.frame(&v, vec![]);
+    let (_, out) = p.frame(&m, vec![]);
     let text = texts(&out);
     for s in ["Start with a board", "New board", "Open…", "Return", "Custom…", "any size"] {
         assert!(text.iter().any(|t| t == s), "empty page shows {s:?}: {text:?}");
     }
     assert!(!text.iter().any(|t| t == "Recent boards" || t == "Move"));
     assert_near("New board painted", p.rect(ids::new_board()), l.new_board);
-    // Return on the untouched page = New board (the hint)
-    assert_eq!(p.press(&v, Key::Enter), [StartIntent::NewBoard]);
-    // only hero + presets in the ring
-    assert_eq!(start_page::tab_order(&v, usize::MAX).len(), 7);
+    assert_eq!(p.press(&m, Key::Enter), [StartAction::NewBoard], "Return on the untouched page = New board");
+    assert_eq!(start_page::tab_order(&m, usize::MAX).len(), 7);
 }
 
 #[test]
 fn list_view_is_the_numbered_table() {
-    let mut v = recent_view();
-    v.view = ViewMode::List;
-    let l = layout(area(egui::vec2(W, H)), &v);
+    let mut m = recent_model();
+    m.apply(&StartAction::SetView(StartView::List));
+    let l = shape_layout(&m, egui::vec2(W, H));
     assert!(l.cards.is_empty());
     assert_near("table head", l.table_head, r(52.0, 376.0, 1408.0, 32.0));
     assert_eq!(l.rows.len(), 10);
@@ -441,33 +550,28 @@ fn list_view_is_the_numbered_table() {
     assert_near("row 10", l.rows[9], r(52.0, 858.0, 1408.0, 50.0));
     assert_eq!(start_page::list_wide_column(1408.0), 300.0);
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    let (_, out) = p.frame(&v, vec![]);
+    let (_, out) = p.frame(&m, vec![]);
     let text = texts(&out);
-    for s in ["#", "Name", "Tags", "Folder", "Modified", "1", "10", "Today 14:32"] {
+    let first_date = m.cards()[0].modified_text.clone();
+    for s in ["#", "Name", "Tags", "Folder", "Modified", "1", "10", first_date.as_str()] {
         assert!(text.iter().any(|t| t == s), "list shows {s:?}");
     }
-    assert_near("row painted", p.rect(ids::row("board-0")), l.rows[0]);
-    assert_eq!(p.click(&v, ids::row("board-4")), [StartIntent::OpenBoard("board-4".into())]);
-    // ↑/↓ move by one row in the list; ←/→ do nothing there
+    assert_near("row painted", p.rect(ids::row(&key(0))), l.rows[0]);
+    assert_eq!(p.click(&m, ids::row(&key(4))), [StartAction::OpenRecent(path(4))]);
     p.page.reset_focus();
-    for _ in 0..40 {
-        p.press(&v, Key::Tab);
-        if matches!(p.page.focus(), Slot::Card(_)) {
-            break;
-        }
-    }
-    assert_eq!(p.page.focus(), &Slot::Card("board-0".into()));
-    p.press(&v, Key::ArrowDown);
-    assert_eq!(p.page.focus(), &Slot::Card("board-1".into()));
-    p.press(&v, Key::ArrowRight);
-    assert_eq!(p.page.focus(), &Slot::Card("board-1".into()));
+    p.tab_to_cards(&m);
+    assert_eq!(p.page.focus(), &Slot::Card(key(0)));
+    p.press(&m, Key::ArrowDown);
+    assert_eq!(p.page.focus(), &Slot::Card(key(1)), "↓ = one list row");
+    p.press(&m, Key::ArrowRight);
+    assert_eq!(p.page.focus(), &Slot::Card(key(1)), "←/→ do nothing in the list");
 }
 
 #[test]
 fn folder_text_elides_in_the_middle_and_helpers_match_the_copy() {
     let home = std::path::Path::new("/Users/ahmed");
-    let path = home.join("Design/Clients/Noor Foods/Ramadan 2026/Ramadan campaign.vrs");
-    assert_eq!(start_page::folder_text(&path, Some(home)), "~/Design/Clients/Noor Foods/Ramadan 2026");
+    let file = home.join("Design/Clients/Noor Foods/Ramadan 2026/Ramadan campaign.vrs");
+    assert_eq!(start_page::folder_text(&file, Some(home)), "~/Design/Clients/Noor Foods/Ramadan 2026");
     assert_eq!(start_page::folder_text(std::path::Path::new("/tmp/a.vrs"), Some(home)), "/tmp");
     let full = "~/Design/Clients/Noor Foods/Ramadan 2026";
     assert_eq!(start_page::elide_middle(full, |s| s.chars().count() <= 60), full);
@@ -480,21 +584,29 @@ fn folder_text_elides_in_the_middle_and_helpers_match_the_copy() {
     assert_eq!(start_page::facts(1), "1 artboard");
     assert_eq!(start_page::facts(2), "2 artboards");
     assert_eq!(start_page::version_text(), "Varos 0.1 α");
-    assert_eq!(PresetId::Portrait.size_text(), "1080 × 1350 px");
-    assert_eq!(PresetId::Custom.size_text(), "any size");
+    assert_eq!(start_page::preset_size_text(PresetId::Portrait), "1080 × 1350 px");
+    assert_eq!(start_page::preset_size_text(PresetId::A4), "595 × 842 pt");
+    assert_eq!(start_page::preset_size_text(PresetId::Custom), "any size");
 }
 
 #[test]
 fn only_tokens_colours_and_azure_only_for_focus_and_the_filter_bar() {
     assert_eq!(t::WELL_DOT, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 18));
-    let v = recent_view();
+    let m = recent_model();
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    let (_, out) = p.frame(&v, vec![]);
-    // at rest, azure appears exactly once: the selected filter's 2 px bar
+    let (_, out) = p.frame(&m, vec![]);
     let azure: Vec<Rect> = rects(&out).into_iter().filter(|r| r.fill == t::ACCENT).map(|r| r.rect).collect();
     assert_eq!(azure.len(), 1, "{azure:?}");
     assert_eq!(azure[0].height(), t::SB_FILTER_BAR);
     assert!(!accent_stroke(&out));
+}
+
+/// The thumbnail seam is one function and returns nothing until L3: every card draws its placeholder.
+#[test]
+fn thumbnails_go_through_one_seam_that_is_empty_until_l3() {
+    let mut page = StartPage::new();
+    let ctx = context(1.0);
+    assert_eq!(page.thumb_texture(&ctx, &varos_app::start::ThumbKey("k".into())), None);
 }
 
 /// Ratchet: the new files hand-paint with the kit — no egui default widgets, no literal colours, no
@@ -503,7 +615,6 @@ fn only_tokens_colours_and_azure_only_for_focus_and_the_filter_bar() {
 fn source_rules_no_default_widgets_no_literals_no_animation() {
     let files = [
         ("start_page.rs", include_str!("../src/start_page.rs")),
-        ("start_view.rs", include_str!("../src/start_view.rs")),
         ("kit/board.rs", include_str!("../src/shell/kit/board.rs")),
     ];
     let banned = [
@@ -632,48 +743,45 @@ fn snapshot_the_mockup_states_on_the_cpu() {
         return;
     };
     let dir = std::path::PathBuf::from(dir);
-    let recent = recent_view();
+    std::fs::create_dir_all(&dir).unwrap();
     for state in ["recent", "hover", "list", "empty"] {
-        let mut v = match state {
-            "empty" => StartView::default(),
-            _ => recent.clone(),
+        let mut m = match state {
+            "empty" => StartModel::without_recovery(&Recents::default(), demo::NOW, |_| false),
+            _ => recent_model(),
         };
         if state == "list" {
-            v.view = ViewMode::List;
+            m.apply(&StartAction::SetView(StartView::List));
         }
         let mut p = Page::new(2.0, egui::vec2(W, H));
         let mut atlas = std::collections::HashMap::new();
         let mut events = vec![];
-        let (_, out) = p.frame(&v, vec![]);
+        let (_, out) = p.frame(&m, vec![]);
         apply_textures(&mut atlas, &out);
         if state == "hover" {
-            let card = p.rect(ids::card("board-3"));
-            let (_, out) = p.frame(&v, vec![Event::PointerMoved(card.center())]);
+            let card = p.rect(ids::card(&key(3)));
+            let (_, out) = p.frame(&m, vec![Event::PointerMoved(card.center())]);
             apply_textures(&mut atlas, &out);
-            let chip = p.rect(ids::chip("board-3")).center();
+            let chip = p.rect(ids::chip(&key(3))).center();
             for pressed in [true, false] {
-                let (_, out) = p.frame(
-                    &v,
-                    vec![Event::PointerButton {
-                        pos: chip,
-                        button: PointerButton::Primary,
-                        pressed,
-                        modifiers: Modifiers::NONE,
-                    }],
-                );
+                let e = Event::PointerButton {
+                    pos: chip,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                };
+                let (_, out) = p.frame(&m, vec![e]);
                 apply_textures(&mut atlas, &out);
             }
-            p.press(&v, Key::ArrowDown);
-            p.press(&v, Key::ArrowDown);
-            let card6 = p.rect(ids::card("board-6")).center();
-            events.push(Event::PointerMoved(card6));
+            p.press(&m, Key::ArrowDown);
+            p.press(&m, Key::ArrowDown);
+            events.push(Event::PointerMoved(p.rect(ids::card(&key(6))).center()));
         }
-        let (_, out) = p.frame(&v, events);
+        let (_, out) = p.frame(&m, events);
         apply_textures(&mut atlas, &out);
-        let (_, out) = p.frame(&v, vec![]);
+        let (_, out) = p.frame(&m, vec![]);
         apply_textures(&mut atlas, &out);
         let img = rasterize(&p.ctx, out, &atlas, 2.0);
-        img.save(dir.join(format!("start-{state}.png"))).unwrap();
+        img.save(dir.join(format!("{state}.png"))).unwrap();
     }
 }
 

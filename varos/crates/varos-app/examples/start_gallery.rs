@@ -1,14 +1,15 @@
-//! Manual Start v2 — Boards window (lane L4), for the moderator's screenshot and hand checks:
+//! Manual Start v2 — Boards window, for the moderator's screenshot and hand checks:
 //! `cargo run -p varos-app --example start_gallery` (1512 × 982, the mockup's size).
 //! `VAROS_START_EMPTY=1` shows the first-launch page; `VAROS_START_LIST=1` starts in the list view.
-//! Fake data: the mockup's ten boards (board 4 Missing), one Recovered row, simple generated
-//! thumbnails. The gallery plays the model: it applies filter / search / view / remove intents and
-//! prints the rest. Never run from automated tests.
+//! Fake data: the mockup's ten boards through the real Recent cache and `StartModel` (board 4 Missing),
+//! one Recovered row. The gallery plays the host: filter actions go to the model, Remove rebuilds it,
+//! the rest are printed. Never run from automated tests.
 use std::{sync::Arc, time::Instant};
 use varos_app::{
     shell::{fonts, tokens},
-    start_page::StartPage,
-    start_view::{demo, StartIntent, StartView, ViewMode},
+    start::{StartAction, StartModel, StartView},
+    start_page::{demo, StartPage},
+    storage::recents::Recents,
 };
 use varos_core::{geom::View, scene::Scene};
 use varos_render_wgpu::Renderer;
@@ -20,102 +21,35 @@ use winit::{
 };
 
 struct Model {
-    empty: bool,
-    filter: Option<String>,
-    search: String,
-    view: ViewMode,
-    removed: Vec<String>,
+    home: std::path::PathBuf,
+    recents: Recents,
     recovered: bool,
-    thumbs: Vec<egui::TextureHandle>,
+    model: StartModel,
 }
 impl Model {
-    fn view(&self) -> StartView {
-        if self.empty {
-            return StartView::default();
-        }
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
-        let mut v = demo::view(&home, Some(3), self.filter.as_deref(), &self.search);
-        v.view = self.view;
-        v.cards.retain(|c| !self.removed.contains(&c.key));
-        for c in &mut v.cards {
-            let i: usize = c.key.trim_start_matches("board-").parse().unwrap_or(0);
-            c.thumb = self.thumbs.get(i).map(|t| t.id());
-        }
-        v.total -= self.removed.len();
-        if !self.recovered {
-            v.recovered.clear();
-        }
-        v
+    fn rebuild(&mut self) {
+        let gone = demo::path(&self.home, 3);
+        let rows = if self.recovered { vec![demo::recovered()] } else { vec![] };
+        let mut next = StartModel::build(&self.recents, demo::NOW, |p| p == gone, rows);
+        next.carry_focus_from(&self.model);
+        self.model = next;
     }
-    fn apply(&mut self, intent: StartIntent) {
-        match intent {
-            StartIntent::SetTagFilter(f) => self.filter = f,
-            StartIntent::Search(s) => self.search = s,
-            StartIntent::SetView(v) => self.view = v,
-            StartIntent::Remove(k) => self.removed.push(k),
-            StartIntent::Recover(_) | StartIntent::Discard(_) => self.recovered = false,
-            other => println!("intent: {other:?}"),
+    fn apply(&mut self, action: StartAction) {
+        if self.model.apply(&action) {
+            return;
         }
-    }
-}
-
-/// A plain generated stand-in for lane L3's thumbnails: artboards (or free shapes) on transparent.
-fn thumb(ctx: &egui::Context, i: usize) -> egui::TextureHandle {
-    type Art = (&'static [(f32, f32)], [u8; 3], [u8; 3]);
-    const ART: [Art; 10] = [
-        (&[(1080.0, 1350.0), (1080.0, 1920.0)], [0x16, 0x23, 0x3d], [0xe9, 0xc4, 0x6a]),
-        (&[], [0xec, 0xe6, 0xdc], [0xd0, 0x62, 0x3f]),
-        (&[(842.0, 1191.0)], [0xec, 0xe4, 0xd6], [0xe4, 0x57, 0x2e]),
-        (&[], [0xd6, 0xd0, 0xc8], [0xd6, 0xd0, 0xc8]),
-        (&[(1080.0, 1920.0)], [0xe8, 0x55, 0x3f], [0xf6, 0xe7, 0xd2]),
-        (&[(1050.0, 600.0), (1050.0, 600.0)], [0x2a, 0x23, 0x21], [0xe7, 0xd3, 0xb0]),
-        (&[], [0x2f, 0x6f, 0x6a], [0xe7, 0xd3, 0xb0]),
-        (&[(595.0, 842.0)], [0xff, 0xff, 0xff], [0x1b, 0x19, 0x19]),
-        (&[(1080.0, 1080.0)], [0x1f, 0x4d, 0x3a], [0xe3, 0xb0, 0x4b]),
-        (&[], [0xec, 0xe6, 0xdc], [0xd0, 0x62, 0x3f]),
-    ];
-    let (w, h) = (488usize, 198usize);
-    let mut px = vec![egui::Color32::TRANSPARENT; w * h];
-    let (boards, bg, accent) = ART[i % ART.len()];
-    let mut put = |x: usize, y: usize, c: [u8; 3]| {
-        if x < w && y < h {
-            px[y * w + x] = egui::Color32::from_rgb(c[0], c[1], c[2]);
-        }
-    };
-    if boards.is_empty() {
-        // free artwork: a row of shapes
-        for k in 0..4 {
-            let cx = 60 + k * 120;
-            for y in 40..160 {
-                for x in cx - 50..cx + 50 {
-                    let (dx, dy) = (x as f32 - cx as f32, y as f32 - 100.0);
-                    if dx * dx + dy * dy < 2500.0 {
-                        put(x, y, if k % 2 == 0 { bg } else { accent });
-                    }
-                }
+        match action {
+            StartAction::RemoveRecent(p) => {
+                self.recents.remove(&p);
+                self.rebuild();
             }
-        }
-    } else {
-        let gap = 160.0;
-        let total_w: f32 = boards.iter().map(|b| b.0).sum::<f32>() + gap * (boards.len() - 1) as f32;
-        let total_h = boards.iter().map(|b| b.1).fold(0.0, f32::max);
-        let s = (w as f32 / total_w).min(h as f32 / total_h);
-        let mut x0 = (w as f32 - total_w * s) / 2.0;
-        for (bw, bh) in boards {
-            let (rw, rh) = ((bw * s) as usize, (bh * s) as usize);
-            let (ox, oy) = (x0 as usize, (h - rh) / 2);
-            for y in 0..rh {
-                for x in 0..rw {
-                    let (dx, dy) = (x as f32 - rw as f32 * 0.6, y as f32 - rh as f32 * 0.35);
-                    let inside = dx * dx + dy * dy < (rw as f32 * 0.28).powi(2);
-                    put(ox + x, oy + y, if inside { accent } else { bg });
-                }
+            StartAction::Recover(_) | StartAction::DiscardRecovery(_) => {
+                self.recovered = false;
+                self.rebuild();
             }
-            x0 += (bw + gap) * s;
+            other => println!("action: {other:?}"),
         }
     }
-    let image = egui::ColorImage::new([w, h], px);
-    ctx.load_texture(format!("thumb-{i}"), image, egui::TextureOptions::LINEAR)
 }
 
 struct Runtime {
@@ -152,7 +86,6 @@ impl ApplicationHandler for Gallery {
         for theme in [egui::Theme::Dark, egui::Theme::Light] {
             ctx.style_mut_of(theme, |s| s.text_styles = tokens::text_styles());
         }
-        self.model.thumbs = (0..10).map(|i| thumb(&ctx, i)).collect();
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, &window, None, None, None);
         window.request_redraw();
         self.runtime = Some(Runtime { window, renderer, ctx, state, next_repaint: None });
@@ -186,7 +119,7 @@ impl ApplicationHandler for Gallery {
             }
             WindowEvent::RedrawRequested => {
                 let input = r.state.take_egui_input(&r.window);
-                let view = self.model.view();
+                let model = &self.model.model;
                 let mut intents = vec![];
                 let page = &mut self.page;
                 let out = r.ctx.run_ui(input, |ui| {
@@ -196,9 +129,9 @@ impl ApplicationHandler for Gallery {
                     ui.painter().rect_filled(bar, 0.0, tokens::SEAM);
                     let search =
                         egui::Rect::from_min_size(egui::pos2(full.right() - 453.0, 2.0), egui::vec2(200.0, 24.0));
-                    intents.extend(page.search_box(ui, search, &view));
+                    intents.extend(page.search_box(ui, search, model));
                     let area = egui::Rect::from_min_max(egui::pos2(full.left(), bar.bottom()), full.max);
-                    intents.extend(page.draw_in(ui, area, &view));
+                    intents.extend(page.draw_in(ui, area, model, None));
                 });
                 let changed = !intents.is_empty();
                 for i in intents {
@@ -232,15 +165,15 @@ impl ApplicationHandler for Gallery {
 fn main() {
     let mut page = StartPage::new();
     page.command_keys = true;
-    let model = Model {
-        empty: std::env::var_os("VAROS_START_EMPTY").is_some(),
-        filter: None,
-        search: String::new(),
-        view: if std::env::var_os("VAROS_START_LIST").is_some() { ViewMode::List } else { ViewMode::Grid },
-        removed: vec![],
-        recovered: true,
-        thumbs: vec![],
-    };
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    let empty = std::env::var_os("VAROS_START_EMPTY").is_some();
+    let recents = if empty { Recents::default() } else { demo::recents(&home) };
+    let blank = StartModel::without_recovery(&Recents::default(), demo::NOW, |_| false);
+    let mut model = Model { home, recents, recovered: !empty, model: blank };
+    model.rebuild();
+    if std::env::var_os("VAROS_START_LIST").is_some() {
+        model.model.apply(&StartAction::SetView(StartView::List));
+    }
     let mut gallery = Gallery { runtime: None, page, model };
     EventLoop::new().expect("gallery event loop").run_app(&mut gallery).expect("gallery run");
 }

@@ -375,3 +375,28 @@ pub fn search_pill(ui: &mut Ui, id: Id, rect: Rect, text: &mut String, font: egu
     super::field::search_field(ui, id, field, text, font, hint);
     *text != before
 }
+
+/// Width of a removable tag chip holding `label` (the tag field in the Board section).
+pub fn tag_chip_width(label: &Galley) -> f32 {
+    t::SB_PILL_PAD + label.size().x + t::SB_CHIP_GAP + t::SB_CHIP_X + t::SB_CHIP_PAD_R
+}
+
+/// A removable tag chip (the Board section's tag field): the tag pill's look (SURFACE capsule, MUTED
+/// 11/500) with an × at its end. `activated` = the × was clicked (remove this tag). The × glyph is a
+/// registry icon; its hit target is the chip's full height.
+pub fn tag_chip(ui: &mut Ui, id: Id, rect: Rect, label: Arc<Galley>, name: &str) -> ControlResponse {
+    let x_rect = Rect::from_min_max(
+        egui::pos2(rect.right() - t::SB_CHIP_PAD_R - t::SB_CHIP_X - t::SB_CHIP_GAP / 2.0, rect.top()),
+        rect.right_bottom(),
+    );
+    let r = interact(ui, id, x_rect, name, true);
+    let hover = hovered(&r);
+    let p = ui.painter();
+    p.rect_filled(rect, t::RCAP, t::SURFACE);
+    let text_pos = egui::pos2(rect.left() + t::SB_PILL_PAD, rect.center().y - label.size().y / 2.0);
+    p.galley(text_pos, label, t::MUTED);
+    let x_center = egui::pos2(rect.right() - t::SB_CHIP_PAD_R - t::SB_CHIP_X / 2.0, rect.center().y);
+    Icon::Remove.paint(p, x_center, t::SB_CHIP_X, if hover { t::TEXT } else { t::MUTED });
+    let response = r.response.on_hover_text(format!("Remove {name}"));
+    ControlResponse { response, activated: r.activated }
+}
