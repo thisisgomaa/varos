@@ -44,6 +44,7 @@ fn number<'a>(ui: &egui::Ui, w: f32, label: Label<'a>, tip: &'a str, value: f32,
         decimals,
         speed: 1.0,
         range: -1.0e6..=1.0e6,
+        disabled: false,
     }
 }
 
@@ -62,7 +63,42 @@ pub(crate) fn num(
     ops: &mut Vec<Op>,
     mk: impl Fn(f32) -> Op,
 ) {
-    let f = NumberField { speed, range, ..number(ui, w, label, tip, value, decimals) };
+    num_body(ui, w, label, tip, value, decimals, speed, range, false, ops, mk);
+}
+
+/// The explicit kit disabled state: full-strength DISABLED ink, reason tooltip, no interaction.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn num_disabled(
+    ui: &mut egui::Ui,
+    w: f32,
+    label: Label<'_>,
+    tip: &str,
+    value: f32,
+    decimals: usize,
+    speed: f32,
+    range: std::ops::RangeInclusive<f32>,
+    disabled: bool,
+    ops: &mut Vec<Op>,
+    mk: impl Fn(f32) -> Op,
+) {
+    num_body(ui, w, label, tip, value, decimals, speed, range, disabled, ops, mk);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn num_body(
+    ui: &mut egui::Ui,
+    w: f32,
+    label: Label<'_>,
+    tip: &str,
+    value: f32,
+    decimals: usize,
+    speed: f32,
+    range: std::ops::RangeInclusive<f32>,
+    disabled: bool,
+    ops: &mut Vec<Op>,
+    mk: impl Fn(f32) -> Op,
+) {
+    let f = NumberField { speed, range, disabled, ..number(ui, w, label, tip, value, decimals) };
     let e = kf::number_field(ui, f);
     #[cfg(test)]
     tests::probe(tip, e.rect);

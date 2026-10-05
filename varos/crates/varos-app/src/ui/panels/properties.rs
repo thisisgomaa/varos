@@ -16,7 +16,9 @@ pub(crate) fn panel_properties(
     egui::ScrollArea::vertical().id_salt("props-body").auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
             let inner = ui.available_width();
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+            ui.spacing_mut().item_spacing = egui::vec2(PANEL_ITEM_GAP_X, 5.0);
+            #[cfg(test)]
+            let content_top = ui.cursor().top();
 
             // Pain A15: nothing to inspect (no object, no Direct/anchor path, not mid-draft) → the compact
             // Document settings home instead of a transform panel full of zeros. Returns from THIS closure.
@@ -26,14 +28,14 @@ pub(crate) fn panel_properties(
             }
 
             let measured = s.sel || s.direct; // real numbers below (objects, or a Direct selection — Astra F07)
-            ui.label(RichText::new(&s.name).color(if measured { TEXT } else { MUTED }).size(12.5).strong());
+            ui.label(if measured { panel_title(&s.name) } else { panel_title(&s.name).color(MUTED) });
             ui.add_space(2.0);
-            ui.label(RichText::new("TRANSFORM").color(MUTED).size(10.0).strong());
-            ui.add_space(2.0);
+            ui.label(micro_label("TRANSFORM"));
+            label_gap(ui);
 
             // ── Transform block: [9-pt refpoint] [X/W · Y/H] [link] ──
             ui.horizontal(|ui| {
-                refpoint(ui, 38.0, refpt);
+                refpoint(ui, TRANSFORM_REFPOINT_SIZE, refpt);
                 let (ax, ay) = *refpt;
                 let fw = 66.0;
                 ui.vertical(|ui| {
@@ -69,32 +71,36 @@ pub(crate) fn panel_properties(
             // ── Angle + flip ──
             // Rotate/flip act on OBJECTS only; for a Direct selection (Astra F07) they would silently do
             // nothing, so they are shown disabled with the reason on the rotation field's tooltip.
-            ui.add_enabled_ui(!s.direct, |ui| {
-                ui.horizontal(|ui| {
-                    let (rot_tip, rot) = if s.direct {
-                        ("Rotation: select the whole object (Selection tool, V) to rotate or flip", 0.0)
-                    } else {
-                        ("Rotation", s.rot)
-                    };
-                    fields::num(
-                        ui,
-                        150.0,
-                        Lab::Icon(ic.rotate.as_ref()),
-                        rot_tip,
-                        rot,
-                        1,
-                        0.5,
-                        full.clone(),
-                        ops,
-                        Op::SetRot,
-                    );
-                    if IA_FLIP_H.show(ui, kit::IconState::Action) {
-                        ops.push(Op::Flip(true));
-                    }
-                    if IA_FLIP_V.show(ui, kit::IconState::Action) {
-                        ops.push(Op::Flip(false));
-                    }
-                });
+            ui.horizontal(|ui| {
+                let (rot_tip, rot) = if s.direct {
+                    ("Rotation: select the whole object (Selection tool, V) to rotate or flip", 0.0)
+                } else {
+                    ("Rotation", s.rot)
+                };
+                fields::num_disabled(
+                    ui,
+                    150.0,
+                    Lab::Icon(ic.rotate.as_ref()),
+                    rot_tip,
+                    rot,
+                    1,
+                    0.5,
+                    full.clone(),
+                    s.direct,
+                    ops,
+                    Op::SetRot,
+                );
+                let flip_state = if s.direct {
+                    kit::IconState::DisabledReason("Select the whole object (Selection tool, V) to rotate or flip")
+                } else {
+                    kit::IconState::Action
+                };
+                if IA_FLIP_H.show(ui, flip_state) {
+                    ops.push(Op::Flip(true));
+                }
+                if IA_FLIP_V.show(ui, flip_state) {
+                    ops.push(Op::Flip(false));
+                }
             });
 
             hsep(ui, inner);
@@ -132,8 +138,8 @@ pub(crate) fn panel_properties(
             );
 
             hsep(ui, inner);
-            ui.label(RichText::new("SHAPE").color(MUTED).size(10.0).strong());
-            ui.add_space(2.0);
+            ui.label(micro_label("SHAPE"));
+            label_gap(ui);
             pathfinder_row(ui, ops, false, s.pathfinder); // a MIRROR of the Pathfinder home (the mockup's Shape section) — roomy dock size
 
             // A30 — per-element release from artboard clip. Shown only when an object is selected AND
@@ -142,12 +148,14 @@ pub(crate) fn panel_properties(
             // No canvas right-click menu exists yet, so the Properties dock is where this lives.
             if s.sel && s.any_clip {
                 hsep(ui, inner);
-                ui.label(RichText::new("ARTBOARD CLIP").color(MUTED).size(10.0).strong());
-                ui.add_space(2.0);
+                ui.label(micro_label("ARTBOARD CLIP"));
+                label_gap(ui);
                 if toggle_row(ui, inner, "Clip to artboard", !s.clip_exempt) {
                     ops.push(Op::SetClipExempt(!s.clip_exempt));
                 }
             }
+            #[cfg(test)]
+            property_height_probes::record(ui.min_rect().bottom() - content_top);
         });
     });
 }
@@ -164,8 +172,8 @@ pub(crate) fn document_section(
 ) {
     board_section(ui, s, w, ops);
     hsep(ui, w);
-    ui.label(RichText::new("DOCUMENT").color(MUTED).size(10.0).strong());
-    ui.add_space(2.0);
+    ui.label(micro_label("DOCUMENT"));
+    label_gap(ui);
     if action_row(ui, w, "Units", s.units_label) {
         ops.push(Op::CycleUnits);
     }
@@ -215,8 +223,8 @@ pub(crate) fn document_section(
 /// core refuses the text); each commit is one undo step and makes the document dirty. Labels MUTED 12,
 /// values 13 — the Start card's tag pills on the Properties rows.
 pub(crate) fn board_section(ui: &mut egui::Ui, s: &Snap, w: f32, ops: &mut Vec<Op>) {
-    ui.label(RichText::new("BOARD").color(MUTED).size(10.0).strong());
-    ui.add_space(2.0);
+    ui.label(micro_label("BOARD"));
+    label_gap(ui);
     for (label, field) in [("Name", 0), ("Description", 1), ("Tags", 2)] {
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(w, varos_app::shell::tokens::BOARD_LABEL_H), egui::Sense::hover());
@@ -234,5 +242,22 @@ pub(crate) fn board_section(ui: &mut egui::Ui, s: &Snap, w: f32, ops: &mut Vec<O
             _ => fields::board_tags(ui, w, &s.board_tags, ops),
         }
         ui.add_space(varos_app::shell::tokens::BOARD_GAP);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod property_height_probes {
+    use std::cell::Cell;
+
+    thread_local! {
+        static HEIGHT: Cell<f32> = const { Cell::new(0.0) };
+    }
+
+    pub(crate) fn record(height: f32) {
+        HEIGHT.with(|value| value.set(height));
+    }
+
+    pub(crate) fn get() -> f32 {
+        HEIGHT.with(Cell::get)
     }
 }

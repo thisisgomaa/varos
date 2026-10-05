@@ -5,31 +5,31 @@ use super::super::*;
 /// every align op carries the current choice.
 pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut AlignTarget, ops: &mut Vec<Op>) {
     egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+        ui.spacing_mut().item_spacing = egui::vec2(PANEL_ITEM_GAP_X, 5.0);
         // A4: the reference switch sits ABOVE the buttons — you pick what "align" means, then act.
-        ui.label(RichText::new("ALIGN TO").color(MUTED).size(10.0).strong());
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let segs = [
-                (
-                    AlignTarget::Auto,
-                    "Auto",
-                    "Smart default: many objects align to each other; a single object or group aligns to the artboard",
-                ),
-                (AlignTarget::Selection, "Selection", "Align objects within the selection's combined bounds"),
-                (AlignTarget::Artboard, "Artboard", "Align each object to the active artboard's edges"),
-            ];
-            for (t, label, tip) in segs {
-                if seg_btn(ui, 60.0, label, *align_target == t, tip) {
-                    *align_target = t;
-                }
+        let _label = ui.label(micro_label("ALIGN TO"));
+        label_gap(ui);
+        let targets = [AlignTarget::Auto, AlignTarget::Selection, AlignTarget::Artboard];
+        let names = ["Auto", "Selection", "Artboard"];
+        let help = [
+            "Smart default: many objects align to each other; a single object or group aligns to the artboard",
+            "Align objects within the selection's combined bounds",
+            "Align each object to the active artboard's edges",
+        ];
+        let selected = targets.iter().position(|target| target == align_target).unwrap_or(0);
+        let _track = ui.horizontal(|ui| {
+            if let Some(index) =
+                segmented_text(ui, ui.make_persistent_id("align-target"), SEG_W, &names, Some(&help), selected)
+            {
+                *align_target = targets[index];
             }
         });
-        ui.add_space(6.0);
-        ui.label(RichText::new("ALIGN OBJECTS").color(MUTED).size(10.0).strong());
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
+        #[cfg(test)]
+        align_probes::record_gap(_label.rect, _track.response.rect);
+        ui.add_space(ALIGN_SECTION_GAP);
+        let _label = ui.label(micro_label("ALIGN OBJECTS"));
+        label_gap(ui);
+        let _controls = ui.horizontal(|ui| {
             if icon_btn(ui, &ic.align[0], "Align left") {
                 ops.push(Op::Align(AlignMode::Left, *align_target));
             }
@@ -49,10 +49,12 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
                 ops.push(Op::Align(AlignMode::Bottom, *align_target));
             }
         });
-        ui.add_space(4.0);
-        ui.label(RichText::new("DISTRIBUTE").color(MUTED).size(10.0).strong());
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
+        #[cfg(test)]
+        align_probes::record_gap(_label.rect, _controls.response.rect);
+        ui.add_space(ALIGN_SECTION_GAP);
+        let _label = ui.label(micro_label("DISTRIBUTE"));
+        label_gap(ui);
+        let _controls = ui.horizontal(|ui| {
             if icon_btn(ui, &ic.align[6], "Distribute horizontal centres") {
                 ops.push(Op::Distribute(DistAxis::Horizontal));
             }
@@ -60,6 +62,8 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
                 ops.push(Op::Distribute(DistAxis::Vertical));
             }
         });
+        #[cfg(test)]
+        align_probes::record_gap(_label.rect, _controls.response.rect);
     });
 }
 
@@ -67,17 +71,17 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
 pub(crate) fn panel_pathfinder(ui: &mut egui::Ui, pf: Result<(), &'static str>, ops: &mut Vec<Op>) {
     egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
-        ui.label(RichText::new("SHAPE MODES").color(MUTED).size(10.0).strong());
-        ui.add_space(2.0);
+        ui.label(micro_label("SHAPE MODES"));
+        label_gap(ui);
         pathfinder_row(ui, ops, false, pf); // the roomier dock home
-        ui.add_space(4.0);
+        ui.add_space(SECTION_GAP_HALF);
         ui.label(RichText::new("Unite \u{b7} Minus Front \u{b7} Intersect \u{b7} Exclude").color(MUTED).size(10.5));
     });
 }
 
 /// The four boolean buttons (Unite / Minus Front / Intersect / Exclude) — hand-painted glyphs:
 /// two overlapping squares with the op's region filled. Shared by the Pathfinder home + Shape mirror.
-/// `compact` = the control-bar mirror (26×26, sized to the other bar controls); false = the roomier dock.
+/// `compact` = the 26×24 control-bar mirror, sized to the other bar controls; false = the roomier dock.
 /// `pf` = `Editor::pathfinder_enabled`: on `Err` every button is drawn disabled with the reason.
 pub(crate) fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>, compact: bool, pf: Result<(), &'static str>) {
     use varos_core::boolean::BoolOp;
@@ -96,8 +100,8 @@ pub(crate) fn pathfinder_row(ui: &mut egui::Ui, ops: &mut Vec<Op>, compact: bool
     });
 }
 
-/// One pathfinder button. Dock: 34×28 chip, 14px squares. Bar mirror (`compact`): 26×26 chip, 12px
-/// squares — so it no longer towers over the 24–26px bar controls (A14.1). WHITE-on-hover / MUTED at rest
+/// One pathfinder button. Both homes use the same 16 pt ink; the bar mirror is 26×24 like Align.
+/// TEXT-on-hover / MUTED at rest
 /// so the boolean icons read as clearly as the SVG align/rail icons. `off` = the kit disabled state:
 /// DISABLED glyph, no hover, the reason in the tooltip, never clicks.
 pub(crate) fn pf_btn(
@@ -108,8 +112,9 @@ pub(crate) fn pf_btn(
     off: Option<&str>,
 ) -> bool {
     use varos_core::boolean::BoolOp;
-    let chip = if compact { egui::vec2(26.0, 26.0) } else { egui::vec2(34.0, 28.0) };
-    let (rect, resp) = ui.add_enabled_ui(off.is_none(), |ui| ui.allocate_exact_size(chip, egui::Sense::click())).inner;
+    let chip = if compact { egui::vec2(PF_BAR_W, PF_BAR_H) } else { egui::vec2(34.0, 28.0) };
+    let sense = if off.is_some() { egui::Sense::hover() } else { egui::Sense::click() };
+    let (rect, resp) = ui.allocate_exact_size(chip, sense);
     #[cfg(test)]
     tests::pathfinder_click_tests::PF_RECTS.with(|r| r.borrow_mut().push((op, rect, off.map(str::to_string))));
     let p = ui.painter();
@@ -117,15 +122,16 @@ pub(crate) fn pf_btn(
     if hot {
         p.rect_filled(rect, CornerRadius::same(3), HOVER);
     }
-    // Match the align/rail contrast: white on hover, MUTED enabled at rest, DISABLED when unavailable.
+    // Match the align/rail contrast: TEXT on hover, MUTED enabled at rest, DISABLED when unavailable.
     let col = pf_btn_ink(off.is_some(), hot);
     // two overlapping squares; `oa`/`ob` are symmetric about the centre so the pair stays centred in the chip
-    let sq = if compact { 12.0 } else { 14.0 };
-    let (oax, oay) = if compact { (9.5, 7.75) } else { (11.0, 9.0) };
-    let a = egui::Rect::from_min_size(rect.center() - egui::vec2(oax, oay), egui::vec2(sq, sq));
-    let b = egui::Rect::from_min_size(rect.center() - egui::vec2(sq - oax, sq - oay), egui::vec2(sq, sq));
-    let rr = CornerRadius::same(2);
-    let sw = if compact { 1.3 } else { 1.4 }; // bolder outline than the old 1.0 hairline
+    let a = egui::Rect::from_min_size(rect.center() - egui::vec2(PF_OFFSET, PF_OFFSET), egui::Vec2::splat(PF_SQUARE));
+    let b = egui::Rect::from_min_size(
+        rect.center() - egui::vec2(PF_SQUARE - PF_OFFSET, PF_SQUARE - PF_OFFSET),
+        egui::Vec2::splat(PF_SQUARE),
+    );
+    let rr = CornerRadius::same(PF_RADIUS);
+    let sw = PF_STROKE;
     match op {
         BoolOp::Unite => {
             p.rect_filled(a, rr, col);
@@ -156,8 +162,29 @@ pub(crate) fn pf_btn_ink(disabled: bool, hot: bool) -> Color32 {
     if disabled {
         DISABLED
     } else if hot {
-        Color32::WHITE
+        TEXT
     } else {
         MUTED
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod align_probes {
+    use std::cell::RefCell;
+
+    thread_local! {
+        pub(super) static GAPS: RefCell<Vec<(egui::Rect, egui::Rect)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn record_gap(label: egui::Rect, controls: egui::Rect) {
+        GAPS.with(|gaps| gaps.borrow_mut().push((label, controls)));
+    }
+
+    pub(crate) fn clear() {
+        GAPS.with(|gaps| gaps.borrow_mut().clear());
+    }
+
+    pub(crate) fn gaps() -> Vec<(egui::Rect, egui::Rect)> {
+        GAPS.with(|gaps| gaps.borrow().clone())
     }
 }

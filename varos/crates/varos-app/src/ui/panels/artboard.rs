@@ -25,7 +25,7 @@ pub(crate) fn panel_artboard(
             let inner = ui.available_width();
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Artboard").color(TEXT).size(13.0).strong());
+                ui.label(panel_title("Artboard"));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     // a free canvas (New board) has no artboard: "0 / 0", not "1 / 0"
                     let at = if s.count == 0 { 0 } else { i + 1 };
@@ -35,7 +35,7 @@ pub(crate) fn panel_artboard(
             fields::name(ui, inner, &s.name, "dock", ops, |v| Op::AbName(i, v));
 
             ui.add_space(2.0);
-            ui.label(RichText::new("SIZE").color(MUTED).size(10.0).strong());
+            ui.label(micro_label("SIZE"));
             // preset dropdown
             let preset_id = ui.make_persistent_id("ab-preset");
             let (prect, presp) = ui.allocate_exact_size(egui::vec2(inner, 26.0), egui::Sense::click());

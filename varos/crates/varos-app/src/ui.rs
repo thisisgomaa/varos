@@ -20,9 +20,11 @@ use winit::window::Window;
 // (R ≥ G ≥ B, tokens.rs = UI_VISION_MOCKUP's :root). The old cool-gray names alias their warm
 // successors while the split modules retain the established body names.
 use varos_app::shell::tokens::{
-    numeric_value, shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, CLOSE_RED, DISABLED, HOVER, LINE as BORDER,
-    LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
-    SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT,
+    micro_label, numeric_value, panel_title, shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, ALIGN_SECTION_GAP,
+    CLOSE_RED, CONTROL_BAR_NAME_H, CONTROL_BAR_NAME_TEXT, CONTROL_BAR_NAME_W, DISABLED, HOVER, LABEL_GAP,
+    LINE as BORDER, LINE2, LINE2 as BORDER_2, MUTED, NONE_RED, PAINT_LABEL_W, PANEL as SOLID_PANEL, PANEL_ITEM_GAP_X,
+    PF_BAR_H, PF_BAR_W, PF_OFFSET, PF_RADIUS, PF_SQUARE, PF_STROKE, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
+    SECTION_GAP_HALF, SEG_TEXT, SEG_W, SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, TRANSFORM_REFPOINT_SIZE,
 };
 // Icon stage 1: one icon registry + one icon button (shell::kit), one set of icon sizes (tokens).
 use varos_app::shell::kit::field::Label as Lab;
@@ -33,10 +35,8 @@ use varos_app::shell::kit::icons::{
     LEGACY_RECT, LEGACY_ROTATE, LEGACY_SCALE, LEGACY_SELECT, LEGACY_STROKEW, LEGACY_TRIANGLE,
 };
 use varos_app::shell::kit::{self, Icon};
-
 mod fields;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
-
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 
 mod bar;
@@ -65,7 +65,6 @@ use picker::*;
 use rail::*;
 use snap::*;
 use style::*;
-
 // ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
 
 /// A shortcut hint shown in an icon button's tooltip.

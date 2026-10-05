@@ -239,16 +239,18 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
             PaintTarget::Fill => "Fill",
             PaintTarget::Stroke => "Stroke",
         };
-        let (lr, _) = ui.allocate_exact_size(egui::vec2(44.0, 18.0), egui::Sense::hover());
+        let (lr, _) = ui.allocate_exact_size(egui::vec2(PAINT_LABEL_W, 18.0), egui::Sense::hover());
         ui.painter().text(
             egui::pos2(lr.left(), lr.center().y),
             Align2::LEFT_CENTER,
             label,
-            FontId::proportional(11.5),
+            varos_app::shell::tokens::small(),
             MUTED,
         );
         let (sw, resp) = ui.allocate_exact_size(egui::vec2(26.0, 18.0), egui::Sense::click());
-        let round = CornerRadius::same(4);
+        #[cfg(test)]
+        paint_probes::record(target, sw);
+        let round = CornerRadius::same(R);
         let p = ui.painter();
         match color {
             Some(c) => {
@@ -265,7 +267,7 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
                 );
             } // None = red slash
         }
-        p.rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+        p.rect_stroke(sw, round, Stroke::new(1.0, if resp.hovered() { MUTED } else { BORDER_2 }), StrokeKind::Middle);
         // single click = focus the target (X toggles) · DOUBLE-click = open the Color Picker modal
         if resp.clicked() {
             ops.push(Op::PaintFocus(target));
@@ -466,31 +468,13 @@ pub(crate) fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
     ui.add_space(4.0);
     // ── harmony rule pills ──
     ui.label(RichText::new("HARMONY").color(MUTED).size(10.5));
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-        for (rule, label) in Harmony::ALL {
-            let on = m.harmony == rule;
-            let (r, resp) = ui.allocate_exact_size(egui::vec2(52.0, 22.0), egui::Sense::click());
-            let rr = CornerRadius::same(R);
-            if on {
-                ui.painter().rect_filled(r, rr, ACCENT);
-            } else if resp.hovered() {
-                ui.painter().rect_filled(r, rr, HOVER);
-            } else {
-                ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
-            }
-            ui.painter().text(
-                r.center(),
-                Align2::CENTER_CENTER,
-                label,
-                FontId::proportional(11.0),
-                if on { Color32::WHITE } else { TEXT },
-            );
-            if resp.clicked() {
-                m.harmony = rule;
-            }
-        }
-    });
+    let harmony_labels = Harmony::ALL.map(|(_, label)| label);
+    let selected = Harmony::ALL.iter().position(|(rule, _)| *rule == m.harmony).unwrap_or(0);
+    if let Some(index) =
+        segmented_text(ui, ui.make_persistent_id("picker-harmony"), 52.0, &harmony_labels, None, selected)
+    {
+        m.harmony = Harmony::ALL[index].0;
+    }
     // ── harmony result chips (click to adopt as the current colour) ──
     if m.harmony != Harmony::None {
         ui.add_space(3.0);
@@ -563,7 +547,7 @@ pub(crate) fn eyedropper_btn(ui: &mut egui::Ui, pipette: &Option<egui::TextureHa
                 t.id(),
                 egui::Rect::from_center_size(r.center(), egui::Vec2::splat(ICON_SM)),
                 UV01(),
-                MUTED.gamma_multiply(0.4),
+                DISABLED,
             );
         }
         resp.on_hover_text("Screen eyedropper is Windows-only for now");
@@ -581,30 +565,37 @@ pub(crate) fn eyedropper_btn(ui: &mut egui::Ui, pipette: &Option<egui::TextureHa
             t.id(),
             egui::Rect::from_center_size(r.center(), egui::Vec2::splat(ICON_SM)),
             UV01(),
-            if armed { Color32::WHITE } else { MUTED },
+            icon_ink(armed, resp.hovered()),
         );
     }
     resp.on_hover_text("Eyedropper \u{2014} sample a colour from anywhere on screen").clicked()
 }
 
 /// A19 — the Fill / Stroke (or Page-colour) target indicator + switch. For a paint target it renders a
-/// two-segment toggle: the ACTIVE segment carries the accent (the selected-state), and clicking the
+/// two-segment grey track: the active segment carries the selected fill, and clicking the
 /// other one switches which paint the picker edits (reseeded from that target's current colour). For an
 /// artboard target it's a plain "Page Color" label. Mutates `m.target`/`m.orig`/`hsva` on a switch.
 pub(crate) fn target_indicator(ui: &mut egui::Ui, m: &mut ColorModal, snap: &Snap) {
     match m.target {
         MTarget::Paint(active) => {
-            for (t, label) in [(PaintTarget::Fill, "Fill"), (PaintTarget::Stroke, "Stroke")] {
+            let targets = [(PaintTarget::Fill, "Fill"), (PaintTarget::Stroke, "Stroke")];
+            let labels = targets.map(|(_, label)| label);
+            let selected = usize::from(active == PaintTarget::Stroke);
+            let segment = egui::vec2(52.0, varos_app::shell::tokens::SEG_BTN_H);
+            let size = kit::board::segmented_size(labels.len(), segment);
+            let (track, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let frame = kit::board::segmented_frame(
+                ui,
+                ui.make_persistent_id("picker-target"),
+                track,
+                &labels,
+                selected,
+                segment,
+                None,
+            );
+            for (index, (t, label)) in targets.into_iter().enumerate() {
                 let on = active == t;
-                let (r, resp) = ui.allocate_exact_size(egui::vec2(52.0, 22.0), egui::Sense::click());
-                let rr = CornerRadius::same(R);
-                if on {
-                    ui.painter().rect_filled(r, rr, ACCENT);
-                } else if resp.hovered() {
-                    ui.painter().rect_filled(r, rr, HOVER);
-                } else {
-                    ui.painter().rect_stroke(r, rr, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
-                }
+                let r = frame.rects[index];
                 // a colour dot on the active segment so it reads as "this is the swatch you're editing"
                 let tx = if on {
                     let dot = egui::pos2(r.left() + 11.0, r.center().y);
@@ -629,9 +620,9 @@ pub(crate) fn target_indicator(ui: &mut egui::Ui, m: &mut ColorModal, snap: &Sna
                     Align2::CENTER_CENTER,
                     label,
                     FontId::proportional(11.5),
-                    if on { Color32::WHITE } else { MUTED },
+                    seg_ink(on, frame.hot[index]),
                 );
-                if resp.clicked() && !on {
+                if frame.chosen == Some(index) && !on {
                     // switch the target within the SAME undo session; reseed from its current colour
                     m.target = MTarget::Paint(t);
                     let seed = snap_target_color(snap, t);
@@ -696,27 +687,13 @@ pub(crate) fn build_color_modal(
                     ui.horizontal(|ui| {
                         target_indicator(ui, m, snap);
                         ui.add_space(12.0);
-                        for (tab, label) in [(MTab::Picker, "Picker"), (MTab::Wheel, "Wheel")] {
-                            let on = m.tab == tab;
-                            let (r, resp) = ui.allocate_exact_size(egui::vec2(54.0, 22.0), egui::Sense::click());
-                            let rr = CornerRadius::same(R);
-                            // ONE active language across the dialog: accent FILL + white text (like Fill/Stroke
-                            // & the harmony pills), not the old accent-outline variant (A17 P3).
-                            if on {
-                                ui.painter().rect_filled(r, rr, ACCENT);
-                            } else if resp.hovered() {
-                                ui.painter().rect_filled(r, rr, HOVER);
-                            }
-                            ui.painter().text(
-                                r.center(),
-                                Align2::CENTER_CENTER,
-                                label,
-                                FontId::proportional(12.0),
-                                if on { Color32::WHITE } else { MUTED },
-                            );
-                            if resp.clicked() {
-                                m.tab = tab;
-                            }
+                        let tabs = [(MTab::Picker, "Picker"), (MTab::Wheel, "Wheel")];
+                        let labels = tabs.map(|(_, label)| label);
+                        let selected = usize::from(m.tab == MTab::Wheel);
+                        if let Some(index) =
+                            segmented_text(ui, ui.make_persistent_id("picker-tabs"), 54.0, &labels, None, selected)
+                        {
+                            m.tab = tabs[index].0;
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if IA_PICKER_CLOSE.show(ui, kit::IconState::Action) {
@@ -1053,5 +1030,28 @@ pub(crate) fn build_color_modal(
     }
     if ok || cancel {
         *modal = None;
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod paint_probes {
+    use std::cell::RefCell;
+
+    use super::PaintTarget;
+
+    thread_local! {
+        pub(crate) static SWATCHES: RefCell<Vec<(PaintTarget, egui::Rect)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(crate) fn record(target: PaintTarget, rect: egui::Rect) {
+        SWATCHES.with(|swatches| swatches.borrow_mut().push((target, rect)));
+    }
+
+    pub(crate) fn clear() {
+        SWATCHES.with(|swatches| swatches.borrow_mut().clear());
+    }
+
+    pub(crate) fn swatches() -> Vec<(PaintTarget, egui::Rect)> {
+        SWATCHES.with(|swatches| swatches.borrow().clone())
     }
 }

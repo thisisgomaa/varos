@@ -191,6 +191,19 @@ pub fn micro() -> egui::FontId {
     weighted(11.0, super::fonts::UI_400)
 }
 
+/// Upper-case panel section label: Inter 500, 10.5 pt, tracked and secondary.
+pub fn micro_label(text: impl AsRef<str>) -> egui::RichText {
+    egui::RichText::new(text.as_ref().to_uppercase())
+        .font(weighted(T_MICRO, super::fonts::UI_500))
+        .extra_letter_spacing(MICRO_TRACKING)
+        .color(MUTED)
+}
+
+/// A panel's real title: Inter 600, 13 pt, primary text.
+pub fn panel_title(text: impl Into<String>) -> egui::RichText {
+    egui::RichText::new(text).font(weighted(PANEL_TITLE_TEXT, super::fonts::UI_600)).color(TEXT)
+}
+
 /// Tabular numeric values/readouts at the caller's size; labels remain proportional Inter.
 pub fn numeric_value(size: f32) -> egui::FontId {
     egui::FontId::monospace(size)
@@ -449,15 +462,53 @@ pub const ICON_BTN_H: f32 = KIT_MIN_TARGET;
 /// A toggle's "on" mark (owner decision: toggle = a small azure bar, no fill; tool = an azure block).
 pub const ICON_BAR_W: f32 = 10.0;
 pub const ICON_BAR_H: f32 = 2.0;
+/// Panel typography and section rhythm (polish pass, 2026-10-05).
+pub const T_MICRO: f32 = 10.5;
+pub const MICRO_TRACKING: f32 = 0.6;
+pub const PANEL_TITLE_TEXT: f32 = 13.0;
+pub const SECTION_GAP_HALF: f32 = 7.0;
+/// Align's two section breaks compensate for its taller micro-labels and 24-point segmented track.
+pub const ALIGN_SECTION_GAP: f32 = 5.0;
+pub const LABEL_GAP: f32 = 6.0;
+/// Shared grey segmented control geometry.
+pub const SEG_W: f32 = 60.0;
+pub const SEG_BTN_H: f32 = 20.0;
+pub const SEG_H: f32 = SEG_BTN_H + (KIT_STROKE + SB_SEG_PAD) * 2.0;
+pub const SEG_TEXT: f32 = 11.0;
+/// The fixed leading name slot keeps each control-bar mode stable as the selection changes.
+pub const CONTROL_BAR_NAME_W: f32 = 64.0;
+pub const CONTROL_BAR_NAME_H: f32 = 26.0;
+pub const CONTROL_BAR_NAME_TEXT: f32 = 11.5;
+/// One Pathfinder glyph geometry in either its dock or control-bar home.
+pub const PF_BAR_W: f32 = ICON_BTN_W;
+pub const PF_BAR_H: f32 = ICON_BTN_H;
+pub const PF_INK: f32 = 16.0;
+pub const PF_SQUARE: f32 = 10.0;
+pub const PF_OFFSET: f32 = 8.0;
+pub const PF_STROKE: f32 = 1.5;
+pub const PF_RADIUS: u8 = 2; // egui's integer radius: nearest representable value to the 1.5 pt target
 /// Fields (K3, piece P2 — `kit::field`): the number-field row and its label column, the text-field
 /// box, the value text size and the label letter size, and the text inset inside a box.
 pub const FIELD_H: f32 = 25.0;
 pub const TEXT_FIELD_H: f32 = 26.0;
-pub const FIELD_LABEL_W: f32 = 22.0;
+pub const FIELD_LABEL_W: f32 = 18.0;
 pub const FIELD_TEXT: f32 = 13.0;
 pub const FIELD_LABEL_TEXT: f32 = 11.5;
 pub const FIELD_INSET_X: f32 = 8.0;
 pub const FIELD_INSET_Y: f32 = 3.0;
+/// Number-only typography and inset; shared text fields deliberately retain `FIELD_TEXT`/`FIELD_INSET_X`.
+pub const NUM_TEXT: f32 = 12.0;
+pub const NUM_INSET_X: f32 = 3.0;
+pub const NUM_LABEL_RIGHT_INSET: f32 = 4.0;
+pub const NUM_ICON_CENTER_X: f32 = 11.0;
+pub const FIELD_LABEL_BOX_GAP: f32 = 2.0;
+/// Transform geometry shared with paint-row alignment.
+pub const PANEL_ITEM_GAP_X: f32 = 6.0;
+pub const TRANSFORM_REFPOINT_SIZE: f32 = 38.0;
+/// Paint labels end six points before the Transform X/Y value column. The column moves with the
+/// exact same refpoint, item-gap and field-label tokens used by the Transform row.
+pub const PAINT_LABEL_W: f32 =
+    TRANSFORM_REFPOINT_SIZE + PANEL_ITEM_GAP_X + FIELD_LABEL_W + FIELD_LABEL_BOX_GAP - PANEL_ITEM_GAP_X;
 /// Kit menus: minimum popup width and the gap between the anchor and the popup.
 pub const KIT_MENU_MIN_W: f32 = 176.0;
 pub const KIT_MENU_GAP: f32 = 4.0;

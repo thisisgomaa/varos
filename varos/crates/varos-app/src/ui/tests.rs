@@ -39,6 +39,302 @@ mod ui_zoom_tests {
 }
 
 #[cfg(test)]
+mod polish_pass_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use varos_app::shell::tokens as t;
+
+    fn src(path: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src").join(path);
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn informational_text_never_faint() {
+        let source = [
+            "shell/kit/field.rs",
+            "ui/controls.rs",
+            "ui/control_bar.rs",
+            "ui/panels/align.rs",
+            "ui/panels/layers.rs",
+            "ui/panels/properties.rs",
+            "ui/picker.rs",
+        ]
+        .map(src)
+        .join("\n");
+        assert!(!source.contains("FAINT"));
+    }
+
+    #[test]
+    fn number_box_is_44_and_value_is_mono_12() {
+        let box_w = 64.0 - t::FIELD_LABEL_W - t::FIELD_LABEL_BOX_GAP;
+        assert_eq!(box_w, 44.0);
+        assert_eq!(t::NUM_TEXT, 12.0);
+        assert_eq!(t::numeric_value(t::NUM_TEXT).family, egui::FontFamily::Monospace);
+    }
+
+    #[test]
+    fn typing_editor_is_at_least_38_wide() {
+        let box_w = 64.0 - t::FIELD_LABEL_W - t::FIELD_LABEL_BOX_GAP;
+        assert!(box_w - t::NUM_INSET_X * 2.0 >= 38.0);
+    }
+
+    #[test]
+    fn rail_icons_rest_muted_hover_text_active_white() {
+        assert_eq!(icon_ink(false, false), MUTED);
+        assert_eq!(icon_ink(false, true), TEXT);
+        assert_eq!(icon_ink(true, false), Color32::WHITE);
+    }
+
+    #[test]
+    fn micro_label_is_10_5_medium_tracked_muted() {
+        assert_eq!((t::T_MICRO, t::MICRO_TRACKING), (10.5, 0.6));
+        let source = src("shell/tokens.rs");
+        assert!(
+            source.contains("UI_500")
+                && source.contains("extra_letter_spacing(MICRO_TRACKING)")
+                && source.contains(".color(MUTED)")
+        );
+    }
+
+    #[test]
+    fn control_bar_name_slot_is_64_and_elides() {
+        assert_eq!(t::CONTROL_BAR_NAME_W, 64.0);
+        let source = src("ui/control_bar.rs");
+        assert!(
+            source.contains("control_bar_name(ui, &ab.name")
+                && source.matches("control_bar_name(ui, &s.name").count() == 2
+        );
+        assert!(source.contains("format!(\"{shown}…\")"));
+    }
+
+    #[test]
+    fn toggle_off_track_is_line2() {
+        assert_eq!(toggle_track(false), LINE2);
+        assert_eq!(toggle_knob(false), MUTED);
+        assert_eq!((toggle_track(true), toggle_knob(true)), (ACCENT, TEXT));
+    }
+
+    #[test]
+    fn layer_names_are_all_12() {
+        let source = src("ui/panels/layers.rs");
+        assert!(source.contains("small_medium()") && source.contains("small()"));
+        assert!(source.contains("row.selected || !auto"));
+        assert!(
+            !source.contains("Color32::from_gray(208)")
+                && !source.contains("&row.name,\n                                12.5")
+        );
+    }
+
+    #[test]
+    fn pf_glyph_fits_16() {
+        assert_eq!((t::PF_INK, t::PF_SQUARE, t::PF_OFFSET, t::PF_STROKE), (16.0, 10.0, 8.0, 1.5));
+        assert_eq!((t::PF_BAR_W, t::PF_BAR_H), (t::ICON_BTN_W, t::ICON_BTN_H));
+        assert_eq!(t::PF_OFFSET * 2.0, t::PF_INK);
+    }
+
+    #[test]
+    fn swatch_starts_on_the_value_column() {
+        let mut ed = Editor::new();
+        ed.ppu = 1.0;
+        ed.set_tool(ToolKind::Rect);
+        ed.pointer_down([20.0, 20.0]);
+        ed.pointer_move([120.0, 120.0]);
+        ed.pointer_up();
+        ed.set_tool(ToolKind::Object);
+        ed.select_all();
+        let snap = Snap::read(&ed);
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        t::apply(&ctx);
+        fields::tests::clear_probes();
+        paint_probes::clear();
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(360.0, 720.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let none = None;
+                let align = [None, None, None, None, None, None, None, None];
+                let icons = DockIcons { rotate: &none, opacity: &none, strokew: &none, align: &align };
+                panel_properties(
+                    ui,
+                    &snap,
+                    &icons,
+                    &mut (0.0, 0.0),
+                    &mut false,
+                    &mut vec![],
+                    (&Default::default(), &mut vec![]),
+                );
+            },
+        );
+        let x_box = fields::tests::probed_rect("X position", 0);
+        let fill = paint_probes::swatches()
+            .into_iter()
+            .find(|(target, _)| *target == PaintTarget::Fill)
+            .expect("Fill swatch was laid out")
+            .1;
+        assert_eq!(fill.left(), x_box.left(), "measured swatch and Transform X-box columns must coincide");
+        assert_eq!(t::PAINT_LABEL_W, t::TRANSFORM_REFPOINT_SIZE + t::FIELD_LABEL_W + t::FIELD_LABEL_BOX_GAP);
+    }
+
+    fn legacy_align_height(ui: &mut egui::Ui) -> f32 {
+        egui::Frame::NONE
+            .inner_margin(Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+                let first = ui.label(RichText::new("ALIGN TO").color(MUTED).size(10.0).strong());
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    for _ in 0..3 {
+                        ui.allocate_exact_size(egui::vec2(60.0, 22.0), egui::Sense::hover());
+                    }
+                });
+                ui.add_space(6.0);
+                ui.label(RichText::new("ALIGN OBJECTS").color(MUTED).size(10.0).strong());
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    for _ in 0..6 {
+                        ui.allocate_exact_size(egui::vec2(ICON_BTN_W, ICON_BTN_H), egui::Sense::hover());
+                    }
+                });
+                ui.add_space(4.0);
+                ui.label(RichText::new("DISTRIBUTE").color(MUTED).size(10.0).strong());
+                ui.add_space(2.0);
+                let last = ui.horizontal(|ui| {
+                    for _ in 0..2 {
+                        ui.allocate_exact_size(egui::vec2(ICON_BTN_W, ICON_BTN_H), egui::Sense::hover());
+                    }
+                });
+                last.response.rect.bottom() - first.rect.top()
+            })
+            .inner
+    }
+
+    #[test]
+    fn label_gap_and_align_height_are_measured_from_laid_out_rects() {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        t::apply(&ctx);
+        align_probes::clear();
+        let mut current = 0.0;
+        let mut legacy = 0.0;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(360.0, 480.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input.clone(), |ui| {
+            let none = None;
+            let align: [Option<egui::TextureHandle>; 8] = std::array::from_fn(|_| None);
+            let icons = DockIcons { rotate: &none, opacity: &none, strokew: &none, align: &align };
+            panel_align(ui, &icons, &mut AlignTarget::Auto, &mut vec![]);
+            let gaps = align_probes::gaps();
+            assert_eq!(gaps.len(), 3);
+            for (label, controls) in &gaps {
+                assert_eq!(controls.top() - label.bottom(), 6.0, "visible label-to-controls gap");
+            }
+            current = gaps.last().unwrap().1.bottom() - gaps.first().unwrap().0.top();
+        });
+        let _ = ctx.run_ui(input, |ui| legacy = legacy_align_height(ui));
+        const ALIGN_BEFORE: f32 = 147.0;
+        const ALIGN_AFTER: f32 = 149.0;
+        assert_eq!((legacy, current), (ALIGN_BEFORE, ALIGN_AFTER));
+        assert!(current <= legacy + 2.0, "Align grew from {legacy} to {current}; maximum allowed is {}", legacy + 2.0);
+    }
+
+    #[test]
+    fn properties_and_pathfinder_height_measurements() {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        t::apply(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(360.0, 900.0))),
+            ..Default::default()
+        };
+        let mut ed = Editor::new();
+        ed.ppu = 1.0;
+        ed.set_tool(ToolKind::Rect);
+        ed.pointer_down([20.0, 20.0]);
+        ed.pointer_move([120.0, 120.0]);
+        ed.pointer_up();
+        ed.set_tool(ToolKind::Object);
+        ed.select_all();
+        let snap = Snap::read(&ed);
+        let _ = ctx.run_ui(input.clone(), |ui| {
+            let none = None;
+            let align: [Option<egui::TextureHandle>; 8] = std::array::from_fn(|_| None);
+            let icons = DockIcons { rotate: &none, opacity: &none, strokew: &none, align: &align };
+            panel_properties(
+                ui,
+                &snap,
+                &icons,
+                &mut (0.0, 0.0),
+                &mut false,
+                &mut vec![],
+                (&Default::default(), &mut vec![]),
+            );
+        });
+        let properties_after = property_height_probes::get();
+        let mut title_delta = 0.0;
+        let _ = ctx.run_ui(input.clone(), |ui| {
+            let old = ui.label(RichText::new("Rectangle").color(TEXT).size(12.5).strong()).rect.height();
+            let new = ui.label(panel_title("Rectangle")).rect.height();
+            title_delta = new - old;
+        });
+        let properties_before = properties_after + 12.0 - title_delta;
+
+        const PANEL_VERTICAL_MARGIN: f32 = 20.0;
+        let mut pathfinder_after = 0.0;
+        let mut pathfinder_before = 0.0;
+        let _ = ctx.run_ui(input.clone(), |ui| {
+            pathfinder_after =
+                ui.scope(|ui| panel_pathfinder(ui, Ok(()), &mut vec![])).response.rect.height() - PANEL_VERTICAL_MARGIN;
+        });
+        let _ = ctx.run_ui(input, |ui| {
+            pathfinder_before = ui
+                .scope(|ui| {
+                    egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
+                        ui.label(RichText::new("SHAPE MODES").color(MUTED).size(10.0).strong());
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            for _ in 0..4 {
+                                ui.allocate_exact_size(egui::vec2(34.0, 28.0), egui::Sense::hover());
+                            }
+                        });
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("Unite \u{b7} Minus Front \u{b7} Intersect \u{b7} Exclude")
+                                .color(MUTED)
+                                .size(10.5),
+                        );
+                    });
+                })
+                .response
+                .rect
+                .height()
+                - PANEL_VERTICAL_MARGIN;
+        });
+        const PROPERTIES_BEFORE: f32 = 368.0;
+        const PROPERTIES_AFTER: f32 = 357.0;
+        const PATHFINDER_BEFORE: f32 = 69.0;
+        const PATHFINDER_AFTER: f32 = 72.0;
+        assert_eq!((properties_before, properties_after), (PROPERTIES_BEFORE, PROPERTIES_AFTER));
+        assert_eq!((pathfinder_before, pathfinder_after), (PATHFINDER_BEFORE, PATHFINDER_AFTER));
+    }
+
+    #[test]
+    fn section_gap_is_12() {
+        assert_eq!((t::SECTION_GAP_HALF, t::LABEL_GAP), (7.0, 6.0));
+        let source = src("ui/controls.rs");
+        assert_eq!(source.matches("ui.add_space(SECTION_GAP_HALF)").count(), 2);
+    }
+}
+
+#[cfg(test)]
 mod color_tests {
     use super::{hsv_to_rgb, rgb_to_hsv};
 
@@ -263,8 +559,10 @@ mod layer_rename_tests {
 
     impl Panel {
         fn new(rows: Vec<LRow>) -> Self {
+            let ctx = egui::Context::default();
+            varos_app::shell::fonts::install(&ctx);
             let mut p = Panel {
-                ctx: egui::Context::default(),
+                ctx,
                 t: 10.0,
                 rows,
                 icons: no_icons(),
@@ -2217,7 +2515,9 @@ pub(super) mod pathfinder_click_tests {
             if front == PanelId::Pathfinder {
                 shell.toggle_panel(PanelId::Pathfinder); // buried behind Align → surfaced (Window menu)
             }
-            App { ctx: egui::Context::default(), shell, t: 1.0 }
+            let ctx = egui::Context::default();
+            varos_app::shell::fonts::install(&ctx);
+            App { ctx, shell, t: 1.0 }
         }
         /// One `Ui::run`-shaped frame: lay out, collect ops, `apply_ops`.
         fn frame(&mut self, ed: &mut Editor, events: Vec<Event>) {
@@ -2549,7 +2849,9 @@ pub(super) mod icon_action_tests {
                 eyedrop_prev_down: false,
                 eyedrop_return: [0.0, 0.0, 1.0, 1.0],
             });
-            let mut rig = Rig { ctx: egui::Context::default(), t: 1.0, scene, ed, lock: false, fit: None, modal };
+            let ctx = egui::Context::default();
+            varos_app::shell::fonts::install(&ctx);
+            let mut rig = Rig { ctx, t: 1.0, scene, ed, lock: false, fit: None, modal };
             rig.frame(vec![]); // egui hit-tests against the previous pass: lay out once
             rig
         }
