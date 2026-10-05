@@ -369,7 +369,7 @@ fn draw_resize_handles(tree: &Tree<PanelId>, ui: &egui::Ui) {
                         ui.painter().rect_filled(
                             Rect::from_center_size(pos2(x, ra.center().y), vec2(3.0, 22.0)),
                             CornerRadius::same(2),
-                            T::FAINT,
+                            T::DISABLED,
                         );
                     }
                 }
@@ -379,7 +379,7 @@ fn draw_resize_handles(tree: &Tree<PanelId>, ui: &egui::Ui) {
                         ui.painter().rect_filled(
                             Rect::from_center_size(pos2(ra.center().x, y), vec2(22.0, 3.0)),
                             CornerRadius::same(2),
-                            T::FAINT,
+                            T::DISABLED,
                         );
                     }
                 }
@@ -921,7 +921,7 @@ fn draw_hands(ui: &egui::Ui, board: egui::Rect) {
             }
             let f = Rect::from_min_size(pos2(x, cy - 12.0), vec2(fw, 24.0));
             p.rect(f, T::r_ctrl(), T::SURFACE, T::hairline(), StrokeKind::Middle);
-            p.text(pos2(f.left() + 6.0, cy), Align2::LEFT_CENTER, l, FontId::proportional(9.0), T::FAINT);
+            p.text(pos2(f.left() + 6.0, cy), Align2::LEFT_CENTER, l, FontId::proportional(9.0), T::MUTED);
             p.text(pos2(f.left() + 17.0, cy), Align2::LEFT_CENTER, v, T::numeric_value(10.5), T::TEXT);
             x += fw + 5.0;
         }
