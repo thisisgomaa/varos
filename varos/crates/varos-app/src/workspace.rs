@@ -147,18 +147,18 @@ impl DocumentSession {
         }
     }
 
-    /// `Untitled-3`, or the file name WITH its extension (`Logo.vrs`).
+    /// THE board display rule (`varos_core::board::display_name`, Start v2): the board's own name
+    /// (live — a rename shows at once), else the file stem (`Logo` for `Logo.vrs`), else `Untitled-3`.
+    /// A path-less recovered copy keeps its `(Recovered)` suffix.
     pub fn display_name(&self) -> String {
-        if let Some(name) = self.path.as_ref().and_then(|p| p.file_name()) {
-            return name.to_string_lossy().into_owned();
+        let name = &self.editor.doc.name;
+        if self.path.is_none() {
+            if let Some(source) = &self.recovered {
+                let base = if name.is_empty() { source.name.as_str() } else { name.as_str() };
+                return format!("{base} (Recovered)");
+            }
         }
-        if let Some(source) = &self.recovered {
-            return format!("{} (Recovered)", source.name);
-        }
-        match self.untitled {
-            Some(n) => format!("Untitled-{n}"),
-            None => "Untitled".into(),
-        }
+        varos_core::board::display_name(name, self.path.as_deref(), self.untitled)
     }
 
     /// Unsaved changes, for DRAWING (the tab dot, the title `*`): memoised on `editor.rev`, plus the
@@ -297,6 +297,10 @@ pub struct Workspace {
     next_untitled: u32,
     home: bool,
     placeholder: bool,
+    /// The last custom board size this run (points), for `NewWithPreset(Custom)`. Nothing sets it
+    /// yet: the custom-size dialog is a later piece (START_V2_BOARDS.md); until then Custom opens the
+    /// preset table's fallback square.
+    custom_board_size: Option<(f32, f32)>,
 }
 
 impl Default for Workspace {
@@ -316,7 +320,17 @@ impl Workspace {
             next_untitled: 2,
             home: false,
             placeholder: false,
+            custom_board_size: None,
         }
+    }
+    /// The last-used custom board size (points), if any.
+    pub fn custom_board_size(&self) -> Option<(f32, f32)> {
+        self.custom_board_size
+    }
+    /// Remember the custom board size the (future) size dialog confirmed.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn set_custom_board_size(&mut self, size: (f32, f32)) {
+        self.custom_board_size = Some(size);
     }
 
     /// Start retains a private pristine session to preserve the never-empty host invariant.
@@ -411,6 +425,19 @@ impl Workspace {
         let id = s.id;
         self.sessions.push(s);
         self.activate(id);
+        id
+    }
+
+    /// A new clean `Untitled-N` board that starts as `doc` (a preset board, Start v2): like
+    /// [`Self::new_untitled`], then the editor takes `doc` (`replace_doc`) and the checkpoint is taken
+    /// after that, so the tab opens clean and its first undo cannot remove the preset artboard.
+    pub fn new_untitled_with(&mut self, doc: Document) -> SessionId {
+        let id = self.new_untitled();
+        if let Some(s) = self.get_mut(id) {
+            s.editor.replace_doc(doc);
+            s.saved = s.editor.doc.clone();
+            s.memo.set(None);
+        }
         id
     }
 
@@ -818,7 +845,7 @@ mod tests {
         assert_ne!(x, first, "…by a session with a NEW id");
         assert_eq!(ws.active_id().unwrap(), x);
         let s = ws.active().unwrap();
-        assert_eq!(s.display_name(), "x.vrs");
+        assert_eq!(s.display_name(), "x");
         assert_eq!(s.fit_pending, Some(0.9));
         assert!(!s.is_dirty_exact() && !s.is_pristine(), "a loaded file is clean but not pristine");
         assert_eq!(s.editor.doc.paths.len(), 1);
@@ -920,9 +947,9 @@ mod tests {
         assert_eq!(
             got,
             [
-                ("Logo.vrs — client", "/work/client/Logo.vrs"),
-                ("Logo.vrs — archive", "/work/archive/Logo.vrs"),
-                ("Card.vrs", "/work/archive/Card.vrs"),
+                ("Logo — client", "/work/client/Logo.vrs"),
+                ("Logo — archive", "/work/archive/Logo.vrs"),
+                ("Card", "/work/archive/Card.vrs"),
                 ("Untitled-2", "Not saved yet"),
             ]
         );
@@ -947,7 +974,7 @@ mod tests {
         ws.active_mut().unwrap().mark_saved(PathBuf::from("/docs/a.vrs"), key("/docs/a.vrs"));
         let s = ws.active().unwrap();
         assert!(!s.is_dirty() && !s.is_dirty_exact(), "saved = clean");
-        assert_eq!(s.display_name(), "a.vrs");
+        assert_eq!(s.display_name(), "a");
         assert_eq!(s.untitled, None);
         assert_eq!(s.key, Some(key("/docs/a.vrs")));
         assert!(!s.is_pristine(), "a saved file is never pristine");

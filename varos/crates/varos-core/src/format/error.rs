@@ -60,6 +60,11 @@ pub enum Invalid {
     LegacyInV2 { what: &'static str },
     /// A v2 file that this build's own writer could not have produced (it would change on load).
     NotCanonical { what: &'static str },
+    /// Board metadata over a bound, with a control character, or not in its clean stored form.
+    Board(crate::board::MetaError),
+    /// A key that only a newer format writes, in a file that claims an older format (e.g. the board
+    /// `name` in a format-2 file). Refused like any other unknown field.
+    FieldNotInFormat { field: &'static str, version: u32 },
 }
 
 /// A save refused before anything was written. The editor keeps the document open and dirty.
@@ -138,6 +143,11 @@ impl fmt::Display for Invalid {
             Invalid::NotCanonical { what } => {
                 write!(f, "its {what} is not in the form Varos writes, so it may have been edited by another app")
             }
+            Invalid::Board(e) => e.fmt(f),
+            Invalid::FieldNotInFormat { field, version } => write!(
+                f,
+                "it has a board {field}, which format {version} files cannot contain, so it may have been edited by another app"
+            ),
         }
     }
 }

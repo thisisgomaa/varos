@@ -4009,6 +4009,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sha2",
  "tiny-skia",
  "ttf-parser",
  "unicode-normalization",
@@ -4027,6 +4028,7 @@ dependencies = [
  "i_overlay",
  "serde",
  "serde_json",
+ "unicode-normalization",
 ]
 
 [[package]]

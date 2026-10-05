@@ -1,2 +1,4 @@
 *.ttf binary
+Inter-OFL.txt -text -diff
+JetBrainsMono-OFL.txt -text -diff
 *-LICENSE.txt -text -diff
