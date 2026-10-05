@@ -376,6 +376,13 @@ fn fit_rect(ed: &Editor) -> (f32, f32, f32, f32) {
     }
 }
 
+/// What a "Fit" request for artboard `i` frames: that artboard, or — on a free canvas with zero
+/// artboards (a New board), where the status bar's Fit still asks for board 0 — the artwork bounds /
+/// fallback region of [`fit_rect`]. Before Start v2 this case silently did nothing.
+fn fit_request_rect(ed: &Editor, i: usize) -> (f32, f32, f32, f32) {
+    ed.doc.artboards.get(i).map_or_else(|| fit_rect(ed), |a| (a.x, a.y, a.w, a.h))
+}
+
 /// The CANVAS area (the visible drawing region) in physical px — the Board box's interior when the
 /// shell reports one (Stage 4), else the whole window.
 /// Home flag + warning every time (cheap); Start's model only when `StartRefresh` says its inputs
@@ -1620,9 +1627,8 @@ fn main() {
                         }
                         // a "Fit in window" request from the artboard panel / status Fit / ⋮ menu
                         if let Some(i) = gui.fit_request.take() {
-                            if let Some(a) = ed.doc.artboards.get(i).cloned() {
-                                *view = fit_to_board(&gui, &window, a.x, a.y, a.w, a.h, 0.9);
-                            }
+                            let (x, y, w, h) = fit_request_rect(ed, i);
+                            *view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
                         }
                         // Stage 4: the first document frame knows the Board box — refit the startup
                         // view INTO it once (the pre-shell fit centred on the whole window).
@@ -1740,6 +1746,40 @@ fn main() {
             }
         })
         .unwrap_or_else(|e| fatal("The Windows event loop stopped unexpectedly.", &e.to_string()));
+}
+
+#[cfg(test)]
+mod zero_artboard_fit_tests {
+    use super::{fit_rect, fit_request_rect, FIT_FALLBACK};
+    use varos_core::board::{new_board, new_board_with_preset, PresetId};
+    use varos_core::editor::Editor;
+    use varos_core::model::{Anchor, Path};
+
+    #[test]
+    fn fit_on_a_new_board_frames_the_artwork_or_the_fallback_never_nothing() {
+        let mut ed = Editor::new();
+        ed.replace_doc(new_board());
+        // the status bar's Fit asks for board 0 even on a free canvas
+        assert_eq!(fit_request_rect(&ed, 0), FIT_FALLBACK, "empty free canvas → the default region");
+        let a = |id: u32, x: f32, y: f32| Anchor { id, p: [x, y], hin: None, hout: None, smooth: false };
+        ed.doc.paths.push(Path::new(
+            1,
+            vec![a(1, 100.0, 50.0), a(2, 300.0, 50.0), a(3, 200.0, 250.0)],
+            true,
+            None,
+            None,
+            0.0,
+        ));
+        ed.doc.ids = 3;
+        ed.doc.sync_tree();
+        assert_eq!(fit_request_rect(&ed, 0), fit_rect(&ed), "free canvas with art → the art");
+        let (x, y, w, h) = fit_request_rect(&ed, 0);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        assert!(near(x, 100.0) && near(y, 50.0) && near(w, 200.0) && near(h, 200.0), "{:?}", (x, y, w, h));
+        // with a board, Fit frames that board
+        ed.replace_doc(new_board_with_preset(PresetId::Story, None));
+        assert_eq!(fit_request_rect(&ed, 0), (0.0, 0.0, 1080.0, 1920.0));
+    }
 }
 
 #[cfg(test)]

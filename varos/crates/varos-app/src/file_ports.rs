@@ -591,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn frozen_v1_broken_mask_saves_as_v2_and_reopens_clean_without_notice() {
+    fn frozen_v1_broken_mask_saves_as_current_format_and_reopens_clean_without_notice() {
         use varos_app::storage::durable::RealFs;
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../varos-core/tests/fixtures/v2/v1_broken_mask.vrs");
         let dir = Scratch::new("v1-repair");
@@ -601,7 +601,7 @@ mod tests {
         assert_eq!(notice, Some(varos_core::format::RELEASED_MASKS_NOTICE));
         durable_save(&RealFs, &doc, &path, &Limits::DEFAULT).unwrap();
         let loaded = varos_pdf::load_vrs_checked(&path, &Limits::DEFAULT).unwrap();
-        assert_eq!(loaded.source_version, 2);
+        assert_eq!(loaded.source_version, varos_core::format::FORMAT_VERSION);
         assert_eq!(loaded.notice(), None);
         assert_eq!(loaded.doc, doc);
     }
@@ -620,7 +620,11 @@ mod tests {
         let node = doc.nodes.iter_mut().find(|n| n.id == group).unwrap();
         node.role = GroupRole::Clip;
         node.mask_child = Some(99999);
-        let bytes = serde_json::to_vec(&serde_json::json!({"varos":1,"doc":doc})).unwrap();
+        let mut v1 = serde_json::json!({"varos":1,"doc":doc});
+        for key in ["name", "description", "tags"] {
+            v1["doc"].as_object_mut().unwrap().remove(key); // a v1 writer never emitted the board keys
+        }
+        let bytes = serde_json::to_vec(&v1).unwrap();
         std::fs::write(&path, &bytes).unwrap();
         let (opened, notice) = DiskStore.load_with_notice(&path).unwrap();
         assert!(notice.unwrap().contains("broken clipping masks released"));
