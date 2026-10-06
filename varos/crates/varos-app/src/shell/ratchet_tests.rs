@@ -14,7 +14,7 @@ fn production_ui_files() -> Vec<PathBuf> {
         }
     }
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = vec![src.join("ui.rs")];
+    let mut files = vec![src.join("ui.rs"), src.join("recovery_card.rs")];
     visit(&src.join("ui"), &mut files);
     files.sort();
     files
@@ -86,7 +86,7 @@ fn ui_source_ratchets_only_tighten() {
 fn ui_rs_only_shrinks_and_icons_have_one_home() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let ui_rs = std::fs::read_to_string(src.join("ui.rs")).expect("read ui.rs");
-    assert!(ui_rs.lines().count() <= 956);
+    assert!(ui_rs.lines().count() <= 946);
     let source = rust_source_outside_icon_registry();
     let legacy_prefix = ["IC", "_"].concat();
     assert!(
@@ -99,6 +99,7 @@ fn ui_rs_only_shrinks_and_icons_have_one_home() {
 fn ratchets_scan_every_production_ui_module_and_exclude_test_modules() {
     let files = production_ui_files();
     assert!(files.iter().any(|path| path.ends_with("ui/bar.rs")));
+    assert!(files.iter().any(|path| path.ends_with("recovery_card.rs")));
     assert!(files.iter().any(|path| path.ends_with("ui/panels/align.rs")));
     assert!(!files.iter().any(|path| path.file_name().is_some_and(|name| name == "tests.rs")));
 }

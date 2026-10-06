@@ -2727,54 +2727,135 @@ mod window_focus_tests {
 #[cfg(test)]
 mod recovery_strip_tests {
     use super::*;
+    use varos_app::recovery_card::{ids, ReviewRow};
+
+    fn context(ppp: f32) -> egui::Context {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        varos_app::shell::tokens::apply(&ctx);
+        let _ = ctx.run_ui(input(ppp, vec![]), |_| {});
+        ctx
+    }
+    fn input(ppp: f32, events: Vec<egui::Event>) -> egui::RawInput {
+        let mut input = egui::RawInput {
+            events,
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1512.0, 982.0))),
+            ..Default::default()
+        };
+        input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().native_pixels_per_point = Some(ppp);
+        input
+    }
+    /// Hover, press, release — one frame each (the pointer reaches a control before it clicks).
+    fn click(pos: egui::Pos2) -> [Vec<egui::Event>; 3] {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        [vec![egui::Event::PointerMoved(pos)], vec![button(true)], vec![button(false)]]
+    }
+
     #[test]
-    fn recovery_strip_actions_target_review_later_and_the_recovered_tab() {
+    fn restored_notice_floats_saves_defers_per_tab_and_yields_to_review() {
         for ppp in [1.0, 2.0] {
-            let ctx = egui::Context::default();
-            varos_app::shell::fonts::install(&ctx);
-            varos_app::shell::tokens::apply(&ctx);
-            let recovery = crate::recovery_host::RecoveryUi { banner: true, sid: Some(SessionId(42)), recovered_notice: Some("Recovered a long document name. Save this copy to keep it. Your original file has not been changed.".into()), ..Default::default() };
-            let frame = |events| {
-                let mut cmds = Vec::new();
-                let mut input = egui::RawInput {
-                    events,
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320.0, 600.0))),
-                    ..Default::default()
-                };
-                input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().native_pixels_per_point = Some(ppp);
-                let _ = ctx.run_ui(input, |ui| build_recovery_strip(ui, &recovery, &mut cmds));
+            let ctx = context(ppp);
+            let board = egui::Rect::from_min_max(egui::pos2(12.0, 52.0), egui::pos2(1200.0, 950.0));
+            let restored = crate::recovery_host::RecoveryUi {
+                sid: Some(SessionId(42)),
+                recovered_notice: Some("Restored copy of Menu card — save it to keep it".into()),
+                ..Default::default()
+            };
+            let frame = |recovery: &crate::recovery_host::RecoveryUi, events| {
+                let mut cmds = vec![];
+                let _ = ctx.run_ui(input(ppp, events), |ui| {
+                    let before = ui.available_rect_before_wrap();
+                    build_recovery_card(ui.ctx(), board, recovery, &mut cmds);
+                    assert_eq!(before, ui.available_rect_before_wrap(), "floating notice consumes no root space");
+                });
                 cmds
             };
-            assert!(frame(vec![]).is_empty());
-            assert!(frame(vec![]).is_empty());
-            for (id, expected) in [
-                ("review-recovery", AppCommand::ReviewRecovery),
-                ("defer-recovery", AppCommand::DeferRecovery),
-                ("save-recovered", AppCommand::SaveAs(SessionId(42))),
-            ] {
-                let rect = ctx.read_response(egui::Id::new(id)).unwrap().rect;
-                assert!(rect.left() >= 0.0 && rect.right() <= 320.0);
-                let pos = rect.center();
-                let pointer = |pressed| {
-                    vec![
-                        egui::Event::PointerMoved(pos),
-                        egui::Event::PointerButton {
-                            pos,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: Default::default(),
-                        },
-                    ]
-                };
-                assert!(frame(pointer(true)).is_empty());
-                assert_eq!(
-                    frame(pointer(false)),
-                    [expected],
-                    "{id} ppp={ppp} before={rect:?} after={:?}",
-                    ctx.read_response(egui::Id::new(id)).unwrap().rect
-                );
-            }
+            let press = |recovery: &crate::recovery_host::RecoveryUi, id| {
+                let pos = ctx.read_response(id).unwrap().rect.center();
+                let mut cmds = vec![];
+                for events in click(pos) {
+                    cmds.extend(frame(recovery, events));
+                }
+                cmds
+            };
+            let both = crate::recovery_host::RecoveryUi { banner: true, rows: rows(), ..restored.clone() };
+            frame(&both, vec![]);
+            frame(&both, vec![]);
+            assert!(ctx.read_response(ids::review()).is_some());
+            assert!(ctx.read_response(ids::save_as()).is_none(), "review rows take priority");
+            frame(&restored, vec![]);
+            frame(&restored, vec![]);
+            assert!(ctx.read_response(ids::review()).is_none());
+            assert_eq!(press(&restored, ids::save_as()), [AppCommand::SaveAs(SessionId(42))]);
+            assert!(press(&restored, ids::later()).is_empty());
+            frame(&restored, vec![]);
+            frame(&restored, vec![]);
+            assert!(ctx.read_response(ids::card()).is_none(), "Later hides this tab's notice");
+            let other = crate::recovery_host::RecoveryUi { sid: Some(SessionId(43)), ..restored.clone() };
+            frame(&other, vec![]);
+            frame(&other, vec![]);
+            assert!(ctx.read_response(ids::save_as()).is_some(), "another tab retains its notice");
         }
+    }
+
+    fn rows() -> Vec<ReviewRow> {
+        ["menu", "untitled"]
+            .iter()
+            .map(|rid| ReviewRow {
+                rid: (*rid).into(),
+                name: format!("Copy {rid}"),
+                when: "never saved".into(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// The card raises the commands Start's Recovered band raises (one adapter): Later = DeferRecovery,
+    /// Restore = Recover(rid) (the same open command), Discard = DiscardRecovery(rid) (the host confirms);
+    /// Review itself raises nothing — it opens the panel in place, it never goes Home.
+    #[test]
+    fn recovery_card_commands_are_starts_commands() {
+        let ctx = context(2.0);
+        let board = egui::Rect::from_min_max(egui::pos2(12.0, 52.0), egui::pos2(1200.0, 950.0));
+        let recovery = crate::recovery_host::RecoveryUi {
+            banner: true,
+            rows: rows(),
+            footer: "Recovery on · copies every 30 seconds".into(),
+            ..Default::default()
+        };
+        let frame = |events| {
+            let mut cmds = Vec::new();
+            let _ = ctx.run_ui(input(2.0, events), |ui| build_recovery_card(ui.ctx(), board, &recovery, &mut cmds));
+            cmds
+        };
+        let press = |id: egui::Id| {
+            let pos = ctx.read_response(id).unwrap_or_else(|| panic!("{id:?} not drawn")).rect.center();
+            let [hover, press, release] = click(pos);
+            assert!(frame(hover).is_empty() && frame(press).is_empty());
+            frame(release)
+        };
+        frame(vec![]);
+        assert_eq!(press(ids::review()), [], "Review never sends Home");
+        frame(vec![]);
+        assert!(ctx.read_response(ids::panel()).is_some(), "the panel is open in place");
+        assert_eq!(press(ids::restore("menu")), [AppCommand::Recover("menu".into())]);
+        assert_eq!(press(ids::discard("untitled")), [AppCommand::DiscardRecovery("untitled".into())]);
+        assert_eq!(press(ids::close()), [AppCommand::DeferRecovery], "× = Later");
+        frame(vec![]);
+        assert_eq!(press(ids::later()), [AppCommand::DeferRecovery]);
+        // after Later the host clears `banner`: nothing is drawn and nothing blocks the canvas
+        let hidden = crate::recovery_host::RecoveryUi { banner: false, ..recovery.clone() };
+        for _ in 0..2 {
+            let _ = ctx.run_ui(input(2.0, vec![]), |ui| build_recovery_card(ui.ctx(), board, &hidden, &mut vec![]));
+        }
+        let probe = egui::pos2(board.center().x, board.bottom() - 40.0);
+        let floating = ctx.layer_id_at(probe).is_some_and(|l| l.order != egui::Order::Background);
+        assert!(!floating, "no card layer is left over the canvas (the pointer test gives it back)");
     }
 }
 
@@ -3105,6 +3186,7 @@ pub(super) mod icon_action_tests {
             src.join("shell/boxtree.rs"),
             src.join("shell/kit/mod.rs"),
             src.join("shell/kit/icons.rs"),
+            src.join("recovery_card.rs"),
         ]);
         let mut raw: std::collections::HashMap<String, usize> = Default::default();
         let mut scanned = 0;
@@ -3119,8 +3201,9 @@ pub(super) mod icon_action_tests {
                 }
             }
         }
-        // 27 since 2026-10-06: the band's two Search glyphs and the Custom… preset's plus were removed
-        assert!(scanned >= 27, "the scan must see every current production icon draw (saw {scanned})");
+        // 27 since 2026-10-06: the band's two Search glyphs and the Custom… preset's plus were removed;
+        // 29 with the recovery card's Review panel (its history and shield glyphs; × is a kit icon button)
+        assert!(scanned >= 29, "the scan must see every current production icon draw (saw {scanned})");
         for (func, cap) in TOP_BAR_CAPS {
             let n = raw.get(func).copied().unwrap_or(0);
             assert!(n > 0, "`{func}` must remain covered while its raw-size exception exists");
@@ -3160,6 +3243,29 @@ mod home_page_tests {
         page: StartPage,
         model: StartModel,
     }
+    #[test]
+    fn home_frame_removes_document_recovery_card() {
+        let mut home = Home::new();
+        let rows = [varos_app::recovery_card::ReviewRow {
+            rid: "copy".into(),
+            name: "Recovered board".into(),
+            ..Default::default()
+        }];
+        for _ in 0..2 {
+            let _ = home.ctx.run_ui(
+                RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, SIZE)), ..Default::default() },
+                |ui| {
+                    varos_app::recovery_card::show(ui.ctx(), ui.max_rect(), &rows, "Recovery on");
+                },
+            );
+        }
+        assert!(home.ctx.read_response(varos_app::recovery_card::ids::card()).is_some());
+        home.frame(vec![]);
+        home.frame(vec![]);
+        for id in [varos_app::recovery_card::ids::card(), varos_app::recovery_card::ids::panel()] {
+            assert!(home.ctx.read_response(id).is_none(), "run_home's painting pass has no floating recovery object");
+        }
+    }
     impl Home {
         fn new() -> Self {
             let ctx = egui::Context::default();
@@ -3185,23 +3291,20 @@ mod home_page_tests {
             let icons = TopIcons { menu: None };
             let (mut win, mut rail, mut dock) = (None, true, true);
             let _ = self.ctx.run_ui(input, |root| {
-                build_topbar(
+                build_home_frame(
                     root,
                     &icons,
                     &mut self.shell,
                     &mut win,
                     &[],
-                    None,
                     &mut cmds,
                     &mut rail,
                     &mut dock,
-                    &mut Default::default(),
+                    &mut self.page,
+                    &mut self.model,
                     None,
                     false,
-                    true,
-                    true,
                 );
-                home_body(root, &mut self.page, &mut self.model, None, &mut cmds);
             });
             cmds
         }

@@ -567,28 +567,19 @@ impl Ui {
         let input = self.state.take_egui_input(window);
         self.export_sheet = None; // Home has no document to export
         let out = self.ctx.run_ui(input, |root| {
-            build_topbar(
+            build_home_frame(
                 root,
                 &self.top,
                 &mut self.shell,
                 &mut self.win_action,
                 &self.doc_tabs,
-                None,
                 &mut self.app_cmds,
                 &mut self.show_rail,
                 &mut self.show_dock,
-                &mut Default::default(),
-                None,
-                maximized,
-                true,
-                cfg!(target_os = "macos"),
-            );
-            home_body(
-                root,
                 &mut self.start_page,
                 &mut self.start_model,
                 self.recent_warning.as_deref(),
-                &mut self.app_cmds,
+                maximized,
             );
         });
 
@@ -732,7 +723,6 @@ impl Ui {
                     }
                 }
             }
-            build_recovery_strip(root, recovery, &mut app_cmds);
             build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request, status);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
             // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
@@ -773,6 +763,7 @@ impl Ui {
                                 );
                             }
                             new_hole = Some(inner);
+                            build_recovery_card(ui.ctx(), rect, recovery, &mut app_cmds);
                             true
                         }
                         P::Properties => {
@@ -839,7 +830,6 @@ impl Ui {
             build_snap_hud(ctx, view, ppp, hole, &snap_hud);
             build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
             build_color_modal(ctx, &mut color_modal, &snap, ic_pipette, &mut ops);
-            // over everything
         });
         self.color_modal = color_modal;
         self.refpt = refpt;

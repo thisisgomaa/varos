@@ -71,7 +71,7 @@ pub enum AppCommand {
     ClearRecent,
     SetRecoveryEnabled(bool),
     RetryRecovery(SessionId),
-    ReviewRecovery,
+    /// Restore a recovery copy (Start's Recovered band, the editor's Review panel).
     Recover(String),
     DiscardRecovery(String),
     DeferRecovery,
