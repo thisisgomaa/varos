@@ -11,7 +11,9 @@ EDGES = {
     "varos-core": set(),
     "varos-render-wgpu": {"varos-core"},
     "varos-pdf": {"varos-core"},
-    "varos-app": {"varos-core", "varos-render-wgpu", "varos-pdf"},
+    "varos-app": {"varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster"},
+    "varos-raster": {"varos-core", "varos-pdf"},  # PDF is test-only.
+    "varos-cli": {"varos-core", "varos-pdf", "varos-raster"},
 }
 
 
@@ -34,10 +36,10 @@ def validate(metadata, app_source):
         exact(f"{name} internal dependencies", internal, allowed)
         for dependency in dependencies:
             normalized = dependency["name"].replace("_", "-")
-            if name == "varos-core" and re.match(
+            if name in {"varos-core", "varos-raster", "varos-cli"} and re.match(
                 r"^(wgpu|winit|egui(?:-|$)|windows(?:-|$))", normalized
             ):
-                violations.append(f"varos-core forbidden UI/GPU/platform dependency: {dependency['name']}")
+                violations.append(f"{name} forbidden UI/GPU/platform dependency: {dependency['name']}")
             if name == "varos-render-wgpu" and re.match(r"^winit(?:-|$)", normalized):
                 violations.append("varos-render-wgpu must not depend on winit")
         if name == "varos-app" and sum(d["name"] == "egui_tiles" for d in dependencies) != 1:
@@ -59,7 +61,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     try:
         result = subprocess.run(
-            ["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps",
+            ["cargo", "metadata", "--offline", "--locked", "--format-version", "1", "--no-deps",
              "--manifest-path", str(root / "varos/Cargo.toml")],
             check=True, capture_output=True, text=True, encoding="utf-8",
         )
@@ -75,7 +77,7 @@ def main():
             print(error.stderr, file=sys.stderr)
         return 1
     print("check_dep_directions: PASS")
-    print("internal edges: renderer -> core; pdf -> core; app -> core, renderer, pdf")
+    print("internal edges: match declared workspace allowlist; core/raster/cli reject UI/GPU dependencies")
     print("egui_tiles code use: varos-app/src/shell/boxtree.rs only")
     return 0
 
