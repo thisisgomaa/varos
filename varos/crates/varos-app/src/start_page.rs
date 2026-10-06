@@ -2,7 +2,7 @@
 //! cards from Recent's cache, tag counts, the filter) to the design of record
 //! (design-reference/mockups/start-v2/: `inter-recent`, `inter-empty`, `inter-hover`, `inter-list`;
 //! numbers from its `src.html`) and returns [`StartAction`]s. Filter actions (`SetTagFilter`,
-//! `SetView`, `Search`) go to `StartModel::apply`; the rest to `host::start_command`. Presentation
+//! `SetView`) go to `StartModel::apply`; the rest to `host::start_command`. Presentation
 //! only: no files, no filtering, no commands. Hand-painted with the kit (`shell/kit/board.rs`); tokens
 //! only (`shell/tokens.rs`: `SB_*` layout, the type tokens); nothing animates.
 //!
@@ -71,7 +71,6 @@ pub mod roles {
 /// Copy (owner-approved mockup text).
 pub const LEDE: &str = "A board is a free canvas with a name, a short description and tags. Artboards inside are optional — add one when a piece needs a fixed size.";
 pub const FIRST_TITLE: &str = "Start with a board";
-pub const RECOVERY_STATUS: &str = "Recovery on · copies every 30 seconds";
 /// The recovery copy's open action, one word everywhere (owner 2026-10-06): Start's Recovered band and
 /// the editor's Review panel.
 pub const RESTORE: &str = "Restore";
@@ -796,6 +795,8 @@ pub struct StartPage {
     /// Handle ⌘N / ⌘O here. Off in the app — the host's command keys own them (K2 row 1); the example
     /// gallery turns it on.
     pub command_keys: bool,
+    /// Current recovery setting / availability, supplied by the same host as the Review footer.
+    pub recovery_status: String,
 }
 impl Default for StartPage {
     fn default() -> Self {
@@ -827,6 +828,7 @@ impl StartPage {
             seen_generation: 0,
             home: home_dir(),
             command_keys: false,
+            recovery_status: String::new(),
         }
     }
     /// Home was (re)entered: focus rests on New board with no ring until the keyboard is used.
@@ -902,7 +904,7 @@ impl StartPage {
         p.rect_filled(area, egui::CornerRadius::ZERO, t::SEAM);
         p.rect_filled(lay.board, t::r_box(), t::BG);
         p.rect_stroke(lay.board, t::r_box(), t::hairline(), egui::StrokeKind::Inside);
-        status(ui, &lay, &self.derived.version, f.warning);
+        status(ui, &lay, &self.derived.version, f.warning, &self.recovery_status);
         let inner = lay.board.shrink(t::KIT_STROKE);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(Align::Min)));
         egui::ScrollArea::vertical().id_salt("start-v2-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
@@ -1690,13 +1692,13 @@ fn keys(ui: &Ui, rect: Rect, groups: &[(&[&str], &str)], center: bool) {
 }
 
 /// The status line: version left; the Recent list's load warning after it; recovery right.
-fn status(ui: &Ui, l: &PageLayout, version: &str, warning: Option<&str>) {
+fn status(ui: &Ui, l: &PageLayout, version: &str, warning: Option<&str>, recovery_status: &str) {
     let p = ui.painter().clone();
     let s = l.status;
     let left = text(ui, version, roles::MICRO);
     let lw = left.size().x;
     kb::galley_in_line(&p, s.left(), s.top(), s.height(), left, t::MUTED);
-    let right = text(ui, RECOVERY_STATUS, roles::MICRO);
+    let right = text(ui, recovery_status, roles::MICRO);
     let rw = right.size().x;
     kb::galley_in_line(&p, s.right() - rw, s.top(), s.height(), right, t::MUTED);
     let ix = s.right() - rw - t::SB_STATUS_ICON_GAP - t::SB_ICON_SMALL / 2.0;

@@ -4,7 +4,7 @@
 //!
 //! Start v2 (work order `START_V2_BOARDS.md`, the L2↔L4 interface): every Recent entry is also a
 //! [`BoardCard`] built from Recent's cached board summary (Home never parses a `.vrs`), with a tag
-//! list + counts ([`StartModel::tags`]) and pure filtering ([`StartFilter`]: tag, search, grid/list).
+//! list + counts ([`StartModel::tags`]) and pure filtering ([`StartFilter`]: tag, grid/list).
 //! The filter decides which Recent rows keyboard traversal visits; with the default (empty) filter
 //! the traversal is exactly the Start v1 contract.
 //! Tab/Shift+Tab traverse actions, arrows move within a list, Enter activates and Delete (or Mac
@@ -21,8 +21,8 @@ use varos_core::board::{fold, PresetId};
 pub const START_TITLE: &str = "Varos";
 /// Exact empty-Recent copy (work order §3.7).
 pub const EMPTY_RECENT_COPY: &str = "No recent documents. Create a document or open a .vrs file.";
-/// Shown when Recent has boards but the tag filter / search hides all of them.
-pub const NO_MATCH_COPY: &str = "No boards match. Clear the search or choose All.";
+/// Shown when Recent has boards but the tag filter hides all of them.
+pub const NO_MATCH_COPY: &str = "No boards match. Choose All to see every board.";
 /// Tag shown next to a recent row whose file can't be found on disk (work order §3.7). No consumer
 /// yet: the Start page draws it beside a row whose [`StartRow::missing`] is true.
 pub const MISSING_TAG: &str = "Missing";
@@ -96,52 +96,30 @@ pub struct TagCount {
     pub count: usize,
 }
 
-/// The Start filter state: tag (`None` = All), search text, view. Pure; applied by
+/// The Start filter state: tag (`None` = All), view. Pure; applied by
 /// [`StartModel::apply`] and carried across model rebuilds.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StartFilter {
     pub tag: Option<String>,
-    pub search: String,
     pub view: StartView,
 }
 impl StartFilter {
     /// Does `card` pass? Every comparison goes through the ONE core fold (`varos_core::board::fold`:
     /// NFC + full case fold, so ß/SS and σ/ς meet). Tag: folded equality with one of its tags.
-    /// Search: every whitespace-separated term must appear (folded substring) in the name, the
-    /// description, a tag or the folder path.
     pub fn matches(&self, card: &BoardCard) -> bool {
-        if let Some(tag) = &self.tag {
-            let tag = fold(tag);
-            if !card.tags.iter().any(|t| fold(t) == tag) {
-                return false;
-            }
-        }
-        let search = fold(&self.search);
-        let terms: Vec<&str> = search.split_whitespace().collect();
-        if terms.is_empty() {
-            return true;
-        }
-        let folder = parent_dir_display(&card.path);
-        let fields: Vec<String> = [card.name.as_str(), card.description.as_deref().unwrap_or(""), folder.as_str()]
-            .into_iter()
-            .chain(card.tags.iter().map(String::as_str))
-            .map(fold)
-            .collect();
-        terms.iter().all(|term| fields.iter().any(|f| f.contains(term)))
+        self.tag.as_ref().is_none_or(|tag| card.tags.iter().any(|t| fold(t) == fold(tag)))
     }
-    /// Apply a filter action (`SetTagFilter`, `SetView`, `Search`); `true` when the state changed.
+    /// Apply a filter action (`SetTagFilter`, `SetView`); `true` when the state changed.
     /// Every other action is not a filter action and returns `false`.
     pub fn apply(&mut self, action: &StartAction) -> bool {
         let changed = match action {
             StartAction::SetTagFilter(tag) => self.tag != *tag,
             StartAction::SetView(view) => self.view != *view,
-            StartAction::Search(text) => self.search != *text,
             _ => return false,
         };
         match action {
             StartAction::SetTagFilter(tag) => self.tag.clone_from(tag),
             StartAction::SetView(view) => self.view = *view,
-            StartAction::Search(text) => self.search.clone_from(text),
             _ => {}
         }
         changed
@@ -177,7 +155,6 @@ pub enum StartAction {
     /// Filter actions — handled by [`StartModel::apply`], never sent to the host.
     SetTagFilter(Option<String>),
     SetView(StartView),
-    Search(String),
     Open,
     OpenRecent(PathBuf),
     Locate(PathBuf),
@@ -338,7 +315,7 @@ impl StartModel {
         &self.filter
     }
 
-    /// Apply a filter action (`SetTagFilter`, `SetView`, `Search`). `true` when the state changed;
+    /// Apply a filter action (`SetTagFilter`, `SetView`). `true` when the state changed;
     /// any other action returns `false` and changes nothing.
     pub fn apply(&mut self, action: &StartAction) -> bool {
         if !self.filter.apply(action) {
@@ -932,36 +909,20 @@ mod tests {
     }
 
     #[test]
-    fn tag_filter_and_search_are_pure_and_case_insensitive() {
+    fn tag_filter_is_case_insensitive_and_all_restores_every_board() {
         let mut model = StartModel::without_recovery(&boards(), 400, |_| false);
         assert!(model.apply(&StartAction::SetTagFilter(Some("CLIENT".into()))));
         assert_eq!(names(&model), ["Cafe Logo", "شعار المقهى"]);
-        assert!(!model.apply(&StartAction::SetTagFilter(Some("CLIENT".into()))), "unchanged → false");
-        assert!(model.apply(&StartAction::Search("logo".into())));
-        assert_eq!(names(&model), ["Cafe Logo"], "tag AND search");
-        model.apply(&StartAction::SetTagFilter(None));
-        for (search, want) in [
-            ("", vec!["Cafe Logo", "b", "شعار المقهى", "d"]),
-            ("ROUND", vec!["Cafe Logo"]),                      // description
-            ("birthday", vec!["b"]),                           // description
-            ("عربي", vec!["شعار المقهى"]),                     // tag
-            ("المقهى", vec!["شعار المقهى"]),                   // Arabic name
-            ("/old", vec!["d"]),                               // folder
-            ("work client", vec!["Cafe Logo", "شعار المقهى"]), // every term, any field
-            ("work personal", vec![]),
-            ("   ", vec!["Cafe Logo", "b", "شعار المقهى", "d"]),
-        ] {
-            model.apply(&StartAction::Search(search.into()));
-            assert_eq!(names(&model), want, "search {search:?}");
-        }
-        assert_eq!(model.no_match_copy(), None);
-        model.apply(&StartAction::Search("nothing like it".into()));
-        assert_eq!(model.no_match_copy(), Some(NO_MATCH_COPY));
+        assert!(!model.apply(&StartAction::SetTagFilter(Some("CLIENT".into()))));
+        model.apply(&StartAction::SetTagFilter(Some("absent".into())));
+        assert_eq!(model.no_match_copy(), Some("No boards match. Choose All to see every board."));
         assert_eq!(model.visible_count(), 0);
-        // view toggle is state only
+        model.apply(&StartAction::SetTagFilter(None));
+        assert_eq!(names(&model), ["Cafe Logo", "b", "شعار المقهى", "d"]);
+        assert_eq!(model.no_match_copy(), None);
         assert!(model.apply(&StartAction::SetView(StartView::List)));
         assert_eq!(model.filter().view, StartView::List);
-        // non-filter actions are not applied
+        assert_eq!(model.visible_count(), 4);
         assert!(!model.apply(&StartAction::NewBoard));
         assert!(!model.apply(&StartAction::OpenRecent("/x".into())));
     }
@@ -993,7 +954,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_counts_and_search_use_the_one_core_fold() {
+    fn filter_counts_and_tags_use_the_one_core_fold() {
         let mut r = Recents::default();
         let board = |tags: &[&str]| BoardSummary {
             name: "Café".into(),
@@ -1009,7 +970,7 @@ mod tests {
         model.apply(&StartAction::SetTagFilter(Some("straße".into())));
         assert_eq!(model.visible_count(), 2);
         model.apply(&StartAction::SetTagFilter(None));
-        model.apply(&StartAction::Search("CAFE\u{301}".into())); // NFD + upper case finds "Café"
+        model.apply(&StartAction::SetTagFilter(Some("σσ".into())));
         assert_eq!(model.visible_count(), 2);
     }
 
@@ -1019,8 +980,8 @@ mod tests {
         let mut filter = StartFilter::default();
         assert!(!filter.apply(&StartAction::NewWithPreset(PresetId::A4)));
         assert!(!filter.apply(&StartAction::NewBoard));
-        assert!(filter.apply(&StartAction::Search("x".into())));
-        assert_eq!(filter, StartFilter { tag: None, search: "x".into(), view: StartView::Grid });
+        assert!(filter.apply(&StartAction::SetTagFilter(Some("x".into()))));
+        assert_eq!(filter, StartFilter { tag: Some("x".into()), view: StartView::Grid });
     }
 
     #[test]

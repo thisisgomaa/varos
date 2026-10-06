@@ -1,10 +1,16 @@
 > **Status:** proposed — UI System **v3**, 2026-10-04, revised in place from v2 (2026-09-27) after the independent review's REQUEST CHANGES ("contracts without values"). Reconciled against `main` @ `221310f`. Every "today" value cites `file:line` at that commit (re-check before a piece starts). Not implementation evidence or independent approval; accepted ADRs and the charter remain authoritative. [`UI_DIRECTION`](../UI_DIRECTION.md) is the visual law; this spec makes it measurable.
 # Varos UI System v3
 
+## Current implementation routing — 2026-10-06
+
+Main baseline: `07ff058`. The measured tables and old `file:line` references below remain the dated v3 design baseline, not current source locations. Since then P2 (`fa6bd10`), P3 (`d882454`), top bar 4b (`19611ae`) and polish (`7adee37`) landed. Inter + JetBrains Mono replaced Plex in UI; box glide stays by owner decision 2026-10-06. Close-out 1 (`736feba`) removed band Search and Custom… and brought recovery scanning before frame 0 (bounded 250 ms wait; pending scans still poll). Trackpad control (`2f2bcc0`) and recovery card / in-place Review (`1532637`) are landed, awaiting the owner's eye. The strip entry and split map below describe the earlier baseline; recovery now lives in `recovery_card.rs`.
+
+Cycle-close cleanup ratchet ceilings and measured counts: FontId 16, `.size` 18, raw colours 31, literal radii 20, `ui.rs` 931 lines (includes `recovery_card.rs` in production scan). QW6 panel icon size, remaining P4, P5/P7, P6/F7/F8 measurements and Arabic gate §8 remain open. VIEW_ROTATION is planned/parked. v3's independent document review remains pending; these landings do not approve every proposed contract.
+
 ## ملخص للمالك
 
 - ده «دستور الواجهة» بالأرقام: كل لون ومقاس وزرار له قيمة واحدة، ونقدر نختبرها بالإيد وبالاختبارات.
-- القرارات اللي إنت خدتها بقت قانون ومش هتتسأل تاني (الجدول تحت): Home بدل ☰ على الماك، أيقونات بدل الكلام (الكلام في التلميح)، خطوط Plex، مفيش أي حركة أو توهج، وشكل «الشغّال» لكل نوع زرار.
+- القرارات اللي إنت خدتها بقت قانون ومش هتتسأل تاني (الجدول تحت): Home بدل ☰ على الماك، أيقونات بدل الكلام (الكلام في التلميح)، خطوط Inter/JetBrains Mono (Plex للعربي)، مفيش حركة أو توهج إلا glide البوكسات، وشكل «الشغّال» لكل نوع زرار.
 - أهم قاعدة جديدة: **أي خانة بتكتب فيها تتحفظ لما تسيبها** (Enter أو Tab أو تضغط برّه أو تبدّل تبويب أو تحفظ)، و**Esc يرجّع القديم**. ده بيقفل مشكلة اسم الأرتبورد اللي بيضيع لما تضغط برّه.
 - ملف الواجهة الكبير (`ui.rs`، ٨٢١٥ سطر) هيتقسم لملفات صغيرة، نقل بس من غير تغيير سلوك، وفيه عدّاد يمنع إنه يكبر تاني.
 - قسنا المخالفات النهارده: ٧٥ مقاس خط مكتوب بإيد، ٤٥ لون مكتوب بإيد، ٢٦ تدوير زوايا بإيد، و٣٩ أيقونة متعرّفة جوه `ui.rs` بعيد عن سجل الأيقونات. العدّاد ده هينزل بس، عمره ما يطلع.
@@ -161,7 +167,7 @@ Every later UI piece reports these numbers (or "not affected: why") in its GATE_
 | Start sizes | 26 / 20 / 14 | Start title / section / file | `tokens.rs:139-141` |
 
 **Offenders today and the ratchet** (baseline counted by grep at `221310f`; P3's
-`shell/ratchet_tests.rs` discovers production `ui.rs` + `ui/**/*.rs` with `read_dir` at test
+`shell/ratchet_tests.rs` now discovers production `ui.rs` + `recovery_card.rs` + `ui/**/*.rs` with `read_dir` at test
 time, excludes files named `tests.rs`, and asserts `count <= CEILING`; a piece that removes
 offenders lowers the ceiling in the same commit; inline `#[cfg(test)]` helpers remain counted;
 raising a ceiling is a review failure):

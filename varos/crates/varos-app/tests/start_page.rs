@@ -183,6 +183,7 @@ fn painted_controls_sit_on_the_mockup_rects_at_1x_and_2x() {
 fn real_fonts_keep_the_mockup_lines_whole() {
     let m = recent_model();
     let mut p = Page::new(2.0, egui::vec2(W, H));
+    p.page.recovery_status = "Recovery on · copies every 30 seconds".into();
     p.frame(&m, vec![]);
     let (_, out) = p.frame(&m, vec![]);
     let galleys: Vec<_> = out
@@ -411,7 +412,7 @@ fn presets_filters_and_recovered_by_keyboard() {
 }
 
 #[test]
-fn filters_and_search_come_from_the_model() {
+fn filters_and_no_match_copy_come_from_the_model() {
     let mut m = recent_model();
     assert!(m.apply(&StartAction::SetTagFilter(Some("print".into()))));
     let mut p = Page::new(1.0, egui::vec2(W, H));
@@ -421,10 +422,9 @@ fn filters_and_search_come_from_the_model() {
     let azure: Vec<Rect> = rects(&out).into_iter().filter(|r| r.fill == t::ACCENT).map(|r| r.rect).collect();
     let print = p.rect(ids::filter(Some("print")));
     assert!(azure.len() == 1 && print.contains_rect(azure[0]), "the bar sits under the selected tag");
-    m.apply(&StartAction::SetTagFilter(None));
-    m.apply(&StartAction::Search("zzz".into()));
+    m.apply(&StartAction::SetTagFilter(Some("absent".into())));
     let (_, out) = p.frame(&m, vec![]);
-    assert!(texts(&out).iter().any(|s| s.starts_with("No boards match")));
+    assert!(texts(&out).iter().any(|s| s == "No boards match. Choose All to see every board."));
 }
 
 #[test]
@@ -1128,4 +1128,25 @@ fn a_decode_landing_after_its_board_was_removed_is_dropped() {
     }
     assert_eq!(p.page.thumb_textures(), 0, "late decodes for removed boards are not uploaded");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recovery_status_paints_the_current_host_footer_instead_of_a_fixed_claim() {
+    let m = recent_model();
+    let mut p = Page::new(1.0, egui::vec2(W, H));
+    for footer in [
+        "Recovery on · copies every 30 seconds",
+        "Recovery is off. Save regularly to keep your work.",
+        "Recovery unavailable. Save your document regularly.",
+    ] {
+        p.page.recovery_status = footer.into();
+        let (_, out) = p.frame(&m, vec![]);
+        let painted = texts(&out);
+        assert!(painted.iter().any(|s| s == footer), "{painted:?}");
+        for other in ["Recovery on · copies every 30 seconds", "Recovery is off. Save regularly to keep your work."] {
+            if other != footer {
+                assert!(!painted.iter().any(|s| s == other));
+            }
+        }
+    }
 }

@@ -86,7 +86,7 @@ fn ui_source_ratchets_only_tighten() {
 fn ui_rs_only_shrinks_and_icons_have_one_home() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let ui_rs = std::fs::read_to_string(src.join("ui.rs")).expect("read ui.rs");
-    assert!(ui_rs.lines().count() <= 946);
+    assert!(ui_rs.lines().count() <= 931);
     let source = rust_source_outside_icon_registry();
     let legacy_prefix = ["IC", "_"].concat();
     assert!(
