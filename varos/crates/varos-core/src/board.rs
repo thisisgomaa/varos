@@ -239,7 +239,8 @@ pub fn new_board_with_preset(id: PresetId) -> Document {
     let (w, h) = (p.w * p.unit.pt_per(72.0), p.h * p.unit.pt_per(72.0));
     let mut doc = new_board();
     doc.units.display = p.unit;
-    doc.artboards = vec![Artboard { w, h, ..Artboard::default() }];
+    let id = doc.nid(); // format 4: every artboard carries a stable id from the document counter
+    doc.artboards = vec![Artboard { id, w, h, ..Artboard::default() }];
     doc.active = 0;
     doc
 }

@@ -18,7 +18,7 @@ pub mod validate;
 
 pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
-pub use migrate::{migrate_v1_to_v2, migrate_v2_to_v3};
+pub use migrate::{migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4};
 pub use structure::check_structure;
 pub use validate::validate;
 
@@ -29,9 +29,12 @@ use std::path::Path;
 
 /// The format this build writes (the wrapper key `varos` and the PDF catalog's `/VAROS_SchemaVersion`).
 /// 3 (2026-10-04): board metadata — `doc.name`, `doc.description`, `doc.tags` (ADR-0008 amendment).
-pub const FORMAT_VERSION: u32 = 3;
+/// 4 (2026-10-07): stable artboard ids — `doc.artboards[].id` (ADR-0008 amendment, Bridge slice 3).
+pub const FORMAT_VERSION: u32 = 4;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
+/// The first format whose writer emits a stable `id` on every artboard.
+pub const ARTBOARD_ID_VERSION: u32 = 4;
 /// The oldest format this build reads (older ones are migrated up in memory).
 pub const MIN_READ_VERSION: u32 = 1;
 /// Shown after opening a file that was migrated from an older format.
@@ -124,7 +127,7 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
             return Err(LoadError::VersionMismatch { container, model: version });
         }
     }
-    if version < BOARD_META_VERSION {
+    if version < ARTBOARD_ID_VERSION {
         refuse_newer_keys(json, version)?; // keys only, before any typed decode
     }
     let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
@@ -141,8 +144,12 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
         doc
     } else {
         // v2 and later were written canonical by Varos: check that BEFORE migrating, so a v2 file gets
-        // exactly the strictness it had when v2 was current.
-        validate(&doc, limits)?;
+        // exactly the strictness it had when v2 was current (artboard ids exist from format 4 only).
+        if version >= ARTBOARD_ID_VERSION {
+            validate(&doc, limits)?;
+        } else {
+            validate::before_artboard_ids(&doc)?;
+        }
         let doc = canonical(doc)?;
         if migrated {
             let doc = migrate::migrate(doc, version, FORMAT_VERSION, limits)?;
@@ -156,61 +163,132 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     Ok(Loaded { doc, source_version: version, migrated, released_legacy_masks })
 }
 
-/// A file that claims a format older than [`BOARD_META_VERSION`] must not carry the board keys: no
-/// writer of that format emitted them, so their presence is an unknown field (ADR-0008: unknown fields
-/// fail closed), not data to keep — whatever its value (`"name": 42`, `null`, a nested object). The
-/// typed decode would default them (or fail on a wrong type as merely "damaged"), so this keys-only
-/// scan runs right after the version gate, BEFORE any typed decode, for older files only. It reads
-/// the top-level keys of `doc` and skips every value (serde's `IgnoredAny`, inside serde_json's
-/// 128-level depth limit, after the model byte cap) — nothing is built. A `doc` that is not an object
-/// is left for the typed decode to refuse.
+/// A file that claims a format older than the one that introduced a key must not carry it: no writer
+/// of that format emitted it, so its presence is an unknown field (ADR-0008: unknown fields fail
+/// closed), not data to keep — whatever its value (`"name": 42`, `null`, a nested object). The keys:
+/// the board metadata (`doc.name`, `doc.description`, `doc.tags`, format 3) and the artboard id
+/// (`doc.artboards[].id`, format 4). The typed decode would default them (or fail on a wrong type as
+/// merely "damaged"), so this keys-only scan runs right after the version gate, BEFORE any typed
+/// decode, for older files only. It reads the top-level keys of `doc` and the keys of each artboard
+/// object, skipping every value (serde's `IgnoredAny`, inside serde_json's 128-level depth limit, after
+/// the model byte cap) — nothing is built. A `doc` (or artboard list) of the wrong shape is left for
+/// the typed decode to refuse.
 fn refuse_newer_keys(json: &[u8], version: u32) -> Result<(), LoadError> {
     use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
     use std::fmt;
 
-    /// The first board key found in `doc`, if any.
+    /// Skip any JSON value; for a map, report whether it has an `id` key (an artboard's id).
     #[derive(Default)]
-    struct DocKeys(Option<&'static str>);
-    impl<'de> Deserialize<'de> for DocKeys {
+    struct HasId(bool);
+    /// The first board key found, and whether any artboard carries an `id`.
+    #[derive(Default)]
+    struct Found {
+        board: Option<&'static str>,
+        artboard_id: bool,
+    }
+
+    macro_rules! skip_scalars {
+        ($t:ty, $v:expr) => {
+            fn visit_bool<E>(self, _: bool) -> Result<$t, E> {
+                Ok($v)
+            }
+            fn visit_i64<E>(self, _: i64) -> Result<$t, E> {
+                Ok($v)
+            }
+            fn visit_u64<E>(self, _: u64) -> Result<$t, E> {
+                Ok($v)
+            }
+            fn visit_f64<E>(self, _: f64) -> Result<$t, E> {
+                Ok($v)
+            }
+            fn visit_str<E>(self, _: &str) -> Result<$t, E> {
+                Ok($v)
+            }
+            fn visit_unit<E>(self) -> Result<$t, E> {
+                Ok($v)
+            }
+        };
+    }
+
+    impl<'de> Deserialize<'de> for HasId {
         fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
             struct V;
             impl<'de> Visitor<'de> for V {
-                type Value = DocKeys;
+                type Value = HasId;
                 fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                     f.write_str("any JSON value")
                 }
-                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<DocKeys, A::Error> {
-                    let mut found = None;
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<HasId, A::Error> {
+                    let mut found = false;
                     while let Some(key) = map.next_key::<std::borrow::Cow<'de, str>>()? {
                         map.next_value::<IgnoredAny>()?;
-                        if found.is_none() {
-                            found = ["name", "description", "tags"].into_iter().find(|k| *k == key);
+                        found |= key == "id";
+                    }
+                    Ok(HasId(found))
+                }
+                fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<HasId, A::Error> {
+                    while seq.next_element::<IgnoredAny>()?.is_some() {}
+                    Ok(HasId(false))
+                }
+                skip_scalars!(HasId, HasId(false));
+            }
+            d.deserialize_any(V)
+        }
+    }
+    /// The artboard list: does any artboard object carry an `id`?
+    struct AnyArtboardId(bool);
+    impl<'de> Deserialize<'de> for AnyArtboardId {
+        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = AnyArtboardId;
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("any JSON value")
+                }
+                fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<AnyArtboardId, A::Error> {
+                    let mut found = false;
+                    while let Some(HasId(id)) = seq.next_element::<HasId>()? {
+                        found |= id;
+                    }
+                    Ok(AnyArtboardId(found))
+                }
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<AnyArtboardId, A::Error> {
+                    while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                    Ok(AnyArtboardId(false))
+                }
+                skip_scalars!(AnyArtboardId, AnyArtboardId(false));
+            }
+            d.deserialize_any(V)
+        }
+    }
+    impl<'de> Deserialize<'de> for Found {
+        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = Found;
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("any JSON value")
+                }
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Found, A::Error> {
+                    let mut found = Found::default();
+                    while let Some(key) = map.next_key::<std::borrow::Cow<'de, str>>()? {
+                        if key == "artboards" {
+                            let AnyArtboardId(id) = map.next_value()?;
+                            found.artboard_id |= id;
+                            continue;
+                        }
+                        map.next_value::<IgnoredAny>()?;
+                        if found.board.is_none() {
+                            found.board = ["name", "description", "tags"].into_iter().find(|k| *k == key);
                         }
                     }
-                    Ok(DocKeys(found))
+                    Ok(found)
                 }
-                fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<DocKeys, A::Error> {
+                fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Found, A::Error> {
                     while seq.next_element::<IgnoredAny>()?.is_some() {}
-                    Ok(DocKeys(None))
+                    Ok(Found::default())
                 }
-                fn visit_bool<E>(self, _: bool) -> Result<DocKeys, E> {
-                    Ok(DocKeys(None))
-                }
-                fn visit_i64<E>(self, _: i64) -> Result<DocKeys, E> {
-                    Ok(DocKeys(None))
-                }
-                fn visit_u64<E>(self, _: u64) -> Result<DocKeys, E> {
-                    Ok(DocKeys(None))
-                }
-                fn visit_f64<E>(self, _: f64) -> Result<DocKeys, E> {
-                    Ok(DocKeys(None))
-                }
-                fn visit_str<E>(self, _: &str) -> Result<DocKeys, E> {
-                    Ok(DocKeys(None))
-                }
-                fn visit_unit<E>(self) -> Result<DocKeys, E> {
-                    Ok(DocKeys(None))
-                }
+                skip_scalars!(Found, Found::default());
             }
             d.deserialize_any(V)
         }
@@ -218,12 +296,17 @@ fn refuse_newer_keys(json: &[u8], version: u32) -> Result<(), LoadError> {
     #[derive(Deserialize)]
     struct Head {
         #[serde(default)]
-        doc: DocKeys,
+        doc: Found,
     } // no deny_unknown_fields: `varos` and anything else are skipped here; the typed decode is strict
     let head: Head = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
-    match head.doc.0 {
-        Some(field) => Err(Invalid::FieldNotInFormat { field, version }.into()),
-        None => Ok(()),
+    match head.doc {
+        Found { board: Some(field), .. } if version < BOARD_META_VERSION => {
+            Err(Invalid::FieldNotInFormat { field, version }.into())
+        }
+        Found { artboard_id: true, .. } if version < ARTBOARD_ID_VERSION => {
+            Err(Invalid::FieldNotInFormat { field: "artboard id", version }.into())
+        }
+        _ => Ok(()),
     }
 }
 
@@ -264,7 +347,11 @@ fn canonical(doc: Document) -> Result<Document, LoadError> {
 pub fn encode_model(doc: &Document, limits: &Limits) -> Result<String, SaveRefused> {
     check_structure(doc, limits).map_err(SaveRefused)?;
     validate::authored(doc).map_err(|e| SaveRefused(e.into()))?;
-    let norm = migrate::normalize(doc.clone()).map_err(SaveRefused)?;
+    let mut norm = migrate::normalize(doc.clone()).map_err(SaveRefused)?;
+    // format 4: a page built in memory without an id gets one, and a stale active index is clamped —
+    // the same forms `Editor::commit` keeps, so this only matters for documents assembled in code.
+    norm.assign_artboard_ids();
+    migrate::clamp_active(&mut norm);
     check_structure(&norm, limits).map_err(SaveRefused)?; // adoption may add nodes
     validate(&norm, limits).map_err(|i| SaveRefused(i.into()))?;
     let out = serde_json::to_string(&VrsFileRef { varos: FORMAT_VERSION, doc: &norm })

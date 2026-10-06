@@ -85,7 +85,7 @@ pub fn tools() -> Value {
         ),
         object(json!({"verb":{"const":"rename"},"ids":edit_ids,"name":name}), &["verb", "ids", "name"]),
         object(
-            json!({"verb":{"const":"align"},"ids":edit_ids,"mode":{"enum":["left","center","right","top","middle","bottom"]},"target":{"type":"string","pattern":"^(selection|a[0-9]+@[0-9]+)$"}}),
+            json!({"verb":{"const":"align"},"ids":edit_ids,"mode":{"enum":["left","center","right","top","middle","bottom"]},"target":{"type":"string","pattern":"^(selection|artboard:[1-9][0-9]*|\\$[A-Za-z][A-Za-z0-9_]{0,62}|a[0-9]+@[0-9]+)$","description":"selection, artboard:N, a request-local bound to an artboard, or the deprecated revision-bound aN@rev"}}),
             &["verb", "ids", "mode", "target"],
         ),
         object(
@@ -101,7 +101,21 @@ pub fn tools() -> Value {
     for verb in ["delete", "ungroup"] {
         operation_schemas.push(object(json!({"verb":{"const":verb},"ids":edit_ids}), &["verb", "ids"]));
     }
-    schemas.insert("snapshot",object(json!({"api":api,"board":board,"rev":rev,"width":{"type":"integer","minimum":1,"maximum":1024,"default":544},"height":{"type":"integer","minimum":1,"maximum":1024,"default":246}}),&["board","rev"]));
+    // slice 3: page verbs, addressed by the persistent artboard:N (or a request-local bound to one)
+    let artboard = json!({"type":"string","pattern":"^(artboard:[1-9][0-9]*|\\$[A-Za-z][A-Za-z0-9_]{0,62})$"});
+    let page_bounds = json!({"type":"array","minItems":4,"maxItems":4,"items":{"type":"number"},"description":"[x,y,width,height] in points; width and height at least 1"});
+    let add_artboard = json!({"verb":{"const":"add_artboard"},"bounds":page_bounds,"preset":{"enum":["square","portrait","story","a4"],"description":"square 1080x1080, portrait 1080x1350, story 1080x1920 (px = pt at 72 ppi), a4 595x842 pt"},"origin":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"},"description":"top-left for a preset page; default: right of the right-most page"},"name":name,"local":local});
+    operation_schemas.push(json!({"type":"object","properties":add_artboard,"required":["verb"],"additionalProperties":false,"oneOf":[{"required":["bounds"],"not":{"anyOf":[{"required":["preset"]},{"required":["origin"]}]}},{"required":["preset"],"not":{"required":["bounds"]}}]}));
+    operation_schemas.push(object(
+        json!({"verb":{"const":"resize_artboard"},"id":artboard,"bounds":page_bounds}),
+        &["verb", "id", "bounds"],
+    ));
+    operation_schemas
+        .push(object(json!({"verb":{"const":"rename_artboard"},"id":artboard,"name":name}), &["verb", "id", "name"]));
+    for verb in ["delete_artboard", "set_active_artboard"] {
+        operation_schemas.push(object(json!({"verb":{"const":verb},"id":artboard}), &["verb", "id"]));
+    }
+    schemas.insert("snapshot",object(json!({"api":api,"board":board,"rev":rev,"artboard":{"type":"string","pattern":"^artboard:[1-9][0-9]*$","description":"render only this page, at its aspect ratio inside width x height (default 1024 x 1024)"},"width":{"type":"integer","minimum":1,"maximum":1024,"description":"default 544 (board preview) or 1024 (page)"},"height":{"type":"integer","minimum":1,"maximum":1024,"description":"default 246 (board preview) or 1024 (page)"}}),&["board","rev"]));
     schemas.insert("edit",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"ops":{"type":"array","minItems":1,"maxItems":100,"items":{"oneOf":operation_schemas}}}),&["api","board","request_id","expected_rev","ops"]));
     schemas.insert("history",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"action":{"enum":["undo","redo"]},"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}}),&["api","board","request_id","expected_rev","action"]));
     schemas.insert("request_status", object(json!({"api":api,"request_id":request_id}), &["request_id"]));
@@ -110,8 +124,8 @@ pub fn tools() -> Value {
         "list_boards"=>"List authorized open boards, never files or Recent entries.",
         "describe"=>"Summary first; ask for ids and fields for paginated detail. since returns net changes or resync_required.",
         "select"=>"Deliberately replace human selection with explicit targets; no document undo step.",
-        "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection.",
-        "snapshot"=>"Explicit revision-pinned CPU PNG preview. Returns an MCP image; max 1024 pixels per dimension.",
+        "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection. Page verbs use persistent artboard:N ids.",
+        "snapshot"=>"Explicit revision-pinned CPU PNG preview of the board, or of one artboard:N page. Returns an MCP image; max 1024 pixels per dimension.",
         "history"=>"One shared undo/redo entry. Retry confirmation_required with digest and SAME request_id. Requires desktop owner VAROS_BRIDGE_ALLOW_HISTORY=1.",
         _=>"Get a retained receipt by monotonic request_id for this proxy client.",
     },"inputSchema":schemas[*name]})).collect();

@@ -540,6 +540,107 @@ fn bridge_envelope_versions_and_stable_wire_names() {
     }
 }
 
+/// Slice 3: `export-pdf --artboard` exports exactly that page by its stable id (format 4 fixture: ids 16, 17).
+#[test]
+fn export_pdf_artboard_exports_one_page_by_stable_id() {
+    let dir = Scratch::new();
+    let input = Path::new(env!("CARGO_MANIFEST_DIR")).join("../varos-core/tests/fixtures/v4/v4_board_meta.vrs");
+    let count = |out: &Path| {
+        let text = String::from_utf8_lossy(&std::fs::read(out).unwrap()).into_owned();
+        let at = text.find("/Count ").expect("a page tree");
+        text[at + 7..].split(|c: char| !c.is_ascii_digit()).next().unwrap().parse::<u32>().unwrap()
+    };
+    let all = dir.path("all.pdf");
+    cli(&["export-pdf".as_ref(), input.as_os_str(), "--out".as_ref(), all.as_os_str()], true);
+    assert_eq!(count(&all), 2);
+    let mut bytes = vec![];
+    for id in ["artboard:16", "artboard:17", "17"] {
+        let one = dir.path(&format!("one-{}.pdf", id.replace(':', "_")));
+        let args = ["export-pdf".as_ref(), input.as_os_str(), "--out".as_ref(), one.as_os_str()];
+        cli(&[&args[..], &["--artboard".as_ref(), id.as_ref()]].concat(), true);
+        assert_eq!(count(&one), 1, "{id}");
+        bytes.push(std::fs::read(&one).unwrap());
+    }
+    assert_ne!(bytes[0], bytes[1], "page A (with art) and page B are different pages");
+    assert_eq!(bytes[1], bytes[2], "artboard:17 and 17 name the same page");
+    for bad in ["artboard:99", "artboard:0", "a1@1"] {
+        let out = dir.path("bad.pdf");
+        let error = cli(
+            &[
+                "export-pdf".as_ref(),
+                input.as_os_str(),
+                "--out".as_ref(),
+                out.as_os_str(),
+                "--artboard".as_ref(),
+                bad.as_ref(),
+            ],
+            false,
+        );
+        assert!(error["reason"].as_str().unwrap().contains("artboard"), "{bad}: {error}");
+    }
+    let out = dir.path("save.vrs");
+    cli(
+        &[
+            "save-as".as_ref(),
+            input.as_os_str(),
+            "--out".as_ref(),
+            out.as_os_str(),
+            "--artboard".as_ref(),
+            "17".as_ref(),
+        ],
+        false,
+    );
+}
+
+/// Review P1 (slice 3): an export never overwrites its editable input — not by the same path, a
+/// `..` spelling, a symlink or (Unix) a hard link — and `--in-place` is not an export option.
+#[test]
+fn export_pdf_refuses_to_overwrite_its_input() {
+    let dir = Scratch::new();
+    let input = dir.path("board.vrs");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../varos-core/tests/fixtures/v4/v4_board_meta.vrs"),
+        &input,
+    )
+    .unwrap();
+    let original = std::fs::read(&input).unwrap();
+    let dotted = dir.path("sub");
+    std::fs::create_dir(&dotted).unwrap();
+    // symlink and hard-link aliases are detected on Unix (canonical path, then device/inode)
+    let targets: Vec<PathBuf> = [input.clone(), dotted.join("../board.vrs")]
+        .into_iter()
+        .chain(unix_aliases(&input, &dir.path("link.vrs"), &dir.path("hard.vrs")))
+        .collect();
+    for out in &targets {
+        for extra in [&[][..], &["--artboard".as_ref(), "17".as_ref()][..]] {
+            let args =
+                [&["export-pdf".as_ref(), input.as_os_str(), "--out".as_ref(), out.as_os_str()][..], extra].concat();
+            let error = cli(&args, false);
+            assert!(error["reason"].as_str().unwrap().contains("resolves to the input"), "{out:?}: {error}");
+            assert_eq!(std::fs::read(&input).unwrap(), original, "{out:?}: the editable input is untouched");
+        }
+    }
+    let error = cli(&["export-pdf".as_ref(), input.as_os_str(), "--in-place".as_ref()], false);
+    assert!(error["reason"].as_str().unwrap().contains("unknown option --in-place"), "{error}");
+    assert_eq!(std::fs::read(&input).unwrap(), original);
+    // a different, existing destination is still fine (replaced atomically)
+    let other = dir.path("other.pdf");
+    std::fs::write(&other, b"old").unwrap();
+    cli(&["export-pdf".as_ref(), input.as_os_str(), "--out".as_ref(), other.as_os_str()], true);
+    assert!(std::fs::read(&other).unwrap().starts_with(b"%PDF-"));
+}
+
+#[cfg(unix)]
+fn unix_aliases(target: &Path, link: &Path, hard: &Path) -> Vec<PathBuf> {
+    std::os::unix::fs::symlink(target, link).unwrap();
+    std::fs::hard_link(target, hard).unwrap();
+    vec![link.to_path_buf(), hard.to_path_buf()]
+}
+#[cfg(not(unix))]
+fn unix_aliases(_: &Path, _: &Path, _: &Path) -> Vec<PathBuf> {
+    vec![]
+}
+
 fn nested_fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v3_nested_group.vrs")
 }
