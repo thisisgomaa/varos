@@ -18,3 +18,8 @@ serde_json = "1"
 # Board tags compare by ONE fold rule (NFC + full case fold, `board::fold`) — the same rule as the app's
 # volume-name keys. Pure Rust, already in the workspace lock (varos-app uses it).
 unicode-normalization = "0.1.25"
+
+[dev-dependencies]
+# SVG parsing/raster validation only; the exporter uses std and the existing core model.
+resvg = { version = "0.45", default-features = false }
+roxmltree = "0.20"
