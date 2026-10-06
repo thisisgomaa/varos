@@ -11,9 +11,10 @@ EDGES = {
     "varos-core": set(),
     "varos-render-wgpu": {"varos-core"},
     "varos-pdf": {"varos-core"},
-    "varos-app": {"varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster"},
+    "varos-app": {"varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
     "varos-raster": {"varos-core", "varos-pdf"},  # PDF is test-only.
-    "varos-cli": {"varos-core", "varos-pdf", "varos-raster"},
+    "varos-bridge": {"varos-core"},
+    "varos-cli": {"varos-core", "varos-pdf", "varos-raster", "varos-bridge"},
 }
 
 
@@ -36,7 +37,7 @@ def validate(metadata, app_source):
         exact(f"{name} internal dependencies", internal, allowed)
         for dependency in dependencies:
             normalized = dependency["name"].replace("_", "-")
-            if name in {"varos-core", "varos-raster", "varos-cli"} and re.match(
+            if name in {"varos-core", "varos-raster", "varos-cli", "varos-bridge"} and re.match(
                 r"^(wgpu|winit|egui(?:-|$)|windows(?:-|$))", normalized
             ):
                 violations.append(f"{name} forbidden UI/GPU/platform dependency: {dependency['name']}")
@@ -77,7 +78,7 @@ def main():
             print(error.stderr, file=sys.stderr)
         return 1
     print("check_dep_directions: PASS")
-    print("internal edges: match declared workspace allowlist; core/raster/cli reject UI/GPU dependencies")
+    print("internal edges: Bridge -> core; raster -> core (+ pdf tests); CLI -> Bridge, core, pdf, raster; app -> core, renderer, pdf, raster, Bridge")
     print("egui_tiles code use: varos-app/src/shell/boxtree.rs only")
     return 0
 

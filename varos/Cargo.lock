@@ -4013,6 +4013,7 @@ dependencies = [
  "tiny-skia",
  "ttf-parser",
  "unicode-normalization",
+ "varos-bridge",
  "varos-core",
  "varos-pdf",
  "varos-raster",
@@ -4022,9 +4023,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "varos-bridge"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "varos-core",
+]
+
+[[package]]
 name = "varos-cli"
 version = "0.1.0"
 dependencies = [
+ "varos-bridge",
  "varos-core",
  "varos-pdf",
  "varos-raster",
