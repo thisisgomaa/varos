@@ -76,6 +76,13 @@ impl<T: Send + 'static> IoWorker<T> {
         self.done.try_iter().collect()
     }
 
+    /// The next completion, waiting at most `timeout` for it (`None` = nothing finished in time, or
+    /// the worker is gone). Only for a bounded wait at launch (the recovery scan before the first
+    /// frame); the event loop itself always uses [`Self::try_completions`].
+    pub fn wait_completion(&self, timeout: std::time::Duration) -> Option<T> {
+        self.done.recv_timeout(timeout).ok()
+    }
+
     /// Close the queue, run everything already submitted, join the thread, and return the
     /// completions not yet collected.
     pub fn shutdown(mut self) -> Vec<T> {

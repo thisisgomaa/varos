@@ -73,7 +73,7 @@ fn preset_boards_save_reopen_and_export_their_one_artboard() {
         (PresetId::Story, 1080.0, 1920.0),
         (PresetId::A4, 595.0, 842.0),
     ] {
-        let d = named(new_board_with_preset(id, None));
+        let d = named(new_board_with_preset(id));
         let bytes = write_pdf_checked(&d, &Limits::DEFAULT).unwrap();
         let back = load_vrs_bytes(&bytes, &Limits::DEFAULT).unwrap().doc;
         assert_eq!(back, d, "{id:?}");

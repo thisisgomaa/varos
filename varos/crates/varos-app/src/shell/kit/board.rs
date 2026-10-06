@@ -1,6 +1,6 @@
 //! Start v2 — Boards kit controls (lane L4): the hero button, the text button, tag / Missing pills, the
 //! key chip, the filter tab, the segmented view toggle, the preset cell, the board card surface and its
-//! "…" chip, the table row, the search pill, and THE outside focus ring.
+//! "…" chip, the table row, and THE outside focus ring.
 //!
 //! Every control here is placed at an explicit rect (the page computes its layout once) and is
 //! pointer-only (`Sense::CLICK`): the Start page owns the keyboard (K2 row 2) and passes `focused`
@@ -8,7 +8,7 @@
 //! control picks the state colour. No host commands, no I/O, no animation, tokens only.
 use std::sync::Arc;
 
-use egui::{Color32, CornerRadius, Galley, Id, Painter, PointerButton, Pos2, Rect, Sense, Stroke, StrokeKind, Ui};
+use egui::{Color32, CornerRadius, Galley, Id, Painter, PointerButton, Rect, Sense, Stroke, StrokeKind, Ui};
 
 use super::{Availability, ControlResponse, Icon};
 use crate::shell::tokens as t;
@@ -282,20 +282,15 @@ pub fn segmented(
     (frame.chosen, frame.rects)
 }
 
-/// The preview a preset cell draws: an outline at the shared scale, or Custom's dashed box with a plus.
-#[derive(Clone, Copy, Debug)]
-pub enum PresetPreview {
-    Outline(egui::Vec2),
-    Custom,
-}
-/// One preset cell (src.html `.pr`): preview on a shared baseline, name 13/500, mono size. Hover = a
-/// ROW_HOVER wash; the focus ring is drawn just inside the cell so it never crosses the panel edge.
+/// One preset cell (src.html `.pr`): the artboard's outline (`outline` = its size at the shared
+/// scale) on a shared baseline, name 13/500, mono size. Hover = a ROW_HOVER wash; the focus ring is
+/// drawn just inside the cell so it never crosses the panel edge.
 #[allow(clippy::too_many_arguments)]
 pub fn preset_cell(
     ui: &mut Ui,
     id: Id,
     rect: Rect,
-    preview: PresetPreview,
+    outline: egui::Vec2,
     name_line: (Arc<Galley>, f32),
     size_line: (Arc<Galley>, f32),
     focused: bool,
@@ -308,25 +303,12 @@ pub fn preset_cell(
         p.rect_filled(rect, CornerRadius::ZERO, t::ROW_HOVER);
     }
     let base = rect.top() + t::SB_PRESET_TOP + t::SB_PRESET_PV;
-    match preview {
-        PresetPreview::Outline(size) => {
-            let ab = Rect::from_min_max(
-                egui::pos2(rect.center().x - size.x / 2.0, base - size.y),
-                egui::pos2(rect.center().x + size.x / 2.0, base),
-            );
-            p.rect_filled(ab, CornerRadius::ZERO, t::BG);
-            p.rect_stroke(ab, CornerRadius::ZERO, Stroke::new(t::KIT_STROKE, t::MUTED), StrokeKind::Inside);
-        }
-        PresetPreview::Custom => {
-            // on the shared baseline like the outlines (src.html `.pv { align-items: flex-end }`)
-            let ab = Rect::from_min_max(
-                egui::pos2(rect.center().x - t::SB_CUSTOM_W / 2.0, base - t::SB_CUSTOM_H),
-                egui::pos2(rect.center().x + t::SB_CUSTOM_W / 2.0, base),
-            );
-            dashed_rect(p, ab.shrink(t::KIT_STROKE / 2.0), t::MUTED);
-            Icon::Plus.paint(p, ab.center(), t::SB_ICON_SMALL, t::MUTED);
-        }
-    }
+    let ab = Rect::from_min_max(
+        egui::pos2(rect.center().x - outline.x / 2.0, base - outline.y),
+        egui::pos2(rect.center().x + outline.x / 2.0, base),
+    );
+    p.rect_filled(ab, CornerRadius::ZERO, t::BG);
+    p.rect_stroke(ab, CornerRadius::ZERO, Stroke::new(t::KIT_STROKE, t::MUTED), StrokeKind::Inside);
     let (name, name_top) = name_line;
     let (size, size_top) = size_line;
     p.galley(egui::pos2(rect.center().x - name.size().x / 2.0, name_top), name, t::TEXT);
@@ -401,38 +383,6 @@ pub fn table_row(ui: &mut Ui, id: Id, rect: Rect, focused: bool, label: &str) ->
         focus_ring(&ui.painter().with_clip_rect(ui.clip_rect()), rect, t::R, t::BG);
     }
     r
-}
-
-/// The top band's "Search boards" field (4b): r3, PANEL + 1-px LINE at rest; while it holds the
-/// keyboard SURFACE + LINE2 with the 2-px azure focus ring 1 px outside it. Search glyph, then the
-/// kit's live search field (every keystroke is the value; Esc restores). Returns true when `text`
-/// changed. The document's (inert) Search in the band paints the same rest look.
-pub fn search_pill(ui: &mut Ui, id: Id, rect: Rect, text: &mut String, font: egui::FontId, hint: &str) -> bool {
-    let focused = ui.ctx().memory(|m| m.has_focus(id));
-    let p = ui.painter();
-    let (fill, line) = if focused { (t::SURFACE, t::LINE2) } else { (t::PANEL, t::LINE) };
-    p.rect_filled(rect, t::R, fill);
-    p.rect_stroke(rect, t::R, egui::Stroke::new(t::KIT_STROKE, line), egui::StrokeKind::Inside);
-    if focused {
-        // the focus overlay: a 2-px ring, KIT_FOCUS_GAP outside the field (UI_SYSTEM K5)
-        let ring = rect.expand(t::KIT_FOCUS_GAP + t::KIT_FOCUS_STROKE / 2.0);
-        let r = t::R + (t::KIT_FOCUS_GAP + t::KIT_FOCUS_STROKE / 2.0) as u8;
-        let stroke = egui::Stroke::new(t::KIT_FOCUS_STROKE, t::ACCENT);
-        ui.painter().with_clip_rect(ui.clip_rect().expand(t::KIT_FOCUS_STROKE * 2.0)).rect_stroke(
-            ring,
-            r,
-            stroke,
-            egui::StrokeKind::Middle,
-        );
-    }
-    let p = ui.painter();
-    let icon_c = egui::pos2(rect.left() + t::SB_SEARCH_PAD + t::SB_ICON_SMALL / 2.0, rect.center().y);
-    Icon::Search.paint(p, icon_c, t::SB_ICON_SMALL, t::MUTED);
-    let x = rect.left() + t::SB_SEARCH_PAD + t::SB_ICON_SMALL + t::SB_SEARCH_GAP;
-    let field = Rect::from_min_max(Pos2::new(x, rect.top()), Pos2::new(rect.right() - t::SB_SEARCH_PAD, rect.bottom()));
-    let before = text.clone();
-    super::field::search_field(ui, id, field, text, font, hint);
-    *text != before
 }
 
 /// Width of a removable tag chip holding `label` (the tag field in the Board section).

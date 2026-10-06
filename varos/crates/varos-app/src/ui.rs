@@ -181,7 +181,7 @@ pub struct Ui {
     /// takes the recovery status's place.
     pub file_status: String,
     /// DFS S6: the open Export PDF sheet and each tab's last scope; 4b: the panel column's x-span as
-    /// last laid out (the band's Search + V zone, and the sheet's right edge — one frame late).
+    /// last laid out (the band's right zone with the V mark, and the sheet's right edge — one frame late).
     export_sheet: Option<crate::export_ui::ExportSheet>,
     panel_column: Option<egui::Rangef>,
     export_scopes: std::collections::HashMap<SessionId, varos_pdf::ExportScope>,
@@ -483,9 +483,8 @@ impl Ui {
             varos_app::shell::kit::close_menu(&self.ctx);
             if home {
                 self.start_page.reset_focus();
-                // entering Home drops a document field's keyboard once; Home itself keeps egui focus
-                // (its Search field) — canvas keys never reach a document behind it anyway
-                // (`Workspace::document_target`)
+                // entering Home drops a document field's keyboard once — canvas keys never reach a
+                // document behind Home anyway (`Workspace::document_target`)
                 self.ctx.memory_mut(|m| {
                     if let Some(id) = m.focused() {
                         m.surrender_focus(id);
@@ -609,8 +608,8 @@ impl Ui {
             );
         });
 
-        // K3: Home draws only its live Search field (it commits nothing); any other edit left open (an
-        // invalid one a non-user command passed) is closed here — there is no document to commit into
+        // K3: Home draws no document field; any edit left open (an invalid one a non-user command
+        // passed) is closed here — there is no document to commit into
         let _ = kit::field::end_frame(&self.ctx);
         self.field_pending = None;
         self.board_hole = None;

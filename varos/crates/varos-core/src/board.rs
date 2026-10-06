@@ -193,16 +193,14 @@ fn file_stem(path: &Path) -> Option<String> {
     path.file_stem().or_else(|| path.file_name()).map(|s| s.to_string_lossy().into_owned()).filter(|s| !s.is_empty())
 }
 
-/// A new-board preset (Start's "…or start with an artboard").
+/// A new-board preset (Start's "…or start with an artboard"). There is no "Custom…" preset (owner
+/// 2026-10-06): a board opens as a free canvas with no size chosen up front (`new_board`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PresetId {
     Square,
     Portrait,
     Story,
     A4,
-    /// One artboard of the last-used custom size. The size dialog is a later piece; until then the
-    /// caller supplies the remembered size (or the default square).
-    Custom,
 }
 
 /// One row of the preset table. `w`/`h` are in `unit`; geometry is stored in points (px == pt at the
@@ -216,13 +214,12 @@ pub struct Preset {
     pub unit: Unit,
 }
 
-/// THE preset table (the one home for preset sizes). `Custom`'s size here is only its fallback.
+/// THE preset table (the one home for preset sizes).
 pub const PRESETS: &[Preset] = &[
     Preset { id: PresetId::Square, label: "Square", w: 1080.0, h: 1080.0, unit: Unit::Px },
     Preset { id: PresetId::Portrait, label: "Portrait", w: 1080.0, h: 1350.0, unit: Unit::Px },
     Preset { id: PresetId::Story, label: "Story", w: 1080.0, h: 1920.0, unit: Unit::Px },
     Preset { id: PresetId::A4, label: "A4", w: 595.0, h: 842.0, unit: Unit::Pt },
-    Preset { id: PresetId::Custom, label: "Custom…", w: 1080.0, h: 1080.0, unit: Unit::Px },
 ];
 
 /// The table row for `id`.
@@ -236,15 +233,10 @@ pub fn new_board() -> Document {
 }
 
 /// A fresh board with one artboard from the preset table, at the origin, active, and the document's
-/// display unit set to the preset's unit. `custom` = the last-used custom size in points (only read
-/// for [`PresetId::Custom`]; `None` → the table's fallback). A non-finite or non-positive custom size
-/// falls back too, so this never builds a document the save gate would refuse.
-pub fn new_board_with_preset(id: PresetId, custom: Option<(f32, f32)>) -> Document {
+/// display unit set to the preset's unit.
+pub fn new_board_with_preset(id: PresetId) -> Document {
     let p = preset(id);
-    let (w, h) = match (id, custom) {
-        (PresetId::Custom, Some((w, h))) if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 => (w, h),
-        _ => (p.w * p.unit.pt_per(72.0), p.h * p.unit.pt_per(72.0)),
-    };
+    let (w, h) = (p.w * p.unit.pt_per(72.0), p.h * p.unit.pt_per(72.0));
     let mut doc = new_board();
     doc.units.display = p.unit;
     doc.artboards = vec![Artboard { w, h, ..Artboard::default() }];

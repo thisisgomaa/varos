@@ -135,9 +135,9 @@ impl ShellState {
         serde_json::to_string(&self.tree)
     }
 
-    /// The right panel column's x-span as last laid out (4b: the top band's Search + V zone sits
-    /// over it): the root is a horizontal split whose LAST child does not hold the Board → that
-    /// child's rect. `None` before the first layout, or when no such column exists (panels closed,
+    /// The right panel column's x-span as last laid out (4b: the top band's right zone — the V mark
+    /// at its right end — sits over it): the root is a horizontal split whose LAST child does not
+    /// hold the Board → that child's rect. `None` before the first layout, or when no such column exists (panels closed,
     /// the Board last, a vertical root). Read-only — the layout is never touched.
     pub fn side_column_span(&self) -> Option<egui::Rangef> {
         let root = self.tree.root()?;

@@ -1005,6 +1005,15 @@ fn main() {
     );
     let mut start_refresh = varos_app::start::StartRefresh::default();
     let mut recovery_gen = 0u64;
+    // The orphan scan was submitted with the host (before the window / GPU setup): take its result
+    // now (bounded wait) so frame 0 already carries the "closed unexpectedly" strip / Start's
+    // Recovered rows — not whenever the loop next wakes (owner report 2026-10-06: ≈ 30 s late).
+    if !recovery.await_launch_scan(recovery_host::LAUNCH_SCAN_WAIT) {
+        eprintln!("[varos] recovery scan still running at first frame; polling for it");
+    }
+    recovery.observe(&mut ws, Instant::now());
+    recovery_gen += recovery.take_changed() as u64;
+    gui.recovery = recovery.presentation(ws.active());
     sync_home(&mut gui, ws.on_home(), &store, &recovery, &mut probe, &mut start_refresh, recovery_gen);
 
     let installed = cursors::install(hwnd);
@@ -1811,7 +1820,7 @@ mod zero_artboard_fit_tests {
         let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
         assert!(near(x, 100.0) && near(y, 50.0) && near(w, 200.0) && near(h, 200.0), "{:?}", (x, y, w, h));
         // with a board, Fit frames that board
-        ed.replace_doc(new_board_with_preset(PresetId::Story, None));
+        ed.replace_doc(new_board_with_preset(PresetId::Story));
         assert_eq!(fit_request_rect(&ed, 0), (0.0, 0.0, 1080.0, 1920.0));
     }
 }
