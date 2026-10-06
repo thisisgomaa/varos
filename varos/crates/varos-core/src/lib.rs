@@ -11,6 +11,7 @@ pub mod format;
 pub mod geom;
 pub mod model;
 pub mod scene;
+pub mod svg;
 pub mod tools;
 pub mod units;
 
