@@ -65,6 +65,10 @@ pub enum Invalid {
     /// A key that only a newer format writes, in a file that claims an older format (e.g. the board
     /// `name` in a format-2 file). Refused like any other unknown field.
     FieldNotInFormat { field: &'static str, version: u32 },
+    /// A format-4 artboard (0-based `index`) without its stable id.
+    MissingArtboardId { index: usize },
+    /// The active artboard index names no artboard.
+    ActiveArtboardOutOfRange { active: usize, count: usize },
 }
 
 /// A save refused before anything was written. The editor keeps the document open and dirty.
@@ -144,10 +148,18 @@ impl fmt::Display for Invalid {
                 write!(f, "its {what} is not in the form Varos writes, so it may have been edited by another app")
             }
             Invalid::Board(e) => e.fmt(f),
+            Invalid::FieldNotInFormat { field: "artboard id", version } => write!(
+                f,
+                "it has an artboard id, which format {version} files cannot contain, so it may have been edited by another app"
+            ),
             Invalid::FieldNotInFormat { field, version } => write!(
                 f,
                 "it has a board {field}, which format {version} files cannot contain, so it may have been edited by another app"
             ),
+            Invalid::MissingArtboardId { index } => write!(f, "artboard {} has no id", index + 1),
+            Invalid::ActiveArtboardOutOfRange { active, count } => {
+                write!(f, "its active artboard ({}) does not exist ({count} artboards)", active + 1)
+            }
         }
     }
 }

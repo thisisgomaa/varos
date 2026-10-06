@@ -8,6 +8,21 @@ use std::collections::{HashMap, HashSet};
 
 /// Validate canonical content, after migration/normalization and the structural precheck.
 pub fn validate(doc: &Document, _limits: &Limits) -> Result<(), Invalid> {
+    before_artboard_ids(doc)?;
+    // format 4: every artboard has its id (uniqueness is structural, `check_structure`), and `active`
+    // names an artboard (or is 0 on a free canvas)
+    if let Some(index) = doc.artboards.iter().position(|a| a.id == 0) {
+        return Err(Invalid::MissingArtboardId { index });
+    }
+    if doc.active >= doc.artboards.len().max(1) {
+        return Err(Invalid::ActiveArtboardOutOfRange { active: doc.active, count: doc.artboards.len() });
+    }
+    Ok(())
+}
+
+/// `validate` without the format-4 artboard checks: a v2/v3 file is checked with exactly the strictness
+/// it had when its format was current, before the v3→v4 migration assigns ids.
+pub(crate) fn before_artboard_ids(doc: &Document) -> Result<(), Invalid> {
     authored(doc)?;
     let leaves: HashSet<u32> = doc
         .nodes

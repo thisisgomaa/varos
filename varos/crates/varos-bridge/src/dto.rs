@@ -177,6 +177,43 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         opacity: Option<f32>,
     },
+    /// Slice 3: a new page, from explicit `bounds` OR a `preset` (optionally placed at `origin`, else
+    /// to the right of the right-most page). Returns `artboard:<id>` through `locals`/`artboards_created`.
+    AddArtboard {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bounds: Option<[f32; 4]>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preset: Option<ArtboardPreset>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<[f32; 2]>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        local: Option<String>,
+    },
+    ResizeArtboard {
+        id: String,
+        bounds: [f32; 4],
+    },
+    RenameArtboard {
+        id: String,
+        name: String,
+    },
+    DeleteArtboard {
+        id: String,
+    },
+    SetActiveArtboard {
+        id: String,
+    },
+}
+/// The board presets (`varos_core::board::PRESETS`), in points.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtboardPreset {
+    Square,
+    Portrait,
+    Story,
+    A4,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -216,7 +253,12 @@ pub enum Order {
 impl Operation {
     pub fn ids(&self) -> &[String] {
         match self {
-            Self::AddShape { .. } => &[],
+            Self::AddShape { .. }
+            | Self::AddArtboard { .. }
+            | Self::ResizeArtboard { .. }
+            | Self::RenameArtboard { .. }
+            | Self::DeleteArtboard { .. }
+            | Self::SetActiveArtboard { .. } => &[],
             Self::Move { ids, .. }
             | Self::SetPaint { ids, .. }
             | Self::Resize { ids, .. }
@@ -230,8 +272,34 @@ impl Operation {
             | Self::Order { ids, .. } => ids,
         }
     }
+    /// The artboard this operation addresses (`artboard:N` or a request-local), if it is a page verb.
+    pub fn artboard(&self) -> Option<&str> {
+        match self {
+            Self::ResizeArtboard { id, .. }
+            | Self::RenameArtboard { id, .. }
+            | Self::DeleteArtboard { id }
+            | Self::SetActiveArtboard { id } => Some(id),
+            _ => None,
+        }
+    }
+    /// A slice-3 page verb (these can add, remove or re-index artboards).
+    pub fn is_page_verb(&self) -> bool {
+        matches!(
+            self,
+            Self::AddArtboard { .. }
+                | Self::ResizeArtboard { .. }
+                | Self::RenameArtboard { .. }
+                | Self::DeleteArtboard { .. }
+                | Self::SetActiveArtboard { .. }
+        )
+    }
+    /// An `align` whose target is the deprecated revision-bound `aN@rev` page reference.
+    pub fn uses_legacy_artboard_alias(&self) -> bool {
+        matches!(self, Self::Align { target, .. }
+            if target.starts_with('a') && target.contains('@') && !target.starts_with("artboard:"))
+    }
     pub fn destructive(&self) -> bool {
-        matches!(self, Self::Delete { .. } | Self::Ungroup { .. })
+        matches!(self, Self::Delete { .. } | Self::Ungroup { .. } | Self::DeleteArtboard { .. })
     }
 }
 fn snapshot_width() -> u32 {
@@ -247,10 +315,21 @@ pub struct Snapshot {
     pub api: String,
     pub board: String,
     pub rev: u64,
-    #[serde(default = "snapshot_width")]
-    pub width: u32,
-    #[serde(default = "snapshot_height")]
-    pub height: u32,
+    /// Slice 3: render only this page (`artboard:N`): its own bounds and background, at its aspect
+    /// ratio inside `width`×`height` (each default 1024 for a page). Absent: the fitted board preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artboard: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+impl Snapshot {
+    /// The requested image box: the board preview defaults to 544×246, a page snapshot to 1024×1024.
+    pub fn size(&self) -> (u32, u32) {
+        let (w, h) = if self.artboard.is_some() { (1024, 1024) } else { (snapshot_width(), snapshot_height()) };
+        (self.width.unwrap_or(w), self.height.unwrap_or(h))
+    }
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

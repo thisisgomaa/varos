@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 pub type Step = fn(Document, &Limits) -> Result<Document, LoadError>;
 
 /// The sequential table. Loading format N runs every step from N up to `FORMAT_VERSION`, in order.
-pub const MIGRATIONS: &[(u32, Step)] = &[(1, migrate_v1_to_v2), (2, migrate_v2_to_v3)];
+pub const MIGRATIONS: &[(u32, Step)] = &[(1, migrate_v1_to_v2), (2, migrate_v2_to_v3), (3, migrate_v3_to_v4)];
 
 /// Run the migrations that take a format-`from` document to format `to`, in order.
 pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result<Document, LoadError> {
@@ -45,6 +45,26 @@ pub fn migrate_v1_to_v2(doc: Document, _limits: &Limits) -> Result<Document, Loa
 pub fn migrate_v2_to_v3(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     debug_assert!(doc.name.is_empty() && doc.description.is_empty() && doc.tags.is_empty());
     Ok(doc)
+}
+
+/// v3 → v4 (2026-10-07, stable artboard ids, Bridge slice 3). Format 4 adds `doc.artboards[].id`; a v3
+/// file has none (`decode_model` refuses the key in a v1–v3 file), so every artboard decoded with id 0.
+/// Assign ids deterministically, in artboard order, from the document id counter (`Document::nid`,
+/// which the v3 canonical pass / v1 normalization already raised to cover every id in use), and clamp a
+/// stale `active` index into range (format 4 refuses a dangling one; a v3 reader clamped it on read).
+/// Nothing else changes.
+pub fn migrate_v3_to_v4(mut doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
+    debug_assert!(doc.artboards.iter().all(|a| a.id == 0));
+    doc.ids = doc.ids.max(max_used_id(&doc));
+    doc.assign_artboard_ids();
+    clamp_active(&mut doc);
+    Ok(doc)
+}
+
+/// The canonical `active` index: within `artboards`, or 0 on a free canvas. Every editor path keeps
+/// this already (`ab_delete`, `ab_set_count`, …); the format refuses anything else from format 4.
+pub(crate) fn clamp_active(doc: &mut Document) {
+    doc.active = doc.active.min(doc.artboards.len().saturating_sub(1));
 }
 
 /// The shared normalizer: migration of v1 files, and the save-side pass on a clone of the editor's

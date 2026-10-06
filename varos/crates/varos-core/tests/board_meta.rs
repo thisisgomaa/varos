@@ -286,7 +286,7 @@ fn meta_doc() -> Document {
 fn metadata_round_trips_through_blob_and_disk_including_arabic() {
     let d = meta_doc();
     let blob = doc_to_blob(&d).unwrap();
-    assert!(blob.starts_with(r#"{"varos":3,"doc":{"name":"شعار المقهى — Café","description":"#), "{}", &blob[..80]);
+    assert!(blob.starts_with(r#"{"varos":4,"doc":{"name":"شعار المقهى — Café","description":"#), "{}", &blob[..80]);
     assert!(blob.contains(r#""tags":["client","عربي","شخصي"]"#), "stored as plain UTF-8, not escaped");
     assert_eq!(doc_from_blob(&blob).unwrap(), d);
     let p = std::env::temp_dir().join(format!("varos-board-meta-{}.vrs", std::process::id()));
@@ -306,9 +306,9 @@ fn v2_files_migrate_to_v3_with_empty_metadata_and_a_notice() {
         assert!(l.migrated, "{name}");
         assert_eq!(l.notice(), Some(MIGRATION_NOTICE), "{name}");
         assert!(l.doc.name.is_empty() && l.doc.description.is_empty() && l.doc.tags.is_empty(), "{name}");
-        // the migrated v2 file saves as exactly the frozen v3 twin
+        // the migrated v2 file saves as exactly the frozen v4 twin (no artboards, so no ids allocated)
         if name.ends_with("v2_boardless.vrs") {
-            let frozen = std::fs::read(fixture("v3/v3_boardless.vrs")).unwrap();
+            let frozen = std::fs::read(fixture("v4/v4_boardless.vrs")).unwrap();
             assert_eq!(doc_to_blob(&l.doc).unwrap().as_bytes(), frozen.as_slice());
         }
     }
@@ -323,13 +323,19 @@ fn v2_files_migrate_to_v3_with_empty_metadata_and_a_notice() {
 
 #[test]
 fn frozen_v3_metadata_fixture_loads_its_exact_metadata() {
+    // format 4 since 2026-10-07: the v3 file migrates (artboard ids) and keeps its metadata exactly
     let bytes = std::fs::read(fixture("v3/v3_board_meta.vrs")).unwrap();
     let l = decode_model(&bytes, None, &Limits::DEFAULT).unwrap();
-    assert_eq!((l.source_version, l.migrated, l.notice()), (3, false, None));
+    assert_eq!((l.source_version, l.migrated, l.notice()), (3, true, Some(MIGRATION_NOTICE)));
     assert_eq!(l.doc.name, "شعار المقهى — Café logo");
     assert_eq!(l.doc.description, "Brand mark, round two. نسخة ثانية للشعار.");
     assert_eq!(l.doc.tags, tags(&["client", "عربي", "logo"]));
-    assert_eq!(doc_to_blob(&l.doc).unwrap().as_bytes(), bytes.as_slice(), "byte-stable");
+    let v4 = std::fs::read(fixture("v4/v4_board_meta.vrs")).unwrap();
+    assert_eq!(doc_to_blob(&l.doc).unwrap().as_bytes(), v4.as_slice(), "saves as the frozen v4 twin");
+    let l4 = decode_model(&v4, None, &Limits::DEFAULT).unwrap();
+    assert_eq!((l4.source_version, l4.migrated, l4.notice()), (4, false, None));
+    assert_eq!(l4.doc, l.doc);
+    assert_eq!(doc_to_blob(&l4.doc).unwrap().as_bytes(), v4.as_slice(), "byte-stable");
 }
 
 fn stamped(d: &Document, version: u32) -> Value {
@@ -399,7 +405,7 @@ fn over_bound_metadata_is_refused_on_load_and_on_save() {
             other => panic!("save of {want:?}: got {other:?}"),
         }
         assert_eq!(d, before, "a refused save never mutates the document");
-        match dec(&stamped(&d, 3)) {
+        match dec(&stamped(&d, 4)) {
             Err(LoadError::Invalid(Invalid::Board(e))) => assert_eq!(e, want),
             other => panic!("load of {want:?}: got {other:?}"),
         }
