@@ -70,7 +70,6 @@ pub mod roles {
 pub const LEDE: &str = "A board is a free canvas with a name, a short description and tags. Artboards inside are optional — add one when a piece needs a fixed size.";
 pub const FIRST_TITLE: &str = "Start with a board";
 pub const RECOVERY_STATUS: &str = "Recovery on · copies every 30 seconds";
-pub const SEARCH_HINT: &str = "Search boards";
 pub const NO_RECENT_COPY: &str = "No recent boards yet.";
 const LOCATE: &str = "Locate…";
 const REMOVE: &str = "Remove from Recent";
@@ -115,10 +114,6 @@ pub mod ids {
     /// The "+N" tab holding the tag filters that do not fit.
     pub fn more_filters() -> Id {
         Id::new("start-v2-more-filters")
-    }
-    /// The top bar's "Search boards" field (Home only).
-    pub fn search() -> Id {
-        Id::new("start-v2-search")
     }
 }
 
@@ -432,12 +427,9 @@ pub fn facts(artboards: u32) -> String {
     }
 }
 
-/// The mono size line under a preset ("1080 × 1350 px"; Custom… = "any size").
+/// The mono size line under a preset ("1080 × 1350 px").
 pub fn preset_size_text(id: PresetId) -> String {
     let p = varos_core::board::preset(id);
-    if id == PresetId::Custom {
-        return "any size".into();
-    }
     format!("{} × {} {}", p.w.round() as u32, p.h.round() as u32, p.unit.suffix())
 }
 
@@ -780,7 +772,7 @@ struct Derived {
     version: String,
 }
 
-/// The Start page state: keyboard focus and its visibility, the open "…" menu, the search buffer.
+/// The Start page state: keyboard focus and its visibility, the open "…" menu.
 pub struct StartPage {
     focus: Slot,
     ring: bool,
@@ -791,15 +783,11 @@ pub struct StartPage {
     /// Enter / Space on the "+N" tab: its menu opens where the tab is drawn this frame.
     more_request: bool,
     last_card: usize,
-    search: String,
     thumbs: ThumbCache,
     derived: Derived,
     derived_builds: u64,
     seen_generation: u64,
     home: Option<PathBuf>,
-    /// The Search field held the keyboard at the end of the last frame (egui drops a field's focus at
-    /// the start of a Tab pass, so the page reads this instead of egui's memory).
-    search_typing: bool,
     /// Handle ⌘N / ⌘O here. Off in the app — the host's command keys own them (K2 row 1); the example
     /// gallery turns it on.
     pub command_keys: bool,
@@ -828,13 +816,11 @@ impl StartPage {
             menu_request: None,
             more_request: false,
             last_card: 0,
-            search: String::new(),
             thumbs: ThumbCache::default(),
             derived: Derived::default(),
             derived_builds: 0,
             seen_generation: 0,
             home: home_dir(),
-            search_typing: false,
             command_keys: false,
         }
     }
@@ -892,19 +878,6 @@ impl StartPage {
     pub fn draw(&mut self, ui: &mut Ui, model: &StartModel, warning: Option<&str>) -> Vec<StartAction> {
         let area = ui.available_rect_before_wrap();
         self.draw_in(ui, area, model, warning)
-    }
-
-    /// The top band's "Search boards" field at `rect` (the host places it: the band's right zone, 28
-    /// tall — 4b). Emits
-    /// `Search` on every change; Esc restores the text it had when it took the keyboard.
-    pub fn search_box(&mut self, ui: &mut Ui, rect: Rect, model: &StartModel) -> Option<StartAction> {
-        let id = ids::search();
-        if !ui.ctx().memory(|m| m.has_focus(id)) {
-            self.search.clone_from(&model.filter().search);
-        }
-        let changed = kb::search_pill(ui, id, rect, &mut self.search, t::small(), SEARCH_HINT);
-        self.search_typing = ui.ctx().memory(|m| m.has_focus(id));
-        changed.then(|| StartAction::Search(self.search.clone()))
     }
 
     /// Draw the page in `area`.
@@ -1060,14 +1033,14 @@ impl StartPage {
     }
 
     /// The page's keyboard (K2 row 2). Returns whether focus moved (to scroll it into view). The page
-    /// yields while a kit menu is open or the Search field has the keyboard.
+    /// yields while a kit menu is open.
     fn keyboard(&mut self, ui: &mut Ui, lay: &PageLayout, f: &mut Frame<'_>) -> bool {
         let ctx = ui.ctx().clone();
         let events = ui.input(|i| i.events.clone());
         if events.is_empty() {
             return false;
         }
-        let blocked = kit::menu_open(&ctx) || self.search_typing || ctx.memory(|m| m.has_focus(ids::search()));
+        let blocked = kit::menu_open(&ctx);
         let order = tab_order(f.model, Some(&self.derived.plan));
         let mut moved = false;
         for event in events {
@@ -1282,11 +1255,7 @@ impl StartPage {
             if i > 0 {
                 p.vline(cell.left() - t::KIT_STROKE / 2.0, cell.y_range(), t::hairline());
             }
-            let preview = if preset.id == PresetId::Custom {
-                kb::PresetPreview::Custom
-            } else {
-                kb::PresetPreview::Outline(egui::vec2(preset.w, preset.h) * t::SB_PRESET_SCALE)
-            };
+            let preview = egui::vec2(preset.w, preset.h) * t::SB_PRESET_SCALE;
             let name_top = cell.top() + t::SB_PRESET_TOP + t::SB_PRESET_PV + t::SB_PRESET_NAME_GAP;
             let name = text(ui, preset.label, roles::BODY_MEDIUM);
             let name_y = name_top + (roles::BODY_MEDIUM.line - name.size().y) / 2.0;

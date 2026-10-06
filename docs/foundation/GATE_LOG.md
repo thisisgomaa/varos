@@ -762,3 +762,10 @@ Base `codex/ui-system-plan` @ `8853d7a`; two independent reviews approved with n
 - **Local gates (Mac, moderator-run on the merged tree):** `cargo test --workspace -j 4` **1056 passed / 0 failed / 8 ignored**; clippy `--all-targets -D warnings` Mac and `x86_64-pc-windows-msvc` clean; `cargo fmt --all --check` clean.
 - **Known representation limit:** egui 0.35 stores painted rectangle corner radii as integer `u8`; Pathfinder's requested 1.5 pt glyph radius is represented by the nearest value, 2 pt. Other values are code/headless-test targets, not a claim of pixel-exact GUI verification.
 - **Not verified:** no GUI was launched, per work order; screenshot overlay and hover/disabled visual checks remain for the owner hand test.
+
+## 2026-10-06 — Close-out 1: Search removed from the band, recovery notice at frame 0, Custom… preset removed
+
+- **Scope:** branch `fix/close-out-1`, baseline `2cb1a47`. Owner decisions 2026-10-06: the band Search field was a dead control → removed (editor + Home, `Icon::Search` + `search.svg` gone, old area drags the window); "Custom…" preset removed (a board opens empty; `PresetId::Custom` never persisted, so no compat impact); recovery notice appeared ~30 s after launch → the launch orphan scan result is now awaited (≤ 250 ms) and observed before frame 0, with a 50 ms poll in `next_wake()` while the scan is out (`IoWorker::wait_completion`, `RecoveryHost::launch/await_launch_scan`).
+- **Author:** Opus. **Review:** Codex Sol — no defect in the three changes; noted the original wake diagnosis is incomplete (winit's proxy wake should not be missed) but the frame-0 guarantee holds; branch-base note resolved by merging main before landing.
+- **Local gates (Mac, moderator-run):** `cargo test --workspace -j 4` **1057 passed / 0 failed / 8 ignored**; clippy Mac + `x86_64-pc-windows-msvc` clean; fmt clean. Ratchet `ui.rs` ≤ 956.
+- **Not verified:** the notice timing after a real Force Quit + relaunch (owner hand test, with the new card design that follows). Leftover: `StartFilter.search` model + `NO_MATCH_COPY` wording are now unreachable (cleanup later).

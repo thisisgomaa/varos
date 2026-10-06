@@ -60,9 +60,8 @@ pub enum AppCommand {
     /// canvas with ZERO artboards (`varos_core::board::new_board`).
     NewBoard,
     /// Start's "…or start with an artboard": a fresh, clean `Untitled-N` board with one artboard from
-    /// the core preset table (`varos_core::board::new_board_with_preset`). `Custom` uses the last
-    /// custom size this run (the size dialog is a later piece; until then it opens the table's
-    /// fallback square — see `lifecycle::Lifecycle::new_with_preset`).
+    /// the core preset table (`varos_core::board::new_board_with_preset`). No "Custom…" preset: a
+    /// board with no size chosen up front is `NewBoard` (owner 2026-10-06).
     NewWithPreset(varos_core::board::PresetId),
     /// Show Start while retaining every open document.
     Home,

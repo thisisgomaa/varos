@@ -255,12 +255,11 @@ fn presets_create_the_right_artboard() {
         (PresetId::Portrait, 1080.0, 1350.0, Unit::Px),
         (PresetId::Story, 1080.0, 1920.0, Unit::Px),
         (PresetId::A4, 595.0, 842.0, Unit::Pt),
-        (PresetId::Custom, 1080.0, 1080.0, Unit::Px),
     ];
-    assert_eq!(PRESETS.len(), want.len(), "one table, one row per preset");
+    assert_eq!(PRESETS.len(), want.len(), "one table, one row per preset (no Custom… since 2026-10-06)");
     for (id, w, h, unit) in want {
         assert_eq!((preset(id).w, preset(id).h, preset(id).unit), (w, h, unit), "{id:?} table row");
-        let d = new_board_with_preset(id, None);
+        let d = new_board_with_preset(id);
         assert_eq!(d.artboards.len(), 1, "{id:?}");
         let ab = &d.artboards[0];
         assert_eq!((ab.x, ab.y, ab.w, ab.h), (0.0, 0.0, w, h), "{id:?}: at the origin, in points (72 ppi)");
@@ -270,21 +269,13 @@ fn presets_create_the_right_artboard() {
         let back = doc_from_blob(&doc_to_blob(&d).unwrap()).unwrap();
         assert_eq!(back, d, "{id:?}: saves and reopens");
     }
-    let custom = new_board_with_preset(PresetId::Custom, Some((300.0, 250.0)));
-    assert_eq!((custom.artboards[0].w, custom.artboards[0].h), (300.0, 250.0), "last-used custom size");
-    for bad in [(0.0, 10.0), (-1.0, 10.0), (f32::NAN, 10.0), (10.0, f32::INFINITY)] {
-        let d = new_board_with_preset(PresetId::Custom, Some(bad));
-        assert_eq!((d.artboards[0].w, d.artboards[0].h), (1080.0, 1080.0), "{bad:?} falls back");
-    }
-    // the custom size is only read for Custom
-    let sq = new_board_with_preset(PresetId::Square, Some((300.0, 250.0)));
-    assert_eq!(sq.artboards[0].w, 1080.0);
+    assert!(!PRESETS.iter().any(|p| p.label.starts_with("Custom")), "no Custom… row");
 }
 
 // ───────────────────────────── format 3 on the wire ─────────────────────────────
 
 fn meta_doc() -> Document {
-    let mut d = new_board_with_preset(PresetId::Portrait, None);
+    let mut d = new_board_with_preset(PresetId::Portrait);
     d.name = s("شعار المقهى — Café");
     d.description = s("الوصف بالعربي and English, 100% UTF-8 ✓");
     d.tags = tags(&["client", "عربي", "شخصي"]);

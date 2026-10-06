@@ -297,10 +297,6 @@ pub struct Workspace {
     next_untitled: u32,
     home: bool,
     placeholder: bool,
-    /// The last custom board size this run (points), for `NewWithPreset(Custom)`. Nothing sets it
-    /// yet: the custom-size dialog is a later piece (START_V2_BOARDS.md); until then Custom opens the
-    /// preset table's fallback square.
-    custom_board_size: Option<(f32, f32)>,
 }
 
 impl Default for Workspace {
@@ -320,17 +316,7 @@ impl Workspace {
             next_untitled: 2,
             home: false,
             placeholder: false,
-            custom_board_size: None,
         }
-    }
-    /// The last-used custom board size (points), if any.
-    pub fn custom_board_size(&self) -> Option<(f32, f32)> {
-        self.custom_board_size
-    }
-    /// Remember the custom board size the (future) size dialog confirmed.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn set_custom_board_size(&mut self, size: (f32, f32)) {
-        self.custom_board_size = Some(size);
     }
 
     /// Start retains a private pristine session to preserve the never-empty host invariant.

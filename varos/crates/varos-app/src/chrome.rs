@@ -49,11 +49,9 @@ pub struct TopbarLayout {
     pub caps: Option<[egui::Rect; 3]>,
     /// macOS: the Home chip (28×28 at the traffic-light lead). Windows: the burger cell.
     pub menu: egui::Rect,
-    /// The V mark — a 28×28 square at the right zone's right edge.
+    /// The V mark — a 28×28 square at the right zone's right edge. The rest of the right zone, left
+    /// of it, is empty band (owner 2026-10-06: no Search there): a press on it drags the window.
     pub brand: egui::Rect,
-    /// Search: the right zone from its left edge up to the V mark (never narrower than
-    /// `BAND_SEARCH_MIN_W`).
-    pub search: egui::Rect,
     /// `(original tab index, its chip rect)`, left → right. Not always a `0..n` prefix: when the
     /// strip overflows, the greedy fit stops early and the ACTIVE tab (spec §4 "Active document name
     /// always matches canvas/layers") takes the last visible slot even if that means displacing
@@ -75,9 +73,10 @@ pub fn tab_width(text_width: f32) -> f32 {
     (t::TAB_PAD_L + text_width + t::TAB_TRAIL).clamp(t::TAB_W_MIN, t::TAB_W_MAX)
 }
 
-/// The right zone (Search + V): the panel column's x-span when one is docked (`right_zone`, from the
-/// box tree, last frame), else `BAND_RIGHT_ZONE_W` wide ending `SEAM_GAP` before the right edge
-/// (before Windows' caps). Never past the caps / window edge.
+/// The right zone (the V mark at its right edge, empty band before it): the panel column's x-span
+/// when one is docked (`right_zone`, from the box tree, last frame), else `BAND_RIGHT_ZONE_W` wide
+/// ending `SEAM_GAP` before the right edge (before Windows' caps). Never past the caps / window edge.
+/// The tabs stop `BAND_TABS_END_GAP` before it.
 pub fn right_zone(
     bar: egui::Rect,
     chrome: TopbarChrome,
@@ -118,9 +117,6 @@ pub fn topbar_layout(
     });
     let zone = self::right_zone(bar, chrome, caps.map(|c| c[0].left()), right_zone);
     let brand = chip(zone.max - t::BAND_BRAND, t::BAND_BRAND);
-    let search_right = brand.left() - t::BAND_GAP;
-    let search_left = zone.min.min(search_right - t::BAND_SEARCH_MIN_W);
-    let search = Rect::from_min_max(pos2(search_left, brand.top()), pos2(search_right, brand.bottom()));
     // macOS: the Home chip on the band's centre line; Windows keeps its full-height burger cell
     let menu = if chrome.window_caps {
         Rect::from_min_size(pos2(bar.left() + chrome.lead, bar.top()), vec2(36.0, bar.height()))
@@ -128,7 +124,8 @@ pub fn topbar_layout(
         chip(bar.left() + chrome.lead, t::BAND_CHIP_H)
     };
     let start_x = menu.right() + t::BAND_GAP;
-    let tabs_right = search.left() - t::BAND_TABS_END_GAP;
+    // the tabs end before the right zone (and never closer than BAND_GAP to the V mark)
+    let tabs_right = zone.min.min(brand.left() - t::BAND_GAP) - t::BAND_TABS_END_GAP;
     let plus_w = t::BAND_CHIP_H;
     // reserve the `+` chip (and its gap) BEFORE fitting tabs (F15: it must never be starved out)
     let mut fit_right = tabs_right - t::BAND_OVERFLOW_GAP - plus_w;
@@ -174,12 +171,12 @@ pub fn topbar_layout(
     });
     // clamp so a wider swapped-in active tab can never push `+` out of the band
     let plus = Some(chip(next.min(tabs_right - plus_w).max(start_x), plus_w));
-    TopbarLayout { caps, menu, brand, search, tabs, overflow, hidden, plus }
+    TopbarLayout { caps, menu, brand, tabs, overflow, hidden, plus }
 }
 
 impl TopbarLayout {
     /// Every bar rect a press BELONGS to (a control, a tab chip's FULL slot — its × lives inside it —
-    /// the `+` and "+N" chips, Home / the burger, Search, the V mark, Windows' caps). This one list is
+    /// the `+` and "+N" chips, Home / the burger, the V mark, Windows' caps). This one list is
     /// what the bar publishes as the caption exclusions (`caption_exclusions` → `cursors::set_caption`),
     /// so the Windows `WM_NCHITTEST` band and the macOS `caption_drag_hit` test exactly the rects the
     /// strip draws and hit-tests — never a second, hand-kept copy (P15).
@@ -192,7 +189,7 @@ impl TopbarLayout {
     /// resting slots — the same "published == painted" invariant (P15, P16 review).
     pub fn interactive_rects_with(&self, chips: impl IntoIterator<Item = egui::Rect>) -> Vec<egui::Rect> {
         let mut out: Vec<egui::Rect> = self.caps.map_or_else(Vec::new, |c| c.to_vec());
-        out.extend([self.menu, self.brand, self.search]);
+        out.extend([self.menu, self.brand]);
         out.extend(chips);
         out.extend(self.overflow);
         out.extend(self.plus);
@@ -711,7 +708,7 @@ mod tests {
     /// Every band control's rect (chips' × squares included) for this layout.
     fn controls(layout: &TopbarLayout) -> Vec<egui::Rect> {
         let tab_rects: Vec<egui::Rect> = layout.tabs.iter().map(|&(_, r)| r).collect();
-        [layout.menu, layout.brand, layout.search]
+        [layout.menu, layout.brand]
             .into_iter()
             .chain(tab_rects.iter().copied())
             .chain(tab_rects.iter().copied().map(tab_close_rect))
@@ -756,7 +753,7 @@ mod tests {
             let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, chrome.height));
             let layout = topbar_layout(bar, chrome, None, &[80.0; 9], Some(8));
             assert!(layout.overflow.is_some(), "setup: nine tabs overflow at {width}");
-            let chips = [layout.menu, layout.brand, layout.search]
+            let chips = [layout.menu, layout.brand]
                 .into_iter()
                 .chain(layout.tabs.iter().map(|&(_, r)| r))
                 .chain(layout.overflow)
@@ -781,19 +778,19 @@ mod tests {
         assert_eq!(tab_close_rect(chip).center(), egui::pos2(236.0 - 16.0, 26.0));
     }
 
-    /// The right zone over the panel column: Search from its left edge, V at its right edge.
+    /// The right zone over the panel column: empty band from its left edge, V at its right edge.
     #[test]
     fn right_zone_follows_the_panel_column() {
         let chrome = topbar_chrome(true);
         let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1512.0, chrome.height));
         let column = egui::Rangef::new(1212.0, 1500.0);
         let layout = topbar_layout(bar, chrome, Some(column), &[80.0, 80.0], Some(0));
-        assert_eq!(layout.search.x_range(), egui::Rangef::new(1212.0, 1464.0), "the mockup: 1212–1464 (252)");
+        assert_eq!(right_zone(bar, chrome, None, Some(column)), column, "the mockup: 1212–1500");
         assert_eq!(layout.brand.x_range(), egui::Rangef::new(1472.0, 1500.0), "V: 1472–1500");
         // the editor's column (6-pt side margin) ends 6 from the edge: V follows it, not the fallback
         let editor = egui::Rangef::new(1206.0, 1506.0);
         let l = topbar_layout(bar, chrome, Some(editor), &[], None);
-        assert_eq!((l.search.left(), l.brand.right()), (1206.0, 1506.0));
+        assert_eq!((right_zone(bar, chrome, None, Some(editor)).min, l.brand.right()), (1206.0, 1506.0));
         // never past the window edge, and an empty span falls back
         let l = topbar_layout(bar, chrome, Some(egui::Rangef::new(1300.0, 1600.0)), &[], None);
         assert_eq!(l.brand.right(), 1512.0);
@@ -810,7 +807,7 @@ mod tests {
             let zone = right_zone(bar, chrome, None, None);
             assert_eq!(zone, egui::Rangef::new(width - 12.0 - t::BAND_RIGHT_ZONE_W, width - 12.0), "{width}");
             let layout = topbar_layout(bar, chrome, None, &[], None);
-            assert_eq!((layout.search.left(), layout.brand.right()), (zone.min, zone.max));
+            assert_eq!(layout.brand.right(), zone.max);
         }
         // Windows: the zone ends a seam before the caps
         let win = topbar_chrome(false);
@@ -820,18 +817,39 @@ mod tests {
         assert_eq!(layout.brand.right(), caps[0].left() - t::SEAM_GAP);
     }
 
+    /// Owner 2026-10-06 ("شيل خانة البحث"): the band has NO Search. The slot it used to fill — the
+    /// right zone from its left edge up to `BAND_GAP` before the V mark — publishes no rect, so a press
+    /// anywhere on it drags the window; the V mark keeps its place at the zone's right edge, and the
+    /// tabs still stop `BAND_TABS_END_GAP` before the zone (tab fitting unchanged).
     #[test]
-    fn search_spans_the_zone_up_to_the_brand_and_never_below_120() {
+    fn the_band_has_no_search_and_its_old_slot_drags_the_window() {
         use varos_app::shell::tokens as t;
-        let chrome = topbar_chrome(true);
-        let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1512.0, chrome.height));
-        let wide = topbar_layout(bar, chrome, Some(egui::Rangef::new(1100.0, 1500.0)), &[], None);
-        assert_eq!(wide.search.right(), wide.brand.left() - t::BAND_GAP);
-        assert_eq!(wide.search.left(), 1100.0);
-        // a narrow column: Search keeps 120 and grows left past the column's edge
-        let narrow = topbar_layout(bar, chrome, Some(egui::Rangef::new(1400.0, 1500.0)), &[], None);
-        assert_eq!(narrow.search.width(), t::BAND_SEARCH_MIN_W);
-        assert_eq!(narrow.search.right(), narrow.brand.left() - t::BAND_GAP);
+        for chrome in [topbar_chrome(true), topbar_chrome(false)] {
+            let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1512.0, chrome.height));
+            for column in [None, Some(egui::Rangef::new(1212.0, 1500.0)), Some(egui::Rangef::new(1100.0, 1500.0))] {
+                let layout = topbar_layout(bar, chrome, column, &[90.0; 12], Some(0));
+                let zone = right_zone(bar, chrome, layout.caps.map(|c| c[0].left()), column);
+                assert_eq!(layout.brand.x_range(), egui::Rangef::new(zone.max - t::BAND_BRAND, zone.max), "V stays");
+                // where Search was (4b: zone.min … V − 8, chip height)
+                let old = egui::Rect::from_min_max(
+                    egui::pos2(zone.min, layout.brand.top()),
+                    egui::pos2(layout.brand.left() - t::BAND_GAP, layout.brand.bottom()),
+                );
+                assert!(old.width() >= 100.0, "setup: a real slot {old:?}");
+                for r in layout.interactive_rects() {
+                    assert!(!r.intersects(old), "{r:?} is published over the old Search slot {old:?}");
+                }
+                let plus = layout.plus.expect("+ is placed");
+                assert!(plus.right() <= zone.min - t::BAND_TABS_END_GAP, "the tabs stop before the zone");
+                for ppp in [1.0, 1.25, 2.0] {
+                    let i = old.shrink(0.5);
+                    for p in [old.center(), i.left_top(), i.right_top(), i.left_bottom(), i.right_bottom()] {
+                        assert!(drags_window(&layout, chrome, ppp, p), "{p:?} (ppp {ppp}) must drag the window");
+                    }
+                    assert!(!drags_window(&layout, chrome, ppp, layout.brand.center()), "V is still a control");
+                }
+            }
+        }
     }
 
     #[test]
@@ -846,8 +864,8 @@ mod tests {
         }
     }
 
-    /// 4b: Export / Share / Window / the magnet are gone from the band — the published list is
-    /// exactly caps + Home + V + Search + chips + "+N" + `+`.
+    /// 4b: Export / Share / Window / the magnet are gone from the band (and Search, 2026-10-06) — the
+    /// published list is exactly caps + Home + V + chips + "+N" + `+`.
     #[test]
     fn the_layout_has_no_export_share_or_window_rect() {
         for chrome in [topbar_chrome(true), topbar_chrome(false)] {
@@ -855,7 +873,7 @@ mod tests {
             for n in [2, 12] {
                 let layout = topbar_layout(bar, chrome, None, &vec![90.0; n], Some(0));
                 let mut want: Vec<egui::Rect> = layout.caps.map_or_else(Vec::new, |c| c.to_vec());
-                want.extend([layout.menu, layout.brand, layout.search]);
+                want.extend([layout.menu, layout.brand]);
                 want.extend(layout.tabs.iter().map(|&(_, r)| r));
                 want.extend(layout.overflow);
                 want.extend(layout.plus);
@@ -874,7 +892,9 @@ mod tests {
         let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1512.0, chrome.height));
         // nine tabs (the mockup): some hidden; the active last one is drawn
         let widths = [110.0, 90.0, 100.0, 85.0, 75.0, 125.0, 80.0, 115.0, 120.0];
-        let layout = topbar_layout(bar, chrome, Some(egui::Rangef::new(1212.0, 1500.0)), &widths, Some(8));
+        let column = egui::Rangef::new(1212.0, 1500.0);
+        let zone = right_zone(bar, chrome, None, Some(column));
+        let layout = topbar_layout(bar, chrome, Some(column), &widths, Some(8));
         let drawn: Vec<usize> = layout.tabs.iter().map(|&(i, _)| i).collect();
         assert!(drawn.contains(&8) && drawn.len() < 9, "setup: overflow with the active tab drawn: {drawn:?}");
         let mut all = drawn.clone();
@@ -888,11 +908,11 @@ mod tests {
         assert_eq!(ov.size(), egui::vec2(t::BAND_OVERFLOW_W, t::BAND_CHIP_H));
         let plus = layout.plus.unwrap();
         assert_eq!(plus.left(), ov.right() + t::BAND_OVERFLOW_GAP, "+ after +N");
-        assert!(plus.right() <= layout.search.left() - t::BAND_TABS_END_GAP, "the drag gap before Search stays");
+        assert!(plus.right() <= zone.min - t::BAND_TABS_END_GAP, "the drag gap before the right zone stays");
         // five tabs at 1512 all fit and leave ≥ 120 pt of empty band (the mockup's drag handle)
-        let five = topbar_layout(bar, chrome, Some(egui::Rangef::new(1212.0, 1500.0)), &widths[..5], Some(1));
+        let five = topbar_layout(bar, chrome, Some(column), &widths[..5], Some(1));
         assert!(five.overflow.is_none() && five.hidden.is_empty() && five.tabs.len() == 5);
-        assert!(five.search.left() - five.plus.unwrap().right() >= 120.0);
+        assert!(zone.min - five.plus.unwrap().right() >= 120.0);
     }
 
     /// Whatever the overflow, a displaced active tab that is very wide still never pushes `+` out.
@@ -1183,7 +1203,7 @@ mod tests {
                 for pos in [plus.center(), plus.shrink(0.5).left_top(), plus.shrink(0.5).right_bottom()] {
                     assert!(!drags_window(&layout, chrome, ppp, pos), "+ at {pos:?} (ppp {ppp}) drags");
                 }
-                for r in [layout.menu, layout.brand, layout.search] {
+                for r in [layout.menu, layout.brand] {
                     assert!(!drags_window(&layout, chrome, ppp, r.center()), "control {r:?} (ppp {ppp}) drags");
                 }
                 if let Some(caps) = layout.caps {
@@ -1204,9 +1224,9 @@ mod tests {
                 let layout = topbar_layout(bar, chrome, None, &[60.0, 90.0], Some(0));
                 let plus = layout.plus.expect("+ is placed");
                 let y = bar.center().y;
-                // the open stretch between `+` and Search — the main drag handle
-                let open = egui::pos2((plus.right() + layout.search.left()) / 2.0, y);
-                assert!(layout.search.left() - plus.right() > 40.0, "setup: a real empty stretch");
+                // the open stretch between `+` and the V mark — the main drag handle
+                let open = egui::pos2((plus.right() + layout.brand.left()) / 2.0, y);
+                assert!(layout.brand.left() - plus.right() > 40.0, "setup: a real empty stretch");
                 assert!(drags_window(&layout, chrome, ppp, open), "empty bar at {open:?} (ppp {ppp})");
                 // the 2-px gap between two chips is empty bar too
                 let gap = egui::pos2((layout.tabs[0].1.right() + layout.tabs[1].1.left()) / 2.0, y);
@@ -1223,14 +1243,14 @@ mod tests {
     }
 
     /// 4b: the 12 pt above AND below a chip are empty band — a press there drags the window, on
-    /// every control column (Home, a tab, `+`, Search, V).
+    /// every control column (Home, a tab, `+`, V).
     #[test]
     fn the_band_above_and_below_a_chip_drags_the_window() {
         let chrome = topbar_chrome(true);
         for ppp in [1.0, 1.25, 2.0] {
             let bar = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1512.0, chrome.height));
             let layout = topbar_layout(bar, chrome, None, &[60.0, 90.0], Some(0));
-            let columns = [layout.menu, layout.tabs[0].1, layout.plus.unwrap(), layout.search, layout.brand];
+            let columns = [layout.menu, layout.tabs[0].1, layout.plus.unwrap(), layout.brand];
             for r in columns {
                 for y in [bar.top() + 0.6, r.top() - 1.0, r.bottom() + 1.0, bar.bottom() - 0.6] {
                     let at = egui::pos2(r.center().x, y);

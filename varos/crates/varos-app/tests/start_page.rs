@@ -129,8 +129,10 @@ fn layout_matches_the_mockup_at_1512_by_982() {
     assert_near("Open…", l.open, r(336.0, 72.0, 272.0, 64.0));
     assert_near("presets", l.presets, r(620.0, 72.0, 840.0, 152.0));
     assert_near("keys", l.keys, r(52.0, 206.0, 556.0, 18.0));
-    assert_eq!(l.preset_cells.len(), 5);
-    let square = Rect::from_min_max(egui::pos2(621.0, 105.0), egui::pos2(788.6, 223.0));
+    // four presets (no Custom… since 2026-10-06) share the 840-wide panel: 838 / 4 = 209.5 each
+    // (was 5 × 167.6 — Square 621…788.6)
+    assert_eq!(l.preset_cells.len(), 4);
+    let square = Rect::from_min_max(egui::pos2(621.0, 105.0), egui::pos2(830.5, 223.0));
     assert_near("Square cell", l.preset_cells[0], square);
     assert_near("recovered", l.recovered[0], r(52.0, 252.0, 1408.0, 52.0));
     assert_near("head", l.head, r(52.0, 332.0, 1408.0, 28.0));
@@ -158,7 +160,8 @@ fn painted_controls_sit_on_the_mockup_rects_at_1x_and_2x() {
         p.frame(&m, vec![]);
         assert_near("New board", p.rect(ids::new_board()), r(52.0, 72.0, 272.0, 64.0));
         assert_near("Open…", p.rect(ids::open()), r(336.0, 72.0, 272.0, 64.0));
-        let story = Rect::from_min_max(egui::pos2(956.2, 105.0), egui::pos2(1123.8, 223.0));
+        // the third of four 209.5-wide cells (was 956.2…1123.8 with five cells)
+        let story = Rect::from_min_max(egui::pos2(1040.0, 105.0), egui::pos2(1249.5, 223.0));
         assert_near("Story", p.rect(ids::preset(PresetId::Story)), story);
         assert_near("card 1", p.rect(ids::card(&key(0))), r(52.0, 376.0, 272.0, 266.0));
         assert_near("card 10", p.rect(ids::card(&key(9))), r(1188.0, 654.0, 272.0, 266.0));
@@ -194,7 +197,6 @@ fn real_fonts_keep_the_mockup_lines_whole() {
         "A .vrs file from disk",
         "1080 × 1920 px",
         "595 × 842 pt",
-        "Custom…",
         "Recent boards",
         "Recover",
         "Ramadan campaign",
@@ -213,7 +215,7 @@ fn real_fonts_keep_the_mockup_lines_whole() {
     // the hero sub-label fits inside its button, the shortcut too, with the mockup's paddings
     let (pos, sub) = find("Free canvas, no size needed");
     assert!(pos.x + sub.size().x <= 52.0 + 272.0 - 16.0 - 18.0, "sub-label runs into ⌘N");
-    // every preset size line fits its 167.6-wide cell
+    // every preset size line fits its cell (209.5 wide; checked against the old 167.6 still)
     for s in ["1080 × 1080 px", "1080 × 1350 px", "1080 × 1920 px"] {
         assert!(find(s).1.size().x < 160.0, "{s} too wide for its cell");
     }
@@ -268,7 +270,7 @@ fn every_control_emits_its_action_by_pointer() {
     p.frame(&m, vec![]);
     assert_eq!(p.click(&m, ids::new_board()), [StartAction::NewBoard]);
     assert_eq!(p.click(&m, ids::open()), [StartAction::Open]);
-    for preset in [PresetId::Square, PresetId::Portrait, PresetId::Story, PresetId::A4, PresetId::Custom] {
+    for preset in [PresetId::Square, PresetId::Portrait, PresetId::Story, PresetId::A4] {
         assert_eq!(p.click(&m, ids::preset(preset)), [StartAction::NewWithPreset(preset)]);
     }
     assert_eq!(p.click(&m, ids::discard(RID)), [StartAction::DiscardRecovery(RID.into())]);
@@ -277,57 +279,6 @@ fn every_control_emits_its_action_by_pointer() {
     assert_eq!(p.click(&m, ids::filter(None)), [StartAction::SetTagFilter(None)]);
     assert_eq!(p.click(&m, ids::view_segment(StartView::List)), [StartAction::SetView(StartView::List)]);
     assert_eq!(p.click(&m, ids::card(&key(2))), [StartAction::OpenRecent(path(2))]);
-    // the search pill emits Search on every change
-    let mut got = None;
-    let bar = Rect::from_min_size(egui::pos2(W - 300.0, t::BAND_PAD_Y), egui::vec2(252.0, t::BAND_CHIP_H)); // 4b's band field
-    let press = |pressed| Event::PointerButton {
-        pos: bar.center(),
-        button: PointerButton::Primary,
-        pressed,
-        modifiers: Modifiers::NONE,
-    };
-    for events in [
-        vec![],
-        vec![Event::PointerMoved(bar.center()), press(true)],
-        vec![press(false)],
-        vec![Event::Text("ram".into())],
-    ] {
-        let ctx = p.ctx.clone();
-        let _ = ctx.run_ui(input(1.0, egui::vec2(W, H), events), |ui| {
-            if let Some(a) = p.page.search_box(ui, bar, &m) {
-                got = Some(a);
-            }
-        });
-    }
-    assert_eq!(got, Some(StartAction::Search("ram".into())));
-}
-
-/// The page yields the keyboard to the Search field while it is typing (Tab / Delete stay in it).
-#[test]
-fn the_search_field_owns_the_keyboard_while_it_types() {
-    let m = recent_model();
-    let ctx = context(1.0);
-    let mut page = StartPage::new();
-    let bar = Rect::from_min_size(egui::pos2(W - 300.0, t::BAND_PAD_Y), egui::vec2(252.0, t::BAND_CHIP_H)); // 4b's band field
-    let run = |page: &mut StartPage, events: Vec<Event>| {
-        let mut actions = vec![];
-        let _ = ctx.run_ui(input(1.0, egui::vec2(W, H), events), |ui| {
-            actions = page.draw_in(ui, area(egui::vec2(W, H)), &m, None);
-            actions.extend(page.search_box(ui, bar, &m));
-        });
-        actions
-    };
-    run(&mut page, vec![]);
-    ctx.memory_mut(|mem| mem.request_focus(ids::search()));
-    run(&mut page, vec![]);
-    let k =
-        |key, pressed| Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: Modifiers::NONE };
-    assert!(run(&mut page, vec![k(Key::Tab, true), k(Key::Tab, false)]).is_empty());
-    assert!(!page.ring_visible() && page.focus() == &Slot::New, "Tab stayed with the field");
-    ctx.memory_mut(|mem| mem.request_focus(ids::search()));
-    run(&mut page, vec![]);
-    assert!(run(&mut page, vec![k(Key::Delete, true), k(Key::Delete, false)]).is_empty());
-    assert!(!page.ring_visible(), "Delete stayed with the field");
 }
 
 #[test]
@@ -396,7 +347,7 @@ fn keyboard_ring_order_activation_and_2d_grid_moves() {
     let mut dedup = kinds.clone();
     dedup.dedup();
     assert_eq!(dedup, ["new", "open", "preset", "discard", "recover", "filter", "view", "card"]);
-    assert_eq!(kinds.iter().filter(|k| **k == "preset").count(), 5);
+    assert_eq!(kinds.iter().filter(|k| **k == "preset").count(), 4);
     assert_eq!(p.page.focus(), &Slot::Card(key(0)));
     assert_eq!(p.press(&m, Key::Enter), [StartAction::OpenRecent(path(0))]);
     p.press(&m, Key::ArrowRight);
@@ -444,7 +395,8 @@ fn presets_filters_and_recovered_by_keyboard() {
     p.press(&m, Key::ArrowRight);
     p.press(&m, Key::ArrowRight);
     assert_eq!(p.press(&m, Key::Enter), [StartAction::NewWithPreset(PresetId::Story)]);
-    for _ in 0..3 {
+    // Story → A4 → Discard (two Tabs since Custom… left the preset row, 2026-10-06)
+    for _ in 0..2 {
         p.press(&m, Key::Tab);
     }
     assert_eq!(p.page.focus(), &Slot::Discard(RID.into()));
@@ -537,13 +489,14 @@ fn first_launch_is_the_centred_empty_page() {
     let mut p = Page::new(1.0, egui::vec2(W, H));
     let (_, out) = p.frame(&m, vec![]);
     let text = texts(&out);
-    for s in ["Start with a board", "New board", "Open…", "Return", "Custom…", "any size"] {
+    for s in ["Start with a board", "New board", "Open…", "Return"] {
         assert!(text.iter().any(|t| t == s), "empty page shows {s:?}: {text:?}");
     }
+    assert!(!text.iter().any(|t| t == "Custom…" || t == "any size"), "no Custom… preset (2026-10-06)");
     assert!(!text.iter().any(|t| t == "Recent boards" || t == "Move"));
     assert_near("New board painted", p.rect(ids::new_board()), l.new_board);
     assert_eq!(p.press(&m, Key::Enter), [StartAction::NewBoard], "Return on the untouched page = New board");
-    assert_eq!(start_page::tab_order(&m, None).len(), 7);
+    assert_eq!(start_page::tab_order(&m, None).len(), 6, "New · Open · 4 presets");
 }
 
 #[test]
@@ -594,7 +547,6 @@ fn folder_text_elides_in_the_middle_and_helpers_match_the_copy() {
     assert_eq!(start_page::version_text(), "Varos 0.1 α");
     assert_eq!(start_page::preset_size_text(PresetId::Portrait), "1080 × 1350 px");
     assert_eq!(start_page::preset_size_text(PresetId::A4), "595 × 842 pt");
-    assert_eq!(start_page::preset_size_text(PresetId::Custom), "any size");
 }
 
 #[test]
@@ -619,7 +571,7 @@ fn every_start_control_hit_target_is_at_least_24pt() {
     let card = p.rect(ids::card(&key(6)));
     p.frame(&m, vec![Event::PointerMoved(card.center())]);
     let mut ids_to_check = vec![ids::new_board(), ids::open(), ids::discard(RID), ids::recover(RID), ids::filter(None)];
-    ids_to_check.extend([PresetId::Square, PresetId::A4, PresetId::Custom].map(ids::preset));
+    ids_to_check.extend([PresetId::Square, PresetId::Story, PresetId::A4].map(ids::preset));
     ids_to_check.extend([StartView::Grid, StartView::List].map(ids::view_segment));
     ids_to_check.extend(m.tags().iter().take(3).map(|tc| ids::filter(Some(tc.tag.as_str()))));
     ids_to_check.extend([ids::card(&key(0)), ids::chip(&key(6))]);
