@@ -13,6 +13,17 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    /// Deterministic creation; checked callers use `try_execute_created` for the allocated path id.
+    AddShape {
+        kind: crate::model::ShapeKind,
+        bounds: [f32; 4],
+        parent: Option<u32>,
+        fill: Option<Rgba>,
+        stroke: Option<Rgba>,
+        stroke_width: f32,
+        opacity: f32,
+        name: Option<String>,
+    },
     /// Explicit headless object selection, using stable path ids.
     #[serde(rename = "SelectPaths")]
     SelectPaths(Vec<u32>),
@@ -258,6 +269,9 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            Self::AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
+                let _ = ed.add_shape(kind, bounds, parent, fill, stroke, stroke_width, opacity, name);
+            }
             Self::SelectPaths(paths) => {
                 ed.escape();
                 ed.tool = crate::editor::ToolKind::Object;
@@ -364,6 +378,51 @@ impl Editor {
         crate::bridge::check(&command, self)?;
         self.execute(command);
         Ok(())
+    }
+
+    /// Checked creation returns the actual allocated identity, never a guessed counter.
+    pub fn try_execute_created(&mut self, command: EditCommand) -> Result<u32, String> {
+        crate::bridge::check(&command, self)?;
+        match command {
+            EditCommand::AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
+                self.add_shape(kind, bounds, parent, fill, stroke, stroke_width, opacity, name)
+            }
+            _ => Err("command does not create a shape".into()),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_shape(
+        &mut self,
+        kind: crate::model::ShapeKind,
+        bounds: [f32; 4],
+        parent: Option<u32>,
+        fill: Option<Rgba>,
+        stroke: Option<Rgba>,
+        stroke_width: f32,
+        opacity: f32,
+        name: Option<String>,
+    ) -> Result<u32, String> {
+        let command =
+            EditCommand::AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name: name.clone() };
+        crate::bridge::check(&command, self)?;
+        self.begin(); // reserves above the session high-water mark before any allocation
+        let active = self.doc.active_layer;
+        self.doc.active_layer = parent.unwrap_or(active);
+        let id = self.doc.nid();
+        let [x, y, w, h] = bounds;
+        let anchors = self.doc.build_shape(kind, [x, y], [x + w, y + h]);
+        let mut path = crate::model::Path::new(id, anchors, true, fill, stroke, stroke_width);
+        path.opacity = opacity;
+        if let Some(name) = name {
+            path.name = Some(clean_name(&name).to_owned());
+        }
+        self.doc.paths.push(path);
+        self.doc.sync_tree();
+        self.doc.active_layer = active;
+        self.dirty = true;
+        self.commit();
+        Ok(id)
     }
 
     /// Execute one deterministic edit through the core-owned command boundary.

@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 varos-core = { path = "../varos-core" }
+varos-raster = { path = "../varos-raster" }
+base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
@@ -12,3 +14,6 @@ getrandom = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+png = "0.17"
