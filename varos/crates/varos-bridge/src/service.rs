@@ -25,8 +25,44 @@ pub struct BoardAccess<'a> {
     pub editor: &'a mut Editor,
     pub dirty: bool,
 }
+/// Owned, revision-pinned CPU work. Capture on the owning thread, render on a host worker.
+pub struct SnapshotJob {
+    pub document: Document,
+    pub rev: u64,
+    pub size: [u32; 2],
+}
+impl SnapshotJob {
+    pub fn render(self, cancelled: &AtomicBool) -> Reply {
+        let result = (|| {
+            use base64::Engine;
+            let checkpoint = || {
+                if cancelled.load(Ordering::Acquire) {
+                    Err(Error::new("cancelled", "snapshot cancelled"))
+                } else {
+                    Ok(())
+                }
+            };
+            checkpoint()?;
+            let raster = varos_raster::rasterize(std::sync::Arc::new(self.document), self.size);
+            checkpoint()?;
+            let png = raster.encode_png().map_err(|e| Error::new("invalid_argument", e))?;
+            checkpoint()?;
+            if png.len() > (crate::MAX_FRAME - 4096) * 3 / 4 {
+                return Err(Error::new("limit_exceeded", "PNG exceeds transport image budget"));
+            }
+            Ok(Reply::success(
+                json!({"rev":self.rev,"width":self.size[0],"height":self.size[1],"mime_type":"image/png","png":base64::engine::general_purpose::STANDARD.encode(png),"preview":"CPU preview"}),
+            ))
+        })();
+        result.unwrap_or_else(Reply::failure)
+    }
+}
 /// Only the desktop host supplies owning-thread mutable access. No transport knows an Editor.
 pub trait Host {
+    /// Synchronous headless default. Desktop overrides to defer work beyond the owning thread.
+    fn snapshot(&mut self, job: SnapshotJob, cancelled: &AtomicBool) -> Reply {
+        job.render(cancelled)
+    }
     fn build(&self) -> &str {
         "host-unreported"
     }
@@ -227,7 +263,7 @@ impl Service {
                 );
             } else {
                 let mut error =
-                    Reply::failure(Error::new("limit_exceeded", "response exceeds 16 KiB; reduce page limit"));
+                    Reply::failure(Error::new("limit_exceeded", "response exceeds the 16 KiB page budget; request fewer objects or omit geometry; an individual oversized path cannot be paginated"));
                 error.board = reply.board;
                 error.rev = reply.rev;
                 reply = error;
@@ -306,7 +342,7 @@ impl Service {
             }
             match req {
                 Request::Capabilities(_) => Ok(Reply::success(
-                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3],"writable_vrs":[3],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N scoped to epoch","limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"geometry_anchors_per_object":1000,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":ctx.read,"edit":ctx.edit,"history_owner_grant":ctx.allow_history,"destructive_owner_grant":ctx.allow_destructive,"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry"],"unsupported":["files","headless","add_path","corner_radius","flip","pathfinder","group_distribution","gap_distribution","reparent"]}),
+                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3],"writable_vrs":[3],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N scoped to epoch","limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":ctx.read,"edit":ctx.edit,"history_owner_grant":ctx.allow_history,"destructive_owner_grant":ctx.allow_destructive,"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry"],"unsupported":["files","headless","add_path","corner_radius","flip","pathfinder","group_distribution","gap_distribution","reparent"]}),
                 )),
                 Request::ListBoards(v) => {
                     check_page(v.limit)?;
@@ -323,20 +359,11 @@ impl Service {
                 }
                 Request::Describe(v) => self.describe(v, host),
                 Request::Snapshot(v) => {
-                    use base64::Engine;
                     if v.width == 0 || v.height == 0 || v.width > 1024 || v.height > 1024 {
                         return Err(Error::new("limit_exceeded", "snapshot dimensions must be 1..1024"));
                     }
-                    let doc = host.access(&v.board)?.editor.doc.clone();
-                    let png = varos_raster::rasterize(std::sync::Arc::new(doc), [v.width, v.height])
-                        .encode_png()
-                        .map_err(|e| Error::new("invalid_argument", e))?;
-                    if png.len() > (crate::MAX_FRAME - 4096) * 3 / 4 {
-                        return Err(Error::new("limit_exceeded", "PNG exceeds transport image budget"));
-                    }
-                    Ok(Reply::success(
-                        json!({"rev":v.rev,"width":v.width,"height":v.height,"mime_type":"image/png","png":base64::engine::general_purpose::STANDARD.encode(png),"preview":"CPU preview"}),
-                    ))
+                    let document = host.access(&v.board)?.editor.doc.clone();
+                    Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [v.width, v.height] }, cancelled))
                 }
                 Request::Select(v) => {
                     if v.ids.len() > MAX_TARGETS {
@@ -412,7 +439,9 @@ impl Service {
                             &json!({"epoch":self.epoch,"edit":exact,"target":authored_fingerprint(batch.document()),"affected":affected,"source":authored_fingerprint(&a.editor.doc)}),
                         );
                         let key = format!("destructive:{}:{}", ctx.client, v.board);
-                        if v.digest.as_deref() != Some(&hash) {
+                        if v.digest.as_deref() != Some(&hash)
+                            || !self.grants.get(&key).is_some_and(|g| g.digest == hash && g.expires > Instant::now())
+                        {
                             if ctx.allow_destructive {
                                 if self.grants.len() >= 128 && !self.grants.contains_key(&key) {
                                     return Err(Error::new("limit_exceeded", "too many outstanding confirmations"));
@@ -476,7 +505,9 @@ impl Service {
                     let hash = digest(
                         &json!({"epoch":self.epoch,"history":exact,"target":target_digest,"objects":self.boards[&v.board].objects}),
                     );
-                    if v.digest.as_deref() != Some(&hash) {
+                    if v.digest.as_deref() != Some(&hash)
+                        || !self.grants.get(&key).is_some_and(|g| g.digest == hash && g.expires > Instant::now())
+                    {
                         if ctx.allow_history {
                             if self.grants.len() >= 128 && !self.grants.contains_key(&key) {
                                 return Err(Error::new("limit_exceeded", "too many outstanding confirmations"));
@@ -751,7 +782,7 @@ impl Service {
             end += 1;
         }
         if end == offset && end < ids.len() {
-            return Err(Error::new("limit_exceeded", "object exceeds output budget"));
+            return Err(Error::new("limit_exceeded", "individual object exceeds the 16 KiB page budget (including response overhead); omit geometry or request other fields; within-path anchor pagination is not supported"));
         }
         Ok(Reply::success(
             json!({"rev":b.rev,"objects":objects,"more":end<ids.len(),"cursor":(end<ids.len()).then(||cursor(&sig,end))}),
@@ -1150,6 +1181,75 @@ mod observation_tests {
             Ok(BoardAccess { editor: &mut self.0, dirty: false })
         }
     }
+    #[test]
+    fn expired_digest_resend_refreshes_edit_and_history_grants() {
+        for history in [false, true] {
+            let mut host = Fake(Editor::new());
+            let pid = host
+                .0
+                .try_execute_created(varos_core::EditCommand::AddShape {
+                    kind: varos_core::model::ShapeKind::Rect,
+                    bounds: [0.0, 0.0, 20.0, 10.0],
+                    parent: None,
+                    fill: Some([1.0, 0.0, 0.0, 1.0]),
+                    stroke: None,
+                    stroke_width: 0.0,
+                    opacity: 1.0,
+                    name: None,
+                })
+                .unwrap();
+            let context = Context {
+                client: "test".into(),
+                epoch: "test".into(),
+                read: true,
+                edit: true,
+                allow_history: true,
+                allow_destructive: true,
+            };
+            let mut service = Service::new("test".into());
+            let args = if history {
+                json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":host.0.rev,"action":"undo"})
+            } else {
+                json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":host.0.rev,"ops":[{"verb":"delete","ids":[format!("path:{pid}")]}]})
+            };
+            let mut request = crate::mcp::decode_tool(if history { "history" } else { "edit" }, args).unwrap();
+            let cancelled = AtomicBool::new(false);
+            let challenge = service.handle(&mut host, &context, request.clone(), &cancelled);
+            let digest = challenge.error.unwrap().digest.clone();
+            match &mut request {
+                Request::History(v) => v.digest = digest,
+                Request::Edit(v) => v.digest = digest,
+                _ => unreachable!(),
+            }
+            for grant in service.grants.values_mut() {
+                grant.expires = Instant::now() - Duration::from_secs(1);
+            }
+            let before = host.0.doc.clone();
+            let fresh = service.handle(&mut host, &context, request.clone(), &cancelled).error.unwrap();
+            assert_eq!(fresh.code, "confirmation_required");
+            assert!(fresh.digest.is_some());
+            assert!(!fresh.ids.is_empty());
+            assert_eq!(fresh.actual_rev, Some(host.0.rev));
+            assert_eq!(host.0.doc, before);
+            match &mut request {
+                Request::History(v) => v.digest = fresh.digest.clone(),
+                Request::Edit(v) => v.digest = fresh.digest.clone(),
+                _ => unreachable!(),
+            }
+            assert!(service.handle(&mut host, &context, request, &cancelled).ok);
+        }
+    }
+
+    #[test]
+    fn snapshot_worker_checkpoints_cancel_and_pin_owned_revision() {
+        let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40] };
+        let reply = job.render(&AtomicBool::new(true));
+        assert_eq!(reply.error.unwrap().code, "cancelled");
+        let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40] };
+        let reply = job.render(&AtomicBool::new(false));
+        assert_eq!(reply.result.unwrap()["rev"], 7);
+    }
+
     #[test]
     fn unchanged_observation_does_not_fingerprint() {
         let mut host = Fake(Editor::new());
