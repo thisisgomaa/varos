@@ -19,3 +19,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Already locked transitively; pins the frozen fixture corpus to its SHA256SUMS (A2).
 sha2 = "0.11"
+
+# Validate SVG output from binary frozen .vrs fixtures, without production linkage.
+resvg = { version = "0.45", default-features = false }

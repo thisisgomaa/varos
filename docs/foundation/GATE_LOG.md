@@ -805,3 +805,46 @@ Base `codex/ui-system-plan` @ `8853d7a`; two independent reviews approved with n
 - **Open — owner / separate stages:** recovery card + frame-0 notice after Force Quit + trackpad hardware feel; VIEW_ROTATION planned/parked; QW6 panel icon size; remaining P4, P5/P7; P6/F7/F8 performance/dependency/release measurements; P21 (4) artboard move vs hidden clip mask; Arabic UI gate §8; Windows S4-A and runtime acceptance; CI billing lock (last inspected 2026-09-27, current state unverified). These require owner observation, scoped implementation/measurement, or external account work, not trivial cleanup.
 - **Open — smaller reviewer follow-ups:** `Ui::wants_pointer_at` physical→logical conversion lacks dedicated scale coverage; VIEW_ROTATION plan still needs the review's text/caret, angle-detent, cursor re-pick, scissor-clip, shape-axis and status-readout questions before execution. Neither is claimed fixed here.
 - **Retained acceptance / product gaps:** Start v2 acceptance and K3 hand test; P12/P21 real-window checks; Dock/`open(1)` and cold/warm opening; recovery cancel/failure and S5 refusal/broken-mask notices; export sheet edge cases and large-save remeasurement. Export Cancel / Show in Finder, QW8 Fit placement, window geometry memory, screen eyedropper, mask gestures and interchange remain in their existing queues. Independent review of UI System v3 and the ADR-0008 format-3 amendment remains unrecorded; icon stage 2, MCP/web remain parked.
+
+## 2026-10-06 — SVG export, local worktree only
+
+Owner-requested pure `varos-core::svg`; [scope and evidence](work_orders/SVG_EXPORT.md).
+Uncommitted implementation, no UI wiring, no GUI/installation/remote operation.
+
+Final local gates from `varos/`: `cargo test --workspace -j 4` **1103 passed / 0 failed / 8 ignored**;
+macOS and `x86_64-pc-windows-msvc` all-target clippy with `-D warnings` **PASS**;
+`cargo fmt --all --check` **PASS**. Dependency-direction checker and `git diff --check` **PASS**.
+16 added tests cover 17 golden SVGs from 13 frozen raw fixtures, all 25 accepted JSON/PDF containers
+in default/whole-board scopes, exact cubic closing segments, visibility/names, clips and malformed
+input. Twelve resvg/CPU raster comparisons PASS (mean error limit 0.25/255/channel; >32 summed RGBA
+error on fewer than 0.5% of pixels; observed worst mean 0.0092, fraction 0.0005).
+
+Existing PDF and canvas differ when both object opacity and stroke alpha are reduced: SVG follows
+canvas isolated compositing; PDF change is out of scope. UI format/multiple destinations need design
+before wiring. Owner visual acceptance and Windows runtime remain untested. Logs in ignored
+`varos/target/svg-export-gates/`; this is not a merge or release claim.
+
+
+### 2026-10-06 — SVG export independent-review fixes
+
+Addressed the six owner-supplied REQUEST CHANGES items on `wip/svg-export`, retaining all
+existing uncommitted work. Unitless viewport dimensions, literal XML-safe Unicode letters/digits
+with injective `_xHH_` escapes, hex RGB + separate alpha, `board`/`background` ids, and 1e-4
+quantization before three-decimal formatting. Re-blessed all 17 SVG goldens; original input
+fixtures unchanged. Three new regressions cover ids/escape collisions, neighboring floats at
+decimal midpoints, and parsed/rasterized viewport sizes + colors/page ids.
+
+Open PDF knockout divergence is now dated with source lines in [PAINS_LOG](../PAINS_LOG.md).
+[SVG_EXPORT](work_orders/SVG_EXPORT.md#import-considerations--2026-10-06) records baked rotation,
+clip-run group splits, anonymous mask sources and dropped smooth flags for future import.
+
+Final gates from `varos/` (all exit 0):
+1. `cargo test --workspace -j 4`: **1106 passed / 0 failed / 8 ignored** (61 summaries).
+2. `cargo clippy --workspace --all-targets -- -D warnings`: **PASS**.
+3. `cargo fmt --all --check`: **PASS**.
+4. `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`: **PASS**.
+
+Dependency directions and `git diff --check`: **PASS**. Twelve raster comparisons still pass;
+worst observed mean channel error 0.0092/255, differing-pixel fraction 0.0002. Logs:
+`varos/target/svg-export-review-gates/{tests,clippy-mac,fmt,clippy-windows,raster}.log`.
+No GUI, commit, push, merge, build/install of the app bundle or Windows runtime verification.
