@@ -4,7 +4,7 @@
 - **Date:** 2026-07-11
 - **Decision owner:** Product owner
 - **Supersedes:** The unqualified introspectable "one schema" promise in `CLAUDE.md:10`
-- **Superseded by:** None
+- **Superseded by:** None Partially: [ADR-0009](ADR-0009-varos-bridge.md) (accepted 2026-10-06) supersedes the deferral of a documented AI command/query API for the Bridge surface only; the persisted-model rule stands.
 
 ## Context
 
