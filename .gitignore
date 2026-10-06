@@ -43,3 +43,6 @@ Desktop.ini
 /tree.json
 /_cmp.html
 /logo.ai
+
+# Bridge: per-launch token for the local MCP server (tools/mac/bridge-connect.sh)
+/.mcp.json
