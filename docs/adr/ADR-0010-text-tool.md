@@ -1,6 +1,6 @@
 # ADR-0010 — Arabic-first Text tool
 
-Status: proposed — awaiting owner
+Status: accepted — owner (Ahmed) 2026-10-06 («ماشي»): stack direction, editable TextBox in format v4, outline-first PDF; P1 engine spike commissioned the same day. Panel/tool visuals still need mockups.
 
 Date: 2026-10-06. Owner: Ahmed. Scope: decision proposal only; no implementation or UI approval.
 

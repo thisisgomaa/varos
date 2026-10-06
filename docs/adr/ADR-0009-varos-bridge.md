@@ -1,4 +1,4 @@
-> **Status:** proposed — awaiting owner
+> **Status:** accepted — owner (Ahmed) 2026-10-06 («ماشي»); first slice commissioned the same day
 # ADR-0009: Varos Bridge — one local command API for agents and people
 
 - **Date:** 2026-10-06
@@ -259,4 +259,4 @@ Required implementation evidence: identical result/error fixtures through MCP an
 
 ## Status
 
-proposed — awaiting owner
+accepted — owner 2026-10-06. Supersedes ADR-0004's deferral of the AI command/query API in the scope of §7 only.
