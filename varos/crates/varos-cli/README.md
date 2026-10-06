@@ -81,6 +81,7 @@ Supported checked document commands:
 
 | Command | Payload inside the variant object |
 |---|---|
+| AddShape | `{ "kind":"Rect", "bounds":[0,0,100,80], "parent":null, "fill":[1,0,0,1], "stroke":null, "stroke_width":0, "opacity":1, "name":null }`; kind Rect or Ellipse; paint uses RGBA arrays, not API 1.0 hex strings |
 | SelectPaths / SelectAnchors | array of path / anchor ids (empty clears selection) |
 | SetBoardName / SetBoardDescription | string |
 | SetBoardTags | array of strings; existing cleaning/deduplication rules apply |
@@ -106,6 +107,8 @@ Supported checked document commands:
 | SetMoveArtWithArtboard | bool |
 
 Unit commands: `"GroupSelection"`, `"UngroupSelection"`, `"DeleteSelected"`, `"DeleteLayerSelection"`, `"SwapColors"`, `"DefaultPaint"`, `"Copy"`, `"Cut"`, `"AddArtboard"`, `"CycleUnits"`.
+
+`AddShape` is accepted by legacy API 0.x `parse_batch` through the same pinned `EditCommand` serde table and checked core allocation/staging path. Its required fields are kind, bounds, stroke_width and opacity; parent/fill/stroke/name may be omitted or null. Bounds must be positive and finite, and paint values valid; null parent uses the active layer. It does not select the new path or return its allocated ID in the CLI apply receipt; refresh `describe` after saving. Both null paints are valid in this low-level provisional API, whereas attached API 1.0 `add_shape` refuses them. We document the existing acceptance rather than adding a second version-specific verb filter; API 0.x deliberately exposes the checked core command table.
 
 Selection-target commands require a selection. Paths/anchors must exist and be visible/unlocked. Coordinates must be finite, dimensions positive, RGBA/opacity bounded, structural moves legal, and the resulting document must pass structure and semantic validation after **each** entry. Allocation near id exhaustion is refused before mutation. Clipboard state is the core's in-memory clipboard, never the OS clipboard; CLI batches start empty and can Copy/Cut then Paste.
 
