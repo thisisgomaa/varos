@@ -43,6 +43,35 @@ fn response(action: impl FnOnce() -> Result<Value, Failure> + std::panic::Unwind
     }
 }
 fn main() {
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        Some("bridge") => match varos_bridge::cli::run(args.collect()) {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("varos-cli bridge: {e}");
+                std::process::exit(1);
+            }
+        },
+        Some("bridge-endpoint") => {
+            if args.next().is_some() {
+                eprintln!("bridge-endpoint takes no arguments");
+                std::process::exit(1);
+            }
+            match varos_bridge::ipc::endpoint_paths() {
+                Ok(paths) => {
+                    for p in paths {
+                        println!("{}", p.display());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("bridge-endpoint: {e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        _ => {}
+    }
     std::panic::set_hook(Box::new(|_| {}));
     let (value, code) = response(|| run(std::env::args_os().skip(1).collect()));
     if writeln!(std::io::stdout().lock(), "{value}").is_err() {

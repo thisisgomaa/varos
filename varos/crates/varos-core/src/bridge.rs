@@ -44,7 +44,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         // u32 ids; refusing near exhaustion is safer than overflowing before post-validation.
         let limits = format::Limits::DEFAULT;
         let reserve = (limits.max_nodes + limits.max_paths + limits.max_anchors) as u64;
-        if u64::from(ed.doc.ids) + reserve >= u64::from(u32::MAX) {
+        if u64::from(ed.allocation_floor()) + reserve >= u64::from(u32::MAX) {
             return Err("not enough stable ids remain for an allocating command".into());
         }
     }
@@ -459,4 +459,176 @@ pub fn diff(a: &crate::model::Document, b: &crate::model::Document) -> Value {
 pub(crate) fn check_document(ed: &Editor) -> Result<(), String> {
     format::check_structure(&ed.doc, &format::Limits::DEFAULT).map_err(|e| e.to_string())?;
     format::validate(&ed.doc, &format::Limits::DEFAULT).map_err(|e| e.to_string())
+}
+
+/// Deliberately separate from wire DTOs and the interactive command enum.
+#[derive(Clone, Debug)]
+pub enum TargetEdit {
+    Move {
+        paths: Vec<u32>,
+        delta: [f32; 2],
+    },
+    Paint {
+        paths: Vec<u32>,
+        fill: Option<Option<[f32; 4]>>,
+        stroke: Option<Option<[f32; 4]>>,
+        stroke_width: Option<f32>,
+        opacity: Option<f32>,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TargetErrorCode {
+    NotFound,
+    LockedTarget,
+    HiddenTarget,
+    InvalidArgument,
+    Busy,
+    Cancelled,
+}
+#[derive(Debug)]
+pub struct TargetError {
+    pub code: TargetErrorCode,
+    pub index: usize,
+    pub ids: Vec<u32>,
+    pub reason: String,
+}
+impl Editor {
+    /// Replace Bridge selection without escaping or switching the human's tool.
+    pub fn bridge_select(&mut self, paths: Vec<u32>) -> Result<(), String> {
+        check(&EditCommand::SelectPaths(paths.clone()), self)?;
+        self.objsel = paths.into_iter().collect();
+        self.selected.clear();
+        self.group_sel.clear();
+        self.dsel_path = None;
+        self.absel.clear();
+        self.refresh_obj_angle();
+        Ok(())
+    }
+    /// Explicit targets, checked staging, one publication and no implicit human selection change.
+    pub fn execute_targeted_batch(&mut self, ops: Vec<TargetEdit>) -> Result<(), TargetError> {
+        self.execute_targeted_batch_cancellable(ops, || false)
+    }
+    pub fn execute_targeted_batch_cancellable(
+        &mut self,
+        ops: Vec<TargetEdit>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<(), TargetError> {
+        if self.transaction_open() {
+            return Err(TargetError {
+                code: TargetErrorCode::Busy,
+                index: 0,
+                ids: vec![],
+                reason: "active gesture".into(),
+            });
+        }
+        let mut staged = self.batch_stage();
+        for (index, op) in ops.iter().enumerate() {
+            if cancelled() {
+                return Err(TargetError {
+                    code: TargetErrorCode::Cancelled,
+                    index,
+                    ids: vec![],
+                    reason: "cancelled before commit".into(),
+                });
+            }
+            staged.apply_targeted_op(op, index)?;
+            staged.clear_batch_history();
+        }
+        if cancelled() {
+            return Err(TargetError {
+                code: TargetErrorCode::Cancelled,
+                index: 0,
+                ids: vec![],
+                reason: "cancelled before commit".into(),
+            });
+        }
+        if validate_targeted_stage(&staged).is_err() {
+            // Full validation/encoding runs once on success; replay only failures for attribution.
+            let mut replay = self.batch_stage();
+            for (index, op) in ops.iter().enumerate() {
+                replay.apply_targeted_op(op, index)?;
+                if let Err(reason) = validate_targeted_stage(&replay) {
+                    let ids = match op {
+                        TargetEdit::Move { paths, .. } | TargetEdit::Paint { paths, .. } => paths.clone(),
+                    };
+                    return Err(TargetError { code: TargetErrorCode::InvalidArgument, index, ids, reason });
+                }
+                replay.clear_batch_history();
+            }
+        }
+        if cancelled() {
+            return Err(TargetError {
+                code: TargetErrorCode::Cancelled,
+                index: 0,
+                ids: vec![],
+                reason: "cancelled before commit".into(),
+            });
+        }
+        staged.doc.active_layer = self.doc.active_layer;
+        self.publish_batch(staged, true);
+        Ok(())
+    }
+    fn apply_targeted_op(&mut self, op: &TargetEdit, index: usize) -> Result<(), TargetError> {
+        let paths = match op {
+            TargetEdit::Move { paths, .. } | TargetEdit::Paint { paths, .. } => paths,
+        };
+        let fail = |code, reason: String| TargetError { code, index, ids: paths.clone(), reason };
+        if paths.is_empty() {
+            return Err(fail(TargetErrorCode::InvalidArgument, "targets must not be empty".into()));
+        }
+        for id in paths {
+            if self.doc.pidx(*id).is_none() {
+                return Err(fail(TargetErrorCode::NotFound, format!("unknown path:{id}")));
+            }
+            if self.doc.eff_locked(*id) {
+                return Err(fail(TargetErrorCode::LockedTarget, format!("path:{id} is locked")));
+            }
+            if self.doc.eff_hidden(*id) {
+                return Err(fail(TargetErrorCode::HiddenTarget, format!("path:{id} is hidden")));
+            }
+        }
+        let result = (|| -> Result<(), String> {
+            self.try_execute(EditCommand::SelectPaths(paths.clone()))?;
+            match op {
+                TargetEdit::Move { delta, .. } => {
+                    if !delta.iter().all(|v| v.is_finite()) {
+                        return Err("delta must be finite".into());
+                    }
+                    self.move_explicit(paths, *delta);
+                }
+                TargetEdit::Paint { fill, stroke, stroke_width, opacity, .. } => {
+                    if fill.is_none() && stroke.is_none() && stroke_width.is_none() && opacity.is_none() {
+                        return Err("paint needs at least one property".into());
+                    }
+                    if let Some(color) = fill {
+                        self.try_execute(EditCommand::ApplyPaint {
+                            target: crate::editor::PaintTarget::Fill,
+                            color: *color,
+                        })?;
+                    }
+                    if let Some(color) = stroke {
+                        self.try_execute(EditCommand::ApplyPaint {
+                            target: crate::editor::PaintTarget::Stroke,
+                            color: *color,
+                        })?;
+                    }
+                    if let Some(width) = stroke_width {
+                        self.try_execute(EditCommand::SetStrokeWidth(*width))?;
+                    }
+                    if let Some(opacity) = opacity {
+                        self.try_execute(EditCommand::SetOpacity(*opacity))?;
+                    }
+                }
+            }
+            Ok(())
+        })();
+        result.map_err(|reason| fail(TargetErrorCode::InvalidArgument, reason))?;
+        Ok(())
+    }
+}
+
+fn validate_targeted_stage(editor: &Editor) -> Result<(), String> {
+    check_document(editor)?;
+    crate::format::encode_model(&editor.doc, &format::Limits::DEFAULT).map_err(|e| e.to_string())?;
+    Ok(())
 }

@@ -438,27 +438,16 @@ pub trait DocUi {
     fn settle_fields(&mut self, ed: &mut Editor) -> bool {
         self.settle(ed)
     }
+    /// Bridge must refuse picker previews instead of cancelling a human preview.
+    fn bridge_preview_active(&self) -> bool {
+        false
+    }
     /// A text / number field is being edited: ⌘Z / ⇧⌘Z belong to its own text, not to the document.
     fn field_has_focus(&self) -> bool {
         false
     }
     /// Drop the Ui's per-document caches (layer rows, drag, collapse, search).
     fn document_switched(&mut self);
-}
-
-impl DocUi for crate::ui::Ui {
-    fn settle(&mut self, ed: &mut Editor) -> bool {
-        crate::ui::Ui::settle(self, ed)
-    }
-    fn settle_fields(&mut self, ed: &mut Editor) -> bool {
-        self.commit_fields(ed)
-    }
-    fn field_has_focus(&self) -> bool {
-        self.editing_field()
-    }
-    fn document_switched(&mut self) {
-        crate::ui::Ui::document_switched(self)
-    }
 }
 
 /// What one lifecycle command leaves for the event loop to do.

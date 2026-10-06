@@ -213,7 +213,7 @@ impl Lifecycle<'_> {
             AppCommand::ReorderDocument(id, slot) => {
                 self.ws.reorder(id, slot);
             }
-            AppCommand::Window(_) => {}
+            AppCommand::Window(_) | AppCommand::Bridge(_) => {}
         }
         Effect::default()
     }

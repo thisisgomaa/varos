@@ -448,6 +448,7 @@ pub struct Editor {
     /// Edit ▸ Copy / Cut / Paste — the IN-APP clipboard (deep copies of model data). Not the OS
     /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
     clipboard: Clipboard,
+    id_high_water: u32,
     undo: Vec<Document>,
     redo: Vec<Document>,
     pending: Option<Document>,
@@ -500,6 +501,7 @@ impl Editor {
             dirty: false,
             flatten_cache: Default::default(),
             clipboard: Clipboard::default(),
+            id_high_water: 0,
             undo: vec![],
             redo: vec![],
             pending: None,
@@ -1750,6 +1752,34 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
+    /// Bridge relative world translation reuses the same path/pivot move primitives as numeric
+    /// bounds and pointer moves. A partial transformed unit moves only its explicit leaf targets.
+    pub(crate) fn move_explicit(&mut self, paths: &[u32], delta: Pt) {
+        if delta == [0.0, 0.0] {
+            return;
+        }
+        self.begin();
+        let mut units: Vec<u32> = paths.iter().filter_map(|p| self.doc.unit_of(*p)).collect();
+        units.sort_unstable();
+        units.dedup();
+        for unit in units {
+            let members = self.doc.node_paths(unit);
+            let xf = self.doc.node_xform(unit);
+            let complete = members.iter().all(|p| paths.contains(p));
+            let local_delta = if complete { delta } else { rotate_about(delta, [0.0, 0.0], -xf.rot) };
+            for pid in members.iter().filter(|p| paths.contains(p)) {
+                if let Some(pi) = self.doc.pidx(*pid) {
+                    self.translate_path(pi, local_delta);
+                }
+            }
+            if complete {
+                self.doc.set_node_xform(unit, xf.translated(delta));
+            }
+        }
+        self.dirty = true;
+        self.commit();
+    }
+
     /// Numeric W/H/X/Y for a SINGLE unit, worked in its LOCAL frame so the live rotation is preserved:
     /// W/H scale the local anchors about the local reference point (keeping the corresponding WORLD point
     /// fixed); X/Y then translate the whole unit in WORLD (carrying the pivot). See `set_obj_bbox`.
@@ -3239,8 +3269,25 @@ impl Editor {
                 reason: "finish the active transaction before a batch".into(),
             });
         }
+        let mut staged = self.batch_stage();
+        for (index, command) in commands.into_iter().enumerate() {
+            staged
+                .try_execute(command)
+                .and_then(|()| crate::bridge::check_document(&staged))
+                .map_err(|reason| crate::bridge::BatchError { index, reason })?;
+            // The staging host never undoes individual entries. Retaining their snapshots would
+            // multiply document memory by up to 200 for a large batch; only the published step lives.
+            staged.undo.clear();
+            staged.redo.clear();
+        }
+        self.publish_batch(staged, false);
+        Ok(())
+    }
+
+    pub(crate) fn batch_stage(&self) -> Editor {
         let mut staged = Editor::new();
         staged.replace_doc(self.doc.clone());
+        staged.id_high_water = self.id_high_water.max(self.doc.ids);
         staged.objsel = self.objsel.clone();
         staged.selected = self.selected.clone();
         staged.group_sel = self.group_sel.clone();
@@ -3254,45 +3301,69 @@ impl Editor {
         staged.paint = self.paint;
         staged.constrain_wh = self.constrain_wh;
         staged.refresh_obj_angle();
-        for (index, command) in commands.into_iter().enumerate() {
-            staged
-                .try_execute(command)
-                .and_then(|()| crate::bridge::check_document(&staged))
-                .map_err(|reason| crate::bridge::BatchError { index, reason })?;
-            // The staging host never undoes individual entries. Retaining their snapshots would
-            // multiply document memory by up to 200 for a large batch; only the published step lives.
-            staged.undo.clear();
-            staged.redo.clear();
-        }
-        if staged.doc != self.doc {
+        staged
+    }
+
+    /// Targeted Bridge edits publish document content only; transient human state stays owned by
+    /// the live editor. The legacy batch includes selection/default commands, but keeps the live
+    /// tool and clipboard too.
+    pub(crate) fn publish_batch(&mut self, staged: Editor, preserve_transient: bool) {
+        if if preserve_transient { !staged.doc.content_eq(&self.doc) } else { staged.doc != self.doc } {
             self.begin();
             self.doc = staged.doc;
             self.dirty = true;
             self.commit();
+        }
+        if preserve_transient {
+            self.refresh_obj_angle();
+            self.prune_inert_selection();
+            return;
         }
         self.objsel = staged.objsel;
         self.selected = staged.selected;
         self.group_sel = staged.group_sel;
         self.dsel_path = staged.dsel_path;
         self.absel = staged.absel;
-        self.tool = staged.tool;
-        self.clipboard = staged.clipboard;
         self.cur_fill = staged.cur_fill;
         self.cur_stroke = staged.cur_stroke;
         self.cur_sw = staged.cur_sw;
         self.paint = staged.paint;
         self.refresh_obj_angle();
         self.prune_inert_selection();
-        Ok(())
+    }
+
+    pub(crate) fn allocation_floor(&self) -> u32 {
+        self.id_high_water.max(self.doc.ids)
+    }
+    pub(crate) fn clear_batch_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+    pub fn history_preview(&self, redo: bool) -> Option<&Document> {
+        if redo {
+            self.redo.last()
+        } else {
+            self.undo.last()
+        }
+    }
+    pub fn history_available(&self, redo: bool) -> bool {
+        if redo {
+            !self.redo.is_empty()
+        } else {
+            !self.undo.is_empty()
+        }
     }
 
     // ---------- history ----------
     pub fn begin(&mut self) {
+        self.id_high_water = self.id_high_water.max(self.doc.ids);
         self.pending = Some(self.doc.clone());
+        self.doc.ids = self.id_high_water;
         self.dirty = false;
     }
     pub fn commit(&mut self) {
         self.doc.sync_tree(); // adopt new paths / prune dead + empty nodes / re-flatten z
+        self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
             if let Some(p) = self.pending.take() {
                 self.undo.push(p);
@@ -3332,6 +3403,7 @@ impl Editor {
         snapshot.snap = self.doc.snap;
         snapshot.guides_locked = self.doc.guides_locked;
         snapshot.ruler_origin = self.doc.ruler_origin;
+        self.id_high_water = self.id_high_water.max(self.doc.ids);
         self.doc = snapshot;
     }
     /// Is a history transaction open (`begin` without its `commit` / picker cancel yet)? The app reads
@@ -3388,6 +3460,7 @@ impl Editor {
     pub fn replace_doc(&mut self, doc: Document) {
         self.doc = doc;
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
+        self.id_high_water = self.doc.ids;
         self.undo.clear();
         self.redo.clear();
         self.pending = None;
@@ -4720,7 +4793,7 @@ impl Editor {
     /// Paths targeted by inspector edits (paint / stroke-weight / opacity): object selection ∪ the paths of
     /// individually-selected anchors ∪ the Direct-tool path-level selection. Missing that last term was the
     /// bug where changing colour / removing stroke did nothing while the Direct-Selection tool was active.
-    pub(crate) fn selected_pids(&self) -> HashSet<u32> {
+    pub fn selected_pids(&self) -> HashSet<u32> {
         let mut pids: HashSet<u32> = self.objsel.clone();
         for &aid in &self.selected {
             if let Some(pid) = self.doc.pid_of_anchor(aid) {
