@@ -115,6 +115,41 @@ pub(crate) fn paint_brand(p: &egui::Painter, rect: egui::Rect, under: Color32) {
     }
 }
 
+/// CPU-only painting pass shared by run_home and its frame tests.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_home_frame(
+    root: &mut egui::Ui,
+    top: &TopIcons,
+    shell: &mut varos_app::shell::ShellState,
+    win: &mut Option<WinAction>,
+    tabs: &[TabView],
+    commands: &mut Vec<AppCommand>,
+    rail: &mut bool,
+    dock: &mut bool,
+    page: &mut varos_app::start_page::StartPage,
+    model: &mut varos_app::start::StartModel,
+    warning: Option<&str>,
+    maximized: bool,
+) {
+    build_topbar(
+        root,
+        top,
+        shell,
+        win,
+        tabs,
+        None,
+        commands,
+        rail,
+        dock,
+        &mut Default::default(),
+        None,
+        maximized,
+        true,
+        cfg!(target_os = "macos"),
+    );
+    home_body(root, page, model, warning, commands);
+}
+
 /// Home's body under the top bar: THE Start page. Filter actions (tag / view) change the Start
 /// model; every other action becomes its `AppCommand` through the one adapter (`host::start_command`).
 pub(crate) fn home_body(
@@ -663,46 +698,27 @@ pub(crate) fn corner_voids(p: &egui::Painter, rect: egui::Rect) {
     }
 }
 
-/// Recovery choices live on Start; these neutral strips lead there or to Save As.
-pub(crate) fn build_recovery_strip(
-    root: &mut egui::Ui,
+/// The recovery card (owner decision 2026-10-06, direction B), floating in the Board box `board` on a
+/// document tab — Home never draws it (Start lists the copies itself). Review opens the copies in
+/// place; its clicks are Start's actions, through the one adapter (`host::start_command`): Restore =
+/// `Recover`, Discard = `DiscardRecovery` (the host asks first), Later / × = `DeferRecovery`.
+pub(crate) fn build_recovery_card(
+    ctx: &egui::Context,
+    board: egui::Rect,
     recovery: &crate::recovery_host::RecoveryUi,
     commands: &mut Vec<AppCommand>,
 ) {
-    if !recovery.banner && recovery.recovered_notice.is_none() {
-        return;
+    let rows = if recovery.banner { recovery.rows.as_slice() } else { &[] };
+    for action in varos_app::recovery_card::show(ctx, board, rows, &recovery.footer) {
+        commands.extend(crate::host::start_command(action));
     }
-    use varos_app::shell::{
-        kit::{self, Control},
-        tokens as t,
-    };
-    egui::Panel::top("recovery-strip").frame(egui::Frame::NONE.fill(t::SEAM).inner_margin(t::KIT_PAD)).show(
-        root,
-        |ui| {
-            if recovery.banner {
-                kit::notice(ui, "Varos closed unexpectedly. Recovery copies are available.");
-                kit::notice(ui, "Review copies from your last session before continuing.");
-                ui.horizontal_wrapped(|ui| {
-                    if kit::action(ui, Control::new(egui::Id::new("review-recovery"), "Review Recovery"), false)
-                        .activated
-                    {
-                        commands.push(AppCommand::ReviewRecovery);
-                    }
-                    if kit::action(ui, Control::new(egui::Id::new("defer-recovery"), "Later"), false).activated {
-                        commands.push(AppCommand::DeferRecovery);
-                    }
-                });
+    if rows.is_empty() {
+        if let (Some(sid), Some(notice)) = (recovery.sid, recovery.recovered_notice.as_deref()) {
+            if varos_app::recovery_card::show_restored(ctx, board, sid.0, notice) {
+                commands.push(AppCommand::SaveAs(sid));
             }
-            if let Some(notice) = &recovery.recovered_notice {
-                kit::notice(ui, notice);
-                if let Some(id) = recovery.sid {
-                    if kit::action(ui, Control::new(egui::Id::new("save-recovered"), "Save As…"), false).activated {
-                        commands.push(AppCommand::SaveAs(id));
-                    }
-                }
-            }
-        },
-    );
+        }
+    }
 }
 
 /// Status mirror: recovery state on the left; artboard, Fit and zoom on the right.

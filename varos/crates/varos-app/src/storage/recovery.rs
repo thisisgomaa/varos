@@ -114,6 +114,9 @@ pub struct OrphanEntry {
     pub original_path: Option<PathBuf>,
     /// Unix seconds of the generation Recover would use (else the newest listed one).
     pub saved_at: Option<u64>,
+    /// Unix seconds of the folder's first copy (the manifest's `created`): when that session's first
+    /// recovery copy was written. `None` when the manifest can't be read.
+    pub created: Option<u64>,
     pub state: OrphanState,
 }
 
@@ -542,7 +545,7 @@ impl RecoveryStore {
                     },
                 }
             }
-            let (display_name, original_path, saved_at, state) = match self.read_manifest(&path) {
+            let (display_name, original_path, saved_at, created, state) = match self.read_manifest(&path) {
                 Ok(None) if self.only_known_files(&path) => {
                     // Nothing was ever published here. Retire renames it while the claim is held.
                     let _ = self.retire(&rid);
@@ -552,15 +555,24 @@ impl RecoveryStore {
                     "Unknown document".to_string(),
                     None,
                     None,
+                    None,
                     OrphanState::Damaged("The recovery record can't be read.".to_string()),
                 ),
-                Ok(Some(m)) => match self.best(&path, &m) {
-                    Ok(l) => (m.display_name, m.original_path, Some(l.generation.saved_at), OrphanState::Ready),
-                    Err(e) => (m.display_name, m.original_path, m.generations.first().map(|g| g.saved_at), state_of(e)),
-                },
-                Err(e) => ("Unknown document".to_string(), None, None, state_of(e)),
+                Ok(Some(m)) => {
+                    let created = Some(m.created);
+                    match self.best(&path, &m) {
+                        Ok(l) => {
+                            (m.display_name, m.original_path, Some(l.generation.saved_at), created, OrphanState::Ready)
+                        }
+                        Err(e) => {
+                            let newest = m.generations.first().map(|g| g.saved_at);
+                            (m.display_name, m.original_path, newest, created, state_of(e))
+                        }
+                    }
+                }
+                Err(e) => ("Unknown document".to_string(), None, None, None, state_of(e)),
             };
-            out.push(OrphanEntry { rid, display_name, original_path, saved_at, state });
+            out.push(OrphanEntry { rid, display_name, original_path, saved_at, created, state });
         }
         out.sort_by_key(|a| std::cmp::Reverse(a.saved_at));
         out
@@ -1080,6 +1092,7 @@ mod tests {
                 display_name: "Logo".into(),
                 original_path: Some(PathBuf::from("/Users/a/Logo.vrs")),
                 saved_at: Some(102),
+                created: Some(101),
                 state: OrphanState::Ready,
             }]
         );

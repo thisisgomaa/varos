@@ -171,7 +171,7 @@ fn painted_controls_sit_on_the_mockup_rects_at_1x_and_2x() {
             r(1401.0, 334.0, 28.0, 24.0),
         );
         let recover = p.rect(ids::recover(RID));
-        assert_eq!((recover.right(), recover.height()), (1448.0, 28.0), "Recover: 12 in from the band's right edge");
+        assert_eq!((recover.right(), recover.height()), (1448.0, 28.0), "Restore: 12 in from the band's right edge");
         let all = p.rect(ids::filter(None));
         assert_eq!((all.top(), all.height()), (332.0, 28.0));
     }
@@ -198,7 +198,7 @@ fn real_fonts_keep_the_mockup_lines_whole() {
         "1080 × 1920 px",
         "595 × 842 pt",
         "Recent boards",
-        "Recover",
+        "Restore",
         "Ramadan campaign",
         "Logo marks v3",
         "ramadan",
@@ -212,6 +212,8 @@ fn real_fonts_keep_the_mockup_lines_whole() {
         assert!(!g.text().contains('…') || s.contains('…'), "{s:?} is cut");
     }
     assert!(!galleys.iter().any(|(_, g)| g.text().starts_with('+')), "every card shows all its tags (no +n)");
+    // one word for opening a recovery copy everywhere (owner 2026-10-06): Start's band says Restore too
+    assert!(!galleys.iter().any(|(_, g)| g.text() == "Recover"), "the Recovered band's button reads Restore");
     // the hero sub-label fits inside its button, the shortcut too, with the mockup's paddings
     let (pos, sub) = find("Free canvas, no size needed");
     assert!(pos.x + sub.size().x <= 52.0 + 272.0 - 16.0 - 18.0, "sub-label runs into ⌘N");

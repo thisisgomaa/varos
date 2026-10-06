@@ -199,7 +199,11 @@ pub fn micro_label(text: impl AsRef<str>) -> egui::RichText {
 
 /// A panel's real title: Inter 600, 13 pt, primary text.
 pub fn panel_title(text: impl Into<String>) -> egui::RichText {
-    egui::RichText::new(text).font(weighted(PANEL_TITLE_TEXT, super::fonts::UI_600)).color(TEXT)
+    egui::RichText::new(text).font(panel_title_font()).color(TEXT)
+}
+/// The font of [`panel_title`] (Inter 600, 13 pt), for hand-painted titles (the Review panel).
+pub fn panel_title_font() -> egui::FontId {
+    weighted(PANEL_TITLE_TEXT, super::fonts::UI_600)
 }
 
 /// Tabular numeric values/readouts at the caller's size; labels remain proportional Inter.
@@ -339,6 +343,45 @@ pub const SB_RECOV_ICON_GAP: f32 = 14.0;
 pub const SB_RECOV_TEXT_GAP: f32 = 12.0;
 pub const SB_BTN_H: f32 = 28.0;
 pub const SB_BTN_PAD: f32 = 14.0;
+// ── The editor's recovery card + Review panel (owner decision 2026-10-06, direction B; mockups
+// recovery-B-canvas-card-*.png / review-panel.png). The card IS Start's Recovered band (`SB_RECOV_*`,
+// `SB_BTN_*`) floating in the Board box; these are only the numbers the band does not have. ──
+/// The card's / panel's bottom edge sits this far above the Board box's bottom edge (also the least
+/// gap kept to the box's other edges when the box is small).
+pub const RC_GAP: f32 = 24.0;
+/// From the end of the sentence to Later.
+pub const RC_TEXT_BTN_GAP: f32 = 20.0;
+/// Between Later and Review (and Discard and Restore).
+pub const RC_BTN_GAP: f32 = 8.0;
+/// Under this Board-box width the card drops its second phrase ("from your last session").
+pub const RC_NARROW_W: f32 = 600.0;
+// Compact floating recovery layouts.
+/// Minimum sentence width before the card stacks its text above the buttons.
+pub const RC_MIN_TEXT_W: f32 = 80.0;
+/// Card height when its text and buttons are stacked.
+pub const RC_STACK_CARD_H: f32 = 88.0;
+/// Review row height when its text and buttons are stacked.
+pub const RC_STACK_ROW_H: f32 = 96.0;
+/// Below this inner row width, Review rows stack their text above the buttons.
+pub const RC_COMPACT_ROW_W: f32 = 420.0;
+
+/// The Review panel: width, header / row / footer heights, side padding.
+pub const RC_PANEL_W: f32 = 620.0;
+pub const RC_HEAD_H: f32 = 44.0;
+pub const RC_ROW_H: f32 = KIT_ROW_H;
+pub const RC_FOOT_H: f32 = 36.0;
+pub const RC_PAD_X: f32 = 16.0;
+/// Header glyph → title, title → count, footer shield → text.
+pub const RC_HEAD_ICON_GAP: f32 = 10.0;
+pub const RC_COUNT_GAP: f32 = 8.0;
+pub const RC_FOOT_ICON_GAP: f32 = 8.0;
+/// A row's name line and detail line: their tops inside the 56 row, and their line boxes.
+pub const RC_NAME_TOP: f32 = 11.0;
+pub const RC_DETAIL_TOP: f32 = 31.0;
+pub const RC_NAME_LINE: f32 = 16.0;
+pub const RC_DETAIL_LINE: f32 = 14.0;
+/// The gap between the detail text and the folder path on a row's second line.
+pub const RC_PATH_GAP: f32 = 12.0;
 pub const SB_HEAD_H: f32 = 28.0;
 pub const SB_HEAD_GAP: f32 = 16.0;
 pub const SB_COUNT_GAP: f32 = 8.0;
