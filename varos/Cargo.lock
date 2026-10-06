@@ -4036,6 +4036,8 @@ version = "0.1.0"
 dependencies = [
  "flo_curves",
  "i_overlay",
+ "resvg",
+ "roxmltree",
  "serde",
  "serde_json",
  "unicode-normalization",
@@ -4047,6 +4049,7 @@ version = "0.1.0"
 dependencies = [
  "lopdf",
  "pdf-writer",
+ "resvg",
  "serde",
  "serde_json",
  "sha2",

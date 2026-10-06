@@ -525,3 +525,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "svg_tests.rs"]
+mod svg_tests;
