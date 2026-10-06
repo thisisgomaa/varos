@@ -234,7 +234,7 @@ Awaiting Ahmed: accept/reject the stack direction and outline-first PDF trade-of
 
 ## Amendment 1 — after P1 (2026-10-07)
 
-**Proposed, awaiting owner. Do NOT start P2.** Owner direction is to amend this ADR first. The 2026-10-06 acceptance remains recorded; this amendment supersedes the earlier prospective P1/status statements where they conflict with the results below. Accepting the amendment commissions a bounded P1b headless investigation, not a TextBox, format migration, renderer integration or UI implementation. The outline-first PDF and future v4 decisions stand. Estimates below are engineering effort, not elapsed-time promises or upstream acceptance dates.
+**Accepted by the owner 2026-10-07. Do NOT start P2 before P1b passes.** Owner direction was to amend this ADR first. The 2026-10-06 acceptance remains recorded; this amendment supersedes the earlier prospective P1/status statements where they conflict with the results below. Accepting the amendment commissions a bounded P1b headless investigation, not a TextBox, format migration, renderer integration or UI implementation. The outline-first PDF and future v4 decisions stand. Estimates below are engineering effort, not elapsed-time promises or upstream acceptance dates.
 
 ### Evidence and what passed
 
