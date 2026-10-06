@@ -26,6 +26,7 @@ use winit::{
 };
 
 mod app_command;
+mod bridge_host;
 mod chrome;
 mod cursors;
 mod export_ui;
@@ -688,6 +689,7 @@ fn run_action(
     jobs: &mut dyn host::FileJobs,
 ) -> host::Ran {
     match action {
+        host::HostAction::App(AppCommand::Bridge(request)) => bridge_host::run(*request, ws, ui),
         host::HostAction::App(cmd) => host::run_command(cmd, ws, ui, dialogs, store, keys, jobs),
         host::HostAction::Doc(a) => {
             if ws.on_home() {
@@ -868,6 +870,25 @@ fn main() {
     // `run()`, because a cold-launch open arrives inside `run()` before the first frame is handled.
     #[cfg(target_os = "macos")]
     mac_open::install(event_loop.create_proxy());
+    let (bridge_tx, bridge_rx) = std::sync::mpsc::sync_channel(32);
+    let bridge_proxy = event_loop.create_proxy();
+    let bridge_listener = match varos_bridge::ipc::Listener::start(bridge_tx, move || {
+        let _ = bridge_proxy.send_event(());
+    }) {
+        Ok(listener) => {
+            match listener.epoch() {
+                Ok(epoch) => bridge_host::initialize(epoch),
+                Err(e) => eprintln!("[varos-bridge] endpoint unavailable: {e}"),
+            }
+            // Diagnostics only: no menu, approval panel or new visible controls.
+            eprintln!("[varos-bridge] endpoint file: {}", listener.endpoint_file.display());
+            Some(listener)
+        }
+        Err(e) => {
+            eprintln!("[varos-bridge] attachment unavailable: {e}");
+            None
+        }
+    };
     let recovery_proxy = event_loop.create_proxy();
     let mut recovery = recovery_host::RecoveryHost::new(Box::new(move || {
         let _ = recovery_proxy.send_event(());
@@ -1096,6 +1117,16 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
+            // Keep the capability alive exactly as long as this host. Requests bind explicit session
+            // handles when decoded; never replace them with whichever tab is active at drain time.
+            let _attachment = &bridge_listener;
+            for request in bridge_rx.try_iter() {
+                pending.push(host::HostAction::App(AppCommand::Bridge(Box::new(request))));
+                window.request_redraw();
+            }
+            if matches!(&event, Event::AboutToWait) && bridge_listener.as_ref().is_some_and(|l| l.has_clients()) {
+                bridge_host::observe(&mut ws);
+            }
             #[cfg(target_os = "macos")]
             if let Some(menu) = &mac_menu {
                 if matches!(&event, Event::NewEvents(winit::event::StartCause::Init)) {

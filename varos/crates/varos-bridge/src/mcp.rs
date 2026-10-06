@@ -1,0 +1,242 @@
+//! Newline JSON-RPC binding. Editing stays in Service.
+use crate::{dto::*, ipc, service::compact, MCP_VERSION, TOOLS};
+use serde_json::{json, Value};
+use std::{
+    collections::HashMap,
+    io::{self, BufRead, Write},
+    sync::{Arc, Mutex},
+};
+pub fn tool_result(reply: &Reply) -> Value {
+    json!({"content":[{"type":"text","text":compact(reply)}],"structuredContent":reply,"isError":!reply.ok})
+}
+pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
+    if name == "edit" {
+        if let Some(ops) = args.get("ops").and_then(Value::as_array) {
+            for (index, op) in ops.iter().enumerate() {
+                if let Some(verb) = op.get("verb").and_then(Value::as_str) {
+                    if !["move", "set_paint"].contains(&verb) {
+                        return Err(Error::new("unsupported", "edit verb is not enabled in this slice").at(index));
+                    }
+                }
+                serde_json::from_value::<Operation>(op.clone())
+                    .map_err(|e| Error::new("invalid_argument", e.to_string()).at(index))?;
+            }
+        }
+    }
+    serde_json::from_value(json!({"tool":name,"arguments":args}))
+        .map_err(|e| Error::new("invalid_argument", e.to_string()))
+}
+fn object(properties: Value, required: &[&str]) -> Value {
+    json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
+}
+pub fn tools() -> Value {
+    let api = json!({"type":"string","const":"1.0","default":"1.0"});
+    let ids = json!({"type":"array","items":{"type":"string","pattern":"^(path|node):[0-9]+$"},"maxItems":1000});
+    let rev = json!({"type":"integer","minimum":0});
+    let board = json!({"type":"string","pattern":"^b[0-9]+$"});
+    let request_id = json!({"type":"string","pattern":"^r[1-9][0-9]*$"});
+    let page = json!({"type":"integer","minimum":1,"maximum":100,"default":20});
+    let cursor = json!({"type":"string"});
+    let paint = json!({"anyOf":[{"type":"string","pattern":"^#[0-9A-Fa-f]{8}$"},{"type":"null"}]});
+    let mut schemas = HashMap::new();
+    schemas.insert("capabilities", object(json!({"api":api}), &[]));
+    schemas.insert("list_boards", object(json!({"api":api,"limit":page,"cursor":cursor}), &[]));
+    schemas.insert("describe",object(json!({"api":api,"board":board,"rev":rev,"ids":ids,"fields":{"type":"array","items":{"enum":["bounds","paint","parent","name","state","metadata","artboards"]}},"since":rev,"limit":page,"cursor":cursor}),&["board"]));
+    schemas.insert(
+        "select",
+        object(
+            json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"ids":ids}),
+            &["api", "board", "request_id", "expected_rev", "ids"],
+        ),
+    );
+    let move_schema = object(
+        json!({"verb":{"const":"move"},"ids":ids,"delta":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}}),
+        &["verb", "ids", "delta"],
+    );
+    let paint_schema = object(
+        json!({"verb":{"const":"set_paint"},"ids":ids,"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),
+        &["verb", "ids"],
+    );
+    schemas.insert("edit",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"ops":{"type":"array","minItems":1,"maxItems":100,"items":{"oneOf":[move_schema,paint_schema]}}}),&["api","board","request_id","expected_rev","ops"]));
+    schemas.insert("history",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"action":{"enum":["undo","redo"]},"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}}),&["api","board","request_id","expected_rev","action"]));
+    schemas.insert("request_status", object(json!({"api":api,"request_id":request_id}), &["request_id"]));
+    let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
+        "capabilities"=>"Negotiate Bridge API 1.0 and inspect enabled limits and grants.",
+        "list_boards"=>"List authorized open boards, never files or Recent entries.",
+        "describe"=>"Summary first; ask for ids and fields for paginated detail. since returns net changes or resync_required.",
+        "select"=>"Deliberately replace human selection with explicit targets; no document undo step.",
+        "edit"=>"Atomic move/solid paint batch with explicit targets; one human undo step. Retains human selection.",
+        "history"=>"One shared undo/redo entry. Retry confirmation_required with digest and SAME request_id. Requires desktop owner VAROS_BRIDGE_ALLOW_HISTORY=1.",
+        _=>"Get a retained receipt by monotonic request_id for this proxy client.",
+    },"inputSchema":schemas[*name]})).collect();
+    json!({"tools":tools})
+}
+fn rpc_result(id: Value, result: Value) -> Value {
+    json!({"jsonrpc":"2.0","id":id,"result":result})
+}
+fn rpc_error(id: Value, code: i32, message: &str) -> Value {
+    json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
+}
+/// Keep reading cancellations while a tool waits for the UI owning thread.
+pub trait Transport: Send + Sync + 'static {
+    fn call(&self, call_id: &str, request: Request) -> Reply;
+    fn cancel(&self, call_id: &str);
+}
+impl Transport for ipc::Client {
+    fn call(&self, call_id: &str, request: Request) -> Reply {
+        ipc::Client::call(self, call_id, request)
+    }
+    fn cancel(&self, call_id: &str) {
+        ipc::Client::cancel(self, call_id)
+    }
+}
+pub fn serve<T: Transport>(
+    reader: &mut impl BufRead,
+    writer: impl Write + Send + 'static,
+    client: T,
+) -> io::Result<()> {
+    let writer = Arc::new(Mutex::new(writer));
+    let client = Arc::new(client);
+    type Active = HashMap<String, (String, Arc<std::sync::atomic::AtomicBool>)>;
+    let active = Arc::new(Mutex::new(Active::new()));
+    let (tx, rx) = std::sync::mpsc::sync_channel::<(Value, String, Request, Arc<std::sync::atomic::AtomicBool>)>(6);
+    let (worker_writer, worker_client, worker_active) = (writer.clone(), client.clone(), active.clone());
+    let worker = std::thread::spawn(move || {
+        while let Ok((id, call, req, flag)) = rx.recv() {
+            let reply = if flag.load(std::sync::atomic::Ordering::Acquire) {
+                Reply::failure(Error::new("cancelled", "cancelled before attachment dispatch"))
+            } else {
+                worker_client.call(&call, req)
+            };
+            if !flag.load(std::sync::atomic::Ordering::Acquire) {
+                let _ =
+                    ipc::write_frame(&mut *worker_writer.lock().unwrap(), &rpc_result(id.clone(), tool_result(&reply)));
+            }
+            worker_active.lock().unwrap().remove(&id.to_string());
+        }
+    });
+    let mut initialized = false;
+    let mut ready = false;
+    let mut serial = 0u64;
+    while let Some(bytes) = ipc::read_frame(reader)? {
+        let msg: Value = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(_) => {
+                ipc::write_frame(&mut *writer.lock().unwrap(), &rpc_error(Value::Null, -32700, "parse error"))?;
+                continue;
+            }
+        };
+        let id = msg.get("id").cloned();
+        let valid_id = id.as_ref().is_none_or(|v| v.is_string() || v.is_number());
+        if msg["jsonrpc"] != "2.0" || !msg["method"].is_string() || !valid_id || !msg.is_object() {
+            ipc::write_frame(
+                &mut *writer.lock().unwrap(),
+                &rpc_error(Value::Null, -32600, "invalid JSON-RPC request"),
+            )?;
+            continue;
+        }
+        let method = msg["method"].as_str().unwrap();
+        let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
+        if method == "notifications/cancelled" {
+            if let Some(request) = params.get("requestId") {
+                if let Some((call, flag)) = active.lock().unwrap().get(&request.to_string()).cloned() {
+                    if !flag.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                        let cancel_client = client.clone();
+                        std::thread::spawn(move || cancel_client.cancel(&call));
+                    }
+                }
+            }
+            continue;
+        }
+        if method == "notifications/initialized" && initialized {
+            ready = true;
+            continue;
+        }
+        let Some(id) = id else {
+            continue;
+        };
+        let result = match method {
+            "initialize" if !initialized => {
+                if params["protocolVersion"].as_str().is_none()
+                    || !params["clientInfo"].is_object()
+                    || !params["capabilities"].is_object()
+                {
+                    rpc_error(id, -32602, "invalid initialize parameters")
+                } else {
+                    initialized = true;
+                    rpc_result(
+                        id,
+                        json!({"protocolVersion":MCP_VERSION,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"varos-bridge","version":env!("CARGO_PKG_VERSION")},"instructions":"Call capabilities api 1.0 first. Summary then ids/fields. Explicit board/revision/targets; consume either text or structured content."}),
+                    )
+                }
+            }
+            "ping" => rpc_result(id, json!({})),
+            _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
+            "tools/list" => rpc_result(id, tools()),
+            "tools/call" if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name)) => {
+                rpc_error(id, -32602, "unknown or missing tool name")
+            }
+            "tools/call" => {
+                let decoded = params["name"]
+                    .as_str()
+                    .ok_or_else(|| Error::new("invalid_argument", "tool name required"))
+                    .and_then(|name| decode_tool(name, params.get("arguments").cloned().unwrap_or_else(|| json!({}))));
+                match decoded {
+                    Err(e) => rpc_result(id, tool_result(&Reply::failure(e))),
+                    Ok(req) => {
+                        if active.lock().unwrap().len() >= 6 {
+                            rpc_result(
+                                id,
+                                tool_result(&Reply::failure(Error::new("busy", "too many pending MCP calls"))),
+                            )
+                        } else {
+                            serial += 1;
+                            let call = format!("mcp-{serial}");
+                            let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                            let inserted = match active.lock().unwrap().entry(id.to_string()) {
+                                std::collections::hash_map::Entry::Vacant(entry) => {
+                                    entry.insert((call.clone(), flag.clone()));
+                                    true
+                                }
+                                std::collections::hash_map::Entry::Occupied(_) => false,
+                            };
+                            if !inserted {
+                                ipc::write_frame(
+                                    &mut *writer.lock().unwrap(),
+                                    &rpc_error(id, -32600, "duplicate pending JSON-RPC id"),
+                                )?;
+                            } else if tx.try_send((id.clone(), call, req, flag)).is_err() {
+                                active.lock().unwrap().remove(&id.to_string());
+                                ipc::write_frame(
+                                    &mut *writer.lock().unwrap(),
+                                    &rpc_result(
+                                        id,
+                                        tool_result(&Reply::failure(Error::new("busy", "MCP queue is full"))),
+                                    ),
+                                )?;
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+            _ => rpc_error(id, -32601, "method not found"),
+        };
+        ipc::write_frame(&mut *writer.lock().unwrap(), &result)?;
+    }
+    let calls: Vec<_> = active.lock().unwrap().values().cloned().collect();
+    for (call, flag) in calls {
+        flag.store(true, std::sync::atomic::Ordering::Release);
+        let cancel_client = client.clone();
+        std::thread::spawn(move || cancel_client.cancel(&call));
+    }
+    drop(tx);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while !worker.is_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    if worker.is_finished() {
+        let _ = worker.join();
+    }
+    Ok(())
+}

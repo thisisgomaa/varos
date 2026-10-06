@@ -1,0 +1,4 @@
+board b1 rev=1
+path:10 path parent=node:1 bounds=[20,20,80,100] fill=#0080FFFF stroke=none stroke_width=1 opacity=1
+path:20 path parent=node:1 bounds=[140,20,80,100] fill=#0080FFFF stroke=none stroke_width=1 opacity=1
+more=false

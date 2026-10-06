@@ -1,0 +1,1 @@
+{"ok":false,"request_id":"r1","board":"b1","rev":1,"undo_steps":0,"error":{"code":"revision_conflict","reason":"describe the fresh revision before retrying","retryable":true,"expected_rev":0,"actual_rev":1}}
