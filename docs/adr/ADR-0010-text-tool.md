@@ -234,6 +234,9 @@ Awaiting Ahmed: accept/reject the stack direction and outline-first PDF trade-of
 
 ## Amendment 1 — after P1 (2026-10-07)
 
+**Prior art (2026-10-07):** the June-2026 web prototype already had a rules-based kashida engine and an "Arabic — the moat" inspector group; harvested in [TEXT_PRIOR_ART_KASHIDA.md](../foundation/work_orders/TEXT_PRIOR_ART_KASHIDA.md) — the slot/cluster/لا rules and the slider UX carry over; literal U+0640 insertion does not.
+
+
 **Accepted by the owner 2026-10-07. Do NOT start P2 before P1b passes.** Owner direction was to amend this ADR first. The 2026-10-06 acceptance remains recorded; this amendment supersedes the earlier prospective P1/status statements where they conflict with the results below. Accepting the amendment commissions a bounded P1b headless investigation, not a TextBox, format migration, renderer integration or UI implementation. The outline-first PDF and future v4 decisions stand. Estimates below are engineering effort, not elapsed-time promises or upstream acceptance dates.
 
 ### Evidence and what passed
