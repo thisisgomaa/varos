@@ -1,0 +1,17 @@
+[package]
+name = "varos-text-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+cosmic-text = { version = "=0.19.0", default-features = false, features = ["no_std"] }
+skrifa = "=0.42.1"
+fontdb = { version = "=0.23.0", default-features = false }
+unicode-bidi = "=0.3.18"
+unicode-linebreak = "=0.1.5"
+unicode-segmentation = "=1.13.3"
+tiny-skia = "=0.11.4"
+i_overlay = "=7.0.2"

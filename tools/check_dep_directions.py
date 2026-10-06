@@ -12,7 +12,7 @@ EDGES = {
     "varos-render-wgpu": {"varos-core"},
     "varos-pdf": {"varos-core"},
     "varos-app": {"varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
-    "varos-raster": {"varos-core", "varos-pdf"},
+    "varos-raster": {"varos-core", "varos-pdf"},  # PDF is test-only.
     "varos-bridge": {"varos-core"},
     "varos-cli": {"varos-core", "varos-pdf", "varos-raster", "varos-bridge"},
 }
@@ -62,7 +62,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     try:
         result = subprocess.run(
-            ["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps",
+            ["cargo", "metadata", "--offline", "--locked", "--format-version", "1", "--no-deps",
              "--manifest-path", str(root / "varos/Cargo.toml")],
             check=True, capture_output=True, text=True, encoding="utf-8",
         )
