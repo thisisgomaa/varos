@@ -27,6 +27,7 @@ Varos: a free, open-source, Mac-first for now (official build Mac-only as of 202
 
 ## Key docs
 - `docs/PLAN.md` — single execution map; begin here, do not restart completed work from historical plans.
+- `docs/VISION_AI_NATIVE.md` — the owner's product vision (2026-10-06): humans + agents on the same files; Bridge (MCP/CLI) first, web = WASM mirror; read before proposing new stages.
 - `docs/foundation/STATUS.md` — current program state · `docs/adr/` — accepted architecture decisions
 - `docs/UI_DIRECTION.md` — current visual direction · `docs/reference/BOX_SYSTEM_PLAN.md` — shell reference
 - `docs/LAYERS_VISION.md` — current layers/masks intent · `docs/audits/` — tracked risk register
