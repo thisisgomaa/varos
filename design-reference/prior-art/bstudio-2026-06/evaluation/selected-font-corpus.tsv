@@ -1,0 +1,41 @@
+row	configs	finite_valid	bidi_lines_checked	bidi_bad	breaks_checked	illegal_breaks	missing_layout_carets	cubic_segments	notdef
+joins	9	9	18	0	9	0	27	2430	0
+ligatures	9	9	17	0	8	0	53	990	0
+marks	18	18	24	0	6	0	33	4068	0
+mixed_bidi	18	18	38	14	20	0	38	5031	0
+wrapping	9	9	26	0	17	0	35	4518	0
+joining_controls	36	36	36	0	0	0	45	1980	0
+style_context	9	9	9	0	0	0	9	756	0
+explicit_direction	27	27	24	0	6	0	33	3204	0
+isolates_newlines	45	36	31	9	4	1	139	3564	0
+fallback	27	27	32	0	5	0	32	2817	18
+VISUAL lines=25 bidi_bad=0 caret_x_roundtrips=253 bad_x=0 returned_inside_grapheme=4
+KASHIDA word="A\u{2067}شعار" flags=[8, 6] inserted=[6, 8, 8] dropped=0 source_bytes=12 working_bytes=18
+KASHIDA word="الثلاثاء" flags=[12, 6, 4] inserted=[4, 6, 12] dropped=0 source_bytes=16 working_bytes=22
+KASHIDA word="الساعة" flags=[10, 6, 4] inserted=[4, 6, 10] dropped=0 source_bytes=12 working_bytes=18
+KASHIDA word="السعر" flags=[8, 6, 4] inserted=[4, 6, 8] dropped=0 source_bytes=10 working_bytes=16
+KASHIDA word="السلام" flags=[6, 4] inserted=[4, 6, 6] dropped=0 source_bytes=12 working_bytes=18
+KASHIDA word="الس\u{64e}\u{651}ل\u{64e}ام\u{64f}" flags=[10, 10, 4, 4] inserted=[4, 4, 4] dropped=0 source_bytes=20 working_bytes=26
+KASHIDA word="الله" flags=[6, 4] inserted=[4, 6, 6] dropped=0 source_bytes=8 working_bytes=14
+KASHIDA word="ب\u{200c}ب" flags=[] inserted=[] dropped=0 source_bytes=7 working_bytes=7
+KASHIDA word="ب\u{200d}ب" flags=[5] inserted=[] dropped=0 source_bytes=7 working_bytes=7
+KASHIDA word="ج.م." flags=[] inserted=[] dropped=0 source_bytes=6 working_bytes=6
+KASHIDA word="سـلام" flags=[4, 2] inserted=[] dropped=0 source_bytes=10 working_bytes=10
+KASHIDA word="شعار" flags=[4, 2] inserted=[2, 4, 4] dropped=0 source_bytes=8 working_bytes=14
+KASHIDA word="صباح\u{64b}ا." flags=[10, 4, 2] inserted=[2, 4, 4] dropped=0 source_bytes=13 working_bytes=19
+KASHIDA word="عليكم" flags=[8, 6, 4, 2] inserted=[2, 6, 8] dropped=0 source_bytes=10 working_bytes=16
+KASHIDA word="ع\u{64e}ل\u{64e}ي\u{652}ك\u{64f}م\u{652}" flags=[16, 16, 12, 12, 8, 8, 4, 4] inserted=[] dropped=0 source_bytes=20 working_bytes=20
+KASHIDA word="ق\u{64f}ر\u{652}آن\u{64c}" flags=[4, 4] inserted=[] dropped=0 source_bytes=14 working_bytes=14
+KASHIDA word="ك\u{64e}ر\u{650}يم\u{64c}" flags=[10, 10, 4, 4] inserted=[10, 10, 10] dropped=0 source_bytes=14 working_bytes=20
+KASHIDA word="لآ" flags=[] inserted=[] dropped=0 source_bytes=4 working_bytes=4
+KASHIDA word="لأ" flags=[] inserted=[] dropped=0 source_bytes=4 working_bytes=4
+KASHIDA word="لإ" flags=[] inserted=[] dropped=0 source_bytes=4 working_bytes=4
+KASHIDA word="لا" flags=[] inserted=[] dropped=0 source_bytes=4 working_bytes=4
+KASHIDA word="موعدنا" flags=[10, 6, 2] inserted=[2, 6, 10] dropped=0 source_bytes=12 working_bytes=18
+KASHIDA word="می\u{200c}روم" flags=[2] inserted=[] dropped=0 source_bytes=13 working_bytes=13
+KASHIDA word="ورحمة" flags=[8, 6] inserted=[6, 8, 8] dropped=0 source_bytes=10 working_bytes=16
+KASHIDA word="يوم" flags=[2] inserted=[2, 2, 2] dropped=0 source_bytes=6 working_bytes=12
+KASHIDA word="١٢٣٫٤٥" flags=[] inserted=[] dropped=0 source_bytes=12 working_bytes=12
+MARK positioned_in_shaper=8 layout_offset_fields=absent
+FALLBACK inter_arabic_notdef=4 plex_probe=FontProbe { parse_ok: true, arabic: true, tatweel_ok: true, kashida_safe: true, has_wght: false } inter_probe=FontProbe { parse_ok: true, arabic: true, tatweel_ok: false, kashida_safe: true, has_wght: false }
+NEWLINE second_line_clusters=[6, 4, 2, 0]
