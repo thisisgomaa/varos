@@ -7,6 +7,14 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
+## Implementation status — 2026-10-07 (format 4)
+
+The writer emits **v4** (stable artboard ids: `doc.artboards[].id` — Bridge slice 3, ADR-0008
+amendment 2026-10-07). It reads v3 through the v3→v4 migration (§6c), v2 through v2→v3→v4 and v1
+through all three steps. Everything below about v2/v3 strictness still holds; v3 is now an older format
+and opens with the migration notice. Work-branch status (`feat/bridge-slice3-artboards`): implemented
+with headless tests; independent review and owner hand test pending.
+
 ## Implementation status — 2026-10-04 (format 3)
 
 The writer emits **v3** (board metadata: `doc.name`, `doc.description`, `doc.tags` — Start v2 lane
@@ -98,7 +106,8 @@ S5-B now supplies the version-first gate through `format::decode_model`, includi
 |---|---|---|---|
 | 1 | **legacy, readable through migration** | every `.vrs`-capable build since `7a5b3c8` (2026-07-02) | a *family* of eras, all stamped `1` — raw JSON, pre-artboards, legacy group registry, pre-`Paint` enum, pre-tree, and (the hole) masks/rotation added under this same number. See ADR-0008 §Context. |
 | 2 | **legacy, readable through migration** (since 2026-10-04) | S5-B builds up to `f21c20e` | same `Document` shape as 1; the reader contract tightens (§6, §9). No schema change — see ADR-0008 §"v2 is the same model with a stricter reader". |
-| 3 | **current writer** since 2026-10-04 | current build | v2 plus three `doc` keys: `name` (string), `description` (string), `tags` (array of strings) — board metadata, bounded (§6b). A v1/v2 file carrying any of them is refused. |
+| 3 | **legacy, readable through migration** (since 2026-10-07) | builds up to `a5f687b` | v2 plus three `doc` keys: `name` (string), `description` (string), `tags` (array of strings) — board metadata, bounded (§6b). A v1/v2 file carrying any of them is refused. |
+| 4 | **current writer** since 2026-10-07 | current build | v3 plus one key on every artboard: `id` (u32 > 0, unique among artboards, from the document id counter) — stable artboard identity (§6c). `active` must name an artboard (or be 0 on a free canvas). A v1/v2/v3 file carrying an artboard `id` is refused. |
 
 ## 6. Migration v1 → v2
 
@@ -175,6 +184,43 @@ BEFORE any typed decode: it reads the top-level keys of `doc`, skipping every va
 that claims format 1 or 2 but has `name`, `description` or `tags` — whatever the value (`42`, `null`, a
 nested object) — with `Invalid::FieldNotInFormat`, the same fail-closed rule as any unknown field. A v3 file may omit them (reader relaxation: they
 default to empty); this build's writer always emits all three.
+
+## 6c. Migration v3 → v4 (2026-10-07, artboard ids)
+
+`format::migrate_v3_to_v4` — pure, deterministic, runs once on a v3 input after the v3 canonical
+check. A v3 file has no artboard ids (refused below), so every artboard decoded with id 0. The step:
+
+| field | migrated value |
+|---|---|
+| `artboards[i].id` | `ids + 1`, `ids + 2`, … in artboard order, where `ids` is the document id counter after the v3 canonical pass (raised to cover every id in use) |
+| `ids` | raised by the number of artboards |
+| `active` | clamped into range (`min(active, len − 1)`, or 0 on a free canvas); a v3 reader already clamped on read, so the active page is the same |
+
+Nothing else changes. v1/v2 files run their earlier steps first. The migrated file opens with the
+ordinary migration notice; no bytes change until the user saves (which writes v4). The frozen
+`v3/v3_board_meta` (counter 15, two pages) becomes ids 16 and 17, counter 17.
+
+**Format-4 checks.** Structure: artboard ids are unique among artboards (`Invalid::DuplicateId { kind:
+"artboard" }`); cross-kind reuse stays legal (a path, a node and an artboard may share a number), and
+the id-headroom check counts one id per artboard still to be assigned. Validation: every artboard has
+an id (`Invalid::MissingArtboardId { index }`; the typed decode defaults a missing `id` to 0) and
+`active < max(len, 1)` (`Invalid::ActiveArtboardOutOfRange`). A v2/v3 file is validated without these
+two checks, before its migration. Save runs the same checks after the save-side normalizer, which gives
+an artboard built in memory without an id (`0`) a fresh one and clamps a stale `active` on the clone —
+the forms `Editor::commit` already keeps. A duplicate non-zero id is refused on save, never renumbered.
+
+**Older formats must not carry the artboard id.** The keys-only scan (`format::refuse_newer_keys`) now
+runs for v1–v3 input and also reads the keys of each artboard object (values skipped): an artboard
+`id` in a file that claims format 1, 2 or 3 — any value, `0`, `null` or a nested object — is refused
+with `Invalid::FieldNotInFormat { field: "artboard id" }` before typed decoding. A board key in a v1/v2
+file is still reported first.
+
+**Live identity.** The editor allocates artboard ids from the same counter and lifetime high-water
+mark as paths and nodes: every commit gives a new or duplicated page a fresh id (`Document::
+assign_artboard_ids` — a copy inserted after its source gets the new id), undo restores the same page
+with the same id, and a page created after an undo never reuses a removed page's id. Indices stay
+internal (export planning, Layers artboard sections, `path_boards`/`node_boards`, the `active`
+preference, `ExportScope::ActiveArtboard`); the Bridge and `varos-cli export-pdf --artboard` speak ids.
 
 ## 7. v2 required keys and the unknown-field policy
 
@@ -336,6 +382,19 @@ current, the frozen `v3_future` / `future_pdf` now pass the gate and fail the ty
 (Malformed); their bytes are unchanged. The native writer byte fixtures `varos-pdf/tests/fixtures/
 native_{demo,rich}.pdf` were re-blessed once for the bump (model stream + version + offsets only).
 
+### Frozen v4 corpus (2026-10-07)
+
+`varos-core/tests/fixtures/v4/README.md` records the first v4 writer, construction and SHA256SUMS:
+`v4_board_meta` (the frozen `v3_board_meta` migrated: artboard ids 16 and 17) and `v4_boardless` (the
+frozen `v3_boardless` migrated: no pages, so no ids), each as raw + PDF twins. Six refusal inputs were
+appended to `fixtures/refused/` (README format-4 addendum): `v5_future`, `future_v5_pdf` (NewerVersion
+5/4), `v3_artboard_id` (FieldNotInFormat "artboard id", 3), `artboard_duplicate_id` (DuplicateId
+artboard 16), `artboard_missing_id` (MissingArtboardId 0) and `active_out_of_range`
+(ActiveArtboardOutOfRange 2/2). Since v4 is current, the frozen `v4_future` / `future_v4_pdf` now pass
+the gate and fail the typed decode (Malformed); their bytes are unchanged. The native writer byte
+fixtures `varos-pdf/tests/fixtures/native_{demo,rich}.pdf` were re-blessed once for the bump (model
+stream + version + offsets only; page content streams are byte-identical).
+
 ### Frozen v2 and refusal corpus (S5-E)
 
 `varos-core/tests/fixtures/v2/README.md` records the writer baseline (`6b6f41e`), exact
@@ -367,6 +426,11 @@ Format 3 adds a second frozen gate, `v2_gate`: the format-2 reader's `peek_versi
 `f21c20e:varos/crates/varos-core/src/format/mod.rs` with `FORMAT_VERSION` = 2 and its `NewerVersion`
 text inlined. Fresh and frozen v3 raw/PDF output must receive exactly "This file needs a newer Varos.
 It uses file format 3; this build supports up to 2. …"; frozen v1 and v2 headers pass it (5 tests).
+
+Format 4 adds a third frozen gate, `v3_gate`: the format-3 reader's `peek_version` from
+`a5f687b:varos/crates/varos-core/src/format/mod.rs` with `FORMAT_VERSION` = 3. Fresh and frozen v4
+raw/PDF output must receive exactly "This file needs a newer Varos. It uses file format 4; this build
+supports up to 3. …"; frozen v1, v2 and v3 headers pass it. The v1 and v2 gates refuse v4 too (8 tests).
 
 These tests prove the old gate logic, not execution of an old application binary. Personal
 files, real-window behavior, an actual pre-S5 build and Preview re-saving remain unverified.

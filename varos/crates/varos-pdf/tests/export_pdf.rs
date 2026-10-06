@@ -56,6 +56,7 @@ fn demo_doc() -> Document {
     d.paths[0].opacity = 0.8;
     d.ids = 5;
     d.sync_tree();
+    d.assign_artboard_ids(); // format 4: every commit leaves pages with stable ids
     d
 }
 
@@ -114,6 +115,7 @@ fn rich_doc() -> Document {
     let unit = d.unit_of(2).expect("rect 2's unit");
     d.set_node_xform(unit, Xform { rot: 0.5, piv: [250.0, 120.0] });
     d.clip_group(&[4, 5], 5).expect("4 clips to 5");
+    d.assign_artboard_ids();
     d
 }
 
@@ -139,6 +141,9 @@ fn fixture(name: &str) -> PathBuf {
 /// S5's schema version bump) and say so in that PR. Re-blessed 2026-10-04 for format 3 (board
 /// metadata, Start v2 lane L2): the only differences are the model stream (`"varos":3` plus the empty
 /// `name`/`description`/`tags` keys), its /Length, `/VAROS_SchemaVersion 3` and the shifted xref offsets.
+/// Re-blessed 2026-10-07 for format 4 (artboard ids, Bridge slice 3): the model stream gains
+/// `"varos":4`, an `"id"` first in each artboard and the moved id counter, plus its /Length,
+/// `/VAROS_SchemaVersion 4` and the shifted xref offsets.
 #[test]
 fn native_write_is_byte_identical_to_fixture() {
     let bless = std::env::var_os("VAROS_BLESS_PDF_FIXTURES").is_some();

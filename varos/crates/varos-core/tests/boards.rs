@@ -29,6 +29,7 @@ fn two_pages(clip: bool) -> Editor {
     let mut ed = Editor::new();
     ed.ppu = 1.0;
     ed.doc.artboards = vec![board(0.0, "A", clip), board(150.0, "B", clip)];
+    ed.doc.assign_artboard_ids(); // format 4: pages carry stable ids
     ed
 }
 /// All Fill prims EXCEPT the page-paper fills (papers carry the page colour; art here is grey).

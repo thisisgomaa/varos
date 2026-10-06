@@ -86,11 +86,20 @@ struct Args {
     detail: Option<String>,
     batch: Option<PathBuf>,
     preset: Option<String>,
+    artboard: Option<String>,
     in_place: bool,
 }
 fn parse(args: Vec<OsString>, allowed: &[&str], count: usize) -> Result<Args, String> {
-    let mut result =
-        Args { positional: vec![], out: None, size: None, detail: None, batch: None, preset: None, in_place: false };
+    let mut result = Args {
+        positional: vec![],
+        out: None,
+        size: None,
+        detail: None,
+        batch: None,
+        preset: None,
+        artboard: None,
+        in_place: false,
+    };
     let mut it = args.into_iter();
     let mut seen = std::collections::HashSet::new();
     let mut literal = false;
@@ -117,6 +126,7 @@ fn parse(args: Vec<OsString>, allowed: &[&str], count: usize) -> Result<Args, St
                 "--batch" => result.batch = Some(value.into()),
                 "--detail" => result.detail = Some(value.into_string().map_err(|_| "detail id must be UTF-8")?),
                 "--preset" => result.preset = Some(value.into_string().map_err(|_| "preset must be UTF-8")?),
+                "--artboard" => result.artboard = Some(value.into_string().map_err(|_| "artboard must be UTF-8")?),
                 "--size" => {
                     result.size = Some(
                         value
@@ -164,12 +174,35 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
             Ok(json!({"out":out.to_string_lossy(),"width":size,"height":size,"bytes":png.len()}))
         }
         "export-pdf" | "save-as" => {
-            let a = parse(args, &["--out"], 1)?;
+            let a = parse(args, if verb == "export-pdf" { &["--out", "--artboard"] } else { &["--out"] }, 1)?;
             let out = required(a.out, "--out")?;
-            let doc = varos_pdf::load_vrs(&a.positional[0])?;
+            // An export is a model-free PDF: writing it over the input would destroy the editable
+            // document. Refused outright (there is no `--in-place` for export), checked before loading.
+            if verb == "export-pdf" && same_file(&a.positional[0], &out)? {
+                return Err("--out resolves to the input; an export would replace the editable document with a \
+                     model-free PDF. Choose another --out"
+                    .to_owned()
+                    .into());
+            }
+            let mut doc = varos_pdf::load_vrs(&a.positional[0])?;
             let pdf = if verb == "export-pdf" {
-                let plan =
-                    varos_pdf::plan_pdf_export(&doc, varos_pdf::default_scope(&doc)).map_err(|e| e.to_string())?;
+                // `--artboard artboard:N` (or N): export that one page — the stable id (format 4) mapped
+                // to the ActiveArtboard scope on this in-memory copy; the file itself is not changed
+                let scope = match &a.artboard {
+                    Some(id) => {
+                        let n = id
+                            .strip_prefix("artboard:")
+                            .unwrap_or(id)
+                            .parse::<u32>()
+                            .ok()
+                            .filter(|n| *n > 0)
+                            .ok_or_else(|| "--artboard must be artboard:N or N".to_owned())?;
+                        doc.active = doc.artboard_index(n).ok_or_else(|| format!("unknown artboard:{n}"))?;
+                        varos_pdf::ExportScope::ActiveArtboard
+                    }
+                    None => varos_pdf::default_scope(&doc),
+                };
+                let plan = varos_pdf::plan_pdf_export(&doc, scope).map_err(|e| e.to_string())?;
                 varos_pdf::export_pdf_bytes(&doc, &plan, &AtomicBool::new(false)).map_err(|e| e.to_string())?
             } else {
                 varos_pdf::write_pdf_checked(&doc, &Limits::DEFAULT)?
@@ -244,6 +277,31 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
     }
 }
 /// Unique sibling temp file: refusal never truncates the destination or a user's fixed-name temp.
+/// Does `out` name the same file as `input`? The canonical paths (symlinks, `..`) and, on Unix, the
+/// device/inode pair (hard links). A missing `out` is never the input.
+fn same_file(input: &Path, out: &Path) -> Result<bool, String> {
+    let input_path = std::fs::canonicalize(input).map_err(|e| e.to_string())?;
+    let out_path = match std::fs::canonicalize(out) {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.to_string()),
+    };
+    if input_path == out_path {
+        return Ok(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let (a, b) = (
+            std::fs::metadata(&input_path).map_err(|e| e.to_string())?,
+            std::fs::metadata(&out_path).map_err(|e| e.to_string())?,
+        );
+        if (a.dev(), a.ino()) == (b.dev(), b.ino()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 fn write_output(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     for serial in 0..100 {
