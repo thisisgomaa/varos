@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn summary_of_a_document() {
-        let mut doc = varos_core::board::new_board_with_preset(varos_core::board::PresetId::A4, None);
+        let mut doc = varos_core::board::new_board_with_preset(varos_core::board::PresetId::A4);
         doc.name = "Poster".into();
         doc.description = "A4 poster".into();
         doc.tags = vec!["print".into()];

@@ -63,12 +63,51 @@ pub struct RecoveryHost {
     held: Vec<Finished>,
     /// The command held back for an in-flight save (`host::run_command`).
     pub save_wait: crate::host::SaveWait,
+    /// The launch scan is submitted and its result has not been applied yet. While it is, the
+    /// event loop polls for it (`next_wake`) instead of relying on the worker's wake alone.
+    scan_pending: bool,
+    /// When the event loop should look for the pending scan again (`observe` time + `SCAN_POLL`).
+    scan_poll: Option<Instant>,
 }
+
+/// How long launch waits (once, before the first frame) for the orphan scan it submitted while the
+/// window and GPU were being set up. The scan reads only the recovery folder, so it has normally
+/// landed long before; the cap keeps a slow disk from holding the first frame.
+pub const LAUNCH_SCAN_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+/// While the launch scan is still out, the event loop looks for its result this often — never
+/// waiting for the 30-second recovery-copy deadline, the only other timed wake (owner report
+/// 2026-10-06: the "closed unexpectedly" strip appeared ≈ 30 s after a relaunch).
+pub const SCAN_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
 impl RecoveryHost {
     pub fn new(wake: Box<dyn Fn() + Send>) -> Self {
-        let mut host = Self::at(paths::data_root().map(|root| AppLayout { root }), wake);
+        Self::launch(paths::data_root().map(|root| AppLayout { root }), wake)
+    }
+    /// The host at `layout` with its orphan scan already submitted — what launch does.
+    fn launch(layout: Option<AppLayout>, wake: Box<dyn Fn() + Send>) -> Self {
+        let mut host = Self::at(layout, wake);
         host.begin_scan();
         host
+    }
+    /// Launch, before the first frame: wait (at most `timeout`) for the orphan scan submitted by
+    /// [`Self::new`], so the first `observe` already has the orphans and the first frames show the
+    /// banner / Start's Recovered rows. `true` when the scan result is in (or none is pending).
+    /// Other completions that arrive meanwhile are kept for `observe` / the file queue, in order.
+    pub fn await_launch_scan(&mut self, timeout: std::time::Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.pump();
+            let landed = self.held.iter().any(|d| matches!(d, Finished::Scanned(_) | Finished::ScanFailed));
+            if !self.scan_pending || landed {
+                return true;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            let Some(done) = self.worker.as_ref().filter(|_| !left.is_zero()).and_then(|w| w.wait_completion(left))
+            else {
+                return false;
+            };
+            self.sort(done);
+        }
     }
     fn at(layout: Option<AppLayout>, wake: Box<dyn Fn() + Send>) -> Self {
         let mut host = Self {
@@ -86,6 +125,8 @@ impl RecoveryHost {
             file_done: Default::default(),
             held: Vec::new(),
             save_wait: Default::default(),
+            scan_pending: false,
+            scan_poll: None,
         };
         // The worker runs whether or not recovery storage is available: saves and exports use it too.
         let worker_error = match IoWorker::spawn(wake) {
@@ -157,6 +198,9 @@ impl RecoveryHost {
         });
         if worker.submit(job, Finished::ScanFailed).is_err() {
             self.warning = Some("Recovery scan unavailable.".into());
+        } else {
+            self.scan_pending = true;
+            self.scan_poll = Some(Instant::now() + SCAN_POLL);
         }
     }
     pub fn rows(&self) -> Vec<varos_app::start::RecoveryRow> {
@@ -285,8 +329,11 @@ impl RecoveryHost {
             _ => false,
         }
     }
+    /// The earliest moment the event loop must run `observe` again: the recovery scheduler's next
+    /// deadline, or — while the launch scan is still out — a short poll for its result.
     pub fn next_wake(&self) -> Option<Instant> {
-        self.scheduler.next_wake()
+        let poll = self.scan_pending.then_some(self.scan_poll).flatten();
+        [self.scheduler.next_wake(), poll].into_iter().flatten().min()
     }
     pub fn handle(&mut self, cmd: &AppCommand, ws: &mut Workspace, now: Instant) -> bool {
         match cmd {
@@ -327,10 +374,12 @@ impl RecoveryHost {
                     Finished::ScanFailed => {
                         self.warning = Some("Recovery scan failed. Existing copies are kept.".into());
                         self.changed = true;
+                        self.scan_pending = false;
                     }
                     Finished::Scanned(rows) => {
                         self.orphans = rows;
                         self.changed = true;
+                        self.scan_pending = false;
                     }
                     Finished::Loaded(rid, result) => {
                         self.busy.remove(&rid);
@@ -363,6 +412,9 @@ impl RecoveryHost {
                     }
                 }
             }
+        }
+        if self.scan_pending {
+            self.scan_poll = Some(now + SCAN_POLL);
         }
         if self.store.is_none() || self.worker.is_none() {
             return;
@@ -469,6 +521,7 @@ impl RecoveryHost {
     /// Quit: close the worker's queue and run everything already on it — the final recovery retires
     /// AND any in-flight PDF export (Quit waits for it) — then join the thread.
     pub fn shutdown(&mut self) {
+        self.scan_pending = false; // no worker left to answer: stop polling for it
         if let Some(worker) = self.worker.take() {
             for done in worker.shutdown() {
                 if let Finished::Recovery(Completion { result: Err(reason), .. }) = done {
@@ -826,6 +879,56 @@ mod tests {
             .run(AppCommand::InstallRecovered(Box::new(copy)));
             self.ws.active_id().unwrap()
         }
+    }
+
+    /// Owner report 2026-10-06: after a Force Quit + relaunch the "Varos closed unexpectedly" strip
+    /// showed ≈ 30 s late. Launch must REQUEST the orphan scan at startup and apply it before the
+    /// first frame (`await_launch_scan` + one `observe` at the launch instant) — never on the first
+    /// 30-second recovery tick. Until the result is in, the loop polls for it every `SCAN_POLL`,
+    /// so a lost worker wake can no longer leave it waiting for that tick either.
+    #[test]
+    fn launch_requests_the_orphan_scan_at_startup_not_after_the_first_interval() {
+        let mut r = Rig::new();
+        let _rid = r.seed(1, None);
+        r.host.shutdown();
+        let (tx, rx) = mpsc::channel();
+        let t0 = Instant::now();
+        r.host = RecoveryHost::launch(
+            Some(r.layout.clone()),
+            Box::new(move || {
+                let _ = tx.send(());
+            }),
+        );
+        r.wake = rx;
+        // requested at construction: the loop's first wake is a short poll, not the 30-s tick
+        assert!(r.host.scan_pending, "the launch scan is submitted by construction");
+        let first = r.host.next_wake().expect("the pending scan schedules a wake");
+        assert!(first <= Instant::now() + SCAN_POLL, "polls for the scan: {:?}", first - t0);
+        assert!(first < t0 + RECOVERY_INTERVAL);
+        // the launch path: a bounded wait, then ONE observe at the launch instant (no time advanced)
+        assert!(r.host.await_launch_scan(Duration::from_secs(5)), "the scan lands within the wait");
+        r.host.observe(&mut r.ws, t0);
+        assert!(r.host.take_changed(), "Start rebuilds with the rows on its first frame");
+        assert_eq!(r.host.rows().len(), 1);
+        assert!(r.host.presentation(r.ws.active()).banner, "the banner is up before any interval passed");
+        assert!(!r.host.scan_pending);
+        assert_eq!(r.host.next_wake(), None, "no more polling once the scan is in (clean session)");
+    }
+
+    /// Without the bounded wait (a slow disk), every `observe` keeps the poll SCAN_POLL ahead, so
+    /// the event loop re-checks for the scan on its own and the banner follows within one poll.
+    #[test]
+    fn a_late_scan_is_polled_for_never_left_to_the_recovery_tick() {
+        let mut r = Rig::new();
+        let _rid = r.seed(1, None);
+        r.host.begin_scan();
+        r.host.observe(&mut r.ws, r.now);
+        if r.host.scan_pending {
+            assert_eq!(r.host.next_wake(), Some(r.now + SCAN_POLL));
+        }
+        r.complete();
+        assert!(r.host.presentation(r.ws.active()).banner);
+        assert_eq!(r.host.next_wake(), None);
     }
 
     #[test]

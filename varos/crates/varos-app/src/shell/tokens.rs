@@ -67,17 +67,17 @@ pub const SEAM_GAP: f32 = 12.0; // equal void between all boxes (wider +20% so b
 // Boxes start at the band's bottom; the 12 above/below a chip is the same 12 as the seams. ──
 /// The band's height (macOS); boxes start right under it.
 pub const BAND_H: f32 = 52.0;
-/// Every control in the band: Home, tabs, `+`, `+N`, Search, the V mark.
+/// Every control in the band: Home, tabs, `+`, `+N`, the V mark.
 pub const BAND_CHIP_H: f32 = 28.0;
 /// The void above (and below) a chip — the seam rhythm.
 pub const BAND_PAD_Y: f32 = SEAM_GAP;
-/// The right zone (Search + V) when no panel column is docked, and on Home: this wide, ending
-/// `SEAM_GAP` before the window's right edge.
+/// The right zone (empty band, the V mark at its right end — no Search since 2026-10-06) when no
+/// panel column is docked, and on Home: this wide, ending `SEAM_GAP` before the window's right edge.
 pub const BAND_RIGHT_ZONE_W: f32 = 288.0;
 /// The V mark's square button and the mark painted inside it.
 pub const BAND_BRAND: f32 = 28.0;
 pub const BAND_BRAND_MARK: f32 = 18.0;
-/// Search ↔ V, Home ↔ the first tab.
+/// Home ↔ the first tab; the tabs never come closer than this to the V mark either.
 pub const BAND_GAP: f32 = 8.0;
 /// The "+N ⌄" button (hidden tabs) and its gap to its neighbours.
 pub const BAND_OVERFLOW_W: f32 = 40.0;
@@ -88,8 +88,6 @@ pub const BAND_OVERFLOW_CHEV_X: f32 = 24.0;
 /// The count's size (Inter 11.5) and the chevron glyph.
 pub const BAND_OVERFLOW_TEXT: f32 = 11.5;
 pub const BAND_OVERFLOW_CHEV: f32 = 12.0;
-/// Search never gets narrower than this (it grows left when the panel column is narrower).
-pub const BAND_SEARCH_MIN_W: f32 = 120.0;
 /// The tabs leave at least this much void before the right zone (the drag handle).
 pub const BAND_TABS_END_GAP: f32 = SEAM_GAP;
 /// The dashed landing-slot outline while a tab is dragged: dash and gap lengths.
@@ -312,7 +310,7 @@ pub const SB_BIG_GAP: f32 = 14.0;
 pub const SB_BIG_SUB_GAP: f32 = 3.0;
 /// The hero buttons' and the Recovered band's glyph (src.html `svg.i.lg`).
 pub const SB_ICON_HERO: f32 = 20.0;
-/// Small glyphs: view toggle, Custom… plus, status shield, search (src.html `svg.i.sm`).
+/// Small glyphs: view toggle, status shield (src.html `svg.i.sm`).
 pub const SB_ICON_SMALL: f32 = 14.0;
 pub const SB_LEDE_GAP: f32 = 18.0;
 pub const SB_LEDE_W: f32 = 500.0;
@@ -330,8 +328,6 @@ pub const SB_PRESET_NAME_GAP: f32 = 10.0;
 pub const SB_PRESET_SIZE_GAP: f32 = 3.0;
 /// One shared scale for every preset outline: 1920 document units = 56 px, on one baseline.
 pub const SB_PRESET_SCALE: f32 = SB_PRESET_PV / 1920.0;
-pub const SB_CUSTOM_W: f32 = 44.0;
-pub const SB_CUSTOM_H: f32 = 28.0;
 pub const SB_DASH: f32 = 3.0;
 pub const SB_DASH_GAP: f32 = 2.0;
 // vertical rhythm under the hero
@@ -424,10 +420,6 @@ pub const SB_FIRST_BTNS_GAP: f32 = 32.0;
 pub const SB_FIRST_KEYS_GAP: f32 = 20.0;
 pub const SB_FIRST_PRESETS_GAP: f32 = 56.0;
 pub const SB_FIRST_PAD_BOTTOM: f32 = 24.0;
-// the band's Search field ("Search boards" on Home): glyph inset and the glyph → text gap (4b sizes it
-// from the band's right zone — `chrome::topbar_layout` — so it has no width / height token of its own)
-pub const SB_SEARCH_PAD: f32 = 10.0;
-pub const SB_SEARCH_GAP: f32 = 6.0;
 
 // Minimum Start/Recovery kit, in logical points. No runtime colour/size literals in controls.
 pub const KIT_MIN_TARGET: f32 = 24.0;

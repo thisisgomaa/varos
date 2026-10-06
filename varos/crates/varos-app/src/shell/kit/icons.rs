@@ -48,7 +48,7 @@ pub const LEGACY_DIST_H: &str = r#"<rect x="3" y="6" width="3" height="12"/><rec
 pub const LEGACY_DIST_V: &str = r#"<rect x="6" y="3" width="12" height="3"/><rect x="6" y="10.5" width="12" height="3"/><rect x="6" y="18" width="12" height="3"/>"#;
 // top-bar icons: menu (☰). Window min/max/close are painted directly in `winctl` (crisp Win11 glyphs).
 pub const LEGACY_MENU: &str = r#"<path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/>"#;
-// (4b: the band's search / plus / × / magnet glyphs now come from the kit registry, `Icon`)
+// (4b: the band's plus / × / magnet glyphs now come from the kit registry, `Icon`; no band Search)
 // Artboard tool (Lucide "frame" — a bold # that reads clearly at 20px) · hexagon (polygon shape) ·
 // portrait/landscape page · "fit in window" frame
 pub const LEGACY_ARTBOARD: &str = r#"<path d="M22 6H2"/><path d="M22 18H2"/><path d="M6 2v20"/><path d="M18 2v20"/>"#;
@@ -116,13 +116,11 @@ pub enum Icon {
     Shield,
     /// A Missing board's well ("File not found").
     FileQuestion,
-    /// The Custom… preset.
+    /// The band's `+` (new board).
     Plus,
-    /// The top bar's "Search boards".
-    Search,
 }
 impl Icon {
-    pub const ALL: [Icon; 25] = [
+    pub const ALL: [Icon; 24] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -147,7 +145,6 @@ impl Icon {
         Self::Shield,
         Self::FileQuestion,
         Self::Plus,
-        Self::Search,
     ];
 
     /// The Lucide icon name and its embedded upstream SVG.
@@ -182,7 +179,6 @@ impl Icon {
             Self::Shield => svg!("shield-check"),
             Self::FileQuestion => svg!("file-question-mark"),
             Self::Plus => svg!("plus"),
-            Self::Search => svg!("search"),
         }
     }
 

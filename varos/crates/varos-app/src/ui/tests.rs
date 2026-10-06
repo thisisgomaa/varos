@@ -1004,7 +1004,7 @@ mod tab_strip_tests {
         cmds
     }
 
-    /// The chip / `+` / "+N" / Search / V rects for these tabs — measured with the exact same font
+    /// The chip / `+` / "+N" / V rects for these tabs — measured with the exact same font
     /// call `build_topbar` makes (Inter 500 12, `tokens::small_medium`), on the SAME `Context`, so the
     /// rects line up with what a real frame draws.
     fn measure(ctx: &egui::Context, tabs: &[TabView], active: Option<SessionId>) -> crate::chrome::TopbarLayout {
@@ -2102,15 +2102,25 @@ mod dead_control_tests {
         assert_eq!(cmds.first(), menu.as_ref(), "the burger row = File ▸ Export ▸ PDF…'s command");
     }
 
-    /// The band's Search is `Sense::hover`-only (never clickable at all — the strongest form of "not
-    /// an enabled dead button"), with its honest tooltip; no command search exists yet.
+    /// Owner 2026-10-06 ("شيل خانة البحث"): the editor band has no Search. A real frame's click where
+    /// it sat (the right zone, left of the V mark) raises no command and no window action, and the
+    /// bar publishes no rect there — so the OS / macOS caption hit test drags the window from it.
     #[test]
-    fn search_never_raises_a_command() {
+    fn the_editor_band_has_no_search_and_its_old_spot_drags_the_window() {
         let mut bar = Bar::new();
         let layout = bar.layout();
-        let cmds = bar.click(layout.search.center());
-        assert!(cmds.is_empty(), "Search must not raise a command (not wired yet)");
+        let old_slot = egui::pos2(layout.brand.left() - 120.0, layout.brand.center().y);
+        let cmds = bar.click(old_slot);
+        assert!(cmds.is_empty(), "nothing is wired where Search was");
         assert!(bar.win.is_none());
+        let chrome = crate::chrome::TOPBAR;
+        for ppp in [1.0, 2.0] {
+            let excl = crate::chrome::caption_exclusions(&layout.interactive_rects(), ppp);
+            let h = (chrome.height * ppp) as i32;
+            let at = |p: Pos2| crate::chrome::caption_hit(h, &excl, (p.x * ppp) as i32, (p.y * ppp) as i32);
+            assert!(at(old_slot), "the old Search spot drags the window (ppp {ppp})");
+            assert!(!at(layout.brand.center()), "the V mark stays a control (ppp {ppp})");
+        }
     }
 
     /// The V mark: on macOS a click asks for the native About panel (the same one Varos ▸ About
@@ -2345,7 +2355,7 @@ mod home_band_tests {
             let home = layout(&widths, true);
             assert!(home.plus.is_none(), "{n} tabs: Home has no +");
             assert!(drags(&home, plus.center()), "{n} tabs: where + would be is empty band on Home");
-            for r in [home.menu, home.brand, home.search].into_iter().chain(home.tabs.iter().map(|&(_, r)| r)) {
+            for r in [home.menu, home.brand].into_iter().chain(home.tabs.iter().map(|&(_, r)| r)) {
                 assert!(!drags(&home, r.center()), "{n} tabs: painted control {r:?} never drags");
             }
         }
@@ -3109,7 +3119,8 @@ pub(super) mod icon_action_tests {
                 }
             }
         }
-        assert!(scanned >= 28, "the scan must see every current production icon draw (saw {scanned})");
+        // 27 since 2026-10-06: the band's two Search glyphs and the Custom… preset's plus were removed
+        assert!(scanned >= 27, "the scan must see every current production icon draw (saw {scanned})");
         for (func, cap) in TOP_BAR_CAPS {
             let n = raw.get(func).copied().unwrap_or(0);
             assert!(n > 0, "`{func}` must remain covered while its raw-size exception exists");
@@ -3131,14 +3142,14 @@ pub(super) mod icon_action_tests {
     }
 }
 
-/// Start v2 mounted: Home's body is THE Start page plus the bar's live "Search boards" field; its
+/// Start v2 mounted: Home's body is THE Start page (the band has no Search since 2026-10-06); its
 /// actions reach the host as `AppCommand`s through the one adapter, filter actions stay on the model.
 #[cfg(test)]
 mod home_page_tests {
     use super::*;
     use crate::app_command::AppCommand;
     use egui::{Event, PointerButton, Pos2, RawInput};
-    use varos_app::start::{StartAction, StartModel};
+    use varos_app::start::StartModel;
     use varos_app::start_page::{demo, ids, StartPage};
     use varos_core::board::PresetId;
 
@@ -3199,6 +3210,9 @@ mod home_page_tests {
         }
         fn click(&mut self, id: egui::Id) -> Vec<AppCommand> {
             let pos = self.rect(id).center();
+            self.click_at(pos)
+        }
+        fn click_at(&mut self, pos: Pos2) -> Vec<AppCommand> {
             let e = |pressed| Event::PointerButton {
                 pos,
                 button: PointerButton::Primary,
@@ -3213,7 +3227,7 @@ mod home_page_tests {
     }
 
     #[test]
-    fn home_draws_the_start_page_with_search_boards_in_the_bar() {
+    fn home_draws_the_start_page_and_the_band_has_no_search() {
         let mut h = Home::new();
         h.frame(vec![]);
         let bar = crate::chrome::TOPBAR.height;
@@ -3222,8 +3236,23 @@ mod home_page_tests {
         let pad = varos_app::shell::tokens::SB_PAD_TOP;
         assert_eq!(new_board.top(), bar + pad, "4b: the box starts at the band's bottom");
         assert_eq!(new_board.top(), 72.0, "…and the content sits where the owner approved it (y 72)");
-        let search = h.rect(ids::search());
-        assert!(search.bottom() <= bar && search.width() > 150.0, "Search boards lives in the bar: {search:?}");
+        // owner 2026-10-06: no "Search boards" in the band — nothing is drawn under its old id, and a
+        // click where it sat (the right zone, left of the V mark) raises nothing and focuses nothing
+        assert!(h.ctx.read_response(egui::Id::new("start-v2-search")).is_none(), "no Search field");
+        let l = band_layout(
+            crate::chrome::topbar_layout(
+                egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(SIZE.x, bar)),
+                crate::chrome::TOPBAR,
+                None,
+                &[],
+                None,
+            ),
+            true,
+        );
+        let old_slot = egui::pos2(l.brand.left() - 120.0, l.brand.center().y);
+        assert!(l.interactive_rects().iter().all(|r| !r.contains(old_slot)), "nothing published there");
+        assert!(h.click_at(old_slot).is_empty());
+        assert_eq!(h.ctx.memory(|m| m.focused()), None, "no field took the keyboard");
     }
 
     #[test]
@@ -3240,14 +3269,5 @@ mod home_page_tests {
         h.frame(vec![]);
         let card = h.model.visible_cards().next().unwrap().clone();
         assert_eq!(h.click(ids::card(&card.key)), [AppCommand::OpenRecent(card.path.clone())]);
-        // typing in the bar's Search boards filters the cards, and the field keeps the keyboard across
-        // frames (Home no longer surrenders egui focus every frame)
-        h.model.apply(&StartAction::SetTagFilter(None));
-        h.click(ids::search());
-        h.frame(vec![Event::Text("ramadan".into())]);
-        h.frame(vec![]);
-        assert!(h.ctx.memory(|m| m.has_focus(ids::search())), "the field keeps the keyboard");
-        assert_eq!(h.model.filter().search, "ramadan");
-        assert_eq!(h.model.visible_count(), 1);
     }
 }
