@@ -420,3 +420,24 @@ pub(crate) fn settle(
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+impl crate::host::DocUi for crate::ui::Ui {
+    fn settle(&mut self, ed: &mut Editor) -> bool {
+        crate::ui::Ui::settle(self, ed)
+    }
+    fn settle_fields(&mut self, ed: &mut Editor) -> bool {
+        self.commit_fields(ed)
+    }
+    fn bridge_preview_active(&self) -> bool {
+        self.color_modal.is_some()
+            || self.lay_drag.is_some()
+            || self.tab_drag_active()
+            || self.ctx.input(|i| i.pointer.any_down())
+    }
+    fn field_has_focus(&self) -> bool {
+        self.editing_field()
+    }
+    fn document_switched(&mut self) {
+        crate::ui::Ui::document_switched(self)
+    }
+}
