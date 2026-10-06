@@ -11,7 +11,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
-use varos_core::geom::{self, Pt, View};
+use varos_core::geom::{Pt, View};
 use varos_core::scene::{build_scene_in_view, scene_signature};
 use varos_core::EditCommand;
 use varos_render_wgpu::Renderer;
@@ -19,7 +19,7 @@ use varos_render_wgpu::Renderer;
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::{
     dpi::PhysicalPosition,
-    event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, Event, MouseButton, TouchPhase, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::Window,
@@ -31,6 +31,7 @@ mod cursors;
 mod export_ui;
 mod file_jobs;
 mod file_ports;
+mod gestures;
 mod host;
 mod lifecycle;
 #[cfg(target_os = "macos")]
@@ -50,6 +51,7 @@ mod ui;
 mod workspace;
 use app_command::{AppCommand, OpenOrigin, SessionId, WindowCmd};
 use cursors::CK;
+use gestures::zoom_to;
 
 /// The one cursor this frame wants: a pan in progress beats the Space hand, which beats the chrome's
 /// own cursor (`chrome` = Some while the pointer is over a panel), which beats the tool's (lazy). Pure.
@@ -556,8 +558,6 @@ fn fatal(context: &str, detail: &str) -> ! {
     std::process::exit(1);
 }
 
-/// One wheel notch of zoom (Alt+wheel) — fine, because a wheel gives many notches per gesture.
-const ZOOM_NOTCH: f32 = 1.12;
 /// One ⌘= / ⌘− press — Illustrator-sized (100 → 150 → 225 %…), because a key press is one deliberate step.
 const ZOOM_KEY_STEP: f32 = 1.5;
 
@@ -579,13 +579,6 @@ fn paste_key(ed: &mut Editor, view: &View, canvas_centre: Pt, in_place: bool) {
 /// Apply a complete zoom step now, keeping the world point under the cursor fixed.
 fn zoom_step(view: &mut View, screen: Pt, factor: f32) {
     zoom_to(view, screen, view.zoom * factor);
-}
-
-/// Jump to `zoom` now (clamped to the view limits), keeping the world point at `screen` fixed.
-fn zoom_to(view: &mut View, screen: Pt, zoom: f32) {
-    let anchor = view.s2w(screen);
-    view.zoom = zoom.clamp(0.05, 40.0);
-    view.pan = geom::pan_for_anchor(anchor, screen, view.zoom);
 }
 
 /// One DOCUMENT shortcut key (a lifecycle key never gets here — `host::key_command` takes those):
@@ -1562,28 +1555,45 @@ fn main() {
                         window.request_redraw();
                     }
                     WindowEvent::MouseWheel { delta, .. } => {
-                        // a panel is a hard scroll boundary: if the pointer is over egui chrome (e.g. the
-                        // Layers list), the wheel scrolls THAT — it must never leak to canvas pan/zoom.
-                        if home || gui.wants_pointer() {
-                            window.request_redraw();
-                            return;
-                        }
-                        let (dx, dy) = match delta {
-                            MouseScrollDelta::LineDelta(x, y) => (x, y),
-                            MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 40.0, p.y as f32 / 40.0),
-                        };
-                        if ed.mods.alt {
-                            // Exponential per notch, including coalesced wheel events.
-                            let f = ZOOM_NOTCH.powf(dy).clamp(0.2, 5.0);
-                            zoom_step(view, screen_cursor, f);
-                        } else if ed.mods.shift {
-                            view.pan[0] += (dy + dx) * 30.0;
-                        } else {
-                            view.pan[1] += dy * 30.0;
-                            view.pan[0] += dx * 30.0;
+                        gestures::apply(
+                            view,
+                            screen_cursor,
+                            gestures::Gesture::Scroll {
+                                delta,
+                                scale_factor: window.scale_factor(),
+                                alt: ed.mods.alt,
+                                shift: ed.mods.shift,
+                            },
+                            over_panel || gui.wants_pointer_at(screen_cursor),
+                        );
+                        window.request_redraw();
+                    }
+                    WindowEvent::PinchGesture { delta, phase, .. } => {
+                        // Started/Moved/Ended can carry incremental magnification. Cancellation
+                        // applies no further delta; there is no animation or gesture rollback.
+                        if phase != TouchPhase::Cancelled {
+                            gestures::apply(
+                                view,
+                                screen_cursor,
+                                gestures::Gesture::Pinch(delta),
+                                over_panel || gui.wants_pointer_at(screen_cursor),
+                            );
                         }
                         window.request_redraw();
                     }
+                    WindowEvent::DoubleTapGesture { .. } => {
+                        let (x, y, w, h) = fit_rect(ed);
+                        let fit = fit_to_board(&gui, &window, x, y, w, h, 0.9);
+                        gestures::apply(
+                            view,
+                            screen_cursor,
+                            gestures::Gesture::SmartZoom(fit),
+                            over_panel || gui.wants_pointer_at(screen_cursor),
+                        );
+                        window.request_redraw();
+                    }
+                    // View rotation needs the full transform/hit-testing work order first.
+                    WindowEvent::RotationGesture { .. } => {}
                     WindowEvent::KeyboardInput { event, .. } => {
                         let PhysicalKey::Code(code) = event.physical_key else { return };
                         // DFS S1 + UI audit 04: the file / tab keys (⌘N ⌘O ⌘S ⇧⌘S ⌘W ⌘Q, Ctrl+Tab) are
