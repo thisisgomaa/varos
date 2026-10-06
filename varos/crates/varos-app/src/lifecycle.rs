@@ -181,8 +181,7 @@ impl Lifecycle<'_> {
                 self.ws.new_untitled();
             }
             AppCommand::NewWithPreset(preset) => {
-                let size = self.ws.custom_board_size();
-                self.ws.new_untitled_with(varos_core::board::new_board_with_preset(preset, size));
+                self.ws.new_untitled_with(varos_core::board::new_board_with_preset(preset));
             }
             AppCommand::OpenDialog => {
                 let picked = self.dialogs.pick_open();
@@ -1015,7 +1014,6 @@ mod tests {
             (PresetId::Portrait, 1080.0, 1350.0),
             (PresetId::Story, 1080.0, 1920.0),
             (PresetId::A4, 595.0, 842.0),
-            (PresetId::Custom, 1080.0, 1080.0), // no custom size remembered yet → the table fallback
         ] {
             r.run(AppCommand::NewWithPreset(preset));
             let id = r.active();
@@ -1027,12 +1025,8 @@ mod tests {
             r.ed(id).execute(EditCommand::Undo);
             assert_eq!(r.get(id).editor.doc.artboards.len(), 1, "{preset:?}: undo cannot remove the preset page");
         }
-        r.ws.set_custom_board_size((300.0, 250.0));
-        r.run(AppCommand::NewWithPreset(PresetId::Custom));
-        let ab = &r.get(r.active()).editor.doc.artboards[0];
-        assert_eq!((ab.w, ab.h), (300.0, 250.0), "Custom = the last-used custom size");
         let names = r.names();
-        assert_eq!(names.len(), 8, "each New is its own tab: {names:?}");
+        assert_eq!(names.len(), 6, "each New is its own tab: {names:?}");
         assert!(names.iter().all(|n| n.starts_with("Untitled-")), "{names:?}");
     }
 

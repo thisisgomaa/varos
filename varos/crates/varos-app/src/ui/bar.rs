@@ -115,9 +115,8 @@ pub(crate) fn paint_brand(p: &egui::Painter, rect: egui::Rect, under: Color32) {
     }
 }
 
-/// Home's body under the top bar: THE Start page plus the bar's live "Search boards" field. Filter
-/// actions (tag / search / view) change the Start model; every other action becomes its `AppCommand`
-/// through the one adapter (`host::start_command`).
+/// Home's body under the top bar: THE Start page. Filter actions (tag / view) change the Start
+/// model; every other action becomes its `AppCommand` through the one adapter (`host::start_command`).
 pub(crate) fn home_body(
     root: &mut egui::Ui,
     page: &mut varos_app::start_page::StartPage,
@@ -125,37 +124,11 @@ pub(crate) fn home_body(
     warning: Option<&str>,
     cmds: &mut Vec<AppCommand>,
 ) {
-    let mut actions = page.draw(root, model, warning);
-    if let Some(rect) = root.ctx().data(|d| d.get_temp::<egui::Rect>(home_search_rect_id())) {
-        actions.extend(page.search_box(root, rect, model));
-    }
-    for action in actions {
+    for action in page.draw(root, model, warning) {
         if !model.apply(&action) {
             cmds.extend(crate::host::start_command(action));
         }
     }
-}
-
-/// Where the top bar left Home's "Search boards" field this frame (egui temp data, written by
-/// `build_topbar` on Home, read by `run_home`).
-pub(crate) fn home_search_rect_id() -> egui::Id {
-    egui::Id::new("varos-home-search-rect")
-}
-
-/// The document's Search field in the band (4b): PANEL fill, 1-px LINE border, r3, search glyph and a
-/// MUTED "Search" — the same geometry as Home's live "Search boards" (`kit::board::search_pill`).
-/// `Sense::hover` only, never clickable: there is no command search yet, so the tooltip says so
-/// honestly (spec §2 forbids an "enabled dead button"; UI audit finding 1).
-pub(crate) fn search_pill(ui: &mut egui::Ui, p: &egui::Painter, rect: egui::Rect) {
-    use varos_app::shell::tokens as t;
-    ui.interact(rect, ui.id().with("tb-kpill"), egui::Sense::hover()).on_hover_text("Search isn't available yet.");
-    let rr = CornerRadius::same(R);
-    p.rect_filled(rect, rr, SOLID_PANEL);
-    p.rect_stroke(rect, rr, Stroke::new(t::KIT_STROKE, BORDER), StrokeKind::Inside);
-    let icon_c = egui::pos2(rect.left() + t::SB_SEARCH_PAD + t::SB_ICON_SMALL / 2.0, rect.center().y);
-    Icon::Search.paint(p, icon_c, t::SB_ICON_SMALL, MUTED);
-    let x = rect.left() + t::SB_SEARCH_PAD + t::SB_ICON_SMALL + t::SB_SEARCH_GAP;
-    p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, "Search", t::small(), MUTED);
 }
 
 /// One document tab (4b), painted at `rect` (its resting slot, or its lifted / reflowed rect during
@@ -321,7 +294,7 @@ pub(crate) fn tab_drag_update(
     Some((i, frame))
 }
 
-/// The top band (4b, MAC_CHROME.md §A′): Home · tabs · "+N ⌄" · `+` · drag space · Search · V, all
+/// The top band (4b, MAC_CHROME.md §A′): Home · tabs · "+N ⌄" · `+` · drag space · V, all
 /// on one centre line, on the one black backdrop (Windows: burger · … · caps). Interactive rects are
 /// published as the caption exclusions so the OS / macOS caption hit-test makes them egui's while the
 /// empty band drags the window. `right_zone` = the panel column's x-span (last frame), `None` on Home.
@@ -373,13 +346,8 @@ pub(crate) fn build_topbar(
             }
         }
 
-        // right zone: Search over the panel column, the V mark at its right edge
-        if home {
-            // Home: the slot is Start's live "Search boards" field, drawn by `home_body`
-            ui.ctx().data_mut(|d| d.insert_temp(home_search_rect_id(), layout.search));
-        } else {
-            search_pill(ui, &p, layout.search);
-        }
+        // right zone: empty band over the panel column (it drags the window — no Search since
+        // 2026-10-06), the V mark at its right edge.
         // V: the native About panel on macOS; Windows has no About panel to open, so hover-only
         let mac = cfg!(target_os = "macos");
         let sense = if mac { egui::Sense::click() } else { egui::Sense::hover() };

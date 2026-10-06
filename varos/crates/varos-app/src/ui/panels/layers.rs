@@ -2,7 +2,7 @@ use super::super::*;
 
 pub(crate) struct TopIcons {
     /// Windows' burger. min/max/close are painted glyphs (`winctl`); the 4b band's Home, `+`, "+N",
-    /// ×, Search glyphs come from the kit icon registry (`Icon`).
+    /// × glyphs come from the kit icon registry (`Icon`).
     pub(crate) menu: Option<egui::TextureHandle>,
 }
 

@@ -123,13 +123,10 @@ impl ApplicationHandler for Gallery {
                 let mut intents = vec![];
                 let page = &mut self.page;
                 let out = r.ctx.run_ui(input, |ui| {
-                    // a stand-in for the app's top bar: the void with the Search pill where the mockup has it
+                    // a stand-in for the app's top bar: the void (no Search since 2026-10-06)
                     let full = ui.max_rect();
                     let bar = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), 28.0));
                     ui.painter().rect_filled(bar, 0.0, tokens::SEAM);
-                    let search =
-                        egui::Rect::from_min_size(egui::pos2(full.right() - 453.0, 2.0), egui::vec2(200.0, 24.0));
-                    intents.extend(page.search_box(ui, search, model));
                     let area = egui::Rect::from_min_max(egui::pos2(full.left(), bar.bottom()), full.max);
                     intents.extend(page.draw_in(ui, area, model, None));
                 });
