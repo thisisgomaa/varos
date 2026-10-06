@@ -1,0 +1,15 @@
+# Build wrapper; preserved source files remain byte-identical.
+[package]
+name = "bstudio-text"
+version = "0.0.4"
+edition = "2021"
+license = "MPL-2.0"
+publish = false
+[lib]
+path = "../../v0/crates/bstudio-text/src/lib.rs"
+[dependencies]
+harfrust = "=0.7.0"
+unicode-bidi = "=0.3.18"
+icu_properties = "=2.2.0"
+skrifa = "=0.42.1"
+read-fonts = "=0.39.2"
