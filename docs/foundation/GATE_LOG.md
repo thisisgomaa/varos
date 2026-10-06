@@ -769,3 +769,10 @@ Base `codex/ui-system-plan` @ `8853d7a`; two independent reviews approved with n
 - **Author:** Opus. **Review:** Codex Sol — no defect in the three changes; noted the original wake diagnosis is incomplete (winit's proxy wake should not be missed) but the frame-0 guarantee holds; branch-base note resolved by merging main before landing.
 - **Local gates (Mac, moderator-run):** `cargo test --workspace -j 4` **1057 passed / 0 failed / 8 ignored**; clippy Mac + `x86_64-pc-windows-msvc` clean; fmt clean. Ratchet `ui.rs` ≤ 956.
 - **Not verified:** the notice timing after a real Force Quit + relaunch (owner hand test, with the new card design that follows). Leftover: `StartFilter.search` model + `NO_MATCH_COPY` wording are now unreachable (cleanup later).
+
+## 2026-10-06 — Trackpad view control: pinch zoom, smart zoom, 1:1 pan (+ VIEW_ROTATION plan)
+
+- **Scope:** branch `feat/trackpad-view`, baseline `736feba`. Owner request 2026-10-06 ("التحكم في البورد من التاتش باد"). `src/gestures.rs`: `PinchGesture` → `exp(delta)` zoom about the pointer (same mapping as egui-winit), clamped 5–4000 % through the shared `zoom_to`; `DoubleTapGesture` → Fit ↔ pointer-anchored 100 %; `PixelDelta` pan 1:1 in logical points (was 0.75×), `LineDelta`/Shift/Alt paths unchanged; `RotationGesture` ignored. `src/ui/pointer.rs`: gesture guard = old `home || wants_pointer()` plus a fresh-position hit on floating areas. Plan doc `docs/foundation/work_orders/VIEW_ROTATION.md` (size L, 4 gated pieces; not started).
+- **Author:** Codex Sol 6.1. **Review:** Opus — APPROVE, 4 low notes (no-op scale round-trip in `pixel_pan_logical`; near-tautological guard test; `wants_pointer_at` conversion untested; VIEW_ROTATION.md should add text-editing/caret, angle detents, cursor re-pick, scissor clip, shape-axis and status readout questions).
+- **Local gates (Mac, moderator-run):** `cargo test --workspace -j 4` **1064 passed / 0 failed / 8 ignored**; clippy Mac + `x86_64-pc-windows-msvc` clean; fmt clean.
+- **Not verified:** feel on real hardware (owner hand test): pinch speed, double-tap toggle, pan speed.

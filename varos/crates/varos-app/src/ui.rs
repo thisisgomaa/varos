@@ -47,6 +47,7 @@ mod menus;
 mod ops;
 mod panels;
 mod picker;
+mod pointer;
 mod rail;
 mod snap;
 mod style;
@@ -422,23 +423,6 @@ impl Ui {
                 window.request_redraw();
             }
             response.consumed
-        }
-    }
-    /// Is the pointer over chrome (a box, ruler, bar, hand, menu)? The canvas owns everything else.
-    /// Stage 4: the box tree paints the whole workspace on the BACKGROUND layer, so the old
-    /// `is_pointer_over_egui` (panels-only) is wrong — instead: any floating layer wins; on the
-    /// background, everything is chrome EXCEPT the Board pane's interior (the wgpu canvas hole).
-    pub fn wants_pointer(&self) -> bool {
-        if self.ctx.egui_is_using_pointer() {
-            return true; // a live widget interaction (field scrub, splitter drag, open menu)
-        }
-        let Some(pos) = self.ctx.input(|i| i.pointer.interact_pos()) else {
-            return false;
-        };
-        match self.ctx.layer_id_at(pos) {
-            None => false,
-            Some(l) if l.order == egui::Order::Background => !self.board_hole.is_some_and(|b| b.contains(pos)),
-            Some(_) => true, // hands / menus / modal float above the tree
         }
     }
     /// Empty background bar space can drag the macOS window; floating UI always owns its area.
