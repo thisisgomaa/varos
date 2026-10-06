@@ -90,9 +90,49 @@ pub fn board_date_with(now: u64, then: u64, offset_at: impl Fn(u64) -> FixedOffs
     }
 }
 
+/// A recovery copy's time inside a sentence (the editor's Review panel, owner mockup 2026-10-06):
+/// "11:48 today", "22:41 yesterday", then "2 Oct" this year and "17 Sep 2025" before. Calendar days
+/// are compared as in [`board_date`] (each instant in the offset in force at that instant).
+pub fn copy_time(now: u64, then: u64) -> String {
+    copy_time_with(now, then, local_offset)
+}
+
+/// [`copy_time`] in one fixed offset.
+pub fn copy_time_at(now: u64, then: u64, offset: FixedOffset) -> String {
+    copy_time_with(now, then, |_| offset)
+}
+
+/// [`copy_time`] with an explicit "offset in force at this instant" rule.
+pub fn copy_time_with(now: u64, then: u64, offset_at: impl Fn(u64) -> FixedOffset) -> String {
+    let (n, t) = (in_offset(now, offset_at(now)), in_offset(then, offset_at(then)));
+    let (nd, td) = (n.date_naive(), t.date_naive());
+    if td >= nd {
+        return format!("{} today", t.format("%H:%M"));
+    }
+    if nd.pred_opt() == Some(td) {
+        return format!("{} yesterday", t.format("%H:%M"));
+    }
+    if nd.year() == td.year() {
+        t.format("%-d %b").to_string()
+    } else {
+        t.format("%-d %b %Y").to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_times_read_inside_a_sentence() {
+        let utc = FixedOffset::east_opt(0).unwrap();
+        assert_eq!(copy_time_at(NOW, NOW - 600, utc), "14:22 today");
+        assert_eq!(copy_time_at(NOW, NOW + 600, utc), "14:42 today", "a future time is today");
+        assert_eq!(copy_time_at(NOW, NOW - 16 * 3600 - 51 * 60, utc), "21:41 yesterday");
+        assert_eq!(copy_time_at(NOW, NOW - 22 * 86_400, utc), "2 Sep");
+        assert_eq!(copy_time_at(NOW, NOW - 372 * 86_400, utc), "17 Sep 2025");
+        assert!(copy_time(NOW, NOW).ends_with(" today"), "the real-zone wrapper: same day reads today");
+    }
 
     #[test]
     fn board_dates_read_like_the_mockup() {

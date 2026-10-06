@@ -32,6 +32,10 @@ pub struct RecoveryUi {
     pub sid: Option<SessionId>,
     pub banner: bool,
     pub recovered_notice: Option<String>,
+    /// The copies the editor's recovery card offers (empty unless `banner`): its Review panel's rows.
+    pub rows: Vec<varos_app::recovery_card::ReviewRow>,
+    /// The Review panel's footer: the recovery setting as it really is.
+    pub footer: String,
 }
 enum Finished {
     Recovery(Completion<SessionId>),
@@ -227,6 +231,32 @@ impl RecoveryHost {
             })
             .collect()
     }
+    /// The Review panel's rows at `now` (unix seconds): name; "unsaved changes from 11:48 today" for a
+    /// copy of a saved file (its folder beside it), "never saved · started 11:52 today" for a document
+    /// that never had a file ("started" = its first recovery copy, written within one interval of the
+    /// first change); a problem replaces that text and disables Restore, as on Start.
+    pub fn review_rows(&self, now: u64) -> Vec<varos_app::recovery_card::ReviewRow> {
+        self.orphans
+            .iter()
+            .map(|row| varos_app::recovery_card::ReviewRow {
+                rid: row.rid.clone(),
+                name: row.display_name.clone(),
+                when: match (&row.original_path, row.saved_at, row.created) {
+                    (Some(_), Some(at), _) => format!("unsaved changes from {}", time_text::copy_time(now, at)),
+                    (Some(_), None, _) => "unsaved changes".into(),
+                    (None, _, Some(at)) => format!("never saved · started {}", time_text::copy_time(now, at)),
+                    (None, _, None) => "never saved".into(),
+                },
+                folder: row.original_path.as_deref().and_then(std::path::Path::parent).map(|p| p.display().to_string()),
+                problem: match &row.state {
+                    OrphanState::Ready => None,
+                    OrphanState::Damaged(reason) => Some(reason.clone()),
+                    OrphanState::NewerFormat(_) => Some("This copy needs a newer version of Varos.".into()),
+                },
+                busy: self.busy.contains(&row.rid),
+            })
+            .collect()
+    }
     pub fn start_warning(&self, recent: Option<&str>) -> Option<String> {
         match (recent, self.warning.as_deref()) {
             (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
@@ -246,10 +276,6 @@ impl RecoveryHost {
     }
     pub fn handle_read(&mut self, cmd: &AppCommand, dialogs: &mut dyn crate::lifecycle::Dialogs) -> bool {
         match cmd {
-            AppCommand::ReviewRecovery => {
-                self.deferred = false;
-                false
-            } // lifecycle settles and shows Home
             AppCommand::SetRecoveryEnabled(_) => {
                 if let Some(reason) = &self.settings_unsaved {
                     // The switch still applies for this session (`handle`); say it won't persist.
@@ -539,20 +565,29 @@ impl RecoveryHost {
         };
         if let Some(source) = session.and_then(|s| s.recovered.as_ref()) {
             ui.recovered_notice = Some(format!(
-                "Recovered “{}” from {}. Save this copy to keep it. Your original file has not been changed.{}",
+                "Restored copy of {} — save it to keep it{}",
                 source.name,
-                time_text::clock_hhmm(source.saved_at),
                 if source.fell_back { " The newest copy was damaged; the previous copy was used." } else { "" }
             ));
         }
         if let Some(warning) = &self.warning {
             ui.detail = warning.clone();
         }
+        if ui.banner {
+            ui.rows = self.review_rows(unix_now());
+        }
         if self.worker.is_none() || self.store.is_none() {
             ui.status = "Recovery unavailable. Save your document regularly.".into();
         } else if !ui.enabled {
             ui.status = "Recovery is off. Save regularly to keep your work.".into();
-        } else if let Some(s) = session {
+        }
+        // the Review panel's footer says what recovery really does now (Start's status-line wording)
+        ui.footer = if ui.status.is_empty() {
+            format!("Recovery on · copies every {} seconds", varos_app::storage::scheduler::RECOVERY_INTERVAL.as_secs())
+        } else {
+            ui.status.clone()
+        };
+        if let Some(s) = session.filter(|_| ui.status.is_empty()) {
             let r = &s.recovery;
             if let Some(g) = &r.last_ok {
                 ui.last_copy = format!("Last recovery copy: {}", time_text::clock_hhmm(g.saved_at));
@@ -954,7 +989,7 @@ mod tests {
             .presentation(Some(s))
             .recovered_notice
             .unwrap()
-            .contains("Your original file has not been changed"));
+            .contains("Restored copy of Logo.vrs — save it to keep it"));
         assert_eq!(std::fs::read(&original).unwrap(), b"the original stays intact");
         assert_eq!(std::fs::metadata(&original).unwrap().modified().unwrap(), before);
         // Merely opening even an empty recovery copy must never retire it.
@@ -1029,6 +1064,7 @@ mod tests {
         r.scan();
         r.host.handle_read(&AppCommand::DeferRecovery, &mut Dialog::default());
         assert!(!r.host.presentation(r.ws.active()).banner);
+        assert!(r.host.presentation(r.ws.active()).rows.is_empty(), "Later hides the editor's card");
         assert_eq!(r.host.rows().len(), 1, "Home still owns the choices");
         let before = RecoveryHost::before_close(&r.ws);
         r.host.after_dispatch(before, &mut r.ws, true, r.now);
@@ -1046,6 +1082,64 @@ mod tests {
         r.scan();
         assert_eq!(r.host.rows().len(), 1);
         assert!(r.host.presentation(r.ws.active()).banner);
+    }
+
+    /// The editor's Review panel rows (owner mockup 2026-10-06): a saved file's copy reads "unsaved
+    /// changes from <time>" with its folder; a never-saved document reads "never saved · started
+    /// <its first copy's time>".
+    #[test]
+    fn review_rows_say_when_and_where() {
+        let mut r = Rig::new();
+        let original = r.layout.root.join("Clients").join("Logo.vrs");
+        let saved = r.seed(2, Some(original.clone()));
+        let never = r.seed(1, None);
+        r.scan();
+        let now = 200;
+        let rows = r.host.review_rows(now);
+        assert_eq!(rows.len(), 2);
+        let s = rows.iter().find(|row| row.rid == saved).unwrap();
+        assert_eq!(s.when, format!("unsaved changes from {}", time_text::copy_time(now, 102)));
+        assert_eq!(s.folder.as_deref(), Some(original.parent().unwrap().display().to_string().as_str()));
+        assert_eq!((s.name.as_str(), s.problem.as_ref(), s.busy), ("Logo.vrs", None, false));
+        let n = rows.iter().find(|row| row.rid == never).unwrap();
+        assert_eq!(n.when, format!("never saved · started {}", time_text::copy_time(now, 101)));
+        assert_eq!(n.folder, None);
+        let ui = r.host.presentation(r.ws.active());
+        assert!(ui.banner && ui.rows.len() == 2, "the card gets every copy while the banner is up");
+        assert_eq!(ui.footer, "Recovery on · copies every 30 seconds");
+    }
+
+    /// Restore in the Review panel is the old Recover: the same command, the row goes busy, then leaves
+    /// when the copy is open as a tab; with the last row gone the card's rows are empty (panel closed).
+    #[test]
+    fn restore_from_the_review_panel_removes_the_row_and_the_last_one_ends_the_notice() {
+        let mut r = Rig::new();
+        let first = r.seed(1, None);
+        let second = r.seed(1, None);
+        r.scan();
+        assert_eq!(r.host.presentation(None).rows.len(), 2);
+        let id = r.recover(&first); // asserts the busy row on the way
+        assert_eq!(r.ws.active_id(), Some(id), "restored as a tab in this window");
+        let ui = r.host.presentation(r.ws.active());
+        assert_eq!(ui.rows.iter().map(|row| row.rid.as_str()).collect::<Vec<_>>(), [second.as_str()]);
+        let mut dialog = Dialog { discard: true, ..Default::default() };
+        r.host.handle_read(&AppCommand::DiscardRecovery(second.clone()), &mut dialog);
+        assert_eq!(dialog.prompts, 1, "Discard keeps asking first");
+        assert!(r.host.presentation(r.ws.active()).rows[0].busy);
+        r.complete();
+        let ui = r.host.presentation(r.ws.active());
+        assert!(!ui.banner && ui.rows.is_empty(), "the last row gone: no card, no panel");
+    }
+
+    /// The footer reflects the real setting.
+    #[test]
+    fn review_footer_follows_the_recovery_setting() {
+        let mut r = Rig::new();
+        r.host.handle(&AppCommand::SetRecoveryEnabled(false), &mut r.ws, r.now);
+        r.complete();
+        assert_eq!(r.host.presentation(None).footer, "Recovery is off. Save regularly to keep your work.");
+        let off = RecoveryHost::at(None, Box::new(|| {}));
+        assert_eq!(off.presentation(None).footer, "Recovery unavailable. Save your document regularly.");
     }
 
     #[test]
