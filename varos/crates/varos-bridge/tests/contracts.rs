@@ -1452,6 +1452,53 @@ fn poster_frozen_fixture_through_actual_mcp_stdio_binding() {
     drop(input_tx);
     server.join().unwrap();
 }
+/// Slice 3: the frozen Instagram Story batch through the actual MCP stdio binding, then a page snapshot
+/// of the new artboard (the story's 9:16 ratio inside the requested box).
+#[test]
+fn story_frozen_fixture_through_actual_mcp_stdio_binding() {
+    let transport = FakeTransport {
+        state: std::sync::Arc::new(std::sync::Mutex::new((Service::new("test-epoch".into()), empty_host()))),
+        cancellations: Default::default(),
+    };
+    let (input_tx, input) = std::sync::mpsc::channel();
+    let (output, receive) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        varos_bridge::mcp::serve(
+            &mut std::io::BufReader::new(ChannelRead { rx: input, current: std::io::Cursor::new(vec![]) }),
+            ChannelWrite { tx: output, bytes: vec![] },
+            transport,
+        )
+        .unwrap()
+    });
+    let send = |v: Value| {
+        let mut data = serde_json::to_vec(&v).unwrap();
+        data.push(b'\n');
+        input_tx.send(data).unwrap();
+    };
+    let read =
+        || serde_json::from_slice::<Value>(&receive.recv_timeout(std::time::Duration::from_secs(3)).unwrap()).unwrap();
+    send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{},"capabilities":{}}}),
+    );
+    assert_eq!(read()["result"]["protocolVersion"], "2025-06-18");
+    send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
+    let arguments: Value = serde_json::from_str(include_str!("fixtures/story-request-1.0.json")).unwrap();
+    send(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"edit","arguments":arguments}}));
+    assert_eq!(
+        read()["result"]["structuredContent"],
+        serde_json::from_str::<Value>(include_str!("fixtures/story-result-1.0.json")).unwrap()
+    );
+    send(
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"snapshot","arguments":{"board":"b1","rev":2,"artboard":"artboard:2","width":200,"height":200}}}),
+    );
+    let result = read()["result"].clone();
+    assert_eq!(result["content"][1]["type"], "image");
+    assert_eq!(result["structuredContent"]["result"]["width"], 113);
+    assert_eq!(result["structuredContent"]["result"]["height"], 200);
+    assert_eq!(result["structuredContent"]["result"]["artboard"], "artboard:2");
+    drop(input_tx);
+    server.join().unwrap();
+}
 #[test]
 fn geometry_is_explicit_bounded_paginated_and_does_not_mutate() {
     let mut h = FakeHost::new();

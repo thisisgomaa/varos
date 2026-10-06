@@ -48,6 +48,7 @@ fn every_golden_fixture_obeys_the_full_round_trip_law() {
         .chain(V1_CORPUS)
         .chain(["v2/v2_masked_rotated.vrs", "v2/v2_boardless.vrs", "v2/v1_broken_mask.vrs"])
         .chain(["v3/v3_board_meta.vrs", "v3/v3_boardless.vrs"])
+        .chain(["v4/v4_board_meta.vrs", "v4/v4_boardless.vrs"])
         .collect();
     for name in names {
         let loaded = load_fixture(name);

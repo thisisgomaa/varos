@@ -30,4 +30,9 @@ pub const EDIT_VERBS: &[&str] = &[
     "group",
     "ungroup",
     "order",
+    "add_artboard",
+    "resize_artboard",
+    "rename_artboard",
+    "delete_artboard",
+    "set_active_artboard",
 ];

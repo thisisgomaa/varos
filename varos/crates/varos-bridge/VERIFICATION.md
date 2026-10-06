@@ -1,3 +1,36 @@
+# Slice 3 verification — artboards (2026-10-07)
+
+Completed locally in worktree `bridge-slice3`, branch `feat/bridge-slice3-artboards` on `a5f687b`. No commit, push, merge, installation, GUI launch, `/Applications` operation or osascript. Live owner acceptance (the Instagram Story batch on an open board, a page snapshot, then one ⌘Z) is pending.
+
+## Done
+
+| Piece | Where |
+|---|---|
+| Persistent artboard ids (`Artboard.id`, `Document::artboard_index`, `assign_artboard_ids`; allocated at every commit from the counter/high-water mark) | `varos-core/src/model.rs`, `editor.rs` (`commit`, `replace_doc`), `board.rs` (presets) |
+| Format 4: `FORMAT_VERSION = 4`, `migrate_v3_to_v4`, artboard-id key refused in v1–v3 before typed decode, unique/non-zero ids, no dangling `active`, save-side id assignment on the clone | `varos-core/src/format/{mod,migrate,structure,validate,error}.rs`; ADR-0008 amendment; `docs/reference/VRS_FORMAT.md` §5/§6c/§12/§13 |
+| Frozen fixtures: `fixtures/v4/` (4 files + SHA256SUMS + README), six refusals appended (`v5_future`, `future_v5_pdf`, `v3_artboard_id`, `artboard_duplicate_id`, `artboard_missing_id`, `active_out_of_range`); `v4_future`/`future_v4_pdf` now Malformed (bytes unchanged); v3-reader gate in the old-reader harness; native PDF byte fixtures re-blessed (model stream only) | `varos-core/tests/fixtures/`, `varos-pdf/tests/{frozen_v2,old_reader_harness,export_pdf}.rs` |
+| Checked core page operations (add / set rect / rename / delete with the active rule / set active), id-stable `active` in staging, human artboard multi-selection re-pointed by id on publish | `varos-core/src/bridge.rs` |
+| Bridge page verbs, `artboard:N` + request-locals, id/local align targets (deprecated `aN@rev` kept), describe ids + `active_artboard`, receipts `artboards_created`/`artboards_removed`, page `snapshot`, capabilities, complete MCP schemas | `src/{dto,design,service,mcp,lib}.rs` |
+| One-page CPU raster at the page's ratio and background | `varos-raster/src/lib.rs` (`rasterize_artboard`) |
+| `varos-cli export-pdf --artboard artboard:N` (id → ActiveArtboard scope on an in-memory copy) | `varos-cli/src/main.rs` |
+
+## Gates (from `varos/`, final source)
+
+Review fixes (Codex Sol REQUEST CHANGES, same day): `export-pdf` refuses an `--out` that resolves to its input (path, `..`, symlink, Unix hard link; no `--in-place`); the deprecated `aN@rev` alias is refused in any batch that also has a page verb (A/B/C delete-then-align regression); the page snapshot paints its background once (half-alpha test); ADR-0010 notes the TextBox schema is now format v5.
+
+1. `cargo test --workspace -j 4`: **1,203 passed / 0 failed / 10 ignored** (71 result lines). Bridge: 10 artboard tests + 38 contracts (2 ignored by default).
+2. `cargo clippy --workspace --all-targets -- -D warnings`: PASS.
+3. `cargo fmt --all --check`: PASS.
+4. `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`: PASS (compile only).
+5. `python3 ../tools/check_dep_directions.py`: PASS (no new crate edges).
+6. `cargo test -p varos-bridge --test contracts -- --ignored`: the two real Unix-socket tests **ran and passed** in this environment (2 passed, exit 0).
+
+`git diff --check`: PASS. No test constructs a GPU renderer or EventLoop.
+
+## Not verified here
+
+Live desktop: the story batch on Ahmed's open board, the page and design appearing, one ⌘Z removing both, the Layers panel/export after a Bridge-added page, and an old (format-3) Varos build actually refusing a saved v4 file (only the frozen gate logic is tested). Page reorder/duplicate/colour edits, headless hosting and Windows runtime are out of scope.
+
 # Slice 2 verification — 2026-10-07
 
 Completed locally in `feat/bridge-slice2`. No commit, push, merge, installation, GUI launch, `/Applications` operation, or osascript. Slice 1's live move/recolour/one-undo acceptance is confirmed by the owner in the work order; slice 2's live acceptance remains pending.

@@ -4,6 +4,8 @@
 //! *gate*, fed the CURRENT build's own output. S5-B raised the writer to format 2, so these checks now run in the default suite.
 //! Format 3 (2026-10-04, board metadata) adds a second frozen gate: the format-2 reader's
 //! `peek_version` from `f21c20e`, which must refuse every format-3 file before typed decode.
+//! Format 4 (2026-10-07, artboard ids) adds a third: the format-3 reader's `peek_version` from
+//! `a5f687b`, which must refuse every format-4 file before typed decode.
 //!
 //! Honesty note: this proves the frozen *logic*, not the old *binary*. The binary is covered by
 //! Ahmed's hand test 3 (`docs/foundation/work_orders/DFS_S5_FORMAT_V2.md` §1).
@@ -85,52 +87,117 @@ fn embedded_model_json(pdf_bytes: &[u8]) -> String {
     String::from_utf8(s.content.clone()).expect("the embedded model is UTF-8 JSON")
 }
 
-/// The v1-era gate refuses the frozen v2 files and every format-3 file (fresh and frozen) before
-/// typed decode, naming the file's own number.
+/// Frozen version gate of the FORMAT-3 reader: `a5f687b:varos/crates/varos-core/src/format/mod.rs`
+/// `peek_version` with `FORMAT_VERSION` replaced by its value then, 3, and the `NewerVersion` `Display`
+/// text inlined — the same function as `v2_gate` with the next number (format 4, 2026-10-07, artboard
+/// ids). A format-3 build must refuse every format-4 file before typed decode, so it can never open a
+/// board, drop its artboard ids as unknown, and save the loss.
+fn v3_gate(body: &str) -> Result<u32, String> {
+    #[derive(serde::Deserialize)]
+    struct Head {
+        #[serde(default, deserialize_with = "present")]
+        varos: Option<serde_json::Value>,
+    }
+    fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<serde_json::Value>, D::Error> {
+        <serde_json::Value as serde::Deserialize>::deserialize(d).map(Some)
+    }
+    let head: Head = serde_json::from_str(body).map_err(|e| format!("malformed: {e}"))?;
+    let value = head.varos.ok_or("missing version")?;
+    let version = match value.as_u64() {
+        Some(0) | None => return Err(format!("invalid version {value}")),
+        Some(v) => u32::try_from(v).map_err(|_| format!("invalid version {value}"))?,
+    };
+    if version > 3 {
+        return Err(format!(
+            "This file needs a newer Varos. It uses file format {version}; this build supports up to 3. \
+             Update Varos to open it. The file has not been changed."
+        ));
+    }
+    Ok(version)
+}
+const V2_REFUSES_V4: &str = "This file needs a newer Varos. It uses file format 4; this build supports up to 2. Update Varos to open it. The file has not been changed.";
+const V3_REFUSES_V4: &str = "This file needs a newer Varos. It uses file format 4; this build supports up to 3. Update Varos to open it. The file has not been changed.";
+
+/// The v1-era gate refuses the frozen v2 and v3 files and every format-4 file (fresh and frozen)
+/// before typed decode, naming the file's own number.
 #[test]
-fn old_reader_refuses_v2_and_v3_json_before_decode() {
+fn old_reader_refuses_v2_v3_and_v4_json_before_decode() {
     let fresh = varos_core::file::doc_to_blob(&sample_doc()).unwrap();
     let v2 = include_str!("../../varos-core/tests/fixtures/v2/v2_masked_rotated.vrs");
     assert_eq!(old_gate(v2).unwrap_err(), "this file was saved by a newer Varos (v2) — please update");
-    for body in [fresh.as_str(), include_str!("../../varos-core/tests/fixtures/v3/v3_board_meta.vrs")] {
-        assert_eq!(old_gate(body).unwrap_err(), "this file was saved by a newer Varos (v3) — please update");
+    let v3 = include_str!("../../varos-core/tests/fixtures/v3/v3_board_meta.vrs");
+    assert_eq!(old_gate(v3).unwrap_err(), "this file was saved by a newer Varos (v3) — please update");
+    for body in [fresh.as_str(), include_str!("../../varos-core/tests/fixtures/v4/v4_board_meta.vrs")] {
+        assert_eq!(old_gate(body).unwrap_err(), "this file was saved by a newer Varos (v4) — please update");
     }
 }
 
 /// The same gate proof through fresh and frozen PDF model streams (not an old binary run).
 #[test]
-fn old_reader_refuses_v2_and_v3_pdf_before_decode() {
+fn old_reader_refuses_v2_v3_and_v4_pdf_before_decode() {
     let fresh = varos_pdf::write_pdf(&sample_doc()).unwrap();
     let v2 = include_bytes!("../../varos-core/tests/fixtures/v2/v2_masked_rotated_pdf.vrs");
     assert_eq!(
         old_gate(&embedded_model_json(v2)).unwrap_err(),
         "this file was saved by a newer Varos (v2) — please update"
     );
-    for pdf in [fresh.as_slice(), include_bytes!("../../varos-core/tests/fixtures/v3/v3_board_meta_pdf.vrs").as_slice()]
+    let v3 = include_bytes!("../../varos-core/tests/fixtures/v3/v3_board_meta_pdf.vrs");
+    assert_eq!(
+        old_gate(&embedded_model_json(v3)).unwrap_err(),
+        "this file was saved by a newer Varos (v3) — please update"
+    );
+    for pdf in [fresh.as_slice(), include_bytes!("../../varos-core/tests/fixtures/v4/v4_board_meta_pdf.vrs").as_slice()]
     {
         assert_eq!(
             old_gate(&embedded_model_json(pdf)).unwrap_err(),
-            "this file was saved by a newer Varos (v3) — please update"
+            "this file was saved by a newer Varos (v4) — please update"
         );
     }
 }
 
-/// The format-2 reader's gate refuses fresh and frozen format-3 output (raw and PDF) with its own
-/// readable "newer Varos" message — so a v2 build can never open a board, drop its name/description/
-/// tags as unknown, and save the loss.
+/// The format-2 reader's gate refuses frozen format-3 and fresh/frozen format-4 output (raw and PDF)
+/// with its own readable "newer Varos" message.
 #[test]
-fn v2_reader_refuses_v3_raw_and_pdf_before_decode() {
+fn v2_reader_refuses_v3_and_v4_raw_and_pdf_before_decode() {
+    let frozen_raw = include_str!("../../varos-core/tests/fixtures/v3/v3_board_meta.vrs");
+    let frozen_pdf = embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v3/v3_board_meta_pdf.vrs"));
+    for body in [frozen_raw, frozen_pdf.as_str()] {
+        assert_eq!(v2_gate(body).unwrap_err(), V2_REFUSES_V3);
+    }
     let doc = sample_doc();
     let fresh_raw = varos_core::file::doc_to_blob(&doc).unwrap();
     let fresh_pdf = embedded_model_json(&varos_pdf::write_pdf(&doc).unwrap());
-    let frozen_raw = include_str!("../../varos-core/tests/fixtures/v3/v3_board_meta.vrs");
-    let frozen_pdf = embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v3/v3_board_meta_pdf.vrs"));
+    let frozen_raw = include_str!("../../varos-core/tests/fixtures/v4/v4_board_meta.vrs");
+    let frozen_pdf = embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v4/v4_board_meta_pdf.vrs"));
     for body in [fresh_raw.as_str(), fresh_pdf.as_str(), frozen_raw, frozen_pdf.as_str()] {
-        assert_eq!(v2_gate(body).unwrap_err(), V2_REFUSES_V3);
+        assert_eq!(v2_gate(body).unwrap_err(), V2_REFUSES_V4);
     }
     // the inlined copy is the current core text with the numbers of a v2 build
     let core = varos_core::format::LoadError::NewerVersion { found: 3, supported: 2 }.to_string();
     assert_eq!(core, V2_REFUSES_V3);
+}
+
+/// The format-3 reader's gate refuses fresh and frozen format-4 output (raw and PDF) — so a v3 build
+/// can never open a board, drop its artboard ids as unknown, and save the loss.
+#[test]
+fn v3_reader_refuses_v4_raw_and_pdf_before_decode() {
+    let doc = sample_doc();
+    let fresh_raw = varos_core::file::doc_to_blob(&doc).unwrap();
+    let fresh_pdf = embedded_model_json(&varos_pdf::write_pdf(&doc).unwrap());
+    let frozen_raw = include_str!("../../varos-core/tests/fixtures/v4/v4_board_meta.vrs");
+    let frozen_pdf = embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v4/v4_board_meta_pdf.vrs"));
+    for body in [fresh_raw.as_str(), fresh_pdf.as_str(), frozen_raw, frozen_pdf.as_str()] {
+        assert_eq!(v3_gate(body).unwrap_err(), V3_REFUSES_V4);
+    }
+    let core = varos_core::format::LoadError::NewerVersion { found: 4, supported: 3 }.to_string();
+    assert_eq!(core, V3_REFUSES_V4);
+}
+
+#[test]
+fn frozen_v3_gate_still_accepts_v1_v2_and_v3_headers() {
+    assert_eq!(v3_gate(include_str!("../../varos-core/tests/fixtures/v1/v1_masked.vrs")), Ok(1));
+    assert_eq!(v3_gate(include_str!("../../varos-core/tests/fixtures/v2/v2_masked_rotated.vrs")), Ok(2));
+    assert_eq!(v3_gate(include_str!("../../varos-core/tests/fixtures/v3/v3_board_meta.vrs")), Ok(3));
 }
 
 #[test]

@@ -58,3 +58,20 @@ remains in `container_bounds.rs`, `format_v2.rs` and `format_validate.rs`.
 
 Fixture-local `.gitattributes` disables line-ending conversion for every `.vrs` and marks
 PDF containers binary. Their xref offsets and byte identity depend on preserving exact whitespace.
+
+## Addendum — format 4 (2026-10-07, artboard ids)
+
+The twenty-two files above are unchanged. Format 4 became current, so `v4_future.vrs` and
+`future_v4_pdf.vrs` are no longer "newer": both now pass the version gate and are refused by the typed
+decode (`"doc":42` → Malformed), exactly like `v3_future`/`future_pdf` after format 3. Their bytes stay
+frozen; only the expected reason changed. The NewerVersion proof moved to two new files, and four
+format-4 refusals were added (appended to `SHA256SUMS`; no existing line changed):
+
+| Fixture | Exact mutation / expected refusal |
+|---|---|
+| `v5_future.vrs` | `{"varos":5,"doc":42}`; NewerVersion { found 5, supported 4 } before typed decoding. |
+| `future_v5_pdf.vrs` | `future_v4_pdf.vrs` with its two `4` bytes (catalog `/VAROS_SchemaVersion` and model `"varos"`) changed to `5`, same length so xref offsets hold; NewerVersion { 5, 4 }. |
+| `v3_artboard_id.vrs` | `../v3/v3_board_meta.vrs` with `"id":7,` inserted first in the first artboard; a format-3 file carrying a format-4 key → `Invalid::FieldNotInFormat { field: "artboard id", version: 3 }`, before typed decoding. |
+| `artboard_duplicate_id.vrs` | `../v4/v4_board_meta.vrs` with the second artboard's `"id":17` changed to `16`; `Invalid::DuplicateId { kind: "artboard", id: 16 }`. |
+| `artboard_missing_id.vrs` | `../v4/v4_board_meta.vrs` with the first artboard's `"id":16,` removed (the typed decode defaults it to 0); `Invalid::MissingArtboardId { index: 0 }`. |
+| `active_out_of_range.vrs` | `../v4/v4_board_meta.vrs` with `"active":0` changed to `2` (two artboards); `Invalid::ActiveArtboardOutOfRange { active: 2, count: 2 }`. |

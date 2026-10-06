@@ -360,6 +360,14 @@ pub struct Node {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Artboard {
+    /// Stable artboard id (format 4, 2026-10-07): allocated from the document id counter (`Document::nid`,
+    /// the same high-water discipline as paths and nodes), unique among artboards, never reused for a
+    /// different page in a session. `0` means "not assigned yet" — an in-memory state only (a page built
+    /// with `..Artboard::default()`); `Document::assign_artboard_ids` gives it a fresh id at the next
+    /// commit / save, and the format refuses a 0 or duplicate id in a format-4 file. The Bridge speaks
+    /// `artboard:<id>`; indices stay internal (`artboard_index`).
+    #[serde(default)]
+    pub id: u32,
     pub x: f32,
     pub y: f32,
     pub w: f32,
@@ -396,6 +404,7 @@ impl Default for Artboard {
     /// modal comes later). px == pt at the default 72 ppi.
     fn default() -> Self {
         Artboard {
+            id: 0,
             x: 0.0,
             y: 0.0,
             w: 1080.0,
@@ -641,7 +650,7 @@ impl Document {
     /// | `groups`, `group_of` | content  | the legacy group registry (empty after `migrate_legacy`, compared for completeness) |
     /// | `nodes`            | content    | the scene tree: layer/group names, parents/children order, node hide/lock, layer colour, `clip_exempt`, live transform `xform`, clip `role` + `mask_child` |
     /// | `roots`            | content    | layer order |
-    /// | `artboards`        | content    | rect, name, bleed, page colour, `clip`, `hidden`, `locked` |
+    /// | `artboards`        | content    | id (format 4), rect, name, bleed, page colour, `clip`, `hidden`, `locked` |
     /// | `guides`           | content    | ruler guides are placed with undo and saved with the file |
     /// | `units.ppi`        | content    | the px ↔ physical bridge changes what a size means in print |
     /// | `units.display`    | preference | the unit shown in fields/rulers (`CycleUnits`); geometry stays in pt |
@@ -700,6 +709,32 @@ impl Document {
         self.ids
     }
 
+    /// The position of the artboard whose stable id is `id` (format 4). `0` never matches.
+    pub fn artboard_index(&self, id: u32) -> Option<usize> {
+        if id == 0 {
+            return None;
+        }
+        self.artboards.iter().position(|a| a.id == id)
+    }
+    /// Give every artboard without a usable id (0, or a repeat of an earlier artboard's id — e.g. a
+    /// fresh duplicate cloned from its source) a fresh id from the document counter, in artboard
+    /// order. Earlier artboards keep their ids, so a duplicate inserted after its source gets the new
+    /// one. Idempotent; returns whether anything changed. Called by `Editor::commit`/`replace_doc`,
+    /// the save-side normalizer and the v3→v4 migration.
+    pub fn assign_artboard_ids(&mut self) -> bool {
+        let mut seen = std::collections::HashSet::with_capacity(self.artboards.len());
+        let mut changed = false;
+        for i in 0..self.artboards.len() {
+            let id = self.artboards[i].id;
+            if id == 0 || !seen.insert(id) {
+                let fresh = self.nid();
+                self.artboards[i].id = fresh;
+                seen.insert(fresh);
+                changed = true;
+            }
+        }
+        changed
+    }
     /// The active artboard (index clamped), or None on a free canvas with no artboards (A8a).
     pub fn active_artboard(&self) -> Option<&Artboard> {
         if self.artboards.is_empty() {

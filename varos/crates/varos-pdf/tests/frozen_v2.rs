@@ -16,7 +16,7 @@ fn bytes(relative: &str) -> Vec<u8> {
 #[test]
 fn frozen_fixture_bytes_match_their_sha256sums() {
     use sha2::{Digest, Sha256};
-    for folder in ["v2", "v3", "refused"] {
+    for folder in ["v2", "v3", "v4", "refused"] {
         let dir = fixture(folder);
         let sums = std::fs::read_to_string(dir.join("SHA256SUMS")).unwrap();
         let mut listed = std::collections::BTreeMap::new();
@@ -42,10 +42,10 @@ fn frozen_fixture_bytes_match_their_sha256sums() {
 }
 
 /// Format 3 (2026-10-04) made v2 an older format: the frozen v2 twins still load identically from both
-/// containers, now through the v2→v3 migration (empty board metadata, the migration notice), and save
-/// as exactly the frozen v3 twins (`fixtures/v3/README.md`).
+/// containers, now through the v2→v3→v4 migrations (empty board metadata, artboard ids, the migration
+/// notice). The boardless one saves as exactly the frozen v4 twin (no pages, so no ids allocated).
 #[test]
-fn frozen_v2_twins_load_equal_and_migrate_to_the_frozen_v3_bytes() {
+fn frozen_v2_twins_load_equal_and_migrate_to_the_frozen_v4_bytes() {
     for scenario in ["masked_rotated", "boardless"] {
         let raw = bytes(&format!("v2/v2_{scenario}.vrs"));
         let pdf = bytes(&format!("v2/v2_{scenario}_pdf.vrs"));
@@ -57,16 +57,19 @@ fn frozen_v2_twins_load_equal_and_migrate_to_the_frozen_v3_bytes() {
         assert_eq!(a.notice(), Some(varos_core::format::MIGRATION_NOTICE));
         assert!(a.doc.name.is_empty() && a.doc.description.is_empty() && a.doc.tags.is_empty());
         if scenario == "boardless" {
-            let raw3 = bytes("v3/v3_boardless.vrs");
-            let pdf3 = bytes("v3/v3_boardless_pdf.vrs");
-            assert_eq!(varos_core::file::doc_to_blob(&a.doc).unwrap().as_bytes(), raw3, "{scenario}: v3 raw bytes");
-            assert_eq!(write_pdf(&a.doc).unwrap(), pdf3, "{scenario}: v3 PDF bytes");
+            let raw4 = bytes("v4/v4_boardless.vrs");
+            let pdf4 = bytes("v4/v4_boardless_pdf.vrs");
+            assert_eq!(varos_core::file::doc_to_blob(&a.doc).unwrap().as_bytes(), raw4, "{scenario}: v4 raw bytes");
+            assert_eq!(write_pdf(&a.doc).unwrap(), pdf4, "{scenario}: v4 PDF bytes");
         }
     }
 }
 
+/// Format 4 (2026-10-07) made v3 an older format: the frozen v3 twins load identically from both
+/// containers through the v3→v4 migration (artboard ids in order, the migration notice) and save as
+/// exactly the frozen v4 twins (`fixtures/v4/README.md`).
 #[test]
-fn frozen_v3_twins_are_exact_and_byte_stable() {
+fn frozen_v3_twins_load_equal_and_migrate_to_the_frozen_v4_bytes() {
     for scenario in ["board_meta", "boardless"] {
         let raw = bytes(&format!("v3/v3_{scenario}.vrs"));
         let pdf = bytes(&format!("v3/v3_{scenario}_pdf.vrs"));
@@ -74,6 +77,33 @@ fn frozen_v3_twins_are_exact_and_byte_stable() {
         let b = load_vrs_bytes(&pdf, &Limits::DEFAULT).unwrap();
         assert_eq!(a, b, "{scenario}: container must preserve the complete document and metadata");
         assert_eq!(a.source_version, 3);
+        assert!(a.migrated && !a.released_legacy_masks);
+        assert_eq!(a.notice(), Some(varos_core::format::MIGRATION_NOTICE));
+        let raw4 = bytes(&format!("v4/v4_{scenario}.vrs"));
+        let pdf4 = bytes(&format!("v4/v4_{scenario}_pdf.vrs"));
+        assert_eq!(varos_core::file::doc_to_blob(&a.doc).unwrap().as_bytes(), raw4, "{scenario}: v4 raw bytes");
+        assert_eq!(write_pdf(&a.doc).unwrap(), pdf4, "{scenario}: v4 PDF bytes");
+    }
+    // the metadata board = its v2 source + exactly the documented metadata (ids and counter aside)
+    let meta = load_vrs_checked(&fixture("v3/v3_board_meta_pdf.vrs"), &Limits::DEFAULT).unwrap().doc;
+    let mut expected = load_vrs_checked(&fixture("v2/v2_masked_rotated.vrs"), &Limits::DEFAULT).unwrap().doc;
+    expected.name = "شعار المقهى — Café logo".into();
+    expected.description = "Brand mark, round two. نسخة ثانية للشعار.".into();
+    expected.tags = vec!["client".into(), "عربي".into(), "logo".into()];
+    assert_eq!(meta, expected);
+    assert_eq!(meta.artboards.iter().map(|a| a.id).collect::<Vec<_>>(), [16, 17]);
+    assert_eq!((meta.ids, meta.active), (17, 0));
+}
+
+#[test]
+fn frozen_v4_twins_are_exact_and_byte_stable() {
+    for scenario in ["board_meta", "boardless"] {
+        let raw = bytes(&format!("v4/v4_{scenario}.vrs"));
+        let pdf = bytes(&format!("v4/v4_{scenario}_pdf.vrs"));
+        let a = load_vrs_bytes(&raw, &Limits::DEFAULT).unwrap();
+        let b = load_vrs_bytes(&pdf, &Limits::DEFAULT).unwrap();
+        assert_eq!(a, b, "{scenario}: container must preserve the complete document and metadata");
+        assert_eq!(a.source_version, 4);
         assert!(!a.migrated && !a.released_legacy_masks);
         assert_eq!(a.notice(), None);
         assert_eq!(varos_core::file::doc_to_blob(&a.doc).unwrap().as_bytes(), raw, "{scenario}: raw frozen bytes");
@@ -83,13 +113,6 @@ fn frozen_v3_twins_are_exact_and_byte_stable() {
         assert_eq!(a.doc, reloaded.doc);
         assert_eq!(write_pdf(&reloaded.doc).unwrap(), saved);
     }
-    // the metadata board = its v2 source + exactly the documented metadata
-    let meta = load_vrs_checked(&fixture("v3/v3_board_meta_pdf.vrs"), &Limits::DEFAULT).unwrap().doc;
-    let mut expected = load_vrs_checked(&fixture("v2/v2_masked_rotated.vrs"), &Limits::DEFAULT).unwrap().doc;
-    expected.name = "شعار المقهى — Café logo".into();
-    expected.description = "Brand mark, round two. نسخة ثانية للشعار.".into();
-    expected.tags = vec!["client".into(), "عربي".into(), "logo".into()];
-    assert_eq!(meta, expected);
 }
 
 #[test]
@@ -152,6 +175,12 @@ fn frozen_refusals_keep_their_typed_reason_on_bytes_and_disk() {
         "future_v4_pdf",
         "v2_board_name",
         "board_duplicate_tag",
+        "v5_future",
+        "future_v5_pdf",
+        "v3_artboard_id",
+        "artboard_duplicate_id",
+        "artboard_missing_id",
+        "active_out_of_range",
     ];
     for name in cases {
         let path = fixture(&format!("refused/{name}.vrs"));
@@ -159,12 +188,20 @@ fn frozen_refusals_keep_their_typed_reason_on_bytes_and_disk() {
         let err = load_vrs_bytes(&raw, &Limits::DEFAULT).unwrap_err();
         assert_eq!(load_vrs_checked(&path, &Limits::DEFAULT).unwrap_err(), err, "{name}: both entry points");
         let expected = match name {
-            // format 3 is current since 2026-10-04: these two now pass the gate and fail the typed
-            // decode (`"doc":42`); the newer-version proof moved to the v4 pair (refused/README.md)
-            "v3_future" | "future_pdf" => {
+            // format 4 is current since 2026-10-07: the v4 pair now fails the typed decode too; the
+            // newer-version proof moved to the v5 pair (refused/README.md, format-4 addendum)
+            "v3_future" | "future_pdf" | "v4_future" | "future_v4_pdf" => {
                 matches!(&err, LoadError::Malformed { detail, .. } if detail.contains("expected struct Document"))
             }
-            "v4_future" | "future_v4_pdf" => err == LoadError::NewerVersion { found: 4, supported: 3 },
+            "v5_future" | "future_v5_pdf" => err == LoadError::NewerVersion { found: 5, supported: 4 },
+            "v3_artboard_id" => {
+                err == LoadError::Invalid(Invalid::FieldNotInFormat { field: "artboard id", version: 3 })
+            }
+            "artboard_duplicate_id" => err == LoadError::Invalid(Invalid::DuplicateId { kind: "artboard", id: 16 }),
+            "artboard_missing_id" => err == LoadError::Invalid(Invalid::MissingArtboardId { index: 0 }),
+            "active_out_of_range" => {
+                err == LoadError::Invalid(Invalid::ActiveArtboardOutOfRange { active: 2, count: 2 })
+            }
             "v2_board_name" => err == LoadError::Invalid(Invalid::FieldNotInFormat { field: "name", version: 2 }),
             "board_duplicate_tag" => {
                 err == LoadError::Invalid(Invalid::Board(varos_core::board::MetaError::DuplicateTag {
