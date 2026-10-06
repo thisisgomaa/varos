@@ -264,10 +264,13 @@ pub enum NodeKind {
 }
 
 /// Where a dragged row lands relative to the target row (the 3-zone drag model).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DropPos {
+    #[serde(rename = "Before")]
     Before,
+    #[serde(rename = "Into")]
     Into,
+    #[serde(rename = "After")]
     After,
 }
 

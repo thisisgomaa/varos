@@ -10,128 +10,231 @@ use crate::geom::{Pt, Rgba};
 use crate::model::{DropPos, SnapConfig};
 
 /// A deterministic edit or history action executed entirely inside `varos-core`.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    /// Explicit headless object selection, using stable path ids.
+    #[serde(rename = "SelectPaths")]
+    SelectPaths(Vec<u32>),
+    /// Explicit direct selection, using stable anchor ids.
+    #[serde(rename = "SelectAnchors")]
+    SelectAnchors(Vec<u32>),
     /// Transform-panel X/Y/W/H. Edits the object selection, or — when there is none — the Direct
     /// selection (selected anchors / Direct path-level selection; Astra F07).
+    #[serde(rename = "SetObjectBounds")]
     SetObjectBounds {
+        #[serde(rename = "x")]
         x: Option<f32>,
+        #[serde(rename = "y")]
         y: Option<f32>,
+        #[serde(rename = "width")]
         width: Option<f32>,
+        #[serde(rename = "height")]
         height: Option<f32>,
+        #[serde(rename = "anchor_x")]
         anchor_x: f32,
+        #[serde(rename = "anchor_y")]
         anchor_y: f32,
     },
+    #[serde(rename = "SetObjectRotation")]
     SetObjectRotation(f32),
+    #[serde(rename = "SetOpacity")]
     SetOpacity(f32),
+    #[serde(rename = "SetStrokeWidth")]
     SetStrokeWidth(f32),
+    #[serde(rename = "SetClipExempt")]
     SetClipExempt(bool),
+    #[serde(rename = "ApplyPaint")]
     ApplyPaint {
+        #[serde(rename = "target")]
         target: PaintTarget,
+        #[serde(rename = "color")]
         color: Option<Rgba>,
     },
+    #[serde(rename = "SwapColors")]
     SwapColors,
+    #[serde(rename = "DefaultPaint")]
     DefaultPaint,
+    #[serde(rename = "PickerBegin")]
     PickerBegin,
+    #[serde(rename = "PickerLivePaint")]
     PickerLivePaint {
+        #[serde(rename = "target")]
         target: PaintTarget,
+        #[serde(rename = "color")]
         color: Rgba,
     },
+    #[serde(rename = "PickerLiveArtboard")]
     PickerLiveArtboard {
+        #[serde(rename = "index")]
         index: usize,
+        #[serde(rename = "color")]
         color: Rgba,
     },
+    #[serde(rename = "PickerCommit")]
     PickerCommit {
+        #[serde(rename = "current")]
         current: Option<PaintTarget>,
+        #[serde(rename = "color")]
         color: Rgba,
     },
+    #[serde(rename = "PickerCancel")]
     PickerCancel,
+    #[serde(rename = "ToggleNodeHidden")]
     ToggleNodeHidden(u32),
+    #[serde(rename = "ToggleNodeLocked")]
     ToggleNodeLocked(u32),
+    #[serde(rename = "RenameNode")]
     RenameNode {
+        #[serde(rename = "node")]
         node: u32,
+        #[serde(rename = "name")]
         name: String,
     },
     /// Name a path (its Layers row, the inspector header). A path's leaf node does not carry the
     /// displayed name — `Path::name` does — so a `<Path>` row renames through this, not `RenameNode`
     /// (QW3 / Astra F10). The name is trimmed; an empty or unchanged name is a no-op (no undo step,
     /// the document stays clean) — Illustrator keeps the old name when the field is emptied.
+    #[serde(rename = "RenamePath")]
     RenamePath {
+        #[serde(rename = "path")]
         path: u32,
+        #[serde(rename = "name")]
         name: String,
     },
+    #[serde(rename = "GroupSelection")]
     GroupSelection,
+    #[serde(rename = "UngroupSelection")]
     UngroupSelection,
+    #[serde(rename = "DeleteLayerSelection")]
     DeleteLayerSelection,
+    #[serde(rename = "MoveLayer")]
     MoveLayer {
+        #[serde(rename = "sources")]
         sources: Vec<u32>,
+        #[serde(rename = "target")]
         target: u32,
+        #[serde(rename = "position")]
         position: DropPos,
     },
+    #[serde(rename = "DuplicateMoveLayer")]
     DuplicateMoveLayer {
+        #[serde(rename = "sources")]
         sources: Vec<u32>,
+        #[serde(rename = "target")]
         target: u32,
+        #[serde(rename = "position")]
         position: DropPos,
     },
+    #[serde(rename = "MoveLayerToBoard")]
     MoveLayerToBoard {
+        #[serde(rename = "sources")]
         sources: Vec<u32>,
+        #[serde(rename = "source_board")]
         source_board: Option<usize>,
+        #[serde(rename = "target_board")]
         target_board: usize,
     },
+    #[serde(rename = "Flip")]
     Flip(bool),
+    #[serde(rename = "Align")]
     Align {
+        #[serde(rename = "mode")]
         mode: AlignMode,
+        #[serde(rename = "target")]
         target: AlignTarget,
     },
+    #[serde(rename = "Distribute")]
     Distribute(DistAxis),
+    #[serde(rename = "Boolean")]
     Boolean(BoolOp),
+    #[serde(rename = "Arrange")]
     Arrange(ZOrder),
+    #[serde(rename = "TransformAgain")]
     TransformAgain,
+    #[serde(rename = "DeleteSelected")]
     DeleteSelected,
     /// Edit ▸ Copy: selection → the in-app clipboard. Leaves the document untouched (no history).
+    #[serde(rename = "Copy")]
     Copy,
     /// Edit ▸ Cut: Copy + delete the selection, as ONE undo step.
+    #[serde(rename = "Cut")]
     Cut,
     /// Edit ▸ Paste / Paste in Place: a fresh copy of the clipboard onto the active layer, selected,
     /// as ONE undo step. `offset` = world translation from the copied position (the app passes the
     /// delta that centres the art in the view — core has no view); `None` = in place (⇧⌘V).
+    #[serde(rename = "Paste")]
     Paste {
+        #[serde(rename = "offset")]
         offset: Option<Pt>,
     },
+    #[serde(rename = "Nudge")]
     Nudge {
+        #[serde(rename = "x")]
         x: f32,
+        #[serde(rename = "y")]
         y: f32,
     },
+    #[serde(rename = "SetActiveArtboard")]
     SetActiveArtboard(usize),
+    #[serde(rename = "SetArtboardRect")]
     SetArtboardRect {
+        #[serde(rename = "index")]
         index: usize,
+        #[serde(rename = "x")]
         x: Option<f32>,
+        #[serde(rename = "y")]
         y: Option<f32>,
+        #[serde(rename = "width")]
         width: Option<f32>,
+        #[serde(rename = "height")]
         height: Option<f32>,
     },
+    #[serde(rename = "RenameArtboard")]
     RenameArtboard {
+        #[serde(rename = "index")]
         index: usize,
+        #[serde(rename = "name")]
         name: String,
     },
+    #[serde(rename = "SetArtboardColor")]
     SetArtboardColor {
+        #[serde(rename = "index")]
         index: usize,
+        #[serde(rename = "color")]
         color: Option<Rgba>,
     },
+    #[serde(rename = "ToggleArtboardClip")]
     ToggleArtboardClip(usize),
+    #[serde(rename = "ToggleArtboardHidden")]
     ToggleArtboardHidden(usize),
+    #[serde(rename = "ToggleArtboardLocked")]
     ToggleArtboardLocked(usize),
+    #[serde(rename = "OrientArtboard")]
     OrientArtboard(usize),
+    #[serde(rename = "AddArtboard")]
     AddArtboard,
+    #[serde(rename = "DuplicateArtboard")]
     DuplicateArtboard(usize),
+    #[serde(rename = "DeleteArtboard")]
     DeleteArtboard(usize),
+    #[serde(rename = "SetArtboardCount")]
     SetArtboardCount(usize),
+    #[serde(rename = "SetMoveArtWithArtboard")]
     SetMoveArtWithArtboard(bool),
+    #[serde(rename = "SetRulerOrigin")]
     SetRulerOrigin(Pt),
+    #[serde(rename = "CommitGuide")]
     CommitGuide,
+    #[serde(rename = "CycleUnits")]
     CycleUnits,
+    #[serde(rename = "SetSnapConfig")]
     SetSnapConfig(SnapConfig),
+    #[serde(rename = "ToggleSnapping")]
     ToggleSnapping,
+    #[serde(rename = "ToggleGuidesLocked")]
     ToggleGuidesLocked,
+    #[serde(rename = "ToggleSmartGuides")]
     ToggleSmartGuides,
     /// Board metadata (format 3, `crate::board`). Each is ONE undo step and dirties the document; an
     /// unchanged value is a no-op (no undo step, the document stays clean). These variants only ever
@@ -140,16 +243,32 @@ pub enum EditCommand {
     /// and shows it) and builds the command only from valid, cleaned input. The variant re-cleans
     /// (idempotent) and asserts validity in debug builds; a release build still never stores an
     /// invalid value (it is ignored).
+    #[serde(rename = "SetBoardName")]
     SetBoardName(String),
+    #[serde(rename = "SetBoardDescription")]
     SetBoardDescription(String),
+    #[serde(rename = "SetBoardTags")]
     SetBoardTags(Vec<String>),
+    #[serde(rename = "Undo")]
     Undo,
+    #[serde(rename = "Redo")]
     Redo,
 }
 
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            Self::SelectPaths(paths) => {
+                ed.escape();
+                ed.tool = crate::editor::ToolKind::Object;
+                ed.objsel.extend(paths);
+                ed.refresh_obj_angle();
+            }
+            Self::SelectAnchors(anchors) => {
+                ed.escape();
+                ed.tool = crate::editor::ToolKind::Direct;
+                ed.selected.extend(anchors);
+            }
             Self::SetObjectBounds { x, y, width, height, anchor_x, anchor_y } => {
                 ed.set_obj_bbox(x, y, width, height, anchor_x, anchor_y)
             }
@@ -240,6 +359,13 @@ impl EditCommand {
 }
 
 impl Editor {
+    /// Checked headless path; existing interactive `execute` callers keep their behavior.
+    pub fn try_execute(&mut self, command: EditCommand) -> Result<(), String> {
+        crate::bridge::check(&command, self)?;
+        self.execute(command);
+        Ok(())
+    }
+
     /// Execute one deterministic edit through the core-owned command boundary.
     pub fn execute(&mut self, command: EditCommand) {
         command.apply(self);

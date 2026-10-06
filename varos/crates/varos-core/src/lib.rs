@@ -22,3 +22,5 @@ pub use geom::{Pt, Rgba, View};
 pub use scene::{build_scene, build_scene_in_view, Group, Prim, Scene};
 pub mod file;
 pub use units::{DocUnits, Unit};
+
+pub mod bridge;
