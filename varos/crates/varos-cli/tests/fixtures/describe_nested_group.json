@@ -1,0 +1,146 @@
+{
+  "artboards": [
+    {
+      "bleed": 0.0,
+      "clip": true,
+      "h": 100.0,
+      "hidden": false,
+      "locked": false,
+      "name": "Artboard 1",
+      "page_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "w": 100.0,
+      "x": 0.0,
+      "y": 0.0
+    },
+    {
+      "bleed": 0.0,
+      "clip": true,
+      "h": 100.0,
+      "hidden": false,
+      "locked": false,
+      "name": "لوحة ثانية",
+      "page_color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "w": 100.0,
+      "x": 120.0,
+      "y": 0.0
+    }
+  ],
+  "description": "Brand mark, round two. نسخة ثانية للشعار.",
+  "element_count": 5,
+  "elements": [
+    {
+      "bounds": [
+        -10.71,
+        -10.71,
+        70.71,
+        70.71
+      ],
+      "fill": null,
+      "hidden": false,
+      "id": "node:1",
+      "kind": "layer",
+      "locked": false,
+      "name": "Layer 1",
+      "parent": null,
+      "stroke": null
+    },
+    {
+      "bounds": [
+        -10.71,
+        -10.71,
+        70.71,
+        70.71
+      ],
+      "fill": null,
+      "hidden": false,
+      "id": "node:15",
+      "kind": "group",
+      "locked": false,
+      "name": "Group 15",
+      "parent": "node:1",
+      "stroke": null
+    },
+    {
+      "bounds": [
+        -10.71,
+        -10.71,
+        70.71,
+        70.71
+      ],
+      "fill": null,
+      "hidden": false,
+      "id": "node:16",
+      "kind": "group",
+      "locked": false,
+      "name": "Nested group",
+      "parent": "node:15",
+      "stroke": null
+    },
+    {
+      "bounds": [
+        -10.71,
+        -10.71,
+        70.71,
+        70.71
+      ],
+      "fill": [
+        0.1,
+        0.4,
+        0.9,
+        1.0
+      ],
+      "hidden": false,
+      "id": "path:10",
+      "kind": "path",
+      "locked": false,
+      "name": null,
+      "opacity": 1.0,
+      "parent": "node:16",
+      "stroke": {
+        "paint": null,
+        "width": 1.0
+      }
+    },
+    {
+      "bounds": [
+        2.86,
+        2.86,
+        57.14,
+        57.14
+      ],
+      "fill": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "hidden": false,
+      "id": "path:11",
+      "kind": "path",
+      "locked": false,
+      "name": null,
+      "opacity": 1.0,
+      "parent": "node:15",
+      "stroke": {
+        "paint": null,
+        "width": 1.0
+      }
+    }
+  ],
+  "name": "شعار المقهى — Café logo",
+  "tags": [
+    "client",
+    "عربي",
+    "logo"
+  ]
+}
