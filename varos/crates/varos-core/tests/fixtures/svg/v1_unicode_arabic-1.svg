@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" id="artboard-1-الصفحة_x20_الأولى" width="1080.000" height="1080.000" viewBox="0.000 0.000 1080.000 1080.000" overflow="hidden">
+<title>الصفحة الأولى</title>
+<rect id="background" x="0.000" y="0.000" width="1080.000" height="1080.000" fill="#ffffff" fill-opacity="1.000"/>
+<g id="node-1-Layer_x20_1">
+<title>Layer 1</title>
+<g id="path-1-مثلث_x20_الشعار" opacity="1.000">
+<title>مثلث الشعار</title>
+<path d="M0.000 0.000 L30.000 0.000 L15.000 25.000 L0.000 0.000 Z " fill="#333333" fill-opacity="1.000" fill-rule="evenodd" stroke="none" stroke-opacity="1.000" stroke-width="1.000" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>

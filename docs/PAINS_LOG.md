@@ -15,6 +15,18 @@ Still relevant: P21 (4) artboard move vs clip mask; QW6 panel icon size (micro l
 
 ---
 
+## Open — PDF knockout differs from canvas/SVG (2026-10-06)
+
+PDF uses stroke alpha × object opacity to choose knockout before isolation
+(`varos/crates/varos-pdf/src/write.rs:388-390`). Canvas isolates fill/stroke first when
+object opacity < 0.999 (`varos/crates/varos-core/src/scene.rs:576-584`); SVG follows that
+rule (`varos/crates/varos-core/src/svg.rs:336`). A filled, stroked object with reduced
+object opacity can therefore lose fill beneath its stroke in PDF while retaining it
+on canvas and in SVG. **Open:** reconcile PDF with the canvas rule in a separate change,
+with reduced-opacity fill/stroke regression coverage. PDF behavior is unchanged here.
+
+---
+
 ## 🐢 P11 — تقل في التحريك/الزوم مع شكل معقد أثناء التحديد (2026-07-12، جولة تحقق F4.1)
 
 > أحمد رسم شكلًا معقدًا (~100+ نقطة مع فتحات) ولاحظ: الحركة والزوم تقيلة **فقط** عندما يكون العنصر محددًا أو أداة الـDirect Selection مفتوحة. كل شيء آخر يعمل طبيعيًا، وF4.1 تأكدت يدويًا.
