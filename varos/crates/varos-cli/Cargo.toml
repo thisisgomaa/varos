@@ -1,0 +1,13 @@
+[package]
+name = "varos-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "varos-cli"
+path = "src/main.rs"
+
+[dependencies]
+varos-core = { path = "../varos-core" }
+varos-pdf = { path = "../varos-pdf" }
+varos-raster = { path = "../varos-raster" }

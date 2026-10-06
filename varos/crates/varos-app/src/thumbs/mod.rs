@@ -1,6 +1,6 @@
 //! Asynchronous Start-card thumbnail cache. It never reads or writes a `.vrs` file.
 
-pub mod raster;
+pub use varos_raster as raster;
 
 use crate::workspace::FileKey;
 use std::collections::{HashMap, HashSet};

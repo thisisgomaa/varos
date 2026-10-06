@@ -16,11 +16,15 @@ pub type Shape = Vec<Ring>;
 /// One cubic segment: (start, control1, control2, end).
 pub type Seg = (Pt, Pt, Pt, Pt);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum BoolOp {
+    #[serde(rename = "Unite")]
     Unite,
+    #[serde(rename = "MinusFront")]
     MinusFront,
+    #[serde(rename = "Intersect")]
     Intersect,
+    #[serde(rename = "Exclude")]
     Exclude,
 }
 
