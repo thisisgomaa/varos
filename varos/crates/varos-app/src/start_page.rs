@@ -64,12 +64,17 @@ pub mod roles {
     pub const TAG: Role = Role { font: t::tag, tracking_em: PLAIN, line: 20.0 };
     pub const MICRO: Role = Role { font: t::micro, tracking_em: PLAIN, line: 16.0 };
     pub const MONO: Role = Role { font: t::mono, tracking_em: PLAIN, line: 16.0 };
+    /// The Review panel's title (Inter 600 13, `t::panel_title_font`).
+    pub const PANEL_TITLE: Role = Role { font: t::panel_title_font, tracking_em: PLAIN, line: 16.0 };
 }
 
 /// Copy (owner-approved mockup text).
 pub const LEDE: &str = "A board is a free canvas with a name, a short description and tags. Artboards inside are optional — add one when a piece needs a fixed size.";
 pub const FIRST_TITLE: &str = "Start with a board";
 pub const RECOVERY_STATUS: &str = "Recovery on · copies every 30 seconds";
+/// The recovery copy's open action, one word everywhere (owner 2026-10-06): Start's Recovered band and
+/// the editor's Review panel.
+pub const RESTORE: &str = "Restore";
 pub const NO_RECENT_COPY: &str = "No recent boards yet.";
 const LOCATE: &str = "Locate…";
 const REMOVE: &str = "Remove from Recent";
@@ -442,7 +447,7 @@ pub fn version_text() -> String {
 
 // ───────────────────────────── text ─────────────────────────────
 
-fn format(role: Role) -> TextFormat {
+pub(crate) fn format(role: Role) -> TextFormat {
     let font_id = (role.font)();
     TextFormat {
         extra_letter_spacing: font_id.size * role.tracking_em,
@@ -451,12 +456,12 @@ fn format(role: Role) -> TextFormat {
         ..Default::default()
     }
 }
-fn text(ui: &Ui, s: &str, role: Role) -> Arc<Galley> {
+pub(crate) fn text(ui: &Ui, s: &str, role: Role) -> Arc<Galley> {
     let mut job = LayoutJob::default();
     job.append(s, 0.0, format(role));
     ui.fonts_mut(|f| f.layout_job(job))
 }
-fn text_elided(ui: &Ui, s: &str, role: Role, width: f32) -> Arc<Galley> {
+pub(crate) fn text_elided(ui: &Ui, s: &str, role: Role, width: f32) -> Arc<Galley> {
     text_wrapped(ui, s, role, width, 1, Align::Min)
 }
 fn text_wrapped(ui: &Ui, s: &str, role: Role, width: f32, rows: usize, halign: Align) -> Arc<Galley> {
@@ -475,7 +480,7 @@ fn text_wrapped(ui: &Ui, s: &str, role: Role, width: f32, rows: usize, halign: A
 fn width_of(ui: &Ui, s: &str, role: Role) -> f32 {
     text(ui, s, role).size().x
 }
-fn path_galley(ui: &Ui, folder: &str, width: f32) -> Arc<Galley> {
+pub(crate) fn path_galley(ui: &Ui, folder: &str, width: f32) -> Arc<Galley> {
     let fitted = elide_middle(folder, |c| width_of(ui, c, roles::MONO) <= width);
     text(ui, &fitted, roles::MONO)
 }
@@ -1280,13 +1285,10 @@ impl StartPage {
 
     fn recovered(&mut self, ui: &mut Ui, index: usize, row: &RecoveryRow, rect: Rect, f: &mut Frame<'_>) {
         let p = ui.painter().clone();
-        p.rect_filled(rect, t::r_box(), t::PANEL);
-        p.rect_stroke(rect, t::r_box(), egui::Stroke::new(t::KIT_STROKE, t::LINE2), egui::StrokeKind::Inside);
-        let icon_x = rect.left() + t::SB_RECOV_PAD_L;
-        let icon_c = egui::pos2(icon_x + t::SB_ICON_HERO / 2.0, rect.center().y);
-        Icon::History.paint(&p, icon_c, t::SB_ICON_HERO, t::TEXT);
-        // buttons, right to left: Recover (solid), Discard (ghost)
-        let label_r = text(ui, "Recover", roles::SMALL_MEDIUM);
+        // the one Recovered band painter (shared with the editor's recovery card)
+        let x = kb::recovered_band(&p, rect);
+        // buttons, right to left: Restore (solid), Discard (ghost) — "Restore" everywhere (owner 2026-10-06)
+        let label_r = text(ui, RESTORE, roles::SMALL_MEDIUM);
         let label_d = text(ui, "Discard", roles::SMALL_MEDIUM);
         let w_r = kb::pill_width(&label_r, t::SB_BTN_PAD);
         let w_d = kb::pill_width(&label_d, t::SB_BTN_PAD);
@@ -1311,14 +1313,13 @@ impl StartPage {
         }
         let solid = kb::ButtonKind::Solid;
         let r =
-            kb::text_button(ui, ids::recover(&row.rid), recover, label_r, solid, rec_av, self.ring_on(&sr), "Recover");
+            kb::text_button(ui, ids::recover(&row.rid), recover, label_r, solid, rec_av, self.ring_on(&sr), RESTORE);
         self.mark(f, &sr, recover);
         if r.activated {
             f.actions.push(StartAction::Recover(row.rid.clone()));
             f.clicked = Some(sr);
         }
         // text: name · when (or the problem) · folder, on one baseline; the folder is elided to fit
-        let x = icon_x + t::SB_ICON_HERO + t::SB_RECOV_ICON_GAP;
         let right = discard.left() - t::SB_RECOV_ICON_GAP;
         let (title, folder) = self.derived.recovered.get(index).cloned().unwrap_or_default();
         let name = text_elided(ui, &title, roles::BODY_MEDIUM, (right - x).max(0.0));

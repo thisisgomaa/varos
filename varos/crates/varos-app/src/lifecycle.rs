@@ -165,7 +165,7 @@ impl Lifecycle<'_> {
             AppCommand::InstallRecovered(copy) => {
                 self.ws.add_recovered(*copy);
             }
-            AppCommand::Home | AppCommand::ReviewRecovery => self.ws.show_home(),
+            AppCommand::Home => self.ws.show_home(),
             AppCommand::OpenRecent(path) => {
                 if self.store.exists(&path) {
                     self.open_one(path, None);

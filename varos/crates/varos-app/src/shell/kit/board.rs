@@ -147,6 +147,28 @@ pub fn text_button(
     }
 }
 
+/// THE recovery box (src.html `.rec`): PANEL fill, 1 px LINE2 border, 8 px corners. Start's Recovered
+/// band, the editor's recovery card and its Review panel are all this one box.
+pub fn recovery_box(painter: &Painter, rect: Rect) {
+    painter.rect_filled(rect, t::r_box(), t::PANEL);
+    painter.rect_stroke(rect, t::r_box(), Stroke::new(t::KIT_STROKE, t::LINE2), StrokeKind::Inside);
+}
+
+/// THE Recovered band: [`recovery_box`] with the history glyph (20) at 20 in, vertically centred.
+/// Returns the x where the band's text starts (the glyph + its 14 gap).
+pub fn recovered_band(painter: &Painter, rect: Rect) -> f32 {
+    recovery_box(painter, rect);
+    recovered_glyph(painter, rect)
+}
+
+/// History glyph and text origin, for a band whose outer box is painted by its caller.
+pub fn recovered_glyph(painter: &Painter, rect: Rect) -> f32 {
+    let icon_x = rect.left() + t::SB_RECOV_PAD_L;
+    let icon_c = egui::pos2(icon_x + t::SB_ICON_HERO / 2.0, rect.center().y);
+    Icon::History.paint(painter, icon_c, t::SB_ICON_HERO, t::TEXT);
+    icon_x + t::SB_ICON_HERO + t::SB_RECOV_ICON_GAP
+}
+
 /// Width of a pill holding `label` with `pad` each side.
 pub fn pill_width(label: &Galley, pad: f32) -> f32 {
     label.size().x + pad * 2.0
