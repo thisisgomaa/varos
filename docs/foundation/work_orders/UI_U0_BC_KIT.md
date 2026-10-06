@@ -1,4 +1,4 @@
-> **Status:** current — minimum U0-B/C implementation on `codex/ui-system-plan`; independent review and owner acceptance pending.
+> **Status:** reference — minimum U0-B/C implementation, merged to `main` in `2cb072a` (2026-10-04, after the batch review, fixes `e772f16`). Its Start consumers were since replaced by Start v2 (`6405dc9`); owner acceptance of these controls on their own is not recorded.
 # U0-B/C — minimum Start controls
 
 2026-09-27, baseline `04dd7f2`. Implements only the controls required before E2/F2 under [UI System K1/K5](../../specs/UI_SYSTEM.md). No host wiring, document tab migration, command registry, persistence, generic inputs, or editor access.

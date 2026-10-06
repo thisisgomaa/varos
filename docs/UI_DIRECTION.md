@@ -3,7 +3,7 @@
 
 ## Execution note — 2026-09-27
 
-This document retains the visual direction. `BOX_SYSTEM_PLAN` is implementation background, not the current build queue. Later owner decisions (Home instead of the Mac burger, icons instead of text buttons, bundled fonts, no drag easing/glide, deferred layout persistence) are collected in [UI_SYSTEM](specs/UI_SYSTEM.md). The mockup illustrates layout; runtime values live in `shell/tokens.rs`. Follow [PLAN](PLAN.md) for execution order; no new visual choice is approved by this navigation update.
+This document retains the visual direction. `BOX_SYSTEM_PLAN` is implementation background, not the current build queue. Later owner decisions (Home instead of the Mac burger, icons instead of text buttons, bundled fonts, instant chrome with the box glide as an accepted exception, deferred layout persistence) are collected in [UI_SYSTEM](specs/UI_SYSTEM.md). The mockup illustrates layout; runtime values live in `shell/tokens.rs`. Follow [PLAN](PLAN.md) for execution order; no new visual choice is approved by this navigation update.
 
 ## Reconciliation — 2026-10-04 (UI System v3)
 
@@ -16,7 +16,7 @@ This text disagreed with the code and with later owner decisions in four places 
 | Tab radius | doc tab 4 px; panel tabs "pill" | doc tab chip `RBOX` 8 (`ui.rs:3192`, BOX_SYSTEM_PLAN §3.5); panel tab pill `RCAP` 11 (`shell/boxtree.rs:584`, owner 07-08 "one capsule radius"); `tokens.rs:57` comment wrongly lists tabs under `R` 3 | **doc tab chip 8 · panel tab pill 11** | fix the `R` comment (P4) |
 | Panel corners | "0–4 px max, controls only; panels sit square" | boxes `RBOX` 8 (`tokens.rs:58`, owner 07-04); 26 stray literals 2/3/4/5 in `ui.rs` | **three radii only: 3 controls & menu rows · 8 boxes, popup frames, doc tab chips · 11 capsules** (CLAUDE.md "3px controls / 8px boxes") | literals → tokens (P4) |
 | "On" looks | (not stated) | `icon_toggle` on = ACCENT block (`ui.rs:1982`); `seg_btn` on = ACCENT + white text (`ui.rs:5172`, white on azure 3.53:1 fails text contrast) | tool = azure block · toggle = small azure bar · tab/segment = SURFACE fill (owner, Sep 24/25) | P4 |
-| Motion | (rule absent) | `animation_time = 0` (`tokens.rs:90`) | **No animation, glide, ease or glow, ever**; the direction bar stays | U4-M removes glide/glow under a superseding ADR |
+| Motion | (rule absent) | `animation_time = 0` (`tokens.rs:90`) | **Chrome appears instantly** (`animation_time = 0`: menus, popups, panels never fade or ease) and the **live tab drag is instant** (no time, no interpolation); the direction bar stays. **Accepted exception:** the box glide on dock/undock (owner 2026-07-05, reaffirmed 2026-10-06: not a defect) | none — do not spend effort removing the glide |
 
 > ✅ **APPROVED by Ahmed 2026-07-03 ("برفكتو").** The living visual reference =
 > **`docs/reference/UI_VISION_MOCKUP.html`** (open it in a browser — it demonstrates every rule below:

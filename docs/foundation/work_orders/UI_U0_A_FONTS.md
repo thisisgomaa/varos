@@ -1,4 +1,4 @@
-> **Status:** current — U0-A implementation/evidence, 2026-09-27, on `codex/ui-system-plan`; independent review and merge pending.
+> **Status:** reference — U0-A implementation/evidence, 2026-09-27; merged to `main` in `2cb072a` (2026-10-04). The Plex UI fonts described here were since replaced by Inter 400/500/600 + JetBrains Mono (`429c3f2`, merged `33aa767`); the Arabic gate recorded here still applies ([UI_SYSTEM §8](../../specs/UI_SYSTEM.md#8-arabic--rtl-gate-owner-piece)).
 # U0-A — deterministic UI fonts and text readiness
 
 ## Outcome and scope
