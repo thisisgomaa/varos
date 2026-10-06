@@ -26,6 +26,10 @@ Keep the four-crate architecture: pure `varos-core`, scene renderer `varos-rende
 | Export | S6-B/C merged in `bd4e552` (`export_ui.rs`; export and ⌘S run on the background I/O worker). Owner-seen 2026-10-06: File ▸ Export ▸ PDF works. Export Cancel and Show in Finder are deferred; the 2.38 s large save was not re-measured off-thread. SVG/PNG interchange is pending. |
 | UI system | [UI System v3](../specs/UI_SYSTEM.md) is on `main` as a document (`420b153`); its header still says "proposed". Merged pieces: P2 field law (`fa6bd10`), P3 split/registry/ratchets (`d882454`; `ui.rs` now 931 lines), top bar 4b with `mac_titlebar.rs` (`19611ae`), polish pass (`7adee37`, includes the grey-segment half of P4 and `T_MICRO = 10.5`), icon stage 1 (`4be3208`), Inter + JetBrains Mono fonts (`33aa767`). Owner-seen 2026-10-06: 4b + polish pass. Open: QW6 panel icon size 18 (not verified closed), rest of P4, P5–P8. Band Search removal landed in `736feba`. Icon stage 2 is parked. |
 
+## Local worktree — SVG export (2026-10-06, uncommitted)
+
+`varos-core::svg` now plans and writes standalone SVG 1.1 files for visible artboards or whole-board artwork bounds, without new production dependencies. Exact cubics, even-odd fills/clips, round strokes, names/ids, visibility and canvas opacity isolation/knockout have headless test coverage. [Work order](work_orders/SVG_EXPORT.md) records the API and validation. No app command/menu/FileJob wiring: the PDF-only sheet has no format choice, and multiple SVG destinations need design first. No GUI or owner hand test, installation, push or merge. This local implementation does not change the main baseline described above.
+
 ## Next steps
 
 The single execution map is [PLAN](../PLAN.md). Start there for completed work, the queue and unresolved decisions.

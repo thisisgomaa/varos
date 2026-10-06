@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" id="board" width="30.000" height="25.000" viewBox="0.000 0.000 30.000 25.000" overflow="hidden">
+<g id="node-1-Layer_x20_1">
+<title>Layer 1</title>
+<g id="path-1" opacity="1.000">
+<path d="M0.000 0.000 L30.000 0.000 L15.000 25.000 L0.000 0.000 Z " fill="#4d4d4d" fill-opacity="1.000" fill-rule="evenodd" stroke="none" stroke-opacity="1.000" stroke-width="1.000" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>
