@@ -24,9 +24,11 @@ pub struct Mods {
     pub ctrl: bool,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PaintTarget {
+    #[serde(rename = "Fill")]
     Fill,
+    #[serde(rename = "Stroke")]
     Stroke,
 }
 
@@ -163,36 +165,51 @@ pub enum SnapGuide {
     PathHi { pid: u32 },   // highlight a whole path we snapped onto (Illustrator's "path" highlight)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum ZOrder {
+    #[serde(rename = "Front")]
     Front,
+    #[serde(rename = "Forward")]
     Forward,
+    #[serde(rename = "Backward")]
     Backward,
+    #[serde(rename = "Back")]
     Back,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum AlignMode {
+    #[serde(rename = "Left")]
     Left,
+    #[serde(rename = "CenterH")]
     CenterH,
+    #[serde(rename = "Right")]
     Right,
+    #[serde(rename = "Top")]
     Top,
+    #[serde(rename = "Middle")]
     Middle,
+    #[serde(rename = "Bottom")]
     Bottom,
 }
 /// A4 — what an align acts RELATIVE to. `Auto` is the smart default: it aligns objects to each
 /// other when >1 top-level item is selected, else to the active artboard (single object/group).
 /// `Selection` / `Artboard` force one reference regardless. Artboard with no active board falls
 /// back to Selection (never panics).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub enum AlignTarget {
     #[default]
+    #[serde(rename = "Auto")]
     Auto,
+    #[serde(rename = "Selection")]
     Selection,
+    #[serde(rename = "Artboard")]
     Artboard,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum DistAxis {
+    #[serde(rename = "Horizontal")]
     Horizontal,
+    #[serde(rename = "Vertical")]
     Vertical,
 }
 /// A snap target line: `(coord, span_lo, span_hi)` on one axis.
@@ -3211,6 +3228,62 @@ impl Editor {
             }
         }
         (nd, guides, hud(add(first, nd)))
+    }
+
+    /// Apply a checked document batch atomically, publishing exactly one undo snapshot on change.
+    /// Staging never touches this editor, so any indexed refusal preserves history and selections.
+    pub fn execute_batch(&mut self, commands: Vec<crate::EditCommand>) -> Result<(), crate::bridge::BatchError> {
+        if self.transaction_open() {
+            return Err(crate::bridge::BatchError {
+                index: 0,
+                reason: "finish the active transaction before a batch".into(),
+            });
+        }
+        let mut staged = Editor::new();
+        staged.replace_doc(self.doc.clone());
+        staged.objsel = self.objsel.clone();
+        staged.selected = self.selected.clone();
+        staged.group_sel = self.group_sel.clone();
+        staged.tool = self.tool;
+        staged.dsel_path = self.dsel_path;
+        staged.absel = self.absel.clone();
+        staged.clipboard = self.clipboard.clone();
+        staged.cur_fill = self.cur_fill;
+        staged.cur_stroke = self.cur_stroke;
+        staged.cur_sw = self.cur_sw;
+        staged.paint = self.paint;
+        staged.constrain_wh = self.constrain_wh;
+        staged.refresh_obj_angle();
+        for (index, command) in commands.into_iter().enumerate() {
+            staged
+                .try_execute(command)
+                .and_then(|()| crate::bridge::check_document(&staged))
+                .map_err(|reason| crate::bridge::BatchError { index, reason })?;
+            // The staging host never undoes individual entries. Retaining their snapshots would
+            // multiply document memory by up to 200 for a large batch; only the published step lives.
+            staged.undo.clear();
+            staged.redo.clear();
+        }
+        if staged.doc != self.doc {
+            self.begin();
+            self.doc = staged.doc;
+            self.dirty = true;
+            self.commit();
+        }
+        self.objsel = staged.objsel;
+        self.selected = staged.selected;
+        self.group_sel = staged.group_sel;
+        self.dsel_path = staged.dsel_path;
+        self.absel = staged.absel;
+        self.tool = staged.tool;
+        self.clipboard = staged.clipboard;
+        self.cur_fill = staged.cur_fill;
+        self.cur_stroke = staged.cur_stroke;
+        self.cur_sw = staged.cur_sw;
+        self.paint = staged.paint;
+        self.refresh_obj_angle();
+        self.prune_inert_selection();
+        Ok(())
     }
 
     // ---------- history ----------

@@ -4015,9 +4015,19 @@ dependencies = [
  "unicode-normalization",
  "varos-core",
  "varos-pdf",
+ "varos-raster",
  "varos-render-wgpu",
  "windows",
  "winit",
+]
+
+[[package]]
+name = "varos-cli"
+version = "0.1.0"
+dependencies = [
+ "varos-core",
+ "varos-pdf",
+ "varos-raster",
 ]
 
 [[package]]
@@ -4041,6 +4051,15 @@ dependencies = [
  "serde_json",
  "sha2",
  "varos-core",
+]
+
+[[package]]
+name = "varos-raster"
+version = "0.1.0"
+dependencies = [
+ "tiny-skia",
+ "varos-core",
+ "varos-pdf",
 ]
 
 [[package]]
