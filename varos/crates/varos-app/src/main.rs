@@ -1558,12 +1558,7 @@ fn main() {
                         gestures::apply(
                             view,
                             screen_cursor,
-                            gestures::Gesture::Scroll {
-                                delta,
-                                scale_factor: window.scale_factor(),
-                                alt: ed.mods.alt,
-                                shift: ed.mods.shift,
-                            },
+                            gestures::Gesture::Scroll { delta, alt: ed.mods.alt, shift: ed.mods.shift },
                             over_panel || gui.wants_pointer_at(screen_cursor),
                         );
                         window.request_redraw();

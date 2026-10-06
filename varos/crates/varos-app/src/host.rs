@@ -89,7 +89,7 @@ pub fn start_command(action: varos_app::start::StartAction) -> Option<AppCommand
         A::NewBoard => AppCommand::NewBoard,
         A::NewWithPreset(preset) => AppCommand::NewWithPreset(preset),
         // filter actions are applied to the Start model by the page itself
-        A::SetTagFilter(_) | A::SetView(_) | A::Search(_) => return None,
+        A::SetTagFilter(_) | A::SetView(_) => return None,
         A::Open => AppCommand::OpenDialog,
         A::OpenRecent(p) => AppCommand::OpenRecent(p),
         A::Locate(p) => AppCommand::LocateRecent(p),
@@ -774,7 +774,7 @@ mod tests {
         use varos_core::board::PresetId;
         assert_eq!(start_command(A::NewBoard), Some(AppCommand::NewBoard));
         assert_eq!(start_command(A::NewWithPreset(PresetId::Story)), Some(AppCommand::NewWithPreset(PresetId::Story)));
-        for filter in [A::SetTagFilter(Some("client".into())), A::SetView(StartView::List), A::Search("x".into())] {
+        for filter in [A::SetTagFilter(Some("client".into())), A::SetView(StartView::List)] {
             assert_eq!(start_command(filter), None);
         }
     }

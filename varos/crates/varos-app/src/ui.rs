@@ -565,6 +565,7 @@ impl Ui {
         let raw = self.state.egui_input_mut();
         raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
         let input = self.state.take_egui_input(window);
+        self.start_page.recovery_status.clone_from(&self.recovery.footer);
         self.export_sheet = None; // Home has no document to export
         let out = self.ctx.run_ui(input, |root| {
             build_home_frame(

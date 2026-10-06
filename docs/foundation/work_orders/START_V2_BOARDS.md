@@ -1,6 +1,8 @@
 > **Status:** current — work order, owner-approved direction 2026-10-04 (charter §3). Design of record: `design-reference/mockups/start-v2/` (PNG mockups + NOTES).
 # Start page v2 — Boards
 
+> **Removed 2026-10-06:** band Search and the Custom… artboard preset were removed in `736feba` by owner decision. Search filtering was subsequently removed from the Start model in cycle-close cleanup. References and mockups below preserve the original approved direction; they do not request rebuilding these controls. New board still opens a free canvas. Recovery is now the card / in-place Review (`1532637`), and its status follows the real setting.
+
 ## Owner decisions (2026-10-04)
 - The engineer-built Start page was rejected ("صفر وبشعة"). **Design first**: anything visible is built from an approved mockup and must match it.
 - Chosen design: direction A "Workbench", v2, in `design-reference/mockups/start-v2/` — `inter-recent.png`, `inter-empty.png`, `inter-hover.png`, `inter-list.png`. `NOTES.md` there gives the grid, type scale and tokens. Build to these images.

@@ -9,7 +9,7 @@ const ZOOM_NOTCH: f32 = 1.12;
 pub enum Gesture {
     Pinch(f64),
     SmartZoom(View),
-    Scroll { delta: MouseScrollDelta, scale_factor: f64, alt: bool, shift: bool },
+    Scroll { delta: MouseScrollDelta, alt: bool, shift: bool },
 }
 
 /// Winit delivers incremental magnification, not a cumulative gesture scale.
@@ -30,9 +30,9 @@ pub fn zoom_to(view: &mut View, screen: Pt, zoom: f32) {
     view.pan = pan_for_anchor(anchor, screen, view.zoom);
 }
 
-/// Physical winit pixel deltas → logical points. View.pan itself is in physical pixels.
-fn pixel_pan_logical(delta: [f64; 2], scale_factor: f64, shift: bool) -> [f64; 2] {
-    let [x, y] = delta.map(|v| v / scale_factor);
+/// Winit deltas and View.pan are both physical pixels; preserve 1:1 movement.
+fn pixel_pan(delta: [f64; 2], shift: bool) -> [f64; 2] {
+    let [x, y] = delta;
     if shift {
         [x + y, 0.0]
     } else {
@@ -67,7 +67,7 @@ pub fn apply(view: &mut View, screen: Pt, gesture: Gesture, blocked: bool) -> bo
             zoom_to(view, screen, view.zoom * factor);
         }
         Gesture::SmartZoom(fit) => smart_zoom(view, screen, fit),
-        Gesture::Scroll { delta, scale_factor, alt, shift } => {
+        Gesture::Scroll { delta, alt, shift } => {
             if alt {
                 // Preserve Alt+wheel sensitivity, including the existing pixel /40 mapping.
                 let y = match delta {
@@ -84,9 +84,7 @@ pub fn apply(view: &mut View, screen: Pt, gesture: Gesture, blocked: bool) -> bo
                             [x * 30.0, y * 30.0]
                         }
                     }
-                    MouseScrollDelta::PixelDelta(p) => {
-                        pixel_pan_logical([p.x, p.y], scale_factor, shift).map(|v| (v * scale_factor) as f32)
-                    }
+                    MouseScrollDelta::PixelDelta(p) => pixel_pan([p.x, p.y], shift).map(|v| v as f32),
                 };
                 view.pan = [view.pan[0] + pan[0], view.pan[1] + pan[1]];
             }
@@ -164,14 +162,12 @@ mod tests {
         for scale in [1.0, 2.0] {
             let physical = [12.0 * scale, -8.0 * scale];
             for (shift, logical) in [(false, [12.0, -8.0]), (true, [4.0, 0.0])] {
-                assert_eq!(pixel_pan_logical(physical, scale, shift), logical);
                 let mut view = View { zoom: 3.0, pan: [30.0, 50.0] };
                 apply(
                     &mut view,
                     [0.0, 0.0],
                     Gesture::Scroll {
                         delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(physical[0], physical[1])),
-                        scale_factor: scale,
                         alt: false,
                         shift,
                     },
@@ -190,7 +186,7 @@ mod tests {
             apply(
                 &mut view,
                 [0.0, 0.0],
-                Gesture::Scroll { delta: MouseScrollDelta::LineDelta(2.0, -3.0), scale_factor: 2.0, alt: false, shift },
+                Gesture::Scroll { delta: MouseScrollDelta::LineDelta(2.0, -3.0), alt: false, shift },
                 false,
             );
             assert_eq!(view.pan, expected);
@@ -200,36 +196,33 @@ mod tests {
         {
             let mut view = View::identity();
             let screen = [200.0, 150.0];
-            apply(&mut view, screen, Gesture::Scroll { delta, scale_factor: 2.0, alt: true, shift: true }, false);
+            apply(&mut view, screen, Gesture::Scroll { delta, alt: true, shift: true }, false);
             assert_eq!(view.zoom, ZOOM_NOTCH.powf(2.0));
             assert_anchor(view, screen, screen);
         }
     }
 
     #[test]
-    fn home_and_chrome_block_every_view_gesture() {
-        // Chrome includes the floating control bar and recovery card; all use the same boundary.
-        for (home, chrome) in [(true, false), (false, true), (true, true)] {
+    fn blocked_gestures_leave_the_view_unchanged_and_unblocked_gestures_change_it() {
+        for blocked in [true, false] {
             let before = View { zoom: 2.0, pan: [23.0, -11.0] };
             for gesture in [
                 Gesture::Pinch(0.5),
                 Gesture::SmartZoom(View::identity()),
                 Gesture::Scroll {
                     delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(20.0, 40.0)),
-                    scale_factor: 2.0,
                     alt: false,
                     shift: false,
                 },
-                Gesture::Scroll {
-                    delta: MouseScrollDelta::LineDelta(0.0, 3.0),
-                    scale_factor: 1.0,
-                    alt: true,
-                    shift: false,
-                },
+                Gesture::Scroll { delta: MouseScrollDelta::LineDelta(0.0, 3.0), alt: true, shift: false },
             ] {
                 let mut view = before;
-                assert!(!apply(&mut view, [100.0, 200.0], gesture, home || chrome));
-                assert_view(view, before);
+                assert_eq!(apply(&mut view, [100.0, 200.0], gesture, blocked), !blocked);
+                if blocked {
+                    assert_view(view, before);
+                } else {
+                    assert!(view.zoom != before.zoom || view.pan != before.pan);
+                }
             }
         }
     }

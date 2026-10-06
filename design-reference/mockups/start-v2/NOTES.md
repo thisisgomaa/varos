@@ -1,4 +1,6 @@
 # A v2 — Workbench, board-first
+
+> **Removed 2026-10-06:** band Search and the Custom… artboard preset were removed in `736feba` by owner decision. Search filtering was subsequently removed from the Start model in cycle-close cleanup. References and mockups below preserve the original approved direction; they do not request rebuilding these controls. New board still opens a free canvas. Recovery is now the card / in-place Review (`1532637`), and its status follows the real setting.
 **Idea.** Home opens a BOARD: one free canvas with a name, a short description and tags. Artboards inside are optional. "New board ⌘N" is the one confident (inverted, light) control. The artboard presets are a secondary panel ("…or start with an artboard"). Recent boards are cards that show the work itself on the canvas: the dot grid from the editor, the artboards on it, or free artwork bounds when a board has no artboard.
 
 **Rail removed (full width).** The v1 rail only repeated Recent/Recovered. A tag list in it would duplicate the tag filter and break the ONE-HOME rule. So the filter row is the single home for tags, the recovery status moved to the status seam, and the board gets the full width.
