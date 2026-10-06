@@ -22,7 +22,10 @@ class DependencyDirections(unittest.TestCase):
                 ("varos-core", ["serde"]),
                 ("varos-render-wgpu", ["varos-core", "wgpu"]),
                 ("varos-pdf", ["varos-core"]),
-                ("varos-app", ["varos-core", "varos-render-wgpu", "varos-pdf", "egui_tiles"]),
+                ("varos-app", ["varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "egui_tiles"]),
+                ("varos-raster", ["varos-core", "varos-pdf", "tiny-skia"]),
+                ("varos-cli", ["varos-core", "varos-pdf", "varos-raster"]),
+                ("varos-text-spike", ["cosmic-text", "skrifa", "fontdb"]),
             ]
         ]
         self.metadata = {"packages": self.packages, "workspace_members": [p["id"] for p in self.packages]}
@@ -43,6 +46,17 @@ class DependencyDirections(unittest.TestCase):
     def test_target_specific_platform_dependency_fails(self):
         self.packages[0]["dependencies"].append({"name": "windows-sys", "target": "cfg(windows)"})
         self.assertTrue(any("forbidden" in e for e in self.check()))
+
+    def test_headless_crates_reject_ui_even_in_dev_or_target_dependencies(self):
+        for name in ("varos-raster", "varos-cli", "varos-text-spike"):
+            for dependency in ("wgpu", "winit", "egui", "egui-wgpu", "windows-sys"):
+                with self.subTest(crate=name, dependency=dependency):
+                    package = next(p for p in self.packages if p["name"] == name)
+                    package["dependencies"].append({
+                        "name": dependency, "kind": "dev", "target": "cfg(windows)",
+                    })
+                    self.assertTrue(any(f"{name} forbidden" in e for e in self.check()))
+                    package["dependencies"].pop()
 
     def test_renderer_window_dependency_fails(self):
         self.packages[1]["dependencies"].append({"name": "winit"})

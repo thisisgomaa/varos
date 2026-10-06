@@ -2,6 +2,7 @@
 # Hard seam: varos-core is pure Rust (no GPU/window deps); varos-render-wgpu depends on core, never the reverse.
 [workspace]
 resolver = "2"
+exclude = ["spikes/text-p1"]
 members = ["crates/varos-core", "crates/varos-render-wgpu", "crates/varos-app", "crates/varos-pdf", "crates/varos-raster", "crates/varos-cli"]
 
 [profile.dev]
