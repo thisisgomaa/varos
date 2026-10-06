@@ -1,0 +1,128 @@
+[
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/Cargo.toml",
+    "path": "v0/crates/bstudio-text/Cargo.toml",
+    "bytes": 712,
+    "sha256": "a9b6ea16db460544725dd19ff7b7a8c7c7cb252635318f91efbbbd764c9784e2"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/benches/kashida_reshape.rs",
+    "path": "v0/crates/bstudio-text/benches/kashida_reshape.rs",
+    "bytes": 2019,
+    "sha256": "b62d1741d2cad535b73d81cf98a8ef2b6e49336f0d5cbfa8d5275d793af9a0eb"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/src/bidi.rs",
+    "path": "v0/crates/bstudio-text/src/bidi.rs",
+    "bytes": 5565,
+    "sha256": "1d53d56784340a309f002c51de3dddda9de6e1e30722d9d595b362cb9ac5440d"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/src/caret.rs",
+    "path": "v0/crates/bstudio-text/src/caret.rs",
+    "bytes": 16953,
+    "sha256": "c2915482520146d36d9a2251eeb5a62bef02db964850126f7be7f846cb6bbd81"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/src/kashida.rs",
+    "path": "v0/crates/bstudio-text/src/kashida.rs",
+    "bytes": 25875,
+    "sha256": "bc592a726ec32edba1073c453a27372d0db40c69e1bc24cc9088791c00573883"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/src/layout.rs",
+    "path": "v0/crates/bstudio-text/src/layout.rs",
+    "bytes": 20032,
+    "sha256": "2fbd63120881fe5403a1d937e2c0f17a019bec9020a7f3e64aac2e371e2a2423"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/src/lib.rs",
+    "path": "v0/crates/bstudio-text/src/lib.rs",
+    "bytes": 21232,
+    "sha256": "7d8b74ea65927a161e30be1c411f5331f2c7e6c078966f4a4b6619c91ee7855a"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/src/outline.rs",
+    "path": "v0/crates/bstudio-text/src/outline.rs",
+    "bytes": 5653,
+    "sha256": "2972a180765ea0752052ae4d36197b8962f7f999fec47b9676cb0ac2df620acb"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/src/visual.rs",
+    "path": "v0/crates/bstudio-text/src/visual.rs",
+    "bytes": 37047,
+    "sha256": "5c4d16dcd4fad74806b16448046a20c8e7c2b2ae806320a20e995ce41b7205bc"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/crates/bstudio-text/tests/bidi_corpus.rs",
+    "path": "v0/crates/bstudio-text/tests/bidi_corpus.rs",
+    "bytes": 9870,
+    "sha256": "d1697ea1e069d3906139b60b29ee769dc7751d5a374df1268eb5edf5ede73a9c"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/specs/001-arabic-typography-depth/checklists/requirements.md",
+    "path": "specs/001-arabic-typography-depth/checklists/requirements.md",
+    "bytes": 1789,
+    "sha256": "32a68c80d3b9ba1fb737f7c774c55a7c11b74138b8ecd16c4279449ace997d6b"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/specs/001-arabic-typography-depth/plan.md",
+    "path": "specs/001-arabic-typography-depth/plan.md",
+    "bytes": 4136,
+    "sha256": "e4b26ffd3183b912232e5310ec1f2b58899f230550e2d50e9af6377b5b4d641d"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/specs/001-arabic-typography-depth/research.md",
+    "path": "specs/001-arabic-typography-depth/research.md",
+    "bytes": 7080,
+    "sha256": "a746311bf73b3e59fbdca4afca6ad0c2f078b6c4b53589cc3873af2c2f4fa629"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/specs/001-arabic-typography-depth/spec.md",
+    "path": "specs/001-arabic-typography-depth/spec.md",
+    "bytes": 16015,
+    "sha256": "3152cbdad3c3cf42f0213c8c7408d8302029be47866e6e6a70d30cee85104a43"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/RESEARCH/03_arabic_engine.md",
+    "path": "RESEARCH/03_arabic_engine.md",
+    "bytes": 28158,
+    "sha256": "764c59207f80c2ccc4d4afaa5eeabe96d5fd889e559e684368edaedad7da864a"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/LICENSE",
+    "path": "LICENSE",
+    "bytes": 4985,
+    "sha256": "4bbff4bda8578814128972282147ad367c29dc26ff0dab54187048c3227b534c"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/wt-w8-engine/v0/Cargo.toml",
+    "path": "v0/Cargo.toml.reference",
+    "bytes": 1926,
+    "sha256": "6b685c6f94dde9c8b949440fb3af04ae3c0dacc700c5556a0cfcc298142b1f0c"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/v0/web/bstudio/src/textLayout.ts",
+    "path": "web/textLayout.ts",
+    "bytes": 7771,
+    "sha256": "1b74f2d9b982cc6ca0a9bc42c357179c04277aa86a96ff2dd9cee9c48f9736cf"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/v0/web/bstudio/src/TextOverlay.tsx",
+    "path": "web/TextOverlay.tsx",
+    "bytes": 37726,
+    "sha256": "448d5f92694d7638574c0629867ff322533bda6c4d40f2a428fdae08ed37caa0"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/v0/web/_archive/editor-tldraw/src/KashidaSidebar.tsx",
+    "path": "web/KashidaSidebar.tsx",
+    "bytes": 10751,
+    "sha256": "a3bb833336c8038d628191dc84a546da94b0ff43ee2833e4b75ba61a1bacf2e3"
+  },
+  {
+    "source": "/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/FIGMA_ARABIC_RULES.md",
+    "path": "FIGMA_ARABIC_RULES.md",
+    "bytes": 7138,
+    "sha256": "486cb8028f4350c6353db636c0b1a8d6e06a6d6ecc88674e95d2a16059e35441"
+  }
+]
