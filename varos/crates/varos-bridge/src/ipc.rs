@@ -229,6 +229,7 @@ impl Listener {
         let stopped = stop.clone();
         let attached = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let connections = attached.clone();
+        let allow_destructive = std::env::var("VAROS_BRIDGE_ALLOW_DESTRUCTIVE").as_deref() == Ok("1");
         let allow_history = std::env::var("VAROS_BRIDGE_ALLOW_HISTORY").as_deref() == Ok("1");
         let wake = Arc::new(wake);
         type CancelMap = std::collections::HashMap<(String, String), (Arc<AtomicBool>, std::time::Instant)>;
@@ -345,7 +346,14 @@ impl Listener {
                                         };
                                         let (reply, rx) = mpsc::sync_channel(1);
                                         let pending = Pending {
-                                            context: Context { client, epoch, read: true, edit: true, allow_history },
+                                            context: Context {
+                                                client,
+                                                epoch,
+                                                read: true,
+                                                edit: true,
+                                                allow_history,
+                                                allow_destructive,
+                                            },
                                             request,
                                             cancelled: flag.clone(),
                                             reply,
@@ -482,11 +490,13 @@ pub fn secure_endpoint_file(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     #[test]
-    fn hello_cannot_grant_history() {
+    fn hello_cannot_grant_history_or_destructive() {
         let hello = serde_json::json!({"kind":"hello","api":"1.0","token":"token","client":"client"});
         assert!(serde_json::from_value::<Frame>(hello.clone()).is_ok());
-        let mut widened = hello;
-        widened["allow_history"] = serde_json::json!(true);
-        assert!(serde_json::from_value::<Frame>(widened).is_err());
+        for field in ["allow_history", "allow_destructive"] {
+            let mut widened = hello.clone();
+            widened[field] = serde_json::json!(true);
+            assert!(serde_json::from_value::<Frame>(widened).is_err());
+        }
     }
 }

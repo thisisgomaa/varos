@@ -1,8 +1,10 @@
-# Varos Bridge — attached slice (API 1.0)
+# Varos Bridge — attached design slice (API 1.0)
 
 Ahmed: this lets Claude Code describe and change the board already open in Varos. A move + solid recolour in one `edit` request is one normal undo step. There is no new menu or panel. The app never calls an AI provider itself.
 
-This slice implements `capabilities`, `list_boards`, `describe`, `select`, `edit` (`move`, `set_paint`), `history`, and `request_status`. Files, saving/export, snapshots, geometry dumps, shape creation, structural edits, headless hosting and Windows attachment are not enabled. The existing standalone `varos-cli describe/apply` API 0.x remains a separate provisional file workflow; attached API 1.0 is `varos-cli bridge …` and uses exactly the same service as MCP.
+This slice implements `capabilities`, `list_boards`, `describe` (including explicit bounded geometry), `select`, `edit` (`move`, `set_paint`, `add_shape`, `resize`, `rotate`, `rename`, `delete`, `align`, `distribute`, `group`, `ungroup`, `order`), `snapshot`, `history`, and `request_status`. Files, saving/export, arbitrary paths, rounded rectangles, headless hosting and Windows attachment are not enabled. The existing standalone `varos-cli describe/apply` API 0.x remains a separate provisional file workflow; attached API 1.0 is `varos-cli bridge …` and uses exactly the same service as MCP.
+
+Slice 1 has landed and the owner verified live move + recolour followed by one human undo. Slice 2's live acceptance is still pending: an external agent builds the poster below on the active open board, asks for a snapshot, then the owner checks the objects and undoes the entire design once. Headless tests and CPU preview inspection do not establish live desktop acceptance.
 
 ## Try it on macOS, without installing anything
 
@@ -57,9 +59,9 @@ Disconnect/removal: `claude mcp remove varos`. After restarting Varos, repeat re
 
 MCP is UTF-8 newline JSON-RPC 2.0 on stdio, with protocol revision **2025-06-18**. Stdout is protocol only. `initialize` and `notifications/initialized` precede tools. It returns both `structuredContent` and the shared compact text projection; consume one representation. Tool failures have `isError: true` and the same ADR error payload as CLI. JSON-RPC framing/method errors are separate; unknown tool names return `-32602`. Cancelled requests receive no MCP response. EOF requests cancellation and waits at most 500 ms for the worker; it does not reverse any published edit.
 
-`capabilities {"api":"1.0"}` reports the launch epoch, proxy client identity, actual enabled verbs and limits. Different Bridge API versions are refused before editing. Unknown fields/variants are refused, including model-supplied `confirm`, `allow_history`, filesystem destinations and unsupported edit verbs. MCP input schemas are complete for this slice. Wire DTOs do not expose `EditCommand` or `AppCommand`.
+`capabilities {"api":"1.0"}` reports the launch epoch, proxy client identity, actual enabled verbs and limits. Different Bridge API versions are refused before editing. Unknown fields/variants are refused, including model-supplied `confirm`, `allow_history`, `allow_destructive`, filesystem destinations and unsupported edit verbs. MCP input schemas are complete for this slice. Wire DTOs do not expose `EditCommand` or `AppCommand`.
 
-`describe {"board":"b2"}` returns a small header, counts, outline bounds, up to 20 artboards and a bounded selection preview. `fields` with `bounds`, `paint`, `parent`, `name`, `state` requests object details; omit `ids` for paint-order pagination. Explicit detail IDs are capped at 1,000, each page at 100 objects / 16 KiB readable text. Repeat the same query with its cursor; a changed revision/query returns `resync_required`. `fields:["metadata"]` reads board metadata only; `fields:["artboards"]` reads paginated page properties. Artboard references are `a0@12`, tied to revision 12; no artboard mutation verbs exist. `settings_digest` records settings changes without exposing an internal enum schema.
+`describe {"board":"b2"}` returns a small header, counts, outline bounds, up to 20 artboards and a bounded selection preview. `fields` with `bounds`, `paint`, `parent`, `name`, `state`, `geometry` requests object details; omit `ids` for paint-order pagination. Explicit detail IDs are capped at 1,000, each page at 100 objects / 16 KiB readable text. Repeat the same query with its cursor; a changed revision/query returns `resync_required`. `fields:["metadata"]` reads board metadata only; `fields:["artboards"]` reads paginated page properties. Artboard references are `a0@12`, tied to revision 12; no artboard mutation verbs exist. `settings_digest` records settings changes without exposing an internal enum schema.
 
 `describe {"board":"b2","since":12}` returns the exact net projection change, including human edits and history, or `resync_required` if the requested boundary was not observed/retained or the net diff exceeds the budget. Journal limits are 128 revision boundaries / 8 MiB per board. Large edit receipts remain committed successes and return counts plus a revision-pinned detail query/cursor instead of an unmarked partial dump. Geometry changes are marked, not dumped. Selection previews carry count/more fields. Idle event-loop observation runs only while an authenticated socket client is attached. It compares the editor revision, a fixed-size settings snapshot and dirty flag before fingerprinting; unchanged documents cost no serialization or SHA-256. Transient selection is sampled at request boundaries. Disconnected changes are reconciled on the next request; unobserved intermediate revisions require resync.
 
@@ -68,6 +70,84 @@ Mutation IDs are positive canonical `r1`, `r2`, …, increasing for each proxy c
 Reads leave pending fields open and return the last committed state; they never commit a field or create an undo step. Only mutations settle valid pending fields as a separate human undo step, then recheck `expected_rev`. Invalid fields or active gestures return `busy`; the bridge does not dismiss or finish a human gesture. A human settings change that bypassed the old editor revision path is observed and advances the Bridge document revision. A stale request returns `revision_conflict` with expected/actual values. Nothing implicitly switches tabs.
 
 The runtime queue admits 32 pending socket requests; there are at most 8 socket workers, 6 MCP tool calls, 128 outstanding confirmation challenges and 64 cancellation entries (60-second expiry). The listener polls idle accept at 50 ms. On shutdown it cancels pending work and shuts down active sockets before joining workers (500 ms worker wait, at most 1 second in listener drop). Socket requests expire after 30 seconds awaiting the host; query the receipt after a timeout. Requests are capped at 1 MiB / 100 operations / 1,000 explicit and expanded targets. Staging checks each operation's preconditions, then validates/encodes the final document once. Only a final validation failure replays prefixes to identify the first invalid operation; failure identifies the zero-based operation index and publishes nothing. No latency or maximum-format-size responsiveness promise is made; large-board staging/projection measurements remain release work.
+
+## Design verbs and request-local identities
+
+`edit` keeps the existing revision, receipt, scope, cancellation and one-step undo contracts. Each operation resolves and checks its targets against the isolated staged document, then the final document is checked/encoded before one publication. A later failure returns its zero-based `op_index` and leaves the live document, allocator, dirty state, undo/redo, selection, tool and drawing defaults unchanged. Successful deletion prunes references to removed entities from human selection; it never selects the new artwork. All explicit and expanded targets remain bounded to 1,000 across the batch.
+
+Creation defaults: absent fill/stroke mean no paint; stroke width is 0 and opacity is 1. Supply a fill or stroke for visible artwork. A missing parent uses the human's active layer. `parent` must be an editable visible `node:N` layer. `insert` defaults to `"top"`, the only supported position, at the front of that layer. Existing siblings keep their relative order. Name input is bounded to 256 characters, cleaned by the core's existing name cleaner; an empty cleaned name is refused. Receipts carry the actual cleaned name.
+
+A creation may supply `"local":"$a"`; `group` may supply `"local":"$poster"`. These aliases are ASCII `$` + a letter + letters/digits/underscores (maximum 64 bytes), unique within that request. Later `ids` may reference them; forward/unknown/duplicate aliases are refused. Successful receipts return `result.locals`, mapping aliases to actual allocated `path:N` / `node:N` IDs. Aliases expire after the request and cannot be used in another request, `select`, or a read. A mapped identity removed later in the same batch is no longer a live object; even a successful create-then-delete batch with no net undo entry reserves its allocated IDs against reuse. This is separate from the visible `name` property. Shape allocation uses the core `EditCommand::AddShape` outcome and the existing session high-water allocator, including undo-then-create branches.
+
+| Verb | Operation fields and behavior |
+|---|---|
+| `add_shape` | `kind: "rect"` or `"ellipse"`, `bounds: [x,y,width,height]` with positive finite dimensions; optional `parent`, `insert`, `local`, `name`, `fill`, `stroke`, `stroke_width`, `opacity`. Ellipses use the existing four cubic anchors/handles. Plain rectangles use four corner anchors. The current model has no corner radius. |
+| `resize` | `ids`, `bounds: [x,y,width,height]`. Explicit top-left anchor, unconstrained proportions. For one rotated unit, width/height are local dimensions and x/y locate the world bounding-box top-left; several units use world bounds, matching the core. Degenerate bounds and requests that would trigger the core's minimum-size/scale clamp are refused. |
+| `rotate` | `ids`, `degrees` (absolute finite degrees for each complete object/group, including mixed rotations). |
+| `rename` | `ids`, `name`; dispatches path/leaf-node/container identities to the correct core command. |
+| `delete` | `ids`; deletes complete objects/groups, including their descendants. Requires the destructive confirmation below. Layer deletion and partial-group deletion are deferred. |
+| `align` | `ids`, `mode: left|center|right|top|middle|bottom`, `target: "selection"` (at least two complete units) or a revision-bound `"a0@12"`. Units/groups remain rigid. Missing, hidden, locked or stale artboards are refused; no Auto/fallback. |
+| `distribute` | `ids`, `axis: "h"` or `"v"`; equal centers, at least three distinct editable leaf paths. Groups/mixed grouped targets and explicit gaps are refused. |
+| `group` | `ids`, optional `local`; at least two complete units sharing a parent. Existing groups can be nested, with all affected descendants checked. Returns the new group ID through `created` and optional `locals`. |
+| `ungroup` | `ids`; explicit complete top-level `node:N` groups only, dissolves one level. Requires destructive confirmation. |
+| `order` | `ids`, `order: front|forward|backward|back`; within the existing parent, never arbitrary reparenting. |
+| `set_paint` | Existing `ids`, `fill`, `stroke`, `stroke_width`, `opacity`; opacity is already folded into this verb (0–1). |
+
+Resize/rotate/align/group/order require complete units. A bare leaf inside a group cannot cause implicit sibling changes: supply the group ID or its complete descendant target set. Layer IDs remain supported for ordinary move/paint/rename and describe; structural layer mutations are refused. No `add_path` is included in this slice: safe anchor allocation/creation and its additional geometry schema are deferred. `capabilities.unsupported` lists this and the other deferred operations.
+
+## Moderator poster batch
+
+This is the exact checked fixture [poster-request-1.0.json](tests/fixtures/poster-request-1.0.json), also exercised through the actual MCP stdio binding and CLI decoding against the same service. Read `list_boards`/`describe` first and replace **only** the envelope's `board`, `expected_rev`, and monotonic `request_id` with live values. The example assumes `b1`, revision 1, and a fresh client. The design is 360×480 document points at the origin, on the active layer; the three circles become evenly spaced. It creates five paths and a group, touches no existing art, and needs no destructive grant.
+
+```json
+{
+  "api": "1.0",
+  "request_id": "r1",
+  "board": "b1",
+  "expected_rev": 1,
+  "ops": [
+    {"verb": "add_shape", "kind": "rect", "bounds": [0, 0, 360, 480], "fill": "#172B4DFF", "local": "$background", "name": "Background"},
+    {"verb": "add_shape", "kind": "ellipse", "bounds": [40, 160, 60, 60], "fill": "#F4BD50FF", "local": "$a"},
+    {"verb": "add_shape", "kind": "ellipse", "bounds": [120, 160, 60, 60], "fill": "#E66C4FFF", "local": "$b"},
+    {"verb": "add_shape", "kind": "ellipse", "bounds": [260, 160, 60, 60], "fill": "#B5D8CCFF", "local": "$c"},
+    {"verb": "distribute", "ids": ["$a", "$b", "$c"], "axis": "h"},
+    {"verb": "add_shape", "kind": "rect", "bounds": [40, 340, 280, 36], "fill": "#F4EAD5FF", "local": "$title", "name": "Title bar"},
+    {"verb": "group", "ids": ["$background", "$a", "$b", "$c", "$title"], "local": "$poster"},
+    {"verb": "rename", "ids": ["$poster"], "name": "Poster"}
+  ]
+}
+```
+
+MCP: call `edit` with that argument object. CLI (from `varos/`), after adapting the envelope in a copy:
+
+```sh
+target/debug/varos-cli bridge edit --attach "$BRIDGE_SOCKET" --token "$BRIDGE_TOKEN" \
+  --request-file /explicit/path/poster-request.json --json
+```
+
+The receipt's `$poster` mapping identifies the group for subsequent reads/edits. The title is a rectangle, not editable text. The owner should see the poster and press ⌘Z once to remove all five shapes and the group, then ⌘⇧Z to restore them.
+
+## See the staged result through CPU snapshots and geometry
+
+`describe {"board":"b1","rev":2,"ids":["path:8"],"fields":["geometry"]}` explicitly requests path `closed`, local `anchors` (`point`, optional `hin`/`hout`), `holes`, and `world_transform`. Containers have `geometry: null`; use bounds/parent for them. Geometry stays off default summaries, diffs and receipts. Object pagination/cursors apply, with at most 1,000 anchors (outer + holes) per object and the existing 16 KiB text budget. An individual object exceeding either budget returns `limit_exceeded` with no unmarked partial geometry. Finer within-path geometry pagination is deferred.
+
+`snapshot {"board":"b1","rev":2}` explicitly requests an immutable revision-pinned CPU preview via `varos-raster`, default **544×246**, with optional integer `width`/`height` each 1–1024. A stale revision is refused. It constructs no window/GPU, creates no history entry and changes no selection/tool. This is the thumbnail-style fitted preview, including the dark dotted well; it is not production PNG export or GPU pixel parity. Encoded PNGs exceeding the existing transport-frame budget are refused.
+
+MCP returns an `image/png` image content block only for this requested tool; structured/text content contains dimensions/revision/preview metadata, never a duplicate base64 dump. CLI writes bytes only to its explicit local destination (a new file; overwrite/symlinks at the final filename are refused), and prints metadata instead of image bytes:
+
+```sh
+printf '%s\n' '{"board":"b1","rev":2,"width":544,"height":246}' | \
+  target/debug/varos-cli bridge snapshot --attach "$BRIDGE_SOCKET" --token "$BRIDGE_TOKEN" \
+  --output /explicit/path/poster-preview.png --json
+```
+
+The destination is a CLI-local option, never a host wire field or a desktop filesystem grant. MCP takes no destination. Use actual receipt revision and allocated IDs in both examples.
+
+## Temporary owner destructive grant — optional
+
+By default `delete` and `ungroup` return `confirmation_required` after validating/staging the entire batch, with exact affected IDs, `expected_rev`, `actual_rev` and a payload digest. A model-provided `confirm:true` or digest alone grants nothing. Nothing has been published at this point.
+
+For this temporary slice, the owner may launch the **desktop** with `VAROS_BRIDGE_ALLOW_DESTRUCTIVE=1 target/debug/varos`. The listener reads this once at startup and issues exact, 60-second, single-use grants. Retry the exact `edit` envelope/operations/request_id/revision with its returned `digest`; the host binds the grant to client, board, epoch, source and staged result, rechecks revision, then consumes it before publication. Modified payloads, another client/board, human revision changes or expiration invalidate the grant. Completed retries use the existing cached receipt. Destructive edits in a mixed batch still publish only once and undo once. This grant does not authorize shared undo/redo; the separate history policy below remains required for those requests. Clients have no grant-enabling flag/Hello field. Restart the desktop without this environment variable for default refusal. No confirmation UI is added.
 
 ## Temporary owner history grant — optional
 
@@ -90,7 +170,7 @@ CLI defaults to the compact text; `--json` returns the same structured receipt a
 
 ## Verification boundary
 
-Tests construct no GPU renderer or event loop. Frozen API 1.0 describe/edit/error fixtures, fake-host MCP/CLI parity, indexed rollback, one-step undo, revisions, busy/inactive/scope/auth refusal, cancellation, journals, monotonic receipts and allocator branching run headlessly. Two real Unix-socket integration tests are explicitly ignored by default because the implementation sandbox rejects socket bind with `EPERM`; this is **unverified native IPC**, not a pass. Run them from a normal macOS terminal:
+Tests construct no GPU renderer or event loop. Frozen API 1.0 describe/edit/error/poster fixtures, actual MCP binding with fake-host CLI parity, each design verb, indexed rollback, request-local identity, confirmation binding, bounded geometry, valid PNG dimensions, explicit CLI output, one-step undo/redo, revisions, busy/inactive/scope/auth refusal, cancellation, journals, monotonic receipts and allocator branching run headlessly. Two real Unix-socket integration tests are explicitly ignored by default because the implementation sandbox rejects socket bind with `EPERM`; this is **unverified native IPC**, not a pass. Run them from a normal macOS terminal:
 
 ```sh
 cargo test -p varos-bridge --test contracts -- --ignored
