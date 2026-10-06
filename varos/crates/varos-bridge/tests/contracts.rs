@@ -65,7 +65,14 @@ impl Host for FakeHost {
     }
 }
 fn ctx() -> Context {
-    Context { client: "fixture".into(), epoch: "test-epoch".into(), read: true, edit: true, allow_history: false }
+    Context {
+        client: "fixture".into(),
+        epoch: "test-epoch".into(),
+        read: true,
+        edit: true,
+        allow_history: false,
+        allow_destructive: false,
+    }
 }
 fn req(tool: &str, arguments: Value) -> Request {
     varos_bridge::mcp::decode_tool(tool, arguments).unwrap()
@@ -189,9 +196,10 @@ fn refusals_revisions_scope_and_epoch_do_not_mutate() {
 }
 #[test]
 fn unknown_fields_and_unsupported_ops_are_indexed() {
-    for bad in
-        [json!({"verb":"delete","ids":["path:10"]}), json!({"verb":"move","ids":["path:10"],"delta":[1,0],"snap":true})]
-    {
+    for bad in [
+        json!({"verb":"pathfinder","ids":["path:10"]}),
+        json!({"verb":"move","ids":["path:10"],"delta":[1,0],"snap":true}),
+    ] {
         let error=varos_bridge::mcp::decode_tool("edit",json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"move","ids":["path:10"],"delta":[1,0]},bad]})).unwrap_err();
         assert_eq!(error.op_index, Some(1));
     }
@@ -467,7 +475,7 @@ fn real_binary_mcp_initialization_call_cancel_and_shared_cli() {
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
     send(&mut stdin, json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
     send(&mut stdin, json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
-    assert_eq!(read(&mut stdout)["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(read(&mut stdout)["result"]["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len());
     let args = json!({"board":"b1","ids":["path:10","path:20"],"fields":["bounds","paint","parent"]});
     send(
         &mut stdin,
@@ -607,7 +615,7 @@ fn mcp_fake_host_exercises_actual_binding_parity_errors_and_cancellation() {
     assert_eq!(read()["result"]["protocolVersion"], "2025-06-18");
     send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
     send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
-    assert_eq!(read()["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(read()["result"]["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len());
     send(
         json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"describe","arguments":{"board":"b1","ids":["path:10","path:20"],"fields":["bounds","paint","parent"]}}}),
     );
@@ -687,7 +695,7 @@ fn real_binary_stdio_initialization_has_protocol_only_stdout() {
         String::from_utf8(output.stdout).unwrap().lines().map(|s| serde_json::from_str(s).unwrap()).collect();
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0]["result"]["protocolVersion"], "2025-06-18");
-    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len());
     assert!(output.stderr.is_empty());
 }
 #[test]
@@ -864,4 +872,670 @@ fn mcp_eof_wait_is_bounded_even_when_transport_does_not_finish() {
     *release.0.lock().unwrap() = true;
     release.1.notify_all();
     assert!(receive.recv_timeout(std::time::Duration::from_secs(1)).is_err(), "cancelled call must emit no response");
+}
+
+fn design_request(ops: Vec<Value>, rev: u64) -> Request {
+    req("edit", json!({"api":"1.0","board":"b1","request_id":"r1","expected_rev":rev,"ops":ops}))
+}
+fn shape(local: &str, kind: &str, bounds: [f32; 4]) -> Value {
+    json!({"verb":"add_shape","kind":kind,"bounds":bounds,"fill":"#FF6600FF","stroke":"#101010FF","stroke_width":2,"opacity":0.8,"local":local})
+}
+fn poster_request() -> Request {
+    req("edit", serde_json::from_str(include_str!("fixtures/poster-request-1.0.json")).unwrap())
+}
+fn empty_host() -> FakeHost {
+    let mut host = FakeHost::new();
+    host.editor = Editor::new();
+    host.editor.replace_doc(varos_core::board::new_board());
+    host
+}
+#[test]
+fn poster_fixture_cli_mcp_parity_local_names_atomic_history_and_png() {
+    use base64::Engine;
+    let arguments: Value = serde_json::from_str(include_str!("fixtures/poster-request-1.0.json")).unwrap();
+    let cli =
+        varos_bridge::cli::decode(&serde_json::to_vec(&json!({"tool":"edit","arguments":arguments})).unwrap()).unwrap();
+    let mut h = empty_host();
+    let mut m = empty_host();
+    h.editor.tool = ToolKind::Direct;
+    m.editor.tool = ToolKind::Direct;
+    h.editor.cur_fill = Some([0.2, 0.3, 0.4, 1.0]);
+    m.editor.cur_fill = h.editor.cur_fill;
+    let before = h.editor.doc.clone();
+    let mut s = Service::new("test-epoch".into());
+    let mut ms = Service::new("test-epoch".into());
+    let r = handle(&mut s, &mut h, cli);
+    let mr = handle(&mut ms, &mut m, poster_request());
+    assert!(r.ok, "{r:?}");
+    assert_eq!(json!(r), serde_json::from_str::<Value>(include_str!("fixtures/poster-result-1.0.json")).unwrap());
+    assert_eq!(r, mr);
+    assert_eq!(r.undo_steps, 1);
+    assert_eq!(varos_bridge::mcp::tool_result(&r)["structuredContent"], json!(r));
+    assert!(h.editor.tool == ToolKind::Direct);
+    assert!(h.editor.objsel.is_empty());
+    assert_eq!(h.editor.cur_fill, Some([0.2, 0.3, 0.4, 1.0]));
+    assert_eq!(h.editor.doc.paths.len(), 5);
+    let locals = &r.result.as_ref().unwrap()["locals"];
+    assert_eq!(locals.as_object().unwrap().len(), 6);
+    let b = locals["$b"].as_str().unwrap().strip_prefix("path:").unwrap().parse::<u32>().unwrap();
+    let bbox = h.editor.doc.outline_bbox(h.editor.doc.pidx(b).unwrap());
+    assert!((bbox.0 - 150.0).abs() < 0.01, "{bbox:?}");
+    let group = locals["$poster"].as_str().unwrap().strip_prefix("node:").unwrap().parse::<u32>().unwrap();
+    assert_eq!(h.editor.doc.node(group).unwrap().name, "Poster");
+    assert_eq!(h.editor.doc.node_paths(group).len(), 5);
+    let detail = handle(
+        &mut s,
+        &mut h,
+        req("describe", json!({"board":"b1","rev":2,"ids":[locals["$a"]],"fields":["geometry"]})),
+    );
+    assert_eq!(detail.result.unwrap()["objects"][0]["geometry"]["anchors"].as_array().unwrap().len(), 4);
+    let snapshot = handle(&mut s, &mut h, req("snapshot", json!({"board":"b1","rev":2})));
+    assert!(snapshot.ok, "{snapshot:?}");
+    assert_eq!(snapshot.undo_steps, 0);
+    let png = base64::engine::general_purpose::STANDARD
+        .decode(snapshot.result.as_ref().unwrap()["png"].as_str().unwrap())
+        .unwrap();
+    let decoder = png::Decoder::new(std::io::Cursor::new(&png));
+    let mut reader = decoder.read_info().unwrap();
+    assert_eq!((reader.info().width, reader.info().height), (544, 246));
+    let mut pixels = vec![0; reader.output_buffer_size()];
+    reader.next_frame(&mut pixels).unwrap();
+    let image = varos_bridge::mcp::tool_result(&snapshot);
+    assert_eq!(image["content"][1]["type"], "image");
+    assert!(image["structuredContent"]["result"].get("png").is_none());
+    assert!(!image["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains(snapshot.result.as_ref().unwrap()["png"].as_str().unwrap()));
+    if let Some(path) = std::env::var_os("VAROS_BRIDGE_POSTER_PNG") {
+        std::fs::write(&path, &png).unwrap();
+    }
+    let high = h.editor.doc.ids;
+    h.editor.undo();
+    assert!(h.editor.doc.content_eq(&before));
+    assert!(!h.editor.history_available(false));
+    h.editor.redo();
+    assert_eq!(h.editor.doc.paths.len(), 5);
+    h.editor.undo();
+    let r = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.0","board":"b1","request_id":"r2","expected_rev":5,"ops":[shape("$new","rect",[0.0,0.0,10.0,10.0])]}),
+        ),
+    );
+    assert!(r.ok, "{r:?}");
+    assert!(h.editor.doc.paths[0].id > high);
+}
+#[test]
+fn each_design_verb_success_and_indexed_not_found_rollback() {
+    let operations = [
+        json!({"verb":"resize","ids":["path:10"],"bounds":[30,40,160,50]}),
+        json!({"verb":"rotate","ids":["path:10"],"degrees":30}),
+        json!({"verb":"rename","ids":["path:10"],"name":"  New name  "}),
+        json!({"verb":"align","ids":["path:10","path:20"],"mode":"left","target":"selection"}),
+        json!({"verb":"distribute","ids":["path:10","path:20","$third"],"axis":"h"}),
+        json!({"verb":"group","ids":["path:10","path:20"],"local":"$group"}),
+        json!({"verb":"order","ids":["path:10"],"order":"front"}),
+        json!({"verb":"delete","ids":["path:10"]}),
+        json!({"verb":"ungroup","ids":["$group"]}),
+    ];
+    for op in operations {
+        let mut h = FakeHost::new();
+        let before = h.editor.doc.clone();
+        let mut s = Service::new("test-epoch".into());
+        h.editor.tool = ToolKind::Direct;
+        h.editor.bridge_select(vec![20]).unwrap();
+        let mut ops = vec![shape("$third", "ellipse", [350.0, 20.0, 60.0, 60.0])];
+        if op["verb"] == "ungroup" {
+            ops.push(json!({"verb":"group","ids":["path:10","path:20"],"local":"$group"}));
+        }
+        ops.push(op.clone());
+        let mut request = design_request(ops, 1);
+        let mut owner = ctx();
+        owner.allow_destructive = true;
+        let mut r = s.handle(&mut h, &owner, request.clone(), &AtomicBool::new(false));
+        if ["delete", "ungroup"].contains(&op["verb"].as_str().unwrap()) {
+            assert_eq!(r.error.as_ref().unwrap().code, "confirmation_required");
+            assert!(h.editor.doc.content_eq(&before));
+            if let Request::Edit(ref mut edit) = request {
+                edit.digest = r.error.unwrap().digest.clone();
+            }
+            r = s.handle(&mut h, &owner, request, &AtomicBool::new(false));
+        }
+        assert!(r.ok, "op={op} reply={r:?}");
+        assert_eq!(r.undo_steps, 1);
+        assert!(h.editor.tool == ToolKind::Direct);
+        if op["verb"] != "delete" {
+            assert!(h.editor.objsel.contains(&20));
+        }
+        if op["verb"] == "resize" {
+            let b = h.editor.doc.outline_bbox(h.editor.doc.pidx(10).unwrap());
+            for (actual, expected) in [b.0, b.1, b.2, b.3].into_iter().zip([30.0, 40.0, 190.0, 90.0]) {
+                assert!((actual - expected).abs() < 0.001);
+            }
+        }
+        if op["verb"] == "rotate" {
+            assert!((h.editor.doc.unit_xform(10).rot.to_degrees() - 30.0).abs() < 0.01);
+        }
+        if op["verb"] == "rename" {
+            assert_eq!(h.editor.doc.paths[h.editor.doc.pidx(10).unwrap()].name.as_deref(), Some("New name"));
+        }
+        if op["verb"] == "align" {
+            assert!((h.editor.doc.outline_bbox(h.editor.doc.pidx(20).unwrap()).0 - 20.0).abs() < 0.001);
+        }
+        if op["verb"] == "order" {
+            assert_eq!(h.editor.doc.paths.last().unwrap().id, 10);
+        }
+        if op["verb"] == "delete" {
+            assert!(h.editor.doc.pidx(10).is_none());
+        }
+        if op["verb"] == "ungroup" {
+            assert!(h.editor.doc.top_group_of_path(10).is_none());
+        }
+        h.editor.undo();
+        assert!(h.editor.doc.content_eq(&before));
+        assert!(!h.editor.history_available(false));
+        let mut bad = op.clone();
+        bad["ids"] = json!(["path:99999"]);
+        let r = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":"1.0","board":"b1","request_id":"r2","expected_rev":3,"ops":[shape("$a","rect",[1.0,2.0,3.0,4.0]),bad]}),
+            ),
+        );
+        assert_eq!(r.error.as_ref().unwrap().code, "not_found", "{op} {r:?}");
+        assert_eq!(r.error.unwrap().op_index, Some(1));
+        assert!(h.editor.doc.content_eq(&before));
+        assert!(h.editor.history_available(true));
+    }
+}
+#[test]
+fn design_validation_failures_rollback_every_prefix_and_local_names_are_request_scoped() {
+    let failures = [
+        (shape("$bad", "rect", [0.0, 0.0, -1.0, 10.0]), "invalid_argument"),
+        (json!({"verb":"add_shape","kind":"ellipse","bounds":[0,0,10,10],"parent":"node:999"}), "not_found"),
+        (json!({"verb":"resize","ids":["path:10"],"bounds":[0,0,0.00001,1]}), "invalid_argument"),
+        (json!({"verb":"rename","ids":["path:10"],"name":"  "}), "invalid_argument"),
+        (json!({"verb":"align","ids":["path:10"],"mode":"center","target":"selection"}), "invalid_argument"),
+        (json!({"verb":"align","ids":["path:10"],"mode":"center","target":"Auto"}), "unsupported"),
+        (json!({"verb":"distribute","ids":["path:10","path:20"],"axis":"v"}), "invalid_argument"),
+        (json!({"verb":"group","ids":["path:10"],"local":"$group"}), "invalid_argument"),
+        (json!({"verb":"ungroup","ids":["path:10"]}), "unsupported"),
+        (json!({"verb":"move","ids":["$unknown"],"delta":[10,0]}), "not_found"),
+        (shape("$a", "ellipse", [0.0, 0.0, 10.0, 10.0]), "invalid_argument"),
+    ];
+    for (bad, code) in failures {
+        for index in 1..4 {
+            let mut h = FakeHost::new();
+            let before = h.editor.doc.clone();
+            let mut s = Service::new("test-epoch".into());
+            let mut ops = vec![shape("$a", "rect", [0.0, 0.0, 10.0, 10.0])];
+            for _ in 1..index {
+                ops.push(json!({"verb":"move","ids":["$a"],"delta":[5,0]}));
+            }
+            ops.push(bad.clone());
+            let r = handle(&mut s, &mut h, design_request(ops, 1));
+            assert_eq!(r.error.as_ref().unwrap().code, code, "{bad} {r:?}");
+            assert_eq!(r.error.unwrap().op_index, Some(index));
+            assert_eq!(h.editor.doc, before);
+            assert_eq!(h.editor.rev, 1);
+            assert!(!h.editor.history_available(false));
+        }
+    }
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    assert!(handle(&mut s, &mut h, design_request(vec![shape("$a", "rect", [0.0, 0.0, 10.0, 10.0])], 1)).ok);
+    let r = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.0","board":"b1","request_id":"r2","expected_rev":2,"ops":[{"verb":"move","ids":["$a"],"delta":[5,0]}]}),
+        ),
+    );
+    assert_eq!(r.error.unwrap().code, "not_found");
+}
+#[test]
+fn destructive_grants_default_deny_exact_payload_and_receipt_retry() {
+    let mut h = FakeHost::new();
+    let before = h.editor.doc.clone();
+    let mut s = Service::new("test-epoch".into());
+    let request = design_request(vec![json!({"verb":"delete","ids":["path:10"]})], 1);
+    let challenge = handle(&mut s, &mut h, request.clone());
+    assert_eq!(challenge.error.as_ref().unwrap().code, "confirmation_required");
+    let mut confirmed = request.clone();
+    if let Request::Edit(ref mut e) = confirmed {
+        e.digest = challenge.error.unwrap().digest.clone();
+    }
+    assert_eq!(handle(&mut s, &mut h, confirmed.clone()).error.unwrap().code, "confirmation_required");
+    assert_eq!(h.editor.doc, before);
+    let mut owner = ctx();
+    owner.allow_destructive = true;
+    let r = s.handle(&mut h, &owner, request, &AtomicBool::new(false));
+    if let Request::Edit(ref mut e) = confirmed {
+        e.digest = r.error.unwrap().digest.clone();
+    }
+    let mut changed = confirmed.clone();
+    if let Request::Edit(ref mut e) = changed {
+        e.ops.push(varos_bridge::dto::Operation::Move { ids: vec!["path:20".into()], delta: [2.0, 0.0] });
+    }
+    assert_eq!(s.handle(&mut h, &ctx(), changed, &AtomicBool::new(false)).error.unwrap().code, "confirmation_required");
+    let success = s.handle(&mut h, &owner, confirmed.clone(), &AtomicBool::new(false));
+    assert!(success.ok, "{success:?}");
+    assert_eq!(s.handle(&mut h, &owner, confirmed, &AtomicBool::new(false)), success);
+    assert!(h.editor.doc.pidx(10).is_none());
+    h.editor.undo();
+    assert!(h.editor.doc.content_eq(&before));
+}
+#[test]
+fn snapshots_refuse_stale_oversized_and_ungranted_reads_without_history() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let before = h.editor.doc.clone();
+    for (args, code) in [
+        (json!({"board":"b1","rev":0}), "revision_conflict"),
+        (json!({"board":"b1","rev":1,"width":1025}), "limit_exceeded"),
+        (json!({"board":"b1","rev":1,"height":0}), "limit_exceeded"),
+    ] {
+        let r = handle(&mut s, &mut h, req("snapshot", args));
+        assert_eq!(r.error.unwrap().code, code);
+    }
+    let mut context = ctx();
+    context.read = false;
+    assert_eq!(
+        s.handle(&mut h, &context, req("snapshot", json!({"board":"b1","rev":1})), &AtomicBool::new(false))
+            .error
+            .unwrap()
+            .code,
+        "scope_refused"
+    );
+    assert_eq!(h.editor.doc, before);
+    assert!(!h.editor.history_available(false));
+}
+
+#[test]
+fn shape_parent_paints_names_and_allocator_failures_are_checked() {
+    for kind in ["rect", "ellipse"] {
+        let mut h = empty_host();
+        let parent = h.editor.doc.active_layer;
+        let mut s = Service::new("test-epoch".into());
+        let r = handle(
+            &mut s,
+            &mut h,
+            design_request(
+                vec![
+                    json!({"verb":"add_shape","kind":kind,"bounds":[10,20,30,40],"parent":format!("node:{parent}"),"insert":"top","name":"  Shape  ","fill":null,"stroke":"#123456FF","stroke_width":3,"opacity":0.25,"local":"$shape"}),
+                ],
+                1,
+            ),
+        );
+        assert!(r.ok, "{r:?}");
+        let p = &h.editor.doc.paths[0];
+        assert_eq!(p.name.as_deref(), Some("Shape"));
+        assert_eq!(p.fill, Paint::None);
+        assert_eq!(p.opacity, 0.25);
+        assert_eq!(p.stroke_width, 3.0);
+        assert_eq!(p.anchors.len(), 4);
+        assert_eq!(h.editor.doc.node(h.editor.doc.node_of_path(p.id).unwrap()).unwrap().parent, Some(parent));
+        if kind == "ellipse" {
+            assert!(p.anchors.iter().all(|a| a.hin.is_some() && a.hout.is_some()));
+        } else {
+            assert!(p.anchors.iter().all(|a| a.hin.is_none() && a.hout.is_none()));
+        }
+    }
+    for (property, value) in [
+        ("fill", json!("#bad")),
+        ("stroke_width", json!(-1)),
+        ("opacity", json!(1.1)),
+        ("local", json!("$bad-name")),
+        ("name", json!(" ")),
+    ] {
+        let mut h = empty_host();
+        let mut s = Service::new("test-epoch".into());
+        let before = h.editor.doc.clone();
+        let mut op = shape("$a", "rect", [0.0, 0.0, 10.0, 10.0]);
+        op[property] = value;
+        let r = handle(&mut s, &mut h, design_request(vec![op], 1));
+        assert_eq!(r.error.unwrap().code, "invalid_argument");
+        assert_eq!(h.editor.doc, before);
+    }
+    for locked in [false, true] {
+        let mut h = empty_host();
+        let parent = h.editor.doc.active_layer;
+        let n = h.editor.doc.nodes.iter_mut().find(|n| n.id == parent).unwrap();
+        n.locked = locked;
+        n.hidden = !locked;
+        let mut s = Service::new("test-epoch".into());
+        let r = handle(&mut s, &mut h, design_request(vec![shape("$a", "rect", [0.0, 0.0, 10.0, 10.0])], 1));
+        assert_eq!(r.error.unwrap().code, if locked { "locked_target" } else { "hidden_target" });
+        assert!(h.editor.doc.paths.is_empty());
+    }
+    let mut h = empty_host();
+    h.editor.doc.ids = u32::MAX - 1;
+    let before = h.editor.doc.clone();
+    let mut s = Service::new("test-epoch".into());
+    let r = handle(&mut s, &mut h, design_request(vec![shape("$a", "rect", [0.0, 0.0, 10.0, 10.0])], 1));
+    assert_eq!(r.error.unwrap().code, "invalid_argument");
+    assert_eq!(h.editor.doc, before);
+    // The core command itself exposes creation outcomes and validates before allocating.
+    let mut ed = Editor::new();
+    let id = ed
+        .try_execute_created(EditCommand::AddShape {
+            kind: varos_core::model::ShapeKind::Rect,
+            bounds: [0.0, 0.0, 10.0, 20.0],
+            parent: None,
+            fill: Some([1.0; 4]),
+            stroke: None,
+            stroke_width: 0.0,
+            opacity: 1.0,
+            name: None,
+        })
+        .unwrap();
+    assert_eq!(ed.doc.paths[0].id, id);
+}
+#[test]
+fn align_all_modes_revision_bound_artboards_and_rigid_groups() {
+    for (mode, want) in [
+        ("left", [0.0, 20.0]),
+        ("center", [210.0, 20.0]),
+        ("right", [420.0, 20.0]),
+        ("top", [20.0, 0.0]),
+        ("middle", [20.0, 150.0]),
+        ("bottom", [20.0, 300.0]),
+    ] {
+        let mut h = FakeHost::new();
+        h.editor.doc.artboards.push(varos_core::model::Artboard {
+            x: 0.0,
+            y: 0.0,
+            w: 500.0,
+            h: 400.0,
+            ..Default::default()
+        });
+        let mut s = Service::new("test-epoch".into());
+        let r = handle(
+            &mut s,
+            &mut h,
+            design_request(vec![json!({"verb":"align","ids":["path:10"],"mode":mode,"target":"a0@1"})], 1),
+        );
+        assert!(r.ok, "{mode} {r:?}");
+        let b = h.editor.doc.outline_bbox(h.editor.doc.pidx(10).unwrap());
+        assert!((b.0 - want[0]).abs() < 0.001 && (b.1 - want[1]).abs() < 0.001, "{mode} {b:?}");
+        assert_eq!(h.editor.doc.active, 0);
+    }
+    for (target, code) in [("a0@0", "revision_conflict"), ("a99@1", "not_found")] {
+        let mut h = FakeHost::new();
+        let before = h.editor.doc.clone();
+        let mut s = Service::new("test-epoch".into());
+        let r = handle(
+            &mut s,
+            &mut h,
+            design_request(
+                vec![
+                    shape("$a", "rect", [0.0, 0.0, 10.0, 10.0]),
+                    json!({"verb":"align","ids":["$a"],"mode":"left","target":target}),
+                ],
+                1,
+            ),
+        );
+        assert_eq!(r.error.as_ref().unwrap().code, code);
+        assert_eq!(r.error.unwrap().op_index, Some(1));
+        assert_eq!(h.editor.doc, before);
+    }
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let r = handle(
+        &mut s,
+        &mut h,
+        design_request(
+            vec![
+                json!({"verb":"group","ids":["path:10","path:20"],"local":"$g"}),
+                shape("$a", "rect", [400.0, 20.0, 10.0, 20.0]),
+                json!({"verb":"align","ids":["$g","$a"],"mode":"right","target":"selection"}),
+            ],
+            1,
+        ),
+    );
+    assert!(r.ok, "{r:?}");
+    let a = h.editor.doc.outline_bbox(h.editor.doc.pidx(10).unwrap());
+    let b = h.editor.doc.outline_bbox(h.editor.doc.pidx(20).unwrap());
+    assert!((b.0 - a.0 - 120.0).abs() < 0.001);
+    assert!((b.2 - 410.0).abs() < 0.001);
+}
+#[test]
+fn rotation_is_absolute_for_mixed_units_and_rotated_resize_uses_local_size() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let r = handle(
+        &mut s,
+        &mut h,
+        design_request(
+            vec![
+                json!({"verb":"rotate","ids":["path:10"],"degrees":30}),
+                json!({"verb":"rotate","ids":["path:20"],"degrees":60}),
+                json!({"verb":"rotate","ids":["path:10","path:20"],"degrees":90}),
+                json!({"verb":"resize","ids":["path:10"],"bounds":[10,20,160,50]}),
+            ],
+            1,
+        ),
+    );
+    assert!(r.ok, "{r:?}");
+    for pid in [10, 20] {
+        assert!((h.editor.doc.unit_xform(pid).rot.to_degrees() - 90.0).abs() < 0.001);
+    }
+    h.editor.try_execute(EditCommand::SelectPaths(vec![10])).unwrap();
+    let size = h.editor.obj_local_bbox().unwrap();
+    assert!((size.2 - size.0 - 160.0).abs() < 0.01 && (size.3 - size.1 - 50.0).abs() < 0.01, "{size:?}");
+}
+#[test]
+fn distribution_both_axes_order_all_positions_and_partial_groups_refuse() {
+    for axis in ["h", "v"] {
+        let mut h = FakeHost::new();
+        let mut s = Service::new("test-epoch".into());
+        let r = handle(
+            &mut s,
+            &mut h,
+            design_request(
+                vec![
+                    shape("$a", "rect", [500.0, 500.0, 10.0, 10.0]),
+                    json!({"verb":"distribute","ids":["path:10","path:20","$a"],"axis":axis}),
+                ],
+                1,
+            ),
+        );
+        assert!(r.ok, "{r:?}");
+        let centres: Vec<_> = h
+            .editor
+            .doc
+            .paths
+            .iter()
+            .map(|p| {
+                let b = h.editor.doc.outline_bbox(h.editor.doc.pidx(p.id).unwrap());
+                if axis == "h" {
+                    (b.0 + b.2) / 2.0
+                } else {
+                    (b.1 + b.3) / 2.0
+                }
+            })
+            .collect();
+        let mut centres = centres;
+        centres.sort_by(f32::total_cmp);
+        assert!((centres[1] - (centres[0] + centres[2]) / 2.0).abs() < 0.01);
+    }
+    for order in ["front", "forward", "backward", "back"] {
+        let mut h = FakeHost::new();
+        let mut s = Service::new("test-epoch".into());
+        let pid = if order == "back" || order == "backward" { 20 } else { 10 };
+        let r = handle(
+            &mut s,
+            &mut h,
+            design_request(vec![json!({"verb":"order","ids":[format!("path:{pid}")],"order":order})], 1),
+        );
+        assert!(r.ok, "{r:?}");
+        assert_eq!(h.editor.doc.paths[0].id, 20);
+        assert_eq!(r.undo_steps, 1);
+    }
+    for op in [
+        json!({"verb":"resize","ids":["path:10"],"bounds":[0,0,10,10]}),
+        json!({"verb":"rotate","ids":["path:10"],"degrees":45}),
+        json!({"verb":"delete","ids":["path:10"]}),
+        json!({"verb":"order","ids":["path:10"],"order":"front"}),
+        json!({"verb":"distribute","ids":["$g","$a"],"axis":"h"}),
+    ] {
+        let mut h = FakeHost::new();
+        let before = h.editor.doc.clone();
+        let mut s = Service::new("test-epoch".into());
+        let r = handle(
+            &mut s,
+            &mut h,
+            design_request(
+                vec![
+                    json!({"verb":"group","ids":["path:10","path:20"],"local":"$g"}),
+                    shape("$a", "rect", [400.0, 20.0, 10.0, 20.0]),
+                    op,
+                ],
+                1,
+            ),
+        );
+        assert_eq!(r.error.as_ref().unwrap().code, "unsupported");
+        assert_eq!(r.error.unwrap().op_index, Some(2));
+        assert_eq!(h.editor.doc, before);
+    }
+}
+
+#[test]
+fn poster_frozen_fixture_through_actual_mcp_stdio_binding() {
+    let transport = FakeTransport {
+        state: std::sync::Arc::new(std::sync::Mutex::new((Service::new("test-epoch".into()), empty_host()))),
+        cancellations: Default::default(),
+    };
+    let (input_tx, input) = std::sync::mpsc::channel();
+    let (output, receive) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        varos_bridge::mcp::serve(
+            &mut std::io::BufReader::new(ChannelRead { rx: input, current: std::io::Cursor::new(vec![]) }),
+            ChannelWrite { tx: output, bytes: vec![] },
+            transport,
+        )
+        .unwrap()
+    });
+    let send = |v: Value| {
+        let mut data = serde_json::to_vec(&v).unwrap();
+        data.push(b'\n');
+        input_tx.send(data).unwrap();
+    };
+    let read =
+        || serde_json::from_slice::<Value>(&receive.recv_timeout(std::time::Duration::from_secs(3)).unwrap()).unwrap();
+    send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{},"capabilities":{}}}),
+    );
+    assert_eq!(read()["result"]["protocolVersion"], "2025-06-18");
+    send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
+    let arguments: Value = serde_json::from_str(include_str!("fixtures/poster-request-1.0.json")).unwrap();
+    send(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"edit","arguments":arguments}}));
+    assert_eq!(
+        read()["result"]["structuredContent"],
+        serde_json::from_str::<Value>(include_str!("fixtures/poster-result-1.0.json")).unwrap()
+    );
+    send(
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"snapshot","arguments":{"board":"b1","rev":2,"width":80,"height":120}}}),
+    );
+    let result = read()["result"].clone();
+    assert_eq!(result["content"][1]["type"], "image");
+    assert_eq!(result["structuredContent"]["result"]["width"], 80);
+    assert_eq!(result["structuredContent"]["result"]["height"], 120);
+    assert!(result["structuredContent"]["result"].get("png").is_none());
+
+    drop(input_tx);
+    server.join().unwrap();
+}
+#[test]
+fn geometry_is_explicit_bounded_paginated_and_does_not_mutate() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let before = h.editor.doc.clone();
+    let plain = handle(&mut s, &mut h, req("describe", json!({"board":"b1","ids":["path:10"]})));
+    assert!(plain.result.unwrap()["objects"][0].get("geometry").is_none());
+    let args = json!({"board":"b1","rev":1,"ids":["path:10","path:20"],"fields":["geometry"],"limit":1});
+    let first = handle(&mut s, &mut h, req("describe", args.clone()));
+    let value = first.result.unwrap();
+    assert_eq!(value["more"], true);
+    assert_eq!(value["objects"][0]["geometry"]["closed"], true);
+    let mut next = args;
+    next["cursor"] = value["cursor"].clone();
+    let second = handle(&mut s, &mut h, req("describe", next));
+    assert_eq!(second.result.unwrap()["objects"][0]["id"], "path:20");
+    assert_eq!(h.editor.doc, before);
+    assert!(!h.editor.history_available(false));
+    let p = &mut h.editor.doc.paths[0];
+    let anchor = p.anchors[0].clone();
+    for i in 0..1001 {
+        let mut a = anchor.clone();
+        a.id = 100 + i;
+        p.anchors.push(a);
+    }
+    h.editor.rev += 1;
+    let r = handle(&mut s, &mut h, req("describe", json!({"board":"b1","ids":["path:10"],"fields":["geometry"]})));
+    assert_eq!(r.error.unwrap().code, "limit_exceeded");
+}
+
+#[test]
+fn successful_create_delete_noop_still_reserves_exposed_identities() {
+    let mut h = empty_host();
+    let before = h.editor.doc.clone();
+    let mut s = Service::new("test-epoch".into());
+    let mut owner = ctx();
+    owner.allow_destructive = true;
+    let mut request =
+        design_request(vec![shape("$a", "rect", [0.0, 0.0, 10.0, 10.0]), json!({"verb":"delete","ids":["$a"]})], 1);
+    let challenge = s.handle(&mut h, &owner, request.clone(), &AtomicBool::new(false));
+    assert_eq!(h.editor.doc, before);
+    if let Request::Edit(ref mut e) = request {
+        e.digest = challenge.error.unwrap().digest.clone();
+    }
+    let r = s.handle(&mut h, &owner, request, &AtomicBool::new(false));
+    assert!(r.ok, "{r:?}");
+    assert_eq!(r.undo_steps, 0);
+    assert_eq!(h.editor.rev, 1);
+    assert!(h.editor.doc.content_eq(&before));
+    assert!(!h.editor.history_available(false));
+    let exposed =
+        r.result.unwrap()["locals"]["$a"].as_str().unwrap().strip_prefix("path:").unwrap().parse::<u32>().unwrap();
+    let r = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.0","board":"b1","request_id":"r2","expected_rev":1,"ops":[shape("$b","rect",[0.0,0.0,10.0,10.0])]}),
+        ),
+    );
+    assert!(r.ok, "{r:?}");
+    assert!(h.editor.doc.paths[0].id > exposed + 4);
+    assert_eq!(r.undo_steps, 1);
+}
+
+#[test]
+fn distribution_equal_centre_ties_use_stable_ids() {
+    for _ in 0..8 {
+        let mut h = FakeHost::new();
+        let mut s = Service::new("test-epoch".into());
+        let r = handle(
+            &mut s,
+            &mut h,
+            design_request(
+                vec![
+                    shape("$third", "rect", [500.0, 500.0, 10.0, 10.0]),
+                    json!({"verb":"distribute","ids":["path:20","$third","path:10"],"axis":"v"}),
+                ],
+                1,
+            ),
+        );
+        assert!(r.ok, "{r:?}");
+        let a = h.editor.doc.outline_bbox(h.editor.doc.pidx(10).unwrap());
+        let b = h.editor.doc.outline_bbox(h.editor.doc.pidx(20).unwrap());
+        assert!((a.1 - 20.0).abs() < 0.001 && (b.1 - 237.5).abs() < 0.001, "{a:?} {b:?}");
+    }
 }

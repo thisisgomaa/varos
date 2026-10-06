@@ -144,6 +144,7 @@ mod tests {
                     read: true,
                     edit: true,
                     allow_history: false,
+                    allow_destructive: false,
                 },
                 request: req,
                 cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),

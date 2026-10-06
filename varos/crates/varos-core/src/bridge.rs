@@ -38,8 +38,10 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
 /// Preconditions for the headless command path. Interactive callers retain `execute` unchanged.
 pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
-    if matches!(command, GroupSelection | Boolean(_) | Paste { .. } | DuplicateMoveLayer { .. } | DuplicateArtboard(_))
-    {
+    if matches!(
+        command,
+        AddShape { .. } | GroupSelection | Boolean(_) | Paste { .. } | DuplicateMoveLayer { .. } | DuplicateArtboard(_)
+    ) {
         // Reserve an entire format-sized arena before an allocating edit. Existing allocators use
         // u32 ids; refusing near exhaustion is safer than overflowing before post-validation.
         let limits = format::Limits::DEFAULT;
@@ -93,6 +95,57 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
+            if !matches!(kind, crate::model::ShapeKind::Rect | crate::model::ShapeKind::Ellipse) {
+                return Err("only rect and ellipse are supported".into());
+            }
+            let [x, y, w, h] = *bounds;
+            finite(x)?;
+            finite(y)?;
+            dimension(w)?;
+            dimension(h)?;
+            finite(x + w)?;
+            finite(y + h)?;
+            if x + w <= x || y + h <= y {
+                return Err("bounds collapse at f32 precision".into());
+            }
+            finite(x + (x + w))?;
+            finite(y + (y + h))?;
+            let limits = format::Limits::DEFAULT;
+            if ed.doc.paths.len() >= limits.max_paths
+                || ed.doc.nodes.len() >= limits.max_nodes
+                || ed
+                    .doc
+                    .paths
+                    .iter()
+                    .map(|p| p.anchors.len() + p.holes.iter().map(Vec::len).sum::<usize>())
+                    .sum::<usize>()
+                    > limits.max_anchors - 4
+            {
+                return Err("shape would exceed document limits".into());
+            }
+            if let Some(c) = fill {
+                color(c)?;
+            }
+            if let Some(c) = stroke {
+                color(c)?;
+            }
+            finite(*stroke_width)?;
+            if *stroke_width < 0.0 || !opacity.is_finite() || !(0.0..=1.0).contains(opacity) {
+                return Err("invalid stroke width or opacity".into());
+            }
+            if let Some(n) = name {
+                nonempty(n)?;
+            }
+            let n = ed.doc.node(parent.unwrap_or(ed.doc.active_layer)).ok_or("unknown parent layer")?;
+            if n.kind != NodeKind::Layer {
+                return Err("parent must be a layer".into());
+            }
+            if n.hidden || n.locked {
+                return Err("parent is hidden or locked".into());
+            }
+            Ok(())
+        }
         SelectPaths(ids) => {
             for id in ids {
                 path(*id)?;
@@ -568,7 +621,7 @@ impl Editor {
         self.publish_batch(staged, true);
         Ok(())
     }
-    fn apply_targeted_op(&mut self, op: &TargetEdit, index: usize) -> Result<(), TargetError> {
+    pub fn apply_targeted_op(&mut self, op: &TargetEdit, index: usize) -> Result<(), TargetError> {
         let paths = match op {
             TargetEdit::Move { paths, .. } | TargetEdit::Paint { paths, .. } => paths,
         };
@@ -631,4 +684,62 @@ fn validate_targeted_stage(editor: &Editor) -> Result<(), String> {
     check_document(editor)?;
     crate::format::encode_model(&editor.doc, &format::Limits::DEFAULT).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Opaque staged document; only checked staging can construct it.
+pub struct PreparedDesignBatch {
+    editor: Editor,
+    revision: u64,
+}
+impl PreparedDesignBatch {
+    pub fn document(&self) -> &crate::model::Document {
+        &self.editor.doc
+    }
+}
+impl Editor {
+    /// Resolve and validate each operation against isolated state; publish separately after host authorization.
+    pub fn prepare_design_batch<E>(
+        &self,
+        count: usize,
+        mut apply: impl FnMut(&mut Editor, usize) -> Result<(), E>,
+        error: impl Fn(usize, String) -> E,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<PreparedDesignBatch, E> {
+        if self.transaction_open() {
+            return Err(error(0, "active gesture".into()));
+        }
+        let mut staged = self.batch_stage();
+        for index in 0..count {
+            if cancelled() {
+                return Err(error(index, "cancelled before commit".into()));
+            }
+            apply(&mut staged, index)?;
+            staged.clear_batch_history();
+        }
+        if validate_targeted_stage(&staged).is_err() {
+            let mut replay = self.batch_stage();
+            for index in 0..count {
+                if cancelled() {
+                    return Err(error(index, "cancelled before commit".into()));
+                }
+                apply(&mut replay, index)?;
+                validate_targeted_stage(&replay).map_err(|reason| error(index, reason))?;
+                replay.clear_batch_history();
+            }
+        }
+        if cancelled() {
+            return Err(error(0, "cancelled before commit".into()));
+        }
+        staged.doc.active_layer = self.doc.active_layer;
+        staged.doc.active = self.doc.active;
+        Ok(PreparedDesignBatch { editor: staged, revision: self.rev })
+    }
+    /// The owning-thread service rechecks cancellation and consumes grants before this single publication.
+    pub fn publish_design_batch(&mut self, batch: PreparedDesignBatch) -> Result<(), String> {
+        if self.transaction_open() || self.rev != batch.revision {
+            return Err("staged revision changed".into());
+        }
+        self.publish_batch(batch.editor, true);
+        Ok(())
+    }
 }
