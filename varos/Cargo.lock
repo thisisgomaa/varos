@@ -4060,6 +4060,7 @@ dependencies = [
 name = "varos-raster"
 version = "0.1.0"
 dependencies = [
+ "resvg",
  "tiny-skia",
  "varos-core",
  "varos-pdf",
