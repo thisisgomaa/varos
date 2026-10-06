@@ -11,7 +11,11 @@ Owner (2026-10-07): «في النسخ القديمة أنظمة كشيدة وح�
 - `design-reference/editor-redesign/EditorPro.jsx` ~201, ~219 — text renders through `kashidaText`; **Type** menu rows *Justify with kashida* / *Reset kashida*.
 - `design-reference/design-system.md` ~100 — the Arabic font set used then: Amiri, Cairo, IBM Plex Sans Arabic, Tajawal, Noto Sans Arabic.
 - History docs: `docs/history/MASTER_PLAN_V1_LAUNCH.md` §10 (kashida deferred by owner decision 2026-07-07; "smart kashida = the real innovation, justification by kashida with rules, not word-spacing"), `docs/history/DETAILED_ROADMAP.md` 2.2.d / 15.3, `docs/reference/ELEMENTS_CATALOG.md` (kashida/harakat controls as explicit items).
-- The server (`srv`) `~/VAROS/varos` is empty; no other copy of this work was found there (2026-10-07 scan).
+- **Discovery 2026-10-07:** `/root/wt/wt-w8-engine` contains the real Rust BStudio engine (`v0/crates/bstudio-text`; later `v1` restructure), specs and research. The earlier empty `~/VAROS/varos` scan did not establish absence elsewhere.
+- Server frontend backup: `/root/backups/v0-frontend-2026-06-16.tar.gz` — `web/bstudio/src/{textLayout.ts,TextOverlay.tsx}` and archived `editor-tldraw/src/KashidaSidebar.tsx`.
+- Owner typography rules: `/root/shared_workspace/company_os/FIGMA_ARABIC_RULES.md`.
+- Local read-only discovery root: `/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/prior-art/`; engine under `wt-w8-engine/`, extracted frontend under `v0/web/`. Server paths above are owner-supplied, not remotely reverified here.
+- Durable, checksummed MPL reference: [BStudio archive](../../../design-reference/prior-art/bstudio-2026-06/README.md); measured comparison and recommendation: [TEXT_PRIOR_ART_EVALUATION.md](TEXT_PRIOR_ART_EVALUATION.md).
 
 ## The rules the prototype encoded (carry over as requirements)
 
@@ -23,8 +27,8 @@ Owner (2026-10-07): «في النسخ القديمة أنظمة كشيدة وح�
 
 ## What does NOT carry over (and why)
 
-- The prototype inserted **literal tatweel characters (U+0640)** into the string. ADR-0010 rejects that for production: it mutates the author's text, breaks copy/search, and cannot produce font-correct curved elongation. The rules above must be re-implemented at the **glyph level** (OpenType `jalt`/`cswh` alternates or kashida glyph insertion between shaped glyphs, with the font's own tatweel glyph and metrics), after P1b and the area-text piece (P4), as the separate justification research gate the ADR already names.
-- The browser did shaping; Varos's engine (cosmic-text + HarfRust) must expose the slot information itself (cluster map + joining classes) — P1b's caret/cluster work gives us that map.
+- **Correction after source inspection:** JS `kashidaText(base, amount)` returns a derived display string; its `EditorPro` caller does not overwrite `s.text`. Rust v0 `insert_kashida(&str, …)` also preserves the source, inserts U+0640 into a separate **working string**, then reshapes with HarfRust. It is not source-text mutation. However, output clusters index the expanded working string: exact source↔working mapping, caret/selection/copy and font-quality proofs are still missing. Neither working-string insertion nor direct glyph insertion is automatically approved by ADR-0010; arbitrary author-text insertion remains rejected, and a shaped-run implementation must satisfy the separate justification gate. Width growth alone is not proof of ligature/mark safety.
+- The small JSX mockup delegated shaping to the browser; the newly recovered Rust engine did real HarfRust shaping and exposed SAFE_TO_INSERT_TATWEEL plus joining filters. Preserve that distinction. Port the tested rules/fixtures through the chosen engine's shaped-cluster seam; the BStudio single-valued scalar caret implementation cannot replace Varos's grapheme + affinity contract verbatim.
 
 ## How to use this
 
