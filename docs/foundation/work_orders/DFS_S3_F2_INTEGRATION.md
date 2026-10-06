@@ -1,4 +1,4 @@
-> **Status:** implemented on `codex/ui-system-plan`; native acceptance, independent batch review and merge pending.
+> **Status:** reference — merged to `main` in `2cb072a` (2026-10-04, after the batch review, fixes `e772f16`). Owner hand test 2026-10-06: recovery after Force Quit works, but the banner appeared ~30 s late (fix in flight) and its look needs a design pass; cancel/failure paths are tests-only. See [PLAN](../../PLAN.md).
 # DFS S3-F2 — Recover saved copies after relaunch
 
 2026-09-27, baseline `6f50eab`. Implements [F2](DFS_S2_S3_START_RECENTS_RECOVERY.md) on top of F1's single worker. Launch cleanup/scan, explicit loading and discard run on that worker. Start remains the home for recovery choices; a neutral strip in the editor leads there. Later hides the reminder for this run and retains copies. Damaged/newer copies remain listed with their reason; busy actions cannot duplicate work.

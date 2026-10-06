@@ -13,7 +13,7 @@ Varos: a free, open-source, Mac-first for now (official build Mac-only as of 202
 
 ## Visual constitution (docs/UI_DIRECTION.md is law)
 - Warm-black ramp (`#141313` signature); azure `#0c8ce9` is a scalpel — active/selection/focus ONLY.
-- **No shadows. No animations** (`animation_time = 0`) — a work tool answers instantly.
+- **No shadows.** Chrome appears instantly (`animation_time = 0`); the box glide on dock/undock is an accepted exception (owner 2026-10-06) — don't spend work removing motion.
 - Corners: 3px controls / 8px boxes. Typography-only decoration. Tokens live in ONE place (`shell/tokens.rs`).
 - ONE-HOME rule: every domain has one Section-home; control bar & menus are mirrors only.
 

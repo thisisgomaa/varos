@@ -1,4 +1,4 @@
-> **Status:** implemented on `codex/ui-system-plan`; independent review and merge pending.
+> **Status:** reference — merged to `main` in `2cb072a` (2026-10-04, after the batch review, fixes `e772f16`). Owner hand test 2026-10-06: recovery after Force Quit works; banner delay and look are open in [PLAN](../../PLAN.md).
 # DFS S3-F1 — Durable Save and recovery writing
 
 2026-09-27, baseline `2fd8a23`. Implements [F1](DFS_S2_S3_START_RECENTS_RECOVERY.md) in the existing native app; no new framework or background thread beyond the existing generic I/O worker.

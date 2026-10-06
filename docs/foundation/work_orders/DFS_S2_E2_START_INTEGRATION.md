@@ -1,4 +1,4 @@
-> **Status:** implemented on `codex/ui-system-plan`, not independently reviewed or merged.
+> **Status:** reference — merged to `main` in `2cb072a` (2026-10-04, after the batch review, fixes `e772f16`). The E2 Start page has since been superseded by [Start v2 — Boards](START_V2_BOARDS.md) (`6405dc9`); the one open path, Home and Recent wiring described here remain. Current state: [PLAN](../../PLAN.md).
 # DFS S2-E2 — Start, Home and recent-file integration
 
 2026-09-27. Baseline `c27b8a4`. Implements the E2 slice of [S2/S3](DFS_S2_S3_START_RECENTS_RECOVERY.md) after [minimum U0-B/C](UI_U0_BC_KIT.md). Owner requested continued implementation with independent review batched at session end.
