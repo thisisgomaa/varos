@@ -70,6 +70,8 @@ fn ctx(destructive: bool) -> Context {
         epoch: "test-epoch".into(),
         read: true,
         edit: true,
+        destructive: true,
+        history: true,
         allow_history: false,
         allow_destructive: destructive,
     }
