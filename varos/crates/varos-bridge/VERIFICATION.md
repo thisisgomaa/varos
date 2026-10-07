@@ -1,3 +1,28 @@
+# Slice 3 / slice-2 follow-ups merge resolution — 2026-10-07
+
+Resolved in `fix/bridge-slice2-followups`, merging main `8fd8659` into follow-ups `e5dc666`. The reports below are historical, retained newest slice first: slice 3, slice-2 follow-ups, original slice 2.
+
+- `SnapshotJob` carries an optional persistent artboard id. The service validates the id and captures the revision-pinned document; both whole-board and per-artboard raster/PNG work go through `Host::snapshot` and the desktop worker. Page images report actual fitted dimensions, `artboard:N` and `CPU page preview`. Cancellation checkpoints and transport image limits are retained. Board defaults remain 544×246; page defaults remain 1024×1024.
+- Capabilities retain readable formats 1–4, writable format 4, persistent artboard ids, artboard presets, deprecated aliases, and all geometry limits (16 KiB page budget, roughly 300 typical anchors, 1,000 anchors/object, no anchor pagination).
+- Both README sections and both verification reports are retained. Automatic merges retain leaf resize inside groups, refusal of partial-group absolute rotation and partial rotated-group resize, paintless/invisible shape refusal, expired-grant re-challenges, legacy AddShape documentation, active-artboard settings tracking, and deprecated-alias refusal in page-verb batches. The older follow-up report's partial-rotation statement is superseded by the refusal behavior in the current README and contracts.
+- Regression evidence: `bridge_host::tests::page_snapshot_worker_replies_with_captured_revision_after_human_edit` exercises the actual desktop worker, page metadata/aspect ratio, revision pinning and absence of field/history side effects. The artboard capabilities test asserts both slice-3 and geometry-budget fields.
+
+## Gates on the resolved source (from `varos/`)
+
+| Gate | Result | Exit |
+|---|---|---:|
+| `cargo test --workspace -j 4` | **1,214 passed / 0 failed / 11 ignored**, 71 suites; Bridge: 60 passed / 2 ignored | 0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS | 0 |
+| `cargo fmt --all --check` | PASS | 0 |
+| `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings` | PASS, compilation only | 0 |
+| `python3 ../tools/check_dep_directions.py` | PASS | 0 |
+
+Logs: `/tmp/bridge-merge-workspace-tests.log`, `/tmp/bridge-merge-clippy-native.log`, `/tmp/bridge-merge-fmt.log`, `/tmp/bridge-merge-clippy-windows.log`, `/tmp/bridge-merge-dep-directions.log`. `git diff --check` on the five resolution/regression files passes; no conflict markers remain. Full staged whitespace checking reports existing PDF fixture whitespace from main (`future_v5_pdf.vrs`), whose bytes are preserved.
+
+Staging and the merge commit are **blocked by the session filesystem restriction**: `git add` cannot create `/Users/gomaa/Documents/AI workspace/varos/.git/worktrees/bridge-followups/index.lock` (`Operation not permitted`). The working files are resolved, but the index still records the three conflicts. No commit, push, installation, GUI verification, independent review or Windows runtime verification is claimed for this resolution.
+
+---
+
 # Slice 3 verification — artboards (2026-10-07)
 
 Completed locally in worktree `bridge-slice3`, branch `feat/bridge-slice3-artboards` on `a5f687b`. No commit, push, merge, installation, GUI launch, `/Applications` operation or osascript. Live owner acceptance (the Instagram Story batch on an open board, a page snapshot, then one ⌘Z) is pending.
@@ -30,6 +55,51 @@ Review fixes (Codex Sol REQUEST CHANGES, same day): `export-pdf` refuses an `--o
 ## Not verified here
 
 Live desktop: the story batch on Ahmed's open board, the page and design appearing, one ⌘Z removing both, the Layers panel/export after a Bridge-added page, and an old (format-3) Varos build actually refusing a saved v4 file (only the frozen gate logic is tested). Page reorder/duplicate/colour edits, headless hosting and Windows runtime are out of scope.
+
+---
+
+# Slice 2 review follow-ups — 2026-10-07
+
+Completed in `fix/bridge-slice2-followups`, only in this worktree. No commit, push, merge, GUI, osascript, installation or owner-window verification. Artboard code, `format/` and `model.rs` are unchanged. The original slice-2 report below is historical.
+
+| Follow-up | Implementation / evidence (relative to `varos/`) |
+|---|---|
+| Explicit grouped leaves | `crates/varos-bridge/src/design.rs:237` permits resize/rotate without widening to siblings; `crates/varos-core/src/editor.rs:1824` rotates partial leaves about their own bounds. `tests/contracts.rs:1542` checks leaf bounds, sibling preservation, group bounds and one-step undo, including rotated groups. Partial rotated-group resize returns its missing-local-frame reason and the alternative `move` or whole-group `resize`. Partial rotation is baked geometry in the inherited unit frame, not a separately persisted leaf angle; documented in README. |
+| Whole-group order | `crates/varos-bridge/tests/contracts.rs:1593` exercises all four order values with explicit `node:<group>`, checks contiguous member order and undo. |
+| Geometry limit | `crates/varos-bridge/src/service.rs:345` advertises 16 KiB pages, roughly 300 typical anchors, 1,000 absolute anchors/object and no anchor pagination. `:785` explains individual-object overflow without suggesting a smaller limit; `tests/contracts.rs:1663` checks byte overflow at `limit:1`. |
+| Snapshot worker | `crates/varos-bridge/src/service.rs:29` owns the pinned clone/render job; `crates/varos-app/src/bridge_host.rs:114` runs raster/encode on a worker and replies through the existing channel. Cancellation checkpoints precede raster, encode and delivery. Worker-spawn failure replies `busy`. App test `:187` checks a captured revision survives a later human edit without field commit/history side effects. |
+| Legacy AddShape | `crates/varos-cli/README.md:84` and `:111` document API 0.x acceptance and its RGBA payload. Chosen because the provisional API exposes the checked core command table; a separate legacy filter would introduce another verb policy. |
+| Confirmation | `crates/varos-bridge/tests/contracts.rs:1645` rejects edit-envelope `confirm:true`. `src/service.rs:442` and `:508` refresh missing/expired exact grants into full challenges; `:1185` expires both destructive/history grants deterministically, resends their digests, checks no mutation and successfully retries the refreshed challenge. |
+| Explicit creation paint | `crates/varos-bridge/src/design.rs:171` refuses absent/null fill and stroke with `invalid_argument: paint required`, preserving ADR-0009 explicit paint. `tests/contracts.rs:1645` covers both forms; README documents the choice. |
+
+## Snapshot measurements
+
+Headless **release** probe: 5,000 four-anchor filled paths, one warm-up and five measured samples per size. Times include owning-thread document clone, CPU raster and PNG encode; they exclude service observation/projection and scheduling. `crates/varos-raster/src/lib.rs:455`:
+
+```sh
+cargo test -p varos-raster --release snapshot_five_thousand_paths_timings -- --ignored --nocapture
+```
+
+| Dimensions | Median clone | Median raster | Median encode | Median total | Total range |
+|---|---:|---:|---:|---:|---:|
+| 544×246 | 0.100 ms | 337.190 ms | 0.364 ms | **337.655 ms** | 277.184–399.350 ms |
+| 1024×1024 | 0.100 ms | 292.115 ms | 1.689 ms | **293.906 ms** | 277.149–326.248 ms |
+
+Both exceed 8 ms, so desktop raster/encode now run off the owning thread. Clone remains on it. This is a bounded fixture measurement, not a general large-document/UI responsiveness claim. Probe: **1 passed / 0 failed**. All samples: `/tmp/bridge-followups-snapshot.log`.
+
+## Final gates
+
+From `varos/`, all exit **0**:
+
+1. `cargo test --workspace -j 4`: **1,183 passed / 0 failed / 11 ignored**, 69 suites. Bridge: **46 passed / 2 ignored** (unit + integration). The additional ignored test is the explicit timing probe above.
+2. `cargo clippy --workspace --all-targets -- -D warnings`: PASS.
+3. `cargo fmt --all --check`: PASS.
+4. `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`: PASS, compilation only.
+5. `python3 ../tools/check_dep_directions.py`: PASS.
+
+`git diff --check`: PASS. No tests construct a GPU Renderer or EventLoop. Logs: `/tmp/bridge-followups-workspace-tests.log`, `/tmp/bridge-followups-clippy-native.log`, `/tmp/bridge-followups-clippy-windows.log`. Native socket/owner-window behavior and Windows runtime remain unverified; no independent review, merge or installed binary is claimed.
+
+---
 
 # Slice 2 verification — 2026-10-07
 

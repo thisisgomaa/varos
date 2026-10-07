@@ -279,6 +279,14 @@ pub(crate) fn apply_design_op(
                     "parent layer is inert",
                 ));
             }
+            let fill = paint(fill)?.unwrap_or(None);
+            let stroke = paint(stroke)?.unwrap_or(None);
+            if fill.is_none() && stroke.is_none() {
+                return Err(fail("paint required: add_shape needs an explicit non-null fill or stroke"));
+            }
+            if fill.is_none() && stroke_width.unwrap_or(0.0) <= 0.0 {
+                return Err(fail("stroke_width must be > 0 when stroke is the only paint"));
+            }
             let id = ed
                 .try_execute_created(EditCommand::AddShape {
                     kind: match kind {
@@ -287,8 +295,8 @@ pub(crate) fn apply_design_op(
                     },
                     bounds: *bounds,
                     parent,
-                    fill: paint(fill)?.unwrap_or(None),
-                    stroke: paint(stroke)?.unwrap_or(None),
+                    fill,
+                    stroke,
                     stroke_width: stroke_width.unwrap_or(0.0),
                     opacity: opacity.unwrap_or(1.0),
                     name: name.as_ref().map(|n| clean_name(n)).transpose()?,
@@ -340,7 +348,30 @@ pub(crate) fn apply_design_op(
                     ));
                 }
             }
-            let units = whole_units(ed, &paths)?;
+            if let Operation::Rotate { degrees, .. } = op {
+                if !degrees.is_finite() {
+                    return Err(fail("degrees must be finite"));
+                }
+                for unit in paths.iter().filter_map(|p| ed.doc.unit_of(*p)) {
+                    if ed.doc.node_paths(unit).iter().any(|p| !paths.contains(p)) {
+                        return Err(Error::new(
+                            "unsupported",
+                            format!("partial-group rotate has no independent absolute leaf angle in core; rotate the whole group node:{unit}"),
+                        ));
+                    }
+                }
+            }
+            let units = if matches!(op, Operation::Resize { .. }) {
+                let units: BTreeSet<_> = paths.iter().filter_map(|p| ed.doc.unit_of(*p)).collect();
+                if units.iter().any(|u| {
+                    !ed.doc.node_xform(*u).is_identity() && ed.doc.node_paths(*u).iter().any(|p| !paths.contains(p))
+                }) {
+                    return Err(Error::new("unsupported", "partial resize of a rotated group has no independent local size frame in core; use move for leaf placement or resize with the whole group node id"));
+                }
+                units.into_iter().collect()
+            } else {
+                whole_units(ed, &paths)?
+            };
             ed.try_execute(EditCommand::SelectPaths(paths.clone())).map_err(fail)?;
             match op {
                 Operation::Resize { bounds, .. } => {
@@ -484,4 +515,45 @@ pub(crate) fn apply_design_op(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotate_rejects_nonfinite_degrees_before_mutation() {
+        let mut ed = Editor::new();
+        let id = ed
+            .try_execute_created(EditCommand::AddShape {
+                kind: varos_core::model::ShapeKind::Rect,
+                bounds: [0.0, 0.0, 10.0, 20.0],
+                parent: None,
+                fill: Some([1.0; 4]),
+                stroke: None,
+                stroke_width: 0.0,
+                opacity: 1.0,
+                name: None,
+            })
+            .unwrap();
+        let before = ed.doc.clone();
+        let selection = ed.objsel.clone();
+        let rev = ed.rev;
+        for degrees in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let error = apply_design_op(
+                &mut ed,
+                &Operation::Rotate { ids: vec![format!("path:{id}")], degrees },
+                rev,
+                &mut BTreeMap::new(),
+                &mut 0,
+                &mut BTreeSet::new(),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, "invalid_argument");
+            assert_eq!(error.reason, "degrees must be finite");
+            assert_eq!(ed.doc, before);
+            assert_eq!(ed.objsel, selection);
+            assert_eq!(ed.rev, rev);
+        }
+    }
 }

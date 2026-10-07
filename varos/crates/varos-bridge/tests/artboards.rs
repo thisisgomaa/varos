@@ -461,6 +461,11 @@ fn capabilities_and_mcp_schemas_advertise_every_page_verb() {
         assert!(caps["edit_verbs"].as_array().unwrap().contains(&json!(verb)), "{verb}");
     }
     assert_eq!(caps["writable_vrs"], json!([4]));
+    assert_eq!(caps["readable_vrs"], json!([1, 2, 3, 4]));
+    assert_eq!(caps["artboard_presets"]["story"], json!([1080, 1920]));
+    assert_eq!(caps["limits"]["geometry_page_bytes"], 16 * 1024);
+    assert_eq!(caps["limits"]["geometry_typical_anchors_per_page"], 300);
+    assert_eq!(caps["limits"]["geometry_anchor_pagination"], false);
     assert!(caps["deprecated"]["aN@rev"].is_string());
     let tools = varos_bridge::mcp::tools();
     let edit = tools["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();

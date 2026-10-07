@@ -1238,6 +1238,28 @@ fn shape_parent_paints_names_and_allocator_failures_are_checked() {
     assert_eq!(ed.doc.paths[0].id, id);
 }
 #[test]
+fn stroke_only_shape_requires_positive_width() {
+    for kind in ["rect", "ellipse"] {
+        for width in [None, Some(0.0)] {
+            let mut h = empty_host();
+            let mut s = Service::new("test-epoch".into());
+            let before = h.editor.doc.clone();
+            let mut op = json!({"verb":"add_shape","kind":kind,"bounds":[0,0,10,20],"stroke":"#123456FF"});
+            if let Some(width) = width {
+                op["stroke_width"] = json!(width);
+                op["fill"] = Value::Null;
+            }
+            let r = handle(&mut s, &mut h, design_request(vec![op], 1));
+            let error = r.error.unwrap();
+            assert_eq!(error.code, "invalid_argument");
+            assert_eq!(error.reason, "stroke_width must be > 0 when stroke is the only paint");
+            assert_eq!(r.undo_steps, 0);
+            assert_eq!(h.editor.rev, 1);
+            assert_eq!(h.editor.doc, before);
+        }
+    }
+}
+#[test]
 fn align_all_modes_revision_bound_artboards_and_rigid_groups() {
     for (mode, want) in [
         ("left", [0.0, 20.0]),
@@ -1317,6 +1339,9 @@ fn rotation_is_absolute_for_mixed_units_and_rotated_resize_uses_local_size() {
                 json!({"verb":"rotate","ids":["path:10"],"degrees":30}),
                 json!({"verb":"rotate","ids":["path:20"],"degrees":60}),
                 json!({"verb":"rotate","ids":["path:10","path:20"],"degrees":90}),
+                json!({"verb":"rotate","ids":["path:10","path:20"],"degrees":90}),
+                json!({"verb":"rotate","ids":["path:10","path:20"],"degrees":0}),
+                json!({"verb":"rotate","ids":["path:10","path:20"],"degrees":90}),
                 json!({"verb":"resize","ids":["path:10"],"bounds":[10,20,160,50]}),
             ],
             1,
@@ -1329,6 +1354,34 @@ fn rotation_is_absolute_for_mixed_units_and_rotated_resize_uses_local_size() {
     h.editor.try_execute(EditCommand::SelectPaths(vec![10])).unwrap();
     let size = h.editor.obj_local_bbox().unwrap();
     assert!((size.2 - size.0 - 160.0).abs() < 0.01 && (size.3 - size.1 - 50.0).abs() < 0.01, "{size:?}");
+}
+#[test]
+fn whole_group_rotation_repeats_absolute_angle_and_resets_to_zero() {
+    let mut h = FakeHost::new();
+    h.editor.execute(EditCommand::SelectPaths(vec![10, 20]));
+    h.editor.execute(EditCommand::GroupSelection);
+    let group = h.editor.doc.top_group_of_path(10).unwrap();
+    let mut s = Service::new("test-epoch".into());
+    let mut at_ninety = None;
+    for (i, degrees) in [90, 90, 0].into_iter().enumerate() {
+        let rev = h.editor.rev;
+        let request = req(
+            "edit",
+            json!({"api":"1.0","board":"b1","request_id":format!("r{}", i + 1),"expected_rev":rev,
+                "ops":[{"verb":"rotate","ids":[format!("node:{group}")],"degrees":degrees}]}),
+        );
+        let reply = handle(&mut s, &mut h, request);
+        assert!(reply.ok, "{reply:?}");
+        assert!((h.editor.doc.node_xform(group).rot.to_degrees() - degrees as f32).abs() < 0.001);
+        if i == 0 {
+            at_ninety = Some(h.editor.doc.clone());
+        } else if i == 1 {
+            assert_eq!(Some(&h.editor.doc), at_ninety.as_ref());
+            assert_eq!(reply.undo_steps, 0);
+        } else {
+            assert_eq!(reply.undo_steps, 1);
+        }
+    }
 }
 #[test]
 fn distribution_both_axes_order_all_positions_and_partial_groups_refuse() {
@@ -1379,8 +1432,6 @@ fn distribution_both_axes_order_all_positions_and_partial_groups_refuse() {
         assert_eq!(r.undo_steps, 1);
     }
     for op in [
-        json!({"verb":"resize","ids":["path:10"],"bounds":[0,0,10,10]}),
-        json!({"verb":"rotate","ids":["path:10"],"degrees":45}),
         json!({"verb":"delete","ids":["path:10"]}),
         json!({"verb":"order","ids":["path:10"],"order":"front"}),
         json!({"verb":"distribute","ids":["$g","$a"],"axis":"h"}),
@@ -1585,4 +1636,157 @@ fn distribution_equal_centre_ties_use_stable_ids() {
         let b = h.editor.doc.outline_bbox(h.editor.doc.pidx(20).unwrap());
         assert!((a.1 - 20.0).abs() < 0.001 && (b.1 - 237.5).abs() < 0.001, "{a:?} {b:?}");
     }
+}
+
+#[test]
+fn explicit_group_leaves_resize_and_undo_without_sibling_changes_partial_rotate_refused() {
+    for rotated in [false, true] {
+        for (verb, degrees) in [("resize", 0), ("rotate", 0), ("rotate", 90)] {
+            let mut h = FakeHost::new();
+            h.editor.execute(EditCommand::SelectPaths(vec![10, 20]));
+            h.editor.execute(EditCommand::GroupSelection);
+            if rotated {
+                h.editor.execute(EditCommand::SetObjectRotation(30.0));
+            }
+            let group = h.editor.doc.top_group_of_path(10).unwrap();
+            let before = h.editor.doc.clone();
+            let sibling = h.editor.doc.paths[h.editor.doc.pidx(20).unwrap()].clone();
+            let old_group_bounds =
+                varos_core::bridge::describe(&before, Some(&format!("node:{group}"))).unwrap()["bounds"].clone();
+            let rev = h.editor.rev;
+            let op = if verb == "resize" {
+                json!({"verb":verb,"ids":["path:10"],"bounds":[-100,-100,200,150]})
+            } else {
+                json!({"verb":verb,"ids":["path:10"],"degrees":degrees})
+            };
+            let mut service = Service::new("test-epoch".into());
+            let reply = handle(&mut service, &mut h, design_request(vec![op], rev));
+            if verb == "rotate" || rotated {
+                let error = reply.error.unwrap();
+                assert_eq!(error.code, "unsupported");
+                if verb == "rotate" {
+                    assert!(error.reason.contains("no independent absolute leaf angle"));
+                    assert!(error.reason.contains(&format!("rotate the whole group node:{group}")));
+                } else {
+                    assert!(error.reason.contains("rotated group") && error.reason.contains("move"));
+                }
+                assert_eq!(reply.undo_steps, 0);
+                assert_eq!(h.editor.rev, rev);
+                assert_eq!(h.editor.doc, before);
+                continue;
+            }
+            assert!(reply.ok, "{reply:?}");
+            assert_eq!(reply.undo_steps, 1);
+            assert_eq!(h.editor.doc.paths[h.editor.doc.pidx(20).unwrap()], sibling);
+            assert_ne!(
+                varos_core::bridge::describe(&h.editor.doc, Some(&format!("node:{group}"))).unwrap()["bounds"],
+                old_group_bounds
+            );
+            if verb == "resize" {
+                let actual = h.editor.doc.outline_bbox(h.editor.doc.pidx(10).unwrap());
+                for (actual, expected) in
+                    [actual.0, actual.1, actual.2, actual.3].into_iter().zip([-100.0, -100.0, 100.0, 50.0])
+                {
+                    assert!((actual - expected).abs() < 0.001);
+                }
+            }
+            h.editor.undo();
+            assert_eq!(h.editor.doc, before);
+        }
+    }
+}
+
+#[test]
+fn order_explicit_group_id_moves_as_a_unit() {
+    for order in ["front", "forward", "backward", "back"] {
+        let mut h = FakeHost::new();
+        let mut service = Service::new("test-epoch".into());
+        let reply = handle(
+            &mut service,
+            &mut h,
+            design_request(
+                vec![
+                    json!({"verb":"group","ids":["path:10","path:20"],"local":"$g"}),
+                    shape("$a", "rect", [300.0, 0.0, 10.0, 10.0]),
+                ],
+                1,
+            ),
+        );
+        assert!(reply.ok, "{reply:?}");
+        let locals = &reply.result.unwrap()["locals"];
+        let gid = locals["$g"].as_str().unwrap().strip_prefix("node:").unwrap().parse::<u32>().unwrap();
+        let aid = locals["$a"].as_str().unwrap().strip_prefix("path:").unwrap().parse::<u32>().unwrap();
+        if order == "back" || order == "backward" {
+            let rev = h.editor.rev;
+            let r = handle(
+                &mut service,
+                &mut h,
+                req(
+                    "edit",
+                    json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":rev,"ops":[{"verb":"order","ids":[format!("node:{gid}")],"order":"front"}]}),
+                ),
+            );
+            assert!(r.ok, "{r:?}");
+        }
+        let before = h.editor.doc.clone();
+        let rev = h.editor.rev;
+        let r = handle(
+            &mut service,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":"1.0","request_id":"r3","board":"b1","expected_rev":rev,"ops":[{"verb":"order","ids":[format!("node:{gid}")],"order":order}]}),
+            ),
+        );
+        assert!(r.ok, "{r:?}");
+        assert_eq!(r.undo_steps, 1);
+        let ids: Vec<_> = h.editor.doc.paths.iter().map(|p| p.id).collect();
+        assert_eq!(ids, if order == "front" || order == "forward" { vec![aid, 10, 20] } else { vec![10, 20, aid] });
+        assert_eq!(h.editor.doc.node_paths(gid), vec![10, 20]);
+        h.editor.undo();
+        assert_eq!(h.editor.doc, before);
+    }
+}
+
+#[test]
+fn edit_confirm_true_is_refused_and_bare_creation_requires_paint() {
+    let error=varos_bridge::mcp::decode_tool("edit",json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"confirm":true,"ops":[{"verb":"delete","ids":["path:10"]}]})).unwrap_err();
+    assert_eq!(error.code, "invalid_argument");
+    for extra in [json!({}), json!({"fill":null,"stroke":null})] {
+        let mut h = FakeHost::new();
+        let before = h.editor.doc.clone();
+        let mut service = Service::new("test-epoch".into());
+        let mut op = json!({"verb":"add_shape","kind":"rect","bounds":[0,0,10,10]});
+        op.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let r = handle(&mut service, &mut h, design_request(vec![op], 1));
+        let error = r.error.unwrap();
+        assert_eq!(error.code, "invalid_argument");
+        assert!(error.reason.contains("paint required"));
+        assert_eq!(h.editor.doc, before);
+    }
+}
+
+#[test]
+fn geometry_single_object_byte_budget_and_capabilities_are_honest() {
+    let mut h = FakeHost::new();
+    let anchor = h.editor.doc.paths[0].anchors[0].clone();
+    for i in 0..600 {
+        let mut a = anchor.clone();
+        a.id = 100 + i;
+        h.editor.doc.paths[0].anchors.push(a);
+    }
+    let mut service = Service::new("test-epoch".into());
+    let r = handle(
+        &mut service,
+        &mut h,
+        req("describe", json!({"board":"b1","ids":["path:10"],"fields":["geometry"],"limit":1})),
+    );
+    let error = r.error.unwrap();
+    assert_eq!(error.code, "limit_exceeded");
+    assert!(error.reason.contains("16 KiB"));
+    assert!(!error.reason.contains("reduce page limit"));
+    let caps = handle(&mut service, &mut h, req("capabilities", json!({"api":"1.0"}))).result.unwrap();
+    assert_eq!(caps["limits"]["geometry_page_bytes"], 16384);
+    assert_eq!(caps["limits"]["geometry_typical_anchors_per_page"], 300);
+    assert_eq!(caps["limits"]["geometry_anchor_pagination"], false);
 }

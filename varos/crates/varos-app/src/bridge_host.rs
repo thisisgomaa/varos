@@ -10,6 +10,7 @@ pub fn initialize(epoch: String) {
 struct Desktop<'a> {
     ws: &'a mut Workspace,
     ui: Option<&'a mut dyn DocUi>,
+    snapshot: Option<varos_bridge::service::SnapshotJob>,
 }
 fn session(board: &str) -> Result<SessionId, Error> {
     board
@@ -20,6 +21,14 @@ fn session(board: &str) -> Result<SessionId, Error> {
         .ok_or_else(|| Error::new("invalid_argument", "board must be a session handle bN"))
 }
 impl Host for Desktop<'_> {
+    fn snapshot(
+        &mut self,
+        job: varos_bridge::service::SnapshotJob,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> varos_bridge::Reply {
+        self.snapshot = Some(job);
+        varos_bridge::Reply::success(serde_json::json!({"pending":true}))
+    }
     fn build(&self) -> &str {
         concat!("varos-app ", env!("CARGO_PKG_VERSION"))
     }
@@ -91,19 +100,38 @@ impl Host for Desktop<'_> {
 pub fn observe(ws: &mut Workspace) {
     SERVICE.with(|s| {
         if let Some(service) = s.borrow_mut().as_mut() {
-            service.observe(&mut Desktop { ws, ui: None });
+            service.observe(&mut Desktop { ws, ui: None, snapshot: None });
         }
     });
 }
 pub fn run(request: varos_bridge::ipc::Pending, ws: &mut Workspace, ui: &mut dyn DocUi) -> crate::host::Ran {
+    let mut desktop = Desktop { ws, ui: Some(ui), snapshot: None };
     let reply = SERVICE.with(|s| match s.borrow_mut().as_mut() {
-        Some(service) => {
-            service.handle(&mut Desktop { ws, ui: Some(ui) }, &request.context, request.request, &request.cancelled)
-        }
+        Some(service) => service.handle(&mut desktop, &request.context, request.request, &request.cancelled),
         None => varos_bridge::Reply::failure(Error::new("unsupported", "attachment listener unavailable")),
     });
     let changed = reply.ok && reply.request_id.is_some();
-    let _ = request.reply.send(reply);
+    if let Some(job) = desktop.snapshot.take().filter(|_| reply.ok) {
+        // No Workspace/Editor/UI reference crosses this boundary. The existing reply channel
+        // delivers the pinned image; cancellation is checked before raster, encode and reply.
+        let failure_channel = request.reply.clone();
+        let failure_board = reply.board.clone();
+        let failure_rev = reply.rev;
+        if let Err(error) = std::thread::Builder::new().name("bridge-snapshot".into()).spawn(move || {
+            let mut rendered = job.render(&request.cancelled);
+            rendered.board = reply.board;
+            rendered.rev = reply.rev;
+            let _ = request.reply.send(rendered);
+        }) {
+            let mut failure =
+                varos_bridge::Reply::failure(Error::new("busy", format!("snapshot worker unavailable: {error}")));
+            failure.board = failure_board;
+            failure.rev = failure_rev;
+            let _ = failure_channel.send(failure);
+        }
+    } else {
+        let _ = request.reply.send(reply);
+    }
     crate::host::Ran { ran: changed, ..Default::default() }
 }
 #[cfg(test)]
@@ -155,6 +183,78 @@ mod tests {
         );
         rx.recv().unwrap()
     }
+    #[test]
+    fn snapshot_worker_replies_with_captured_revision_after_human_edit() {
+        snapshot_worker_pins_revision(false);
+    }
+
+    #[test]
+    fn page_snapshot_worker_replies_with_captured_revision_after_human_edit() {
+        snapshot_worker_pins_revision(true);
+    }
+
+    fn snapshot_worker_pins_revision(page: bool) {
+        initialize("epoch".into());
+        let mut ws = Workspace::new();
+        let artboard = if page {
+            let mut doc = ws.active().unwrap().editor.doc.clone();
+            let id = doc.nid();
+            doc.artboards.push(varos_core::model::Artboard { id, w: 1080.0, h: 1920.0, ..Default::default() });
+            ws.active_mut().unwrap().editor.replace_doc(doc);
+            Some(format!("artboard:{id}"))
+        } else {
+            None
+        };
+        let board = format!("b{}", ws.active_id().unwrap().0);
+        let rev = ws.active().unwrap().editor.rev;
+        let before = ws.active().unwrap().editor.doc.clone();
+        let mut args = serde_json::json!({"board":board,"rev":rev,"width":80,"height":40});
+        if let Some(id) = &artboard {
+            args["artboard"] = serde_json::json!(id);
+        }
+        let req = varos_bridge::mcp::decode_tool("snapshot", args).unwrap();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let mut fields = Fields { valid: true, commit: true };
+        let ran = run(
+            varos_bridge::ipc::Pending {
+                context: varos_bridge::Context {
+                    client: "test".into(),
+                    epoch: "epoch".into(),
+                    read: true,
+                    edit: true,
+                    allow_history: false,
+                    allow_destructive: false,
+                },
+                request: req,
+                cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                reply: tx,
+            },
+            &mut ws,
+            &mut fields,
+        );
+        assert!(!ran.ran);
+        assert!(fields.commit);
+        assert_eq!(ws.active().unwrap().editor.doc, before);
+        assert!(!ws.active().unwrap().editor.history_available(false));
+        ws.active_mut().unwrap().editor.execute(varos_core::EditCommand::SetBoardName("later human edit".into()));
+        let reply = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert!(reply.ok, "{reply:?}");
+        assert_eq!(reply.board, Some(board));
+        assert_eq!(reply.rev, Some(rev));
+        let result = reply.result.unwrap();
+        assert_eq!(result["rev"], rev);
+        if let Some(id) = artboard {
+            assert_eq!(result["artboard"], id);
+            assert_eq!(result["preview"], "CPU page preview");
+            assert_eq!(result["width"], 23);
+            assert_eq!(result["height"], 40);
+        } else {
+            assert_eq!(result["width"], 80);
+            assert_eq!(result["height"], 40);
+        }
+        assert!(ws.active().unwrap().editor.rev > rev);
+    }
+
     #[test]
     fn describe_keeps_pending_field_open_without_an_undo_step() {
         initialize("epoch".into());
