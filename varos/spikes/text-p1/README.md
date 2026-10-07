@@ -1,4 +1,4 @@
-# Text P1b — headless, excluded workspace
+# Text P1b/P1c — headless, excluded workspace
 
 This is an Amendment-1 experiment, **not product code or P2 approval**. Run every
 Cargo command offline from this directory. No production renderer/model changes.
@@ -8,10 +8,12 @@ cargo --offline test --release --no-fail-fast
 cargo --offline clippy --all-targets -- -D warnings
 cargo --offline build --release
 ./target/release/varos-text-spike proofs /private/tmp/text-p1b
-./target/release/varos-text-spike edits 10000 long middle
-python3 scripts/benchmarks.py /private/tmp/text-p1b
+./target/release/varos-text-spike edits 10000 long middle          # optional 5th arg: motif|words|arabic
+./target/release/varos-text-spike corpus-dump /private/tmp/text-p1c  # golden layouts, cold + cached path
+./target/release/varos-text-spike cap-probe                          # 1 MiB slice/cache probe
+python3 scripts/benchmarks.py /private/tmp/text-p1b                  # VAROS_SPIKE_BIN=… for another build
 cargo --offline build --release --example control_bench
-python3 scripts/control_benchmarks.py /private/tmp/text-p1b
+python3 scripts/control_benchmarks.py /private/tmp/text-p1b          # VAROS_CONTROL_BIN=… likewise
 python3 scripts/harness.py /private/tmp/text-p1b/harnesses
 python3 scripts/checks.py /private/tmp/text-p1b
 ```
@@ -55,19 +57,38 @@ See [P1b report](../../../docs/foundation/work_orders/TEXT_P1B_RESULTS.md).
   Cluster-order reversal preserves mark/base order, checked by positioned oracles.
 - Per-line UBA L1 uses a line-local snapshot of upstream resolved classes/levels,
   avoiding repeated full-paragraph clones. L2 still reorders whole clusters.
-- The incremental prototype caches paragraph layouts with stable identities/revisions,
-  width/direction/face/style/language/script/features. Font bytes are compile-time
-  immutable. Unchanged paragraphs are not reshaped; paint does not invalidate.
-  Edited paragraphs still reflow fully: line convergence is **not implemented**.
-  Cache eviction and cancellation/refusal preserve published source. Cancellation
-  checks paragraph boundaries, not guaranteed ≤8ms work slices. Cache counters are
-  retained-payload estimates, excluding allocator overhead; RSS is separate.
+- The incremental prototype caches paragraphs with stable identities/revisions.
+  Font bytes are compile-time immutable. Unchanged paragraphs are not reshaped;
+  paint does not invalidate. **P1c (`src/converge.rs`)**: each paragraph keeps a
+  text-revision *analysis* (full-paragraph UBA classes/levels, grapheme boundaries,
+  scripts, UAX #14 opportunities, cut-segment attributes, legal fitting units with
+  shaped glyphs) that survives width/alignment changes, plus fitted lines. An edit
+  recomputes the O(n) Unicode analyses exactly, diffs them against the previous
+  revision (levels may change anywhere), and reshapes only level runs touching the
+  difference ± HarfRust's five-scalar context, closed over segment/run/unit
+  boundaries. Fitting (a port of the patched `layout_with_breaks`) restarts at the
+  first line whose inputs or one-unit look-ahead touch that window and stops when a
+  new line start equals a cached one beyond it; later lines are reused shifted.
+  Base-direction flips, settings changes and unmappable style/language ranges
+  rebuild the analysis. Several UBA paragraphs inside one UAX #14 paragraph fall back
+  to the unchanged cold engine. Cached output equals the cold engine (randomised
+  edit tests, corpus goldens); counters (`Counters::work`) prove runs/lines reused.
+  A periodic text can legitimately cascade line breaks to the paragraph end.
+  Cached paragraph analyses/lines are not mutated before commit, so cancellation/
+  refusal preserve the published source and cache; content-keyed memo caches (attribute
+  interner, span/shape-run caches, font system) are still written, which is benign.
+  `cancel` is polled inside analysis, shaping, segment building,
+  per fitted line, output and merge; labelled poll stretches double as a stage
+  profile. Cache counters are retained-payload estimates; RSS is separate.
 - A separate resolved-bidi-span cache reuses shapes with identical text, attributes,
   direction and five-scalar surrounding context. It does not split arbitrary words.
   Shape-run and adapter-span caches each cap at 4,096 entries / 8MiB payload;
   outline cache ≤16,384 entries; paragraph cache ≤32MiB payload; text cap 1MiB.
   Fixed Unicode coverage bitsets avoid per-character tree lookup. Counters include
-  their storage. Arbitrary hostile-font work and temporary allocation caps remain open.
+  their storage. A 100k-scalar motif paragraph's P1c state is ≈26MB, so paragraphs
+  well above ~120k scalars exceed the 32MiB bound and relayout cold every edit.
+  Transient heap per edit is measured (counting allocator in the benchmark binary),
+  not capped. Hostile-font work is not addressed: fonts are fixed compile-time bytes.
 
 ## NonZero and runtime evidence
 
