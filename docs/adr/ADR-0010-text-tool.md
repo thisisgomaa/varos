@@ -234,6 +234,8 @@ Awaiting Ahmed: accept/reject the stack direction and outline-first PDF trade-of
 
 ## Amendment 1 — after P1 (2026-10-07)
 
+**Format number (2026-10-07):** format 4 is now taken by stable artboard ids ([ADR-0008 amendment 2026-10-07](ADR-0008-vrs-format-versioning.md)), so the TextBox schema this ADR calls "v4" becomes **format v5** (with v4→v5 migration and "future v5" rejection fixtures moving to v6); every "v4" below means that next format.
+
 **Prior art (2026-10-07):** the June-2026 web prototype already had a rules-based kashida engine and an "Arabic — the moat" inspector group; harvested in [TEXT_PRIOR_ART_KASHIDA.md](../foundation/work_orders/TEXT_PRIOR_ART_KASHIDA.md) — the slot/cluster/لا rules and the slider UX carry over; literal U+0640 insertion does not.
 
 

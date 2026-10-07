@@ -99,9 +99,43 @@ decoder defaults these keys. Shipped with the bump: the named migration, frozen 
 **Consequence.** Builds up to `f21c20e` (format 2) refuse every file this build saves, even one whose
 board has no name, description or tags (rule 3, Consequences ¶1). No downgrade-save.
 
+## Amendment — 2026-10-07: format 4 (artboard ids)
+
+**What changed.** The owner asked on 2026-10-07 that an agent can "make an Instagram Story artboard
+and design on it" through the Bridge (ADR-0009). ADR-0009 §2 deferred persistent artboard identity to
+"separate core/schema work and an ADR-0008 format bump"; this is that bump. The writer now emits one
+more key on every artboard — `doc.artboards[].id` — so rule 3 applies: `FORMAT_VERSION` 3 → **4**.
+Nothing else in the model changed.
+
+**Why a bump, not a defaulted field.** Same reasoning as format 3: a v3 build would refuse the unknown
+key only because of `deny_unknown_fields`; rule 3 bumps regardless, so a v3 build refuses a v4 file at
+its version gate ("needs a newer Varos") before any decode and can never drop the ids and save the loss.
+
+**Migration row.**
+
+| from → to | step | what it does |
+|---|---|---|
+| 3 → 4 | `format::migrate_v3_to_v4` | runs after the v3 canonical check; assigns ids to the artboards in order from the document id counter (raised to cover every id in use), raises the counter, clamps a stale `active` index into range; nothing else changes. v1/v2 files run their earlier steps first. The ordinary migration notice is shown; the file is untouched until Save. |
+
+**Contract additions.** Artboard ids are unique among artboards (structure), non-zero, and `active`
+names an artboard or is 0 on a free canvas (validation) — checked on load and on save. A file claiming
+format 1, 2 or 3 that carries an artboard `id` is refused (`Invalid::FieldNotInFormat`) by the
+keys-only scan, now extended into the artboard objects. Ids come from the same counter and lifetime
+high-water discipline as paths and nodes; `active` stays an index (a preference). Shipped with the
+bump: the named migration, frozen v4 fixtures (`fixtures/v4/`), six rejection fixtures
+(`refused/v5_future`, `future_v5_pdf`, `v3_artboard_id`, `artboard_duplicate_id`,
+`artboard_missing_id`, `active_out_of_range`), a frozen v3-reader gate in the old-reader harness, and
+the `docs/reference/VRS_FORMAT.md` update (§5, §6c, §12, §13).
+
+**Consequences.** Builds up to `a5f687b` (format 3) refuse every file this build saves. No
+downgrade-save. ADR-0010's text model, which planned "v4", now needs **v5** when it freezes its wire
+fields (its own rule: "Move current 'future v4' rejection fixtures to future v5 at implementation time"
+becomes v5 → v6).
+
 ## Status
 
 Accepted — product owner (Ahmed), 2026-09-24. Amended 2026-10-04 (format 3, board metadata — owner's
-Board decision in `START_V2_BOARDS.md`; the amendment itself awaits independent review).
+Board decision in `START_V2_BOARDS.md`; the amendment itself awaits independent review). Amended
+2026-10-07 (format 4, artboard ids — owner's Bridge "Instagram Story" ask; awaits independent review).
 
 **Number note:** 0008 is taken by this ADR because it is filed first. The MCP study (`docs/studies/2026-09-23-MCP_CONTROL_STUDY.md`) and the Online study (`docs/studies/2026-09-23-ONLINE_AND_MAC_STUDY.md`) also propose "ADR-0008"; they take the next free numbers when their ADRs are drafted.

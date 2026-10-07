@@ -1,4 +1,4 @@
-> **Status:** proposed — awaiting owner
+> **Status:** accepted — owner (Ahmed) 2026-10-07 («ماشي»); C1 commissioned after Bridge slice 3 (artboards)
 # ADR-0011: Bridge connection and trust — register once, attach safely
 
 **ملخص بالمصري**

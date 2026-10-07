@@ -72,6 +72,7 @@ fn masked_rotated() -> Document {
     let leaf3 = d.node_of_path(3).unwrap();
     d.set_node_xform(leaf3, Xform { rot: 0.5, piv: [170.0, 20.0] });
     d.sync_tree();
+    d.assign_artboard_ids(); // format 4: what every commit leaves behind
     d
 }
 fn boardless() -> Document {
@@ -118,7 +119,15 @@ fn blob_as(d: &Document, version: u32) -> Value {
     strip_board_keys(&mut v, version);
     v
 }
+/// What an older writer emitted: no artboard ids before format 4, no board metadata before format 3.
 fn strip_board_keys(v: &mut Value, version: u32) {
+    if version < 4 {
+        if let Some(boards) = v["doc"]["artboards"].as_array_mut() {
+            for b in boards {
+                b.as_object_mut().unwrap().remove("id");
+            }
+        }
+    }
     if version < 3 {
         if let Some(doc) = v["doc"].as_object_mut() {
             for key in ["name", "description", "tags"] {
@@ -126,6 +135,16 @@ fn strip_board_keys(v: &mut Value, version: u32) {
             }
         }
     }
+}
+/// `d` with the artboard ids and the id counter blanked: an older file migrated up gets fresh page
+/// ids, so a migrated document equals its source up to these two.
+fn same_but_ids(d: &Document) -> Document {
+    let mut d = d.clone();
+    d.ids = 0;
+    for a in &mut d.artboards {
+        a.id = 0;
+    }
+    d
 }
 fn dec_value(v: &Value) -> Result<varos_core::format::Loaded, LoadError> {
     dec(&v.to_string())
@@ -152,15 +171,15 @@ fn tiny(f: impl FnOnce(&mut Limits)) -> Limits {
 
 #[test]
 fn new_saves_write_the_current_format() {
-    // format 3 since 2026-10-04 (board metadata); this file's other checks keep their v2-era names
-    assert_eq!(FORMAT_VERSION, 3);
+    // format 4 since 2026-10-07 (artboard ids); this file's other checks keep their v2-era names
+    assert_eq!(FORMAT_VERSION, 4);
     assert_eq!(VRS_VERSION, FORMAT_VERSION, "the old constant is an alias");
     assert_eq!(MIN_READ_VERSION, 1);
     for (name, d) in corpus() {
         let s = enc(&d);
-        assert!(s.starts_with(r#"{"varos":3,"doc":{"#), "{name}: the wrapper says format 3, got {}", &s[..20]);
+        assert!(s.starts_with(r#"{"varos":4,"doc":{"#), "{name}: the wrapper says format 4, got {}", &s[..20]);
         assert_eq!(doc_to_blob(&d).unwrap(), s, "{name}: doc_to_blob delegates to encode_model");
-        assert_eq!(peek_version(s.as_bytes()), Ok(3));
+        assert_eq!(peek_version(s.as_bytes()), Ok(4));
     }
 }
 
@@ -179,7 +198,7 @@ fn v1_blob_migrates_and_reports_notice() {
             .unwrap();
     let l = decode_model(&legacy, None, &Limits::DEFAULT).expect("legacy v1 loads");
     assert!(l.migrated && l.doc.groups.is_empty() && l.doc.group_of.is_empty());
-    assert!(enc(&l.doc).starts_with(r#"{"varos":3,"#), "saving the migrated file writes the current format");
+    assert!(enc(&l.doc).starts_with(r#"{"varos":4,"#), "saving the migrated file writes the current format");
 }
 
 #[test]
@@ -197,10 +216,10 @@ fn v2_blob_loads_without_migration() {
 #[test]
 fn newer_version_refused_before_typed_decode() {
     // `"doc": 42` would be `Malformed` if the typed decode ran first
-    let e = dec(r#"{"varos":4,"doc":42}"#).unwrap_err();
-    assert_eq!(e, LoadError::NewerVersion { found: 4, supported: 3 });
+    let e = dec(r#"{"varos":5,"doc":42}"#).unwrap_err();
+    assert_eq!(e, LoadError::NewerVersion { found: 5, supported: 4 });
     let msg = e.to_string();
-    assert!(msg.contains("newer") && msg.contains("file format 4") && msg.contains("up to 3"), "{msg}");
+    assert!(msg.contains("newer") && msg.contains("file format 5") && msg.contains("up to 4"), "{msg}");
     // a newer version wins over an inconsistent container number too
     let e = decode_model(br#"{"varos":9999,"doc":{}}"#, Some(2), &Limits::DEFAULT).unwrap_err();
     assert!(matches!(e, LoadError::NewerVersion { found: 9999, .. }), "{e:?}");
@@ -295,9 +314,9 @@ fn explicit_empty_artboards_stays_boardless_v1_and_v2() {
 fn container_version_mismatch_refused() {
     let s = enc(&doc_with(1));
     let e = decode_model(s.as_bytes(), Some(1), &Limits::DEFAULT).unwrap_err();
-    assert_eq!(e, LoadError::VersionMismatch { container: 1, model: 3 });
-    assert!(e.to_string().contains("format 1") && e.to_string().contains("format 3"));
-    assert!(decode_model(s.as_bytes(), Some(3), &Limits::DEFAULT).is_ok());
+    assert_eq!(e, LoadError::VersionMismatch { container: 1, model: 4 });
+    assert!(e.to_string().contains("format 1") && e.to_string().contains("format 4"));
+    assert!(decode_model(s.as_bytes(), Some(4), &Limits::DEFAULT).is_ok());
     let v1 = blob_as(&doc_with(1), 1).to_string();
     assert!(decode_model(v1.as_bytes(), Some(1), &Limits::DEFAULT).is_ok(), "a v1 PDF with a v1 catalog");
     assert_eq!(
@@ -622,7 +641,10 @@ fn v1_masks_and_xform_preserved_through_migration() {
     let d = masked_rotated();
     let l = dec_value(&blob_as(&d, 1)).expect("v1 masked+rotated loads");
     assert!(l.migrated);
-    assert_eq!(l.doc, d, "roles, mask_child and xform survive the migration unchanged");
+    // the v3→v4 step gives the pages fresh ids from the counter; everything else is unchanged
+    assert_eq!(same_but_ids(&l.doc), same_but_ids(&d), "roles, mask_child and xform survive the migration unchanged");
+    let ids: Vec<u32> = l.doc.artboards.iter().map(|a| a.id).collect();
+    assert!(ids.windows(2).all(|w| w[0] < w[1]) && ids[0] > 0, "ids assigned in artboard order: {ids:?}");
     let clip = l.doc.nodes.iter().find(|n| n.role == GroupRole::Clip).expect("still a clip");
     assert!(clip.mask_child.is_some());
     assert!(l.doc.is_mask_source(2), "the mask still shapes the clip");

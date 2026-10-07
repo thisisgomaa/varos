@@ -35,6 +35,7 @@ fn sample() -> Editor {
     ed.doc.paths.push(sq(11, 110, 160.0, 10.0, 20.0));
     ed.doc.ids = 200;
     ed.doc.sync_tree();
+    ed.doc.assign_artboard_ids(); // format 4: pages carry stable ids
     ed.objsel.insert(10);
     ed
 }

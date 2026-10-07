@@ -6,7 +6,7 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use varos_core::{
-    bridge::TargetEdit,
+    bridge::{ArtboardError, ArtboardErrorCode, TargetEdit},
     editor::{AlignMode, AlignTarget, DistAxis, Editor, ZOrder},
     model::NodeKind,
     EditCommand,
@@ -53,6 +53,107 @@ fn clean_name(name: &str) -> Result<String, Error> {
     }
     Ok(name.to_owned())
 }
+/// `artboard:N` (canonical, N > 0) or a request-local bound to one, resolved to the stable id.
+fn artboard_ref(id: &str, locals: &BTreeMap<String, String>) -> Result<u32, Error> {
+    let id = if id.starts_with('$') {
+        locals.get(id).ok_or_else(|| Error::new("not_found", format!("unknown request-local {id}")))?.as_str()
+    } else {
+        id
+    };
+    id.strip_prefix("artboard:")
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|n| *n > 0 && format!("artboard:{n}") == id)
+        .ok_or_else(|| fail(format!("{id} is not an artboard; use artboard:N or a request-local bound to one")))
+}
+fn artboard_error(e: ArtboardError) -> Error {
+    Error::new(
+        match e.code {
+            ArtboardErrorCode::NotFound => "not_found",
+            ArtboardErrorCode::LockedTarget => "locked_target",
+            ArtboardErrorCode::InvalidArgument => "invalid_argument",
+            ArtboardErrorCode::LimitExceeded => "limit_exceeded",
+        },
+        e.reason,
+    )
+}
+/// The page verbs (slice 3). Identity is the stable artboard id; the active page never changes as a
+/// side effect (see `Editor::artboard_delete` for the active-artboard rule).
+fn apply_artboard_op(
+    ed: &mut Editor,
+    op: &Operation,
+    locals: &mut BTreeMap<String, String>,
+    affected: &mut BTreeSet<String>,
+) -> Result<(), Error> {
+    match op {
+        Operation::AddArtboard { bounds, preset, origin, name, local } => {
+            if let Some(local) = local {
+                local_name(local)?;
+                if locals.contains_key(local) {
+                    return Err(fail("duplicate request-local name"));
+                }
+            }
+            let rect = match (bounds, preset) {
+                (Some(b), None) => {
+                    if origin.is_some() {
+                        return Err(fail("origin goes with preset; bounds already place the artboard"));
+                    }
+                    *b
+                }
+                (None, Some(p)) => {
+                    let p = varos_core::board::preset(match p {
+                        ArtboardPreset::Square => varos_core::board::PresetId::Square,
+                        ArtboardPreset::Portrait => varos_core::board::PresetId::Portrait,
+                        ArtboardPreset::Story => varos_core::board::PresetId::Story,
+                        ArtboardPreset::A4 => varos_core::board::PresetId::A4,
+                    });
+                    let ppi = ed.doc.units.ppi;
+                    let (w, h) = (p.w * p.unit.pt_per(ppi), p.h * p.unit.pt_per(ppi));
+                    let [x, y] = origin.unwrap_or_else(|| ed.artboard_next_origin());
+                    [x, y, w, h]
+                }
+                _ => return Err(fail("add_artboard needs exactly one of bounds or preset")),
+            };
+            let name = name.as_ref().map(|n| clean_name(n)).transpose()?;
+            let id = ed.artboard_add(rect, name).map_err(artboard_error)?;
+            bind(locals, local, format!("artboard:{id}"))?;
+        }
+        Operation::ResizeArtboard { id, bounds } => {
+            ed.artboard_set_rect(artboard_ref(id, locals)?, *bounds).map_err(artboard_error)?
+        }
+        Operation::RenameArtboard { id, name } => {
+            let name = clean_name(name)?;
+            ed.artboard_rename(artboard_ref(id, locals)?, name).map_err(artboard_error)?
+        }
+        Operation::DeleteArtboard { id } => {
+            let id = artboard_ref(id, locals)?;
+            affected.insert(format!("artboard:{id}"));
+            ed.artboard_delete(id).map_err(artboard_error)?
+        }
+        Operation::SetActiveArtboard { id } => {
+            ed.artboard_set_active(artboard_ref(id, locals)?).map_err(artboard_error)?
+        }
+        _ => unreachable!("not a page verb"),
+    }
+    Ok(())
+}
+/// DEPRECATED (slice 3, kept for one slice): the revision-bound `aI@rev` reference of slice 1/2. It
+/// names the page at index I of revision `rev` and is valid only when `rev` is the request's revision;
+/// it resolves against the staged document, so the service refuses it in any batch that also has a
+/// page verb (review P2: an earlier delete would otherwise retarget it). Use `artboard:N` instead.
+fn legacy_artboard_ref(target: &str, original_rev: u64) -> Result<usize, Error> {
+    let (index, rev) = target.strip_prefix('a').and_then(|s| s.split_once('@')).ok_or_else(|| {
+        fail("align target must be selection, artboard:N, an artboard request-local, or the deprecated aN@revision")
+    })?;
+    let index = index.parse::<usize>().map_err(|_| fail("invalid artboard reference"))?;
+    let rev = rev.parse::<u64>().map_err(|_| fail("invalid artboard revision"))?;
+    if format!("a{index}@{rev}") != target {
+        return Err(fail("artboard reference must be canonical"));
+    }
+    if rev != original_rev {
+        return Err(Error::new("revision_conflict", "artboard reference is revision-bound"));
+    }
+    Ok(index)
+}
 fn whole_units(ed: &Editor, paths: &[u32]) -> Result<Vec<u32>, Error> {
     let chosen: BTreeSet<_> = paths.iter().copied().collect();
     let units: BTreeSet<_> = paths.iter().filter_map(|p| ed.doc.unit_of(*p)).collect();
@@ -71,6 +172,16 @@ pub(crate) fn apply_design_op(
     expanded: &mut usize,
     affected: &mut BTreeSet<String>,
 ) -> Result<(), Error> {
+    if matches!(
+        op,
+        Operation::AddArtboard { .. }
+            | Operation::ResizeArtboard { .. }
+            | Operation::RenameArtboard { .. }
+            | Operation::DeleteArtboard { .. }
+            | Operation::SetActiveArtboard { .. }
+    ) {
+        return apply_artboard_op(ed, op, locals, affected);
+    }
     let ids = op
         .ids()
         .iter()
@@ -314,18 +425,16 @@ pub(crate) fn apply_design_op(
                         if target.eq_ignore_ascii_case("auto") {
                             return Err(Error::new("unsupported", "Auto alignment is not enabled"));
                         }
-                        let (index, rev) =
-                            target.strip_prefix('a').and_then(|s| s.split_once('@')).ok_or_else(|| {
-                                fail("align target must be selection or aN@revision; Auto is unsupported")
-                            })?;
-                        let index = index.parse::<usize>().map_err(|_| fail("invalid artboard reference"))?;
-                        let rev = rev.parse::<u64>().map_err(|_| fail("invalid artboard revision"))?;
-                        if format!("a{index}@{rev}") != *target {
-                            return Err(fail("artboard reference must be canonical"));
-                        }
-                        if rev != original_rev {
-                            return Err(Error::new("revision_conflict", "artboard reference is revision-bound"));
-                        }
+                        let index = if target.starts_with("artboard:") || target.starts_with('$') {
+                            // slice 3: the stable id (or a request-local bound to one) — resolved in
+                            // the staged document, so a page added earlier in this batch is a target
+                            let id = artboard_ref(target, locals)?;
+                            ed.doc
+                                .artboard_index(id)
+                                .ok_or_else(|| Error::new("not_found", format!("unknown artboard:{id}")))?
+                        } else {
+                            legacy_artboard_ref(target, original_rev)?
+                        };
                         let a =
                             ed.doc.artboards.get(index).ok_or_else(|| Error::new("not_found", "unknown artboard"))?;
                         if a.hidden || a.locked {

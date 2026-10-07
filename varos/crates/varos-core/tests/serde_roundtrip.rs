@@ -68,12 +68,13 @@ fn sample_doc() -> Document {
         nodes: vec![],
         roots: vec![],
         active_layer: 0,
-        ids: 100,
+        ids: 102,
         // non-default units + a MULTI-artboard set, so the round-trip exercises every new field:
         // a square white page with bleed + clip, and a transparent page (page_color = None).
         units: DocUnits { ppi: 96.0, display: Unit::Mm },
         artboards: vec![
             Artboard {
+                id: 101, // stable artboard id (format 4)
                 x: 0.0,
                 y: 0.0,
                 w: 800.0,
@@ -86,6 +87,7 @@ fn sample_doc() -> Document {
                 locked: false,
             },
             Artboard {
+                id: 102,
                 x: 900.0,
                 y: 0.0,
                 w: 1080.0,

@@ -185,16 +185,34 @@ mod tests {
     }
     #[test]
     fn snapshot_worker_replies_with_captured_revision_after_human_edit() {
+        snapshot_worker_pins_revision(false);
+    }
+
+    #[test]
+    fn page_snapshot_worker_replies_with_captured_revision_after_human_edit() {
+        snapshot_worker_pins_revision(true);
+    }
+
+    fn snapshot_worker_pins_revision(page: bool) {
         initialize("epoch".into());
         let mut ws = Workspace::new();
+        let artboard = if page {
+            let mut doc = ws.active().unwrap().editor.doc.clone();
+            let id = doc.nid();
+            doc.artboards.push(varos_core::model::Artboard { id, w: 1080.0, h: 1920.0, ..Default::default() });
+            ws.active_mut().unwrap().editor.replace_doc(doc);
+            Some(format!("artboard:{id}"))
+        } else {
+            None
+        };
         let board = format!("b{}", ws.active_id().unwrap().0);
         let rev = ws.active().unwrap().editor.rev;
         let before = ws.active().unwrap().editor.doc.clone();
-        let req = varos_bridge::mcp::decode_tool(
-            "snapshot",
-            serde_json::json!({"board":board,"rev":rev,"width":80,"height":40}),
-        )
-        .unwrap();
+        let mut args = serde_json::json!({"board":board,"rev":rev,"width":80,"height":40});
+        if let Some(id) = &artboard {
+            args["artboard"] = serde_json::json!(id);
+        }
+        let req = varos_bridge::mcp::decode_tool("snapshot", args).unwrap();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let mut fields = Fields { valid: true, commit: true };
         let ran = run(
@@ -223,7 +241,17 @@ mod tests {
         assert!(reply.ok, "{reply:?}");
         assert_eq!(reply.board, Some(board));
         assert_eq!(reply.rev, Some(rev));
-        assert_eq!(reply.result.unwrap()["rev"], rev);
+        let result = reply.result.unwrap();
+        assert_eq!(result["rev"], rev);
+        if let Some(id) = artboard {
+            assert_eq!(result["artboard"], id);
+            assert_eq!(result["preview"], "CPU page preview");
+            assert_eq!(result["width"], 23);
+            assert_eq!(result["height"], 40);
+        } else {
+            assert_eq!(result["width"], 80);
+            assert_eq!(result["height"], 40);
+        }
         assert!(ws.active().unwrap().editor.rev > rev);
     }
 
