@@ -1,13 +1,20 @@
-//! Bounded paragraph cache experiment, with stable prefix/suffix identities.
-//! Edited paragraphs currently reflow in full; line convergence is not claimed.
+//! Bounded paragraph cache with stable prefix/suffix identities. Each paragraph
+//! keeps a text-revision analysis and fitted lines (`converge`); an edited
+//! paragraph re-fits only from its first affected line until line starts converge.
+use crate::converge::{Cancel, ParagraphState, WorkCounters};
 use crate::*;
 use std::ops::Range;
+use std::rc::Rc;
 #[derive(Clone, Debug, Default)]
 pub struct Counters {
+    /// Paragraphs whose cached layout was reused unchanged.
     pub hits: usize,
+    /// Paragraphs that needed any layout work (incremental, width refit or full).
     pub reshaped: usize,
     pub evicted: usize,
     pub cache_bytes: usize,
+    /// Fine-grained work inside the updated paragraphs.
+    pub work: WorkCounters,
 }
 #[derive(Clone, PartialEq)]
 struct Key {
@@ -19,7 +26,8 @@ struct Entry {
     revision: u64,
     text: String,
     key: Option<Key>,
-    layout: Option<Layout>,
+    state: Option<Rc<ParagraphState>>,
+    bytes: usize,
 }
 pub struct Incremental {
     engine: Engine,
@@ -58,18 +66,29 @@ impl Incremental {
         self.entries.iter().map(|e| e.id).collect()
     }
     /// Cancellation/refusal leaves source and paragraph cache identities unchanged.
-    /// Cancellation is checked at paragraph boundaries; this is not an 8ms slice guarantee.
+    /// `cancel` is polled cooperatively inside analysis, shaping, line fitting and
+    /// output assembly (see `Counters::work.cancel_checks`); nothing is published
+    /// and no cached state is mutated before the final commit.
     pub fn layout(&mut self, r: &Request<'_>, cancel: impl Fn() -> bool) -> Result<Layout, &'static str> {
-        if cancel() {
-            return Err("cancelled");
-        }
+        let mut cancel = Cancel::new(&cancel);
+        let result = self.layout_inner(r, &mut cancel);
+        cancel.finish();
+        self.counters.work.cancel_checks = cancel.checks;
+        (self.counters.work.max_poll_gap_ms, self.counters.work.max_poll_gap_at) = cancel.max_gap();
+        self.counters.work.stretches = std::mem::take(&mut cancel.stretches);
+        result
+    }
+    fn layout_inner(&mut self, r: &Request<'_>, cancel: &mut Cancel<'_>) -> Result<Layout, &'static str> {
+        cancel.check("doc_entry")?;
         if r.text.len() > 1_048_576 {
             return Err("resource limit");
         }
         // Validate complete source ranges before clipping them to paragraphs.
         // Invalid remote style/language ranges must not disappear on a cache hit.
         crate::engine::validate_request(r)?;
+        cancel.check("doc_validate")?;
         let texts = paragraphs(r.text);
+        cancel.check("doc_paragraphs")?;
         let mut prefix = 0;
         while prefix < texts.len() && prefix < self.entries.len() && texts[prefix] == self.entries[prefix].text {
             prefix += 1;
@@ -86,9 +105,7 @@ impl Incremental {
         let mut offset = 0;
         self.counters = Counters::default();
         for (i, text) in texts.iter().enumerate() {
-            if cancel() {
-                return Err("cancelled");
-            }
+            cancel.check("paragraph")?;
             let old_index = if i < prefix {
                 Some(i)
             } else if i >= texts.len() - suffix {
@@ -143,20 +160,21 @@ impl Incremental {
             let rev = old_index.map_or(0, |j| self.entries[j].revision + u64::from(self.entries[j].text != *text));
             let key = Key { revision: rev, settings };
             let hit =
-                old_index.filter(|j| self.entries[*j].key.as_ref() == Some(&key) && self.entries[*j].layout.is_some());
-            let layout = if let Some(j) = hit {
+                old_index.filter(|j| self.entries[*j].key.as_ref() == Some(&key) && self.entries[*j].state.is_some());
+            let (state, bytes) = if let Some(j) = hit {
                 self.counters.hits += 1;
-                self.entries[j].layout.as_ref().unwrap().clone()
+                (self.entries[j].state.clone().unwrap(), self.entries[j].bytes)
             } else {
                 self.counters.reshaped += 1;
-                self.engine.layout(&req)?
+                let old = old_index.and_then(|j| self.entries[j].state.as_deref());
+                let state = ParagraphState::layout(&mut self.engine, old, &req, cancel, &mut self.counters.work)?;
+                let bytes = state.bytes();
+                (Rc::new(state), bytes)
             };
-            pending.push((old_index, key, layout));
+            pending.push((old_index, key, state, bytes));
             offset += text.len();
         }
-        if cancel() {
-            return Err("cancelled");
-        }
+        cancel.check("combine")?;
         let mut combined = Layout {
             source: r.text.into(),
             lines: vec![],
@@ -169,8 +187,8 @@ impl Incremental {
         let mut top = 0.;
         let mut new_entries = Vec::new();
         let count = pending.len();
-        for (i, (old, key, layout)) in pending.into_iter().enumerate() {
-            let mut local = layout.clone();
+        for (i, (old, key, state, state_bytes)) in pending.into_iter().enumerate() {
+            let mut local = state.output(cancel)?;
             if i + 1 < count && local.lines.last().is_some_and(|l| l.range.is_empty()) {
                 local.lines.pop();
                 local.carets.retain(|c| c.line < local.lines.len());
@@ -189,10 +207,14 @@ impl Incremental {
                 top += (line.ascent + line.descent).max(r.size * 1.4);
                 combined.lines.push(line);
             }
-            for mut c in local.carets {
+            cancel.check("combine_lines")?;
+            for (k, mut c) in local.carets.into_iter().enumerate() {
                 c.byte += offset;
                 c.line += line_offset;
                 combined.carets.push(c);
+                if k % 65536 == 65535 {
+                    cancel.check("combine_carets")?;
+                }
             }
             for issue in local.issues {
                 combined.issues.push(match issue {
@@ -205,6 +227,7 @@ impl Incremental {
                 });
             }
             combined.levels.extend(local.levels);
+            cancel.check("combine_levels")?;
             let id = old.map_or_else(
                 || {
                     let id = self.next_id;
@@ -213,22 +236,32 @@ impl Incremental {
                 },
                 |j| self.entries[j].id,
             );
-            let bytes = layout_bytes(&layout) + key.settings.capacity() + std::mem::size_of::<Key>();
+            let bytes = state_bytes + key.settings.capacity() + std::mem::size_of::<Key>();
             let keep = self.counters.cache_bytes + bytes <= self.limit;
             if keep {
                 self.counters.cache_bytes += bytes;
             } else {
                 self.counters.evicted += 1;
             }
+            let state = if keep {
+                Some(state)
+            } else {
+                // Dropping an over-budget paragraph state is itself sliced work.
+                drop(state);
+                cancel.check("evict_drop")?;
+                None
+            };
             new_entries.push(Entry {
                 id,
                 revision: key.revision,
                 text: texts[i].into(),
                 key: keep.then_some(key),
-                layout: keep.then_some(layout),
+                state,
+                bytes: state_bytes,
             });
             offset += texts[i].len();
         }
+        cancel.check("bounds")?;
         // Bounds use the engine's outline cache; translated placement is authoritative.
         combined.ink_bounds = self.engine.bounds_for(&combined.lines)?;
         self.entries = new_entries;
