@@ -71,7 +71,7 @@ Look at Varos: both objects should move/recolour together. Press **⌘Z once** w
 
 MCP is UTF-8 newline JSON-RPC 2.0 on stdio, with protocol revision **2025-06-18**. Stdout is protocol only. `initialize` and `notifications/initialized` precede tools. It returns both `structuredContent` and the shared compact text projection; consume one representation. Tool failures have `isError: true` and the same ADR error payload as CLI. JSON-RPC framing/method errors are separate; unknown tool names return `-32602`. Cancelled requests receive no MCP response. EOF requests cancellation and waits at most 500 ms for the worker; it does not reverse any published edit.
 
-`capabilities {"api":"1.0"}` reports the launch epoch, proxy client identity, actual enabled verbs and limits. Different Bridge API versions are refused before editing. Unknown fields/variants are refused, including model-supplied `confirm`, `allow_history`, `allow_destructive`, filesystem destinations and unsupported edit verbs. MCP input schemas are complete for this slice. Wire DTOs do not expose `EditCommand` or `AppCommand`.
+`capabilities {"api":"1.0"}` reports the launch epoch, proxy client identity, actual enabled verbs and limits. Different Bridge API versions are refused before editing. Unknown fields/variants are refused, including model-supplied `confirm`, `allow_history`, `allow_destructive`, filesystem destinations inside edit batches and unsupported edit verbs. MCP input schemas are complete for this slice. Wire DTOs do not expose `EditCommand` or `AppCommand`.
 
 `describe {"board":"b2"}` returns a small header, counts, outline bounds, up to 20 artboards and a bounded selection preview. `fields` with `bounds`, `paint`, `parent`, `name`, `state`, `geometry` requests object details; omit `ids` for paint-order pagination. Explicit detail IDs are capped at 1,000, each page at 100 objects / 16 KiB readable text. Repeat the same query with its cursor; a changed revision/query returns `resync_required`. `fields:["metadata"]` reads board metadata only; `fields:["artboards"]` reads paginated page properties. Each page has a persistent `id` such as `artboard:7` (format 4: it survives edits, undo/redo and save/reopen; a new page never reuses a removed page's id) plus its current `index`; the summary and receipts name the `active_artboard`. The old revision-bound `ref` (`a0@12`, valid only at revision 12) is still returned and accepted as an `align` target for **one more slice** — it is deprecated; use `artboard:N`. `settings_digest` records settings changes without exposing an internal enum schema.
 
@@ -93,7 +93,7 @@ A creation may supply `"local":"$a"`; `group` may supply `"local":"$poster"`. Th
 
 | Verb | Operation fields and behavior |
 |---|---|
-| `add_shape` | `kind: "rect"` or `"ellipse"`, `bounds: [x,y,width,height]` with positive finite dimensions; optional `parent`, `insert`, `local`, `name`, `fill`, `stroke`, `stroke_width`, `opacity`. Ellipses use the existing four cubic anchors/handles. Plain rectangles use four corner anchors. The current model has no corner radius. With stroke as the only paint, `stroke_width` must be > 0; omitted or zero width returns `invalid_argument: stroke_width must be > 0 when stroke is the only paint`. |
+| `add_shape` | `kind: "rect"` or `"ellipse"`, `bounds: [x,y,width,height]` with positive finite dimensions; optional `parent`, `insert`, `local`, `name`, `fill`, `stroke`, `stroke_width`, `opacity`. Ellipses use the existing four cubic anchors/handles. Plain rectangles use four corner anchors. Optional rect `radius` creates an eight-anchor cubic path; the model has no live corner-radius primitive. With stroke as the only paint, `stroke_width` must be > 0; omitted or zero width returns `invalid_argument: stroke_width must be > 0 when stroke is the only paint`. |
 | `resize` | `ids`, `bounds: [x,y,width,height]`. Explicit top-left anchor, unconstrained proportions. For one rotated unit, width/height are local dimensions and x/y locate the world bounding-box top-left; several units use world bounds, matching the core. Degenerate bounds and requests that would trigger the core's minimum-size/scale clamp are refused. |
 | `rotate` | `ids`, `degrees` (absolute finite degrees for each complete object/group, including mixed rotations; partial-group targets are refused with `unsupported` and the alternative `rotate the whole group node:N`). |
 | `rename` | `ids`, `name`; dispatches path/leaf-node/container identities to the correct core command. |
@@ -110,9 +110,9 @@ A creation may supply `"local":"$a"`; `group` may supply `"local":"$poster"`. Th
 | `delete_artboard` | `id`. Removes the page only; its artwork stays (a floater, or on the other pages it overlaps). Destructive: needs the confirmation below. **Active rule:** deleting the active page while other pages remain is refused — put `set_active_artboard` for another page earlier in the same batch; deleting the last page leaves a free canvas. Locked pages are refused. |
 | `set_active_artboard` | `id`. Makes the page the active one (where the human's panel/export "active artboard" points). Navigation, not content: alone it creates no undo step and no new revision; the receipt and `describe` show `active_artboard`. The human's artboard multi-selection is re-pointed to it. |
 
-Page verbs address pages only by `artboard:N` or a request-local bound to one; an `artboard:` id in an object `ids` list is refused (pages are not objects). No page verb changes the active page as a side effect, and the human's artboard multi-selection is carried across insertions/removals by id. Reorder, duplicate and page colour/clip/bleed edits are not in this slice (`capabilities.unsupported`).
+Page verbs address pages only by `artboard:N` or a request-local bound to one; an `artboard:` id in an object `ids` list is refused (pages are not objects). No page verb changes the active page as a side effect, and the human's artboard multi-selection is carried across insertions/removals by id. Reorder, duplicate and page colour/clip edits are supported. Page bleed edits remain unsupported (`artboard_bleed` in `capabilities.unsupported`).
 
-Resize and move accept explicit leaf paths inside a group and leave siblings unchanged; group outline bounds follow the changed leaves. Partial resize of a rotated group is refused because core has no independent local size frame for the leaf: use `move` for placement, or `resize` with the whole group node ID. Partial-group rotate is refused because core has no independent absolute leaf angle; rotate the whole group `node:N` instead, matching the desktop Rotate tool's whole-group behavior. Whole-group transforms retain their existing live absolute-angle semantics. Align/group/order and deletion still require complete units. Layer IDs remain supported for ordinary move/paint/rename and describe; structural layer mutations are refused. No `add_path` is included in this slice: safe anchor allocation/creation and its additional geometry schema are deferred. `capabilities.unsupported` lists this and the other deferred operations.
+Resize and move accept explicit leaf paths inside a group and leave siblings unchanged; group outline bounds follow the changed leaves. Partial resize of a rotated group is refused because core has no independent local size frame for the leaf: use `move` for placement, or `resize` with the whole group node ID. Partial-group rotate is refused because core has no independent absolute leaf angle; rotate the whole group `node:N` instead, matching the desktop Rotate tool's whole-group behavior. Whole-group transforms retain their existing live absolute-angle semantics. Align/group/order and deletion still require complete units. Layer IDs remain supported for ordinary move/paint/rename and describe; structural layer mutations are refused. Slice 4 adds `add_path` and radius geometry (documented below). `capabilities.unsupported` lists only remaining deferred operations.
 
 ## Moderator poster batch
 
@@ -189,7 +189,7 @@ printf '%s\n' '{"board":"b1","rev":2,"width":544,"height":246}' | \
   --output /explicit/path/poster-preview.png --json
 ```
 
-The destination is a CLI-local option, never a host wire field or a desktop filesystem grant. MCP takes no destination. Use actual receipt revision and allocated IDs in both examples.
+The destination is a CLI-local option, never a host wire field or a desktop filesystem grant. The `snapshot` MCP tool takes no destination. Slice-4 file tools have separately authorized host destinations. Use actual receipt revision and allocated IDs in both examples.
 
 ## Temporary owner destructive grant — optional
 
@@ -227,3 +227,74 @@ cargo test -p varos-bridge --test contracts -- --ignored
 C1 headless tests (`tests/connection.rs`) cover the registry (round trip, permissions, stale/pid-reuse cleanup, forged and symlinked entries), deterministic selection, the handshake (happy path, wrong host/agent key, replayed nonce, epoch mismatch, downgrade), pairing → approve → revoke → refused, bounded pending requests, scope parsing, trust-store read failure, the owning-thread recheck, locked credential store, per-client profiles, a changed host key asking again, one profile per client under concurrent first use (approved profile preferred), the deferred host-key load (never blocks start; refusal reported once), FIFO-safe private reads, the `--attach auto` state machine on a fake registry, and the real `varos-bridge mcp` binary initializing and answering `host_not_running` with no Varos. The macOS Keychain itself is **not** exercised by the automatic tests (they use an in-memory store); `cargo test -p varos-bridge --lib keychain -- --ignored` writes and deletes one throwaway Keychain item. Keychain prompts after rebuilds/re-signing and behaviour across app upgrades are the open C1 signing gate.
 
 Then perform Ahmed's window exercise above. Kernel peer-uid checks, real socket lifecycle and the owner window remain separate from the passing fake-host proof. No merge, installation or owner acceptance is claimed.
+
+## Slice 4: paths, rounded rectangles, page ordering/copies and files
+
+`add_path` accepts `anchors:[{p:[x,y],hin?:[x,y],hout?:[x,y],smooth?:bool}]`, `closed`,
+and the same explicit paint/parent/name/local options as `add_shape`. Handles are absolute document
+points. All coordinates must be finite; 2–1,000 anchors per path. `add_shape` rect accepts optional
+`radius` from 0 through half the shorter dimension. This creates editable cubic path geometry
+(eight tangent anchors), not a rectangle with a live radius property. Ellipse radius is refused.
+
+Page verbs also include `reorder_artboard {id,position}` (zero-based),
+`duplicate_artboard {id,with_art,offset?,local?}` (relative world delta; default right by page width
+plus desktop gap), `set_artboard_color {id,color}` (`#RRGGBBAA` or null), and
+`set_artboard_clip {id,clip}`. Duplication inserts after the source, returns a fresh page ID and
+keeps the active page. `with_art:true` uses desktop overlap membership and preserves copy groups,
+clipping masks, transforms and layers; locked/hidden artwork is treated exactly as desktop duplication.
+Copies share no path/node/anchor identities with their sources. Page edits are in the atomic edit batch.
+
+`describe {fields:["selection"]}` paginates deliberate current selection. `list_boards` includes
+`dirty` and `backing_file` (filename only, null for untitled sessions).
+
+File tools need an owner-granted `files` scope (default OFF, old profiles remain OFF):
+
+```text
+varos-cli bridge pair --approve <request-id> --scopes read,edit,files
+```
+
+The owner launches the desktop with `VAROS_BRIDGE_FILE_ROOTS=/absolute/output/folder:/another/folder`.
+This is a temporary launch setting, not a request argument or a UI feature. Each directory must
+already exist. `save` uses only the CURRENT `.vrs` backing file and refuses a changed/unreadable
+external fingerprint. `save_as {path}` writes a fresh `.vrs` destination; `export_pdf {path,scope}`
+writes pure PDF. Export scopes: `all_visible_artboards`, visible `artboard:N`, or `artwork_bounds`
+for a free canvas. Both explicit-path tools require an absolute path inside an owner root, refuse
+backing-file aliases and existing destinations, and prevent symlink/changed-parent escapes. There
+is no overwrite confirmation route in this slice: choose a fresh filename. macOS writers also
+refuse non-local volumes. Windows hosting remains unsupported; the code is compilation-tested.
+
+These are standalone requests with `api`, `board`, `expected_rev`, and monotonic `request_id`.
+They cannot be mixed into an edit batch. All filesystem inspection, encoding and durable writing
+use the desktop I/O worker; no inline fallback. An acceptance receipt contains `accepted:true`
+and `ticket`; it does not prove a write. Poll `request_status {request_id}` for pending/completed
+and the completion receipt. Path-policy refusals arrive in that completion. A completed save says
+`durable:true`, or `durable:false` when replacement succeeded but durability was unconfirmed;
+the latter keeps the board dirty. Later human edits remain dirty after the captured snapshot saves.
+File completion never opens a dialog. Accepted request retries reuse the ticket instead of writing twice.
+
+### Second example: logo mark, rounded label, then export to a granted folder
+
+Use the returned live board/revision; the creation request below is the new frozen logo fixture
+(`tests/fixtures/logo-request-1.0.json`, result alongside it). For a fresh rev-0 board:
+
+```json
+{"api":"1.0","request_id":"r1","board":"b1","expected_rev":0,"ops":[
+  {"verb":"add_path","anchors":[{"p":[20,20]},{"p":[60,20],"hout":[80,20]},{"p":[80,60],"hin":[80,40]},{"p":[20,60]}],"closed":true,"fill":"#141313FF","local":"$mark"},
+  {"verb":"add_shape","kind":"rect","bounds":[100,20,100,40],"radius":10,"fill":"#FF6600FF","local":"$label"}
+]}
+```
+
+Send that via `edit` (MCP) or `varos-cli bridge edit --request-file logo.json --json`. Creation is
+one undo step and returns both path IDs. Then, on the returned revision, send `export_pdf`:
+
+```json
+{"api":"1.0","request_id":"r2","board":"b1","expected_rev":1,"path":"/absolute/output/folder/logo.pdf","scope":"artwork_bounds"}
+```
+
+After acceptance, send `request_status {"request_id":"r2"}` until completed and check the receipt's
+`ok` and `exported`. Export is a separate file effect with zero undo steps. The folder must be in
+the owner's launch roots, the filename fresh, and the agent must have `files` scope.
+
+Slice 4 review amendment: save_as writes a copy; the board stays on its current file (owner may widen later). Its dirty state and Recent entries stay unchanged. Destinations require an absolute filename, `.vrs` for save_as or `.pdf` for export_pdf (case-insensitive), and no dot-prefixed components. Protected system roots, ~/Library and the running app bundle are refused. Roots are logged to the owner at startup; capabilities exposes only `files_roots_granted: bool`.
+
+File completion codes: `save_conflict` means a fingerprint mismatch or an existing destination (including a publication race); other IO failures use `io_error`; denied grants/destinations use `scope_refused`. request_status returns the failed completion receipt. Missing or expired results return `not_found`, never indefinite pending. Completion audit entries contain verb, board, ticket and result code, without paths.

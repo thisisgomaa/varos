@@ -1,3 +1,65 @@
+# Slice 4 verification — 2026-10-07
+
+Implemented locally on `feat/bridge-slice4`, based on `9058ab5`. No commit, push, merge, GUI,
+osascript, installation, `/Applications` write, network access or real Keychain write. Cargo build,
+test and lint commands used `--offline -j 2`; format and dependency checks made no network calls.
+No ratchet ceilings or existing frozen fixture bytes were changed.
+
+## Changes (paths relative to `varos/crates/`)
+
+- `varos-core/src/command.rs:27`, `:403` and `bridge.rs:110`: checked `AddPath`, finite explicit
+  points/handles, 2–1,000 anchors, fresh high-water IDs, existing parent/paint validation.
+- `varos-bridge/src/design.rs:305`, `:580`: creation and rounded-rect cubics, request-local names,
+  radius refusal rules; rounded rectangles are editable paths without a live radius property.
+- `varos-core/src/bridge.rs:938`: reorder/duplicate/color/clip; `editor.rs:2453` shares desktop
+  artwork duplication, and desktop duplicate now assigns a fresh page ID. Active page follows ID.
+- `varos-bridge/src/{dto,mcp,lib,service}.rs`: standalone save/save_as/export tools, complete
+  schemas/capabilities, selection detail and filename-only list metadata. `conn/trust.rs:25` and
+  `ipc.rs`: files scope defaults OFF, owner approval parsing/intersection/rechecks include it.
+- `varos-app/src/bridge_host.rs:59`, `file_jobs.rs:176`, `lifecycle.rs:413`, `file_ports.rs:308`:
+  worker submission without inline fallback, accepted ticket/status, pinned document snapshot,
+  successful checkpoint and truthful durability; no completion dialogs/field settling.
+- `varos-bridge/src/files.rs:9`, `varos-app/src/bridge_fs.rs:16`: canonical root/backing-alias
+  policy; pinned no-follow directory traversal, parent identity recheck, fresh-file publication
+  without overwrite, current-file fingerprint checks, worker/pre-publication scope rechecks and
+  Mac local-volume check. Launch roots are temporary owner policy; eight pending file jobs maximum.
+- `varos-bridge/tests/contracts.rs:2117`, `tests/artboards.rs:503`, new logo fixtures: indexed
+  rollback, path/radius validation, fresh identities after undo, page properties, schema completeness,
+  fake-host save tickets, new frozen adapter parity and actual MCP stdio. Core/app tests cover
+  nonfinite handles, pinned-directory/destination races, revocation, save/reopen, pure PDF and the
+  saved-snapshot checkpoint while later human edits remain dirty. Old poster/story fixtures pass.
+- `varos-bridge/README.md:231`, `:275`: new verbs, files policy and second logo/export example;
+  ADR-0009/0011 have dated implementation amendments.
+
+## Final gates
+
+| Gate | Result |
+|---|---|
+| `cargo test --offline -j 2 --workspace` | **1,255 passed, 0 failed, 16 ignored**, 72 result lines |
+| `cargo clippy --offline -j 2 --workspace --all-targets -- -D warnings` | PASS |
+| `cargo fmt --all --check` | PASS |
+| `cargo clippy --offline -j 2 --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings` | PASS (compilation only) |
+| `python3 ../tools/check_dep_directions.py` | PASS |
+| `cargo test --offline -j 2 -p varos-bridge --test contracts -- --ignored` | **0 passed, 4 failed**, exit 101: all listener binds refused with EPERM |
+
+Five gates pass; the sixth is sandbox-blocked native IPC, not a pass. The four socket tests were
+attempted unchanged. `git diff --check` passes. Logs use `/tmp/bridge-slice4-` with suffixes
+`workspace-tests.log`, `clippy-native.log`, `clippy-windows.log`, `fmt.log`,
+`dep-directions.log`, and `sockets.log`.
+
+## Limits / unverified
+
+- Native attachment, peer credentials, real attached CLI/MCP behavior and socket lifecycle remain
+  unverified because this sandbox denies Unix listener bind. No test was weakened.
+- Live desktop appearance, UI responsiveness and owner hand-testing were not performed (GUI forbidden).
+  Windows runtime/file hosting remains unsupported; only target compilation is verified.
+- Explicit destinations must be fresh filenames inside existing owner roots. Existing-file overwrite
+  is refused under ADR-0009 §8; no exact overwrite-confirmation ceremony was added. Worker path/policy
+  refusals are completion receipts, so `accepted` alone does not imply a write.
+- No independent review, merge, installed build or owner acceptance is claimed.
+
+---
+
 # Slice 3 / slice-2 follow-ups merge resolution — 2026-10-07
 
 Resolved in `fix/bridge-slice2-followups`, merging main `8fd8659` into follow-ups `e5dc666`. The reports below are historical, retained newest slice first: slice 3, slice-2 follow-ups, original slice 2.

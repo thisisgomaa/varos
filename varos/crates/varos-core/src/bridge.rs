@@ -46,7 +46,13 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
     if matches!(
         command,
-        AddShape { .. } | GroupSelection | Boolean(_) | Paste { .. } | DuplicateMoveLayer { .. } | DuplicateArtboard(_)
+        AddPath { .. }
+            | AddShape { .. }
+            | GroupSelection
+            | Boolean(_)
+            | Paste { .. }
+            | DuplicateMoveLayer { .. }
+            | DuplicateArtboard(_)
     ) {
         // Reserve an entire format-sized arena before an allocating edit. Existing allocators use
         // u32 ids; refusing near exhaustion is safer than overflowing before post-validation.
@@ -101,6 +107,38 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        AddPath { anchors, parent, fill, stroke, stroke_width, opacity, name, .. } => {
+            if !(2..=1000).contains(&anchors.len()) {
+                return Err("path needs 2..1000 anchors".into());
+            }
+            for a in anchors {
+                for p in std::iter::once(&a.p).chain(a.hin.iter()).chain(a.hout.iter()) {
+                    for v in p {
+                        finite(*v)?;
+                        finite(*v + *v)?;
+                    }
+                }
+            }
+            check(
+                &AddShape {
+                    kind: crate::model::ShapeKind::Rect,
+                    bounds: [0.0, 0.0, 1.0, 1.0],
+                    parent: *parent,
+                    fill: *fill,
+                    stroke: *stroke,
+                    stroke_width: *stroke_width,
+                    opacity: *opacity,
+                    name: name.clone(),
+                },
+                ed,
+            )?;
+            let count: usize =
+                ed.doc.paths.iter().map(|p| p.anchors.len() + p.holes.iter().map(Vec::len).sum::<usize>()).sum();
+            if count + anchors.len() > format::Limits::DEFAULT.max_anchors {
+                return Err("path would exceed anchor limit".into());
+            }
+            Ok(())
+        }
         AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
             if !matches!(kind, crate::model::ShapeKind::Rect | crate::model::ShapeKind::Ellipse) {
                 return Err("only rect and ellipse are supported".into());
@@ -897,6 +935,78 @@ impl Editor {
         self.commit();
         Ok(())
     }
+    /// Move a page to a zero-based position; active navigation follows its stable id.
+    pub fn artboard_reorder(&mut self, id: u32, position: usize) -> Result<(), ArtboardError> {
+        let i = self.artboard_checked(id)?;
+        if position >= self.doc.artboards.len() {
+            return Err(ab_error(ArtboardErrorCode::InvalidArgument, "position out of range"));
+        }
+        let active = self.doc.active_artboard().map(|a| a.id);
+        self.begin();
+        let page = self.doc.artboards.remove(i);
+        self.doc.artboards.insert(position, page);
+        self.keep_active(active);
+        self.dirty = true;
+        self.commit();
+        Ok(())
+    }
+    /// Desktop membership/copy semantics, with explicit artwork and offset choices.
+    pub fn artboard_duplicate(
+        &mut self,
+        id: u32,
+        with_art: bool,
+        offset: Option<[f32; 2]>,
+    ) -> Result<u32, ArtboardError> {
+        let i = self.artboard_checked(id)?;
+        let src = self.doc.artboards[i].clone();
+        if src.locked {
+            return Err(ab_error(ArtboardErrorCode::LockedTarget, "page is locked"));
+        }
+        let d = offset.unwrap_or([src.w + crate::editor::AB_GAP, 0.0]);
+        let active = self.doc.active_artboard().map(|a| a.id);
+        check_page_rect([src.x + d[0], src.y + d[1], src.w, src.h])?;
+        let limits = format::Limits::DEFAULT;
+        if self.doc.artboards.len() >= limits.max_artboards
+            || u64::from(self.allocation_floor()) + (limits.max_nodes + limits.max_paths + limits.max_anchors) as u64
+                >= u64::from(u32::MAX)
+        {
+            return Err(ab_error(ArtboardErrorCode::LimitExceeded, "page or id limit reached"));
+        }
+        self.begin();
+        let created = self.doc.nid();
+        if with_art {
+            self.copy_artboard_art(i, d);
+        }
+        let mut page = src;
+        page.id = created;
+        page.x += d[0];
+        page.y += d[1];
+        page.name = format!("{} copy", page.name);
+        self.doc.artboards.insert(i + 1, page);
+        self.keep_active(active);
+        self.dirty = true;
+        self.commit();
+        Ok(created)
+    }
+    pub fn artboard_color(&mut self, id: u32, color: Option<[f32; 4]>) -> Result<(), ArtboardError> {
+        let i = self.artboard_checked(id)?;
+        if color.is_some_and(|c| c.iter().any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))) {
+            return Err(ab_error(ArtboardErrorCode::InvalidArgument, "invalid color"));
+        }
+        self.begin();
+        self.doc.artboards[i].page_color = color;
+        self.dirty = true;
+        self.commit();
+        Ok(())
+    }
+    pub fn artboard_clip(&mut self, id: u32, clip: bool) -> Result<(), ArtboardError> {
+        let i = self.artboard_checked(id)?;
+        self.begin();
+        self.doc.artboards[i].clip = clip;
+        self.dirty = true;
+        self.commit();
+        Ok(())
+    }
     /// Make a page the active one (a navigation preference: no undo step on its own).
     pub fn artboard_set_active(&mut self, id: u32) -> Result<(), ArtboardError> {
         self.doc.active = self.artboard_checked(id)?;
@@ -907,5 +1017,38 @@ impl Editor {
         self.doc.active = id
             .and_then(|id| self.doc.artboard_index(id))
             .unwrap_or_else(|| self.doc.active.min(self.doc.artboards.len().saturating_sub(1)));
+    }
+}
+
+#[cfg(test)]
+mod slice4_tests {
+    use super::*;
+    #[test]
+    fn explicit_path_refuses_nonfinite_points_and_handles_without_allocation() {
+        let mut ed = Editor::new();
+        let before = ed.doc.clone();
+        for (p, hin, hout) in [
+            ([f32::NAN, 0.0], None, None),
+            ([3.4e38, 0.0], None, None),
+            ([0.0, 0.0], Some([-3.4e38, 0.0]), None),
+            ([0.0, 0.0], None, Some([3.4e38, 0.0])),
+            ([0.0, 0.0], Some([0.0, f32::INFINITY]), None),
+            ([0.0, 0.0], None, Some([f32::NEG_INFINITY, 0.0])),
+        ] {
+            let a = crate::model::Anchor { id: 123, p, hin, hout, smooth: false };
+            let cmd = EditCommand::AddPath {
+                anchors: vec![a.clone(), a],
+                closed: false,
+                parent: None,
+                fill: Some([1.0; 4]),
+                stroke: None,
+                stroke_width: 0.0,
+                opacity: 1.0,
+                name: None,
+            };
+            assert!(ed.try_execute_created(cmd).is_err());
+            assert_eq!(ed.doc, before);
+            assert!(!ed.history_available(false));
+        }
     }
 }

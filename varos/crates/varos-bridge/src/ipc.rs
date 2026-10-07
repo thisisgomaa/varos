@@ -72,6 +72,11 @@ pub(crate) enum Frame {
 /// Re-reads the trust store for this principal (revocation / narrowed scopes).
 #[derive(Clone)]
 pub struct Recheck(pub Arc<dyn Fn() -> Result<Scopes, Error> + Send + Sync>);
+impl PartialEq for Recheck {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
 impl std::fmt::Debug for Recheck {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Recheck")
@@ -86,6 +91,7 @@ pub struct Pending {
     pub reply: mpsc::SyncSender<Reply>,
     /// Paired principals only: re-evaluated on the owning thread right before dispatch.
     pub recheck: Option<Recheck>,
+    pub file_audit: Option<(conn::Paths, conn::audit::Entry)>,
 }
 impl Pending {
     /// ADR-0011 §3: evaluate the grant again on the owning thread before the service runs.
@@ -98,6 +104,7 @@ impl Pending {
             c.edit &= now.edit;
             c.destructive &= now.destructive;
             c.history &= now.history;
+            c.files &= now.files;
             if !c.read {
                 return Err(Error::new("scope_refused", "agent access was revoked"));
             }
@@ -679,7 +686,7 @@ fn legacy_hello(
         return Ok(None);
     }
     write_frame(writer, &Reply::success(serde_json::json!({"api":API,"epoch":epoch})))?;
-    let all = Scopes { read: true, edit: true, destructive: true, history: true };
+    let all = Scopes { read: true, edit: true, destructive: true, history: true, files: false };
     let audit = audit.clone().map(|paths| (paths, "legacy".to_owned(), client[..8].to_ascii_lowercase()));
     Ok(Some(Admitted { client, scopes: all, recheck: None, audit }))
 }
@@ -868,6 +875,7 @@ fn serve_connection(stream: std::os::unix::net::UnixStream, auth: &Auth, shared:
                     (
                         paths.clone(),
                         conn::audit::Entry {
+                            ticket: None,
                             t: conn::now_secs(),
                             event: "call".into(),
                             agent: agent.clone(),
@@ -907,6 +915,7 @@ fn serve_connection(stream: std::os::unix::net::UnixStream, auth: &Auth, shared:
                     edit: s.edit,
                     destructive: s.destructive,
                     history: s.history,
+                    files: s.files,
                     allow_history: shared.allow_history,
                     allow_destructive: shared.allow_destructive,
                 },
@@ -914,6 +923,7 @@ fn serve_connection(stream: std::os::unix::net::UnixStream, auth: &Auth, shared:
                 cancelled: flag.clone(),
                 reply,
                 recheck: admitted.recheck.clone(),
+                file_audit: audit_entry("pending", None),
             };
             let result = if shared.queue.try_send(pending).is_err() {
                 Reply::failure(Error::new("busy", "attachment queue is full"))
