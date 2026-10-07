@@ -1,0 +1,12 @@
+import fs from 'node:fs';
+const [wasmPath,out]=process.argv.slice(2);
+const module=await WebAssembly.compile(fs.readFileSync(wasmPath));
+const imports=WebAssembly.Module.imports(module);
+if(imports.length) throw new Error(`unexpected host imports: ${JSON.stringify(imports)}`);
+const instance=await WebAssembly.instantiate(module,{});
+const start=performance.now();
+const ptr=instance.exports.p1b_fixtures();
+const view=new DataView(instance.exports.memory.buffer);
+const len=view.getUint32(ptr,true);
+fs.writeFileSync(out,new Uint8Array(instance.exports.memory.buffer,ptr+4,len));
+console.log(JSON.stringify({runtime:process.version,fixtureMs:performance.now()-start,bytes:len,memoryBytes:instance.exports.memory.buffer.byteLength,imports}));

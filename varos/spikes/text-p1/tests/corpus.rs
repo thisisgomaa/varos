@@ -260,12 +260,12 @@ fn winding_overlapping_contours() {
         ],
     };
     let outlines = vec![box_outline(0.), box_outline(10.)];
-    let (d, _, _) = winding_diff(&outlines, 2.).unwrap();
+    let (d, _, _) = nonzero_diff(&outlines, 2.).unwrap();
     assert_eq!(d.severe, 0);
     assert_eq!(d.mean_delta, 0.);
 }
 #[test]
-fn mixed_metrics_rotation_limits_and_language_refusal() {
+fn mixed_metrics_rotation_limits_and_language() {
     let mut e = Engine::default();
     let mut r = Request::new("Logo سلام", 48., None);
     r.styles = vec![Style { range: 5..13, face: Face::Plex, size: 200., baseline_shift: 40., paint: 0 }];
@@ -277,7 +277,7 @@ fn mixed_metrics_rotation_limits_and_language_refusal() {
     let rotated = path.transform(tiny_skia::Transform::from_rotate(37.)).unwrap();
     assert!(rotated.bounds().width() > 0.);
     r.language = "ar";
-    assert!(e.layout(&r).unwrap().issues.contains(&Issue::UnsupportedLanguage("ar".into())));
+    assert!(!e.layout(&r).unwrap().issues.contains(&Issue::UnsupportedLanguage("ar".into())));
     r.size = f32::NAN;
     assert!(e.layout(&r).is_err());
     let huge = "x".repeat(1_048_577);
@@ -416,8 +416,8 @@ fn legal_line_breaks_gate() {
     assert!(failures.is_empty(), "{} illegal breaks:\n{}", failures.len(), failures.join("\n"));
 }
 
-/// The strict cubic/nonzero -> polygon/even-odd acceptance gate is separate
-/// from the exact synthetic overlapping-rectangle unit test above.
+/// Amendment 1 replaces conversion acceptance with native NonZero parity.
+/// Historical conversion measurements remain in preserved P1 artifacts.
 #[test]
 fn winding_corpus_gate() {
     let mut engine = Engine::default();
@@ -435,7 +435,7 @@ fn winding_corpus_gate() {
                         for line in &layout.lines {
                             let outlines: Vec<_> =
                                 line.glyphs.iter().map(glyph_outline).collect::<Result<_, _>>().unwrap();
-                            let (diff, _, _) = winding_diff(&outlines, 2.).unwrap();
+                            let (diff, _, _) = nonzero_diff(&outlines, 2.).unwrap();
                             count += 1;
                             worst = worst.max(diff.max_delta);
                             if diff.mean_delta > 1. || diff.severe > 0 {
@@ -449,6 +449,6 @@ fn winding_corpus_gate() {
     }
     assert_eq!(
         failures, 0,
-        "{failures}/{count} lines exceed declared raster tolerance; max alpha delta {worst}. See winding.tsv."
+        "{failures}/{count} lines exceed declared raster tolerance; max alpha delta {worst}. See nonzero.tsv."
     );
 }
