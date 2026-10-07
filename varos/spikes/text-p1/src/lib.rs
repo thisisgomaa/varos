@@ -73,3 +73,8 @@ pub const CORPUS: [CorpusRow; 10] = [
         required_evidence: "Latin ligatures/marks; missing Arabic face; whole-cluster fallback or explicit unsupported, never silent loss.",
     },
 ];
+pub mod export;
+pub mod stencil;
+
+pub mod incremental;
+pub mod parity;

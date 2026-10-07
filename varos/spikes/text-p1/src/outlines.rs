@@ -1,5 +1,5 @@
 //! Unhinted Skrifa quadratics -> exact cubics -> Y-down points.
-//! Nonzero regions are resolved before feeding the existing even-odd convention.
+//! Native winding is preserved. The old even-odd conversion remains diagnostic.
 use crate::{Glyph, Layout};
 use i_overlay::{core::fill_rule::FillRule, float::simplify::SimplifyShape};
 use skrifa::{
