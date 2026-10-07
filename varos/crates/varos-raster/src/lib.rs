@@ -534,6 +534,36 @@ mod tests {
         assert!(elapsed.as_secs_f32() < 1.5, "{elapsed:?}");
     }
 
+    #[test]
+    #[ignore = "headless 5k-path clone/raster/encode timing probe; run --release --ignored --nocapture"]
+    fn snapshot_five_thousand_paths_timings() {
+        let mut doc = Document::default();
+        for i in 0..5_000 {
+            doc.paths.push(rect(
+                i * 10 + 2,
+                [(i % 100) as f32 * 3.0, (i / 100) as f32 * 3.0],
+                [2.0, 2.0],
+                [1.0, 0.2, 0.1, 1.0],
+            ));
+        }
+        doc.sync_tree();
+        for size in [[544, 246], [1024, 1024]] {
+            let _ = rasterize(Arc::new(doc.clone()), size).encode_png().unwrap();
+            for sample in 0..5 {
+                let start = Instant::now();
+                let snapshot = Arc::new(doc.clone());
+                let clone_time = start.elapsed();
+                let raster_start = Instant::now();
+                let raster = rasterize(snapshot, size);
+                let raster_time = raster_start.elapsed();
+                let encode_start = Instant::now();
+                let png = raster.encode_png().unwrap();
+                let encode_time = encode_start.elapsed();
+                eprintln!("snapshot {}x{} sample={sample} clone_ms={:.3} raster_ms={:.3} encode_ms={:.3} total_ms={:.3} bytes={}", size[0], size[1], clone_time.as_secs_f64()*1000.0, raster_time.as_secs_f64()*1000.0, encode_time.as_secs_f64()*1000.0, start.elapsed().as_secs_f64()*1000.0, png.len());
+            }
+        }
+    }
+
     /// For the Start snapshot only: `VAROS_START_THUMBS=<dir>` writes real thumbnails (this rasteriser,
     /// the cache's 544 × 246) for four of the demo boards as `<index>.png`. Not a gate.
     #[test]
