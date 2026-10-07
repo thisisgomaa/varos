@@ -23,6 +23,7 @@ fn rect_doc() -> Document {
     ));
     d.ids = 4;
     d.sync_tree(); // materialise the leaf node so the unit transform can be attached
+    d.assign_artboard_ids(); // format 4: pages carry stable ids, as after any commit
     d
 }
 fn rotate_unit_90(d: &mut Document) {

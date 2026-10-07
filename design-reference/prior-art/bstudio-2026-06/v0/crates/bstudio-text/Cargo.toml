@@ -1,0 +1,30 @@
+[package]
+name = "bstudio-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+# Shaping (the moat — see RESEARCH/03_arabic_engine.md)
+harfrust       = { workspace = true }
+# BiDi resolution
+unicode-bidi   = { workspace = true }
+icu_properties = { workspace = true }
+# Font outlines for text-to-paths (Phase 0: SVG export)
+skrifa         = { workspace = true }
+read-fonts     = { workspace = true }
+
+# parley will be added when we vendor the fork. For Block B we just
+# stub the kashida-justification API.
+
+[dev-dependencies]
+criterion = "0.5"
+
+[lib]
+crate-type = ["rlib"]
+
+[[bench]]
+name = "kashida_reshape"
+harness = false

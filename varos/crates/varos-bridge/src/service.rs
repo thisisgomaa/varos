@@ -1,4 +1,4 @@
-use crate::{dto::*, API, MAX_OPS, MAX_PAGE, MAX_TARGETS, MAX_TEXT, MCP_VERSION, TOOLS};
+use crate::{design::apply_design_op, dto::*, API, MAX_OPS, MAX_PAGE, MAX_TARGETS, MAX_TEXT, MCP_VERSION, TOOLS};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 use varos_core::{
-    bridge::{self, TargetEdit, TargetErrorCode},
+    bridge::{self, TargetErrorCode},
     editor::Editor,
     model::{Document, NodeKind},
 };
@@ -25,8 +25,59 @@ pub struct BoardAccess<'a> {
     pub editor: &'a mut Editor,
     pub dirty: bool,
 }
+/// Owned, revision-pinned CPU work. Capture on the owning thread, render on a host worker.
+pub struct SnapshotJob {
+    pub document: Document,
+    pub rev: u64,
+    pub size: [u32; 2],
+    /// Persistent page id resolved against the owned document; None renders the fitted board.
+    pub artboard: Option<u32>,
+}
+impl SnapshotJob {
+    pub fn render(self, cancelled: &AtomicBool) -> Reply {
+        let result = (|| {
+            use base64::Engine;
+            let checkpoint = || {
+                if cancelled.load(Ordering::Acquire) {
+                    Err(Error::new("cancelled", "snapshot cancelled"))
+                } else {
+                    Ok(())
+                }
+            };
+            checkpoint()?;
+            let raster = match self.artboard {
+                None => varos_raster::rasterize(std::sync::Arc::new(self.document), self.size),
+                Some(id) => {
+                    let index = self
+                        .document
+                        .artboard_index(id)
+                        .ok_or_else(|| Error::new("not_found", format!("unknown artboard:{id}")))?;
+                    varos_raster::rasterize_artboard(std::sync::Arc::new(self.document), index, self.size)
+                        .ok_or_else(|| Error::new("invalid_argument", "artboard cannot be rendered"))?
+                }
+            };
+            checkpoint()?;
+            let png = raster.encode_png().map_err(|e| Error::new("invalid_argument", e))?;
+            checkpoint()?;
+            if png.len() > (crate::MAX_FRAME - 4096) * 3 / 4 {
+                return Err(Error::new("limit_exceeded", "PNG exceeds transport image budget"));
+            }
+            let mut out = json!({"rev":self.rev,"width":raster.width,"height":raster.height,"mime_type":"image/png","png":base64::engine::general_purpose::STANDARD.encode(png),"preview":"CPU preview"});
+            if let Some(id) = self.artboard {
+                out["artboard"] = json!(format!("artboard:{id}"));
+                out["preview"] = json!("CPU page preview");
+            }
+            Ok(Reply::success(out))
+        })();
+        result.unwrap_or_else(Reply::failure)
+    }
+}
 /// Only the desktop host supplies owning-thread mutable access. No transport knows an Editor.
 pub trait Host {
+    /// Synchronous headless default. Desktop overrides to defer work beyond the owning thread.
+    fn snapshot(&mut self, job: SnapshotJob, cancelled: &AtomicBool) -> Reply {
+        job.render(cancelled)
+    }
     fn build(&self) -> &str {
         "host-unreported"
     }
@@ -47,6 +98,7 @@ pub struct Context {
     pub read: bool,
     pub edit: bool,
     pub allow_history: bool,
+    pub allow_destructive: bool,
 }
 // Fixed-size settings that can change outside the normal document revision path.
 #[derive(Clone, Copy, PartialEq)]
@@ -56,6 +108,8 @@ struct Settings {
     origin: [f32; 2],
     guides_locked: bool,
     move_art: bool,
+    /// The active artboard's stable id: a navigation preference outside `Editor.rev` (slice 3).
+    active_artboard: Option<u32>,
 }
 impl Settings {
     fn of(doc: &Document) -> Self {
@@ -65,6 +119,7 @@ impl Settings {
             origin: doc.ruler_origin,
             guides_locked: doc.guides_locked,
             move_art: doc.move_art_with_ab,
+            active_artboard: doc.active_artboard().map(|a| a.id),
         }
     }
 }
@@ -226,7 +281,7 @@ impl Service {
                 );
             } else {
                 let mut error =
-                    Reply::failure(Error::new("limit_exceeded", "response exceeds 16 KiB; reduce page limit"));
+                    Reply::failure(Error::new("limit_exceeded", "response exceeds the 16 KiB page budget; request fewer objects or omit geometry; an individual oversized path cannot be paginated"));
                 error.board = reply.board;
                 error.rev = reply.rev;
                 reply = error;
@@ -288,10 +343,10 @@ impl Service {
                     .ok_or_else(|| Error::new("not_found", "board closed or not authorized"))?
                     .rev;
                 let expected = req.mutation().map(|(_, rev)| rev).or({
-                    if let Request::Describe(v) = req {
-                        v.rev
-                    } else {
-                        None
+                    match req {
+                        Request::Describe(v) => v.rev,
+                        Request::Snapshot(v) => Some(v.rev),
+                        _ => None,
                     }
                 });
                 if let Some(expected) = expected {
@@ -305,7 +360,7 @@ impl Service {
             }
             match req {
                 Request::Capabilities(_) => Ok(Reply::success(
-                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3],"writable_vrs":[3],"mode":"attached","tools":TOOLS,"edit_verbs":["move","set_paint"],"ids":"path:N/node:N scoped to epoch","limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":ctx.read,"edit":ctx.edit,"history_owner_grant":ctx.allow_history,"detail_fields":["bounds","paint","parent","name","state","metadata","artboards"],"unsupported":["files","geometry","snapshot","headless"]}),
+                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":ctx.read,"edit":ctx.edit,"history_owner_grant":ctx.allow_history,"destructive_owner_grant":ctx.allow_destructive,"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry"],"unsupported":["files","headless","add_path","corner_radius","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_reorder","artboard_duplicate","artboard_paint"]}),
                 )),
                 Request::ListBoards(v) => {
                     check_page(v.limit)?;
@@ -321,6 +376,28 @@ impl Service {
                     ))
                 }
                 Request::Describe(v) => self.describe(v, host),
+                Request::Snapshot(v) => {
+                    let (width, height) = v.size();
+                    if width == 0 || height == 0 || width > 1024 || height > 1024 {
+                        return Err(Error::new("limit_exceeded", "snapshot dimensions must be 1..1024"));
+                    }
+                    let document = host.access(&v.board)?.editor.doc.clone();
+                    let artboard = match &v.artboard {
+                        None => None,
+                        Some(id) => {
+                            let n = id
+                                .strip_prefix("artboard:")
+                                .and_then(|n| n.parse::<u32>().ok())
+                                .filter(|n| *n > 0 && format!("artboard:{n}") == *id)
+                                .ok_or_else(|| Error::new("invalid_argument", "artboard must be artboard:N"))?;
+                            document
+                                .artboard_index(n)
+                                .ok_or_else(|| Error::new("not_found", format!("unknown {id}")))?;
+                            Some(n)
+                        }
+                    };
+                    Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
+                }
                 Request::Select(v) => {
                     if v.ids.len() > MAX_TARGETS {
                         return Err(Error::new("limit_exceeded", "too many targets"));
@@ -340,68 +417,115 @@ impl Service {
                         return Err(Error::new("limit_exceeded", "edit needs 1..100 operations"));
                     }
                     let a = host.access(&v.board)?;
-                    let total: usize = v
-                        .ops
-                        .iter()
-                        .map(|op| match op {
-                            Operation::Move { ids, .. } | Operation::SetPaint { ids, .. } => ids.len(),
-                        })
-                        .sum();
-                    if total > MAX_TARGETS {
+                    if v.ops.iter().map(|op| op.ids().len()).sum::<usize>() > MAX_TARGETS {
                         return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
                     }
-                    let ops = v
-                        .ops
-                        .iter()
-                        .enumerate()
-                        .map(|(index, op)| {
-                            let result = (|| -> Result<TargetEdit, Error> {
-                                match op {
-                                    Operation::Move { ids, delta } => Ok(TargetEdit::Move {
-                                        paths: resolve(&a.editor.doc, ids, false)?,
-                                        delta: *delta,
-                                    }),
-                                    Operation::SetPaint { ids, fill, stroke, stroke_width, opacity } => {
-                                        Ok(TargetEdit::Paint {
-                                            paths: resolve(&a.editor.doc, ids, false)?,
-                                            fill: paint(fill)?,
-                                            stroke: paint(stroke)?,
-                                            stroke_width: *stroke_width,
-                                            opacity: *opacity,
-                                        })
-                                    }
-                                }
-                            })();
-                            result.map_err(|e| e.at(index))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let mut expanded = 0usize;
-                    for (index, op) in ops.iter().enumerate() {
-                        expanded += match op {
-                            TargetEdit::Move { paths, .. } | TargetEdit::Paint { paths, .. } => paths.len(),
-                        };
-                        if expanded > MAX_TARGETS {
-                            return Err(Error::new("limit_exceeded", "batch expanded targets exceed 1000").at(index));
+                    // Review P2 (slice 3): a deprecated `aN@rev` alias names a page by its index AT `rev`.
+                    // Page verbs in the same batch can shift indices in the stage, so the alias could
+                    // silently retarget another page: refuse the combination instead of guessing.
+                    if v.ops.iter().any(Operation::is_page_verb) {
+                        if let Some(index) = v.ops.iter().position(Operation::uses_legacy_artboard_alias) {
+                            return Err(Error::new(
+                                "invalid_argument",
+                                "the deprecated aN@rev artboard alias cannot be combined with page verbs in one \
+                                 batch; use artboard:N",
+                            )
+                            .at(index));
                         }
                     }
                     let from = a.editor.rev;
-                    a.editor.execute_targeted_batch_cancellable(ops, || cancelled.load(Ordering::Acquire)).map_err(
-                        |e| {
-                            let code = match e.code {
-                                TargetErrorCode::NotFound => "not_found",
-                                TargetErrorCode::LockedTarget => "locked_target",
-                                TargetErrorCode::HiddenTarget => "hidden_target",
-                                TargetErrorCode::InvalidArgument => "invalid_argument",
-                                TargetErrorCode::Busy => "busy",
-                                TargetErrorCode::Cancelled => "cancelled",
-                            };
-                            let mut error = Error::new(code, e.reason).at(e.index);
-                            error.ids = e.ids.iter().map(|id| format!("path:{id}")).collect();
-                            error
+                    let mut locals = BTreeMap::new();
+                    let mut expanded = 0usize;
+                    let mut affected = std::collections::BTreeSet::new();
+                    let batch = a.editor.prepare_design_batch(
+                        v.ops.len(),
+                        |staged, index| {
+                            if index == 0 {
+                                locals.clear();
+                                expanded = 0;
+                                affected.clear();
+                            }
+                            apply_design_op(
+                                staged,
+                                &v.ops[index],
+                                v.expected_rev,
+                                &mut locals,
+                                &mut expanded,
+                                &mut affected,
+                            )
+                            .map_err(|e| e.at(index))
                         },
+                        |index, reason| {
+                            Error::new(
+                                if reason == "active gesture" {
+                                    "busy"
+                                } else if reason.starts_with("cancelled") {
+                                    "cancelled"
+                                } else {
+                                    "invalid_argument"
+                                },
+                                reason,
+                            )
+                            .at(index)
+                        },
+                        || cancelled.load(Ordering::Acquire),
                     )?;
+                    if v.ops.iter().any(Operation::destructive) {
+                        if affected.len() > MAX_TARGETS
+                            || serde_json::to_string(&affected).expect("affected ids").len() > MAX_TEXT - 2048
+                        {
+                            return Err(Error::new(
+                                "limit_exceeded",
+                                "destructive affected IDs exceed confirmation budget",
+                            ));
+                        }
+                        let mut exact = serde_json::to_value(v).expect("DTO");
+                        exact.as_object_mut().unwrap().remove("digest");
+                        let hash = digest(
+                            &json!({"epoch":self.epoch,"edit":exact,"target":authored_fingerprint(batch.document()),"affected":affected,"source":authored_fingerprint(&a.editor.doc)}),
+                        );
+                        let key = format!("destructive:{}:{}", ctx.client, v.board);
+                        if v.digest.as_deref() != Some(&hash)
+                            || !self.grants.get(&key).is_some_and(|g| g.digest == hash && g.expires > Instant::now())
+                        {
+                            if ctx.allow_destructive {
+                                if self.grants.len() >= 128 && !self.grants.contains_key(&key) {
+                                    return Err(Error::new("limit_exceeded", "too many outstanding confirmations"));
+                                }
+                                self.grants.insert(
+                                    key,
+                                    Grant { digest: hash.clone(), expires: Instant::now() + Duration::from_secs(60) },
+                                );
+                            }
+                            let mut e = Error::new("confirmation_required", "delete/ungroup requires an exact owner-issued grant; desktop VAROS_BRIDGE_ALLOW_DESTRUCTIVE=1 enables the temporary grant policy");
+                            e.digest = Some(hash);
+                            e.ids = affected.into_iter().collect();
+                            e.expected_rev = Some(v.expected_rev);
+                            e.actual_rev = Some(from);
+                            return Err(e);
+                        }
+                        let grant = self
+                            .grants
+                            .remove(&key)
+                            .ok_or_else(|| Error::new("confirmation_required", "no owner-issued destructive grant"))?;
+                        if grant.digest != hash || grant.expires < Instant::now() {
+                            return Err(Error::new("confirmation_required", "destructive grant expired"));
+                        }
+                    }
+                    if cancelled.load(Ordering::Acquire) {
+                        return Err(Error::new("cancelled", "cancelled before commit"));
+                    }
+                    a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
                     self.observe(host);
-                    Ok(self.edit_receipt(&v.board, from))
+                    let mut reply = self.edit_receipt_reserved(
+                        &v.board,
+                        from,
+                        serde_json::to_string(&locals).expect("locals").len(),
+                    );
+                    if !locals.is_empty() {
+                        reply.result.as_mut().unwrap()["locals"] = json!(locals);
+                    }
+                    Ok(reply)
                 }
                 Request::History(v) => {
                     let a = host.access(&v.board)?;
@@ -427,7 +551,9 @@ impl Service {
                     let hash = digest(
                         &json!({"epoch":self.epoch,"history":exact,"target":target_digest,"objects":self.boards[&v.board].objects}),
                     );
-                    if v.digest.as_deref() != Some(&hash) {
+                    if v.digest.as_deref() != Some(&hash)
+                        || !self.grants.get(&key).is_some_and(|g| g.digest == hash && g.expires > Instant::now())
+                    {
                         if ctx.allow_history {
                             if self.grants.len() >= 128 && !self.grants.contains_key(&key) {
                                 return Err(Error::new("limit_exceeded", "too many outstanding confirmations"));
@@ -506,6 +632,9 @@ impl Service {
         reply
     }
     fn edit_receipt(&self, board: &str, from: u64) -> Reply {
+        self.edit_receipt_reserved(board, from, 0)
+    }
+    fn edit_receipt_reserved(&self, board: &str, from: u64, reserved: usize) -> Reply {
         let b = &self.boards[board];
         let diff = b
             .journal
@@ -515,7 +644,7 @@ impl Service {
             .unwrap_or_else(|| json!({"from":from,"rev":b.rev,"changed":[],"created":[],"removed":[]}));
         let mut value = diff;
         strip_journal(&mut value);
-        if value.to_string().len() > MAX_TEXT - 4096
+        if value.to_string().len() > MAX_TEXT - 4096 - reserved
             || (b.rev != from && b.journal.back().is_none_or(|d| d["from"] != from))
         {
             let counts = json!({"changed":value["changed"].as_array().map(Vec::len),"created":value["created"].as_array().map(Vec::len),"removed":value["removed"].as_array().map(Vec::len)});
@@ -529,6 +658,10 @@ impl Service {
         value["selection_more"] = json!(b.selection.len() > 100);
         value["selection_rev"] = json!(b.selection_rev);
         value["changed_document"] = json!(b.rev != from);
+        if !b.header["active_artboard"].is_null() {
+            // additive (slice 3): only boards with pages carry it, so frozen page-less receipts are unchanged
+            value["active_artboard"] = b.header["active_artboard"].clone();
+        }
         let mut r = Reply::success(value);
         r.undo_steps = u8::from(b.rev != from);
         r
@@ -637,8 +770,11 @@ impl Service {
         }
         let fields =
             v.fields.clone().unwrap_or_else(|| vec!["bounds".into(), "paint".into(), "parent".into(), "name".into()]);
-        if fields.iter().any(|f| !["bounds", "paint", "parent", "name", "state"].contains(&f.as_str())) {
-            return Err(Error::new("unsupported", "supported detail fields: bounds, paint, parent, name, state"));
+        if fields.iter().any(|f| !["bounds", "paint", "parent", "name", "state", "geometry"].contains(&f.as_str())) {
+            return Err(Error::new(
+                "unsupported",
+                "supported detail fields: bounds, paint, parent, name, state, geometry",
+            ));
         }
         let all = b.order.clone();
         let ids = v.ids.clone().unwrap_or(all);
@@ -651,6 +787,8 @@ impl Service {
         if offset > ids.len() {
             return Err(Error::new("invalid_argument", "cursor offset out of range"));
         }
+        let geometry = fields.iter().any(|f| f == "geometry");
+        let doc = geometry.then(|| host.access(&v.board).map(|a| a.editor.doc.clone())).transpose()?;
         let mut objects = vec![];
         let mut end = offset;
         while end < ids.len() && objects.len() < v.limit {
@@ -659,6 +797,21 @@ impl Service {
             let mut out = json!({"id":id,"kind":source["kind"]});
             for field in &fields {
                 match field.as_str() {
+                    "geometry" => {
+                        out["geometry"] = Value::Null;
+                        if let Some(pid) = id.strip_prefix("path:").and_then(|n| n.parse::<u32>().ok()) {
+                            let doc = doc.as_ref().expect("geometry requested");
+                            let p = &doc.paths[doc.pidx(pid).expect("observed id")];
+                            // A single oversized object is explicitly refused; object pages stay within the text budget.
+                            if p.anchors.len() + p.holes.iter().map(Vec::len).sum::<usize>() > 1000 {
+                                return Err(Error::new(
+                                    "limit_exceeded",
+                                    "geometry exceeds 1000 anchors; no partial geometry returned",
+                                ));
+                            }
+                            out["geometry"] = json!({"closed":p.closed,"anchors":p.anchors.iter().map(|a| json!({"point":a.p,"hin":a.hin,"hout":a.hout})).collect::<Vec<_>>(),"holes":p.holes.iter().map(|ring| ring.iter().map(|a| json!({"point":a.p,"hin":a.hin,"hout":a.hout})).collect::<Vec<_>>()).collect::<Vec<_>>(),"world_transform":doc.unit_xform(pid)});
+                        }
+                    }
                     "paint" => {
                         for key in ["fill", "stroke", "stroke_width", "opacity"] {
                             out[key] = source[key].clone();
@@ -679,7 +832,7 @@ impl Service {
             end += 1;
         }
         if end == offset && end < ids.len() {
-            return Err(Error::new("limit_exceeded", "object exceeds output budget"));
+            return Err(Error::new("limit_exceeded", "individual object exceeds the 16 KiB page budget (including response overhead); omit geometry or request other fields; within-path anchor pagination is not supported"));
         }
         Ok(Reply::success(
             json!({"rev":b.rev,"objects":objects,"more":end<ids.len(),"cursor":(end<ids.len()).then(||cursor(&sig,end))}),
@@ -727,7 +880,7 @@ fn selection(ed: &Editor) -> Vec<String> {
     ids.sort();
     ids
 }
-fn paint(p: &Paint) -> Result<Option<Option<[f32; 4]>>, Error> {
+pub(crate) fn paint(p: &Paint) -> Result<Option<Option<[f32; 4]>>, Error> {
     match p {
         Paint::Unchanged => Ok(None),
         Paint::None => Ok(Some(None)),
@@ -743,7 +896,7 @@ fn paint(p: &Paint) -> Result<Option<Option<[f32; 4]>>, Error> {
         }
     }
 }
-fn resolve(doc: &Document, ids: &[String], empty: bool) -> Result<Vec<u32>, Error> {
+pub(crate) fn resolve(doc: &Document, ids: &[String], empty: bool) -> Result<Vec<u32>, Error> {
     if ids.is_empty() && !empty {
         return Err(Error::new("invalid_argument", "explicit targets must not be empty"));
     }
@@ -768,6 +921,12 @@ fn resolve(doc: &Document, ids: &[String], empty: bool) -> Result<Vec<u32>, Erro
                     ));
                 }
                 doc.node_paths(n)
+            }
+            "artboard" => {
+                return Err(Error::new(
+                    "invalid_argument",
+                    format!("{id} is an artboard, not an object; use it in a page verb, align target or snapshot"),
+                ))
             }
             _ => return Err(Error::new("invalid_argument", "unknown id namespace")),
         };
@@ -829,7 +988,7 @@ fn projection(doc: &Document) -> (BTreeMap<String, Value>, Value, Vec<String>) {
         objects.insert(id.into(), o);
     }
     let counts = json!({"paths":doc.paths.len(),"groups":doc.nodes.iter().filter(|n|n.kind==NodeKind::Group).count(),"layers":doc.nodes.iter().filter(|n|n.kind==NodeKind::Layer).count(),"artboards":doc.artboards.len()});
-    let artboards:Vec<_>=doc.artboards.iter().enumerate().map(|(i,a)|json!({"index":i,"name":a.name,"bounds":[round(a.x as f64),round(a.y as f64),round(a.w as f64),round(a.h as f64)],"bleed":round(a.bleed as f64),"fill":color(&json!(a.page_color)),"clip":a.clip,"hidden":a.hidden,"locked":a.locked})).collect();
+    let artboards:Vec<_>=doc.artboards.iter().enumerate().map(|(i,a)|json!({"id":format!("artboard:{}",a.id),"index":i,"name":a.name,"bounds":[round(a.x as f64),round(a.y as f64),round(a.w as f64),round(a.h as f64)],"bleed":round(a.bleed as f64),"fill":color(&json!(a.page_color)),"clip":a.clip,"hidden":a.hidden,"locked":a.locked})).collect();
     let mut settings = json!(doc);
     for k in [
         "paths",
@@ -847,7 +1006,7 @@ fn projection(doc: &Document) -> (BTreeMap<String, Value>, Value, Vec<String>) {
         settings.as_object_mut().unwrap().remove(k);
     }
     let metadata = json!({"description":doc.description,"tags":doc.tags,"display_units":doc.units.display.suffix(),"ppi":round(doc.units.ppi as f64),"settings_digest":digest(&settings)});
-    let header = json!({"name":doc.name,"units":"pt","counts":counts,"bounds":bounds.map(|b|[b[0],b[1],round(b[2]-b[0]),round(b[3]-b[1])]),"artboards":artboards,"artboards_more":doc.artboards.len()>20,"metadata":metadata,"detail":["objects","artboards","paint","metadata","parent","name","state"]});
+    let header = json!({"name":doc.name,"units":"pt","counts":counts,"active_artboard":doc.active_artboard().map(|a|format!("artboard:{}",a.id)),"bounds":bounds.map(|b|[b[0],b[1],round(b[2]-b[0]),round(b[3]-b[1])]),"artboards":artboards,"artboards_more":doc.artboards.len()>20,"metadata":metadata,"detail":["objects","artboards","paint","metadata","parent","name","state"]});
     let order = source["elements"].as_array().unwrap().iter().map(|v| v["id"].as_str().unwrap().to_owned()).collect();
     (objects, header, order)
 }
@@ -903,7 +1062,21 @@ fn changes(
         a.iter().filter(|(id, v)| b.get(*id) != Some(*v)).map(|(id, v)| (id.clone(), v.clone())).collect();
     let board_changes: serde_json::Map<String, Value> =
         bh.as_object().unwrap().iter().filter(|(k, v)| ah[*k] != **v).map(|(k, v)| (k.clone(), v.clone())).collect();
-    json!({"before":before,"before_header":(ah!=bh).then_some(ah),"from":from,"rev":rev,"created":created,"removed":removed,"changed":changed,"board_changes":(!board_changes.is_empty()).then_some(board_changes)})
+    // pages are not objects; their identity changes are listed beside the object lists (slice 3)
+    let page_ids = |h: &Value| -> Vec<String> {
+        h["artboards"].as_array().into_iter().flatten().filter_map(|a| a["id"].as_str().map(str::to_owned)).collect()
+    };
+    let (pa, pb) = (page_ids(ah), page_ids(bh));
+    let artboards_created: Vec<_> = pb.iter().filter(|id| !pa.contains(id)).collect();
+    let artboards_removed: Vec<_> = pa.iter().filter(|id| !pb.contains(id)).collect();
+    let mut out = json!({"before":before,"before_header":(ah!=bh).then_some(ah),"from":from,"rev":rev,"created":created,"removed":removed,"changed":changed,"board_changes":(!board_changes.is_empty()).then_some(board_changes)});
+    if !artboards_created.is_empty() {
+        out["artboards_created"] = json!(artboards_created);
+    }
+    if !artboards_removed.is_empty() {
+        out["artboards_removed"] = json!(artboards_removed);
+    }
+    out
 }
 /// The sole readable projection consumed by both CLI and MCP. All document text is JSON escaped.
 pub fn compact(r: &Reply) -> String {
@@ -972,6 +1145,7 @@ pub fn compact(r: &Reply) -> String {
                     "hidden",
                     "locked",
                     "geometry_changed",
+                    "geometry",
                 ] {
                     if let Some(value) = o.get(field) {
                         let value = if ["fill", "stroke", "parent"].contains(&field) {
@@ -997,6 +1171,10 @@ pub fn compact(r: &Reply) -> String {
         "artboards",
         "board_changes",
         "removed",
+        "artboards_created",
+        "artboards_removed",
+        "active_artboard",
+        "artboard",
         "selection",
         "selection_count",
         "selection_more",
@@ -1008,6 +1186,12 @@ pub fn compact(r: &Reply) -> String {
         "resync_required",
         "history",
         "history_steps",
+        "locals",
+        "width",
+        "height",
+        "mime_type",
+        "preview",
+        "path",
     ] {
         if let Some(value) = v.get(key) {
             if (key == "cursor" && value.is_null())
@@ -1042,6 +1226,20 @@ fn text_value(v: &Value) -> String {
     v.to_string()
 }
 
+pub(crate) fn target_error(e: varos_core::bridge::TargetError) -> Error {
+    let code = match e.code {
+        TargetErrorCode::NotFound => "not_found",
+        TargetErrorCode::LockedTarget => "locked_target",
+        TargetErrorCode::HiddenTarget => "hidden_target",
+        TargetErrorCode::InvalidArgument => "invalid_argument",
+        TargetErrorCode::Busy => "busy",
+        TargetErrorCode::Cancelled => "cancelled",
+    };
+    let mut error = Error::new(code, e.reason).at(e.index);
+    error.ids = e.ids.iter().map(|id| format!("path:{id}")).collect();
+    error
+}
+
 #[cfg(test)]
 mod observation_tests {
     use super::*;
@@ -1057,6 +1255,75 @@ mod observation_tests {
             Ok(BoardAccess { editor: &mut self.0, dirty: false })
         }
     }
+    #[test]
+    fn expired_digest_resend_refreshes_edit_and_history_grants() {
+        for history in [false, true] {
+            let mut host = Fake(Editor::new());
+            let pid = host
+                .0
+                .try_execute_created(varos_core::EditCommand::AddShape {
+                    kind: varos_core::model::ShapeKind::Rect,
+                    bounds: [0.0, 0.0, 20.0, 10.0],
+                    parent: None,
+                    fill: Some([1.0, 0.0, 0.0, 1.0]),
+                    stroke: None,
+                    stroke_width: 0.0,
+                    opacity: 1.0,
+                    name: None,
+                })
+                .unwrap();
+            let context = Context {
+                client: "test".into(),
+                epoch: "test".into(),
+                read: true,
+                edit: true,
+                allow_history: true,
+                allow_destructive: true,
+            };
+            let mut service = Service::new("test".into());
+            let args = if history {
+                json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":host.0.rev,"action":"undo"})
+            } else {
+                json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":host.0.rev,"ops":[{"verb":"delete","ids":[format!("path:{pid}")]}]})
+            };
+            let mut request = crate::mcp::decode_tool(if history { "history" } else { "edit" }, args).unwrap();
+            let cancelled = AtomicBool::new(false);
+            let challenge = service.handle(&mut host, &context, request.clone(), &cancelled);
+            let digest = challenge.error.unwrap().digest.clone();
+            match &mut request {
+                Request::History(v) => v.digest = digest,
+                Request::Edit(v) => v.digest = digest,
+                _ => unreachable!(),
+            }
+            for grant in service.grants.values_mut() {
+                grant.expires = Instant::now() - Duration::from_secs(1);
+            }
+            let before = host.0.doc.clone();
+            let fresh = service.handle(&mut host, &context, request.clone(), &cancelled).error.unwrap();
+            assert_eq!(fresh.code, "confirmation_required");
+            assert!(fresh.digest.is_some());
+            assert!(!fresh.ids.is_empty());
+            assert_eq!(fresh.actual_rev, Some(host.0.rev));
+            assert_eq!(host.0.doc, before);
+            match &mut request {
+                Request::History(v) => v.digest = fresh.digest.clone(),
+                Request::Edit(v) => v.digest = fresh.digest.clone(),
+                _ => unreachable!(),
+            }
+            assert!(service.handle(&mut host, &context, request, &cancelled).ok);
+        }
+    }
+
+    #[test]
+    fn snapshot_worker_checkpoints_cancel_and_pin_owned_revision() {
+        let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40], artboard: None };
+        let reply = job.render(&AtomicBool::new(true));
+        assert_eq!(reply.error.unwrap().code, "cancelled");
+        let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40], artboard: None };
+        let reply = job.render(&AtomicBool::new(false));
+        assert_eq!(reply.result.unwrap()["rev"], 7);
+    }
+
     #[test]
     fn unchanged_observation_does_not_fingerprint() {
         let mut host = Fake(Editor::new());

@@ -1,6 +1,12 @@
 //! Provisional headless contracts. No file I/O, UI or renderer dependencies.
 //! Bridge API 0.x spellings are pinned in `EditCommand`'s serde table.
-use crate::{board, command::EditCommand, editor::Editor, format, model::NodeKind};
+use crate::{
+    board,
+    command::EditCommand,
+    editor::Editor,
+    format,
+    model::{Artboard, NodeKind},
+};
 pub use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -38,8 +44,10 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
 /// Preconditions for the headless command path. Interactive callers retain `execute` unchanged.
 pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
-    if matches!(command, GroupSelection | Boolean(_) | Paste { .. } | DuplicateMoveLayer { .. } | DuplicateArtboard(_))
-    {
+    if matches!(
+        command,
+        AddShape { .. } | GroupSelection | Boolean(_) | Paste { .. } | DuplicateMoveLayer { .. } | DuplicateArtboard(_)
+    ) {
         // Reserve an entire format-sized arena before an allocating edit. Existing allocators use
         // u32 ids; refusing near exhaustion is safer than overflowing before post-validation.
         let limits = format::Limits::DEFAULT;
@@ -93,6 +101,57 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
+            if !matches!(kind, crate::model::ShapeKind::Rect | crate::model::ShapeKind::Ellipse) {
+                return Err("only rect and ellipse are supported".into());
+            }
+            let [x, y, w, h] = *bounds;
+            finite(x)?;
+            finite(y)?;
+            dimension(w)?;
+            dimension(h)?;
+            finite(x + w)?;
+            finite(y + h)?;
+            if x + w <= x || y + h <= y {
+                return Err("bounds collapse at f32 precision".into());
+            }
+            finite(x + (x + w))?;
+            finite(y + (y + h))?;
+            let limits = format::Limits::DEFAULT;
+            if ed.doc.paths.len() >= limits.max_paths
+                || ed.doc.nodes.len() >= limits.max_nodes
+                || ed
+                    .doc
+                    .paths
+                    .iter()
+                    .map(|p| p.anchors.len() + p.holes.iter().map(Vec::len).sum::<usize>())
+                    .sum::<usize>()
+                    > limits.max_anchors - 4
+            {
+                return Err("shape would exceed document limits".into());
+            }
+            if let Some(c) = fill {
+                color(c)?;
+            }
+            if let Some(c) = stroke {
+                color(c)?;
+            }
+            finite(*stroke_width)?;
+            if *stroke_width < 0.0 || !opacity.is_finite() || !(0.0..=1.0).contains(opacity) {
+                return Err("invalid stroke width or opacity".into());
+            }
+            if let Some(n) = name {
+                nonempty(n)?;
+            }
+            let n = ed.doc.node(parent.unwrap_or(ed.doc.active_layer)).ok_or("unknown parent layer")?;
+            if n.kind != NodeKind::Layer {
+                return Err("parent must be a layer".into());
+            }
+            if n.hidden || n.locked {
+                return Err("parent is hidden or locked".into());
+            }
+            Ok(())
+        }
         SelectPaths(ids) => {
             for id in ids {
                 path(*id)?;
@@ -568,7 +627,7 @@ impl Editor {
         self.publish_batch(staged, true);
         Ok(())
     }
-    fn apply_targeted_op(&mut self, op: &TargetEdit, index: usize) -> Result<(), TargetError> {
+    pub fn apply_targeted_op(&mut self, op: &TargetEdit, index: usize) -> Result<(), TargetError> {
         let paths = match op {
             TargetEdit::Move { paths, .. } | TargetEdit::Paint { paths, .. } => paths,
         };
@@ -631,4 +690,222 @@ fn validate_targeted_stage(editor: &Editor) -> Result<(), String> {
     check_document(editor)?;
     crate::format::encode_model(&editor.doc, &format::Limits::DEFAULT).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Opaque staged document; only checked staging can construct it.
+pub struct PreparedDesignBatch {
+    editor: Editor,
+    revision: u64,
+}
+impl PreparedDesignBatch {
+    pub fn document(&self) -> &crate::model::Document {
+        &self.editor.doc
+    }
+}
+impl Editor {
+    /// Resolve and validate each operation against isolated state; publish separately after host authorization.
+    pub fn prepare_design_batch<E>(
+        &self,
+        count: usize,
+        mut apply: impl FnMut(&mut Editor, usize) -> Result<(), E>,
+        error: impl Fn(usize, String) -> E,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<PreparedDesignBatch, E> {
+        if self.transaction_open() {
+            return Err(error(0, "active gesture".into()));
+        }
+        let mut staged = self.batch_stage();
+        for index in 0..count {
+            if cancelled() {
+                return Err(error(index, "cancelled before commit".into()));
+            }
+            apply(&mut staged, index)?;
+            staged.clear_batch_history();
+        }
+        if validate_targeted_stage(&staged).is_err() {
+            let mut replay = self.batch_stage();
+            for index in 0..count {
+                if cancelled() {
+                    return Err(error(index, "cancelled before commit".into()));
+                }
+                apply(&mut replay, index)?;
+                validate_targeted_stage(&replay).map_err(|reason| error(index, reason))?;
+                replay.clear_batch_history();
+            }
+        }
+        if cancelled() {
+            return Err(error(0, "cancelled before commit".into()));
+        }
+        staged.doc.active_layer = self.doc.active_layer;
+        // `active` is NOT reset to the human's index: every staged operation keeps the active page by
+        // stable id across artboard insertions/removals, and only `artboard_set_active` changes it.
+        Ok(PreparedDesignBatch { editor: staged, revision: self.rev })
+    }
+    /// The owning-thread service rechecks cancellation and consumes grants before this single publication.
+    pub fn publish_design_batch(&mut self, batch: PreparedDesignBatch) -> Result<(), String> {
+        if self.transaction_open() || self.rev != batch.revision {
+            return Err("staged revision changed".into());
+        }
+        // The human's artboard multi-selection is index-based: carry it across by stable id.
+        let before = self.doc.active_artboard().map(|a| a.id);
+        let picked: Vec<u32> = self.absel.iter().filter_map(|&i| self.doc.artboards.get(i).map(|a| a.id)).collect();
+        let active = batch.editor.doc.active;
+        self.publish_batch(batch.editor, true);
+        // a set-active-only batch is no content change, so `publish_batch` kept this document: apply
+        // the staged active index (same artboards, so the same index) as the navigation preference it is
+        self.doc.active = active.min(self.doc.artboards.len().saturating_sub(1));
+        let after = self.doc.active_artboard().map(|a| a.id);
+        self.absel = if after != before {
+            after.map(|_| self.doc.active).into_iter().collect()
+        } else {
+            picked.into_iter().filter_map(|id| self.doc.artboard_index(id)).collect()
+        };
+        Ok(())
+    }
+}
+
+/// Why a checked artboard operation was refused (Bridge slice 3). The adapter maps the code to its
+/// stable external error code; the reason is plain English.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArtboardErrorCode {
+    NotFound,
+    LockedTarget,
+    InvalidArgument,
+    LimitExceeded,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtboardError {
+    pub code: ArtboardErrorCode,
+    pub reason: String,
+}
+fn ab_error(code: ArtboardErrorCode, reason: impl Into<String>) -> ArtboardError {
+    ArtboardError { code, reason: reason.into() }
+}
+
+/// A page rect for a checked artboard operation: finite, at least 1 pt on each side (the editor's own
+/// minimum page size, `ab_set_rect`), and representable once added up — refused, never clamped.
+fn check_page_rect(rect: [f32; 4]) -> Result<(), ArtboardError> {
+    let [x, y, w, h] = rect;
+    let bad = |reason: &str| Err(ab_error(ArtboardErrorCode::InvalidArgument, reason));
+    if !rect.iter().all(|v| v.is_finite()) || !(x + w).is_finite() || !(y + h).is_finite() {
+        return bad("artboard bounds must be finite");
+    }
+    if w < 1.0 || h < 1.0 {
+        return bad("artboard width and height must be at least 1 pt");
+    }
+    if x + w <= x || y + h <= y {
+        return bad("artboard bounds collapse at f32 precision");
+    }
+    Ok(())
+}
+
+/// Checked, id-addressed artboard operations for the Bridge (slice 3). Each is one ordinary
+/// `begin`/`commit` edit, so inside the isolated staging editor a batch still publishes one undo step.
+/// None of them changes the active artboard as a side effect: the active page is the human's
+/// navigation, kept by id across insertions and removals. `artboard_set_active` is the only way to
+/// change it, and the delete rule below refuses to leave it without an explicit choice.
+impl Editor {
+    fn artboard_checked(&self, id: u32) -> Result<usize, ArtboardError> {
+        self.doc
+            .artboard_index(id)
+            .ok_or_else(|| ab_error(ArtboardErrorCode::NotFound, format!("unknown artboard:{id}")))
+    }
+    /// Where `artboard_add` places a page of size `w`×`h` when no position is given: to the right of
+    /// the right-most page with the standard gap, top-aligned with the active page (the same slot as
+    /// the Artboards panel's "+"), or at the origin on a free canvas.
+    pub fn artboard_next_origin(&self) -> [f32; 2] {
+        let right = self.doc.artboards.iter().map(|a| a.x + a.w).fold(f32::MIN, f32::max);
+        let y = self.doc.active_artboard().map_or(0.0, |a| a.y);
+        [if right > f32::MIN { right + crate::editor::AB_GAP } else { 0.0 }, y]
+    }
+    /// Append a page with `rect = [x, y, w, h]` and an optional (already cleaned, non-empty) name; the
+    /// default name is "Artboard N". Returns the new page's stable id. The active page is unchanged.
+    pub fn artboard_add(&mut self, rect: [f32; 4], name: Option<String>) -> Result<u32, ArtboardError> {
+        check_page_rect(rect)?;
+        if self.doc.artboards.len() >= format::Limits::DEFAULT.max_artboards {
+            return Err(ab_error(ArtboardErrorCode::LimitExceeded, "artboard limit (1000) reached"));
+        }
+        let limits = format::Limits::DEFAULT;
+        let reserve = (limits.max_nodes + limits.max_paths + limits.max_anchors) as u64;
+        if u64::from(self.allocation_floor()) + reserve >= u64::from(u32::MAX) {
+            return Err(ab_error(ArtboardErrorCode::LimitExceeded, "not enough stable ids remain"));
+        }
+        let active = self.doc.active_artboard().map(|a| a.id);
+        self.begin();
+        let id = self.doc.nid();
+        let n = self.doc.artboards.len() + 1;
+        let [x, y, w, h] = rect;
+        let name = name.unwrap_or_else(|| format!("Artboard {n}"));
+        self.doc.artboards.push(Artboard { id, x, y, w, h, name, ..Artboard::default() });
+        self.keep_active(active);
+        self.dirty = true;
+        self.commit();
+        Ok(id)
+    }
+    /// Set a page's rect exactly (artwork does not move with it — the panel's X/Y/W/H behaviour).
+    /// A locked page is refused: it locks what stands on it, and resizing changes that membership.
+    pub fn artboard_set_rect(&mut self, id: u32, rect: [f32; 4]) -> Result<(), ArtboardError> {
+        let i = self.artboard_checked(id)?;
+        check_page_rect(rect)?;
+        if self.doc.artboards[i].locked {
+            return Err(ab_error(ArtboardErrorCode::LockedTarget, format!("artboard:{id} is locked")));
+        }
+        self.begin();
+        let [x, y, w, h] = rect;
+        let ab = &mut self.doc.artboards[i];
+        (ab.x, ab.y, ab.w, ab.h) = (x, y, w, h);
+        self.dirty = true;
+        self.commit();
+        Ok(())
+    }
+    /// Rename a page; `name` must already be cleaned and non-empty (the adapter cleans it).
+    pub fn artboard_rename(&mut self, id: u32, name: String) -> Result<(), ArtboardError> {
+        let i = self.artboard_checked(id)?;
+        if name.trim().is_empty() {
+            return Err(ab_error(ArtboardErrorCode::InvalidArgument, "name must not be empty"));
+        }
+        self.begin();
+        self.doc.artboards[i].name = name;
+        self.dirty = true;
+        self.commit();
+        Ok(())
+    }
+    /// Remove one page; its artwork stays where it is (it becomes a floater, or stays on the other pages
+    /// it overlaps — the same as the panel's delete). THE ACTIVE-ARTBOARD RULE: deleting the active page
+    /// while other pages remain is refused — choose the new active page first with
+    /// `artboard_set_active`; deleting the last page leaves a free canvas (`active = 0`, never indexed).
+    /// A locked page is refused.
+    pub fn artboard_delete(&mut self, id: u32) -> Result<(), ArtboardError> {
+        let i = self.artboard_checked(id)?;
+        if self.doc.artboards[i].locked {
+            return Err(ab_error(ArtboardErrorCode::LockedTarget, format!("artboard:{id} is locked")));
+        }
+        let active = self.doc.active_artboard().map(|a| a.id);
+        if active == Some(id) && self.doc.artboards.len() > 1 {
+            return Err(ab_error(
+                ArtboardErrorCode::InvalidArgument,
+                format!(
+                    "artboard:{id} is the active artboard; set_active_artboard to another artboard earlier in \
+                     the batch, then delete it"
+                ),
+            ));
+        }
+        self.begin();
+        self.doc.artboards.remove(i);
+        self.keep_active(active);
+        self.dirty = true;
+        self.commit();
+        Ok(())
+    }
+    /// Make a page the active one (a navigation preference: no undo step on its own).
+    pub fn artboard_set_active(&mut self, id: u32) -> Result<(), ArtboardError> {
+        self.doc.active = self.artboard_checked(id)?;
+        Ok(())
+    }
+    /// Re-point `active` at the page with stable id `id` after an insertion/removal (free canvas → 0).
+    fn keep_active(&mut self, id: Option<u32>) {
+        self.doc.active = id
+            .and_then(|id| self.doc.artboard_index(id))
+            .unwrap_or_else(|| self.doc.active.min(self.doc.artboards.len().saturating_sub(1)));
+    }
 }

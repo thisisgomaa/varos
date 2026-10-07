@@ -1,0 +1,160 @@
+{
+  "ok": true,
+  "request_id": "r1",
+  "board": "b1",
+  "rev": 2,
+  "undo_steps": 1,
+  "result": {
+    "board_changes": {
+      "bounds": [
+        0.0,
+        0.0,
+        360.0,
+        480.0
+      ],
+      "counts": {
+        "artboards": 0,
+        "groups": 1,
+        "layers": 1,
+        "paths": 5
+      }
+    },
+    "changed": [
+      {
+        "bounds": [
+          0.0,
+          0.0,
+          360.0,
+          480.0
+        ],
+        "geometry_changed": true,
+        "id": "node:1"
+      }
+    ],
+    "changed_document": true,
+    "created": [
+      {
+        "bounds": [
+          0.0,
+          0.0,
+          360.0,
+          480.0
+        ],
+        "fill": null,
+        "hidden": false,
+        "id": "node:32",
+        "kind": "group",
+        "locked": false,
+        "name": "Poster",
+        "parent": "node:1",
+        "stroke": null,
+        "stroke_width": null
+      },
+      {
+        "bounds": [
+          150.0,
+          160.0,
+          60.0,
+          60.0
+        ],
+        "fill": "#E66C4FFF",
+        "hidden": false,
+        "id": "path:14",
+        "kind": "path",
+        "locked": false,
+        "name": null,
+        "opacity": 1.0,
+        "parent": "node:32",
+        "stroke": null,
+        "stroke_width": 0.0
+      },
+      {
+        "bounds": [
+          0.0,
+          0.0,
+          360.0,
+          480.0
+        ],
+        "fill": "#172B4DFF",
+        "hidden": false,
+        "id": "path:2",
+        "kind": "path",
+        "locked": false,
+        "name": "Background",
+        "opacity": 1.0,
+        "parent": "node:32",
+        "stroke": null,
+        "stroke_width": 0.0
+      },
+      {
+        "bounds": [
+          260.0,
+          160.0,
+          60.0,
+          60.0
+        ],
+        "fill": "#B5D8CCFF",
+        "hidden": false,
+        "id": "path:20",
+        "kind": "path",
+        "locked": false,
+        "name": null,
+        "opacity": 1.0,
+        "parent": "node:32",
+        "stroke": null,
+        "stroke_width": 0.0
+      },
+      {
+        "bounds": [
+          40.0,
+          340.0,
+          280.0,
+          36.0
+        ],
+        "fill": "#F4EAD5FF",
+        "hidden": false,
+        "id": "path:26",
+        "kind": "path",
+        "locked": false,
+        "name": "Title bar",
+        "opacity": 1.0,
+        "parent": "node:32",
+        "stroke": null,
+        "stroke_width": 0.0
+      },
+      {
+        "bounds": [
+          40.0,
+          160.0,
+          60.0,
+          60.0
+        ],
+        "fill": "#F4BD50FF",
+        "hidden": false,
+        "id": "path:8",
+        "kind": "path",
+        "locked": false,
+        "name": null,
+        "opacity": 1.0,
+        "parent": "node:32",
+        "stroke": null,
+        "stroke_width": 0.0
+      }
+    ],
+    "from": 1,
+    "locals": {
+      "$a": "path:8",
+      "$b": "path:14",
+      "$background": "path:2",
+      "$c": "path:20",
+      "$poster": "node:32",
+      "$title": "path:26"
+    },
+    "removed": [],
+    "rev": 2,
+    "selection": [],
+    "selection_count": 0,
+    "selection_more": false,
+    "selection_rev": 0
+  }
+}

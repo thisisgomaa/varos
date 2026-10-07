@@ -31,6 +31,7 @@ fn demo_doc() -> Document {
     d.paths[0].opacity = 0.8;
     d.ids = 5;
     d.sync_tree(); // adopt the raw pushes into the scene tree (every real commit does this)
+    d.assign_artboard_ids(); // …and gives each page its stable id (format 4)
     d
 }
 fn tmp(name: &str) -> std::path::PathBuf {
@@ -91,6 +92,7 @@ fn every_board_hidden_still_writes_one_valid_page() {
     // while the embedded model still preserves the true all-hidden state.
     let mut doc = demo_doc();
     doc.artboards.push(Artboard { x: 500.0, y: 0.0, w: 200.0, h: 200.0, ..Default::default() });
+    doc.assign_artboard_ids();
     for ab in &mut doc.artboards {
         ab.hidden = true;
     }

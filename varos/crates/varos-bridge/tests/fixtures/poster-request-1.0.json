@@ -1,0 +1,16 @@
+{
+  "api": "1.0",
+  "request_id": "r1",
+  "board": "b1",
+  "expected_rev": 1,
+  "ops": [
+    {"verb": "add_shape", "kind": "rect", "bounds": [0, 0, 360, 480], "fill": "#172B4DFF", "local": "$background", "name": "Background"},
+    {"verb": "add_shape", "kind": "ellipse", "bounds": [40, 160, 60, 60], "fill": "#F4BD50FF", "local": "$a"},
+    {"verb": "add_shape", "kind": "ellipse", "bounds": [120, 160, 60, 60], "fill": "#E66C4FFF", "local": "$b"},
+    {"verb": "add_shape", "kind": "ellipse", "bounds": [260, 160, 60, 60], "fill": "#B5D8CCFF", "local": "$c"},
+    {"verb": "distribute", "ids": ["$a", "$b", "$c"], "axis": "h"},
+    {"verb": "add_shape", "kind": "rect", "bounds": [40, 340, 280, 36], "fill": "#F4EAD5FF", "local": "$title", "name": "Title bar"},
+    {"verb": "group", "ids": ["$background", "$a", "$b", "$c", "$title"], "local": "$poster"},
+    {"verb": "rename", "ids": ["$poster"], "name": "Poster"}
+  ]
+}

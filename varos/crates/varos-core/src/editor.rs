@@ -917,6 +917,8 @@ impl Editor {
                 }
             }
         }
+        // Stable tie decisions for checked grouping/transform outcomes, independent of HashSet seeds.
+        units.sort_unstable();
         units
     }
     /// The selection's units paired with their CURRENT stored transform (snapshot for a drag's base).
@@ -1525,6 +1527,41 @@ impl Editor {
         self.dirty = true;
         self.commit();
     }
+    /// Bridge alignment keeps each explicit complete unit rigid, including groups. Uses the same
+    /// alignment deltas as the interactive operation and the checked explicit world translation seam.
+    pub fn align_explicit_units(&mut self, mode: AlignMode, target: AlignTarget) -> Result<(), String> {
+        crate::bridge::check(&crate::EditCommand::Align { mode, target }, self)?;
+        let mut units: Vec<_> = self.objsel.iter().filter_map(|p| self.doc.unit_of(*p)).collect();
+        units.sort_unstable();
+        units.dedup();
+        let reference = match target {
+            AlignTarget::Selection if units.len() >= 2 => self.obj_bbox().ok_or("empty selection bounds")?,
+            AlignTarget::Artboard => self.doc.active_artboard().ok_or("missing artboard reference")?.rect(),
+            _ => return Err("explicit selection (at least two units) or artboard reference required".into()),
+        };
+        let mut translations = Vec::new();
+        for unit in units {
+            let paths = self.doc.node_paths(unit);
+            if paths.iter().any(|p| !self.objsel.contains(p)) {
+                return Err("alignment requires complete units".into());
+            }
+            let mut bounds: Option<(f32, f32, f32, f32)> = None;
+            for pid in &paths {
+                let b = self.doc.outline_bbox(self.doc.pidx(*pid).ok_or("missing path")?);
+                bounds = Some(bounds.map_or(b, |r| (r.0.min(b.0), r.1.min(b.1), r.2.max(b.2), r.3.max(b.3))));
+            }
+            let delta = align_delta(mode, reference, bounds.ok_or("empty unit bounds")?);
+            if !delta.iter().all(|v| v.is_finite()) {
+                return Err("alignment delta must be finite".into());
+            }
+            translations.push((paths, delta));
+        }
+        for (paths, delta) in translations {
+            self.move_explicit(&paths, delta);
+        }
+        Ok(())
+    }
+
     /// Artboard mode: each selected TOP-LEVEL item (an ungrouped object, or a whole group moved as
     /// one rigid unit) shifts so ITS bbox lands on the active artboard's matching edge/centre.
     /// Works for a single object (unlike Selection). Silently no-ops if there is no active board.
@@ -1595,7 +1632,7 @@ impl Editor {
                 })
             })
             .collect();
-        items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
         let n = items.len();
         let (c0, c1) = (items[0].1, items[n - 1].1);
         let step = (c1 - c0) / (n as f32 - 1.0);
@@ -3308,6 +3345,9 @@ impl Editor {
     /// the live editor. The legacy batch includes selection/default commands, but keeps the live
     /// tool and clipboard too.
     pub(crate) fn publish_batch(&mut self, staged: Editor, preserve_transient: bool) {
+        // A successful create-then-delete/group-then-ungroup batch may expose allocated identities
+        // while leaving no authored change. Reserve them even when no undo entry is published.
+        self.id_high_water = self.id_high_water.max(staged.allocation_floor());
         if if preserve_transient { !staged.doc.content_eq(&self.doc) } else { staged.doc != self.doc } {
             self.begin();
             self.doc = staged.doc;
@@ -3363,6 +3403,7 @@ impl Editor {
     }
     pub fn commit(&mut self) {
         self.doc.sync_tree(); // adopt new paths / prune dead + empty nodes / re-flatten z
+        self.doc.assign_artboard_ids(); // a new or duplicated page gets its stable id (format 4)
         self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
             if let Some(p) = self.pending.take() {
@@ -3460,6 +3501,7 @@ impl Editor {
     pub fn replace_doc(&mut self, doc: Document) {
         self.doc = doc;
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
+        self.doc.assign_artboard_ids(); // in-memory pages built without an id (format 4)
         self.id_high_water = self.doc.ids;
         self.undo.clear();
         self.redo.clear();
