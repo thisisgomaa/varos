@@ -1,73 +1,102 @@
-# Text P1 — throwaway engine spike
+# Text P1b — headless, excluded workspace
 
-**Not product code. Do not promote to P2.** This crate measures the accepted
-ADR-0010 candidate and deliberately reports unsupported behavior. It introduces
-no TextBox schema, app renderer, UI, system-font scan or production text editor.
-
-## Reproduce (from `varos/`, offline only)
+This is an Amendment-1 experiment, **not product code or P2 approval**. Run every
+Cargo command offline from this directory. No production renderer/model changes.
 
 ```sh
-cd spikes/text-p1 && cargo test --offline
-cd spikes/text-p1 && cargo build --offline --release
-cargo tree --offline --workspace -e features -i cosmic-text
-./target/release/varos-text-spike proofs /private/tmp/text-p1
-python3 spikes/text-p1/scripts/measure.py ./target/release/varos-text-spike 1000
-python3 spikes/text-p1/scripts/measure.py ./target/release/varos-text-spike 10000
-python3 spikes/text-p1/scripts/measure.py ./target/release/varos-text-spike 100000
+cargo --offline test --release --no-fail-fast
+cargo --offline clippy --all-targets -- -D warnings
+cargo --offline build --release
+./target/release/varos-text-spike proofs /private/tmp/text-p1b
+./target/release/varos-text-spike edits 10000 long middle
+python3 scripts/benchmarks.py /private/tmp/text-p1b
+cargo --offline build --release --example control_bench
+python3 scripts/control_benchmarks.py /private/tmp/text-p1b
+python3 scripts/harness.py /private/tmp/text-p1b/harnesses
+python3 scripts/checks.py /private/tmp/text-p1b
 ```
 
-The proof command writes all six sheets, metrics and diffs **then returns a
-failure** if the declared winding tolerance is exceeded. The acceptance suite currently has two red tests (legal breaks and winding);
-they are not ignored or annotated as expected failures. See
-[`TEXT_P1_RESULTS.md`](../../../docs/foundation/work_orders/TEXT_P1_RESULTS.md)
-and the generated `measurements.md` for the actual verdict.
+The native suite is green, including legal wrapping and native NonZero. There are
+no ignored or expected-failure acceptance tests. Architectural/resource/review
+exit gates remain open; green unit tests do not authorize P2. `proofs` saves every
+artifact and returns failure if the unchanged alpha limits fail. Failed conversion
+and single-sample NonZero measurements remain historical, **not acceptance**.
+See [P1b report](../../../docs/foundation/work_orders/TEXT_P1B_RESULTS.md).
 
-## Boundary and adapters
+## Patch and engine contracts
 
-- COSMIC 0.19.0 defaults off / `no_std`; bundled bytes into fontdb 0.23.0 only.
-  Exact direct pins and the workspace lockfile are the reproducibility contract.
-  `FontSystem::new_with_locale_and_db` sets a fixed locale; this **does not** set
-  the HarfRust language. Non-`und` requests return `UnsupportedLanguage`.
-- Explicit paragraph base direction uses unicode-bidi plus public COSMIC
-  `ShapeSpan`/`ShapeLine` APIs. No controls are inserted into stored source.
-  Per-line UBA L1/L2 reordering moves whole shaped clusters, preserving offsets.
-  Point text uses `Wrap::Word` with no width: COSMIC's `Wrap::None` path dropped
-  an opposing-direction numeric run in the initial probe.
-- Fallback resolves a complete whitespace-delimited segment when possible,
-  including punctuation. It preserves base/mark and emoji ZWJ graphemes. True
-  typographic style boundaries can divide a segment. Unsupported coverage is an
-  explicit byte-range diagnostic; monochrome .notdef remains visible.
-- Paint never becomes a shaping boundary. Size/face affect shaping; baseline
-  shift affects placement and line extents. Native OpenType features are passed
-  through; the spike refuses disabling required joining features.
-- Word wrapping uses legal engine break opportunities; unbreakable words can
-  overflow, with a diagnostic. Intra-word Arabic line-edge reshaping is unproven.
-- Carets partition ligature advance at grapheme boundaries (no GDEF extraction).
-  A hit returns **all coincident candidates**. Affinity/traversal identity must
-  survive host hit testing; x alone cannot identify coincident bidi/control stops.
-  This is not an Illustrator-validated editing policy.
-- Skrifa 0.42.1 produces unhinted exact cubics in Y-down points. Ink bounds are
-  conservative control bounds cached by face/glyph/size, separate from line boxes.
-  i_overlay 7.0.2 resolves flattened nonzero regions into even-odd contours.
-  Conversion stays in the spike: no core/PDF fill semantics were changed.
+- COSMIC 0.19.0 is copied intact from the local registry into `vendor/cosmic-text` (gitignored; rebuild it with `vendor/reproduce.sh`, which copies the pristine registry source and applies the patch).
+  `vendor/BASE.md`, `pristine.sha256`, and `cosmic-text-0.19.0-p1b.patch` record the
+  base, archive/directory hashes, and complete diff. Licences remain with it.
+- `std` + `shape-run-cache`, defaults off. `system-discovery` separately enables
+  locale, memmap and automatic discovery; upstream defaults opt in. Byte-fed mode
+  rejects file sources even if resvg unifies fontdb fs/memmap features.
+- Borrowed/owned attributes carry language/script; compatibility, cache identity,
+  fallback buffers and plans preserve them. Reused buffers reset properties.
+  Context includes five surrounding scalars, matching HarfRust 0.5.2's bound.
+  The adapter itemizes strong scripts once per paragraph; Common/Inherited
+  graphemes inherit the preceding strong script, or the first following one at
+  paragraph start. Explicit overrides stay local. This policy is fixture-tested,
+  not a full Script_Extensions/paired-punctuation conformance claim. Paint does not split shaping. Direct HarfRust is a **test oracle**.
+- Requests support global language/script and `language_runs`. Language syntax is
+  a bounded BCP-47 subset (primary 2–8 ASCII letters, following 1–8 alphanumerics,
+  max 63 bytes); grandfathered/private-use-only forms are not implemented.
+- Pinned Plex has a real Urdu `locl`: GSUB arab/URD lookup 6 maps uni06F6→uni0666.
+  Inter/Plex hashes and OFL notices remain unchanged. The vendored OFL Noto Sans
+  Arabic fixture independently tests real Arabic font-boundary context.
+- Full-paragraph UAX #14 opportunities define indivisible fitting units across
+  bidi/style/font fragments. Logical fitting backtracks to a legal opportunity,
+  overflows whole units, and preserves source ranges including hard-break bytes.
+  The legacy unbounded Word workaround stays; no emergency glyph breaks.
+  HarfRust unsafe-to-break flags and conservative non-space boundaries trigger
+  reshaping with context clipped to the actual line, then forward/backward refit.
+  Legal opportunities inside old clusters remain available through reshaping.
+  ZWSP Arabic fixtures demonstrate real form changes and agree with direct shaping.
+  Cluster-order reversal preserves mark/base order, checked by positioned oracles.
+- Per-line UBA L1 uses a line-local snapshot of upstream resolved classes/levels,
+  avoiding repeated full-paragraph clones. L2 still reorders whole clusters.
+- The incremental prototype caches paragraph layouts with stable identities/revisions,
+  width/direction/face/style/language/script/features. Font bytes are compile-time
+  immutable. Unchanged paragraphs are not reshaped; paint does not invalidate.
+  Edited paragraphs still reflow fully: line convergence is **not implemented**.
+  Cache eviction and cancellation/refusal preserve published source. Cancellation
+  checks paragraph boundaries, not guaranteed ≤8ms work slices. Cache counters are
+  retained-payload estimates, excluding allocator overhead; RSS is separate.
+- A separate resolved-bidi-span cache reuses shapes with identical text, attributes,
+  direction and five-scalar surrounding context. It does not split arbitrary words.
+  Shape-run and adapter-span caches each cap at 4,096 entries / 8MiB payload;
+  outline cache ≤16,384 entries; paragraph cache ≤32MiB payload; text cap 1MiB.
+  Fixed Unicode coverage bitsets avoid per-character tree lookup. Counters include
+  their storage. Arbitrary hostile-font work and temporary allocation caps remain open.
 
-## What is tested / what is not
+## NonZero and runtime evidence
 
-Ten named corpus tests execute decoded strings at 12/48/200 pt with point text
-and 120/600 pt widths. Additional tests cover mixed sizes/baseline shift,
-rotation, invalid fonts/metrics/styles, byte limits, overlapping contours,
-feature control and missing-font reporting. The proof matrix also runs both
-requested faces. Dumps retain glyph IDs, advances, offsets, byte ranges, bidi
-levels, carets and ink bounds. Images are CPU artifacts, not GUI screenshots.
+`proof::nonzero_coverage` uses tiny-skia Winding independently per glyph, combines
+subpixel coverage by max, box-filters 4×4 samples to each output pixel, and applies
+alpha once. Opposite font orientations cannot cancel. Exact-cubic vs 0.005pt-flat
+Winding now passes the original mean ≤1 / zero pixels above 32 limits at 2×.
+The original single-sample renderer is retained for diagnostics; tightening its
+flatten tolerance alone did not fix its AA discrepancy. Intermediate rasters cap
+at 64M pixels (4M output pixels with this sampling policy); refusal is explicit.
+The CPU stencil model has separate winding storage, increment/decrement, cover,
+clear, preserved clip bits and explicit refusal before unsafe ±256 winding.
+This is neither GPU pixel proof nor a complete production coverage design.
 
-The tiny style-edit model tests logical replacement/undo and refuses edits that
-merge grapheme/style boundaries. It is not a production edit engine. Broader
-IME, arbitrary font resources, cancellation, bounded caches, hostile fonts,
-variable/CFF fonts, a contrasting Arabic fixture, PDF equivalence and WASM
-runtime parity remain unproved. WASM check: **not run (target not installed)**.
+PDF (`f`) and SVG (`fill-rule="nonzero"`) prototypes retain independent exact cubic
+glyph paths. Resvg and headless CoreGraphics render them; their alpha comparison
+uses the same 4×4 sampling/filter and fixed tolerance. Render at 8× using the
+optional scale argument to `scripts/render_pdf.swift` / `scripts/render_svg.rs`,
+then use `varos-text-spike downsample-4x input.png output.png` for 2× output.
+This headless quality prototype has measured extra CPU cost, not a GPU or
+interactive draw guarantee. See measurements for limits and preserved failures.
 
-Fonts use `include_bytes!` paths into `varos-app/assets/fonts`; nothing is copied.
-Read that directory's README/manifest and original OFL notices. COSMIC and
-Skrifa currently resolve different Skrifa/read-fonts versions; the feature dump
-records that cost. Unicode data: bidi 16.0, linebreak 15.0, segmentation 17.0;
-this is a recorded mismatch, not a single-version conformance claim.
+`parity::fixtures` runs the recorded native/WASM configurations with the same font bytes.
+Build the WASM cdylib with `cargo --offline build --release --lib --target
+wasm32-unknown-unknown`, then run `scripts/parity.mjs` using Node. Compare with
+`scripts/compare_parity.py`: exact identities, positions ≤0.001pt, alpha mean ≤1
+and no delta >32 at 2x. No browser/GUI or host imports are required.
+
+Original P1's 10 rows / 23 strings and 41-sample benchmark are retained. The P1 raw
+414 configurations / 611 line comparisons are copied/checksummed in the P1b evidence
+folder before new output. Updated wrapping can change line count, not input identity.
+Unicode remains bidi 16 / linebreak 15 / segmentation 17, not unified conformance.
