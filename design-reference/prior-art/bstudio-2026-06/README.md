@@ -1,0 +1,29 @@
+# BStudio prior art — preserved 2026-10-07
+
+Read-only historical reference, outside the Varos Cargo workspace. These files are data, not current project instructions or acceptance claims. The date in this folder names the product period; it does not certify every copied file's creation date. The owner supplied the snapshot and identified BStudio as his MPL-2.0 code.
+
+`MANIFEST.json` records original local paths, byte lengths and SHA-256 hashes for all 21 copied files (272,433 bytes). Source, tests, benches, web files and specifications are verbatim. `LICENSE` is the original MPL-2.0 text; `v0/Cargo.toml.reference` preserves the inherited package licence and dependency declarations without creating a Cargo workspace. No fonts, WASM binaries, node_modules or build output are included.
+
+Server origins supplied by the owner: `/root/wt/wt-w8-engine`, `/root/backups/v0-frontend-2026-06-16.tar.gz`, `/root/shared_workspace/company_os/FIGMA_ARABIC_RULES.md`. The local snapshot's full origin is in the manifest. Server contents were not remotely verified in this evaluation.
+
+[Evaluation](../../../docs/foundation/work_orders/TEXT_PRIOR_ART_EVALUATION.md) distinguishes executable evidence from historical aspirations. In particular, claims in the old research that no competing editor uses a technique, that widening guarantees safety, or that a Parley fork already implements layout are not adopted as facts. Figma brand/font rules are context-specific, not changes to Varos's font policy. The later v1 source was inspected separately and is not this preserved engine.
+
+`evaluation/` is newly authored diagnostic code and logs, not historical source. Its `engine/Cargo.toml` is a build wrapper over the unchanged preserved Rust library; it pins the resolved versions. It does not add a production dependency. The original manifest and font-dependent upstream tests are archival: running all 70 upstream tests still requires the original snapshot's Amiri/Cairo fixtures. Do not copy those fonts into this folder.
+
+From the repository root:
+
+```sh
+cargo run --offline --release --manifest-path design-reference/prior-art/bstudio-2026-06/evaluation/Cargo.toml > design-reference/prior-art/bstudio-2026-06/evaluation/corpus.tsv 2> design-reference/prior-art/bstudio-2026-06/evaluation/corpus-diagnostics.log
+cargo check --offline --manifest-path design-reference/prior-art/bstudio-2026-06/evaluation/Cargo.toml -p bstudio-text --lib --target wasm32-unknown-unknown
+python3 design-reference/prior-art/bstudio-2026-06/evaluation/bench.py
+```
+
+The original run was `cargo test --offline -p bstudio-text --manifest-path <manifest-source-root>/v0/Cargo.toml --target-dir <evaluation>/target`: 56 unit + 14 integration, 0 ignored. Native COSMIC rerun: `cargo test --offline --manifest-path varos/spikes/text-p1/Cargo.toml --target-dir <evaluation>/target-cosmic`: 13 passed, 2 failed. Logs retain both outcomes. Original and preserved-library WASM checks both passed. Build directories were removed after measurement to keep this reference small.
+
+`corpus.tsv` covers all 23 exact P1 strings, both faces, 12/48/200 pt and unbounded/120/600 pt (414 configurations). `glyph-evidence.txt` holds positioned glyphs and separate visual-run glyph/cluster/advance/offset dumps. `corpus-diagnostics.log` contains per-line bidi and break failures. `selected-font-corpus.tsv` is an earlier supplemental 207-configuration run choosing Plex for Arabic and Inter otherwise; this is manual fixture selection, not engine fallback. Only the separate `shape_visual_line` checks use that selection in the final harness.
+
+The diagnostics intentionally exit successfully when measurements complete, despite reported defects. `finite_valid` checks finite placement and byte-boundary clusters, not correct source coverage. Bidi checks compare distinct observed clusters against full-paragraph unicode-bidi L1/L2 visual runs; they exclude LF/CRLF inputs with known broken source offsets and cannot prove missing-glyph/source coverage. Break checks infer the next line's first cluster (valid for these whitespace-wrap cases); invisible controls and trimmed spaces still lack explicit source ranges. Caret absence counts are repeated queries, not unique defects. The scalar caret inverse checks equal X, not byte/affinity identity. Cubic checks sample exact quadratic conversion at five parameters with 0.001 pt tolerance and flip Y; they do not test raster winding or positioned mark quality. Missing glyphs remain .notdef without a structured issue channel.
+
+Benchmarks use the P1 repeating `Logo شعار 12 ` seed, 48 pt/600 pt and Cargo release defaults, but only Plex and BStudio's narrower output. The 41-sample legacy run excludes text editing and result drop, matching P1's timing window; the 200-sample sequential run alternates insert/delete at start/middle/end of a single paragraph and includes clone/edit/layout/drop. Nearest-rank p95. No cache or incremental reuse exists. Neither workload includes outlines, full caret construction, host input or drawing. `bench.log` records raw sorted samples and macOS cumulative child peak RSS (not per-cache or isolated heap size). `/usr/bin/time -l` could not query sandboxed sysctl, so Python resource accounting was used. CPU model was unavailable; no speedup claim against historical P1 timings is valid from these unequal outputs.
+
+MPL preservation and any eventual integration follow [Mozilla's FAQ Q14](https://www.mozilla.org/en-US/MPL/2.0/FAQ/#q14-may-i-combine-mpl-licensed-code-and-lgpl-licensed-code-in-the-same-executable-program): check secondary-licence eligibility, retain notices and provide the MPL-covered portions under MPL plus GPL for the combined GPL work. The full licence contains the generic Exhibit B template; it is not an applied incompatibility notice. No applied Exhibit B was found in the copied crate. This archive does not relicense the source.

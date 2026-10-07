@@ -44,6 +44,55 @@ pub fn rasterize(snapshot: Arc<Document>, size: [u32; 2]) -> Raster {
     Raster { width: w, height: h, pixels: pixmap.take() }
 }
 
+/// Render ONE page of an immutable document snapshot (Bridge slice 3): the image is exactly the page
+/// rect `artboards[index]` (trim box, no bleed) at the page's aspect ratio, scaled to fit inside
+/// `max_size`; the background is the page colour (transparent for a transparent page), and anything
+/// outside the page is outside the image. The caller's document is not modified; other pages' papers
+/// still paint in scene order, as on canvas. `None` for an unknown index or a degenerate page.
+pub fn rasterize_artboard(snapshot: Arc<Document>, index: usize, max_size: [u32; 2]) -> Option<Raster> {
+    let page = snapshot.artboards.get(index)?.clone();
+    let (size, scale) = page_fit([page.w, page.h], max_size)?;
+    let mut doc = Arc::try_unwrap(snapshot).unwrap_or_else(|snapshot| (*snapshot).clone());
+    // a transparent page paints a faint ghost paper on canvas (`scene::AB_GHOST`) so it reads on the
+    // dark board; a page image has no board behind it, so that canvas aid is dropped from this copy
+    for ab in &mut doc.artboards {
+        ab.page_color.get_or_insert([0.0; 4]);
+    }
+    // the background is painted ONCE, by the fill below; the scene's own paper for this page is made
+    // fully transparent in the copy, or a translucent page colour would composite over itself (review
+    // P2). The fill also keeps the background for a hidden page, whose paper the scene skips.
+    doc.artboards[index].page_color = Some([0.0; 4]);
+    let mut editor = Editor::new();
+    editor.replace_doc(doc);
+    let scene = build_scene(&editor, 1.0);
+    let xf = Transform::from_row(scale, 0.0, 0.0, scale, -page.x * scale, -page.y * scale);
+    let mut pixmap = Pixmap::new(size[0], size[1])?;
+    if let Some(c) = page.page_color {
+        if let Some(color) = tiny_skia::Color::from_rgba(c[0], c[1], c[2], c[3]) {
+            pixmap.fill(color);
+        }
+    }
+    draw_groups(&scene.content, &mut pixmap, xf);
+    Some(Raster { width: size[0], height: size[1], pixels: pixmap.take() })
+}
+
+/// The pixel size of a `page` (w, h in points) fitted inside `max` at its own aspect ratio, and the
+/// points→pixels scale. Each side is at least 1 pixel.
+fn page_fit(page: [f32; 2], max: [u32; 2]) -> Option<([u32; 2], f32)> {
+    let [pw, ph] = page;
+    if !(pw.is_finite() && ph.is_finite() && pw > 0.0 && ph > 0.0) {
+        return None;
+    }
+    let (mw, mh) = (max[0].max(1) as f32, max[1].max(1) as f32);
+    let scale = (mw / pw).min(mh / ph);
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let w = (pw * scale).round().clamp(1.0, mw) as u32;
+    let h = (ph * scale).round().clamp(1.0, mh) as u32;
+    Some(([w, h], scale))
+}
+
 fn fit(b: [f32; 4], w: u32, h: u32) -> (f32, f32, f32) {
     if !b.iter().all(|v| v.is_finite()) {
         return (1.0, 0.0, 0.0);
@@ -412,6 +461,41 @@ mod tests {
     }
 
     #[test]
+    fn artboard_raster_is_the_page_at_its_ratio_with_its_background() {
+        let mut d = Document::default();
+        d.artboards.push(Artboard { x: 100.0, y: 50.0, w: 1080.0, h: 1920.0, ..Artboard::default() });
+        d.artboards.push(Artboard { x: 2000.0, w: 100.0, h: 100.0, page_color: None, ..Artboard::default() });
+        // a red square in the page's top-left quarter, and a green one off every page
+        d.paths.push(rect(1, [100.0, 50.0], [540.0, 960.0], [1.0, 0.0, 0.0, 1.0]));
+        d.paths.push(rect(2, [-500.0, -500.0], [100.0, 100.0], [0.0, 1.0, 0.0, 1.0]));
+        d.ids = 100;
+        let r = rasterize_artboard(Arc::new(d.clone()), 0, [1024, 1024]).unwrap();
+        assert_eq!((r.width, r.height), (576, 1024), "9:16 story fitted inside 1024×1024");
+        assert_eq!(pixel(&r, 10, 10), [255, 0, 0, 255], "art at the page's top-left");
+        assert_eq!(pixel(&r, 500, 900), [255, 255, 255, 255], "white page background");
+        let r = rasterize_artboard(Arc::new(d.clone()), 1, [64, 32]).unwrap();
+        assert_eq!((r.width, r.height), (32, 32));
+        assert_eq!(pixel(&r, 16, 16), [0, 0, 0, 0], "a transparent page has a transparent background");
+        // a half-transparent page colour is painted once: alpha 0.5, not 0.75 (review P2)
+        let mut half = d.clone();
+        half.artboards[1].page_color = Some([1.0, 0.0, 0.0, 0.5]);
+        let r = rasterize_artboard(Arc::new(half.clone()), 1, [32, 32]).unwrap();
+        let [red, g, b, a] = pixel(&r, 16, 16);
+        assert!((127..=128).contains(&a) && (127..=128).contains(&red) && g == 0 && b == 0, "{:?}", [red, g, b, a]);
+        // and the opaque page keeps exactly its colour with art on top unchanged
+        assert_eq!(
+            pixel(&rasterize_artboard(Arc::new(half.clone()), 0, [1024, 1024]).unwrap(), 500, 900),
+            [255, 255, 255, 255]
+        );
+        // a hidden page still gets its background
+        half.artboards[1].hidden = true;
+        assert_eq!(pixel(&rasterize_artboard(Arc::new(half), 1, [32, 32]).unwrap(), 16, 16)[3], a);
+        assert!(rasterize_artboard(Arc::new(d), 2, [64, 64]).is_none());
+        assert_eq!(page_fit([f32::NAN, 1.0], [10, 10]), None);
+        assert_eq!(page_fit([1.0, 1.0e9], [10, 10]).unwrap().0, [1, 10]);
+    }
+
+    #[test]
     fn fit_rejects_nonfinite_and_bounds_extreme_values() {
         assert_eq!(fit([f32::NAN, 0.0, 1.0, 1.0], 100, 100), (1.0, 0.0, 0.0));
         for bounds in [[0.0, 0.0, 0.0, 0.0], [-1.0e30, -1.0e30, 1.0e30, 1.0e30]] {
@@ -448,6 +532,36 @@ mod tests {
         let elapsed = start.elapsed();
         eprintln!("2,000-path thumbnail: {elapsed:?}");
         assert!(elapsed.as_secs_f32() < 1.5, "{elapsed:?}");
+    }
+
+    #[test]
+    #[ignore = "headless 5k-path clone/raster/encode timing probe; run --release --ignored --nocapture"]
+    fn snapshot_five_thousand_paths_timings() {
+        let mut doc = Document::default();
+        for i in 0..5_000 {
+            doc.paths.push(rect(
+                i * 10 + 2,
+                [(i % 100) as f32 * 3.0, (i / 100) as f32 * 3.0],
+                [2.0, 2.0],
+                [1.0, 0.2, 0.1, 1.0],
+            ));
+        }
+        doc.sync_tree();
+        for size in [[544, 246], [1024, 1024]] {
+            let _ = rasterize(Arc::new(doc.clone()), size).encode_png().unwrap();
+            for sample in 0..5 {
+                let start = Instant::now();
+                let snapshot = Arc::new(doc.clone());
+                let clone_time = start.elapsed();
+                let raster_start = Instant::now();
+                let raster = rasterize(snapshot, size);
+                let raster_time = raster_start.elapsed();
+                let encode_start = Instant::now();
+                let png = raster.encode_png().unwrap();
+                let encode_time = encode_start.elapsed();
+                eprintln!("snapshot {}x{} sample={sample} clone_ms={:.3} raster_ms={:.3} encode_ms={:.3} total_ms={:.3} bytes={}", size[0], size[1], clone_time.as_secs_f64()*1000.0, raster_time.as_secs_f64()*1000.0, encode_time.as_secs_f64()*1000.0, start.elapsed().as_secs_f64()*1000.0, png.len());
+            }
+        }
     }
 
     /// For the Start snapshot only: `VAROS_START_THUMBS=<dir>` writes real thumbnails (this rasteriser,

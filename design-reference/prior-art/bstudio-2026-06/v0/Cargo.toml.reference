@@ -1,0 +1,60 @@
+# BStudio v0 — workspace root
+# Phase 0: kashida-correct Arabic typography demo
+# Stack: Rust + wasm-bindgen + skia-safe (wasm32-unknown-emscripten)
+# See ../BLUEPRINT.md and ../TODO.md
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/bstudio-core",     # document model + tools dispatcher (Loro doc lives here)
+    "crates/bstudio-text",     # forked Parley line breaker + kashida engine (THE MOAT)
+    "crates/bstudio-render",   # renderer trait + Skia impl (emscripten target)
+    "crates/bstudio-web",      # wasm-bindgen entry point + canvas glue (kashida demo)
+    "crates/bstudio-editor",   # lean wasm-bindgen document API for the editor shell
+]
+
+[workspace.package]
+version = "0.0.4"
+edition = "2021"
+rust-version = "1.88"
+authors = ["Ahmed Gomaa <thisisgomaa@gmail.com>", "Abaas (Claude)"]
+license = "MPL-2.0"
+repository = "https://github.com/thisisgomaa/bstudio"  # placeholder until pushed
+publish = false                                       # internal until Phase 2
+
+[workspace.dependencies]
+# Shaping (the moat)
+harfrust = "0.7"
+
+# BiDi
+unicode-bidi = "=0.3.18"
+icu_properties = "2.2"
+
+# Font outlines
+skrifa     = "0.42"
+read-fonts = "0.39"
+
+# Text layout (we'll add as a fork later — placeholder for now)
+# parley = { git = "https://github.com/pivot-studio/parley-fork.git", branch = "pivot/main" }
+parley = { version = "0.9", default-features = false }
+
+# CRDT (document model)
+loro = "1.12"
+
+# Renderer (emscripten target only — see decisions/002_skia_binding.md)
+# skia-safe = { version = "0.97", default-features = false, features = ["gl", "svg", "textlayout"] }
+
+# Wasm bridges (wasm-bindgen target only)
+wasm-bindgen = "0.2"
+web-sys = "0.3"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+
+[profile.release]
+opt-level = "z"        # optimize for size (wasm payload)
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 1          # too slow without some optimisation when wasm

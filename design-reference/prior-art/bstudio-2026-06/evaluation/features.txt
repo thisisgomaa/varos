@@ -1,0 +1,179 @@
+bstudio-prior-art-eval v0.0.0 (/Users/gomaa/Documents/AI workspace/varos/.claude/worktrees/prior-art-eval/design-reference/prior-art/bstudio-2026-06/evaluation)
+├── bstudio-text feature "default"
+│   └── bstudio-text v0.0.4 (/Users/gomaa/Documents/AI workspace/varos/.claude/worktrees/prior-art-eval/design-reference/prior-art/bstudio-2026-06/evaluation/engine)
+│       ├── harfrust feature "default"
+│       │   ├── harfrust v0.7.0
+│       │   │   ├── read-fonts v0.39.2
+│       │   │   │   ├── bytemuck feature "default"
+│       │   │   │   │   └── bytemuck v1.25.0
+│       │   │   │   │       └── bytemuck_derive feature "default"
+│       │   │   │   │           └── bytemuck_derive v1.10.2 (proc-macro)
+│       │   │   │   │               ├── proc-macro2 feature "default"
+│       │   │   │   │               │   ├── proc-macro2 v1.0.106
+│       │   │   │   │               │   │   └── unicode-ident feature "default"
+│       │   │   │   │               │   │       └── unicode-ident v1.0.24
+│       │   │   │   │               │   └── proc-macro2 feature "proc-macro"
+│       │   │   │   │               │       └── proc-macro2 v1.0.106 (*)
+│       │   │   │   │               ├── quote feature "default"
+│       │   │   │   │               │   ├── quote v1.0.46
+│       │   │   │   │               │   │   └── proc-macro2 v1.0.106 (*)
+│       │   │   │   │               │   └── quote feature "proc-macro"
+│       │   │   │   │               │       ├── quote v1.0.46 (*)
+│       │   │   │   │               │       └── proc-macro2 feature "proc-macro" (*)
+│       │   │   │   │               └── syn feature "default"
+│       │   │   │   │                   ├── syn v2.0.118
+│       │   │   │   │                   │   ├── proc-macro2 v1.0.106 (*)
+│       │   │   │   │                   │   ├── quote v1.0.46 (*)
+│       │   │   │   │                   │   └── unicode-ident feature "default" (*)
+│       │   │   │   │                   ├── syn feature "clone-impls"
+│       │   │   │   │                   │   └── syn v2.0.118 (*)
+│       │   │   │   │                   ├── syn feature "derive"
+│       │   │   │   │                   │   └── syn v2.0.118 (*)
+│       │   │   │   │                   ├── syn feature "parsing"
+│       │   │   │   │                   │   └── syn v2.0.118 (*)
+│       │   │   │   │                   ├── syn feature "printing"
+│       │   │   │   │                   │   └── syn v2.0.118 (*)
+│       │   │   │   │                   └── syn feature "proc-macro"
+│       │   │   │   │                       ├── syn v2.0.118 (*)
+│       │   │   │   │                       ├── proc-macro2 feature "proc-macro" (*)
+│       │   │   │   │                       └── quote feature "proc-macro" (*)
+│       │   │   │   ├── font-types feature "bytemuck"
+│       │   │   │   │   └── font-types v0.11.3
+│       │   │   │   │       ├── bytemuck feature "default" (*)
+│       │   │   │   │       ├── bytemuck feature "derive"
+│       │   │   │   │       │   ├── bytemuck v1.25.0 (*)
+│       │   │   │   │       │   └── bytemuck feature "bytemuck_derive"
+│       │   │   │   │       │       └── bytemuck v1.25.0 (*)
+│       │   │   │   │       └── bytemuck feature "min_const_generics"
+│       │   │   │   │           └── bytemuck v1.25.0 (*)
+│       │   │   │   └── font-types feature "default"
+│       │   │   │       └── font-types v0.11.3 (*)
+│       │   │   ├── bitflags feature "default"
+│       │   │   │   └── bitflags v2.13.0
+│       │   │   ├── bytemuck feature "default" (*)
+│       │   │   ├── bytemuck feature "extern_crate_alloc"
+│       │   │   │   └── bytemuck v1.25.0 (*)
+│       │   │   └── smallvec feature "default"
+│       │   │       └── smallvec v1.15.2
+│       │   └── harfrust feature "std"
+│       │       ├── harfrust v0.7.0 (*)
+│       │       └── read-fonts feature "std"
+│       │           ├── read-fonts v0.39.2 (*)
+│       │           └── font-types feature "std"
+│       │               └── font-types v0.11.3 (*)
+│       ├── read-fonts feature "default"
+│       │   ├── read-fonts v0.39.2 (*)
+│       │   └── read-fonts feature "std" (*)
+│       ├── icu_properties feature "default"
+│       │   ├── icu_properties v2.2.0
+│       │   │   ├── icu_collections v2.2.0
+│       │   │   │   ├── displaydoc v0.2.6 (proc-macro)
+│       │   │   │   │   ├── proc-macro2 feature "default" (*)
+│       │   │   │   │   ├── quote feature "default" (*)
+│       │   │   │   │   └── syn feature "default" (*)
+│       │   │   │   ├── utf8_iter v1.0.4
+│       │   │   │   ├── potential_utf feature "zerovec"
+│       │   │   │   │   └── potential_utf v0.1.5
+│       │   │   │   │       └── zerovec v0.11.6
+│       │   │   │   │           ├── yoke v0.8.3
+│       │   │   │   │           │   ├── stable_deref_trait v1.2.1
+│       │   │   │   │           │   ├── yoke-derive v0.8.2 (proc-macro)
+│       │   │   │   │           │   │   ├── proc-macro2 feature "default" (*)
+│       │   │   │   │           │   │   ├── quote feature "default" (*)
+│       │   │   │   │           │   │   ├── syn feature "default" (*)
+│       │   │   │   │           │   │   ├── syn feature "fold"
+│       │   │   │   │           │   │   │   └── syn v2.0.118 (*)
+│       │   │   │   │           │   │   └── synstructure feature "default"
+│       │   │   │   │           │   │       ├── synstructure v0.13.2
+│       │   │   │   │           │   │       │   ├── proc-macro2 v1.0.106 (*)
+│       │   │   │   │           │   │       │   ├── quote v1.0.46 (*)
+│       │   │   │   │           │   │       │   ├── syn feature "clone-impls" (*)
+│       │   │   │   │           │   │       │   ├── syn feature "derive" (*)
+│       │   │   │   │           │   │       │   ├── syn feature "extra-traits"
+│       │   │   │   │           │   │       │   │   └── syn v2.0.118 (*)
+│       │   │   │   │           │   │       │   ├── syn feature "parsing" (*)
+│       │   │   │   │           │   │       │   ├── syn feature "printing" (*)
+│       │   │   │   │           │   │       │   └── syn feature "visit"
+│       │   │   │   │           │   │       │       └── syn v2.0.118 (*)
+│       │   │   │   │           │   │       └── synstructure feature "proc-macro"
+│       │   │   │   │           │   │           ├── synstructure v0.13.2 (*)
+│       │   │   │   │           │   │           ├── proc-macro2 feature "proc-macro" (*)
+│       │   │   │   │           │   │           ├── quote feature "proc-macro" (*)
+│       │   │   │   │           │   │           └── syn feature "proc-macro" (*)
+│       │   │   │   │           │   └── zerofrom v0.1.8
+│       │   │   │   │           │       └── zerofrom-derive v0.1.7 (proc-macro)
+│       │   │   │   │           │           ├── proc-macro2 feature "default" (*)
+│       │   │   │   │           │           ├── quote feature "default" (*)
+│       │   │   │   │           │           ├── syn feature "default" (*)
+│       │   │   │   │           │           ├── syn feature "fold" (*)
+│       │   │   │   │           │           └── synstructure feature "default" (*)
+│       │   │   │   │           ├── zerofrom v0.1.8 (*)
+│       │   │   │   │           └── zerovec-derive v0.11.3 (proc-macro)
+│       │   │   │   │               ├── proc-macro2 feature "default" (*)
+│       │   │   │   │               ├── quote feature "default" (*)
+│       │   │   │   │               ├── syn feature "default" (*)
+│       │   │   │   │               └── syn feature "extra-traits" (*)
+│       │   │   │   ├── zerovec feature "derive"
+│       │   │   │   │   └── zerovec v0.11.6 (*)
+│       │   │   │   ├── zerovec feature "yoke"
+│       │   │   │   │   └── zerovec v0.11.6 (*)
+│       │   │   │   ├── yoke feature "derive"
+│       │   │   │   │   ├── yoke v0.8.3 (*)
+│       │   │   │   │   ├── yoke feature "zerofrom"
+│       │   │   │   │   │   └── yoke v0.8.3 (*)
+│       │   │   │   │   └── zerofrom feature "derive"
+│       │   │   │   │       └── zerofrom v0.1.8 (*)
+│       │   │   │   └── zerofrom feature "derive" (*)
+│       │   │   ├── icu_properties_data v2.2.0
+│       │   │   ├── icu_provider v2.2.0
+│       │   │   │   ├── displaydoc v0.2.6 (proc-macro) (*)
+│       │   │   │   ├── icu_locale_core v2.2.0
+│       │   │   │   │   ├── displaydoc v0.2.6 (proc-macro) (*)
+│       │   │   │   │   ├── litemap v0.8.2
+│       │   │   │   │   ├── tinystr v0.8.3
+│       │   │   │   │   │   ├── displaydoc v0.2.6 (proc-macro) (*)
+│       │   │   │   │   │   └── zerovec v0.11.6 (*)
+│       │   │   │   │   ├── writeable v0.6.3
+│       │   │   │   │   └── zerovec v0.11.6 (*)
+│       │   │   │   ├── writeable v0.6.3
+│       │   │   │   ├── zerotrie v0.2.4
+│       │   │   │   │   ├── displaydoc v0.2.6 (proc-macro) (*)
+│       │   │   │   │   ├── zerofrom v0.1.8 (*)
+│       │   │   │   │   └── yoke feature "derive" (*)
+│       │   │   │   ├── zerovec feature "derive" (*)
+│       │   │   │   ├── yoke feature "derive" (*)
+│       │   │   │   └── zerofrom feature "derive" (*)
+│       │   │   ├── zerovec feature "derive" (*)
+│       │   │   ├── zerovec feature "yoke" (*)
+│       │   │   ├── icu_locale_core feature "zerovec"
+│       │   │   │   ├── icu_locale_core v2.2.0 (*)
+│       │   │   │   └── tinystr feature "zerovec"
+│       │   │   │       └── tinystr v0.8.3 (*)
+│       │   │   ├── zerotrie feature "yoke"
+│       │   │   │   └── zerotrie v0.2.4 (*)
+│       │   │   └── zerotrie feature "zerofrom"
+│       │   │       └── zerotrie v0.2.4 (*)
+│       │   └── icu_properties feature "compiled_data"
+│       │       ├── icu_properties v2.2.0 (*)
+│       │       └── icu_provider feature "baked"
+│       │           └── icu_provider v2.2.0 (*)
+│       ├── skrifa feature "default"
+│       │   ├── skrifa v0.42.1
+│       │   │   ├── read-fonts v0.39.2 (*)
+│       │   │   └── bytemuck feature "default" (*)
+│       │   ├── skrifa feature "autohint_shaping"
+│       │   │   └── skrifa v0.42.1 (*)
+│       │   └── skrifa feature "std"
+│       │       ├── skrifa v0.42.1 (*)
+│       │       └── read-fonts feature "std" (*)
+│       └── unicode-bidi feature "default"
+│           ├── unicode-bidi v0.3.18
+│           ├── unicode-bidi feature "hardcoded-data"
+│           │   └── unicode-bidi v0.3.18
+│           └── unicode-bidi feature "std"
+│               └── unicode-bidi v0.3.18
+├── unicode-bidi feature "default" (*)
+├── unicode-linebreak feature "default"
+│   └── unicode-linebreak v0.1.5
+└── unicode-segmentation feature "default"
+    └── unicode-segmentation v1.13.3

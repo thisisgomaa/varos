@@ -1,0 +1,17 @@
+{
+  "api": "1.0",
+  "request_id": "r1",
+  "board": "b1",
+  "expected_rev": 1,
+  "ops": [
+    {"verb": "add_artboard", "preset": "story", "origin": [0, 0], "name": "Instagram Story", "local": "$story"},
+    {"verb": "set_active_artboard", "id": "$story"},
+    {"verb": "add_shape", "kind": "rect", "bounds": [0, 0, 1080, 1920], "fill": "#172B4DFF", "local": "$bg", "name": "Background"},
+    {"verb": "add_shape", "kind": "ellipse", "bounds": [0, 0, 640, 640], "fill": "#F4BD50FF", "local": "$sun", "name": "Sun"},
+    {"verb": "align", "ids": ["$sun"], "mode": "center", "target": "$story"},
+    {"verb": "align", "ids": ["$sun"], "mode": "middle", "target": "$story"},
+    {"verb": "add_shape", "kind": "rect", "bounds": [120, 1500, 840, 160], "fill": "#F4EAD5FF", "local": "$title", "name": "Title bar"},
+    {"verb": "group", "ids": ["$bg", "$sun", "$title"], "local": "$design"},
+    {"verb": "rename", "ids": ["$design"], "name": "Story design"}
+  ]
+}

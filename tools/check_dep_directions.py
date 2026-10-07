@@ -13,7 +13,7 @@ EDGES = {
     "varos-pdf": {"varos-core"},
     "varos-app": {"varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
     "varos-raster": {"varos-core", "varos-pdf"},  # PDF is test-only.
-    "varos-bridge": {"varos-core"},
+    "varos-bridge": {"varos-core", "varos-raster"},
     "varos-cli": {"varos-core", "varos-pdf", "varos-raster", "varos-bridge"},
 }
 
@@ -78,7 +78,7 @@ def main():
             print(error.stderr, file=sys.stderr)
         return 1
     print("check_dep_directions: PASS")
-    print("internal edges: Bridge -> core; raster -> core (+ pdf tests); CLI -> Bridge, core, pdf, raster; app -> core, renderer, pdf, raster, Bridge")
+    print("internal edges: Bridge -> core, raster; raster -> core (+ pdf tests); CLI -> Bridge, core, pdf, raster; app -> core, renderer, pdf, raster, Bridge")
     print("egui_tiles code use: varos-app/src/shell/boxtree.rs only")
     return 0
 
