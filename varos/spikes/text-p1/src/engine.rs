@@ -165,7 +165,7 @@ pub struct Engine {
     span_cache_bytes: usize,
     span_hits: usize,
     span_misses: usize,
-    fonts: FontSystem,
+    pub(crate) fonts: FontSystem,
     ids: Vec<(fontdb::ID, Face)>,
     coverage: [Vec<u64>; 2],
     ink_cache: BTreeMap<(u8, u16, u32), Option<[f32; 4]>>,
@@ -221,7 +221,7 @@ impl Engine {
     }
     /// Reuse a resolved bidi span only with identical text, full attributes,
     /// direction and HarfRust's bounded surrounding context. No arbitrary chunks.
-    fn shape_span_cached(
+    pub(crate) fn shape_span_cached(
         &mut self,
         text: &str,
         attrs: &AttrsList,
@@ -317,7 +317,7 @@ impl Engine {
     fn available(&self, face: Face) -> bool {
         self.ids.iter().any(|(_, f)| *f == face)
     }
-    fn covers(&self, face: Face, text: &str) -> bool {
+    pub(crate) fn covers(&self, face: Face, text: &str) -> bool {
         self.available(face)
             && text.chars().filter(|c| !ignorable(*c)).all(|c| {
                 let c = c as usize;
@@ -348,7 +348,7 @@ impl Engine {
         let mut top = 0.;
         // Keep newline bytes in source; only paste_normalize explicitly normalizes CRLF.
         for raw in paragraphs(req.text) {
-            let text = raw.trim_end_matches(['\n', '\r', '\u{b}', '\u{c}', '\u{85}', '\u{2028}', '\u{2029}']);
+            let text = paragraphs_trim(raw);
             let base = match req.direction {
                 Direction::Auto => None,
                 Direction::Ltr => Some(Level::ltr()),
@@ -399,41 +399,8 @@ impl Engine {
             cuts.dedup();
             for pair in cuts.windows(2) {
                 let range = pair[0]..pair[1];
-                let global = offset + range.start..offset + range.end;
-                let style = req.styles.iter().find(|s| s.range.contains(&global.start));
-                let requested = style.map_or(req.face, |s| s.face);
-                let segment = &text[range.clone()];
-                let actual = if self.covers(requested, segment) {
-                    requested
-                } else if self.covers(Face::Plex, segment) {
-                    Face::Plex
-                } else if self.covers(Face::Inter, segment) {
-                    Face::Inter
-                } else {
-                    requested
-                };
-                if requested != actual {
-                    out.issues.push(Issue::Substituted { range: global.clone(), requested, actual });
-                }
-                for (i, g) in segment.grapheme_indices(true) {
-                    if !self.covers(actual, g) {
-                        out.issues.push(Issue::UnsupportedCluster(global.start + i..global.start + i + g.len()));
-                    }
-                }
-                let size = style.map_or(req.size, |s| s.size);
-                let language_run = req.language_runs.iter().find(|run| run.range.contains(&global.start));
-                let explicit_script = language_run.map_or(req.script, |run| run.script);
-                let script_index = scripts.partition_point(|(r, _)| r.end <= range.start);
-                let run_script = explicit_script.or_else(|| scripts.get(script_index).and_then(|(_, script)| *script));
-                let mut a = Attrs::new()
-                    .family(Family::Name(actual.family()))
-                    .metrics(cosmic_text::Metrics::new(size, size * 1.4))
-                    .script(run_script)
-                    .font_features(features.clone());
-                a.language = language_run.map_or_else(
-                    || attrs.language.clone(),
-                    |run| Some(std::sync::Arc::new(run.language.parse().unwrap())),
-                );
+                let a =
+                    self.segment_attrs(req, offset, text, &scripts, &attrs, &features, range.clone(), &mut out.issues);
                 attrs_list.add_span(range, &a);
             }
             checkpoint("attributes");
@@ -459,100 +426,19 @@ impl Engine {
             // cutting a shaped joining cluster without line-edge reshaping.
             let opportunities: Vec<_> = unicode_linebreak::linebreaks(text).collect();
             let layouts = shape.layout_with_breaks(text, &opportunities, req.size, req.width, align, |range| {
-                let slice = &text[range.clone()];
-                let mut local_attrs = AttrsList::new(&attrs_list.get_span(range.start));
-                for (r, a) in attrs_list.spans() {
-                    let start = r.start.max(range.start);
-                    let end = r.end.min(range.end);
-                    if start < end {
-                        local_attrs.add_span(start - range.start..end - range.start, &a.as_attrs());
-                    }
-                }
-                let mut edge = ShapeLine::new(&mut self.fonts, "", &local_attrs, Shaping::Advanced, 4);
-                edge.rtl = rtl;
-                let mut start = range.start;
-                while start < range.end {
-                    let l = levels[start];
-                    let end = text[start..range.end]
-                        .char_indices()
-                        .skip(1)
-                        .map(|(i, _)| start + i)
-                        .find(|i| levels[*i] != l)
-                        .unwrap_or(range.end);
-                    let mut span = ShapeSpan::new(
-                        &mut self.fonts,
-                        slice,
-                        &local_attrs,
-                        start - range.start..end - range.start,
-                        rtl,
-                        l,
-                        Shaping::Advanced,
-                    );
-                    for word in &mut span.words {
-                        for g in &mut word.glyphs {
-                            g.start += range.start;
-                            g.end += range.start;
-                        }
-                    }
-                    edge.spans.push(span);
-                    start = end;
-                }
-                edge
+                reshape_edge(&mut self.fonts, text, &attrs_list, &levels, rtl, range)
             });
             checkpoint("legal_layout");
+            let para_bidi =
+                bidi.paragraphs.first().map(|p| (bidi.text, &bidi.original_classes[..], &bidi.levels[..], p.level));
             for (source_range, line) in layouts {
-                let min = source_range.start;
-                let max = source_range.end;
-                let mut ascent = line.max_ascent.max(req.size * 0.8);
-                let mut descent = line.max_descent.max(req.size * 0.2);
-                for s in &req.styles {
-                    if s.range.start < offset + max && s.range.end > offset + min {
-                        ascent = ascent.max(line.max_ascent + s.baseline_shift);
-                        descent = descent.max(line.max_descent - s.baseline_shift);
-                    }
+                let (mut line, overflow) = self.place_line(req, offset, rtl, source_range, line, para_bidi)?;
+                apply_baseline(&mut line, top, &req.styles);
+                if overflow {
+                    out.issues.push(Issue::Overflow(out.lines.len()));
                 }
-                let baseline = top + ascent;
-                let mut glyphs = Vec::new();
-                for g in line.glyphs {
-                    let face = self.ids.iter().find(|(id, _)| *id == g.font_id).ok_or("unknown resolved font")?.1;
-                    let shift = req
-                        .styles
-                        .iter()
-                        .find(|s| s.range.contains(&(offset + g.start)))
-                        .map_or(0., |s| s.baseline_shift);
-                    glyphs.push(Glyph {
-                        id: g.glyph_id,
-                        face,
-                        cluster: offset + g.start..offset + g.end,
-                        level: g.level.number(),
-                        x: g.x,
-                        y: baseline + g.y - shift,
-                        advance: g.w,
-                        offset: [g.x_offset * g.font_size, -g.y_offset * g.font_size],
-                        size: g.font_size,
-                    });
-                }
-                // COSMIC resolves whitespace at paragraph scope. Reapply UBA L1/L2
-                // at the chosen line boundary, keeping each shaped cluster intact.
-                if let Some(para) = bidi.paragraphs.first() {
-                    let line_levels = local_line_levels(&bidi, para.level, min..max);
-                    reorder_clusters(&mut glyphs, &line_levels, offset + min);
-                }
-                let index = out.lines.len();
-                if req.width.is_some_and(|w| line.w > w + 0.01) {
-                    out.issues.push(Issue::Overflow(index));
-                }
-                out.lines.push(Line {
-                    range: offset + min..offset + max,
-                    rtl,
-                    baseline,
-                    ascent,
-                    descent,
-                    width: line.w,
-                    empty_caret_x: if rtl ^ req.end_align { req.width.unwrap_or(0.) } else { 0. },
-                    glyphs,
-                });
-                top += (ascent + descent).max(req.size * 1.4);
+                top += (line.ascent + line.descent).max(req.size * 1.4);
+                out.lines.push(line);
             }
             if let Some(last) = out.lines.last_mut() {
                 last.range.end = offset + raw.len();
@@ -565,6 +451,114 @@ impl Engine {
         build_carets(&mut out, &boundaries);
         checkpoint("carets");
         Ok(out)
+    }
+    /// One cut segment's resolved face/size/script/language attributes plus its
+    /// coverage issues. Shared by the cold engine and the convergent paragraph cache.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn segment_attrs(
+        &self,
+        req: &Request<'_>,
+        offset: usize,
+        text: &str,
+        scripts: &[(Range<usize>, Option<cosmic_text::harfrust::Script>)],
+        paragraph: &Attrs<'_>,
+        features: &FontFeatures,
+        range: Range<usize>,
+        issues: &mut Vec<Issue>,
+    ) -> Attrs<'static> {
+        let global = offset + range.start..offset + range.end;
+        let style = req.styles.iter().find(|s| s.range.contains(&global.start));
+        let requested = style.map_or(req.face, |s| s.face);
+        let segment = &text[range.clone()];
+        let actual = if self.covers(requested, segment) {
+            requested
+        } else if self.covers(Face::Plex, segment) {
+            Face::Plex
+        } else if self.covers(Face::Inter, segment) {
+            Face::Inter
+        } else {
+            requested
+        };
+        if requested != actual {
+            issues.push(Issue::Substituted { range: global.clone(), requested, actual });
+        }
+        for (i, g) in segment.grapheme_indices(true) {
+            if !self.covers(actual, g) {
+                issues.push(Issue::UnsupportedCluster(global.start + i..global.start + i + g.len()));
+            }
+        }
+        let size = style.map_or(req.size, |s| s.size);
+        let language_run = req.language_runs.iter().find(|run| run.range.contains(&global.start));
+        let explicit_script = language_run.map_or(req.script, |run| run.script);
+        let script_index = scripts.partition_point(|(r, _)| r.end <= range.start);
+        let run_script = explicit_script.or_else(|| scripts.get(script_index).and_then(|(_, script)| *script));
+        let mut a = Attrs::new()
+            .family(Family::Name(actual.family()))
+            .metrics(cosmic_text::Metrics::new(size, size * 1.4))
+            .script(run_script)
+            .font_features(features.clone());
+        a.language = language_run
+            .map_or_else(|| paragraph.language.clone(), |run| Some(std::sync::Arc::new(run.language.parse().unwrap())));
+        a
+    }
+    /// Converts one fitted COSMIC line into spike glyphs with line-local UBA L1/L2
+    /// cluster order. Glyph `y` stays COSMIC's raw value until [`apply_baseline`].
+    /// Returns whether the line overflows the requested width.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn place_line(
+        &self,
+        req: &Request<'_>,
+        offset: usize,
+        rtl: bool,
+        source_range: Range<usize>,
+        line: cosmic_text::LayoutLine,
+        bidi: Option<(&str, &[unicode_bidi::BidiClass], &[Level], Level)>,
+    ) -> Result<(Line, bool), &'static str> {
+        let min = source_range.start;
+        let max = source_range.end;
+        let mut ascent = line.max_ascent.max(req.size * 0.8);
+        let mut descent = line.max_descent.max(req.size * 0.2);
+        for s in &req.styles {
+            if s.range.start < offset + max && s.range.end > offset + min {
+                ascent = ascent.max(line.max_ascent + s.baseline_shift);
+                descent = descent.max(line.max_descent - s.baseline_shift);
+            }
+        }
+        let mut glyphs = Vec::with_capacity(line.glyphs.len());
+        for g in line.glyphs {
+            let face = self.ids.iter().find(|(id, _)| *id == g.font_id).ok_or("unknown resolved font")?.1;
+            glyphs.push(Glyph {
+                id: g.glyph_id,
+                face,
+                cluster: offset + g.start..offset + g.end,
+                level: g.level.number(),
+                x: g.x,
+                y: g.y,
+                advance: g.w,
+                offset: [g.x_offset * g.font_size, -g.y_offset * g.font_size],
+                size: g.font_size,
+            });
+        }
+        // COSMIC resolves whitespace at paragraph scope. Reapply UBA L1/L2
+        // at the chosen line boundary, keeping each shaped cluster intact.
+        if let Some((text, classes, levels, level)) = bidi {
+            let line_levels = line_levels_from(text, classes, levels, level, min..max);
+            reorder_clusters(&mut glyphs, &line_levels, offset + min);
+        }
+        let overflow = req.width.is_some_and(|w| line.w > w + 0.01);
+        Ok((
+            Line {
+                range: offset + min..offset + max,
+                rtl,
+                baseline: 0.,
+                ascent,
+                descent,
+                width: line.w,
+                empty_caret_x: if rtl ^ req.end_align { req.width.unwrap_or(0.) } else { 0. },
+                glyphs,
+            },
+            overflow,
+        ))
     }
     pub(crate) fn bounds_for(&mut self, lines: &[Line]) -> Result<Option<[f32; 4]>, &'static str> {
         let mut bounds_out: Option<[f32; 4]> = None;
@@ -610,42 +604,112 @@ fn build_carets(layout: &mut Layout, boundaries: &[usize]) {
     layout.carets.reserve(boundaries.len().saturating_mul(2));
     let mut cluster_boundaries = Vec::new();
     for (line_i, line) in layout.lines.iter().enumerate() {
-        // L2 keeps a cluster contiguous; avoid a tree allocation per cluster.
-        for group in line.glyphs.chunk_by(|a, b| a.cluster == b.cluster) {
-            let start = group[0].cluster.start;
-            let end = group[0].cluster.end;
-            let level = group[0].level;
-            let left = group.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
-            let right = group.iter().map(|g| g.x + g.advance).fold(f32::NEG_INFINITY, f32::max);
-            cluster_boundaries.clear();
-            cluster_boundaries
-                .extend(layout.source[start..end].grapheme_indices(true).map(|(i, _)| start + i).chain([end]));
-            let count = cluster_boundaries.len().saturating_sub(1).max(1);
-            for (i, &byte) in cluster_boundaries.iter().enumerate() {
-                if !legal[byte] {
-                    continue;
-                }
-                let t = i as f32 / count as f32;
-                let x = if level % 2 == 1 { right - (right - left) * t } else { left + (right - left) * t };
-                if i > 0 {
-                    layout.carets.push(Caret { byte, affinity: Affinity::Upstream, line: line_i, x });
-                }
-                if i < count {
-                    layout.carets.push(Caret { byte, affinity: Affinity::Downstream, line: line_i, x });
-                }
+        line_carets(line, line_i, &layout.source, &legal, &mut cluster_boundaries, &mut layout.carets);
+    }
+    // Stable finite visual walk. Coincident carets retain byte+affinity identity.
+    layout.carets.sort_by(caret_order);
+    layout.carets.dedup();
+}
+/// Visual caret order; `line` is the primary key, so per-line sorting is identical.
+pub(crate) fn caret_order(a: &Caret, b: &Caret) -> std::cmp::Ordering {
+    a.line.cmp(&b.line).then(a.x.total_cmp(&b.x)).then(a.byte.cmp(&b.byte)).then(a.affinity.cmp(&b.affinity))
+}
+/// Unsorted caret candidates for one line (shared by cold and convergent layout).
+pub(crate) fn line_carets(
+    line: &Line,
+    line_i: usize,
+    source: &str,
+    legal: &[bool],
+    cluster_boundaries: &mut Vec<usize>,
+    carets: &mut Vec<Caret>,
+) {
+    // L2 keeps a cluster contiguous; avoid a tree allocation per cluster.
+    for group in line.glyphs.chunk_by(|a, b| a.cluster == b.cluster) {
+        let start = group[0].cluster.start;
+        let end = group[0].cluster.end;
+        let level = group[0].level;
+        let left = group.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
+        let right = group.iter().map(|g| g.x + g.advance).fold(f32::NEG_INFINITY, f32::max);
+        cluster_boundaries.clear();
+        cluster_boundaries.extend(source[start..end].grapheme_indices(true).map(|(i, _)| start + i).chain([end]));
+        let count = cluster_boundaries.len().saturating_sub(1).max(1);
+        for (i, &byte) in cluster_boundaries.iter().enumerate() {
+            if !legal[byte] {
+                continue;
             }
-        }
-        if line.glyphs.is_empty() {
-            for affinity in [Affinity::Upstream, Affinity::Downstream] {
-                layout.carets.push(Caret { byte: line.range.start, affinity, line: line_i, x: line.empty_caret_x });
+            let t = i as f32 / count as f32;
+            let x = if level % 2 == 1 { right - (right - left) * t } else { left + (right - left) * t };
+            if i > 0 {
+                carets.push(Caret { byte, affinity: Affinity::Upstream, line: line_i, x });
+            }
+            if i < count {
+                carets.push(Caret { byte, affinity: Affinity::Downstream, line: line_i, x });
             }
         }
     }
-    // Stable finite visual walk. Coincident carets retain byte+affinity identity.
-    layout.carets.sort_by(|a, b| {
-        a.line.cmp(&b.line).then(a.x.total_cmp(&b.x)).then(a.byte.cmp(&b.byte)).then(a.affinity.cmp(&b.affinity))
-    });
-    layout.carets.dedup();
+    if line.glyphs.is_empty() {
+        for affinity in [Affinity::Upstream, Affinity::Downstream] {
+            carets.push(Caret { byte: line.range.start, affinity, line: line_i, x: line.empty_caret_x });
+        }
+    }
+}
+/// Final glyph y: `baseline + raw COSMIC y - style shift`, in the cold engine's order.
+pub(crate) fn apply_baseline(line: &mut Line, top: f32, styles: &[Style]) {
+    line.baseline = top + line.ascent;
+    for g in &mut line.glyphs {
+        let shift = styles.iter().find(|s| s.range.contains(&g.cluster.start)).map_or(0., |s| s.baseline_shift);
+        g.y = line.baseline + g.y - shift;
+    }
+}
+/// Line-edge reshaping with HarfRust context clipped to `range`. Offsets stay
+/// paragraph-relative; `attrs` must describe every paragraph byte in `range`.
+pub(crate) fn reshape_edge(
+    fonts: &mut FontSystem,
+    text: &str,
+    attrs: &AttrsList,
+    levels: &[Level],
+    rtl: bool,
+    range: Range<usize>,
+) -> ShapeLine {
+    let slice = &text[range.clone()];
+    let mut local_attrs = AttrsList::new(&attrs.get_span(range.start));
+    for (r, a) in attrs.spans() {
+        let start = r.start.max(range.start);
+        let end = r.end.min(range.end);
+        if start < end {
+            local_attrs.add_span(start - range.start..end - range.start, &a.as_attrs());
+        }
+    }
+    let mut edge = ShapeLine::new(fonts, "", &local_attrs, Shaping::Advanced, 4);
+    edge.rtl = rtl;
+    let mut start = range.start;
+    while start < range.end {
+        let l = levels[start];
+        let end = text[start..range.end]
+            .char_indices()
+            .skip(1)
+            .map(|(i, _)| start + i)
+            .find(|i| levels[*i] != l)
+            .unwrap_or(range.end);
+        let mut span = ShapeSpan::new(
+            fonts,
+            slice,
+            &local_attrs,
+            start - range.start..end - range.start,
+            rtl,
+            l,
+            Shaping::Advanced,
+        );
+        for word in &mut span.words {
+            for g in &mut word.glyphs {
+                g.start += range.start;
+                g.end += range.start;
+            }
+        }
+        edge.spans.push(span);
+        start = end;
+    }
+    edge
 }
 pub fn paste_normalize(text: &str) -> String {
     text.replace("\r\n", "\n")
@@ -682,7 +746,7 @@ impl StyledText {
     }
 }
 
-fn reorder_clusters(glyphs: &mut Vec<Glyph>, levels: &[Level], offset: usize) {
+pub(crate) fn reorder_clusters(glyphs: &mut Vec<Glyph>, levels: &[Level], offset: usize) {
     if glyphs.is_empty() {
         return;
     }
@@ -711,6 +775,10 @@ fn reorder_clusters(glyphs: &mut Vec<Glyph>, levels: &[Level], offset: usize) {
     }
 }
 
+/// A paragraph without its trailing mandatory-break characters.
+pub(crate) fn paragraphs_trim(raw: &str) -> &str {
+    raw.trim_end_matches(['\n', '\r', '\u{b}', '\u{c}', '\u{85}', '\u{2028}', '\u{2029}'])
+}
 /// Mandatory UAX #14 boundaries retain their original source bytes (including CRLF).
 pub fn paragraphs(text: &str) -> Vec<&str> {
     let mut out = Vec::new();
@@ -729,11 +797,21 @@ pub fn paragraphs(text: &str) -> Vec<&str> {
 /// Use upstream L1 on a line-local snapshot, avoiding its whole-paragraph clone.
 /// Paragraph analysis still happens once over the original text.
 pub fn local_line_levels(bidi: &BidiInfo<'_>, level: Level, range: Range<usize>) -> Vec<Level> {
+    line_levels_from(bidi.text, &bidi.original_classes, &bidi.levels, level, range)
+}
+/// [`local_line_levels`] over retained paragraph analysis slices.
+pub(crate) fn line_levels_from(
+    text: &str,
+    classes: &[unicode_bidi::BidiClass],
+    levels: &[Level],
+    level: Level,
+    range: Range<usize>,
+) -> Vec<Level> {
     let len = range.len();
     let local = BidiInfo {
-        text: &bidi.text[range.clone()],
-        original_classes: bidi.original_classes[range.clone()].to_vec(),
-        levels: bidi.levels[range].to_vec(),
+        text: &text[range.clone()],
+        original_classes: classes[range.clone()].to_vec(),
+        levels: levels[range].to_vec(),
         paragraphs: vec![],
     };
     local.reordered_levels(&unicode_bidi::ParagraphInfo { range: 0..len, level }, 0..len)
@@ -830,7 +908,7 @@ pub(crate) fn validate_request(req: &Request<'_>) -> Result<(FontFeatures, Vec<u
 /// Linear paragraph itemization: Common/Inherited graphemes inherit the preceding
 /// strong script, or the first following strong script at paragraph start. Explicit
 /// run overrides take precedence. No cut is introduced inside an extended grapheme.
-fn script_ranges(text: &str) -> Vec<(Range<usize>, Option<cosmic_text::harfrust::Script>)> {
+pub(crate) fn script_ranges(text: &str) -> Vec<(Range<usize>, Option<cosmic_text::harfrust::Script>)> {
     use unicode_script::{Script, UnicodeScript};
     let strong = |c: char| {
         let s = c.script();
