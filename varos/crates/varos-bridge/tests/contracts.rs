@@ -70,6 +70,8 @@ fn ctx() -> Context {
         epoch: "test-epoch".into(),
         read: true,
         edit: true,
+        destructive: true,
+        history: true,
         allow_history: false,
         allow_destructive: false,
     }
@@ -193,6 +195,81 @@ fn refusals_revisions_scope_and_epoch_do_not_mutate() {
         assert_eq!(h.editor.doc, before);
         assert_eq!(h.editor.rev, 1);
     }
+}
+#[test]
+fn scopes_are_enforced_per_verb_class_before_any_grant() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let call = |s: &mut Service, h: &mut FakeHost, c: &Context, tool: &str, args: Value| {
+        s.handle(h, c, req(tool, args), &AtomicBool::new(false))
+    };
+    // read only: reads work, every mutation class is refused.
+    let mut c = ctx();
+    c.edit = false;
+    c.destructive = false;
+    c.history = false;
+    assert!(call(&mut s, &mut h, &c, "describe", json!({"board":"b1"})).ok);
+    assert!(call(&mut s, &mut h, &c, "list_boards", json!({})).ok);
+    for (tool, args) in [
+        ("select", json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ids":[]})),
+        (
+            "edit",
+            json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"move","ids":["path:10"],"delta":[1,0]}]}),
+        ),
+    ] {
+        assert_eq!(call(&mut s, &mut h, &c, tool, args).error.unwrap().code, "scope_refused");
+    }
+    // read+edit: ordinary edits work; destructive verbs and history are refused by scope,
+    // even when the owner's temporary grant policies are on (scope is checked first).
+    c.edit = true;
+    c.allow_destructive = true;
+    c.allow_history = true;
+    let caps = call(&mut s, &mut h, &c, "capabilities", json!({"api":"1.0"})).result.unwrap();
+    assert_eq!((caps["destructive_scope"].clone(), caps["history_scope"].clone()), (json!(false), json!(false)));
+    let moved = call(
+        &mut s,
+        &mut h,
+        &c,
+        "edit",
+        json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"move","ids":["path:10"],"delta":[1,0]}]}),
+    );
+    assert!(moved.ok, "{moved:?}");
+    for (tool, args) in [
+        (
+            "edit",
+            json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"ops":[{"verb":"delete","ids":["path:20"]}]}),
+        ),
+        (
+            "edit",
+            json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"ops":[{"verb":"move","ids":["path:10"],"delta":[1,0]},{"verb":"ungroup","ids":["path:20"]}]}),
+        ),
+        ("history", json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"action":"undo"})),
+    ] {
+        let e = call(&mut s, &mut h, &c, tool, args).error.unwrap();
+        assert_eq!(e.code, "scope_refused");
+        assert!(e.digest.is_none(), "no confirmation grant is issued without the scope");
+    }
+    assert_eq!(h.editor.rev, 2);
+    // With the scopes, the existing exact-confirmation flow still applies.
+    c.destructive = true;
+    c.history = true;
+    let del = call(
+        &mut s,
+        &mut h,
+        &c,
+        "edit",
+        json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"ops":[{"verb":"delete","ids":["path:20"]}]}),
+    );
+    assert_eq!(del.error.unwrap().code, "confirmation_required");
+    let undo = call(
+        &mut s,
+        &mut h,
+        &c,
+        "history",
+        json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"action":"undo"}),
+    );
+    assert_eq!(undo.error.unwrap().code, "confirmation_required");
+    assert_eq!(h.editor.rev, 2);
 }
 #[test]
 fn unknown_fields_and_unsupported_ops_are_indexed() {
@@ -361,8 +438,22 @@ struct SocketHost {
 #[cfg(unix)]
 impl SocketHost {
     fn start(delay: bool) -> Self {
+        Self::start_with(delay, None)
+    }
+    /// Legacy endpoint plus, optionally, the ADR-0011 paired listener on the same epoch.
+    fn start_with(delay: bool, paired: Option<varos_bridge::ipc::PairedConfig>) -> Self {
         let (tx, rx) = std::sync::mpsc::sync_channel::<varos_bridge::ipc::Pending>(32);
-        let listener = varos_bridge::ipc::Listener::start(tx, || {}).unwrap();
+        let listener = varos_bridge::ipc::Listener::start_with(
+            tx,
+            || {},
+            varos_bridge::ipc::Options {
+                legacy: true,
+                legacy_audit: paired.as_ref().map(|p| p.paths.clone()),
+                paired: paired.map(varos_bridge::ipc::PairedSource::Ready),
+            },
+        )
+        .unwrap();
+        // With the legacy listener on, endpoint_file is the legacy (token) endpoint.
         let endpoint: varos_bridge::ipc::Endpoint =
             serde_json::from_slice(&std::fs::read(&listener.endpoint_file).unwrap()).unwrap();
         let stop = std::sync::Arc::new(AtomicBool::new(false));
@@ -372,11 +463,15 @@ impl SocketHost {
             let mut host = FakeHost::new();
             let mut service = Service::new(epoch);
             while !flag.load(Ordering::Acquire) {
-                if let Ok(p) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                if let Ok(mut p) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
                     if delay && p.request.mutation().is_some() {
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
-                    let reply = service.handle(&mut host, &p.context, p.request, &p.cancelled);
+                    // Same owning-thread recheck as varos-app's bridge_host::run.
+                    let reply = match p.authorize() {
+                        Ok(()) => service.handle(&mut host, &p.context, p.request, &p.cancelled),
+                        Err(e) => Reply::failure(e),
+                    };
                     let _ = p.reply.send(reply);
                 }
             }
@@ -511,6 +606,231 @@ fn real_binary_mcp_initialization_call_cancel_and_shared_cli() {
     assert_eq!(read(&mut stdout)["result"]["structuredContent"]["rev"], 1);
     drop(stdin);
     assert!(child.wait().unwrap().success());
+}
+#[cfg(unix)]
+struct TempHome(std::path::PathBuf);
+#[cfg(unix)]
+impl TempHome {
+    fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("vb{}", varos_bridge::conn::random_hex(3).unwrap()));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        Self(dir)
+    }
+}
+#[cfg(unix)]
+impl Drop for TempHome {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+#[cfg(unix)]
+#[ignore = "requires native Unix socket bind; sandbox denies bind with EPERM"]
+#[test]
+fn paired_socket_pairing_scopes_revocation_audit_and_registry_lifecycle() {
+    use std::os::unix::fs::PermissionsExt;
+    use varos_bridge::conn::{
+        self,
+        attach::{AutoClient, Selector},
+        credentials::{self, MemoryStore},
+        manage,
+        trust::Scopes,
+    };
+    let home = TempHome::new();
+    let paths = conn::Paths::under(&home.0);
+    let host_key = credentials::load_or_create(&MemoryStore::new(), credentials::HOST_ACCOUNT).unwrap();
+    let config = |key: &ed25519_dalek::SigningKey| varos_bridge::ipc::PairedConfig {
+        paths: paths.clone(),
+        host_key: key.clone(),
+        mode: "desktop",
+        app_build: "varos-app test".into(),
+    };
+    let host = SocketHost::start_with(true, Some(config(&host_key)));
+    let registry = host.listener.as_ref().unwrap().registry_file().unwrap();
+    assert_eq!(host.listener.as_ref().unwrap().paired_status(), varos_bridge::ipc::PairedStatus::Ready);
+    assert_eq!(std::fs::metadata(&registry).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::metadata(registry.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+    let record: conn::registry::Record = serde_json::from_slice(&std::fs::read(&registry).unwrap()).unwrap();
+    assert_eq!(record.epoch, host.endpoint.epoch, "both listeners share one epoch/service");
+    assert!(!std::fs::read_to_string(&registry).unwrap().contains(&host.endpoint.token));
+
+    let store: std::sync::Arc<dyn credentials::CredentialStore> = std::sync::Arc::new(MemoryStore::new());
+    let agent = std::sync::Arc::new(
+        AutoClient::with(Ok(paths.clone()), store.clone(), Selector::Auto, None, "claude-code").unwrap(),
+    );
+    // Unknown agent: pairing_required, no board metadata.
+    let first = agent.call("c1", req("list_boards", json!({})));
+    assert!(first.result.is_none());
+    let error = first.error.unwrap();
+    assert_eq!(error.code, "pairing_required", "{error:?}");
+    let request_id = error.pairing.as_ref().unwrap()["request_id"].as_str().unwrap().to_owned();
+    let match_code = error.pairing.as_ref().unwrap()["match_code"].as_str().unwrap().to_owned();
+    assert!(error.reason.contains(&match_code), "the agent is shown the code to read to the owner");
+    assert!(error.reason.contains(&request_id));
+    // Still pending: a retry coalesces into the same request.
+    let retry = agent.call("c1", req("list_boards", json!({}))).error.unwrap();
+    assert_eq!(retry.pairing.as_ref().unwrap()["request_id"], json!(request_id));
+
+    // The legacy token Hello is never accepted on the paired socket...
+    {
+        use std::io::{BufRead, Write};
+        let mut raw = std::os::unix::net::UnixStream::connect(&record.socket).unwrap();
+        writeln!(raw, "{}", json!({"kind":"hello","api":"1.0","token":host.endpoint.token,"client":"a".repeat(64)}))
+            .unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(raw).read_line(&mut line).unwrap();
+        let reply: Reply = serde_json::from_str(&line).unwrap();
+        assert_eq!(reply.error.unwrap().code, "unsupported");
+    }
+    // ...while the deprecated legacy socket keeps working for this transition slice.
+    assert!(host.client().call("legacy", req("capabilities", json!({"api":"1.0"}))).ok);
+
+    // Owner approval (library form of `varos-cli bridge pair --approve`).
+    assert_eq!(
+        manage::approve(&paths, &request_id, "AAA-000", Scopes::DEFAULT_REQUEST).unwrap_err().code,
+        "match_code_mismatch"
+    );
+    manage::approve(&paths, &request_id, &match_code.to_lowercase(), Scopes::DEFAULT_REQUEST).unwrap();
+    let caps = agent.call("c2", req("capabilities", json!({"api":"1.0"})));
+    assert!(caps.ok, "{caps:?}");
+    let caps = caps.result.unwrap();
+    assert_eq!(caps["edit"], true);
+    assert_eq!(caps["destructive_scope"], false);
+    assert_eq!(caps["history_scope"], false);
+    let profile = caps["client"].as_str().unwrap().split(':').next().unwrap().to_owned();
+    assert!(agent.call("c3", req("describe", json!({"board":"b1"}))).ok);
+    assert!(agent.call("c4", edit("r1", 1)).ok);
+    let delete = json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"ops":[{"verb":"delete","ids":["path:20"]}]});
+    assert_eq!(agent.call("c5", req("edit", delete)).error.unwrap().code, "scope_refused");
+
+    // Revocation while a mutation is queued: the owning-thread recheck refuses it.
+    let inflight = {
+        let agent = agent.clone();
+        std::thread::spawn(move || agent.call("c6", edit("r2", 2)))
+    };
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    manage::revoke(&paths, &profile).unwrap();
+    assert_eq!(inflight.join().unwrap().error.unwrap().code, "scope_refused");
+    let rev = host.client().call("legacy-2", req("describe", json!({"board":"b1"}))).rev;
+    assert_eq!(rev, Some(2), "the revoked mutation never ran");
+    // The revoked key is refused outright; the client itself must pair a new profile.
+    let old = AutoClient::with(Ok(paths.clone()), store.clone(), Selector::Auto, Some(profile.clone()), "claude-code")
+        .unwrap();
+    assert_eq!(old.call("c7", req("capabilities", json!({"api":"1.0"}))).error.unwrap().code, "pairing_denied");
+    assert_eq!(agent.call("c8", req("capabilities", json!({"api":"1.0"}))).error.unwrap().code, "pairing_required");
+
+    // Audit: verbs/boards/revisions/results only — no payload, paint or names.
+    let audit = conn::audit::tail(&paths, 50).join("\n");
+    assert!(audit.contains("\"verb\":\"edit\"") && audit.contains("\"result\":\"ok\""), "{audit}");
+    assert!(audit.contains("agent_revoked") && audit.contains("pairing_requested"));
+    assert!(audit.contains("\"agent\":\"legacy\""), "opt-in legacy calls are audited as agent legacy");
+    assert!(!audit.contains("FF6600") && !audit.contains("Logo") && !audit.contains(&host.endpoint.token));
+
+    // A second launch makes an unpinned agent's choice ambiguous.
+    let second = SocketHost::start_with(false, Some(config(&host_key)));
+    let fresh = AutoClient::with(Ok(paths.clone()), store, Selector::Auto, None, "other-agent").unwrap();
+    let e = fresh.call("c9", req("capabilities", json!({"api":"1.0"}))).error.unwrap();
+    assert_eq!(e.code, "ambiguous_target");
+    assert_eq!(e.candidates.len(), 2);
+    drop(second);
+    drop(host);
+    assert!(!registry.exists(), "the host removes its own registry entry on exit");
+    assert!(conn::registry::scan(&paths).live.is_empty());
+}
+#[cfg(unix)]
+#[ignore = "requires native Unix socket bind; sandbox denies bind with EPERM"]
+#[test]
+fn paired_host_key_change_asks_again_and_deferred_start_publishes() {
+    use varos_bridge::conn::{
+        self,
+        attach::{AutoClient, Selector},
+        credentials::{self, MemoryStore},
+        manage,
+        trust::Scopes,
+    };
+    use varos_bridge::ipc::{Listener, Options, PairedSource, PairedStatus};
+    let home = TempHome::new();
+    let paths = conn::Paths::under(&home.0);
+    let host_store = MemoryStore::new();
+    let config = |key: ed25519_dalek::SigningKey| varos_bridge::ipc::PairedConfig {
+        paths: paths.clone(),
+        host_key: key,
+        mode: "desktop",
+        app_build: "varos-app test".into(),
+    };
+    let first_key = credentials::load_or_create(&host_store, credentials::HOST_ACCOUNT).unwrap();
+    let host = SocketHost::start_with(false, Some(config(first_key)));
+    let store: std::sync::Arc<dyn credentials::CredentialStore> = std::sync::Arc::new(MemoryStore::new());
+    let agent = AutoClient::with(Ok(paths.clone()), store, Selector::Auto, None, "claude-code").unwrap();
+    let caps = || req("capabilities", json!({"api":"1.0"}));
+    let pairing = agent.call("c1", caps()).error.unwrap().pairing.clone().unwrap();
+    manage::approve(
+        &paths,
+        pairing["request_id"].as_str().unwrap(),
+        pairing["match_code"].as_str().unwrap(),
+        Scopes::DEFAULT_REQUEST,
+    )
+    .unwrap();
+    assert!(agent.call("c2", caps()).ok);
+    drop(host);
+    // The host identity is replaced (e.g. the Keychain item was reset) and Varos relaunches;
+    // this launch loads its key on a background thread like the desktop.
+    credentials::CredentialStore::delete(&host_store, credentials::HOST_ACCOUNT).unwrap();
+    let second_key = credentials::load_or_create(&host_store, credentials::HOST_ACCOUNT).unwrap();
+    let (tx, rx) = std::sync::mpsc::sync_channel::<varos_bridge::ipc::Pending>(32);
+    let deferred = config(second_key);
+    let listener = Listener::start_with(
+        tx,
+        || {},
+        Options {
+            legacy: false,
+            paired: Some(PairedSource::Deferred(Box::new(move || Ok(deferred)))),
+            legacy_audit: None,
+        },
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while listener.paired_status() != PairedStatus::Ready && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(listener.paired_status(), PairedStatus::Ready);
+    assert!(listener.registry_file().unwrap().exists());
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let epoch = listener.epoch().unwrap();
+    let worker = std::thread::spawn(move || {
+        let mut host = FakeHost::new();
+        let mut service = Service::new(epoch);
+        while !flag.load(Ordering::Acquire) {
+            if let Ok(mut p) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                let reply = match p.authorize() {
+                    Ok(()) => service.handle(&mut host, &p.context, p.request, &p.cancelled),
+                    Err(e) => Reply::failure(e),
+                };
+                let _ = p.reply.send(reply);
+            }
+        }
+    });
+    // Relaunch → session_reset once; then the changed key asks again, naming the reason.
+    assert_eq!(agent.call("c3", caps()).error.unwrap().code, "session_reset");
+    let again = agent.call("c4", caps()).error.unwrap();
+    assert_eq!(again.code, "pairing_required", "{again:?}");
+    assert!(again.reason.contains("identity key changed"), "{}", again.reason);
+    let pairing = again.pairing.clone().unwrap();
+    manage::approve(
+        &paths,
+        pairing["request_id"].as_str().unwrap(),
+        pairing["match_code"].as_str().unwrap(),
+        Scopes::DEFAULT_REQUEST,
+    )
+    .unwrap();
+    assert!(agent.call("c5", caps()).ok);
+    stop.store(true, Ordering::Release);
+    worker.join().unwrap();
+    let registry = listener.registry_file().unwrap();
+    drop(listener);
+    assert!(!registry.exists());
 }
 #[test]
 fn framing_rejects_oversize_unterminated_and_schema_version() {
