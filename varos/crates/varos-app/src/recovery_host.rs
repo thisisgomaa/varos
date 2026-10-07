@@ -950,6 +950,37 @@ mod tests {
         assert_eq!(r.host.next_wake(), None, "no more polling once the scan is in (clean session)");
     }
 
+    /// Owner report 2026-10-07 (the Mac ran warm with Varos idle): the recovery timer wakes the
+    /// event loop for a PASS, never for a frame, and a clean / already-copied document leaves no
+    /// timed wake at all — the loop's plan (`pacing::plan`) is `Wait` with nothing drawn.
+    #[test]
+    fn the_recovery_tick_is_a_pass_not_a_frame_and_rest_is_silent() {
+        use crate::pacing::{plan, Flow, Plan};
+        let rest = Plan { redraw: false, flow: Flow::Wait };
+        let mut r = Rig::new();
+        r.host.observe(&mut r.ws, r.now);
+        assert_eq!(r.host.next_wake(), None, "a clean document at rest: no timed wake");
+        assert_eq!(plan(r.now, None, &[r.host.next_wake()], r.host.has_file_done()), rest);
+        // an edit: the 30-second copy is a timed pass
+        r.edit();
+        r.host.observe(&mut r.ws, r.now);
+        let tick = r.host.next_wake().expect("the copy deadline");
+        assert_eq!(tick, r.now + RECOVERY_INTERVAL);
+        let p = plan(r.now, None, &[Some(tick)], r.host.has_file_done());
+        assert_eq!(p, Plan { redraw: false, flow: Flow::WaitUntil(tick) });
+        // the deadline passes: that pass issues the copy and still asks for no frame
+        r.now = tick;
+        r.host.observe(&mut r.ws, r.now);
+        assert!(r.ws.active().unwrap().recovery.in_flight.is_some(), "the copy is written in the background");
+        assert!(!plan(r.now, None, &[r.host.next_wake()], r.host.has_file_done()).redraw);
+        // the copy lands: it holds this revision, so the loop sleeps again
+        r.complete();
+        assert_eq!(r.host.next_wake(), None);
+        assert_eq!(plan(r.now, None, &[r.host.next_wake()], r.host.has_file_done()), rest);
+        r.host.shutdown();
+        let _ = std::fs::remove_dir_all(&r.layout.root);
+    }
+
     /// Without the bounded wait (a slow disk), every `observe` keeps the poll SCAN_POLL ahead, so
     /// the event loop re-checks for the scan on its own and the banner follows within one poll.
     #[test]

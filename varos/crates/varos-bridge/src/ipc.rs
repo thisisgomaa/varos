@@ -197,6 +197,9 @@ pub struct Listener {
     attached: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(unix)]
     thread: Option<std::thread::JoinHandle<()>>,
+    /// The socket the accept thread blocks on; `Drop` connects to it once to wake that thread.
+    #[cfg(unix)]
+    socket: PathBuf,
 }
 impl Listener {
     #[cfg(unix)]
@@ -221,9 +224,12 @@ impl Listener {
         let socket = dir.join("bridge.sock");
         let listener = UnixListener::bind(&socket)?;
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
-        listener.set_nonblocking(true)?;
+        // A BLOCKING accept: the thread sleeps in the kernel until a client connects — no timed poll
+        // at rest (owner report 2026-10-07: an idle app must not keep waking). `Drop` sets `stop`
+        // and connects once to wake it.
         let endpoint_file = dir.join("endpoint.json");
         let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&endpoint_file)?;
+        let wake_socket = socket.clone();
         write_frame(&mut f, &Endpoint { api: API.into(), socket, token: token.clone(), epoch: epoch.clone() })?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
@@ -237,10 +243,16 @@ impl Listener {
         let thread = std::thread::spawn(move || {
             let mut workers = vec![];
             while !stopped.load(Ordering::Acquire) {
+                let accepted = listener.accept();
+                if stopped.load(Ordering::Acquire) {
+                    break; // the wake connection from `Drop` (or anything racing it): never served
+                }
+                // Prune AFTER the (possibly hours-long) blocking accept, so the worker cap below sees
+                // the live set, not a list frozen at the previous connection.
                 workers
                     .retain(|(h, _): &(std::thread::JoinHandle<()>, std::os::unix::net::UnixStream)| !h.is_finished());
                 cancellations.lock().unwrap().retain(|_, (_, time)| time.elapsed() < Duration::from_secs(60));
-                match listener.accept() {
+                match accepted {
                     Ok((stream, _)) if workers.len() < 8 => {
                         let (token, epoch, queue, wake, stopped, cancellations) = (
                             token.clone(),
@@ -253,8 +265,8 @@ impl Listener {
                         let Ok(shutdown) = stream.try_clone() else { continue };
                         let connections = connections.clone();
                         let worker = std::thread::spawn(move || {
-                            // macOS/BSD: an accepted stream inherits the listener's O_NONBLOCK; make it
-                            // blocking so the framed reads below wait instead of failing with WouldBlock.
+                            // macOS/BSD: an accepted stream inherits the listener's O_NONBLOCK. The listener
+                            // blocks now; stay explicit so the framed reads below can never see WouldBlock.
                             let _ = stream.set_nonblocking(false);
                             let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
                             let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
@@ -396,7 +408,7 @@ impl Listener {
                         workers.push((worker, shutdown));
                     }
                     Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+                    Err(e) if matches!(e.kind(), io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted) => {}
                     Err(_) => break,
                 }
             }
@@ -417,7 +429,7 @@ impl Listener {
             }
         });
         cleanup.1 = true;
-        Ok(Self { endpoint_file, stop, attached, thread: Some(thread) })
+        Ok(Self { endpoint_file, stop, attached, thread: Some(thread), socket: wake_socket })
     }
     #[cfg(not(unix))]
     pub fn start(_queue: mpsc::SyncSender<Pending>, _wake: impl Fn() + Send + Sync + 'static) -> io::Result<Self> {
@@ -433,6 +445,9 @@ impl Listener {
 impl Drop for Listener {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        // wake the blocking accept so the thread sees `stop` (a failed connect = it is gone already)
+        #[cfg(unix)]
+        let _ = std::os::unix::net::UnixStream::connect(&self.socket);
         #[cfg(unix)]
         if let Some(h) = self.thread.take() {
             let deadline = std::time::Instant::now() + Duration::from_secs(1);
@@ -489,6 +504,21 @@ pub fn secure_endpoint_file(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// The accept thread blocks in the kernel (no timed poll) and still stops promptly: `Drop`
+    /// wakes it with one connection, so it never waits out the 1-second join deadline.
+    #[cfg(unix)]
+    #[ignore = "requires native Unix socket bind; sandbox denies bind with EPERM"]
+    #[test]
+    fn blocking_accept_thread_stops_promptly_on_drop() {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let listener = Listener::start(tx, || {}).unwrap();
+        let dir = listener.endpoint_file.parent().unwrap().to_path_buf();
+        std::thread::sleep(Duration::from_millis(200)); // the thread is parked in accept()
+        let started = std::time::Instant::now();
+        drop(listener);
+        assert!(started.elapsed() < Duration::from_millis(500), "drop took {:?}", started.elapsed());
+        assert!(!dir.exists(), "endpoint removed");
+    }
     #[test]
     fn hello_cannot_grant_history_or_destructive() {
         let hello = serde_json::json!({"kind":"hello","api":"1.0","token":"token","client":"client"});
