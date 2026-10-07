@@ -47,7 +47,7 @@ pub fn tools() -> Value {
     let mut schemas = HashMap::new();
     schemas.insert("capabilities", object(json!({"api":api}), &[]));
     schemas.insert("list_boards", object(json!({"api":api,"limit":page,"cursor":cursor}), &[]));
-    schemas.insert("describe",object(json!({"api":api,"board":board,"rev":rev,"ids":ids,"fields":{"type":"array","items":{"enum":["bounds","paint","parent","name","state","metadata","artboards","geometry"]}},"since":rev,"limit":page,"cursor":cursor}),&["board"]));
+    schemas.insert("describe",object(json!({"api":api,"board":board,"rev":rev,"ids":ids,"fields":{"type":"array","items":{"enum":["bounds","paint","parent","name","state","metadata","artboards","geometry","selection"]}},"since":rev,"limit":page,"cursor":cursor}),&["board"]));
     schemas.insert(
         "select",
         object(
@@ -75,7 +75,7 @@ pub fn tools() -> Value {
         move_schema,
         paint_schema,
         object(
-            json!({"verb":{"const":"add_shape"},"kind":{"enum":["rect","ellipse"]},"bounds":bounds,"parent":{"type":"string","pattern":"^node:[1-9][0-9]*$"},"insert":{"enum":["top"]},"local":local,"name":name,"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),
+            json!({"verb":{"const":"add_shape"},"kind":{"enum":["rect","ellipse"]},"bounds":bounds,"radius":{"type":"number","minimum":0,"description":"rect only; at most half the shorter side; creates cubic path geometry"},"parent":{"type":"string","pattern":"^node:[1-9][0-9]*$"},"insert":{"enum":["top"]},"local":local,"name":name,"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),
             &["verb", "kind", "bounds"],
         ),
         object(json!({"verb":{"const":"resize"},"ids":edit_ids,"bounds":bounds}), &["verb", "ids", "bounds"]),
@@ -98,6 +98,8 @@ pub fn tools() -> Value {
             &["verb", "ids", "order"],
         ),
     ];
+    let point = json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}});
+    operation_schemas.push(object(json!({"verb":{"const":"add_path"},"anchors":{"type":"array","minItems":2,"maxItems":1000,"items":object(json!({"p":point,"hin":{"anyOf":[point,{"type":"null"}]},"hout":{"anyOf":[point,{"type":"null"}]},"smooth":{"type":"boolean","default":false}}),&["p"])},"closed":{"type":"boolean"},"parent":{"type":"string","pattern":"^node:[1-9][0-9]*$"},"local":local,"name":name,"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),&["verb","anchors","closed"]));
     for verb in ["delete", "ungroup"] {
         operation_schemas.push(object(json!({"verb":{"const":verb},"ids":edit_ids}), &["verb", "ids"]));
     }
@@ -115,6 +117,28 @@ pub fn tools() -> Value {
     for verb in ["delete_artboard", "set_active_artboard"] {
         operation_schemas.push(object(json!({"verb":{"const":verb},"id":artboard}), &["verb", "id"]));
     }
+    operation_schemas.push(object(
+        json!({"verb":{"const":"reorder_artboard"},"id":artboard,"position":{"type":"integer","minimum":0}}),
+        &["verb", "id", "position"],
+    ));
+    operation_schemas.push(object(json!({"verb":{"const":"duplicate_artboard"},"id":artboard,"with_art":{"type":"boolean"},"offset":{"anyOf":[point,{"type":"null"}]},"local":local}),&["verb","id","with_art"]));
+    operation_schemas.push(object(
+        json!({"verb":{"const":"set_artboard_color"},"id":artboard,"color":paint}),
+        &["verb", "id", "color"],
+    ));
+    operation_schemas.push(object(
+        json!({"verb":{"const":"set_artboard_clip"},"id":artboard,"clip":{"type":"boolean"}}),
+        &["verb", "id", "clip"],
+    ));
+    schemas.insert(
+        "save",
+        object(
+            json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev}),
+            &["api", "board", "request_id", "expected_rev"],
+        ),
+    );
+    schemas.insert("save_as",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"path":{"type":"string","minLength":1}}),&["api","board","request_id","expected_rev","path"]));
+    schemas.insert("export_pdf",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"path":{"type":"string","minLength":1},"scope":{"type":"string","pattern":"^(all_visible_artboards|artwork_bounds|artboard:[1-9][0-9]*)$"}}),&["api","board","request_id","expected_rev","path","scope"]));
     schemas.insert("snapshot",object(json!({"api":api,"board":board,"rev":rev,"artboard":{"type":"string","pattern":"^artboard:[1-9][0-9]*$","description":"render only this page, at its aspect ratio inside width x height (default 1024 x 1024)"},"width":{"type":"integer","minimum":1,"maximum":1024,"description":"default 544 (board preview) or 1024 (page)"},"height":{"type":"integer","minimum":1,"maximum":1024,"description":"default 246 (board preview) or 1024 (page)"}}),&["board","rev"]));
     schemas.insert("edit",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"ops":{"type":"array","minItems":1,"maxItems":100,"items":{"oneOf":operation_schemas}}}),&["api","board","request_id","expected_rev","ops"]));
     schemas.insert("history",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"action":{"enum":["undo","redo"]},"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}}),&["api","board","request_id","expected_rev","action"]));
@@ -126,6 +150,7 @@ pub fn tools() -> Value {
         "select"=>"Deliberately replace human selection with explicit targets; no document undo step.",
         "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection. Page verbs use persistent artboard:N ids.",
         "snapshot"=>"Explicit revision-pinned CPU PNG preview of the board, or of one artboard:N page. Returns an MCP image; max 1024 pixels per dimension.",
+        "save"|"save_as"|"export_pdf"=>"Queue revision-pinned file work; files scope required. Returns accepted and ticket; poll request_status. Explicit destinations require an owner-granted root and fresh filename.",
         "history"=>"One shared undo/redo entry. Retry confirmation_required with digest and SAME request_id. Requires desktop owner VAROS_BRIDGE_ALLOW_HISTORY=1.",
         _=>"Get a retained receipt by monotonic request_id for this proxy client.",
     },"inputSchema":schemas[*name]})).collect();

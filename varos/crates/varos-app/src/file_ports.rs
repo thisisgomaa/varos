@@ -305,6 +305,51 @@ impl DocStore for DiskStore {
     fn save(&mut self, doc: &Document, path: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
         durable_save(&varos_app::storage::durable::RealFs, doc, path, &varos_core::format::Limits::DEFAULT)
     }
+    fn save_guarded(
+        &mut self,
+        doc: &Document,
+        path: &Path,
+        expected: Option<&varos_app::storage::durable::Fingerprint>,
+        fresh: bool,
+        auth: Option<&varos_bridge::ipc::Recheck>,
+    ) -> Result<crate::lifecycle::SaveOutcome, varos_bridge::Error> {
+        #[cfg(unix)]
+        {
+            let fs = crate::bridge_fs::Pinned::new(path, expected, fresh, auth).map_err(|e| e.bridge())?;
+            durable_save(&fs, doc, path, &varos_core::format::Limits::DEFAULT).map_err(|_| fs.error())
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (doc, path, expected, fresh, auth);
+            Err(varos_bridge::Error::new("unsupported", "Bridge file writes unavailable on this platform"))
+        }
+    }
+    fn export_guarded(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        auth: Option<&varos_bridge::ipc::Recheck>,
+    ) -> Result<crate::lifecycle::SaveOutcome, varos_bridge::Error> {
+        #[cfg(unix)]
+        {
+            let fs = crate::bridge_fs::Pinned::new(path, None, true, auth).map_err(|e| e.bridge())?;
+            use varos_app::storage::{
+                checksum::new_nonce,
+                durable::{io_reason, write_replace, WriteOutcome},
+            };
+            match write_replace(&fs, path, bytes, &new_nonce()).map_err(|_| fs.error())? {
+                WriteOutcome::Durable => Ok(crate::lifecycle::SaveOutcome::Durable),
+                WriteOutcome::ReplacedUnconfirmed(e) => {
+                    Ok(crate::lifecycle::SaveOutcome::ReplacedUnconfirmed(io_reason(&e)))
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (path, bytes, auth);
+            Err(varos_bridge::Error::new("unsupported", "Bridge file writes unavailable on this platform"))
+        }
+    }
     fn fingerprint(&self, path: &Path) -> Option<varos_app::storage::durable::Fingerprint> {
         varos_app::storage::durable::fingerprint(&varos_app::storage::durable::RealFs, path)
     }

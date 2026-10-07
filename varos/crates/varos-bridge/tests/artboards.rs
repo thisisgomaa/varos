@@ -49,7 +49,14 @@ impl FakeHost {
 }
 impl Host for FakeHost {
     fn boards(&self) -> Vec<BoardInfo> {
-        vec![BoardInfo { board: "b1".into(), name: String::new(), rev: self.editor.rev, dirty: true, active: true }]
+        vec![BoardInfo {
+            board: "b1".into(),
+            name: String::new(),
+            rev: self.editor.rev,
+            dirty: true,
+            active: true,
+            backing_file: None,
+        }]
     }
     fn prepare(&mut self, board: &str, _: bool) -> Result<(), Error> {
         if board != "b1" {
@@ -72,6 +79,7 @@ fn ctx(destructive: bool) -> Context {
         edit: true,
         destructive: true,
         history: true,
+        files: false,
         allow_history: false,
         allow_destructive: destructive,
     }
@@ -489,4 +497,128 @@ fn capabilities_and_mcp_schemas_advertise_every_page_verb() {
     )
     .unwrap_err();
     assert_eq!((e.code.as_str(), e.op_index), ("invalid_argument", Some(0)));
+}
+
+#[test]
+fn slice4_reorder_duplicate_color_clip_and_rollback() {
+    let mut h = FakeHost::two_pages();
+    let mut s = Service::new("test-epoch".into());
+    let source = ids(&h)[0];
+    let other = ids(&h)[1];
+    let before = h.editor.doc.clone();
+    let rev = h.editor.rev;
+    let r = edit(
+        &mut s,
+        &mut h,
+        "r1",
+        rev,
+        json!([
+            {"verb":"duplicate_artboard","id":format!("artboard:{source}"),"with_art":true,"offset":[400,50],"local":"$copy"},
+            {"verb":"reorder_artboard","id":"$copy","position":0},
+            {"verb":"set_artboard_color","id":"$copy","color":"#00FF0080"},
+            {"verb":"set_artboard_clip","id":"$copy","clip":false}
+        ]),
+    );
+    assert!(r.ok, "{r:?}");
+    assert_eq!(r.undo_steps, 1);
+    let copy = &h.editor.doc.artboards[0];
+    let new_id = copy.id;
+    assert_ne!(new_id, source);
+    assert_ne!(new_id, other);
+    assert_eq!(copy.x, 400.0);
+    assert!(!copy.clip);
+    assert!(copy.page_color.unwrap()[1] > 0.99);
+    assert_eq!(h.editor.doc.active_artboard().unwrap().id, source);
+    assert_eq!(h.editor.doc.paths.len(), 2);
+    let cloned = h.editor.doc.paths.last().unwrap();
+    let pid = cloned.id;
+    assert_eq!(cloned.anchors[0].p, [410.0, 60.0]);
+    assert_ne!(pid, 10);
+    h.editor.undo();
+    assert!(h.editor.doc.content_eq(&before));
+    for invalid in [
+        json!({"verb":"reorder_artboard","id":format!("artboard:{source}"),"position":9}),
+        json!({"verb":"duplicate_artboard","id":"artboard:9999","with_art":true}),
+        json!({"verb":"duplicate_artboard","id":format!("artboard:{source}"),"with_art":true,"offset":[3.4e38,3.4e38]}),
+        json!({"verb":"set_artboard_color","id":format!("artboard:{source}"),"color":"bad"}),
+        json!({"verb":"set_artboard_clip","id":"artboard:9999","clip":false}),
+    ] {
+        let rev = h.editor.rev;
+        let r = edit(
+            &mut s,
+            &mut h,
+            "r2",
+            rev,
+            json!([{"verb":"set_artboard_clip","id":format!("artboard:{source}"),"clip":false},invalid]),
+        );
+        assert!(!r.ok, "{r:?}");
+        assert_eq!(r.error.unwrap().op_index, Some(1));
+        assert!(h.editor.doc.content_eq(&before));
+    }
+    let rev = h.editor.rev;
+    let r = edit(
+        &mut s,
+        &mut h,
+        "r2",
+        rev,
+        json!([{"verb":"duplicate_artboard","id":format!("artboard:{source}"),"with_art":false}]),
+    );
+    assert!(r.ok, "{r:?}");
+    assert_eq!(h.editor.doc.paths.len(), 1);
+    assert!(h.editor.doc.artboards.iter().map(|a| a.id).max().unwrap() > new_id.max(pid));
+}
+
+#[test]
+fn duplicate_group_and_clip_allocates_fresh_tree_ids() {
+    for clipped in [false, true] {
+        let mut h = FakeHost::two_pages();
+        let source = ids(&h)[0];
+        h.editor
+            .try_execute_created(varos_core::EditCommand::AddShape {
+                kind: varos_core::model::ShapeKind::Rect,
+                bounds: [10.0, 10.0, 25.0, 25.0],
+                parent: None,
+                fill: Some([1.0; 4]),
+                stroke: None,
+                stroke_width: 0.0,
+                opacity: 1.0,
+                name: None,
+            })
+            .unwrap();
+        h.editor.objsel = h.editor.doc.paths.iter().map(|p| p.id).collect();
+        h.editor.group_selection();
+        let group = h.editor.doc.nodes.iter_mut().find(|n| n.kind == varos_core::model::NodeKind::Group).unwrap();
+        let group_id = group.id;
+        if clipped {
+            group.role = varos_core::model::GroupRole::Clip;
+            group.mask_child = Some(group.children[0]);
+        }
+        let old_nodes: std::collections::HashSet<_> = h.editor.doc.nodes.iter().map(|n| n.id).collect();
+        let old_paths: std::collections::HashSet<_> = h.editor.doc.paths.iter().map(|p| p.id).collect();
+        let rev = h.editor.rev;
+        let mut s = Service::new("test-epoch".into());
+        let r = edit(
+            &mut s,
+            &mut h,
+            "r1",
+            rev,
+            json!([{"verb":"duplicate_artboard","id":format!("artboard:{source}"),"with_art":true,"offset":null}]),
+        );
+        assert!(r.ok, "{r:?}");
+        let copy = h
+            .editor
+            .doc
+            .nodes
+            .iter()
+            .find(|n| n.kind == varos_core::model::NodeKind::Group && n.id != group_id)
+            .unwrap();
+        assert!(!old_nodes.contains(&copy.id));
+        assert!(copy.children.iter().all(|id| !old_nodes.contains(id)));
+        assert_eq!(copy.role == varos_core::model::GroupRole::Clip, clipped);
+        if clipped {
+            assert!(copy.children.contains(&copy.mask_child.unwrap()));
+            assert!(!old_nodes.contains(&copy.mask_child.unwrap()));
+        }
+        assert_eq!(h.editor.doc.paths.iter().filter(|p| !old_paths.contains(&p.id)).count(), 2);
+    }
 }

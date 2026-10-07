@@ -97,6 +97,27 @@ pub trait DocStore {
         self.load(path).map(|doc| (doc, None))
     }
     fn save(&mut self, doc: &Document, path: &Path) -> Result<SaveOutcome, String>;
+    /// Bridge uses a pinned directory on the real disk; in-memory stores reuse their fake writer.
+    fn save_guarded(
+        &mut self,
+        doc: &Document,
+        path: &Path,
+        _expected: Option<&varos_app::storage::durable::Fingerprint>,
+        _fresh: bool,
+        _auth: Option<&varos_bridge::ipc::Recheck>,
+    ) -> Result<SaveOutcome, varos_bridge::Error> {
+        self.save(doc, path).map_err(|e| varos_bridge::Error::new("io_error", e))
+    }
+    fn export_guarded(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        _auth: Option<&varos_bridge::ipc::Recheck>,
+    ) -> Result<SaveOutcome, varos_bridge::Error> {
+        self.write_export(path, bytes)
+            .map(|_| SaveOutcome::Durable)
+            .map_err(|e| varos_bridge::Error::new("io_error", e))
+    }
     /// The file's identity: absolute + canonical path (the parent canonicalised for a file that does
     /// not exist yet), plus device/inode on unix.
     fn key(&self, path: &Path) -> FileKey;
@@ -391,6 +412,45 @@ impl Lifecycle<'_> {
     /// A background job finished: apply it to its tab (a closed tab is ignored, a stale ticket too).
     fn file_done(&mut self, done: FileDone) -> Effect {
         match done {
+            FileDone::Bridge { ticket, copy, result, done } => {
+                crate::bridge_host::file_completed(ticket, result.clone());
+                if let Some(done) = done {
+                    match *done {
+                        FileDone::Saved(done) => {
+                            if copy {
+                                if let Some(s) = self.ws.get_mut(done.sid) {
+                                    s.saving.take_if(|f| f.ticket == ticket);
+                                }
+                                return Effect::default();
+                            }
+                            if result.ok && matches!(done.result, Ok(SaveOutcome::Durable)) {
+                                return self.save_done(done);
+                            }
+                            if let Some(s) = self.ws.get_mut(done.sid) {
+                                s.saving.take_if(|f| f.ticket == ticket);
+                                if let Ok(SaveOutcome::ReplacedUnconfirmed(_)) = done.result {
+                                    s.path = Some(done.dest.clone());
+                                    s.key = Some(self.store.key(&done.dest));
+                                    s.untitled = None;
+                                    s.save_unconfirmed = true;
+                                    s.recovered = None;
+                                    s.source_fingerprint = self.store.fingerprint(&done.dest);
+                                }
+                            }
+                        }
+                        FileDone::Exported(_) => {}
+                        FileDone::Bridge { .. } => unreachable!(),
+                    }
+                } else {
+                    let ids: Vec<_> = self.ws.sessions().iter().map(|s| s.id).collect();
+                    for id in ids {
+                        if let Some(s) = self.ws.get_mut(id) {
+                            s.saving.take_if(|f| f.ticket == ticket);
+                        }
+                    }
+                }
+                Effect::default()
+            }
             FileDone::Saved(done) => self.save_done(done),
             FileDone::Exported(done) => {
                 self.export_done(done);
@@ -515,7 +575,7 @@ impl Lifecycle<'_> {
             s.exports.remove(0);
         }
         match done.result {
-            ExportResult::Exported => {
+            ExportResult::Exported | ExportResult::ExportedUnconfirmed(_) => {
                 self.dialogs.notice(&format!("Exported {name}"), "Your document has not changed.")
             }
             ExportResult::Failed(reason) => {
@@ -956,6 +1016,43 @@ mod tests {
         }
         fn names(&self) -> Vec<String> {
             self.ws.sessions().iter().map(|s| s.display_name()).collect()
+        }
+    }
+
+    #[test]
+    fn bridge_save_copy_preserves_backing_dirty_and_recent() {
+        for dirty in [false, true] {
+            let mut r = Rig::new();
+            r.s.put("/d/original.vrs", art([1.0; 4]));
+            let id = r.open("/d/original.vrs");
+            if dirty {
+                r.ed(id).execute(EditCommand::SetBoardName("changed".into()));
+            }
+            let path = r.get(id).path.clone();
+            let key = r.get(id).key.clone();
+            let recent = r.s.recent.entries().to_vec();
+            let dest = p("/d/copy.vrs");
+            let doc = Arc::new(r.get(id).editor.doc.clone());
+            r.ws.get_mut(id).unwrap().saving = Some(SaveInFlight {
+                ticket: 7,
+                dest: dest.clone(),
+                doc: doc.clone(),
+                follow_up: false,
+                started: std::time::Instant::now(),
+            });
+            let result = r.s.save(&doc, &dest);
+            r.run(AppCommand::FileDone(Box::new(FileDone::Bridge {
+                ticket: 7,
+                copy: true,
+                result: varos_bridge::Reply::success(serde_json::json!({"saved":true})),
+                done: Some(Box::new(FileDone::Saved(SaveDone { sid: id, ticket: 7, dest: dest.clone(), result }))),
+            })));
+            assert_eq!(r.get(id).path, path);
+            assert_eq!(r.get(id).key, key);
+            assert_eq!(r.get(id).is_dirty(), dirty);
+            assert_eq!(r.s.recent.entries(), recent);
+            assert!(r.s.files.contains_key(&dest));
+            assert!(r.get(id).saving.is_none());
         }
     }
 
@@ -2532,5 +2629,48 @@ mod tests {
             assert!(ws.get(b).unwrap().saving.is_some(), "another folder is another file: allowed");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn bridge_background_save_checkpoint_and_fingerprint_failure_without_dialogs() {
+        use crate::file_jobs::BridgeFileJob;
+        use varos_app::storage::durable::Fingerprint;
+        let mut r = Rig::new();
+        r.s.put("/d/bridge.vrs", art(RED));
+        let fp = Fingerprint { len: 42, modified: None };
+        r.s.fingerprints.insert(p("/d/bridge.vrs"), fp);
+        let id = r.open("/d/bridge.vrs");
+        r.ed(id).execute(EditCommand::SetBoardName("written".into()));
+        let (_, jobs) = r.bg(AppCommand::Save(id));
+        let job = one(jobs);
+        let ticket = r.get(id).saving.as_ref().unwrap().ticket;
+        let job = FileJob::Bridge(Box::new(BridgeFileJob {
+            ticket,
+            inner: job,
+            roots: vec![],
+            backing: vec![],
+            expected: Some((p("/d/bridge.vrs"), Some(fp))),
+            auth: None,
+        }));
+        r.ed(id).execute(EditCommand::SetBoardName("later human".into()));
+        r.land(job);
+        assert_eq!(r.s.doc("/d/bridge.vrs").name, "written");
+        assert!(r.get(id).is_dirty_exact());
+        assert!(r.get(id).saving.is_none());
+        let (_, jobs) = r.bg(AppCommand::Save(id));
+        let inner = one(jobs);
+        let ticket = r.get(id).saving.as_ref().unwrap().ticket;
+        r.s.fingerprints.insert(p("/d/bridge.vrs"), Fingerprint { len: 43, modified: None });
+        r.land(FileJob::Bridge(Box::new(BridgeFileJob {
+            ticket,
+            inner,
+            roots: vec![],
+            backing: vec![],
+            expected: Some((p("/d/bridge.vrs"), Some(fp))),
+            auth: None,
+        })));
+        assert_eq!(r.s.doc("/d/bridge.vrs").name, "written");
+        assert!(r.get(id).saving.is_none());
+        assert!(r.get(id).is_dirty_exact());
+        assert!(r.prompts().iter().all(|p| !p.starts_with("failed")));
     }
 }

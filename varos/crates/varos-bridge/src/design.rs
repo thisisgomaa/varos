@@ -132,6 +132,26 @@ fn apply_artboard_op(
         Operation::SetActiveArtboard { id } => {
             ed.artboard_set_active(artboard_ref(id, locals)?).map_err(artboard_error)?
         }
+        Operation::ReorderArtboard { id, position } => {
+            ed.artboard_reorder(artboard_ref(id, locals)?, *position).map_err(artboard_error)?
+        }
+        Operation::DuplicateArtboard { id, with_art, offset, local } => {
+            if let Some(n) = local {
+                local_name(n)?;
+                if locals.contains_key(n) {
+                    return Err(fail("duplicate request-local name"));
+                }
+            }
+            let id = ed.artboard_duplicate(artboard_ref(id, locals)?, *with_art, *offset).map_err(artboard_error)?;
+            bind(locals, local, format!("artboard:{id}"))?;
+        }
+        Operation::SetArtboardColor { id, color } => {
+            let color = paint(&color.clone().map_or(Paint::None, Paint::Solid))?.flatten();
+            ed.artboard_color(artboard_ref(id, locals)?, color).map_err(artboard_error)?;
+        }
+        Operation::SetArtboardClip { id, clip } => {
+            ed.artboard_clip(artboard_ref(id, locals)?, *clip).map_err(artboard_error)?
+        }
         _ => unreachable!("not a page verb"),
     }
     Ok(())
@@ -172,14 +192,7 @@ pub(crate) fn apply_design_op(
     expanded: &mut usize,
     affected: &mut BTreeSet<String>,
 ) -> Result<(), Error> {
-    if matches!(
-        op,
-        Operation::AddArtboard { .. }
-            | Operation::ResizeArtboard { .. }
-            | Operation::RenameArtboard { .. }
-            | Operation::DeleteArtboard { .. }
-            | Operation::SetActiveArtboard { .. }
-    ) {
+    if op.is_page_verb() {
         return apply_artboard_op(ed, op, locals, affected);
     }
     let ids = op
@@ -194,7 +207,7 @@ pub(crate) fn apply_design_op(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let paths = if matches!(op, Operation::AddShape { .. }) {
+    let paths = if matches!(op, Operation::AddShape { .. } | Operation::AddPath { .. }) {
         vec![]
     } else if matches!(op, Operation::Rename { .. }) {
         if ids.is_empty() {
@@ -242,7 +255,8 @@ pub(crate) fn apply_design_op(
     }
     let execute = |ed: &mut Editor, command| ed.try_execute(command).map_err(fail);
     match op {
-        Operation::AddShape { kind, bounds, parent, local, name, fill, stroke, stroke_width, opacity, .. } => {
+        Operation::AddShape { parent, local, name, fill, stroke, stroke_width, opacity, .. }
+        | Operation::AddPath { parent, local, name, fill, stroke, stroke_width, opacity, .. } => {
             if let Some(local) = local {
                 local_name(local)?;
                 if locals.contains_key(local) {
@@ -287,21 +301,66 @@ pub(crate) fn apply_design_op(
             if fill.is_none() && stroke_width.unwrap_or(0.0) <= 0.0 {
                 return Err(fail("stroke_width must be > 0 when stroke is the only paint"));
             }
-            let id = ed
-                .try_execute_created(EditCommand::AddShape {
-                    kind: match kind {
+            let command = match op {
+                Operation::AddPath { anchors, closed, .. } => {
+                    if anchors.len() > 1000 {
+                        return Err(Error::new("limit_exceeded", "path exceeds 1000 anchors"));
+                    }
+                    EditCommand::AddPath {
+                        anchors: anchors
+                            .iter()
+                            .map(|a| varos_core::model::Anchor {
+                                id: 0,
+                                p: a.p,
+                                hin: a.hin,
+                                hout: a.hout,
+                                smooth: a.smooth,
+                            })
+                            .collect(),
+                        closed: *closed,
+                        parent,
+                        fill,
+                        stroke,
+                        stroke_width: stroke_width.unwrap_or(0.0),
+                        opacity: opacity.unwrap_or(1.0),
+                        name: name.as_ref().map(|n| clean_name(n)).transpose()?,
+                    }
+                }
+                Operation::AddShape { kind, bounds, radius, .. } => {
+                    let kind = match kind {
                         ShapeKind::Rect => varos_core::model::ShapeKind::Rect,
                         ShapeKind::Ellipse => varos_core::model::ShapeKind::Ellipse,
-                    },
-                    bounds: *bounds,
-                    parent,
-                    fill,
-                    stroke,
-                    stroke_width: stroke_width.unwrap_or(0.0),
-                    opacity: opacity.unwrap_or(1.0),
-                    name: name.as_ref().map(|n| clean_name(n)).transpose()?,
-                })
-                .map_err(fail)?;
+                    };
+                    if radius.is_some() && kind != varos_core::model::ShapeKind::Rect {
+                        return Err(fail("radius requires rect"));
+                    }
+                    if let Some(r) = radius.filter(|r| *r != 0.0) {
+                        EditCommand::AddPath {
+                            anchors: rounded_rect(*bounds, r)?,
+                            closed: true,
+                            parent,
+                            fill,
+                            stroke,
+                            stroke_width: stroke_width.unwrap_or(0.0),
+                            opacity: opacity.unwrap_or(1.0),
+                            name: name.as_ref().map(|n| clean_name(n)).transpose()?,
+                        }
+                    } else {
+                        EditCommand::AddShape {
+                            kind,
+                            bounds: *bounds,
+                            parent,
+                            fill,
+                            stroke,
+                            stroke_width: stroke_width.unwrap_or(0.0),
+                            opacity: opacity.unwrap_or(1.0),
+                            name: name.as_ref().map(|n| clean_name(n)).transpose()?,
+                        }
+                    }
+                }
+                _ => unreachable!(),
+            };
+            let id = ed.try_execute_created(command).map_err(fail)?;
             bind(locals, local, format!("path:{id}"))?;
         }
         Operation::Move { delta, .. } => {
@@ -517,10 +576,84 @@ pub(crate) fn apply_design_op(
     Ok(())
 }
 
+/// Eight tangent anchors, quarter-circle cubics. This is editable path geometry, not a primitive.
+fn rounded_rect([x, y, w, h]: [f32; 4], r: f32) -> Result<Vec<varos_core::model::Anchor>, Error> {
+    if ![x, y, w, h, r, x + w, y + h].iter().all(|v| v.is_finite())
+        || w <= 0.0
+        || h <= 0.0
+        || r < 0.0
+        || x + w <= x
+        || y + h <= y
+    {
+        return Err(fail("radius must be finite and between 0 and half the shorter positive dimension"));
+    }
+    let r = r.min(w.min(h) / 2.0);
+    let k = varos_core::model::K * r;
+    let points = [
+        [x + r, y],
+        [x + w - r, y],
+        [x + w, y + r],
+        [x + w, y + h - r],
+        [x + w - r, y + h],
+        [x + r, y + h],
+        [x, y + h - r],
+        [x, y + r],
+    ];
+    let incoming = [
+        [x + r - k, y],
+        [x + w - r, y],
+        [x + w, y + r - k],
+        [x + w, y + h - r],
+        [x + w - r + k, y + h],
+        [x + r, y + h],
+        [x, y + h - r + k],
+        [x, y + r],
+    ];
+    let outgoing = [
+        [x + r, y],
+        [x + w - r + k, y],
+        [x + w, y + r],
+        [x + w, y + h - r + k],
+        [x + w - r, y + h],
+        [x + r - k, y + h],
+        [x, y + h - r],
+        [x, y + r - k],
+    ];
+    let mut anchors: Vec<varos_core::model::Anchor> = (0..8)
+        .map(|i| varos_core::model::Anchor {
+            id: 0,
+            p: points[i],
+            hin: (incoming[i] != points[i]).then_some(incoming[i]),
+            hout: (outgoing[i] != points[i]).then_some(outgoing[i]),
+            smooth: true,
+        })
+        .collect();
+    for i in (1..anchors.len()).rev() {
+        if anchors[i].p == anchors[i - 1].p {
+            anchors[i - 1].hout = anchors[i].hout;
+            anchors.remove(i);
+        }
+    }
+    Ok(anchors)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn rounded_rect_half_and_clamp_drop_straights() {
+        let half = rounded_rect([0.0, 0.0, 20.0, 20.0], 10.0).unwrap();
+        assert_eq!(half.len(), 4);
+        assert_eq!(rounded_rect([0.0, 0.0, 20.0, 20.0], 100.0).unwrap(), half);
+        let small = rounded_rect([0.0, 0.0, 20.0, 30.0], 5.0).unwrap();
+        assert_eq!(small.len(), 8);
+        assert!(small[0].hout.is_none());
+        assert!(small[1].hin.is_none());
+        for a in half {
+            assert!(a.hin.is_some() && a.hout.is_some());
+        }
+    }
     #[test]
     fn rotate_rejects_nonfinite_degrees_before_mutation() {
         let mut ed = Editor::new();
