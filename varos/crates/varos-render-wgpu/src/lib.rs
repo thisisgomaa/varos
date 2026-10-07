@@ -70,6 +70,9 @@ pub struct Renderer {
     egui_rend: egui_wgpu::Renderer,
     // egui frees that arrived on a frame the OS didn't give us — processed after the next real submit
     free_q: FreeQueue,
+    /// The last frame was skipped because the OS gave no drawable for a window it is not showing
+    /// (occluded / timeout) — retrying cannot help until it is shown again.
+    unshown: bool,
     clamp_logged: bool, // the "window larger than the GPU texture cap" note is logged once
 }
 
@@ -605,6 +608,7 @@ impl Renderer {
             blit_bg,
             egui_rend,
             free_q: FreeQueue::default(),
+            unshown: false,
             clamp_logged: false,
         })
     }
@@ -986,7 +990,9 @@ impl Renderer {
     /// Get this frame's surface texture, or None when the OS gives none (lost/outdated → reconfigure;
     /// occluded/timeout → just skip). Callers park egui frees on None (see `FreeQueue`).
     fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
-        match self.surface.get_current_texture() {
+        let status = self.surface.get_current_texture();
+        self.unshown = matches!(status, wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout);
+        match status {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => Some(f),
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.config);
@@ -994,6 +1000,11 @@ impl Renderer {
             }
             _ => None,
         }
+    }
+    /// Was the last skipped frame skipped because the window is not being shown (occluded /
+    /// timeout)? The host does not retry such a frame — the uncover redraw paints it.
+    pub fn surface_unshown(&self) -> bool {
+        self.unshown
     }
     /// egui's screen size, never larger than the (possibly clamped) surface — keeps scissor rects inside it.
     fn fit_screen(&self, s: &egui_wgpu::ScreenDescriptor) -> egui_wgpu::ScreenDescriptor {

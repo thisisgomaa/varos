@@ -44,6 +44,7 @@ mod mac_open;
 #[cfg(target_os = "macos")]
 mod mac_titlebar;
 mod os_open;
+mod pacing;
 mod recent_files;
 mod recovery_host;
 mod single_instance;
@@ -65,6 +66,36 @@ fn resolve_ck(panning: bool, space_down: bool, chrome: Option<CK>, tool: impl Fn
         c
     } else {
         tool()
+    }
+}
+
+/// What woke the loop, for `VAROS_FRAME_DEBUG=1` (`pacing`).
+fn pacing_event_kind(event: &Event<()>) -> &'static str {
+    use winit::event::StartCause as S;
+    match event {
+        Event::NewEvents(S::Init) => "new:init",
+        Event::NewEvents(S::Poll) => "new:poll",
+        Event::NewEvents(S::ResumeTimeReached { .. }) => "new:timer",
+        Event::NewEvents(S::WaitCancelled { .. }) => "new:wait-cancelled",
+        Event::UserEvent(()) => "user(proxy)",
+        Event::DeviceEvent { .. } => "device",
+        Event::AboutToWait => "about-to-wait",
+        Event::WindowEvent { event, .. } => match event {
+            WindowEvent::RedrawRequested => "w:redraw",
+            WindowEvent::CursorMoved { .. } => "w:cursor-moved",
+            WindowEvent::MouseInput { .. } => "w:mouse",
+            WindowEvent::MouseWheel { .. } => "w:wheel",
+            WindowEvent::KeyboardInput { .. } => "w:key",
+            WindowEvent::ModifiersChanged(_) => "w:modifiers",
+            WindowEvent::Focused(_) => "w:focused",
+            WindowEvent::Occluded(_) => "w:occluded",
+            WindowEvent::Resized(_) => "w:resized",
+            WindowEvent::Moved(_) => "w:moved",
+            WindowEvent::CursorEntered { .. } => "w:cursor-entered",
+            WindowEvent::CursorLeft { .. } => "w:cursor-left",
+            _ => "w:other",
+        },
+        _ => "other",
     }
 }
 
@@ -1114,15 +1145,38 @@ fn main() {
     let mut editor_framed = false; // restore maximized geometry after the initial frame
     let mut last_scene_signature: Option<u64> = None;
     let mut surface_retries = 0u8;
+    // `VAROS_FRAME_DEBUG=1`: frames / passes / ControlFlow / who asked for each frame (`pacing`)
+    let mut pace = pacing::FrameStats::from_env();
+    // one display refresh: the floor between egui's self-driven passes (re-read when the window moves
+    // to another display); and whether AppKit reports the window fully covered (no drawable then)
+    let mut frame_interval =
+        pacing::refresh_interval(window.current_monitor().and_then(|m| m.refresh_rate_millihertz()));
+    let mut occluded = false;
+    // `VAROS_FRAME_DEBUG=1` only: the last frame's paint + scene key, to count `repeats`
+    let mut debug_prev: (Vec<egui::ClippedPrimitive>, Option<u64>) = (Vec::new(), None);
+    // Every frame request names its reason, so the idle discipline can be measured (`pacing`).
+    macro_rules! redraw {
+        ($why:expr) => {{
+            pace.redraw($why);
+            window.request_redraw();
+        }};
+    }
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
+            if pace.enabled() {
+                pace.wake(pacing_event_kind(&event));
+            }
+            let pass_start = Instant::now();
             // Keep the capability alive exactly as long as this host. Requests bind explicit session
             // handles when decoded; never replace them with whichever tab is active at drain time.
             let _attachment = &bridge_listener;
+            // A Bridge request arrives with a proxy wake, so this turn's `AboutToWait` dispatches it;
+            // it draws only if it changed the document (`ran_any` below) — an agent reading
+            // (capabilities / describe / list_boards / snapshot) never makes a frame.
             for request in bridge_rx.try_iter() {
                 pending.push(host::HostAction::App(AppCommand::Bridge(Box::new(request))));
-                window.request_redraw();
+                pace.wake("bridge-request");
             }
             if matches!(&event, Event::AboutToWait) && bridge_listener.as_ref().is_some_and(|l| l.has_clients()) {
                 bridge_host::observe(&mut ws);
@@ -1143,7 +1197,7 @@ fn main() {
                     let cmd = match action {
                         mac_menu::NativeAction::App(cmd) => {
                             pending.push(host::HostAction::App(cmd));
-                            window.request_redraw();
+                            redraw!("menu-app");
                             continue;
                         }
                         mac_menu::NativeAction::Menu(cmd) => cmd,
@@ -1189,7 +1243,7 @@ fn main() {
                         }
                         None => {}
                     }
-                    window.request_redraw();
+                    redraw!("menu-row");
                 }
             }
             if matches!(&event, Event::AboutToWait) {
@@ -1226,7 +1280,7 @@ fn main() {
                     }
                 }
                 if any_finished {
-                    window.request_redraw();
+                    redraw!("file-done");
                 }
                 // THE one dispatch: every queued action, in the order it was raised (FIFO) — up to a
                 // click the Ui frame has not turned into its command yet
@@ -1246,6 +1300,7 @@ fn main() {
                         let before = recovery_host::RecoveryHost::before_close(&ws);
                         let (ds, keys) = (&mut dialogs, &keyboard);
                         let jobs = &mut recovery;
+                        let bridge = matches!(&action, host::HostAction::App(AppCommand::Bridge(_)));
                         let ran =
                             dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, ds, &mut store, keys, jobs);
                         if ran.held {
@@ -1254,7 +1309,9 @@ fn main() {
                             pending.hold(retry.into_iter().chain(ready.by_ref()));
                             break;
                         }
-                        ran_any = true;
+                        // every command the user raised redraws; a Bridge request only when it changed
+                        // the document (`bridge_host::run` reports a mutation as `ran`)
+                        ran_any |= !bridge || ran.ran;
                         recovery.after_dispatch(before, &mut ws, ran.exit, Instant::now());
                         // a coalesced second ⌘S runs as a normal ⌘S, behind what is already waiting
                         pending
@@ -1286,7 +1343,7 @@ fn main() {
                         }
                     }
                     if ran_any {
-                        window.request_redraw();
+                        redraw!("dispatch");
                     }
                 }
             }
@@ -1299,7 +1356,7 @@ fn main() {
                             .into_iter()
                             .map(|copy| host::HostAction::App(AppCommand::InstallRecovered(Box::new(copy)))),
                     );
-                    window.request_redraw();
+                    redraw!("recovered");
                 }
                 let recovery_changed = recovery.take_changed();
                 recovery_gen += recovery_changed as u64;
@@ -1311,42 +1368,46 @@ fn main() {
                 }
                 if recovery_changed | probe.poll() | !thumbs_landed.is_empty() {
                     sync_home(&mut gui, ws.on_home(), &store, &recovery, &mut probe, &mut start_refresh, recovery_gen);
-                    window.request_redraw();
+                    redraw!("home-sync");
                 }
                 let recovery_ui = recovery.presentation(ws.active());
                 if gui.recovery != recovery_ui {
                     gui.recovery = recovery_ui;
-                    window.request_redraw();
+                    redraw!("recovery-ui");
                 }
-                // a background result `observe` picked up is applied at the next turn: make one happen
-                if recovery.has_file_done() || pending.has_new() {
-                    window.request_redraw();
+                // a queued action behind a pointer mark needs the Ui frame that resolves the mark; a
+                // background result `observe` picked up only needs one more pass (`turn_now`, no frame)
+                if pending.has_new() {
+                    redraw!("queue");
                 }
+                let turn_now = recovery.has_file_done();
                 // "Finishing save of “name”…" while a command waits for it; else "Saving “name”…" /
                 // "Exporting PDF…" only after 300 ms (no flicker) — plain text
                 let now = Instant::now();
                 let file_status = recovery.save_wait.status().unwrap_or_else(|| file_jobs::status_text(&ws, now));
                 if gui.file_status != file_status {
                     gui.file_status = file_status;
-                    window.request_redraw();
+                    redraw!("file-status");
                 }
-                let wake = [
-                    gui.repaint_at,
-                    recovery.next_wake(),
-                    file_jobs::next_status_wake(&ws, now),
-                    recovery.save_wait.next_ask(),
-                ]
-                .into_iter()
-                .flatten()
-                .min();
-                match wake {
-                    Some(at) if at <= Instant::now() => {
-                        gui.repaint_at = None;
-                        window.request_redraw();
-                        elwt.set_control_flow(ControlFlow::Wait);
-                    }
-                    Some(at) => elwt.set_control_flow(ControlFlow::WaitUntil(at)),
-                    None => elwt.set_control_flow(ControlFlow::Wait),
+                // Background deadlines wake a PASS, never a frame: the recovery copy, the launch-scan
+                // poll, the "Saving…" delay and the Keep Waiting question each run in this block and ask
+                // for a frame themselves only when something visible changed (above). Only egui's own
+                // deadline (tooltip delay, caret blink, a paced follow-up pass) draws.
+                let background =
+                    [recovery.next_wake(), file_jobs::next_status_wake(&ws, now), recovery.save_wait.next_ask()];
+                let plan = pacing::plan(Instant::now(), gui.repaint_at, &background, turn_now);
+                if plan.redraw {
+                    gui.repaint_at = None;
+                    redraw!("egui-timer");
+                }
+                pace.pass(pass_start.elapsed());
+                pace.flow(plan.flow);
+                elwt.set_control_flow(match plan.flow {
+                    pacing::Flow::Wait => ControlFlow::Wait,
+                    pacing::Flow::WaitUntil(at) => ControlFlow::WaitUntil(at),
+                });
+                if let Some(line) = pace.tick(Instant::now()) {
+                    eprintln!("{line}");
                 }
             }
             if let Event::WindowEvent { event, window_id } = event {
@@ -1356,6 +1417,16 @@ fn main() {
                 // The held keys: the keyboard's one truth (`host::Keyboard`), mirrored into the active
                 // tab's editor — kept even when no tab is active. Losing focus lets Space and the command
                 // keys go (their key-ups go elsewhere now); winit releases the modifiers itself.
+                match &event {
+                    WindowEvent::Occluded(covered) => occluded = *covered,
+                    // another display may refresh at another rate
+                    WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                        frame_interval = pacing::refresh_interval(
+                            window.current_monitor().and_then(|m| m.refresh_rate_millihertz()),
+                        );
+                    }
+                    _ => {}
+                }
                 if let WindowEvent::Focused(false) = &event {
                     if keyboard.space() {
                         panning = false; // as a Space key-up does: the Space pan ends
@@ -1385,14 +1456,22 @@ fn main() {
                     _ => false,
                 };
                 if command_key_event {
-                    window.request_redraw();
+                    redraw!("command-key");
                 }
-                let egui_consumed = !command_key_event && gui.on_event(&window, &event);
+                let egui_consumed = !command_key_event && {
+                    let response = gui.on_event(&window, &event);
+                    // Windows repaints through its own paths (`egui_consumed` + the input arms below).
+                    // A window move or being covered changes no pixel of ours (egui-winit asks anyway).
+                    if cfg!(not(windows)) && response.repaint && pacing::event_needs_frame(&event) {
+                        redraw!("egui-event");
+                    }
+                    response.consumed
+                };
                 // a pointer button's chrome command (a tab chip, a burger row) exists only after the next
                 // Ui frame: each press / release leaves its mark, and what is raised after it waits
                 if let WindowEvent::MouseInput { state, .. } = &event {
                     pending.pointer_button(*state == ElementState::Released);
-                    window.request_redraw();
+                    redraw!("mouse-button-mark");
                 }
                 let home = ws.on_home();
                 if home && matches!(event, WindowEvent::Focused(true)) {
@@ -1403,7 +1482,7 @@ fn main() {
                 let Some(s) = ws.active_mut() else { return };
                 let (ed, view) = (&mut s.editor, &mut s.view);
                 if egui_consumed {
-                    window.request_redraw();
+                    redraw!("egui-consumed");
                 }
                 match event {
                     // Winit's macOS tracking rect follows our full-size content view, including
@@ -1411,7 +1490,7 @@ fn main() {
                     #[cfg(target_os = "macos")]
                     WindowEvent::CursorEntered { .. } => {
                         pointer_inside = true;
-                        window.request_redraw();
+                        redraw!("cursor-entered");
                     }
                     #[cfg(target_os = "macos")]
                     WindowEvent::CursorLeft { .. } => {
@@ -1423,7 +1502,7 @@ fn main() {
                         // Unfocused means outside for cursor ownership, even if the pointer has
                         // not moved. Retain containment for immediate restoration on reactivation.
                         if focused {
-                            window.request_redraw();
+                            redraw!("focused");
                         }
                     }
                     // red traffic light / OS close: the Quit transaction over every tab (Astra F01; S1
@@ -1445,13 +1524,13 @@ fn main() {
                             *view = fit_to_board(&gui, &window, x, y, w, h, 0.9);
                             refit_pending = false;
                         }
-                        window.request_redraw();
+                        redraw!("resized");
                     }
                     // macOS: an opaque window that was covered gets no redraws (AppKit skips drawing an
                     // occluded view), so a view that started behind another window would sit there
                     // until the next input event — repaint the moment it is uncovered.
                     #[cfg(target_os = "macos")]
-                    WindowEvent::Occluded(false) => window.request_redraw(),
+                    WindowEvent::Occluded(false) => redraw!("uncovered"),
                     WindowEvent::Moved(pos) => {
                         // AppKit can consume mouse motion/releases during its native drag loop.
                         // Native move events also catch a drag that returns to its starting point.
@@ -1480,14 +1559,14 @@ fn main() {
                             ed.ppu = view.zoom;
                             ed.pointer_move(view.s2w(screen_cursor));
                         }
-                        window.request_redraw();
+                        redraw!("cursor-moved");
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
                         // A5 — while the picker's system eyedropper is armed, the sample click is read
                         // globally (GetAsyncKeyState); swallow the in-window event so it doesn't also
                         // poke the canvas (select/deselect) under the floating picker.
                         if gui.picking_screen() {
-                            window.request_redraw();
+                            redraw!("picker-armed-click");
                             return;
                         }
                         match button {
@@ -1504,7 +1583,7 @@ fn main() {
                                             panning = true;
                                             pan_last = screen_cursor;
                                         }
-                                        window.request_redraw();
+                                        redraw!("space-pan-press");
                                         return;
                                     }
                                     // macOS: an EMPTY spot on our bar is the title bar (Windows gets this from
@@ -1523,14 +1602,14 @@ fn main() {
                                                 caption_clicks.reset_after_drag();
                                             }
                                         }
-                                        window.request_redraw();
+                                        redraw!("caption-drag");
                                         return;
                                     }
                                     // A press belonging to a widget/canvas breaks the caption sequence too.
                                     #[cfg(target_os = "macos")]
                                     caption_clicks.reset_after_drag();
                                     if over_panel {
-                                        window.request_redraw();
+                                        redraw!("panel-press");
                                         return;
                                     } // egui handles the click
                                     let now = Instant::now();
@@ -1544,7 +1623,7 @@ fn main() {
                                     // change the selection; text that does not parse keeps the keyboard and
                                     // the press is not delivered
                                     if !gui.commit_fields(ed) {
-                                        window.request_redraw();
+                                        redraw!("field-commit");
                                         return;
                                     }
                                     last_click = Some((now, screen_cursor));
@@ -1567,7 +1646,7 @@ fn main() {
                                         host::LeftRelease::Chrome => {}
                                         // dropped a guide onto a ruler → delete
                                         host::LeftRelease::Canvas { over_panel: true } if ed.delete_dragged_guide() => {
-                                            window.request_redraw();
+                                            redraw!("guide-delete");
                                         }
                                         host::LeftRelease::Canvas { .. } => ed.pointer_up(),
                                     }
@@ -1583,7 +1662,7 @@ fn main() {
                             },
                             _ => {}
                         }
-                        window.request_redraw();
+                        redraw!("mouse-input");
                     }
                     WindowEvent::MouseWheel { delta, .. } => {
                         gestures::apply(
@@ -1592,7 +1671,7 @@ fn main() {
                             gestures::Gesture::Scroll { delta, alt: ed.mods.alt, shift: ed.mods.shift },
                             over_panel || gui.wants_pointer_at(screen_cursor),
                         );
-                        window.request_redraw();
+                        redraw!("wheel");
                     }
                     WindowEvent::PinchGesture { delta, phase, .. } => {
                         // Started/Moved/Ended can carry incremental magnification. Cancellation
@@ -1605,7 +1684,7 @@ fn main() {
                                 over_panel || gui.wants_pointer_at(screen_cursor),
                             );
                         }
-                        window.request_redraw();
+                        redraw!("pinch");
                     }
                     WindowEvent::DoubleTapGesture { .. } => {
                         let (x, y, w, h) = fit_rect(ed);
@@ -1616,7 +1695,7 @@ fn main() {
                             gestures::Gesture::SmartZoom(fit),
                             over_panel || gui.wants_pointer_at(screen_cursor),
                         );
-                        window.request_redraw();
+                        redraw!("double-tap");
                     }
                     // View rotation needs the full transform/hit-testing work order first.
                     WindowEvent::RotationGesture { .. } => {}
@@ -1647,13 +1726,13 @@ fn main() {
                             if !down {
                                 panning = false;
                             }
-                            window.request_redraw();
+                            redraw!("space-key");
                         } else if event.state == ElementState::Pressed {
                             // runs now, or waits behind a command raised earlier in this batch (FIFO)
                             let d = host::DocAction::Key(code, keyboard.held());
                             let canvas = canvas_px(&gui, &window);
                             raise_doc(&mut pending, d, ed, view, canvas, &mut gui);
-                            window.request_redraw();
+                            redraw!("doc-key");
                         }
                     }
                     WindowEvent::RedrawRequested => {
@@ -1678,6 +1757,10 @@ fn main() {
                         // the updated editor so the change shows this same frame.
                         let (jobs, tdelta, screen) =
                             gui.run(&window, ed, scale as f32, *view, cursors::is_maximized(hwnd));
+                        pace.frame();
+                        if pace.enabled() {
+                            pace.egui_causes(gui.repaint_causes());
+                        }
                         // the tab strip / burger / window controls raised commands: the one dispatch runs
                         // them when the loop is about to wait (right after this frame)
                         // …in the place of the click that raised them (`ActionQueue::chrome_frame`)
@@ -1687,7 +1770,7 @@ fn main() {
                         let at = pending.last_release();
                         pending.chrome_frame(raised.map(|c| (at, host::HostAction::App(c))));
                         if pending.has_new() {
-                            window.request_redraw();
+                            redraw!("chrome-commands");
                         }
                         // macOS menu bar: every ✓ is read back from the real state (only changes are written)
                         #[cfg(target_os = "macos")]
@@ -1710,7 +1793,7 @@ fn main() {
                         // Stage 4: the first document frame knows the Board box — refit the startup
                         // view INTO it once (the pre-shell fit centred on the whole window).
                         if !home && take_pending_fit(&mut s.fit_pending, ed, view, &gui, &window) {
-                            window.request_redraw();
+                            redraw!("pending-fit");
                         }
                         // Cursor: over chrome show the UI's OWN cursor (egui's icon mapped to the
                         // Win32 set — seam-resize arrows on box splitters, ↔ on a scrubbed field,
@@ -1740,6 +1823,17 @@ fn main() {
                                 format!("hwnd={hw}\ninstalled={ins}\nsetcursor_hits={hits}\ncurrent_hcursor={cur}\n"),
                             );
                         }
+                        if pace.enabled() {
+                            // measurement only: would this frame repaint exactly the last one?
+                            let scene = (!home)
+                                .then(|| host::scene_key(s.id, scene_signature(ed, *view, [psz.width, psz.height])));
+                            let same = tdelta.set.is_empty()
+                                && tdelta.free.is_empty()
+                                && scene == debug_prev.1
+                                && pacing::same_paint(&jobs, &debug_prev.0);
+                            pace.repeat(same);
+                            debug_prev = (jobs.clone(), scene);
+                        }
                         let rendered = if home {
                             last_scene_signature = None;
                             renderer.render_ui(&Default::default(), *view, &jobs, &tdelta, &screen)
@@ -1767,13 +1861,20 @@ fn main() {
                             }
                             rendered
                         };
+                        // egui's OWN follow-up passes (its settle passes after input, wheel smoothing, the
+                        // tooltip countdown, a drag ghost easing, the armed eyedropper's polling) run at
+                        // most once per display refresh — never as fast as the CPU can present
+                        // (`present: Immediate`, owner report 2026-10-07). Input still draws at once.
+                        gui.repaint_at = pacing::paced(gui.repaint_at, perf_start, frame_interval);
                         // An outdated/lost drawable can skip a frame. Retry briefly so an idle Home
                         // transition cannot leave the old canvas on screen; do not spin while occluded.
                         if rendered {
+                            pace.present();
                             surface_retries = 0;
-                        } else if surface_retries < 3 {
+                        } else if !occluded && !renderer.surface_unshown() && surface_retries < 3 {
                             surface_retries += 1;
-                            gui.repaint_at = Some(Instant::now() + std::time::Duration::from_millis(16));
+                            let retry = Instant::now() + std::time::Duration::from_millis(16);
+                            gui.repaint_at = Some(gui.repaint_at.map_or(retry, |t| t.min(retry)));
                         }
                         // Restore maximized geometry after rendering, never resize mid-frame.
                         if !editor_framed {
@@ -1790,12 +1891,10 @@ fn main() {
                                 refit_pending = false;
                             }
                             editor_framed = true;
-                            window.request_redraw();
+                            redraw!("first-frame");
                         }
-                        // Zoom needs no follow-up frames; idle when egui has no work.
-                        if gui.repaint {
-                            window.request_redraw();
-                        }
+                        // Zoom needs no follow-up frames; idle when egui has no work. egui's own next pass
+                        // is `gui.repaint_at` (paced above), drawn by the loop's plan — not requested here.
                         // the tab strip + window title follow the documents (name, unsaved dot / `*`)
                         let (name, dirty) = (s.display_name(), !home && s.is_dirty());
                         let title =
@@ -1815,7 +1914,7 @@ fn main() {
                         // dispatch in `AboutToWait` already handed over its own result)
                         let tabs = ws.visible_tabs();
                         if tabs != drawn_tabs {
-                            window.request_redraw(); // repaint once more so the strip shows the change
+                            redraw!("tab-strip"); // repaint once more so the strip shows the change
                             gui.set_tabs(tabs.clone(), ws.document_target());
                             drawn_tabs = tabs;
                         }
