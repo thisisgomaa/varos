@@ -95,8 +95,12 @@ pub trait Host {
 pub struct Context {
     pub client: String,
     pub epoch: String,
+    /// ADR-0011 §3 capability scopes for this principal. `destructive` and `history` are only
+    /// *eligibility* to request those verbs; each still needs an exact owner-issued grant.
     pub read: bool,
     pub edit: bool,
+    pub destructive: bool,
+    pub history: bool,
     pub allow_history: bool,
     pub allow_destructive: bool,
 }
@@ -299,6 +303,14 @@ impl Service {
         if !ctx.read || (req.mutation().is_some() && !ctx.edit) {
             return Reply::failure(Error::new("scope_refused", "attachment has no required grant"));
         }
+        if matches!(req, Request::History(_)) && !ctx.history {
+            return Reply::failure(Error::new("scope_refused", "this agent was not granted the history scope"));
+        }
+        if let Request::Edit(v) = req {
+            if !ctx.destructive && v.ops.iter().any(Operation::destructive) {
+                return Reply::failure(Error::new("scope_refused", "this agent was not granted the destructive scope"));
+            }
+        }
         if req.board().is_some_and(|board| !canonical_board(board)) {
             return Reply::failure(Error::new("invalid_argument", "board must be a canonical session handle bN"));
         }
@@ -360,7 +372,7 @@ impl Service {
             }
             match req {
                 Request::Capabilities(_) => Ok(Reply::success(
-                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":ctx.read,"edit":ctx.edit,"history_owner_grant":ctx.allow_history,"destructive_owner_grant":ctx.allow_destructive,"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry"],"unsupported":["files","headless","add_path","corner_radius","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_reorder","artboard_duplicate","artboard_paint"]}),
+                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":ctx.read,"edit":ctx.edit,"destructive_scope":ctx.destructive,"history_scope":ctx.history,"history_owner_grant":ctx.allow_history,"destructive_owner_grant":ctx.allow_destructive,"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry"],"unsupported":["files","headless","add_path","corner_radius","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_reorder","artboard_duplicate","artboard_paint"]}),
                 )),
                 Request::ListBoards(v) => {
                     check_page(v.limit)?;
@@ -1277,6 +1289,8 @@ mod observation_tests {
                 epoch: "test".into(),
                 read: true,
                 edit: true,
+                destructive: true,
+                history: true,
                 allow_history: true,
                 allow_destructive: true,
             };

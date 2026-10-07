@@ -6,6 +6,19 @@
 #   NO_INSTALL=1 OUT_DIR=/tmp/x tools/mac/bundle.sh   # build the bundle into /tmp/x only: nothing is
 #                                  # copied to /Applications and Launch Services is not told
 #   BIN=path/to/varos ...          # bundle this binary instead of target/release/varos (implies SKIP_BUILD)
+#   BRIDGE_BIN=… CLI_BIN=…         # Bridge helpers to bundle (default: next to BIN, i.e. target/release/)
+#   CODESIGN_ID="Varos Local"      # sign with this identity instead of ad-hoc (default: "-" = ad-hoc)
+#
+# Keychain note (ADR-0011 C1): the Bridge keys live in the login Keychain, whose access list trusts
+# the signing identity of the binary that created them. Ad-hoc signatures change on every build, so
+# macOS asks again ("Always Allow") after each rebuild. A stable self-signed code-signing identity
+# (created once by the owner in Keychain Access ▸ Certificate Assistant) passed as CODESIGN_ID
+# keeps the same identity across rebuilds and stops those prompts. The owner decides; nothing here
+# creates certificates.
+#
+# The agent Bridge helpers (ADR-0011 §4) ship INSIDE the app so their path is stable:
+#   Varos.app/Contents/MacOS/varos-bridge   (the MCP/stdio proxy agents register once)
+#   Varos.app/Contents/MacOS/varos-cli      (owner commands: bridge register / pair / agents)
 #
 # Build outputs go under varos/target/mac/ (ignored via `target/`) unless OUT_DIR says otherwise.
 # Nothing here needs sudo.
@@ -28,6 +41,8 @@ if [[ -n "${BIN:-}" ]]; then
 else
   BIN="$WORKSPACE/target/release/varos"
 fi
+BRIDGE_BIN="${BRIDGE_BIN:-$(dirname "$BIN")/varos-bridge}"
+CLI_BIN="${CLI_BIN:-$(dirname "$BIN")/varos-cli}"
 OUT_DIR="${OUT_DIR:-$WORKSPACE/target/mac}"
 APP="$OUT_DIR/Varos.app"
 # NO_INSTALL must never touch the live install: building straight into /Applications would
@@ -42,16 +57,20 @@ ICON_SRC="$REPO_ROOT/icon.png"
 APP_CARGO="$WORKSPACE/crates/varos-app/Cargo.toml"
 
 BUNDLE_ID="com.varos.editor"
+SIGN_ID="${CODESIGN_ID:--}"
 DOC_UTI="com.varos.editor.document"
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
 # ---- 1. build (cargo only recompiles what changed; a fresh build is a fast no-op) ----
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
-  echo "==> cargo build --release -p varos-app"
-  (cd "$WORKSPACE" && cargo build --release -p varos-app -j 4)
+  echo "==> cargo build --release -p varos-app -p varos-bridge -p varos-cli"
+  (cd "$WORKSPACE" && cargo build --release -p varos-app -p varos-bridge -p varos-cli -j 4)
 fi
 [[ -x "$BIN" ]] || { echo "bundle.sh: missing $BIN (build failed or SKIP_BUILD=1 without a build)" >&2; exit 1; }
+for helper in "$BRIDGE_BIN" "$CLI_BIN"; do
+  [[ -x "$helper" ]] || { echo "bundle.sh: missing Bridge helper $helper (build varos-bridge and varos-cli, or set BRIDGE_BIN/CLI_BIN)" >&2; exit 1; }
+done
 
 # ---- 2. version from varos-app's Cargo.toml ([package] version = "x.y.z") ----
 VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$APP_CARGO" | head -n1)"
@@ -83,6 +102,10 @@ cp "$FONT_ASSETS/"*-LICENSE.txt "$FONT_ASSETS/"*-OFL.txt "$FONT_ASSETS/manifest.
 # ---- 5. binary ----
 cp "$BIN" "$APP/Contents/MacOS/varos"
 chmod +x "$APP/Contents/MacOS/varos"
+# Bridge helpers beside the app binary: one stable path, updated together with the app.
+cp "$BRIDGE_BIN" "$APP/Contents/MacOS/varos-bridge"
+cp "$CLI_BIN" "$APP/Contents/MacOS/varos-cli"
+chmod +x "$APP/Contents/MacOS/varos-bridge" "$APP/Contents/MacOS/varos-cli"
 
 # ---- 6. Info.plist ----
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -142,9 +165,17 @@ plist_get() { plutil -extract "$1" raw -o - "$APP/Contents/Info.plist"; }
   || { echo "bundle.sh: Info.plist lost the .vrs document type / UTI declaration" >&2; exit 1; }
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# ---- 7. ad-hoc sign (local use only; not notarized) ----
-codesign --force --deep --sign - "$APP"
+# ---- 7. sign: ad-hoc by default, or CODESIGN_ID (local use only; not notarized) ----
+# Helpers first (nested code), then the bundle. Keychain item access is tied to these
+# signatures; ad-hoc re-signing after a rebuild can make macOS ask once to allow access.
+for helper in varos-bridge varos-cli; do
+  codesign --force --sign "$SIGN_ID" "$APP/Contents/MacOS/$helper"
+done
+codesign --force --deep --sign "$SIGN_ID" "$APP"
 codesign --verify --deep --strict "$APP"
+for helper in varos-bridge varos-cli; do
+  codesign --verify --strict "$APP/Contents/MacOS/$helper"
+done
 
 if [[ "${NO_INSTALL:-0}" == "1" ]]; then
   echo "==> built (not installed): $APP"
@@ -177,6 +208,7 @@ fi
 rm -rf "$APP"
 
 echo "==> installed: $DEST"
+echo "    agents: register once with  \"$DEST/Contents/MacOS/varos-cli\" bridge register claude"
 echo "    check the .vrs association: Finder ▸ Get Info on a .vrs file shows \"Open with: Varos\","
 echo "    or run: $LSREG -dump | grep -c $DOC_UTI"
 echo "    then double-click a .vrs (Varos closed, and again with Varos open) — it opens as a tab."
