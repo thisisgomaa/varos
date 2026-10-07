@@ -539,6 +539,7 @@ fn owning_thread_recheck_denies_revoked_and_narrows_scopes() {
             edit: true,
             destructive: true,
             history: true,
+            files: false,
             allow_history: false,
             allow_destructive: false,
         },
@@ -546,6 +547,7 @@ fn owning_thread_recheck_denies_revoked_and_narrows_scopes() {
         cancelled: Arc::new(AtomicBool::new(false)),
         reply: tx,
         recheck: Some(varos_bridge::ipc::Recheck(Arc::new(move || state.lock().unwrap().clone()))),
+        file_audit: None,
     };
     pending.authorize().unwrap();
     assert!(pending.context.edit && !pending.context.destructive && !pending.context.history);

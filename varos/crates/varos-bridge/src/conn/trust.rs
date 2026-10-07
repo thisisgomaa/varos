@@ -21,9 +21,11 @@ pub struct Scopes {
     pub edit: bool,
     pub destructive: bool,
     pub history: bool,
+    #[serde(default)]
+    pub files: bool,
 }
 impl Scopes {
-    pub const DEFAULT_REQUEST: Self = Self { read: true, edit: true, destructive: false, history: false };
+    pub const DEFAULT_REQUEST: Self = Self { read: true, edit: true, destructive: false, history: false, files: false };
     pub fn parse(text: &str) -> Result<Self, Error> {
         let mut s = Self::default();
         for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
@@ -32,10 +34,11 @@ impl Scopes {
                 "edit" => s.edit = true,
                 "destructive" => s.destructive = true,
                 "history" => s.history = true,
+                "files" => s.files = true,
                 other => {
                     return Err(Error::new(
                         "invalid_argument",
-                        format!("unknown scope {other:?}; use read,edit,destructive,history"),
+                        format!("unknown scope {other:?}; use read,edit,destructive,history,files"),
                     ))
                 }
             }
@@ -55,15 +58,22 @@ impl Scopes {
             edit: self.edit && other.edit,
             destructive: self.destructive && other.destructive,
             history: self.history && other.history,
+            files: self.files && other.files,
         }
     }
     pub fn names(&self) -> String {
-        [("read", self.read), ("edit", self.edit), ("destructive", self.destructive), ("history", self.history)]
-            .iter()
-            .filter(|(_, on)| *on)
-            .map(|(n, _)| *n)
-            .collect::<Vec<_>>()
-            .join(",")
+        [
+            ("read", self.read),
+            ("edit", self.edit),
+            ("destructive", self.destructive),
+            ("history", self.history),
+            ("files", self.files),
+        ]
+        .iter()
+        .filter(|(_, on)| *on)
+        .map(|(n, _)| *n)
+        .collect::<Vec<_>>()
+        .join(",")
     }
 }
 
@@ -313,5 +323,21 @@ pub fn find_pending(paths: &Paths, request_id: &str) -> Result<PairingRequest, E
 pub fn remove_pending(paths: &Paths, request_id: &str) {
     if valid_request_id(request_id) {
         let _ = fsutil::remove_owned(&paths.pairing().join(format!("{request_id}.json")));
+    }
+}
+
+#[cfg(test)]
+mod slice4_scope_tests {
+    use super::*;
+    #[test]
+    fn files_scope_defaults_off_and_intersects() {
+        let old: Scopes =
+            serde_json::from_str(r#"{"read":true,"edit":true,"destructive":false,"history":false}"#).unwrap();
+        assert!(!old.files);
+        const { assert!(!Scopes::DEFAULT_REQUEST.files) };
+        let grant = Scopes::parse("read,edit,files").unwrap();
+        assert!(grant.files);
+        assert_eq!(grant.names(), "read,edit,files");
+        assert!(!grant.intersect(old).files);
     }
 }

@@ -26,6 +26,7 @@ use winit::{
 };
 
 mod app_command;
+mod bridge_fs;
 mod bridge_host;
 mod chrome;
 mod cursors;
@@ -720,7 +721,7 @@ fn run_action(
     jobs: &mut dyn host::FileJobs,
 ) -> host::Ran {
     match action {
-        host::HostAction::App(AppCommand::Bridge(request)) => bridge_host::run(*request, ws, ui),
+        host::HostAction::App(AppCommand::Bridge(request)) => bridge_host::run_with_files(*request, ws, ui, Some(jobs)),
         host::HostAction::App(cmd) => host::run_command(cmd, ws, ui, dialogs, store, keys, jobs),
         host::HostAction::Doc(a) => {
             if ws.on_home() {

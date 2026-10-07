@@ -60,6 +60,7 @@ pub struct ExportJob {
 pub enum FileJob {
     Save(SaveJob),
     Export(ExportJob),
+    Bridge(Box<BridgeFileJob>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,6 +75,7 @@ pub struct SaveDone {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExportResult {
     Exported,
+    ExportedUnconfirmed(String),
     /// The destination holds an editable Varos document and the user has not agreed to replace it
     /// yet: nothing was written.
     NeedsReplaceConfirm,
@@ -93,18 +95,36 @@ pub struct ExportDone {
 pub enum FileDone {
     Saved(SaveDone),
     Exported(ExportDone),
+    Bridge { ticket: u64, copy: bool, result: varos_bridge::Reply, done: Option<Box<FileDone>> },
 }
 
+/// Bridge policy is checked on the worker before using the existing safe file writer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BridgeFileJob {
+    pub ticket: u64,
+    pub auth: Option<varos_bridge::ipc::Recheck>,
+    pub inner: FileJob,
+    pub roots: Vec<PathBuf>,
+    pub backing: Vec<PathBuf>,
+    /// Some = CURRENT save, checked against the load/last-save fingerprint.
+    pub expected: Option<(PathBuf, Option<varos_app::storage::durable::Fingerprint>)>,
+}
 impl FileDone {
     /// A durable save: nothing to ask or tell, so the host applies it without settling the active tab
     /// (a background save landing must not end the user's drag).
     pub fn is_quiet(&self) -> bool {
-        matches!(self, FileDone::Saved(SaveDone { result: Ok(SaveOutcome::Durable), .. }))
+        matches!(self, FileDone::Bridge { .. } | FileDone::Saved(SaveDone { result: Ok(SaveOutcome::Durable), .. }))
     }
 
     /// What the worker delivers if `job` panicked (a bug): a failure carrying the job's identity.
     pub fn panicked(job: &FileJob) -> FileDone {
         match job {
+            FileJob::Bridge(j) => FileDone::Bridge {
+                ticket: j.ticket,
+                copy: j.expected.is_none(),
+                result: varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", "file worker panicked")),
+                done: None,
+            },
             FileJob::Save(j) => FileDone::Saved(SaveDone {
                 sid: j.sid,
                 ticket: j.ticket,
@@ -142,6 +162,7 @@ pub fn next_ticket() -> u64 {
 /// Recent entry, and a save's Recent entry is recorded by the lifecycle when its result is applied.
 pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
     match job {
+        FileJob::Bridge(j) => execute_bridge(*j, disk),
         FileJob::Save(j) => {
             let result = disk.save(&j.doc, &j.dest);
             FileDone::Saved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result })
@@ -151,6 +172,91 @@ pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
             FileDone::Exported(ExportDone { job: j, result })
         }
     }
+}
+
+fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
+    let result = (|| -> Result<FileDone, varos_bridge::Error> {
+        if let Some(auth) = &j.auth {
+            let scopes = (auth.0)()?;
+            if !scopes.read || !scopes.files {
+                return Err(varos_bridge::Error::new("scope_refused", "file grant revoked"));
+            }
+        }
+        let dest = match &mut j.inner {
+            FileJob::Save(s) => &mut s.dest,
+            FileJob::Export(e) => &mut e.dest,
+            FileJob::Bridge(_) => unreachable!(),
+        };
+        if let Some((path, expected)) = &j.expected {
+            if expected.is_none() || disk.fingerprint(path) != *expected {
+                return Err(varos_bridge::Error::new(
+                    "save_conflict",
+                    "backing file changed or cannot be fingerprinted",
+                ));
+            }
+        } else {
+            *dest = varos_bridge::files::destination(dest, &j.roots, &j.backing)?;
+            // Refuse existing destinations for this temporary API: replacing exports needs an owner dialog.
+            if disk.exists(dest) {
+                return Err(varos_bridge::Error::new("save_conflict", "destination exists; choose a fresh filename"));
+            }
+        }
+        Ok(match j.inner {
+            FileJob::Save(s) => {
+                let result = disk.save_guarded(
+                    &s.doc,
+                    &s.dest,
+                    j.expected.as_ref().and_then(|(_, fp)| fp.as_ref()),
+                    j.expected.is_none(),
+                    j.auth.as_ref(),
+                )?;
+                FileDone::Saved(SaveDone { sid: s.sid, ticket: s.ticket, dest: s.dest, result: Ok(result) })
+            }
+            FileJob::Export(e) => {
+                let result = match varos_pdf::export_pdf_bytes(&e.doc, &e.plan, &AtomicBool::new(false)) {
+                    Ok(bytes) => match disk.export_guarded(&e.dest, &bytes, j.auth.as_ref()) {
+                        Ok(SaveOutcome::Durable) => ExportResult::Exported,
+                        Ok(SaveOutcome::ReplacedUnconfirmed(e)) => ExportResult::ExportedUnconfirmed(e),
+                        Err(e) => return Err(e),
+                    },
+                    Err(e) => ExportResult::Failed(e.to_string()),
+                };
+                FileDone::Exported(ExportDone { job: e, result })
+            }
+            FileJob::Bridge(_) => unreachable!(),
+        })
+    })();
+    let (reply, done) = match result {
+        Err(e) => (varos_bridge::Reply::failure(e), None),
+        Ok(done) => {
+            let reply = match &done {
+                FileDone::Saved(SaveDone { result: Ok(SaveOutcome::Durable), .. }) => {
+                    varos_bridge::Reply::success(serde_json::json!({"saved":true,"durable":true}))
+                }
+                FileDone::Saved(SaveDone { result: Ok(SaveOutcome::ReplacedUnconfirmed(reason)), .. }) => {
+                    varos_bridge::Reply::success(serde_json::json!({"saved":true,"durable":false,"reason":reason}))
+                }
+                FileDone::Saved(SaveDone { result: Err(reason), .. }) => {
+                    varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", reason))
+                }
+                FileDone::Exported(ExportDone { result: ExportResult::Exported, .. }) => {
+                    varos_bridge::Reply::success(serde_json::json!({"exported":true,"durable":true}))
+                }
+                FileDone::Exported(ExportDone { result: ExportResult::ExportedUnconfirmed(reason), .. }) => {
+                    varos_bridge::Reply::success(serde_json::json!({"exported":true,"durable":false,"reason":reason}))
+                }
+                FileDone::Exported(ExportDone { result: ExportResult::Failed(reason), .. }) => {
+                    varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", reason))
+                }
+                FileDone::Exported(_) => {
+                    varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", "PDF export refused or failed"))
+                }
+                FileDone::Bridge { .. } => unreachable!(),
+            };
+            (reply, Some(Box::new(done)))
+        }
+    };
+    FileDone::Bridge { ticket: j.ticket, copy: j.expected.is_none(), result: reply, done }
 }
 
 /// The export body: the destination check (a bounded byte scan, off the UI thread), the pure PDF,
@@ -281,5 +387,78 @@ mod tests {
         ws.get_mut(id).unwrap().exports.push(t0);
         assert_eq!(status_text(&ws, t0 + Duration::from_millis(100)), "");
         assert_eq!(status_text(&ws, t0 + Duration::from_secs(1)), "Exporting PDF…");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn bridge_file_jobs_roundtrip_pure_pdf_and_destination_refusals() {
+        let root = std::env::temp_dir().join(format!("bridge-file-jobs-{}", varos_app::storage::checksum::new_nonce()));
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let mut ed = varos_core::editor::Editor::new();
+        ed.try_execute_created(varos_core::EditCommand::AddShape {
+            kind: varos_core::model::ShapeKind::Rect,
+            bounds: [0.0, 0.0, 40.0, 40.0],
+            parent: None,
+            fill: Some([1.0; 4]),
+            stroke: None,
+            stroke_width: 0.0,
+            opacity: 1.0,
+            name: None,
+        })
+        .unwrap();
+        let doc = Arc::new(ed.doc.clone());
+        let path = root.join("saved.vrs");
+        let save = |dest: PathBuf, expected| {
+            FileJob::Bridge(Box::new(BridgeFileJob {
+                ticket: 9,
+                inner: FileJob::Save(SaveJob { sid: SessionId(1), ticket: 9, dest, doc: doc.clone() }),
+                roots: vec![root.clone()],
+                backing: vec![path.clone()],
+                expected,
+                auth: None,
+            }))
+        };
+        // No backing file exists yet; fresh Save As is independent of the live editor.
+        let fresh = FileJob::Bridge(Box::new(BridgeFileJob {
+            ticket: 8,
+            inner: FileJob::Save(SaveJob { sid: SessionId(1), ticket: 8, dest: path.clone(), doc: doc.clone() }),
+            roots: vec![root.clone()],
+            backing: vec![],
+            expected: None,
+            auth: None,
+        }));
+        let done = execute(fresh, &mut crate::file_ports::DiskStore);
+        assert!(matches!(done, FileDone::Bridge { result: varos_bridge::Reply { ok: true, .. }, .. }));
+        let reopened = varos_pdf::load_vrs(&path).unwrap();
+        assert!(reopened.content_eq(&doc));
+        let fp = crate::file_ports::DiskStore.fingerprint(&path).unwrap();
+        let done = execute(save(path.clone(), Some((path.clone(), Some(fp)))), &mut crate::file_ports::DiskStore);
+        assert!(matches!(done, FileDone::Bridge { result: varos_bridge::Reply { ok: true, .. }, .. }));
+        let pdf = root.join("logo.pdf");
+        let plan = varos_pdf::plan_pdf_export(&doc, varos_pdf::ExportScope::ArtworkBounds).unwrap();
+        let job = FileJob::Bridge(Box::new(BridgeFileJob {
+            ticket: 10,
+            inner: FileJob::Export(ExportJob {
+                sid: SessionId(1),
+                dest: pdf.clone(),
+                doc: doc.clone(),
+                plan,
+                replace_confirmed: false,
+            }),
+            roots: vec![root.clone()],
+            backing: vec![path.clone()],
+            expected: None,
+            auth: None,
+        }));
+        let done = execute(job, &mut crate::file_ports::DiskStore);
+        assert!(matches!(done, FileDone::Bridge { result: varos_bridge::Reply { ok: true, .. }, .. }));
+        let bytes = std::fs::read(&pdf).unwrap();
+        assert!(bytes.starts_with(b"%PDF"));
+        assert!(!varos_pdf::has_embedded_model(&bytes));
+        let before = std::fs::read(&path).unwrap();
+        let done = execute(save(path.clone(), None), &mut crate::file_ports::DiskStore);
+        assert!(matches!(done, FileDone::Bridge { result: varos_bridge::Reply { ok: false, .. }, .. }));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

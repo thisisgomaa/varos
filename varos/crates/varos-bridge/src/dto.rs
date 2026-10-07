@@ -18,6 +18,9 @@ pub enum Request {
     History(History),
     RequestStatus(Status),
     Snapshot(Snapshot),
+    Save(FileEffect),
+    SaveAs(FileEffect),
+    ExportPdf(FileEffect),
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -108,11 +111,31 @@ impl Paint {
 pub enum Operation {
     AddShape {
         kind: ShapeKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<f32>,
         bounds: [f32; 4],
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         insert: Option<InsertPosition>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        local: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Paint::unchanged")]
+        fill: Paint,
+        #[serde(default, skip_serializing_if = "Paint::unchanged")]
+        stroke: Paint,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stroke_width: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opacity: Option<f32>,
+    },
+    AddPath {
+        anchors: Vec<PathAnchor>,
+        closed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         local: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -202,9 +225,44 @@ pub enum Operation {
     DeleteArtboard {
         id: String,
     },
+    ReorderArtboard {
+        id: String,
+        position: usize,
+    },
+    DuplicateArtboard {
+        id: String,
+        with_art: bool,
+        #[serde(default)]
+        offset: Option<[f32; 2]>,
+        #[serde(default)]
+        local: Option<String>,
+    },
+    SetArtboardColor {
+        id: String,
+        #[serde(deserialize_with = "nullable_color")]
+        color: Option<String>,
+    },
+    SetArtboardClip {
+        id: String,
+        clip: bool,
+    },
     SetActiveArtboard {
         id: String,
     },
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PathAnchor {
+    pub p: [f32; 2],
+    #[serde(default)]
+    pub hin: Option<[f32; 2]>,
+    #[serde(default)]
+    pub hout: Option<[f32; 2]>,
+    #[serde(default)]
+    pub smooth: bool,
+}
+fn nullable_color<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(d)
 }
 /// The board presets (`varos_core::board::PRESETS`), in points.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -254,10 +312,15 @@ impl Operation {
     pub fn ids(&self) -> &[String] {
         match self {
             Self::AddShape { .. }
+            | Self::AddPath { .. }
             | Self::AddArtboard { .. }
             | Self::ResizeArtboard { .. }
             | Self::RenameArtboard { .. }
             | Self::DeleteArtboard { .. }
+            | Self::ReorderArtboard { .. }
+            | Self::DuplicateArtboard { .. }
+            | Self::SetArtboardColor { .. }
+            | Self::SetArtboardClip { .. }
             | Self::SetActiveArtboard { .. } => &[],
             Self::Move { ids, .. }
             | Self::SetPaint { ids, .. }
@@ -278,6 +341,10 @@ impl Operation {
             Self::ResizeArtboard { id, .. }
             | Self::RenameArtboard { id, .. }
             | Self::DeleteArtboard { id }
+            | Self::ReorderArtboard { id, .. }
+            | Self::DuplicateArtboard { id, .. }
+            | Self::SetArtboardColor { id, .. }
+            | Self::SetArtboardClip { id, .. }
             | Self::SetActiveArtboard { id } => Some(id),
             _ => None,
         }
@@ -290,6 +357,10 @@ impl Operation {
                 | Self::ResizeArtboard { .. }
                 | Self::RenameArtboard { .. }
                 | Self::DeleteArtboard { .. }
+                | Self::ReorderArtboard { .. }
+                | Self::DuplicateArtboard { .. }
+                | Self::SetArtboardColor { .. }
+                | Self::SetArtboardClip { .. }
                 | Self::SetActiveArtboard { .. }
         )
     }
@@ -355,6 +426,19 @@ pub struct Status {
     pub api: String,
     pub request_id: String,
 }
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileEffect {
+    #[serde(default = "api")]
+    pub api: String,
+    pub request_id: String,
+    pub board: String,
+    pub expected_rev: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+}
 impl Request {
     /// Wire tool name (for audit records; never carries arguments).
     pub fn tool(&self) -> &'static str {
@@ -367,6 +451,9 @@ impl Request {
             Self::History(_) => "history",
             Self::RequestStatus(_) => "request_status",
             Self::Snapshot(_) => "snapshot",
+            Self::Save(_) => "save",
+            Self::SaveAs(_) => "save_as",
+            Self::ExportPdf(_) => "export_pdf",
         }
     }
     pub fn api(&self) -> &str {
@@ -379,12 +466,14 @@ impl Request {
             Self::History(v) => &v.api,
             Self::RequestStatus(v) => &v.api,
             Self::Snapshot(v) => &v.api,
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => &v.api,
         }
     }
     pub fn board(&self) -> Option<&str> {
         match self {
             Self::Describe(v) => Some(&v.board),
             Self::Snapshot(v) => Some(&v.board),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
             Self::Edit(v) => Some(&v.board),
             Self::History(v) => Some(&v.board),
@@ -396,6 +485,7 @@ impl Request {
             Self::Select(v) => Some((&v.request_id, v.expected_rev)),
             Self::Edit(v) => Some((&v.request_id, v.expected_rev)),
             Self::History(v) => Some((&v.request_id, v.expected_rev)),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,
         }
     }

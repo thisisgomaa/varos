@@ -24,6 +24,16 @@ pub enum EditCommand {
         opacity: f32,
         name: Option<String>,
     },
+    AddPath {
+        anchors: Vec<crate::model::Anchor>,
+        closed: bool,
+        parent: Option<u32>,
+        fill: Option<Rgba>,
+        stroke: Option<Rgba>,
+        stroke_width: f32,
+        opacity: f32,
+        name: Option<String>,
+    },
     /// Explicit headless object selection, using stable path ids.
     #[serde(rename = "SelectPaths")]
     SelectPaths(Vec<u32>),
@@ -269,6 +279,9 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            Self::AddPath { .. } => {
+                let _ = ed.try_execute_created(self);
+            }
             Self::AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
                 let _ = ed.add_shape(kind, bounds, parent, fill, stroke, stroke_width, opacity, name);
             }
@@ -387,7 +400,25 @@ impl Editor {
             EditCommand::AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
                 self.add_shape(kind, bounds, parent, fill, stroke, stroke_width, opacity, name)
             }
-            _ => Err("command does not create a shape".into()),
+            EditCommand::AddPath { mut anchors, closed, parent, fill, stroke, stroke_width, opacity, name } => {
+                self.begin();
+                let active = self.doc.active_layer;
+                self.doc.active_layer = parent.unwrap_or(active);
+                let id = self.doc.nid();
+                for anchor in &mut anchors {
+                    anchor.id = self.doc.nid();
+                }
+                let mut path = crate::model::Path::new(id, anchors, closed, fill, stroke, stroke_width);
+                path.opacity = opacity;
+                path.name = name.map(|n| clean_name(&n).to_owned());
+                self.doc.paths.push(path);
+                self.doc.sync_tree();
+                self.doc.active_layer = active;
+                self.dirty = true;
+                self.commit();
+                Ok(id)
+            }
+            _ => Err("command does not create a path".into()),
         }
     }
 

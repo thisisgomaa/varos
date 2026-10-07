@@ -3,6 +3,7 @@ pub mod cli;
 pub mod conn;
 mod design;
 pub mod dto;
+pub mod files;
 pub mod ipc;
 pub mod mcp;
 pub mod service;
@@ -15,13 +16,29 @@ pub const MAX_OPS: usize = 100;
 pub const MAX_TARGETS: usize = 1000;
 pub const MAX_PAGE: usize = 100;
 pub const MAX_TEXT: usize = 16_384;
-pub const TOOLS: &[&str] =
-    &["capabilities", "list_boards", "describe", "select", "edit", "history", "request_status", "snapshot"];
+pub const TOOLS: &[&str] = &[
+    "capabilities",
+    "list_boards",
+    "describe",
+    "select",
+    "edit",
+    "history",
+    "request_status",
+    "snapshot",
+    "save",
+    "save_as",
+    "export_pdf",
+];
 
 pub const EDIT_VERBS: &[&str] = &[
     "move",
     "set_paint",
     "add_shape",
+    "add_path",
+    "reorder_artboard",
+    "duplicate_artboard",
+    "set_artboard_color",
+    "set_artboard_clip",
     "resize",
     "rotate",
     "rename",

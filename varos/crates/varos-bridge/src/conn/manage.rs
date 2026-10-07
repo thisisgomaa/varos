@@ -11,7 +11,7 @@ pub fn handles(args: &[String]) -> bool {
 const USAGE: &str = "usage:
   varos-cli bridge register claude|codex|cursor|print [--dry-run] [--replace] [--claude <path>|--codex <path>]
   varos-cli bridge pair [list]
-  varos-cli bridge pair --approve <request-id> [--scopes read,edit[,destructive][,history]]
+  varos-cli bridge pair --approve <request-id> [--scopes read,edit[,destructive][,history][,files]]
   varos-cli bridge pair --deny <request-id>
   varos-cli bridge agents [list]
   varos-cli bridge agents revoke <profile-id>

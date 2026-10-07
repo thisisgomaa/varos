@@ -20,6 +20,7 @@ pub struct BoardInfo {
     pub rev: u64,
     pub dirty: bool,
     pub active: bool,
+    pub backing_file: Option<String>,
 }
 pub struct BoardAccess<'a> {
     pub editor: &'a mut Editor,
@@ -78,6 +79,19 @@ pub trait Host {
     fn snapshot(&mut self, job: SnapshotJob, cancelled: &AtomicBool) -> Reply {
         job.render(cancelled)
     }
+    /// Queue host file work; no filesystem effect is a document edit.
+    fn file_effect(&mut self, _verb: &str, _request: &FileEffect) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host does not provide file jobs"))
+    }
+    fn files_roots_granted(&self) -> bool {
+        false
+    }
+    fn file_pending(&self, _ticket: u64) -> bool {
+        false
+    }
+    fn file_status(&mut self, _ticket: u64) -> Option<Reply> {
+        None
+    }
     fn build(&self) -> &str {
         "host-unreported"
     }
@@ -101,6 +115,7 @@ pub struct Context {
     pub edit: bool,
     pub destructive: bool,
     pub history: bool,
+    pub files: bool,
     pub allow_history: bool,
     pub allow_destructive: bool,
 }
@@ -300,8 +315,15 @@ impl Service {
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
         }
-        if !ctx.read || (req.mutation().is_some() && !ctx.edit) {
+        if !ctx.read
+            || (req.mutation().is_some()
+                && !matches!(req, Request::Save(_) | Request::SaveAs(_) | Request::ExportPdf(_))
+                && !ctx.edit)
+        {
             return Reply::failure(Error::new("scope_refused", "attachment has no required grant"));
+        }
+        if matches!(req, Request::Save(_) | Request::SaveAs(_) | Request::ExportPdf(_)) && !ctx.files {
+            return Reply::failure(Error::new("scope_refused", "this agent was not granted the files scope"));
         }
         if matches!(req, Request::History(_)) && !ctx.history {
             return Reply::failure(Error::new("scope_refused", "this agent was not granted the history scope"));
@@ -372,7 +394,7 @@ impl Service {
             }
             match req {
                 Request::Capabilities(_) => Ok(Reply::success(
-                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":ctx.read,"edit":ctx.edit,"destructive_scope":ctx.destructive,"history_scope":ctx.history,"history_owner_grant":ctx.allow_history,"destructive_owner_grant":ctx.allow_destructive,"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry"],"unsupported":["files","headless","add_path","corner_radius","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_reorder","artboard_duplicate","artboard_paint"]}),
+                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"file_jobs":8,"path_anchors":1000,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":ctx.read,"edit":ctx.edit,"destructive_scope":ctx.destructive,"history_scope":ctx.history,"files_roots_granted":host.files_roots_granted(),"files_scope":ctx.files,"scopes":["read","edit","destructive","history","files"],"history_owner_grant":ctx.allow_history,"destructive_owner_grant":ctx.allow_destructive,"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry","selection"],"unsupported":["headless","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_bleed"]}),
                 )),
                 Request::ListBoards(v) => {
                     check_page(v.limit)?;
@@ -409,6 +431,21 @@ impl Service {
                         }
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
+                }
+                Request::Save(v) | Request::SaveAs(v) | Request::ExportPdf(v) => {
+                    match req {
+                        Request::Save(_) if v.path.is_some() || v.scope.is_some() => {
+                            return Err(Error::new("invalid_argument", "save uses CURRENT backing file only"))
+                        }
+                        Request::SaveAs(_) if v.path.is_none() || v.scope.is_some() => {
+                            return Err(Error::new("invalid_argument", "save_as requires path and no scope"))
+                        }
+                        Request::ExportPdf(_) if v.path.is_none() || v.scope.is_none() => {
+                            return Err(Error::new("invalid_argument", "export_pdf requires path and scope"))
+                        }
+                        _ => {}
+                    }
+                    host.file_effect(req.tool(), v)
                 }
                 Request::Select(v) => {
                     if v.ids.len() > MAX_TARGETS {
@@ -612,12 +649,30 @@ impl Service {
                     r.result.as_mut().unwrap()["history_steps"] = json!(1);
                     Ok(r)
                 }
-                Request::RequestStatus(v) => self
-                    .clients
-                    .get(&ctx.client)
-                    .and_then(|c| c.receipts.iter().find(|(id, _, _)| id == &v.request_id))
-                    .map(|(_, _, r)| Reply::success(json!({"status":"completed","receipt":r})))
-                    .ok_or_else(|| Error::new("not_found", "receipt not retained for this client")),
+                Request::RequestStatus(v) => {
+                    let r = self
+                        .clients
+                        .get(&ctx.client)
+                        .and_then(|c| c.receipts.iter().find(|(id, _, _)| id == &v.request_id))
+                        .map(|(_, _, r)| r.clone())
+                        .ok_or_else(|| Error::new("not_found", "receipt not retained for this client"))?;
+                    if let Some(ticket) = r.result.as_ref().and_then(|r| r["ticket"].as_u64()) {
+                        if !ctx.files {
+                            return Err(Error::new("scope_refused", "files scope required for file status"));
+                        }
+                        if let Some(mut done) = host.file_status(ticket) {
+                            done.board = r.board.clone();
+                            done.rev = r.rev;
+                            done.request_id = Some(v.request_id.clone());
+                            return Ok(Reply::success(json!({"status":"completed","ticket":ticket,"receipt":done})));
+                        }
+                        if !host.file_pending(ticket) {
+                            return Err(Error::new("not_found", "file receipt expired or host restarted"));
+                        }
+                        return Ok(Reply::success(json!({"status":"pending","ticket":ticket,"receipt":r})));
+                    }
+                    Ok(Reply::success(json!({"status":"completed","receipt":r})))
+                }
             }
         })();
         let mut reply = outcome.unwrap_or_else(Reply::failure);
@@ -718,17 +773,31 @@ impl Service {
             return Ok(Reply::success(value));
         }
         if let Some(fields) = &v.fields {
-            if fields.iter().any(|f| f == "metadata" || f == "artboards") {
-                if v.ids.is_some() || fields.iter().any(|f| f != "metadata" && f != "artboards") {
+            if fields.iter().any(|f| f == "metadata" || f == "artboards" || f == "selection") {
+                if v.ids.is_some() || fields.iter().any(|f| f != "metadata" && f != "artboards" && f != "selection") {
                     return Err(Error::new(
                         "invalid_argument",
                         "board detail fields cannot be mixed with object ids or fields",
                     ));
                 }
-                let sig =
-                    digest(&json!({"epoch":self.epoch,"board":v.board,"rev":b.rev,"fields":fields,"limit":v.limit}));
+                if fields.iter().any(|f| f == "selection") && fields.len() != 1 {
+                    return Err(Error::new("invalid_argument", "selection detail must be requested alone"));
+                }
+                let sig = digest(
+                    &json!({"epoch":self.epoch,"board":v.board,"rev":b.rev,"selection_rev":b.selection_rev,"fields":fields,"limit":v.limit}),
+                );
                 let offset = cursor_offset(v.cursor.as_deref(), &sig)?;
                 let mut out = json!({"rev":b.rev,"more":false,"cursor":null});
+                if fields.iter().any(|f| f == "selection") {
+                    if offset > b.selection.len() {
+                        return Err(Error::new("invalid_argument", "cursor offset out of range"));
+                    }
+                    let end = (offset + v.limit).min(b.selection.len());
+                    out["selection"] = json!(b.selection[offset..end]);
+                    out["selection_rev"] = json!(b.selection_rev);
+                    out["more"] = json!(end < b.selection.len());
+                    out["cursor"] = json!((end < b.selection.len()).then(|| cursor(&sig, end)));
+                }
                 if fields.iter().any(|f| f == "metadata") {
                     out["metadata"] = b.header["metadata"].clone();
                 }
@@ -756,7 +825,7 @@ impl Service {
                     out["artboards"] = json!(page);
                     out["more"] = json!(end < all.len());
                     out["cursor"] = json!((end < all.len()).then(|| cursor(&sig, end)));
-                } else if v.cursor.is_some() {
+                } else if v.cursor.is_some() && !fields.iter().any(|f| f == "selection") {
                     return Err(Error::new("invalid_argument", "metadata has no cursor"));
                 }
                 if out.to_string().len() > MAX_TEXT - 512 {
@@ -1258,7 +1327,14 @@ mod observation_tests {
     struct Fake(Editor);
     impl Host for Fake {
         fn boards(&self) -> Vec<BoardInfo> {
-            vec![BoardInfo { board: "b1".into(), name: String::new(), rev: self.0.rev, dirty: false, active: true }]
+            vec![BoardInfo {
+                board: "b1".into(),
+                name: String::new(),
+                rev: self.0.rev,
+                dirty: false,
+                active: true,
+                backing_file: None,
+            }]
         }
         fn prepare(&mut self, _: &str, _: bool) -> Result<(), Error> {
             Ok(())
@@ -1291,6 +1367,7 @@ mod observation_tests {
                 edit: true,
                 destructive: true,
                 history: true,
+                files: false,
                 allow_history: true,
                 allow_destructive: true,
             };

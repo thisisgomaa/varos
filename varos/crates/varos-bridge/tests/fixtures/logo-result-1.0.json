@@ -1,0 +1,85 @@
+{
+  "board": "b1",
+  "ok": true,
+  "request_id": "r1",
+  "result": {
+    "board_changes": {
+      "bounds": [
+        20.0,
+        20.0,
+        180.0,
+        40.0
+      ],
+      "counts": {
+        "artboards": 0,
+        "groups": 0,
+        "layers": 1,
+        "paths": 2
+      }
+    },
+    "changed": [
+      {
+        "bounds": [
+          20.0,
+          20.0,
+          180.0,
+          40.0
+        ],
+        "geometry_changed": true,
+        "id": "node:1"
+      }
+    ],
+    "changed_document": true,
+    "created": [
+      {
+        "bounds": [
+          20.0,
+          20.0,
+          60.0,
+          40.0
+        ],
+        "fill": "#141313FF",
+        "hidden": false,
+        "id": "path:2",
+        "kind": "path",
+        "locked": false,
+        "name": null,
+        "opacity": 1.0,
+        "parent": "node:1",
+        "stroke": null,
+        "stroke_width": 0.0
+      },
+      {
+        "bounds": [
+          100.0,
+          20.0,
+          100.0,
+          40.0
+        ],
+        "fill": "#FF6600FF",
+        "hidden": false,
+        "id": "path:8",
+        "kind": "path",
+        "locked": false,
+        "name": null,
+        "opacity": 1.0,
+        "parent": "node:1",
+        "stroke": null,
+        "stroke_width": 0.0
+      }
+    ],
+    "from": 0,
+    "locals": {
+      "$label": "path:8",
+      "$mark": "path:2"
+    },
+    "removed": [],
+    "rev": 1,
+    "selection": [],
+    "selection_count": 0,
+    "selection_more": false,
+    "selection_rev": 0
+  },
+  "rev": 1,
+  "undo_steps": 1
+}
