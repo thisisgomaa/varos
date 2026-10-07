@@ -3403,6 +3403,7 @@ impl Editor {
     }
     pub fn commit(&mut self) {
         self.doc.sync_tree(); // adopt new paths / prune dead + empty nodes / re-flatten z
+        self.doc.assign_artboard_ids(); // a new or duplicated page gets its stable id (format 4)
         self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
             if let Some(p) = self.pending.take() {
@@ -3500,6 +3501,7 @@ impl Editor {
     pub fn replace_doc(&mut self, doc: Document) {
         self.doc = doc;
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
+        self.doc.assign_artboard_ids(); // in-memory pages built without an id (format 4)
         self.id_high_water = self.doc.ids;
         self.undo.clear();
         self.redo.clear();

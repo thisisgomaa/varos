@@ -30,6 +30,14 @@ pub fn check_structure(doc: &Document, limits: &Limits) -> Result<(), LoadError>
             return Err(Invalid::DuplicateId { kind: "node", id: n.id }.into());
         }
     }
+    // artboard ids (format 4): 0 is "not assigned yet" (pre-v4 input before migration, or a page built
+    // in memory) and is checked by `validate`; any other id must be unique among artboards
+    let mut artboard_ids: HashSet<u32> = HashSet::with_capacity(doc.artboards.len());
+    for a in doc.artboards.iter().filter(|a| a.id != 0) {
+        if !artboard_ids.insert(a.id) {
+            return Err(Invalid::DuplicateId { kind: "artboard", id: a.id }.into());
+        }
+    }
     let mut group_ids: HashSet<u32> = HashSet::with_capacity(doc.groups.len());
     for g in &doc.groups {
         if !group_ids.insert(g.id) {
@@ -203,7 +211,7 @@ fn check_legacy_groups(doc: &Document, limits: &Limits) -> Result<(), LoadError>
     Ok(())
 }
 
-/// The highest id in use by any kind: paths, anchors (outer + holes), nodes, legacy groups.
+/// The highest id in use by any kind: paths, anchors (outer + holes), nodes, legacy groups, artboards.
 pub(crate) fn max_used_id(doc: &Document) -> u32 {
     let mut m = 0u32;
     for p in &doc.paths {
@@ -218,12 +226,16 @@ pub(crate) fn max_used_id(doc: &Document) -> u32 {
     for g in &doc.groups {
         m = m.max(g.id);
     }
+    for a in &doc.artboards {
+        m = m.max(a.id);
+    }
     m
 }
 
 /// An upper bound on the ids `Document::sync_tree` can allocate through `nid()` for this document:
 /// the legacy migration (a host layer, one node per legacy group, one leaf per path), leaves for paths
-/// no node refers to, and a replacement "Layer 1".
+/// no node refers to, a replacement "Layer 1", and an id for every artboard that has none yet (the
+/// v3→v4 migration / save-side `assign_artboard_ids`).
 fn ids_normalization_may_allocate(doc: &Document) -> u64 {
     let legacy = !doc.groups.is_empty() || !doc.group_of.is_empty();
     let leaves = if legacy {
@@ -234,5 +246,6 @@ fn ids_normalization_may_allocate(doc: &Document) -> u64 {
         doc.paths.iter().filter(|p| !known.contains(&p.id)).count()
     };
     let legacy_nodes = if legacy { 1 + doc.groups.len() } else { 0 };
-    (legacy_nodes + leaves + 1) as u64
+    let artboards = doc.artboards.iter().filter(|a| a.id == 0).count();
+    (legacy_nodes + leaves + 1 + artboards) as u64
 }

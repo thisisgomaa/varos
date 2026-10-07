@@ -624,6 +624,9 @@ mod tests {
         for key in ["name", "description", "tags"] {
             v1["doc"].as_object_mut().unwrap().remove(key); // a v1 writer never emitted the board keys
         }
+        for board in v1["doc"]["artboards"].as_array_mut().unwrap() {
+            board.as_object_mut().unwrap().remove("id"); // …nor artboard ids (format 4)
+        }
         let bytes = serde_json::to_vec(&v1).unwrap();
         std::fs::write(&path, &bytes).unwrap();
         let (opened, notice) = DiskStore.load_with_notice(&path).unwrap();

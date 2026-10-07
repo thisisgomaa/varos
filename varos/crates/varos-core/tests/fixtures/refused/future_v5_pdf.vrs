@@ -1,0 +1,91 @@
+%PDF-1.7
+%€€€€
+1 0 obj
+<</Type/Catalog/Pages 2 0 R/Names<</EmbeddedFiles<</Names[(model.varos.json) 4 0 R]>>>>/AF[4 0 R]/VAROS_Model 3 0 R/VAROS_SchemaVersion 5>>
+endobj
+2 0 obj
+<</Type/Pages/Kids[7 0 R 9 0 R]/Count 2>>
+endobj
+3 0 obj
+<</Length 20/Type/EmbeddedFile/Subtype/application#2Fjson>>stream
+{"varos":5,"doc":42}
+endstream 
+endobj
+4 0 obj
+<</Type/Filespec/F(model.varos.json)/UF(model.varos.json)/EF<</F 3 0 R>>/AFRelationship/Source/Desc(Varos editable model (source of truth))>>
+endobj
+5 0 obj
+<</Type/ExtGState/ca 1/CA 0>>
+endobj
+6 0 obj
+<</Length 841>>stream
+1 J
+1 j
+q
+1 1 1 rg
+0 0 100 100 re
+f*
+Q
+q
+22.03686 97.14016 m
+22.03686 97.14016 57.14016 77.96314 57.14016 77.96314 c
+57.14016 77.96314 37.963142 42.85984 37.963142 42.85984 c
+37.963142 42.85984 2.8598385 62.036858 2.8598385 62.036858 c
+2.8598385 62.036858 22.03686 97.14016 22.03686 97.14016 c
+h
+W*
+n
+q
+/GS0 gs
+0.1 0.4 0.9 rg
+18.05529 110.71024 m
+18.05529 110.71024 70.71024 81.94471 70.71024 81.94471 c
+70.71024 81.94471 41.94471 29.289757 41.94471 29.289757 c
+41.94471 29.289757 -10.710243 58.05529 -10.710243 58.05529 c
+-10.710243 58.05529 18.05529 110.71024 18.05529 110.71024 c
+h
+26.018429 83.57008 m
+26.018429 83.57008 43.57008 73.98157 43.57008 73.98157 c
+43.57008 73.98157 33.98157 56.42992 33.98157 56.42992 c
+33.98157 56.42992 16.42992 66.01843 16.42992 66.01843 c
+16.42992 66.01843 26.018429 83.57008 26.018429 83.57008 c
+h
+f*
+Q
+Q
+endstream 
+endobj
+7 0 obj
+<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/Contents 6 0 R/Resources<</ExtGState<</GS0 5 0 R>>>>>>
+endobj
+8 0 obj
+<</Length 38>>stream
+1 J
+1 j
+q
+1 1 1 rg
+0 0 100 100 re
+f*
+Q
+endstream 
+endobj
+9 0 obj
+<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/Contents 8 0 R/Resources<<>>>>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000015 00000 n 
+0000000170 00000 n 
+0000000227 00000 n 
+0000000340 00000 n 
+0000000497 00000 n 
+0000000542 00000 n 
+0000001432 00000 n 
+0000001550 00000 n 
+0000001636 00000 n 
+trailer
+<</Size 10/Root 1 0 R>>
+startxref
+1730
+%%EOF

@@ -257,6 +257,20 @@ Required implementation evidence: identical result/error fixtures through MCP an
 
 **Not in v1:** in-app chat UI; web/WASM/cloud drives; remote MCP/HTTP hosting; shared-network boards or CRDT co-editing; account/credential brokerage; autonomous background agents; general plugin execution or property registry; persistent artboard identities and artboard mutation verbs; arbitrary path/anchor editing; editable text/Arabic shaping; image generation; arbitrary reparenting; group/gap distribution; gradients; SVG import/export or production PNG export (small snapshot PNG is not that feature); cross-board batches; crash-durable headless history/recovery; full GPU/CPU equivalence; window/panel control; Windows runtime support. None of these is implemented or promised by this document.
 
+## Amendment — 2026-10-07: persistent artboard ids (slice 3)
+
+§2's deferral is resolved by the ADR-0008 format-4 amendment: every artboard carries a stable id, so
+the Bridge exposes `artboard:N` (persistent across edits and save/reopen, like `path:N`/`node:N`
+underlying ids) and the page verbs `add_artboard`, `resize_artboard`, `rename_artboard`,
+`delete_artboard` (destructive confirmation, §8) and `set_active_artboard` inside `edit` — same atomic
+batch, one undo step, typed errors, request-local names. The revision-bound `a0@12` reference remains
+a **deprecated alias for one slice** (align target, describe `ref`). Active-artboard rule: page verbs
+never change the human's active page as a side effect; `set_active_artboard` is an explicit navigation
+change (no undo step on its own); deleting the active page while others remain is refused until the
+batch sets another active page first; deleting the last page leaves a free canvas. `snapshot` accepts
+`artboard` to render one page at its own aspect ratio and background. Reorder/duplicate/page paint
+remain deferred. Details: `varos/crates/varos-bridge/README.md`.
+
 ## Status
 
 accepted — owner 2026-10-06. Supersedes ADR-0004's deferral of the AI command/query API in the scope of §7 only.
