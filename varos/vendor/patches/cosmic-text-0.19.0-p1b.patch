@@ -1,0 +1,659 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -31,7 +31,9 @@
+ features = ["vi"]
+ 
+ [features]
++system-discovery = ["std", "dep:sys-locale", "fontdb/memmap"]
+ default = [
++    "system-discovery",
+     "std",
+     "swash",
+     "fontconfig",
+@@ -51,13 +53,11 @@
+ peniko = []
+ shape-run-cache = []
+ std = [
+-    "fontdb/memmap",
+     "fontdb/std",
+     "harfrust/std",
+     "linebender_resource_handle/std",
+     "skrifa/std",
+     "swash?/std",
+-    "sys-locale",
+     "unicode-bidi/std",
+ ]
+ vi = [
+--- a/Cargo.toml.orig
++++ b/Cargo.toml.orig
+@@ -43,20 +43,19 @@
+ features = ["hardcoded-data"]
+ 
+ [features]
+-default = ["std", "swash", "fontconfig"]
++system-discovery = ["std", "dep:sys-locale", "fontdb/memmap"]
++default = ["system-discovery", "std", "swash", "fontconfig"]
+ fontconfig = ["fontdb/fontconfig", "std"]
+ monospace_fallback = []
+ no_std = ["hashbrown", "dep:libm", "skrifa/libm", "core_maths", "swash?/libm"]
+ peniko = []
+ shape-run-cache = []
+ std = [
+-    "fontdb/memmap",
+     "fontdb/std",
+     "harfrust/std",
+     "linebender_resource_handle/std",
+     "skrifa/std",
+     "swash?/std",
+-    "sys-locale",
+     "unicode-bidi/std",
+ ]
+ vi = ["modit", "syntect", "cosmic_undo_2"]
+--- a/src/attrs.rs
++++ b/src/attrs.rs
+@@ -295,6 +295,10 @@
+     pub metrics_opt: Option<CacheMetrics>,
+     /// Letter spacing (tracking) in EM
+     pub letter_spacing_opt: Option<LetterSpacing>,
++    /// BCP-47 shaping language; None leaves HarfRust language unset.
++    pub language: Option<alloc::sync::Arc<harfrust::Language>>,
++    /// ISO 15924 script override; None uses HarfRust inference.
++    pub script: Option<harfrust::Script>,
+     pub font_features: FontFeatures,
+     pub text_decoration: TextDecoration,
+ }
+@@ -314,9 +318,23 @@
+             cache_key_flags: CacheKeyFlags::empty(),
+             metrics_opt: None,
+             letter_spacing_opt: None,
++            language: None,
++            script: None,
+             font_features: FontFeatures::new(),
+             text_decoration: TextDecoration::new(),
+         }
++    }
++
++    /// Set the per-run shaping language.
++    pub fn language(mut self, language: Option<harfrust::Language>) -> Self {
++        self.language = language.map(alloc::sync::Arc::new);
++        self
++    }
++
++    /// Set an explicit script, or None for automatic inference.
++    pub fn script(mut self, script: Option<harfrust::Script>) -> Self {
++        self.script = script;
++        self
+     }
+ 
+     /// Set [Color]
+@@ -415,6 +433,9 @@
+             && self.stretch == other.stretch
+             && self.style == other.style
+             && self.weight == other.weight
++            && self.language == other.language
++            && self.script == other.script
++            && self.font_features == other.font_features
+     }
+ }
+ 
+@@ -452,6 +473,10 @@
+     pub metrics_opt: Option<CacheMetrics>,
+     /// Letter spacing (tracking) in EM
+     pub letter_spacing_opt: Option<LetterSpacing>,
++    /// BCP-47 shaping language; None leaves HarfRust language unset.
++    pub language: Option<alloc::sync::Arc<harfrust::Language>>,
++    /// ISO 15924 script override; None uses HarfRust inference.
++    pub script: Option<harfrust::Script>,
+     pub font_features: FontFeatures,
+     pub text_decoration: TextDecoration,
+ }
+@@ -468,6 +493,8 @@
+             cache_key_flags: attrs.cache_key_flags,
+             metrics_opt: attrs.metrics_opt,
+             letter_spacing_opt: attrs.letter_spacing_opt,
++            language: attrs.language.clone(),
++            script: attrs.script,
+             font_features: attrs.font_features.clone(),
+             text_decoration: attrs.text_decoration,
+         }
+@@ -484,6 +511,8 @@
+             cache_key_flags: self.cache_key_flags,
+             metrics_opt: self.metrics_opt,
+             letter_spacing_opt: self.letter_spacing_opt,
++            language: self.language.clone(),
++            script: self.script,
+             font_features: self.font_features.clone(),
+             text_decoration: self.text_decoration,
+         }
+--- a/src/font/mod.rs
++++ b/src/font/mod.rs
+@@ -124,13 +124,17 @@
+ 
+         let data = match &info.source {
+             fontdb::Source::Binary(data) => Arc::clone(data),
+-            #[cfg(feature = "std")]
++            #[cfg(feature = "system-discovery")]
+             fontdb::Source::File(path) => {
+                 log::warn!("Unsupported fontdb Source::File('{}')", path.display());
+                 return None;
+             }
+-            #[cfg(feature = "std")]
++            #[cfg(feature = "system-discovery")]
+             fontdb::Source::SharedFile(_path, data) => Arc::clone(data),
++            // Cargo can unify fontdb fs/memmap through another consumer. The
++            // byte-fed engine deliberately refuses every non-Binary source.
++            #[allow(unreachable_patterns)]
++            _ => return None,
+         };
+ 
+         // It's a bit unfortunate but we need to parse the data into a `FontRef`
+--- a/src/font/system.rs
++++ b/src/font/system.rs
+@@ -303,7 +303,7 @@
+         self.font_cache
+             .entry((id, weight))
+             .or_insert_with(|| {
+-                #[cfg(feature = "std")]
++                #[cfg(feature = "system-discovery")]
+                 unsafe {
+                     self.db.make_shared_face_data(id);
+                 }
+@@ -417,7 +417,7 @@
+             .clone()
+     }
+ 
+-    #[cfg(feature = "std")]
++    #[cfg(feature = "system-discovery")]
+     fn get_locale() -> String {
+         sys_locale::get_locale().unwrap_or_else(|| {
+             log::warn!("failed to get system locale, falling back to en-US");
+@@ -425,12 +425,12 @@
+         })
+     }
+ 
+-    #[cfg(not(feature = "std"))]
++    #[cfg(not(feature = "system-discovery"))]
+     fn get_locale() -> String {
+         String::from("en-US")
+     }
+ 
+-    #[cfg(feature = "std")]
++    #[cfg(feature = "system-discovery")]
+     fn load_fonts(db: &mut fontdb::Database, fonts: impl Iterator<Item = fontdb::Source>) {
+         #[cfg(not(target_arch = "wasm32"))]
+         let now = std::time::Instant::now();
+@@ -449,7 +449,7 @@
+         );
+     }
+ 
+-    #[cfg(not(feature = "std"))]
++    #[cfg(not(feature = "system-discovery"))]
+     fn load_fonts(db: &mut fontdb::Database, fonts: impl Iterator<Item = fontdb::Source>) {
+         for source in fonts {
+             db.load_font_source(source);
+--- a/src/shape.rs
++++ b/src/shape.rs
+@@ -5,8 +5,8 @@
+ use crate::fallback::FontFallbackIter;
+ use crate::{
+     math, Align, Attrs, AttrsList, CacheKeyFlags, Color, DecorationMetrics, DecorationSpan,
+-    Ellipsize, EllipsizeHeightLimit, Family, Font, FontSystem, GlyphDecorationData, Hinting,
+-    LayoutGlyph, LayoutLine, Metrics, Wrap,
++    Ellipsize, EllipsizeHeightLimit, Font, FontSystem, GlyphDecorationData, Hinting, LayoutGlyph,
++    LayoutLine, Metrics, Wrap,
+ };
+ #[cfg(not(feature = "std"))]
+ use alloc::{format, vec, vec::Vec};
+@@ -17,6 +17,8 @@
+ use core::mem;
+ use core::ops::Range;
+ 
++#[cfg(feature = "swash")]
++use crate::Family;
+ #[cfg(not(feature = "std"))]
+ use core_maths::CoreFloat;
+ use fontdb::Style;
+@@ -133,6 +135,15 @@
+     let descent = -font.metrics().descent / font_scale;
+ 
+     let mut buffer = scratch.harfrust_buffer.take().unwrap_or_default();
++    // Reset all segment properties even when the scratch buffer is reused.
++    buffer.clear();
++    let attrs = attrs_list.get_span(start_run);
++    if let Some(language) = attrs.language.clone() {
++        buffer.set_language((*language).clone());
++    }
++    if let Some(script) = attrs.script {
++        buffer.set_script(script);
++    }
+     buffer.set_direction(if span_rtl {
+         harfrust::Direction::RightToLeft
+     } else {
+@@ -147,6 +158,9 @@
+     } else {
+         buffer.push_str(run);
+     }
++    // Keep joining context across legitimate font/language run boundaries.
++    buffer.set_pre_context(&line[..start_run]);
++    buffer.set_post_context(&line[end_run..]);
+     buffer.guess_segment_properties();
+ 
+     let rtl = matches!(buffer.direction(), harfrust::Direction::RightToLeft);
+@@ -221,6 +235,7 @@
+ 
+         glyphs.push(ShapeGlyph {
+             start: start_glyph,
++            unsafe_to_break: info.unsafe_to_break(),
+             end: end_run, // Set later
+             x_advance,
+             y_advance,
+@@ -428,6 +443,9 @@
+     let run_range = start_run..end_run;
+     let mut key = ShapeRunKey {
+         text: line[run_range.clone()].to_string(),
++        rtl: span_rtl,
++        pre_context: line[..start_run].chars().rev().take(5).collect(),
++        post_context: line[end_run..].chars().take(5).collect(),
+         default_attrs: AttrsOwned::new(&attrs_list.defaults()),
+         attrs_spans: Vec::new(),
+     };
+@@ -593,6 +611,7 @@
+ 
+                 ShapeGlyph {
+                     start: chr_idx + start_run,
++                    unsafe_to_break: false,
+                     end: chr_idx + start_run + codepoint.len_utf8(),
+                     x_advance,
+                     y_advance: 0.0,
+@@ -628,6 +647,8 @@
+ /// A shaped glyph
+ #[derive(Clone, Debug)]
+ pub struct ShapeGlyph {
++    /// HarfRust requires reshaping on both sides of this cluster boundary.
++    pub unsafe_to_break: bool,
+     pub start: usize,
+     pub end: usize,
+     pub x_advance: f32,
+@@ -823,11 +844,14 @@
+ 
+         if is_simple_ascii && !word.is_empty() && {
+             let attrs_start = attrs_list.get_span(word_range.start);
+-            attrs_list.spans_iter().all(|(other_range, other_attrs)| {
+-                word_range.end <= other_range.start
+-                    || other_range.end <= word_range.start
+-                    || attrs_start.compatible(&other_attrs.as_attrs())
+-            })
++            attrs_list
++                .spans
++                .overlapping(&word_range)
++                .all(|(other_range, other_attrs)| {
++                    word_range.end <= other_range.start
++                        || other_range.end <= word_range.start
++                        || attrs_start.compatible(&other_attrs.as_attrs())
++                })
+         } {
+             shaping.run(
+                 &mut glyphs,
+@@ -841,11 +865,20 @@
+         } else {
+             // Complex text path: Full grapheme iteration and attribute processing
+             let mut start_run = word_range.start;
+-            let mut attrs = attrs_list.defaults();
+-            for (egc_i, _egc) in word.grapheme_indices(true) {
++            let mut attrs = attrs_list.get_span(word_range.start);
++            let mut run_script = None;
++            for (egc_i, egc) in word.grapheme_indices(true) {
+                 let start_egc = word_range.start + egc_i;
+                 let attrs_egc = attrs_list.get_span(start_egc);
+-                if !attrs.compatible(&attrs_egc) {
++                let strong_script = egc
++                    .chars()
++                    .map(|c| c.script())
++                    .find(|s| !matches!(s, Script::Common | Script::Inherited | Script::Unknown));
++                let script_boundary = attrs_egc.script.is_none()
++                    && run_script.is_some()
++                    && strong_script.is_some()
++                    && run_script != strong_script;
++                if !attrs.compatible(&attrs_egc) || script_boundary {
+                     shaping.run(
+                         &mut glyphs,
+                         font_system,
+@@ -858,6 +891,9 @@
+ 
+                     start_run = start_egc;
+                     attrs = attrs_egc;
++                }
++                if strong_script.is_some() {
++                    run_script = strong_script;
+                 }
+             }
+             if start_run < word_range.end {
+@@ -1103,11 +1139,14 @@
+         // Early-out: skip font lookup and span iteration when no decorations exist.
+         // For plain text (the common case) this is a single bool check.
+         let any_decoration = attrs_list.defaults().text_decoration.has_decoration()
+-            || attrs_list.spans_iter().any(|(range, attr_owned)| {
+-                let start = range.start.max(span_range.start);
+-                let end = range.end.min(span_range.end);
+-                start < end && attr_owned.as_attrs().text_decoration.has_decoration()
+-            });
++            || attrs_list
++                .spans
++                .overlapping(&span_range)
++                .any(|(range, attr_owned)| {
++                    let start = range.start.max(span_range.start);
++                    let end = range.end.min(span_range.end);
++                    start < end && attr_owned.as_attrs().text_decoration.has_decoration()
++                });
+ 
+         if any_decoration {
+             // Get font metrics once from the primary glyph of this shape span
+@@ -1126,7 +1165,7 @@
+                 // Track which sub-ranges of span_range are covered by explicit spans
+                 let mut covered_end = span_range.start;
+ 
+-                for (range, attr_owned) in attrs_list.spans_iter() {
++                for (range, attr_owned) in attrs_list.spans.overlapping(&span_range) {
+                     // Compute intersection with our shape span's byte range
+                     let start = range.start.max(span_range.start);
+                     let end = range.end.min(span_range.end);
+@@ -1565,6 +1604,203 @@
+         }
+ 
+         elements
++    }
++
++    /// Word wrapping against full-paragraph UAX #14 opportunities. Unlike the
++    /// legacy span-local wrapper, bidi/style/font fragments cannot create breaks.
++    /// Returns source ranges separately from glyph extents, including controls.
++    pub fn layout_with_breaks(
++        &self,
++        text: &str,
++        opportunities: &[(usize, unicode_linebreak::BreakOpportunity)],
++        font_size: f32,
++        width: Option<f32>,
++        align: Align,
++        mut reshape: impl FnMut(Range<usize>) -> ShapeLine,
++    ) -> Vec<(Range<usize>, LayoutLine)> {
++        use unicode_linebreak::BreakOpportunity;
++        let mut ends = opportunities.to_vec();
++        if ends.last().map(|x| x.0) != Some(text.len()) {
++            ends.push((text.len(), BreakOpportunity::Mandatory));
++        }
++        let glyphs: Vec<_> = self
++            .spans
++            .iter()
++            .flat_map(|s| {
++                s.words
++                    .iter()
++                    .flat_map(move |w| w.glyphs.iter().map(move |g| (s.level, w.blank, g)))
++            })
++            .collect();
++        let mut unsafe_boundary = vec![false; text.len() + 1];
++        for (_, _, g) in &glyphs {
++            unsafe_boundary[g.start] |= g.unsafe_to_break;
++            unsafe_boundary[g.start + 1..g.end].fill(true);
++        }
++        // Conservatively reshape non-space boundaries too. This covers context
++        // that crosses independently shaped bidi/font/attribute runs (including
++        // ZWSP) rather than relying on a first-glyph unsafe flag in such a run.
++        for &(end, _) in &ends {
++            if end < text.len() {
++                unsafe_boundary[end] |= text[..end]
++                    .chars()
++                    .next_back()
++                    .is_some_and(|c| !c.is_whitespace());
++            }
++        }
++        unsafe_boundary[0] = false;
++        unsafe_boundary[text.len()] = false;
++        let mut unit_at = vec![0; text.len() + 1];
++        let mut start = 0;
++        for (index, (end, _)) in ends.iter().enumerate() {
++            unit_at[start..*end].fill(index);
++            start = *end;
++        }
++        let mut units: Vec<Vec<(unicode_bidi::Level, bool, ShapeGlyph)>> =
++            vec![Vec::new(); ends.len()];
++        let mut widths = vec![0.; ends.len()];
++        for (level, blank, g) in glyphs {
++            let index = unit_at[g.start];
++            widths[index] += g.width(font_size);
++            units[index].push((level, blank, g.clone()));
++        }
++        let mut output = Vec::new();
++        let mut first = 0;
++        while first < ends.len() {
++            let mut last = first + 1;
++            let mut used = widths[first];
++            while last < ends.len()
++                && ends[last - 1].1 != BreakOpportunity::Mandatory
++                && width.is_none_or(|w| used + widths[last] <= w)
++            {
++                used += widths[last];
++                last += 1;
++            }
++            let source_start = if first == 0 { 0 } else { ends[first - 1].0 };
++            // Safe breaks preserve advances exactly: move rather than clone
++            // the committed fragments, and avoid speculative edge shaping.
++            if !unsafe_boundary[source_start]
++                && !unsafe_boundary[ends[last - 1].0]
++                && (last == ends.len()
++                    || ends[last - 1].1 == BreakOpportunity::Mandatory
++                    || !unsafe_boundary[ends[last].0])
++            {
++                let fragments = (first..last)
++                    .flat_map(|i| core::mem::take(&mut units[i]))
++                    .collect();
++                let line = self.place_legal_fragments(fragments, font_size, width, align);
++                output.push((source_start..ends[last - 1].0, line));
++                first = last;
++                continue;
++            }
++            let place = |last: usize, reshape: &mut dyn FnMut(Range<usize>) -> ShapeLine| {
++                let source = source_start..ends[last - 1].0;
++                let fragments = if unsafe_boundary[source.start] || unsafe_boundary[source.end] {
++                    // The callback retains paragraph levels/attributes but clips
++                    // HarfRust context to this actual line. Returned offsets are
++                    // paragraph-relative, including any newly split clusters.
++                    reshape(source)
++                        .spans
++                        .into_iter()
++                        .flat_map(|s| {
++                            s.words.into_iter().flat_map(move |w| {
++                                w.glyphs.into_iter().map(move |g| (s.level, w.blank, g))
++                            })
++                        })
++                        .collect()
++                } else {
++                    units[first..last].iter().flatten().cloned().collect()
++                };
++                self.place_legal_fragments(fragments, font_size, width, align)
++            };
++            let mut line = place(last, &mut reshape);
++            // Changed edge forms can grow. Never commit a forbidden boundary;
++            // refit backwards to one whole legal unit, which may overflow.
++            while last > first + 1 && width.is_some_and(|w| line.w > w) {
++                last -= 1;
++                line = place(last, &mut reshape);
++            }
++            // A reshaped edge can shrink as well. Probe the next legal unit,
++            // stopping at the first non-fitting candidate or mandatory break.
++            while last < ends.len() && ends[last - 1].1 != BreakOpportunity::Mandatory {
++                if width.is_some_and(|w| line.w + widths[last] > w)
++                    && !unsafe_boundary[source_start]
++                    && !unsafe_boundary[ends[last - 1].0]
++                    && !unsafe_boundary[ends[last].0]
++                {
++                    break;
++                }
++                let next = place(last + 1, &mut reshape);
++                if width.is_some_and(|w| next.w > w) {
++                    break;
++                }
++                last += 1;
++                line = next;
++            }
++            output.push((source_start..ends[last - 1].0, line));
++            first = last;
++        }
++        output
++    }
++
++    fn place_legal_fragments(
++        &self,
++        mut fragments: Vec<(unicode_bidi::Level, bool, ShapeGlyph)>,
++        font_size: f32,
++        width: Option<f32>,
++        align: Align,
++    ) -> LayoutLine {
++        fragments.sort_by_key(|(_, _, g)| g.start);
++        let mut line = Self {
++            rtl: self.rtl,
++            spans: Vec::new(),
++            metrics_opt: self.metrics_opt,
++            ellipsis_span: None,
++        };
++        for (level, blank, g) in fragments {
++            if line.spans.last().is_none_or(|s| s.level != level) {
++                let mut span = ShapeSpan::empty();
++                span.level = level;
++                line.spans.push(span);
++            }
++            let span = line.spans.last_mut().unwrap();
++            if span.words.last().is_none_or(|w| w.blank != blank) {
++                span.words.push(ShapeWord {
++                    blank,
++                    glyphs: Vec::new(),
++                });
++            }
++            span.words.last_mut().unwrap().glyphs.push(g);
++        }
++        for span in &mut line.spans {
++            if self.rtl != span.level.is_rtl() {
++                // Preserve the original mark/base ordering inside each cluster.
++                for word in &mut span.words {
++                    word.glyphs.sort_by_key(|g| core::cmp::Reverse(g.start));
++                }
++                span.words.reverse();
++            }
++        }
++        // Keep the existing unbounded Word workaround for Wrap::None.
++        let mut laid = line.layout(
++            font_size,
++            None,
++            Wrap::Word,
++            Some(Align::Left),
++            None,
++            Hinting::Disabled,
++        );
++        debug_assert_eq!(laid.len(), 1);
++        let mut item = laid.remove(0);
++        let shift = match align {
++            Align::Right => width.unwrap_or(item.w) - item.w,
++            Align::Center => (width.unwrap_or(item.w) - item.w) * 0.5,
++            _ => 0.,
++        };
++        for g in &mut item.glyphs {
++            g.x += shift;
++        }
++        item
+     }
+ 
+     pub fn layout(
+@@ -2887,9 +3123,7 @@
+                                         .max(1.0)
+                                         / glyph_to_match_factor
+                                         * font_size;
+-                                    log::trace!(
+-                                        "Adjusted glyph font size ({font_size} => {glyph_font_size})"
+-                                    );
++                                    log::trace!("Adjusted glyph font size ({font_size} => {glyph_font_size})");
+                                     glyph_font_size
+                                 }
+                                 _ => font_size,
+--- a/src/shape_run_cache.rs
++++ b/src/shape_run_cache.rs
+@@ -7,6 +7,9 @@
+ /// Key for caching shape runs.
+ #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+ pub struct ShapeRunKey {
++    pub rtl: bool,
++    pub pre_context: String,
++    pub post_context: String,
+     pub text: String,
+     pub default_attrs: AttrsOwned,
+     pub attrs_spans: Vec<(Range<usize>, AttrsOwned)>,
+@@ -16,10 +19,16 @@
+ #[derive(Clone, Default)]
+ pub struct ShapeRunCache {
+     age: u64,
++    bytes: usize,
+     cache: HashMap<ShapeRunKey, (u64, Vec<ShapeGlyph>)>,
+ }
+ 
+ impl ShapeRunCache {
++    /// Estimated retained payload bytes; hash table allocator overhead excluded.
++    pub fn payload_bytes(&self) -> usize {
++        self.bytes
++    }
++
+     /// Get cache item, updating age if found
+     pub fn get(&mut self, key: &ShapeRunKey) -> Option<&Vec<ShapeGlyph>> {
+         self.cache.get_mut(key).map(|(age, glyphs)| {
+@@ -30,6 +39,19 @@
+ 
+     /// Insert cache item with current age
+     pub fn insert(&mut self, key: ShapeRunKey, glyphs: Vec<ShapeGlyph>) {
++        // Conservative payload budget plus an entry ceiling for table overhead.
++        let size = entry_bytes(&key, &glyphs);
++        if size > 8 * 1024 * 1024 {
++            return;
++        }
++        if self.cache.len() >= 4096 || self.bytes + size > 8 * 1024 * 1024 {
++            self.cache.clear();
++            self.bytes = 0;
++        }
++        if let Some((old_key, (_, old_glyphs))) = self.cache.remove_entry(&key) {
++            self.bytes -= entry_bytes(&old_key, &old_glyphs);
++        }
++        self.bytes += size;
+         self.cache.insert(key, (self.age, glyphs));
+     }
+ 
+@@ -37,6 +59,7 @@
+     pub fn trim(&mut self, keep_ages: u64) {
+         self.cache
+             .retain(|_key, (age, _glyphs)| *age + keep_ages >= self.age);
++        self.bytes = self.cache.iter().map(|(k, (_, g))| entry_bytes(k, g)).sum();
+         // Increase age
+         self.age += 1;
+     }
+@@ -47,3 +70,27 @@
+         f.debug_tuple("ShapeRunCache").finish()
+     }
+ }
++
++fn entry_bytes(key: &ShapeRunKey, glyphs: &Vec<ShapeGlyph>) -> usize {
++    fn attrs_bytes(a: &AttrsOwned) -> usize {
++        let family = match &a.family_owned {
++            crate::FamilyOwned::Name(s) => s.len(),
++            _ => 0,
++        };
++        family
++            + a.language.as_ref().map_or(0, |l| l.as_str().len())
++            + a.font_features.features.capacity() * core::mem::size_of::<crate::Feature>()
++    }
++    core::mem::size_of::<ShapeRunKey>()
++        + key.text.capacity()
++        + key.pre_context.capacity()
++        + key.post_context.capacity()
++        + attrs_bytes(&key.default_attrs)
++        + key.attrs_spans.capacity() * core::mem::size_of::<(Range<usize>, AttrsOwned)>()
++        + key
++            .attrs_spans
++            .iter()
++            .map(|(_, a)| attrs_bytes(a))
++            .sum::<usize>()
++        + glyphs.capacity() * core::mem::size_of::<ShapeGlyph>()
++}

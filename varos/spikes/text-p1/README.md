@@ -121,3 +121,15 @@ Original P1's 10 rows / 23 strings and 41-sample benchmark are retained. The P1 
 414 configurations / 611 line comparisons are copied/checksummed in the P1b evidence
 folder before new output. Updated wrapping can change line count, not input identity.
 Unicode remains bidi 16 / linebreak 15 / segmentation 17, not unified conformance.
+
+## T1 promotion (2026-10-07)
+
+The evidence harness stays standalone on its original adapter and patched vendor.
+Production shaping, convergence/incremental layout, caret maps and exact cubic
+outlines now live in `../../crates/varos-text`; migrated tests use byte-fed fixture
+FontSets. Proof/stencil/export/parity scripts and benchmarks stay here. Production
+changes must be tested in the main workspace; spike results do not certify them.
+Incremental code is prepared for T1, pending owner acceptance of ADR-0012;
+the owner verbally selected “option 2 = path B” on 2026-10-07, but acceptance
+is not recorded and no T1 work-order file exists. The T4 deferral is not formally overridden;
+its 1 MiB cancellation, temporary-memory and hostile-font limits remain open.

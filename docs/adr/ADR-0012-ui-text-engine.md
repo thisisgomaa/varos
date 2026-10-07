@@ -1,4 +1,5 @@
 > **Status:** proposed — awaiting owner (Ahmed). Owner chose path B of [UI_SYSTEM §8](../specs/UI_SYSTEM.md#8-arabic--rtl-gate-owner-piece) on 2026-10-07; this paper says how. No implementation is authorized by this document alone.
+> **T1 implementation:** [results](../foundation/work_orders/TEXT_T1_RESULTS.md); exit gates remain open.
 # ADR-0012: One text engine for the UI and the canvas — `varos-text` + `kit::text`
 
 **ملخص بالمصري**

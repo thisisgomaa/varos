@@ -9,9 +9,10 @@ import sys
 
 EDGES = {
     "varos-core": set(),
+    "varos-text": set(),
     "varos-render-wgpu": {"varos-core"},
     "varos-pdf": {"varos-core"},
-    "varos-app": {"varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
+    "varos-app": {"varos-text", "varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
     "varos-raster": {"varos-core", "varos-pdf"},  # PDF is test-only.
     "varos-bridge": {"varos-core", "varos-raster"},
     "varos-cli": {"varos-core", "varos-pdf", "varos-raster", "varos-bridge"},
@@ -37,8 +38,8 @@ def validate(metadata, app_source):
         exact(f"{name} internal dependencies", internal, allowed)
         for dependency in dependencies:
             normalized = dependency["name"].replace("_", "-")
-            if name in {"varos-core", "varos-raster", "varos-cli", "varos-bridge"} and re.match(
-                r"^(wgpu|winit|egui(?:-|$)|windows(?:-|$))", normalized
+            if name in {"varos-text", "varos-core", "varos-raster", "varos-cli", "varos-bridge"} and re.match(
+                r"^(wgpu|winit|epaint(?:-|$)|egui(?:-|$)|windows(?:-|$))", normalized
             ):
                 violations.append(f"{name} forbidden UI/GPU/platform dependency: {dependency['name']}")
             if name == "varos-render-wgpu" and re.match(r"^winit(?:-|$)", normalized):
@@ -67,6 +68,21 @@ def main():
             check=True, capture_output=True, text=True, encoding="utf-8",
         )
         violations = validate(json.loads(result.stdout), root / "varos/crates/varos-app/src")
+        graph_unresolved = False
+        try:
+            graph = subprocess.run(
+                ["cargo", "tree", "--locked", "-e", "features", "-p", "varos-text",
+                 "--manifest-path", str(root / "varos/Cargo.toml")],
+                check=True, capture_output=True, text=True,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError) as error:
+            graph = ""
+            graph_unresolved = True
+            print("check_dep_directions: SKIP isolated feature graph (cargo tree cannot resolve; not verified)", file=sys.stderr)
+            print(getattr(error, "stderr", None) or str(error), file=sys.stderr)
+        forbidden = r'\b(?:sys-locale|swash|egui(?:-[\w]+)?|epaint|winit|wgpu(?:-[\w]+)?) v|cosmic-text feature "(?:system-discovery|fontconfig)"|fontdb feature "(?:fontconfig|fs|memmap)"'
+        if re.search(forbidden, graph):
+            violations.append("varos-text isolated graph contains discovery/UI/GPU features")
         if violations:
             for violation in violations:
                 print(f"ERROR: {violation}", file=sys.stderr)
@@ -77,8 +93,12 @@ def main():
         if isinstance(error, subprocess.CalledProcessError) and error.stderr:
             print(error.stderr, file=sys.stderr)
         return 1
+    if graph_unresolved:
+        print("dependency edges checked; isolated features not verified", file=sys.stderr)
+        return 2
     print("check_dep_directions: PASS")
     print("internal edges: Bridge -> core, raster; raster -> core (+ pdf tests); CLI -> Bridge, core, pdf, raster; app -> core, renderer, pdf, raster, Bridge")
+    print("varos-text: pure leaf; app -> text allowed; core -> text forbidden until T4; isolated features clean")
     print("egui_tiles code use: varos-app/src/shell/boxtree.rs only")
     return 0
 
