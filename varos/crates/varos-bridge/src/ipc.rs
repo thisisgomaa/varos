@@ -269,8 +269,9 @@ pub enum PairedStatus {
 struct PairedState {
     status: Option<PairedStatus>,
     entry: Option<conn::registry::Entry>,
+    /// The paired accept thread and the socket it blocks on (`Drop` connects once to wake it).
     #[cfg(unix)]
-    thread: Option<std::thread::JoinHandle<()>>,
+    thread: Option<(std::thread::JoinHandle<()>, PathBuf)>,
     closed: bool,
     notice_taken: bool,
 }
@@ -320,8 +321,10 @@ pub struct Listener {
     epoch: String,
     stop: Arc<AtomicBool>,
     attached: Arc<std::sync::atomic::AtomicUsize>,
+    /// Accept threads (each with the socket it blocks on, woken once by `Drop`) and the
+    /// deferred host-key loader (no socket; it ends when the load returns).
     #[cfg(unix)]
-    threads: Vec<std::thread::JoinHandle<()>>,
+    threads: Vec<(std::thread::JoinHandle<()>, Option<PathBuf>)>,
     legacy_dir: Option<PathBuf>,
     paired: Arc<std::sync::Mutex<PairedState>>,
 }
@@ -398,7 +401,7 @@ impl Listener {
             Some(PairedSource::Deferred(load)) => {
                 this.paired.lock().unwrap().status = Some(PairedStatus::Starting);
                 let (shared, state) = (shared.clone(), this.paired.clone());
-                this.threads.push(std::thread::spawn(move || {
+                let loader = std::thread::spawn(move || {
                     let outcome = load().and_then(|config| bring_up_paired(config, &shared, &state));
                     if let Err(e) = outcome {
                         eprintln!("[varos-bridge] paired attachment unavailable: {}: {}", e.code, e.reason);
@@ -406,7 +409,8 @@ impl Listener {
                             Some(PairedStatus::Unavailable(format!("{}: {}", e.code, e.reason)));
                     }
                     (shared.wake)();
-                }));
+                });
+                this.threads.push((loader, None));
             }
         }
         if options.legacy {
@@ -417,12 +421,14 @@ impl Listener {
             let socket = dir.join("bridge.sock");
             let listener = UnixListener::bind(&socket)?;
             std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
-            listener.set_nonblocking(true)?;
+            // BLOCKING accept (no timed poll at rest); `Drop` wakes it through this socket.
+            let wake_socket = socket.clone();
             let endpoint_file = dir.join("endpoint.json");
             let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&endpoint_file)?;
             write_frame(&mut f, &Endpoint { api: API.into(), socket, token: token.clone(), epoch: epoch.clone() })?;
             this.endpoint_file = endpoint_file;
-            this.threads.push(spawn_accept(listener, Arc::new(Auth::Legacy { token }), shared.clone()));
+            let accept = spawn_accept(listener, Arc::new(Auth::Legacy { token }), shared.clone());
+            this.threads.push((accept, Some(wake_socket)));
         }
         Ok(this)
     }
@@ -476,6 +482,7 @@ impl Listener {
 impl Drop for Listener {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        // `closed` under the lock: a deferred bring-up that has not published yet never will.
         let (entry, paired_thread) = {
             let mut state = self.paired.lock().unwrap();
             state.closed = true;
@@ -486,17 +493,29 @@ impl Drop for Listener {
             (state.entry.take(), thread)
         };
         #[cfg(unix)]
-        for h in self.threads.drain(..).chain(paired_thread) {
-            let deadline = std::time::Instant::now() + Duration::from_secs(1);
-            while !h.is_finished() && std::time::Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(5));
+        {
+            let threads: Vec<_> =
+                self.threads.drain(..).chain(paired_thread.map(|(h, socket)| (h, Some(socket)))).collect();
+            // Wake every accept thread first (one connection to its own socket each; a failed
+            // connect means it is gone already), then join each with a 1-second bound.
+            for (_, socket) in &threads {
+                if let Some(socket) = socket {
+                    let _ = std::os::unix::net::UnixStream::connect(socket);
+                }
             }
-            if h.is_finished() {
-                let _ = h.join();
+            for (h, _) in threads {
+                let deadline = std::time::Instant::now() + Duration::from_secs(1);
+                while !h.is_finished() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                if h.is_finished() {
+                    let _ = h.join();
+                }
             }
         }
         #[cfg(not(unix))]
         let _ = paired_thread;
+        // Sockets/records are removed only after the threads were woken through them.
         if let Some(entry) = entry {
             entry.remove();
         }
@@ -506,7 +525,8 @@ impl Drop for Listener {
     }
 }
 
-/// Reserve, bind, start accepting, then publish the registry record (in that order).
+/// Reserve, bind, publish the registry record, then start the blocking accept thread. A client
+/// that connects in between waits in the listen backlog; a publish failure leaves no thread.
 #[cfg(unix)]
 fn bring_up_paired(
     config: PairedConfig,
@@ -537,7 +557,6 @@ fn bring_up_paired(
     let mut reserved = Reserved(socket.clone(), false);
     let listener = UnixListener::bind(&socket).map_err(ioe)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).map_err(ioe)?;
-    listener.set_nonblocking(true).map_err(ioe)?;
     let pid = std::process::id();
     let fingerprint = conn::credentials::fingerprint(&config.host_key.verifying_key());
     let record = conn::registry::Record {
@@ -561,23 +580,18 @@ fn bring_up_paired(
         paths: paths.clone(),
         pairing_attempts: std::sync::Mutex::new(Default::default()),
     });
-    let thread = spawn_accept(listener, Arc::new(Auth::Paired(host)), shared.clone());
-    let entry = match conn::registry::Entry::publish(&paths, record) {
-        Ok(e) => e,
-        Err(e) => {
-            let mut s = state.lock().unwrap();
-            s.thread = Some(thread);
-            return Err(e);
-        }
-    };
+    let wake_socket = record.socket.clone();
+    let entry = conn::registry::Entry::publish(&paths, record)?;
     reserved.1 = true;
+    // Spawn under the state lock so `Drop` either sees `closed` here or finds the thread to wake.
     let mut s = state.lock().unwrap();
-    s.thread = Some(thread);
     if s.closed {
-        // The host shut down while the key was loading: never leave a record behind.
+        // The host shut down while the key was loading: never leave a record or thread behind.
         entry.remove();
         return Ok(());
     }
+    let thread = spawn_accept(listener, Arc::new(Auth::Paired(host)), shared.clone());
+    s.thread = Some((thread, wake_socket));
     eprintln!("[varos-bridge] registry {}", entry.dir.join(conn::registry::RECORD_FILE).display());
     s.entry = Some(entry);
     s.status = Some(PairedStatus::Ready);
@@ -593,15 +607,21 @@ fn spawn_accept(
     std::thread::spawn(move || {
         let mut workers = vec![];
         while !shared.stopped.load(Ordering::Acquire) {
+            // BLOCKING accept: the thread sleeps in the kernel until a client (or `Drop`'s wake
+            // connection) arrives — no timed poll at rest.
+            let accepted = listener.accept();
+            if shared.stopped.load(Ordering::Acquire) {
+                break; // the wake connection from `Drop` (or anything racing it): never served
+            }
+            // Prune AFTER the (possibly hours-long) accept, so the worker cap sees the live set.
             workers.retain(|(h, _): &(std::thread::JoinHandle<()>, std::os::unix::net::UnixStream)| !h.is_finished());
             shared.cancellations.lock().unwrap().retain(|_, (_, time)| time.elapsed() < Duration::from_secs(60));
-            match listener.accept() {
+            match accepted {
                 Ok((stream, _)) if workers.len() < 8 => {
                     let Ok(shutdown) = stream.try_clone() else { continue };
                     let (auth, shared) = (auth.clone(), shared.clone());
                     let worker = std::thread::spawn(move || {
-                        // macOS/BSD: an accepted stream inherits the listener's O_NONBLOCK; make it
-                        // blocking so the framed reads below wait instead of failing with WouldBlock.
+                        // The listener blocks; stay explicit so the framed reads below never see WouldBlock.
                         let _ = stream.set_nonblocking(false);
                         let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
                         let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
@@ -612,7 +632,7 @@ fn spawn_accept(
                     workers.push((worker, shutdown));
                 }
                 Ok(_) => {}
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+                Err(e) if matches!(e.kind(), io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted) => {}
                 Err(_) => break,
             }
         }
@@ -969,6 +989,52 @@ pub fn secure_endpoint_file(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// The accept thread blocks in the kernel (no timed poll) and still stops promptly: `Drop`
+    /// wakes it with one connection, so it never waits out the 1-second join deadline.
+    #[cfg(unix)]
+    #[ignore = "requires native Unix socket bind; sandbox denies bind with EPERM"]
+    #[test]
+    fn blocking_accept_thread_stops_promptly_on_drop() {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let listener = Listener::start(tx, || {}).unwrap();
+        let dir = listener.endpoint_file.parent().unwrap().to_path_buf();
+        std::thread::sleep(Duration::from_millis(200)); // the thread is parked in accept()
+        let started = std::time::Instant::now();
+        drop(listener);
+        assert!(started.elapsed() < Duration::from_millis(500), "drop took {:?}", started.elapsed());
+        assert!(!dir.exists(), "endpoint removed");
+    }
+    /// Both listeners (paired + legacy) block in accept and are each woken through their own
+    /// socket: dropping the pair is still prompt and leaves no registry record or endpoint.
+    #[cfg(unix)]
+    #[ignore = "requires native Unix socket bind; sandbox denies bind with EPERM"]
+    #[test]
+    fn both_blocking_accept_threads_stop_promptly_on_drop() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = std::env::temp_dir().join(format!("vb{}", conn::random_hex(3).unwrap()));
+        std::fs::create_dir(&home).unwrap();
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let host_key =
+            conn::credentials::load_or_create(&conn::credentials::MemoryStore::new(), conn::credentials::HOST_ACCOUNT)
+                .unwrap();
+        let config =
+            PairedConfig { paths: conn::Paths::under(&home), host_key, mode: "desktop", app_build: "test".into() };
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let listener = Listener::start_with(
+            tx,
+            || {},
+            Options { legacy: true, paired: Some(PairedSource::Ready(config)), legacy_audit: None },
+        )
+        .unwrap();
+        let registry = listener.registry_file().unwrap();
+        let legacy = listener.endpoint_file.parent().unwrap().to_path_buf();
+        std::thread::sleep(Duration::from_millis(200)); // both threads parked in accept()
+        let started = std::time::Instant::now();
+        drop(listener);
+        assert!(started.elapsed() < Duration::from_millis(500), "drop took {:?}", started.elapsed());
+        assert!(!registry.exists() && !legacy.exists());
+        let _ = std::fs::remove_dir_all(home);
+    }
     #[test]
     fn hello_cannot_grant_history_or_destructive() {
         let hello = serde_json::json!({"kind":"hello","api":"1.0","token":"token","client":"client"});
