@@ -3,10 +3,22 @@
 [workspace]
 resolver = "2"
 exclude = ["spikes/text-p1"]
-members = ["crates/varos-core", "crates/varos-render-wgpu", "crates/varos-app", "crates/varos-pdf", "crates/varos-raster", "crates/varos-cli", "crates/varos-bridge"]
+members = ["crates/varos-text", "crates/varos-core", "crates/varos-render-wgpu", "crates/varos-app", "crates/varos-pdf", "crates/varos-raster", "crates/varos-cli", "crates/varos-bridge"]
 
 [profile.dev]
 debug = 0           # lighter/faster build loop (we judge feel, not step-debug)
+
+# Optimize text sweeps in debug while retaining the default workspace development profile.
+[profile.dev.package.varos-text]
+opt-level = 2
+[profile.dev.package.cosmic-text]
+opt-level = 2
+[profile.dev.package."harfrust:0.5.2"]
+opt-level = 2
+[profile.dev.package."skrifa:0.42.1"]
+opt-level = 2
+[profile.dev.package."read-fonts:0.39.2"]
+opt-level = 2
 
 # Local fork of egui_tiles 0.16.0 at upstream 62ac74717ebe284749a0066adf9566bbbab9ee42.
 # Varos' docking, tab, preview, and glide delta spans exactly five source files and is isolated behind
@@ -14,3 +26,4 @@ debug = 0           # lighter/faster build loop (we judge feel, not step-debug)
 # ../docs/VENDOR_PATCHES.md and ../tools/check_vendor_patches.ps1.
 [patch.crates-io]
 egui_tiles = { path = "vendor/egui_tiles" }
+cosmic-text = { path = "vendor/cosmic-text" }

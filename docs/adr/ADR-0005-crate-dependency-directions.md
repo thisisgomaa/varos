@@ -37,3 +37,13 @@ Inside `varos-app`, direct `egui_tiles` use remains confined to `shell/boxtree.r
 ## Status
 
 Accepted — product owner, 2026-07-11.
+
+## T1 text amendment (2026-10-07)
+
+**Pending owner acceptance of [ADR-0012](ADR-0012-ui-text-engine.md).**
+The owner selected “option 2 = path B” verbally on 2026-10-07, but ADR acceptance
+is not yet recorded and no T1 work-order file exists. The prepared implementation
+and checker anticipate a leaf `varos-text` with no Varos dependencies and an
+allowed `varos-app -> varos-text` edge; this amendment is not yet in force.
+`varos-core -> varos-text` remains forbidden until T4. Existing raster/Bridge/CLI
+edges remain as enforced by `tools/check_dep_directions.py`; no other edge is added.

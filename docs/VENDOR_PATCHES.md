@@ -22,7 +22,7 @@ From the repository root on Windows:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_vendor_patches.ps1
 ```
 
-The checker locates the immutable `.crate` archive in Cargo's cache or downloads it from crates.io when absent, verifies the archive SHA-256, extracts it to the system temporary directory, verifies the packaged VCS SHA, normalizes line endings, compares the complete file set, and exits non-zero unless the modified-file set is exactly the five files below. An audited extracted tree can be supplied with `-UpstreamPath <path>`; its package version and VCS SHA are still checked.
+The checker locates the immutable `.crate` archive in Cargo's cache (no download when absent), verifies the archive SHA-256, extracts it to the system temporary directory, verifies the packaged VCS SHA, normalizes line endings, compares the complete file set, and exits non-zero unless the modified-file set is exactly the five files below. An audited extracted tree can be supplied with `-UpstreamPath <path>`; its package version and VCS SHA are still checked.
 
 Verified output on 2026-07-11:
 
@@ -55,3 +55,39 @@ Direct application use of `egui_tiles` is confined to `varos/crates/varos-app/sr
 4. Run `tools/check_vendor_patches.ps1`. Any sixth modified file, missing expected patch, or file-set difference is a failed contract, not an automatic documentation update.
 5. Review the full upstream diff and confirm that direct use remains isolated to `shell/boxtree.rs`.
 6. Run `cargo fmt --all -- --check`, `cargo test --workspace -j 4`, and `cargo clippy --workspace --all-targets -j 4 -- -D warnings` before gate review.
+
+## COSMIC text engine — T1 (2026-10-07)
+
+- Identity: crates.io `cosmic-text 0.19.0`, MIT OR Apache-2.0;
+  archive SHA-256 `be17b688510d934ce13f48a2beba700e11583e281e0fda99c22bb256a14eda73`.
+- Production tree: `varos/vendor/cosmic-text`, patched by the workspace manifest.
+  Complete delta: `varos/vendor/patches/cosmic-text-0.19.0-p1b.patch`;
+  pristine per-file hashes and directory digest: adjacent `pristine.sha256` / `BASE.md`.
+  `.cargo-ok` / `.cargo_vcs_info.json` are registry metadata excluded from the vendor;
+  `Cargo.toml.orig` is retained because the patch updates it; the upstream ignored
+  library `Cargo.lock` is excluded (the workspace lock is authoritative).
+  `.gitattributes` is also excluded: its nested Git LFS filters would turn bundled
+  `fonts/*.ttf` into pointers on machines with git-lfs, breaking `include_bytes!`.
+- Exactly seven changed files: `Cargo.toml`, `Cargo.toml.orig` (std/discovery split);
+  `src/attrs.rs` (language/script identity); `src/font/mod.rs`, `src/font/system.rs`
+  (byte-only loading, discovery gates); `src/shape.rs` (context, legal wrapping,
+  line-edge refit, stable mark ordering); `src/shape_run_cache.rs` (keys and limits).
+- Check offline from either platform: `python3 tools/check_vendor_patches.py`.
+  The PowerShell gate additionally calls the COSMIC checker. Both report SKIP if a cached
+  pristine archive is absent; neither downloads. The Python checker verifies archive
+  identity, pristine hashes, full file set, exact seven-file delta and patch reproduction.
+- Direct production consumer: `varos-text`; defaults disabled, `std` and
+  `shape-run-cache` only. No locale/system discovery, swash or cosmic fontconfig.
+  App/resvg unifies fontdb fs/memmap/fontconfig; byte-fed COSMIC refuses file sources.
+- Maintenance owner and independent patch review remain pending owner designation.
+  Rebase from the verified pristine archive, reapply only the ledger, run both
+  vendor/dependency checks and native/Windows/WASM gates; never raise a ratchet.
+  Removal: upstream release carrying the fixes or an owner-reviewed replacement.
+  No upstream submission occurred in this offline T1 run.
+
+### Vendor verification statuses
+
+- PASS (exit 0): every requested package verified against its pristine archive.
+- FAIL (exit 1): hash, file set, patch, or ledger mismatch, or another verification error.
+- SKIP (archive not cached; not verified) (exit 2): a pristine archive is absent.
+  Other packages are still checked; any FAIL takes precedence over SKIP.

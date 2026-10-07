@@ -94,11 +94,7 @@ function Get-CrateArchive([string] $CargoHome, [string] $TemporaryRoot) {
     }
 
     if (-not $archive) {
-        $archivePath = Join-Path $TemporaryRoot "$PackageName-$PackageVersion.crate"
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-        Write-Verbose "upstream archive not found in Cargo cache; downloading immutable crates.io package"
-        Invoke-WebRequest -UseBasicParsing -Uri $PackageUrl -OutFile $archivePath | Out-Null
-        $archive = Get-Item -LiteralPath $archivePath
+        throw [System.IO.FileNotFoundException]::new("archive not cached; not verified: $PackageName-$PackageVersion.crate")
     }
 
     $actualHash = (Get-FileHash -LiteralPath $archive.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
@@ -179,12 +175,29 @@ try {
     Write-Output "comparable files: $($comparableUpstream.Count); modified files: $($modified.Count)"
     $modified | ForEach-Object { Write-Output "  $_" }
 } catch {
-    [Console]::Error.WriteLine("check_vendor_patches: FAIL - $($_.Exception.Message)")
-    $exitCode = 1
+    if ($_.Exception -is [System.IO.FileNotFoundException] -and $_.Exception.Message.StartsWith("archive not cached; not verified:")) {
+        [Console]::Error.WriteLine("egui_tiles: SKIP (archive not cached; not verified)")
+        $exitCode = 2
+    } else {
+        [Console]::Error.WriteLine("check_vendor_patches: FAIL - $($_.Exception.Message)")
+        $exitCode = 1
+    }
 } finally {
     if ($temporaryRoot -and (Test-Path -LiteralPath $temporaryRoot)) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
     }
 }
 
+# COSMIC follows the same immutable archive + complete delta contract.
+$CosmicExcluded = @("Cargo.lock", ".gitattributes") # Same exclusions as the Python COSMIC comparison.
+foreach ($relativePath in $CosmicExcluded) {
+    if (Test-Path -LiteralPath (Join-Path $repoRoot "varos/vendor/cosmic-text/$relativePath")) {
+        [Console]::Error.WriteLine("cosmic-text: FAIL - excluded vendor file present: $relativePath")
+        $exitCode = 1
+    }
+}
+& python3 (Join-Path $PSScriptRoot "check_vendor_patches.py") --package cosmic-text
+if ($LASTEXITCODE -eq 1) { $exitCode = 1 }
+elseif ($LASTEXITCODE -eq 2 -and $exitCode -eq 0) { $exitCode = 2 }
+elseif ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) { $exitCode = 1 }
 exit $exitCode
