@@ -76,5 +76,6 @@ pub const CORPUS: [CorpusRow; 10] = [
 pub mod export;
 pub mod stencil;
 
+pub mod converge;
 pub mod incremental;
 pub mod parity;

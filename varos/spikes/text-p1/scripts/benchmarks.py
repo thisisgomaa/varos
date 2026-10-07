@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Sequential fresh processes; run without concurrent builds/raster jobs."""
+"""Sequential fresh processes; run without concurrent builds/raster jobs.
+Optional VAROS_SPIKE_BIN=/path/to/varos-text-spike compares another build (e.g. preserved P1b)."""
 from pathlib import Path
-import subprocess,sys,resource,platform,json,re
+import subprocess,sys,resource,platform,json,re,os
 if sys.argv[1]=='--one':
  r=subprocess.run([sys.argv[2],'edits',*sys.argv[3:]],check=False)
  u=resource.getrusage(resource.RUSAGE_CHILDREN)
  print(f'peak_rss_bytes={u.ru_maxrss*(1 if platform.system()=="Darwin" else 1024)}',flush=True)
  sys.exit(r.returncode)
 root=Path(__file__).resolve().parents[1];out=Path(sys.argv[1]);out.mkdir(parents=True,exist_ok=True)
-exe=root/'target/release/varos-text-spike';results=[]
+exe=Path(os.environ.get('VAROS_SPIKE_BIN',root/'target/release/varos-text-spike'));results=[]
 for count in [10000,100000]:
  for kind in ['long','many']:
   for position in ['start','middle','end']:
