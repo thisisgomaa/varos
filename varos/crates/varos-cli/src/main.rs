@@ -45,13 +45,22 @@ fn response(action: impl FnOnce() -> Result<Value, Failure> + std::panic::Unwind
 fn main() {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
-        Some("bridge") => match varos_bridge::cli::run(args.collect()) {
-            Ok(code) => std::process::exit(code),
-            Err(e) => {
-                eprintln!("varos-cli bridge: {e}");
-                std::process::exit(1);
+        Some("bridge") => {
+            let rest: Vec<String> = args.collect();
+            // ADR-0011 owner commands (pair/agents/hosts/register) vs attached tool calls.
+            let outcome = if varos_bridge::conn::manage::handles(&rest) {
+                varos_bridge::conn::manage::run(rest)
+            } else {
+                varos_bridge::cli::run(rest)
+            };
+            match outcome {
+                Ok(code) => std::process::exit(code),
+                Err(e) => {
+                    eprintln!("varos-cli bridge: {e}");
+                    std::process::exit(1);
+                }
             }
-        },
+        }
         Some("bridge-endpoint") => {
             if args.next().is_some() {
                 eprintln!("bridge-endpoint takes no arguments");

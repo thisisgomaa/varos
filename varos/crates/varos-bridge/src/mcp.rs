@@ -141,6 +141,19 @@ fn rpc_error(id: Value, code: i32, message: &str) -> Value {
 pub trait Transport: Send + Sync + 'static {
     fn call(&self, call_id: &str, request: Request) -> Reply;
     fn cancel(&self, call_id: &str);
+    /// The MCP client's self-declared name: a display label / profile-mapping hint, never identity.
+    fn client_info(&self, _name: &str) {}
+}
+impl Transport for crate::conn::attach::AutoClient {
+    fn call(&self, call_id: &str, request: Request) -> Reply {
+        crate::conn::attach::AutoClient::call(self, call_id, request)
+    }
+    fn cancel(&self, call_id: &str) {
+        crate::conn::attach::AutoClient::cancel(self, call_id)
+    }
+    fn client_info(&self, name: &str) {
+        self.set_label(name)
+    }
 }
 impl Transport for ipc::Client {
     fn call(&self, call_id: &str, request: Request) -> Reply {
@@ -224,9 +237,12 @@ pub fn serve<T: Transport>(
                     rpc_error(id, -32602, "invalid initialize parameters")
                 } else {
                     initialized = true;
+                    if let Some(name) = params["clientInfo"]["name"].as_str() {
+                        client.client_info(name);
+                    }
                     rpc_result(
                         id,
-                        json!({"protocolVersion":MCP_VERSION,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"varos-bridge","version":env!("CARGO_PKG_VERSION")},"instructions":"Call capabilities api 1.0 first. Summary then ids/fields. Explicit board/revision/targets; consume either text or structured content."}),
+                        json!({"protocolVersion":MCP_VERSION,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"varos-bridge","version":env!("CARGO_PKG_VERSION")},"instructions":"Call capabilities api 1.0 first. Summary then ids/fields. Explicit board/revision/targets; consume either text or structured content. Connection errors are typed: host_not_running (ask the owner to open Varos), pairing_required (the OWNER approves in their own Terminal; never run the approval yourself), ambiguous_target (ask the owner which Varos), session_reset (list_boards again)."}),
                     )
                 }
             }
