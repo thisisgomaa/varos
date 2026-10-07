@@ -872,16 +872,20 @@ fn main() {
     mac_open::install(event_loop.create_proxy());
     let (bridge_tx, bridge_rx) = std::sync::mpsc::sync_channel(32);
     let bridge_proxy = event_loop.create_proxy();
-    let bridge_listener = match varos_bridge::ipc::Listener::start(bridge_tx, move || {
-        let _ = bridge_proxy.send_event(());
-    }) {
+    let bridge_listener = match varos_bridge::ipc::Listener::start_desktop(
+        bridge_tx,
+        move || {
+            let _ = bridge_proxy.send_event(());
+        },
+        concat!("varos-app ", env!("CARGO_PKG_VERSION")),
+    ) {
         Ok(listener) => {
             match listener.epoch() {
                 Ok(epoch) => bridge_host::initialize(epoch),
                 Err(e) => eprintln!("[varos-bridge] endpoint unavailable: {e}"),
             }
-            // Diagnostics only: no menu, approval panel or new visible controls.
-            eprintln!("[varos-bridge] endpoint file: {}", listener.endpoint_file.display());
+            // Diagnostics only: no menu or approval panel (a key refusal uses the existing notice).
+            eprintln!("[varos-bridge] {}", listener.diagnostic());
             Some(listener)
         }
         Err(e) => {
@@ -1126,6 +1130,18 @@ fn main() {
             }
             if matches!(&event, Event::AboutToWait) && bridge_listener.as_ref().is_some_and(|l| l.has_clients()) {
                 bridge_host::observe(&mut ws);
+            }
+            // ADR-0011 C1: the host key loads off the main thread; a refusal is told once.
+            if let Some(reason) = bridge_listener
+                .as_ref()
+                .filter(|_| matches!(&event, Event::AboutToWait))
+                .and_then(|l| l.take_unavailable_notice())
+            {
+                lifecycle::Dialogs::notice(
+                    &mut dialogs,
+                    "AI agents can't connect to Varos",
+                    &bridge_host::unavailable_text(&reason),
+                );
             }
             #[cfg(target_os = "macos")]
             if let Some(menu) = &mac_menu {

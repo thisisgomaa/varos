@@ -4,7 +4,21 @@ use std::{
     io::{self, Read, Write},
     path::PathBuf,
 };
+/// Either the ADR-0011 `--attach auto` transport or the deprecated slice-1 token attachment.
+enum Attachment {
+    Auto(Box<crate::conn::attach::AutoClient>),
+    Legacy(ipc::Client),
+}
+impl Attachment {
+    fn call(&self, call_id: &str, request: Request) -> Reply {
+        match self {
+            Self::Auto(c) => c.call(call_id, request),
+            Self::Legacy(c) => c.call(call_id, request),
+        }
+    }
+}
 pub fn run(args: Vec<String>) -> Result<i32, String> {
+    use crate::conn::attach::{AutoClient, Selector};
     let mut it = args.into_iter();
     let verb = it.next().ok_or("expected mcp or a Bridge tool")?;
     let mut client_id = None;
@@ -13,19 +27,40 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
     let mut json = false;
     let mut file = None;
     let mut output_path = None;
+    let mut selector = None;
+    let mut identity = None;
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--attach" => {
                 if endpoint.is_some() {
                     return Err("duplicate --attach".into());
                 }
-                endpoint = Some(PathBuf::from(it.next().ok_or("missing --attach value")?));
+                endpoint = Some(it.next().ok_or("missing --attach value")?);
             }
             "--token" => {
                 if token.is_some() {
                     return Err("duplicate --token".into());
                 }
                 token = Some(it.next().ok_or("missing --token value")?);
+            }
+            "--instance" | "--pid" => {
+                if selector.is_some() {
+                    return Err("use at most one of --instance / --pid".into());
+                }
+                let value = it.next().ok_or(format!("missing {flag} value"))?;
+                selector = Some(if flag == "--pid" {
+                    Selector::Pid(value.parse().map_err(|_| "--pid must be a number")?)
+                } else if crate::conn::is_hex(&value, 16) {
+                    Selector::Instance(value)
+                } else {
+                    return Err("--instance must be a 16-hex instance id (see varos-cli bridge hosts)".into());
+                });
+            }
+            "--identity" => {
+                if identity.is_some() {
+                    return Err("duplicate --identity".into());
+                }
+                identity = Some(it.next().ok_or("missing --identity value")?);
             }
             "--client" => client_id = Some(it.next().ok_or("missing --client value")?),
             "--output" => {
@@ -39,19 +74,45 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
             _ => return Err(format!("unknown option {flag}")),
         }
     }
-    let mut client = ipc::Client::new(
-        endpoint.ok_or("--attach socket is required (no automatic discovery)")?,
-        token.ok_or("--token is required (default deny)")?,
-    )
-    .map_err(|e| e.to_string())?;
-    if let Some(id) = client_id {
-        client = client.with_client(id).map_err(|e| e.to_string())?;
-    }
+    let legacy = endpoint.as_deref().is_some_and(|e| e != "auto");
+    let client = if legacy {
+        // Deprecated slice-1 path (ADR-0011 §5 transition): explicit socket + per-launch token.
+        if selector.is_some() || identity.is_some() {
+            return Err("--instance/--pid/--identity apply only to --attach auto".into());
+        }
+        let mut client = ipc::Client::new(
+            PathBuf::from(endpoint.unwrap()),
+            token.ok_or("--token is required with an explicit --attach socket (deprecated slice-1 mode)")?,
+        )
+        .map_err(|e| e.to_string())?;
+        if let Some(id) = client_id {
+            client = client.with_client(id).map_err(|e| e.to_string())?;
+        }
+        Attachment::Legacy(client)
+    } else {
+        if token.is_some() {
+            return Err(
+                "--token belongs only to the deprecated explicit-socket mode; --attach auto uses Keychain identity"
+                    .into(),
+            );
+        }
+        let label = if verb == "mcp" { "mcp-client" } else { "varos-bridge-cli" };
+        let mut auto = AutoClient::new(selector.unwrap_or(Selector::Auto), identity, label)
+            .map_err(|e| format!("{}: {}", e.code, e.reason))?;
+        if let Some(id) = client_id {
+            auto = auto.with_session(id.to_ascii_lowercase()).map_err(|e| e.reason.clone())?;
+        }
+        Attachment::Auto(Box::new(auto))
+    };
     if verb == "mcp" {
         if file.is_some() || json || output_path.is_some() {
             return Err("mcp does not accept --json or --request-file".into());
         }
-        crate::mcp::serve(&mut io::stdin().lock(), io::stdout(), client).map_err(|e| e.to_string())?;
+        match client {
+            Attachment::Auto(c) => crate::mcp::serve(&mut io::stdin().lock(), io::stdout(), *c),
+            Attachment::Legacy(c) => crate::mcp::serve(&mut io::stdin().lock(), io::stdout(), c),
+        }
+        .map_err(|e| e.to_string())?;
         return Ok(0);
     }
     if !crate::TOOLS.contains(&verb.as_str()) {

@@ -97,6 +97,12 @@ impl Host for Desktop<'_> {
         Ok(BoardAccess { editor: &mut s.editor, dirty })
     }
 }
+/// Owner-readable body for the one-time "agents can't connect" notice.
+pub fn unavailable_text(reason: &str) -> String {
+    format!(
+        "Varos works normally, but AI agents (Claude Code, Codex…) can't connect to it in this session.\n\nVaros couldn't use its connection key in the macOS Keychain ({reason}).\n\nTo try again, quit and reopen Varos and choose Allow when macOS asks about the Keychain."
+    )
+}
 pub fn observe(ws: &mut Workspace) {
     SERVICE.with(|s| {
         if let Some(service) = s.borrow_mut().as_mut() {
@@ -104,7 +110,12 @@ pub fn observe(ws: &mut Workspace) {
         }
     });
 }
-pub fn run(request: varos_bridge::ipc::Pending, ws: &mut Workspace, ui: &mut dyn DocUi) -> crate::host::Ran {
+pub fn run(mut request: varos_bridge::ipc::Pending, ws: &mut Workspace, ui: &mut dyn DocUi) -> crate::host::Ran {
+    // ADR-0011 §3: re-evaluate the paired agent's grant on the owning thread before dispatch.
+    if let Err(error) = request.authorize() {
+        let _ = request.reply.send(varos_bridge::Reply::failure(error));
+        return crate::host::Ran::default();
+    }
     let mut desktop = Desktop { ws, ui: Some(ui), snapshot: None };
     let reply = SERVICE.with(|s| match s.borrow_mut().as_mut() {
         Some(service) => service.handle(&mut desktop, &request.context, request.request, &request.cancelled),
@@ -171,12 +182,15 @@ mod tests {
                     epoch: "epoch".into(),
                     read: true,
                     edit: true,
+                    destructive: true,
+                    history: true,
                     allow_history: false,
                     allow_destructive: false,
                 },
                 request: req,
                 cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 reply: tx,
+                recheck: None,
             },
             ws,
             fields,
@@ -222,12 +236,15 @@ mod tests {
                     epoch: "epoch".into(),
                     read: true,
                     edit: true,
+                    destructive: true,
+                    history: true,
                     allow_history: false,
                     allow_destructive: false,
                 },
                 request: req,
                 cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 reply: tx,
+                recheck: None,
             },
             &mut ws,
             &mut fields,

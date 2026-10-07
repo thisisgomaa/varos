@@ -356,6 +356,19 @@ pub struct Status {
     pub request_id: String,
 }
 impl Request {
+    /// Wire tool name (for audit records; never carries arguments).
+    pub fn tool(&self) -> &'static str {
+        match self {
+            Self::Capabilities(_) => "capabilities",
+            Self::ListBoards(_) => "list_boards",
+            Self::Describe(_) => "describe",
+            Self::Select(_) => "select",
+            Self::Edit(_) => "edit",
+            Self::History(_) => "history",
+            Self::RequestStatus(_) => "request_status",
+            Self::Snapshot(_) => "snapshot",
+        }
+    }
     pub fn api(&self) -> &str {
         match self {
             Self::Capabilities(v) => &v.api,
@@ -407,6 +420,12 @@ pub struct ErrorDetails {
     pub actual_rev: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+    /// ADR-0011 `ambiguous_target`: bounded, non-secret host candidates (no board names or paths).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub candidates: Vec<Value>,
+    /// ADR-0011 `pairing_required`: the pending request the owner must approve.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairing: Option<Value>,
 }
 impl std::ops::Deref for Error {
     type Target = ErrorDetails;
@@ -424,7 +443,10 @@ impl Error {
         Self {
             code: code.into(),
             reason: reason.into().chars().take(1024).collect(),
-            retryable: matches!(code, "busy" | "revision_conflict"),
+            retryable: matches!(
+                code,
+                "busy" | "revision_conflict" | "host_not_running" | "pairing_required" | "session_reset"
+            ),
             details: Box::default(),
         }
     }
