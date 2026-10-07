@@ -175,7 +175,8 @@ struct ToolBtn {
 pub struct Ui {
     ctx: egui::Context,
     state: egui_winit::State,
-    pub repaint: bool,
+    /// When egui wants its next pass (`now` + its repaint delay; `None` = it wants none). The host
+    /// paces it to the display refresh and draws it from the loop's plan (`pacing`).
     pub repaint_at: Option<Instant>,
     pub recovery: crate::recovery_host::RecoveryUi,
     /// Background save / export status for the status bar (`file_jobs::status_text`); when set it
@@ -360,7 +361,6 @@ impl Ui {
         Ui {
             ctx,
             state,
-            repaint: false,
             repaint_at: None,
             recovery: Default::default(),
             file_status: String::new(),
@@ -410,20 +410,15 @@ impl Ui {
         }
     }
 
-    /// Feed a window event to egui. Returns true if egui consumed it (so the canvas should NOT).
-    pub fn on_event(&mut self, window: &Window, ev: &WindowEvent) -> bool {
-        #[cfg(windows)]
-        {
-            self.state.on_window_event(window, ev).consumed
-        }
-        #[cfg(not(windows))]
-        {
-            let response = self.state.on_window_event(window, ev);
-            if response.repaint && !matches!(ev, WindowEvent::RedrawRequested) {
-                window.request_redraw();
-            }
-            response.consumed
-        }
+    /// Feed a window event to egui. `consumed` = egui took it (so the canvas should NOT); `repaint` =
+    /// egui wants a frame for it (the host asks for that frame, tagged — `pacing`).
+    pub fn on_event(&mut self, window: &Window, ev: &WindowEvent) -> egui_winit::EventResponse {
+        self.state.on_window_event(window, ev)
+    }
+    /// Why egui ran this frame (the repaint requests of the previous pass, `file:line reason`) —
+    /// `VAROS_FRAME_DEBUG=1` only.
+    pub fn repaint_causes(&self) -> Vec<String> {
+        self.ctx.repaint_causes().iter().map(|c| c.to_string()).collect()
     }
     /// Empty background bar space can drag the macOS window; floating UI always owns its area.
     #[cfg(target_os = "macos")]
@@ -600,7 +595,6 @@ impl Ui {
         self.state.handle_platform_output(window, out.platform_output);
         self.repaint_at =
             out.viewport_output.get(&egui::ViewportId::ROOT).and_then(|v| Instant::now().checked_add(v.repaint_delay));
-        self.repaint = out.viewport_output.get(&egui::ViewportId::ROOT).is_some_and(|v| v.repaint_delay.is_zero());
         let jobs = self.ctx.tessellate(out.shapes, out.pixels_per_point);
         let size = window.inner_size();
         (
@@ -917,7 +911,6 @@ impl Ui {
         });
         self.repaint_at =
             out.viewport_output.get(&egui::ViewportId::ROOT).and_then(|v| Instant::now().checked_add(v.repaint_delay));
-        self.repaint = out.viewport_output.get(&egui::ViewportId::ROOT).is_some_and(|v| v.repaint_delay.is_zero());
         let jobs = self.ctx.tessellate(out.shapes, out.pixels_per_point);
         let sz = window.inner_size();
         let screen = egui_wgpu::ScreenDescriptor {

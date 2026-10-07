@@ -1,5 +1,6 @@
 //! API 1.0 adapters. No window, GPU, provider or filesystem editing dependency.
 pub mod cli;
+pub mod conn;
 mod design;
 pub mod dto;
 pub mod ipc;

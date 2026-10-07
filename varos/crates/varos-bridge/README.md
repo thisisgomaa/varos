@@ -6,36 +6,38 @@ This slice implements `capabilities`, `list_boards`, `describe` (including expli
 
 Slice 1 has landed and the owner verified live move + recolour followed by one human undo. Slice 3's live acceptance (the Instagram Story batch below on an open board, then one ⌘Z) is pending. Slice 2's live acceptance is still pending: an external agent builds the poster below on the active open board, asks for a snapshot, then the owner checks the objects and undoes the entire design once. Headless tests and CPU preview inspection do not establish live desktop acceptance.
 
-## Try it on macOS, without installing anything
+## Try it on macOS — register once, then just say "use Varos"
 
-From the repository's `varos/` directory:
+**مرة واحدة بس:** تسجّل Varos عند Claude Code بأمر واحد. بعد كده أي جلسة جديدة في أي فولدر تقدر تقول "use Varos" وخلاص — من غير سكريبتات ولا توكن في أي ملف إعدادات. أول مرة الوكيل بيتصل، Varos بيطلب موافقتك أنت (من التيرمنال مؤقتاً لحد ما يتعمل شكل في البرنامج).
 
-```sh
-cargo build -p varos-app --bin varos
-cargo build -p varos-cli -p varos-bridge
-```
+1. **Install Varos with its helpers** (the helpers live inside the app so their path never changes): `tools/mac/bundle.sh` now copies `varos-bridge` and `varos-cli` into `Varos.app/Contents/MacOS/`. An older installed Varos does not contain the C1 listener.
+2. **Register once** (user scope — every folder, every new session):
 
-1. Start **this build**, `target/debug/varos`, from a terminal. Open a board with two editable objects. Keep that board active, finish any text/number field, close the colour picker and release any drag. A previously installed Varos does not contain this listener.
-2. In another terminal, run `target/debug/varos-cli bridge-endpoint`. It prints endpoint **file paths**, never tokens. The desktop also prints the path to stderr. Copy the path for the running build. The location is `$TMPDIR/varos-bridge-<pid>-<launch>/endpoint.json` (normally under the macOS user temporary directory). The app creates the directory with mode 0700, the socket and endpoint file with mode 0600. Each launch gets a new token and epoch; old connections never fall back to TCP. On normal shutdown the directory is removed. After a crash a stale file may remain, but connection fails; use the new launch's path.
-3. Read the chosen file explicitly, and register the stdio server:
+   ```sh
+   /Applications/Varos.app/Contents/MacOS/varos-cli bridge register claude
+   ```
 
-```sh
-# Replace this with the exact path printed above; choose one endpoint, not a directory scan.
-BRIDGE_ENDPOINT='/path/from/bridge-endpoint/endpoint.json'
-BRIDGE_SOCKET="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["socket"])' "$BRIDGE_ENDPOINT")"
-BRIDGE_TOKEN="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "$BRIDGE_ENDPOINT")"
+   This runs `claude mcp add --transport stdio --scope user varos -- /Applications/Varos.app/Contents/MacOS/varos-bridge mcp`. If `claude` is not on your PATH it prints that exact command instead (and, if Claude Code desktop's own CLI is found, how to use it: `… register claude --claude '<path>'`). `--replace` replaces only an existing `varos` entry; `--dry-run` only prints. Other clients: `register codex` (runs `codex mcp add varos -- <path> mcp`), `register cursor` / `register print` (print the `mcpServers` entry to merge into `~/.cursor/mcp.json`). The entry is only the executable and `mcp` — **no token, socket path or key**.
+3. **Open Varos**, then open Claude Code in **any** folder and say **"use Varos"**. Varos's window never waits for the Keychain: its connection key loads in the background. If macOS asks whether Varos may use its Keychain item, choose **Always Allow**; if access is refused or the Keychain is locked, Varos keeps working and shows one notice that agents can't connect in this session. The agent's tools load immediately even if Varos is closed; a call then answers `host_not_running` ("open Varos") instead of hanging.
+4. **First time only — approve the agent.** The first call answers `pairing_required` with a request id and a short match code (like `4F2-9A1`) — the agent shows you both. In **your own Terminal** (an agent cannot do this for you: the command needs an interactive terminal):
 
-claude mcp add --transport stdio varos -- "$PWD/target/debug/varos-bridge" mcp \
-  --attach "$BRIDGE_SOCKET" --token "$BRIDGE_TOKEN"
-```
+   ```sh
+   /Applications/Varos.app/Contents/MacOS/varos-cli bridge pair            # see who is waiting (label is a claim; the key is verified)
+   /Applications/Varos.app/Contents/MacOS/varos-cli bridge pair --approve <request-id>   # default scopes: read,edit
+   ```
 
-The endpoint file is a capability: choosing it and passing its token explicitly grants this proxy read/edit access to this desktop launch's exposed open boards, including boards subsequently opened. It grants no file/root/shell access. Do not share it. Claude Code stores the server arguments in its local MCP configuration. `list_boards` exposes session handles, names, revisions and dirty/active state, never backing paths, the private Home placeholder or Recent entries. No tool can widen these grants. An inactive/Home board can be read but cannot be edited/selected/undone; activate it yourself. Reopening produces a different board handle. Same-user capability protection does not protect against a compromised macOS account.
+   `--approve` does **not** print the code: it asks you to type the match code the agent showed you, which proves you are approving that same agent. A wrong code approves nothing. Add `--scopes read,edit,destructive` or `…,history` only if you want that agent to be *allowed to ask* for delete/ungroup or shared undo (each still needs the exact confirmation described below). `--deny <request-id>` refuses. Requests expire after 10 minutes. **This terminal approval is temporary** — a pairing screen inside Varos needs saved mockups and owner approval first (ADR-0011 §3), so none is built.
+5. Ask the agent again; it now works. Approval is remembered across Varos and Claude Code restarts. A fresh Claude Code session reuses the same approved profile.
 
-**Command syntax checked live on 2026-10-06:** the official [Claude Code MCP page, “Option 3: Add a local stdio server”](https://code.claude.com/docs/en/mcp#option-3-add-a-local-stdio-server) documents `claude mcp add [options] <name> -- <command> [args...]`, `--transport stdio`, and passing the server's flags after `--`. That is the syntax used above. This was a documentation check; no Claude registration/login/provider call was performed during implementation.
+**See / remove agents:** `varos-cli bridge agents` lists approved agents and scopes; `varos-cli bridge agents revoke <profile-id>` removes one (its next call — even one already queued — is refused; it would have to be paired again as a new agent); `varos-cli bridge agents audit` shows the recent audit log; `varos-cli bridge hosts` lists running Varos launches. To unregister from Claude Code: `claude mcp remove --scope user varos`.
 
-4. Start/restart Claude Code in the chosen project and inspect `/mcp` to check Varos is connected. Ask:
+**Two Varos launches at once:** the agent gets `ambiguous_target` with a short list (instance, pid, mode, build — never board names or paths) and must ask you. Close the extra Varos, or pass `--pid <pid>` from that list (instance ids change every launch, so don't register them). If the attached Varos restarts, the next call answers `session_reset` once (board handles changed; the agent lists boards again).
 
-> Call Varos capabilities with api 1.0. List the boards. Describe the active board, then request a page of objects with fields bounds, paint and parent. Choose two unlocked visible path IDs. Move them 10 points right and recolour their fills to #FF6600FF in ONE edit request with two operations, using the board's expected_rev and a new monotonic request_id. Keep my selection. Report the receipt. Do not save or request history.
+From a source checkout the same works with `target/debug/varos` (start it from a terminal) and `target/debug/varos-cli bridge register claude`; `register` warns that a build-folder path is not stable. `tools/mac/bridge-connect.sh` is deprecated and now only runs `varos-cli bridge register claude`.
+
+Ask, for example:
+
+> Use Varos. Call capabilities with api 1.0. List the boards. Describe the active board, then request a page of objects with fields bounds, paint and parent. Choose two unlocked visible path IDs. Move them 10 points right and recolour their fills to #FF6600FF in ONE edit request with two operations, using the board's expected_rev and a new monotonic request_id. Keep my selection. Report the receipt. Do not save or request history.
 
 Use IDs returned by the bridge, such as `path:42` / `node:8`, not names or stacking positions. The concrete edit is:
 
@@ -51,9 +53,19 @@ Use IDs returned by the bridge, such as `path:42` / `node:8`, not names or stack
 
 The sample board, revision and IDs are placeholders; use live values. Coordinates are document points, x right, y down, independent of zoom/ruler origin. Fill/stroke are `#RRGGBBAA`; `null` removes paint; absent paint stays unchanged. `stroke_width` is nonnegative points; `opacity` is 0–1. Node targets expand to all descendant paths and refuse if any is hidden/locked. A partial rotated group move changes only the requested leaf paths.
 
-5. Look at Varos: both objects should move/recolour together. Press **⌘Z once** with the canvas focused: both changes should undo together. Save through the existing human save command if desired. This real window check is the acceptance step; headless tests are not evidence that Ahmed has seen it.
+Look at Varos: both objects should move/recolour together. Press **⌘Z once** with the canvas focused: both changes should undo together. This real window check is the acceptance step; headless tests are not evidence that Ahmed has seen it. No auto-save happens on agent disconnect.
 
-Disconnect/removal: `claude mcp remove varos`. After restarting Varos, repeat registration with its new endpoint/token. No auto-save happens on agent disconnect.
+## Connection and trust (ADR-0011 C1)
+
+- **Discovery.** Each running Varos publishes `hosts/<instance-id>/endpoint.json` (0600) plus socket `b.sock` (0600) in an owner-only (0700) `varos-bridge/` folder inside the macOS per-user temp directory, resolved with `confstr(_CS_DARWIN_USER_TEMP_DIR)`, not `$TMPDIR`. The record holds `discovery_version`, random `instance_id`, `epoch`, pid + process start time, `mode`, socket path, connection version range, app build and the host key fingerprint — no token, key, board name or file path. Records are published by atomic rename; the host removes only its own identity-checked entry on exit and cleans at most 16 stale (dead-pid / pid-reused) entries at start, never recursively. Socket paths are checked against the 103-byte macOS limit. The record only *locates* a host; it never authorizes one.
+- **Identity.** One per-user host key (loaded on a background thread at launch; a refusal is reported once through Varos's normal notice and the app runs without the paired listener) and one key per agent profile (Ed25519, `ed25519-dalek`), stored in the macOS login Keychain (service `com.varos.bridge`, accounts `host` / `agent:<profile-id>`) behind a `CredentialStore` trait. A locked/unavailable Keychain returns `credential_unavailable`; there is no plaintext fallback. Windows/Linux have no store yet (`credential_unavailable`; Windows is compile-only).
+- **Handshake (connection 1.0).** Agent nonce → host signs (versions offered/chosen, API, instance, epoch, host key, both nonces) → agent checks the signature, the registry fingerprint and the epoch, then signs the same binding plus its profile/session (offered versions are length-prefixed in the signed transcript) over the host's fresh nonce → host verifies once, checks the trust store and either admits the call with the approved scopes or records a pairing request. Peer uid is still checked on every connection. If Varos's own key changed since an agent was approved (e.g. its Keychain item was reset), the agent is not stuck: it gets `pairing_required` saying the key changed, and one new approval fixes it. Nothing about boards is released before this succeeds.
+- **Trust store.** `~/Library/Application Support/Varos/bridge/trust.json` (0600, folder 0700): approved profiles (public key, fingerprint, claimed label, scopes, pinned host fingerprint), a revocation list and a monotonic trust generation, changed under an `flock` transaction. `profiles.json` maps an MCP client name (a hint, never identity) to its profile id. The host re-reads trust on every connection and again on the owning thread right before the call runs; an unreadable store denies.
+- **Scopes.** `read` (capabilities/list/describe/snapshot/status), `edit` (select and ordinary edits), `destructive` (eligibility to request delete/ungroup/delete_artboard) and `history` (eligibility to request shared undo/redo). Default approval is `read,edit`. Destructive and history still need the exact single-use owner grant below; a scope alone never confirms anything. Board policy in C1 is "all exposed open boards" (per-board grants are C2).
+- **Audit.** `~/Library/Application Support/Varos/bridge/audit/audit.log` (0600, persistent): time, agent profile, session prefix, request id, verb, board handle, from/to revision, result code, plus pairing/revocation events — never names, paths, payloads or keys. Rotation (10 MiB; rotated file deleted after 30 days) and appends happen under one lock. A mutation is refused (`audit_unavailable`) if its audit line cannot be written first. Opt-in legacy token calls are audited as agent `legacy`. It is a diagnostic log, not tamper-proof against the account owner.
+- **Legacy transition (deprecated, one slice).** The slice-1 per-launch token endpoint (`$TMPDIR/varos-bridge-<pid>-<launch>/endpoint.json`, `varos-cli bridge-endpoint`, `--attach <socket> --token …`) is **off by default** — it would make pairing optional. Only if you deliberately launch the desktop with `VAROS_BRIDGE_LEGACY=1` does it run, on its **own** socket, for old setups during this one transition slice. Its token then grants every scope without pairing, exactly as before (its calls are audited as agent `legacy`); the paired socket never accepts it. `tools/mac/bridge-connect.sh` no longer needs it: it only runs `varos-cli bridge register claude`. It is removed in the next connection slice.
+- **Test override.** `VAROS_BRIDGE_HOME=<existing 0700 folder>` relocates discovery and trust files for tests. Debug builds only — a release build ignores it with a warning. It never relocates or weakens secrets.
+- **Keychain prompts after rebuilds (owner decision).** The login Keychain trusts the *signing identity* of the binary that created each item. Ad-hoc signatures (every `cargo build`, and `bundle.sh` by default) change on each build, so macOS asks again after each rebuild. A stable self-signed code-signing identity, created once by the owner (Keychain Access ▸ Certificate Assistant ▸ Create a Certificate, type "Code Signing"), passed as `CODESIGN_ID="<name>" tools/mac/bundle.sh`, keeps the same identity across rebuilds and stops those prompts for the installed app. Nothing creates such a certificate automatically; `target/debug` builds stay ad-hoc.
 
 ## API details and refusal behavior
 
@@ -195,21 +207,23 @@ For this temporary slice only, Ahmed may deliberately launch the **desktop** wit
 
 ```sh
 # JSON arguments on stdin, or --request-file request.json (same tool argument object).
-printf '%s\n' '{"api":"1.0"}' | target/debug/varos-cli bridge capabilities \
-  --attach "$BRIDGE_SOCKET" --token "$BRIDGE_TOKEN" --json
+# Same discovery, Keychain identity and pairing as MCP (the CLI is its own agent profile).
+printf '%s\n' '{"api":"1.0"}' | target/debug/varos-bridge capabilities --json
 
 printf '%s\n' '{"board":"b2","fields":["bounds","paint","parent"]}' | \
-  target/debug/varos-bridge describe --attach "$BRIDGE_SOCKET" --token "$BRIDGE_TOKEN"
+  target/debug/varos-cli bridge describe --pid <varos-pid>
 ```
 
 CLI defaults to the compact text; `--json` returns the same structured receipt as MCP. Failures exit nonzero. The CLI and MCP bindings only decode/encode, authenticate and call the one service. They never reload/overwrite the file behind the live editor.
 
 ## Verification boundary
 
-Tests construct no GPU renderer or event loop. Frozen API 1.0 describe/edit/error/poster fixtures, actual MCP binding with fake-host CLI parity, each design verb, indexed rollback, request-local identity, confirmation binding, bounded geometry, valid PNG dimensions, explicit CLI output, one-step undo/redo, revisions, busy/inactive/scope/auth refusal, cancellation, journals, monotonic receipts and allocator branching run headlessly. Two real Unix-socket integration tests are explicitly ignored by default because the implementation sandbox rejects socket bind with `EPERM`; this is **unverified native IPC**, not a pass. Run them from a normal macOS terminal:
+Tests construct no GPU renderer or event loop. Frozen API 1.0 describe/edit/error/poster fixtures, actual MCP binding with fake-host CLI parity, each design verb, indexed rollback, request-local identity, confirmation binding, bounded geometry, valid PNG dimensions, explicit CLI output, one-step undo/redo, revisions, busy/inactive/scope/auth refusal, cancellation, journals, monotonic receipts and allocator branching run headlessly. Four real Unix-socket integration tests (legacy token path, real-binary MCP, the C1 paired path: pairing → typed match code → scopes → revoke-while-queued → audit incl. `legacy` → two launches → registry cleanup, and host-key change → `session_reset` → `pairing_required` → re-approve with a background-loaded key) are ignored by default because some sandboxes reject socket bind with `EPERM`. Run them from a normal macOS terminal:
 
 ```sh
 cargo test -p varos-bridge --test contracts -- --ignored
 ```
+
+C1 headless tests (`tests/connection.rs`) cover the registry (round trip, permissions, stale/pid-reuse cleanup, forged and symlinked entries), deterministic selection, the handshake (happy path, wrong host/agent key, replayed nonce, epoch mismatch, downgrade), pairing → approve → revoke → refused, bounded pending requests, scope parsing, trust-store read failure, the owning-thread recheck, locked credential store, per-client profiles, a changed host key asking again, one profile per client under concurrent first use (approved profile preferred), the deferred host-key load (never blocks start; refusal reported once), FIFO-safe private reads, the `--attach auto` state machine on a fake registry, and the real `varos-bridge mcp` binary initializing and answering `host_not_running` with no Varos. The macOS Keychain itself is **not** exercised by the automatic tests (they use an in-memory store); `cargo test -p varos-bridge --lib keychain -- --ignored` writes and deletes one throwaway Keychain item. Keychain prompts after rebuilds/re-signing and behaviour across app upgrades are the open C1 signing gate.
 
 Then perform Ahmed's window exercise above. Kernel peer-uid checks, real socket lifecycle and the owner window remain separate from the passing fake-host proof. No merge, installation or owner acceptance is claimed.

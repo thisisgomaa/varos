@@ -268,6 +268,8 @@ Fact: egui 0.35 shapes Arabic into wrong clusters (`لوحة أولى`: 9 scalar
 
 Acceptance names (both paths): `arabic_name_shapes_joined_clusters`, `mixed_bidi_visual_order_matches_uba` ("Logo شعار v2"), `rtl_caret_moves_by_grapheme`, `arabic_selection_copy_paste_roundtrip`, `stored_text_unchanged`; owner hand check: type an Arabic and a mixed name in Layers rename, artboard name and Save As, and read them in tabs and Recent. **Off until it passes**: Plex Arabic in any field/label fallback; any claim of Arabic UI support; canvas Arabic text tool.
 
+**Owner chose path B on 2026-10-07 → [ADR-0012](../adr/ADR-0012-ui-text-engine.md)** (proposed — awaiting owner): one `varos-text` engine for UI and canvas, `kit::text` painter for user strings, our own editor inside the K3 field law; pieces T1–T4.
+
 ## 9. Pieces (in order)
 
 | # | Piece | Owns | Acceptance (owner one sentence + tests) | Defers |
@@ -279,7 +281,7 @@ Acceptance names (both paths): `arabic_name_shapes_joined_clusters`, `mixed_bidi
 | P5 | K2 fixes: canvas Tab no-op, focus rings on legacy controls | `main.rs` router, `ui/controls.rs` | "Tab on the canvas does nothing"; key-routing tests | Hide Panels |
 | P6 | U2-P measure | perf counters, fixture generator | K4 table filled with real numbers | any cache work |
 | P7 | Remaining moves (§7), one module per commit | `ui/*` | "Nothing changed"; `ui_rs_only_shrinks` lowered each time | — |
-| P8 | Arabic gate (§8) | owner chooses path A/B | §8 names + owner hand check | full RTL layout |
+| P8 | Arabic gate (§8) | **path B chosen 2026-10-07 → [ADR-0012](../adr/ADR-0012-ui-text-engine.md)**: T1 `varos-text` crate · T2 read-only labels via `kit::text` · T3 editable fields (own editor in K3) · T4 canvas TextBox reuse (ADR-0010 P2) | §8 names + owner hand check | full RTL layout |
 | then | U1-A/B/C → U2-O/D → U3-T/K/A/B/C → U4-S/M/P → U5-A/B → U6 (v2 order) | per v2 ownership; one owner per shared file | piece tests + owner window check | Workspaces, size-model persistence, pinch zoom, cache optimisation before P6, screen reader, vendor-neutral standard |
 
 ## Spec history (kept in place)

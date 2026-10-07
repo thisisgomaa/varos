@@ -250,7 +250,10 @@ impl Lifecycle<'_> {
                     s.repaired_on_open = notice == Some(varos_core::format::RELEASED_MASKS_NOTICE);
                 }
                 self.store.remember(&at, old, Some(&board));
-                if let Some(message) = notice {
+                // Owner 2026-10-07 («البتاعة دي رخمة»): a plain format migration is silent — the file
+                // opens, the tab shows nothing special, Save writes the current format. Only a repair
+                // that CHANGED content (released legacy masks) still tells the user.
+                if let Some(message) = notice.filter(|m| *m == varos_core::format::RELEASED_MASKS_NOTICE) {
                     self.dialogs.notice(&format!("Opened “{}”", file_name(&path)), message);
                 }
             }
@@ -1203,9 +1206,14 @@ mod tests {
     fn migration_notice_only_after_successful_first_open() {
         let mut r = Rig::new();
         r.s.put("old.vrs", Document::default());
-        r.s.notices.insert(PathBuf::from("old.vrs"), "Broken clipping mask released.");
+        r.s.notices.insert(PathBuf::from("old.vrs"), varos_core::format::RELEASED_MASKS_NOTICE);
         r.open("old.vrs");
         assert_eq!(r.prompts(), vec!["notice Opened “old.vrs”"]);
+        // a plain format migration is silent (owner 2026-10-07)
+        r.s.put("plain.vrs", Document::default());
+        r.s.notices.insert(PathBuf::from("plain.vrs"), varos_core::format::MIGRATION_NOTICE);
+        r.open("plain.vrs");
+        assert!(r.prompts().is_empty(), "plain migration shows no dialog");
         r.open("old.vrs");
         assert!(r.prompts().is_empty(), "already-open files are not reloaded or re-notified");
         r.s.put("bad.vrs", Document::default());
