@@ -274,3 +274,43 @@ remain deferred. Details: `varos/crates/varos-bridge/README.md`.
 ## Status
 
 accepted — owner 2026-10-06. Supersedes ADR-0004's deferral of the AI command/query API in the scope of §7 only.
+
+## Amendment — 2026-10-07: slice 4 remaining creation, page and file operations
+
+The commissioned slice adds `add_path` (2–1,000 explicit anchors with absolute point/handle
+coordinates), rectangle `radius` (0 through half the shorter dimension), `reorder_artboard`
+(zero-based position), `duplicate_artboard` (`with_art` required, optional relative offset),
+`set_artboard_color` and `set_artboard_clip`. A rounded rectangle is an eight-anchor cubic path,
+using the model's circle approximation constant; it has no live radius property. Duplication
+inserts after the source and preserves active navigation. Artwork uses the desktop's overlap
+membership/copy helper, including whole clipping groups, inherited transforms and layer membership.
+Fresh page/path/node/anchor identities use the session high-water allocator. All document verbs
+use the same isolated stage and one published undo step.
+
+`save`, `save_as` and `export_pdf` are standalone tools, never edit operations. They require the
+new C1 `files` scope, denied by default (including previously approved profiles). Owner approval
+can include `--scopes read,edit,files`. `save` only targets the current `.vrs` backing file, with
+the source fingerprint checked on the worker and immediately before atomic replacement.
+`save_as`/`export_pdf` require an absolute explicit destination in a root granted by
+`VAROS_BRIDGE_FILE_ROOTS=<dir:dir>` at desktop launch. This environment setting is temporary owner
+policy, pending a reviewed UI. Roots are captured/canonicalized at launch. Existing destinations
+are refused; this slice provides no exact overwrite-confirmation ceremony. All open backing files
+and hard-link aliases are refused as explicit destinations. Parent canonicalization rejects escapes;
+the Mac writer pins and rechecks directory identity, traverses without following symlinks, refuses
+non-local volumes, and publishes new files without replacement. Windows file hosting remains
+unsupported; Windows remains compilation-only. The safe encoding/durability writer is reused.
+
+File requests return `accepted:true` and a ticket. `request_status` reports pending/completed and
+the completion receipt, including durability or a typed refusal. Worker policy errors therefore
+appear on completion, not in the acceptance receipt. Worker unavailability refuses before acceptance;
+there is no UI-thread fallback. The original snapshot becomes a successful save's checkpoint, so
+later edits stay dirty. File completions never open dialogs or settle a human field/gesture.
+The worker rechecks the agent's current `files` grant before work and publication. Export scopes
+are `all_visible_artboards`, `artboard:N` (visible page only), and `artwork_bounds` (free canvas only).
+Existing v1 fixtures retain their bytes; the new logo request/result is frozen separately.
+
+### Slice 4 independent review amendment (2026-10-07)
+
+save_as writes a copy; the board stays on its current file (owner may widen later). No checkpoint, dirty-state or Recent change accompanies the copy. File fingerprint mismatches and destination-exists races use `save_conflict`; other IO uses `io_error`. Completion outcomes are audited with verb, board, ticket and result code, without paths.
+
+Known widening for the owner until C2: the `files` grant lets an agent save the backing file of any board it can read (not per-file).

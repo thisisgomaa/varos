@@ -40,6 +40,7 @@ impl Host for FakeHost {
                 rev: self.editor.rev,
                 dirty: true,
                 active: self.active,
+                backing_file: None,
             }]
         } else {
             vec![]
@@ -72,6 +73,7 @@ fn ctx() -> Context {
         edit: true,
         destructive: true,
         history: true,
+        files: false,
         allow_history: false,
         allow_destructive: false,
     }
@@ -2109,4 +2111,277 @@ fn geometry_single_object_byte_budget_and_capabilities_are_honest() {
     assert_eq!(caps["limits"]["geometry_page_bytes"], 16384);
     assert_eq!(caps["limits"]["geometry_typical_anchors_per_page"], 300);
     assert_eq!(caps["limits"]["geometry_anchor_pagination"], false);
+}
+
+#[test]
+fn slice4_path_radius_validation_and_indexed_rollback() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let rev = h.editor.rev;
+    let before = h.editor.doc.clone();
+    let shape =
+        json!({"verb":"add_shape","kind":"rect","bounds":[0,0,100,60],"radius":10,"fill":"#FF0000FF","local":"$round"});
+    let path = json!({"verb":"add_path","anchors":[{"p":[0,0],"hout":[5,0]},{"p":[20,20],"hin":[15,20],"smooth":true}],"closed":false,"stroke":"#000000FF","stroke_width":2,"local":"$curve"});
+    let r = handle(
+        &mut s,
+        &mut h,
+        req("edit", json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":rev,"ops":[shape,path]})),
+    );
+    assert!(r.ok, "{r:?}");
+    assert_eq!(r.undo_steps, 1);
+    let doc = h.editor.doc.clone();
+    let round = doc.paths.iter().find(|p| p.anchors.len() == 8).unwrap();
+    assert_eq!(round.anchors[0].p, [10.0, 0.0]);
+    assert_eq!(round.anchors[1].hout, Some([90.0 + varos_core::model::K * 10.0, 0.0]));
+    let curve = doc.paths.last().unwrap();
+    assert!(!curve.closed);
+    assert_eq!(curve.anchors[0].hout, Some([5.0, 0.0]));
+    let max = curve.anchors.iter().map(|a| a.id).max().unwrap();
+    h.editor.undo();
+    assert!(h.editor.doc.content_eq(&before));
+    for invalid in [
+        json!({"verb":"add_path","anchors":[{"p":[0,0]}],"closed":true,"fill":"#FF0000FF"}),
+        json!({"verb":"add_shape","kind":"rect","bounds":[0,0,100,60],"radius":-1,"fill":"#FF0000FF"}),
+        json!({"verb":"add_shape","kind":"ellipse","bounds":[0,0,100,60],"radius":10,"fill":"#FF0000FF"}),
+        json!({"verb":"add_path","anchors":vec![json!({"p":[0,0]});1001],"closed":true,"fill":"#FF0000FF"}),
+    ] {
+        let rev = h.editor.rev;
+        let r = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":rev,"ops":[{"verb":"move","ids":["path:10"],"delta":[9,0]},invalid]}),
+            ),
+        );
+        assert!(!r.ok);
+        assert_eq!(r.error.unwrap().op_index, Some(1));
+        assert!(h.editor.doc.content_eq(&before));
+    }
+    let rev = h.editor.rev;
+    let r = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":rev,"ops":[{"verb":"add_path","anchors":[{"p":[0,0]},{"p":[1,1]}],"closed":false,"fill":"#FF0000FF","local":"$new"},{"verb":"move","ids":["$new"],"delta":[3,4]}]}),
+        ),
+    );
+    assert!(r.ok, "{r:?}");
+    assert!(h.editor.doc.paths.last().unwrap().id > max);
+}
+
+#[test]
+fn slice4_selection_field_and_schema_completeness() {
+    let mut s = Service::new("test-epoch".into());
+    let mut h = FakeHost::new();
+    h.editor.bridge_select(vec![10, 20]).unwrap();
+    let r = handle(&mut s, &mut h, req("describe", json!({"board":"b1","fields":["selection"],"limit":1})));
+    assert!(r.ok, "{r:?}");
+    let v = r.result.unwrap();
+    assert_eq!(v["selection"], json!(["path:10"]));
+    assert_eq!(v["more"], true);
+    let r = handle(
+        &mut s,
+        &mut h,
+        req("describe", json!({"board":"b1","fields":["selection"],"limit":1,"cursor":v["cursor"]})),
+    );
+    assert_eq!(r.result.unwrap()["selection"], json!(["path:20"]));
+    assert!(varos_bridge::mcp::decode_tool("edit",json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":0,"ops":[{"verb":"set_artboard_color","id":"artboard:1"}]})).is_err());
+    let schemas = varos_bridge::mcp::tools();
+    let tools = schemas["tools"].as_array().unwrap();
+    for name in varos_bridge::TOOLS {
+        assert!(tools.iter().any(|t| t["name"] == *name));
+    }
+    let edit = tools.iter().find(|t| t["name"] == "edit").unwrap();
+    let ops = edit["inputSchema"]["properties"]["ops"]["items"]["oneOf"].as_array().unwrap();
+    for verb in varos_bridge::EDIT_VERBS {
+        assert!(ops.iter().any(|o| o["properties"]["verb"]["const"] == *verb), "{verb}");
+    }
+}
+
+#[test]
+fn slice4_files_scope_and_save_ticket_completion_fake_host() {
+    struct Files {
+        host: FakeHost,
+        calls: usize,
+        done: bool,
+        code: Option<&'static str>,
+        pending: bool,
+    }
+    impl Host for Files {
+        fn boards(&self) -> Vec<BoardInfo> {
+            self.host.boards()
+        }
+        fn prepare(&mut self, b: &str, m: bool) -> Result<(), Error> {
+            self.host.prepare(b, m)
+        }
+        fn access(&mut self, b: &str) -> Result<BoardAccess<'_>, Error> {
+            self.host.access(b)
+        }
+        fn file_effect(&mut self, _: &str, _: &varos_bridge::dto::FileEffect) -> Result<Reply, Error> {
+            self.calls += 1;
+            Ok(Reply::success(json!({"accepted":true,"ticket":77})))
+        }
+        fn file_pending(&self, _: u64) -> bool {
+            self.pending
+        }
+        fn file_status(&mut self, t: u64) -> Option<Reply> {
+            (t == 77 && self.done).then(|| {
+                self.code.map_or_else(
+                    || Reply::success(json!({"saved":true,"durable":true})),
+                    |c| Reply::failure(Error::new(c, "test failure")),
+                )
+            })
+        }
+    }
+    let mut h = Files { host: FakeHost::new(), calls: 0, done: false, code: None, pending: true };
+    let mut s = Service::new("test-epoch".into());
+    let rev = h.host.editor.rev;
+    let request = || req("save", json!({"api":"1.0","board":"b1","expected_rev":rev,"request_id":"r1"}));
+    let mut context = ctx();
+    let r = s.handle(&mut h, &context, request(), &AtomicBool::new(false));
+    assert_eq!(r.error.unwrap().code, "scope_refused");
+    assert_eq!(h.calls, 0);
+    for (tool, extras) in [
+        ("save_as", json!({"path":"/granted/copy.vrs"})),
+        ("export_pdf", json!({"path":"/granted/logo.pdf","scope":"artwork_bounds"})),
+    ] {
+        let mut args = json!({"api":"1.0","board":"b1","expected_rev":rev,"request_id":"r1"});
+        args.as_object_mut().unwrap().extend(extras.as_object().unwrap().clone());
+        let r = s.handle(&mut h, &context, req(tool, args.clone()), &AtomicBool::new(false));
+        assert_eq!(r.error.unwrap().code, "scope_refused");
+        assert_eq!(h.calls, 0);
+        let mut separate = Files { host: FakeHost::new(), calls: 0, done: false, code: None, pending: true };
+        let mut service = Service::new("test-epoch".into());
+        let mut granted = context.clone();
+        granted.files = true;
+        let accepted = service.handle(&mut separate, &granted, req(tool, args), &AtomicBool::new(false));
+        assert!(accepted.ok, "{accepted:?}");
+        assert_eq!(accepted.undo_steps, 0);
+        assert_eq!(separate.calls, 1);
+    }
+    context.files = true;
+    context.edit = false;
+    let r = s.handle(&mut h, &context, request(), &AtomicBool::new(false));
+    assert!(r.ok);
+    assert_eq!(r.undo_steps, 0);
+    assert!(s.handle(&mut h, &context, request(), &AtomicBool::new(false)).ok);
+    assert_eq!(h.calls, 1);
+    let status = || req("request_status", json!({"request_id":"r1"}));
+    assert_eq!(s.handle(&mut h, &context, status(), &AtomicBool::new(false)).result.unwrap()["status"], "pending");
+    h.done = true;
+    let r = s.handle(&mut h, &context, status(), &AtomicBool::new(false));
+    assert_eq!(r.result.unwrap()["receipt"]["result"]["durable"], true);
+    for code in ["save_conflict", "io_error", "scope_refused"] {
+        h.code = Some(code);
+        let r = s.handle(&mut h, &context, status(), &AtomicBool::new(false));
+        assert!(r.ok);
+        assert_eq!(r.result.unwrap()["receipt"]["error"]["code"], code);
+    }
+    h.done = false;
+    h.pending = false;
+    assert_eq!(s.handle(&mut h, &context, status(), &AtomicBool::new(false)).error.unwrap().code, "not_found");
+    assert_eq!(h.host.editor.rev, rev);
+}
+
+#[test]
+fn slice4_logo_frozen_fixture_adapter_parity() {
+    let arguments: Value = serde_json::from_str(include_str!("fixtures/logo-request-1.0.json")).unwrap();
+    let make = || {
+        let mut h = FakeHost::new();
+        h.editor = Editor::new();
+        h
+    };
+    let mut cli = make();
+    let mut mcp = make();
+    let mut a = Service::new("test-epoch".into());
+    let mut b = Service::new("test-epoch".into());
+    let via_cli = serde_json::from_value::<Request>(json!({"tool":"edit","arguments":arguments})).unwrap();
+    let cli_reply = handle(&mut a, &mut cli, via_cli);
+    let mcp_reply = handle(&mut b, &mut mcp, req("edit", arguments));
+    assert!(cli_reply.ok, "{cli_reply:?}");
+    assert_eq!(cli_reply, mcp_reply);
+    let value = serde_json::to_value(&cli_reply).unwrap();
+    let expected: Value = serde_json::from_str(include_str!("fixtures/logo-result-1.0.json")).unwrap();
+    assert_eq!(value, expected);
+    assert_eq!(cli.editor.doc, mcp.editor.doc);
+}
+
+#[test]
+fn slice4_logo_frozen_fixture_through_actual_mcp_stdio_binding() {
+    let transport = FakeTransport {
+        state: std::sync::Arc::new(std::sync::Mutex::new((Service::new("test-epoch".into()), {
+            let mut h = FakeHost::new();
+            h.editor = Editor::new();
+            h
+        }))),
+        cancellations: Default::default(),
+    };
+    let (input_tx, input) = std::sync::mpsc::channel();
+    let (output, receive) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        varos_bridge::mcp::serve(
+            &mut std::io::BufReader::new(ChannelRead { rx: input, current: std::io::Cursor::new(vec![]) }),
+            ChannelWrite { tx: output, bytes: vec![] },
+            transport,
+        )
+        .unwrap()
+    });
+    let send = |v: Value| {
+        let mut data = serde_json::to_vec(&v).unwrap();
+        data.push(b'\n');
+        input_tx.send(data).unwrap();
+    };
+    let read =
+        || serde_json::from_slice::<Value>(&receive.recv_timeout(std::time::Duration::from_secs(3)).unwrap()).unwrap();
+    send(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{},"capabilities":{}}}),
+    );
+    assert_eq!(read()["result"]["protocolVersion"], "2025-06-18");
+    send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
+    let arguments: Value = serde_json::from_str(include_str!("fixtures/logo-request-1.0.json")).unwrap();
+    send(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"edit","arguments":arguments}}));
+    assert_eq!(
+        read()["result"]["structuredContent"],
+        serde_json::from_str::<Value>(include_str!("fixtures/logo-result-1.0.json")).unwrap()
+    );
+    send(
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"snapshot","arguments":{"board":"b1","rev":1,"width":80,"height":120}}}),
+    );
+    let result = read()["result"].clone();
+    assert_eq!(result["content"][1]["type"], "image");
+    assert_eq!(result["structuredContent"]["result"]["width"], 80);
+    assert_eq!(result["structuredContent"]["result"]["height"], 120);
+    assert!(result["structuredContent"]["result"].get("png").is_none());
+
+    drop(input_tx);
+    server.join().unwrap();
+}
+
+#[test]
+fn radius_zero_half_and_over_half_through_service() {
+    for radius in [0, 10, 100] {
+        let mut h = FakeHost::new();
+        let mut s = Service::new("test-epoch".into());
+        let rev = h.editor.rev;
+        let r = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":rev,"ops":[{"verb":"add_shape","kind":"rect","bounds":[0,0,20,20],"radius":radius,"fill":"#FFFFFFFF"}]}),
+            ),
+        );
+        assert!(r.ok, "{r:?}");
+        let path = h.editor.doc.paths.last().unwrap();
+        assert_eq!(path.anchors.len(), 4);
+        if radius == 0 {
+            assert_eq!(path.anchors[0].p, [0.0, 0.0]);
+            assert!(path.anchors.iter().all(|a| a.hin.is_none() && a.hout.is_none()));
+        } else {
+            assert!(path.anchors.iter().all(|a| a.hin.is_some() && a.hout.is_some()));
+            assert_eq!(path.anchors[0].p, [10.0, 0.0]);
+        }
+    }
 }

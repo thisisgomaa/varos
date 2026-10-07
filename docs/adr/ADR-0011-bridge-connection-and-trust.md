@@ -166,3 +166,20 @@ A browser/WASM mirror cannot read Keychain or a UDS and generally cannot manage 
 **End-to-end acceptance:** after one-time registration and first pairing, Ahmed says **“use Varos”** to a fresh session of each supported local agent from any folder and it discovers the intended running board, describes it, edits within the grant and returns an ordinary undoable receipt—**no scripts, token copying or re-registration per launch**. A truly new agent identity still asks once; ambiguous targets require selection, unavailable/managed-blocked clients explain refusal. Repeat after app restart/upgrade, with two agents and human input; those safety refusals are part of success, not exceptions to hide.
 
 Each implementation piece needs its own work order, applicable repository gates, independent review before merge and Ahmed's window acceptance before the next. This docs-only change runs document/link/diff checks, not Rust/runtime acceptance. Open evidence gates include actual multiwindow hosting, Keychain access/signing, client identity provenance, native package registry support and remote authorization details. Owner acceptance of this ADR does not approve unseen UI, ship remote access or claim any of C1–C4 already works.
+
+### C1 slice-4 files implementation — 2026-10-07
+
+`files` is now a grantable, default-off scope. Old trust records deserialize it as false; scope
+intersection and owning-thread rechecks include it. `pair --approve … --scopes read,edit,files`
+opts in through the existing owner ceremony. File work checks the grant again on the I/O worker
+and before publication. Owner destination roots are temporarily configured by
+`VAROS_BRIDGE_FILE_ROOTS` at desktop launch; requests cannot change them. Current backing-file
+save needs the separate files grant and unchanged external fingerprint. All explicit destinations
+must be fresh filenames in an existing granted directory; overwrites remain refused pending an
+exact owner confirmation route. See ADR-0009's slice-4 amendment for tickets and worker policy.
+
+### Slice 4 independent review amendment (2026-10-07)
+
+save_as writes a copy; the board stays on its current file (owner may widen later). No checkpoint, dirty-state or Recent change accompanies the copy. File fingerprint mismatches and destination-exists races use `save_conflict`; other IO uses `io_error`. Completion outcomes are audited with verb, board, ticket and result code, without paths.
+
+Known widening for the owner until C2: the `files` grant lets an agent save the backing file of any board it can read (not per-file).

@@ -1,0 +1,1 @@
+{"api":"1.0","request_id":"r1","board":"b1","expected_rev":0,"ops":[{"verb":"add_path","anchors":[{"p":[20,20]},{"p":[60,20],"hout":[80,20]},{"p":[80,60],"hin":[80,40]},{"p":[20,60]}],"closed":true,"fill":"#141313FF","local":"$mark"},{"verb":"add_shape","kind":"rect","bounds":[100,20,100,40],"radius":10,"fill":"#FF6600FF","local":"$label"}]}

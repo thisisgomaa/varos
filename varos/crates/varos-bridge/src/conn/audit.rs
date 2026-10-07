@@ -15,6 +15,8 @@ pub const MAX_AGE_SECS: u64 = 30 * 24 * 3600;
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct Entry {
     pub t: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ticket: Option<u64>,
     pub event: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub agent: String,
