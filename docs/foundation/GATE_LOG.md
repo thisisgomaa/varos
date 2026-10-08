@@ -3,6 +3,13 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-10-08 (close) — remember the workspace layout
+
+- **Scope:** `76b57ed` layout persistence (Codex; Opus review 10 findings, 1–9 fixed), merged into main after `eae1a31`.
+- **What:** `<data root>/layout.json` (version 1) holds the egui_tiles tree + rail/control-bar visibility; saved atomically once per second after a change settles (wake timer, hash compare, bounded retries) and on quit; restored before frame one with validation and `.bad` quarantine; ☰ panel switch now swaps instead of duplicating; Window ▸ Reset layout + `VAROS_RESET_LAYOUT=1`. Floating boxes / per-box collapse not persisted (not in this checkout). Decision: egui_tiles serde format under version 1 + quarantine.
+- **Gates on `main` after merge:** workspace **1402 passed, 0 failed**; clippy macOS + Windows target; fmt; dep directions; ratchets (ui.rs 825). Installed app rebuilt when Varos was closed (see bundle log).
+- **Day summary 2026-10-08:** panel icons · no Keychain · open local trust · describe composition · orange agent presence · token economy 1–2 · control bar idle rule · picker live preview · layout memory. Owner hand test of all of it pending.
+
 ## 2026-10-08 (late) — control bar hidden when idle + colour picker live-preview fixes
 
 - **Scope:** `3a22f56` control bar hidden when nothing is actionable (owner: «مش عاوزها تظهر لو مفيش فيها حاجة أختار منها»; moderator inline, unit test); `2a77497` picker live-preview fixes (Codex; Opus review 11 findings fixed; Opus re-audit confirmed all 11), merged `eae1a31`.
