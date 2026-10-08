@@ -3,6 +3,14 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-10-08 (night) — on-canvas agent presence + Bridge token economy slices 1–2
+
+- **Scope:** `b729775` agent presence on the canvas (Codex; Opus review 12 findings, all fixed; merged `6fc03e3`), `6591eef` token economy slices 1–2 (Codex; Opus review 12 findings, all fixed; merged `6edb655`), `4e3f771` semantic-merge fix (presence now reads the expanded API 1.1 leaf ops; main was red for one merge commit).
+- **Presence (owner design):** AGENT colour role `#C76A20`; artboard outline + label for 4 s after each committed agent edit; created/changed objects revealed in op order (stagger ≤ 25 ms, cap 1.5 s, 900 ms fade); human azure wins; idle = no repaint (pacing plan tested); Layer nodes excluded; overlay on Order::Background inside the Board hole. Zero wire/agent-call changes. Real-window capture not obtained (second-instance captures black while the owner's Varos ran; control build black too → capture environment, not a regression). **Owner hand test pending.**
+- **Token economy (API 1.1, opt-in):** defaults, optional names with host labels, compact tuples, repeat, ids receipts, economy snapshot, describe summary_budget; MCP schemas with shared $defs and flat roots: `tools/list` 16,399 → 23,109 bytes (first cut was 65,587), contract cap 24,000, no root combinators (moderator's live stdio probe). Measured: wireframe ops 28,092 → 7,960 bytes (8,188 with envelopes), exact document equivalence by test; poster 708→508, story 738→618. Provider token/image usage still unmeasured.
+- **Gates on `main` at `4e3f771`:** workspace **1364 passed, 0 failed**; 4 real socket contract tests PASS; clippy macOS + Windows target; fmt; dep directions; ratchets. Installed app rebuilt from `4e3f771` (Varos was closed).
+- **Open:** owner hand test (presence, panels); token slice 3 (bars/group/clone) optional; picker live-preview fixes (in flight) then picker v2 direction C after owner OK; per-AI history (design written); ADR-0012.
+
 ## 2026-10-08 (evening) — describe composition fix + token-economy amendment (proposed) + agent-presence mockups
 
 - **Scope:** `415ad99` describe composes board sections with object fields (Codex; Opus review 8 findings, all fixed), merged `e34ec4a`; `fc0890a` ADR-0009 amendment "token economy" (Astra, **proposed**, owner approval pending); agent-presence mockups A/B/C in session scratchpad `agent-presence/` (owner pick pending).
