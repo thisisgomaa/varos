@@ -249,6 +249,8 @@ pub enum EditCommand {
     CommitGuide,
     #[serde(rename = "CycleUnits")]
     CycleUnits,
+    #[serde(rename = "SetUnits")]
+    SetUnits(crate::units::Unit),
     #[serde(rename = "SetSnapConfig")]
     SetSnapConfig(SnapConfig),
     #[serde(rename = "ToggleSnapping")]
@@ -357,6 +359,7 @@ impl EditCommand {
             }
             Self::CommitGuide => ed.commit_guide(),
             Self::CycleUnits => ed.cycle_units(),
+            Self::SetUnits(unit) => ed.set_units(unit),
             Self::SetSnapConfig(config) => ed.doc.snap = config,
             Self::ToggleSnapping => ed.doc.snap.enabled = !ed.doc.snap.enabled,
             Self::ToggleGuidesLocked => ed.doc.guides_locked = !ed.doc.guides_locked,

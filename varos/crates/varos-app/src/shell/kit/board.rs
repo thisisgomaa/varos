@@ -227,7 +227,7 @@ pub fn filter_tab(
 }
 
 /// The segmented view toggle (src.html `.seg`): a LINE outline holding icon segments; the selected
-/// segment has a HOVER fill and TEXT glyph, the others MUTED. Returns the activated segment.
+/// segment has a TOGGLE_WELL fill and TEXT glyph, the others MUTED. Returns the activated segment.
 pub struct SegmentedFrame {
     pub chosen: Option<usize>,
     pub rects: Vec<Rect>,
@@ -262,13 +262,22 @@ pub fn segmented_frame(
     let mut hot = Vec::with_capacity(names.len());
     let inner = rect.shrink(t::KIT_STROKE + t::SB_SEG_PAD);
     for (i, name) in names.iter().enumerate() {
-        let x = inner.left() + i as f32 * (segment.x + t::SB_SEG_PAD);
+        let gap = if names.len() > 1 {
+            (inner.width() - names.len() as f32 * segment.x) / (names.len() - 1) as f32
+        } else {
+            0.0
+        };
+        let x = inner.left() + i as f32 * (segment.x + gap);
         let seg = Rect::from_min_size(egui::pos2(x, inner.top()), segment);
         let lift = ((t::KIT_MIN_TARGET - seg.height()) / 2.0).max(0.0);
         let r = interact(ui, id.with(i), seg.expand2(egui::vec2(0.0, lift)), name, true);
         let is_hot = hovered(&r);
         if i == selected || is_hot {
-            ui.painter().rect_filled(seg, CornerRadius::same(t::SB_SEG_R), t::HOVER);
+            ui.painter().rect_filled(
+                seg,
+                CornerRadius::same(t::SB_SEG_R),
+                if i == selected { t::TOGGLE_WELL } else { t::HOVER },
+            );
         }
         let response = help.map_or(r.response.clone(), |tips| r.response.on_hover_text(tips[i]));
         if response.clicked_by(PointerButton::Primary) {
@@ -288,15 +297,39 @@ pub fn segmented(
     selected: usize,
     focused: Option<usize>,
 ) -> (Option<usize>, Vec<Rect>) {
+    segmented_sized(
+        ui,
+        id,
+        rect,
+        segments,
+        selected,
+        focused,
+        egui::vec2(t::SB_SEG_BTN_W, t::SB_SEG_BTN_H),
+        t::SB_ICON_SMALL,
+    )
+}
+
+/// Panel hosts reuse the shared segment interaction and paint with their own token geometry.
+#[allow(clippy::too_many_arguments)]
+pub fn segmented_sized(
+    ui: &mut Ui,
+    id: Id,
+    rect: Rect,
+    segments: &[(Icon, &str)],
+    selected: usize,
+    focused: Option<usize>,
+    segment: egui::Vec2,
+    glyph: f32,
+) -> (Option<usize>, Vec<Rect>) {
+    debug_assert!(segments.iter().all(|(_, name)| !name.trim().is_empty()), "icon segments require tooltips");
     let names = segments.iter().map(|(_, name)| *name).collect::<Vec<_>>();
-    let frame =
-        segmented_frame(ui, id, rect, &names, selected, egui::vec2(t::SB_SEG_BTN_W, t::SB_SEG_BTN_H), Some(&names));
+    let frame = segmented_frame(ui, id, rect, &names, selected, segment, Some(&names));
     for (i, (icon, _)) in segments.iter().enumerate() {
         let seg = frame.rects[i];
         let on = i == selected;
         let hover = frame.hot[i];
         let p = ui.painter();
-        icon.paint(p, seg.center(), t::SB_ICON_SMALL, if on || hover { t::TEXT } else { t::MUTED });
+        icon.paint(p, seg.center(), glyph, if on || hover { t::TEXT } else { t::MUTED });
         if focused == Some(i) {
             focus_ring(&ui.painter().with_clip_rect(ui.clip_rect()), seg, t::SB_SEG_R, t::BG);
         }

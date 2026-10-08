@@ -56,10 +56,17 @@ pub(crate) fn board_ctlbar(
                         });
                         bar_sep(ui);
                         ctl_ab_color(ui, ab.color, i, ops);
-                        if toggle_row(ui, 114.0, "Clip to page", ab.clip) {
+                        if IA_CLIP.show(
+                            ui,
+                            if ab.count == 0 {
+                                kit::IconState::Disabled("No artboard to clip")
+                            } else {
+                                kit::IconState::Toggle(ab.clip)
+                            },
+                        ) {
                             ops.push(Op::AbClip(i));
                         }
-                        if toggle_row(ui, 142.0, "Move artwork", ab.move_art) {
+                        if IA_MOVE.show(ui, kit::IconState::Toggle(ab.move_art)) {
                             ops.push(Op::AbMoveArt(!ab.move_art));
                         }
                         bar_sep(ui);
@@ -106,7 +113,7 @@ pub(crate) fn board_ctlbar(
                         fields::num(
                             ui,
                             74.0,
-                            Lab::Letter("Op"),
+                            Lab::Icon(ic.opacity.as_ref()),
                             "Opacity %",
                             s.opacity * 100.0,
                             0,
@@ -216,7 +223,6 @@ pub(crate) fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarg
 
 /// Control-bar page colour field. Click opens the existing Color Picker for the active artboard.
 pub(crate) fn ctl_ab_color(ui: &mut egui::Ui, color: Option<Rgba>, i: usize, ops: &mut Vec<Op>) {
-    ui.label(RichText::new("Page").color(MUTED).size(11.0));
     let (sw, resp) = ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::click());
     let round = CornerRadius::same(2);
     match color {

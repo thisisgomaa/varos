@@ -178,7 +178,7 @@ entire safety guarantee.
   Dot grid: cell `22`, dot = `dot_grid`.
 - **HAND 1 — control bar (over board):** anchored `top:30` from the board's top edge, horizontally centered;
   h`36`, pad `0 10`, gap `6`. Mini field h`24` pad `0 7` radius `r`. Colour chip `17×17`. Icon button `26×26`
-  radius `r`; active = `10×2` accent underline. Vertical sep `1×16` `line`.
+  radius `r`; active = `10×2` accent underline. **Superseded for toggles by owner 2026-10-08: TOGGLE_WELL + TEXT, no underline.** Vertical sep `1×16` `line`.
 - **HAND 2 — tool rail (over board, left):** anchored `left:34`, `top:104`; width `44`, vertical pad `6`,
   gap `2`. Tool button `32×32` radius `r`; **active = `accent` fill, white icon**. Separator `22×1`.
   Fill/Stroke swatch cluster `32×32` + paint-mode trio `9×9` at the bottom (Illustrator DNA).

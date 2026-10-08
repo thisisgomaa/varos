@@ -53,7 +53,12 @@ pub(crate) enum Op {
     BoardDescription(String),
     BoardTags(Vec<String>),
     // ---- document settings (Pain A15: Properties dock when nothing is selected) ----
-    CycleUnits,     // step the document display unit (undoable — mutates the serialized doc.units)
+    Units(varos_core::units::Unit), // one dropdown choice = one undoable document edit
+    FitArtboard(usize),
+    ToggleGuidesLock,
+    ToggleSmartGuides,
+    ToggleSnapPoint,
+    ToggleSnapGrid, // mirror of the existing View-menu grid flag
     ToggleSnapping, // doc.snap.enabled master switch (a non-undoable mode flag, like the magnet menu)
     ToggleGuides,   // show/hide ruler guides — the guides-visibility view pref (mirrors Ctrl+;)
     ToggleRulers,   // show/hide rulers — the rulers view pref (mirrors Ctrl+R)
@@ -155,7 +160,19 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::BoardTags(tags) => {
                 let _ = ed.try_set_board_tags(tags);
             }
-            Op::CycleUnits => ed.execute(EditCommand::CycleUnits),
+            Op::Units(unit) => ed.execute(EditCommand::SetUnits(unit)),
+            Op::FitArtboard(_) => {} // UI-only, intercepted by run
+            Op::ToggleGuidesLock => ed.execute(EditCommand::ToggleGuidesLocked),
+            Op::ToggleSmartGuides => ed.execute(EditCommand::ToggleSmartGuides),
+            Op::ToggleSnapPoint | Op::ToggleSnapGrid => {
+                let mut snap = ed.doc.snap;
+                if matches!(op, Op::ToggleSnapPoint) {
+                    snap.key_points = !snap.key_points;
+                } else {
+                    snap.grid = !snap.grid;
+                }
+                ed.execute(EditCommand::SetSnapConfig(snap));
+            }
             // Applied after SetSnapConfig so the panel toggle is not clobbered by the frame snapshot.
             Op::ToggleSnapping => ed.execute(EditCommand::ToggleSnapping),
             Op::ToggleGuides => ed.toggle_guides_visibility(),

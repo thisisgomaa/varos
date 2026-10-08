@@ -1,12 +1,17 @@
-//! THE icon registry (icon stage 1): every registry icon is a real Lucide SVG file under
-//! `assets/icons/` (ISC — see the LICENSE beside them, which also carries the Feather MIT notice),
-//! embedded with `include_str!`, rasterized once per context at [`t::ICON_RASTER`] through the shared
-//! `svg::render_svg` → texture path, white, and tinted at paint time. Never hand-drawn glyphs (owner
-//! rule); never Adobe artwork (ICON_LIBRARY_STUDY §6.2).
+//! THE icon registry (icon stage 1): every registry icon is an SVG file embedded with `include_str!`,
+//! rasterized once per context at [`t::ICON_RASTER`] through the shared `svg::render_svg` → texture path,
+//! white, and tinted at paint time. Two sources, one ink:
+//! - **Lucide first** — official upstream SVGs under `assets/icons/` (ISC — see the LICENSE beside them,
+//!   which also carries the Feather MIT notice).
+//! - **Varos originals** — only where Lucide has no glyph (UI_SYSTEM §icons rule 2): drawn from scratch on
+//!   the 24 grid, 2 px stroke, round caps/joins, under `assets/icons/varos/`, each file headed
+//!   "original Varos glyph". Never traced from another product; never Adobe artwork
+//!   (ICON_LIBRARY_STUDY §6.2). Cursors keep their own rule: never hand-drawn.
 //!
-//! Adding an icon: drop the upstream SVG into `assets/icons/`, add one variant, one `ALL` entry and one
-//! `lucide()` arm. The tests check every variant resolves, parses and rasterizes, and that every SVG
-//! file in the folder is used.
+//! Adding an icon: drop the upstream SVG into `assets/icons/` (or draw an original into
+//! `assets/icons/varos/`), add one variant, one `ALL` entry and one `lucide()` arm (`svg!` / `varos!`).
+//! The tests check every variant resolves, parses and rasterizes, and that every SVG file in both folders
+//! is used.
 use super::t;
 use egui::{Color32, Context, Id, Painter, Pos2, Rect, TextureHandle, TextureOptions};
 
@@ -51,6 +56,8 @@ pub const LEGACY_MENU: &str = r#"<path d="M4 12h16"/><path d="M4 6h16"/><path d=
 // (4b: the band's plus / × / magnet glyphs now come from the kit registry, `Icon`; no band Search)
 // Artboard tool (Lucide "frame" — a bold # that reads clearly at 20px) · hexagon (polygon shape) ·
 // portrait/landscape page · "fit in window" frame
+/// The same geometry as the registry's `Icon::Frame` (`assets/icons/frame.svg`, Lucide "frame"); a test
+/// keeps the two identical until the rail moves onto the registry.
 pub const LEGACY_ARTBOARD: &str = r#"<path d="M22 6H2"/><path d="M22 18H2"/><path d="M6 2v20"/><path d="M18 2v20"/>"#;
 pub const LEGACY_POLYGON: &str = r#"<path d="M21 16.05V7.95a2 2 0 0 0-1-1.73l-7-4.04a2 2 0 0 0-2 0l-7 4.04A2 2 0 0 0 3 7.95v8.1a2 2 0 0 0 1 1.73l7 4.04a2 2 0 0 0 2 0l7-4.04a2 2 0 0 0 1-1.73Z"/>"#;
 pub const LEGACY_FIT: &str = r#"<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>"#;
@@ -118,9 +125,62 @@ pub enum Icon {
     FileQuestion,
     /// The band's `+` (new board).
     Plus,
+    // ── panel controls as icons (panel-icons lane 1, 2026-10-08; NOTES "B + three borrowings from A").
+    // Lucide glyphs. Doc comment = the control's tooltip text. ──
+    /// "Align to: Selection — within the selection's combined bounds".
+    AlignSelection,
+    /// "Align to: Artboard"; also the Document quick action "Edit artboards ⇧O".
+    Frame,
+    /// "Rulers ⌘R".
+    Ruler,
+    /// "Grid dots — always shown (no switch yet)".
+    GridDots,
+    /// "Snapping".
+    Magnet,
+    /// "Filter layers by kind".
+    ListFilter,
+    /// "Clip to artboard — off lets this object bleed" / "Clip to page".
+    Crop,
+    /// "Move artwork with artboard".
+    MoveArtwork,
+    /// "Previous artboard".
+    ChevronLeft,
+    /// "Next artboard".
+    ChevronRight,
+    // ── Varos originals (assets/icons/varos/) ──
+    /// "Align to: Auto".
+    AlignAuto,
+    /// "Guides ⌘;".
+    Guides,
+    /// "Lock guides ⌥⌘;".
+    GuidesLock,
+    /// "Smart guides ⌘U".
+    SmartGuides,
+    /// "Snap to point".
+    SnapPoint,
+    /// "Snap to grid".
+    SnapGrid,
+    /// "Transparent page".
+    TransparentPage,
+    /// Colour harmony "None".
+    HarmonyNone,
+    /// Colour harmony "Complementary".
+    HarmonyComplementary,
+    /// Colour harmony "Analogous".
+    HarmonyAnalogous,
+    /// Colour harmony "Split complementary".
+    HarmonySplit,
+    /// Colour harmony "Triad".
+    HarmonyTriad,
+    /// Colour harmony "Tetradic".
+    HarmonyTetradic,
+    /// Colour harmony "Square".
+    HarmonySquare,
+    /// Colour harmony "Monochrome".
+    HarmonyMono,
 }
 impl Icon {
-    pub const ALL: [Icon; 24] = [
+    pub const ALL: [Icon; 49] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -145,13 +205,44 @@ impl Icon {
         Self::Shield,
         Self::FileQuestion,
         Self::Plus,
+        Self::AlignSelection,
+        Self::Frame,
+        Self::Ruler,
+        Self::GridDots,
+        Self::Magnet,
+        Self::ListFilter,
+        Self::Crop,
+        Self::MoveArtwork,
+        Self::ChevronLeft,
+        Self::ChevronRight,
+        Self::AlignAuto,
+        Self::Guides,
+        Self::GuidesLock,
+        Self::SmartGuides,
+        Self::SnapPoint,
+        Self::SnapGrid,
+        Self::TransparentPage,
+        Self::HarmonyNone,
+        Self::HarmonyComplementary,
+        Self::HarmonyAnalogous,
+        Self::HarmonySplit,
+        Self::HarmonyTriad,
+        Self::HarmonyTetradic,
+        Self::HarmonySquare,
+        Self::HarmonyMono,
     ];
 
-    /// The Lucide icon name and its embedded upstream SVG.
+    /// The icon's name and its embedded SVG: the upstream Lucide file, or — for [`Icon::is_original`] —
+    /// the Varos original under `assets/icons/varos/`. The name is the file stem in either folder.
     pub fn lucide(self) -> (&'static str, &'static str) {
         macro_rules! svg {
             ($name:literal) => {
                 ($name, include_str!(concat!("../../../assets/icons/", $name, ".svg")))
+            };
+        }
+        macro_rules! varos {
+            ($name:literal) => {
+                ($name, include_str!(concat!("../../../assets/icons/varos/", $name, ".svg")))
             };
         }
         match self {
@@ -179,7 +270,38 @@ impl Icon {
             Self::Shield => svg!("shield-check"),
             Self::FileQuestion => svg!("file-question-mark"),
             Self::Plus => svg!("plus"),
+            Self::AlignSelection => svg!("square-dashed"),
+            Self::Frame => svg!("frame"),
+            Self::Ruler => svg!("ruler"),
+            Self::GridDots => svg!("grip"),
+            Self::Magnet => svg!("magnet"),
+            Self::ListFilter => svg!("list-filter"),
+            Self::Crop => svg!("crop"),
+            Self::MoveArtwork => svg!("move"),
+            Self::ChevronLeft => svg!("chevron-left"),
+            Self::ChevronRight => svg!("chevron-right"),
+            Self::AlignAuto => varos!("align-auto"),
+            Self::Guides => varos!("guides"),
+            Self::GuidesLock => varos!("guides-lock"),
+            Self::SmartGuides => varos!("smart-guides"),
+            Self::SnapPoint => varos!("snap-point"),
+            Self::SnapGrid => varos!("snap-grid"),
+            Self::TransparentPage => varos!("transparent-page"),
+            Self::HarmonyNone => varos!("harmony-none"),
+            Self::HarmonyComplementary => varos!("harmony-complementary"),
+            Self::HarmonyAnalogous => varos!("harmony-analogous"),
+            Self::HarmonySplit => varos!("harmony-split"),
+            Self::HarmonyTriad => varos!("harmony-triad"),
+            Self::HarmonyTetradic => varos!("harmony-tetradic"),
+            Self::HarmonySquare => varos!("harmony-square"),
+            Self::HarmonyMono => varos!("harmony-mono"),
         }
+    }
+
+    /// True for a Varos original (drawn from scratch, `assets/icons/varos/`), false for an upstream Lucide
+    /// glyph. Read from the embedded file itself, so the answer cannot drift from the `lucide()` arm.
+    pub fn is_original(self) -> bool {
+        self.lucide().1.contains("class=\"varos varos-")
     }
 
     /// White straight-alpha RGBA at `px` × `px`; `None` only if the embedded SVG is broken.

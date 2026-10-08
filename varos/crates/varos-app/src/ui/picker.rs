@@ -40,15 +40,15 @@ pub(crate) enum Harmony {
     Mono,
 }
 impl Harmony {
-    const ALL: [(Harmony, &'static str); 8] = [
-        (Harmony::None, "None"),
-        (Harmony::Complementary, "Comp"),
-        (Harmony::Analogous, "Analog"),
-        (Harmony::Split, "Split"),
-        (Harmony::Triadic, "Triad"),
-        (Harmony::Tetradic, "Tetra"),
-        (Harmony::Square, "Square"),
-        (Harmony::Mono, "Mono"),
+    const ALL: [(Harmony, Icon, &'static str); 8] = [
+        (Harmony::None, Icon::HarmonyNone, "None"),
+        (Harmony::Complementary, Icon::HarmonyComplementary, "Complementary"),
+        (Harmony::Analogous, Icon::HarmonyAnalogous, "Analogous"),
+        (Harmony::Split, Icon::HarmonySplit, "Split complementary"),
+        (Harmony::Triadic, Icon::HarmonyTriad, "Triad"),
+        (Harmony::Tetradic, Icon::HarmonyTetradic, "Tetradic"),
+        (Harmony::Square, Icon::HarmonySquare, "Square"),
+        (Harmony::Mono, Icon::HarmonyMono, "Monochrome"),
     ];
     /// Hue offsets (degrees) for the non-base members — empty for None/Mono.
     fn offsets(self) -> &'static [f32] {
@@ -234,20 +234,7 @@ pub(crate) fn swatch_strip(ui: &mut egui::Ui, label: &str, colors: &[Rgba]) -> O
 /// Fill / Stroke row: a hand-painted swatch (double-click → the Color Picker modal), + hex + clear ×.
 pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &mut Vec<Op>) {
     ui.horizontal(|ui| {
-        // A18: name the target so the two rows read as Fill / Stroke at a glance (fixed column → swatches align)
-        let label = match target {
-            PaintTarget::Fill => "Fill",
-            PaintTarget::Stroke => "Stroke",
-        };
-        let (lr, _) = ui.allocate_exact_size(egui::vec2(PAINT_LABEL_W, 18.0), egui::Sense::hover());
-        ui.painter().text(
-            egui::pos2(lr.left(), lr.center().y),
-            Align2::LEFT_CENTER,
-            label,
-            varos_app::shell::tokens::small(),
-            MUTED,
-        );
-        let (sw, resp) = ui.allocate_exact_size(egui::vec2(26.0, 18.0), egui::Sense::click());
+        let (sw, resp) = ui.allocate_exact_size(egui::vec2(ICON_BTN_W, ICON_BTN_H), egui::Sense::click());
         #[cfg(test)]
         paint_probes::record(target, sw);
         let round = CornerRadius::same(R);
@@ -267,6 +254,9 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
                 );
             } // None = red slash
         }
+        if target == PaintTarget::Stroke {
+            p.rect_filled(sw.shrink(varos_app::shell::tokens::SWATCH_RING_INSET), round, SOLID_PANEL);
+        }
         p.rect_stroke(sw, round, Stroke::new(1.0, if resp.hovered() { MUTED } else { BORDER_2 }), StrokeKind::Middle);
         // single click = focus the target (X toggles) · DOUBLE-click = open the Color Picker modal
         if resp.clicked() {
@@ -275,7 +265,10 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
         if resp.double_clicked() {
             ops.push(Op::OpenPicker(MTarget::Paint(target)));
         }
-        resp.on_hover_text("Double-click to edit the colour");
+        resp.on_hover_text(match target {
+            PaintTarget::Fill => "Fill — double-click to edit",
+            PaintTarget::Stroke => "Stroke — double-click to edit",
+        });
         ui.add_space(8.0);
         ui.label(RichText::new(color.map(hex_of).unwrap_or_else(|| "None".into())).color(TEXT).monospace().size(12.0));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -468,11 +461,15 @@ pub(crate) fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
     ui.add_space(4.0);
     // ── harmony rule pills ──
     ui.label(RichText::new("HARMONY").color(MUTED).size(10.5));
-    let harmony_labels = Harmony::ALL.map(|(_, label)| label);
-    let selected = Harmony::ALL.iter().position(|(rule, _)| *rule == m.harmony).unwrap_or(0);
-    if let Some(index) =
-        segmented_text(ui, ui.make_persistent_id("picker-harmony"), 52.0, &harmony_labels, None, selected)
-    {
+    let harmony_segments = Harmony::ALL.map(|(_, icon, name)| (icon, name));
+    let selected = Harmony::ALL.iter().position(|(rule, _, _)| *rule == m.harmony).unwrap_or(0);
+    if let Some(index) = panel_segments(
+        ui,
+        "picker-harmony",
+        &harmony_segments,
+        selected,
+        Some(varos_app::shell::tokens::HARMONY_TRACK_W),
+    ) {
         m.harmony = Harmony::ALL[index].0;
     }
     // ── harmony result chips (click to adopt as the current colour) ──

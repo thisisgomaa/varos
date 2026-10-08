@@ -288,3 +288,22 @@ fn pen_resume_from_the_first_anchor_is_one_undoable_edit() {
     assert_eq!(ed2.rev, 0, "no reversal ⇒ no history step");
     assert!(ed2.doc.content_eq(&saved));
 }
+
+#[test]
+fn set_units_is_one_history_step_and_unchanged_is_a_noop() {
+    let mut ed = Editor::new();
+    let before = ed.doc.clone();
+    let rev = ed.rev;
+    ed.execute(EditCommand::SetUnits(before.units.display));
+    assert_eq!(ed.rev, rev);
+    assert!(!ed.dirty);
+    ed.execute(EditCommand::SetUnits(Unit::In));
+    assert_eq!(ed.rev, rev + 1);
+    assert!(ed.doc.content_eq(&before));
+    ed.execute(EditCommand::SetUnits(Unit::In));
+    assert_eq!(ed.rev, rev + 1);
+    ed.execute(EditCommand::Undo);
+    assert_eq!(ed.doc.units.display, before.units.display);
+    ed.execute(EditCommand::Redo);
+    assert_eq!(ed.doc.units.display, Unit::In);
+}

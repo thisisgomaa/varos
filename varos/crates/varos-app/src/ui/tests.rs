@@ -134,7 +134,7 @@ mod polish_pass_tests {
     }
 
     #[test]
-    fn swatch_starts_on_the_value_column() {
+    fn captionless_swatches_start_at_the_panel_edge() {
         let mut ed = Editor::new();
         ed.ppu = 1.0;
         ed.set_tool(ToolKind::Rect);
@@ -175,8 +175,8 @@ mod polish_pass_tests {
             .find(|(target, _)| *target == PaintTarget::Fill)
             .expect("Fill swatch was laid out")
             .1;
-        assert_eq!(fill.left(), x_box.left(), "measured swatch and Transform X-box columns must coincide");
-        assert_eq!(t::PAINT_LABEL_W, t::TRANSFORM_REFPOINT_SIZE + t::FIELD_LABEL_W + t::FIELD_LABEL_BOX_GAP);
+        assert!(fill.left() < x_box.left(), "captionless swatch is at the panel edge");
+        assert!(fill.height() >= t::KIT_MIN_TARGET);
     }
 
     fn legacy_align_height(ui: &mut egui::Ui) -> f32 {
@@ -321,7 +321,7 @@ mod polish_pass_tests {
         const PROPERTIES_BEFORE: f32 = 368.0;
         const PROPERTIES_AFTER: f32 = 357.0;
         const PATHFINDER_BEFORE: f32 = 69.0;
-        const PATHFINDER_AFTER: f32 = 72.0;
+        const PATHFINDER_AFTER: f32 = 47.0;
         assert_eq!((properties_before, properties_after), (PROPERTIES_BEFORE, PROPERTIES_AFTER));
         assert_eq!((pathfinder_before, pathfinder_after), (PATHFINDER_BEFORE, PATHFINDER_AFTER));
     }
@@ -396,11 +396,11 @@ mod layer_cache_tests {
     fn pointer_only_frames_keep_the_layer_rows_key() {
         let mut ed = editor_with_path();
         let collapsed = HashSet::new();
-        let before = layer_rows_key(&ed, &collapsed, "");
+        let before = layer_rows_key(&ed, &collapsed, "", 0);
         ed.cursor = [400.0, 300.0];
-        assert_eq!(before, layer_rows_key(&ed, &collapsed, ""));
+        assert_eq!(before, layer_rows_key(&ed, &collapsed, "", 0));
         ed.objsel.insert(7);
-        assert_ne!(before, layer_rows_key(&ed, &collapsed, ""));
+        assert_ne!(before, layer_rows_key(&ed, &collapsed, "", 0));
     }
 
     #[test]
@@ -583,6 +583,13 @@ mod layer_rename_tests {
             let input = RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 480.0))),
                 time: Some(self.t),
+                modifiers: events
+                    .iter()
+                    .find_map(|e| match e {
+                        Event::PointerButton { modifiers, .. } => Some(*modifiers),
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
                 events,
                 ..Default::default()
             };
@@ -667,6 +674,87 @@ mod layer_rename_tests {
         }
         assert!(!hits.is_empty(), "row {id} was never hit by a click");
         (hits[0] + hits[hits.len() - 1]) * 0.5
+    }
+
+    fn set_paths_filter(p: &mut Panel) {
+        let id = egui::Id::new(("layer-kind-filter", None::<crate::app_command::SessionId>));
+        p.ctx.data_mut(|d| d.insert_temp(id, 1usize));
+        p.frame(vec![]);
+    }
+
+    #[test]
+    fn filtered_click_and_shift_range_skip_hidden_kinds() {
+        let visible = [path_row(3, "A"), path_row(4, "B")];
+        let y1 = row_y(&visible, 3);
+        let y2 = row_y(&visible, 4);
+        let mut hidden = path_row(5, "Hidden group");
+        hidden.kind = LKind::Group;
+        let mut p = Panel::new(vec![visible[0].clone(), hidden, visible[1].clone()]);
+        set_paths_filter(&mut p);
+        assert!(p.click(egui::pos2(NAME_X, y1)).iter().any(|o| matches!(o, Op::LayerSelectSet(v) if v == &[3])));
+        p.t += 1.0;
+        let pos = egui::pos2(NAME_X, y2);
+        let modifiers = Modifiers { shift: true, ..Modifiers::NONE };
+        p.frame(vec![Event::PointerMoved(pos)]);
+        p.frame(vec![Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers }]);
+        let ops =
+            p.frame(vec![Event::PointerButton { pos, button: PointerButton::Primary, pressed: false, modifiers }]);
+        assert!(ops.iter().any(|o| matches!(o, Op::LayerSelectSet(v) if v == &[3, 4])));
+    }
+
+    #[test]
+    fn filtered_drag_payload_contains_only_matching_kinds() {
+        let mut rows = vec![path_row(3, "A"), path_row(5, "Hidden group"), path_row(4, "B"), path_row(6, "Target")];
+        rows[1].kind = LKind::Group;
+        for r in &mut rows[..3] {
+            r.drag_sel = true;
+            r.full_sel = true;
+        }
+        // A fully selected nonmatching parent normally owns the drag roots.
+        rows[0].drag_sel = false;
+        rows[2].drag_sel = false;
+        let visible = vec![rows[0].clone(), rows[2].clone(), rows[3].clone()];
+        let from = egui::pos2(NAME_X, row_y(&visible, 3));
+        let to = egui::pos2(NAME_X, row_y(&visible, 6) + 8.0);
+        let mut p = Panel::new(rows);
+        set_paths_filter(&mut p);
+        p.button(from, PointerButton::Primary, true);
+        p.frame(vec![Event::PointerMoved(from + egui::vec2(0.0, 8.0))]);
+        p.frame(vec![Event::PointerMoved(to)]);
+        p.frame(vec![]);
+        let ops = p.button(to, PointerButton::Primary, false);
+        assert!(ops.iter().any(|o| matches!(o, Op::LayerMove(v, 6, _) if v == &[3, 4])));
+    }
+
+    #[test]
+    fn active_filters_walk_collapsed_boards_layers_and_groups_and_keep_ancestors() {
+        let mut ed = two_path_editor();
+        ed.doc.artboards.push(varos_core::model::Artboard::default());
+        ed.objsel.extend([1, 2]);
+        ed.group_selection();
+        let group = ed.doc.nodes.iter().find(|n| matches!(n.kind, NodeKind::Group)).unwrap().id;
+        let mut layer = ed.doc.node(group).unwrap().clone();
+        layer.id = ed.doc.nid();
+        layer.kind = NodeKind::Layer;
+        layer.name = "Nested layer".into();
+        layer.children = vec![group];
+        let layer_id = layer.id;
+        let parent = layer.parent.unwrap();
+        ed.doc.nodes.iter_mut().find(|n| n.id == parent).unwrap().children = vec![layer_id];
+        ed.doc.nodes.iter_mut().find(|n| n.id == group).unwrap().parent = Some(layer_id);
+        ed.doc.nodes.push(layer);
+        let collapsed = HashSet::from([layer_id, group, super::board_row_id(0)]);
+        let mut cache = HashMap::new();
+        assert!(!build_layer_rows(&ed, &collapsed, "", 0, &mut cache).iter().any(|r| r.kind == LKind::Path));
+        let rows = build_layer_rows(&ed, &collapsed, "", 1, &mut cache);
+        assert_eq!(rows.iter().filter(|r| r.kind == LKind::Path).count(), 2);
+        assert!(rows.iter().any(|r| r.id == group));
+        assert!(rows.iter().any(|r| r.id == layer_id));
+        assert!(rows.iter().any(|r| r.kind == LKind::Board));
+        let groups = build_layer_rows(&ed, &collapsed, "", 2, &mut cache);
+        assert!(groups.iter().any(|r| r.id == group));
+        assert!(!groups.iter().any(|r| r.kind == LKind::Path));
+        assert_ne!(super::layer_rows_key(&ed, &collapsed, "", 0), super::layer_rows_key(&ed, &collapsed, "", 1));
     }
 
     fn two_paths() -> Vec<LRow> {
@@ -844,12 +932,12 @@ mod layer_rename_tests {
         let rev = ed.rev;
         apply_ops(&mut ed, vec![Op::LayerRename(node, "Logo".into())]);
         let mut thumbs = HashMap::new();
-        let rows = build_layer_rows(&ed, &HashSet::new(), "", &mut thumbs);
+        let rows = build_layer_rows(&ed, &HashSet::new(), "", 0, &mut thumbs);
         let row = rows.iter().find(|r| r.id == node).expect("the path's row");
         assert_eq!(row.name, "Logo", "the rename landed nowhere the Layers row reads");
         assert_eq!(ed.rev, rev + 1, "a rename is one undoable edit");
         ed.undo();
-        let rows = build_layer_rows(&ed, &HashSet::new(), "", &mut thumbs);
+        let rows = build_layer_rows(&ed, &HashSet::new(), "", 0, &mut thumbs);
         assert_eq!(rows.iter().find(|r| r.id == node).unwrap().name, "<Path>", "undo restores the auto-name");
         // a Layer (container) row keeps using the node rename — its name lives on the node
         let layer = ed.doc.nodes.iter().find(|n| matches!(n.kind, NodeKind::Layer)).map(|n| n.id).unwrap();
@@ -2892,6 +2980,20 @@ pub(super) mod icon_action_tests {
             Op::Paint(PaintTarget::Fill, None) => "Paint(Fill, None)".into(),
             Op::Paint(PaintTarget::Stroke, None) => "Paint(Stroke, None)".into(),
             Op::PickerCancel => "PickerCancel".into(),
+            Op::AbColor(_, Some(_)) => "Opaque".into(),
+            Op::AbClip(i) => format!("AbClip({i})"),
+            Op::AbMoveArt(value) => format!("AbMoveArt({value})"),
+            Op::AbActive(i) => format!("AbActive({i})"),
+            Op::Tool(ToolKind::Artboard) => "EditArtboards".into(),
+            Op::FitArtboard(i) => format!("FitArtboard({i})"),
+            Op::SetClipExempt(value) => format!("ClipExempt({value})"),
+            Op::ToggleSnapping => "ToggleSnapping".into(),
+            Op::ToggleGuides => "ToggleGuides".into(),
+            Op::ToggleRulers => "ToggleRulers".into(),
+            Op::ToggleGuidesLock => "ToggleGuidesLock".into(),
+            Op::ToggleSmartGuides => "ToggleSmartGuides".into(),
+            Op::ToggleSnapPoint => "ToggleSnapPoint".into(),
+            Op::ToggleSnapGrid => "ToggleSnapGrid".into(),
             _ => return None,
         })
     }
@@ -2906,6 +3008,7 @@ pub(super) mod icon_action_tests {
             portrait: bool,
         },
         Properties,
+        Document,
         Picker,
     }
 
@@ -2929,6 +3032,8 @@ pub(super) mod icon_action_tests {
             ed.pointer_up();
             ed.set_tool(ToolKind::Object);
             ed.select_all();
+            ed.execute(varos_core::command::EditCommand::AddArtboard);
+            ed.doc.artboards[0].clip = true;
             let modal = Some(ColorModal {
                 target: MTarget::Paint(PaintTarget::Fill),
                 orig: None,
@@ -2960,7 +3065,7 @@ pub(super) mod icon_action_tests {
             let mut ops: Vec<Op> = vec![];
             let (lock0, fit0) = (self.lock, self.fit);
             let snap = Snap::read(&self.ed);
-            let Rig { ctx, scene, lock, fit, modal, .. } = self;
+            let Rig { ctx, scene, lock, fit, modal, ed, .. } = self;
             let _ = ctx.run_ui(input, |ui| match *scene {
                 Scene::Layers => {
                     let ic = LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, search: None };
@@ -3000,6 +3105,13 @@ pub(super) mod icon_action_tests {
                     let ic = DockIcons { rotate: &none, opacity: &none, strokew: &none, align: &align };
                     let mut refpt = (0.0, 0.0);
                     panel_properties(ui, &snap, &ic, &mut refpt, lock, &mut ops, (&Default::default(), &mut vec![]));
+                }
+                Scene::Document => {
+                    let mut snapshot = Snap::read(ed);
+                    snapshot.artboards = 2;
+                    snapshot.active_artboard = 0;
+                    snapshot.artboard_names = vec!["First".into(), "Second".into()];
+                    super::document_section(ui, &snapshot, 264.0, &mut ops, (&Default::default(), &mut vec![]));
                 }
                 Scene::Picker => build_color_modal(ui.ctx(), modal, &snap, &None, &mut ops),
             });
@@ -3059,6 +3171,7 @@ pub(super) mod icon_action_tests {
         let two = Scene::Artboard { count: 2, portrait: true };
         vec![
             (IA_LAYER_GROUP, Scene::Layers, vec!["LayerGroup"]),
+            (IA_LAYER_FILTER, Scene::Layers, vec![]),
             (IA_LAYER_DELETE, Scene::Layers, vec!["LayerDeleteSel"]),
             (IA_AB_ADD, two, vec!["AbAdd"]),
             (IA_AB_DUP, two, vec!["AbDup(0)"]),
@@ -3077,13 +3190,36 @@ pub(super) mod icon_action_tests {
             (IA_NO_FILL, Scene::Properties, vec!["Paint(Fill, None)"]),
             (IA_NO_STROKE, Scene::Properties, vec!["Paint(Stroke, None)"]),
             (IA_PICKER_CLOSE, Scene::Picker, vec!["PickerCancel"]),
+            (IA_TRANSPARENT, two, vec!["Opaque"]),
+            (IA_TRANSPARENT, Scene::Artboard { count: 0, portrait: true }, vec![]),
+            (IA_CLIP, two, vec!["AbClip(0)"]),
+            (IA_CLIP, Scene::Artboard { count: 0, portrait: true }, vec![]),
+            (IA_MOVE, two, vec!["AbMoveArt(false)"]),
+            (IA_OBJECT_CLIP, Scene::Properties, vec!["ClipExempt(true)"]),
+            (IA_STROKE_PRESETS, Scene::Properties, vec![]),
+            (IA_SNAP, Scene::Document, vec!["ToggleSnapping"]),
+            (IA_GUIDES, Scene::Document, vec!["ToggleGuides"]),
+            (IA_RULERS, Scene::Document, vec!["ToggleRulers"]),
+            (IA_GRID, Scene::Document, vec![]),
+            (IA_GUIDES_LOCK, Scene::Document, vec!["ToggleGuidesLock"]),
+            (IA_SMART, Scene::Document, vec!["ToggleSmartGuides"]),
+            (IA_POINT, Scene::Document, vec!["ToggleSnapPoint"]),
+            (IA_SNAP_GRID, Scene::Document, vec!["ToggleSnapGrid"]),
+            (IA_EDIT_BOARDS, Scene::Document, vec!["EditArtboards"]),
+            (IA_FIT_BOARD, Scene::Document, vec!["FitArtboard(0)"]),
+            (IA_ADD_BOARD, Scene::Document, vec!["AbAdd"]),
+            (IA_PREV_BOARD, Scene::Document, vec![]),
+            (IA_NEXT_BOARD, Scene::Document, vec!["AbActive(1)"]),
         ]
     }
 
     #[test]
     fn converted_icon_buttons_emit_what_their_text_buttons_emitted() {
         for (action, scene, want) in table() {
-            let got = Rig::new(scene).click(action.key);
+            let mut rig = Rig::new(scene);
+            let rect = rig.probe(action.key).1;
+            assert!(rect.width() >= 24.0 && rect.height() >= 24.0, "{} target", action.key);
+            let got = rig.click(action.key);
             assert_eq!(got, want, "{} by pointer", action.key);
             let got = Rig::new(scene).enter(action.key);
             assert_eq!(got, want, "{} by keyboard (focus + Enter)", action.key);
@@ -3373,4 +3509,194 @@ mod home_page_tests {
         let card = h.model.visible_cards().next().unwrap().clone();
         assert_eq!(h.click(ids::card(&card.key)), [AppCommand::OpenRecent(card.path.clone())]);
     }
+}
+
+#[cfg(test)]
+mod panel_icons_lane2_tests {
+    use super::*;
+    use varos_core::{command::EditCommand, units::Unit};
+
+    #[test]
+    fn properties_mirrors_the_native_view_checks_after_panel_and_menu_edits() {
+        let mut ed = Editor::new();
+        let check = |ed: &Editor| {
+            let s = Snap::read(ed);
+            for (kind, value) in [
+                (crate::chrome::Check::Rulers, s.rulers_on),
+                (crate::chrome::Check::Guides, s.guides_on),
+                (crate::chrome::Check::GuidesLocked, s.guides_locked),
+                (crate::chrome::Check::SmartGuides, s.snap_config.smart),
+                (crate::chrome::Check::SnapPoint, s.snap_config.key_points),
+                (crate::chrome::Check::SnapGrid, s.snap_config.grid),
+            ] {
+                assert_eq!(crate::editor_check(ed, kind), Some(value));
+            }
+            assert_eq!(s.snap_enabled, ed.doc.snap.enabled);
+        };
+        check(&ed);
+        let initial = ed.doc.snap;
+        apply_frame(
+            &mut ed,
+            initial,
+            vec![
+                Op::ToggleSnapping,
+                Op::ToggleGuides,
+                Op::ToggleRulers,
+                Op::ToggleGuidesLock,
+                Op::ToggleSmartGuides,
+                Op::ToggleSnapPoint,
+                Op::ToggleSnapGrid,
+            ],
+        );
+        check(&ed);
+        assert_eq!(ed.doc.snap.grid, !initial.grid);
+        assert_eq!(ed.doc.snap.key_points, !initial.key_points);
+        assert_eq!(ed.doc.snap.smart, !initial.smart);
+        crate::menu_snap_toggle(&mut ed, crate::chrome::SnapRow::Point);
+        crate::menu_snap_toggle(&mut ed, crate::chrome::SnapRow::Grid);
+        ed.execute(EditCommand::ToggleGuidesLocked);
+        ed.execute(EditCommand::ToggleSmartGuides);
+        check(&ed);
+        assert_eq!(ed.doc.snap.grid, initial.grid);
+        assert_eq!(ed.doc.snap.key_points, initial.key_points);
+        assert_eq!(ed.doc.snap.smart, initial.smart);
+    }
+
+    #[test]
+    fn document_artboard_navigation_is_bounded_and_uses_the_existing_app_op() {
+        let mut ed = Editor::new();
+        assert_eq!(adjacent_artboard(0, 0, true), None);
+        for _ in 0..3 {
+            ed.execute(EditCommand::AddArtboard);
+        }
+        apply_ops(&mut ed, vec![Op::AbActive(0)]);
+        assert_eq!(adjacent_artboard(0, 3, false), None);
+        let next = adjacent_artboard(ed.doc.active, 3, true).unwrap();
+        apply_ops(&mut ed, vec![Op::AbActive(next)]);
+        assert_eq!(Snap::read(&ed).active_artboard, 1);
+        let previous = adjacent_artboard(ed.doc.active, 3, false).unwrap();
+        apply_ops(&mut ed, vec![Op::AbActive(previous)]);
+        assert_eq!(ed.doc.active, 0);
+        apply_ops(&mut ed, vec![Op::AbActive(2)]);
+        assert_eq!(adjacent_artboard(ed.doc.active, 3, true), None);
+        apply_ops(&mut ed, vec![Op::AbActive(99)]);
+        assert_eq!(ed.doc.active, 2);
+    }
+
+    #[test]
+    fn document_unit_dropdown_commits_one_undo_step() {
+        let mut ed = Editor::new();
+        let before = ed.doc.units.display;
+        apply_ops(&mut ed, vec![Op::Units(Unit::In)]);
+        assert_eq!(Snap::read(&ed).units_label, "in");
+        apply_ops(&mut ed, vec![Op::Units(Unit::In)]);
+        ed.undo();
+        assert_eq!(ed.doc.units.display, before);
+        ed.redo();
+        assert_eq!(ed.doc.units.display, Unit::In);
+    }
+
+    #[test]
+    fn layers_filter_menu_changes_only_visible_kinds_and_is_document_scoped() {
+        use egui::{Event, Key, Modifiers};
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        varos_app::shell::tokens::apply(&ctx);
+        let mut ed = Editor::new();
+        ed.execute(EditCommand::AddArtboard);
+        let rows = build_layer_rows(&ed, &Default::default(), "", 0, &mut Default::default());
+        let mut path = rows[0].clone();
+        path.kind = LKind::Path;
+        path.name = "Test path".into();
+        path.id = 1;
+        path.active = false;
+        let mut group = path.clone();
+        group.kind = LKind::Group;
+        group.name = "Test group".into();
+        group.id = 2;
+        let mut layer = path.clone();
+        layer.kind = LKind::Layer;
+        layer.name = "Test layer".into();
+        layer.id = 3;
+        let mut rows = rows;
+        rows.extend([path, group, layer]);
+        let frame = |events, doc| {
+            set_doc_salt(&ctx, Some(crate::app_command::SessionId(doc)));
+            let mut ops = vec![];
+            let out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let icons = LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, search: None };
+                    panel_layers(
+                        ui,
+                        &rows,
+                        &icons,
+                        &mut String::new(),
+                        &mut None,
+                        &mut Default::default(),
+                        &mut None,
+                        &mut None,
+                        &mut ops,
+                    );
+                },
+            );
+            assert!(ops.is_empty());
+            out.shapes
+                .into_iter()
+                .filter_map(|s| match s.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(frame(vec![], 1).iter().any(|s| s == "Test group"));
+        let (id, rect) = icon_action_tests::PROBE.with(|p| {
+            p.borrow().iter().find(|(k, _, _)| *k == "layer-filter").map(|(_, id, rect)| (*id, *rect)).unwrap()
+        });
+        assert!(rect.width() >= 24.0 && rect.height() >= 24.0);
+        ctx.memory_mut(|m| m.request_focus(id));
+        let key =
+            |key| Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        frame(vec![key(Key::Enter)], 1);
+        frame(
+            vec![Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+            1,
+        );
+        assert!(kit::menu_open(&ctx));
+        frame(vec![key(Key::ArrowDown)], 1); // All
+        frame(vec![key(Key::ArrowDown)], 1); // Paths
+        frame(vec![key(Key::Enter)], 1);
+        let text = frame(vec![], 1);
+        assert!(text.iter().any(|s| s == "Test path"), "{text:?}");
+        assert!(!text.iter().any(|s| s == "Test group" || s == "Test layer"));
+        assert!(frame(vec![], 2).iter().any(|s| s == "Test group"));
+        for filter in 1..=3 {
+            let shown = rows.iter().filter(|row| layer_kind_matches(row.kind, filter)).collect::<Vec<_>>();
+            assert!(shown.iter().all(|row| row.kind == [LKind::Path, LKind::Group, LKind::Board][filter - 1]));
+        }
+    }
+}
+
+#[test]
+fn menu_owner_absent_for_one_frame_releases_keyboard_and_closes_menu() {
+    let ctx = egui::Context::default();
+    let owner = egui::Id::new("disappearing-owner");
+    let _ = ctx.run_ui(Default::default(), |ui| {
+        kit::open_menu(ui.ctx(), owner, egui::pos2(10.0, 10.0), None);
+        kit::menu(ui.ctx(), owner, &[kit::MenuEntry::Item("Action")]);
+    });
+    assert!(super::wants_keyboard(&ctx));
+    let _ = ctx.run_ui(Default::default(), |_| {});
+    assert!(!super::wants_keyboard(&ctx));
+    assert!(!kit::is_menu_open(&ctx, owner));
 }

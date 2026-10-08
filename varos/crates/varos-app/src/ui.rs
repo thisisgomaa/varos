@@ -22,9 +22,9 @@ use winit::window::Window;
 use varos_app::shell::tokens::{
     micro_label, numeric_value, panel_title, shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, ALIGN_SECTION_GAP,
     CLOSE_RED, CONTROL_BAR_NAME_H, CONTROL_BAR_NAME_TEXT, CONTROL_BAR_NAME_W, DISABLED, HOVER, LABEL_GAP,
-    LINE as BORDER, LINE2, LINE2 as BORDER_2, MUTED, NONE_RED, PAINT_LABEL_W, PANEL as SOLID_PANEL, PANEL_ITEM_GAP_X,
-    PF_BAR_H, PF_BAR_W, PF_OFFSET, PF_RADIUS, PF_SQUARE, PF_STROKE, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM,
-    SECTION_GAP_HALF, SEG_TEXT, SEG_W, SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, TRANSFORM_REFPOINT_SIZE,
+    LINE as BORDER, LINE2, LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, PANEL_ITEM_GAP_X, PF_BAR_H,
+    PF_BAR_W, PF_OFFSET, PF_RADIUS, PF_SQUARE, PF_STROKE, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM, SECTION_GAP_HALF,
+    SEG_TEXT, SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, TRANSFORM_REFPOINT_SIZE,
 };
 // Icon stage 1: one icon registry + one icon button (shell::kit), one set of icon sizes (tokens).
 use varos_app::shell::kit::field::Label as Lab;
@@ -68,93 +68,8 @@ use snap::*;
 use style::*;
 // ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
 
-/// A shortcut hint shown in an icon button's tooltip.
-#[derive(Clone, Copy)]
-enum Hint {
-    None,
-    /// The platform primary modifier + key (⌘G on Mac, Ctrl+G elsewhere).
-    Primary(&'static str),
-    /// A plain key name.
-    Key(&'static str),
-}
-
-/// One panel icon button: its stable key, its registry glyph, the text label it used to show (now its
-/// tooltip) and its shortcut. Every icon button in the panels is drawn from [`ICON_ACTIONS`], so the
-/// tooltip test covers all of them (ICON_LIBRARY_STUDY §4; owner: "icons instead of text").
-#[derive(Clone, Copy)]
-struct IconAction {
-    key: &'static str,
-    icon: Icon,
-    label: &'static str,
-    hint: Hint,
-}
-impl IconAction {
-    /// The label plus its shortcut — what the button says on hover.
-    fn tooltip(&self) -> String {
-        match self.hint {
-            Hint::None => self.label.to_string(),
-            Hint::Primary(k) => format!("{} ({})", self.label, shortcut_label(k)),
-            Hint::Key(k) => format!("{} ({k})", self.label),
-        }
-    }
-    /// Draw it through the one kit control; true once on activation (pointer or Enter/Space).
-    fn show(&self, ui: &mut egui::Ui, state: kit::IconState<'_>) -> bool {
-        let id = ui.make_persistent_id(("icon-action", self.key));
-        let r = kit::icon_button(ui, id, self.icon, &self.tooltip(), state);
-        #[cfg(test)]
-        tests::icon_action_tests::PROBE.with(|p| p.borrow_mut().push((self.key, id, r.response.rect)));
-        r.activated
-    }
-}
-
-const IA_LAYER_GROUP: IconAction =
-    IconAction { key: "layer-group", icon: Icon::Group, label: "Group the selection", hint: Hint::Primary("G") };
-const IA_LAYER_DELETE: IconAction =
-    IconAction { key: "layer-delete", icon: Icon::Trash, label: "Delete the selection", hint: Hint::Key("Delete") };
-const IA_AB_ADD: IconAction =
-    IconAction { key: "ab-add", icon: Icon::ArtboardAdd, label: "Add artboard", hint: Hint::None };
-const IA_AB_DUP: IconAction =
-    IconAction { key: "ab-dup", icon: Icon::Duplicate, label: "Duplicate artboard", hint: Hint::None };
-const IA_AB_DEL: IconAction =
-    IconAction { key: "ab-del", icon: Icon::Trash, label: "Delete artboard", hint: Hint::None };
-const IA_AB_LINK: IconAction =
-    IconAction { key: "ab-link", icon: Icon::Link, label: "Constrain W/H", hint: Hint::None };
-const IA_AB_PORTRAIT: IconAction =
-    IconAction { key: "ab-portrait", icon: Icon::Portrait, label: "Portrait", hint: Hint::None };
-const IA_AB_LANDSCAPE: IconAction =
-    IconAction { key: "ab-landscape", icon: Icon::Landscape, label: "Landscape", hint: Hint::None };
-const IA_AB_FIT: IconAction =
-    IconAction { key: "ab-fit", icon: Icon::Fit, label: "Fit in window", hint: Hint::Primary("0") };
-const IA_PROP_LINK: IconAction =
-    IconAction { key: "prop-link", icon: Icon::Link, label: "Constrain W/H proportions", hint: Hint::None };
-const IA_FLIP_H: IconAction =
-    IconAction { key: "flip-h", icon: Icon::FlipH, label: "Flip horizontal", hint: Hint::None };
-const IA_FLIP_V: IconAction = IconAction { key: "flip-v", icon: Icon::FlipV, label: "Flip vertical", hint: Hint::None };
-const IA_NO_FILL: IconAction = IconAction { key: "no-fill", icon: Icon::Remove, label: "No paint", hint: Hint::None };
-const IA_NO_STROKE: IconAction =
-    IconAction { key: "no-stroke", icon: Icon::Remove, label: "No paint", hint: Hint::None };
-const IA_PICKER_CLOSE: IconAction =
-    IconAction { key: "picker-close", icon: Icon::Remove, label: "Close", hint: Hint::Key("Esc") };
-
-/// Every panel icon action, for the tooltip/emission tests.
-#[cfg(test)]
-const ICON_ACTIONS: [IconAction; 15] = [
-    IA_LAYER_GROUP,
-    IA_LAYER_DELETE,
-    IA_AB_ADD,
-    IA_AB_DUP,
-    IA_AB_DEL,
-    IA_AB_LINK,
-    IA_AB_PORTRAIT,
-    IA_AB_LANDSCAPE,
-    IA_AB_FIT,
-    IA_PROP_LINK,
-    IA_FLIP_H,
-    IA_FLIP_V,
-    IA_NO_FILL,
-    IA_NO_STROKE,
-    IA_PICKER_CLOSE,
-];
+mod icon_actions;
+use icon_actions::*;
 
 /// A window action the custom title bar asks the host (winit) to perform.
 pub enum WinAction {
@@ -438,7 +353,7 @@ impl Ui {
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
     pub fn wants_keyboard(&self) -> bool {
-        self.ctx.egui_wants_keyboard_input()
+        wants_keyboard(&self.ctx)
     }
     /// Is the Color Picker modal open? (canvas shortcuts must be fully gated off while it is)
     pub fn modal_open(&self) -> bool {
@@ -649,11 +564,11 @@ impl Ui {
         let mut new_hole: Option<egui::Rect> = None;
         let top = &self.top;
         // Pointer-only frames reuse the rows wholesale. Selection/tree/search changes rebuild row state;
-        // the independent thumbnail cache still avoids curve subdivision when geometry is unchanged.
-        let rows_key = layer_rows_key(ed, &self.lay_collapsed, &self.lay_search);
+        let filter = layer_kind_filter(&self.ctx);
+        let rows_key = layer_rows_key(ed, &self.lay_collapsed, &self.lay_search, filter);
         let mut layer_rows_cache = self.layer_rows_cache.take();
         if layer_rows_cache.as_ref().is_none_or(|cache| cache.key != rows_key) {
-            let rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search, &mut self.layer_thumb_cache);
+            let rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search, filter, &mut self.layer_thumb_cache);
             layer_rows_cache = Some(LayerRowsCache { key: rows_key, rows });
         }
         let layer_rows = &layer_rows_cache.as_ref().expect("layers cache is populated above").rows;
@@ -857,6 +772,10 @@ impl Ui {
                                    // K3: field commits first; while a field holds invalid text the frame's presses are dropped
         fields::finish_frame(&self.ctx, self.doc_active, &mut ops, &mut self.field_pending);
         ops.retain(|op| {
+            if let Op::FitArtboard(index) = op {
+                self.fit_request = Some(*index);
+                return false;
+            }
             if let Op::OpenPicker(t) = op {
                 let seed = match *t {
                     MTarget::Paint(PaintTarget::Fill) => snap.fill,

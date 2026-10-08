@@ -10,17 +10,20 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
         let _label = ui.label(micro_label("ALIGN TO"));
         label_gap(ui);
         let targets = [AlignTarget::Auto, AlignTarget::Selection, AlignTarget::Artboard];
-        let names = ["Auto", "Selection", "Artboard"];
         let help = [
-            "Smart default: many objects align to each other; a single object or group aligns to the artboard",
-            "Align objects within the selection's combined bounds",
-            "Align each object to the active artboard's edges",
+            "Align to: Auto — Smart default: many objects align to each other; a single object or group aligns to the artboard",
+            "Align to: Selection — Align objects within the selection's combined bounds",
+            "Align to: Artboard — Align each object to the active artboard's edges",
         ];
         let selected = targets.iter().position(|target| target == align_target).unwrap_or(0);
         let _track = ui.horizontal(|ui| {
-            if let Some(index) =
-                segmented_text(ui, ui.make_persistent_id("align-target"), SEG_W, &names, Some(&help), selected)
-            {
+            if let Some(index) = panel_segments(
+                ui,
+                "align-target",
+                &[(Icon::AlignAuto, help[0]), (Icon::AlignSelection, help[1]), (Icon::Frame, help[2])],
+                selected,
+                None,
+            ) {
                 *align_target = targets[index];
             }
         });
@@ -74,8 +77,6 @@ pub(crate) fn panel_pathfinder(ui: &mut egui::Ui, pf: Result<(), &'static str>, 
         ui.label(micro_label("SHAPE MODES"));
         label_gap(ui);
         pathfinder_row(ui, ops, false, pf); // the roomier dock home
-        ui.add_space(SECTION_GAP_HALF);
-        ui.label(RichText::new("Unite \u{b7} Minus Front \u{b7} Intersect \u{b7} Exclude").color(MUTED).size(10.5));
     });
 }
 
