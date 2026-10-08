@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
-use varos_bridge::{dto::HistoryAction, BoardAccess, BoardInfo, Context, Error, Host, Reply, Request, Service};
+use varos_bridge::{BoardAccess, BoardInfo, Context, Error, Host, Reply, Request, Service};
 use varos_core::{
     bridge::TargetEdit,
     editor::{Editor, PaintTarget, ToolKind},
@@ -66,17 +66,7 @@ impl Host for FakeHost {
     }
 }
 fn ctx() -> Context {
-    Context {
-        client: "fixture".into(),
-        epoch: "test-epoch".into(),
-        read: true,
-        edit: true,
-        destructive: true,
-        history: true,
-        files: false,
-        allow_history: false,
-        allow_destructive: false,
-    }
+    Context { client: "fixture".into(), epoch: "test-epoch".into() }
 }
 fn req(tool: &str, arguments: Value) -> Request {
     varos_bridge::mcp::decode_tool(tool, arguments).unwrap()
@@ -179,7 +169,7 @@ fn selection_defaults_preserved_and_select_is_deliberate() {
 }
 #[test]
 fn refusals_revisions_scope_and_epoch_do_not_mutate() {
-    for code in ["revision_conflict", "busy", "board_not_active", "scope_refused", "not_found"] {
+    for code in ["revision_conflict", "busy", "board_not_active", "not_found"] {
         let mut h = FakeHost::new();
         let mut s = Service::new("test-epoch".into());
         let mut c = ctx();
@@ -187,7 +177,6 @@ fn refusals_revisions_scope_and_epoch_do_not_mutate() {
         match code {
             "busy" => h.busy = true,
             "board_not_active" => h.active = false,
-            "scope_refused" => c.edit = false,
             "not_found" => c.epoch = "old launch".into(),
             _ => {}
         }
@@ -199,79 +188,21 @@ fn refusals_revisions_scope_and_epoch_do_not_mutate() {
     }
 }
 #[test]
-fn scopes_are_enforced_per_verb_class_before_any_grant() {
+fn local_service_does_not_gate_scopes() {
     let mut h = FakeHost::new();
     let mut s = Service::new("test-epoch".into());
-    let call = |s: &mut Service, h: &mut FakeHost, c: &Context, tool: &str, args: Value| {
-        s.handle(h, c, req(tool, args), &AtomicBool::new(false))
-    };
-    // read only: reads work, every mutation class is refused.
-    let mut c = ctx();
-    c.edit = false;
-    c.destructive = false;
-    c.history = false;
-    assert!(call(&mut s, &mut h, &c, "describe", json!({"board":"b1"})).ok);
-    assert!(call(&mut s, &mut h, &c, "list_boards", json!({})).ok);
-    for (tool, args) in [
-        ("select", json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ids":[]})),
-        (
-            "edit",
-            json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"move","ids":["path:10"],"delta":[1,0]}]}),
-        ),
-    ] {
-        assert_eq!(call(&mut s, &mut h, &c, tool, args).error.unwrap().code, "scope_refused");
-    }
-    // read+edit: ordinary edits work; destructive verbs and history are refused by scope,
-    // even when the owner's temporary grant policies are on (scope is checked first).
-    c.edit = true;
-    c.allow_destructive = true;
-    c.allow_history = true;
-    let caps = call(&mut s, &mut h, &c, "capabilities", json!({"api":"1.0"})).result.unwrap();
-    assert_eq!((caps["destructive_scope"].clone(), caps["history_scope"].clone()), (json!(false), json!(false)));
-    let moved = call(
-        &mut s,
-        &mut h,
-        &c,
-        "edit",
-        json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"move","ids":["path:10"],"delta":[1,0]}]}),
+    let context = ctx();
+
+    assert!(s.handle(&mut h, &context, edit("r1", 1), &AtomicBool::new(false)).ok);
+    assert!(
+        s.handle(
+            &mut h,
+            &context,
+            req("history", json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"action":"undo"})),
+            &AtomicBool::new(false)
+        )
+        .ok
     );
-    assert!(moved.ok, "{moved:?}");
-    for (tool, args) in [
-        (
-            "edit",
-            json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"ops":[{"verb":"delete","ids":["path:20"]}]}),
-        ),
-        (
-            "edit",
-            json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"ops":[{"verb":"move","ids":["path:10"],"delta":[1,0]},{"verb":"ungroup","ids":["path:20"]}]}),
-        ),
-        ("history", json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"action":"undo"})),
-    ] {
-        let e = call(&mut s, &mut h, &c, tool, args).error.unwrap();
-        assert_eq!(e.code, "scope_refused");
-        assert!(e.digest.is_none(), "no confirmation grant is issued without the scope");
-    }
-    assert_eq!(h.editor.rev, 2);
-    // With the scopes, the existing exact-confirmation flow still applies.
-    c.destructive = true;
-    c.history = true;
-    let del = call(
-        &mut s,
-        &mut h,
-        &c,
-        "edit",
-        json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"ops":[{"verb":"delete","ids":["path:20"]}]}),
-    );
-    assert_eq!(del.error.unwrap().code, "confirmation_required");
-    let undo = call(
-        &mut s,
-        &mut h,
-        &c,
-        "history",
-        json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"action":"undo"}),
-    );
-    assert_eq!(undo.error.unwrap().code, "confirmation_required");
-    assert_eq!(h.editor.rev, 2);
 }
 #[test]
 fn unknown_fields_and_unsupported_ops_are_indexed() {
@@ -303,29 +234,16 @@ fn idempotency_receipts_are_original_after_human_edits() {
     assert_eq!(status.result.unwrap()["receipt"], json!(first));
 }
 #[test]
-fn history_challenge_and_owner_grant_are_bound_single_use() {
+fn history_without_grant_has_idempotent_receipt() {
     let mut h = FakeHost::new();
     let mut s = Service::new("test-epoch".into());
+    let before = h.editor.doc.clone();
     assert!(handle(&mut s, &mut h, edit("r1", 1)).ok);
-    let args = json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"action":"undo"});
-    let denied = handle(&mut s, &mut h, req("history", args.clone()));
-    let hash = denied.error.unwrap().digest.clone().unwrap();
-    let mut exact = args.clone();
-    exact["digest"] = json!(hash);
-    assert_eq!(handle(&mut s, &mut h, req("history", exact)).error.unwrap().code, "confirmation_required");
-    assert_eq!(h.editor.rev, 2);
-    let mut c = ctx();
-    c.allow_history = true;
-    let challenge = s.handle(&mut h, &c, req("history", args.clone()), &AtomicBool::new(false));
-    let mut exact = args;
-    exact["digest"] = json!(challenge.error.unwrap().digest.clone().unwrap());
-    let r = req("history", exact);
-    assert!(s.handle(&mut h, &c, r.clone(), &AtomicBool::new(false)).ok);
+    let undo = req("history", json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"action":"undo"}));
+    assert!(handle(&mut s, &mut h, undo.clone()).ok);
+    assert!(h.editor.doc.content_eq(&before));
+    assert!(handle(&mut s, &mut h, undo).ok);
     assert_eq!(h.editor.rev, 3);
-    assert_eq!(h.editor.doc.paths[0].anchors[0].p, [20., 20.]);
-    assert!(s.handle(&mut h, &c, r, &AtomicBool::new(false)).ok);
-    assert_eq!(h.editor.rev, 3, "receipt replay cannot undo twice");
-    let _ = HistoryAction::Redo;
 }
 #[test]
 fn cancellation_at_staging_checkpoint_is_atomic() {
@@ -465,15 +383,12 @@ impl SocketHost {
             let mut host = FakeHost::new();
             let mut service = Service::new(epoch);
             while !flag.load(Ordering::Acquire) {
-                if let Ok(mut p) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                if let Ok(p) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
                     if delay && p.request.mutation().is_some() {
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
-                    // Same owning-thread recheck as varos-app's bridge_host::run.
-                    let reply = match p.authorize() {
-                        Ok(()) => service.handle(&mut host, &p.context, p.request, &p.cancelled),
-                        Err(e) => Reply::failure(e),
-                    };
+                    // Peer uid and identity were checked before queuing.
+                    let reply = service.handle(&mut host, &p.context, p.request, &p.cancelled);
                     let _ = p.reply.send(reply);
                 }
             }
@@ -630,18 +545,17 @@ impl Drop for TempHome {
 #[cfg(unix)]
 #[ignore = "requires native Unix socket bind; sandbox denies bind with EPERM"]
 #[test]
-fn paired_socket_pairing_scopes_revocation_audit_and_registry_lifecycle() {
+fn same_uid_socket_all_scopes_no_pairing_audit_and_registry_lifecycle() {
     use std::os::unix::fs::PermissionsExt;
     use varos_bridge::conn::{
         self,
         attach::{AutoClient, Selector},
-        credentials::{self, MemoryStore},
-        manage,
-        trust::Scopes,
+        credentials::{self, FileKeyStore},
     };
     let home = TempHome::new();
     let paths = conn::Paths::under(&home.0);
-    let host_key = credentials::load_or_create(&MemoryStore::new(), credentials::HOST_ACCOUNT).unwrap();
+    let host_key =
+        credentials::load_or_create(&FileKeyStore::new(paths.state.join("keys")), credentials::HOST_ACCOUNT).unwrap();
     let config = |key: &ed25519_dalek::SigningKey| varos_bridge::ipc::PairedConfig {
         paths: paths.clone(),
         host_key: key.clone(),
@@ -657,22 +571,14 @@ fn paired_socket_pairing_scopes_revocation_audit_and_registry_lifecycle() {
     assert_eq!(record.epoch, host.endpoint.epoch, "both listeners share one epoch/service");
     assert!(!std::fs::read_to_string(&registry).unwrap().contains(&host.endpoint.token));
 
-    let store: std::sync::Arc<dyn credentials::CredentialStore> = std::sync::Arc::new(MemoryStore::new());
+    let store: std::sync::Arc<dyn credentials::CredentialStore> =
+        std::sync::Arc::new(FileKeyStore::new(paths.state.join("keys")));
     let agent = std::sync::Arc::new(
         AutoClient::with(Ok(paths.clone()), store.clone(), Selector::Auto, None, "claude-code").unwrap(),
     );
-    // Unknown agent: pairing_required, no board metadata.
-    let first = agent.call("c1", req("list_boards", json!({})));
-    assert!(first.result.is_none());
-    let error = first.error.unwrap();
-    assert_eq!(error.code, "pairing_required", "{error:?}");
-    let request_id = error.pairing.as_ref().unwrap()["request_id"].as_str().unwrap().to_owned();
-    let match_code = error.pairing.as_ref().unwrap()["match_code"].as_str().unwrap().to_owned();
-    assert!(error.reason.contains(&match_code), "the agent is shown the code to read to the owner");
-    assert!(error.reason.contains(&request_id));
-    // Still pending: a retry coalesces into the same request.
-    let retry = agent.call("c1", req("list_boards", json!({}))).error.unwrap();
-    assert_eq!(retry.pairing.as_ref().unwrap()["request_id"], json!(request_id));
+    assert!(agent.call("c1", req("list_boards", json!({}))).ok);
+    assert!(!paths.runtime.join("pairing").exists());
+    assert!(!paths.state.join("trust.json").exists());
 
     // The legacy token Hello is never accepted on the paired socket...
     {
@@ -688,44 +594,35 @@ fn paired_socket_pairing_scopes_revocation_audit_and_registry_lifecycle() {
     // ...while the deprecated legacy socket keeps working for this transition slice.
     assert!(host.client().call("legacy", req("capabilities", json!({"api":"1.0"}))).ok);
 
-    // Owner approval (library form of `varos-cli bridge pair --approve`).
-    assert_eq!(
-        manage::approve(&paths, &request_id, "AAA-000", Scopes::DEFAULT_REQUEST).unwrap_err().code,
-        "match_code_mismatch"
-    );
-    manage::approve(&paths, &request_id, &match_code.to_lowercase(), Scopes::DEFAULT_REQUEST).unwrap();
     let caps = agent.call("c2", req("capabilities", json!({"api":"1.0"})));
     assert!(caps.ok, "{caps:?}");
     let caps = caps.result.unwrap();
     assert_eq!(caps["edit"], true);
-    assert_eq!(caps["destructive_scope"], false);
-    assert_eq!(caps["history_scope"], false);
+    assert_eq!(caps["destructive_scope"], true);
+    assert_eq!(caps["history_scope"], true);
+    assert_eq!(caps["files_scope"], true);
+    assert_eq!(caps["read"], true);
+    assert_eq!(caps["trust"], "local user");
     let profile = caps["client"].as_str().unwrap().split(':').next().unwrap().to_owned();
     assert!(agent.call("c3", req("describe", json!({"board":"b1"}))).ok);
     assert!(agent.call("c4", edit("r1", 1)).ok);
     let delete = json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"ops":[{"verb":"delete","ids":["path:20"]}]});
-    assert_eq!(agent.call("c5", req("edit", delete)).error.unwrap().code, "scope_refused");
-
-    // Revocation while a mutation is queued: the owning-thread recheck refuses it.
-    let inflight = {
-        let agent = agent.clone();
-        std::thread::spawn(move || agent.call("c6", edit("r2", 2)))
-    };
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    manage::revoke(&paths, &profile).unwrap();
-    assert_eq!(inflight.join().unwrap().error.unwrap().code, "scope_refused");
-    let rev = host.client().call("legacy-2", req("describe", json!({"board":"b1"}))).rev;
-    assert_eq!(rev, Some(2), "the revoked mutation never ran");
-    // The revoked key is refused outright; the client itself must pair a new profile.
-    let old = AutoClient::with(Ok(paths.clone()), store.clone(), Selector::Auto, Some(profile.clone()), "claude-code")
-        .unwrap();
-    assert_eq!(old.call("c7", req("capabilities", json!({"api":"1.0"}))).error.unwrap().code, "pairing_denied");
-    assert_eq!(agent.call("c8", req("capabilities", json!({"api":"1.0"}))).error.unwrap().code, "pairing_required");
+    assert!(agent.call("c5", req("edit", delete)).ok);
+    assert!(
+        agent
+            .call(
+                "c6",
+                req("history", json!({"api":"1.0","request_id":"r3","board":"b1","expected_rev":3,"action":"undo"}))
+            )
+            .ok
+    );
 
     // Audit: verbs/boards/revisions/results only — no payload, paint or names.
     let audit = conn::audit::tail(&paths, 50).join("\n");
     assert!(audit.contains("\"verb\":\"edit\"") && audit.contains("\"result\":\"ok\""), "{audit}");
-    assert!(audit.contains("agent_revoked") && audit.contains("pairing_requested"));
+    assert!(audit.contains(&format!("\"agent\":\"{profile}\"")));
+    assert!(audit.contains("\"label\":\"claude-code\""));
+    assert!(!audit.contains("pairing_requested"));
     assert!(audit.contains("\"agent\":\"legacy\""), "opt-in legacy calls are audited as agent legacy");
     assert!(!audit.contains("FF6600") && !audit.contains("Logo") && !audit.contains(&host.endpoint.token));
 
@@ -743,18 +640,16 @@ fn paired_socket_pairing_scopes_revocation_audit_and_registry_lifecycle() {
 #[cfg(unix)]
 #[ignore = "requires native Unix socket bind; sandbox denies bind with EPERM"]
 #[test]
-fn paired_host_key_change_asks_again_and_deferred_start_publishes() {
+fn local_host_key_change_resets_session_without_pairing() {
     use varos_bridge::conn::{
         self,
         attach::{AutoClient, Selector},
-        credentials::{self, MemoryStore},
-        manage,
-        trust::Scopes,
+        credentials::{self, FileKeyStore},
     };
     use varos_bridge::ipc::{Listener, Options, PairedSource, PairedStatus};
     let home = TempHome::new();
     let paths = conn::Paths::under(&home.0);
-    let host_store = MemoryStore::new();
+    let host_store = FileKeyStore::new(paths.state.join("keys"));
     let config = |key: ed25519_dalek::SigningKey| varos_bridge::ipc::PairedConfig {
         paths: paths.clone(),
         host_key: key,
@@ -763,20 +658,13 @@ fn paired_host_key_change_asks_again_and_deferred_start_publishes() {
     };
     let first_key = credentials::load_or_create(&host_store, credentials::HOST_ACCOUNT).unwrap();
     let host = SocketHost::start_with(false, Some(config(first_key)));
-    let store: std::sync::Arc<dyn credentials::CredentialStore> = std::sync::Arc::new(MemoryStore::new());
+    let store: std::sync::Arc<dyn credentials::CredentialStore> =
+        std::sync::Arc::new(FileKeyStore::new(paths.state.join("keys")));
     let agent = AutoClient::with(Ok(paths.clone()), store, Selector::Auto, None, "claude-code").unwrap();
     let caps = || req("capabilities", json!({"api":"1.0"}));
-    let pairing = agent.call("c1", caps()).error.unwrap().pairing.clone().unwrap();
-    manage::approve(
-        &paths,
-        pairing["request_id"].as_str().unwrap(),
-        pairing["match_code"].as_str().unwrap(),
-        Scopes::DEFAULT_REQUEST,
-    )
-    .unwrap();
     assert!(agent.call("c2", caps()).ok);
     drop(host);
-    // The host identity is replaced (e.g. the Keychain item was reset) and Varos relaunches;
+    // The host identity is replaced (e.g. the host key file was replaced) and Varos relaunches;
     // this launch loads its key on a background thread like the desktop.
     credentials::CredentialStore::delete(&host_store, credentials::HOST_ACCOUNT).unwrap();
     let second_key = credentials::load_or_create(&host_store, credentials::HOST_ACCOUNT).unwrap();
@@ -805,28 +693,15 @@ fn paired_host_key_change_asks_again_and_deferred_start_publishes() {
         let mut host = FakeHost::new();
         let mut service = Service::new(epoch);
         while !flag.load(Ordering::Acquire) {
-            if let Ok(mut p) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
-                let reply = match p.authorize() {
-                    Ok(()) => service.handle(&mut host, &p.context, p.request, &p.cancelled),
-                    Err(e) => Reply::failure(e),
-                };
+            if let Ok(p) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                let reply = service.handle(&mut host, &p.context, p.request, &p.cancelled);
                 let _ = p.reply.send(reply);
             }
         }
     });
-    // Relaunch → session_reset once; then the changed key asks again, naming the reason.
+    // Relaunch → session_reset once; the registry-matching changed key remains locally trusted.
     assert_eq!(agent.call("c3", caps()).error.unwrap().code, "session_reset");
-    let again = agent.call("c4", caps()).error.unwrap();
-    assert_eq!(again.code, "pairing_required", "{again:?}");
-    assert!(again.reason.contains("identity key changed"), "{}", again.reason);
-    let pairing = again.pairing.clone().unwrap();
-    manage::approve(
-        &paths,
-        pairing["request_id"].as_str().unwrap(),
-        pairing["match_code"].as_str().unwrap(),
-        Scopes::DEFAULT_REQUEST,
-    )
-    .unwrap();
+    assert!(agent.call("c4", caps()).ok);
     assert!(agent.call("c5", caps()).ok);
     stop.store(true, Ordering::Release);
     worker.join().unwrap();
@@ -1070,7 +945,7 @@ fn net_diff_preserves_multiple_fields_and_cancelling_human_changes() {
     assert_eq!(r.result.unwrap()["changed"], json!([]));
 }
 #[test]
-fn frozen_compact_projection_and_confirmation_digest() {
+fn frozen_compact_projection_and_open_history_receipt() {
     let mut h = FakeHost::new();
     let mut s = Service::new("test-epoch".into());
     let r = handle(
@@ -1086,8 +961,8 @@ fn frozen_compact_projection_and_confirmation_digest() {
         req("history", json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"action":"undo"})),
     );
     let text = varos_bridge::service::compact(&r);
-    assert!(text.contains(r.error.unwrap().digest.as_ref().unwrap()));
-    assert!(text.contains("expected_rev=2"));
+    assert!(r.ok, "{text}");
+    assert_eq!(r.rev, Some(3));
     let bad = handle(&mut s, &mut h, req("describe", json!({"board":"b1\ninstructions"})));
     assert!(!varos_bridge::service::compact(&bad).contains('\n'));
 }
@@ -1314,18 +1189,10 @@ fn each_design_verb_success_and_indexed_not_found_rollback() {
             ops.push(json!({"verb":"group","ids":["path:10","path:20"],"local":"$group"}));
         }
         ops.push(op.clone());
-        let mut request = design_request(ops, 1);
-        let mut owner = ctx();
-        owner.allow_destructive = true;
-        let mut r = s.handle(&mut h, &owner, request.clone(), &AtomicBool::new(false));
-        if ["delete", "ungroup"].contains(&op["verb"].as_str().unwrap()) {
-            assert_eq!(r.error.as_ref().unwrap().code, "confirmation_required");
-            assert!(h.editor.doc.content_eq(&before));
-            if let Request::Edit(ref mut edit) = request {
-                edit.digest = r.error.unwrap().digest.clone();
-            }
-            r = s.handle(&mut h, &owner, request, &AtomicBool::new(false));
-        }
+        let request = design_request(ops, 1);
+        let owner = ctx();
+
+        let r = s.handle(&mut h, &owner, request.clone(), &AtomicBool::new(false));
         assert!(r.ok, "op={op} reply={r:?}");
         assert_eq!(r.undo_steps, 1);
         assert!(h.editor.tool == ToolKind::Direct);
@@ -1422,36 +1289,16 @@ fn design_validation_failures_rollback_every_prefix_and_local_names_are_request_
     assert_eq!(r.error.unwrap().code, "not_found");
 }
 #[test]
-fn destructive_grants_default_deny_exact_payload_and_receipt_retry() {
+fn destructive_edit_without_grant_is_one_undo_and_idempotent() {
     let mut h = FakeHost::new();
-    let before = h.editor.doc.clone();
     let mut s = Service::new("test-epoch".into());
     let request = design_request(vec![json!({"verb":"delete","ids":["path:10"]})], 1);
-    let challenge = handle(&mut s, &mut h, request.clone());
-    assert_eq!(challenge.error.as_ref().unwrap().code, "confirmation_required");
-    let mut confirmed = request.clone();
-    if let Request::Edit(ref mut e) = confirmed {
-        e.digest = challenge.error.unwrap().digest.clone();
-    }
-    assert_eq!(handle(&mut s, &mut h, confirmed.clone()).error.unwrap().code, "confirmation_required");
-    assert_eq!(h.editor.doc, before);
-    let mut owner = ctx();
-    owner.allow_destructive = true;
-    let r = s.handle(&mut h, &owner, request, &AtomicBool::new(false));
-    if let Request::Edit(ref mut e) = confirmed {
-        e.digest = r.error.unwrap().digest.clone();
-    }
-    let mut changed = confirmed.clone();
-    if let Request::Edit(ref mut e) = changed {
-        e.ops.push(varos_bridge::dto::Operation::Move { ids: vec!["path:20".into()], delta: [2.0, 0.0] });
-    }
-    assert_eq!(s.handle(&mut h, &ctx(), changed, &AtomicBool::new(false)).error.unwrap().code, "confirmation_required");
-    let success = s.handle(&mut h, &owner, confirmed.clone(), &AtomicBool::new(false));
-    assert!(success.ok, "{success:?}");
-    assert_eq!(s.handle(&mut h, &owner, confirmed, &AtomicBool::new(false)), success);
-    assert!(h.editor.doc.pidx(10).is_none());
+    let first = handle(&mut s, &mut h, request.clone());
+    assert!(first.ok, "{first:?}");
+    assert_eq!(first.undo_steps, 1);
+    assert_eq!(json!(handle(&mut s, &mut h, request)), json!(first));
     h.editor.undo();
-    assert!(h.editor.doc.content_eq(&before));
+    assert!(h.editor.doc.pidx(10).is_some());
 }
 #[test]
 fn snapshots_refuse_stale_oversized_and_ungranted_reads_without_history() {
@@ -1466,15 +1313,9 @@ fn snapshots_refuse_stale_oversized_and_ungranted_reads_without_history() {
         let r = handle(&mut s, &mut h, req("snapshot", args));
         assert_eq!(r.error.unwrap().code, code);
     }
-    let mut context = ctx();
-    context.read = false;
-    assert_eq!(
-        s.handle(&mut h, &context, req("snapshot", json!({"board":"b1","rev":1})), &AtomicBool::new(false))
-            .error
-            .unwrap()
-            .code,
-        "scope_refused"
-    );
+    let context = ctx();
+
+    assert!(s.handle(&mut h, &context, req("snapshot", json!({"board":"b1","rev":1})), &AtomicBool::new(false)).ok);
     assert_eq!(h.editor.doc, before);
     assert!(!h.editor.history_available(false));
 }
@@ -1907,15 +1748,10 @@ fn successful_create_delete_noop_still_reserves_exposed_identities() {
     let mut h = empty_host();
     let before = h.editor.doc.clone();
     let mut s = Service::new("test-epoch".into());
-    let mut owner = ctx();
-    owner.allow_destructive = true;
-    let mut request =
+    let owner = ctx();
+
+    let request =
         design_request(vec![shape("$a", "rect", [0.0, 0.0, 10.0, 10.0]), json!({"verb":"delete","ids":["$a"]})], 1);
-    let challenge = s.handle(&mut h, &owner, request.clone(), &AtomicBool::new(false));
-    assert_eq!(h.editor.doc, before);
-    if let Request::Edit(ref mut e) = request {
-        e.digest = challenge.error.unwrap().digest.clone();
-    }
     let r = s.handle(&mut h, &owner, request, &AtomicBool::new(false));
     assert!(r.ok, "{r:?}");
     assert_eq!(r.undo_steps, 0);
@@ -2108,6 +1944,9 @@ fn geometry_single_object_byte_budget_and_capabilities_are_honest() {
     assert!(error.reason.contains("16 KiB"));
     assert!(!error.reason.contains("reduce page limit"));
     let caps = handle(&mut service, &mut h, req("capabilities", json!({"api":"1.0"}))).result.unwrap();
+    assert!(caps.get("files_roots_granted").is_none());
+    assert_eq!(caps["trust"], "local user");
+    assert!(caps["file_guards"].as_array().unwrap().iter().any(|v| v == "no_overwrite"));
     assert_eq!(caps["limits"]["geometry_page_bytes"], 16384);
     assert_eq!(caps["limits"]["geometry_typical_anchors_per_page"], 300);
     assert_eq!(caps["limits"]["geometry_anchor_pagination"], false);
@@ -2239,30 +2078,26 @@ fn slice4_files_scope_and_save_ticket_completion_fake_host() {
     let mut s = Service::new("test-epoch".into());
     let rev = h.host.editor.rev;
     let request = || req("save", json!({"api":"1.0","board":"b1","expected_rev":rev,"request_id":"r1"}));
-    let mut context = ctx();
+    let context = ctx();
     let r = s.handle(&mut h, &context, request(), &AtomicBool::new(false));
-    assert_eq!(r.error.unwrap().code, "scope_refused");
-    assert_eq!(h.calls, 0);
+    assert!(r.ok);
+    assert_eq!(h.calls, 1);
     for (tool, extras) in [
         ("save_as", json!({"path":"/granted/copy.vrs"})),
         ("export_pdf", json!({"path":"/granted/logo.pdf","scope":"artwork_bounds"})),
     ] {
         let mut args = json!({"api":"1.0","board":"b1","expected_rev":rev,"request_id":"r1"});
         args.as_object_mut().unwrap().extend(extras.as_object().unwrap().clone());
-        let r = s.handle(&mut h, &context, req(tool, args.clone()), &AtomicBool::new(false));
-        assert_eq!(r.error.unwrap().code, "scope_refused");
-        assert_eq!(h.calls, 0);
         let mut separate = Files { host: FakeHost::new(), calls: 0, done: false, code: None, pending: true };
         let mut service = Service::new("test-epoch".into());
-        let mut granted = context.clone();
-        granted.files = true;
+        let granted = context.clone();
+
         let accepted = service.handle(&mut separate, &granted, req(tool, args), &AtomicBool::new(false));
         assert!(accepted.ok, "{accepted:?}");
         assert_eq!(accepted.undo_steps, 0);
         assert_eq!(separate.calls, 1);
     }
-    context.files = true;
-    context.edit = false;
+
     let r = s.handle(&mut h, &context, request(), &AtomicBool::new(false));
     assert!(r.ok);
     assert_eq!(r.undo_steps, 0);
@@ -2383,5 +2218,18 @@ fn radius_zero_half_and_over_half_through_service() {
             assert!(path.anchors.iter().all(|a| a.hin.is_some() && a.hout.is_some()));
             assert_eq!(path.anchors[0].p, [10.0, 0.0]);
         }
+    }
+}
+
+#[test]
+fn noncanonical_board_refused_before_prepare() {
+    let mut host = FakeHost::new();
+    host.busy = true; // prepare would otherwise return busy/not_found.
+    let mut service = Service::new("test-epoch".into());
+    for board in ["b01", "b0", "b+1", "b1 "] {
+        let reply = handle(&mut service, &mut host, req("describe", json!({"api":"1.0","board":board})));
+        let error = reply.error.unwrap();
+        assert_eq!(error.code, "invalid_argument");
+        assert_eq!(error.reason, "board must be a canonical session handle bN");
     }
 }

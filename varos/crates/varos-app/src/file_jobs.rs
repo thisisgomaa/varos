@@ -102,10 +102,8 @@ pub enum FileDone {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BridgeFileJob {
     pub ticket: u64,
-    pub auth: Option<varos_bridge::ipc::Recheck>,
     pub inner: FileJob,
-    pub roots: Vec<PathBuf>,
-    pub backing: Vec<PathBuf>,
+    pub home: PathBuf,
     /// Some = CURRENT save, checked against the load/last-save fingerprint.
     pub expected: Option<(PathBuf, Option<varos_app::storage::durable::Fingerprint>)>,
 }
@@ -176,12 +174,6 @@ pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
 
 fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
     let result = (|| -> Result<FileDone, varos_bridge::Error> {
-        if let Some(auth) = &j.auth {
-            let scopes = (auth.0)()?;
-            if !scopes.read || !scopes.files {
-                return Err(varos_bridge::Error::new("scope_refused", "file grant revoked"));
-            }
-        }
         let dest = match &mut j.inner {
             FileJob::Save(s) => &mut s.dest,
             FileJob::Export(e) => &mut e.dest,
@@ -195,8 +187,8 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 ));
             }
         } else {
-            *dest = varos_bridge::files::destination(dest, &j.roots, &j.backing)?;
-            // Refuse existing destinations for this temporary API: replacing exports needs an owner dialog.
+            *dest = varos_bridge::files::destination(dest, &j.home)?;
+            // Refuse existing destinations for this temporary API: existing destinations must never be replaced.
             if disk.exists(dest) {
                 return Err(varos_bridge::Error::new("save_conflict", "destination exists; choose a fresh filename"));
             }
@@ -208,13 +200,12 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                     &s.dest,
                     j.expected.as_ref().and_then(|(_, fp)| fp.as_ref()),
                     j.expected.is_none(),
-                    j.auth.as_ref(),
                 )?;
                 FileDone::Saved(SaveDone { sid: s.sid, ticket: s.ticket, dest: s.dest, result: Ok(result) })
             }
             FileJob::Export(e) => {
                 let result = match varos_pdf::export_pdf_bytes(&e.doc, &e.plan, &AtomicBool::new(false)) {
-                    Ok(bytes) => match disk.export_guarded(&e.dest, &bytes, j.auth.as_ref()) {
+                    Ok(bytes) => match disk.export_guarded(&e.dest, &bytes) {
                         Ok(SaveOutcome::Durable) => ExportResult::Exported,
                         Ok(SaveOutcome::ReplacedUnconfirmed(e)) => ExportResult::ExportedUnconfirmed(e),
                         Err(e) => return Err(e),
@@ -412,20 +403,16 @@ mod tests {
             FileJob::Bridge(Box::new(BridgeFileJob {
                 ticket: 9,
                 inner: FileJob::Save(SaveJob { sid: SessionId(1), ticket: 9, dest, doc: doc.clone() }),
-                roots: vec![root.clone()],
-                backing: vec![path.clone()],
+                home: root.clone(),
                 expected,
-                auth: None,
             }))
         };
         // No backing file exists yet; fresh Save As is independent of the live editor.
         let fresh = FileJob::Bridge(Box::new(BridgeFileJob {
             ticket: 8,
             inner: FileJob::Save(SaveJob { sid: SessionId(1), ticket: 8, dest: path.clone(), doc: doc.clone() }),
-            roots: vec![root.clone()],
-            backing: vec![],
+            home: root.clone(),
             expected: None,
-            auth: None,
         }));
         let done = execute(fresh, &mut crate::file_ports::DiskStore);
         assert!(matches!(done, FileDone::Bridge { result: varos_bridge::Reply { ok: true, .. }, .. }));
@@ -445,10 +432,8 @@ mod tests {
                 plan,
                 replace_confirmed: false,
             }),
-            roots: vec![root.clone()],
-            backing: vec![path.clone()],
+            home: root.clone(),
             expected: None,
-            auth: None,
         }));
         let done = execute(job, &mut crate::file_ports::DiskStore);
         assert!(matches!(done, FileDone::Bridge { result: varos_bridge::Reply { ok: true, .. }, .. }));

@@ -223,6 +223,8 @@ While status is proposed, **no accepted ADR is superseded** and no authority hea
 
 ### 8. Security and destructive operations
 
+**Superseded for local trust by [ADR-0011 Amendment 3](ADR-0011-bridge-connection-and-trust.md#amendment-3--open-local-trust-owner-2026-10-08), owner 2026-10-08:** same-uid agents receive all scopes without pairing, confirmation or file-root grants. Undo + audit + future per-AI review history replace the gates described historically below. Uid checks, revision checks, mistake-guards and refusal to overwrite existing save_as/export destinations remain.
+
 - Default deny. User grants read/write roots or individual files and authorized live board sessions at launch/attach. Separate read, edit and export/write capabilities. `list_boards` cannot leak other sessions, paths or Recent entries. A tool request cannot widen grants or enable its own write access.
 - All open/save/export/snapshot paths are local and checked at use time. Canonicalize existing inputs and output parent directories, reject escape via `..`, symlinks, aliases or replaced parents; use directory-relative/identity-checked operations rather than trusting a string-prefix check. Handle hard-link aliases in writer ownership checks. Reject URL schemes, device paths and network-mounted locations in v1; if locality cannot be established, refuse. Do not enumerate the home directory or read credentials. Apply bounded file/PDF/model parsing before installing a document.
 - Bridge has no outbound network, remote listener, telemetry, package install, generic shell tool or provider SDK. Its only IPC is stdio/local sockets. The later agent launcher belongs to the app layer; its network activity is a separate, user-selected vendor process (§6).

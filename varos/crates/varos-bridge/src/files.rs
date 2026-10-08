@@ -1,4 +1,4 @@
-//! Temporary owner-root policy for Bridge file destinations. No root means no destinations.
+//! Mistake-guards for open local trust: passwd home, cloud drives and external volumes; new names only.
 use crate::Error;
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,9 @@ pub fn validate_path(path: &Path, extension: &str) -> Result<(), Error> {
     if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case(extension)) {
         return Err(Error::new("invalid_argument", format!("destination must be .{extension}")));
     }
-    if forbidden(path) {
+    let home =
+        crate::conn::fsutil::user_home_dir().map_err(|_| Error::new("scope_refused", "user home unavailable"))?;
+    if forbidden_for_home(path, &home) || !contained(path, &home) {
         return Err(Error::new("scope_refused", "protected destination"));
     }
     Ok(())
@@ -18,72 +20,51 @@ pub fn validate_path(path: &Path, extension: &str) -> Result<(), Error> {
 fn in_app_bundle(path: &Path, exe: &Path) -> bool {
     exe.ancestors().any(|a| a.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")) && path.starts_with(a))
 }
-pub fn forbidden(path: &Path) -> bool {
+fn cloud_drive(path: &Path, home: &Path) -> bool {
+    path.starts_with(home.join("Library/Mobile Documents"))
+        || path.strip_prefix(home.join("Library/CloudStorage")).is_ok_and(|p| p.components().count() >= 2)
+}
+fn contained(path: &Path, home: &Path) -> bool {
+    home != Path::new("/")
+        && ((path.starts_with(home) && (!path.starts_with(home.join("Library")) || cloud_drive(path, home)))
+            || path.strip_prefix("/Volumes").is_ok_and(|p| p.components().count() >= 2))
+}
+fn forbidden_for_home(path: &Path, home: &Path) -> bool {
     path == Path::new("/")
         || ["/System", "/Applications", "/Library", "/dev", "/proc", "/sys"].iter().any(|p| path.starts_with(p))
         || path.as_os_str().to_string_lossy().split('/').any(|p| p.starts_with('.'))
-        || path.components().any(|c| match c {
-            std::path::Component::Normal(n) => n.to_string_lossy().starts_with('.'),
-            std::path::Component::ParentDir | std::path::Component::CurDir => true,
-            _ => false,
-        })
-        || std::env::var_os("HOME").is_some_and(|h| path.starts_with(PathBuf::from(h).join("Library")))
+        || path.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::CurDir))
+        || (path.starts_with(home.join("Library")) && !cloud_drive(path, home))
         || std::env::current_exe().ok().is_some_and(|exe| in_app_bundle(path, &exe))
 }
-/// Resolve an existing file or a new filename in an existing directory. Canonical parents stop
-/// symlink escapes; a dangling symlink is refused rather than interpreted as a new file.
+pub fn forbidden(path: &Path) -> bool {
+    crate::conn::fsutil::user_home_dir().map_or(true, |home| forbidden_for_home(path, &home))
+}
+/// New names only, under the user's home, cloud drives or external volumes. No owner grant.
 #[cfg(unix)]
-pub fn destination(path: &Path, roots: &[PathBuf], backing: &[PathBuf]) -> Result<PathBuf, Error> {
-    if forbidden(path) {
-        return Err(Error::new("scope_refused", "protected destination"));
-    }
+pub fn destination(path: &Path, home: &Path) -> Result<PathBuf, Error> {
     let refuse = |reason| Error::new("scope_refused", reason);
-    if !path.is_absolute() {
-        return Err(refuse("destination must be absolute"));
+    if !path.is_absolute() || forbidden_for_home(path, home) || !contained(path, home) {
+        return Err(refuse("protected destination"));
     }
-    let dest = match std::fs::symlink_metadata(path) {
-        Ok(_) => path.canonicalize().map_err(|_| Error::new("io_error", "destination cannot be resolved"))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let parent = path
-                .parent()
-                .and_then(|p| p.canonicalize().ok())
-                .ok_or_else(|| Error::new("io_error", "destination directory must exist"))?;
-            parent.join(path.file_name().ok_or_else(|| refuse("destination needs filename"))?)
-        }
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => return Err(Error::new("save_conflict", "destination exists; choose a fresh filename")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err(Error::new("io_error", "destination cannot be inspected")),
-    };
-    if ["/dev", "/proc", "/sys"].iter().any(|p| dest.starts_with(p)) {
-        return Err(refuse("device and virtual filesystem destinations are refused"));
     }
-    if forbidden(&dest)
-        || !roots
-            .iter()
-            .filter_map(|r| r.canonicalize().ok().filter(|now| now == r))
-            .any(|r| dest.starts_with(&r) && dest != r)
-    {
-        return Err(refuse("destination outside owner-granted file roots"));
-    }
-    for source in backing {
-        if source.canonicalize().ok().as_ref() == Some(&dest) || same_file(source, &dest) {
-            return Err(refuse("destination would overwrite an open backing file"));
-        }
+    let parent = path.parent().ok_or_else(|| refuse("destination needs parent"))?;
+    let canonical = parent.canonicalize().map_err(|_| Error::new("io_error", "destination directory must exist"))?;
+    // Resolve aliases before containment checks; the writer pins this canonical directory.
+    let dest = canonical.join(path.file_name().ok_or_else(|| refuse("destination needs filename"))?);
+    let home = home.canonicalize().map_err(|_| refuse("home cannot be resolved"))?;
+    if forbidden_for_home(&dest, &home) || !contained(&dest, &home) {
+        return Err(refuse("destination must be under user home, an external volume or a cloud drive"));
     }
     Ok(dest)
 }
 #[cfg(not(unix))]
-pub fn destination(_path: &Path, _roots: &[PathBuf], _backing: &[PathBuf]) -> Result<PathBuf, Error> {
+pub fn destination(_path: &Path, _home: &Path) -> Result<PathBuf, Error> {
     Err(Error::new("unsupported", "Bridge file hosting is unavailable on this platform"))
-}
-#[cfg(unix)]
-fn same_file(a: &Path, b: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b)) {
-            return a.dev() == b.dev() && a.ino() == b.ino();
-        }
-    }
-    false
 }
 
 #[cfg(all(test, unix))]
@@ -106,8 +87,8 @@ mod tests {
         ] {
             assert!(forbidden(Path::new(path)), "{path}");
         }
-        if let Some(home) = std::env::var_os("HOME") {
-            let library = PathBuf::from(home).join("Library");
+        if let Ok(home) = crate::conn::fsutil::user_home_dir() {
+            let library = home.join("Library");
             assert!(forbidden(&library));
             assert!(forbidden(&library.join("a.vrs")));
         }
@@ -115,49 +96,95 @@ mod tests {
         assert!(in_app_bundle(Path::new("/opt/Varos.app"), exe));
         assert!(in_app_bundle(Path::new("/opt/Varos.app/copy.vrs"), exe));
         assert!(!in_app_bundle(Path::new("/opt/Other.app/copy.vrs"), exe));
-        assert!(validate_path(Path::new("/tmp/A.PDF"), "pdf").is_ok());
-        assert!(validate_path(Path::new("/tmp/A.VrS"), "vrs").is_ok());
+        let home = crate::conn::fsutil::user_home_dir().unwrap();
+        assert!(validate_path(&home.join("A.PDF"), "pdf").is_ok());
+        assert!(validate_path(&home.join("A.VrS"), "vrs").is_ok());
+        for root in [
+            "Library/Mobile Documents",
+            "Library/CloudStorage/Dropbox",
+            "Library/CloudStorage/GoogleDrive",
+            "Library/CloudStorage/OneDrive",
+        ] {
+            assert!(validate_path(&home.join(root).join("new.pdf"), "pdf").is_ok());
+        }
+        assert!(validate_path(Path::new("/Volumes/External/new.pdf"), "pdf").is_ok());
+        assert_eq!(
+            validate_path(&home.join("Library/Application Support/new.pdf"), "pdf").unwrap_err().code,
+            "scope_refused"
+        );
+        for path in ["/tmp/A.pdf", "/private/var/A.pdf", "/Volumes/A.pdf"] {
+            assert_eq!(validate_path(Path::new(path), "pdf").unwrap_err().code, "scope_refused");
+        }
+        assert!(!contained(Path::new("/anything/a.pdf"), Path::new("/")));
     }
     #[test]
-    fn roots_backing_and_symlink_escape_refused() {
-        let root = std::env::temp_dir().join(format!("bridge-roots-{}", crate::conn::random_hex(8).unwrap()));
-        std::fs::create_dir(&root).unwrap();
-        let root = root.canonicalize().unwrap();
-        let granted = root.join("granted");
-        let outside = root.join("outside");
-        std::fs::create_dir(&granted).unwrap();
-        std::fs::create_dir(&outside).unwrap();
-        let backing = granted.join("open.vrs");
-        std::fs::write(&backing, b"source").unwrap();
-        assert!(destination(&granted.join("new.pdf"), std::slice::from_ref(&granted), std::slice::from_ref(&backing))
-            .is_ok());
-        for path in [&outside.join("out.pdf"), &granted.join("../outside/out.pdf"), &backing] {
+    fn fake_home_needs_no_grant_and_refuses_overwrite_and_links() {
+        let home = std::env::temp_dir().join(format!("bridge-home-{}", crate::conn::random_hex(8).unwrap()));
+        std::fs::create_dir(&home).unwrap();
+        let home = home.canonicalize().unwrap();
+        std::fs::create_dir(home.join("Library")).unwrap();
+        assert!(destination(&home.join("new.vrs"), &home).is_ok());
+        assert!(destination(&home.join("new.pdf"), &home).is_ok());
+        assert!(destination(&home.join("Library/new.vrs"), &home).is_err());
+        for root in [
+            "Library/Mobile Documents",
+            "Library/CloudStorage/Dropbox",
+            "Library/CloudStorage/GoogleDrive",
+            "Library/CloudStorage/OneDrive",
+        ] {
+            std::fs::create_dir_all(home.join(root)).unwrap();
+            assert!(destination(&home.join(root).join("new.pdf"), &home).is_ok());
+        }
+        std::fs::create_dir_all(home.join("Library/Application Support")).unwrap();
+        assert_eq!(
+            destination(&home.join("Library/Application Support/new.pdf"), &home).unwrap_err().code,
+            "scope_refused"
+        );
+        assert!(destination(&home.join(".hidden.vrs"), &home).is_err());
+        let backing = home.join("open.vrs");
+        std::fs::write(&backing, b"original").unwrap();
+        std::fs::hard_link(&backing, home.join("alias.vrs")).unwrap();
+        std::os::unix::fs::symlink(&backing, home.join("link.vrs")).unwrap();
+        std::os::unix::fs::symlink(&home, home.join("parent-link")).unwrap();
+        for path in [backing, home.join("alias.vrs"), home.join("link.vrs")] {
+            assert_eq!(destination(&path, &home).unwrap_err().code, "save_conflict");
+        }
+        assert!(destination(&home.join("parent-link/new.pdf"), &home).is_ok());
+        std::os::unix::fs::symlink(home.parent().unwrap(), home.join("escape")).unwrap();
+        assert!(destination(&home.join("escape/new.pdf"), &home).is_err());
+        assert!(destination(&home.parent().unwrap().join("outside.pdf"), &home).is_err());
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod environment_tests {
+    use super::*;
+    #[test]
+    fn passwd_home_ignores_unset_or_forged_home() {
+        // Run in a subprocess so environment mutation cannot race other tests.
+        const CHILD: &str = "VAROS_HOME_POLICY_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let home = crate::conn::fsutil::user_home_dir().unwrap();
+            assert!(validate_path(&home.join("new.pdf"), "pdf").is_ok());
             assert_eq!(
-                destination(path, std::slice::from_ref(&granted), std::slice::from_ref(&backing)).unwrap_err().code,
+                validate_path(&home.join("Library/Application Support/new.pdf"), "pdf").unwrap_err().code,
                 "scope_refused"
             );
+            assert!(destination(&home.join(format!("bridge-home-test-{}.pdf", std::process::id())), &home).is_ok());
+            return;
         }
-        assert!(destination(&granted.join("out.pdf"), &[], &[]).is_err());
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(&outside, granted.join("escape")).unwrap();
-            assert!(destination(&granted.join("escape/out.pdf"), std::slice::from_ref(&granted), &[]).is_err());
-            std::os::unix::fs::symlink(outside.join("missing"), granted.join("dangling")).unwrap();
-            assert!(destination(&granted.join("dangling"), std::slice::from_ref(&granted), &[]).is_err());
-            std::fs::hard_link(&backing, granted.join("alias.vrs")).unwrap();
-            assert!(destination(
-                &granted.join("alias.vrs"),
-                std::slice::from_ref(&granted),
-                std::slice::from_ref(&backing)
-            )
-            .is_err());
+        for forged in [None, Some("/")] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child
+                .args(["--exact", "files::environment_tests::passwd_home_ignores_unset_or_forged_home"])
+                .env(CHILD, "1");
+            if let Some(value) = forged {
+                child.env("HOME", value);
+            } else {
+                child.env_remove("HOME");
+            }
+            assert!(child.status().unwrap().success());
         }
-        #[cfg(unix)]
-        {
-            std::fs::rename(&granted, root.join("original-grant")).unwrap();
-            std::os::unix::fs::symlink(&outside, &granted).unwrap();
-            assert!(destination(&granted.join("new.pdf"), std::slice::from_ref(&granted), &[]).is_err());
-        }
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

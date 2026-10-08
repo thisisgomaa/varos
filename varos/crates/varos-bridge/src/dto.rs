@@ -513,7 +513,7 @@ pub struct ErrorDetails {
     /// ADR-0011 `ambiguous_target`: bounded, non-secret host candidates (no board names or paths).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub candidates: Vec<Value>,
-    /// ADR-0011 `pairing_required`: the pending request the owner must approve.
+    /// Historical API 1.0 compatibility field; open local trust never creates pairing requests.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pairing: Option<Value>,
 }
@@ -533,10 +533,7 @@ impl Error {
         Self {
             code: code.into(),
             reason: reason.into().chars().take(1024).collect(),
-            retryable: matches!(
-                code,
-                "busy" | "revision_conflict" | "host_not_running" | "pairing_required" | "session_reset"
-            ),
+            retryable: matches!(code, "busy" | "revision_conflict" | "host_not_running" | "session_reset"),
             details: Box::default(),
         }
     }

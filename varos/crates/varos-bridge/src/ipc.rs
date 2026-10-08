@@ -1,14 +1,11 @@
 //! Local attachment only; no TCP fallback. Two listeners share one epoch and one Service:
-//! - paired (ADR-0011 C1): registry entry + signed handshake + owner-approved agent keys;
+//! - paired (ADR-0011 C1): registry entry + signed handshake + open local trust and agent profile ids;
 //! - legacy (ADR-0009 slice 1, deprecated): per-launch endpoint file + bearer token, opt-in only
 //!   (`VAROS_BRIDGE_LEGACY=1`) for one transition slice, on its own socket and audited as agent
 //!   `legacy`. Legacy auth is never accepted on the paired socket.
+use crate::{conn, Context, Error, Reply, Request, MAX_FRAME};
 #[cfg(unix)]
-use crate::API;
-use crate::{
-    conn::{self, trust::Scopes},
-    Context, Error, Reply, Request, MAX_FRAME,
-};
+use crate::{conn::trust::Scopes, API};
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::time::Duration;
@@ -69,19 +66,6 @@ pub(crate) enum Frame {
     Call { call_id: String, request: Request },
     Cancel { call_id: String },
 }
-/// Re-reads the trust store for this principal (revocation / narrowed scopes).
-#[derive(Clone)]
-pub struct Recheck(pub Arc<dyn Fn() -> Result<Scopes, Error> + Send + Sync>);
-impl PartialEq for Recheck {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-impl std::fmt::Debug for Recheck {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Recheck")
-    }
-}
 /// Authentication happens before DTOs enter the app queue. The host owns the only service.
 #[derive(Clone, Debug)]
 pub struct Pending {
@@ -89,28 +73,7 @@ pub struct Pending {
     pub request: Request,
     pub cancelled: Arc<AtomicBool>,
     pub reply: mpsc::SyncSender<Reply>,
-    /// Paired principals only: re-evaluated on the owning thread right before dispatch.
-    pub recheck: Option<Recheck>,
     pub file_audit: Option<(conn::Paths, conn::audit::Entry)>,
-}
-impl Pending {
-    /// ADR-0011 §3: evaluate the grant again on the owning thread before the service runs.
-    /// Revocation or a failed trust-store read denies; narrowed scopes narrow this call.
-    pub fn authorize(&mut self) -> Result<(), Error> {
-        if let Some(recheck) = &self.recheck {
-            let now = (recheck.0)()?;
-            let c = &mut self.context;
-            c.read &= now.read;
-            c.edit &= now.edit;
-            c.destructive &= now.destructive;
-            c.history &= now.history;
-            c.files &= now.files;
-            if !c.read {
-                return Err(Error::new("scope_refused", "agent access was revoked"));
-            }
-        }
-        Ok(())
-    }
 }
 impl PartialEq for Pending {
     fn eq(&self, other: &Self) -> bool {
@@ -246,8 +209,8 @@ pub struct PairedConfig {
     pub mode: &'static str,
     pub app_build: String,
 }
-/// Loads the host identity. `Deferred` runs on a background thread so a Keychain prompt or a
-/// slow/locked store never blocks the app window.
+/// Loads the host identity. `Deferred` runs on a background thread so a slow or unavailable
+/// file store never blocks the app window.
 #[allow(clippy::large_enum_variant)] // built once per launch
 pub enum PairedSource {
     Ready(PairedConfig),
@@ -286,10 +249,8 @@ struct PairedState {
 #[cfg(unix)]
 struct PairedHost {
     key: ed25519_dalek::SigningKey,
-    fingerprint: String,
     instance_id: String,
     paths: conn::Paths,
-    pairing_attempts: std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>,
 }
 #[cfg(unix)]
 enum Auth {
@@ -300,10 +261,8 @@ enum Auth {
 #[cfg(unix)]
 struct Admitted {
     client: String,
-    scopes: Scopes,
-    recheck: Option<Recheck>,
     /// Audited calls: (paths, agent, session prefix). Legacy calls use agent `legacy`.
-    audit: Option<(conn::Paths, String, String)>,
+    audit: Option<(conn::Paths, String, String, String)>,
 }
 #[cfg(unix)]
 #[derive(Clone)]
@@ -313,8 +272,6 @@ struct Shared {
     stopped: Arc<AtomicBool>,
     attached: Arc<std::sync::atomic::AtomicUsize>,
     epoch: String,
-    allow_history: bool,
-    allow_destructive: bool,
     cancellations: Arc<std::sync::Mutex<CancelMap>>,
     legacy_audit: Option<conn::Paths>,
 }
@@ -341,9 +298,9 @@ impl Listener {
         Self::start_with(queue, wake, Options { legacy: true, paired: None, legacy_audit: None })
     }
     /// Desktop host: the paired listener, whose host key is loaded from the platform
-    /// CredentialStore on a background thread (the window never waits for the Keychain), plus
+    /// CredentialStore on a background thread (the window never waits for file IO), plus
     /// the deprecated token listener only when `VAROS_BRIDGE_LEGACY=1`. A failed key load
-    /// (`credential_unavailable`, e.g. the owner chose Deny) leaves Varos running without the
+    /// (`credential_unavailable`, e.g. unsafe key file permissions) leaves Varos running without the
     /// paired listener and is reported through [`Listener::take_unavailable_notice`].
     pub fn start_desktop(
         queue: mpsc::SyncSender<Pending>,
@@ -382,8 +339,6 @@ impl Listener {
             stopped: Arc::new(AtomicBool::new(false)),
             attached: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             epoch: epoch.clone(),
-            allow_destructive: std::env::var("VAROS_BRIDGE_ALLOW_DESTRUCTIVE").as_deref() == Ok("1"),
-            allow_history: std::env::var("VAROS_BRIDGE_ALLOW_HISTORY").as_deref() == Ok("1"),
             cancellations: Arc::new(std::sync::Mutex::new(CancelMap::new())),
             legacy_audit: options.legacy_audit,
         };
@@ -580,13 +535,7 @@ fn bring_up_paired(
         app_build: config.app_build.chars().filter(|c| c.is_ascii_graphic() || *c == ' ').take(128).collect(),
         host_fingerprint: fingerprint.clone(),
     };
-    let host = Arc::new(PairedHost {
-        key: config.host_key,
-        fingerprint,
-        instance_id,
-        paths: paths.clone(),
-        pairing_attempts: std::sync::Mutex::new(Default::default()),
-    });
+    let host = Arc::new(PairedHost { key: config.host_key, instance_id, paths: paths.clone() });
     let wake_socket = record.socket.clone();
     let entry = conn::registry::Entry::publish(&paths, record)?;
     reserved.1 = true;
@@ -686,12 +635,12 @@ fn legacy_hello(
         return Ok(None);
     }
     write_frame(writer, &Reply::success(serde_json::json!({"api":API,"epoch":epoch})))?;
-    let all = Scopes { read: true, edit: true, destructive: true, history: true, files: false };
-    let audit = audit.clone().map(|paths| (paths, "legacy".to_owned(), client[..8].to_ascii_lowercase()));
-    Ok(Some(Admitted { client, scopes: all, recheck: None, audit }))
+    let audit =
+        audit.clone().map(|paths| (paths, "legacy".to_owned(), client[..8].to_ascii_lowercase(), "legacy".into()));
+    Ok(Some(Admitted { client, audit }))
 }
 
-/// Connection 1.0: host proof, agent proof, then the owner-approved grant (or pairing).
+/// Connection 1.0: host proof, agent proof, then every scope for the already checked local uid.
 #[cfg(unix)]
 fn paired_handshake(
     reader: &mut impl BufRead,
@@ -699,7 +648,7 @@ fn paired_handshake(
     host: &Arc<PairedHost>,
     epoch: &str,
 ) -> io::Result<Option<Admitted>> {
-    use conn::{audit, handshake, trust};
+    use conn::handshake;
     let refuse = |writer: &mut dyn Write, e: Error| -> io::Result<Option<Admitted>> {
         let mut w = writer;
         write_frame(&mut w, &Reply::failure(e))?;
@@ -731,89 +680,19 @@ fn paired_handshake(
         Ok(a) => a,
         Err(e) => return refuse(writer, e),
     };
-    let trust_file = match trust::TrustFile::load(&host.paths) {
-        Ok(t) => t,
-        Err(e) => return refuse(writer, e),
-    };
-    let session_tag = agent.session[..8].to_string();
-    match trust_file.decide(&agent, &host.fingerprint) {
-        trust::Decision::Denied(e) => {
-            let _ = audit::append(&host.paths, &audit::Entry::event("connect", &agent.profile_id, &e.code));
-            refuse(writer, e)
-        }
-        trust::Decision::NeedsPairing => {
-            // New pairing requests are rate limited (ADR-0011 §7: 3/min); a retry of an already
-            // pending request coalesces and is not counted.
-            let pending = trust::pending(&host.paths).unwrap_or_default();
-            let known =
-                pending.iter().any(|r| r.fingerprint == agent.fingerprint && r.host_fingerprint == host.fingerprint);
-            if !known {
-                let mut attempts = host.pairing_attempts.lock().unwrap();
-                attempts.retain(|t| t.elapsed() < Duration::from_secs(60));
-                if attempts.len() >= 3 {
-                    return refuse(writer, Error::new("busy", "pairing attempts are rate limited; retry in a minute"));
-                }
-                attempts.push_back(std::time::Instant::now());
-            }
-            match trust::request_pairing(&host.paths, &agent, &host.fingerprint, &host.instance_id) {
-                Ok(request) => {
-                    let _ = audit::append(
-                        &host.paths,
-                        &audit::Entry::event("pairing_requested", &agent.profile_id, "pending"),
-                    );
-                    // A remembered approval for another host key: Varos's identity changed.
-                    let rekeyed = trust_file
-                        .approved(&agent.profile_id)
-                        .is_some_and(|a| a.fingerprint == agent.fingerprint && a.host_fingerprint != host.fingerprint);
-                    let why = if rekeyed {
-                        "Varos's identity key changed since this agent was approved (for example its Keychain item was reset or replaced), so the owner must approve it again."
-                    } else {
-                        "Varos has not approved this agent yet."
-                    };
-                    let mut e = Error::new(
-                        "pairing_required",
-                        format!(
-                            "{why} The owner (not the agent) must run in their own Terminal: varos-cli bridge pair --approve {} and type this match code when asked: {}. Then retry this call.",
-                            request.request_id, request.match_code
-                        ),
-                    );
-                    e.pairing = Some(request.summary());
-                    refuse(writer, e)
-                }
-                Err(e) => refuse(writer, e),
-            }
-        }
-        trust::Decision::Allowed { scopes, generation } => {
-            let (paths, profile, fingerprint, host_fp) =
-                (host.paths.clone(), agent.profile_id.clone(), agent.fingerprint.clone(), host.fingerprint.clone());
-            let recheck = Recheck(Arc::new(move || {
-                let file = trust::TrustFile::load(&paths)?;
-                match file.approved(&profile) {
-                    Some(a)
-                        if a.fingerprint == fingerprint
-                            && a.host_fingerprint == host_fp
-                            && !file.is_revoked(&profile, &fingerprint) =>
-                    {
-                        Ok(a.scopes)
-                    }
-                    _ => Err(Error::new("scope_refused", "agent access was revoked by the owner")),
-                }
-            }));
-            write_frame(
-                writer,
-                &Reply::success(serde_json::json!({
-                    "connection": conn::CONNECTION, "api": API, "epoch": epoch, "instance": host.instance_id,
-                    "agent": agent.profile_id, "scopes": scopes, "trust_generation": generation,
-                })),
-            )?;
-            Ok(Some(Admitted {
-                client: format!("{}:{}", agent.profile_id, agent.session),
-                scopes,
-                recheck: Some(recheck),
-                audit: Some((host.paths.clone(), agent.profile_id, session_tag)),
-            }))
-        }
-    }
+    // check_peer has already established the same uid. Identity only attributes audit/history.
+    let scopes = Scopes::ALL;
+    write_frame(
+        writer,
+        &Reply::success(serde_json::json!({
+            "connection": conn::CONNECTION, "api": API, "epoch": epoch, "instance": host.instance_id,
+            "agent": agent.profile_id, "scopes": scopes, "trust": "local user",
+        })),
+    )?;
+    Ok(Some(Admitted {
+        client: format!("{}:{}", agent.profile_id, agent.session),
+        audit: Some((host.paths.clone(), agent.profile_id, agent.session[..8].into(), agent.label)),
+    }))
 }
 
 #[cfg(unix)]
@@ -871,7 +750,7 @@ fn serve_connection(stream: std::os::unix::net::UnixStream, auth: &Auth, shared:
             let board = request.board().map(str::to_owned);
             let mutation = request.mutation().map(|(id, rev)| (id.to_owned(), rev));
             let audit_entry = |result: &str, to_rev: Option<u64>| {
-                admitted.audit.as_ref().map(|(paths, agent, session)| {
+                admitted.audit.as_ref().map(|(paths, agent, session, label)| {
                     (
                         paths.clone(),
                         conn::audit::Entry {
@@ -879,6 +758,7 @@ fn serve_connection(stream: std::os::unix::net::UnixStream, auth: &Auth, shared:
                             t: conn::now_secs(),
                             event: "call".into(),
                             agent: agent.clone(),
+                            label: label.clone(),
                             session: session.clone(),
                             request_id: mutation.as_ref().map(|m| m.0.clone()),
                             verb: Some(verb.into()),
@@ -906,23 +786,11 @@ fn serve_connection(stream: std::os::unix::net::UnixStream, auth: &Auth, shared:
                 }
             }
             let (reply, rx) = mpsc::sync_channel(1);
-            let s = admitted.scopes;
             let pending = Pending {
-                context: Context {
-                    client,
-                    epoch: shared.epoch.clone(),
-                    read: s.read,
-                    edit: s.edit,
-                    destructive: s.destructive,
-                    history: s.history,
-                    files: s.files,
-                    allow_history: shared.allow_history,
-                    allow_destructive: shared.allow_destructive,
-                },
+                context: Context { client, epoch: shared.epoch.clone() },
                 request,
                 cancelled: flag.clone(),
                 reply,
-                recheck: admitted.recheck.clone(),
                 file_audit: audit_entry("pending", None),
             };
             let result = if shared.queue.try_send(pending).is_err() {
@@ -999,6 +867,95 @@ pub fn secure_endpoint_file(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Exercise the actual host handshake without a socket or any persistent trust state.
+    #[cfg(unix)]
+    #[test]
+    fn local_handshake_grants_all_scopes_without_pairing_state() {
+        use conn::{credentials, handshake};
+        struct Output(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl Write for Output {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        struct Agent {
+            input: io::Cursor<Vec<u8>>,
+            output: Arc<std::sync::Mutex<Vec<u8>>>,
+            state: handshake::AgentSide,
+            expect: handshake::Expect,
+            key: ed25519_dalek::SigningKey,
+            proof_sent: bool,
+        }
+        impl io::Read for Agent {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                let available = self.fill_buf()?;
+                let n = available.len().min(bytes.len());
+                bytes[..n].copy_from_slice(&available[..n]);
+                self.consume(n);
+                Ok(n)
+            }
+        }
+        impl BufRead for Agent {
+            fn fill_buf(&mut self) -> io::Result<&[u8]> {
+                if self.input.position() as usize == self.input.get_ref().len() && !self.proof_sent {
+                    let challenge = serde_json::from_slice(&self.output.lock().unwrap()).unwrap();
+                    let proof = self
+                        .state
+                        .respond(&challenge, &self.expect, &self.key, "abcdefabcdef0123", &"5".repeat(64), "Test Agent")
+                        .unwrap();
+                    let mut bytes = serde_json::to_vec(&proof).unwrap();
+                    bytes.push(b'\n');
+                    self.input = io::Cursor::new(bytes);
+                    self.proof_sent = true;
+                }
+                self.input.fill_buf()
+            }
+            fn consume(&mut self, n: usize) {
+                self.input.consume(n);
+            }
+        }
+        let store = credentials::MemoryStore::new();
+        let host_key = credentials::load_or_create(&store, credentials::HOST_ACCOUNT).unwrap();
+        let agent_key = credentials::load_or_create(&store, "agent-test").unwrap();
+        let expect = handshake::Expect {
+            instance_id: "0123456789abcdef".into(),
+            epoch: "e".repeat(64),
+            host_fingerprint: credentials::fingerprint(&host_key.verifying_key()),
+        };
+        let paths =
+            conn::Paths::under(std::env::temp_dir().join(format!("bridge-no-trust-{}", conn::random_hex(8).unwrap())));
+        let host =
+            Arc::new(PairedHost { key: host_key, instance_id: expect.instance_id.clone(), paths: paths.clone() });
+        let (state, hello) = handshake::AgentSide::hello().unwrap();
+        let mut bytes = serde_json::to_vec(&hello).unwrap();
+        bytes.push(b'\n');
+        let output = Arc::new(std::sync::Mutex::new(vec![]));
+        let mut reader = Agent {
+            input: io::Cursor::new(bytes),
+            output: output.clone(),
+            state,
+            expect: expect.clone(),
+            key: agent_key,
+            proof_sent: false,
+        };
+        authorize_uid(501, 501).unwrap();
+        assert!(authorize_uid(502, 501).is_err());
+        let admitted =
+            paired_handshake(&mut reader, &mut Output(output.clone()), &host, &expect.epoch).unwrap().unwrap();
+        let (_, profile, _, label) = admitted.audit.unwrap();
+        assert_eq!(profile, "abcdefabcdef0123");
+        assert_eq!(label, "Test Agent");
+        assert!(!paths.state.exists());
+        assert!(!paths.runtime.exists());
+        let output = output.lock().unwrap();
+        let welcome: Reply = serde_json::from_slice(output.split(|b| *b == b'\n').nth(1).unwrap()).unwrap();
+        assert_eq!(welcome.result.unwrap()["scopes"], serde_json::json!(Scopes::ALL));
+    }
+
     /// The accept thread blocks in the kernel (no timed poll) and still stops promptly: `Drop`
     /// wakes it with one connection, so it never waits out the 1-second join deadline.
     #[cfg(unix)]

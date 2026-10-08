@@ -1,5 +1,5 @@
 //! Bounded owner-only audit log (ADR-0011 §3), in the persistent state folder: time, agent/session, request id, verb, opaque
-//! board handle, revisions, result code and pairing/revocation events. Never names, paths,
+//! board handle, revisions, result code and asynchronous file outcomes. Never names, paths,
 //! prompts, geometry, payloads or credentials. Rotates at 10 MiB; rotated file deleted after
 //! 30 days. Diagnostic, not tamper-proof against the account owner.
 use super::{fsutil, now_secs, Paths};
@@ -20,6 +20,8 @@ pub struct Entry {
     pub event: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub agent: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub label: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub session: String,
     #[serde(skip_serializing_if = "Option::is_none")]

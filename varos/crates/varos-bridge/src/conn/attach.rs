@@ -1,12 +1,11 @@
 //! `--attach auto` (ADR-0011 §2): the agent-side proxy discovers, authenticates and attaches
 //! on every tool call. MCP itself never waits on this — it initializes with static tools, and
-//! tool calls return typed `host_not_running` / `pairing_required` / `ambiguous_target` /
+//! tool calls return typed `host_not_running` / `ambiguous_target` /
 //! `session_reset` errors instead of hanging.
 use super::{
     credentials::{self, CredentialStore},
     fsutil, handshake,
     registry::{self, Record, Scan},
-    trust::TrustFile,
     Paths,
 };
 use crate::{Error, Reply, Request};
@@ -31,9 +30,9 @@ pub enum Selection {
     NotRunning,
     Ambiguous(Vec<Record>),
 }
-/// Deterministic choice. `paired` = host fingerprints this profile is paired with.
+/// Deterministic choice. Historical pairing hints are ignored.
 /// Never prefers newest, desktop over headless, or the last record.
-pub fn select(live: &[Record], selector: &Selector, paired: &[String]) -> Selection {
+pub fn select(live: &[Record], selector: &Selector) -> Selection {
     let matching: Vec<&Record> = live
         .iter()
         .filter(|r| match selector {
@@ -45,21 +44,13 @@ pub fn select(live: &[Record], selector: &Selector, paired: &[String]) -> Select
     if matching.is_empty() {
         return Selection::NotRunning;
     }
-    let eligible: Vec<&Record> = matching.iter().copied().filter(|r| paired.contains(&r.host_fingerprint)).collect();
-    let pick = |v: Vec<&Record>| -> Selection {
-        if v.len() == 1 {
-            Selection::Attach(v[0].clone())
-        } else {
-            Selection::Ambiguous(v.into_iter().take(MAX_CANDIDATES).cloned().collect())
-        }
-    };
-    if eligible.is_empty() {
-        // A sole local candidate may enter pairing (no document access); several need the owner.
-        pick(matching)
+    if matching.len() == 1 {
+        Selection::Attach(matching[0].clone())
     } else {
-        pick(eligible)
+        Selection::Ambiguous(matching.into_iter().take(MAX_CANDIDATES).cloned().collect())
     }
 }
+
 pub fn host_not_running(selector: &Selector) -> Error {
     let which = match selector {
         Selector::Auto => String::new(),
@@ -80,7 +71,7 @@ pub fn ambiguous(candidates: &[Record]) -> Error {
     e
 }
 
-/// Agent-side public profile references (no secrets): which Keychain profile a client label uses.
+/// Agent-side public profile references (no secrets): which credential profile a client label uses.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalProfile {
@@ -101,15 +92,14 @@ impl LocalProfiles {
         if std::fs::symlink_metadata(&path).is_err() {
             return Ok(Self { version: 1, profiles: vec![] });
         }
-        let bytes = fsutil::read_private(&path).map_err(|e| Error::new("trust_unavailable", e.to_string()))?;
-        serde_json::from_slice(&bytes).map_err(|e| Error::new("trust_unavailable", e.to_string()))
+        let bytes = fsutil::read_private(&path).map_err(|e| Error::new("credential_unavailable", e.to_string()))?;
+        serde_json::from_slice(&bytes).map_err(|e| Error::new("credential_unavailable", e.to_string()))
     }
 }
 /// Resolve (or create) this client's profile key. `identity` is an explicit public reference.
 pub fn resolve_profile(
     paths: &Paths,
     store: &dyn CredentialStore,
-    trust: &TrustFile,
     label: &str,
     identity: Option<&str>,
 ) -> Result<(String, ed25519_dalek::SigningKey), Error> {
@@ -117,22 +107,26 @@ pub fn resolve_profile(
         if !handshake::valid_profile_id(id) {
             return Err(Error::new("invalid_argument", "--identity must be a 16-hex profile id"));
         }
-        let key = credentials::load_existing(store, &credentials::agent_account(id))?
-            .ok_or_else(|| Error::new("identity_invalid", "no key for this --identity in the credential store"))?;
+        let key = credentials::load_existing(store, &credentials::agent_account(id))?.ok_or_else(|| {
+            Error::new(
+                "identity_invalid",
+                "no file key for this --identity; remove the old --identity reference and retry",
+            )
+        })?;
         return Ok((id.into(), key));
     }
     let label = super::clean_label(label);
-    // Fast path: an owner-approved profile for this client needs no lock.
-    if let Some((id, key, true)) = pick_profile(&LocalProfiles::load(paths)?, store, trust, &label)? {
+    // Fast path: an existing profile for this label needs no lock.
+    if let Some((id, key)) = pick_profile(&LocalProfiles::load(paths)?, store, &label)? {
         return Ok((id, key));
     }
-    // Look again and create under the trust-store lock, so two MCP processes of the same
+    // Look again and create under the profile lock, so two MCP processes of the same
     // client starting together end up with one profile, not two.
-    let io = |e: std::io::Error| Error::new("trust_unavailable", e.to_string());
+    let io = |e: std::io::Error| Error::new("credential_unavailable", e.to_string());
     fsutil::ensure_private_dir(&paths.state).map_err(io)?;
     let _lock = fsutil::lock(&paths.state.join(super::trust::LOCK_FILE)).map_err(io)?;
     let mut profiles = LocalProfiles::load(paths)?;
-    if let Some((id, key, _)) = pick_profile(&profiles, store, trust, &label)? {
+    if let Some((id, key)) = pick_profile(&profiles, store, &label)? {
         return Ok((id, key));
     }
     // New profile: key in the credential store first, then the public reference.
@@ -152,31 +146,18 @@ pub fn resolve_profile(
         .map_err(io)?;
     Ok((profile_id, key))
 }
-/// This label's best profile: an owner-approved one (true) before the newest unrevoked one (false).
-/// Never chosen for broader grants; approval only breaks ties within the same client label.
+/// Reuse the newest available profile for this client label.
 fn pick_profile(
     profiles: &LocalProfiles,
     store: &dyn CredentialStore,
-    trust: &TrustFile,
     label: &str,
-) -> Result<Option<(String, ed25519_dalek::SigningKey, bool)>, Error> {
-    let mut fallback = None;
+) -> Result<Option<(String, ed25519_dalek::SigningKey)>, Error> {
     for p in profiles.profiles.iter().rev().filter(|p| p.label == label) {
-        let Some(key) = credentials::load_existing(store, &credentials::agent_account(&p.profile_id))? else {
-            continue;
-        };
-        let fp = credentials::fingerprint(&key.verifying_key());
-        if trust.is_revoked(&p.profile_id, &fp) {
-            continue;
-        }
-        if trust.approved(&p.profile_id).is_some_and(|a| a.fingerprint == fp) {
-            return Ok(Some((p.profile_id.clone(), key, true)));
-        }
-        if fallback.is_none() {
-            fallback = Some((p.profile_id.clone(), key, false));
+        if let Some(key) = credentials::load_existing(store, &credentials::agent_account(&p.profile_id))? {
+            return Ok(Some((p.profile_id.clone(), key)));
         }
     }
-    Ok(fallback)
+    Ok(None)
 }
 
 type Scanner = Box<dyn Fn(&Paths) -> Scan + Send + Sync>;
@@ -194,7 +175,7 @@ pub struct AutoClient {
     scanner: Scanner,
 }
 impl AutoClient {
-    /// Platform paths and credential store (Keychain on macOS).
+    /// Platform paths and credential store (per-user file keys).
     pub fn new(selector: Selector, identity: Option<String>, label: &str) -> Result<Self, Error> {
         Self::with(Paths::resolve(), Arc::from(credentials::platform_store()), selector, identity, label)
     }
@@ -236,16 +217,16 @@ impl AutoClient {
         self.pinned.lock().unwrap().clone()
     }
 
-    /// This client's profile, cached for the process; re-resolved after a label change or revocation.
-    fn profile(&self, paths: &Paths, trust: &TrustFile) -> Result<(String, ed25519_dalek::SigningKey), Error> {
+    /// This client's profile, cached for the process; re-resolved after a label change.
+    fn profile(&self, paths: &Paths) -> Result<(String, ed25519_dalek::SigningKey), Error> {
         let label = self.label.lock().unwrap().clone();
         let mut cache = self.profile.lock().unwrap();
         if let Some((l, id, key)) = cache.as_ref() {
-            if l == &label && !trust.is_revoked(id, &credentials::fingerprint(&key.verifying_key())) {
+            if l == &label {
                 return Ok((id.clone(), key.clone()));
             }
         }
-        let (id, key) = resolve_profile(paths, self.store.as_ref(), trust, &label, self.identity.as_deref())?;
+        let (id, key) = resolve_profile(paths, self.store.as_ref(), &label, self.identity.as_deref())?;
         *cache = Some((label, id.clone(), key.clone()));
         Ok((id, key))
     }
@@ -255,14 +236,7 @@ impl AutoClient {
         if scan.live.is_empty() {
             return Err(host_not_running(&self.selector));
         }
-        let trust = TrustFile::load(paths)?;
-        let (profile_id, key) = self.profile(paths, &trust)?;
-        let fingerprint = credentials::fingerprint(&key.verifying_key());
-        let pinned_host = trust
-            .approved(&profile_id)
-            .filter(|a| a.fingerprint == fingerprint && !trust.is_revoked(&profile_id, &fingerprint))
-            .map(|a| a.host_fingerprint.clone());
-        let paired: Vec<String> = pinned_host.iter().cloned().collect();
+        let (profile_id, key) = self.profile(paths)?;
         let mut pin = self.pinned.lock().unwrap();
         // A live pinned instance keeps this session; never silently switch to another launch.
         if let Some((instance, epoch)) = pin.as_ref() {
@@ -272,7 +246,7 @@ impl AutoClient {
                 }
             }
         }
-        let record = match select(&scan.live, &self.selector, &paired) {
+        let record = match select(&scan.live, &self.selector) {
             Selection::Attach(r) => r,
             Selection::NotRunning => return Err(host_not_running(&self.selector)),
             Selection::Ambiguous(c) => return Err(ambiguous(&c)),
@@ -305,8 +279,7 @@ impl AutoClient {
         let Some(record) = scan.live.into_iter().find(|r| r.instance_id == instance && r.epoch == epoch) else {
             return;
         };
-        let Ok(trust) = TrustFile::load(paths) else { return };
-        let Ok((profile_id, key)) = self.profile(paths, &trust) else { return };
+        let Ok((profile_id, key)) = self.profile(paths) else { return };
         let _ = self.exchange(&record, &profile_id, &key, crate::ipc::Frame::Cancel { call_id: call_id.into() });
     }
     #[cfg(unix)]
