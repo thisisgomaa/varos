@@ -29,10 +29,18 @@ Sources: [decision record 24/25 Sep](../history/STATUS_THROUGH_2026-09-26.md), [
 | L4 | Chrome appears instantly; live tab drag has no interpolation; direction bar stays. The box glide on dock/undock is an accepted exception (owner 2026-07-05, reaffirmed 2026-10-06: not a defect) | `animation_time = 0` (`tokens.rs:90`); no time-based interpolation in chrome code (tab drag: `chrome.rs:220` "no time, no interpolation"). |
 | L5 | "On" looks | tool = azure block + white icon; icon toggle and icon segment: rest = no fill + MUTED; hover = HOVER + TEXT; on = TOGGLE_WELL (black, below PANEL) + TEXT, no bar. Azure remains focus/selection. Owner 2026-10-08: «زرار منوّر وخلاص، بلاش ألوان كتير». Tabs retain their existing fill. |
 | L6 | FAINT → MUTED with QW6 sizes | Informational text never FAINT; panel icon glyph 18 pt in the 26×24 chip; micro-labels 10.5 pt. |
-| L7 | Layout persistence deferred; Reset Workspace only in the Window menu | No layout file; Reset (not built yet) touches UI state only, never documents/tabs/OS window. |
+| L7 | Remember the per-user shell layout (owner 2026-10-08); Reset layout lives in the Window menu | Versioned `layout.json`, atomic debounced writes and quit flush; reset touches shell state only. |
 | L8 | Tab drag: the tab follows the pointer, others reflow instantly, no drop line | `chrome.rs:208-221` geometry; Esc / focus loss / list change cancels (`ui.rs:3318-3345`). |
 | L9 | Field edits commit on blur (Illustrator/Figma convention) | K3 table. |
 | L10 | Shortcuts equal Illustrator's | Any new chord is checked against Illustrator before binding. |
+
+Layout persistence law (owner 2026-10-08): per-user `<data root>/layout.json`, envelope `{version:1, app_build, layout}`.
+Persist the complete docked tree: split shares, panel membership/visibility and active tabs, plus rail/control-bar visibility.
+The side column span and box rectangles are derived from the saved tree and current viewport; drag ghosts are transient (no persistent floating/collapsed boxes exist today).
+Write through the existing atomic replacement helper after one second without changes, compare canonical hashes, and flush pending changes on confirmed quit; stop after three failures until the next real change, logging once.
+Restore before frame zero; repair duplicate panels (keep the first in tree order) and stale active tabs; reject non-dockable panels, grids, incompatible versions and unsafe trees, silently use the standard layout and quarantine bytes as `layout.json.bad`. Read errors leave the file untouched. The ☰ switch swaps panels when its target is already open.
+Deliberate L7 decision (2026-10-08): version 1 stores egui_tiles' serde format with quarantine; an egui_tiles upgrade may silently reset layouts (accepted for now).
+Window menu “Reset layout” and `VAROS_RESET_LAYOUT=1` restore the standard shell and remove the file; documents, Start page and `window.txt` are independent.
 
 ## K1 — Library and command boundary
 
@@ -268,7 +276,7 @@ never extra calls, to recover touched ids. No Bridge wire changes.
 2. Board exactly once, never closable or tabbable. Window-menu ticks mean visible/frontmost.
 3. U4-S size model: min/preferred/max in logical points, one Fill slot; tree normalised on mutation, not per frame; board rect excludes rulers.
 4. Motion: instant chrome (L4); the box glide stays (owner decision 2026-10-06 — U4-M dropped, no ADR needed); `scroll_animation` none; wheel smoothing residue is measured, not denied.
-5. Workspaces/persistence stay deferred (L7); Reset Workspace is the only layout command and lives in the Window menu.
+5. Named workspaces stay deferred; per-user shell persistence and Window menu “Reset layout” follow L7 (owner 2026-10-08).
 
 ## 7. `ui.rs` split plan
 

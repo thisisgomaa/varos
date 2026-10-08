@@ -41,6 +41,7 @@ pub enum WindowCmd {
     ToggleRail,
     ToggleDock,
     TogglePanel(PanelId),
+    ResetLayout,
     /// The band's V mark (4b): the native About panel — the same one Varos ▸ About opens.
     About,
 }

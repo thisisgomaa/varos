@@ -2247,6 +2247,18 @@ mod dead_control_tests {
         assert_ne!(bar.shell.is_open(first), was, "burger ▸ {} toggles it", first.title());
     }
 
+    #[test]
+    fn burger_reset_layout_uses_the_same_command_as_the_native_window_menu() {
+        let mut bar = Bar::new();
+        let at = bar.burger_row(17, 5);
+        let cmds = bar.click(at);
+        assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::ResetLayout)]);
+        assert_eq!(
+            crate::host::menu_route(crate::chrome::MenuCmd::ResetLayout, None),
+            Some(crate::host::MenuRoute::App(cmds[0].clone()))
+        );
+    }
+
     /// Windows has no native menu bar: the four snapping controls the magnet held (and Smart Guides)
     /// live in its burger, each a check row on its own flag, flipping exactly that flag.
     #[test]
