@@ -49,6 +49,7 @@ pub struct Describe {
     #[serde(default)]
     pub ids: Option<Vec<String>>,
     #[serde(default)]
+    /// Board sections and object fields compose; ids scopes only object detail.
     pub fields: Option<Vec<String>>,
     #[serde(default)]
     pub since: Option<u64>,
