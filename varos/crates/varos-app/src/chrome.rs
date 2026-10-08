@@ -424,6 +424,7 @@ pub enum MenuCmd {
     ToggleRail,
     ToggleDock,
     TogglePanel(PanelId),
+    ResetLayout,
     /// A snapping row (View): flips one `SnapConfig` flag. Alignment / Geometric Guides lived only in
     /// the magnet quick-menu before 4b removed it from the band.
     Snap(SnapRow),
@@ -523,7 +524,12 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
             check: Some(Check::Panel(p)),
         });
     }
-    window.extend([Entry::Sep, Entry::Native(Native::BringAllToFront)]);
+    window.extend([
+        Entry::Sep,
+        item("win.reset-layout", "Reset layout", None, MenuCmd::ResetLayout),
+        Entry::Sep,
+        Entry::Native(Native::BringAllToFront),
+    ]);
     vec![
         (
             "Varos",
@@ -1458,6 +1464,7 @@ mod tests {
             assert!(has(MenuCmd::TogglePanel(p)), "Window menu misses {}", p.title());
         }
         assert!(has(MenuCmd::ToggleRail) && has(MenuCmd::ToggleDock));
+        assert!(has(MenuCmd::ResetLayout));
         // ⌘Q quits the app; ⌘W closes only the active tab — two DIFFERENT FileCmds (review F5: no
         // longer both folded into one "Close Window" path).
         assert!(has(MenuCmd::File(FileCmd::Quit)), "Varos ▸ Quit is File(FileCmd::Quit)");

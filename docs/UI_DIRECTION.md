@@ -3,7 +3,7 @@
 
 ## Execution note — 2026-09-27
 
-This document retains the visual direction. `BOX_SYSTEM_PLAN` is implementation background, not the current build queue. Later owner decisions (Home instead of the Mac burger, icons instead of text buttons, bundled fonts, instant chrome with the box glide as an accepted exception, deferred layout persistence) are collected in [UI_SYSTEM](specs/UI_SYSTEM.md). The mockup illustrates layout; runtime values live in `shell/tokens.rs`. Follow [PLAN](PLAN.md) for execution order; no new visual choice is approved by this navigation update.
+This document retains the visual direction. `BOX_SYSTEM_PLAN` is implementation background, not the current build queue. Later owner decisions (Home instead of the Mac burger, icons instead of text buttons, bundled fonts, instant chrome with the box glide as an accepted exception, per-user layout persistence under law L7 (2026-10-08)) are collected in [UI_SYSTEM](specs/UI_SYSTEM.md). The mockup illustrates layout; runtime values live in `shell/tokens.rs`. Follow [PLAN](PLAN.md) for execution order; no new visual choice is approved by this navigation update.
 
 ## Reconciliation — 2026-10-04 (UI System v3)
 

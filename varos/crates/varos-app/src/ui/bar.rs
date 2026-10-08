@@ -587,6 +587,11 @@ pub(crate) fn build_topbar(
                     hit = true;
                 }
             }
+            menu_sep(ui);
+            if menu_row(ui, "Reset layout", "") {
+                cmds.push(AppCommand::Window(crate::app_command::WindowCmd::ResetLayout));
+                hit = true;
+            }
             if hit {
                 menu_set(ui, menu_id, false);
             }

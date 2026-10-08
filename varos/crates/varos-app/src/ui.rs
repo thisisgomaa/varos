@@ -16,9 +16,8 @@ use winit::event::WindowEvent;
 use crate::app_command::{AppCommand, SessionId, TabView};
 use winit::window::Window;
 
-// Stage 0b (BOX_SYSTEM_PLAN §6, ruling 4): the palette now comes from the LAW ramp — the warm black
-// (R ≥ G ≥ B, tokens.rs = UI_VISION_MOCKUP's :root). The old cool-gray names alias their warm
-// successors while the split modules retain the established body names.
+// The law palette (warm ramp; tokens.rs) is shared with the split UI modules.
+// Legacy colour aliases retain the established body names.
 use varos_app::shell::tokens::{
     micro_label, numeric_value, panel_title, shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, ALIGN_SECTION_GAP,
     CLOSE_RED, CONTROL_BAR_NAME_H, CONTROL_BAR_NAME_TEXT, CONTROL_BAR_NAME_W, DISABLED, HOVER, LABEL_GAP,
@@ -43,6 +42,7 @@ mod bar;
 mod canvas_overlay;
 mod control_bar;
 mod controls;
+mod layout;
 mod menus;
 mod ops;
 mod panels;

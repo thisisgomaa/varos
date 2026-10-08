@@ -13,6 +13,7 @@ pub mod checksum;
 pub mod durable;
 pub mod exists_probe;
 pub mod io_worker;
+pub mod layout;
 pub mod paths;
 pub mod recents;
 pub mod recovery;

@@ -90,8 +90,13 @@ impl ShellState {
             }
         }
         if let Some((id, panel)) = behavior.switch {
+            // An already-open target swaps places with this panel, preserving unique membership.
+            let existing = find_pane(&self.tree, panel).filter(|other| *other != id);
             if let Some(Tile::Pane(p)) = self.tree.tiles.get_mut(id) {
-                *p = panel;
+                let previous = std::mem::replace(p, panel);
+                if let Some(Tile::Pane(p)) = existing.and_then(|other| self.tree.tiles.get_mut(other)) {
+                    *p = previous;
+                }
             }
         }
         if let Some(id) = behavior.close {
@@ -133,6 +138,116 @@ impl ShellState {
 
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(&self.tree)
+    }
+
+    /// Canonical persistent tree only: tile rectangles and drag previews are frame-local.
+    pub fn layout_value(&self) -> serde_json::Value {
+        let mut tree = self.tree.clone();
+        let mut host = |_: PanelId, _: &mut egui::Ui| false;
+        let mut behavior = ShellBehavior {
+            switch: None,
+            close: None,
+            set_active: None,
+            groups: HashMap::new(),
+            tree_id: None,
+            host: &mut host,
+        };
+        tree.simplify(&behavior.simplification_options());
+        tree.gc(&mut behavior);
+        normalize_active_tabs(&mut tree);
+        let mut value = serde_json::to_value(&tree).expect("shell tree serializes");
+        if let Some(ids) = value["tiles"]["invisible"].as_array_mut() {
+            ids.sort_by_key(|id| id.as_u64());
+        }
+        value
+    }
+
+    /// Reject unsafe trees; repair duplicate panels (first in tree order wins) and stale active tabs.
+    pub fn from_layout_value(value: serde_json::Value) -> Option<Self> {
+        let mut tree: Tree<PanelId> = serde_json::from_value(value.clone()).ok()?;
+        let root = tree.root()?;
+        if tree.tiles.is_empty() || tree.tiles.len() > 1024 {
+            return None;
+        }
+        for key in ["width", "height"] {
+            if !value[key].is_null() && !value[key].as_f64().is_some_and(|n| n.is_finite() && n > 0.0) {
+                return None;
+            }
+        }
+        let next = value["tiles"]["next_tile_id"].as_u64()?;
+        if next == u64::MAX
+            || value["tiles"]["tiles"].as_object()?.keys().any(|id| id.parse::<u64>().map_or(true, |id| id >= next))
+        {
+            return None;
+        }
+        if value["tiles"]["invisible"]
+            .as_array()?
+            .iter()
+            .any(|id| id.as_u64().is_none_or(|id| tree.tiles.get(TileId::from_u64(id)).is_none()))
+        {
+            return None;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut pending = vec![(root, true)];
+        let mut boards = 0;
+        let mut panels = std::collections::HashSet::new();
+        let mut duplicates = Vec::new();
+        while let Some((id, parent_visible)) = pending.pop() {
+            if !seen.insert(id) {
+                return None;
+            }
+            let visible = parent_visible && tree.tiles.is_visible(id);
+            match tree.tiles.get(id)? {
+                Tile::Pane(p) => {
+                    if !p.is_board() && !PanelId::DOCKABLE.contains(p) {
+                        return None;
+                    }
+                    if !panels.insert(*p) {
+                        duplicates.push(id);
+                        continue;
+                    }
+                    if p.is_board() {
+                        if !visible
+                            || tree.tiles.parent_of(id).is_some_and(|parent| {
+                                matches!(tree.tiles.get(parent), Some(Tile::Container(Container::Tabs(_))))
+                            })
+                        {
+                            return None;
+                        }
+                        boards += 1;
+                    }
+                }
+                Tile::Container(c) => {
+                    let children: Vec<_> = c.children().copied().collect();
+                    if children.is_empty() {
+                        return None;
+                    }
+                    match c {
+                        Container::Tabs(_) => {}
+                        Container::Linear(l) => {
+                            if l.shares.iter().any(|(_, share)| !share.is_finite() || *share <= 0.0)
+                                || !l.shares.iter().map(|(_, share)| *share).sum::<f32>().is_finite()
+                            {
+                                return None;
+                            }
+                        }
+                        Container::Grid(_) => return None,
+                    }
+                    pending.extend(children.into_iter().rev().map(|child| (child, visible)));
+                }
+            }
+        }
+        if boards != 1 || seen.len() != tree.tiles.len() {
+            return None;
+        }
+        for id in duplicates {
+            detach(&mut tree, id);
+            tree.tiles.remove(id);
+        }
+        normalize_active_tabs(&mut tree);
+        // Simplify containers emptied by repair before the restored tree can be snapshotted again.
+        let shell = Self { tree };
+        Some(Self { tree: serde_json::from_value(shell.layout_value()).ok()? })
     }
 
     /// The right panel column's x-span as last laid out (4b: the top band's right zone — the V mark
@@ -306,6 +421,23 @@ fn flatten_nested_tabs(tree: &mut Tree<PanelId>) {
 
 fn is_board_tile(tiles: &Tiles<PanelId>, id: TileId) -> bool {
     matches!(tiles.get(id), Some(Tile::Pane(PanelId::Board)))
+}
+
+/// Match egui_tiles' ensure_active, including hidden children and drop-time stale selections.
+fn normalize_active_tabs(tree: &mut Tree<PanelId>) {
+    let active: Vec<_> = tree
+        .tiles
+        .iter()
+        .filter_map(|(id, tile)| match tile {
+            Tile::Container(Container::Tabs(t)) => Some((*id, t.next_active(&tree.tiles))),
+            _ => None,
+        })
+        .collect();
+    for (id, active) in active {
+        if let Some(Tile::Container(Container::Tabs(t))) = tree.tiles.get_mut(id) {
+            t.active = active;
+        }
+    }
 }
 
 /// Detach `id` from its parent container's child list (used by close; the tile itself is removed after).
@@ -1043,6 +1175,7 @@ mod tests {
                 vec![key(k), up]
             };
             run(&mut shell, vec![]);
+            let align = find_pane(&shell.tree, PanelId::Align).unwrap();
             let props = find_pane(&shell.tree, PanelId::Properties).expect("standard layout has Properties");
             let (_, owner, rect) = MENU_PROBE
                 .with(|p| p.borrow().iter().find(|(tile, _, _)| *tile == props).copied())
@@ -1079,8 +1212,69 @@ mod tests {
                 matches!(shell.tree.tiles.get(props), Some(Tile::Pane(PanelId::Align))),
                 "the Properties tab now shows Align (keyboard: {keyboard})"
             );
+            assert!(matches!(shell.tree.tiles.get(align), Some(Tile::Pane(PanelId::Properties))));
+            assert_eq!(shell.tree.tiles.iter().filter(|(_, t)| matches!(t, Tile::Pane(PanelId::Align))).count(), 1);
+            assert!(ShellState::from_layout_value(shell.layout_value()).is_some());
             assert!(!kit::is_menu_open(&ctx, owner));
         }
+    }
+
+    #[test]
+    fn duplicate_repair_keeps_first_in_tree_order_and_detaches_later_copies() {
+        let mut shell = ShellState::standard();
+        let align = find_pane(&shell.tree, PanelId::Align).unwrap();
+        let props = find_pane(&shell.tree, PanelId::Properties).unwrap();
+        *shell.tree.tiles.get_mut(props).unwrap() = Tile::Pane(PanelId::Align);
+        let restored = ShellState::from_layout_value(serde_json::to_value(&shell.tree).unwrap()).unwrap();
+        assert_eq!(find_pane(&restored.tree, PanelId::Align), Some(align));
+        assert!(restored.tree.tiles.get(props).is_none());
+        assert!(ShellState::from_layout_value(restored.layout_value()).is_some());
+    }
+
+    #[test]
+    fn snapshots_and_loads_normalize_active_like_ensure_active() {
+        for selection in [None, Some(TileId::from_u64(999)), Some(TileId::from_u64(2))] {
+            for hide_first in [false, true] {
+                let mut shell = ShellState::standard();
+                let align = find_pane(&shell.tree, PanelId::Align).unwrap();
+                let path = find_pane(&shell.tree, PanelId::Pathfinder).unwrap();
+                let tabs = shell.tree.tiles.parent_of(align).unwrap();
+                shell.tree.tiles.set_visible(align, !hide_first);
+                if let Some(Tile::Container(Container::Tabs(t))) = shell.tree.tiles.get_mut(tabs) {
+                    t.active = selection;
+                }
+                let expected = if hide_first { path } else { align };
+                let raw = serde_json::to_value(&shell.tree).unwrap();
+                let snapshot = shell.layout_value();
+                for (kind, value) in [raw, snapshot].into_iter().enumerate() {
+                    let restored = ShellState::from_layout_value(value).unwrap();
+                    let Some(Tile::Container(Container::Tabs(t))) = restored.tree.tiles.get(tabs) else {
+                        panic!("tabs retained")
+                    };
+                    assert_eq!(
+                        t.active,
+                        Some(expected),
+                        "kind {kind}, selection {selection:?}, hidden {hide_first}, children {:?}",
+                        t.children
+                    );
+                }
+            }
+        }
+        let mut shell = ShellState::standard();
+        let align = find_pane(&shell.tree, PanelId::Align).unwrap();
+        let path = find_pane(&shell.tree, PanelId::Pathfinder).unwrap();
+        let tabs = shell.tree.tiles.parent_of(align).unwrap();
+        if let Some(Tile::Container(Container::Tabs(t))) = shell.tree.tiles.get_mut(tabs) {
+            t.active = Some(path);
+        }
+        let restored = ShellState::from_layout_value(shell.layout_value()).unwrap();
+        let Some(Tile::Container(Container::Tabs(t))) = restored.tree.tiles.get(tabs) else { panic!("tabs retained") };
+        assert_eq!(t.active, Some(path)); // preserve an existing visible choice
+        shell.tree.tiles.set_visible(align, false);
+        shell.tree.tiles.set_visible(path, false);
+        let restored = ShellState::from_layout_value(shell.layout_value()).unwrap();
+        let Some(Tile::Container(Container::Tabs(t))) = restored.tree.tiles.get(tabs) else { panic!("tabs retained") };
+        assert_eq!(t.active, None);
     }
 
     /// The ☰ menu's ways out (UI_SYSTEM K5 / kit menu contract): Esc closes it, picks nothing and hands
