@@ -3,6 +3,14 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-10-08 — Panel icons (direction B) + Bridge: no Keychain, no pairing
+
+- **Scope:** `3914b14` panel icons (glyphs Opus, wiring Codex, review Opus: 13 findings, 1–12 fixed) and `e24180c` Bridge file key store + open local trust (Codex ×3 lanes, review Opus: 16 findings, all fixed), merged `189ff0e`.
+- **Panel icons:** 10 official Lucide 1.8.0 + 15 original Varos glyphs (`assets/icons/varos/`, provenance + shape tests, proof sheets); toggle ON = `TOGGLE_WELL` (black) + TEXT ink, **no azure bar** (owner 2026-10-08 «زرار منوّر وخلاص»); Align To visible 3-icon track; DOCUMENT strip (units dropdown via `EditCommand::SetUnits`, artboard dropdown + prev/next, 8 icon toggles mirroring View state, quick actions); artboard/control-bar/picker-harmony icon controls; Layers kind filter (ancestors kept); kit menu stamped per frame (no stuck keyboard capture); `icon_actions.rs` extracted, ui.rs ceiling 931→843. Stroke cap/join/dash NOT in this slice (engine work, PLAN B2). Owner saw the real-window capture; hand test pending.
+- **Bridge:** Keychain + `security-framework` removed; identities in 0600 files under app support (atomic create, owner/mode/symlink checks); same-uid peers get all scopes after the signed handshake; pairing/match code/scopes/file-root grant removed (CLI no-ops); files: fresh paths under home, /Volumes, iCloud Drive, CloudStorage providers; mistake-guards kept (system roots, dot components, extension, existing destination, network volumes named, FAT/exFAT rename fallback unverified); audit carries profile id + label. ADR-0011 Amendments 2 + 3; per-AI history = next PLAN row.
+- **Gates on `main` after merge:** workspace **1321 passed, 0 failed**; 4 real Unix-socket contract tests PASS on macOS; clippy `-D warnings` macOS + `x86_64-pc-windows-msvc` PASS; fmt PASS; dep directions PASS; ratchets PASS. Per-branch before merge: 1316 (icons), 1309 (bridge).
+- **Open:** owner hand test of the panels; ADR-0012 acceptance; per-AI history design; Bridge `set_units` verb (publication policy); exFAT/network media; T2/T3 text items.
+
 ## 2026-10-07 — Cycle 3 first pair: T1 varos-text crate + Bridge slice 4 (Codex impl, Opus review)
 
 - **Scope:** `d0e4e85` T1 (branch `feat/text-t1-crate`) and `30c34b1` Bridge slice 4 (branch `feat/bridge-slice4`), merged `83819a1`. Implementation Codex `gpt-6.1-sol`; independent reviews Opus (T1: 18 findings, 1–9 fixed before merge, rest listed in TEXT_T1_RESULTS as T2/T3; slice 4: 14 findings, 1–11 fixed, 12–14 recorded). Moderator re-ran every gate after each fix round.
