@@ -2036,7 +2036,7 @@ fn slice4_selection_field_and_schema_completeness() {
         assert!(tools.iter().any(|t| t["name"] == *name));
     }
     let edit = tools.iter().find(|t| t["name"] == "edit").unwrap();
-    let ops = edit["inputSchema"]["properties"]["ops"]["items"]["oneOf"].as_array().unwrap();
+    let ops = edit["inputSchema"]["$defs"].as_object().unwrap().values().collect::<Vec<_>>();
     for verb in varos_bridge::EDIT_VERBS {
         assert!(ops.iter().any(|o| o["properties"]["verb"]["const"] == *verb), "{verb}");
     }
@@ -2583,4 +2583,529 @@ fn describe_combined_budget_errors_preserve_resync_semantics() {
     for fields in ["fields:[\"selection\"]", "fields:[\"artboards\"]"] {
         assert!(error.reason.contains(fields));
     }
+}
+
+fn economy_args(ops: Value) -> Value {
+    json!({"api":"1.1","board":"b1","request_id":"r1","expected_rev":1,"ops":ops,"receipt":"ids"})
+}
+
+#[test]
+fn economy_wireframe_byte_gate_exact_document_equivalence_and_receipts() {
+    let original: Vec<Value> = serde_json::from_str(include_str!("fixtures/wireframe-source-1.1.json")).unwrap();
+    let encoded: Vec<Value> = serde_json::from_str(include_str!("fixtures/wireframe-request-1.1.json")).unwrap();
+    assert_eq!(encoded.iter().map(|r| serde_json::to_vec(r).unwrap().len()).sum::<usize>(), 8188);
+    let bytes: usize = encoded
+        .iter()
+        .map(|r| serde_json::to_vec(&json!({"defaults":r["defaults"],"ops":r["ops"]})).unwrap().len())
+        .sum();
+    assert_eq!(bytes, 7960);
+    assert!(bytes <= 9364);
+    assert_eq!(original.iter().map(|b| b.as_array().unwrap().len()).sum::<usize>(), 201);
+    let mut old = FakeHost::new();
+    old.editor = Editor::new();
+    let mut new = FakeHost::new();
+    new.editor = Editor::new();
+    let mut old_service = Service::new("test-epoch".into());
+    let mut new_service = Service::new("test-epoch".into());
+    let mut receipts = vec![];
+    let mut states = vec![];
+    let mut names = vec![];
+    for (i, (ops, args)) in original.iter().zip(&encoded).enumerate() {
+        let baseline = json!({"api":"1.0","board":"b1","request_id":format!("r{}",i+1),"expected_rev":i,"ops":ops});
+        let before = new.editor.doc.clone();
+        let a = handle(&mut old_service, &mut old, req("edit", baseline));
+        assert!(a.ok, "{a:?}");
+        let cli =
+            varos_bridge::cli::decode(&serde_json::to_vec(&json!({"tool":"edit","arguments":args})).unwrap()).unwrap();
+        let b = handle(&mut new_service, &mut new, cli);
+        assert!(b.ok, "{b:?}");
+        assert_eq!(b.undo_steps, 1);
+        let after = new.editor.doc.clone();
+        let retry = handle(&mut new_service, &mut new, req("edit", args.clone()));
+        assert_eq!(retry, b);
+        assert_eq!(new.editor.doc, after);
+        collect_creation_names(&args["ops"], &mut names);
+        assert_eq!(names.len(), after.paths.len());
+        let mut normalized = after.clone();
+        for ((p, expected), explicit) in normalized.paths.iter_mut().zip(&old.editor.doc.paths).zip(&names) {
+            if let Some(name) = explicit {
+                assert_eq!(p.name.as_ref(), Some(name));
+            } else {
+                p.name = expected.name.clone();
+            }
+        }
+        assert_eq!(normalized, old.editor.doc, "geometry/paint/tree/order/IDs differ in batch {i}");
+        states.push((before, after));
+        receipts.push(json!(b));
+    }
+    for (before, _) in states.iter().rev() {
+        new.editor.undo();
+        assert_eq!(&new.editor.doc, before);
+    }
+    for (_, after) in &states {
+        new.editor.redo();
+        assert_eq!(&new.editor.doc, after);
+    }
+    assert_eq!(
+        json!(receipts),
+        serde_json::from_str::<Value>(include_str!("fixtures/wireframe-receipt-1.1.json")).unwrap()
+    );
+}
+
+#[test]
+fn economy_defaults_tuples_ids_retry_and_batch_local_names() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    h.editor.objsel.insert(10);
+    h.editor.cur_fill = Some([0.2, 0.3, 0.4, 1.]);
+    h.editor.cur_stroke = Some([0.4, 0.3, 0.2, 1.]);
+    h.editor.cur_sw = 7.;
+    let human = (h.editor.cur_fill, h.editor.cur_stroke, h.editor.cur_sw, h.editor.objsel.clone());
+    let mut args = economy_args(json!([
+        ["rect",[1,2,20,30],{"local":"$a"}],
+        ["ellipse",[30,2,20,30],null,{"stroke":"#FF0000FF","stroke_width":2}],
+        ["path",[[0,0],[10,20]],false]
+    ]));
+    args["defaults"] = json!({"parent":"node:1","fill":"#112233FF","stroke":null,"radius":2,"opacity":0.5});
+    let before = h.editor.doc.clone();
+    let r = handle(&mut s, &mut h, req("edit", args.clone()));
+    assert!(r.ok, "{r:?}");
+    assert_eq!((h.editor.cur_fill, h.editor.cur_stroke, h.editor.cur_sw, h.editor.objsel.clone()), human);
+    let result = r.result.as_ref().unwrap();
+    assert!(result["created"].as_array().unwrap().iter().all(Value::is_string));
+    assert!(!result.to_string().contains("bounds"));
+    let paths = &h.editor.doc.paths[2..];
+    assert!(paths[0].name.as_ref().unwrap().starts_with("Rect "));
+    assert!(paths[1].name.as_ref().unwrap().starts_with("Ellipse "));
+    assert!(paths[2].name.as_ref().unwrap().starts_with("Path "));
+    assert_eq!(paths[1].fill, Paint::None);
+    let after = h.editor.doc.clone();
+    assert_eq!(handle(&mut s, &mut h, req("edit", args.clone())), r);
+    args["ops"][0] = json!({"verb":"add_shape","kind":"rect","bounds":[1,2,20,30],"local":"$a"});
+    let conflict = handle(&mut s, &mut h, req("edit", args));
+    assert!(!conflict.ok);
+    h.editor.undo();
+    assert_eq!(h.editor.doc, before);
+    h.editor.redo();
+    assert_eq!(h.editor.doc, after);
+    let rev = h.editor.rev;
+    let fail = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.1","board":"b1","request_id":"r2","expected_rev":rev,"ops":[["rect",[0,0,10,10]]]}),
+        ),
+    );
+    assert!(!fail.ok);
+    assert_eq!(h.editor.doc, after);
+}
+
+#[test]
+fn economy_rejects_bad_tuple_defaults_and_version_before_execution() {
+    for ops in [
+        json!([["rect",[0,0,2,2],"#FFFFFFFF",1,{"fill":"#FFFFFFFF"}]]),
+        json!([["ellipse", [0, 0, 2, 2], "#FFFFFFFF", 1]]),
+        json!([["rect",[0,0,2,2],{"radius":null}]]),
+        json!([["path",[[0,0],[1,1]],true,{"holes":[]}]]),
+        json!([["rect",[0,0,2,2],{"kind":"ellipse"}]]),
+        json!([["rect", [0, 0, 2, 2], 7]]),
+        json!([["rect", [0, 0, 2, 2], null, 1, {}, 0]]),
+    ] {
+        assert!(varos_bridge::mcp::decode_tool("edit", economy_args(ops)).is_err());
+    }
+    for defaults in [
+        json!({"parent":null}),
+        json!({"radius":null}),
+        json!({"opacity":null}),
+        json!({"stroke_width":null}),
+        json!({"opacity":2}),
+        json!({"fill":"red"}),
+        json!({"name":"no"}),
+    ] {
+        let mut args = economy_args(json!([["rect", [0, 0, 10, 10], "#FFFFFFFF"]]));
+        args["defaults"] = defaults;
+        assert!(varos_bridge::mcp::decode_tool("edit", args).is_err());
+    }
+    for extra in [json!({"defaults":{}}), json!({"receipt":"ids"})] {
+        let mut args = economy_args(json!([]));
+        args["api"] = json!("1.0");
+        args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        assert!(varos_bridge::mcp::decode_tool("edit", args).is_err());
+    }
+    let mut args = economy_args(json!([["rect", [0, 0, 10, 10], "#FFFFFFFF"]]));
+    args["api"] = json!("1.0");
+    args.as_object_mut().unwrap().remove("receipt");
+    assert!(varos_bridge::mcp::decode_tool("edit", args).is_err());
+}
+
+#[test]
+fn economy_nested_repeat_instance_order_locals_handles_and_rollback() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let args = economy_args(
+        json!([{"verb":"repeat","count":2,"dx":100,"dy":0,"ops":[{"verb":"repeat","count":2,"dx":0,"dy":50,"ops":[{"verb":"add_path","anchors":[{"p":[1,2],"hout":[3,4]},{"p":[5,6],"hin":[7,8]}],"closed":false,"fill":"#FFFFFFFF","local":"$p"}]}]}]),
+    );
+    let r = handle(&mut s, &mut h, req("edit", args));
+    assert!(r.ok, "{r:?}");
+    let locals = &r.result.as_ref().unwrap()["locals"];
+    for (i, (x, y)) in [(1., 2.), (1., 52.), (101., 2.), (101., 52.)].iter().enumerate() {
+        let p = &h.editor.doc.paths[2 + i];
+        assert_eq!(p.anchors[0].p, [*x, *y]);
+        assert_eq!(p.anchors[0].hout, Some([*x + 2., *y + 2.]));
+        assert_eq!(locals[format!("$p_{}_{}", i / 2, i % 2)], format!("path:{}", p.id));
+    }
+    let before = h.editor.doc.clone();
+    let rev = h.editor.rev;
+    let mut bad = economy_args(
+        json!([{"verb":"repeat","count":2,"dx":0,"dy":0,"ops":[["rect",[0,0,10,10],"#FFFFFFFF"],{"verb":"repeat","count":1,"dx":0,"dy":0,"ops":[["ellipse",[0,0,-1,10],"#FFFFFFFF"]]}]}]),
+    );
+    bad["request_id"] = json!("r2");
+    bad["expected_rev"] = json!(rev);
+    let r = handle(&mut s, &mut h, req("edit", bad));
+    assert!(!r.ok);
+    let e = r.error.unwrap();
+    assert_eq!(e.op_index, Some(0));
+    assert_eq!(e.location, vec!["instance:0", "op:1", "instance:0", "op:0"]);
+    assert_eq!(h.editor.doc, before);
+    assert_eq!(h.editor.rev, rev);
+    // Failed allocation did not consume lifetime IDs.
+    let mut good = economy_args(json!([["rect", [0, 0, 10, 10], "#FFFFFFFF"]]));
+    good["request_id"] = json!("r2");
+    good["expected_rev"] = json!(rev);
+    let mut control = Editor::new();
+    control.replace_doc(before.clone());
+    let expected = control
+        .try_execute_created(EditCommand::AddShape {
+            kind: varos_core::model::ShapeKind::Rect,
+            bounds: [0., 0., 10., 10.],
+            parent: None,
+            fill: Some([1.; 4]),
+            stroke: None,
+            stroke_width: 0.,
+            opacity: 1.,
+            name: None,
+        })
+        .unwrap();
+    let r = handle(&mut s, &mut h, req("edit", good));
+    assert!(r.ok, "{r:?}");
+    assert_eq!(h.editor.doc.paths.last().unwrap().id, expected);
+}
+
+#[test]
+fn economy_repeat_bounds_collisions_forward_refs_and_cancellation() {
+    let leaf = json!(["rect",[0,0,10,10],"#FFFFFFFF",{"local":"$x"}]);
+    let repeat = |count, ops| json!({"verb":"repeat","count":count,"dx":0,"dy":0,"ops":ops});
+    for count in [0, 101] {
+        assert!(varos_bridge::mcp::decode_tool("edit", economy_args(json!([repeat(count, json!([leaf]))]))).is_err());
+    }
+    let mut nested = leaf.clone();
+    for _ in 0..5 {
+        nested = repeat(1, json!([nested]));
+    }
+    assert!(varos_bridge::mcp::decode_tool("edit", economy_args(json!([nested]))).is_err());
+    let four = repeat(1, json!([repeat(1, json!([repeat(1, json!([repeat(1, json!([leaf]))]))]))]));
+    assert!(varos_bridge::mcp::decode_tool("edit", economy_args(json!([four]))).is_ok());
+    let overflow = economy_args(json!([repeat(100, json!([leaf])), ["ellipse", [0, 0, 10, 10], "#FFFFFFFF"]]));
+    let error = varos_bridge::mcp::decode_tool("edit", overflow).unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+    for ops in [
+        json!([repeat(1, json!([{"verb":"move","ids":["path:10"],"delta":[1,1]}]))]),
+        json!([repeat(1, json!([{"verb":"add_artboard","bounds":[0,0,10,10]}]))]),
+    ] {
+        assert!(varos_bridge::mcp::decode_tool("edit", economy_args(ops)).is_err());
+    }
+    for ops in [
+        json!([repeat(1,json!([leaf])),["rect",[0,0,10,10],"#FFFFFFFF",{"local":"$x_0"}]]),
+        json!([repeat(1, json!([["rect",[0,0,10,10],"#FFFFFFFF",{"local":format!("${}","x".repeat(62))}]]))]),
+        json!([{"verb":"move","ids":["$x_0"],"delta":[1,1]},repeat(1,json!([leaf]))]),
+        json!([repeat(1,json!([leaf])),{"verb":"move","ids":["$x"],"delta":[1,1]}]),
+    ] {
+        let mut h = FakeHost::new();
+        let mut s = Service::new("test-epoch".into());
+        let before = h.editor.doc.clone();
+        let rev = h.editor.rev;
+        let r = handle(&mut s, &mut h, req("edit", economy_args(ops)));
+        assert!(!r.ok, "{r:?}");
+        assert_eq!(h.editor.doc, before);
+        assert_eq!(h.editor.rev, rev);
+    }
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let before = h.editor.doc.clone();
+    let args = economy_args(json!([repeat(100, json!([leaf]))]));
+    let r = s.handle(&mut h, &ctx(), req("edit", args.clone()), &AtomicBool::new(true));
+    assert!(!r.ok);
+    assert_eq!(h.editor.doc, before);
+    let r = handle(&mut s, &mut h, req("edit", args));
+    assert!(r.ok, "{r:?}");
+    assert_eq!(h.editor.doc.paths.len(), 102);
+    assert_eq!(r.result.unwrap()["locals"].as_object().unwrap().len(), 100);
+}
+
+#[test]
+fn economy_snapshot_summary_hint_and_revision_pinned_detail() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    h.editor.doc.name = "ع".repeat(200);
+    h.editor.objsel.insert(10);
+    let r = handle(&mut s, &mut h, req("describe", json!({"api":"1.1","board":"b1","summary_budget":1024})));
+    assert!(r.ok, "{r:?}");
+    assert!(serde_json::to_vec(r.result.as_ref().unwrap()).unwrap().len() <= 1024);
+    assert!(varos_bridge::service::compact(&r).len() <= 1024);
+    assert!(r.result.as_ref().unwrap()["counts"].is_object());
+    assert_eq!(r.result.as_ref().unwrap()["selection_count"], 1);
+    let trimmed = handle(&mut s, &mut h, req("describe", json!({"api":"1.1","board":"b1","summary_budget":512})));
+    assert!(trimmed.ok, "{trimmed:?}");
+    assert!(trimmed.result.unwrap()["name"].as_str().unwrap().ends_with("…"));
+    let mut detail = r.result.unwrap()["detail_request"].clone();
+    detail["api"] = json!("1.1");
+    let d = handle(&mut s, &mut h, req("describe", detail));
+    assert!(d.ok, "{d:?}");
+    assert_eq!(d.result.unwrap()["objects"].as_array().unwrap().len(), 3);
+    let snapshot = |api, profile| json!({"api":api,"board":"b1","rev":1,"profile":profile});
+    let before = h.editor.doc.clone();
+    let r = handle(&mut s, &mut h, req("snapshot", snapshot("1.1", "economy")));
+    assert!(r.ok, "{r:?}");
+    assert_eq!(r.result.as_ref().unwrap()["width"], 512);
+    assert_eq!(r.result.unwrap()["height"], 232);
+    let r = handle(&mut s, &mut h, req("snapshot", snapshot("1.0", "economy")));
+    assert!(!r.ok);
+    let r = handle(&mut s, &mut h, req("describe", json!({"board":"b1","summary_budget":1024})));
+    assert!(!r.ok);
+    assert_eq!(h.editor.doc, before);
+    let cap = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.1"})));
+    let cap = cap.result.unwrap();
+    assert_eq!(cap["supported_api"], json!(["1.0", "1.1"]));
+    assert!(cap["economy_hint"].as_str().unwrap().contains("repeat"));
+    assert!(!cap["economy_hint"].as_str().unwrap().contains("bars"));
+    let old = handle(&mut s, &mut h, req("capabilities", json!({})));
+    assert!(old.result.unwrap().get("economy_hint").is_none());
+}
+
+#[test]
+fn economy_targets_preallocation_limit_and_large_ids_pagination() {
+    let mut h = FakeHost::new();
+    h.editor = Editor::new();
+    let template = h
+        .editor
+        .try_execute_created(EditCommand::AddShape {
+            kind: varos_core::model::ShapeKind::Rect,
+            bounds: [0., 0., 10., 10.],
+            parent: None,
+            fill: Some([1.; 4]),
+            stroke: None,
+            stroke_width: 0.,
+            opacity: 1.,
+            name: None,
+        })
+        .unwrap();
+    // Seed 1,000 validated independent paths with large identities to exercise receipt paging.
+    let mut doc = h.editor.doc.clone();
+    let source = doc.paths.iter().find(|p| p.id == template).unwrap().clone();
+    doc.paths.clear();
+    doc.nodes.retain(|n| n.kind == varos_core::model::NodeKind::Layer);
+    doc.nodes[0].children.clear();
+    for i in 0..1000u32 {
+        let mut p = source.clone();
+        p.id = 100_000_000 + i * 10;
+        for (j, a) in p.anchors.iter_mut().enumerate() {
+            a.id = p.id + j as u32 + 1;
+        }
+        doc.paths.push(p);
+    }
+    doc.ids = 100_010_000;
+    h.editor.replace_doc(doc);
+    let mut s = Service::new("test-epoch".into());
+    let rev = h.editor.rev;
+    let before = h.editor.doc.clone();
+
+    let args = json!({"api":"1.1","board":"b1","request_id":"r1","expected_rev":rev,"receipt":"ids","ops":[["rect",[0,0,10,10],"#FFFFFFFF"],{"verb":"set_paint","ids":["node:1"],"fill":"#FF0000FF"}]});
+    let r = handle(&mut s, &mut h, req("edit", args));
+    assert!(!r.ok);
+    assert_eq!(r.error.unwrap().code, "limit_exceeded");
+    assert_eq!(h.editor.doc, before);
+    assert_eq!(h.editor.doc.ids, before.ids);
+    let ids: Vec<_> = h.editor.doc.paths.iter().map(|p| format!("path:{}", p.id)).collect();
+    let args = json!({"api":"1.1","board":"b1","request_id":"r1","expected_rev":rev,"receipt":"ids","ops":[{"verb":"set_paint","ids":ids,"fill":"#FF0000FF"}]});
+    let first = handle(&mut s, &mut h, req("edit", args.clone()));
+    assert!(first.ok, "{first:?}");
+    assert_eq!(first.result.as_ref().unwrap()["more"], true);
+    assert_eq!(handle(&mut s, &mut h, req("edit", args)), first);
+    let status = handle(&mut s, &mut h, req("request_status", json!({"api":"1.1","request_id":"r1"})));
+    assert!(status.ok, "{status:?}");
+    assert_eq!(status.result.unwrap()["receipt"], json!(first));
+    let mut all = vec![];
+    let mut page = first.result.clone().unwrap();
+    let first_cursor = page["cursor"].clone();
+    loop {
+        all.extend(page["changed"].as_array().unwrap().iter().filter_map(Value::as_str).map(str::to_owned));
+        assert!(serde_json::to_vec(&page).unwrap().len() < 16_384);
+        if page["more"] != true {
+            break;
+        }
+        let r = handle(
+            &mut s,
+            &mut h,
+            req("request_status", json!({"api":"1.1","request_id":"r1","cursor":page["cursor"]})),
+        );
+        assert!(r.ok, "{r:?}");
+        page = r.result.unwrap()["receipt"]["result"].clone();
+    }
+    assert_eq!(all.len(), 1000);
+    assert_eq!(all.iter().collect::<std::collections::BTreeSet<_>>().len(), 1000);
+    h.editor.undo();
+    let expired =
+        handle(&mut s, &mut h, req("request_status", json!({"api":"1.1","request_id":"r1","cursor":first_cursor})));
+    assert!(!expired.ok);
+}
+
+#[test]
+fn economy_page_snapshot_fit_and_explicit_dimensions() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let r = handle(
+        &mut s,
+        &mut h,
+        req("edit", economy_args(json!([{"verb":"add_artboard","bounds":[0,0,1440,3000],"local":"$page"}]))),
+    );
+    assert!(r.ok, "{r:?}");
+    let page = r.result.unwrap()["locals"]["$page"].clone();
+    let rev = h.editor.rev;
+    for (explicit, w, height) in [(false, 246, 512), (true, 492, 1024)] {
+        let mut args = json!({"api":"1.1","board":"b1","rev":rev,"artboard":page,"profile":"economy"});
+        if explicit {
+            args["width"] = json!(1024);
+            args["height"] = json!(1024);
+        }
+        let r = handle(&mut s, &mut h, req("snapshot", args));
+        assert!(r.ok, "{r:?}");
+        let r = r.result.unwrap();
+        assert_eq!(r["width"], w);
+        assert_eq!(r["height"], height);
+    }
+}
+
+#[test]
+fn economy_actual_mcp_stdio_matches_cli_and_bounded_schema() {
+    let args =
+        economy_args(json!([{"verb":"repeat","count":2,"dx":20,"dy":0,"ops":[["rect",[0,0,10,10],{"local":"$a"}]]}]));
+    let mut args = args;
+    args["defaults"] = json!({"fill":"#FFFFFFFF"});
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let cli =
+        varos_bridge::cli::decode(&serde_json::to_vec(&json!({"tool":"edit","arguments":args})).unwrap()).unwrap();
+    let expected = handle(&mut s, &mut h, cli);
+    let transport = FakeTransport {
+        state: std::sync::Arc::new(std::sync::Mutex::new((Service::new("test-epoch".into()), FakeHost::new()))),
+        cancellations: Default::default(),
+    };
+    let (input_tx, input) = std::sync::mpsc::channel();
+    let (output, receive) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        varos_bridge::mcp::serve(
+            &mut std::io::BufReader::new(ChannelRead { rx: input, current: std::io::Cursor::new(vec![]) }),
+            ChannelWrite { tx: output, bytes: vec![] },
+            transport,
+        )
+        .unwrap()
+    });
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{},"capabilities":{}}}),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"edit","arguments":args}}),
+    ] {
+        let mut bytes = serde_json::to_vec(&msg).unwrap();
+        bytes.push(b'\n');
+        input_tx.send(bytes).unwrap();
+    }
+    receive.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let result: Value =
+        serde_json::from_slice(&receive.recv_timeout(std::time::Duration::from_secs(3)).unwrap()).unwrap();
+    assert_eq!(result["result"], varos_bridge::mcp::tool_result(&expected));
+    drop(input_tx);
+    server.join().unwrap();
+    let schema = varos_bridge::mcp::tools();
+    let edit = schema["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
+    let schema = &edit["inputSchema"];
+    assert_eq!(schema["properties"]["api"]["enum"], json!(["1.0", "1.1"]));
+    assert!(schema["$defs"].get("repeat4").is_none());
+    assert_eq!(schema["$defs"]["repeat3"]["properties"]["ops"]["items"]["anyOf"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn economy_preserves_api_10_request_projection_and_retry_normalization() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let mut args = json!({"api":"1.0","board":"b1","request_id":"r1","expected_rev":1,"ops":[{"verb":"add_shape","kind":"rect","bounds":[0,0,10,10],"fill":"#FFFFFFFF","parent":null}]});
+    let request = req("edit", args.clone());
+    let projected = serde_json::to_value(&request).unwrap();
+    assert!(projected["arguments"]["ops"][0].get("parent").is_none());
+    assert_eq!(projected["arguments"]["ops"][0]["bounds"].to_string(), "[0.0,0.0,10.0,10.0]");
+    let r = handle(&mut s, &mut h, request);
+    assert!(r.ok, "{r:?}");
+    args["ops"][0].as_object_mut().unwrap().remove("parent");
+    assert_eq!(handle(&mut s, &mut h, req("edit", args)), r);
+}
+
+fn collect_creation_names(ops: &Value, out: &mut Vec<Option<String>>) {
+    for op in ops.as_array().unwrap() {
+        if op["verb"] == "repeat" {
+            for _ in 0..op["count"].as_u64().unwrap() {
+                collect_creation_names(&op["ops"], out);
+            }
+        } else if op.is_array() {
+            out.push(
+                op.as_array().unwrap().last().and_then(|v| v.get("name")).and_then(Value::as_str).map(str::to_owned),
+            );
+        } else if matches!(op["verb"].as_str(), Some("add_shape" | "add_path")) {
+            out.push(op["name"].as_str().map(str::to_owned));
+        }
+    }
+}
+
+#[test]
+fn economy_schema_size_and_flat_roots() {
+    let list = varos_bridge::mcp::tools();
+    let bytes = serde_json::to_vec(&list).unwrap().len();
+    println!("compact tools/list bytes: {bytes}");
+    assert!(bytes <= 24_000, "tools/list grew to {bytes} bytes");
+    for tool in list["tools"].as_array().unwrap() {
+        let root = &tool["inputSchema"];
+        assert_eq!(root["type"], "object");
+        for key in ["oneOf", "anyOf", "allOf"] {
+            assert!(root.get(key).is_none(), "{} root {key}", tool["name"]);
+        }
+    }
+    let edit = list["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
+    for kind in ["rect", "ellipse", "path"] {
+        let tuple = &edit["inputSchema"]["$defs"][format!("{kind}_tuple")];
+        assert!(tuple["prefixItems"].is_array());
+        assert!(tuple.get("items").is_none());
+    }
+    assert!(edit["description"].as_str().unwrap().contains("object operations"));
+}
+
+#[test]
+fn economy_legacy_target_count_and_alias_index() {
+    let shape = json!({"verb":"add_shape","kind":"rect","bounds":[0,0,10,10],"fill":"#FFFFFFFF"});
+    let ids = vec!["path:1"; 1000];
+    let args = json!({"api":"1.0","board":"b1","request_id":"r1","expected_rev":0,"ops":[shape,{"verb":"move","ids":ids,"delta":[1,0]}]});
+    assert!(varos_bridge::mcp::decode_tool("edit", args.clone()).is_ok());
+    let mut bad = args;
+    bad["ops"][1]["ids"].as_array_mut().unwrap().push(json!("path:1"));
+    let e = varos_bridge::mcp::decode_tool("edit", bad).unwrap_err();
+    assert_eq!(e.reason, "edit exceeds 1000 explicit targets");
+    assert_eq!(e.op_index, None);
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let mut args = economy_args(json!([
+        {"verb":"repeat","count":3,"dx":20,"dy":0,"ops":[["rect",[0,0,10,10],"#FFFFFFFF"]]},
+        {"verb":"align","ids":["path:1"],"mode":"left","target":"a0@0"},
+        {"verb":"add_artboard","bounds":[0,0,100,100]}
+    ]));
+    args["expected_rev"] = json!(h.editor.rev);
+    let r = handle(&mut s, &mut h, req("edit", args));
+    assert_eq!(r.error.unwrap().op_index, Some(1));
 }

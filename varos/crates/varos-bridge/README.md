@@ -6,6 +6,61 @@ This slice implements `capabilities`, `list_boards`, `describe` (including expli
 
 Slice 1 has landed and the owner verified live move + recolour followed by one human undo. Slice 3's live acceptance (the Instagram Story batch below on an open board, then one ⌘Z) is pending. Slice 2's live acceptance is still pending: an external agent builds the poster below on the active open board, asks for a snapshot, then the owner checks the objects and undoes the entire design once. Headless tests and CPU preview inspection do not establish live desktop acceptance.
 
+## Cheapest way (API 1.1)
+
+Negotiate with `capabilities {"api":"1.1"}`. The cheapest way to create decorative art is an explicit
+API 1.1 edit with batch-local `defaults`, omitted decorative names, compact rect/ellipse/path tuples,
+and `repeat` for identical translated rows. Use `receipt:"ids"`, `describe summary_budget:1024`
+(or a since-revision diff), and `snapshot profile:"economy"` only when an image helps; request specific
+IDs/fields and larger dimensions explicitly. API 1.0 and unprofiled reads keep their existing behavior.
+These are measured JSON-byte savings, not a measured tokenizer or provider-cost claim.
+
+```json
+{"api":"1.1","board":"b1","request_id":"r1","expected_rev":0,
+ "defaults":{"parent":"node:1","fill":"#112233FF","radius":4},"receipt":"ids",
+ "ops":[{"verb":"repeat","count":3,"dx":24,"dy":0,
+         "ops":[["rect",[0,0,20,12],{"local":"$tile"}]]}]}
+```
+
+Defaults accept only parent, fill, stroke, stroke_width, radius and opacity; explicit leaf values win.
+Null removes fill/stroke; parent/numeric null is invalid. Radius defaults apply only to rectangles;
+an explicit ellipse radius is refused. Defaults never change the human's drawing paint state.
+Omitted creation names become `Rect <path-id>`, `Ellipse <path-id>` or `Path <path-id>`; retry returns
+the cached receipt and redo restores the same labels. Explicit names retain the existing cleaning rules.
+
+Tuples may freely mix with existing object verbs: `["rect",[x,y,w,h],fill,radius]`,
+`["ellipse",[x,y,w,h],fill]`, `["path",[[x,y],…],closed,fill]`. Fill is optional color/null; radius
+may follow a supplied rect fill. Use a trailing options object to inherit fill while supplying radius,
+e.g. `["rect",[0,0,20,12],{"radius":4}]`. Duplicate/unknown keys, extra slots and invalid values fail.
+Path tuples contain plain points; use object add_path for handles/smooth. Holes are refused.
+
+Repeat count includes the first instance (1–100), expands instance-major in source order, translates
+points and handles, and nests at most four levels. Children are shapes, paths or repeats. Locals acquire
+instance suffixes (`$tile_0`, `$tile_1`; nested suffixes concatenate); external references must use those
+suffixed names. Collisions, overlong names and forward references fail. Both top-level and expanded
+operations are capped at 100; expanded creation/target work is capped at 1,000 before ID allocation.
+Errors retain the top-level op_index and a nested location of instance/op entries. One batch is one undo step.
+
+IDs receipts contain only created/changed/removed object IDs, created/removed page IDs, locals and revision,
+plus the existing reply envelope. Object ID lists use canonical lexicographic order; page IDs use page order;
+locals use key order. Large receipts mark `more` and supply a revision-pinned cursor and `detail_request`
+for API 1.1 request_status. Each page includes only its IDs/locals; collect all pages. A document edit expires
+a continuation cursor; retrying the original request still returns the identical cached first page.
+
+Budgeted summaries accept 256–1024 UTF-8 bytes and retain revision/counts, bounded name/selection/page
+previews, and an explicit more/cursor/detail_request. The structured result and readable text both fit the
+requested budget; a budget too small for the mandatory header/cursor is refused. This option is summary-only.
+Economy snapshots default to 512×232 for a board or an aspect fit within 512×512 for a page. Explicit dimensions
+may still reach 1024. MCP and CLI use the same decoder/service, including defaults, tuples and repeat.
+Bars, inline group creation and clone remain deferred to token-economy slice 3 (the general capabilities hint
+mentions bars, but they are absent from enabled edit_verbs/schemas).
+
+Replay the frozen wireframe encoding with `python3 tools/bridge_token_economy.py
+varos/crates/varos-bridge/tests/fixtures/wireframe-source-1.1.json` from the repository root.
+It measures 3,364 + 3,410 + 1,186 = **7,960 bytes**, including each defaults/ops wrapper;
+the contract test applies both encodings and compares the complete document except omitted path names.
+The three original transaction boundaries are preserved. Poster/story compact payloads are 508/618 bytes.
+
 ## Try it on macOS — register once, then just say "use Varos"
 
 Run `varos-cli bridge register claude`, then say **“use Varos”**. Open Varos before calling its tools. Same-uid local agents are trusted automatically with every scope; no pairing or save permission is needed (owner decision 2026-10-08).

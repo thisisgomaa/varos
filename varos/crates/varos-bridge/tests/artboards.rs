@@ -453,11 +453,11 @@ fn capabilities_and_mcp_schemas_advertise_every_page_verb() {
     assert!(caps["deprecated"]["aN@rev"].is_string());
     let tools = varos_bridge::mcp::tools();
     let edit = tools["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
-    let verbs: Vec<_> = edit["inputSchema"]["properties"]["ops"]["items"]["oneOf"]
-        .as_array()
+    let verbs: Vec<_> = edit["inputSchema"]["$defs"]
+        .as_object()
         .unwrap()
-        .iter()
-        .map(|s| s["properties"]["verb"]["const"].as_str().unwrap().to_owned())
+        .values()
+        .filter_map(|s| s["properties"]["verb"]["const"].as_str().map(str::to_owned))
         .collect();
     for verb in varos_bridge::EDIT_VERBS {
         assert!(verbs.contains(&verb.to_string()), "schema for {verb}");
