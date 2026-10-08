@@ -243,3 +243,76 @@ pub(crate) fn build_snap_hud(
     p.rect_stroke(rect, CornerRadius::same(R), Stroke::new(1.0, BORDER), StrokeKind::Middle);
     p.text(rect.center(), Align2::CENTER_CENTER, text, font, TEXT);
 }
+
+// on-canvas overlays are CONFINED to the Board hole (Ahmed 07-07)
+/// Background paints above the wgpu canvas/root, below the floating control bar, tool rail,
+/// page chrome and recovery card. Painter only: no hit-testing.
+pub(crate) fn paint_agent_presence(
+    ctx: &egui::Context,
+    view: View,
+    ppp: f32,
+    hole: egui::Rect,
+    frame: &crate::agent_presence::Frame,
+) {
+    use varos_app::shell::tokens::{
+        AGENT, AGENT_LABEL_GAP, AGENT_LABEL_H, AGENT_LABEL_MIN_PAGE_W, AGENT_LABEL_PAD, AGENT_LABEL_TITLE_TRAIL,
+        AGENT_OBJECT_STROKE, AGENT_PAGE_STROKE, KIT_STROKE,
+    };
+    if frame.pages.is_empty() && frame.objects.is_empty() && frame.repaint_after.is_none() {
+        return;
+    }
+    let painter = ctx
+        .layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("agent-presence")))
+        .with_clip_rect(hole);
+    let rect = |b: [f32; 4]| {
+        let tl = view.w2s([b[0], b[1]]);
+        let br = view.w2s([b[2], b[3]]);
+        egui::Rect::from_min_max(egui::pos2(tl[0] / ppp, tl[1] / ppp), egui::pos2(br[0] / ppp, br[1] / ppp))
+    };
+    for page in &frame.pages {
+        let r = rect(page.bounds);
+        if hole.intersects(r.expand(AGENT_LABEL_H * (page.labels.len() + 1) as f32)) {
+            painter.rect_stroke(r, CornerRadius::ZERO, Stroke::new(AGENT_PAGE_STROKE, AGENT), StrokeKind::Outside);
+            if r.intersect(hole).width() < AGENT_LABEL_MIN_PAGE_W {
+                continue;
+            }
+            let title = painter.layout_no_wrap(page.name.clone(), varos_app::shell::tokens::micro(), TEXT);
+            let title_end = r.left() + title.size().x + AGENT_LABEL_GAP;
+            for (i, label) in page.labels.iter().enumerate() {
+                // Title-style labels are pinned above the top-right edge and stack upward.
+                // Leave the existing page settings dots at the corner clear.
+                let galley = painter.layout_no_wrap(label.clone(), varos_app::shell::tokens::micro(), TEXT);
+                let size = egui::vec2(galley.size().x + AGENT_LABEL_PAD * 2.0, AGENT_LABEL_H);
+                let chip = egui::Rect::from_min_size(
+                    egui::pos2(
+                        (r.right() - size.x - AGENT_LABEL_TITLE_TRAIL).max(title_end),
+                        r.top() - AGENT_LABEL_GAP - AGENT_LABEL_H - i as f32 * (AGENT_LABEL_H + AGENT_LABEL_GAP),
+                    ),
+                    size,
+                );
+                painter.rect_filled(chip, CornerRadius::same(R), SOLID_PANEL);
+                painter.rect_stroke(chip, CornerRadius::same(R), Stroke::new(KIT_STROKE, AGENT), StrokeKind::Inside);
+                painter.galley(
+                    egui::pos2(chip.left() + AGENT_LABEL_PAD, chip.center().y - galley.size().y / 2.0),
+                    galley,
+                    TEXT,
+                );
+            }
+        }
+    }
+    for object in &frame.objects {
+        let r = rect(object.bounds);
+        if hole.intersects(r) {
+            painter.rect_stroke(
+                r,
+                CornerRadius::ZERO,
+                Stroke::new(AGENT_OBJECT_STROKE, AGENT.gamma_multiply(object.alpha)),
+                StrokeKind::Outside,
+            );
+        }
+    }
+    let delay = crate::agent_presence::repaint_after(frame, |bounds| hole.intersects(rect(bounds)));
+    if let Some(delay) = delay {
+        ctx.request_repaint_after(delay);
+    }
+}
