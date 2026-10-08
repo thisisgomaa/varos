@@ -681,6 +681,7 @@ fn dispatch(
                 }
             }
             match w {
+                WindowCmd::ResetLayout => {} // handled with the per-user store by the host loop
                 WindowCmd::Minimize => window.set_minimized(true),
                 WindowCmd::ToggleMaximize => window.set_maximized(!cursors::is_maximized(hwnd)),
                 // the V mark: the very panel Varos ▸ About opens (raised only on macOS)
@@ -1030,7 +1031,13 @@ fn main() {
 
     let scale = window.scale_factor();
 
+    let (mut layout_store, shell_layout) = varos_app::storage::layout::LayoutStore::load(
+        &varos_app::storage::durable::RealFs,
+        varos_app::storage::paths::AppLayout::current().map(|p| p.shell_layout()),
+        std::env::var("VAROS_RESET_LAYOUT").as_deref() == Ok("1"),
+    );
     let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
+    gui.restore_shell_layout(shell_layout);
     if let Some(index) = store.thumb_index() {
         gui.set_thumb_source(std::sync::Arc::new(index)); // Home decodes thumbnails off the UI thread
     }
@@ -1315,12 +1322,17 @@ fn main() {
                                 continue;
                             }
                         }
+                        let reset_layout =
+                            matches!(&action, host::HostAction::App(AppCommand::Window(WindowCmd::ResetLayout)));
                         let before = recovery_host::RecoveryHost::before_close(&ws);
                         let (ds, keys) = (&mut dialogs, &keyboard);
                         let jobs = &mut recovery;
                         let bridge = matches!(&action, host::HostAction::App(AppCommand::Bridge(_)));
                         let ran =
                             dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, ds, &mut store, keys, jobs);
+                        if reset_layout {
+                            gui.restore_shell_layout(layout_store.reset(&varos_app::storage::durable::RealFs));
+                        }
                         if ran.held {
                             // held at the head with everything behind it (FIFO); retried when a save
                             // lands or the Keep Waiting question is due — never a busy loop
@@ -1344,6 +1356,8 @@ fn main() {
                             panning = false;
                         }
                         if ran.exit {
+                            layout_store.observe(gui.shell_layout(), Instant::now());
+                            let _ = layout_store.flush(&varos_app::storage::durable::RealFs, Instant::now());
                             recovery.shutdown();
                             save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
                             elwt.exit();
@@ -1366,6 +1380,8 @@ fn main() {
                 }
             }
             if matches!(&event, Event::AboutToWait) {
+                layout_store.observe(gui.shell_layout(), Instant::now());
+                let _ = layout_store.tick(&varos_app::storage::durable::RealFs, Instant::now());
                 agent_presence::retain(&ws, Instant::now());
                 recovery.observe(&mut ws, Instant::now());
                 let recovered = recovery.take_recovered();
@@ -1412,8 +1428,12 @@ fn main() {
                 // poll, the "Saving…" delay and the Keep Waiting question each run in this block and ask
                 // for a frame themselves only when something visible changed (above). Only egui's own
                 // deadline (tooltip delay, caret blink, a paced follow-up pass) draws.
-                let background =
-                    [recovery.next_wake(), file_jobs::next_status_wake(&ws, now), recovery.save_wait.next_ask()];
+                let background = [
+                    recovery.next_wake(),
+                    file_jobs::next_status_wake(&ws, now),
+                    recovery.save_wait.next_ask(),
+                    layout_store.next_wake(),
+                ];
                 let plan = pacing::plan(Instant::now(), gui.repaint_at, &background, turn_now);
                 if plan.redraw {
                     gui.repaint_at = None;
