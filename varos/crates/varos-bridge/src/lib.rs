@@ -55,3 +55,13 @@ pub const EDIT_VERBS: &[&str] = &[
     "delete_artboard",
     "set_active_artboard",
 ];
+
+/// Expanded, ordered leaf operations of an edit (API 1.1 defaults/tuples/repeat applied; API 1.0 as-is).
+/// Used by the host's agent-presence overlay, which needs the creation order; never fails — an
+/// invalid batch yields the 1.0 ops that parse, and an unparsable batch yields nothing.
+pub fn expanded_ops(edit: &dto::Edit) -> Vec<dto::Operation> {
+    match economy::expand(edit) {
+        Ok(leaves) => leaves.into_iter().map(|l| l.op).collect(),
+        Err(_) => edit.ops.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect(),
+    }
+}
