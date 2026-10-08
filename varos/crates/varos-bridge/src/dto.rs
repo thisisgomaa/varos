@@ -53,6 +53,9 @@ pub struct Describe {
     pub fields: Option<Vec<String>>,
     #[serde(default)]
     pub since: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "present_usize")]
+    pub summary_budget: Option<usize>,
     #[serde(default = "page")]
     pub limit: usize,
     #[serde(default)]
@@ -67,16 +70,62 @@ pub struct Select {
     pub expected_rev: u64,
     pub ids: Vec<String>,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Edit {
     pub api: String,
     pub request_id: String,
     pub board: String,
     pub expected_rev: u64,
-    pub ops: Vec<Operation>,
+    pub ops: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "present_value")]
+    pub defaults: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "present_string")]
+    pub receipt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+}
+impl Serialize for Edit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // 1.0 retains the exact historical Operation DTO projection (including float spelling,
+        // anchor defaults and omitted Option fields). 1.1 hashes/transports the original forms.
+        let ops: Vec<Value> = self
+            .ops
+            .iter()
+            .map(|raw| {
+                if self.api == "1.0" {
+                    serde_json::from_value::<Operation>(raw.clone())
+                        .ok()
+                        .and_then(|op| serde_json::to_value(op).ok())
+                        .unwrap_or_else(|| raw.clone())
+                } else {
+                    raw.clone()
+                }
+            })
+            .collect();
+        let mut value = serde_json::json!({"api":self.api,"request_id":self.request_id,"board":self.board,"expected_rev":self.expected_rev,"ops":ops});
+        if let Some(v) = &self.digest {
+            value["digest"] = serde_json::json!(v);
+        }
+        if let Some(v) = &self.defaults {
+            value["defaults"] = v.clone();
+        }
+        if let Some(v) = &self.receipt {
+            value["receipt"] = serde_json::json!(v);
+        }
+        value.serialize(serializer)
+    }
+}
+fn present_usize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<usize>, D::Error> {
+    usize::deserialize(d).map(Some)
+}
+fn present_value<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
+}
+fn present_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(d).map(Some)
 }
 /// Distinguish absent paint (leave it alone) from null (remove it).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -392,6 +441,9 @@ pub struct Snapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artboard: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "present_string")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
@@ -399,7 +451,17 @@ pub struct Snapshot {
 impl Snapshot {
     /// The requested image box: the board preview defaults to 544×246, a page snapshot to 1024×1024.
     pub fn size(&self) -> (u32, u32) {
-        let (w, h) = if self.artboard.is_some() { (1024, 1024) } else { (snapshot_width(), snapshot_height()) };
+        let (w, h) = if self.profile.as_deref() == Some("economy") {
+            if self.artboard.is_some() {
+                (512, 512)
+            } else {
+                (512, 232)
+            }
+        } else if self.artboard.is_some() {
+            (1024, 1024)
+        } else {
+            (snapshot_width(), snapshot_height())
+        };
         (self.width.unwrap_or(w), self.height.unwrap_or(h))
     }
 }
@@ -426,6 +488,9 @@ pub struct Status {
     #[serde(default = "api")]
     pub api: String,
     pub request_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "present_string")]
+    pub cursor: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -503,6 +568,8 @@ pub struct Error {
 pub struct ErrorDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub op_index: Option<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub location: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
