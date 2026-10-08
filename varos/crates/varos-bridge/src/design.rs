@@ -22,7 +22,7 @@ fn canonical(id: &str) -> Result<(&str, u32), Error> {
     }
     Ok((kind, n))
 }
-fn local_name(name: &str) -> Result<(), Error> {
+pub(crate) fn local_name(name: &str) -> Result<(), Error> {
     let bytes = name.as_bytes();
     if bytes.len() < 2
         || bytes.len() > 64
@@ -191,10 +191,11 @@ pub(crate) fn apply_design_op(
     locals: &mut BTreeMap<String, String>,
     expanded: &mut usize,
     affected: &mut BTreeSet<String>,
-) -> Result<(), Error> {
+) -> Result<Option<u32>, Error> {
     if op.is_page_verb() {
-        return apply_artboard_op(ed, op, locals, affected);
+        return apply_artboard_op(ed, op, locals, affected).map(|()| None);
     }
+    let mut created = None;
     let ids = op
         .ids()
         .iter()
@@ -361,6 +362,7 @@ pub(crate) fn apply_design_op(
                 _ => unreachable!(),
             };
             let id = ed.try_execute_created(command).map_err(fail)?;
+            created = Some(id);
             bind(locals, local, format!("path:{id}"))?;
         }
         Operation::Move { delta, .. } => {
@@ -573,7 +575,7 @@ pub(crate) fn apply_design_op(
             }
         }
     }
-    Ok(())
+    Ok(created)
 }
 
 /// Eight tangent anchors, quarter-circle cubics. This is editable path geometry, not a primitive.

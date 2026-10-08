@@ -147,7 +147,7 @@ struct Observed {
 #[derive(Default)]
 struct Client {
     high: u64,
-    receipts: VecDeque<(String, String, Reply)>,
+    receipts: VecDeque<(String, String, Reply, bool)>,
 }
 pub struct Service {
     pub epoch: String,
@@ -274,6 +274,9 @@ impl Service {
                 reply.rev = self.boards.get(b).map(|b| b.rev);
             }
         }
+        if matches!(&req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")) && reply.ok {
+            reply = page_ids(reply, None).unwrap_or_else(Reply::failure);
+        }
         if compact(&reply).len() > MAX_TEXT {
             if reply.ok && req.mutation().is_some() {
                 // The receipt still proves commit; a large selection/detail must be read in pages.
@@ -291,8 +294,8 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if req.api() != API {
-            return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0"));
+        if ![API, "1.1"].contains(&req.api()) {
+            return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0 or 1.1"));
         }
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
@@ -312,7 +315,7 @@ impl Service {
                 return Reply::failure(Error::new("limit_exceeded", "too many authorized clients this launch"));
             }
             let client = self.clients.entry(ctx.client.clone()).or_default();
-            if let Some((_, hash, reply)) = client.receipts.iter().find(|(key, _, _)| key == id) {
+            if let Some((_, hash, reply, _)) = client.receipts.iter().find(|(key, _, _, _)| key == id) {
                 return if hash == &payload {
                     reply.clone()
                 } else {
@@ -357,9 +360,19 @@ impl Service {
                 }
             }
             match req {
-                Request::Capabilities(_) => Ok(Reply::success(
-                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"file_jobs":8,"path_anchors":1000,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":true,"edit":true,"destructive_scope":true,"history_scope":true,"trust":"local user","file_guards":["home_or_external_volume_or_cloud_drive","local_volume_only","protected_roots","dot_components","extension","canonical_parent","no_symlink_escape","no_hardlink_escape","no_overwrite"],"files_scope":true,"scopes":["read","edit","destructive","history","files"],"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry","selection"],"unsupported":["headless","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_bleed"]}),
-                )),
+                Request::Capabilities(_) => {
+                    let mut r = Reply::success(
+                        json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"file_jobs":8,"path_anchors":1000,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":true,"edit":true,"destructive_scope":true,"history_scope":true,"trust":"local user","file_guards":["home_or_external_volume_or_cloud_drive","local_volume_only","protected_roots","dot_components","extension","canonical_parent","no_symlink_escape","no_hardlink_escape","no_overwrite"],"files_scope":true,"scopes":["read","edit","destructive","history","files"],"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry","selection"],"unsupported":["headless","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_bleed"]}),
+                    );
+                    if req.api() == "1.1" {
+                        let v = r.result.as_mut().unwrap();
+                        v["api"] = json!("1.1");
+                        v["supported_api"] = json!(["1.0", "1.1"]);
+                        v["edit_verbs"].as_array_mut().unwrap().push(json!("repeat"));
+                        v["economy_hint"] = json!("Use API 1.1 defaults and omit decorative names; compact rect/ellipse/path plus repeat for identical rows; request IDs receipts, a budgeted summary or since-revision diff, and an economy snapshot only when needed; inspect specific IDs/fields for detail and ask for larger images explicitly.");
+                    }
+                    Ok(r)
+                }
                 Request::ListBoards(v) => {
                     check_page(v.limit)?;
                     let boards = host.boards();
@@ -375,6 +388,12 @@ impl Service {
                 }
                 Request::Describe(v) => self.describe(v, host),
                 Request::Snapshot(v) => {
+                    if v.profile.is_some() && (v.api != "1.1" || v.profile.as_deref() != Some("economy")) {
+                        return Err(Error::new(
+                            "invalid_argument",
+                            "snapshot profile must be economy and requires API 1.1",
+                        ));
+                    }
                     let (width, height) = v.size();
                     if width == 0 || height == 0 || width > 1024 || height > 1024 {
                         return Err(Error::new("limit_exceeded", "snapshot dimensions must be 1..1024"));
@@ -426,24 +445,22 @@ impl Service {
                     ))
                 }
                 Request::Edit(v) => {
-                    if v.ops.is_empty() || v.ops.len() > MAX_OPS {
-                        return Err(Error::new("limit_exceeded", "edit needs 1..100 operations"));
-                    }
+                    let leaves = crate::economy::expand(v)?;
+                    let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
                     let a = host.access(&v.board)?;
-                    if v.ops.iter().map(|op| op.ids().len()).sum::<usize>() > MAX_TARGETS {
-                        return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
+                    if v.api == "1.1" {
+                        crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
                     }
                     // Review P2 (slice 3): a deprecated `aN@rev` alias names a page by its index AT `rev`.
                     // Page verbs in the same batch can shift indices in the stage, so the alias could
                     // silently retarget another page: refuse the combination instead of guessing.
-                    if v.ops.iter().any(Operation::is_page_verb) {
-                        if let Some(index) = v.ops.iter().position(Operation::uses_legacy_artboard_alias) {
-                            return Err(Error::new(
+                    if ops.iter().any(|op| op.is_page_verb()) {
+                        if let Some(index) = ops.iter().position(|op| op.uses_legacy_artboard_alias()) {
+                            return Err(leaves[index].error(Error::new(
                                 "invalid_argument",
                                 "the deprecated aN@rev artboard alias cannot be combined with page verbs in one \
                                  batch; use artboard:N",
-                            )
-                            .at(index));
+                            )));
                         }
                     }
                     let from = a.editor.rev;
@@ -451,25 +468,41 @@ impl Service {
                     let mut expanded = 0usize;
                     let mut affected = std::collections::BTreeSet::new();
                     let batch = a.editor.prepare_design_batch(
-                        v.ops.len(),
+                        ops.len(),
                         |staged, index| {
                             if index == 0 {
                                 locals.clear();
                                 expanded = 0;
                                 affected.clear();
                             }
-                            apply_design_op(
+                            let created = apply_design_op(
                                 staged,
-                                &v.ops[index],
+                                ops[index],
                                 v.expected_rev,
                                 &mut locals,
                                 &mut expanded,
                                 &mut affected,
                             )
-                            .map_err(|e| e.at(index))
+                            .map_err(|e| leaves[index].error(e))?;
+                            if v.api == "1.1" {
+                                let label = match ops[index] {
+                                    Operation::AddShape { kind, name: None, .. } => Some(match kind {
+                                        ShapeKind::Rect => "Rect",
+                                        ShapeKind::Ellipse => "Ellipse",
+                                    }),
+                                    Operation::AddPath { name: None, .. } => Some("Path"),
+                                    _ => None,
+                                };
+                                if let Some(label) = label {
+                                    let id = created.expect("created path");
+                                    staged.doc.paths.iter_mut().find(|p| p.id == id).expect("created path").name =
+                                        Some(format!("{label} {id}"));
+                                }
+                            }
+                            Ok(())
                         },
                         |index, reason| {
-                            Error::new(
+                            leaves[index.min(leaves.len() - 1)].error(Error::new(
                                 if reason == "active gesture" {
                                     "busy"
                                 } else if reason.starts_with("cancelled") {
@@ -478,8 +511,7 @@ impl Service {
                                     "invalid_argument"
                                 },
                                 reason,
-                            )
-                            .at(index)
+                            ))
                         },
                         || cancelled.load(Ordering::Acquire),
                     )?;
@@ -488,11 +520,15 @@ impl Service {
                     }
                     a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
                     self.observe(host);
-                    let mut reply = self.edit_receipt_reserved(
-                        &v.board,
-                        from,
-                        serde_json::to_string(&locals).expect("locals").len(),
-                    );
+                    let mut reply = if v.receipt.as_deref() == Some("ids") {
+                        self.ids_receipt(&v.board, from)
+                    } else {
+                        self.edit_receipt_reserved(
+                            &v.board,
+                            from,
+                            serde_json::to_string(&locals).expect("locals").len(),
+                        )
+                    };
                     if !locals.is_empty() {
                         reply.result.as_mut().unwrap()["locals"] = json!(locals);
                     }
@@ -524,12 +560,24 @@ impl Service {
                     Ok(r)
                 }
                 Request::RequestStatus(v) => {
-                    let r = self
+                    let (r, ids_mode) = self
                         .clients
                         .get(&ctx.client)
-                        .and_then(|c| c.receipts.iter().find(|(id, _, _)| id == &v.request_id))
-                        .map(|(_, _, r)| r.clone())
+                        .and_then(|c| c.receipts.iter().find(|(id, _, _, _)| id == &v.request_id))
+                        .map(|(_, _, r, ids)| (r.clone(), *ids))
                         .ok_or_else(|| Error::new("not_found", "receipt not retained for this client"))?;
+                    if let Some(c) = &v.cursor {
+                        if !ids_mode {
+                            return Err(Error::new("invalid_argument", "cursor requires an IDs receipt"));
+                        }
+                        if v.api != "1.1" {
+                            return Err(Error::new("invalid_argument", "receipt cursor requires API 1.1"));
+                        }
+                        if r.board.as_ref().and_then(|b| self.boards.get(b)).map(|b| b.rev) != r.rev {
+                            return Err(Error::new("invalid_argument", "receipt cursor expired after revision change"));
+                        }
+                        return Ok(Reply::success(json!({"status":"completed","receipt":page_ids(r, Some(c))?})));
+                    }
                     if let Some(ticket) = r.result.as_ref().and_then(|r| r["ticket"].as_u64()) {
                         if let Some(mut done) = host.file_status(ticket) {
                             done.board = r.board.clone();
@@ -542,6 +590,7 @@ impl Service {
                         }
                         return Ok(Reply::success(json!({"status":"pending","ticket":ticket,"receipt":r})));
                     }
+                    let r = if ids_mode { page_ids(r, None)? } else { r };
                     Ok(Reply::success(json!({"status":"completed","receipt":r})))
                 }
             }
@@ -561,13 +610,46 @@ impl Service {
             if reply.ok {
                 let client = self.clients.entry(ctx.client.clone()).or_default();
                 client.high = sequence(id).unwrap();
-                client.receipts.push_back((id.into(), payload, reply.clone()));
+                client.receipts.push_back((
+                    id.into(),
+                    payload,
+                    reply.clone(),
+                    matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
+                ));
                 while client.receipts.len() > 128 {
                     client.receipts.pop_front();
                 }
             }
         }
         reply
+    }
+    fn ids_receipt(&self, board: &str, from: u64) -> Reply {
+        let b = &self.boards[board];
+        let d = b.journal.back().filter(|d| d["from"] == from && d["rev"] == b.rev);
+        if d.is_none() && b.rev != from {
+            let mut r = self.edit_receipt(board, from);
+            r.result.as_mut().unwrap()["resync_required"] = json!(true);
+            return r;
+        }
+        let mut v = json!({"rev":b.rev,"created":[],"changed":[],"removed":[],"artboards_created":[],"artboards_removed":[],"locals":{}});
+        if let Some(d) = d {
+            for key in ["created", "changed"] {
+                v[key] = json!(d[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|o| o.as_str().or_else(|| o["id"].as_str()))
+                    .collect::<Vec<_>>());
+            }
+            for key in ["removed", "artboards_created", "artboards_removed"] {
+                if let Some(a) = d.get(key) {
+                    v[key] = a.clone();
+                }
+            }
+        }
+        let mut r = Reply::success(v);
+        r.undo_steps = u8::from(b.rev != from);
+        r
     }
     fn edit_receipt(&self, board: &str, from: u64) -> Reply {
         self.edit_receipt_reserved(board, from, 0)
@@ -605,6 +687,59 @@ impl Service {
         r
     }
     fn describe(&self, v: &Describe, host: &mut dyn Host) -> Result<Reply, Error> {
+        if let Some(budget) = v.summary_budget {
+            if v.api != "1.1"
+                || !(256..=1024).contains(&budget)
+                || v.ids.is_some()
+                || v.fields.is_some()
+                || v.since.is_some()
+                || v.cursor.is_some()
+            {
+                return Err(Error::new(
+                    "invalid_argument",
+                    "summary_budget requires API 1.1, 256..1024 bytes, and a summary query",
+                ));
+            }
+            let b = &self.boards[&v.board];
+            let sig = digest(
+                &json!({"epoch":self.epoch,"board":v.board,"rev":b.rev,"ids":b.order,"fields":["bounds","paint","parent","name"],"limit":20}),
+            );
+            let mut out = json!({"rev":b.rev,"counts":b.header["counts"],"name":b.header["name"],"selection_count":b.selection.len(),"selection":[],"artboards":[],"more":true,"cursor":cursor(&sig,0),"detail_request":{"board":v.board,"rev":b.rev,"limit":20,"cursor":cursor(&sig,0)}});
+            for key in ["selection", "artboards"] {
+                let values = if key == "selection" { json!(b.selection) } else { b.header[key].clone() };
+                for value in values.as_array().into_iter().flatten().take(3) {
+                    out[key].as_array_mut().unwrap().push(value.clone());
+                    if out.to_string().len() > budget {
+                        out[key].as_array_mut().unwrap().pop();
+                        break;
+                    }
+                }
+            }
+            let fits = |out: &Value| {
+                let mut r = Reply::success(out.clone());
+                r.board = Some(v.board.clone());
+                r.rev = Some(b.rev);
+                out.to_string().len() <= budget && compact(&r).len() <= budget
+            };
+            while !fits(&out) {
+                if out["artboards"].as_array_mut().unwrap().pop().is_some() {
+                    continue;
+                }
+                if out["selection"].as_array_mut().unwrap().pop().is_some() {
+                    continue;
+                }
+                let name = out["name"].as_str().unwrap_or("");
+                if name.is_empty() || name == "…" {
+                    return Err(Error::new("limit_exceeded", "summary budget too small for revision/counts/cursor"));
+                }
+                let name = name.strip_suffix("…").unwrap_or(name);
+                out["name"] = json!(format!(
+                    "{}…",
+                    name.chars().take(name.chars().count().saturating_sub(1)).collect::<String>()
+                ));
+            }
+            return Ok(Reply::success(out));
+        }
         let fields = v.fields.as_deref().unwrap_or(&[]);
         if let Some(f) = fields.iter().find(|f| {
             !["metadata", "artboards", "selection", "state", "bounds", "paint", "parent", "name", "geometry"]
@@ -1116,6 +1251,58 @@ fn changes(
     }
     out
 }
+/// Page immutable cached IDs, including locals. Cursors bind the complete receipt/revision.
+fn page_ids(mut r: Reply, requested: Option<&str>) -> Result<Reply, Error> {
+    let v = r.result.as_ref().ok_or_else(|| Error::new("invalid_argument", "not an IDs receipt"))?;
+    if v["resync_required"] == true {
+        return Ok(r);
+    }
+    if !v["created"].as_array().is_some_and(|a| a.iter().all(Value::is_string)) || v.get("locals").is_none() {
+        return Err(Error::new("invalid_argument", "not an IDs receipt"));
+    }
+    if v.to_string().len() <= 12_000 && compact(&r).len() <= 14_000 && requested.is_none() {
+        return Ok(r);
+    }
+    let sig = digest(&json!({"board":r.board,"rev":r.rev,"request_id":r.request_id,"ids":v}));
+    let offset = cursor_offset(requested, &sig)?;
+    let mut entries = Vec::new();
+    for key in ["created", "changed", "removed", "artboards_created", "artboards_removed"] {
+        for id in v[key].as_array().into_iter().flatten() {
+            entries.push((key.to_owned(), None, id.clone()));
+        }
+    }
+    for (key, id) in v["locals"].as_object().into_iter().flatten() {
+        entries.push(("locals".into(), Some(key.clone()), id.clone()));
+    }
+    if offset > entries.len() {
+        return Err(Error::new("invalid_argument", "receipt cursor offset out of range"));
+    }
+    let mut page = json!({"rev":r.rev,"created":[],"changed":[],"removed":[],"artboards_created":[],"artboards_removed":[],"locals":{},"more":false});
+    let mut end = offset;
+    for (kind, key, id) in entries.iter().skip(offset) {
+        let mut next = page.clone();
+        if let Some(key) = key {
+            next[kind][key] = id.clone();
+        } else {
+            next[kind].as_array_mut().unwrap().push(id.clone());
+        }
+        let mut candidate = r.clone();
+        candidate.result = Some(next.clone());
+        if next.to_string().len() > 10_000 || compact(&candidate).len() > 13_500 {
+            break;
+        }
+        page = next;
+        end += 1;
+    }
+    page["more"] = json!(end < entries.len());
+    if end < entries.len() {
+        page["cursor"] = json!(cursor(&sig, end));
+        page["detail_request"] =
+            json!({"tool":"request_status","api":"1.1","request_id":r.request_id,"cursor":cursor(&sig,end)});
+    }
+    r.result = Some(page);
+    Ok(r)
+}
 /// The sole readable projection consumed by both CLI and MCP. All document text is JSON escaped.
 pub fn compact(r: &Reply) -> String {
     let v = r.result.as_ref();
@@ -1129,6 +1316,9 @@ pub fn compact(r: &Reply) -> String {
         }
         if let Some(rev) = r.rev {
             out.push_str(&format!(" rev={rev}"));
+        }
+        if !e.location.is_empty() {
+            out.push_str(&format!(" location={}", json!(e.location)));
         }
         if let Some(index) = e.op_index {
             out.push_str(&format!(" op_index={index}"));
@@ -1158,7 +1348,7 @@ pub fn compact(r: &Reply) -> String {
     } else {
         format!("board {board} rev={}", r.rev.unwrap_or(0))
     };
-    if v.get("name").is_some() && v.get("counts").is_some() {
+    if v.get("name").is_some() && v.get("counts").is_some() && v.get("detail_request").is_none() {
         out.push_str(&format!(" name={} units=pt dirty={}\ncounts paths={} groups={} layers={} artboards={}\nbounds={} selection={} selection_rev={}\nartboards={}\ndetail={}\n",v["name"],v["dirty"],v["counts"]["paths"],v["counts"]["groups"],v["counts"]["layers"],v["counts"]["artboards"],text_value(&v["bounds"]),text_value(&v["selection"]),v["selection_rev"],text_value(&v["artboards"]),v["detail"].as_array().unwrap().iter().filter_map(Value::as_str).collect::<Vec<_>>().join(",")));
     } else if !out.ends_with('\n') {
         out.push('\n');
@@ -1166,6 +1356,10 @@ pub fn compact(r: &Reply) -> String {
     for key in ["objects", "changed", "created"] {
         if let Some(items) = v[key].as_array() {
             for o in items {
+                if let Some(id) = o.as_str() {
+                    out.push_str(&format!("{key} {id}\n"));
+                    continue;
+                }
                 let id = o["id"].as_str().unwrap_or("?");
                 if key == "objects" {
                     out.push_str(&format!("{id} {}", o["kind"].as_str().unwrap_or("object")));
@@ -1201,10 +1395,11 @@ pub fn compact(r: &Reply) -> String {
     if let Some(created) = v["created"].as_array() {
         out.push_str(&format!(
             "created={}\n",
-            json!(created.iter().filter_map(|o| o["id"].as_str()).collect::<Vec<_>>())
+            json!(created.iter().filter_map(|o| o.as_str().or_else(|| o["id"].as_str())).collect::<Vec<_>>())
         ));
     }
     for key in [
+        "name",
         "metadata",
         "state",
         "artboards",
@@ -1233,11 +1428,14 @@ pub fn compact(r: &Reply) -> String {
         "path",
     ] {
         if let Some(value) = v.get(key) {
-            if (key == "cursor" && value.is_null())
+            if (key == "name" && v.get("detail_request").is_none())
+                || (key == "cursor" && value.is_null())
                 || (key == "selection_more" && value == false)
                 || (key == "board_changes" && value.is_null())
-                || (key == "counts" && v.get("name").is_some())
-                || ((key == "selection" || key == "selection_rev" || key == "artboards") && v.get("name").is_some())
+                || (key == "counts" && v.get("name").is_some() && v.get("detail_request").is_none())
+                || ((key == "selection" || key == "selection_rev" || key == "artboards")
+                    && v.get("name").is_some()
+                    && v.get("detail_request").is_none())
             {
                 continue;
             }
@@ -1301,6 +1499,42 @@ mod observation_tests {
             Ok(BoardAccess { editor: &mut self.0, dirty: false })
         }
     }
+    #[test]
+    fn ids_pages_fit_text_and_missing_journal_resyncs() {
+        let ids: Vec<_> = (1..=950).map(|n| format!("path:{n}")).collect();
+        let mut r = Reply::success(
+            json!({"rev":1,"created":ids,"changed":[],"removed":[],"artboards_created":[],"artboards_removed":[],"locals":{}}),
+        );
+        r.board = Some("b1".into());
+        r.rev = Some(1);
+        r.request_id = Some("r1".into());
+        assert!(compact(&r).len() > MAX_TEXT);
+        let mut page = page_ids(r.clone(), None).unwrap();
+        let mut seen = Vec::new();
+        loop {
+            assert!(compact(&page).len() <= 14_000);
+            let v = page.result.as_ref().unwrap();
+            assert!(v.to_string().len() <= 12_000);
+            seen.extend(v["created"].as_array().unwrap().iter().cloned());
+            if v["more"] != true {
+                break;
+            }
+            page = page_ids(r.clone(), v["cursor"].as_str()).unwrap();
+        }
+        assert_eq!(seen, json!(ids).as_array().unwrap().clone());
+        let mut host = Fake(Editor::new());
+        let mut service = Service::new("test".into());
+        service.observe(&mut host);
+        let board = service.boards.get_mut("b1").unwrap();
+        board.rev = 1;
+        board.journal.clear();
+        let full = service.edit_receipt("b1", 0);
+        let ids = service.ids_receipt("b1", 0);
+        assert_eq!(ids.result.as_ref().unwrap()["more"], full.result.as_ref().unwrap()["more"]);
+        assert_eq!(ids.result.as_ref().unwrap()["resync_required"], true);
+        assert_eq!(page_ids(ids.clone(), None).unwrap(), ids);
+    }
+
     #[test]
     fn snapshot_worker_checkpoints_cancel_and_pin_owned_revision() {
         let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40], artboard: None };

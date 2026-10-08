@@ -17,17 +17,9 @@ pub fn tool_result(reply: &Reply) -> Value {
 }
 pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
     if name == "edit" {
-        if let Some(ops) = args.get("ops").and_then(Value::as_array) {
-            for (index, op) in ops.iter().enumerate() {
-                if let Some(verb) = op.get("verb").and_then(Value::as_str) {
-                    if !crate::EDIT_VERBS.contains(&verb) {
-                        return Err(Error::new("unsupported", "edit verb is not enabled in this slice").at(index));
-                    }
-                }
-                serde_json::from_value::<Operation>(op.clone())
-                    .map_err(|e| Error::new("invalid_argument", e.to_string()).at(index))?;
-            }
-        }
+        let edit: Edit =
+            serde_json::from_value(args.clone()).map_err(|e| Error::new("invalid_argument", e.to_string()))?;
+        crate::economy::expand(&edit)?;
     }
     serde_json::from_value(json!({"tool":name,"arguments":args}))
         .map_err(|e| Error::new("invalid_argument", e.to_string()))
@@ -143,12 +135,89 @@ pub fn tools() -> Value {
     schemas.insert("edit",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"ops":{"type":"array","minItems":1,"maxItems":100,"items":{"oneOf":operation_schemas}}}),&["api","board","request_id","expected_rev","ops"]));
     schemas.insert("history",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"action":{"enum":["undo","redo"]},"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}}),&["api","board","request_id","expected_rev","action"]));
     schemas.insert("request_status", object(json!({"api":api,"request_id":request_id}), &["request_id"]));
+    // Declare each operation once; version-specific legality stays in the decoder.
+    let mut definitions = serde_json::Map::new();
+    let mut all_ops = Vec::new();
+    let mut creations = Vec::new();
+    for schema in &operation_schemas {
+        let verb = schema["properties"]["verb"]["const"].as_str().unwrap();
+        definitions.insert(verb.into(), schema.clone());
+        let reference = json!({"$ref":format!("#/$defs/{verb}")});
+        all_ops.push(reference.clone());
+        if matches!(verb, "add_shape" | "add_path") {
+            creations.push(reference);
+        }
+    }
+    for kind in ["rect", "ellipse", "path"] {
+        let source = definitions[if kind == "path" { "add_path" } else { "add_shape" }].clone();
+        let mut options = source["properties"].clone();
+        for key in ["verb", "kind", "bounds", "anchors", "closed"] {
+            options.as_object_mut().unwrap().remove(key);
+        }
+        if kind != "rect" {
+            options.as_object_mut().unwrap().remove("radius");
+        }
+        let opts = format!("{kind}_options");
+        definitions.insert(opts.clone(), object(options, &[]));
+        let opt = json!({"$ref":format!("#/$defs/{opts}")});
+        let mut prefix = if kind == "path" {
+            vec![
+                json!({"const":kind}),
+                json!({"type":"array","minItems":2,"maxItems":1000,"items":point}),
+                json!({"type":"boolean"}),
+            ]
+        } else {
+            vec![json!({"const":kind}), bounds.clone()]
+        };
+        let minimum = prefix.len();
+        prefix.push(json!({"anyOf":[paint,opt]}));
+        if kind == "rect" {
+            prefix.push(json!({"anyOf":[{"type":"number","minimum":0},opt]}));
+        }
+        prefix.push(opt);
+        let tuple = format!("{kind}_tuple");
+        definitions.insert(tuple.clone(), json!({"type":"array","prefixItems":prefix,"minItems":minimum,"maxItems":prefix.len(),"description":"Optional positional fill, rect radius, then options. Decoder rejects duplicate options and misplaced slots."}));
+        let reference = json!({"$ref":format!("#/$defs/{tuple}")});
+        all_ops.push(reference.clone());
+        creations.push(reference);
+    }
+    definitions.insert("creation".into(), json!({"anyOf":creations}));
+    for depth in (0..4).rev() {
+        let mut alternatives = vec![json!({"$ref":"#/$defs/creation"})];
+        if depth < 3 {
+            alternatives.push(json!({"$ref":format!("#/$defs/repeat{}",depth+1)}));
+        }
+        definitions.insert(format!("repeat{depth}"), object(json!({"verb":{"const":"repeat"},"ops":{"type":"array","minItems":1,"maxItems":100,"items":{"anyOf":alternatives}},"count":{"type":"integer","minimum":1,"maximum":100},"dx":{"type":"number"},"dy":{"type":"number"}}), &["verb","ops","count","dx","dy"]));
+    }
+    all_ops.push(json!({"$ref":"#/$defs/repeat0"}));
+    definitions.insert("operation".into(), json!({"anyOf":all_ops}));
+    let edit = schemas.get_mut("edit").unwrap();
+    edit["properties"]["api"] = json!({"enum":["1.0","1.1"]});
+    edit["properties"]["ops"]["items"] = json!({"$ref":"#/$defs/operation"});
+    edit["properties"]["defaults"] = object(
+        json!({"parent":{"type":"string","pattern":"^node:[1-9][0-9]*$"},"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"radius":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),
+        &[],
+    );
+    edit["properties"]["receipt"] = json!({"const":"ids"});
+    edit["$defs"] = json!(definitions);
+    for (tool, field, schema) in [
+        ("request_status", "cursor", json!({"type":"string"})),
+        ("describe", "summary_budget", json!({"type":"integer","minimum":256,"maximum":1024})),
+        ("snapshot", "profile", json!({"const":"economy"})),
+    ] {
+        let root = schemas.get_mut(tool).unwrap();
+        root["properties"]["api"] = json!({"enum":["1.0","1.1"],"default":"1.0"});
+        root["properties"][field] = schema;
+    }
+    for tool in ["capabilities", "list_boards", "select", "history", "save", "save_as", "export_pdf"] {
+        schemas.get_mut(tool).unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1"],"default":"1.0"});
+    }
     let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
-        "capabilities"=>"Negotiate Bridge API 1.0; local user trust grants every scope. Inspect limits and file mistake-guards.",
+        "capabilities"=>"Negotiate Bridge API 1.0/1.1; local user trust grants every scope. Inspect limits and file mistake-guards.",
         "list_boards"=>"List authorized open boards, never files or Recent entries.",
         "describe"=>"Summary first. fields compose board/object detail; ids scope objects; limit/cursor page objects; since adds net changes or resync_required.",
         "select"=>"Deliberately replace human selection with explicit targets; no document undo step.",
-        "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection. Page verbs use persistent artboard:N ids.",
+        "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection. API 1.1 supports creation tuples; use object operations if your client does not support prefixItems. Page verbs use persistent artboard:N ids.",
         "snapshot"=>"Explicit revision-pinned CPU PNG preview of the board, or of one artboard:N page. Returns an MCP image; max 1024 pixels per dimension.",
         "save"|"save_as"|"export_pdf"=>"Queue revision-pinned file work. Returns accepted and ticket; poll request_status. Allowed: fresh .vrs/.pdf names under passwd home, /Volumes/<volume>/, ~/Library/Mobile Documents (iCloud Drive), or ~/Library/CloudStorage/<provider>/ (Dropbox/Google Drive/OneDrive). Refused: /tmp, /private/var, other ~/Library, system roots, running app bundle, dot components and existing files. Network volumes unsupported. Parents must exist and canonical containment is rechecked. FAT32/exFAT use macOS exclusive-rename fallback after linkat; real volumes unverified.",
         "history"=>"One shared undo/redo entry. Local agents need no approval; revision and idempotency checks still apply.",
