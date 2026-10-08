@@ -38,7 +38,7 @@ renderer fixes below (texture-size limit + egui texture upload/free ordering), w
 | `main.rs:1060` → `cursors.rs:542` `custom_frame` | strip caption, DWM round corners | no-op — the **native macOS title bar stays** (see gaps) |
 | `main.rs:1063` → `cursors.rs:585` `maximize` | `ShowWindow(SW_MAXIMIZE)` | winit `Window::set_maximized(true)` |
 | `ui.rs:3363` → `cursors.rs:460` `set_caption` | caption drag band for WM_NCHITTEST | no-op (the native title bar drags the window) |
-| `ui.rs:2707-2710` → `cursors.rs:372, 404` | system-wide eyedropper (`GetPixel`, `GetAsyncKeyState`) | fallbacks already existed (`None` / `false`) but the button still armed a picker that could never pick. Now the button is **shown disabled** with the tooltip "Screen eyedropper is Windows-only for now" and cannot arm. |
+| `ui.rs:2707-2710` → `cursors.rs:372, 404` | system-wide eyedropper (`GetPixel`, `GetAsyncKeyState`) | screen capture remains Windows-only. The picker now arms an **in-canvas** sampler on macOS using `varos-raster::rasterize_canvas` (cached once on arming, then only on camera/size changes, from the immutable arming snapshot): artwork, page colours, clipping and opacity, excluding UI/selection overlays. Pointer coordinates use the current camera and Retina scale; clicks over chrome or outside the canvas do not pick. No OS screen capture or permission request. The canvas sampler sleeps while the pointer is still; Esc disarms and reverts its preview. Fill/Stroke clicks focus, double-clicks open the picker, and X toggles focus. |
 | `single_instance.rs:39-249` | mutex + WM_COPYDATA file forwarding | fallbacks already existed: always "first instance", no forwarding (each launch is its own window) |
 | `main.rs:1` | `#![windows_subsystem = "windows"]` (no console window) | attribute is ignored off Windows — nothing to do |
 | `ui.rs:1392` (`install_fonts`) | Segoe UI / Cascadia from `C:/Windows/Fonts` | path absent → silently falls back to egui's bundled fonts. Mac font lookup deliberately NOT done now |
@@ -173,7 +173,7 @@ crosshair+badge state per tool); `NoDrop` removed from `CK`
 2. **Tool cursors:** Varos cursor set v1 and 1×/2× Retina representations implemented,
    2026-09-24 (see "Tool cursors: Varos cursor set v1"). On-screen sharpness and all cursor
    states still await Ahmed's hand test.
-3. **Screen eyedropper disabled** (needs macOS Screen Recording permission + CoreGraphics capture).
+3. **Desktop screen eyedropper remains disabled** on macOS (would require Screen Recording permission + CoreGraphics capture). The picker’s in-canvas eyedropper is enabled and uses only Varos’s CPU scene renderer; it never opens a macOS permission dialog.
 4. **No single-instance / "open with" forwarding** and **no remembered window geometry**.
 
 ## Run on macOS (Varos.app bundle, added 2026-09-23)

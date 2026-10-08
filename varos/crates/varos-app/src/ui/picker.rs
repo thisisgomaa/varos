@@ -81,21 +81,192 @@ pub(crate) fn harmony_set(h: Harmony, base: [f32; 3]) -> Vec<[f32; 3]> {
     }
 }
 
-/// The professional Color Picker modal (opened by double-clicking any colour swatch).
+pub(crate) struct EyedropReturn {
+    hsva: [f32; 4],
+    mixed: bool,
+    edited: bool,
+    last_sent: Option<Rgba>,
+    sent_color: Option<Rgba>,
+}
+
+/// The professional Color Picker modal (opened by double-clicking a Fill/Stroke swatch).
 /// Live HSVA is the single source of truth while open; OK commits once, Cancel discards. The whole
-/// interaction is ONE undo step (A6): `EditCommand::PickerBegin` on open, live paint each frame, and a
+/// interaction is ONE undo step (A6): `EditCommand::PickerBegin` on open, live paint on colour changes, and a
 /// single `picker_commit` / `picker_cancel` on close.
 pub(crate) struct ColorModal {
     pub(crate) target: MTarget,
     pub(crate) orig: Option<Rgba>,
     pub(crate) hsva: [f32; 4],
+    pub(crate) mixed: bool,
+    pub(crate) orig_mixed: bool,
+    pub(crate) last_sent: Option<Rgba>,
+    pub(crate) change_requested: bool,
+    pub(crate) edited: bool,
+    pub(crate) sent_targets: Vec<(MTarget, Rgba)>,
+    pub(crate) eyedrop_return: Option<EyedropReturn>,
+    pub(crate) sampling: Option<CanvasSampling>,
+    pub(crate) arm_dirty: bool,
+    pub(crate) arm_snapshot: Option<std::sync::Arc<varos_core::model::Document>>,
     pub(crate) chan: Chan,
     pub(crate) tab: MTab,
     pub(crate) harmony: Harmony,
-    // A5 — system eyedropper: armed while sampling a pixel from anywhere on screen.
+    // Windows samples the screen; other platforms sample only our CPU-rendered canvas.
     pub(crate) eyedropping: bool,
-    pub(crate) eyedrop_prev_down: bool, // previous global-LMB state (edge-detect the commit click)
-    pub(crate) eyedrop_return: [f32; 4], // hsva to restore if the eyedrop is aborted (Esc)
+    pub(crate) eyedrop_prev_down: bool, // previous LMB state (edge-detect the pick click)
+}
+
+impl ColorModal {
+    pub(crate) fn new(target: MTarget, seed: Option<Rgba>, mixed: bool) -> Self {
+        let base = seed.unwrap_or([0.85, 0.85, 0.87, 1.0]);
+        let h = rgb_to_hsv(base);
+        Self {
+            target,
+            orig: seed,
+            hsva: [h[0], h[1], h[2], base[3]],
+            mixed,
+            orig_mixed: mixed,
+            last_sent: seed,
+            change_requested: false,
+            edited: false,
+            sent_targets: vec![],
+            eyedrop_return: None,
+            sampling: None,
+            arm_snapshot: None,
+            arm_dirty: false,
+            chan: Chan::H,
+            tab: MTab::Picker,
+            harmony: Harmony::None,
+            eyedropping: false,
+            eyedrop_prev_down: false,
+        }
+    }
+    pub(crate) fn reseed(&mut self, target: MTarget, seed: Option<Rgba>, mixed: bool) {
+        let fresh = Self::new(target, seed, mixed);
+        self.target = fresh.target;
+        self.hsva = fresh.hsva;
+        self.mixed = mixed;
+        self.last_sent = seed;
+        self.change_requested = false;
+        self.edited = false;
+        self.eyedropping = false;
+        self.sampling = None;
+        self.eyedrop_return = None;
+        self.arm_snapshot = None;
+    }
+    pub(crate) fn arm(&mut self) {
+        self.eyedrop_return = Some(EyedropReturn {
+            hsva: self.hsva,
+            mixed: self.mixed,
+            edited: self.edited,
+            last_sent: self.last_sent,
+            sent_color: self.sent_targets.iter().find(|(t, _)| *t == self.target).map(|(_, c)| *c),
+        });
+        self.sampling = None;
+        self.arm_snapshot = None;
+        self.eyedropping = true;
+        self.eyedrop_prev_down = true;
+    }
+    fn live_color(&mut self) -> Option<Rgba> {
+        if !std::mem::take(&mut self.change_requested) {
+            return None;
+        }
+        let c = hsv_to_rgb(self.hsva[0], self.hsva[1], self.hsva[2]);
+        let col = [c[0], c[1], c[2], self.hsva[3]];
+        let same = self.last_sent.is_some_and(|old| old.iter().zip(col).all(|(a, b)| (a - b).abs() < 1e-6));
+        if same && !self.mixed {
+            return None;
+        }
+        self.mixed = false;
+        self.last_sent = Some(col);
+        self.edited = true;
+        if let Some((_, sent)) = self.sent_targets.iter_mut().find(|(t, _)| *t == self.target) {
+            *sent = col;
+        } else {
+            self.sent_targets.push((self.target, col));
+        }
+        Some(col)
+    }
+}
+
+pub(crate) fn open_picker(modal: &mut Option<ColorModal>, target: MTarget, snap: &Snap, ed: &mut Editor) {
+    let (seed, mixed) = match target {
+        MTarget::Paint(t) => (snap_target_color(snap, t), snap.target_mixed(t)),
+        MTarget::Ab(i) => (ed.doc.artboards.get(i).and_then(|a| a.page_color), false),
+    };
+    if let Some(m) = modal {
+        if m.target != target {
+            m.reseed(target, seed, mixed);
+        }
+    } else {
+        ed.execute(EditCommand::PickerBegin);
+        *modal = Some(ColorModal::new(target, seed, mixed));
+    }
+}
+
+pub(crate) struct CanvasSampling {
+    key: ([f32; 2], f32, f32, egui::Rect),
+    pub(crate) raster: varos_raster::Raster,
+    #[cfg(test)]
+    pub(crate) builds: usize,
+}
+
+/// Build on arming and view changes only. The live preview never replaces this snapshot.
+pub(crate) fn prepare_canvas_sample(m: &mut ColorModal, ed: &Editor, view: View, ppp: f32, hole: egui::Rect) {
+    if !m.eyedropping {
+        m.arm_snapshot = None;
+        m.sampling = None;
+        return;
+    }
+    if m.arm_snapshot.is_none() {
+        m.arm_dirty = ed.dirty;
+        m.arm_snapshot = Some(std::sync::Arc::new(ed.doc.clone()));
+    }
+    let snapshot = m.arm_snapshot.as_ref().unwrap().clone();
+    if crate::cursors::SCREEN_EYEDROPPER {
+        m.sampling = None;
+        return;
+    }
+    let key = (view.pan, view.zoom, ppp, hole);
+    if m.sampling.as_ref().is_some_and(|s| s.key == key) {
+        return;
+    }
+    #[cfg(test)]
+    let builds = m.sampling.as_ref().map_or(1, |s| s.builds + 1);
+    m.sampling = None;
+    let min = [hole.min.x * ppp, hole.min.y * ppp];
+    let raster = varos_raster::rasterize_canvas(
+        &snapshot,
+        [(hole.width() * ppp).ceil() as u32, (hole.height() * ppp).ceil() as u32],
+        [view.pan[0] - min[0], view.pan[1] - min[1]],
+        view.zoom,
+    );
+    m.sampling = Some(CanvasSampling {
+        key,
+        raster,
+        #[cfg(test)]
+        builds,
+    });
+}
+
+pub(crate) fn picker_canvas_sample(ctx: &egui::Context, m: &ColorModal) -> Option<Rgba> {
+    let sampling = m.sampling.as_ref()?;
+    let (_, _, ppp, hole) = sampling.key;
+    let pos = ctx.input(|i| i.pointer.hover_pos())?;
+    if !hole.contains(pos) || ctx.layer_id_at(pos).is_some_and(|l| l.order != egui::Order::Background) {
+        return None;
+    }
+    sampling.raster.sample([(pos.x - hole.min.x) * ppp, (pos.y - hole.min.y) * ppp])
+}
+
+/// Mixed paint has diagonal stripes, distinct from the alpha checkerboard.
+pub(crate) fn mixed_swatch(p: &egui::Painter, r: egui::Rect) {
+    let p = p.with_clip_rect(r);
+    p.rect_filled(r, CornerRadius::ZERO, SWATCH_WELL);
+    let mut x = r.left() - r.height();
+    while x < r.right() {
+        p.line_segment([egui::pos2(x, r.bottom()), egui::pos2(x + r.height(), r.top())], Stroke::new(2.0, MUTED));
+        x += 6.0;
+    }
 }
 
 pub(crate) fn hex_of(c: Rgba) -> String {
@@ -231,8 +402,8 @@ pub(crate) fn swatch_strip(ui: &mut egui::Ui, label: &str, colors: &[Rgba]) -> O
     out
 }
 
-/// Fill / Stroke row: a hand-painted swatch (double-click → the Color Picker modal), + hex + clear ×.
-pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, ops: &mut Vec<Op>) {
+/// Fill / Stroke row: a hand-painted swatch (click focuses, double-click opens the Color Picker), + hex + clear ×.
+pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rgba>, mixed: bool, ops: &mut Vec<Op>) {
     ui.horizontal(|ui| {
         let (sw, resp) = ui.allocate_exact_size(egui::vec2(ICON_BTN_W, ICON_BTN_H), egui::Sense::click());
         #[cfg(test)]
@@ -254,11 +425,14 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
                 );
             } // None = red slash
         }
+        if mixed {
+            mixed_swatch(p, sw);
+        }
         if target == PaintTarget::Stroke {
             p.rect_filled(sw.shrink(varos_app::shell::tokens::SWATCH_RING_INSET), round, SOLID_PANEL);
         }
         p.rect_stroke(sw, round, Stroke::new(1.0, if resp.hovered() { MUTED } else { BORDER_2 }), StrokeKind::Middle);
-        // single click = focus the target (X toggles) · DOUBLE-click = open the Color Picker modal
+        // Owner parity: click focuses; double-click opens.
         if resp.clicked() {
             ops.push(Op::PaintFocus(target));
         }
@@ -266,11 +440,16 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
             ops.push(Op::OpenPicker(MTarget::Paint(target)));
         }
         resp.on_hover_text(match target {
-            PaintTarget::Fill => "Fill — double-click to edit",
-            PaintTarget::Stroke => "Stroke — double-click to edit",
+            PaintTarget::Fill => "Fill — click to focus; double-click to edit",
+            PaintTarget::Stroke => "Stroke — click to focus; double-click to edit",
         });
         ui.add_space(8.0);
-        ui.label(RichText::new(color.map(hex_of).unwrap_or_else(|| "None".into())).color(TEXT).monospace().size(12.0));
+        ui.label(
+            RichText::new(if mixed { "Mixed".into() } else { color.map(hex_of).unwrap_or_else(|| "None".into()) })
+                .color(TEXT)
+                .monospace()
+                .size(12.0),
+        );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let clear = match target {
                 PaintTarget::Fill => IA_NO_FILL,
@@ -412,6 +591,7 @@ pub(crate) fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
         ui.painter().circle_stroke(bp, 7.5, Stroke::new(1.0, Color32::from_black_alpha(120)));
         if dresp.is_pointer_button_down_on() || dresp.dragged() {
             if let Some(p) = dresp.interact_pointer_pos() {
+                m.change_requested = true;
                 let (dx, dy) = (p.x - c.x, p.y - c.y);
                 m.hsva[0] = dx.atan2(-dy).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU;
                 m.hsva[1] = ((dx * dx + dy * dy).sqrt() / rad).clamp(0.0, 1.0);
@@ -435,6 +615,7 @@ pub(crate) fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
         rail_thumb(ui.painter(), br, br.top() + (1.0 - v) * d);
         if brr.is_pointer_button_down_on() || brr.dragged() {
             if let Some(p) = brr.interact_pointer_pos() {
+                m.change_requested = true;
                 m.hsva[2] = (1.0 - (p.y - br.top()) / d).clamp(0.0, 1.0);
             }
         }
@@ -454,6 +635,7 @@ pub(crate) fn build_wheel(ui: &mut egui::Ui, m: &mut ColorModal) {
         rail_thumb(ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * d);
         if arr.is_pointer_button_down_on() || arr.dragged() {
             if let Some(p) = arr.interact_pointer_pos() {
+                m.change_requested = true;
                 m.hsva[3] = (1.0 - (p.y - ar.top()) / d).clamp(0.0, 1.0);
             }
         }
@@ -523,6 +705,7 @@ pub(crate) fn dlg_btn(ui: &mut egui::Ui, label: &str, primary: bool, w: f32) -> 
 /// wheel/plane handle doesn't snap to red. Shared by the RECENT/DOCUMENT strips, the current-half
 /// restore, and the eyedropper.
 pub(crate) fn modal_adopt(m: &mut ColorModal, c: Rgba) {
+    m.change_requested = true;
     let h = rgb_to_hsv(c);
     if h[1] > 0.001 {
         m.hsva[0] = h[0];
@@ -535,21 +718,6 @@ pub(crate) fn modal_adopt(m: &mut ColorModal, c: Rgba) {
 /// The picker header's eyedropper button — the REAL Lucide pipette texture (A16.2), the same
 /// glyph as the Eyedropper tool, so the app shows ONE pipette everywhere. Accent while armed (A5).
 pub(crate) fn eyedropper_btn(ui: &mut egui::Ui, pipette: &Option<egui::TextureHandle>, armed: bool) -> bool {
-    if !crate::cursors::SCREEN_EYEDROPPER {
-        // No screen sampling on this platform yet (MAC_SHELL_PORT.md): show the tool, dimmed and
-        // inert, instead of arming a pick that could never land.
-        let (r, resp) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::hover());
-        if let Some(t) = pipette {
-            ui.painter().image(
-                t.id(),
-                egui::Rect::from_center_size(r.center(), egui::Vec2::splat(ICON_SM)),
-                UV01(),
-                DISABLED,
-            );
-        }
-        resp.on_hover_text("Screen eyedropper is Windows-only for now");
-        return false;
-    }
     let (r, resp) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::click());
     let rr = CornerRadius::same(R);
     if armed {
@@ -565,13 +733,18 @@ pub(crate) fn eyedropper_btn(ui: &mut egui::Ui, pipette: &Option<egui::TextureHa
             icon_ink(armed, resp.hovered()),
         );
     }
-    resp.on_hover_text("Eyedropper \u{2014} sample a colour from anywhere on screen").clicked()
+    resp.on_hover_text(if crate::cursors::SCREEN_EYEDROPPER {
+        "Eyedropper — sample the screen"
+    } else {
+        "Eyedropper — sample the Varos canvas"
+    })
+    .clicked()
 }
 
 /// A19 — the Fill / Stroke (or Page-colour) target indicator + switch. For a paint target it renders a
 /// two-segment grey track: the active segment carries the selected fill, and clicking the
 /// other one switches which paint the picker edits (reseeded from that target's current colour). For an
-/// artboard target it's a plain "Page Color" label. Mutates `m.target`/`m.orig`/`hsva` on a switch.
+/// artboard target it's a plain "Page Color" label. Mutates `m.target`/`hsva`; preserves the opening `orig` on a switch.
 pub(crate) fn target_indicator(ui: &mut egui::Ui, m: &mut ColorModal, snap: &Snap) {
     match m.target {
         MTarget::Paint(active) => {
@@ -596,16 +769,20 @@ pub(crate) fn target_indicator(ui: &mut egui::Ui, m: &mut ColorModal, snap: &Sna
                 // a colour dot on the active segment so it reads as "this is the swatch you're editing"
                 let tx = if on {
                     let dot = egui::pos2(r.left() + 11.0, r.center().y);
-                    match snap_target_color(snap, t) {
-                        Some(cc) => {
-                            ui.painter().circle_filled(dot, 4.0, rgba_c32a(cc));
-                        }
-                        None => {
-                            ui.painter().circle_stroke(dot, 4.0, Stroke::new(1.0, Color32::WHITE));
-                            ui.painter().line_segment(
-                                [dot + egui::vec2(-2.8, 2.8), dot + egui::vec2(2.8, -2.8)],
-                                Stroke::new(1.2, NONE_RED),
-                            );
+                    if snap.target_mixed(t) {
+                        mixed_swatch(ui.painter(), egui::Rect::from_center_size(dot, egui::Vec2::splat(8.0)));
+                    } else {
+                        match snap_target_color(snap, t) {
+                            Some(cc) => {
+                                ui.painter().circle_filled(dot, 4.0, rgba_c32a(cc));
+                            }
+                            None => {
+                                ui.painter().circle_stroke(dot, 4.0, Stroke::new(1.0, Color32::WHITE));
+                                ui.painter().line_segment(
+                                    [dot + egui::vec2(-2.8, 2.8), dot + egui::vec2(2.8, -2.8)],
+                                    Stroke::new(1.2, NONE_RED),
+                                );
+                            }
                         }
                     }
                     r.center().x + 6.0
@@ -621,12 +798,7 @@ pub(crate) fn target_indicator(ui: &mut egui::Ui, m: &mut ColorModal, snap: &Sna
                 );
                 if frame.chosen == Some(index) && !on {
                     // switch the target within the SAME undo session; reseed from its current colour
-                    m.target = MTarget::Paint(t);
-                    let seed = snap_target_color(snap, t);
-                    m.orig = seed;
-                    if let Some(c) = seed {
-                        modal_adopt(m, c);
-                    }
+                    m.reseed(MTarget::Paint(t), snap_target_color(snap, t), snap.target_mixed(t));
                 }
             }
         }
@@ -652,17 +824,19 @@ pub(crate) fn snap_target_color(snap: &Snap, t: PaintTarget) -> Option<Rgba> {
 /// split new/current preview (click the current half to restore); hex (Enter/blur) + A% + HSB/RGB fields;
 /// RECENT/DOCUMENT strips. A6: the target updates LIVE as you drag, the whole interaction is ONE undo
 /// step (OK commits it, Cancel/Esc reverts to the value at open). A19: a Fill/Stroke indicator + switch.
-/// A17: an in-picker eyedropper that samples anywhere on screen (A5). Enter = OK when no field focused.
+/// Eyedropper: Windows screen sampling; macOS canvas sampling. Enter = OK when no field is open.
 pub(crate) fn build_color_modal(
     ctx: &egui::Context,
     modal: &mut Option<ColorModal>,
     snap: &Snap,
     pipette: &Option<egui::TextureHandle>,
     ops: &mut Vec<Op>,
+    canvas_sample: Option<Rgba>,
 ) {
     if modal.is_none() {
         return;
     }
+    let field_open = kit::field::any_open(ctx);
     let screen = ctx.content_rect();
     let (mut ok, mut cancel) = (false, false);
     {
@@ -697,14 +871,23 @@ pub(crate) fn build_color_modal(
                                 cancel = true;
                             }
                             if eyedropper_btn(ui, pipette, m.eyedropping) {
-                                // arm the system eyedropper; the initiating click is still down, so
-                                // remember that and commit on the NEXT fresh global press (A5).
-                                m.eyedropping = true;
-                                m.eyedrop_prev_down = true;
-                                m.eyedrop_return = m.hsva;
+                                m.arm();
                             }
                         });
                     });
+                    ui.label(
+                        micro_label(match m.target {
+                            MTarget::Paint(PaintTarget::Fill) if !snap.has_paint => {
+                                "No selection — sets the default fill"
+                            }
+                            MTarget::Paint(PaintTarget::Stroke) if !snap.has_paint => {
+                                "No selection — sets the default stroke"
+                            }
+                            _ if m.mixed => "Mixed — drag to set all",
+                            _ => "Live preview — Enter keeps changes · Esc cancels",
+                        })
+                        .color(MUTED),
+                    );
                     ui.add_space(4.0);
                     let (px, py, sl) = pick_get(m.chan, m.hsva);
                     ui.horizontal_top(|ui| {
@@ -753,6 +936,7 @@ pub(crate) fn build_color_modal(
                                     );
                                     if presp.is_pointer_button_down_on() || presp.dragged() {
                                         if let Some(p) = presp.interact_pointer_pos() {
+                                            m.change_requested = true;
                                             pick_set(
                                                 m.chan,
                                                 &mut m.hsva,
@@ -794,6 +978,7 @@ pub(crate) fn build_color_modal(
                                     );
                                     if sresp.is_pointer_button_down_on() || sresp.dragged() {
                                         if let Some(p) = sresp.interact_pointer_pos() {
+                                            m.change_requested = true;
                                             let t = ((p.y - sr.top()) / ph).clamp(0.0, 1.0);
                                             let nsl = if m.chan == Chan::H { t.min(0.9999) } else { 1.0 - t };
                                             pick_set(m.chan, &mut m.hsva, px, py, nsl);
@@ -821,6 +1006,7 @@ pub(crate) fn build_color_modal(
                                     rail_thumb(ui.painter(), ar, ar.top() + (1.0 - m.hsva[3]) * ph);
                                     if arr.is_pointer_button_down_on() || arr.dragged() {
                                         if let Some(p) = arr.interact_pointer_pos() {
+                                            m.change_requested = true;
                                             m.hsva[3] = (1.0 - (p.y - ar.top()) / ph).clamp(0.0, 1.0);
                                         }
                                     }
@@ -844,23 +1030,30 @@ pub(crate) fn build_color_modal(
                                     checker(&ui.painter_at(topr), topr, 5.0);
                                 }
                                 ui.painter().rect_filled(topr, CornerRadius::ZERO, rgba_c32a(newc));
-                                match m.orig {
-                                    Some(oc) => {
-                                        if oc[3] < 0.999 {
-                                            checker(&ui.painter_at(botr), botr, 5.0);
+                                if m.orig_mixed {
+                                    mixed_swatch(ui.painter(), botr);
+                                } else {
+                                    match m.orig {
+                                        Some(oc) => {
+                                            if oc[3] < 0.999 {
+                                                checker(&ui.painter_at(botr), botr, 5.0);
+                                            }
+                                            ui.painter().rect_filled(botr, CornerRadius::ZERO, rgba_c32a(oc));
                                         }
-                                        ui.painter().rect_filled(botr, CornerRadius::ZERO, rgba_c32a(oc));
+                                        None => {
+                                            ui.painter().rect_filled(botr, CornerRadius::ZERO, SWATCH_WELL);
+                                            ui.painter().line_segment(
+                                                [
+                                                    botr.left_bottom() + egui::vec2(2.0, -2.0),
+                                                    botr.right_top() + egui::vec2(-2.0, 2.0),
+                                                ],
+                                                Stroke::new(1.4, NONE_RED),
+                                            );
+                                        }
                                     }
-                                    None => {
-                                        ui.painter().rect_filled(botr, CornerRadius::ZERO, SWATCH_WELL);
-                                        ui.painter().line_segment(
-                                            [
-                                                botr.left_bottom() + egui::vec2(2.0, -2.0),
-                                                botr.right_top() + egui::vec2(-2.0, 2.0),
-                                            ],
-                                            Stroke::new(1.4, NONE_RED),
-                                        );
-                                    }
+                                }
+                                if m.mixed {
+                                    mixed_swatch(ui.painter(), topr);
                                 }
                                 ui.painter().rect_stroke(
                                     swr,
@@ -868,10 +1061,11 @@ pub(crate) fn build_color_modal(
                                     Stroke::new(1.0, BORDER_2),
                                     StrokeKind::Middle,
                                 );
-                                if swresp.clicked() {
+                                if swresp.clicked() && !m.orig_mixed {
                                     if let Some(p) = swresp.interact_pointer_pos() {
                                         if p.y > swr.center().y {
                                             if let Some(oc) = m.orig {
+                                                m.change_requested = true;
                                                 let h = rgb_to_hsv(oc);
                                                 if h[1] > 0.001 {
                                                     m.hsva[0] = h[0];
@@ -883,7 +1077,11 @@ pub(crate) fn build_color_modal(
                                         }
                                     }
                                 }
-                                swresp.on_hover_text("new / current \u{2014} click the bottom half to restore");
+                                swresp.on_hover_text(if m.orig_mixed {
+                                    "new / current — Mixed at open"
+                                } else {
+                                    "new / current — click the bottom half to restore"
+                                });
                                 ui.vertical(|ui| {
                                     if dlg_btn(ui, "OK", true, 118.0) {
                                         ok = true;
@@ -898,9 +1096,11 @@ pub(crate) fn build_color_modal(
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("#").color(MUTED).monospace().size(12.5));
                                 let rgbc = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
-                                let shown = hex_of([rgbc[0], rgbc[1], rgbc[2], 1.0]);
+                                let shown =
+                                    if m.mixed { String::new() } else { hex_of([rgbc[0], rgbc[1], rgbc[2], 1.0]) };
                                 // commit on Enter/blur only — no colour-jumping through 3-digit parses mid-typing
                                 if let Some(c2) = fields::hex(ui, 64.0, shown.trim_start_matches('#')) {
+                                    m.change_requested = true;
                                     let h = rgb_to_hsv(c2);
                                     if h[1] > 0.001 {
                                         m.hsva[0] = h[0];
@@ -917,6 +1117,7 @@ pub(crate) fn build_color_modal(
                                     m.hsva[3] * 100.0,
                                     0.0..=100.0,
                                 ) {
+                                    m.change_requested = true;
                                     m.hsva[3] = v / 100.0;
                                 }
                                 ui.label(RichText::new("%").color(MUTED).size(11.0));
@@ -933,6 +1134,7 @@ pub(crate) fn build_color_modal(
                                     }
                                     if let Some(v) = fields::num_value(ui, 76.0, Lab::Letter(lab), tip, val, 0.0..=max)
                                     {
+                                        m.change_requested = true;
                                         match chan {
                                             Chan::H => m.hsva[0] = (v / 360.0).min(0.9999),
                                             Chan::S => m.hsva[1] = v / 100.0,
@@ -956,6 +1158,7 @@ pub(crate) fn build_color_modal(
                                     if let Some(v) =
                                         fields::num_value(ui, 76.0, Lab::Letter(lab), tip, rgbv[i] * 255.0, 0.0..=255.0)
                                     {
+                                        m.change_requested = true;
                                         let mut c2 = rgbv;
                                         c2[i] = v / 255.0;
                                         let h = rgb_to_hsv([c2[0], c2[1], c2[2], 1.0]);
@@ -982,32 +1185,60 @@ pub(crate) fn build_color_modal(
                     }
                 });
             });
-        // A5 — system eyedropper: while armed, sample the pixel under the OS cursor each frame (works
-        // over ANY window) and preview it live; a fresh global left-click (edge-detected) commits it.
+        // Sample the screen on Windows, or only the Varos canvas elsewhere. The pick click
+        // disarms sampling; the picker transaction stays open until OK/Cancel.
         if m.eyedropping {
-            ctx.request_repaint(); // keep polling the global cursor + button while armed
-            if let Some(c) = crate::cursors::screen_color_at_cursor() {
+            if crate::cursors::SCREEN_EYEDROPPER {
+                ctx.request_repaint(); // global screen cursor has no egui input events
+            }
+            if let Some(c) =
+                if crate::cursors::SCREEN_EYEDROPPER { crate::cursors::screen_color_at_cursor() } else { canvas_sample }
+            {
                 modal_adopt(m, c);
             }
-            let down = crate::cursors::left_button_down();
-            if down && !m.eyedrop_prev_down {
+            let down = if crate::cursors::SCREEN_EYEDROPPER {
+                crate::cursors::left_button_down()
+            } else {
+                ctx.input(|i| i.pointer.primary_pressed() && !i.key_down(egui::Key::Space))
+            };
+            if down
+                && (!crate::cursors::SCREEN_EYEDROPPER || !m.eyedrop_prev_down)
+                && (crate::cursors::SCREEN_EYEDROPPER || canvas_sample.is_some())
+            {
                 m.eyedropping = false; // committed — the sampled colour is already live in hsva
             }
             m.eyedrop_prev_down = down;
         }
-        // keyboard: Esc = Cancel (or abort the eyedropper) · Enter = OK (only when no field is focused)
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // K3: the first Enter/Esc belongs to an open field; otherwise OK/Cancel.
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !field_open {
             if m.eyedropping {
                 m.eyedropping = false;
-                m.hsva = m.eyedrop_return; // abort the pick: restore the colour before the eyedropper
+                m.sampling = None;
+                if let Some(EyedropReturn { hsva, mixed, edited, last_sent, sent_color }) = m.eyedrop_return.take() {
+                    m.hsva = hsva;
+                    m.change_requested = true;
+                    if let Some(snapshot) = m.arm_snapshot.take() {
+                        ops.push(Op::PickerRestore(m.target, snapshot, m.arm_dirty));
+                        m.change_requested = false;
+                    } else if let Some(c) = m.live_color() {
+                        ops.push(Op::PickerLive(m.target, c));
+                    }
+                    m.mixed = mixed;
+                    m.edited = edited;
+                    m.last_sent = last_sent;
+                    m.sent_targets.retain(|(t, _)| *t != m.target);
+                    if let Some(c) = sent_color {
+                        m.sent_targets.push((m.target, c));
+                    }
+                }
             } else {
                 cancel = true;
             }
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && ctx.memory(|mem| mem.focused().is_none()) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !field_open && ctx.memory(|mem| mem.focused().is_none()) {
             ok = true;
         }
-        // A6 — LIVE preview: apply the current colour to the target EVERY frame (no new undo step; the
+        // A6 — LIVE preview: apply only real changes (no new undo step; the
         // session opened with EditCommand::PickerBegin). OK folds the whole drag into ONE step + remembers it;
         // Cancel/Esc reverts to the value at open.
         let c = hsv_to_rgb(m.hsva[0], m.hsva[1], m.hsva[2]);
@@ -1015,13 +1246,24 @@ pub(crate) fn build_color_modal(
         if cancel {
             ops.push(Op::PickerCancel);
         } else {
-            ops.push(Op::PickerLive(m.target, col));
+            if let Some(live) = m.live_color() {
+                ops.push(Op::PickerLive(m.target, live));
+            }
             if ok {
                 let cur = match m.target {
                     MTarget::Paint(t) => Some(t),
                     MTarget::Ab(_) => None,
                 };
-                ops.push(Op::PickerCommit(cur, col));
+                for &(target, color) in &m.sent_targets {
+                    if target != m.target || !m.edited {
+                        ops.push(Op::PickerRemember(target, color));
+                    }
+                }
+                if m.edited {
+                    ops.push(Op::PickerCommit(cur, col));
+                } else {
+                    ops.push(Op::PickerFinish);
+                }
             }
         }
     }

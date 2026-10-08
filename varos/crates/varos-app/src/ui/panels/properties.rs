@@ -122,8 +122,8 @@ pub(crate) fn panel_properties(
             hsep(ui, inner);
 
             // Fill / Stroke swatches + stroke weight
-            paint_row(ui, PaintTarget::Fill, s.fill, ops);
-            paint_row(ui, PaintTarget::Stroke, s.stroke, ops);
+            paint_row(ui, PaintTarget::Fill, s.fill, s.fill_mixed, ops);
+            paint_row(ui, PaintTarget::Stroke, s.stroke, s.stroke_mixed, ops);
             ui.horizontal(|ui| {
                 let id = doc_id(ui, "stroke-weight-presets");
                 let weights = [0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0];

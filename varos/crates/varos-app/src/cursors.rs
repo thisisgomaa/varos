@@ -986,7 +986,7 @@ mod mac {
 }
 
 /// True when the system-wide (outside-the-window) eyedropper can actually sample the screen. On other
-/// platforms the picker shows the eyedropper disabled rather than arming a pick that can never land.
+/// platforms the picker samples only Varos artwork through its CPU raster, without OS capture.
 pub const SCREEN_EYEDROPPER: bool = cfg!(windows);
 
 #[cfg(test)]

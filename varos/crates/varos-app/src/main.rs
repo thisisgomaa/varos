@@ -1573,7 +1573,7 @@ fn main() {
                                 view.pan[1] + screen_cursor[1] - pan_last[1],
                             ];
                             pan_last = screen_cursor;
-                        } else if !home && (!over_panel || canvas_gesture) {
+                        } else if !home && !gui.picking_screen() && (!over_panel || canvas_gesture) {
                             // a gesture that began on the canvas keeps tracking even under a panel (C5)
                             ed.ppu = view.zoom;
                             ed.pointer_move(view.s2w(screen_cursor));
@@ -1581,10 +1581,10 @@ fn main() {
                         redraw!("cursor-moved");
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
-                        // A5 — while the picker's system eyedropper is armed, the sample click is read
-                        // globally (GetAsyncKeyState); swallow the in-window event so it doesn't also
+                        // While sampling, the picker reads the click via egui (canvas) or Win32
+                        // (screen); swallow the in-window canvas event so it does not also
                         // poke the canvas (select/deselect) under the floating picker.
-                        if gui.picking_screen() {
+                        if gui.picking_screen() && button == MouseButton::Left && !keyboard.space() && !panning {
                             redraw!("picker-armed-click");
                             return;
                         }
@@ -1822,7 +1822,7 @@ fn main() {
                             panning,
                             keyboard.space(),
                             (home || gui.wants_pointer()).then(|| gui.chrome_ck()),
-                            || desired_ck(ed, view.s2w(screen_cursor)),
+                            || if gui.picking_screen() { CK::Eye } else { desired_ck(ed, view.s2w(screen_cursor)) },
                         );
                         // Runs AFTER gui.run (egui's platform output is already applied), so on non-Windows
                         // the re-assert each frame wins over egui-winit's own cursor write.

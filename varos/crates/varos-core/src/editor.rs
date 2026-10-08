@@ -4786,25 +4786,27 @@ impl Editor {
     /// place with NO new history step (the step was opened by `picker_begin`). An empty selection is a
     /// document no-op; the colour lands as the current paint only on `picker_commit`.
     pub fn paint_live(&mut self, target: PaintTarget, color: Option<Rgba>) {
-        let pids = self.selected_pids();
-        if pids.is_empty() {
-            return;
-        }
-        for pid in pids {
+        let paint = Paint::from_opt(color);
+        for pid in self.selected_pids() {
             if let Some(pi) = self.doc.pidx(pid) {
-                match target {
-                    PaintTarget::Fill => self.doc.paths[pi].fill = Paint::from_opt(color),
-                    PaintTarget::Stroke => self.doc.paths[pi].stroke = Paint::from_opt(color),
+                let current = match target {
+                    PaintTarget::Fill => &mut self.doc.paths[pi].fill,
+                    PaintTarget::Stroke => &mut self.doc.paths[pi].stroke,
+                };
+                if *current != paint {
+                    *current = paint;
+                    self.dirty = true;
                 }
             }
         }
-        self.dirty = true;
     }
     /// Live-apply an artboard page colour during a picker session (no new history step).
     pub fn ab_color_live(&mut self, i: usize, c: Option<Rgba>) {
         if let Some(ab) = self.doc.artboards.get_mut(i) {
-            ab.page_color = c;
-            self.dirty = true;
+            if ab.page_color != c {
+                ab.page_color = c;
+                self.dirty = true;
+            }
         }
     }
     /// Close the picker session with OK: fold the whole live drag into ONE undo step, set the target's
@@ -5315,6 +5317,54 @@ impl Editor {
 #[cfg(test)]
 mod picker_tests {
     use super::*;
+
+    #[test]
+    fn picker_unchanged_live_and_ok_do_not_mark_dirty_or_record_history() {
+        let mut ed = Editor::new();
+        let color = [0.5, 0.5, 0.5, 1.0];
+        ed.doc.paths.push(crate::model::Path::new(7, vec![], true, Some(color), Some(color), 2.0));
+        ed.doc.artboards = vec![Artboard::default()];
+        ed.doc.sync_tree();
+        ed.objsel.insert(7);
+        for target in [PaintTarget::Fill, PaintTarget::Stroke] {
+            let rev = ed.rev;
+            ed.picker_begin();
+            for _ in 0..3 {
+                ed.paint_live(target, Some(color));
+            }
+            ed.ab_color_live(0, ed.doc.artboards[0].page_color);
+            assert!(!ed.dirty);
+            ed.picker_commit(Some(target), color);
+            assert_eq!(ed.rev, rev);
+            assert!(ed.undo.is_empty());
+            assert!(!ed.dirty);
+        }
+    }
+
+    #[test]
+    fn mixed_picker_begin_is_read_only_and_cancel_restores_both_targets() {
+        let mut ed = Editor::new();
+        for (id, c) in [(1, [1.0, 0.0, 0.0, 1.0]), (2, [0.0, 0.0, 1.0, 1.0])] {
+            ed.doc.paths.push(crate::model::Path::new(id, vec![], true, Some(c), Some(c), 2.0));
+            ed.objsel.insert(id);
+        }
+        ed.doc.sync_tree();
+        let before = ed.doc.clone();
+        ed.picker_begin();
+        assert_eq!(ed.doc, before);
+        assert!(!ed.dirty);
+        for target in [PaintTarget::Fill, PaintTarget::Stroke] {
+            ed.paint_live(target, Some([0.0, 1.0, 0.0, 1.0]));
+            assert!(ed.doc.paths.iter().all(|p| match target {
+                PaintTarget::Fill => p.fill.solid(),
+                PaintTarget::Stroke => p.stroke.solid(),
+            } == Some([0.0, 1.0, 0.0, 1.0])));
+        }
+        ed.picker_cancel();
+        assert_eq!(ed.doc, before);
+        assert!(ed.undo.is_empty());
+        assert!(!ed.dirty);
+    }
 
     // A6 — a whole picker drag (many live frames) folds into ONE undo step, and one undo reverts it.
     #[test]
