@@ -7,7 +7,7 @@
 //! 3. agent → `client_proof { profile_id, agent_key, session, label, signature }`
 //!    The agent signs the same binding plus its profile/session: proves possession over the
 //!    host's fresh nonce. The host consumes that nonce once.
-//! 4. host  → `Reply` (welcome with scopes, or `pairing_required` / refusal), then one call frame.
+//! 4. host  → `Reply` (welcome with all local-user scopes, or identity/protocol refusal), then one call frame.
 use super::{credentials, hex, is_hex, random_hex, CONNECTION};
 use crate::{Error, API};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
@@ -255,9 +255,7 @@ impl AgentSide {
         if fingerprint != expect.host_fingerprint {
             return Err(Error::new("host_identity_mismatch", "host key differs from its registry record"));
         }
-        // A host key that differs from the one pinned at pairing is NOT a dead end (ADR-0011
-        // §3.5 "asks again"): the proof below only binds this host's fresh nonce, and the host's
-        // trust store answers `pairing_required` (naming the key change) instead of granting.
+        // Registry proof binds this launch; a restart resets the session, without pairing.
         if instance_id != &expect.instance_id {
             return Err(Error::new("host_identity_mismatch", "host instance differs from the registry record"));
         }

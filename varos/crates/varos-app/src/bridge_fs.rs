@@ -1,5 +1,5 @@
 //! Pinned-directory adapter for the existing durable writer. Bridge never follows a changed
-//! parent or final symlink. Fresh destinations publish with linkat (no replacement).
+//! parent or final symlink. Fresh destinations publish with linkat, or macOS exclusive rename (no replacement).
 #[cfg(unix)]
 mod unix {
     use std::{
@@ -17,7 +17,7 @@ mod unix {
     pub enum PinnedError {
         SaveConflict,
         IoError,
-        ScopeRefused,
+        NetworkVolume,
     }
     impl From<io::Error> for PinnedError {
         fn from(_: io::Error) -> Self {
@@ -30,7 +30,7 @@ mod unix {
                 Self::SaveConflict => {
                     varos_bridge::Error::new("save_conflict", "destination exists or backing file changed")
                 }
-                Self::ScopeRefused => varos_bridge::Error::new("scope_refused", "file grant revoked"),
+                Self::NetworkVolume => varos_bridge::Error::new("scope_refused", "network volume not supported"),
                 Self::IoError => varos_bridge::Error::new("io_error", "file IO failed"),
             }
         }
@@ -42,7 +42,6 @@ mod unix {
         dest: PathBuf,
         expected: Option<Fingerprint>,
         fresh: bool,
-        auth: Option<varos_bridge::ipc::Recheck>,
     }
     fn name(s: &std::ffi::OsStr) -> io::Result<CString> {
         CString::new(s.as_bytes()).map_err(|_| io::Error::other("invalid filename"))
@@ -62,13 +61,50 @@ mod unix {
             Ok(())
         }
     }
+    /// Returns true when exclusive rename consumed the temporary name.
+    #[cfg(target_os = "macos")]
+    fn publish_fresh(
+        link: impl FnOnce() -> io::Result<()>,
+        rename_exclusive: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<bool> {
+        match link() {
+            Ok(()) => Ok(false),
+            Err(e) if matches!(e.raw_os_error(), Some(libc::ENOTSUP | libc::EPERM | libc::EXDEV)) => {
+                rename_exclusive()?;
+                Ok(true)
+            }
+            Err(e) => Err(e),
+        }
+    }
+    #[cfg(all(test, target_os = "macos"))]
+    #[test]
+    fn unsupported_hardlinks_use_exclusive_rename() {
+        use std::cell::Cell;
+        let called = Cell::new(false);
+        assert!(publish_fresh(
+            || Err(io::Error::from_raw_os_error(libc::ENOTSUP)),
+            || {
+                called.set(true);
+                Ok(())
+            }
+        )
+        .unwrap());
+        assert!(called.get());
+        assert!(!publish_fresh(|| Ok(()), || panic!("link succeeded")).unwrap());
+        let error = publish_fresh(
+            || Err(io::Error::from_raw_os_error(libc::ENOTSUP)),
+            || Err(io::Error::from_raw_os_error(libc::EEXIST)),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert!(publish_fresh(
+            || Err(io::Error::from_raw_os_error(libc::EEXIST)),
+            || panic!("must not retry collision")
+        )
+        .is_err());
+    }
     impl Pinned {
-        pub fn new(
-            dest: &Path,
-            expected: Option<&Fingerprint>,
-            fresh: bool,
-            auth: Option<&varos_bridge::ipc::Recheck>,
-        ) -> Result<Self, PinnedError> {
+        pub fn new(dest: &Path, expected: Option<&Fingerprint>, fresh: bool) -> Result<Self, PinnedError> {
             let parent = dest.parent().ok_or_else(|| io::Error::other("missing parent"))?;
             if !parent.is_absolute() {
                 return Err(PinnedError::IoError);
@@ -81,7 +117,7 @@ mod unix {
                 check(unsafe { libc::fstatfs(dir.as_raw_fd(), stat.as_mut_ptr()) })?;
                 // SAFETY: fstatfs succeeded and initialized stat.
                 if unsafe { stat.assume_init() }.f_flags & libc::MNT_LOCAL as u32 == 0 {
-                    return Err(PinnedError::IoError);
+                    return Err(PinnedError::NetworkVolume);
                 }
             }
             let pinned = Self {
@@ -91,7 +127,6 @@ mod unix {
                 dest: dest.to_owned(),
                 expected: expected.cloned(),
                 fresh,
-                auth: auth.cloned(),
             };
             pinned.check_destination()?;
             Ok(pinned)
@@ -190,30 +225,45 @@ mod unix {
             if to != self.dest {
                 return Err(io::Error::other("unexpected destination"));
             }
-            if let Some(auth) = &self.auth {
-                let scopes = (auth.0)().map_err(|_| self.record(PinnedError::ScopeRefused))?;
-                if !scopes.read || !scopes.files {
-                    return Err(self.record(PinnedError::ScopeRefused));
-                }
-            }
             self.parent_unchanged()?;
             self.check_destination().map_err(|e| self.record(e))?;
             let from = self.leaf(from)?;
             let to = self.leaf(to)?;
             if self.fresh {
-                // SAFETY: both names are restricted to the pinned directory; linkat refuses overwrite.
-                check(unsafe {
-                    libc::linkat(self.dir.as_raw_fd(), from.as_ptr(), self.dir.as_raw_fd(), to.as_ptr(), 0)
-                })
-                .map_err(|e| {
+                let link = || {
+                    // SAFETY: names are restricted to the pinned directory; linkat refuses overwrite.
+                    check(unsafe {
+                        libc::linkat(self.dir.as_raw_fd(), from.as_ptr(), self.dir.as_raw_fd(), to.as_ptr(), 0)
+                    })
+                };
+                #[cfg(target_os = "macos")]
+                let published = publish_fresh(link, || {
+                    // SAFETY: valid pinned descriptor and names; RENAME_EXCL never replaces an existing name.
+                    check(unsafe {
+                        libc::renameatx_np(
+                            self.dir.as_raw_fd(),
+                            from.as_ptr(),
+                            self.dir.as_raw_fd(),
+                            to.as_ptr(),
+                            libc::RENAME_EXCL,
+                        )
+                    })
+                });
+                #[cfg(not(target_os = "macos"))]
+                let published = link().map(|()| false);
+                let renamed = published.map_err(|e| {
                     self.record(if e.kind() == io::ErrorKind::AlreadyExists {
                         PinnedError::SaveConflict
                     } else {
                         PinnedError::IoError
                     })
                 })?;
-                // SAFETY: deletes only our temporary name in the pinned directory.
-                check(unsafe { libc::unlinkat(self.dir.as_raw_fd(), from.as_ptr(), 0) })
+                if renamed {
+                    Ok(())
+                } else {
+                    // SAFETY: deletes only our temporary name in the pinned directory.
+                    check(unsafe { libc::unlinkat(self.dir.as_raw_fd(), from.as_ptr(), 0) })
+                }
             } else {
                 // SAFETY: atomic replacement stays in the pinned directory.
                 check(unsafe { libc::renameat(self.dir.as_raw_fd(), from.as_ptr(), self.dir.as_raw_fd(), to.as_ptr()) })
@@ -279,52 +329,27 @@ mod tests {
         let parent = root.join("granted");
         std::fs::create_dir(&parent).unwrap();
         let dest = parent.join("fresh.vrs");
-        let fs = Pinned::new(&dest, None, true, None).unwrap();
+        let fs = Pinned::new(&dest, None, true).unwrap();
         std::fs::rename(&parent, root.join("held")).unwrap();
         std::fs::create_dir(&parent).unwrap();
         assert!(write_replace(&fs, &dest, b"new", &new_nonce()).is_err());
         assert!(!root.join("held/fresh.vrs").exists());
         assert!(!dest.exists());
-        let fs = Pinned::new(&dest, None, true, None).unwrap();
+        let fs = Pinned::new(&dest, None, true).unwrap();
         std::fs::write(&dest, b"another writer").unwrap();
         assert!(write_replace(&fs, &dest, b"new", &new_nonce()).is_err());
         assert_eq!(fs.error().code, "save_conflict");
-        assert_eq!(Pinned::new(&dest, None, true, None).err().unwrap().bridge().code, "save_conflict");
+        assert_eq!(Pinned::new(&dest, None, true).err().unwrap().bridge().code, "save_conflict");
         assert_eq!(std::fs::read(&dest).unwrap(), b"another writer");
         let fp = fingerprint(&RealFs, &dest).unwrap();
-        let fs = Pinned::new(&dest, Some(&fp), false, None).unwrap();
+        let fs = Pinned::new(&dest, Some(&fp), false).unwrap();
         std::fs::write(&dest, b"external changes").unwrap();
         assert!(write_replace(&fs, &dest, b"new", &new_nonce()).is_err());
         assert_eq!(fs.error().code, "save_conflict");
-        assert_eq!(Pinned::new(&dest, Some(&fp), false, None).err().unwrap().bridge().code, "save_conflict");
+        assert_eq!(Pinned::new(&dest, Some(&fp), false).err().unwrap().bridge().code, "save_conflict");
         assert_eq!(std::fs::read(&dest).unwrap(), b"external changes");
         std::os::unix::fs::symlink(root.join("held"), root.join("link")).unwrap();
-        assert!(Pinned::new(&root.join("link/new.vrs"), None, true, None).is_err());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn file_scope_revoked_after_encoding_refuses_publication() {
-        use std::sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        };
-        let root = std::env::temp_dir().join(format!("bridge-revoke-{}", new_nonce()));
-        std::fs::create_dir(&root).unwrap();
-        let root = root.canonicalize().unwrap();
-        let dest = root.join("new.vrs");
-        let allow = Arc::new(AtomicBool::new(true));
-        let grant = allow.clone();
-        let auth = varos_bridge::ipc::Recheck(Arc::new(move || {
-            Ok(varos_bridge::conn::trust::Scopes {
-                read: true,
-                files: grant.load(Ordering::Acquire),
-                ..Default::default()
-            })
-        }));
-        let fs = Pinned::new(&dest, None, true, Some(&auth)).unwrap();
-        allow.store(false, Ordering::Release);
-        assert!(write_replace(&fs, &dest, b"new", &new_nonce()).is_err());
-        assert!(!dest.exists());
+        assert!(Pinned::new(&root.join("link/new.vrs"), None, true).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

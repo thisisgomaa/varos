@@ -1,3 +1,152 @@
+# Independent review fix round — 2026-10-08
+
+Completed in the same `feat/bridge-file-keystore` worktree, uncommitted. No commit, push, GUI, osascript, installation, /Applications writes or real Keychain access. The moderator's `"api":"1.0"` history request fix is preserved (`tests/contracts.rs:615`). The reports below this fix-round section describe earlier source states.
+
+## Review items (paths relative to this crate unless stated otherwise)
+
+1. `src/service.rs:300`: canonical bN validation restored before observation/prepare; regression in `tests/contracts.rs:2225`.
+2. `../varos-app/src/bridge_host.rs:95`, `src/files.rs:14,27`: passwd home, never HOME; home / refused. Unset/forged HOME subprocess checks at `src/files.rs:164`.
+3. `src/conn/credentials.rs:277`: platform store uses `Paths.state/keys`; override subprocess test at `:375`. Debug VAROS_BRIDGE_HOME relocates keys with state/discovery; release ignores it.
+4. `src/files.rs:23,121`: iCloud Mobile Documents and CloudStorage provider exceptions; Application Support still refused. Both acceptance and canonical use-time paths covered; /Volumes requires a volume component.
+5. `src/service.rs:361`: home_or_external_volume_or_cloud_drive and local_volume_only guards; `../varos-app/src/bridge_fs.rs:33,122`: network volume not supported, typed scope_refused.
+6. `../varos-app/src/bridge_fs.rs:66,240`: linkat first, macOS ENOTSUP/EPERM/EXDEV exclusive rename fallback. Fake ENOTSUP success, collision and link-success cases tested at `:81`. Real FAT32/exFAT volumes remain unverified.
+7. `../../../docs/adr/ADR-0011-bridge-connection-and-trust.md:194,196,207`, `README.md:222,260`, repository `README.md:54`, `src/mcp.rs:153`: supersession, precise destination policy and legacy token listener all-scopes behavior documented.
+8. `src/conn/credentials.rs:203`, `src/dto.rs:536`, `src/conn/manage.rs:10`, `tests/contracts.rs:702`, `src/conn/audit.rs:2`, `src/conn/attach.rs:35,95,125`, `src/service.rs:106`, `src/ipc.rs:336,692,790`: obsolete pairing text/retryability/usage/parameter/profile-error codes and dead Context fields/literal gaps cleaned up.
+9. `src/conn/audit.rs:23`: empty label omitted by serde.
+10. `src/conn/credentials.rs:130`: state parent checked before keys creation/read; symlinked-state regression at `:361`.
+11. `../../../tools/mac/bridge-connect.sh:17`: owner command restored to cargo build -q.
+12. `src/files.rs:14`, `../varos-app/src/bridge_host.rs:117,398`: containment rejects /tmp and /private/var immediately at acceptance; canonical use-time check retained at `src/files.rs:60`.
+13. Evidence boundary: cross-uid refusal: policy function tested; kernel path not testable without a second user. Real exFAT unverified.
+
+Optional durability improvement completed: `src/conn/credentials.rs:234` fsyncs keys directory after rename on Unix.
+
+## Gates on final Rust source
+
+All compile/test/lint commands use --offline -j 2, from varos/.
+
+- cargo test --offline -j 2 --workspace: PASS, exit 0; 1,306 passed / 0 failed / 15 ignored, 79 workspace suites. Child subprocess executions are excluded from this count. Bridge: 94 passed / 0 failed / 6 ignored (16 unit, 12 artboard, 14 connection, 52 contracts).
+- cargo clippy --offline -j 2 --workspace --all-targets -- -D warnings: PASS, exit 0.
+- cargo clippy --offline -j 2 --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings: PASS, exit 0; compile only.
+- cargo fmt --all --check: PASS, exit 0.
+- python3 ../tools/check_dep_directions.py: PASS, exit 0.
+- cargo test --offline -j 2 -p varos-bridge --test contracts -- --ignored: exit 101; 0 passed / 4 failed, all socket binds blocked by expected sandbox EPERM. No native IPC behavioral pass claimed here. Moderator reported all four socket tests passing on the Mac before this fix round.
+- git diff --check: PASS.
+
+Logs: /tmp/bridge-fix-workspace.log, /tmp/bridge-fix-clippy-native.log, /tmp/bridge-fix-clippy-windows.log, /tmp/bridge-fix-sockets.log. No requested implementation item deferred. Windows runtime, real network mounts, real FAT32/exFAT, the cross-uid kernel path and live GUI/file-worker behavior are unverified here.
+
+---
+
+# Open local trust verification — 2026-10-08
+
+Current work on `feat/bridge-file-keystore` builds on the existing uncommitted file key store change. The older reports below are historical; their pairing/grant requirements are superseded by ADR-0011 Amendment 3. No commit, push, merge, GUI, osascript, installation, `/Applications` write or real Keychain access.
+
+## Changes and retained guards
+
+- `src/ipc.rs:185,649,688`: same-uid check remains; the signed handshake admits every scope without consulting trust/pairing files. Cross-uid is refused. Ed25519 profiles identify audit/history attribution. `conn/trust.rs` now contains only the capability vocabulary and profile lock name.
+- `src/service.rs:300,491,503`: removed scope gates and destructive/history confirmation state. Board/revision checks, atomic batch publication, one-step undo, cancellation and idempotent receipts remain.
+- `src/conn/manage.rs:25,65`: pair/approve/deny and agents list/revoke are compatibility no-ops, with the exact owner-decision message and exit 0. Register code is unchanged; status prints `trust: local user`.
+- `../varos-app/src/bridge_host.rs:79` and `src/files.rs:35`: removed `VAROS_BRIDGE_FILE_ROOTS`. Current-backing save retains fingerprint checks; new save_as/export names may resolve under home or `/Volumes`. Parent aliases are canonicalized before containment checks; internal aliases remain safe, escaping aliases are refused. Protected roots, dot components, extensions and existing-destination refusal remain.
+- `../varos-app/src/bridge_fs.rs:63,180`: canonical directory identity remains pinned, final symlinks are never followed, and fresh publication uses linkat without replacement. Existing names/hard-link aliases and publication races return `save_conflict`. Local-volume checks remain. Grant rechecks were removed throughout file_jobs/file_ports/lifecycle.
+- `src/conn/audit.rs:23` and `src/ipc.rs:767`: accepted calls retain profile id and now include sanitized client label; asynchronous file-completion audit copies both. Mutations still reserve audit capacity first.
+- `src/service.rs:363`, `src/mcp.rs:147`: capabilities reports local-user trust and the guard list; files_roots_granted is gone. Tool descriptions no longer direct clients through grants. Optional digest fields and the unused pairing error-details field remain API 1.0 wire compatibility only; no challenge/pairing state is produced or consumed.
+- ADR-0011 Amendment 3 quotes the owner, explains same-uid full edit/save access and the undo + review model, and supersedes the old C2 authorization plan. ADR-0009 §8, READMEs, bridge-connect text and PLAN track A are updated.
+
+Core history has no metadata slot: `varos-core/src/editor.rs:452` stores Vec<Document> snapshots. Core is untouched; no `by` field is added to document snapshots. “هيستوري منفصل لكل AI للمراجعة” is the next Bridge piece in PLAN A3-next, not a completed feature. The local audit and claimed labels are not tamper-proof vendor attestation.
+
+## Gates
+
+All Cargo compile/test/lint runs use `--offline -j 2`.
+
+- `cargo test --offline -j 2 --workspace`: PASS, exit 0; **1,301 passed / 0 failed / 15 ignored**, 79 suites. Bridge: **90 passed / 0 failed / 6 ignored** (13 unit + 12 artboard + 14 connection + 51 contract).
+- `cargo clippy --offline -j 2 --workspace --all-targets -- -D warnings`: PASS, exit 0.
+- `cargo fmt --all --check`: PASS, exit 0.
+- `cargo clippy --offline -j 2 --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`: PASS, exit 0 (compilation only).
+- `python3 ../tools/check_dep_directions.py`: PASS, exit 0.
+- `cargo test --offline -j 2 -p varos-bridge --test contracts -- --ignored`: attempted, exit 101; **0 passed / 4 failed**, all at Unix socket bind with EPERM. Sandbox-blocked IPC, not a behavioral pass.
+- `git diff --check`: PASS. Core and all frozen fixtures are untouched.
+
+Headless evidence includes the actual signed host handshake over in-memory framed IO (all scopes, no persistent pairing/trust state), uid refusal, remembered/concurrent profiles, CLI no-ops, schema/capability reporting, direct destructive/history execution and receipts, fake-home save/save-as/PDF without an environment grant, protected/dot/extension/overwrite/hard-link/symlink-escape refusals, and pinned publication races. Obsolete pairing/confirmation/revocation tests were replaced or removed with those obsolete policies.
+
+The actual CLI was also run: `bridge pair --approve ignored` and `bridge agents revoke ignored` print exactly `not needed: local agents are trusted (owner decision 2026-10-08)`; `bridge status` prints `trust: local user`. All exit 0. Register's existing syntax/output test remains passing.
+
+Unverified: native socket attachment/restart/audit lifecycle (four updated ignored contracts blocked at bind), live desktop/external-client behavior, mounted external-volume IO and Windows runtime. Per-AI review history is planned because core has no entry metadata slot. No independent review, installation or owner visual acceptance is claimed.
+
+Logs: `/tmp/open-trust-gate-workspace.log`, `/tmp/open-trust-gate-native.log`, `/tmp/open-trust-gate-windows.log`, `/tmp/open-trust-gate-fmt.log`, `/tmp/open-trust-gate-dependencies.log`, `/tmp/open-trust-final-sockets.log`.
+
+---
+
+# File key store verification — 2026-10-08
+
+Implemented locally on `feat/bridge-file-keystore` (base `945f6d6`). No commit, push,
+merge, GUI, osascript, installation or `/Applications` changes. No real Keychain read,
+write, deletion or migration was attempted. All Cargo compile/test/lint commands used
+`--offline -j 2`.
+
+## Changes
+
+`conn/credentials.rs:107`: `FileKeyStore` is the default on every OS. Raw 32-byte seeds
+use `keys/host.key` and `keys/agent-<profile-id>.key`. Unix creation makes missing
+ancestors and the key directory 0700, and exclusive temporary files 0600; synced
+contents are published by rename under an owner-only creation lock. Windows uses
+exclusive temporary creation and `MoveFileW` (no overwrite), with Unix permission
+checks cfg'd out. Reads validate the parent and key type/owner/mode, reject symlinks
+and unsafe permissions, and report repair instructions without secrets. Existing
+keys win creation races. Delete removes the file. `MemoryStore` remains for tests.
+
+`conn/fsutil.rs:69` shares the per-user application-support path with `Paths::resolve`;
+Windows keys use `%APPDATA%\Varos\bridge\keys\`. `security-framework`, its sys
+package, `KeychainStore`, the unavailable platform backend and the ignored real
+Keychain round-trip test are removed from code/manifests/lockfile.
+
+`conn/attach.rs:123` reports `pairing_required` for a missing explicit identity;
+`conn/manage.rs:205` adds the one-time re-pair notice to `bridge hosts` (there is no
+separate bridge status command). Registration code/output is unchanged. The app's
+existing unavailable notice and IPC/CLI messages now describe file keys and repairs.
+
+ADR-0011 Amendment 2 records the owner's override of “never downgrade to a plaintext
+file”, rebuild/ACL prompt rationale, untouched old keys, one-time re-pair and the
+same-uid threat limit. README, conn module docs and bundle signing comments agree.
+0600 protects against other users, not same-uid processes. Windows user-profile ACLs
+and Windows runtime behavior were not tested.
+
+## Final gates
+
+- `cargo test --offline --workspace -j 2`: PASS, **1,307 passed / 0 failed / 15 ignored**, across 79 suite summaries (including doc tests).
+- `cargo clippy --offline --workspace --all-targets -j 2 -- -D warnings`: PASS.
+- `cargo clippy --offline --workspace --all-targets --target x86_64-pc-windows-msvc -j 2 -- -D warnings`: PASS.
+- `cargo fmt --all --check`: PASS.
+- `python3 ../tools/check_dep_directions.py`: PASS.
+- `git diff --check`: PASS.
+- `cargo test --offline -p varos-bridge -j 2 --test contracts -- --ignored`: attempted, exit 101, **0 passed / 4 failed**, all at native Unix socket bind with **EPERM**. Sandbox-blocked, not a pass.
+
+Coverage: file create/load/delete, host/agent isolation, exact modes, 0644 refusal
+with chmod repair instruction, symlink-parent refusal, two simultaneous creators
+retaining one key, file-backed profile reuse/revocation, full signed handshake →
+pairing → approval → host-key replacement → re-approval, and old public profiles
+without file credentials. The two paired real-socket contracts now use file stores.
+An initial workspace attempt caught non-private missing state ancestors; fixed with
+recursive 0700 directory creation, then the full final suite passed.
+
+## Re-pair and unverified
+
+First launch creates a new host identity and fresh agent profile keys; old Keychain
+items remain untouched. Previously paired agents require one owner approval again.
+Registry-matching host identity changes retain the existing typed `pairing_required`
+flow. An explicit old missing `--identity` asks to remove that reference and pair again.
+`varos-cli bridge register claude` remains unchanged; registration tests passed.
+
+Unverified: native socket lifecycle and real-binary attached MCP/CLI behavior (rerun
+ignored contracts outside this sandbox), live external-agent pairing, installed-app
+behavior, Windows runtime/ACLs. No independent review, rebuild/install or merge claim.
+
+Logs: `/tmp/bridge-keystore-tests.log`, `/tmp/bridge-keystore-clippy-native.log`,
+`/tmp/bridge-keystore-clippy-windows.log`, `/tmp/bridge-keystore-fmt.log`,
+`/tmp/bridge-keystore-dependencies.log`, `/tmp/bridge-keystore-sockets.log`.
+
+---
+
+The earlier slice verification below is historical evidence, not this change's gate run.
+
 # Slice 4 verification — 2026-10-07
 
 Implemented locally on `feat/bridge-slice4`, based on `9058ab5`. No commit, push, merge, GUI,

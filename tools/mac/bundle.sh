@@ -9,12 +9,9 @@
 #   BRIDGE_BIN=… CLI_BIN=…         # Bridge helpers to bundle (default: next to BIN, i.e. target/release/)
 #   CODESIGN_ID="Varos Local"      # sign with this identity instead of ad-hoc (default: "-" = ad-hoc)
 #
-# Keychain note (ADR-0011 C1): the Bridge keys live in the login Keychain, whose access list trusts
-# the signing identity of the binary that created them. Ad-hoc signatures change on every build, so
-# macOS asks again ("Always Allow") after each rebuild. A stable self-signed code-signing identity
-# (created once by the owner in Keychain Access ▸ Certificate Assistant) passed as CODESIGN_ID
-# keeps the same identity across rebuilds and stops those prompts. The owner decides; nothing here
-# creates certificates.
+# CODESIGN_ID concerns Gatekeeper/code signing only. Bridge uses per-user file keys
+# (ADR-0011 Amendment 2), so rebuilding never triggers credential access prompts.
+# Nothing here creates certificates.
 #
 # The agent Bridge helpers (ADR-0011 §4) ship INSIDE the app so their path is stable:
 #   Varos.app/Contents/MacOS/varos-bridge   (the MCP/stdio proxy agents register once)
@@ -166,8 +163,7 @@ plist_get() { plutil -extract "$1" raw -o - "$APP/Contents/Info.plist"; }
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # ---- 7. sign: ad-hoc by default, or CODESIGN_ID (local use only; not notarized) ----
-# Helpers first (nested code), then the bundle. Keychain item access is tied to these
-# signatures; ad-hoc re-signing after a rebuild can make macOS ask once to allow access.
+# Helpers first (nested code), then the bundle; signing is independent of Bridge keys.
 for helper in varos-bridge varos-cli; do
   codesign --force --sign "$SIGN_ID" "$APP/Contents/MacOS/$helper"
 done

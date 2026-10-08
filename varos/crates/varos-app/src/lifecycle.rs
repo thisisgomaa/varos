@@ -104,16 +104,10 @@ pub trait DocStore {
         path: &Path,
         _expected: Option<&varos_app::storage::durable::Fingerprint>,
         _fresh: bool,
-        _auth: Option<&varos_bridge::ipc::Recheck>,
     ) -> Result<SaveOutcome, varos_bridge::Error> {
         self.save(doc, path).map_err(|e| varos_bridge::Error::new("io_error", e))
     }
-    fn export_guarded(
-        &mut self,
-        path: &Path,
-        bytes: &[u8],
-        _auth: Option<&varos_bridge::ipc::Recheck>,
-    ) -> Result<SaveOutcome, varos_bridge::Error> {
+    fn export_guarded(&mut self, path: &Path, bytes: &[u8]) -> Result<SaveOutcome, varos_bridge::Error> {
         self.write_export(path, bytes)
             .map(|_| SaveOutcome::Durable)
             .map_err(|e| varos_bridge::Error::new("io_error", e))
@@ -2646,10 +2640,8 @@ mod tests {
         let job = FileJob::Bridge(Box::new(BridgeFileJob {
             ticket,
             inner: job,
-            roots: vec![],
-            backing: vec![],
+            home: std::env::temp_dir(),
             expected: Some((p("/d/bridge.vrs"), Some(fp))),
-            auth: None,
         }));
         r.ed(id).execute(EditCommand::SetBoardName("later human".into()));
         r.land(job);
@@ -2663,10 +2655,8 @@ mod tests {
         r.land(FileJob::Bridge(Box::new(BridgeFileJob {
             ticket,
             inner,
-            roots: vec![],
-            backing: vec![],
+            home: std::env::temp_dir(),
             expected: Some((p("/d/bridge.vrs"), Some(fp))),
-            auth: None,
         })));
         assert_eq!(r.s.doc("/d/bridge.vrs").name, "written");
         assert!(r.get(id).saving.is_none());

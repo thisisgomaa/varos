@@ -7,7 +7,7 @@
 # per-launch token: delete it; it is no longer needed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-echo "bridge-connect.sh is deprecated; running: varos-cli bridge register claude $*" >&2
+echo "Local agents are trusted; no pairing needed. Register once, then say use Varos. bridge-connect.sh is deprecated; running: varos-cli bridge register claude $*" >&2
 for installed in "/Applications/Varos.app/Contents/MacOS/varos-cli" "$HOME/Applications/Varos.app/Contents/MacOS/varos-cli"; do
   if [[ -x "$installed" && -x "${installed:h}/varos-bridge" ]]; then
     exec "$installed" bridge register claude "$@"

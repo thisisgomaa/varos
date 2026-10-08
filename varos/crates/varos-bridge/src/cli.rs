@@ -92,7 +92,7 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
     } else {
         if token.is_some() {
             return Err(
-                "--token belongs only to the deprecated explicit-socket mode; --attach auto uses Keychain identity"
+                "--token belongs only to the deprecated explicit-socket mode; --attach auto uses file identity keys"
                     .into(),
             );
         }
