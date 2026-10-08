@@ -26,10 +26,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: varos
+      - name: Fetch crates (the dependency checker's cargo tree needs a resolved graph on a cold cache)
+        run: cargo fetch --locked
       - name: Test architecture checker
         run: python -m unittest discover -s ../tools/tests -v
       - name: Enforce dependency directions
         run: python ../tools/check_dep_directions.py
+      - name: Check vendored patches (PASS = 0, SKIP = 2 when a pristine archive is not cached, FAIL = 1)
+        shell: bash
+        run: python ../tools/check_vendor_patches.py || [ $? -eq 2 ]
+      - name: Add wasm32 target (varos-text must stay web-buildable, ADR-0012 §1)
+        if: runner.os == 'macOS'
+        run: rustup target add wasm32-unknown-unknown
+      - name: Check varos-text on wasm32
+        if: runner.os == 'macOS'
+        run: cargo check --locked -p varos-text --target wasm32-unknown-unknown -j 4
       - name: Check formatting
         if: runner.os == 'macOS'
         run: cargo fmt --all --check
