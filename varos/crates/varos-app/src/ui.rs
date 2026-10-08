@@ -364,8 +364,8 @@ impl Ui {
     pub fn tab_drag_active(&self) -> bool {
         self.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY)).is_some())
     }
-    /// Is the picker's system eyedropper armed? While it is, in-window clicks are swallowed by the host
-    /// so the sampled click doesn't also poke the canvas (A5 samples via a global pixel read instead).
+    /// Is the picker eyedropper armed? The host swallows canvas clicks after feeding egui, so
+    /// accepting a canvas sample cannot also select/deselect the artwork.
     pub fn picking_screen(&self) -> bool {
         self.color_modal.as_ref().is_some_and(|m| m.eyedropping)
     }
@@ -739,7 +739,14 @@ impl Ui {
             paint_agent_presence(ctx, view, ppp, hole, &presence);
             build_snap_hud(ctx, view, ppp, hole, &snap_hud);
             build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
-            build_color_modal(ctx, &mut color_modal, &snap, ic_pipette, &mut ops);
+            if let Some(m) = color_modal.as_mut() {
+                prepare_canvas_sample(m, ed, view, ppp, hole);
+            }
+            let sample = color_modal.as_ref().and_then(|m| picker_canvas_sample(ctx, m));
+            build_color_modal(ctx, &mut color_modal, &snap, ic_pipette, &mut ops, sample);
+            if let Some(m) = color_modal.as_mut() {
+                prepare_canvas_sample(m, ed, view, ppp, hole);
+            }
         });
         self.color_modal = color_modal;
         self.refpt = refpt;
@@ -768,7 +775,7 @@ impl Ui {
         }
         self.panel_column = new_column;
         ed.set_constrain_wh(lock); // A12: mirror the Properties W/H lock so canvas scale drags honour it too
-                                   // OpenPicker is a UI op (it opens the modal, seeded from the target's colour) — intercept it here
+                                   // OpenPicker is a UI op: apply_picker_frame applies the frame first, then opens the modal (K3 safe)
                                    // K3: field commits first; while a field holds invalid text the frame's presses are dropped
         fields::finish_frame(&self.ctx, self.doc_active, &mut ops, &mut self.field_pending);
         ops.retain(|op| {
@@ -776,34 +783,9 @@ impl Ui {
                 self.fit_request = Some(*index);
                 return false;
             }
-            if let Op::OpenPicker(t) = op {
-                let seed = match *t {
-                    MTarget::Paint(PaintTarget::Fill) => snap.fill,
-                    MTarget::Paint(PaintTarget::Stroke) => snap.stroke,
-                    MTarget::Ab(i) => ed.doc.artboards.get(i).and_then(|a| a.page_color),
-                };
-                let base = seed.unwrap_or([0.85, 0.85, 0.87, 1.0]);
-                let h = rgb_to_hsv(base);
-                // A6: open ONE undo step for the whole picker session; live edits mutate the doc in
-                // place each frame and OK/Cancel closes the single step.
-                ed.execute(EditCommand::PickerBegin);
-                self.color_modal = Some(ColorModal {
-                    target: *t,
-                    orig: seed,
-                    hsva: [h[0], h[1], h[2], base[3]],
-                    chan: Chan::H,
-                    tab: MTab::Picker,
-                    harmony: Harmony::None,
-                    eyedropping: false,
-                    eyedrop_prev_down: false,
-                    eyedrop_return: [h[0], h[1], h[2], base[3]],
-                });
-                false
-            } else {
-                true
-            }
+            true
         });
-        apply_frame(ed, snap_cfg, ops); // the band's snapping rows, then the panels' ops
+        apply_picker_frame(ed, snap_cfg, ops, &mut self.color_modal);
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
 
         // macOS: cursors.rs owns the OS cursor (Retina NSCursor, re-set every frame from `chrome_ck` /

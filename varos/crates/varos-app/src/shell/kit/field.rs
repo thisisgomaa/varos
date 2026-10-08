@@ -284,6 +284,7 @@ fn finish<T: PartialEq>(
     s.buf = buf;
     let parsed = parse(&s.buf);
     s.validity = match &parsed {
+        _ if s.orig.is_empty() && s.buf.trim().is_empty() => Validity::Unchanged,
         Err(reason) => Validity::Invalid(reason),
         Ok(v) if parse(&s.orig).as_ref().ok() == Some(v) => Validity::Unchanged,
         Ok(_) => Validity::Changed,

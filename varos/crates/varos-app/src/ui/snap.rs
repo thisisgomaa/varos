@@ -15,6 +15,8 @@ pub(crate) struct Snap {
     pub(crate) rot: f32,
     pub(crate) fill: Option<Rgba>,
     pub(crate) stroke: Option<Rgba>,
+    pub(crate) fill_mixed: bool,
+    pub(crate) stroke_mixed: bool,
     pub(crate) sw: f32,
     pub(crate) opacity: f32,
     pub(crate) clip_exempt: bool, // A30: the selection's clip unit is released from artboard clip
@@ -39,7 +41,23 @@ pub(crate) struct Snap {
     pub(crate) rulers_on: bool,
     pub(crate) pathfinder: Result<(), &'static str>, // the boolean buttons' availability + reason (core decides)
 }
+fn paint_mixed(ed: &Editor, target: PaintTarget) -> bool {
+    let mut paints = ed.selected_pids().into_iter().filter_map(|pid| ed.doc.pidx(pid)).map(|pi| {
+        let p = &ed.doc.paths[pi];
+        match target {
+            PaintTarget::Fill => &p.fill,
+            PaintTarget::Stroke => &p.stroke,
+        }
+    });
+    paints.next().is_some_and(|first| paints.any(|paint| paint != first))
+}
 impl Snap {
+    pub(crate) fn target_mixed(&self, target: PaintTarget) -> bool {
+        match target {
+            PaintTarget::Fill => self.fill_mixed,
+            PaintTarget::Stroke => self.stroke_mixed,
+        }
+    }
     pub(crate) fn read(ed: &Editor) -> Self {
         let n = ed.objsel.len();
         // Pen mid-draft. The Pen deselects other art when a draft starts (core `pen.rs`), so the selection
@@ -94,6 +112,8 @@ impl Snap {
             rot: ed.obj_angle.to_degrees(),
             fill,
             stroke,
+            fill_mixed: paint_mixed(ed, PaintTarget::Fill),
+            stroke_mixed: paint_mixed(ed, PaintTarget::Stroke),
             sw,
             opacity,
             clip_exempt: ed.sel_clip_exempt(),

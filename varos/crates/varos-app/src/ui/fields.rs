@@ -353,8 +353,19 @@ pub(crate) fn board_tags(ui: &mut egui::Ui, w: f32, tags: &[String], ops: &mut V
 pub(crate) fn hex(ui: &mut egui::Ui, w: f32, shown: &str) -> Option<varos_core::geom::Rgba> {
     let id = doc_id(ui, "cm-hex");
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, t::FIELD_H), egui::Sense::hover());
+    #[cfg(test)]
+    tests::probe("picker hex", rect);
     let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let f = TextField { id, rect, value: shown, font, framed: true, open: false, hint: "" };
+    let f = TextField {
+        id,
+        rect,
+        value: shown,
+        font,
+        framed: true,
+        open: false,
+        hint: if shown.is_empty() { "Mixed" } else { "" },
+    };
+    // The kit treats an empty original + empty buffer as Unchanged (the Mixed placeholder).
     // a colour is its value: "fff" and "FFFFFF" are the same, unchanged
     let parse = |s: &str| super::parse_hex(s).map(|c| c.map(|v| (v * 255.0).round() as u8)).ok_or("Type a hex colour");
     kf::text_field(ui, f, parse).commit.map(|c| c.map(|v| v as f32 / 255.0))
