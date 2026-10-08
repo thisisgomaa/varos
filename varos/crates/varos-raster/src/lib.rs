@@ -28,6 +28,39 @@ impl Raster {
     }
 }
 
+/// Render artwork once at the physical canvas size, without selection overlays.
+pub fn rasterize_canvas(snapshot: &Document, size: [u32; 2], pan: [f32; 2], ppu: f32) -> Raster {
+    let mut editor = Editor::new();
+    editor.replace_doc(snapshot.clone());
+    let scene = build_scene(&editor, ppu);
+    let mut pixmap = Pixmap::new(size[0].max(1), size[1].max(1)).expect("non-zero canvas size");
+    pixmap.fill(tiny_skia::Color::from_rgba8(20, 19, 19, 255));
+    draw_groups(&scene.content, &mut pixmap, Transform::from_row(ppu, 0.0, 0.0, ppu, pan[0], pan[1]));
+    Raster { width: pixmap.width(), height: pixmap.height(), pixels: pixmap.take() }
+}
+
+impl Raster {
+    /// Read a cached pixel; no scene construction or raster work occurs here.
+    pub fn sample(&self, pixel: [f32; 2]) -> Option<Rgba> {
+        if !pixel.iter().all(|v| v.is_finite() && *v >= 0.0)
+            || pixel[0] >= self.width as f32
+            || pixel[1] >= self.height as f32
+        {
+            return None;
+        }
+        let at = (pixel[1] as usize * self.width as usize + pixel[0] as usize) * 4;
+        let c = &self.pixels[at..at + 4];
+        let alpha = c[3] as f32 / 255.0;
+        let channel = |v: u8| if alpha == 0.0 { 0.0 } else { v as f32 / 255.0 / alpha };
+        Some([channel(c[0]), channel(c[1]), channel(c[2]), alpha])
+    }
+}
+
+#[cfg(test)]
+fn sample_canvas(editor: &Editor, world: [f32; 2], ppu: f32) -> Rgba {
+    rasterize_canvas(&editor.doc, [3, 3], [1.5 - world[0] * ppu, 1.5 - world[1] * ppu], ppu).sample([1.0, 1.0]).unwrap()
+}
+
 /// Render an immutable document snapshot to a dotted `#141313` well, fitting visible scene bounds.
 pub fn rasterize(snapshot: Arc<Document>, size: [u32; 2]) -> Raster {
     let (w, h) = (size[0].max(1), size[1].max(1));
@@ -385,6 +418,27 @@ mod tests {
         let mut d = Document::default();
         d.artboards.push(Artboard { x: 0.0, y: 0.0, w: 100.0, h: 100.0, ..Artboard::default() });
         d
+    }
+
+    #[test]
+    fn canvas_eyedropper_samples_rendered_fixture_not_selection_overlay() {
+        let mut doc = white_board();
+        doc.paths.push(rect(2, [10.0, 10.0], [30.0, 30.0], [1.0, 0.0, 0.0, 1.0]));
+        let mut translucent = rect(3, [20.0, 20.0], [10.0, 10.0], [0.0, 0.0, 1.0, 1.0]);
+        translucent.opacity = 0.5;
+        doc.paths.push(translucent);
+        let mut ed = Editor::new();
+        ed.replace_doc(doc);
+        ed.objsel.insert(2);
+        for zoom in [0.5, 1.0, 2.0, 4.0] {
+            assert_eq!(sample_canvas(&ed, [15.0, 15.0], zoom), [1.0, 0.0, 0.0, 1.0]);
+            assert_eq!(sample_canvas(&ed, [60.0, 60.0], zoom), [1.0; 4]);
+            let blended = sample_canvas(&ed, [25.0, 25.0], zoom);
+            assert!((blended[0] - 0.5).abs() < 0.01 && (blended[2] - 0.5).abs() < 0.01, "{blended:?}");
+            assert_eq!(blended[1], 0.0);
+        }
+        ed.doc.paths[1].hidden = true;
+        assert_eq!(sample_canvas(&ed, [25.0, 25.0], 2.0), [1.0, 0.0, 0.0, 1.0]);
     }
 
     #[test]

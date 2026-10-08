@@ -113,8 +113,8 @@ pub(crate) fn board_ctlbar(
                             Op::SetRot,
                         );
                         bar_sep(ui);
-                        ctl_chip(ui, s.fill, PaintTarget::Fill, ops);
-                        ctl_chip(ui, s.stroke, PaintTarget::Stroke, ops);
+                        ctl_chip(ui, s.fill, PaintTarget::Fill, s.fill_mixed, ops);
+                        ctl_chip(ui, s.stroke, PaintTarget::Stroke, s.stroke_mixed, ops);
                         fields::num(
                             ui,
                             74.0,
@@ -158,8 +158,8 @@ pub(crate) fn board_ctlbar(
                         dim_field(ui, fw, true, s.w, true, ops, |v| Op::SetBBox(None, None, Some(v), None, 0.0, 0.0));
                         dim_field(ui, fw, false, s.h, true, ops, |v| Op::SetBBox(None, None, None, Some(v), 0.0, 0.0));
                         bar_sep(ui);
-                        ctl_chip(ui, s.fill, PaintTarget::Fill, ops);
-                        ctl_chip(ui, s.stroke, PaintTarget::Stroke, ops);
+                        ctl_chip(ui, s.fill, PaintTarget::Fill, s.fill_mixed, ops);
+                        ctl_chip(ui, s.stroke, PaintTarget::Stroke, s.stroke_mixed, ops);
                     } else {
                         // idle: the current tool + a quiet hint — the bar keeps its place. While the Pen is
                         // mid-draft the hint reflects the ACT, not the (still-empty) selection (P9).
@@ -197,8 +197,8 @@ pub(crate) fn bar_sep(ui: &mut egui::Ui) {
     ui.painter().vline(r.center().x, r.y_range(), Stroke::new(1.0, BORDER));
 }
 
-/// A 17×17 colour chip (§3.5): click = open the Color Picker for that target (a MIRROR of Appearance).
-pub(crate) fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarget, ops: &mut Vec<Op>) {
+/// A 17×17 colour chip (§3.5): click focuses; double-click opens the Color Picker for that target (a MIRROR of Appearance).
+pub(crate) fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarget, mixed: bool, ops: &mut Vec<Op>) {
     let (sw, resp) = ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::click());
     let round = CornerRadius::same(2);
     match color {
@@ -216,8 +216,14 @@ pub(crate) fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarg
             );
         }
     }
+    if mixed {
+        mixed_swatch(ui.painter(), sw);
+    }
     ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
     if resp.clicked() {
+        ops.push(Op::PaintFocus(target));
+    }
+    if resp.double_clicked() {
         ops.push(Op::OpenPicker(MTarget::Paint(target)));
     }
     resp.on_hover_text(match target {
@@ -257,7 +263,7 @@ pub(crate) fn ctl_ab_color(ui: &mut egui::Ui, color: Option<Rgba>, i: usize, ops
 
 /// Illustrator's fill/stroke control: overlapping FILL square (top-left) + STROKE ring (bottom-right);
 /// the focused target draws ON TOP with an accent edge. Click a swatch to focus it (X toggles) ·
-/// the ⤡ arrows swap the colours (Shift+X) · the mini pair resets to white/black (D). None = red slash.
+/// double-click opens the picker; the ⤡ arrows swap the colours (Shift+X) · the mini pair resets to white/black (D). None = red slash.
 pub(crate) fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
     // 30-cell rail scale (Ahmed 07-07): 20px swatches overlapping inside a 30×40 slot
     let (area, _) = ui.allocate_exact_size(egui::vec2(30.0, 40.0), egui::Sense::hover());
@@ -285,6 +291,9 @@ pub(crate) fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>
                 slash(p, fr);
             }
         }
+        if s.fill_mixed {
+            mixed_swatch(p, fr);
+        }
         p.rect_stroke(
             fr,
             rr,
@@ -295,21 +304,26 @@ pub(crate) fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>
     let draw_stroke = |p: &egui::Painter, active: bool| {
         p.rect_filled(sr.expand(2.0), CornerRadius::same(5), SOLID_PANEL); // swatch separation halo
         let hole = sr.shrink(6.0);
+        let hole_round = CornerRadius::same(2);
         match s.stroke {
             Some(c) => {
                 if c[3] < 0.999 {
                     checker(p, sr, 5.0);
                 }
                 p.rect_filled(sr, rr, rgba_c32a(c));
-                p.rect_filled(hole, CornerRadius::same(2), SOLID_PANEL);
+                p.rect_filled(hole, hole_round, SOLID_PANEL);
             }
             None => {
                 p.rect_filled(sr, rr, SWATCH_WELL);
-                p.rect_filled(hole, CornerRadius::same(2), SOLID_PANEL);
+                p.rect_filled(hole, hole_round, SOLID_PANEL);
                 slash(p, sr);
             }
         }
-        p.rect_stroke(hole, CornerRadius::same(2), Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
+        if s.stroke_mixed {
+            mixed_swatch(p, sr);
+            p.rect_filled(hole, hole_round, SOLID_PANEL);
+        }
+        p.rect_stroke(hole, hole_round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
         p.rect_stroke(
             sr,
             rr,
@@ -344,15 +358,12 @@ pub(crate) fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>
     if resp.clicked() {
         if let Some(t) = resp.interact_pointer_pos().and_then(hit) {
             ops.push(Op::PaintFocus(t));
+            if resp.double_clicked() {
+                ops.push(Op::OpenPicker(MTarget::Paint(t)));
+            }
         }
     }
-    // double-click a swatch → the Color Picker modal for that target (Illustrator)
-    if resp.double_clicked() {
-        if let Some(t) = resp.interact_pointer_pos().and_then(hit) {
-            ops.push(Op::OpenPicker(MTarget::Paint(t)));
-        }
-    }
-    resp.on_hover_text("Fill / Stroke — click to focus (X) · double-click to edit");
+    resp.on_hover_text("Fill / Stroke — click to focus; double-click to edit (X toggles focus)");
     // swap (Shift+X): a tiny hand-painted double-headed arrow, top-right
     let swr = egui::Rect::from_min_size(area.min + egui::vec2(20.0, 0.0), egui::vec2(10.0, 10.0));
     let rsw = ui.interact(swr, ui.id().with("fs-swap"), egui::Sense::click());
