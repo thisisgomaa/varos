@@ -6,36 +6,22 @@ use varos_core::editor::{AbDrag, Drag, ToolKind};
 thread_local! { static SERVICE: RefCell<Option<Service>> = const { RefCell::new(None) }; }
 pub fn initialize(epoch: String) {
     SERVICE.with(|s| *s.borrow_mut() = Some(Service::new(epoch)));
-    FILE_ROOTS.with(|r| {
-        *r.borrow_mut() = std::env::var_os("VAROS_BRIDGE_FILE_ROOTS")
-            .map(|s| std::env::split_paths(&s).filter_map(accepted_root).collect())
-            .unwrap_or_default()
-    });
     FILE_RESULTS.with(|r| r.borrow_mut().clear());
     FILE_PENDING.with(|r| r.borrow_mut().clear());
     FILE_AUDIT.with(|r| r.borrow_mut().clear());
     FILE_EVICTED.with(|r| r.borrow_mut().clear());
-    FILE_ROOTS.with(|r| eprintln!("Bridge accepted file roots: {:?}", r.borrow()));
-}
-fn accepted_root(path: std::path::PathBuf) -> Option<std::path::PathBuf> {
-    if !path.is_absolute() || varos_bridge::files::forbidden(&path) {
-        return None;
-    }
-    path.canonicalize().ok().filter(|p| p.is_dir() && !varos_bridge::files::forbidden(p))
 }
 struct Desktop<'a> {
     ws: &'a mut Workspace,
     ui: Option<&'a mut dyn DocUi>,
     snapshot: Option<varos_bridge::service::SnapshotJob>,
     files: Option<&'a mut dyn crate::host::FileJobs>,
-    auth: Option<varos_bridge::ipc::Recheck>,
     audit: Option<(varos_bridge::conn::Paths, varos_bridge::conn::audit::Entry)>,
 }
 thread_local! {
     static FILE_AUDIT: RefCell<std::collections::HashMap<u64, (varos_bridge::conn::Paths, varos_bridge::conn::audit::Entry)>> = RefCell::new(std::collections::HashMap::new());
     static FILE_EVICTED: RefCell<std::collections::VecDeque<u64>> = const { RefCell::new(std::collections::VecDeque::new()) };
     static FILE_PENDING: RefCell<std::collections::HashSet<u64>> = RefCell::new(std::collections::HashSet::new());
-    static FILE_ROOTS: RefCell<Vec<std::path::PathBuf>> = const {RefCell::new(Vec::new())};
     static FILE_RESULTS: RefCell<std::collections::VecDeque<(u64,varos_bridge::Reply)>> = const { RefCell::new(std::collections::VecDeque::new()) };
 }
 pub fn file_completed(ticket: u64, reply: varos_bridge::Reply) {
@@ -84,9 +70,6 @@ impl Host for Desktop<'_> {
         self.snapshot = Some(job);
         varos_bridge::Reply::success(serde_json::json!({"pending":true}))
     }
-    fn files_roots_granted(&self) -> bool {
-        FILE_ROOTS.with(|r| !r.borrow().is_empty())
-    }
     fn file_pending(&self, ticket: u64) -> bool {
         !FILE_EVICTED.with(|r| r.borrow().contains(&ticket)) && FILE_PENDING.with(|r| r.borrow().contains(&ticket))
     }
@@ -109,8 +92,8 @@ impl Host for Desktop<'_> {
         }
         let mut snapshot = s.editor.doc.clone();
         let ticket = crate::file_jobs::next_ticket();
-        let roots = FILE_ROOTS.with(|r| r.borrow().clone());
-        let backing = self.ws.sessions().iter().filter_map(|s| s.path.clone()).collect();
+        let home = varos_bridge::conn::fsutil::user_home_dir()
+            .map_err(|e| Error::new("io_error", format!("user home unavailable: {e}")))?;
         let expected =
             if verb == "save" {
                 Some((
@@ -129,9 +112,6 @@ impl Host for Desktop<'_> {
                 request.path.as_ref().ok_or_else(|| Error::new("invalid_argument", "path required"))?,
             );
             varos_bridge::files::validate_path(&path, if verb == "export_pdf" { "pdf" } else { "vrs" })?;
-            if roots.is_empty() {
-                return Err(Error::new("scope_refused", "owner has not granted any file roots"));
-            }
             path
         };
         varos_bridge::files::validate_path(&dest, if verb == "export_pdf" { "pdf" } else { "vrs" })?;
@@ -174,14 +154,7 @@ impl Host for Desktop<'_> {
         let save = if let FileJob::Save(j) = &inner { Some(j.doc.clone()) } else { None };
         let worker = self.files.as_deref_mut().ok_or_else(|| Error::new("busy", "file worker unavailable"))?;
         worker
-            .submit(FileJob::Bridge(Box::new(BridgeFileJob {
-                ticket,
-                inner,
-                roots,
-                backing,
-                expected,
-                auth: self.auth.clone(),
-            })))
+            .submit(FileJob::Bridge(Box::new(BridgeFileJob { ticket, inner, home, expected })))
             .map_err(|_| Error::new("busy", "file worker unavailable"))?;
         FILE_PENDING.with(|r| r.borrow_mut().insert(ticket));
         if let Some(audit) = self.audit.clone() {
@@ -265,35 +238,23 @@ impl Host for Desktop<'_> {
 /// Owner-readable body for the one-time "agents can't connect" notice.
 pub fn unavailable_text(reason: &str) -> String {
     format!(
-        "Varos works normally, but AI agents (Claude Code, Codex…) can't connect to it in this session.\n\nVaros couldn't use its connection key in the macOS Keychain ({reason}).\n\nTo try again, quit and reopen Varos and choose Allow when macOS asks about the Keychain."
+        "Varos works normally, but AI agents (Claude Code, Codex…) can't connect to it in this session.\n\nVaros couldn't use its connection key file ({reason}).\n\nFix the key file or directory as described above, then quit and reopen Varos."
     )
 }
 pub fn observe(ws: &mut Workspace) {
     SERVICE.with(|s| {
         if let Some(service) = s.borrow_mut().as_mut() {
-            service.observe(&mut Desktop { ws, ui: None, snapshot: None, files: None, auth: None, audit: None });
+            service.observe(&mut Desktop { ws, ui: None, snapshot: None, files: None, audit: None });
         }
     });
 }
 pub fn run_with_files<'a>(
-    mut request: varos_bridge::ipc::Pending,
+    request: varos_bridge::ipc::Pending,
     ws: &'a mut Workspace,
     ui: &'a mut dyn DocUi,
     files: Option<&'a mut dyn crate::host::FileJobs>,
 ) -> crate::host::Ran {
-    // ADR-0011 §3: re-evaluate the paired agent's grant on the owning thread before dispatch.
-    if let Err(error) = request.authorize() {
-        let _ = request.reply.send(varos_bridge::Reply::failure(error));
-        return crate::host::Ran::default();
-    }
-    let mut desktop = Desktop {
-        ws,
-        ui: Some(ui),
-        snapshot: None,
-        files,
-        auth: request.recheck.clone(),
-        audit: request.file_audit.clone(),
-    };
+    let mut desktop = Desktop { ws, ui: Some(ui), snapshot: None, files, audit: request.file_audit.clone() };
     let reply = SERVICE.with(|s| match s.borrow_mut().as_mut() {
         Some(service) => service.handle(&mut desktop, &request.context, request.request, &request.cancelled),
         None => varos_bridge::Reply::failure(Error::new("unsupported", "attachment listener unavailable")),
@@ -358,21 +319,11 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         run(
             varos_bridge::ipc::Pending {
-                context: varos_bridge::Context {
-                    client: "test".into(),
-                    epoch: "epoch".into(),
-                    read: true,
-                    edit: true,
-                    destructive: true,
-                    history: true,
-                    files: false,
-                    allow_history: false,
-                    allow_destructive: false,
-                },
+                context: varos_bridge::Context { client: "test".into(), epoch: "epoch".into() },
                 request: req,
                 cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 reply: tx,
-                recheck: None,
+
                 file_audit: None,
             },
             ws,
@@ -397,7 +348,6 @@ mod tests {
             }
         }
         initialize("epoch".into());
-        FILE_ROOTS.with(|r| r.borrow_mut().push(std::env::temp_dir().canonicalize().unwrap()));
         let mut ws = Workspace::new();
         let id = ws.active_id().unwrap();
         let s = ws.get_mut(id).unwrap();
@@ -409,11 +359,10 @@ mod tests {
             follow_up: false,
             started: std::time::Instant::now(),
         });
-        let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({"request_id":"r1","board":format!("b{}",id.0),"expected_rev":s.editor.rev,"path":std::env::temp_dir().join("copy.PDF"),"scope":"all_visible_artboards"})).unwrap();
+        let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({"request_id":"r1","board":format!("b{}",id.0),"expected_rev":s.editor.rev,"path":varos_bridge::conn::fsutil::user_home_dir().unwrap().join("copy.PDF"),"scope":"all_visible_artboards"})).unwrap();
         assert_eq!(request.api, "1.0");
         let mut jobs = Jobs::default();
-        let mut host =
-            Desktop { ws: &mut ws, ui: None, snapshot: None, files: Some(&mut jobs), auth: None, audit: None };
+        let mut host = Desktop { ws: &mut ws, ui: None, snapshot: None, files: Some(&mut jobs), audit: None };
         assert_eq!(host.file_effect("save_as", &request).unwrap_err().code, "busy");
         assert!(host.file_effect("export_pdf", &request).unwrap().ok);
         assert_eq!(host.ws.get(id).unwrap().saving.as_ref().unwrap().ticket, 999);
@@ -446,15 +395,15 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn file_host_refusals_and_root_capability() {
+    fn file_host_guards_and_open_trust_capability() {
         initialize("epoch".into());
-        FILE_ROOTS.with(|r| r.borrow_mut().clear());
         let mut ws = Workspace::new();
         let board = format!("b{}", ws.active_id().unwrap().0);
-        let mut host = Desktop { ws: &mut ws, ui: None, snapshot: None, files: None, auth: None, audit: None };
+        let mut host = Desktop { ws: &mut ws, ui: None, snapshot: None, files: None, audit: None };
         for (verb, path, code) in [
             ("save_as", "/tmp/copy.vrs", "scope_refused"),
             ("export_pdf", "/tmp/export.pdf", "scope_refused"),
+            ("save_as", "/private/var/copy.vrs", "scope_refused"),
             ("save_as", "relative.vrs", "invalid_argument"),
             ("export_pdf", "/tmp/wrong.vrs", "invalid_argument"),
             ("save_as", "/tmp/wrong.pdf", "invalid_argument"),
@@ -474,35 +423,17 @@ mod tests {
             };
             assert_eq!(host.file_effect(verb, &request).unwrap_err().code, code, "{path}");
         }
-        assert!(!host.files_roots_granted());
-        for root in ["relative", "/", "/System", "/System/child", "/Applications", "/Library", "/tmp/.hidden"] {
-            assert!(accepted_root(root.into()).is_none(), "{root}");
-        }
-        if let Some(home) = std::env::var_os("HOME") {
-            assert!(accepted_root(std::path::PathBuf::from(home).join("Library")).is_none());
-        }
-        let granted = std::env::temp_dir().canonicalize().unwrap();
-        FILE_ROOTS.with(|r| r.borrow_mut().push(granted));
-        assert!(host.files_roots_granted());
         let mut service = Service::new("epoch".into());
         let reply = service.handle(
             &mut host,
-            &varos_bridge::Context {
-                client: "c".into(),
-                epoch: "epoch".into(),
-                read: true,
-                edit: false,
-                destructive: false,
-                history: false,
-                files: true,
-                allow_history: false,
-                allow_destructive: false,
-            },
+            &varos_bridge::Context { client: "c".into(), epoch: "epoch".into() },
             varos_bridge::mcp::decode_tool("capabilities", serde_json::json!({})).unwrap(),
             &std::sync::atomic::AtomicBool::new(false),
         );
         let result = reply.result.unwrap();
-        assert_eq!(result["files_roots_granted"], true);
+        assert!(result.get("files_roots_granted").is_none());
+        assert_eq!(result["trust"], "local user");
+        assert!(result["file_guards"].as_array().unwrap().len() >= 7);
         assert!(result.get("files_roots").is_none());
     }
     #[test]
@@ -513,7 +444,7 @@ mod tests {
         }
         assert!(FILE_EVICTED.with(|r| r.borrow().contains(&1)));
         let mut ws = Workspace::new();
-        let host = Desktop { ws: &mut ws, ui: None, snapshot: None, files: None, auth: None, audit: None };
+        let host = Desktop { ws: &mut ws, ui: None, snapshot: None, files: None, audit: None };
         assert!(!host.file_pending(1));
         FILE_PENDING.with(|r| r.borrow_mut().insert(9000));
         assert!(host.file_pending(9000));
@@ -554,21 +485,11 @@ mod tests {
         let mut fields = Fields { valid: true, commit: true };
         let ran = run(
             varos_bridge::ipc::Pending {
-                context: varos_bridge::Context {
-                    client: "test".into(),
-                    epoch: "epoch".into(),
-                    read: true,
-                    edit: true,
-                    destructive: true,
-                    history: true,
-                    files: false,
-                    allow_history: false,
-                    allow_destructive: false,
-                },
+                context: varos_bridge::Context { client: "test".into(), epoch: "epoch".into() },
                 request: req,
                 cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 reply: tx,
-                recheck: None,
+
                 file_audit: None,
             },
             &mut ws,

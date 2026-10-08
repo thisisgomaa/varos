@@ -311,16 +311,15 @@ impl DocStore for DiskStore {
         path: &Path,
         expected: Option<&varos_app::storage::durable::Fingerprint>,
         fresh: bool,
-        auth: Option<&varos_bridge::ipc::Recheck>,
     ) -> Result<crate::lifecycle::SaveOutcome, varos_bridge::Error> {
         #[cfg(unix)]
         {
-            let fs = crate::bridge_fs::Pinned::new(path, expected, fresh, auth).map_err(|e| e.bridge())?;
+            let fs = crate::bridge_fs::Pinned::new(path, expected, fresh).map_err(|e| e.bridge())?;
             durable_save(&fs, doc, path, &varos_core::format::Limits::DEFAULT).map_err(|_| fs.error())
         }
         #[cfg(not(unix))]
         {
-            let _ = (doc, path, expected, fresh, auth);
+            let _ = (doc, path, expected, fresh);
             Err(varos_bridge::Error::new("unsupported", "Bridge file writes unavailable on this platform"))
         }
     }
@@ -328,11 +327,10 @@ impl DocStore for DiskStore {
         &mut self,
         path: &Path,
         bytes: &[u8],
-        auth: Option<&varos_bridge::ipc::Recheck>,
     ) -> Result<crate::lifecycle::SaveOutcome, varos_bridge::Error> {
         #[cfg(unix)]
         {
-            let fs = crate::bridge_fs::Pinned::new(path, None, true, auth).map_err(|e| e.bridge())?;
+            let fs = crate::bridge_fs::Pinned::new(path, None, true).map_err(|e| e.bridge())?;
             use varos_app::storage::{
                 checksum::new_nonce,
                 durable::{io_reason, write_replace, WriteOutcome},
@@ -346,7 +344,7 @@ impl DocStore for DiskStore {
         }
         #[cfg(not(unix))]
         {
-            let _ = (path, bytes, auth);
+            let _ = (path, bytes);
             Err(varos_bridge::Error::new("unsupported", "Bridge file writes unavailable on this platform"))
         }
     }

@@ -1,13 +1,12 @@
-//! ADR-0011 C1 — connection and trust: discovery registry, Keychain-backed identity,
-//! signed handshake, owner pairing, capability scopes, audit and auto-attach.
+//! ADR-0011 C1 — connection and trust: discovery registry, file-backed identity,
+//! signed handshake, open local trust, capability reporting, audit and auto-attach.
 //!
 //! Everything here is host/adapter code. `varos-core` stays pure; no editing happens here.
 //! Layout (macOS):
 //! - runtime (per-user OS temp dir from `confstr(_CS_DARWIN_USER_TEMP_DIR)`, never `$TMPDIR`):
-//!   `<temp>/varos-bridge/{hosts/<instance>/endpoint.json + b.sock, pairing/<id>.json}`
-//! - state (persistent, public data only): `~/Library/Application Support/Varos/bridge/{trust.json,
-//!   profiles.json, audit/audit.log}`
-//! - secrets: macOS Keychain, service `com.varos.bridge`, accounts `host` and `agent:<profile-id>`.
+//!   `<temp>/varos-bridge/{hosts/<instance>/endpoint.json + b.sock}`
+//! - state (persistent): `~/Library/Application Support/Varos/bridge/{profiles.json, audit/audit.log}`
+//! - secrets: `<state>/keys/{host.key,agent-<profile-id>.key}` (raw seeds, Unix 0600/0700).
 pub mod attach;
 pub mod audit;
 pub mod credentials;
@@ -25,7 +24,7 @@ use std::path::PathBuf;
 pub const CONNECTION: &str = "1.0";
 /// Registry record schema version (ADR-0011 §2).
 pub const DISCOVERY_VERSION: u32 = 1;
-/// Override for tests (debug builds only): relocates discovery + trust data (never secrets).
+/// Override for tests (debug builds only): relocates discovery, state and file keys.
 /// The directory must already exist, be owned by this user and be mode 0700.
 pub const HOME_OVERRIDE: &str = "VAROS_BRIDGE_HOME";
 
@@ -44,9 +43,6 @@ impl Paths {
     }
     pub fn hosts(&self) -> PathBuf {
         self.runtime.join("hosts")
-    }
-    pub fn pairing(&self) -> PathBuf {
-        self.runtime.join("pairing")
     }
     /// Persistent and owner-only (the macOS temp folder may be cleaned after a few days).
     pub fn audit(&self) -> PathBuf {
@@ -71,11 +67,7 @@ impl Paths {
             return Ok(Self::under(dir));
         }
         let temp = fsutil::user_temp_dir().map_err(|e| Error::new("unsupported", e.to_string()))?;
-        let home = fsutil::user_home_dir().map_err(|e| Error::new("unsupported", e.to_string()))?;
-        #[cfg(target_os = "macos")]
-        let state = home.join("Library/Application Support/Varos/bridge");
-        #[cfg(not(target_os = "macos"))]
-        let state = home.join(".config/varos/bridge");
+        let state = fsutil::app_support_dir().map_err(|e| Error::new("unsupported", e.to_string()))?;
         Ok(Self { runtime: temp.join("varos-bridge"), state })
     }
 }

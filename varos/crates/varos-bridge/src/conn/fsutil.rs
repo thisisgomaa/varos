@@ -65,6 +65,24 @@ pub fn user_home_dir() -> io::Result<PathBuf> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "Bridge trust store is not implemented on this platform yet"))
 }
 
+/// Persistent per-user Bridge state, shared by trust data and file identity keys.
+pub fn app_support_dir() -> io::Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(user_home_dir()?.join("Library/Application Support/Varos/bridge"))
+    }
+    #[cfg(windows)]
+    {
+        std::env::var_os("APPDATA")
+            .map(|p| PathBuf::from(p).join("Varos/bridge"))
+            .ok_or_else(|| io::Error::other("APPDATA is not set; restore the per-user application support path"))
+    }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    {
+        Ok(user_home_dir()?.join(".config/varos/bridge"))
+    }
+}
+
 /// A real directory (not a link), owned by this user, no group/other permissions.
 pub fn check_private_dir(path: &Path) -> io::Result<()> {
     #[cfg(unix)]

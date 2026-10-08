@@ -144,14 +144,14 @@ pub fn tools() -> Value {
     schemas.insert("history",object(json!({"api":api,"board":board,"request_id":request_id,"expected_rev":rev,"action":{"enum":["undo","redo"]},"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}}),&["api","board","request_id","expected_rev","action"]));
     schemas.insert("request_status", object(json!({"api":api,"request_id":request_id}), &["request_id"]));
     let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
-        "capabilities"=>"Negotiate Bridge API 1.0 and inspect enabled limits and grants.",
+        "capabilities"=>"Negotiate Bridge API 1.0; local user trust grants every scope. Inspect limits and file mistake-guards.",
         "list_boards"=>"List authorized open boards, never files or Recent entries.",
         "describe"=>"Summary first; ask for ids and fields for paginated detail. since returns net changes or resync_required.",
         "select"=>"Deliberately replace human selection with explicit targets; no document undo step.",
         "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection. Page verbs use persistent artboard:N ids.",
         "snapshot"=>"Explicit revision-pinned CPU PNG preview of the board, or of one artboard:N page. Returns an MCP image; max 1024 pixels per dimension.",
-        "save"|"save_as"|"export_pdf"=>"Queue revision-pinned file work; files scope required. Returns accepted and ticket; poll request_status. Explicit destinations require an owner-granted root and fresh filename.",
-        "history"=>"One shared undo/redo entry. Retry confirmation_required with digest and SAME request_id. Requires desktop owner VAROS_BRIDGE_ALLOW_HISTORY=1.",
+        "save"|"save_as"|"export_pdf"=>"Queue revision-pinned file work. Returns accepted and ticket; poll request_status. Allowed: fresh .vrs/.pdf names under passwd home, /Volumes/<volume>/, ~/Library/Mobile Documents (iCloud Drive), or ~/Library/CloudStorage/<provider>/ (Dropbox/Google Drive/OneDrive). Refused: /tmp, /private/var, other ~/Library, system roots, running app bundle, dot components and existing files. Network volumes unsupported. Parents must exist and canonical containment is rechecked. FAT32/exFAT use macOS exclusive-rename fallback after linkat; real volumes unverified.",
+        "history"=>"One shared undo/redo entry. Local agents need no approval; revision and idempotency checks still apply.",
         _=>"Get a retained receipt by monotonic request_id for this proxy client.",
     },"inputSchema":schemas[*name]})).collect();
     json!({"tools":tools})
@@ -267,7 +267,7 @@ pub fn serve<T: Transport>(
                     }
                     rpc_result(
                         id,
-                        json!({"protocolVersion":MCP_VERSION,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"varos-bridge","version":env!("CARGO_PKG_VERSION")},"instructions":"Call capabilities api 1.0 first. Summary then ids/fields. Explicit board/revision/targets; consume either text or structured content. Connection errors are typed: host_not_running (ask the owner to open Varos), pairing_required (the OWNER approves in their own Terminal; never run the approval yourself), ambiguous_target (ask the owner which Varos), session_reset (list_boards again)."}),
+                        json!({"protocolVersion":MCP_VERSION,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"varos-bridge","version":env!("CARGO_PKG_VERSION")},"instructions":"Call capabilities api 1.0 first. Summary then ids/fields. Explicit board/revision/targets; consume either text or structured content. Connection errors are typed: host_not_running (ask the owner to open Varos), ambiguous_target (ask the owner which Varos), session_reset (list_boards again)."}),
                     )
                 }
             }

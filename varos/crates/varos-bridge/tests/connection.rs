@@ -6,11 +6,11 @@ use serde_json::{json, Value};
 use std::{os::unix::fs::PermissionsExt, path::PathBuf, sync::Arc};
 use varos_bridge::conn::{
     attach::{self, AutoClient, Selection, Selector},
-    audit, credentials,
+    credentials,
     handshake::{AgentSide, Expect, Frame, HostSide},
     manage,
     registry::{self, Entry, Record, VersionRange},
-    trust::{self, Decision, Scopes, TrustFile},
+    trust::Scopes,
     Paths,
 };
 
@@ -128,27 +128,28 @@ fn deterministic_selection_never_guesses() {
     let a = record(&paths, "aaaaaaaaaaaaaaaa", &h1);
     let b = record(&paths, "bbbbbbbbbbbbbbbb", &h1);
     let c = record(&paths, "cccccccccccccccc", &h2);
-    let paired_h1 = vec![a.host_fingerprint.clone()];
-    assert_eq!(attach::select(&[], &Selector::Auto, &[]), Selection::NotRunning);
-    // A sole unpaired candidate may enter pairing.
-    assert_eq!(attach::select(std::slice::from_ref(&a), &Selector::Auto, &[]), Selection::Attach(a.clone()));
-    // Several unpaired → owner must choose.
+    assert_eq!(attach::select(&[], &Selector::Auto), Selection::NotRunning);
+    // A sole candidate can attach.
+    assert_eq!(attach::select(std::slice::from_ref(&a), &Selector::Auto), Selection::Attach(a.clone()));
+    // Several candidates → owner must choose.
     assert!(
-        matches!(attach::select(&[a.clone(), c.clone()], &Selector::Auto, &[]), Selection::Ambiguous(v) if v.len() == 2)
+        matches!(attach::select(&[a.clone(), c.clone()], &Selector::Auto), Selection::Ambiguous(v) if v.len() == 2)
     );
-    // One eligible paired host among unpaired ones → attach to it, not the newest.
-    assert_eq!(attach::select(&[c.clone(), a.clone()], &Selector::Auto, &paired_h1), Selection::Attach(a.clone()));
-    // Two launches of the same paired host → ambiguous, never "last one wins".
-    let sel = attach::select(&[a.clone(), b.clone()], &Selector::Auto, &paired_h1);
+    // Reversing candidates never selects a launch implicitly.
+    assert!(
+        matches!(attach::select(&[c.clone(), a.clone()], &Selector::Auto), Selection::Ambiguous(v) if v.len() == 2)
+    );
+    // Two launches of the same host remain ambiguous.
+    let sel = attach::select(&[a.clone(), b.clone()], &Selector::Auto);
     assert!(matches!(&sel, Selection::Ambiguous(v) if v.len() == 2));
     // Explicit selectors narrow.
-    let by_id = attach::select(&[a.clone(), b.clone()], &Selector::Instance(b.instance_id.clone()), &paired_h1);
+    let by_id = attach::select(&[a.clone(), b.clone()], &Selector::Instance(b.instance_id.clone()));
     assert_eq!(by_id, Selection::Attach(b.clone()));
-    assert_eq!(attach::select(std::slice::from_ref(&a), &Selector::Pid(1), &[]), Selection::NotRunning);
-    assert_eq!(attach::select(std::slice::from_ref(&a), &Selector::Pid(a.pid), &[]), Selection::Attach(a.clone()));
+    assert_eq!(attach::select(std::slice::from_ref(&a), &Selector::Pid(1)), Selection::NotRunning);
+    assert_eq!(attach::select(std::slice::from_ref(&a), &Selector::Pid(a.pid)), Selection::Attach(a.clone()));
     // Candidate list is bounded and carries no epoch, socket or names.
     let many: Vec<Record> = (0..20).map(|i| record(&paths, &format!("{i:016x}"), &h1)).collect();
-    let Selection::Ambiguous(v) = attach::select(&many, &Selector::Auto, &paired_h1) else { panic!() };
+    let Selection::Ambiguous(v) = attach::select(&many, &Selector::Auto) else { panic!() };
     let e = attach::ambiguous(&v);
     assert_eq!(e.code, "ambiguous_target");
     assert_eq!(e.candidates.len(), attach::MAX_CANDIDATES);
@@ -258,120 +259,16 @@ fn handshake_rejects_wrong_keys_replay_epoch_and_downgrade() {
     .is_err());
 }
 
-fn verified(p: &Pair, profile: &str) -> varos_bridge::conn::handshake::VerifiedAgent {
-    let (agent, hello) = AgentSide::hello().unwrap();
-    let (mut host, challenge) = HostSide::challenge(&p.host, &p.expect.instance_id, &p.expect.epoch, &hello).unwrap();
-    host.verify(&agent.respond(&challenge, &p.expect, &p.agent, profile, &session(), "codex").unwrap()).unwrap()
-}
-
 #[test]
-fn pairing_pending_approve_attach_revoke_refused_with_audit() {
-    let t = Temp::new();
-    let paths = t.paths();
-    let p = pair();
-    let host_fp = p.expect.host_fingerprint.clone();
-    let agent = verified(&p, PROFILE);
-    let trust_file = TrustFile::load(&paths).unwrap();
-    assert!(matches!(trust_file.decide(&agent, &host_fp), Decision::NeedsPairing));
-    let request = trust::request_pairing(&paths, &agent, &host_fp, &p.expect.instance_id).unwrap();
-    assert_eq!(mode(&paths.pairing().join(format!("{}.json", request.request_id))), 0o600);
-    // Repeated attempts coalesce.
-    assert_eq!(trust::request_pairing(&paths, &agent, &host_fp, &p.expect.instance_id).unwrap(), request);
-    assert_eq!(trust::pending(&paths).unwrap().len(), 1);
-    assert_eq!(request.match_code.len(), 7);
-    // Approval with explicit scopes binds key, profile and host pin.
-    // The owner must type the code the agent was shown; a wrong or empty code approves nothing.
-    for wrong in ["", "000-000"] {
-        let e = manage::approve(&paths, &request.request_id, wrong, Scopes::DEFAULT_REQUEST).unwrap_err();
-        assert_eq!(e.code, "match_code_mismatch");
-    }
-    assert_eq!(trust::pending(&paths).unwrap().len(), 1);
-    let approved =
-        manage::approve(&paths, &request.request_id, &request.match_code, Scopes::parse("read,edit").unwrap()).unwrap();
-    assert_eq!(approved.host_fingerprint, host_fp);
-    assert!(trust::pending(&paths).unwrap().is_empty());
-    assert_eq!(mode(&paths.state.join(trust::TRUST_FILE)), 0o600);
-    let file = TrustFile::load(&paths).unwrap();
-    let Decision::Allowed { scopes, generation } = file.decide(&agent, &host_fp) else { panic!("not allowed") };
-    assert_eq!(scopes, Scopes::DEFAULT_REQUEST);
-    assert_eq!(generation, 1);
-    // Trust store holds public data only.
-    let text = std::fs::read_to_string(paths.state.join(trust::TRUST_FILE)).unwrap();
-    assert!(!text.contains(&varos_bridge::conn::hex(p.agent.as_bytes())));
-    // A copied profile reference with another key is refused, not re-paired.
-    let mut thief = agent.clone();
-    thief.key = key().verifying_key();
-    thief.fingerprint = credentials::fingerprint(&thief.key);
-    assert!(matches!(file.decide(&thief, &host_fp), Decision::Denied(e) if e.code == "identity_mismatch"));
-    // A different host key needs pairing again.
-    assert!(matches!(file.decide(&agent, &"0".repeat(64)), Decision::NeedsPairing));
-    // Revoke → refused; the revoked key cannot be approved again.
-    manage::revoke(&paths, PROFILE).unwrap();
-    let file = TrustFile::load(&paths).unwrap();
-    assert_eq!(file.generation, 2);
-    assert!(matches!(file.decide(&agent, &host_fp), Decision::Denied(e) if e.code == "pairing_denied"));
-    let again = trust::request_pairing(&paths, &agent, &host_fp, &p.expect.instance_id).unwrap();
-    assert_eq!(
-        manage::approve(&paths, &again.request_id, &again.match_code, Scopes::DEFAULT_REQUEST).unwrap_err().code,
-        "pairing_denied"
-    );
-    // Audit: events only, owner-only, no payloads.
-    let lines = audit::tail(&paths, 10);
-    assert!(lines.iter().any(|l| l.contains("pairing_approved")));
-    assert!(lines.iter().any(|l| l.contains("agent_revoked")));
-    assert_eq!(mode(&paths.audit().join(audit::AUDIT_FILE)), 0o600);
-}
-
-#[test]
-fn changed_host_key_asks_again_instead_of_dead_end() {
-    let t = Temp::new();
-    let paths = t.paths();
-    let p = pair();
-    let agent = verified(&p, PROFILE);
-    let request = trust::request_pairing(&paths, &agent, &p.expect.host_fingerprint, &p.expect.instance_id).unwrap();
-    manage::approve(&paths, &request.request_id, &request.match_code, Scopes::DEFAULT_REQUEST).unwrap();
-    // Varos's host key is replaced (Keychain reset): the registry now shows the new key.
-    let new_host = key();
-    let new_record = record(&paths, "abababababababab", &new_host);
-    // Selection still finds the sole launch (no longer "paired"), so the agent can reach pairing...
-    let old_pin = vec![p.expect.host_fingerprint.clone()];
-    assert_eq!(
-        attach::select(std::slice::from_ref(&new_record), &Selector::Auto, &old_pin),
-        Selection::Attach(new_record.clone())
-    );
-    // ...the handshake with the new, registry-matching key succeeds (no host_identity_mismatch)...
-    let expect = Expect {
-        instance_id: new_record.instance_id.clone(),
-        epoch: new_record.epoch.clone(),
-        host_fingerprint: new_record.host_fingerprint.clone(),
-    };
-    let (agent_side, hello) = AgentSide::hello().unwrap();
-    let (mut host, challenge) = HostSide::challenge(&new_host, &expect.instance_id, &expect.epoch, &hello).unwrap();
-    let proof = agent_side.respond(&challenge, &expect, &p.agent, PROFILE, &session(), "codex").unwrap();
-    let again = host.verify(&proof).unwrap();
-    // ...and the trust store asks again rather than granting or dead-ending.
-    let file = TrustFile::load(&paths).unwrap();
-    assert!(matches!(file.decide(&again, &new_record.host_fingerprint), Decision::NeedsPairing));
-    let second = trust::request_pairing(&paths, &again, &new_record.host_fingerprint, &expect.instance_id).unwrap();
-    manage::approve(&paths, &second.request_id, &second.match_code, Scopes::DEFAULT_REQUEST).unwrap();
-    let file = TrustFile::load(&paths).unwrap();
-    assert!(matches!(file.decide(&again, &new_record.host_fingerprint), Decision::Allowed { .. }));
-    assert_eq!(file.approved.len(), 1, "re-approval replaces the old pin");
-}
-
-#[test]
-fn concurrent_first_use_creates_one_profile_and_approved_profile_is_preferred() {
+fn concurrent_first_use_creates_one_profile_without_trust_state() {
     let t = Temp::new();
     let paths = t.paths();
     let store: Arc<dyn credentials::CredentialStore> = Arc::new(credentials::MemoryStore::new());
-    let empty = TrustFile::load(&paths).unwrap();
     // Two MCP processes of the same client starting together (threads share the flock semantics).
     let ids: Vec<String> = (0..4)
         .map(|_| {
-            let (paths, store, empty) = (paths.clone(), store.clone(), empty.clone());
-            std::thread::spawn(move || {
-                attach::resolve_profile(&paths, store.as_ref(), &empty, "claude-code", None).unwrap().0
-            })
+            let (paths, store) = (paths.clone(), store.clone());
+            std::thread::spawn(move || attach::resolve_profile(&paths, store.as_ref(), "claude-code", None).unwrap().0)
         })
         .collect::<Vec<_>>()
         .into_iter()
@@ -380,7 +277,6 @@ fn concurrent_first_use_creates_one_profile_and_approved_profile_is_preferred() 
     assert!(ids.iter().all(|id| id == &ids[0]), "{ids:?}");
     // A second, newer profile for the same label exists (e.g. created elsewhere); the approved
     // one wins, the newest unapproved one does not.
-    let approved_id = ids[0].clone();
     let newer = "fedcba9876543210".to_string();
     let newer_key = credentials::load_or_create(store.as_ref(), &credentials::agent_account(&newer)).unwrap();
     let mut profiles = attach::LocalProfiles::load(&paths).unwrap();
@@ -396,25 +292,9 @@ fn concurrent_first_use_creates_one_profile_and_approved_profile_is_preferred() 
     )
     .unwrap();
     assert_eq!(
-        attach::resolve_profile(&paths, store.as_ref(), &empty, "claude-code", None).unwrap().0,
+        attach::resolve_profile(&paths, store.as_ref(), "claude-code", None).unwrap().0,
         newer,
         "no approval: newest"
-    );
-    let approved_key =
-        credentials::load_existing(store.as_ref(), &credentials::agent_account(&approved_id)).unwrap().unwrap();
-    let mut trust_file = empty.clone();
-    trust_file.approved.push(trust::Approved {
-        profile_id: approved_id.clone(),
-        public_key: credentials::public_hex(&approved_key.verifying_key()),
-        fingerprint: credentials::fingerprint(&approved_key.verifying_key()),
-        label: "claude-code".into(),
-        scopes: Scopes::DEFAULT_REQUEST,
-        host_fingerprint: "0".repeat(64),
-        approved_at: 0,
-    });
-    assert_eq!(
-        attach::resolve_profile(&paths, store.as_ref(), &trust_file, "claude-code", None).unwrap().0,
-        approved_id
     );
 }
 
@@ -428,7 +308,7 @@ fn deferred_host_key_never_blocks_start_and_failure_is_reported_once() {
     let started = std::time::Instant::now();
     let load = || -> Result<varos_bridge::ipc::PairedConfig, varos_bridge::Error> {
         std::thread::sleep(std::time::Duration::from_millis(300));
-        Err(credentials::unavailable("Keychain read failed (-128): user denied"))
+        Err(credentials::unavailable("key file permission denied"))
     };
     let listener = Listener::start_with(
         tx,
@@ -488,109 +368,34 @@ extern "C" {
 }
 
 #[test]
-fn pending_requests_are_bounded_and_scopes_validated() {
-    let t = Temp::new();
-    let paths = t.paths();
-    let p = pair();
-    for i in 0..trust::MAX_PENDING {
-        let mut a = verified(&p, &format!("{i:016x}"));
-        a.fingerprint = format!("{i:064x}");
-        trust::request_pairing(&paths, &a, &p.expect.host_fingerprint, "0123456789abcdef").unwrap();
-    }
-    let mut extra = verified(&p, "ffffffffffffffff");
-    extra.fingerprint = "f".repeat(64);
-    assert_eq!(
-        trust::request_pairing(&paths, &extra, &p.expect.host_fingerprint, "0123456789abcdef").unwrap_err().code,
-        "busy"
-    );
-    assert_eq!(manage::approve(&paths, "nothex!!", "X", Scopes::DEFAULT_REQUEST).unwrap_err().code, "invalid_argument");
-    assert_eq!(manage::approve(&paths, "00000000", "X", Scopes::DEFAULT_REQUEST).unwrap_err().code, "not_found");
-    assert!(Scopes::parse("edit").is_err(), "edit needs read");
-    assert!(Scopes::parse("read,destructive").is_err(), "destructive needs edit");
-    assert!(Scopes::parse("read,edit,admin").is_err());
-    assert_eq!(Scopes::parse("read,edit,history").unwrap().names(), "read,edit,history");
-}
-
-#[test]
-fn trust_store_read_failure_denies() {
-    let t = Temp::new();
-    let paths = t.paths();
-    std::fs::create_dir_all(&paths.state).unwrap();
-    std::fs::set_permissions(&paths.state, std::fs::Permissions::from_mode(0o700)).unwrap();
-    std::fs::write(paths.state.join(trust::TRUST_FILE), b"{not json").unwrap();
-    std::fs::set_permissions(paths.state.join(trust::TRUST_FILE), std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert_eq!(TrustFile::load(&paths).unwrap_err().code, "trust_unavailable");
-    std::fs::write(paths.state.join(trust::TRUST_FILE), b"{}").unwrap();
-    std::fs::set_permissions(paths.state.join(trust::TRUST_FILE), std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert_eq!(TrustFile::load(&paths).unwrap_err().code, "trust_unavailable");
-}
-
-#[test]
-fn owning_thread_recheck_denies_revoked_and_narrows_scopes() {
-    use std::sync::atomic::AtomicBool;
-    let allowed = Arc::new(std::sync::Mutex::new(Ok(Scopes::DEFAULT_REQUEST)));
-    let state = allowed.clone();
-    let (tx, _rx) = std::sync::mpsc::sync_channel(1);
-    let mut pending = varos_bridge::ipc::Pending {
-        context: varos_bridge::Context {
-            client: "c".into(),
-            epoch: "e".into(),
-            read: true,
-            edit: true,
-            destructive: true,
-            history: true,
-            files: false,
-            allow_history: false,
-            allow_destructive: false,
-        },
-        request: varos_bridge::mcp::decode_tool("capabilities", json!({})).unwrap(),
-        cancelled: Arc::new(AtomicBool::new(false)),
-        reply: tx,
-        recheck: Some(varos_bridge::ipc::Recheck(Arc::new(move || state.lock().unwrap().clone()))),
-        file_audit: None,
-    };
-    pending.authorize().unwrap();
-    assert!(pending.context.edit && !pending.context.destructive && !pending.context.history);
-    *allowed.lock().unwrap() = Err(varos_bridge::Error::new("scope_refused", "revoked"));
-    assert_eq!(pending.authorize().unwrap_err().code, "scope_refused");
-}
-
-#[test]
-fn locked_credential_store_is_typed_and_never_plaintext() {
+fn unavailable_credential_store_is_typed_and_does_not_publish_profile() {
     let t = Temp::new();
     let paths = t.paths();
     let store = credentials::MemoryStore::new();
     store.set_locked(true);
-    let trust_file = TrustFile::load(&paths).unwrap();
-    let e = attach::resolve_profile(&paths, &store, &trust_file, "claude-code", None).unwrap_err();
+    let e = attach::resolve_profile(&paths, &store, "claude-code", None).unwrap_err();
     assert_eq!(e.code, "credential_unavailable");
     assert!(!paths.state.join(attach::PROFILES_FILE).exists());
 }
 
 #[test]
-fn profiles_are_remembered_per_client_label_and_rotated_after_revocation() {
+fn profiles_are_remembered_per_client_label() {
     let t = Temp::new();
     let paths = t.paths();
-    let store = credentials::MemoryStore::new();
-    let empty = TrustFile::load(&paths).unwrap();
-    let (a, ka) = attach::resolve_profile(&paths, &store, &empty, "claude-code", None).unwrap();
-    let (a2, _) = attach::resolve_profile(&paths, &store, &empty, "claude-code", None).unwrap();
+    let store = credentials::FileKeyStore::new(paths.state.join("keys"));
+    let (a, ka) = attach::resolve_profile(&paths, &store, "claude-code", None).unwrap();
+    let (a2, _) = attach::resolve_profile(&paths, &store, "claude-code", None).unwrap();
     assert_eq!(a, a2, "a fresh session of the same client reuses its profile");
-    let (b, _) = attach::resolve_profile(&paths, &store, &empty, "codex-mcp-client", None).unwrap();
+    let (b, _) = attach::resolve_profile(&paths, &store, "codex-mcp-client", None).unwrap();
     assert_ne!(a, b, "a different client gets its own profile");
     let profiles = std::fs::read_to_string(paths.state.join(attach::PROFILES_FILE)).unwrap();
     assert!(!profiles.contains(&varos_bridge::conn::hex(ka.as_bytes())), "no secret in profile references");
     // --identity is a public reference; a missing key is refused.
-    assert_eq!(attach::resolve_profile(&paths, &store, &empty, "x", Some(&a)).unwrap().0, a);
+    assert_eq!(attach::resolve_profile(&paths, &store, "x", Some(&a)).unwrap().0, a);
     assert_eq!(
-        attach::resolve_profile(&paths, &store, &empty, "x", Some("0000000000000000")).unwrap_err().code,
+        attach::resolve_profile(&paths, &store, "x", Some("0000000000000000")).unwrap_err().code,
         "identity_invalid"
     );
-    // After revocation the client gets a new profile (which must pair again).
-    let mut revoked = empty.clone();
-    revoked.revoked.push(trust::Revoked { profile_id: a.clone(), fingerprint: String::new(), revoked_at: 0 });
-    let (c, _) = attach::resolve_profile(&paths, &store, &revoked, "claude-code", None).unwrap();
-    assert_ne!(c, a);
 }
 
 #[test]
@@ -687,4 +492,39 @@ fn real_binary_mcp_initializes_and_reports_host_not_running_without_varos() {
     assert!(child.wait().unwrap().success());
     // Nothing secret or persistent was created for an absent host.
     assert!(!t.0.join("state").exists());
+}
+
+#[test]
+fn old_public_profile_without_file_key_requires_new_identity() {
+    let t = Temp::new();
+    let paths = t.paths();
+    // Simulates the old backend without ever accessing a real Keychain.
+    let old_store = credentials::MemoryStore::new();
+    let (old_id, _) = attach::resolve_profile(&paths, &old_store, "claude-code", None).unwrap();
+    let files = credentials::FileKeyStore::new(paths.state.join("keys"));
+    let e = attach::resolve_profile(&paths, &files, "claude-code", Some(&old_id)).unwrap_err();
+    assert_eq!(e.code, "identity_invalid");
+    assert!(e.reason.contains("retry"));
+    let (new_id, key) = attach::resolve_profile(&paths, &files, "claude-code", None).unwrap();
+    assert_ne!(new_id, old_id);
+    assert!(!paths.state.join("trust.json").exists());
+    assert_eq!(
+        credentials::load_existing(&files, &credentials::agent_account(&new_id)).unwrap().unwrap().verifying_key(),
+        key.verifying_key()
+    );
+}
+
+#[test]
+fn pairing_and_revocation_cli_are_noops_without_accessing_state() {
+    for args in [
+        vec!["pair"],
+        vec!["pair", "--approve", "anything"],
+        vec!["pair", "--deny"],
+        vec!["agents", "revoke", "anything"],
+    ] {
+        assert_eq!(manage::run(args.into_iter().map(str::to_owned).collect()).unwrap(), 0);
+    }
+    assert_eq!(Scopes::ALL.names(), "read,edit,destructive,history,files");
+    assert!(varos_bridge::ipc::authorize_uid(501, 501).is_ok());
+    assert_eq!(varos_bridge::ipc::authorize_uid(502, 501).unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
 }

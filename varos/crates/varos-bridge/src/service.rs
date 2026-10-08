@@ -5,7 +5,6 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     sync::atomic::{AtomicBool, Ordering},
-    time::{Duration, Instant},
 };
 use varos_core::{
     bridge::{self, TargetErrorCode},
@@ -83,9 +82,7 @@ pub trait Host {
     fn file_effect(&mut self, _verb: &str, _request: &FileEffect) -> Result<Reply, Error> {
         Err(Error::new("unsupported", "host does not provide file jobs"))
     }
-    fn files_roots_granted(&self) -> bool {
-        false
-    }
+
     fn file_pending(&self, _ticket: u64) -> bool {
         false
     }
@@ -109,15 +106,7 @@ pub trait Host {
 pub struct Context {
     pub client: String,
     pub epoch: String,
-    /// ADR-0011 §3 capability scopes for this principal. `destructive` and `history` are only
-    /// *eligibility* to request those verbs; each still needs an exact owner-issued grant.
-    pub read: bool,
-    pub edit: bool,
-    pub destructive: bool,
-    pub history: bool,
-    pub files: bool,
-    pub allow_history: bool,
-    pub allow_destructive: bool,
+    // Same-uid attachments, including legacy token connections, admit all scopes.
 }
 // Fixed-size settings that can change outside the normal document revision path.
 #[derive(Clone, Copy, PartialEq)]
@@ -160,17 +149,12 @@ struct Client {
     high: u64,
     receipts: VecDeque<(String, String, Reply)>,
 }
-struct Grant {
-    digest: String,
-    expires: Instant,
-}
 pub struct Service {
     pub epoch: String,
     #[cfg(test)]
     fingerprints: usize,
     boards: HashMap<String, Observed>,
     clients: HashMap<String, Client>,
-    grants: HashMap<String, Grant>,
 }
 impl Service {
     pub fn new(epoch: String) -> Self {
@@ -180,13 +164,11 @@ impl Service {
             fingerprints: 0,
             boards: HashMap::new(),
             clients: HashMap::new(),
-            grants: HashMap::new(),
         }
     }
     /// Observe every committed human revision too; never journal a picker or held drag preview.
     pub fn observe(&mut self, host: &mut dyn Host) {
         let listed = host.observation_ids();
-        self.grants.retain(|_, g| g.expires > Instant::now());
         self.boards.retain(|id, _| listed.contains(id));
         for b in listed {
             let Ok(a) = host.observation_access(&b) else { continue };
@@ -315,25 +297,7 @@ impl Service {
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
         }
-        if !ctx.read
-            || (req.mutation().is_some()
-                && !matches!(req, Request::Save(_) | Request::SaveAs(_) | Request::ExportPdf(_))
-                && !ctx.edit)
-        {
-            return Reply::failure(Error::new("scope_refused", "attachment has no required grant"));
-        }
-        if matches!(req, Request::Save(_) | Request::SaveAs(_) | Request::ExportPdf(_)) && !ctx.files {
-            return Reply::failure(Error::new("scope_refused", "this agent was not granted the files scope"));
-        }
-        if matches!(req, Request::History(_)) && !ctx.history {
-            return Reply::failure(Error::new("scope_refused", "this agent was not granted the history scope"));
-        }
-        if let Request::Edit(v) = req {
-            if !ctx.destructive && v.ops.iter().any(Operation::destructive) {
-                return Reply::failure(Error::new("scope_refused", "this agent was not granted the destructive scope"));
-            }
-        }
-        if req.board().is_some_and(|board| !canonical_board(board)) {
+        if req.board().is_some_and(|b| !canonical_board(b)) {
             return Reply::failure(Error::new("invalid_argument", "board must be a canonical session handle bN"));
         }
         let payload = digest(&serde_json::to_value(req).expect("DTO serialization"));
@@ -394,7 +358,7 @@ impl Service {
             }
             match req {
                 Request::Capabilities(_) => Ok(Reply::success(
-                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"file_jobs":8,"path_anchors":1000,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":ctx.read,"edit":ctx.edit,"destructive_scope":ctx.destructive,"history_scope":ctx.history,"files_roots_granted":host.files_roots_granted(),"files_scope":ctx.files,"scopes":["read","edit","destructive","history","files"],"history_owner_grant":ctx.allow_history,"destructive_owner_grant":ctx.allow_destructive,"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry","selection"],"unsupported":["headless","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_bleed"]}),
+                    json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"file_jobs":8,"path_anchors":1000,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":true,"edit":true,"destructive_scope":true,"history_scope":true,"trust":"local user","file_guards":["home_or_external_volume_or_cloud_drive","local_volume_only","protected_roots","dot_components","extension","canonical_parent","no_symlink_escape","no_hardlink_escape","no_overwrite"],"files_scope":true,"scopes":["read","edit","destructive","history","files"],"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry","selection"],"unsupported":["headless","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_bleed"]}),
                 )),
                 Request::ListBoards(v) => {
                     check_page(v.limit)?;
@@ -519,48 +483,6 @@ impl Service {
                         },
                         || cancelled.load(Ordering::Acquire),
                     )?;
-                    if v.ops.iter().any(Operation::destructive) {
-                        if affected.len() > MAX_TARGETS
-                            || serde_json::to_string(&affected).expect("affected ids").len() > MAX_TEXT - 2048
-                        {
-                            return Err(Error::new(
-                                "limit_exceeded",
-                                "destructive affected IDs exceed confirmation budget",
-                            ));
-                        }
-                        let mut exact = serde_json::to_value(v).expect("DTO");
-                        exact.as_object_mut().unwrap().remove("digest");
-                        let hash = digest(
-                            &json!({"epoch":self.epoch,"edit":exact,"target":authored_fingerprint(batch.document()),"affected":affected,"source":authored_fingerprint(&a.editor.doc)}),
-                        );
-                        let key = format!("destructive:{}:{}", ctx.client, v.board);
-                        if v.digest.as_deref() != Some(&hash)
-                            || !self.grants.get(&key).is_some_and(|g| g.digest == hash && g.expires > Instant::now())
-                        {
-                            if ctx.allow_destructive {
-                                if self.grants.len() >= 128 && !self.grants.contains_key(&key) {
-                                    return Err(Error::new("limit_exceeded", "too many outstanding confirmations"));
-                                }
-                                self.grants.insert(
-                                    key,
-                                    Grant { digest: hash.clone(), expires: Instant::now() + Duration::from_secs(60) },
-                                );
-                            }
-                            let mut e = Error::new("confirmation_required", "delete/ungroup requires an exact owner-issued grant; desktop VAROS_BRIDGE_ALLOW_DESTRUCTIVE=1 enables the temporary grant policy");
-                            e.digest = Some(hash);
-                            e.ids = affected.into_iter().collect();
-                            e.expected_rev = Some(v.expected_rev);
-                            e.actual_rev = Some(from);
-                            return Err(e);
-                        }
-                        let grant = self
-                            .grants
-                            .remove(&key)
-                            .ok_or_else(|| Error::new("confirmation_required", "no owner-issued destructive grant"))?;
-                        if grant.digest != hash || grant.expires < Instant::now() {
-                            return Err(Error::new("confirmation_required", "destructive grant expired"));
-                        }
-                    }
                     if cancelled.load(Ordering::Acquire) {
                         return Err(Error::new("cancelled", "cancelled before commit"));
                     }
@@ -577,54 +499,6 @@ impl Service {
                     Ok(reply)
                 }
                 Request::History(v) => {
-                    let a = host.access(&v.board)?;
-                    let redo = v.action == HistoryAction::Redo;
-                    let preview = a.editor.history_preview(redo).ok_or_else(|| {
-                        Error::new(if redo { "nothing_to_redo" } else { "nothing_to_undo" }, "history is empty")
-                    })?;
-                    let (target, target_header, _) = projection(preview);
-                    let b = &self.boards[&v.board];
-                    let affected = changes(b.rev, b.rev + 1, &b.objects, &target, &b.header, &target_header);
-                    let affected_ids: Vec<String> = affected["changed"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .chain(affected["created"].as_array().unwrap().iter())
-                        .map(|v| v["id"].as_str().unwrap().to_owned())
-                        .chain(affected["removed"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_owned()))
-                        .collect();
-                    let target_digest = authored_fingerprint(preview);
-                    let key = format!("{}:{}", ctx.client, v.board);
-                    let mut exact = serde_json::to_value(v).expect("DTO");
-                    exact.as_object_mut().unwrap().remove("digest");
-                    let hash = digest(
-                        &json!({"epoch":self.epoch,"history":exact,"target":target_digest,"objects":self.boards[&v.board].objects}),
-                    );
-                    if v.digest.as_deref() != Some(&hash)
-                        || !self.grants.get(&key).is_some_and(|g| g.digest == hash && g.expires > Instant::now())
-                    {
-                        if ctx.allow_history {
-                            if self.grants.len() >= 128 && !self.grants.contains_key(&key) {
-                                return Err(Error::new("limit_exceeded", "too many outstanding confirmations"));
-                            }
-                            self.grants.insert(
-                                key,
-                                Grant { digest: hash.clone(), expires: Instant::now() + Duration::from_secs(60) },
-                            );
-                        }
-                        let mut e=Error::new("confirmation_required","shared history may undo a human edit; retry the exact payload with this digest only when the owner launched the desktop with VAROS_BRIDGE_ALLOW_HISTORY=1");
-                        e.digest = Some(hash);
-                        e.ids = affected_ids;
-                        e.expected_rev = Some(v.expected_rev);
-                        e.actual_rev = Some(b.rev);
-                        return Err(e);
-                    }
-                    let grant = self.grants.remove(&key).ok_or_else(|| {
-                        Error::new("confirmation_required", "no owner-issued single-use history grant")
-                    })?;
-                    if grant.digest != hash || grant.expires < Instant::now() {
-                        return Err(Error::new("confirmation_required", "history grant expired"));
-                    }
                     let a = host.access(&v.board)?;
                     let redo = v.action == HistoryAction::Redo;
                     if !a.editor.history_available(redo) {
@@ -657,9 +531,6 @@ impl Service {
                         .map(|(_, _, r)| r.clone())
                         .ok_or_else(|| Error::new("not_found", "receipt not retained for this client"))?;
                     if let Some(ticket) = r.result.as_ref().and_then(|r| r["ticket"].as_u64()) {
-                        if !ctx.files {
-                            return Err(Error::new("scope_refused", "files scope required for file status"));
-                        }
                         if let Some(mut done) = host.file_status(ticket) {
                             done.board = r.board.clone();
                             done.rev = r.rev;
@@ -1343,68 +1214,6 @@ mod observation_tests {
             Ok(BoardAccess { editor: &mut self.0, dirty: false })
         }
     }
-    #[test]
-    fn expired_digest_resend_refreshes_edit_and_history_grants() {
-        for history in [false, true] {
-            let mut host = Fake(Editor::new());
-            let pid = host
-                .0
-                .try_execute_created(varos_core::EditCommand::AddShape {
-                    kind: varos_core::model::ShapeKind::Rect,
-                    bounds: [0.0, 0.0, 20.0, 10.0],
-                    parent: None,
-                    fill: Some([1.0, 0.0, 0.0, 1.0]),
-                    stroke: None,
-                    stroke_width: 0.0,
-                    opacity: 1.0,
-                    name: None,
-                })
-                .unwrap();
-            let context = Context {
-                client: "test".into(),
-                epoch: "test".into(),
-                read: true,
-                edit: true,
-                destructive: true,
-                history: true,
-                files: false,
-                allow_history: true,
-                allow_destructive: true,
-            };
-            let mut service = Service::new("test".into());
-            let args = if history {
-                json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":host.0.rev,"action":"undo"})
-            } else {
-                json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":host.0.rev,"ops":[{"verb":"delete","ids":[format!("path:{pid}")]}]})
-            };
-            let mut request = crate::mcp::decode_tool(if history { "history" } else { "edit" }, args).unwrap();
-            let cancelled = AtomicBool::new(false);
-            let challenge = service.handle(&mut host, &context, request.clone(), &cancelled);
-            let digest = challenge.error.unwrap().digest.clone();
-            match &mut request {
-                Request::History(v) => v.digest = digest,
-                Request::Edit(v) => v.digest = digest,
-                _ => unreachable!(),
-            }
-            for grant in service.grants.values_mut() {
-                grant.expires = Instant::now() - Duration::from_secs(1);
-            }
-            let before = host.0.doc.clone();
-            let fresh = service.handle(&mut host, &context, request.clone(), &cancelled).error.unwrap();
-            assert_eq!(fresh.code, "confirmation_required");
-            assert!(fresh.digest.is_some());
-            assert!(!fresh.ids.is_empty());
-            assert_eq!(fresh.actual_rev, Some(host.0.rev));
-            assert_eq!(host.0.doc, before);
-            match &mut request {
-                Request::History(v) => v.digest = fresh.digest.clone(),
-                Request::Edit(v) => v.digest = fresh.digest.clone(),
-                _ => unreachable!(),
-            }
-            assert!(service.handle(&mut host, &context, request, &cancelled).ok);
-        }
-    }
-
     #[test]
     fn snapshot_worker_checkpoints_cancel_and_pin_owned_revision() {
         let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40], artboard: None };
