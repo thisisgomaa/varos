@@ -146,7 +146,7 @@ pub fn tools() -> Value {
     let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
         "capabilities"=>"Negotiate Bridge API 1.0; local user trust grants every scope. Inspect limits and file mistake-guards.",
         "list_boards"=>"List authorized open boards, never files or Recent entries.",
-        "describe"=>"Summary first; ask for ids and fields for paginated detail. since returns net changes or resync_required.",
+        "describe"=>"Summary first. fields compose board/object detail; ids scope objects; limit/cursor page objects; since adds net changes or resync_required.",
         "select"=>"Deliberately replace human selection with explicit targets; no document undo step.",
         "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection. Page verbs use persistent artboard:N ids.",
         "snapshot"=>"Explicit revision-pinned CPU PNG preview of the board, or of one artboard:N page. Returns an MCP image; max 1024 pixels per dimension.",

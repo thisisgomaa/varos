@@ -29,6 +29,7 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
     let mut output_path = None;
     let mut selector = None;
     let mut identity = None;
+    let mut fields = None;
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--attach" => {
@@ -68,6 +69,12 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
                     return Err("duplicate --output".into());
                 }
                 output_path = Some(PathBuf::from(it.next().ok_or("missing --output path")?));
+            }
+            "--fields" => {
+                if verb != "describe" || fields.is_some() {
+                    return Err("--fields is only for describe and may be given once".into());
+                }
+                fields = Some(it.next().ok_or("missing --fields value")?);
             }
             "--json" => json = true,
             "--request-file" => file = Some(PathBuf::from(it.next().ok_or("missing request file")?)),
@@ -133,11 +140,14 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
     let mut reply = if bytes.len() > crate::MAX_FRAME {
         Reply::failure(Error::new("limit_exceeded", "request exceeds 1 MiB"))
     } else {
-        let args = if bytes.is_empty() {
+        let mut args = if bytes.is_empty() {
             serde_json::json!({})
         } else {
             serde_json::from_slice(&bytes).map_err(|e| e.to_string())?
         };
+        if let Some(fields) = fields {
+            apply_fields(&mut args, &fields)?;
+        }
         match crate::mcp::decode_tool(&verb, args) {
             Ok(request) => client.call("cli-1", request),
             Err(error) => Reply::failure(error),
@@ -151,6 +161,19 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
     let output = if json { serde_json::to_string(&reply).map_err(|e| e.to_string())? } else { compact(&reply) };
     writeln!(io::stdout().lock(), "{output}").map_err(|e| e.to_string())?;
     Ok(if reply.ok { 0 } else { 1 })
+}
+fn apply_fields(args: &mut serde_json::Value, fields: &str) -> Result<(), String> {
+    let args = args.as_object_mut().ok_or("describe arguments must be an object")?;
+    if args.contains_key("fields") {
+        return Err("fields supplied both in request and --fields".into());
+    }
+    let fields: Vec<String> = if fields.trim_start().starts_with('[') {
+        serde_json::from_str(fields).map_err(|e| format!("invalid --fields: {e}"))?
+    } else {
+        fields.split(',').map(|f| f.trim().to_owned()).collect()
+    };
+    args.insert("fields".into(), serde_json::json!(fields));
+    Ok(())
 }
 pub fn decode(request: &[u8]) -> Result<Request, Error> {
     let v: serde_json::Value =
@@ -179,6 +202,16 @@ fn write_snapshot(reply: &mut Reply, path: &std::path::Path) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn describe_fields_flag_matches_json_arguments() {
+        for fields in ["artboards, selection,bounds", r#"["artboards","selection","bounds"]"#] {
+            let mut args = serde_json::json!({"board":"b1"});
+            apply_fields(&mut args, fields).unwrap();
+            assert_eq!(args["fields"], serde_json::json!(["artboards", "selection", "bounds"]));
+            assert!(crate::mcp::decode_tool("describe", args.clone()).is_ok());
+            assert!(apply_fields(&mut args, fields).is_err());
+        }
+    }
     #[test]
     fn snapshot_writes_only_an_explicit_new_file_and_strips_bytes() {
         use base64::Engine;
