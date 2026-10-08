@@ -380,6 +380,7 @@ pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> 
         MenuCmd::File(f) => MenuRoute::App(to_app_command(f, active)?),
         MenuCmd::Key(k) => MenuRoute::Key(k),
         MenuCmd::Plain(code) => MenuRoute::Plain(code),
+        MenuCmd::ResetLayout => MenuRoute::App(AppCommand::Window(WindowCmd::ResetLayout)),
         MenuCmd::ToggleRail => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleRail)),
         MenuCmd::ToggleDock => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleDock)),
         MenuCmd::TogglePanel(p) => MenuRoute::App(AppCommand::Window(WindowCmd::TogglePanel(p))),
@@ -831,6 +832,7 @@ mod tests {
         // the Window menu rows are window commands; the other rows keep their own paths
         let p = varos_app::shell::PanelId::DOCKABLE[0];
         for (cmd, want) in [
+            (MenuCmd::ResetLayout, MenuRoute::App(AppCommand::Window(WindowCmd::ResetLayout))),
             (MenuCmd::ToggleRail, MenuRoute::App(AppCommand::Window(WindowCmd::ToggleRail))),
             (MenuCmd::ToggleDock, MenuRoute::App(AppCommand::Window(WindowCmd::ToggleDock))),
             (MenuCmd::TogglePanel(p), MenuRoute::App(AppCommand::Window(WindowCmd::TogglePanel(p)))),

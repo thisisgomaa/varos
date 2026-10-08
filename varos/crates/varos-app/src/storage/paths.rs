@@ -95,6 +95,11 @@ impl AppLayout {
         self.root.join("window.txt")
     }
 
+    /// Per-user shell arrangement (independent of documents and window geometry).
+    pub fn shell_layout(&self) -> PathBuf {
+        self.root.join("layout.json")
+    }
+
     /// The crash log written by the panic hook / fatal path.
     pub fn crash_log(&self) -> PathBuf {
         self.root.join("Logs").join("crash.txt")
