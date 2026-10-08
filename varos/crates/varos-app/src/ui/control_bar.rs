@@ -1,8 +1,10 @@
 use super::*;
 
-/// HAND 1 — the floating control bar (§4.4/§3.5), BORN in Stage 4. FIXED presence (Ahmed 07-07):
-/// the bar never vanishes — its CONTENT follows the moment. Selection → transform/appearance/align
-/// + pathfinder mirrors · Artboard tool → page mirrors · otherwise the tool name and a quiet hint.
+/// HAND 1 — the floating control bar (§4.4/§3.5), BORN in Stage 4. Its CONTENT follows the moment:
+/// selection → transform/appearance/align + pathfinder mirrors · Artboard tool → page mirrors · Pen
+/// mid-draft → the drawing hint. **Owner 2026-10-08 («مش عاوزها تظهر لو مفيش فيها حاجة أختار منها»):
+/// when there is nothing to act on (no selection, not the Artboard tool, not drawing) the bar is not
+/// shown at all** — this replaces the 07-07 "never vanishes" rule.
 #[allow(clippy::too_many_arguments)] // hand-painted bar: each arg is live UI state
 pub(crate) fn board_ctlbar(
     ctx: &egui::Context,
@@ -16,6 +18,9 @@ pub(crate) fn board_ctlbar(
     fit_request: &mut Option<usize>,
 ) {
     let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
+    if ctlbar_hidden(s) {
+        return;
+    }
     egui::Area::new(egui::Id::new("hand1-ctlbar"))
         .order(egui::Order::Middle)
         .pivot(Align2::CENTER_TOP)
@@ -444,4 +449,36 @@ pub(crate) fn shape_slot(
             ui.add_space(5.0);
         });
     });
+}
+
+/// Idle = nothing to choose from (owner 2026-10-08): no selection (object or direct), not the Artboard
+/// tool, and no path being drawn. Then the bar stays hidden instead of showing "Select (V) · No selection".
+pub(crate) fn ctlbar_hidden(s: &Snap) -> bool {
+    s.tool != ToolKind::Artboard && !s.sel && !s.direct && !s.drawing
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+    #[test]
+    fn control_bar_hides_when_there_is_nothing_to_act_on() {
+        let mut ed = varos_core::Editor::new();
+        ed.tool = ToolKind::Object;
+        let mut s = Snap::read(&ed);
+        s.sel = false;
+        s.direct = false;
+        s.drawing = false;
+        assert!(ctlbar_hidden(&s));
+        s.drawing = true;
+        assert!(!ctlbar_hidden(&s));
+        s.drawing = false;
+        s.sel = true;
+        assert!(!ctlbar_hidden(&s));
+        s.sel = false;
+        s.direct = true;
+        assert!(!ctlbar_hidden(&s));
+        s.direct = false;
+        s.tool = ToolKind::Artboard;
+        assert!(!ctlbar_hidden(&s));
+    }
 }
