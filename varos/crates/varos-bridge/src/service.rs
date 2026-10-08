@@ -260,7 +260,17 @@ impl Service {
         }
     }
     pub fn handle(&mut self, host: &mut dyn Host, ctx: &Context, req: Request, cancelled: &AtomicBool) -> Reply {
-        let mut reply = self.handle_inner(host, ctx, &req, cancelled);
+        self.handle_borrowed(host, ctx, &req, cancelled)
+    }
+    /// Dispatch without transferring or copying the request; the host can inspect its receipt afterward.
+    pub fn handle_borrowed(
+        &mut self,
+        host: &mut dyn Host,
+        ctx: &Context,
+        req: &Request,
+        cancelled: &AtomicBool,
+    ) -> Reply {
+        let mut reply = self.handle_inner(host, ctx, req, cancelled);
         if let Some((id, _)) = req.mutation() {
             if sequence(id).is_ok() {
                 reply.request_id = Some(id.into());
