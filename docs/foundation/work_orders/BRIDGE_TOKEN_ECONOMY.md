@@ -1,7 +1,32 @@
-# Bridge token economy — proposed work order, 2026-10-08
+# Bridge token economy — accepted work order, 2026-10-08
 
-Design only, against `243f9fd`; **not commissioned** until Ahmed approves the [ADR amendment](../../adr/ADR-0009-varos-bridge.md#amendment--token-economy-proposed-2026-10-08).
-No implementation, commit, push or owner acceptance is claimed.
+Accepted 2026-10-08: the owner delegated the decision to the moderator («مش هعرف أقرر، قرر انت»).
+Commissioned scope: token-economy slices 1–2 in `feat/bridge-token-economy`, based on main `9db9a85`;
+bars, inline group and clone (slice 3) are deferred. No commit/push/GUI or owner live acceptance is authorized.
+The original encoding experiment used `243f9fd`; its evidence/measurement limits below are retained.
+
+## Slices 1–2 implementation evidence (2026-10-08)
+
+Uncommitted worktree implementation, based on `9db9a85`; no landing SHA or owner live acceptance is claimed.
+`tools/bridge_token_economy.py` re-encodes the new frozen source fixture to the compact 1.1 request fixture.
+`contracts.rs::economy_wireframe_byte_gate_exact_document_equivalence_and_receipts` runs that encoder,
+asserts **7,960 ≤ 9,364 bytes** (3,364 / 3,410 / 1,186), and applies both original and new forms to separate
+clean equivalent editors. Complete document equality holds after restoring the intentionally omitted path names:
+geometry, paint, tree, page state, order and identities match. Each of the three batches undoes/redoes in one step;
+retry uses the same receipt. Compact request + receipt fixtures are added; all **11** frozen 1.0 fixtures are byte-identical.
+Poster/story ops are **508/618** vs **708/738**. Complete compact request envelopes total **8,188** bytes;
+actual IDs-mode receipt JSON totals **2,836** bytes (structured representation only, compact UTF-8 JSON).
+
+Final gates: workspace tests **1,335 passed / 0 failed / 15 ignored**; Bridge contracts **68 passed / 4 ignored**,
+including **10** new economy contracts. Native and `x86_64-pc-windows-msvc` all-targets clippy, fmt and dependency
+directions pass. The explicit ignored-contract run is **0 passed / 4 failed**, all at listener bind with sandbox EPERM;
+this leaves real-socket behavior unverified. No ceilings were raised and no persisted schema changed.
+
+End-to-end provider tokenizer/image usage, schema/read token counts, retries/planning, paired agent tasks,
+owner visual/editability review, Windows runtime and installed-app behavior remain unverified: no provider/client
+traces were supplied, and this commission explicitly excludes GUI, commit and push. JSON-byte savings do not
+establish the end-to-end token/quality gate. Record `slices 1–2 landed <sha>` only when a landing SHA exists and
+the applicable landing/quality gates are satisfied; do not substitute the unchanged base SHA.
 
 ## Measured result and limits
 
@@ -61,7 +86,7 @@ same-request retry, changed-spelling conflict, and boundary/adversarial expansio
 Only add versioned fixtures; all 1.0 frozen fixtures remain byte-identical. CPU checks never construct GPU Renderer/EventLoop.
 Owner live review is separate from passing automated gates; no owner acceptance is inferred from this encoding experiment.
 
-## Implementation slices, after approval
+## Implementation slices (1–2 accepted; 3 deferred)
 
 1. **Encoding and response economy:** additive 1.1 negotiation/schemas/CLI parity, creation defaults, existing optional names plus stable auto-label policy,
    rect/ellipse/path tuples, IDs receipts, opt-in economy snapshots and summary budget, one capabilities hint.

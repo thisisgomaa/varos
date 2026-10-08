@@ -360,3 +360,74 @@ Local native binaries rebuilt successfully: `varos/target/debug/varos`, `varos-c
 Unverified: native socket lifecycle/peer credentials and real binary attached MCP/CLI parity (moderator socket rerun), live poster creation/visible rendering/human one-step undo, actual external-agent attachment, Windows runtime, large-board responsiveness and GPU/CPU pixel parity. No independent review or merge is claimed.
 
 Logs: `/tmp/varos-bridge-slice2-workspace-tests.log`, `...-clippy-native.log`, `...-clippy-windows.log`, `...-socket-tests.log`, `...-build.log`, `...-build-tools.log` (same `/tmp/varos-bridge-slice2` prefix).
+
+
+## Token economy slices 1–2 — uncommitted worktree, 2026-10-08
+
+Based on `9db9a85`, branch `feat/bridge-token-economy`. API 1.1 defaults, deterministic optional names,
+strict mixed object/tuple grammar, IDs receipts with revision-pinned pagination, budgeted summaries, economy
+snapshots, one capabilities hint, bounded discriminated MCP schemas, shared CLI parity and exact bounded repeat.
+All old 1.0 fixture bytes are unchanged (11 files compared directly with HEAD). Slice 3 bars/inline group/clone
+remain unavailable. Core transactions/allocators and persisted format are reused; there is no model version bump.
+
+Measured ops/defaults payload: **7,960 bytes** (3,364 / 3,410 / 1,186), ceiling **9,364**; 201 expanded operations
+across 72/91/38 original batches. The Rust gate consumes the embedded deterministic encoding, applies both encodings, and compares
+complete document geometry/paint/tree/page state/order/identities, allowing only omitted path names. Compact
+requests total 8,188 bytes and structured IDs receipts total 2,836; poster/story ops 508/618 vs 708/738.
+Ten new contracts cover tuple/default/null/override rejection, labels, full atomic rollback at a nested location,
+instance-major nested repeats and translated handles, suffix collisions/forward refs/overlong locals, 4-level and
+100-expanded-op boundaries, 1,000-target preflight, cached retry/spelling conflict, shared undo/redo, preserved
+human paint/selection, receipt cursor pagination/expiry, summary text/result budgets, page-fit/explicit snapshots,
+and actual MCP stdio/CLI parity. Existing schema tests now inspect the shared operation definitions.
+
+- `cargo test --offline --workspace -j 2`: PASS, 1,335 passed / 0 failed / 15 ignored (primary workspace tests; child-process probe summaries excluded).
+- Bridge contracts: PASS, 68 passed / 4 ignored (10 new economy contracts).
+- `cargo clippy --offline -j 2 --workspace --all-targets -- -D warnings`: PASS.
+- `cargo clippy --offline -j 2 --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`: PASS, compilation only.
+- `cargo fmt --all -- --check`: PASS.
+- `python3 ../tools/check_dep_directions.py`: PASS.
+- `cargo test --offline -j 2 -p varos-bridge --test contracts -- --ignored`: 0 passed / 4 failed,
+  all listener bind EPERM in the sandbox; real socket acceptance remains unverified.
+- `git diff --check`: PASS. No ratchet ceiling increased; frozen fixtures untouched (new 1.1 fixtures only).
+
+Final logs: `/tmp/token-final-workspace.log`, `/tmp/token-contracts.log`, `/tmp/token-clippy-native.log`,
+`/tmp/token-clippy-windows.log`, `/tmp/token-fmt.log`, `/tmp/token-dependencies.log`, `/tmp/token-sockets.log`.
+Measurement: `/tmp/token-measurement.json`; reproducible encoder `tools/bridge_token_economy.py`.
+No commit, push, merge, GUI, installed-app rebuild or independent review is claimed. Owner quality acceptance,
+paired same-task provider tokens/image usage and Windows runtime remain unverified; JSON bytes are not tokens.
+The ADR's landed SHA is pending because this commission forbids commit/push.
+
+
+## Token economy independent review fixes — 2026-10-08
+
+Same `feat/bridge-token-economy` worktree, uncommitted. No commit/push/GUI. This section supersedes the earlier token gate counts.
+
+Compact tools/list: **65,587 bytes before** (independent review measurement; original API 1.0 baseline 16,399), **23,119 bytes after** (measured by `economy_schema_size_and_flat_roots`). Contract ceiling: **24,000 bytes**. No ceiling increased.
+
+1. `src/mcp.rs:138`: every operation and each of the three tuple kinds declared once in `$defs`; shared `$ref` unions for edits/repeat children, no duplicated legacy branch. Size cap: `tests/contracts.rs:3069`.
+2. `src/mcp.rs:194,203`: flat object roots with API enum, optional 1.1 fields; decoder enforces versions. All-tool root-combinator prohibition: `tests/contracts.rs:3069`.
+3. `src/service.rs:1263,1291`: page on JSON and compact text size, reserving cursor overhead; compact ceiling 14,000 bytes. 950 short created IDs regression: `src/service.rs:1503`; cached/retrieved large receipt coverage retained in `tests/contracts.rs:2887`.
+4. `src/economy.rs:153,253`: creations count only for economy requests; API 1.0 retains the exact explicit-target error and absent op index. Regression: `tests/contracts.rs:3091`.
+5. `src/service.rs:459`: legacy-alias errors use the original top-level leaf index; regression has a preceding expanded repeat (`tests/contracts.rs:3091`).
+6. `src/design.rs:194,365`, `src/service.rs:478,497`: creation returns its allocated ID; label that exact path in the staging document, without `paths.last()` or RenamePath. Existing label/equivalence/undo contracts pass.
+7. `src/service.rs:626`: missing journal entries reuse the full receipt fallback and explicitly set resync_required; regression: `src/service.rs:1503`.
+8. `src/service.rs:150,563,613`: explicit IDs-mode marker beside each cached receipt; request_status never guesses the mode from result shape, and refuses cursors for full receipts.
+9. `src/service.rs:372`: bars removed from capabilities hint; regression in `tests/contracts.rs:2847`.
+10. `src/mcp.rs:179,220`: one ranged prefixItems tuple per kind, no items:false; description states object fallback. Contract: `tests/contracts.rs:3069`.
+11. `src/service.rs:391,707,735`: accurate profile error; summary includes selection_count and marks trimmed names with an ellipsis. Regression: `tests/contracts.rs:2847`.
+12. `tests/contracts.rs:2593,2627,2776,3052`: embedded encoding, explicit-name comparisons (copy only omitted names), asserted **8,188-byte** full request envelopes, and failed-allocation next-ID comparison. Rust tests do not spawn python3. `../../../tools/bridge_token_economy.py:13`: defaults require the field on every creation; human encoder reproduces the embedded fixture, and a mixed fill/fill-less input preserves the absent fill.
+
+`../../../docs/foundation/STATUS.md:6`: one local-worktree status line added.
+
+Final gates, from `varos/`, all cargo compilation/test commands offline and `-j 2`:
+
+- `cargo test --offline --workspace -j 2`: PASS, **1,338 passed / 0 failed / 15 ignored**, 79 primary summaries (child-process probe summaries excluded). Bridge contracts: **70 passed / 0 failed / 4 ignored**.
+- `cargo clippy --offline -j 2 --workspace --all-targets -- -D warnings`: PASS.
+- `cargo clippy --offline -j 2 --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`: PASS, compile only.
+- `cargo fmt --all -- --check`: PASS.
+- `python3 ../tools/check_dep_directions.py`: PASS.
+- `cargo test --offline -j 2 -p varos-bridge --test contracts -- --ignored`: **0 passed / 4 failed**, all socket listener bind EPERM; sandbox-blocked, not runtime acceptance.
+- `git diff --check`: PASS. All **11 tracked frozen fixtures byte-identical to HEAD**; existing new 1.1 fixtures untouched in this round.
+- Human encoder: **7,960** ops/defaults bytes; batches **3,364 / 3,410 / 1,186**; full request envelopes **8,188**; poster/story **708→508 / 738→618**. No JSON-byte measurement is claimed as tokenizer usage.
+
+Logs: `/tmp/token-review-workspace.log`, `...-clippy-native.log`, `...-clippy-windows.log`, `...-fmt.log`, `...-dependencies.log`, `...-sockets.log`, `...-schema.log`; encoder output `/tmp/token-review-measurement.json`.
