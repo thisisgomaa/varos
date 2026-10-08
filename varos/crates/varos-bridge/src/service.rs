@@ -605,12 +605,90 @@ impl Service {
         r
     }
     fn describe(&self, v: &Describe, host: &mut dyn Host) -> Result<Reply, Error> {
+        let fields = v.fields.as_deref().unwrap_or(&[]);
+        if let Some(f) = fields.iter().find(|f| {
+            !["metadata", "artboards", "selection", "state", "bounds", "paint", "parent", "name", "geometry"]
+                .contains(&f.as_str())
+        }) {
+            return Err(Error::new("invalid_argument", format!("unknown describe field {f}")));
+        }
+        // state alone or with object fields retains its API 1.0 object meaning.
+        let board_fields = fields.iter().any(|f| ["metadata", "artboards", "selection"].contains(&f.as_str()));
+        let object_fields =
+            fields.iter().any(|f| ["bounds", "paint", "parent", "name", "geometry"].contains(&f.as_str()));
+        // Preserve the existing dedicated board pages and object-only wire shapes.
+        let legacy_board = v.ids.is_none()
+            && ((!fields.is_empty() && fields.iter().all(|f| ["metadata", "artboards"].contains(&f.as_str())))
+                || fields == ["selection"]);
+        if v.since.is_none() && (!board_fields || legacy_board)
+            || v.since.is_some() && v.ids.is_none() && v.fields.is_none() && v.cursor.is_none()
+        {
+            return self.describe_detail(v, host, false, 0);
+        }
         check_page(v.limit)?;
         let b = &self.boards[&v.board];
-        if let Some(since) = v.since {
-            if v.ids.is_some() || v.fields.is_some() || v.cursor.is_some() {
-                return Err(Error::new("invalid_argument", "since cannot be combined with object details or cursor"));
+        let mut out = if v.since.is_some() {
+            let mut diff = v.clone();
+            diff.ids = None;
+            diff.fields = None;
+            diff.cursor = None;
+            self.describe_detail(&diff, host, false, 0)?.result.unwrap()
+        } else {
+            json!({"rev":b.rev,"more":false,"cursor":null})
+        };
+        for field in fields {
+            match field.as_str() {
+                "metadata" => out["metadata"] = b.header["metadata"].clone(),
+                "artboards" => {
+                    let mut all = b.header["artboards"].clone();
+                    for (index, a) in all.as_array_mut().unwrap().iter_mut().enumerate() {
+                        a["ref"] = json!(format!("a{index}@{}", b.rev));
+                    }
+                    out["artboards"] = all;
+                }
+                "selection" => {
+                    out["selection"] = json!(b.selection);
+                    out["selection_rev"] = json!(b.selection_rev);
+                    if out.get("selection_more").is_some() {
+                        out["selection_more"] = json!(false);
+                    }
+                }
+                "state" => {
+                    out["state"] =
+                        json!({"dirty":host.access(&v.board)?.dirty,"active_artboard":b.header["active_artboard"]})
+                }
+                _ => {}
             }
+        }
+        let reserved = out.to_string().len();
+        if reserved > MAX_TEXT - 2048 {
+            return Err(if v.since.is_some() {
+                Error::new(
+                    "resync_required",
+                    "net diff and board sections exceed detail budget; request paginated details",
+                )
+            } else {
+                Error::new("limit_exceeded", "board sections exceed detail budget; request paginated fields:[\"selection\"] or fields:[\"artboards\"] separately")
+            });
+        }
+        if v.ids.is_some() || object_fields {
+            let page = self.describe_detail(v, host, true, reserved)?.result.unwrap();
+            out.as_object_mut().unwrap().extend(page.as_object().unwrap().clone());
+        } else if v.cursor.is_some() {
+            return Err(Error::new("invalid_argument", "combined board sections have no object cursor"));
+        }
+        Ok(Reply::success(out))
+    }
+    fn describe_detail(
+        &self,
+        v: &Describe,
+        host: &mut dyn Host,
+        composed: bool,
+        reserved: usize,
+    ) -> Result<Reply, Error> {
+        check_page(v.limit)?;
+        let b = &self.boards[&v.board];
+        if let Some(since) = v.since.filter(|_| !composed) {
             if since == b.rev {
                 return Ok(Reply::success(
                     json!({"from":since,"rev":b.rev,"changed":[],"created":[],"removed":[],"selection":b.selection.iter().take(100).collect::<Vec<_>>(),"selection_count":b.selection.len(),"selection_more":b.selection.len()>100,"selection_rev":b.selection_rev}),
@@ -644,16 +722,7 @@ impl Service {
             return Ok(Reply::success(value));
         }
         if let Some(fields) = &v.fields {
-            if fields.iter().any(|f| f == "metadata" || f == "artboards" || f == "selection") {
-                if v.ids.is_some() || fields.iter().any(|f| f != "metadata" && f != "artboards" && f != "selection") {
-                    return Err(Error::new(
-                        "invalid_argument",
-                        "board detail fields cannot be mixed with object ids or fields",
-                    ));
-                }
-                if fields.iter().any(|f| f == "selection") && fields.len() != 1 {
-                    return Err(Error::new("invalid_argument", "selection detail must be requested alone"));
-                }
+            if !composed && fields.iter().any(|f| f == "metadata" || f == "artboards" || f == "selection") {
                 let sig = digest(
                     &json!({"epoch":self.epoch,"board":v.board,"rev":b.rev,"selection_rev":b.selection_rev,"fields":fields,"limit":v.limit}),
                 );
@@ -720,21 +789,32 @@ impl Service {
             h["dirty"] = json!(host.access(&v.board)?.dirty);
             return Ok(Reply::success(h));
         }
-        let fields =
+        let mut fields: Vec<String> =
             v.fields.clone().unwrap_or_else(|| vec!["bounds".into(), "paint".into(), "parent".into(), "name".into()]);
-        if fields.iter().any(|f| !["bounds", "paint", "parent", "name", "state", "geometry"].contains(&f.as_str())) {
-            return Err(Error::new(
-                "unsupported",
-                "supported detail fields: bounds, paint, parent, name, state, geometry",
-            ));
+        if composed {
+            fields.retain(|f| !["metadata", "artboards", "selection", "state"].contains(&f.as_str()));
+            if fields.is_empty() {
+                fields = vec!["bounds".into(), "paint".into(), "parent".into(), "name".into()];
+            }
+            if v.fields.as_ref().is_some_and(|fields| fields.iter().any(|f| f == "state")) {
+                fields.push("state".into());
+            }
         }
         let all = b.order.clone();
         let ids = v.ids.clone().unwrap_or(all);
         if v.ids.as_ref().is_some_and(|ids| ids.len() > MAX_TARGETS) {
             return Err(Error::new("limit_exceeded", "detail query exceeds 1000 ids"));
         }
-        let sig =
-            digest(&json!({"epoch":self.epoch,"board":v.board,"rev":b.rev,"ids":ids,"fields":fields,"limit":v.limit}));
+        let mut query =
+            json!({"epoch":self.epoch,"board":v.board,"rev":b.rev,"ids":ids,"fields":fields,"limit":v.limit});
+        if composed {
+            query["sections"] = json!(v.fields);
+            query["since"] = json!(v.since);
+            if v.since.is_some() || v.fields.as_ref().is_some_and(|fields| fields.iter().any(|f| f == "selection")) {
+                query["selection_rev"] = json!(b.selection_rev);
+            }
+        }
+        let sig = digest(&query);
         let offset = cursor_offset(v.cursor.as_deref(), &sig)?;
         if offset > ids.len() {
             return Err(Error::new("invalid_argument", "cursor offset out of range"));
@@ -777,13 +857,19 @@ impl Service {
                     field => out[field] = source[field].clone(),
                 }
             }
-            if json!(&objects).to_string().len() + out.to_string().len() > MAX_TEXT - 2048 {
+            if json!(&objects).to_string().len() + out.to_string().len() + reserved > MAX_TEXT - 2048 {
                 break;
             }
             objects.push(out);
             end += 1;
         }
         if end == offset && end < ids.len() {
+            if composed && v.since.is_some() {
+                return Err(Error::new(
+                    "resync_required",
+                    "net diff and object details exceed page budget; request paginated details",
+                ));
+            }
             return Err(Error::new("limit_exceeded", "individual object exceeds the 16 KiB page budget (including response overhead); omit geometry or request other fields; within-path anchor pagination is not supported"));
         }
         Ok(Reply::success(
@@ -1120,6 +1206,7 @@ pub fn compact(r: &Reply) -> String {
     }
     for key in [
         "metadata",
+        "state",
         "artboards",
         "board_changes",
         "removed",

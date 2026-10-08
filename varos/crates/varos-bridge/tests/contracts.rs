@@ -105,7 +105,8 @@ fn frozen_describe_and_edit_parity_and_one_undo() {
         let mcp = varos_bridge::mcp::tool_result(&b);
         assert_eq!(json!(a), mcp["structuredContent"]);
         assert_eq!(varos_bridge::service::compact(&a), mcp["content"][0]["text"]);
-        assert_eq!(json!(a), serde_json::from_str::<Value>(fixture).unwrap());
+        let frozen = serde_json::from_str::<Value>(fixture).unwrap();
+        assert_eq!(serde_json::to_vec(&json!(a)).unwrap(), serde_json::to_vec(&frozen).unwrap());
     }
     assert_eq!(cli_host.editor.rev, 2);
     cli_host.editor.undo();
@@ -495,7 +496,7 @@ fn real_binary_mcp_initialization_call_cancel_and_shared_cli() {
     );
     let mcp = read(&mut stdout);
     let mut cli = Command::new(env!("CARGO_BIN_EXE_varos-bridge"))
-        .args(["describe", "--json", "--attach"])
+        .args(["describe", "--fields", "bounds,paint,parent", "--json", "--attach"])
         .arg(&host.endpoint.socket)
         .arg("--token")
         .arg(&host.endpoint.token)
@@ -503,7 +504,9 @@ fn real_binary_mcp_initialization_call_cancel_and_shared_cli() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    writeln!(cli.stdin.take().unwrap(), "{args}").unwrap();
+    let mut cli_args = args.clone();
+    cli_args.as_object_mut().unwrap().remove("fields");
+    writeln!(cli.stdin.take().unwrap(), "{cli_args}").unwrap();
     let cli = cli.wait_with_output().unwrap();
     assert!(cli.status.success());
     assert_eq!(serde_json::from_slice::<Value>(&cli.stdout).unwrap(), mcp["result"]["structuredContent"]);
@@ -2231,5 +2234,353 @@ fn noncanonical_board_refused_before_prepare() {
         let error = reply.error.unwrap();
         assert_eq!(error.code, "invalid_argument");
         assert_eq!(error.reason, "board must be a canonical session handle bN");
+    }
+}
+
+#[test]
+fn describe_combined_frozen_transport_parity() {
+    let args = json!({"board":"b1","ids":["path:10"],"fields":["metadata","artboards","selection","state","bounds","paint","parent","name","geometry"]});
+    let mut h = FakeHost::new();
+    h.editor.doc.artboards.push(Default::default());
+    h.editor.bridge_select(vec![10, 20]).unwrap();
+    let mut s = Service::new("test-epoch".into());
+    let reply = handle(&mut s, &mut h, req("describe", args.clone()));
+    assert!(reply.ok, "{reply:?}");
+    let result = reply.result.as_ref().unwrap();
+    for section in ["metadata", "artboards", "selection", "state", "objects"] {
+        assert!(result.get(section).is_some(), "{section}");
+    }
+    assert_eq!(result["objects"].as_array().unwrap().len(), 1);
+    assert_eq!(result["objects"][0]["id"], "path:10");
+    assert!(result["objects"][0]["geometry"]["anchors"].is_array());
+    let cli =
+        varos_bridge::cli::decode(&serde_json::to_vec(&json!({"tool":"describe","arguments":args})).unwrap()).unwrap();
+    assert_eq!(json!(handle(&mut s, &mut h, cli)), json!(reply));
+    assert_eq!(varos_bridge::mcp::tool_result(&reply)["structuredContent"], json!(reply));
+    let fixture = serde_json::from_str::<Value>(include_str!("fixtures/describe-combined-1.0.json")).unwrap();
+    assert_eq!(json!(reply), fixture);
+    assert_eq!(
+        format!("{}\n", serde_json::to_string(&reply).unwrap()),
+        include_str!("fixtures/describe-combined-1.0.json")
+    );
+}
+
+#[test]
+fn describe_sections_do_not_page_with_objects_and_since_composes() {
+    let mut h = FakeHost::new();
+    h.editor.doc.artboards.extend([Default::default(), Default::default()]);
+    h.editor.bridge_select(vec![10, 20]).unwrap();
+    let mut s = Service::new("test-epoch".into());
+    let args = json!({"board":"b1","ids":["path:10","path:20"],"fields":["artboards","selection","bounds","name","paint","parent"],"limit":1});
+    let first = handle(&mut s, &mut h, req("describe", args.clone())).result.unwrap();
+    assert_eq!(first["artboards"].as_array().unwrap().len(), 2);
+    assert_eq!(first["selection"], json!(["path:10", "path:20"]));
+    assert_eq!(first["objects"].as_array().unwrap().len(), 1);
+    assert_eq!(first["more"], true);
+    let mut next = args.clone();
+    next["cursor"] = first["cursor"].clone();
+    let second = handle(&mut s, &mut h, req("describe", next.clone())).result.unwrap();
+    assert_eq!(second["objects"][0]["id"], "path:20");
+    assert_eq!(second["more"], false);
+    for key in ["selection", "artboards"] {
+        assert_eq!(first[key], second[key]);
+    }
+    next["fields"] = json!(["bounds"]);
+    assert_eq!(handle(&mut s, &mut h, req("describe", next)).error.unwrap().code, "resync_required");
+    let board =
+        handle(&mut s, &mut h, req("describe", json!({"board":"b1","fields":["artboards","selection"],"limit":1})))
+            .result
+            .unwrap();
+    assert!(board.get("objects").is_none());
+    assert_eq!(board["selection"], first["selection"]);
+    assert_eq!(board["artboards"], first["artboards"]);
+    assert_eq!(board["more"], false);
+    let board =
+        handle(&mut s, &mut h, req("describe", json!({"board":"b1","fields":["metadata","artboards"],"limit":1})))
+            .result
+            .unwrap();
+    assert_eq!(board["artboards"].as_array().unwrap().len(), 1);
+    assert_eq!(board["more"], true);
+    h.editor.execute(EditCommand::SetBoardName("Changed".into()));
+    let mut diff_args = args;
+    diff_args["since"] = json!(1);
+    let diff = handle(&mut s, &mut h, req("describe", diff_args.clone())).result.unwrap();
+    let plain = handle(&mut s, &mut h, req("describe", json!({"board":"b1","since":1}))).result.unwrap();
+    for key in ["from", "rev", "changed", "created", "removed", "board_changes"] {
+        assert_eq!(diff[key], plain[key], "{key}");
+    }
+    assert_eq!(diff["objects"].as_array().unwrap().len(), 1);
+    diff_args["cursor"] = diff["cursor"].clone();
+    assert_eq!(handle(&mut s, &mut h, req("describe", diff_args)).result.unwrap()["objects"][0]["id"], "path:20");
+    let current = handle(
+        &mut s,
+        &mut h,
+        req("describe", json!({"board":"b1","since":2,"fields":["metadata","selection","state"]})),
+    )
+    .result
+    .unwrap();
+    assert_eq!(current["changed"], json!([]));
+    assert!(current["metadata"].is_object());
+    assert!(current["state"]["dirty"].as_bool().unwrap());
+    assert_eq!(
+        handle(&mut s, &mut h, req("describe", json!({"board":"b1","since":0,"fields":["artboards","selection"]})))
+            .error
+            .unwrap()
+            .code,
+        "resync_required"
+    );
+}
+
+#[test]
+fn describe_all_field_subsets_and_unknown_fields_and_schema() {
+    let fields = ["metadata", "artboards", "selection", "state", "bounds", "paint", "parent", "name", "geometry"];
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    // Observe every boundary so both current and older since requests have retained journals.
+    for name in ["One", "Two", "Three"] {
+        handle(&mut s, &mut h, req("describe", json!({"board":"b1"})));
+        h.editor.execute(EditCommand::SetBoardName(name.into()));
+    }
+    let rev = h.editor.rev;
+    for mask in 0..(1 << fields.len()) {
+        let subset: Vec<_> = fields.iter().enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, f)| *f).collect();
+        let board_fields = subset.iter().any(|f| ["metadata", "artboards", "selection"].contains(f));
+        let object_fields = subset.iter().any(|f| ["bounds", "paint", "parent", "name", "geometry"].contains(f));
+        for ids in [None, Some(json!(["path:10"]))] {
+            for since in [None, Some(rev), Some(1)] {
+                let mut args = json!({"board":"b1","fields":subset});
+                if let Some(ids) = &ids {
+                    args["ids"] = ids.clone();
+                }
+                if let Some(since) = since {
+                    args["since"] = json!(since);
+                }
+                let reply = handle(&mut s, &mut h, req("describe", args));
+                assert!(reply.ok, "{subset:?}, ids={ids:?}, since={since:?}: {reply:?}");
+                let result = reply.result.unwrap();
+                let legacy_board = ids.is_none()
+                    && ((!subset.is_empty() && subset.iter().all(|f| ["metadata", "artboards"].contains(f)))
+                        || subset == ["selection"]);
+                let composed = since.is_some() || (board_fields && !legacy_board);
+                let objects = if composed { ids.is_some() || object_fields } else { !legacy_board };
+                let mut expected_keys = vec![];
+                for (key, present) in [
+                    ("rev", true),
+                    ("metadata", subset.contains(&"metadata")),
+                    ("artboards", subset.contains(&"artboards")),
+                    ("selection", since.is_some() || subset.contains(&"selection")),
+                    ("selection_rev", since.is_some() || subset.contains(&"selection")),
+                    ("state", composed && subset.contains(&"state")),
+                    ("objects", objects),
+                    ("more", since.is_none() || objects),
+                    ("cursor", since.is_none() || objects),
+                    ("from", since.is_some()),
+                    ("changed", since.is_some()),
+                    ("created", since.is_some()),
+                    ("removed", since.is_some()),
+                    ("board_changes", since.is_some_and(|since| since < rev)),
+                    ("selection_count", since == Some(rev)),
+                    ("selection_more", since == Some(rev)),
+                    ("dirty", false),
+                    ("active_artboard", false),
+                ] {
+                    if present {
+                        expected_keys.push(key);
+                    }
+                    assert_eq!(
+                        result.get(key).is_some(),
+                        present,
+                        "{key}, {subset:?}, ids={ids:?}, since={since:?}: {result}"
+                    );
+                }
+                expected_keys.sort();
+                let actual_keys: Vec<_> = result.as_object().unwrap().keys().map(String::as_str).collect();
+                assert_eq!(actual_keys, expected_keys, "{subset:?}, ids={ids:?}, since={since:?}");
+            }
+        }
+    }
+    for args in [json!({"board":"b1","fields":["wat"]}), json!({"board":"b1","since":1,"fields":["selection","wat"]})] {
+        let error = handle(&mut s, &mut h, req("describe", args)).error.unwrap();
+        assert_eq!(error.code, "invalid_argument");
+        assert_eq!(error.reason, "unknown describe field wat");
+    }
+    let schemas = varos_bridge::mcp::tools();
+    let describe = schemas["tools"].as_array().unwrap().iter().find(|t| t["name"] == "describe").unwrap();
+    assert!(describe["description"].as_str().unwrap().len() <= 160);
+    let mut actual: Vec<_> = describe["inputSchema"]["properties"]["fields"]["items"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap())
+        .collect();
+    let mut expected = fields.to_vec();
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn describe_legacy_shapes_and_receipt_cursor_complete() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    for ids in [None, Some(json!(["path:10"]))] {
+        let scoped = ids.is_some();
+        let mut args = json!({"board":"b1","fields":["state"]});
+        if let Some(ids) = ids {
+            args["ids"] = ids;
+        }
+        let reply = handle(&mut s, &mut h, req("describe", args));
+        assert!(reply.ok, "{reply:?}");
+        let mut objects = vec![];
+        if !scoped {
+            objects.push(json!({"id":"node:1","kind":"layer","hidden":false,"locked":false}));
+        }
+        objects.push(json!({"id":"path:10","kind":"path","hidden":false,"locked":false}));
+        if !scoped {
+            objects.push(json!({"id":"path:20","kind":"path","hidden":false,"locked":false}));
+        }
+        let expected = json!({"ok":true,"board":"b1","rev":1,"undo_steps":0,"result":{"rev":1,"objects":objects,"more":false,"cursor":null}});
+        assert_eq!(serde_json::to_vec(&json!(reply)).unwrap(), serde_json::to_vec(&expected).unwrap());
+    }
+    h.editor.doc.artboards.extend([Default::default(), Default::default()]);
+    // Byte fingerprints captured from main 243f9fd; both field orders and all pages.
+    let mut legacy_bytes = vec![];
+    for fields in [json!(["metadata", "artboards"]), json!(["artboards", "metadata"])] {
+        let mut args = json!({"board":"b1","fields":fields,"limit":1});
+        loop {
+            let reply = handle(&mut s, &mut h, req("describe", args.clone()));
+            assert!(reply.ok, "{reply:?}");
+            let result = reply.result.as_ref().unwrap();
+            assert_eq!(result["artboards"].as_array().unwrap().len(), 1);
+            legacy_bytes.push(json!(reply));
+            if result["more"] == false {
+                break;
+            }
+            args["cursor"] = result["cursor"].clone();
+        }
+    }
+    assert_eq!(
+        varos_bridge::service::digest(&json!(legacy_bytes)),
+        "e4a4f6b145287a9b882a6654a78d3b11dc00af0537b2ea28e7dbc9e0841fb8e9"
+    );
+
+    let mut h = FakeHost::new();
+    let template = h.editor.doc.paths[0].clone();
+    h.editor.doc.paths.clear();
+    for i in 0..200 {
+        let mut path = template.clone();
+        path.id = 100 + i * 10;
+        for (j, anchor) in path.anchors.iter_mut().enumerate() {
+            anchor.id = path.id + j as u32 + 1;
+        }
+        h.editor.doc.paths.push(path);
+    }
+    h.editor.doc.ids = 3000;
+    let ids: Vec<_> = h.editor.doc.paths.iter().map(|p| format!("path:{}", p.id)).collect();
+    let mut s = Service::new("test-epoch".into());
+    let receipt = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.0","board":"b1","request_id":"r1","expected_rev":1,"ops":[{"verb":"move","ids":ids,"delta":[1,0]}]}),
+        ),
+    );
+    assert!(receipt.ok, "{receipt:?}");
+    let mut args = receipt.result.as_ref().unwrap()["detail_request"].clone();
+    assert!(args["cursor"].is_string(), "{receipt:?}");
+    assert_eq!(args["fields"], json!(["bounds", "paint", "parent", "name", "state"]));
+    let mut seen = vec![];
+    let mut legacy_bytes = vec![json!(receipt)];
+    loop {
+        let reply = handle(&mut s, &mut h, req("describe", args.clone()));
+        assert!(reply.ok, "{reply:?}");
+        let result = reply.result.as_ref().unwrap();
+        assert!(result.get("state").is_none());
+        for object in result["objects"].as_array().unwrap() {
+            assert_eq!(object["hidden"], false);
+            assert_eq!(object["locked"], false);
+            seen.push(object["id"].as_str().unwrap().to_owned());
+        }
+        legacy_bytes.push(json!(reply));
+        if result["more"] == false {
+            break;
+        }
+        assert!(legacy_bytes.len() <= 201, "cursor must advance");
+        args["cursor"] = result["cursor"].clone();
+    }
+    let mut expected = vec!["node:1".to_owned()];
+    expected.extend(ids);
+    assert_eq!(seen, expected);
+    assert_eq!(
+        varos_bridge::service::digest(&json!(legacy_bytes)),
+        "a97225d48734478053ffc0d072233a4b60b558e181f3d2b205450e9a25926b2a"
+    );
+}
+
+#[test]
+fn describe_combined_cursor_only_tracks_requested_selection() {
+    for fields in [json!(["metadata", "bounds"]), json!(["metadata", "selection", "bounds"])] {
+        for since in [None, Some(1)] {
+            let mut h = FakeHost::new();
+            let mut s = Service::new("test-epoch".into());
+            let mut args = json!({"board":"b1","ids":["path:10","path:20"],"fields":fields,"limit":1});
+            if let Some(since) = since {
+                args["since"] = json!(since);
+            }
+            let first = handle(&mut s, &mut h, req("describe", args.clone())).result.unwrap();
+            args["cursor"] = first["cursor"].clone();
+            h.editor.bridge_select(vec![20]).unwrap();
+            let next = handle(&mut s, &mut h, req("describe", args));
+            if since.is_some() || fields.as_array().unwrap().contains(&json!("selection")) {
+                assert_eq!(next.error.unwrap().code, "resync_required");
+            } else {
+                assert!(next.ok, "{next:?}");
+                assert_eq!(next.result.unwrap()["objects"][0]["id"], "path:20");
+            }
+        }
+    }
+}
+
+#[test]
+fn describe_combined_budget_errors_preserve_resync_semantics() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    handle(&mut s, &mut h, req("describe", json!({"board":"b1"})));
+    h.editor.execute(EditCommand::SetBoardName("Changed".into()));
+    h.editor.doc.description = "x".repeat(7500);
+    let diff = handle(&mut s, &mut h, req("describe", json!({"board":"b1","since":1})));
+    assert!(diff.ok, "{diff:?}");
+    let combined = handle(&mut s, &mut h, req("describe", json!({"board":"b1","since":1,"fields":["metadata"]})));
+    assert_eq!(
+        combined.error.as_ref().map(|e| e.code.as_str()),
+        Some("resync_required"),
+        "diff bytes={}, combined={combined:?}",
+        json!(diff).to_string().len()
+    );
+    let anchor = h.editor.doc.paths[0].anchors[0].clone();
+    for i in 0..180 {
+        let mut anchor = anchor.clone();
+        anchor.id = 100 + i;
+        h.editor.doc.paths[0].anchors.push(anchor);
+    }
+    h.editor.execute(EditCommand::SetBoardName("Geometry".into()));
+    for args in [json!({"board":"b1","since":1}), json!({"board":"b1","ids":["path:10"],"fields":["geometry"]})] {
+        let reply = handle(&mut s, &mut h, req("describe", args));
+        assert!(reply.ok, "{reply:?}");
+    }
+    let combined = handle(
+        &mut s,
+        &mut h,
+        req("describe", json!({"board":"b1","since":1,"ids":["path:10"],"fields":["geometry"]})),
+    );
+    assert_eq!(combined.error.unwrap().code, "resync_required");
+    h.editor.doc.artboards.extend((0..120).map(|_| Default::default()));
+    h.editor.execute(EditCommand::SetBoardName("Many pages".into()));
+    let combined = handle(&mut s, &mut h, req("describe", json!({"board":"b1","fields":["artboards","selection"]})));
+    let error = combined.error.unwrap();
+    assert_eq!(error.code, "limit_exceeded");
+    for fields in ["fields:[\"selection\"]", "fields:[\"artboards\"]"] {
+        assert!(error.reason.contains(fields));
     }
 }
