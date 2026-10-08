@@ -28,6 +28,19 @@ This text disagreed with the code and with later owner decisions in four places 
 > Execution timing: the wgpu spike is **DONE** (`451ca2a` — wgpu 29 / egui 0.35). The build order lives in
 > **`docs/reference/BOX_SYSTEM_PLAN.md`** — the Control Bar is born in its Stage 4 (not first).
 
+## Owner decision — agent presence on the canvas, 2026-10-08
+
+Azure is human selection/focus; `AGENT` orange is anything an agent is doing.
+`AGENT = #C76A20` reads on both white pages and the dark well. Presence lives on
+artboards and objects, never in bands or panels; the box system is unchanged.
+A flat 1.5-pt outline outside the working page and small title-style labels show
+its agents after each committed edit (4-s hold); labels stack on the same page. A committed batch gets staggered
+1-pt world-bounds outlines, with short fades allowed as a canvas-only motion
+exception. No shadows. Human selection wins over agent outlines.
+The host paints existing Bridge data: no new wire fields or agent calls.
+The full document commits atomically as one undo step before the reveal begins;
+feedback shows observed edits, never an agent's unobservable thinking time.
+
 ## Identity — "Son of Illustrator, raised by Claude"
 **ابن اليستريتور، متربّي عند كلود.**
 - Illustrator gives the SKELETON: density, completeness ("everything is there"), a serious workbench.
