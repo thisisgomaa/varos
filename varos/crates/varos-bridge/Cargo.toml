@@ -17,9 +17,5 @@ ed25519-dalek = "2.2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# ADR-0011 C1: Keychain-backed CredentialStore (macOS only; other platforms report credential_unavailable).
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3.7"
-
 [dev-dependencies]
 png = "0.17"

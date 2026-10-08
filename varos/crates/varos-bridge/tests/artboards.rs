@@ -71,18 +71,8 @@ impl Host for FakeHost {
         Ok(BoardAccess { editor: &mut self.editor, dirty: true })
     }
 }
-fn ctx(destructive: bool) -> Context {
-    Context {
-        client: "fixture".into(),
-        epoch: "test-epoch".into(),
-        read: true,
-        edit: true,
-        destructive: true,
-        history: true,
-        files: false,
-        allow_history: false,
-        allow_destructive: destructive,
-    }
+fn ctx(_destructive: bool) -> Context {
+    Context { client: "fixture".into(), epoch: "test-epoch".into() }
 }
 fn req(tool: &str, arguments: Value) -> Request {
     varos_bridge::mcp::decode_tool(tool, arguments).unwrap()
@@ -287,20 +277,13 @@ fn every_page_verb_refuses_with_a_typed_error_at_its_index_and_rolls_back() {
 }
 
 #[test]
-fn deleting_pages_follows_the_active_rule_and_needs_the_destructive_grant() {
+fn deleting_pages_follows_the_active_rule_without_a_grant() {
     let mut h = FakeHost::two_pages();
     let mut s = Service::new("test-epoch".into());
-    // non-active page B: a destructive challenge naming the page, nothing published yet
+    // Non-active page B is deleted directly; artwork remains and undo restores it.
     let ops = json!([{"verb":"delete_artboard","id":"artboard:3"}]);
     let args = json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ops":ops});
-    let challenge = s.handle(&mut h, &ctx(true), req("edit", args.clone()), &AtomicBool::new(false));
-    let e = challenge.error.unwrap();
-    assert_eq!(e.code, "confirmation_required");
-    assert_eq!(e.ids, vec!["artboard:3".to_string()]);
-    assert_eq!(h.editor.doc.artboards.len(), 2);
-    let mut exact = args;
-    exact["digest"] = json!(e.digest.clone().unwrap());
-    let r = s.handle(&mut h, &ctx(true), req("edit", exact), &AtomicBool::new(false));
+    let r = s.handle(&mut h, &ctx(false), req("edit", args), &AtomicBool::new(false));
     assert!(r.ok, "{r:?}");
     assert_eq!(ids(&h), vec![2]);
     assert_eq!(h.editor.doc.paths.len(), 1, "the page's artwork stays (as the panel's delete)");
@@ -312,10 +295,7 @@ fn deleting_pages_follows_the_active_rule_and_needs_the_destructive_grant() {
     let mut s = Service::new("test-epoch".into());
     let ops = json!([{"verb":"set_active_artboard","id":"artboard:3"},{"verb":"delete_artboard","id":"artboard:2"}]);
     let args = json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ops":ops});
-    let challenge = s.handle(&mut h, &ctx(true), req("edit", args.clone()), &AtomicBool::new(false));
-    let mut exact = args;
-    exact["digest"] = json!(challenge.error.unwrap().digest.clone().unwrap());
-    let r = s.handle(&mut h, &ctx(true), req("edit", exact), &AtomicBool::new(false));
+    let r = s.handle(&mut h, &ctx(true), req("edit", args), &AtomicBool::new(false));
     assert!(r.ok, "{r:?}");
     assert_eq!((ids(&h), h.editor.doc.active), (vec![3], 0), "B is now first and active");
     assert_eq!(h.editor.absel.iter().copied().collect::<Vec<_>>(), vec![0], "human page selection re-pointed by id");
@@ -329,10 +309,7 @@ fn deleting_pages_follows_the_active_rule_and_needs_the_destructive_grant() {
     assert!(edit(&mut s, &mut h, "r1", 1, json!([{"verb":"add_artboard","preset":"square"}])).ok);
     let ops = json!([{"verb":"delete_artboard","id":"artboard:2"}]);
     let args = json!({"api":"1.0","request_id":"r2","board":"b1","expected_rev":2,"ops":ops});
-    let challenge = s.handle(&mut h, &ctx(true), req("edit", args.clone()), &AtomicBool::new(false));
-    let mut exact = args;
-    exact["digest"] = json!(challenge.error.unwrap().digest.clone().unwrap());
-    assert!(s.handle(&mut h, &ctx(true), req("edit", exact), &AtomicBool::new(false)).ok);
+    assert!(s.handle(&mut h, &ctx(true), req("edit", args), &AtomicBool::new(false)).ok);
     assert!(h.editor.doc.artboards.is_empty() && h.editor.doc.active == 0);
     varos_core::format::validate(&h.editor.doc, &varos_core::format::Limits::DEFAULT).unwrap();
 }
@@ -435,10 +412,7 @@ fn legacy_alias_is_refused_in_batches_with_page_verbs() {
         {"verb":"align","ids":["path:10"],"mode":"left","target":"artboard:3"}
     ]);
     let args = json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ops":ops});
-    let challenge = s.handle(&mut h, &ctx(true), req("edit", args.clone()), &AtomicBool::new(false));
-    let mut exact = args;
-    exact["digest"] = json!(challenge.error.unwrap().digest.clone().unwrap());
-    let r = s.handle(&mut h, &ctx(true), req("edit", exact), &AtomicBool::new(false));
+    let r = s.handle(&mut h, &ctx(true), req("edit", args), &AtomicBool::new(false));
     assert!(r.ok, "{r:?}");
     assert!((h.editor.doc.outline_bbox(0).0 - 200.0).abs() < 1e-3, "aligned to B (x 200), not C (x 400)");
     assert_eq!(ids(&h).len(), 2);
