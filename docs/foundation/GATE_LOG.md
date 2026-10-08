@@ -3,6 +3,13 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-10-08 (late) — control bar hidden when idle + colour picker live-preview fixes
+
+- **Scope:** `3a22f56` control bar hidden when nothing is actionable (owner: «مش عاوزها تظهر لو مفيش فيها حاجة أختار منها»; moderator inline, unit test); `2a77497` picker live-preview fixes (Codex; Opus review 11 findings fixed; Opus re-audit confirmed all 11), merged `eae1a31`.
+- **Picker:** mixed selection writes nothing until the first change (striped "Mixed" swatch, empty hex never traps K3 focus); live writes only on change; OK without change = no undo step; per-target edited tracking; click = focus / double-click = open kept everywhere (Illustrator parity); OpenPicker after apply_frame; macOS eyedropper samples Varos's own raster once per view from the arming snapshot (no OS capture, no prompt, no repaint while still), trackpad tap picks, Esc while armed only disarms. Risk register: no scrim → K3 rule 5 later. Known: hovering empty canvas while armed samples the canvas background (hand test).
+- **Gates on `main` at `eae1a31`:** workspace **1383 passed, 0 failed**; clippy macOS + Windows target; fmt; dep directions; ratchets (ui.rs 825 ≤ 843). Installed app rebuilt from `eae1a31`.
+- **Open:** remember-layout (fix round in flight); picker v2 direction (owner); per-AI history; ADR-0012; Stroke engine.
+
 ## 2026-10-08 (night) — on-canvas agent presence + Bridge token economy slices 1–2
 
 - **Scope:** `b729775` agent presence on the canvas (Codex; Opus review 12 findings, all fixed; merged `6fc03e3`), `6591eef` token economy slices 1–2 (Codex; Opus review 12 findings, all fixed; merged `6edb655`), `4e3f771` semantic-merge fix (presence now reads the expanded API 1.1 leaf ops; main was red for one merge commit).
