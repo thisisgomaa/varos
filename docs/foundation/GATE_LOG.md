@@ -3,6 +3,14 @@
 
 Every work-order gate review is recorded here (charter §4). Format: order, branch, commit range, checks run, defects, verdict, merge commit.
 
+## 2026-10-08 (evening) — describe composition fix + token-economy amendment (proposed) + agent-presence mockups
+
+- **Scope:** `415ad99` describe composes board sections with object fields (Codex; Opus review 8 findings, all fixed), merged `e34ec4a`; `fc0890a` ADR-0009 amendment "token economy" (Astra, **proposed**, owner approval pending); agent-presence mockups A/B/C in session scratchpad `agent-presence/` (owner pick pending).
+- **Trigger:** the owner's first live agent run from Claude Code (session "تصميم بسيط على فاروس"): poster + 8-section website wireframe drawn on his open board (201 ops, 3 batches, 28,092 bytes of ops); describe refused mixed fields twice; the owner could not see the agent working.
+- **Gates on `main` after merge:** Bridge **104 passed**, 4 real socket contract tests PASS; per-branch before merge: workspace 1328, clippy macOS + Windows target, fmt, dep directions PASS; frozen fixtures untouched (+1 new).
+- **Measured for the amendment:** wireframe ops 28,092 → 7,855 bytes (−72%) by defaults, optional names, compact tuples, repeat, bars; gate proposed ≤ 9,364 bytes; receipts/snapshots estimated only (no tokenizer run).
+- **Open:** owner approval of the amendment; presence direction; per-AI history; text tool (all wireframe "text" is grey bars).
+
 ## 2026-10-08 — Panel icons (direction B) + Bridge: no Keychain, no pairing
 
 - **Scope:** `3914b14` panel icons (glyphs Opus, wiring Codex, review Opus: 13 findings, 1–12 fixed) and `e24180c` Bridge file key store + open local trust (Codex ×3 lanes, review Opus: 16 findings, all fixed), merged `189ff0e`.
