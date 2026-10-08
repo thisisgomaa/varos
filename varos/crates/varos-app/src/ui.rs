@@ -542,6 +542,7 @@ impl Ui {
         let snap = Snap::read(ed);
         let absnap = AbSnap::read(ed);
         let abs = ab_infos(ed);
+        let presence = crate::agent_presence::frame(self.doc_active, ed, Instant::now());
         let snap_hud = ed.snap_hud.clone();
         let show_rulers = ed.show_rulers;
         let ruler_origin = ed.doc.ruler_origin;
@@ -721,8 +722,6 @@ impl Ui {
                 root.scope_builder(egui::UiBuilder::new().max_rect(tree_rect), |ui| shell.ui_hosted(ui, &mut host));
                 new_column = shell.side_column_span();
             }
-            // on-canvas overlays are CONFINED to the Board hole (Ahmed 07-07): page chrome, snap
-            // HUD and origin crosshair clip/cull at its edges instead of roaming the window
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
             build_ab_chrome(
                 ctx,
@@ -737,6 +736,7 @@ impl Ui {
                 &mut ab_name_edit,
                 &mut fit_request,
             );
+            paint_agent_presence(ctx, view, ppp, hole, &presence);
             build_snap_hud(ctx, view, ppp, hole, &snap_hud);
             build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
             build_color_modal(ctx, &mut color_modal, &snap, ic_pipette, &mut ops);

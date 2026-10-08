@@ -5,6 +5,7 @@ use varos_bridge::{BoardAccess, BoardInfo, Error, Host, Service};
 use varos_core::editor::{AbDrag, Drag, ToolKind};
 thread_local! { static SERVICE: RefCell<Option<Service>> = const { RefCell::new(None) }; }
 pub fn initialize(epoch: String) {
+    crate::agent_presence::clear();
     SERVICE.with(|s| *s.borrow_mut() = Some(Service::new(epoch)));
     FILE_RESULTS.with(|r| r.borrow_mut().clear());
     FILE_PENDING.with(|r| r.borrow_mut().clear());
@@ -254,11 +255,13 @@ pub fn run_with_files<'a>(
     ui: &'a mut dyn DocUi,
     files: Option<&'a mut dyn crate::host::FileJobs>,
 ) -> crate::host::Ran {
+    let accepted = crate::agent_presence::accept(&request, ws, std::time::Instant::now());
     let mut desktop = Desktop { ws, ui: Some(ui), snapshot: None, files, audit: request.file_audit.clone() };
     let reply = SERVICE.with(|s| match s.borrow_mut().as_mut() {
-        Some(service) => service.handle(&mut desktop, &request.context, request.request, &request.cancelled),
+        Some(service) => service.handle_borrowed(&mut desktop, &request.context, &request.request, &request.cancelled),
         None => varos_bridge::Reply::failure(Error::new("unsupported", "attachment listener unavailable")),
     });
+    crate::agent_presence::complete(accepted, &reply, &request.request, desktop.ws, std::time::Instant::now());
     let changed = reply.ok && reply.request_id.is_some();
     if let Some(job) = desktop.snapshot.take().filter(|_| reply.ok) {
         // No Workspace/Editor/UI reference crosses this boundary. The existing reply channel

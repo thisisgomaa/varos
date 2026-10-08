@@ -25,6 +25,7 @@ use winit::{
     window::Window,
 };
 
+mod agent_presence;
 mod app_command;
 mod bridge_fs;
 mod bridge_host;
@@ -1365,6 +1366,7 @@ fn main() {
                 }
             }
             if matches!(&event, Event::AboutToWait) {
+                agent_presence::retain(&ws, Instant::now());
                 recovery.observe(&mut ws, Instant::now());
                 let recovered = recovery.take_recovered();
                 if !recovered.is_empty() {

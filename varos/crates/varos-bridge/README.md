@@ -262,3 +262,25 @@ Slice 4 review amendment: save_as writes a copy; the board stays on its current 
 File completion codes: `save_conflict` means a fingerprint mismatch or an existing destination (including a publication race); other IO failures use `io_error`; protected or escaping destinations use `scope_refused`. request_status returns the failed completion receipt. Missing or expired results return `not_found`, never indefinite pending. Completion audit entries contain verb, board, ticket and result code, without paths.
 
 The opt-in legacy token listener (`VAROS_BRIDGE_LEGACY=1`) also receives all scopes: read, edit, destructive, history and files. `VAROS_BRIDGE_HOME` relocates discovery, state and keys together in debug builds; release builds ignore it.
+
+## What the human sees
+
+Owner design: 2026-10-08, canvas presence replaces the chip proposals.
+Azure marks the human's selection and focus.
+AGENT orange marks observed agent editing activity.
+The host uses the existing client label and profile identity.
+Labels are sanitized, capped at 24 characters, and self-declared.
+A committed edit lights the target artboard, or the active page.
+Its flat orange 1.5-point Outside outline sits flush on the page edge.
+A small title-style label sits at the page's top-right.
+Agents on the same page have stacked labels.
+Agents on different pages have independent outlines.
+The page stays lit after each committed edit (4-s hold).
+Accept/handle/complete are synchronous on the UI thread; in flight is never visible.
+The whole batch commits immediately, as one undo step.
+Created and changed objects then get 1-point bounds outlines.
+Feedback appears every min(25 ms, 1500 ms / object count).
+Each object outline fades over 900 ms; removed objects draw nothing.
+New work collapses old stagger and finishes it within 120 ms.
+Human selection wins; repaints use the host's existing pacing.
+No extra agent calls or model tokens; no wire, panel or band changes.

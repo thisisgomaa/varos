@@ -38,6 +38,17 @@ pub const DISABLED: Color32 = rgb(0x6e6a66); // disabled-state text only
 pub const ROW_HOVER: Color32 = rgb(0x262323); // list-row hover — calmer than HOVER (between SURFACE and HOVER)
 pub const INPUT_WELL: Color32 = rgb(0x171515); // darker inset well behind a focused text edit
 pub const ACCENT: Color32 = rgb(0x0c8ce9); // azure scalpel — active / selection / focus ONLY
+/// Owner 2026-10-08: azure = human selection/focus; AGENT = anything an agent is doing.
+/// Burnt orange: 3.81:1 on white and 4.58:1 on the dark PANEL (full-strength UI outlines).
+pub const AGENT: Color32 = rgb(0xc76a20);
+pub const AGENT_PAGE_STROKE: f32 = 1.5;
+pub const AGENT_OBJECT_STROKE: f32 = 1.0;
+pub const AGENT_LABEL_MIN_PAGE_W: f32 = 160.0;
+pub const AGENT_LABEL_H: f32 = 18.0;
+pub const AGENT_LABEL_GAP: f32 = 4.0;
+pub const AGENT_LABEL_PAD: f32 = 4.0;
+/// Existing artboard settings dots occupy the last 26 pt of the title row.
+pub const AGENT_LABEL_TITLE_TRAIL: f32 = 30.0;
 pub const ACCENT_HOVER: Color32 = rgb(0x2b9df4); // hovered accent button — one step lighter azure
                                                  // `from_rgba_unmultiplied` is not const — these are its EXACT outputs for the azure at α 60 / 34
                                                  // (proven bit-equal by `premultiplied_exact` below).

@@ -139,6 +139,7 @@ Every later UI piece reports these numbers (or "not affected: why") in its GATE_
 | `MUTED` | #8f8a86 | secondary text, icons at rest | 4.56-5.68 on SEAM…ROW_HOVER | `tokens.rs:34` |
 | `FAINT` | #6e6a66 | disabled text / placeholder ONLY | 2.73-3.62 (text-exempt only when disabled) | `tokens.rs:35`; → rename `DISABLED` once informational uses = 0 |
 | `ACCENT` | #0c8ce9 | selection, active, focus | 4.95 on PANEL · 4.14 on HOVER (UI ✓) · white icon on it 3.53 (UI ✓, **text ✗**) | `tokens.rs:38` |
+| `AGENT` | #c76a20 | agent canvas activity only (owner 2026-10-08); azure stays human selection/focus | 3.81 on white · 4.58 on PANEL | `tokens.rs` |
 | `ACCENT_HOVER` | #2b9df4 | hovered primary button | white text **2.90 ✗** | `tokens.rs:39` |
 | `ACCENT_SEL` | azure α60 | text selection | — | `tokens.rs:42` |
 | `GUIDE` | #ff54a8 | smart guides (reserved) | 5.91 on PANEL | `tokens.rs:44` |
@@ -205,6 +206,7 @@ raising a ceiling is a review failure):
 | Section heading / panel header | MUTED micro 10 `.strong()` | — | — | — | — | — | MUTED ✓; size → 10.5 | `kit::section_heading`; inline `ui.rs:4950,5051,5061` · both |
 | Scrollbar | invisible until body hover | 6→8 px handle | — | — | — | 24 min handle | egui | `tokens.rs:94-97` · egui |
 | Notice / strip | MUTED text; strip on SEAM | — | — | — | — | — | ✓ | `kit::notice` `kit/mod.rs:232`; recovery strip `ui.rs:3740` |
+| Agent presence | none without an edit session | — | 1.5-pt page outline + title-style label; staggered fading 1-pt object bounds, AGENT | — | human azure wins | canvas-only, no hit target | full-strength UI contrast ≥ 3:1; headless clock/pacing tests | `agent_presence.rs`, `ui/canvas_overlay.rs` · host overlay |
 | Native dialogs (Open/Save/Save changes?/errors) | **native by law** (rfd + OS sheets) | OS | OS | OS | OS | OS | OS | `file_ports.rs`, `main.rs` · native, never re-drawn in egui |
 
 **State rules**: precedence disabled > on > pressed > hover > rest; focus-visible is an overlay drawn on top of any state (also on ACCENT: ring outside the block). Text on HOVER or ACCENT_TINT is TEXT. Every disabled control says why in its tooltip. A row marked ✗ is closed when it moves into kit (U3-K), not by local patching.
@@ -222,6 +224,43 @@ Proportional defaults to Inter Regular; Monospace defaults to JetBrains Mono; bo
 Noto symbol fallbacks for ⌘⌥⇧⌃ and arrows. Semantic constructors in `shell/tokens.rs` are the
 one home for h1 30/600, h2 18/600, button 15/500, name 14/600, body 13/400, small 12/400,
 tag 11/500 and mono 11/400. IBM Plex Sans Arabic remains named-diagnostic-only behind §8.
+
+## Agent presence — owner decision 2026-10-08
+
+Azure = human selection/focus. `AGENT` = anything an agent is doing, including
+artboard and object feedback. The single new colour role is `AGENT #C76A20`
+(burnt orange; full-strength outline contrast 3.81:1 on white, 4.58:1 on PANEL).
+Values, stroke widths and label dimensions live only in `shell/tokens.rs`.
+This replaces the earlier band/status chip proposals; no panel or band changes.
+
+The host maintains logical Bridge sessions by existing client id, with sanitized
+label (24 Unicode scalars, no controls), profile id, document, last artboard,
+internal dispatch state and reveal queue. Existing FIFO edit dispatch prepares presence;
+a successful new commit's receipt completes it. Failed/no-op/replayed batches
+restore previous feedback. Target page references win, otherwise the active page.
+Host reset and document close clear state; after four seconds without edits the
+session feedback expires. One-call sockets provide no logical disconnect event,
+so socket close cannot honestly mean the agent session ended.
+
+The page has a flat 1.5-pt AGENT outline flush outside its bounds
+after each committed edit (4-s hold). Accept/handle/complete run synchronously
+on the UI thread, so in-flight dispatch is never visible. Non-interactive labels sit at its top-right
+above the page, leaving the existing settings dots clear; same-page
+labels stack upward by profile id. The label uses the existing 11-pt Inter title style,
+PANEL fill, TEXT ink, R radius and AGENT hairline. No shadows or shell layout work.
+
+After the atomic commit (still one undo step), created/changed objects reveal
+1-pt AGENT world-bounds rectangles in operation order; deleted objects never
+paint. The artwork is complete immediately; only feedback appears in staggered
+steps of min(25 ms, 1500 ms / N). Each outline fades for 900 ms. New work collapses
+remaining old stagger and finishes old highlights within 120 ms, then begins the
+new sequence. Human object/direct/group selection suppresses agent rectangles.
+
+Short canvas feedback fades are an owner-approved motion exception. One clipped
+overlay pass draws bounds, without path tessellation. Repaint deadlines use the
+existing egui/display-refresh pacing; static glow schedules only expiry, and no
+session/effect schedules no repaint. Capped receipts use local document data,
+never extra calls, to recover touched ids. No Bridge wire changes.
 
 ## K6 — Panels, size and motion
 
