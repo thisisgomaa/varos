@@ -160,48 +160,7 @@ pub(crate) fn dim_field(
     let tip = if enabled { tip } else { why };
     fields::num_disabled(ui, fw, Lab::Letter(lab), tip, value, 0, 1.0, 0.0..=1.0e6, !enabled, ops, mk);
 }
-/// A read-only "label … value" settings row (Document panel): steady label, secondary value.
-pub(crate) fn info_row(ui: &mut egui::Ui, w: f32, label: &str, value: &str) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::hover());
-    ui.painter().text(
-        egui::pos2(rect.left() + 4.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        FontId::proportional(12.5),
-        TEXT,
-    );
-    ui.painter().text(
-        egui::pos2(rect.right() - 4.0, rect.center().y),
-        Align2::RIGHT_CENTER,
-        value,
-        FontId::proportional(12.5),
-        MUTED,
-    );
-}
-
-/// A clickable "label … value" row (the Units cycler): hover-highlights and returns true on click.
-pub(crate) fn action_row(ui: &mut egui::Ui, w: f32, label: &str, value: &str) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), egui::Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
-    }
-    ui.painter().text(
-        egui::pos2(rect.left() + 4.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        FontId::proportional(12.5),
-        TEXT,
-    );
-    ui.painter().text(
-        egui::pos2(rect.right() - 4.0, rect.center().y),
-        Align2::RIGHT_CENTER,
-        value,
-        FontId::proportional(12.5),
-        if resp.hovered() { TEXT } else { MUTED },
-    );
-    resp.clicked()
-}
-
+/// Ink for a segment: selected or hovered uses TEXT, otherwise MUTED.
 pub(crate) fn seg_ink(on: bool, hot: bool) -> Color32 {
     if on || hot {
         TEXT
@@ -271,4 +230,35 @@ pub(crate) fn toggle_knob(on: bool) -> Color32 {
     } else {
         MUTED
     }
+}
+
+/// Panel track, using the shared board kit (20 pt paint / ≥24 pt hit).
+pub(crate) fn panel_segments(
+    ui: &mut egui::Ui,
+    key: &str,
+    segments: &[(Icon, &str)],
+    selected: usize,
+    width: Option<f32>,
+) -> Option<usize> {
+    use varos_app::shell::{kit::board, tokens as t};
+    let segment = egui::vec2(t::PANEL_SEG_W, t::PANEL_SEG_H);
+    let mut size = board::segmented_size(segments.len(), segment);
+    if let Some(width) = width {
+        size.x = width;
+    }
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    board::segmented_sized(ui, doc_id(ui, key), rect, segments, selected, None, segment, t::PANEL_SEG_GLYPH).0
+}
+
+/// LINE2 divider separating families inside a compact icon strip.
+pub(crate) fn strip_divider(ui: &mut egui::Ui) {
+    use varos_app::shell::tokens as t;
+    ui.add_space(t::PANEL_ITEM_GAP_X);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(t::KIT_STROKE, t::PANEL_DIVIDER_H), egui::Sense::hover());
+    ui.painter().vline(rect.center().x, rect.y_range(), Stroke::new(t::KIT_STROKE, t::LINE2));
+    ui.add_space(t::PANEL_ITEM_GAP_X);
+}
+
+pub(crate) fn wants_keyboard(ctx: &egui::Context) -> bool {
+    kit::menu_open(ctx) || ctx.egui_wants_keyboard_input()
 }

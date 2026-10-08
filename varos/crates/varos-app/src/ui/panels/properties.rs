@@ -124,18 +124,32 @@ pub(crate) fn panel_properties(
             // Fill / Stroke swatches + stroke weight
             paint_row(ui, PaintTarget::Fill, s.fill, ops);
             paint_row(ui, PaintTarget::Stroke, s.stroke, ops);
-            fields::num(
-                ui,
-                inner,
-                Lab::Icon(ic.strokew.as_ref()),
-                "Stroke weight",
-                s.sw,
-                1,
-                0.2,
-                0.0..=400.0,
-                ops,
-                Op::SetStrokeW,
-            );
+            ui.horizontal(|ui| {
+                let id = doc_id(ui, "stroke-weight-presets");
+                let weights = [0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0];
+                let entries = ["0.25 pt", "0.5 pt", "1 pt", "2 pt", "3 pt", "4 pt", "6 pt", "8 pt", "12 pt"]
+                    .map(kit::MenuEntry::Item);
+                if let Some(index) = kit::menu(ui.ctx(), id, &entries) {
+                    ops.push(Op::SetStrokeW(weights[index]));
+                }
+                fields::num(
+                    ui,
+                    inner - ICON_BTN_W - PANEL_ITEM_GAP_X,
+                    Lab::Icon(ic.strokew.as_ref()),
+                    "Stroke weight",
+                    s.sw,
+                    1,
+                    0.2,
+                    0.0..=400.0,
+                    ops,
+                    Op::SetStrokeW,
+                );
+                let r = IA_STROKE_PRESETS.show_response(ui, kit::IconState::Action);
+                if r.activated {
+                    kit::toggle_menu_below(ui.ctx(), id, r.response.rect);
+                    let _ = kit::menu(ui.ctx(), id, &entries);
+                }
+            });
 
             hsep(ui, inner);
             ui.label(micro_label("SHAPE"));
@@ -150,7 +164,7 @@ pub(crate) fn panel_properties(
                 hsep(ui, inner);
                 ui.label(micro_label("ARTBOARD CLIP"));
                 label_gap(ui);
-                if toggle_row(ui, inner, "Clip to artboard", !s.clip_exempt) {
+                if IA_OBJECT_CLIP.show(ui, kit::IconState::Toggle(!s.clip_exempt)) {
                     ops.push(Op::SetClipExempt(!s.clip_exempt));
                 }
             }
@@ -158,62 +172,6 @@ pub(crate) fn panel_properties(
             property_height_probes::record(ui.min_rect().bottom() - content_top);
         });
     });
-}
-
-/// The Document settings body (Pain A15) — shown in the Properties dock when nothing is selected, in
-/// place of a zeroed transform panel. A "DOCUMENT" micro-label (like "TRANSFORM") then compact rows:
-/// Units (click to cycle), Artboards count, Snapping/Guides/Rulers toggles, and static Grid/Colour info.
-pub(crate) fn document_section(
-    ui: &mut egui::Ui,
-    s: &Snap,
-    w: f32,
-    ops: &mut Vec<Op>,
-    recovery: (&crate::recovery_host::RecoveryUi, &mut Vec<AppCommand>),
-) {
-    board_section(ui, s, w, ops);
-    hsep(ui, w);
-    ui.label(micro_label("DOCUMENT"));
-    label_gap(ui);
-    if action_row(ui, w, "Units", s.units_label) {
-        ops.push(Op::CycleUnits);
-    }
-    info_row(ui, w, "Artboards", &s.artboards.to_string());
-    if toggle_row(ui, w, "Snapping", s.snap_enabled) {
-        ops.push(Op::ToggleSnapping);
-    }
-    if toggle_row(ui, w, "Guides", s.guides_on) {
-        ops.push(Op::ToggleGuides);
-    }
-    if toggle_row(ui, w, "Rulers", s.rulers_on) {
-        ops.push(Op::ToggleRulers);
-    }
-    // Grid dots are drawn unconditionally by the renderer (tess.rs build_bg) with no app-side toggle,
-    // and there is no colour-mode system — so these two stay honest read-only info, not fake toggles.
-    info_row(ui, w, "Grid dots", "On");
-    info_row(ui, w, "Colour", "RGB");
-    hsep(ui, w);
-    let (recovery, commands) = recovery;
-    if toggle_row(ui, w, "Recovery (all documents)", recovery.enabled) {
-        commands.push(AppCommand::SetRecoveryEnabled(!recovery.enabled));
-    }
-    ui.label(RichText::new(&recovery.status).color(MUTED).size(12.0));
-    if !recovery.last_copy.is_empty() {
-        ui.label(RichText::new(&recovery.last_copy).color(MUTED).size(11.0));
-    }
-    if !recovery.detail.is_empty() {
-        ui.label(RichText::new(&recovery.detail).color(MUTED).size(11.0));
-    }
-    if let Some(id) = recovery.sid.filter(|_| recovery.retry) {
-        ui.horizontal(|ui| {
-            use varos_app::shell::kit::{self, Control};
-            if kit::action(ui, Control::new(ui.id().with("recovery-retry"), "Retry"), false).activated {
-                commands.push(AppCommand::RetryRecovery(id));
-            }
-            if kit::action(ui, Control::new(ui.id().with("recovery-save"), "Save document"), false).activated {
-                commands.push(AppCommand::Save(id));
-            }
-        });
-    }
 }
 
 /// The Board section (Start v2 L5) — the ONE home for the board's own metadata, at the top of the

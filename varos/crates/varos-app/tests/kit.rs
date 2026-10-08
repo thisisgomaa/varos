@@ -362,12 +362,13 @@ fn kit_menu_row_is_a_kit_control_with_a_keyboard_ring_only() {
 }
 
 #[test]
-fn kit_icons_are_embedded_lucide_svgs_rendered_to_textures() {
+fn kit_icons_are_embedded_svgs_rendered_to_textures() {
     let names: Vec<_> = Icon::ALL.iter().map(|i| i.lucide().0).collect();
     assert_eq!(names[..6], ["house", "file-plus", "folder-open", "x", "file", "ellipsis"]);
     for icon in Icon::ALL {
         let (name, svg) = icon.lucide();
-        assert!(svg.contains(&format!("lucide-{name}")) && svg.contains("stroke=\"currentColor\""), "{name}");
+        let class = if icon.is_original() { format!("varos-{name}") } else { format!("lucide-{name}") };
+        assert!(svg.contains(&class) && svg.contains("stroke=\"currentColor\""), "{name}");
         let (rgba, w, h) = icon.rasterize().unwrap_or_else(|| panic!("{name} must parse"));
         assert_eq!((w, h), (tokens::ICON_RASTER, tokens::ICON_RASTER));
         assert!(rgba.chunks(4).any(|px| px[3] > 0 && px[0] == 255), "{name} renders white ink");
@@ -380,4 +381,82 @@ fn kit_icons_are_embedded_lucide_svgs_rendered_to_textures() {
         .iter()
         .any(|s| matches!(&s.shape, egui::Shape::Mesh(m) if m.texture_id != egui::TextureId::default())));
     assert!(!out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Path(_))));
+}
+
+#[test]
+fn panel_icon_segments_have_lifted_targets_tooltips_and_a_232_pt_harmony_track() {
+    let segments = [
+        (Icon::HarmonyNone, "None"),
+        (Icon::HarmonyComplementary, "Complementary"),
+        (Icon::HarmonyAnalogous, "Analogous"),
+        (Icon::HarmonySplit, "Split complementary"),
+        (Icon::HarmonyTriad, "Triad"),
+        (Icon::HarmonyTetradic, "Tetradic"),
+        (Icon::HarmonySquare, "Square"),
+        (Icon::HarmonyMono, "Monochrome"),
+    ];
+    for ppp in [1.0, 2.0] {
+        let ctx = context(ppp);
+        for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            ctx.style_mut_of(theme, |s| {
+                s.interaction.tooltip_delay = 0.0;
+                s.interaction.tooltip_grace_time = 0.0;
+                s.interaction.show_tooltips_only_when_still = false;
+            });
+        }
+        let time = std::cell::Cell::new(1.0);
+        let draw = |events| {
+            let mut chosen = None;
+            let mut rects = vec![];
+            let mut track = Rect::NOTHING;
+            time.set(time.get() + 1.0 / 60.0);
+            let mut raw = input(ppp, events);
+            raw.time = Some(time.get());
+            let out = ctx.run_ui(raw, |ui| {
+                let segment = egui::vec2(tokens::PANEL_SEG_W, tokens::PANEL_SEG_H);
+                let size = egui::vec2(tokens::HARMONY_TRACK_W, tokens::SEG_H);
+                (track, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                (chosen, rects) = kit::board::segmented_sized(
+                    ui,
+                    Id::new("harmony"),
+                    track,
+                    &segments,
+                    0,
+                    None,
+                    segment,
+                    tokens::PANEL_SEG_GLYPH,
+                );
+            });
+            (chosen, rects, track, out)
+        };
+        let (_, rects, track, out) = draw(vec![]);
+        assert_eq!(track.width(), 232.0);
+        assert_eq!(rects.len(), 8);
+        assert!(rects
+            .iter()
+            .all(|r| (r.width() - 28.0).abs() < 0.001 && r.height() == 20.0 && track.contains_rect(*r)));
+        assert!(out
+            .shapes
+            .iter()
+            .any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == tokens::TOGGLE_WELL && r.rect == rects[0])));
+        assert!(!out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == tokens::ACCENT)));
+        for (i, (_, name)) in segments.iter().enumerate() {
+            assert!(!name.is_empty());
+            // Click in the lifted strip above the 20 pt painted segment, proving a ≥24 pt target.
+            let pos = egui::pos2(rects[i].center().x, rects[i].top() - 1.0);
+            draw(pointer(pos, true));
+            assert_eq!(draw(pointer(pos, false)).0, Some(i));
+            time.set(time.get() + 1.0);
+            draw(vec![Event::PointerMoved(rects[i].center())]);
+            let (_, _, _, out) = draw(vec![]);
+            assert!(
+                out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == *name)),
+                "missing tooltip {name}: {:?}",
+                out.shapes
+                    .iter()
+                    .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text()) } else { None })
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
 }

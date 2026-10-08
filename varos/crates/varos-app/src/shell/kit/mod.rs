@@ -225,14 +225,14 @@ fn activation(ui: &Ui, response: &Response, pointer_only: bool) -> bool {
 }
 
 /// How an icon button shows its state. Owner decision (UI_SYSTEM "on states"): a tool is an azure
-/// block, a toggle is a small azure bar with no fill; a plain action has neither.
+/// block, a toggle is a dark TOGGLE_WELL with TEXT ink; a plain action has neither.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconState<'a> {
     /// A one-shot action (Add, Duplicate, Flip…).
     Action,
     /// A tool: an azure block while it is the active one.
     Tool(bool),
-    /// An on/off toggle: a small azure bar under the glyph while on.
+    /// An on/off toggle: a dark TOGGLE_WELL fill with TEXT ink while on; no azure bar.
     Toggle(bool),
     /// Not available now; the reason is added to the tooltip, the button never activates.
     Disabled(&'a str),
@@ -266,7 +266,7 @@ pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconSt
         let (_, rect) = ui.allocate_space(egui::vec2(t::ICON_BTN_W, t::ICON_BTN_H));
         let response = ui.interact(rect, id, Sense::click());
         let hover = enabled && (response.hovered() || response.is_pointer_button_down_on());
-        let (block, bar) = match state {
+        let (block, on) = match state {
             IconState::Tool(on) => (on, false),
             IconState::Toggle(on) => (false, on),
             IconState::Action | IconState::Disabled(_) | IconState::DisabledReason(_) => (false, false),
@@ -274,24 +274,19 @@ pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconSt
         let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
         if block && enabled {
             painter.rect_filled(rect, t::r_ctrl(), t::ACCENT);
+        } else if on && enabled {
+            painter.rect_filled(rect, t::r_ctrl(), t::TOGGLE_WELL);
         } else if hover {
             painter.rect_filled(rect, t::r_ctrl(), t::HOVER);
         }
         let ink = if !enabled {
             t::DISABLED
-        } else if block || bar || hover {
+        } else if block || on || hover {
             t::TEXT
         } else {
             t::MUTED
         };
         icon.paint(&painter, rect.center(), t::ICON_LG, ink);
-        if bar && enabled {
-            let mark = egui::Rect::from_center_size(
-                egui::pos2(rect.center().x, rect.bottom() - t::ICON_BAR_H / 2.0),
-                egui::vec2(t::ICON_BAR_W, t::ICON_BAR_H),
-            );
-            painter.rect_filled(mark, egui::CornerRadius::ZERO, t::ACCENT);
-        }
         if response.has_focus() && keyboard {
             // K5: focus-visible is the same overlay in every state — an azure ring OUTSIDE the target,
             // separated from it by a 1 px panel-colour gap so it still reads against an azure block.
@@ -302,7 +297,7 @@ pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconSt
             outer.rect_stroke(ring, t::r_ctrl(), Stroke::new(t::KIT_FOCUS_STROKE, t::ACCENT), StrokeKind::Outside);
         }
         response
-            .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, block || bar, help.as_str()));
+            .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, block || on, help.as_str()));
         let activated = enabled && activation(ui, &response, false);
         let response = response.on_hover_text(help.as_str()).on_disabled_hover_text(help.as_str());
         ControlResponse { response, activated }
@@ -344,12 +339,19 @@ struct MenuState {
     rect: Option<egui::Rect>,
     focus: Option<usize>,
     keyboard: bool,
+    drawn_frame: u64,
 }
 fn menu_key() -> Id {
     Id::new("varos-kit-menu")
 }
 fn menu_state(ctx: &egui::Context) -> Option<MenuState> {
-    ctx.data(|d| d.get_temp::<MenuState>(menu_key()))
+    let state = ctx.data(|d| d.get_temp::<MenuState>(menu_key()));
+    if state.is_some_and(|s| ctx.cumulative_frame_nr().saturating_sub(s.drawn_frame) > 1) {
+        close_menu(ctx);
+        None
+    } else {
+        state
+    }
 }
 fn store_menu(ctx: &egui::Context, state: MenuState) {
     ctx.data_mut(|d| d.insert_temp(menu_key(), state));
@@ -358,7 +360,18 @@ fn store_menu(ctx: &egui::Context, state: MenuState) {
 /// Open the menu owned by `owner` at `pos` (top-left). `anchor` is the control that toggles it:
 /// a press on the anchor does not count as "outside" (so the anchor can close it again).
 pub fn open_menu(ctx: &egui::Context, owner: Id, pos: egui::Pos2, anchor: Option<egui::Rect>) {
-    store_menu(ctx, MenuState { owner, pos, anchor, rect: None, focus: None, keyboard: false });
+    store_menu(
+        ctx,
+        MenuState {
+            owner,
+            pos,
+            anchor,
+            rect: None,
+            focus: None,
+            keyboard: false,
+            drawn_frame: ctx.cumulative_frame_nr(),
+        },
+    );
 }
 /// The anchor's toggle: open under `anchor` (right-aligned to it) or close when already open.
 pub fn toggle_menu_below(ctx: &egui::Context, owner: Id, anchor: egui::Rect) {
@@ -414,6 +427,7 @@ pub fn menu(ctx: &egui::Context, owner: Id, entries: &[MenuEntry<'_>]) -> Option
 /// [`menu`] with an explicit [`MenuLook`].
 pub fn menu_with(ctx: &egui::Context, owner: Id, entries: &[MenuEntry<'_>], look: MenuLook) -> Option<usize> {
     let mut state = menu_state(ctx).filter(|s| s.owner == owner)?;
+    state.drawn_frame = ctx.cumulative_frame_nr();
     let items: Vec<usize> =
         entries.iter().enumerate().filter(|(_, e)| matches!(e, MenuEntry::Item(_))).map(|(i, _)| i).collect();
     if items.is_empty() {
@@ -558,4 +572,38 @@ fn separator_colored(ui: &mut Ui, color: Color32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), t::KIT_GAP), Sense::hover());
     ui.painter().hline(rect.x_range(), rect.center().y, Stroke::new(t::KIT_STROKE, color));
     response
+}
+
+/// A labelled value menu: the same field treatment for document values and artboard presets.
+pub fn text_dropdown(
+    ui: &mut egui::Ui,
+    id: Id,
+    value: &str,
+    entries: &[&str],
+    width: f32,
+    tooltip: &str,
+) -> Option<usize> {
+    let entries = entries.iter().map(|name| MenuEntry::Item(name)).collect::<Vec<_>>();
+    let chosen = menu(ui.ctx(), id, &entries);
+    let enabled = !entries.is_empty();
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 26.0), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, enabled, value));
+    ui.painter().rect(
+        rect,
+        t::r_ctrl(),
+        t::SURFACE,
+        Stroke::new(1.0, if response.hovered() { t::LINE2 } else { t::LINE }),
+        egui::StrokeKind::Middle,
+    );
+    let color = if enabled { t::TEXT } else { t::DISABLED };
+    let galley = elided(ui, value, egui::FontId::proportional(12.5), color, width - t::ICON_SM - 20.0);
+    ui.painter().galley(egui::pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0), galley, color);
+    let chevron = rect.right_center() - egui::vec2(10.0 + t::ICON_SM / 2.0, 0.0);
+    Icon::ChevronDown.paint(ui.painter(), chevron, t::ICON_SM, t::MUTED);
+    if response.clicked() && enabled {
+        toggle_menu_below(ui.ctx(), id, rect);
+        let _ = menu(ui.ctx(), id, &entries);
+    }
+    response.on_hover_text(tooltip);
+    chosen
 }

@@ -37,41 +37,18 @@ pub(crate) fn panel_artboard(
             ui.add_space(2.0);
             ui.label(micro_label("SIZE"));
             // preset dropdown
-            let preset_id = ui.make_persistent_id("ab-preset");
-            let (prect, presp) = ui.allocate_exact_size(egui::vec2(inner, 26.0), egui::Sense::click());
-            ui.painter().rect(
-                prect,
-                CornerRadius::same(R),
-                BG_SURFACE,
-                Stroke::new(1.0, if presp.hovered() { BORDER_2 } else { BORDER }),
-                StrokeKind::Middle,
-            );
-            ui.painter().text(
-                egui::pos2(prect.left() + 10.0, prect.center().y),
-                Align2::LEFT_CENTER,
-                "Presets\u{2026}",
-                FontId::proportional(12.5),
-                TEXT,
-            );
-            // the dropdown's disclosure mark: the registry chevron, not a "▾" font character (T19)
-            Icon::ChevronDown.paint(
-                ui.painter(),
-                egui::pos2(prect.right() - 10.0 - ICON_SM / 2.0, prect.center().y),
-                ICON_SM,
-                MUTED,
-            );
-            if presp.clicked() {
-                menu_toggle(ui, preset_id);
+            let entries = AB_PRESETS.iter().map(|(label, _, _)| *label).collect::<Vec<_>>();
+            if let Some(index) = kit::text_dropdown(
+                ui,
+                ui.make_persistent_id("ab-preset"),
+                "Presets…",
+                &entries,
+                inner,
+                "Artboard presets",
+            ) {
+                let (_, w, h) = AB_PRESETS[index];
+                ops.push(Op::AbRect(i, None, None, Some(w), Some(h)));
             }
-            menu_below(ui, preset_id, &presp, None, |ui| {
-                ui.set_width(inner);
-                for (label, w, h) in AB_PRESETS {
-                    if menu_row(ui, label, "") {
-                        ops.push(Op::AbRect(i, None, None, Some(w), Some(h)));
-                        menu_set(ui, preset_id, false);
-                    }
-                }
-            });
             // W / H + constrain
             ui.horizontal(|ui| {
                 let fw = 70.0;
@@ -150,7 +127,14 @@ pub(crate) fn panel_artboard(
                     .size(12.0),
                 );
             });
-            if toggle_row(ui, inner, "Transparent page", s.color.is_none()) {
+            if IA_TRANSPARENT.show(
+                ui,
+                if s.count == 0 {
+                    kit::IconState::Disabled("No artboard to change")
+                } else {
+                    kit::IconState::Toggle(s.color.is_none())
+                },
+            ) {
                 ops.push(Op::AbColor(i, if s.color.is_none() { Some([1.0, 1.0, 1.0, 1.0]) } else { None }));
             }
 
@@ -158,10 +142,17 @@ pub(crate) fn panel_artboard(
             fields::num(ui, inner, Lab::Letter("#"), "Artboard count", s.count as f32, 0, 0.1, 1.0..=200.0, ops, |v| {
                 Op::AbCount(v.round().max(1.0) as usize)
             });
-            if toggle_row(ui, inner, "Clip to page", s.clip) {
+            if IA_CLIP.show(
+                ui,
+                if s.count == 0 {
+                    kit::IconState::Disabled("No artboard to clip")
+                } else {
+                    kit::IconState::Toggle(s.clip)
+                },
+            ) {
                 ops.push(Op::AbClip(i));
             }
-            if toggle_row(ui, inner, "Move artwork with artboard", s.move_art) {
+            if IA_MOVE.show(ui, kit::IconState::Toggle(s.move_art)) {
                 ops.push(Op::AbMoveArt(!s.move_art));
             }
 

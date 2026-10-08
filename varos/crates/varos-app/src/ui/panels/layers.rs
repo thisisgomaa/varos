@@ -63,7 +63,12 @@ pub(crate) fn hash_f32(value: f32, state: &mut impl Hasher) {
     value.to_bits().hash(state);
 }
 
-pub(crate) fn layer_rows_key(ed: &Editor, collapsed: &std::collections::HashSet<u32>, search: &str) -> u64 {
+pub(crate) fn layer_rows_key(
+    ed: &Editor,
+    collapsed: &std::collections::HashSet<u32>,
+    search: &str,
+    kind_filter: usize,
+) -> u64 {
     let mut state = std::collections::hash_map::DefaultHasher::new();
     ed.rev.hash(&mut state);
     ed.dirty.hash(&mut state);
@@ -97,6 +102,7 @@ pub(crate) fn layer_rows_key(ed: &Editor, collapsed: &std::collections::HashSet<
     folded.sort_unstable();
     folded.hash(&mut state);
     search.hash(&mut state);
+    kind_filter.hash(&mut state);
     if ed.dirty {
         hash_f32(ed.cursor[0], &mut state);
         hash_f32(ed.cursor[1], &mut state);
@@ -141,7 +147,7 @@ pub(crate) fn path_auto_name(p: &varos_core::model::Path) -> String {
 }
 
 /// Flatten the scene tree into display rows (roots front-first, pre-order; collapsed subtrees skipped).
-/// `search` (lowercased) keeps only matching rows + their ancestors. Thumbs are unit-square outlines.
+/// Search and kind filters keep matching rows + ancestors and walk past collapse. Thumbs are unit-square outlines.
 /// Board-header sentinel row id (u32::MAX - board index) — node ids are small sequential, never near MAX.
 pub(crate) fn board_row_id(bi: usize) -> u32 {
     u32::MAX - bi as u32
@@ -150,10 +156,13 @@ pub(crate) fn build_layer_rows(
     ed: &Editor,
     collapsed: &std::collections::HashSet<u32>,
     search: &str,
+    kind_filter: usize,
     thumb_cache: &mut std::collections::HashMap<u32, ThumbCacheEntry>,
 ) -> Vec<LRow> {
     use varos_core::model::NodeKind;
     let q = search.trim().to_lowercase();
+    let unfolded = std::collections::HashSet::new();
+    let collapsed = if !q.is_empty() || kind_filter != 0 { &unfolded } else { collapsed };
     let mut rows: Vec<LRow> = Vec::new();
     let mut parent: Vec<Option<usize>> = Vec::new(); // parallel: each row's parent ROW index
 
@@ -305,13 +314,13 @@ pub(crate) fn build_layer_rows(
 
     thumb_cache.retain(|nid, _| ed.doc.node(*nid).is_some());
 
-    if q.is_empty() {
+    if q.is_empty() && kind_filter == 0 {
         return rows;
     }
     // keep matches + all their ancestors (so hierarchy stays readable)
     let mut keep = vec![false; rows.len()];
     for i in 0..rows.len() {
-        if rows[i].name.to_lowercase().contains(&q) {
+        if rows[i].name.to_lowercase().contains(&q) && layer_kind_matches(rows[i].kind, kind_filter) {
             keep[i] = true;
             let mut p = parent[i];
             while let Some(pi) = p {
@@ -429,6 +438,22 @@ pub(crate) fn panel_layers(
     // Group/Delete icons drew clipped (Ahmed 2026-07-11, twice).
     let pane = ui.max_rect().intersect(ui.clip_rect());
     let w = pane.width();
+    let filter_id = layer_filter_id(ui.ctx());
+    let mut kind_filter = ui.data(|d| d.get_temp::<usize>(filter_id).unwrap_or(0));
+    let owner = filter_id.with("menu");
+    let entries = [
+        kit::MenuEntry::Item("All"),
+        kit::MenuEntry::Item("Paths"),
+        kit::MenuEntry::Item("Groups"),
+        kit::MenuEntry::Item("Artboards"),
+    ];
+    // K2: the open menu consumes keys before the focused anchor/search sees them.
+    if let Some(index) = kit::menu(ui.ctx(), owner, &entries) {
+        kind_filter = index;
+        ui.data_mut(|d| d.insert_temp(filter_id, index));
+    }
+    let visible = filtered_layer_rows(rows, kind_filter);
+    let rows = visible.as_slice();
     // columns: eye · lock · [disclosure · thumb · name]. No identity bar, no target/select gutter.
     let (eye_w, lock_w) = (26.0, 22.0);
     let body_x0 = eye_w + lock_w + 8.0;
@@ -442,7 +467,10 @@ pub(crate) fn panel_layers(
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add_space(11.0);
-                let (sr, _) = ui.allocate_exact_size(egui::vec2(w - 22.0, 26.0), egui::Sense::hover());
+                let (sr, _) = ui.allocate_exact_size(
+                    egui::vec2(w - 22.0 - ICON_BTN_W - PANEL_ITEM_GAP_X, 26.0),
+                    egui::Sense::hover(),
+                );
                 ui.painter().rect(sr, CornerRadius::same(R), BG_SURFACE, Stroke::new(1.0, BORDER), StrokeKind::Middle);
                 if let Some(t) = &ic.search {
                     ui.painter().image(
@@ -457,6 +485,12 @@ pub(crate) fn panel_layers(
                 }
                 let at = egui::Rect::from_min_max(egui::pos2(sr.left() + 28.0, sr.top()), sr.max);
                 fields::search(ui, at.shrink2(egui::vec2(2.0, 3.0)), search);
+                let r = IA_LAYER_FILTER
+                    .show_response(ui, kit::IconState::Toggle(kind_filter != 0 || kit::is_menu_open(ui.ctx(), owner)));
+                if r.activated {
+                    kit::toggle_menu_below(ui.ctx(), owner, r.response.rect);
+                    let _ = kit::menu(ui.ctx(), owner, &entries);
+                }
             });
             ui.add_space(8.0);
             hairline(ui);
@@ -471,16 +505,7 @@ pub(crate) fn panel_layers(
             // rows travel together in panel order (Photoshop). An unselected/partial row lifts alone.
             // forbidden = every payload node + its whole subtree; the model re-guards. Alt = duplicate.
             let ptr = ui.input(|i| i.pointer.interact_pos());
-            let payload: Vec<u32> = drag
-                .map(|(s, _)| {
-                    if rows.iter().any(|r| r.id == s && r.drag_sel) {
-                        let mut seen = std::collections::HashSet::new();
-                        rows.iter().filter(|r| r.drag_sel && seen.insert(r.id)).map(|r| r.id).collect()
-                    } else {
-                        vec![s]
-                    }
-                })
-                .unwrap_or_default();
+            let payload = drag.map(|(source, _)| layer_drag_payload(rows, source, kind_filter)).unwrap_or_default();
             let src_is_layer = payload.iter().any(|&s| rows.iter().any(|r| r.id == s && r.kind == LKind::Layer));
             let forbidden: std::collections::HashSet<u32> = {
                 let mut set = std::collections::HashSet::new();
@@ -509,12 +534,16 @@ pub(crate) fn panel_layers(
             egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, false]).scroll_source(scroll_src).show(
                 ui,
                 |ui| {
-                    if rows.is_empty() {
+                    if !rows.iter().any(|row| layer_kind_matches(row.kind, kind_filter)) {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(w, 40.0), egui::Sense::hover());
                         ui.painter().text(
                             r.center(),
                             Align2::CENTER_CENTER,
-                            if search.trim().is_empty() { "No layers yet" } else { "No matching layers" },
+                            if search.trim().is_empty() && kind_filter == 0 {
+                                "No layers yet"
+                            } else {
+                                "No matching layers"
+                            },
                             FontId::proportional(12.0),
                             MUTED,
                         );
@@ -533,7 +562,8 @@ pub(crate) fn panel_layers(
                         }
                         prev_sec = row.sec;
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click_and_drag());
-                        if resp.drag_started() && row.kind != LKind::Board {
+                        if resp.drag_started() && row.kind != LKind::Board && layer_kind_matches(row.kind, kind_filter)
+                        {
                             *drag = Some((row.id, row.sec));
                             // a drag is not a click — drop any half-built manual double-click
                             let dc_id = doc_id(ui, "lay-last-click");
@@ -764,7 +794,13 @@ pub(crate) fn panel_layers(
                                         .unwrap_or(ri);
                                     let (lo, hi) = if a <= ri { (a, ri) } else { (ri, a) };
                                     ops.push(Op::LayerSelectSet(
-                                        rows[lo..=hi].iter().filter(|r| r.kind != LKind::Board).map(|r| r.id).collect(),
+                                        rows[lo..=hi]
+                                            .iter()
+                                            .filter(|r| {
+                                                r.kind != LKind::Board && layer_kind_matches(r.kind, kind_filter)
+                                            })
+                                            .map(|r| r.id)
+                                            .collect(),
                                     ));
                                 } else {
                                     ops.push(Op::LayerSelectSet(vec![row.id]));
@@ -896,4 +932,67 @@ pub(crate) fn elide(name: &str, avail: f32, size: f32) -> String {
     let mut s: String = name.chars().take(max.saturating_sub(1)).collect();
     s.push('\u{2026}');
     s
+}
+
+/// Filter affects visible kinds only; it never changes scene nodes or selected artwork.
+pub(crate) fn layer_kind_matches(kind: LKind, filter: usize) -> bool {
+    match filter {
+        1 => kind == LKind::Path,
+        2 => kind == LKind::Group,
+        3 => kind == LKind::Board,
+        _ => true,
+    }
+}
+
+fn layer_filter_id(ctx: &egui::Context) -> egui::Id {
+    let doc = ctx.data(|d| d.get_temp::<Option<SessionId>>(doc_salt_key())).flatten();
+    egui::Id::new(("layer-kind-filter", doc))
+}
+pub(crate) fn layer_kind_filter(ctx: &egui::Context) -> usize {
+    ctx.data(|d| d.get_temp::<usize>(layer_filter_id(ctx)).unwrap_or(0))
+}
+/// Keep the matching kinds and their visible ancestors, including artboard headers.
+fn filtered_layer_rows(rows: &[LRow], filter: usize) -> Vec<LRow> {
+    let mut keep = vec![false; rows.len()];
+    let mut ancestors: Vec<usize> = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        while ancestors.last().is_some_and(|&p| rows[p].depth >= row.depth) {
+            ancestors.pop();
+        }
+        if layer_kind_matches(row.kind, filter) {
+            keep[i] = true;
+            for &p in &ancestors {
+                keep[p] = true;
+            }
+        }
+        ancestors.push(i);
+    }
+    rows.iter().zip(keep).filter(|(_, k)| *k).map(|(r, _)| r.clone()).collect()
+}
+
+/// Recompute drag roots among matching kinds so a retained ancestor cannot hide selected paths.
+fn layer_drag_payload(rows: &[LRow], source: u32, filter: usize) -> Vec<u32> {
+    let mut roots = Vec::new();
+    let mut ancestors: Vec<usize> = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        while ancestors.last().is_some_and(|&p| rows[p].depth >= row.depth) {
+            ancestors.pop();
+        }
+        let selected = if filter == 0 { row.drag_sel } else { row.full_sel };
+        if selected
+            && layer_kind_matches(row.kind, filter)
+            && !ancestors.iter().any(|&p| rows[p].full_sel && layer_kind_matches(rows[p].kind, filter))
+            && !roots.contains(&row.id)
+        {
+            roots.push(row.id);
+        }
+        ancestors.push(i);
+    }
+    if roots.contains(&source) {
+        roots
+    } else if rows.iter().any(|r| r.id == source && layer_kind_matches(r.kind, filter)) {
+        vec![source]
+    } else {
+        vec![]
+    }
 }

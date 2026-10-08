@@ -353,7 +353,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
                 Ok(())
             }
         }
-        SetMoveArtWithArtboard(_) | CycleUnits => Ok(()),
+        SetMoveArtWithArtboard(_) | CycleUnits | SetUnits(_) => Ok(()),
         DuplicateMoveLayer { sources, target, position } => {
             node(*target)?;
             if sources.is_empty() {

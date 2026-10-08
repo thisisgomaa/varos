@@ -25,6 +25,8 @@ const fn rgb(hex: u32) -> Color32 {
 
 // ── rule 7: the warm-black ramp (R ≥ G ≥ B). Chrome uses ONLY these. ──
 pub const BG: Color32 = rgb(0x141313); // board / base — the signature warm black
+/// Toggle/segment on well (owner 2026-10-08): below PANEL, no azure bar.
+pub const TOGGLE_WELL: Color32 = rgb(0x000000);
 pub const PANEL: Color32 = rgb(0x1b1919); // box / panel fill
 pub const SURFACE: Color32 = rgb(0x242121); // inset field / control fill
 pub const HOVER: Color32 = rgb(0x2b2828); // hover-state fill
@@ -494,9 +496,15 @@ pub const ICON_LG: f32 = 18.0;
 /// The icon button's hit target — never below `KIT_MIN_TARGET` in either direction.
 pub const ICON_BTN_W: f32 = 26.0;
 pub const ICON_BTN_H: f32 = KIT_MIN_TARGET;
-/// A toggle's "on" mark (owner decision: toggle = a small azure bar, no fill; tool = an azure block).
-pub const ICON_BAR_W: f32 = 10.0;
-pub const ICON_BAR_H: f32 = 2.0;
+/// Panel icon segments: 28×20 paint, lifted to a 24 pt interaction target.
+pub const PANEL_SEG_W: f32 = 28.0;
+pub const PANEL_SEG_H: f32 = 20.0;
+pub const PANEL_SEG_GLYPH: f32 = ICON_MD;
+pub const HARMONY_TRACK_W: f32 = 232.0;
+pub const PANEL_STRIP_GAP: f32 = 2.0;
+pub const PANEL_DIVIDER_H: f32 = 16.0;
+pub const DOC_UNITS_W: f32 = 52.0;
+pub const SWATCH_RING_INSET: f32 = 5.0;
 /// Panel typography and section rhythm (polish pass, 2026-10-05).
 pub const T_MICRO: f32 = 10.5;
 pub const MICRO_TRACKING: f32 = 0.6;
@@ -540,10 +548,6 @@ pub const FIELD_LABEL_BOX_GAP: f32 = 2.0;
 /// Transform geometry shared with paint-row alignment.
 pub const PANEL_ITEM_GAP_X: f32 = 6.0;
 pub const TRANSFORM_REFPOINT_SIZE: f32 = 38.0;
-/// Paint labels end six points before the Transform X/Y value column. The column moves with the
-/// exact same refpoint, item-gap and field-label tokens used by the Transform row.
-pub const PAINT_LABEL_W: f32 =
-    TRANSFORM_REFPOINT_SIZE + PANEL_ITEM_GAP_X + FIELD_LABEL_W + FIELD_LABEL_BOX_GAP - PANEL_ITEM_GAP_X;
 /// Kit menus: minimum popup width and the gap between the anchor and the popup.
 pub const KIT_MENU_MIN_W: f32 = 176.0;
 pub const KIT_MENU_GAP: f32 = 4.0;

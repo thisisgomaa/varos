@@ -2424,8 +2424,15 @@ impl Editor {
     /// Cycle the document's display unit (Pain A15 Document settings). Undoable — the display unit is a
     /// serialized document property, so a units change joins the undo stack like any other doc mutation.
     pub fn cycle_units(&mut self) {
+        self.set_units(self.doc.units.display.cycle());
+    }
+    /// Set the display unit without changing geometry; unchanged values create no history step.
+    pub fn set_units(&mut self, unit: crate::units::Unit) {
+        if self.doc.units.display == unit {
+            return;
+        }
         self.begin();
-        self.doc.units.display = self.doc.units.display.cycle();
+        self.doc.units.display = unit;
         self.dirty = true;
         self.commit();
     }

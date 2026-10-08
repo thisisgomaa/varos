@@ -28,6 +28,7 @@ pub enum Unit {
 }
 
 impl Unit {
+    pub const ALL: [Self; 6] = [Self::Px, Self::Pt, Self::Pica, Self::Mm, Self::Cm, Self::In];
     /// How many POINTS one of this unit equals, given the document `ppi` (pixels-per-inch).
     /// 1 in = 72 pt; 1 pica = 12 pt; 1 in = 25.4 mm; 1 px = 72/ppi pt.
     pub fn pt_per(self, ppi: f32) -> f32 {

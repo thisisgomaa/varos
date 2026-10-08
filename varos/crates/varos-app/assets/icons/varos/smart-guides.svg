@@ -1,0 +1,19 @@
+<!-- original Varos glyph, 2026-10-08, drawn from scratch (24 grid, 2 px stroke, round caps/joins; not traced from any product) - part of Varos, GPL-3.0 -->
+<svg
+  class="varos varos-smart-guides"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <rect x="2" y="7" width="7" height="10" rx="1" />
+  <rect x="15" y="3" width="7" height="18" rx="1" />
+  <circle cx="5.5" cy="12" r="1" fill="currentColor" stroke="none" />
+  <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+  <circle cx="18.5" cy="12" r="1" fill="currentColor" stroke="none" />
+</svg>
