@@ -275,11 +275,12 @@ fn page_id(id: &str) -> Option<u32> {
     id.strip_prefix("artboard:")?.parse().ok()
 }
 fn target_page(edit: &Edit, doc: &Document, locals: &serde_json::Value, before: Option<&Document>) -> Option<u32> {
+    let ops = varos_bridge::expanded_ops(edit);
     let old: BTreeSet<_> = before.into_iter().flat_map(|d| d.artboards.iter().map(|a| a.id)).collect();
     let mut created: BTreeSet<_> =
         before.into_iter().flat_map(|_| doc.artboards.iter().filter(|a| !old.contains(&a.id)).map(|a| a.id)).collect();
     let mut target = None;
-    for op in &edit.ops {
+    for op in &ops {
         let id = match op {
             Operation::AddArtboard { local, .. } | Operation::DuplicateArtboard { local, .. } => {
                 let id =
@@ -375,6 +376,7 @@ fn receipt_order(
     before: &Document,
     after: &Document,
 ) -> (Vec<String>, BTreeSet<String>) {
+    let ops = varos_bridge::expanded_ops(edit);
     let mut touched: BTreeSet<String> = ["created", "changed"]
         .into_iter()
         .flat_map(|k| receipt[k].as_array().into_iter().flatten())
@@ -425,7 +427,7 @@ fn receipt_order(
             }
         }
     };
-    for (op_index, (op, creations)) in edit.ops.iter().zip(&creations).enumerate() {
+    for (op_index, (op, creations)) in ops.iter().zip(&creations).enumerate() {
         for id in creations {
             add(id.clone(), op_index);
         }
@@ -447,11 +449,11 @@ fn creations_by_operation(
     before: &Document,
     after: &Document,
 ) -> Vec<Vec<String>> {
+    let ops = varos_bridge::expanded_ops(edit);
     let old_pages: BTreeSet<_> = before.artboards.iter().map(|a| a.id).collect();
     let mut pages: BTreeSet<_> = after.artboards.iter().filter(|a| !old_pages.contains(&a.id)).map(|a| a.id).collect();
     pages.extend(
-        edit.ops
-            .iter()
+        ops.iter()
             .filter_map(Operation::artboard)
             .filter_map(|id| page_id(receipt["locals"][id].as_str().unwrap_or(id)))
             .filter(|id| !old_pages.contains(id)),
@@ -459,8 +461,8 @@ fn creations_by_operation(
     let paths: BTreeSet<_> = after.paths.iter().map(|p| p.id).collect();
     let groups: BTreeSet<_> = after.nodes.iter().filter(|n| n.kind == NodeKind::Group).map(|n| n.id).collect();
     let mut cursor = after.ids;
-    let mut out = vec![vec![]; edit.ops.len()];
-    for (i, op) in edit.ops.iter().enumerate().rev() {
+    let mut out = vec![vec![]; ops.len()];
+    for (i, op) in ops.iter().enumerate().rev() {
         match op {
             Operation::AddShape { local, bounds, radius, .. } => {
                 let count = shape_anchor_count(*bounds, *radius);
