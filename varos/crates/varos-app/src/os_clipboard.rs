@@ -72,7 +72,21 @@ fn build_available(doc: &Document, clipboard: &Clipboard) -> Result<(Vec<Flavour
         Ok(vectors) => {
             flavours.push(Flavour { kind: "com.adobe.pdf", bytes: vectors.pdf });
             flavours.push(Flavour { kind: "public.svg-image", bytes: vectors.svg });
-            match varos_raster::clipboard_png(vectors.document, vectors.rect) {
+            let bitmap = if vectors.document.images.is_empty() {
+                varos_raster::clipboard_png(vectors.document, vectors.rect)
+            } else {
+                let [x, y, w, h] = vectors.rect;
+                varos_raster::images::rasterize_with_images(
+                    &vectors.document,
+                    &clipboard.resources,
+                    [(w * 2.).ceil() as u32, (h * 2.).ceil() as u32],
+                    [-x * 2., -y * 2.],
+                    2.,
+                    None,
+                )
+                .and_then(|r| r.encode_png())
+            };
+            match bitmap {
                 Ok(bytes) => flavours.push(Flavour { kind: "public.png", bytes }),
                 Err(reason) => report.omitted.push(format!("public.png: {reason}")),
             }
@@ -337,5 +351,66 @@ mod tests {
         assert!(board.flavours[1].bytes.starts_with(b"%PDF-"));
         editor.execute(EditCommand::Undo).unwrap();
         assert_eq!(editor.doc, before);
+    }
+}
+
+/// OS bitmap paste is embedded, has no invented source path, and commits one checked edit.
+#[cfg(test)]
+pub fn paste_bitmap_bytes(ed: &mut Editor, bytes: &[u8], at: [f32; 2]) -> Result<(), String> {
+    varos_core::images::links::place_bytes(ed, bytes, at, None, Default::default(), None)?;
+    Ok(())
+}
+#[cfg(all(target_os = "macos", not(test)))]
+pub fn bitmap_bytes() -> Result<Option<std::sync::Arc<[u8]>>, String> {
+    use objc2_app_kit::NSPasteboard;
+    use objc2_foundation::NSString;
+    let board = NSPasteboard::generalPasteboard();
+    // The internal vector flavour has priority over its bitmap preview.
+    if board.dataForType(&NSString::from_str("org.varos.clipboard")).is_some() {
+        return Ok(None);
+    }
+    for kind in ["public.png", "public.tiff"] {
+        if let Some(data) = board.dataForType(&NSString::from_str(kind)) {
+            if data.len() > varos_core::images::MAX_ORIGINAL {
+                return Err("Clipboard bitmap exceeds 16 MiB".into());
+            }
+            // SAFETY: immutable retained NSData is read synchronously before the pasteboard changes.
+            let bytes = unsafe { data.as_bytes_unchecked() };
+            return Ok(Some(std::sync::Arc::from(bytes)));
+        }
+    }
+    Ok(None)
+}
+#[cfg(any(not(target_os = "macos"), test))]
+pub fn bitmap_bytes() -> Result<Option<std::sync::Arc<[u8]>>, String> {
+    Ok(None)
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    #[test]
+    fn bitmap_paste_embeds_once_and_refusal_leaves_resources_untouched() {
+        let mut ed = Editor::new();
+        let pixels = varos_core::images::Pixels {
+            budget: None,
+            width: 1,
+            height: 1,
+            rgba: std::sync::Arc::from([1, 2, 3, 255]),
+        };
+        let bytes = varos_core::images::codec::encode_png(&pixels).unwrap();
+        paste_bitmap_bytes(&mut ed, &bytes, [5., 6.]).unwrap();
+        assert_eq!(ed.doc.images.len(), 1);
+        assert!(ed.doc.images[0].link.is_none());
+        let rev = ed.rev;
+        let before = ed.clone();
+        assert!(paste_bitmap_bytes(&mut ed, b"bad", [0.; 2]).is_err());
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.blobs, before.blobs);
+        assert_eq!(ed.rev, rev);
+        ed.undo();
+        assert!(ed.doc.images.is_empty());
+        ed.redo();
+        assert_eq!(ed.doc, before.doc);
     }
 }

@@ -227,7 +227,8 @@ pub(crate) fn build_layer_rows(
                 shapes
             }
         };
-        let full_sel = !paths.is_empty() && paths.iter().all(|p| ed.objsel.contains(p));
+        let items = varos_core::images::node_items(&ed.doc, nid);
+        let full_sel = !items.is_empty() && items.iter().all(|p| ed.objsel.contains(p));
         // the top-most fully-selected row is the multi-drag unit (its parent isn't fully selected)
         let drag_sel = full_sel && !par.map(|pi| rows[pi].full_sel).unwrap_or(false);
         rows.push(LRow {

@@ -90,3 +90,6 @@ image 0.25.10 (MIT OR Apache-2.0) and gif 0.13.3 (MIT) decode raster objects; im
 requires uncached gif 0.14.2, so the bounded cached 0.13.3 first-frame adapter is used instead.
 crates/varos-core/src/images/links.rs adapts explicit update/relink and immutable accepted-source
 semantics from VectorCraft engine/cmd/links.rs@a469568 (MIT OR Apache-2.0, ArtCraft Team 2026).
+crates/varos-pdf/src/package.rs and varos-core/src/images/links.rs adapt package/link contracts
+from VectorCraft engine/cmd/{package.rs,links.rs}@a469568. Copyright (c) 2026 ArtCraft Team.
+MIT OR Apache-2.0; independent filesystem/UI implementation; no prior UI/assets copied.

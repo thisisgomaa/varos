@@ -100,8 +100,6 @@ impl Value {
             _ => order.u32(b, self.at),
         }
     }
-
-
 }
 
 /// The value of the entry at `e` if it is a well-formed Orientation entry:
@@ -123,7 +121,9 @@ fn orientation_value(order: Order, b: &[u8], e: usize, big_tiff: bool) -> Option
 /// even when a later duplicate is well formed.
 fn find_entry(b: &[u8]) -> Option<(Order, Value)> {
     let (order, first, count, entry_bytes, big_tiff) = ifd0_entries(b)?;
-    let e = (0..count).filter_map(|i| first.checked_add(i.checked_mul(entry_bytes)?)).find(|&e| order.u16(b, e) == Some(TAG_ORIENTATION))?;
+    let e = (0..count)
+        .filter_map(|i| first.checked_add(i.checked_mul(entry_bytes)?))
+        .find(|&e| order.u16(b, e) == Some(TAG_ORIENTATION))?;
     Some((order, orientation_value(order, b, e, big_tiff)?))
 }
 
@@ -132,6 +132,91 @@ fn find_entry(b: &[u8]) -> Option<(Order, Value)> {
 /// malformed or out-of-range values give 1.
 pub fn exif_orientation(exif: &[u8]) -> u16 {
     let b = tiff_body(exif);
-    find_entry(b).and_then(|(order, v)| v.read(order, b)).and_then(|v| u16::try_from(v).ok()).filter(|v| (1..=8).contains(v)).unwrap_or(1)
+    find_entry(b)
+        .and_then(|(order, v)| v.read(order, b))
+        .and_then(|v| u16::try_from(v).ok())
+        .filter(|v| (1..=8).contains(v))
+        .unwrap_or(1)
 }
 
+/// Source resolution tags share the bounded IFD0 parser used for orientation.
+pub fn tiff_ppi(bytes: &[u8]) -> Option<[f32; 2]> {
+    let b = tiff_body(bytes);
+    let (order, start, count, entry, big) = ifd0_entries(b)?;
+    let mut axes = [None, None];
+    let mut unit = 2u16;
+    for n in 0..count {
+        let at = start.checked_add(n.checked_mul(entry)?)?;
+        let tag = order.u16(b, at)?;
+        let ty = order.u16(b, at + 2)?;
+        let count = if big { order.u64(b, at + 4)? } else { u64::from(order.u32(b, at + 4)?) };
+        if count != 1 {
+            continue;
+        }
+        let value = at + if big { 12 } else { 8 };
+        if tag == 296 && ty == 3 {
+            unit = order.u16(b, value)?;
+        }
+        if (tag == 282 || tag == 283) && ty == 5 {
+            let offset = if big { value } else { order.u32(b, value)? as usize };
+            let num = order.u32(b, offset)?;
+            let den = order.u32(b, offset + 4)?;
+            if den != 0 {
+                axes[usize::from(tag == 283)] = Some(num as f32 / den as f32);
+            }
+        }
+    }
+    let factor = match unit {
+        2 => 1.,
+        3 => 2.54,
+        _ => return None,
+    };
+    let result = [axes[0]? * factor, axes[1]? * factor];
+    result.iter().all(|v| v.is_finite() && *v > 0.).then_some(result)
+}
+pub fn file_ppi(b: &[u8]) -> Option<[f32; 2]> {
+    if b.starts_with(b"II") || b.starts_with(b"MM") {
+        return tiff_ppi(b);
+    }
+    if b.starts_with(&[255, 216]) {
+        let mut at = 2usize;
+        while b.get(at) == Some(&255) {
+            let marker = *b.get(at + 1)?;
+            if marker == 0xda || marker == 0xd9 {
+                break;
+            }
+            let len = u16::from_be_bytes(b.get(at + 2..at + 4)?.try_into().ok()?) as usize;
+            if len < 2 {
+                return None;
+            }
+            let data = b.get(at + 4..at.checked_add(2)?.checked_add(len)?)?;
+            if marker == 0xe1 && data.starts_with(b"Exif\0\0") {
+                return tiff_ppi(data);
+            }
+            at = at.checked_add(len)?.checked_add(2)?;
+        }
+    }
+    if b.starts_with(b"\x89PNG") {
+        let mut at = 8usize;
+        while let Some(header) = b.get(at..at.checked_add(8)?) {
+            let len = u32::from_be_bytes(header[..4].try_into().ok()?) as usize;
+            let end = at.checked_add(8)?.checked_add(len)?;
+            if &header[4..] == b"eXIf" {
+                return tiff_ppi(b.get(at + 8..end)?);
+            }
+            at = end.checked_add(4)?;
+        }
+    }
+    if b.starts_with(b"RIFF") && b.get(8..12) == Some(b"WEBP") {
+        let mut at = 12usize;
+        while let Some(header) = b.get(at..at.checked_add(8)?) {
+            let len = u32::from_le_bytes(header[4..].try_into().ok()?) as usize;
+            let end = at.checked_add(8)?.checked_add(len)?;
+            if &header[..4] == b"EXIF" {
+                return tiff_ppi(b.get(at + 8..end)?);
+            }
+            at = end.checked_add(len % 2)?;
+        }
+    }
+    None
+}

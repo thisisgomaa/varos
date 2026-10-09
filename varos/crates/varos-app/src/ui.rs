@@ -300,7 +300,6 @@ impl Ui {
             field_pending: None,
         }
     }
-
     /// Feed a window event to egui. `consumed` = egui took it (so the canvas should NOT); `repaint` =
     /// egui wants a frame for it (the host asks for that frame, tagged — `pacing`).
     pub fn on_event(&mut self, window: &Window, ev: &WindowEvent) -> egui_winit::EventResponse {
@@ -466,7 +465,6 @@ impl Ui {
                 maximized,
             );
         });
-
         // K3: Home draws no document field; any edit left open (an invalid one a non-user command
         // passed) is closed here — there is no document to commit into
         let _ = kit::field::end_frame(&self.ctx);
@@ -698,6 +696,7 @@ impl Ui {
                             panel_pathfinder(ui, snap.pathfinder, &mut ops);
                             true
                         }
+                        P::Links => crate::image_ui::panel(ui, ed, doc_active, &mut app_cmds),
                         _ => false,
                     })
                 };
@@ -708,6 +707,7 @@ impl Ui {
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
             select_transform::draw(ctx, ed, hole);
             isolation::draw(ctx, ed, hole);
+            crate::image_ui::draw(ctx, ed, doc_active, hole, &mut app_cmds, view, ppp);
             build_ab_chrome(
                 ctx,
                 view,

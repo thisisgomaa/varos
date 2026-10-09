@@ -418,7 +418,7 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
 /// once — so the stroke blends against what's BEHIND the object, never against its own fill.
 #[derive(Debug, PartialEq)]
 pub enum Draw {
-    Image { key: varos_core::images::BlobKey, range: (u32,u32) },
+    Image { key: varos_core::images::BlobKey, range: (u32, u32) },
     Fill { fan: (u32, u32), cover: (u32, u32) },
     // `scissor` = a pixel-space rect [x, y, w, h] to confine this run to (A2: an artboard-clipped OPAQUE
     // stroke, so its extruded band is trimmed to the page edge, not just its centerline). `None` = draw
@@ -543,11 +543,13 @@ fn group_draws(
     while i < prims.len() {
         if let Prim::Image { key, corners, opacity, .. } = &prims[i] {
             let start = fgv.len() as u32;
-            for index in [0usize,1,2,0,2,3] {
-                let uv = [[0.,0.],[1.,0.],[1.,1.],[0.,1.]][index];
-                fgv.push(Vertex { pos: ndc(view.w2s(corners[index]),w,h), color: [uv[0],uv[1],*opacity,0.] });
+            for index in [0usize, 1, 2, 0, 2, 3] {
+                let uv = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]][index];
+                fgv.push(Vertex { pos: ndc(view.w2s(corners[index]), w, h), color: [uv[0], uv[1], *opacity, 0.] });
             }
-            draws.push(Draw::Image { key:key.clone(), range:(start,6) }); i+=1; continue;
+            draws.push(Draw::Image { key: key.clone(), range: (start, 6) });
+            i += 1;
+            continue;
         }
         if matches!(prims[i], Prim::Fill { .. }) {
             // one fill → its own stencil+cover step (offset into the shared fill buffer)
@@ -563,7 +565,9 @@ fn group_draws(
             // TRANSLUCENT stroke (colour alpha < 1 — from the colour itself or folded object opacity)
             // must paint its overlapping quads + join discs EXACTLY ONCE → stencil-mark + cover step
             // (otherwise every overlap re-blends and the band turns into the blotchy "blur").
-            let j = (i..prims.len()).find(|&k| matches!(prims[k], Prim::Fill { .. } | Prim::Image { .. })).unwrap_or(prims.len());
+            let j = (i..prims.len())
+                .find(|&k| matches!(prims[k], Prim::Fill { .. } | Prim::Image { .. }))
+                .unwrap_or(prims.len());
             while i < j {
                 if let Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } = &prims[i] {
                     if color[3] < 0.999 {

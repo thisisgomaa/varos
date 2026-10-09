@@ -16,13 +16,15 @@ pub enum PanelId {
     Swatches,
     History,
     Assets,
+    Links,
 }
 
 impl PanelId {
     /// The panels the Window / box ⌄ menu can dock. Swatches/History/Assets are NOT here yet — they are
     /// unbuilt (sandbox dummies), so they must not appear as choices until they have real bodies (Ahmed
     /// 07-08). The enum variants stay, ready to re-list the moment each is built for real.
-    pub const DOCKABLE: [PanelId; 4] = [PanelId::Align, PanelId::Pathfinder, PanelId::Properties, PanelId::Layers];
+    pub const DOCKABLE: [PanelId; 5] =
+        [PanelId::Align, PanelId::Pathfinder, PanelId::Properties, PanelId::Layers, PanelId::Links];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -34,6 +36,7 @@ impl PanelId {
             PanelId::Swatches => "Swatches",
             PanelId::History => "History",
             PanelId::Assets => "Assets",
+            PanelId::Links => "Links",
         }
     }
 
@@ -68,6 +71,7 @@ pub fn render_panel(id: PanelId, ui: &mut egui::Ui) {
         PanelId::Swatches => swatches_panel(ui),
         PanelId::History => history_panel(ui),
         PanelId::Assets => assets_panel(ui),
+        PanelId::Links => {}
     }
 }
 

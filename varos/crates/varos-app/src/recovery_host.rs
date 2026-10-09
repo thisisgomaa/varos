@@ -335,10 +335,12 @@ impl RecoveryHost {
                     let result = store
                         .load_best_decoded(&rid, |blob| {
                             // ---- w2-images ----
-                            varos_pdf::load_vrs_bytes(blob,&varos_core::format::Limits::DEFAULT).map(|loaded|(loaded.doc,loaded.blobs)).map_err(|e|e.to_string())
+                            varos_pdf::load_vrs_bytes(blob, &varos_core::format::Limits::DEFAULT)
+                                .map(|loaded| (loaded.doc, loaded.blobs))
+                                .map_err(|e| e.to_string())
                         })
                         .map_err(|e| e.reason())
-                        .map(|(loaded, (doc,blobs))| {
+                        .map(|(loaded, (doc, blobs))| {
                             Box::new(crate::workspace::RecoveredDocument {
                                 blobs,
                                 doc,
@@ -568,12 +570,16 @@ impl RecoveryHost {
                     recovered: s.recovered.is_some(),
                 };
                 let doc = s.editor.doc.clone();
-                let blobs=s.editor.blobs.clone();
+                let blobs = s.editor.blobs.clone();
                 (
                     sid,
                     seq,
                     Box::new(move || {
-                        let payload=if doc.images.is_empty(){varos_core::file::doc_to_blob(&doc).map(String::into_bytes)}else{varos_pdf::images::write_vrs(&doc,&blobs,&varos_core::format::Limits::DEFAULT)};
+                        let payload = if doc.images.is_empty() {
+                            varos_core::file::doc_to_blob(&doc).map(String::into_bytes)
+                        } else {
+                            varos_pdf::images::write_vrs(&doc, &blobs, &varos_core::format::Limits::DEFAULT)
+                        };
                         let result = payload.and_then(|blob| {
                             store
                                 .write_generation(&meta, seq, &blob, unix_now())
@@ -1390,6 +1396,7 @@ mod tests {
         }
         let plan = varos_pdf::plan_pdf_export(&doc, varos_pdf::ExportScope::AllVisibleArtboards).unwrap();
         crate::file_jobs::FileJob::Export(crate::file_jobs::ExportJob {
+            blobs: Default::default(),
             pdf_options: Default::default(),
             sid: SessionId(1),
             dest,

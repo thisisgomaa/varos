@@ -24,9 +24,9 @@ use varos_core::model::Document;
 // The write side lives in `write.rs` (the shared page loop + the native container) and `export.rs`
 // (the pure PDF export: planning + a model-free writer). The bounded read side lives in read.rs;
 // this file keeps the compatible public entry points.
-pub mod images;
 mod clipboard;
 mod export;
+pub mod images;
 pub use clipboard::{clipboard_vectors, ClipboardVectors};
 mod options;
 pub use options::{export_pdf_with_options, PdfBoxes, PdfMarks, PdfOptions, PdfPreset};
@@ -148,3 +148,5 @@ pub fn load_vrs_with_notice(path: &FsPath) -> Result<(Document, Option<&'static 
     let notice = loaded.notice();
     Ok((loaded.doc, notice))
 }
+
+pub mod package;

@@ -368,9 +368,8 @@ fn card(ui: &mut egui::Ui, sheet: &mut ExportSheet, index: usize, running: bool)
             ui,
             asset,
             &sheet.minimal.previews,
-            sheet.minimal.preview_id,
-            index,
-            sheet.minimal.selection_tab,
+            &sheet.minimal.blobs,
+            (sheet.minimal.preview_id, index, sheet.minimal.selection_tab),
             preview.shrink(t::KIT_PAD),
         );
         ui.painter().text(
@@ -391,15 +390,16 @@ fn thumbnail(
     ui: &egui::Ui,
     asset: &varos_raster::export::Asset,
     previews: &super::previews::Previews,
-    snapshot: u64,
-    index: usize,
-    selection: bool,
+    blobs: &varos_core::images::BlobStore,
+    identity: (u64, usize, bool),
     rect: egui::Rect,
 ) {
+    let (snapshot, index, selection) = identity;
     let id = Id::new(("export-thumbnail", snapshot, index, selection));
     let mut texture = ui.ctx().data(|d| d.get_temp::<egui::TextureHandle>(id));
     if texture.is_none() {
-        if let Some(pixels) = previews.pixels(ui.ctx(), format!("export-{snapshot}-{selection}-{index}"), asset) {
+        if let Some(pixels) = previews.pixels(ui.ctx(), format!("export-{snapshot}-{selection}-{index}"), asset, blobs)
+        {
             texture = Some(ui.ctx().load_texture(
                 format!("export-{snapshot}-{selection}-{index}"),
                 pixels,

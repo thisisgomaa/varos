@@ -1,7 +1,6 @@
 //! varos-core — the pure Rust core (data model + modeless interaction + render-agnostic scene).
 //! NO gpu/window/tauri deps. Everything below the "hard seam".
 
-pub mod images;
 pub mod board;
 pub mod boolean;
 pub mod clipboard;
@@ -9,6 +8,7 @@ mod clipping;
 pub mod command;
 mod construction;
 pub mod guard;
+pub mod images;
 pub use guard::EngineError;
 pub mod editor;
 pub mod flatten;

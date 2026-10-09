@@ -209,7 +209,10 @@ pub struct Scene {
 /// to double-blend, so no isolated layer needed).
 fn scale_alpha(p: &mut Prim, o: f32) {
     let c = match p {
-        Prim::Image { opacity, .. } => { *opacity *= o; return; },
+        Prim::Image { opacity, .. } => {
+            *opacity *= o;
+            return;
+        }
         Prim::Fill { color, .. } => color,
         Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } => color,
         Prim::Dashed { color, .. } => color,
@@ -304,8 +307,16 @@ pub struct SceneStyle {
 pub fn build_scene_in_view_styled(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle) -> Scene {
     build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style), false)
 }
-pub fn build_artwork_scene(ed: &Editor, ppu: f32) -> Scene {build_scene_impl(ed,ppu,None,None,true)}
-fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>, artwork_only: bool) -> Scene {
+pub fn build_artwork_scene(ed: &Editor, ppu: f32) -> Scene {
+    build_scene_impl(ed, ppu, None, None, true)
+}
+fn build_scene_impl(
+    ed: &Editor,
+    ppu: f32,
+    cull: Option<ViewCull>,
+    style: Option<SceneStyle>,
+    artwork_only: bool,
+) -> Scene {
     let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
     let stroke_budget = std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default());
     let stroke_errors = std::cell::RefCell::new(Vec::new());
@@ -324,7 +335,9 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     {
         let ab_tool = ed.tool == ToolKind::Artboard;
         for (i, ab) in ed.doc.artboards.iter().enumerate() {
-            if artwork_only {break;} 
+            if artwork_only {
+                break;
+            }
             if ab.hidden {
                 continue; // board eye OFF → the page (paper + edge + handles) vanishes with its art
             }
@@ -752,25 +765,39 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     // ---- w2-images ----
     for item in crate::images::paint_order(&ed.doc) {
         if let crate::model::NodeKind::Image(id) = item {
-            if ed.doc.eff_hidden(id) || ed.doc.is_mask_source(id) { continue; }
+            if ed.doc.eff_hidden(id) || ed.doc.is_mask_source(id) {
+                continue;
+            }
             let Some(image) = ed.doc.images.iter().find(|i| i.id == id) else { continue };
             let Some(blob) = ed.blobs.get(&image.blob) else {
                 stroke_errors.borrow_mut().push(format!("Image {id} resource unavailable"));
                 continue;
             };
             let corners = crate::images::world_corners(&ed.doc, image);
-            if cull.as_ref().is_some_and(|c| !rects_intersect(crate::images::corner_rect(corners), c.grown(0.0))) { continue; }
+            if cull.as_ref().is_some_and(|c| !rects_intersect(crate::images::corner_rect(corners), c.grown(0.0))) {
+                continue;
+            }
             let unit_clip = ed.doc.clip_group_of(id);
             if unit_clip != cur_clip {
                 if let Some(c) = cur_clip.take() {
-                    if !clip_open.is_empty() { clip_members.push(Group::Opaque(std::mem::take(&mut clip_open))); }
-                    groups.push(Group::Clip { mask_rings: mask_rings_of(c), members: std::mem::take(&mut clip_members) });
+                    if !clip_open.is_empty() {
+                        clip_members.push(Group::Opaque(std::mem::take(&mut clip_open)));
+                    }
+                    groups
+                        .push(Group::Clip { mask_rings: mask_rings_of(c), members: std::mem::take(&mut clip_members) });
                 }
-                if unit_clip.is_some() && !open.is_empty() { groups.push(Group::Opaque(std::mem::take(&mut open))); }
+                if unit_clip.is_some() && !open.is_empty() {
+                    groups.push(Group::Opaque(std::mem::take(&mut open)));
+                }
                 cur_clip = unit_clip;
             }
-            let prim = Prim::Image { key: image.blob.clone(), pixels: blob.pixels.clone(), corners, opacity: image.opacity };
-            if cur_clip.is_some() { clip_open.push(prim); } else { open.push(prim); }
+            let prim =
+                Prim::Image { key: image.blob.clone(), pixels: blob.pixels.clone(), corners, opacity: image.opacity };
+            if cur_clip.is_some() {
+                clip_open.push(prim);
+            } else {
+                open.push(prim);
+            }
             continue;
         }
         let crate::model::NodeKind::Path(id) = item else { continue };

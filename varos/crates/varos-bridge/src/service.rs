@@ -27,6 +27,7 @@ pub struct BoardAccess<'a> {
 }
 /// Owned, revision-pinned CPU work. Capture on the owning thread, render on a host worker.
 pub struct SnapshotJob {
+    pub blobs: varos_core::images::BlobStore,
     pub document: Document,
     pub rev: u64,
     pub size: [u32; 2],
@@ -45,16 +46,21 @@ impl SnapshotJob {
                 }
             };
             checkpoint()?;
-            let raster = match self.artboard {
-                None => varos_raster::rasterize(std::sync::Arc::new(self.document), self.size),
-                Some(id) => {
-                    let index = self
-                        .document
-                        .artboard_index(id)
-                        .ok_or_else(|| Error::new("not_found", format!("unknown artboard:{id}")))?;
-                    varos_raster::rasterize_artboard_checked(std::sync::Arc::new(self.document), index, self.size)
-                        .map_err(|e| Error::new("limit_exceeded", e))?
-                        .ok_or_else(|| Error::new("invalid_argument", "artboard cannot be rendered"))?
+            let raster = if !self.document.images.is_empty() {
+                varos_raster::images::fitted(&self.document, &self.blobs, self.size, self.artboard)
+                    .map_err(|e| Error::new("limit_exceeded", e))?
+            } else {
+                match self.artboard {
+                    None => varos_raster::rasterize(std::sync::Arc::new(self.document), self.size),
+                    Some(id) => {
+                        let index = self
+                            .document
+                            .artboard_index(id)
+                            .ok_or_else(|| Error::new("not_found", format!("unknown artboard:{id}")))?;
+                        varos_raster::rasterize_artboard_checked(std::sync::Arc::new(self.document), index, self.size)
+                            .map_err(|e| Error::new("limit_exceeded", e))?
+                            .ok_or_else(|| Error::new("invalid_argument", "artboard cannot be rendered"))?
+                    }
                 }
             };
             let raster = raster.into_result().map_err(|e| Error::new("limit_exceeded", e))?;
@@ -144,6 +150,7 @@ impl Settings {
     }
 }
 struct Observed {
+    has_images: bool,
     settings: Settings,
     dirty: bool,
     rev: u64,
@@ -240,6 +247,7 @@ impl Service {
                 if old.selection != selection {
                     old.selection_rev += 1;
                 }
+                old.has_images = !ed.doc.images.is_empty();
                 old.settings = settings;
                 old.dirty = ed.dirty;
                 old.rev = ed.rev;
@@ -252,6 +260,7 @@ impl Service {
                 self.boards.insert(
                     b,
                     Observed {
+                        has_images: !ed.doc.images.is_empty(),
                         settings,
                         dirty: ed.dirty,
                         rev: ed.rev,
@@ -369,7 +378,7 @@ impl Service {
         if ![API, "1.1", "1.2"].contains(&req.api()) {
             return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0, 1.1 or 1.2"));
         }
-        if matches!(req, Request::ImportSvg(_) | Request::AddImage(_)) && req.api() != "1.2" {
+        if matches!(req, Request::ImportSvg(_) | Request::AddImage(_) | Request::ImageAction(_)) && req.api() != "1.2" {
             return Reply::failure(Error::new("unsupported", "import_svg requires API 1.2"));
         }
         if [
@@ -640,12 +649,19 @@ impl Service {
                             Some(n)
                         }
                     };
-                    Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
+                    let blobs = host.access(&v.board)?.editor.blobs.clone();
+                    Ok(host.snapshot(
+                        SnapshotJob { blobs, document, rev: v.rev, size: [width, height], artboard },
+                        cancelled,
+                    ))
                 }
                 // ---- w2-images ----
+                Request::ImageAction(v) => host.file_effect("image_action", v),
                 Request::AddImage(v) => {
-                    if v.path.is_none() || v.scope.is_some() {return Err(Error::new("invalid_argument","add_image requires a local path and no scope"));}
-                    host.file_effect("add_image",v)
+                    if v.path.is_none() || v.scope.is_some() {
+                        return Err(Error::new("invalid_argument", "add_image requires a local path and no scope"));
+                    }
+                    host.file_effect("add_image", v)
                 }
                 Request::ImportSvg(v) => {
                     if v.path.is_none() || v.scope.is_some() {
@@ -1038,11 +1054,16 @@ impl Service {
     }
     fn describe(&self, v: &Describe, host: &mut dyn Host) -> Result<Reply, Error> {
         // ---- w2-images ----
-        if v.api == "1.2" && v.fields.as_ref().is_some_and(|f|f.as_slice()==["images"]) {
-            let a=host.access(&v.board)?;if v.rev.is_some_and(|r|r!=a.editor.rev){return Err(Error::new("stale_revision","document changed"));}
+        if v.api == "1.2" && v.fields.as_ref().is_some_and(|f| f.as_slice() == ["images"]) {
+            let a = host.access(&v.board)?;
+            if v.rev.is_some_and(|r| r != a.editor.rev) {
+                return Err(Error::new("stale_revision", "document changed"));
+            }
             return Ok(Reply::success(crate::images::describe(a.editor)));
         }
-        if v.api != "1.2" && !host.access(&v.board)?.editor.doc.images.is_empty() {return Err(Error::new("unsupported_version","image detail requires API 1.2"));}
+        if v.api != "1.2" && self.boards[&v.board].has_images {
+            return Err(Error::new("unsupported_version", "image detail requires API 1.2"));
+        }
         if v.api == "1.2" && v.fields.as_ref().is_some_and(|f| f.as_slice() == ["document_info"]) {
             let b = &self.boards[&v.board];
             if v.rev.is_some_and(|r| r != b.rev) {
@@ -1999,10 +2020,22 @@ mod observation_tests {
 
     #[test]
     fn snapshot_worker_checkpoints_cancel_and_pin_owned_revision() {
-        let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40], artboard: None };
+        let job = SnapshotJob {
+            blobs: Default::default(),
+            document: Document::default(),
+            rev: 7,
+            size: [80, 40],
+            artboard: None,
+        };
         let reply = job.render(&AtomicBool::new(true));
         assert_eq!(reply.error.unwrap().code, "cancelled");
-        let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40], artboard: None };
+        let job = SnapshotJob {
+            blobs: Default::default(),
+            document: Document::default(),
+            rev: 7,
+            size: [80, 40],
+            artboard: None,
+        };
         let reply = job.render(&AtomicBool::new(false));
         assert_eq!(reply.result.unwrap()["rev"], 7);
     }

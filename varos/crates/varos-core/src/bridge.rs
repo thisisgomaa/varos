@@ -67,6 +67,18 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
 /// Preconditions for the headless command path. Interactive callers retain `execute` unchanged.
 pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
+    // ---- w2-images: mixed leaf selection for clipboard/delete ----
+    if matches!(command, Copy | Cut | DeleteSelected) && ed.doc.images.iter().any(|i| ed.objsel.contains(&i.id)) {
+        for id in &ed.objsel {
+            if ed.doc.pidx(*id).is_none() && !ed.doc.images.iter().any(|i| i.id == *id) {
+                return Err("Unknown object".into());
+            }
+            if ed.doc.eff_hidden(*id) || ed.doc.eff_locked(*id) {
+                return Err("Object is hidden or locked".into());
+            }
+        }
+        return Ok(());
+    }
     if matches!(
         command,
         InsertTracedPaths { .. }
@@ -537,6 +549,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             }
         }
         Paste { offset } => {
+            let mut resources = ed.blobs.clone();
+            ed.clipboard().admit_images(&mut resources)?;
             if ed.clipboard().is_empty() {
                 return Err("clipboard is empty; use Copy or Cut in the batch first".into());
             }

@@ -142,6 +142,7 @@ pub fn plan_selection_svg_export(
             path.hidden = true;
         }
     }
+    crate::images::hide_unselected(&mut narrowed, selected);
     let page = artwork_bounds(&narrowed).ok_or(ExportError::NothingToExport)?;
     Ok((narrowed, ExportPlan { scope: ExportScope::WholeBoard, pages: vec![page] }))
 }
@@ -286,6 +287,11 @@ fn artwork_bounds(doc: &Document) -> Option<PageSpec> {
             b = clipped;
         }
         bounds = Some(bounds.map_or(b, |old| union(old, b)));
+    }
+    for i in &doc.images {
+        if let Some(b) = crate::images::visible_bounds(doc, i) {
+            bounds = Some(bounds.map_or(b, |old| union(old, b)));
+        }
     }
     bounds.map(|b| PageSpec {
         rect: [b.0, b.1, (b.2 - b.0).max(1.0), (b.3 - b.1).max(1.0)],
@@ -524,6 +530,21 @@ fn title(out: &mut String, name: &str) {
     out.push_str("</title>\n");
 }
 
+// ---- w2-images ----
+pub(crate) fn image_clip_data(doc: &Document, clip: u32) -> String {
+    mask_paths(doc, clip).iter().map(|(p, xf, _)| path_data(p, xf)).collect()
+}
+pub(crate) fn paint_image_companion(out: &mut String, doc: &Document, id: u32) -> Result<(), ExportError> {
+    let Some(pi) = doc.pidx(id) else { return Ok(()) };
+    let Some(d) = drawable(doc, pi, &doc.paths[pi]) else { return Ok(()) };
+    if d.p.stroke_style.is_default() {
+        paint(out, &d);
+        Ok(())
+    } else {
+        stroke::paint(out, &d)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,14 +567,4 @@ mod tests {
         }
         assert_eq!(num(-0.00001), "0.000");
     }
-}
-
-// ---- w2-images ----
-pub(crate) fn image_clip_data(doc:&Document,clip:u32)->String {
-    mask_paths(doc,clip).iter().map(|(p,xf,_)|path_data(p,xf)).collect()
-}
-pub(crate) fn paint_image_companion(out:&mut String,doc:&Document,id:u32)->Result<(),ExportError> {
-    let Some(pi)=doc.pidx(id)else{return Ok(())};
-    let Some(d)=drawable(doc,pi,&doc.paths[pi])else{return Ok(())};
-    if d.p.stroke_style.is_default(){paint(out,&d);Ok(())}else{stroke::paint(out,&d)}
 }

@@ -67,7 +67,9 @@ fn knock_gs(pool: &mut KnockGs, ids: &mut Alloc, stroke: bool, alpha: f32) -> (R
 /// The third value is the embedded model's length (stored unfiltered, so it is also the stream's
 /// decoded length the reader bounds).
 pub(crate) fn write_native_counted(doc: &Document, limits: &Limits) -> Result<(Vec<u8>, usize, usize), String> {
-    if !doc.images.is_empty() { return Err("Image documents require the resource-aware writer".into()); }
+    if !doc.images.is_empty() {
+        return Err("Image documents require the resource-aware writer".into());
+    }
     let blob = encode_model(doc, limits).map_err(|e| e.to_string())?;
     let never = AtomicBool::new(false);
     let (bytes, objects) =
@@ -77,7 +79,9 @@ pub(crate) fn write_native_counted(doc: &Document, limits: &Limits) -> Result<(V
 
 /// The native `.vrs` container: one page per visible board + the embedded editable model.
 pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
-    if !doc.images.is_empty() {return Err("Image documents require the resource-aware writer".into());}
+    if !doc.images.is_empty() {
+        return Err("Image documents require the resource-aware writer".into());
+    }
     let blob = doc_to_blob(doc)?;
     let never = AtomicBool::new(false);
     write_pages(doc, &native_pages(doc), Some(&blob), &never).map_err(|e| e.to_string())

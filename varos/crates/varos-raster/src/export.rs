@@ -122,12 +122,23 @@ pub fn plan(doc: &Document, scope: &Scope) -> Result<Vec<Asset>, String> {
 }
 
 pub fn encode(asset: &Asset, options: &Options, cancel: &AtomicBool) -> Result<Output, String> {
+    encode_with_images(asset, options, &varos_core::images::BlobStore::default(), cancel)
+}
+pub fn encode_with_images(
+    asset: &Asset,
+    options: &Options,
+    store: &varos_core::images::BlobStore,
+    cancel: &AtomicBool,
+) -> Result<Output, String> {
     options.validate()?;
     check_cancel(cancel)?;
     // Validate caller-supplied pages and documents before allocation or traversal.
     let plan = svg::ExportPlan { scope: svg::ExportScope::WholeBoard, pages: vec![asset.page.clone()] };
-    let (svg_files, mut report) =
-        svg::export_svg_files_with_report(&asset.doc, &plan, cancel).map_err(|e| e.to_string())?;
+    let (svg_files, mut report) = if asset.doc.images.is_empty() {
+        svg::export_svg_files_with_report(&asset.doc, &plan, cancel).map_err(|e| e.to_string())?
+    } else {
+        varos_core::images::svg::export(&asset.doc, store, &plan, false, cancel)?
+    };
     let bytes = match options.format {
         Format::Svg => svg_files.into_iter().next().ok_or("No export page.")?.bytes,
         Format::Pdf => return Err("PDF encoding belongs to varos-pdf; the host uses the same page plan.".into()),
@@ -161,7 +172,18 @@ pub fn encode(asset: &Asset, options: &Options, cancel: &AtomicBool) -> Result<O
             };
             let index = doc.artboards.len();
             doc.artboards.push(Artboard { x, y, w, h, page_color: background, ..Artboard::default() });
-            let raster = crate::rasterize_artboard(Arc::new(doc), index, size).ok_or("Invalid raster page.")?;
+            let raster = if doc.images.is_empty() {
+                crate::rasterize_artboard(Arc::new(doc), index, size).ok_or("Invalid raster page.")?
+            } else {
+                crate::images::rasterize_with_images(
+                    &doc,
+                    store,
+                    size,
+                    [-x * options.scale, -y * options.scale],
+                    options.scale,
+                    background,
+                )?
+            };
             check_cancel(cancel)?;
             match format {
                 Format::Png => raster.encode_png()?,

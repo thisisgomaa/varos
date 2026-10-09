@@ -426,6 +426,7 @@ pub struct Editor {
     pub last_error: Option<crate::guard::EngineError>,
     // ---- w2-images ----
     pub blobs: crate::images::BlobStore,
+    image_drag: Option<crate::images::input::Gesture>,
     pub doc: Document,
     pub tool: ToolKind,
     pub gesture: ToolKind,
@@ -509,6 +510,7 @@ impl Editor {
             select_transform: Default::default(),
             last_error: None,
             blobs: crate::images::BlobStore::default(),
+            image_drag: None,
             doc: Document::default(),
             tool: ToolKind::Object,
             gesture: ToolKind::Object,
@@ -2064,6 +2066,10 @@ impl Editor {
     }
 
     // ---------- grouping (Ctrl+G / Ctrl+Shift+G) ----------
+    // ---- w2-images ----
+    pub fn selected_image_groups(&self) -> impl Iterator<Item = u32> + '_ {
+        self.group_sel.iter().copied()
+    }
     pub fn group_selection(&mut self) {
         self.group_selection_with_clip(None);
     }
@@ -3606,9 +3612,12 @@ impl Editor {
     }
     // ---- w2-images ----
     pub fn image_pins(&self) -> std::collections::HashSet<crate::images::BlobKey> {
-        std::iter::once(&self.doc).chain(self.undo.iter().map(std::sync::Arc::as_ref))
-            .chain(self.redo.iter().map(std::sync::Arc::as_ref)).chain(self.pending.iter().map(std::sync::Arc::as_ref))
-            .flat_map(|d| d.images.iter().map(|i| i.blob.clone())).collect()
+        std::iter::once(&self.doc)
+            .chain(self.undo.iter().map(std::sync::Arc::as_ref))
+            .chain(self.redo.iter().map(std::sync::Arc::as_ref))
+            .chain(self.pending.iter().map(std::sync::Arc::as_ref))
+            .flat_map(|d| d.images.iter().map(|i| i.blob.clone()))
+            .collect()
     }
     pub fn history_preview(&self, redo: bool) -> Option<&Document> {
         if redo { self.redo.last() } else { self.undo.last() }.map(std::sync::Arc::as_ref)
@@ -3640,11 +3649,16 @@ impl Editor {
         self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
             if let Some(p) = self.pending.take() {
+                // Retire only dropped history keys; staged batch resources stay admitted.
+                let mut retired: std::collections::HashSet<_> =
+                    self.redo.iter().flat_map(|d| d.images.iter().map(|i| i.blob.clone())).collect();
                 self.undo.push(p);
                 if self.undo.len() > 200 {
-                    self.undo.remove(0);
+                    retired.extend(self.undo.remove(0).images.iter().map(|i| i.blob.clone()));
                 }
                 self.redo.clear();
+                let pins = self.image_pins();
+                self.blobs.retire(&retired, &pins);
                 self.rev += 1;
             }
         }
@@ -3707,7 +3721,7 @@ impl Editor {
     /// what still exists in the restored document (a selected path/anchor that the undo removed is dropped,
     /// never left dangling).
     fn clear_transient_keep_selection(&mut self) {
-        self.objsel.retain(|&p| self.doc.pidx(p).is_some());
+        self.objsel.retain(|&p| self.doc.pidx(p).is_some() || self.doc.images.iter().any(|i| i.id == p));
         self.selected.retain(|&a| self.doc.anchor_address(a).is_some());
         self.absel.retain(|&i| i < self.doc.artboards.len());
         if self.dsel_path.is_some_and(|p| self.doc.pidx(p).is_none()) {
@@ -3723,10 +3737,14 @@ impl Editor {
     /// Enforce the selection invariant after any visibility/lock mutation: hidden or locked paths
     /// cannot remain selected through either object selection, Direct path selection, or grabbed anchors.
     pub(crate) fn prune_inert_selection(&mut self) {
-        let allowed = self.select_transform.isolation.map(|n| self.doc.node_paths(n));
+        let allowed = self.select_transform.isolation.map(|n| {
+            let mut ids = self.doc.node_paths(n);
+            ids.extend(self.doc.images.iter().filter(|i| self.in_isolation(i.id)).map(|i| i.id));
+            ids
+        });
         let doc = &self.doc;
         self.objsel.retain(|&pid| {
-            doc.pidx(pid).is_some()
+            (doc.pidx(pid).is_some() || doc.images.iter().any(|i| i.id == pid))
                 && allowed.as_ref().is_none_or(|a| a.contains(&pid))
                 && !doc.eff_hidden(pid)
                 && !doc.eff_locked(pid)
@@ -3753,6 +3771,7 @@ impl Editor {
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
+        self.image_drag = None;
         self.stroke_error = None;
         self.select_transform = Default::default();
         self.reselect.clear();
@@ -4109,6 +4128,17 @@ impl Editor {
         }
     }
     pub fn pointer_down(&mut self, pos: Pt) {
+        if let Some(g) = crate::images::input::gesture(self, pos) {
+            if !self.mods.shift {
+                self.objsel.clear();
+                self.selected.clear();
+                self.group_sel.clear();
+            }
+            self.objsel.insert(g.id);
+            self.begin();
+            self.image_drag = Some(g);
+            return;
+        }
         self.cursor = pos;
         self.begin();
         self.gesture_copy = false;
@@ -4152,6 +4182,19 @@ impl Editor {
         }
     }
     pub fn pointer_up(&mut self) {
+        if let Some(g) = self.image_drag.take() {
+            let xform = self.doc.images.iter().find(|i| i.id == g.id).map(|i| i.xform).unwrap_or(g.xform);
+            if let Some(before) = self.pending.take() {
+                self.doc = std::sync::Arc::unwrap_or_clone(before);
+            }
+            self.dirty = false;
+            self.execute_ui(crate::EditCommand::Image(crate::images::ImageEdit::Transform {
+                id: g.id,
+                xform,
+                opacity: g.opacity,
+            }));
+            return;
+        }
         if crate::tools::select_transform::up(self) {
             return;
         }
@@ -4240,6 +4283,16 @@ impl Editor {
         }
     }
     pub fn pointer_move(&mut self, pos: Pt) {
+        if let Some(g) = self.image_drag.clone() {
+            let xform = crate::images::input::translated(self, &g, pos);
+            if xform.valid() {
+                if let Some(i) = self.doc.images.iter_mut().find(|i| i.id == g.id) {
+                    i.xform = xform;
+                }
+            }
+            self.cursor = pos;
+            return;
+        }
         if crate::tools::select_transform::movement(self, pos) {
             self.cursor = pos;
             return;
@@ -4778,6 +4831,12 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        if self.image_drag.take().is_some() {
+            if let Some(before) = self.pending.take() {
+                self.doc = std::sync::Arc::unwrap_or_clone(before);
+            }
+            self.dirty = false;
+        }
         if self.select_transform.preview.is_some() {
             self.transform_end(true);
             self.select_transform.down = None;
@@ -4872,6 +4931,23 @@ impl Editor {
         self.commit();
     }
     pub fn delete_selected(&mut self) {
+        let images: Vec<_> = self.doc.images.iter().filter(|i| self.objsel.contains(&i.id)).map(|i| i.id).collect();
+        if !images.is_empty() {
+            let mut staged = self.clone();
+            staged.objsel.retain(|id| staged.doc.pidx(*id).is_some());
+            let mut ops: Vec<_> = images
+                .into_iter()
+                .map(|id| crate::EditCommand::Image(crate::images::ImageEdit::Delete { id }))
+                .collect();
+            if !staged.objsel.is_empty() || !staged.selected.is_empty() || staged.dsel_path.is_some() {
+                ops.push(crate::EditCommand::DeleteSelected);
+            }
+            if staged.execute_batch(ops).is_ok() {
+                self.publish_batch(staged, true);
+            }
+            return;
+        }
+
         if self.tool == ToolKind::Artboard {
             self.ab_delete(self.doc.active);
             return;
@@ -4971,12 +5047,23 @@ impl Editor {
         {
             included.insert(pid);
         }
-        self.doc.paths.iter().filter(|path| included.contains(&path.id)).map(|path| path.id).collect()
+        let mut ids: Vec<_> =
+            self.doc.paths.iter().filter(|path| included.contains(&path.id)).map(|path| path.id).collect();
+        ids.extend(
+            self.doc
+                .images
+                .iter()
+                .filter(|i| self.objsel.contains(&i.id) && !self.doc.eff_hidden(i.id) && !self.doc.eff_locked(i.id))
+                .map(|i| i.id),
+        );
+        ids
     }
     /// Fresh detached payload using the same source rules as Copy/Cut. No editor mutation.
     /// Desktop adapters can publish it before a destructive Cut; anchors alone capture nothing.
     pub fn capture_selection_clipboard(&self, cut: bool) -> Clipboard {
-        Clipboard::capture(&self.doc, &self.clipboard_sources(!cut))
+        let mut copy = Clipboard::capture(&self.doc, &self.clipboard_sources(!cut));
+        copy.pin_images(&self.blobs);
+        copy
     }
     /// Edit ▸ Copy (⌘C): put a deep copy of the selection (groups, clip masks and live transforms kept)
     /// on the in-app clipboard. The document is untouched — no history entry, no `rev` bump. With
@@ -4985,6 +5072,7 @@ impl Editor {
         let pids = self.clipboard_sources(true);
         if !pids.is_empty() {
             self.clipboard = Clipboard::capture(&self.doc, &pids);
+            self.clipboard.pin_images(&self.blobs);
         }
     }
     /// Edit ▸ Cut (⌘X): Copy, then delete the selection — ONE undo step. No-op with nothing selected.
@@ -4994,9 +5082,12 @@ impl Editor {
             return;
         }
         self.clipboard = Clipboard::capture(&self.doc, &pids);
+        self.clipboard.pin_images(&self.blobs);
         let gone: HashSet<u32> = pids.into_iter().collect();
         self.begin();
         self.doc.paths.retain(|p| !gone.contains(&p.id));
+        self.doc.images.retain(|i| !gone.contains(&i.id));
+        self.doc.assets.retain(|a| self.doc.images.iter().any(|i| i.blob == a.key));
         self.objsel.clear();
         self.group_sel.clear();
         self.selected.clear();
@@ -5017,7 +5108,12 @@ impl Editor {
         if self.clipboard.is_empty() {
             return;
         }
+        let mut resources = self.blobs.clone();
+        if self.clipboard.admit_images(&mut resources).is_err() {
+            return;
+        }
         self.begin();
+        self.blobs = resources;
         let new = self.clipboard.paste_into_remembering_layers(
             &mut self.doc,
             offset.unwrap_or([0.0, 0.0]),
@@ -5439,7 +5535,7 @@ impl Editor {
             if matches!(self.doc.node(nid).map(|n| &n.kind), Some(NodeKind::Group)) {
                 self.group_sel.insert(nid);
             }
-            for p in self.doc.node_paths(nid) {
+            for p in crate::images::node_items(&self.doc, nid) {
                 if !self.doc.eff_locked(p) && !self.doc.eff_hidden(p) {
                     self.objsel.insert(p);
                 }
@@ -5455,9 +5551,7 @@ impl Editor {
     /// objsel, so requiring them too made deselect unreachable for mixed-lock rows (07-04 review bug #1).
     pub fn layer_toggle(&mut self, nid: u32) {
         self.tool = ToolKind::Object;
-        let paths: Vec<u32> = self
-            .doc
-            .node_paths(nid)
+        let paths: Vec<u32> = crate::images::node_items(&self.doc, nid)
             .into_iter()
             .filter(|&p| !self.doc.eff_locked(p) && !self.doc.eff_hidden(p))
             .collect();
@@ -5473,12 +5567,12 @@ impl Editor {
             }
             if matches!(self.doc.node(nid).map(|n| &n.kind), Some(NodeKind::Group)) {
                 self.group_sel.insert(nid);
-            } else if let Some(descendant) = self.doc.node_paths(nid).first().copied() {
+            } else if let Some(descendant) = crate::images::node_items(&self.doc, nid).first().copied() {
                 let ancestors: Vec<u32> = self
                     .group_sel
                     .iter()
                     .copied()
-                    .filter(|&group| self.doc.node_paths(group).contains(&descendant))
+                    .filter(|&group| crate::images::node_items(&self.doc, group).contains(&descendant))
                     .collect();
                 for group in ancestors {
                     self.group_sel.remove(&group);

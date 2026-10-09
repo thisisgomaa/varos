@@ -205,6 +205,7 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
         ("file.revert", fkey(KeyCode::F12).unwrap(), FileCmd::Revert),
         ("file.export", cmd_alt(KeyCode::KeyE).unwrap(), FileCmd::Export),
         ("file.print", cmd(KeyCode::KeyP).unwrap(), FileCmd::Print),
+        ("file.place", cmd_shift(KeyCode::KeyP).unwrap(), FileCmd::Place),
     ];
     for (id, accel, fc) in want {
         assert!(rows.iter().any(|&(i, a, f)| i == id && a == accel && f == fc), "File menu misses {id}");
@@ -256,6 +257,12 @@ fn snapshot(menus: &[(&'static str, Vec<Entry>)]) -> String {
 
 /// The rows slice 0.6 added after the split; everything else is the pre-split table.
 const ADDED_AFTER_SPLIT: &[&str] = &[
+    "file.place",
+    "file.package",
+    "win.panel.Links",
+    "obj.image.trace",
+    "obj.image.rasterize",
+    "obj.image.crop",
     "file.closeall",
     "file.savecopy",
     "file.revert",
@@ -344,6 +351,8 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.new",
             "file.open",
             "sub Open Recent",
+            "file.place",
+            "file.package",
             "file.place.svg",
             "file.new-template",
             "file.save-template",

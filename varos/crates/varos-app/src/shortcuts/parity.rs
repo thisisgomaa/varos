@@ -26,6 +26,7 @@ pub const BINDINGS: &[Binding] = &[
     b!("KeyQ", true, false, false, "Quit"),
     b!("KeyE", true, false, true, "Export"),
     b!("KeyP", true, false, false, "Print"),
+    b!("KeyP", true, true, false, "Place"),
     b!("KeyP", true, false, true, "Document Setup"),
     b!("KeyZ", true, false, false, "Undo"),
     b!("KeyZ", true, true, false, "Redo"),

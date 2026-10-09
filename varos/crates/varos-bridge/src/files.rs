@@ -301,4 +301,6 @@ mod source_tests {
 }
 
 /// OS account home; never shell variable expansion.
-pub fn account_home()->std::io::Result<PathBuf>{crate::conn::fsutil::user_home_dir()}
+pub fn account_home() -> std::io::Result<PathBuf> {
+    crate::conn::fsutil::user_home_dir()
+}
