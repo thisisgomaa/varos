@@ -46,6 +46,9 @@ pub struct Assignment {
 pub struct Frame {
     #[serde(default)]
     pub binding: Option<Binding>,
+    /// Text anchor at binding time; movement is relative to this boundary-space origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_origin: Option<[f32; 2]>,
     #[serde(default)]
     pub next: Option<u32>,
     #[serde(default)]
@@ -203,6 +206,9 @@ pub fn validate(doc: &Document) -> Result<(), String> {
                 return Err("required Arabic shaping feature cannot be disabled".into());
             }
         }
+        if f.binding_origin.is_some_and(|p| p.iter().any(|v| !v.is_finite() || v.abs() > 1e7)) {
+            return Err("invalid text binding origin".into());
+        }
         if let Some(b) = f.binding {
             let path = match b {
                 Binding::Area { path, .. } | Binding::Path { path, .. } => path,
@@ -253,7 +259,14 @@ pub fn validate(doc: &Document) -> Result<(), String> {
 }
 fn change(doc: &mut Document, action: &Action) -> Result<(), String> {
     match action {
-        Action::Bind { text, binding } => doc.typography.frames.entry(*text).or_default().binding = *binding,
+        Action::Bind { text, binding } => {
+            let origin = doc.text_boxes.iter().find(|t| t.id == *text).map(|t| t.frame);
+            let frame = doc.typography.frames.entry(*text).or_default();
+            if frame.binding.map(binding_path) != binding.map(binding_path) {
+                frame.binding_origin = binding.and(origin);
+            }
+            frame.binding = *binding;
+        }
         Action::Thread { from, to } => doc.typography.frames.entry(*from).or_default().next = *to,
         Action::DefineCharacter { name, definition } => {
             named(name)?;
@@ -349,7 +362,7 @@ pub fn story_root(doc: &Document, mut id: u32) -> Result<u32, String> {
 
 /// Preserve named spans through the single replacement represented by a text edit.
 /// Prefix/suffix boundaries are Unicode scalar boundaries; no authored bytes are rewritten.
-pub(crate) fn remap_characters(frame: &mut Frame, old: &str, new: &str) {
+pub fn remap_characters(frame: &mut Frame, old: &str, new: &str) {
     if old == new {
         return;
     }
@@ -373,4 +386,30 @@ pub(crate) fn remap_characters(frame: &mut Frame, old: &str, new: &str) {
         }
     }
     frame.characters.retain(|span| span.start < span.end);
+}
+
+/// Shared by composition, editing previews and clipboard dependency capture.
+pub fn binding_path(binding: Binding) -> u32 {
+    match binding {
+        Binding::Area { path, .. } | Binding::Path { path, .. } => path,
+    }
+}
+pub fn replace_preview(doc: &mut Document, draft: &TextBox) {
+    if let Some(text) = doc.text_boxes.iter_mut().find(|t| t.id == draft.id) {
+        if let Some(frame) = doc.typography.frames.get_mut(&draft.id) {
+            remap_characters(frame, &text.source(), &draft.source());
+        }
+        *text = draft.clone();
+    }
+}
+pub fn text_transform(doc: &Document, id: u32) -> crate::model::Xform {
+    let mut node = crate::text::node_id(doc, id).and_then(|id| doc.node(id));
+    let mut transform = node.map(|n| n.xform).unwrap_or_default();
+    while let Some(n) = node {
+        if n.kind == crate::model::NodeKind::Group {
+            transform = n.xform;
+        }
+        node = n.parent.and_then(|id| doc.node(id));
+    }
+    transform
 }

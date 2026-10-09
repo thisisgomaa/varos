@@ -25,7 +25,11 @@ impl PathMap {
         };
         let index = doc.pidx(path).ok_or("missing text path")?;
         let shape = &doc.paths[index];
-        let arc = ArcPath::new(varos_core::flatten::flatten_path(doc, index, 4.).outline, shape.closed)?;
+        let frame_text = doc.text_boxes.iter().find(|t| t.id == id).ok_or("missing text frame")?;
+        let arc = ArcPath::new(
+            crate::flow::geometry(doc, frame_text, path)?.into_iter().next().unwrap_or_default(),
+            shape.closed,
+        )?;
         let end = (arc.length - end).max(start);
         let root = varos_core::typography::story_root(doc, id)?;
         let text = doc.text_boxes.iter().find(|t| t.id == root).ok_or("missing text source")?;

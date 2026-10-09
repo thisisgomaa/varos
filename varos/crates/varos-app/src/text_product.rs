@@ -66,9 +66,7 @@ impl TextProduct {
     }
     fn composition(&mut self, ed: &Editor, draft: &TextBox, zoom: f32) -> Result<varos_text_layout::Composed, String> {
         let mut doc = ed.doc.clone();
-        if let Some(t) = doc.text_boxes.iter_mut().find(|t| t.id == draft.id) {
-            *t = draft.clone();
-        }
+        varos_core::typography::replace_preview(&mut doc, draft);
         let target = self.selected.filter(|id| varos_core::typography::story_root(&doc, *id).ok() == Some(draft.id));
         let text = target.and_then(|id| doc.text_boxes.iter().find(|t| t.id == id)).unwrap_or(draft);
         self.engine()?.compose_document(&doc, text, zoom)
@@ -138,7 +136,7 @@ impl TextProduct {
                 .or_else(|| ed.doc.text_boxes.iter().find(|t| t.id == id))?
                 .clone();
             let p = text_transform(ed, id).inverse_apply(p);
-            let c = self.engine().ok()?.compose_document(&ed.doc, &t, zoom).ok()?;
+            let c = self.composition(ed, &t, zoom).ok()?;
             let bounds = if ed.doc.typography.frames.get(&id).is_some_and(|f| f.binding.is_some()) {
                 c.layout.ink_bounds.map(|[x, y, r, b]| [x, y, (r - x).max(8.), (b - y).max(8.)]).unwrap_or([
                     t.frame[0],
@@ -505,8 +503,8 @@ impl TextProduct {
         if let Some(session) = &self.session {
             if session.draft.id == 0 {
                 let _ = varos_core::text::add(&mut preview, session.display_draft(), None);
-            } else if let Some(t) = preview.doc.text_boxes.iter_mut().find(|t| t.id == session.draft.id) {
-                *t = session.display_draft();
+            } else {
+                varos_core::typography::replace_preview(&mut preview.doc, &session.display_draft());
             }
         }
         match self.engine().and_then(|e| e.outlined(&preview.doc, view.zoom)) {
@@ -641,6 +639,59 @@ mod tests {
             pressed,
             modifiers: Default::default(),
         }
+    }
+    #[test]
+    fn named_style_shortening_and_preedit_keep_preview_and_carets_valid() {
+        use varos_core::typography::{Action, CharacterStyle};
+        let mut ed = Editor::new();
+        let id = ed
+            .try_execute_created(EditCommand::AddText {
+                text: left_text("hello world", [20., 50.]).unwrap(),
+                parent: None,
+            })
+            .unwrap();
+        let mut style = ed.doc.text_boxes[0].runs[0].style.clone();
+        style.size = 42.;
+        ed.try_execute(EditCommand::Typography(Action::DefineCharacter {
+            name: "Title".into(),
+            definition: CharacterStyle { parent: None, style: Some(style) },
+        }))
+        .unwrap();
+        ed.try_execute(EditCommand::Typography(Action::ApplyCharacter {
+            text: id,
+            start: 0,
+            end: 11,
+            name: "Title".into(),
+        }))
+        .unwrap();
+        let mut tool = TextProduct {
+            engine: Some(TextLayout::bundled().unwrap()),
+            selected: Some(id),
+            session: Some(EditSession::new(ed.doc.text_boxes[0].clone())),
+            ..Default::default()
+        };
+        for source in ["h", "", "سَلَام"] {
+            tool.session.as_mut().unwrap().draft.runs[0].text = source.into();
+            let draft = tool.session.as_ref().unwrap().display_draft();
+            let composed = tool.composition(&ed, &draft, 1.).unwrap();
+            assert!(composed.layout.carets.iter().all(|c| c.byte <= source.len()));
+            let scene = tool.scene(
+                &ed,
+                View::identity(),
+                [500, 500],
+                SceneStyle {
+                    checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD,
+                    outline: varos_app::shell::tokens::OUTLINE_RGBA,
+                    canvas: varos_app::shell::tokens::CANVAS_RGBA,
+                },
+            );
+            assert!(scene.errors.is_empty(), "{:?}", scene.errors);
+            assert_eq!(ed.doc.typography.frames[&id].characters[0].end, 11);
+        }
+        tool.commit(&mut ed).unwrap();
+        assert_eq!(ed.doc.typography.frames[&id].characters[0].end, "سَلَام".len());
+        ed.undo();
+        assert_eq!(ed.doc.text_boxes[0].source(), "hello world");
     }
     #[test]
     fn object_drag_selects_core_identity_and_moves_one_undo_step() {

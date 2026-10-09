@@ -89,3 +89,62 @@ fn overset_source_is_not_extracted_from_deliverable_pdf() {
     assert!(report.notes.iter().any(|n| n.kind == "text_overset"));
     assert_eq!(ed.doc.text_boxes[0].source(), source);
 }
+
+#[test]
+fn off_page_and_clipped_lines_are_not_extractable() {
+    for clipped in [false, true] {
+        let mut ed = Editor::new();
+        ed.doc.artboards.push(varos_core::model::Artboard {
+            x: 0.,
+            y: 0.,
+            w: 400.,
+            h: if clipped { 400. } else { 80. },
+            ..Default::default()
+        });
+        ed.doc.assign_artboard_ids();
+        let mut text = varos_text_layout::default_text("VISIBLE\n\n\nOFF_PAGE_SECRET", [10., 30.]).unwrap();
+        text.para.align = varos_core::text::Alignment::Left;
+        let id = ed.try_execute_created(EditCommand::AddText { text, parent: None }).unwrap();
+        if clipped {
+            let mask = ed
+                .try_execute_created(EditCommand::AddShape {
+                    kind: varos_core::model::ShapeKind::Rect,
+                    bounds: [0., 0., 400., 80.],
+                    parent: None,
+                    fill: Some([0., 0., 0., 1.]),
+                    stroke: None,
+                    stroke_width: 0.,
+                    opacity: 1.,
+                    name: None,
+                })
+                .unwrap();
+            // Construct the valid persisted clip tree directly: the current selection
+            // command still restricts masks to path/image selection units.
+            let text_node = varos_core::text::node_id(&ed.doc, id).unwrap();
+            let mask_node = ed.doc.node_of_path(mask).unwrap();
+            let mut group = ed.doc.node(mask_node).unwrap().clone();
+            let parent = group.parent.unwrap();
+            group.id = ed.doc.nid();
+            let gid = group.id;
+            group.kind = varos_core::model::NodeKind::Group;
+            group.role = varos_core::model::GroupRole::Clip;
+            group.mask_child = Some(mask_node);
+            group.children = vec![mask_node, text_node];
+            for n in &mut ed.doc.nodes {
+                if [text_node, mask_node].contains(&n.id) {
+                    n.parent = Some(gid);
+                }
+                if n.id == parent {
+                    n.children.retain(|id| ![text_node, mask_node].contains(id));
+                    n.children.insert(0, gid);
+                }
+            }
+            ed.doc.nodes.push(group);
+        }
+        let plan = varos_pdf::plan_pdf_export(&ed.doc, varos_pdf::ExportScope::ActiveArtboard).unwrap();
+        let bytes = varos_pdf::export_pdf_bytes(&ed.doc, &plan, &AtomicBool::new(false)).unwrap();
+        let extracted = lopdf::Document::load_mem(&bytes).unwrap().extract_text(&[1]).unwrap();
+        assert!(extracted.contains("VISIBLE"), "{extracted:?}");
+        assert!(!extracted.contains("OFF_PAGE_SECRET"), "{extracted:?}");
+    }
+}

@@ -9,12 +9,15 @@ pub(super) struct Drag {
     pub arc: ArcPath,
     pub start: bool,
 }
-fn arc(ed: &Editor, binding: Binding) -> Option<ArcPath> {
+fn arc(ed: &Editor, id: u32, binding: Binding) -> Option<ArcPath> {
     let Binding::Path { path, .. } = binding else {
         return None;
     };
     let i = ed.doc.pidx(path)?;
-    ArcPath::new(varos_core::flatten::flatten_path(&ed.doc, i, 4.).outline, ed.doc.paths[i].closed).ok()
+    let text = ed.doc.text_boxes.iter().find(|t| t.id == id)?;
+    let xf = varos_core::typography::text_transform(&ed.doc, id);
+    let points = varos_text_layout::flow::geometry(&ed.doc, text, path).ok()?.into_iter().next()?;
+    ArcPath::new(points.into_iter().map(|p| xf.apply(p)).collect(), ed.doc.paths[i].closed).ok()
 }
 impl TextProduct {
     pub(super) fn bracket_event(
@@ -44,7 +47,7 @@ impl TextProduct {
                 let Binding::Path { start, end, .. } = binding else {
                     return Ok(false);
                 };
-                let Some(arc) = arc(ed, binding) else {
+                let Some(arc) = arc(ed, id, binding) else {
                     return Ok(false);
                 };
                 let p = view.s2w([pos.x * ppp, pos.y * ppp]);
@@ -107,7 +110,7 @@ impl TextProduct {
         let Binding::Path { start, end, .. } = binding else {
             return;
         };
-        let Some(arc) = arc(ed, binding) else {
+        let Some(arc) = arc(ed, id, binding) else {
             return;
         };
         let painter =

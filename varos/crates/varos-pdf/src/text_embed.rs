@@ -16,10 +16,17 @@ struct Glyph {
     size: f32,
     p: [f32; 2],
     fill: [f32; 4],
+    bounds: [f32; 4],
+}
+struct Auxiliary {
+    commands: Vec<varos_text_layout::font_export::Command>,
+    fill: [f32; 4],
+    origin: [f32; 2],
+    bounds: [f32; 4],
 }
 struct Text {
     glyphs: Vec<Glyph>,
-    auxiliaries: Vec<(Vec<varos_text_layout::font_export::Command>, [f32; 4], [f32; 2])>,
+    auxiliaries: Vec<Auxiliary>,
 }
 #[derive(Default)]
 pub(crate) struct Pool {
@@ -88,6 +95,13 @@ pub(crate) fn prepare(
         let mut requests = Vec::new();
         let mut auxiliaries = Vec::new();
         for g in glyphs {
+            let outline = varos_text_layout::font_export::glyph_outline(engine.fonts(), g)?;
+            let bounds = command_bounds(&outline.commands, result.origin).unwrap_or([
+                g.x + result.origin[0],
+                g.y + result.origin[1] - g.size,
+                g.x + result.origin[0] + g.advance,
+                g.y + result.origin[1],
+            ]);
             if !seen.insert((g.cluster.start, g.cluster.end)) {
                 let mut at = 0;
                 let fill = resolved
@@ -98,11 +112,7 @@ pub(crate) fn prepare(
                         (g.cluster.start < at).then_some(r.style.fill)
                     })
                     .unwrap_or([0., 0., 0., 1.]);
-                auxiliaries.push((
-                    varos_text_layout::font_export::glyph_outline(engine.fonts(), g)?.commands,
-                    fill,
-                    result.origin,
-                ));
+                auxiliaries.push(Auxiliary { commands: outline.commands, fill, origin: result.origin, bounds });
                 continue;
             }
             let unicode =
@@ -127,6 +137,7 @@ pub(crate) fn prepare(
                     size: g.size,
                     p: [g.x + g.offset[0] + result.origin[0], g.y + g.offset[1] + result.origin[1]],
                     fill,
+                    bounds,
                 },
             ));
         }
@@ -210,7 +221,14 @@ impl Pool {
     pub fn page(&mut self) {
         self.painted.clear();
     }
-    pub fn paint(&mut self, path: u32, xf: Xform, c: &mut Content, t: &impl Fn([f32; 2]) -> (f32, f32)) -> bool {
+    pub fn paint(
+        &mut self,
+        path: u32,
+        xf: Xform,
+        c: &mut Content,
+        t: &impl Fn([f32; 2]) -> (f32, f32),
+        eligible: &impl Fn((f32, f32, f32, f32)) -> bool,
+    ) -> bool {
         let Some(&index) = self.paths.get(&path) else {
             return false;
         };
@@ -220,6 +238,9 @@ impl Pool {
         c.save_state().begin_text();
         let (sin, cos) = xf.rot.sin_cos();
         for g in &self.texts[index].glyphs {
+            if !eligible(world_bounds(g.bounds, xf)) {
+                continue;
+            }
             let (x, y) = t(xf.apply(g.p));
             c.set_fill_rgb(g.fill[0], g.fill[1], g.fill[2]);
             c.set_font(Name(self.fonts[g.font].0.as_bytes()), g.size);
@@ -227,7 +248,10 @@ impl Pool {
             c.show(Str(&g.cid.to_be_bytes()));
         }
         c.end_text();
-        for (commands, fill, origin) in &self.texts[index].auxiliaries {
+        for Auxiliary { commands, fill, origin, bounds } in &self.texts[index].auxiliaries {
+            if !eligible(world_bounds(*bounds, xf)) {
+                continue;
+            }
             c.set_fill_rgb(fill[0], fill[1], fill[2]);
             let point = |p: [f32; 2]| t(xf.apply([p[0] + origin[0], p[1] + origin[1]]));
             for command in commands {
@@ -343,4 +367,30 @@ fn write_font(
 fn subset_name(index: usize) -> String {
     let prefix: String = (0..6).rev().map(|n| char::from(b'A' + ((index / 26usize.pow(n)) % 26) as u8)).collect();
     format!("{prefix}+Varos")
+}
+
+fn command_bounds(commands: &[varos_text_layout::font_export::Command], origin: [f32; 2]) -> Option<[f32; 4]> {
+    use varos_text_layout::font_export::Command;
+    commands
+        .iter()
+        .flat_map(|c| match *c {
+            Command::Move(p) | Command::Line(p) => vec![p],
+            Command::Cubic(a, b, p) => vec![a, b, p],
+            Command::Close => vec![],
+        })
+        .map(|p| [p[0] + origin[0], p[1] + origin[1]])
+        .fold(None, |b, p| {
+            Some(match b {
+                None => [p[0], p[1], p[0], p[1]],
+                Some([x, y, r, b]) => [x.min(p[0]), y.min(p[1]), r.max(p[0]), b.max(p[1])],
+            })
+        })
+}
+fn world_bounds([x, y, r, b]: [f32; 4], xf: Xform) -> (f32, f32, f32, f32) {
+    [[x, y], [r, y], [r, b], [x, b]]
+        .into_iter()
+        .map(|p| xf.apply(p))
+        .fold((f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY), |(x, y, r, b), p| {
+            (x.min(p[0]), y.min(p[1]), r.max(p[0]), b.max(p[1]))
+        })
 }
