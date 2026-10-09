@@ -25,6 +25,10 @@ pub const BINDINGS: &[Binding] = &[
     b!("KeyW", true, false, true, "Close All"),
     b!("KeyQ", true, false, false, "Quit"),
     b!("KeyE", true, false, true, "Export"),
+    // ---- Lane D: Illustrator drawing bindings ----
+    b!("KeyN", false, false, false, "Pencil"),
+    b!("Backslash", false, false, false, "Line Segment"),
+    b!("Backquote", false, true, false, "Curvature"),
     b!("KeyP", true, false, false, "Print"),
     b!("KeyP", true, false, true, "Document Setup"),
     b!("KeyZ", true, false, false, "Undo"),

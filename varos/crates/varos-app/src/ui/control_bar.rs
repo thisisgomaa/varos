@@ -409,61 +409,6 @@ pub(crate) fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>
 
 /// One rail slot standing in for all four shape tools. Left-click uses the current shape; right-click
 /// opens a flyout of all four (Illustrator tool-group behaviour). A corner mark hints at the flyout.
-pub(crate) fn shape_slot(
-    ui: &mut egui::Ui,
-    shapes: &[ToolBtn],
-    shape_active: &mut ToolKind,
-    s: &Snap,
-    ops: &mut Vec<Op>,
-) {
-    let cur = shapes.iter().find(|t| t.kind == *shape_active).unwrap_or(&shapes[0]);
-    let is_active = shapes.iter().any(|t| t.kind == s.tool);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
-    let rounding = CornerRadius::same(R);
-    if is_active {
-        ui.painter().rect_filled(rect, rounding, ACCENT);
-    } else if resp.hovered() {
-        ui.painter().rect_filled(rect, rounding, HOVER);
-    }
-    if let Some(t) = &cur.tex {
-        ui.painter().image(
-            t.id(),
-            egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_MD)),
-            UV01(),
-            icon_ink(is_active, resp.hovered()),
-        );
-    }
-    // tiny flyout marker — a corner triangle bottom-right, like Illustrator's grouped tools
-    let c = rect.right_bottom() + egui::vec2(-3.5, -3.5);
-    ui.painter().add(egui::Shape::convex_polygon(
-        vec![c, c + egui::vec2(-4.5, 0.0), c + egui::vec2(0.0, -4.5)],
-        icon_ink(is_active, resp.hovered()),
-        Stroke::NONE,
-    ));
-    if resp.clicked() {
-        ops.push(Op::Tool(*shape_active));
-    }
-    resp.clone().on_hover_text("Shapes \u{2014} click to use \u{00b7} right-click for more");
-    let pop = ui.make_persistent_id("shape-flyout");
-    if resp.secondary_clicked() {
-        menu_toggle(ui, pop);
-    }
-    menu_below(ui, pop, &resp, None, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(5.0); // the menu frame has no horizontal padding — give the icons air
-            for t in shapes {
-                if icon_button(ui, &t.tex, s.tool == t.kind).on_hover_text(t.tip).clicked() {
-                    *shape_active = t.kind;
-                    ops.push(Op::Tool(t.kind));
-                    menu_set(ui, pop, false);
-                }
-            }
-            ui.add_space(5.0);
-        });
-    });
-}
-
 /// Idle = nothing to choose from (owner 2026-10-08): no selection (object or direct), not the Artboard
 /// tool, and no path being drawn. Then the bar stays hidden instead of showing "Select (V) · No selection".
 pub(crate) fn ctlbar_hidden(s: &Snap) -> bool {

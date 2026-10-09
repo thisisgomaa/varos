@@ -84,6 +84,23 @@ pub fn legacy_texture(ctx: &Context, name: &str, inner: &str, filled: bool) -> O
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
+    // ---- Lane D: Varos original drawing glyphs ----
+    DrawRect,
+    DrawRoundedRect,
+    DrawEllipse,
+    DrawPolygon,
+    DrawTriangle,
+    DrawStar,
+    DrawLine,
+    DrawArc,
+    DrawSpiral,
+    DrawPolarGrid,
+    DrawPencil,
+    DrawSmooth,
+    DrawCurvature,
+    DrawSelect,
+    DrawDirect,
+
     Hand,
     ZoomIn,
     Lasso,
@@ -210,7 +227,7 @@ pub enum Icon {
     PathEraser,
 }
 impl Icon {
-    pub const ALL: [Icon; 78] = [
+    pub const ALL: [Icon; 93] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -285,6 +302,21 @@ impl Icon {
         Self::DistributeTop,
         Self::DistributeMiddle,
         Self::DistributeBottom,
+        Self::DrawRect,
+        Self::DrawRoundedRect,
+        Self::DrawEllipse,
+        Self::DrawPolygon,
+        Self::DrawTriangle,
+        Self::DrawStar,
+        Self::DrawLine,
+        Self::DrawArc,
+        Self::DrawSpiral,
+        Self::DrawPolarGrid,
+        Self::DrawPencil,
+        Self::DrawSmooth,
+        Self::DrawCurvature,
+        Self::DrawSelect,
+        Self::DrawDirect,
         Self::Hand,
         Self::ZoomIn,
         Self::ExportGrid,
@@ -305,6 +337,21 @@ impl Icon {
             };
         }
         match self {
+            Self::DrawRect => varos!("draw-rect"),
+            Self::DrawRoundedRect => varos!("draw-rounded-rect"),
+            Self::DrawEllipse => varos!("draw-ellipse"),
+            Self::DrawPolygon => varos!("draw-polygon"),
+            Self::DrawTriangle => varos!("draw-triangle"),
+            Self::DrawStar => varos!("draw-star"),
+            Self::DrawLine => varos!("draw-line"),
+            Self::DrawArc => varos!("draw-arc"),
+            Self::DrawSpiral => varos!("draw-spiral"),
+            Self::DrawPolarGrid => varos!("draw-polar-grid"),
+            Self::DrawPencil => varos!("draw-pencil"),
+            Self::DrawSmooth => varos!("draw-smooth"),
+            Self::DrawCurvature => varos!("draw-curvature"),
+            Self::DrawSelect => varos!("draw-select"),
+            Self::DrawDirect => varos!("draw-direct"),
             Self::Hand => svg!("hand"),
             Self::ZoomIn => svg!("zoom-in"),
             Self::Lasso => svg!("lasso"),

@@ -93,7 +93,11 @@ fn every_registry_icon_resolves_to_an_embedded_svg_that_parses() {
             }
         }
     }
-    assert_eq!(originals.len(), 29, "15 panel originals, six picker originals, eight construction originals");
+    assert_eq!(
+        originals.len(),
+        44,
+        "15 panel originals, six picker originals, eight construction originals, 15 drawing originals"
+    );
 }
 
 /// The rail's Artboard tool still paints the inline `LEGACY_ARTBOARD`; it must stay the exact geometry of
