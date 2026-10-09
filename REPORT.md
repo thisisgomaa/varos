@@ -1,26 +1,19 @@
-# Lane E — Phase 8 resume (feat/w2-view)
-- Resumed WIP 056447e; kept completed implementation and finished remaining wiring.
-- State: implemented (provisional UI, owner design review pending), subject to image-lane integration below.
-- 8.1: Cmd+Y Outline; MUTED physical-pixel path/hole strokes, unchanged normal/export scenes, mode-keyed cache.
-- Primary-click Layers eye toggles subtree outline; persistent muted marker/tooltip now reflects per-row state.
-- Image-box outlines: this base has no Image node; moderator must connect the image lane's objects before acceptance.
-- 8.2: Option+Cmd+Y lattice preview; one ppi-based grid at ≥600%, density bounded, clipped with Trim artwork.
-- Snap to Pixel / Move Whole Pixels read existing snap flags; regression checks standalone Bridge publication.
-- Pixel quantization now clears stale alignment guides; resumed Pen readout uses transformed world coordinates.
-- 8.3: real dockable Navigator, cached whole-board proxy, viewport rectangle, click/drag pan and zoom slider.
-- Fixed click-only input, aspect distortion and thumbnail tint; 4 Navigator interaction/cache/pacing tests pass.
-- Navigator raster is synchronous, 224×126 and revision cached; large-board responsiveness needs native acceptance.
-- 8.4: Shift+F Presentation, Escape exit; settles active drawing and suppresses drawing/edit keys despite hidden focus.
-- Trim clips once over artboard union; canvas colour persists; transparency menu reflects Document Setup flag.
-- Shape/Pen angle-distance HUD; document replacement resets view modes and pending camera/preferences requests.
-- EditCommand::View(DepthAction), API 1.2 view verb + schema/list_verbs, and headless CLI view-depth preserved.
-- New .vrs keys/version/migration: none. Existing snap/grid keys reused; additive settings key: canvas_color [u8;3].
-- No prior-art code lifted. Dev-only naga 29 available offline; no missing registry crates.
-- UI remains in new modules / small shared hooks; ui.rs 830/843 lines; ratchet thresholds unchanged.
-- cargo fmt --all --check: PASS; dependency directions: PASS; git diff --check: PASS.
-- cargo test --offline --workspace -j 3 --no-fail-fast: PASS — 1905 passed, 0 failed, 15 ignored (runner summaries).
-- Native + x86_64-pc-windows-msvc Clippy (--offline --workspace --all-targets -j 3, -D warnings): PASS.
-- Shell ratchets: 3 passed, 0 failed; Bridge ratchets + frozen 1.0/1.1 fixtures: 6 passed, 0 failed.
-- Bridge view-depth: 2 passed, 0 failed; core view-depth: 7 passed, 0 failed.
-- Evidence: /tmp/w2-view-gate-*.log; spec and PLAN Progress updated.
-- No new commit/push/merge, GUI launch, installation or independent moderator review; owner native/design acceptance pending.
+# Lane E — Phase 8 (feat/w2-view)
+- Outline, Pixel Preview/snap, Navigator, presentation/Trim and canvas preferences: implemented (provisional UI, owner design review pending).
+- API 1.2 view command/discovery + headless CLI retained; normal/export paint behavior preserved.
+- No .vrs format/version/migration changes; settings key remains canvas_color [u8;3]; no borrowed code/dependencies.
+## Fix round
+- Accepted all four P2 findings; no disagreements with the reviewer.
+- Pixel Preview samples resolved artwork before screen-resolution overlays; final blit/layer composite use separate normal sampling state.
+- Outline now consumes existing cached, viewport-culled/clipped geometry; selection changes do not reflatten paths.
+- Navigator invalidates on live document/camera changes and publishes each texture with its matching camera; idle remains Wait.
+- Already-active canvas colour returns before scheduling settings persistence; changed colours still save.
+- Four added headless regressions cover recorder ordering, cache/culling, live artwork/artboard proxies, and unchanged/changed saves.
+- Renderer evidence is WGSL validation and recorder-order regression; native visual acceptance remains unverified.
+- Image integration remains REQUIRED: this base has only Layer/Group/Path nodes; moderator must add image-box outlines with the image lane.
+- Shared scene/recovery hooks delimited; UI shell/tokens/kit and ratchet thresholds untouched; ui.rs remains 830/843 lines.
+- fmt, dependency directions, diff whitespace, native + Windows all-targets Clippy -D warnings: PASS.
+- cargo test --offline --workspace -j 3 --no-fail-fast: PASS — 1898 passed, 0 failed, 15 ignored.
+- Shell ratchets: 3 passed; Bridge ratchets/frozen 1.0/1.1 fixtures: 6 passed; no fixture edits.
+- Evidence: /tmp/w2-fix-*.log; initial test-fixture mistakes corrected before final workspace rerun.
+- No git writes/commit/push/merge, GUI launch, install, or new independent review; moderator/owner acceptance pending.

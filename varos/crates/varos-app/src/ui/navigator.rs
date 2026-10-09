@@ -19,7 +19,9 @@ pub(super) fn draw(
     let id = egui::Id::new(("navigator-cache", session));
     let mut cache =
         ui.ctx().data_mut(|d| d.remove_temp::<crate::thumbs::navigator::NavigatorThumb>(id)).unwrap_or_default();
-    if let Some(tex) = cache.get(ui.ctx(), ed, session, camera) {
+    let proxy = cache.get(ui.ctx(), ed, session, camera);
+    let camera = proxy.map_or(camera, |(_, camera)| camera);
+    if let Some((tex, _)) = proxy {
         ui.painter().image(
             tex,
             rect,

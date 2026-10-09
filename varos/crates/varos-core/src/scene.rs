@@ -803,6 +803,30 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     if !open.is_empty() {
         groups.push(Group::Opaque(open));
     }
+    // ---- Lane E: cached, viewport-clipped outline pass ----
+    if let Some(style) = style {
+        if ed.view_depth.outline {
+            groups.clear();
+        }
+        let mut outlines = Vec::new();
+        for (pi, geom) in geometry.iter().enumerate() {
+            let p = &ed.doc.paths[pi];
+            if ed.doc.eff_hidden(p.id) || !crate::view_depth_scene::outlined(ed, p.id) {
+                continue;
+            }
+            let Some(geom) = geom else { continue };
+            for pts in view_runs(pi, geom.outline.clone())
+                .into_iter()
+                .chain(geom.holes.iter().flat_map(|h| view_runs(pi, h.clone())))
+            {
+                outlines.push(Prim::Stroke { pts, width: 1.0 / ppu.max(0.0001), color: style.outline, clip: None });
+            }
+        }
+        if !outlines.is_empty() {
+            groups.push(Group::Opaque(outlines));
+        }
+    }
+    // ---- end Lane E ----
     s.content = groups;
 
     // ---- OVERLAY (constant screen size) ----

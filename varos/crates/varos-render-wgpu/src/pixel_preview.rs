@@ -16,9 +16,7 @@ struct VO { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32> };
  let local=in.p.xy-preview.camera.xy;
  let pixel=floor(local/step);
  let sample_px=(pixel+vec2<f32>(0.5))*step+preview.camera.xy;
- // Keep the single scene-owned pixel grid at full screen resolution. Sampling
- // only cell centers would erase the hairlines at the document-pixel edges.
- // The source texture already carries the artboard clip in Trim view.
+ // The artwork source contains only the clipped Trim grid, never editing overlays.
  let edge=local-pixel*step;
  if preview.camera.w>0.0 && step>=2.0 && min(edge.x,edge.y)<1.0 {
    return textureSample(t,s,in.uv);
@@ -26,6 +24,9 @@ struct VO { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32> };
  return textureSample(t,s,clamp(sample_px/size,vec2<f32>(0.0),vec2<f32>(1.0)));
 }
 "#;
+pub fn enabled(step: Option<f32>, view: varos_core::geom::View) -> bool {
+    step.is_some_and(|step| step * view.zoom >= 1.0)
+}
 pub fn parameters(step: Option<f32>, view: varos_core::geom::View, color: [f32; 4]) -> [f32; 8] {
     let s = step.unwrap_or(0.0) * view.zoom;
     [
@@ -42,6 +43,21 @@ pub fn parameters(step: Option<f32>, view: varos_core::geom::View, color: [f32; 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn artwork_sampling_precedes_overlay_resolve_and_final_blit_is_unfiltered() {
+        // Structural headless regression: actual recorder order and its independent bind groups.
+        let source = include_str!("lib.rs");
+        let record = source.split("fn record_scene(").nth(1).expect("scene recorder");
+        let record = record.split("pub fn render(").next().expect("record body");
+        assert!(record.find("artwork-resolve").unwrap() < record.find("pixel-preview-artwork").unwrap());
+        assert!(record.find("pixel-preview-artwork").unwrap() < record.find("scene-overlay").unwrap());
+        assert!(record.contains("rp.set_bind_group(0, &self.preview_bg"));
+        assert!(source.contains("&scene_view, &sampler, &normal_blit_buf"));
+        assert!(source.contains("&layer_view, &sampler, &normal_blit_buf"));
+        assert!(enabled(Some(1.0), varos_core::geom::View { zoom: 12.0, pan: [0.0; 2] }));
+        assert!(!enabled(None, varos_core::geom::View::identity()));
+        assert!(!enabled(Some(0.5), varos_core::geom::View::identity()));
+    }
     #[test]
     fn preview_ppi_and_zoom() {
         let v = varos_core::geom::View { pan: [-5.0, 8.0], zoom: 6.0 };
