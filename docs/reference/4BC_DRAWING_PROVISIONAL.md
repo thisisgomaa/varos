@@ -9,4 +9,5 @@ Owner exception: implemented quickly using the existing kit; owner design review
 - Bridge 1.2: shape_tool, pencil, smooth_path, path_erase, join_tool, curvature, drawing_options. All register in list_verbs/schema; 1.0/1.1 tools/list fixtures stay frozen.
 - Headless CLI: `varos-cli apply INPUT --batch COMMANDS.json --out OUTPUT`; batch API 1.2, commands use `{"Drawing":{"kind":"shape","spec":{...}}}` etc. No new CLI transport or dependencies.
 - New glyphs are Varos originals authored from elementary geometry, embedded provenance in each SVG; existing Lucide glyphs keep their ISC registry provenance. No new external source lifts.
+- Resume hardening: Shift retains radial drag radius; stationary freehand clicks settle without an edit; continuation respects isolation and aligns the endpoint handle; protected destinations/ID exhaustion/creation limits and mask-source replacement refuse before history; rejected numeric sheets retain values.
 - Blob Brush remains deferred by owner scope. Native visual/interaction review and independent integration review remain pending; no GUI/install in this lane.

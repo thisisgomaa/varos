@@ -121,8 +121,10 @@ pub(crate) fn key(ed: &mut Editor, code: &str, shift: bool, alt: bool) -> bool {
     true
 }
 fn fields(ui: &mut egui::Ui, s: &mut ShapeSpec) {
-    number(ui, "Width", &mut s.size[0], 0.01..=1.0e7);
-    number(ui, "Height", &mut s.size[1], 0.01..=1.0e7);
+    if s.kind != Shape::Line {
+        number(ui, "Width", &mut s.size[0], 0.01..=1.0e7);
+        number(ui, "Height", &mut s.size[1], 0.01..=1.0e7);
+    }
     match s.kind {
         Shape::RoundedRectangle => number(ui, "Corner radius", &mut s.radius, 0. ..=1.0e7),
         Shape::Polygon | Shape::Star => {
@@ -165,6 +167,8 @@ fn fields(ui: &mut egui::Ui, s: &mut ShapeSpec) {
     }
 }
 pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect, view: View, ppp: f32) {
+    let modal_id = sheet_id(ctx, "lane-d-modal");
+    ctx.data_mut(|d| d.insert_temp(modal_id, ed.drawing.dialog.is_some()));
     drawing::refresh(ed);
     preview(ctx, ed, hole, view, ppp);
     if matches!(ed.tool, ToolKind::Pencil | ToolKind::Smooth | ToolKind::PathEraser | ToolKind::Join) {
@@ -198,13 +202,13 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect, view:
     let Some(mut s) = ed.drawing.dialog else { return };
     let mut close = false;
     let mut apply = false;
-    egui::Area::new(egui::Id::new("lane-d-sheet-blocker")).order(egui::Order::Foreground).fixed_pos(hole.min).show(
+    egui::Area::new(sheet_id(ctx, "lane-d-sheet-blocker")).order(egui::Order::Foreground).fixed_pos(hole.min).show(
         ctx,
         |ui| {
             ui.allocate_exact_size(hole.size(), egui::Sense::click());
         },
     );
-    egui::Area::new(egui::Id::new("lane-d-shape-sheet"))
+    egui::Area::new(sheet_id(ctx, "lane-d-shape-sheet"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
@@ -224,12 +228,30 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect, view:
         });
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         close = true;
+        apply = false;
+    } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+        apply = true;
     }
-    ed.drawing.dialog = if close || apply { None } else { Some(s) };
     if apply {
-        ed.drawing.shape = s;
-        ed.execute_ui(EditCommand::Drawing(Action::Shape { spec: s }));
+        let action = Action::Shape { spec: s };
+        match drawing::check(ed, &action) {
+            Ok(()) => {
+                ed.drawing.shape = s;
+                ed.execute_ui(EditCommand::Drawing(action));
+                close = true;
+            }
+            Err(error) => ed.stroke_error = Some(error),
+        }
     }
+    ed.drawing.dialog = if close { None } else { Some(s) };
+    ctx.data_mut(|d| d.insert_temp(modal_id, ed.drawing.dialog.is_some()));
+}
+pub(super) fn blocks_keyboard(ctx: &egui::Context) -> bool {
+    let id = sheet_id(ctx, "lane-d-modal");
+    ctx.data(|d| d.get_temp::<bool>(id).unwrap_or(false))
+}
+fn sheet_id(ctx: &egui::Context, label: &str) -> egui::Id {
+    egui::Id::new((label, ctx.data(|d| d.get_temp::<Option<crate::app_command::SessionId>>(super::doc_salt_key()))))
 }
 fn preview(ctx: &egui::Context, ed: &Editor, hole: egui::Rect, view: View, ppp: f32) {
     let painter = ctx
@@ -332,6 +354,27 @@ mod tests {
             click(&ctx, &mut ed, "Cancel");
             assert_eq!(ed.doc, before);
         }
+    }
+    #[test]
+    fn refused_numeric_sheet_retains_values_until_cancel() {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        let mut ed = Editor::new();
+        ed.set_tool(ToolKind::Line);
+        ed.drawing.dialog = Some(ShapeSpec { kind: Shape::Line, size: [100., 0.], ..Default::default() });
+        let layer = ed.doc.active_layer;
+        ed.doc.nodes.iter_mut().find(|n| n.id == layer).unwrap().locked = true;
+        let before = ed.doc.clone();
+        render(&ctx, &mut ed, vec![]);
+        click(&ctx, &mut ed, "Create");
+        assert!(ed.drawing.dialog.is_some());
+        assert_eq!(ed.drawing.dialog.unwrap().size, [100., 0.]);
+        assert_eq!(ed.doc, before);
+        assert!(ed.stroke_error.is_some());
+        assert!(blocks_keyboard(&ctx));
+        click(&ctx, &mut ed, "Cancel");
+        assert!(ed.drawing.dialog.is_none());
+        assert!(!blocks_keyboard(&ctx));
     }
     #[test]
     fn only_illustrator_bindings_and_enter_finishes_curvature() {
