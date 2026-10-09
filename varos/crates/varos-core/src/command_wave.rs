@@ -254,7 +254,7 @@ impl Editor {
         self.selected.insert(id);
         self.dirty = true;
         if own {
-            self.commit();
+            self.commit_wave();
         }
     }
     pub fn wave_delete_anchor(&mut self, id: u32) {
@@ -269,7 +269,7 @@ impl Editor {
         self.selected.remove(&id);
         self.dirty = true;
         if own {
-            self.commit();
+            self.commit_wave();
         }
     }
     pub fn wave_anchor_type(&mut self, id: u32, smooth: bool) {
@@ -285,7 +285,7 @@ impl Editor {
         self.toggle_type(id);
         self.dirty = true;
         if own {
-            self.commit();
+            self.commit_wave();
         }
     }
     /// A selection-level flag edit is one undo step; all also clears ancestor node flags.
@@ -338,7 +338,7 @@ impl Editor {
                     }
                 }
                 self.dirty = true;
-                self.commit();
+                self.commit_wave();
                 self.prune_inert_selection();
             }
             ObjectAction::Average => {
@@ -362,7 +362,7 @@ impl Editor {
                     }
                 }
                 self.dirty = true;
-                self.commit();
+                self.commit_wave();
             }
             ObjectAction::Reverse | ObjectAction::AddAnchors => {
                 if ids.is_empty() {
@@ -403,7 +403,7 @@ impl Editor {
                     }
                 }
                 self.dirty = true;
-                self.commit();
+                self.commit_wave();
             }
             ObjectAction::CleanUp => {
                 let remove: Vec<u32> = self
@@ -425,7 +425,7 @@ impl Editor {
                 self.doc.paths.retain(|p| !remove.contains(&p.id));
                 self.doc.sync_tree();
                 self.dirty = true;
-                self.commit();
+                self.commit_wave();
             }
             ObjectAction::Join => self.join_selection(),
             ObjectAction::CompoundMake => self.compound_make(),
@@ -448,6 +448,20 @@ impl Editor {
         if paths.is_empty() {
             return;
         }
+        // Direct selection must name exactly two endpoints. Whole-path selection uses nearest ends.
+        let explicit = !self.selected.is_empty() && self.objsel.is_empty();
+        if explicit {
+            let endpoints: Vec<_> = paths
+                .iter()
+                .filter_map(|id| self.doc.pidx(*id))
+                .flat_map(|pi| [self.doc.paths[pi].anchors.first(), self.doc.paths[pi].anchors.last()])
+                .flatten()
+                .filter(|a| self.selected.contains(&a.id))
+                .collect();
+            if self.selected.len() != 2 || endpoints.len() != 2 || paths.len() > 2 {
+                return;
+            }
+        }
         self.begin();
         for id in &paths {
             self.bake_unit_of(*id);
@@ -468,6 +482,9 @@ impl Editor {
                         let pa = if ra { left.first() } else { left.last() };
                         let pb = if rb { right.last() } else { right.first() };
                         if let (Some(pa), Some(pb)) = (pa, pb) {
+                            if explicit && (!self.selected.contains(&pa.id) || !self.selected.contains(&pb.id)) {
+                                continue;
+                            }
                             let d = dist(pa.p, pb.p);
                             if d < best.0 {
                                 best = (d, ra, rb);
@@ -496,7 +513,7 @@ impl Editor {
         self.objsel = [first].into_iter().collect();
         self.selected.clear();
         self.dirty = true;
-        self.commit();
+        self.commit_wave();
     }
     fn compound_make(&mut self) {
         let ids = self.selected_pids();
@@ -526,7 +543,7 @@ impl Editor {
         self.doc.sync_tree();
         self.objsel = [first].into_iter().collect();
         self.dirty = true;
-        self.commit();
+        self.commit_wave();
     }
     fn compound_release(&mut self) {
         let ids = self.selected_pids();
@@ -562,7 +579,7 @@ impl Editor {
         }
         self.doc.sync_tree();
         self.dirty = true;
-        self.commit();
+        self.commit_wave();
     }
 }
 
@@ -591,14 +608,17 @@ impl Editor {
                 let delta = align_delta(mode, reference, bounds);
                 for id in pids {
                     if let Some(pi) = self.doc.pidx(id) {
-                        self.translate_path(pi, delta);
+                        // Flattened curve bounds can differ by a few float ulps on reapplication.
+                        if delta[0].abs() > 1.0e-4 || delta[1].abs() > 1.0e-4 {
+                            self.translate_path(pi, delta);
+                        }
                     }
                 }
             }
         }
         self.refresh_obj_angle();
         self.dirty = true;
-        self.commit();
+        self.commit_wave();
     }
     /// Distribute top-level units by matching edges, preserving group geometry.
     pub fn distribute_mode(&mut self, mode: AlignMode) {
@@ -648,13 +668,16 @@ impl Editor {
             };
             for id in pids {
                 if let Some(pi) = self.doc.pidx(*id) {
-                    self.translate_path(pi, delta);
+                    // Flattened curve bounds can differ by a few float ulps on reapplication.
+                    if delta[0].abs() > 1.0e-4 || delta[1].abs() > 1.0e-4 {
+                        self.translate_path(pi, delta);
+                    }
                 }
             }
         }
         self.refresh_obj_angle();
         self.dirty = true;
-        self.commit();
+        self.commit_wave();
     }
 }
 impl Editor {
@@ -687,7 +710,10 @@ impl Editor {
             if Some(unit) != key {
                 for id in paths {
                     if let Some(pi) = self.doc.pidx(id) {
-                        self.translate_path(pi, delta);
+                        // Flattened curve bounds can differ by a few float ulps on reapplication.
+                        if delta[0].abs() > 1.0e-4 || delta[1].abs() > 1.0e-4 {
+                            self.translate_path(pi, delta);
+                        }
                     }
                 }
             }
@@ -695,7 +721,7 @@ impl Editor {
         }
         self.refresh_obj_angle();
         self.dirty = true;
-        self.commit();
+        self.commit_wave();
     }
 }
 
@@ -732,7 +758,7 @@ impl Editor {
         }
         self.doc.active_layer = id;
         self.dirty = true;
-        self.commit();
+        self.commit_wave();
     }
 }
 

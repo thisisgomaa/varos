@@ -5,14 +5,6 @@ use crate::geom::{dist, sub, Pt};
 pub struct Direct;
 impl Tool for Direct {
     fn down(&self, ed: &mut Editor, pos: Pt) {
-        // Option-click climbs groups; a real drag retains Direct's existing duplicate gesture.
-        if ed.mods.alt {
-            let anchor = ed.nearest_anchor(pos, ANCHOR_R, false);
-            if let Some(pid) = anchor.and_then(|id| ed.doc.pid_of_anchor(id)).or_else(|| ed.path_under(pos)) {
-                ed.drag = Drag::GroupClick { path: pid, down: pos, anchor };
-            }
-            return;
-        }
         // handle FIRST — so Alt over a handle BREAKS it (must beat the Alt-duplicate below)
         if let Some(aid) = ed.handle_hit(pos) {
             // A7: reshaping a rotated unit bakes its rotation into geometry first, then edits in world
@@ -22,10 +14,10 @@ impl Tool for Direct {
             }
             let out = ed.which_handle(aid, pos);
             let Some(a) = ed.doc.anchor(aid).cloned() else { return };
-            let hp = if out { a.hout } else { a.hin }.unwrap();
+            let Some(hp) = (if out { a.hout } else { a.hin }) else { return };
             let couple = !ed.mods.alt && a.hin.is_some() && a.hout.is_some() && {
-                let vi = sub(a.hin.unwrap(), a.p);
-                let vo = sub(a.hout.unwrap(), a.p);
+                let vi = sub(a.hin.unwrap_or(a.p), a.p);
+                let vo = sub(a.hout.unwrap_or(a.p), a.p);
                 let mut d = (vi[1].atan2(vi[0]) - vo[1].atan2(vo[0])).abs();
                 if d > std::f32::consts::PI {
                     d = 2.0 * std::f32::consts::PI - d;
@@ -42,6 +34,14 @@ impl Tool for Direct {
             ed.selected.insert(aid);
             ed.dirty = true;
             ed.drag = Drag::Handle { aid, out, couple, opp_len, grab: sub(hp, pos) };
+            return;
+        }
+        // Option-click climbs groups; a real drag retains Direct's existing duplicate gesture.
+        if ed.mods.alt {
+            let anchor = ed.nearest_anchor(pos, ANCHOR_R, false);
+            if let Some(pid) = anchor.and_then(|id| ed.doc.pid_of_anchor(id)).or_else(|| ed.path_under(pos)) {
+                ed.drag = Drag::GroupClick { path: pid, down: pos, anchor };
+            }
             return;
         }
         // an anchor — the white arrow grabs ANY anchor directly (Illustrator), even on an unselected path.

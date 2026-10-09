@@ -1061,7 +1061,11 @@ impl Document {
     pub fn outline_bbox(&self, pi: usize) -> (f32, f32, f32, f32) {
         let xf = self.unit_xform(self.paths[pi].id);
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-        for q in self.outline(pi, 12) {
+        for q in self
+            .outline(pi, 12)
+            .into_iter()
+            .chain(self.paths[pi].holes.iter().flat_map(|ring| Self::ring(ring, true, 12)))
+        {
             let q = xf.apply(q);
             x0 = x0.min(q[0]);
             y0 = y0.min(q[1]);
@@ -1080,19 +1084,14 @@ impl Document {
     /// filled is what you can hit (A31/A32 must agree). Holes cut out even-odd.
     pub fn point_in_path(&self, pi: usize, pt: Pt) -> bool {
         let p = &self.paths[pi];
-        if p.anchors.len() < 3 {
-            return false;
-        }
-        if !point_in_poly(&self.outline(pi, 8), pt) {
-            return false;
-        }
-        // inside the outer ring — but a point inside a hole is NOT in the (even-odd) filled region
+        let mut inside = p.anchors.len() >= 3 && point_in_poly(&self.outline(pi, 8), pt);
+        // Additional contours may be nested holes or disjoint filled islands.
         for h in &p.holes {
             if h.len() >= 3 && point_in_poly(&Self::ring(h, true, 8), pt) {
-                return false;
+                inside = !inside;
             }
         }
-        true
+        inside
     }
 
     /// Anchor+handle bounding box in WORLD space (A7 seam — composes the path's unit transform). Identity
@@ -1101,7 +1100,7 @@ impl Document {
     pub fn bbox(&self, pi: usize) -> (f32, f32, f32, f32) {
         let xf = self.unit_xform(self.paths[pi].id);
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-        for a in &self.paths[pi].anchors {
+        for a in self.paths[pi].anchors.iter().chain(self.paths[pi].holes.iter().flatten()) {
             for q in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
                 let q = xf.apply(q);
                 x0 = x0.min(q[0]);

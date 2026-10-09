@@ -35,7 +35,30 @@ impl Settings {
             recovery_enabled: self.recovery_enabled,
             paste_remembers_layers: self.paste_remembers_layers,
         };
-        let bytes = serde_json::to_vec_pretty(&doc).expect("Settings always serializes");
+        // Additive lane settings: preserve keys owned by sibling lanes at the FIFO writer.
+        let mut value = match fs.read(path) {
+            Ok(bytes) => {
+                let existing: OnDisk = serde_json::from_slice(&bytes)
+                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+                if existing.version != SETTINGS_VERSION {
+                    return Err(WriteError::Write(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Settings version changed; existing settings were kept.",
+                    )));
+                }
+                serde_json::from_slice::<serde_json::Value>(&bytes)
+                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(e) => return Err(WriteError::Write(e)),
+        };
+        let owned =
+            serde_json::to_value(doc).map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+        if let (Some(existing), Some(owned)) = (value.as_object_mut(), owned.as_object()) {
+            existing.extend(owned.clone());
+        }
+        let bytes = serde_json::to_vec_pretty(&value)
+            .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
         durable::write_replace(fs, path, &bytes, &new_nonce())
     }
 }
@@ -107,6 +130,21 @@ mod tests {
     use super::*;
     use crate::storage::durable::RealFs;
     use crate::storage::testdir::TestDir;
+
+    #[test]
+    fn settings_writer_preserves_sibling_keys_and_refuses_changed_version() {
+        let d = TestDir::new("settings-siblings");
+        let path = d.join("settings.json");
+        std::fs::write(&path, br#"{"version":1,"recovery_enabled":true,"sibling":{"enabled":true}}"#).unwrap();
+        Settings { recovery_enabled: false, paste_remembers_layers: true }.save(&RealFs, &path).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["sibling"], serde_json::json!({"enabled":true}));
+        assert_eq!(saved["paste_remembers_layers"], true);
+        let future = br#"{"version":2,"recovery_enabled":true,"sibling":42}"#;
+        std::fs::write(&path, future).unwrap();
+        assert!(Settings::default().save(&RealFs, &path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), future);
+    }
 
     #[test]
     fn settings_default_recovery_on() {

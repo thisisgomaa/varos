@@ -431,3 +431,123 @@ fn anchor_point_type_is_undoable_and_rejects_unknown_anchor() {
     assert!(e.doc.anchor(11).unwrap().smooth);
     assert!(e.try_execute(C::AnchorType { anchor: 999, smooth: true }).is_err());
 }
+
+#[test]
+fn compound_islands_nested_parity_and_bounds_agree() {
+    use varos_core::editor::view_commands::ViewAction;
+    let mut e = editor();
+    select(&mut e, &[10, 20, 30]);
+    e.execute(C::Object(O::CompoundMake));
+    for pt in [[5.0, 5.0], [50.0, 5.0], [115.0, 5.0]] {
+        assert!(e.doc.point_in_path(0, pt));
+        assert_eq!(e.path_under(pt), Some(10));
+    }
+    assert!(!e.doc.point_in_path(0, [80.0, 5.0]));
+    let b = e.doc.outline_bbox(0);
+    assert!(b.0 == 0.0 && b.1 == 0.0 && (b.2 - 130.0).abs() < 0.001 && (b.3 - 10.0).abs() < 0.001);
+    assert_eq!(e.doc.bbox(0), (0.0, 0.0, 130.0, 10.0));
+    e.doc.artboards.push(varos_core::model::Artboard { id: 200, ..Default::default() });
+    e.execute(C::View(ViewAction::FitArtboard { id: 200, selected: true }));
+    assert!((e.doc.artboards[0].w - 130.0).abs() < 0.001);
+    assert!((e.doc.artboards[0].h - 10.0).abs() < 0.001);
+    let ring = |lo: f32, hi: f32| {
+        vec![
+            Anchor { id: 201, p: [lo, lo], hin: None, hout: None, smooth: false },
+            Anchor { id: 202, p: [hi, lo], hin: None, hout: None, smooth: false },
+            Anchor { id: 203, p: [hi, hi], hin: None, hout: None, smooth: false },
+            Anchor { id: 204, p: [lo, hi], hin: None, hout: None, smooth: false },
+        ]
+    };
+    e.doc.paths[0].holes.extend([ring(2.0, 8.0), ring(4.0, 6.0)]);
+    assert!(!e.doc.point_in_path(0, [3.0, 3.0]));
+    assert!(e.doc.point_in_path(0, [5.0, 5.0]));
+}
+#[test]
+fn option_handle_drag_breaks_only_the_grabbed_handle() {
+    use varos_core::editor::ToolKind;
+    let mut e = editor();
+    e.set_tool(ToolKind::Direct);
+    e.ppu = 10.0;
+    let a = &mut e.doc.paths[0].anchors[0];
+    a.hin = Some([-5.0, 0.0]);
+    a.hout = Some([5.0, 0.0]);
+    a.smooth = true;
+    e.execute(C::SelectAnchors(vec![11]));
+    e.mods.alt = true;
+    e.pointer_down([5.0, 0.0]);
+    e.pointer_move([5.0, 3.0]);
+    e.pointer_up();
+    let a = e.doc.anchor(11).unwrap();
+    assert!(!a.smooth);
+    assert_eq!(a.hin, Some([-5.0, 0.0]));
+    assert_eq!(a.hout, Some([5.0, 3.0]));
+    assert_eq!(e.doc.paths.len(), 3);
+}
+#[test]
+fn join_honors_far_explicit_endpoints_and_rejects_interior_points() {
+    let mut e = editor();
+    for p in &mut e.doc.paths {
+        p.closed = false;
+        p.anchors.truncate(2);
+    }
+    e.execute(C::SelectAnchors(vec![11, 22]));
+    e.execute(C::Object(O::Join));
+    assert_eq!(e.doc.paths[0].anchors.iter().map(|a| a.id).collect::<Vec<_>>(), vec![12, 11, 22, 21]);
+    e.undo();
+    e.doc.paths[0].anchors.push(Anchor { id: 15, p: [15.0, 0.0], hin: None, hout: None, smooth: false });
+    e.execute(C::SelectAnchors(vec![12, 22]));
+    let before = e.doc.clone();
+    let rev = e.rev;
+    e.execute(C::Object(O::Join));
+    assert!(e.doc.content_eq(&before));
+    assert_eq!(e.rev, rev);
+}
+#[test]
+fn repeated_alignment_distribution_spacing_and_average_preserve_redo() {
+    let commands: [fn() -> C; 4] = [
+        || C::DistributeMode(AlignMode::Left),
+        || C::DistributeSpacing { axis: DistAxis::Horizontal, gap: 5.0 },
+        || C::Align { mode: AlignMode::Top, target: AlignTarget::KeyObject },
+        || C::Object(O::Average),
+    ];
+    for cmd in commands {
+        let mut e = editor();
+        select(&mut e, &[10, 20, 30]);
+        e.execute(C::SetKeyObject(Some(20)));
+        if matches!(cmd(), C::Object(O::Average)) {
+            e.execute(C::SelectAnchors(vec![11, 12]));
+        }
+        e.execute(cmd());
+        e.execute(C::Object(O::NewLayer));
+        e.undo();
+        let before = e.doc.clone();
+        let rev = e.rev;
+        e.execute(cmd());
+        assert!(e.doc.content_eq(&before));
+        assert_eq!(e.rev, rev);
+        e.redo();
+        assert!(e.doc.nodes.len() > before.nodes.len(), "no-op must retain redo");
+    }
+}
+#[test]
+fn converted_guides_snap_moves_and_resize_with_other_targets_disabled() {
+    let mut e = editor();
+    e.doc.guide_paths.push(20);
+    select(&mut e, &[10]);
+    e.doc.snap.object_bounds = false;
+    e.doc.snap.bbox_mids = false;
+    e.doc.snap.artboard = false;
+    e.doc.snap.grid = false;
+    e.doc.snap.grid_lines = false;
+    e.doc.snap.key_points = false;
+    e.doc.snap.object_geometry = false;
+    e.doc.snap.segment_mids = false;
+    e.doc.snap.gaps_and_sizes = false;
+    e.doc.snap.guides = true;
+    let (d, _, _) = e.snap_move((0.0, 0.0, 10.0, 10.0), [28.0, 0.0]);
+    assert_eq!(d[0], 30.0);
+    let (p, _) = e.snap_xy([38.0, 5.0], true, false);
+    assert_eq!(p[0], 40.0);
+    e.guides_hidden = true;
+    assert_eq!(e.snap_xy([38.0, 5.0], true, false).0[0], 38.0);
+}
