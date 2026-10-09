@@ -142,6 +142,7 @@ pub(crate) fn build_home_frame(
         rail,
         dock,
         &mut Default::default(),
+        false,
         None,
         maximized,
         true,
@@ -333,6 +334,35 @@ pub(crate) fn tab_drag_update(
 /// on one centre line, on the one black backdrop (Windows: burger · … · caps). Interactive rects are
 /// published as the caption exclusions so the OS / macOS caption hit-test makes them egui's while the
 /// empty band drags the window. `right_zone` = the panel column's x-span (last frame), `None` on Home.
+/// Why the burger's Revert row is disabled.
+const REVERT_WHY: &str = "Revert needs a saved document with unsaved changes.";
+
+/// Slice 0.6: one burger File row — the native row's command (`host::to_app_command`) when
+/// `menus::file_row_enabled` allows it, else a disabled row saying `why`. `true` = chosen.
+#[allow(clippy::too_many_arguments)] // one row's label, key, command and the state it reads
+fn file_menu_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    shortcut: &str,
+    f: crate::chrome::FileCmd,
+    state: crate::menus::DocMenuState,
+    active: Option<SessionId>,
+    why: &str,
+    cmds: &mut Vec<AppCommand>,
+) -> bool {
+    match crate::host::to_app_command(f, active).filter(|_| crate::menus::file_row_enabled(f, state)) {
+        Some(cmd) if menu_row(ui, label, shortcut) => {
+            cmds.push(cmd);
+            true
+        }
+        Some(_) => false,
+        None => {
+            menu_row_disabled(ui, label, why);
+            false
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // hand-painted panel builder: each arg is live UI state
 pub(crate) fn build_topbar(
     root: &mut egui::Ui,
@@ -345,6 +375,7 @@ pub(crate) fn build_topbar(
     show_rail: &mut bool,
     show_dock: &mut bool,
     snap: &mut varos_core::model::SnapConfig,
+    has_selection: bool,
     right_zone: Option<egui::Rangef>,
     maximized: bool,
     home: bool,
@@ -354,6 +385,14 @@ pub(crate) fn build_topbar(
     let h = crate::chrome::TOPBAR.height;
     // DFS S6: Export (burger row, File ▸ Export ▸ PDF…) is ONE command through the one mapper
     let export_cmd = crate::host::to_app_command(crate::chrome::FileCmd::Export, active);
+    // slice 0.6: the burger's Save a Copy / Revert / Close All / Export Selection rows read the same
+    // enable rules as the native File menu (`menus::file_row_enabled`)
+    let tab = active.and_then(|id| tabs.iter().find(|t| t.id == id));
+    let file_state = crate::menus::DocMenuState {
+        active: active.is_some(),
+        can_revert: tab.is_some_and(|t| t.dirty && t.file),
+        has_selection,
+    };
     // the band IS the void — backdrop fill, no hairline, no step (4b: one flat #000)
     let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
     egui::Panel::top("topbar").exact_size(h).frame(frame).show_separator_line(false).show(root, |ui| {
@@ -533,6 +572,19 @@ pub(crate) fn build_topbar(
                     cmds.push(AppCommand::SaveAs(id));
                     hit = true;
                 }
+                // slice 0.6, Illustrator's keys (Revert is the bare F12, as in the native menu)
+                use crate::chrome::FileCmd as F;
+                let st = file_state;
+                let alt = |k: &str| {
+                    if cfg!(target_os = "macos") {
+                        format!("\u{2325}{}", shortcut_label(k))
+                    } else {
+                        format!("Ctrl+Alt+{k}")
+                    }
+                };
+                hit |= file_menu_row(ui, "Save a Copy\u{2026}", &alt("S"), F::SaveCopy, st, active, "", cmds);
+                hit |= file_menu_row(ui, "Revert", "F12", F::Revert, st, active, REVERT_WHY, cmds);
+                hit |= file_menu_row(ui, "Close All", &alt("W"), F::CloseAll, st, active, "", cmds);
             }
             menu_sep(ui);
             match &export_cmd {
@@ -544,6 +596,16 @@ pub(crate) fn build_topbar(
                 }
                 None => menu_row_disabled(ui, "Export\u{2026}", "Open a document to export it."),
             }
+            hit |= file_menu_row(
+                ui,
+                "Export Selection\u{2026}",
+                "",
+                crate::chrome::FileCmd::ExportSelection,
+                file_state,
+                active,
+                "Select something to export it.",
+                cmds,
+            );
             if menu_row(ui, "Home", "") {
                 cmds.push(AppCommand::Home);
                 hit = true;

@@ -29,8 +29,8 @@ mod read;
 pub use read::{load_vrs_bytes, load_vrs_checked};
 mod write;
 pub use export::{
-    default_scope, export_pdf_bytes, has_embedded_model, plan_pdf_export, ExportError, ExportPlan, ExportScope,
-    ExportUnavailable, PageSpec, HAS_MODEL_SCAN_CAP,
+    default_scope, export_pdf_bytes, has_embedded_model, plan_pdf_export, plan_selection_export, ExportError,
+    ExportPlan, ExportScope, ExportUnavailable, PageSpec, HAS_MODEL_SCAN_CAP,
 };
 pub use write::write_pdf;
 

@@ -48,17 +48,84 @@ pub struct SaveJob {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportJob {
     pub sid: SessionId,
+    /// Slice 0.6: the Export sheet's ticket for this export (`AppCommand::ExportPdf`); every
+    /// [`ExportEvent`] carries it, so a sheet only ever follows its own export.
+    pub ticket: u64,
     pub dest: PathBuf,
     pub doc: Arc<Document>,
     pub plan: ExportPlan,
     /// The user already agreed to replace a destination that holds an editable Varos document.
     pub replace_confirmed: bool,
+    /// Slice 0.6: the Export sheet's Cancel raises it; the writer checks it before every page and
+    /// again before the file is replaced, so a cancelled export writes nothing.
+    pub cancel: CancelFlag,
+}
+
+/// A shared cancel flag (one per export job). Two flags are equal only when they are the SAME flag.
+#[derive(Clone, Debug, Default)]
+pub struct CancelFlag(Arc<AtomicBool>);
+impl CancelFlag {
+    /// Ask the job to stop (the Export sheet's Cancel).
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+    #[cfg(test)]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+    /// The flag `varos_pdf::export_pdf_bytes` checks.
+    pub fn flag(&self) -> &AtomicBool {
+        &self.0
+    }
+}
+impl PartialEq for CancelFlag {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for CancelFlag {}
+
+/// Slice 0.6: what the Export sheet needs to know about an export it started (`lifecycle::Effect`,
+/// delivered through `host::DocUi::export_event`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExportEvent {
+    /// The job is on the worker; the sheet's Cancel raises this flag.
+    Started { sid: SessionId, ticket: u64, cancel: CancelFlag },
+    /// The PDF was written (the rename happened — the commit boundary): the sheet shows its done
+    /// state (Show in Finder).
+    Finished { sid: SessionId, ticket: u64, dest: PathBuf },
+    /// The sheet's Cancel stopped it before the rename: nothing was written, no temp is left.
+    Cancelled { sid: SessionId, ticket: u64 },
+    /// Nothing will be written: the save panel was cancelled, or the export failed (already told).
+    Ended { sid: SessionId, ticket: u64 },
+}
+impl ExportEvent {
+    pub fn sid(&self) -> SessionId {
+        match self {
+            ExportEvent::Started { sid, .. }
+            | ExportEvent::Finished { sid, .. }
+            | ExportEvent::Cancelled { sid, .. }
+            | ExportEvent::Ended { sid, .. } => *sid,
+        }
+    }
+    /// The export this event is about (the sheet's ticket).
+    pub fn ticket(&self) -> u64 {
+        match self {
+            ExportEvent::Started { ticket, .. }
+            | ExportEvent::Finished { ticket, .. }
+            | ExportEvent::Cancelled { ticket, .. }
+            | ExportEvent::Ended { ticket, .. } => *ticket,
+        }
+    }
 }
 
 /// One unit of background file work.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileJob {
     Save(SaveJob),
+    /// Slice 0.6: File ▸ Save a Copy… — the same write as `Save`, but its result only releases the
+    /// tab's save slot (path, checkpoint, dirty state and Recent stay), like the Bridge's copy.
+    SaveCopy(SaveJob),
     Export(ExportJob),
     Bridge(Box<BridgeFileJob>),
 }
@@ -81,6 +148,8 @@ pub enum ExportResult {
     NeedsReplaceConfirm,
     /// Nothing usable was written; the reason is plain English.
     Failed(String),
+    /// The Export sheet's Cancel stopped it before the file was replaced: nothing was written.
+    Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -94,8 +163,15 @@ pub struct ExportDone {
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileDone {
     Saved(SaveDone),
+    /// A Save a Copy… landed (`FileJob::SaveCopy`).
+    CopySaved(SaveDone),
     Exported(ExportDone),
-    Bridge { ticket: u64, copy: bool, result: varos_bridge::Reply, done: Option<Box<FileDone>> },
+    Bridge {
+        ticket: u64,
+        copy: bool,
+        result: varos_bridge::Reply,
+        done: Option<Box<FileDone>>,
+    },
 }
 
 /// Bridge policy is checked on the worker before using the existing safe file writer.
@@ -111,7 +187,12 @@ impl FileDone {
     /// A durable save: nothing to ask or tell, so the host applies it without settling the active tab
     /// (a background save landing must not end the user's drag).
     pub fn is_quiet(&self) -> bool {
-        matches!(self, FileDone::Bridge { .. } | FileDone::Saved(SaveDone { result: Ok(SaveOutcome::Durable), .. }))
+        matches!(
+            self,
+            FileDone::Bridge { .. }
+                | FileDone::Saved(SaveDone { result: Ok(SaveOutcome::Durable), .. })
+                | FileDone::CopySaved(SaveDone { result: Ok(SaveOutcome::Durable), .. })
+        )
     }
 
     /// What the worker delivers if `job` panicked (a bug): a failure carrying the job's identity.
@@ -128,6 +209,12 @@ impl FileDone {
                 ticket: j.ticket,
                 dest: j.dest.clone(),
                 result: Err("Varos couldn't write the document.".into()),
+            }),
+            FileJob::SaveCopy(j) => FileDone::CopySaved(SaveDone {
+                sid: j.sid,
+                ticket: j.ticket,
+                dest: j.dest.clone(),
+                result: Err("Varos couldn't write the copy.".into()),
             }),
             FileJob::Export(j) => FileDone::Exported(ExportDone {
                 job: j.clone(),
@@ -165,6 +252,10 @@ pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
             let result = disk.save(&j.doc, &j.dest);
             FileDone::Saved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result })
         }
+        FileJob::SaveCopy(j) => {
+            let result = disk.save(&j.doc, &j.dest);
+            FileDone::CopySaved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result })
+        }
         FileJob::Export(j) => {
             let result = export_to(&j, disk);
             FileDone::Exported(ExportDone { job: j, result })
@@ -175,7 +266,7 @@ pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
 fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
     let result = (|| -> Result<FileDone, varos_bridge::Error> {
         let dest = match &mut j.inner {
-            FileJob::Save(s) => &mut s.dest,
+            FileJob::Save(s) | FileJob::SaveCopy(s) => &mut s.dest,
             FileJob::Export(e) => &mut e.dest,
             FileJob::Bridge(_) => unreachable!(),
         };
@@ -194,7 +285,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
             }
         }
         Ok(match j.inner {
-            FileJob::Save(s) => {
+            FileJob::Save(s) | FileJob::SaveCopy(s) => {
                 let result = disk.save_guarded(
                     &s.doc,
                     &s.dest,
@@ -242,7 +333,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 FileDone::Exported(_) => {
                     varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", "PDF export refused or failed"))
                 }
-                FileDone::Bridge { .. } => unreachable!(),
+                FileDone::Bridge { .. } | FileDone::CopySaved(_) => unreachable!(),
             };
             (reply, Some(Box::new(done)))
         }
@@ -256,14 +347,18 @@ fn export_to(j: &ExportJob, disk: &mut dyn DocStore) -> ExportResult {
     if !j.replace_confirmed && disk.read_existing(&j.dest).is_some_and(|bytes| varos_pdf::has_embedded_model(&bytes)) {
         return ExportResult::NeedsReplaceConfirm;
     }
-    // No Cancel control exists yet (the S6 cancel contract needs a real mechanism, not a decoration),
-    // so the flag is never raised.
-    let bytes = match varos_pdf::export_pdf_bytes(&j.doc, &j.plan, &AtomicBool::new(false)) {
+    // Slice 0.6: the Export sheet's Cancel raises `j.cancel`; it is checked before every page and
+    // once more before the destination is replaced, so a cancelled export never touches the file.
+    let bytes = match varos_pdf::export_pdf_bytes(&j.doc, &j.plan, j.cancel.flag()) {
         Ok(b) => b,
+        Err(varos_pdf::ExportError::Cancelled) => return ExportResult::Cancelled,
         Err(e) => return ExportResult::Failed(e.to_string()),
     };
-    match disk.write_export(&j.dest, &bytes) {
-        Ok(()) => ExportResult::Exported,
+    // …and inside the durable write up to its rename (the commit boundary: after it, the PDF is
+    // there and reported as exported, whatever the flag says)
+    match disk.write_export(&j.dest, &bytes, j.cancel.flag()) {
+        Ok(crate::lifecycle::ExportWrite::Written) => ExportResult::Exported,
+        Ok(crate::lifecycle::ExportWrite::Cancelled) => ExportResult::Cancelled,
         Err(reason) => ExportResult::Failed(reason),
     }
 }
@@ -431,6 +526,8 @@ mod tests {
                 doc: doc.clone(),
                 plan,
                 replace_confirmed: false,
+                cancel: CancelFlag::default(),
+                ticket: 0,
             }),
             home: root.clone(),
             expected: None,

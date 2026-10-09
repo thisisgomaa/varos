@@ -402,11 +402,10 @@ impl Ui {
         self.doc_tabs = tabs;
         self.doc_active = active;
     }
-    /// DFS S6: `AppCommand::ShowExport(id)` — open the Export PDF sheet for tab `id` over `doc` (its
-    /// rows and page counts are planned now, once).
-    pub fn show_export(&mut self, id: SessionId, doc: &varos_core::model::Document) {
-        let remembered = self.export_scopes.get(&id).copied();
-        self.export_sheet = Some(crate::export_ui::ExportSheet::new(id, doc, remembered));
+    /// DFS S6: `AppCommand::ShowExport(id)` — open the Export PDF sheet for tab `s` (rows and page counts
+    /// planned now, once); `selection` = Export Selection…; a tab still exporting cannot start another.
+    pub fn show_export(&mut self, s: &crate::workspace::DocumentSession, selection: bool) {
+        self.export_sheet = Some(crate::export_ui::ExportSheet::of(s, selection, &self.export_scopes));
     }
     /// DFS S1: the lifecycle commands the chrome (tab strip, burger rows) raised since the last call.
     pub fn take_app_commands(&mut self) -> Vec<AppCommand> {
@@ -600,6 +599,7 @@ impl Ui {
         let mut show_rail = self.show_rail;
         let mut show_dock = self.show_dock;
         let mut snap_cfg = ed.doc.snap; // the Windows burger's snapping rows edit this (non-undoable mode flag)
+        let has_selection = crate::lifecycle::has_selection(ed); // the burger's Export Selection… row
         let doc_tabs = std::mem::take(&mut self.doc_tabs);
         let doc_active = self.doc_active;
         // an accumulating queue: nothing drains it until S1-D wires `take_app_commands` into the host,
@@ -628,6 +628,7 @@ impl Ui {
                 &mut show_rail,
                 &mut show_dock,
                 &mut snap_cfg,
+                has_selection,
                 panel_column,
                 maximized,
                 false,
@@ -637,9 +638,15 @@ impl Ui {
                 match crate::export_ui::draw(ctx, sheet, panel_column) {
                     crate::export_ui::SheetAction::Stay => {}
                     crate::export_ui::SheetAction::Close => export_sheet = None,
-                    crate::export_ui::SheetAction::Export(id, scope) => {
-                        export_scopes.insert(id, scope);
-                        app_cmds.push(AppCommand::ExportPdf(id, scope));
+                    crate::export_ui::SheetAction::Export(id, scope, ticket) => {
+                        if scope != varos_pdf::ExportScope::Selection {
+                            export_scopes.insert(id, scope); // Selection is asked for, never remembered
+                        }
+                        app_cmds.push(AppCommand::ExportPdf(id, scope, ticket));
+                        // the sheet stays: Cancel / done
+                    }
+                    crate::export_ui::SheetAction::Reveal(path) => {
+                        crate::export_ui::reveal(&path);
                         export_sheet = None;
                     }
                 }

@@ -1028,7 +1028,7 @@ mod tab_strip_tests {
         ctx
     }
     fn tab(id: u64, label: &str, dirty: bool) -> TabView {
-        TabView { id: SessionId(id), label: label.into(), dirty, tooltip: "Not saved yet".into() }
+        TabView { id: SessionId(id), label: label.into(), dirty, file: false, tooltip: "Not saved yet".into() }
     }
     /// The top bar's own rect — matches what `Panel::top(..).exact_size(h)` claims inside
     /// `build_topbar`, and what `crate::chrome::topbar_layout` is fed.
@@ -1088,6 +1088,7 @@ mod tab_strip_tests {
                 show_rail,
                 show_dock,
                 &mut Default::default(),
+                false,
                 None,
                 false,
                 false,
@@ -1422,6 +1423,7 @@ mod tab_strip_tests {
                     rail,
                     dock,
                     &mut Default::default(),
+                    false,
                     None,
                     false,
                     false,
@@ -1893,6 +1895,7 @@ mod tab_strip_tests {
                         &mut rail,
                         &mut dock,
                         &mut Default::default(),
+                        false,
                         None,
                         false,
                         false,
@@ -2043,7 +2046,13 @@ mod dead_control_tests {
         ctx
     }
     fn one_tab() -> Vec<TabView> {
-        vec![TabView { id: SessionId(1), label: "Untitled-1".into(), dirty: false, tooltip: "Not saved yet".into() }]
+        vec![TabView {
+            id: SessionId(1),
+            label: "Untitled-1".into(),
+            dirty: false,
+            file: false,
+            tooltip: "Not saved yet".into(),
+        }]
     }
     /// The top bar's own rect — matches what `Panel::top(..).exact_size(h)` claims inside
     /// `build_topbar`, and what `crate::chrome::topbar_layout` is fed.
@@ -2086,6 +2095,8 @@ mod dead_control_tests {
         win: Option<WinAction>,
         /// The document's snapping flags the burger's View rows edit (`Ui::run` writes them back).
         snap: varos_core::model::SnapConfig,
+        /// The active document has a selection (the burger's Export Selection… row).
+        selection: bool,
     }
     impl Bar {
         fn new() -> Self {
@@ -2098,6 +2109,7 @@ mod dead_control_tests {
                 dock: true,
                 win: None,
                 snap: varos_core::model::SnapConfig::default(),
+                selection: false,
             }
         }
         fn frame(&mut self, input: RawInput) -> Vec<AppCommand> {
@@ -2116,6 +2128,7 @@ mod dead_control_tests {
                     &mut self.rail,
                     &mut self.dock,
                     &mut self.snap,
+                    self.selection,
                     None,
                     false,
                     false,
@@ -2184,15 +2197,52 @@ mod dead_control_tests {
             let cmds = bar.click(pos);
             assert_eq!(cmds, want.iter().cloned().collect::<Vec<_>>(), "row {name}");
         }
-        // Export…, past the separator after the 4 rows above — the one Export command (DFS S6)
+        // Export…, past the separator after the 7 File rows above — the one Export command (DFS S6)
         let mut bar = Bar::new();
         let top_left = bar.open_burger();
-        let y = top_left.y + 4.0 * MENU_ROW_H + SEP_H + MENU_ROW_H / 2.0;
+        let y = top_left.y + 7.0 * MENU_ROW_H + SEP_H + MENU_ROW_H / 2.0;
         let pos = egui::pos2(top_left.x + 100.0, y);
         let cmds = bar.click(pos);
         let menu = crate::host::to_app_command(crate::chrome::FileCmd::Export, Some(SessionId(1)));
         assert_eq!(cmds, vec![AppCommand::ShowExport(SessionId(1))]);
         assert_eq!(cmds.first(), menu.as_ref(), "the burger row = File ▸ Export ▸ PDF…'s command");
+    }
+
+    /// Slice 0.6 (review R6): the Windows burger has Save a Copy… (Ctrl+Alt+S), Revert (F12), Close
+    /// All (Ctrl+Alt+W) and Export Selection…, each the native row's command under the same enable
+    /// rules: Revert needs a saved tab with unsaved changes, Export Selection a selection.
+    #[test]
+    fn burger_slice_0_6_rows_follow_the_native_rows_and_their_enable_rules() {
+        const SEP_H: f32 = 9.0;
+        let click_row = |bar: &mut Bar, k: f32, seps: f32| {
+            let top_left = bar.open_burger();
+            let pos = egui::pos2(top_left.x + 100.0, top_left.y + k * MENU_ROW_H + seps * SEP_H + MENU_ROW_H / 2.0);
+            bar.click(pos)
+        };
+        let id = SessionId(1);
+        // a clean, never-saved tab with nothing selected
+        assert_eq!(click_row(&mut Bar::new(), 4.0, 0.0), [AppCommand::SaveCopy(id)], "Save a Copy…");
+        assert!(click_row(&mut Bar::new(), 5.0, 0.0).is_empty(), "Revert is disabled: no file, no changes");
+        assert_eq!(click_row(&mut Bar::new(), 6.0, 0.0), [AppCommand::CloseAll], "Close All");
+        assert!(click_row(&mut Bar::new(), 8.0, 1.0).is_empty(), "Export Selection… is disabled: no selection");
+        // a saved tab with unsaved changes and a selection: both rows work
+        let mut bar = Bar::new();
+        bar.tabs[0].dirty = true;
+        bar.tabs[0].file = true;
+        bar.selection = true;
+        assert_eq!(click_row(&mut bar, 5.0, 0.0), [AppCommand::Revert(id)]);
+        let mut bar = Bar::new();
+        bar.selection = true;
+        assert_eq!(click_row(&mut bar, 8.0, 1.0), [AppCommand::ShowExportSelection(id)]);
+        // the same commands the native rows route to
+        for (f, want) in [
+            (crate::chrome::FileCmd::SaveCopy, AppCommand::SaveCopy(id)),
+            (crate::chrome::FileCmd::Revert, AppCommand::Revert(id)),
+            (crate::chrome::FileCmd::CloseAll, AppCommand::CloseAll),
+            (crate::chrome::FileCmd::ExportSelection, AppCommand::ShowExportSelection(id)),
+        ] {
+            assert_eq!(crate::host::to_app_command(f, Some(id)), Some(want), "{f:?}");
+        }
     }
 
     /// Owner 2026-10-06 ("شيل خانة البحث"): the editor band has no Search. A real frame's click where
@@ -2235,19 +2285,20 @@ mod dead_control_tests {
     /// now — after the File rows and a separator: Tool rail, Control bar, every dockable panel.
     #[test]
     fn burger_window_rows_toggle_the_rail_and_the_panels() {
-        // New · Open · Save · Save As | Export · Home | 3 guide rows | 2 snap rows | Tool rail · …
+        // New · Open · Save · Save As · Save a Copy · Revert · Close All | Export · Export Selection ·
+        // Home | 3 guide rows | 2 snap rows | Tool rail · …
         let mut bar = Bar::new();
-        let at = bar.burger_row(11, 4);
+        let at = bar.burger_row(15, 4);
         let _ = bar.click(at);
         assert!(!bar.rail, "burger ▸ Tool rail flips the rail");
         let mut bar = Bar::new();
-        let at = bar.burger_row(12, 4);
+        let at = bar.burger_row(16, 4);
         let _ = bar.click(at);
         assert!(!bar.dock, "burger ▸ Control bar flips the control bar");
         let first = varos_app::shell::PanelId::DOCKABLE[0];
         let mut bar = Bar::new();
         let was = bar.shell.is_open(first);
-        let at = bar.burger_row(14, 4);
+        let at = bar.burger_row(18, 4);
         let _ = bar.click(at);
         assert_ne!(bar.shell.is_open(first), was, "burger ▸ {} toggles it", first.title());
     }
@@ -2255,7 +2306,7 @@ mod dead_control_tests {
     #[test]
     fn burger_colour_picker_uses_native_window_route() {
         let mut bar = Bar::new();
-        let at = bar.burger_row(13, 4);
+        let at = bar.burger_row(17, 4);
         let cmds = bar.click(at);
         assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::TogglePicker)]);
         assert_eq!(
@@ -2267,7 +2318,7 @@ mod dead_control_tests {
     #[test]
     fn burger_reset_layout_uses_the_same_command_as_the_native_window_menu() {
         let mut bar = Bar::new();
-        let at = bar.burger_row(18, 5);
+        let at = bar.burger_row(22, 5);
         let cmds = bar.click(at);
         assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::ResetLayout)]);
         assert_eq!(
@@ -2282,11 +2333,11 @@ mod dead_control_tests {
     fn burger_snapping_rows_flip_their_flags() {
         type Flag = fn(&varos_core::model::SnapConfig) -> bool;
         let rows: [(usize, usize, &str, Flag); 5] = [
-            (6, 2, "Smart Guides", |s| s.smart),
-            (7, 2, "Alignment Guides", |s| s.alignment_guides),
-            (8, 2, "Geometric Guides", |s| s.object_geometry),
-            (9, 3, "Snap to Grid", |s| s.grid),
-            (10, 3, "Snap to Point", |s| s.key_points),
+            (10, 2, "Smart Guides", |s| s.smart),
+            (11, 2, "Alignment Guides", |s| s.alignment_guides),
+            (12, 2, "Geometric Guides", |s| s.object_geometry),
+            (13, 3, "Snap to Grid", |s| s.grid),
+            (14, 3, "Snap to Point", |s| s.key_points),
         ];
         for (k, seps, name, flag) in rows {
             let mut bar = Bar::new();
@@ -2309,7 +2360,7 @@ mod dead_control_tests {
         let (mut from_menu, mut from_key) = (Editor::new(), Editor::new());
         let mut bar = Bar::new();
         bar.snap = from_menu.doc.snap;
-        let at = bar.burger_row(6, 2);
+        let at = bar.burger_row(10, 2);
         let _ = bar.click(at);
         super::apply_frame(&mut from_menu, bar.snap, vec![]);
         // …and the key
@@ -2323,7 +2374,7 @@ mod dead_control_tests {
         let before = ed.doc.snap;
         let mut bar = Bar::new();
         bar.snap = before;
-        let at = bar.burger_row(6, 2);
+        let at = bar.burger_row(10, 2);
         let _ = bar.click(at);
         super::apply_frame(&mut ed, bar.snap, vec![super::Op::ToggleSnapping]);
         assert_eq!(ed.doc.snap.enabled, !before.enabled, "the panel's ToggleSnapping wins");
@@ -2369,6 +2420,7 @@ mod band_backdrop_tests {
                     &mut rail,
                     &mut dock,
                     &mut Default::default(),
+                    false,
                     column,
                     false,
                     false,
@@ -2531,6 +2583,7 @@ mod home_band_tests {
                     id: SessionId(i),
                     label: format!("Board {i}"),
                     dirty: false,
+                    file: false,
                     tooltip: String::new(),
                 })
                 .collect();
@@ -2557,6 +2610,7 @@ mod home_band_tests {
                         &mut rail,
                         &mut dock,
                         &mut Default::default(),
+                        false,
                         None,
                         false,
                         true,
