@@ -121,7 +121,7 @@ impl Snap {
             any_clip: ed.doc.artboards.iter().any(|a| a.clip),
             paint: ed.paint,
             recent: ed.recent_colors.clone(),
-            board_colors: ed.board_colors(),
+            board_colors: vec![],
             doc_colors: ed.document_colors(),
             has_paint: repr.is_some(),
             board_name: ed.doc.name.clone(),

@@ -24,9 +24,6 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
             t::hairline(),
             StrokeKind::Inside,
         );
-        if color.is_none() {
-            mixed_swatch(ui.painter(), r);
-        }
         let response = ui.interact(r, ui.id().with(("recent", i)), egui::Sense::click());
         if let Some(c) = color {
             if response.clicked() && !kit::field::blocked(ui.ctx()) {

@@ -2,6 +2,8 @@
 use super::*;
 use varos_app::shell::tokens as t;
 use varos_app::storage::layout::PickerLayout;
+mod board_cache;
+pub(crate) use board_cache::BoardColors;
 mod cluster;
 mod drawer;
 mod fields;

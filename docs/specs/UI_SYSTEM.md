@@ -230,19 +230,21 @@ steps that snap to an unchanged Web value produce no undo step.
 
 Slice 4 (2026-10-09): Harmony's eight original SVG toggles persist `picker.harmony`
 with a serde default of Complementary. `harmony_rules.rs` ports the hue offsets and
-Mono brightness clamps from `da05aca` verbatim. Original linked colours come first;
-six 20 pt result chips are completed with tones using that same brightness progression.
-The old eighth glyph/rule was None, not Shades: Shades uses `harmony-none.svg` and
-aliases the recovered Mono brightness rule. This is an explicit contract/asset mismatch,
-not a newly invented colour algorithm. Clicking a result chip is a change-only atomic step.
+Mono brightness clamps from `da05aca`. The eighth rule is None (⌀, "No harmony"):
+no linked markers, only base-colour tones. Mono member markers sit inside the HSV
+triangle; its result chips continue the brightness progression and dedupe clamped
+values. Other rules complete six 20 pt chips with base/linked-colour tones.
+Clicking a result chip is a change-only atomic step.
 
 Drawer Recent is MRU; Board scans paths belonging to the active artboard using the
 existing outline-overlap membership; Document scans every path. Fill then stroke,
 first appearance, epsilon dedupe, cap 36 (Recent keeps its existing cap 12).
-These are derived artwork colours, not a saved library. Empty chips use MUTED stripes.
+Board scans only while the picker drawer is open on Board, cached by editor revision,
+active artboard and artboard rectangles (cleared on document switch).
+These are derived artwork colours, not a saved library. Empty chips use plain SURFACE wells.
 The drawer tab and expanded state remain layout preferences.
 
-The Artboard panel's page-colour chip opens Mini at its anchor, targeting a stable
+The Artboard panel and control bar page-colour chips open Mini at their anchor, targeting a stable
 artboard ID. Mini is the same state machine with a 192 pt configuration: shared Wheel,
 hex/alpha/pipette row and seven recent chips plus drawer; no header tabs, readout,
 default buttons or target cluster. Opening either configuration finishes the previous
@@ -251,6 +253,12 @@ outside its rect/anchor (K3 fields consume Esc first; an armed canvas click acce
 sample). Mini is transient; only the full panel's open state persists. A deleted page
 closes Mini. Dark tokens replace Figma's white chrome; Mini omits the numeric alpha
 box to match the compact reference. Native visual/interaction validation remains pending.
+
+Mini preserves the big panel’s saved open preference; when Mini closes, an open big
+panel returns on the next frame. Window → Colour reflects that big-panel preference.
+Armed Esc reverts/disarms sampling; a second Esc closes Mini. Target loss clears
+the Mini escape-ownership flag. Like kit menus (`kit/mod.rs::menu_with`), an outside
+dismiss press remains available to the canvas; kit menus do not swallow that press.
 
 Only an accepting canvas click commits an eyedropper preview. Disarm, close, Esc,
 field/target focus, panel press, selection change, document keys and Bridge mutations

@@ -232,7 +232,7 @@ pub(crate) fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarg
     });
 }
 
-/// Control-bar page colour field. Click opens the existing Color Picker for the active artboard.
+/// Control-bar page colour field. Click opens Mini for the active artboard.
 pub(crate) fn ctl_ab_color(ui: &mut egui::Ui, color: Option<Rgba>, id: u32, ops: &mut Vec<Op>) {
     let (sw, resp) = ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::click());
     let round = CornerRadius::same(2);
@@ -253,7 +253,7 @@ pub(crate) fn ctl_ab_color(ui: &mut egui::Ui, color: Option<Rgba>, id: u32, ops:
     }
     ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
     if resp.clicked() {
-        ops.push(Op::OpenPicker(MTarget::Ab(id)));
+        ops.push(Op::OpenMini(id, sw));
     }
     resp.on_hover_text("Page colour");
     ui.label(

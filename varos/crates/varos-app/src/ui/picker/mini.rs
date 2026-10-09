@@ -19,7 +19,7 @@ pub(super) fn build(
         m.finish(ops);
         ops.push(Op::PickerClose);
         *panel = None;
-        layout.open = false;
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("picker-mini"), false));
         return;
     }
     if ctx.input(|i| i.pointer.primary_released()) {
@@ -60,14 +60,15 @@ pub(super) fn build(
     let outside = ctx.input(|i| {
         i.pointer.primary_pressed() && i.pointer.hover_pos().is_some_and(|p| !rect.contains(p) && !anchor.contains(p))
     }) && !m.eyedropping;
-    let escape =
-        !field_open && !menu_open && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    let escape = !m.eyedropping
+        && !field_open
+        && !menu_open
+        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     let close = panel::settle(ctx, m, ops, sample, board, rect, field_open, menu_open, escape || outside);
     if close && !kit::field::blocked(ctx) {
         m.finish(ops);
         ops.push(Op::PickerClose);
         *panel = None;
-        layout.open = false;
         ctx.data_mut(|d| d.insert_temp(egui::Id::new("picker-mini"), false));
     }
 }

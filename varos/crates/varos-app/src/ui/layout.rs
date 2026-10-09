@@ -5,7 +5,7 @@ use varos_app::storage::layout::Layout;
 impl Ui {
     /// Is the modeless colour panel open? Canvas shortcuts remain available.
     pub fn picker_open(&self) -> bool {
-        self.color_panel.is_some()
+        self.picker_layout.open
     }
     pub fn picker_owns_escape(&self) -> bool {
         picker_owns_escape(&self.ctx, self.color_panel.is_some())
@@ -142,6 +142,18 @@ pub(super) fn settle_picker_fields(
         }
     }
     super::fields::settle(ctx, doc, pending, ed)
+}
+
+pub(super) fn sync_picker_open(
+    layout: &mut varos_app::storage::layout::PickerLayout,
+    panel: Option<&super::ColorPanel>,
+) {
+    if let Some(m) = panel {
+        if !m.mini() {
+            layout.open = true;
+        }
+    }
+    // Closing the full panel clears its preference in panel::build; Mini never does.
 }
 
 #[cfg(test)]
