@@ -35,6 +35,8 @@ pub const BINDINGS: &[Binding] = &[
     b!("Backslash", false, false, false, "Line Segment"),
     b!("Backquote", false, true, false, "Curvature"),
     b!("KeyP", true, false, false, "Print"),
+    // ---- Lane H ----
+    b!("KeyP", true, true, false, "Place artwork"),
     b!("KeyP", true, false, true, "Document Setup"),
     b!("KeyZ", true, false, false, "Undo"),
     b!("KeyZ", true, true, false, "Redo"),

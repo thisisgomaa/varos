@@ -89,6 +89,13 @@ fn discard_recovery_from(result: &MessageDialogResult) -> bool {
 pub struct RfdDialogs;
 
 impl Dialogs for RfdDialogs {
+    // ---- Lane H ----
+    fn import_options(&mut self, path: &Path) -> Option<varos_import::ImportOptions> {
+        crate::foreign_import::choose_options(path)
+    }
+    fn accept_import_losses(&mut self, notes: &[String]) -> bool {
+        crate::foreign_import::accept_losses(notes)
+    }
     fn confirm_discard_recovery(&mut self, name: &str) -> bool {
         discard_recovery_from(
             &MessageDialog::new()
@@ -120,13 +127,16 @@ impl Dialogs for RfdDialogs {
             .set_title("Open Varos Document")
             .add_filter("Varos documents (.vrs)", &["vrs"])
             .add_filter("Varos PDF documents (.pdf)", &["pdf"])
-            .add_filter("SVG artwork", &["svg", "svgz"])
+            .add_filter("Import artwork", &["svg", "svgz", "pdf", "ai", "dxf"])
             .pick_files()
             .unwrap_or_default()
     }
 
     fn pick_place_svg(&mut self) -> Option<PathBuf> {
-        FileDialog::new().set_title("Place SVG").add_filter("SVG artwork", &["svg", "svgz"]).pick_file()
+        FileDialog::new()
+            .set_title("Place artwork")
+            .add_filter("Import artwork", &["svg", "svgz", "pdf", "ai", "dxf"])
+            .pick_file()
     }
     fn pick_template(&mut self, folder: &Path) -> Option<PathBuf> {
         FileDialog::new()
@@ -308,7 +318,7 @@ pub struct DiskStore;
 
 impl DocStore for DiskStore {
     fn import_svg(&mut self, path: &Path) -> Result<(Document, Vec<String>), String> {
-        crate::svg_import::read(path).map(|(doc, report)| (doc, report.loss_notes))
+        crate::foreign_import::read(path).map(|(doc, report)| (doc, report.loss_notes))
     }
     fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
         varos_pdf::load_vrs_with_notice(path).map_err(|e| plain_reason(&e, NOT_VAROS))

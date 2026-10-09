@@ -95,6 +95,14 @@ pub trait Host {
         Err(Error::new("unsupported", "host does not provide file jobs"))
     }
 
+    // ---- Lane H: additive cancellation seam; existing hosts remain compatible ----
+    fn import_effect(&mut self, verb: &str, request: &FileEffect, cancel: &AtomicBool) -> Result<Reply, Error> {
+        if cancel.load(Ordering::Acquire) {
+            return Err(Error::new("cancelled", "Import cancelled"));
+        }
+        self.file_effect(verb, request)
+    }
+
     fn file_pending(&self, _ticket: u64) -> bool {
         false
     }
@@ -369,8 +377,10 @@ impl Service {
         if ![API, "1.1", "1.2"].contains(&req.api()) {
             return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0, 1.1 or 1.2"));
         }
-        if matches!(req, Request::ImportSvg(_)) && req.api() != "1.2" {
-            return Reply::failure(Error::new("unsupported", "import_svg requires API 1.2"));
+        if matches!(req, Request::ImportSvg(_) | Request::ImportFile(_) | Request::ImportClipboard(_))
+            && req.api() != "1.2"
+        {
+            return Reply::failure(Error::new("unsupported", "import requires API 1.2"));
         }
         if [
             "schema",
@@ -555,7 +565,11 @@ impl Service {
                             v["trace"] = json!({"input":"RGBA8 array; alpha below 128 omitted","coordinates":"input pixels, y down","max_pixels":varos_core::trace::MAX_PIXELS,"max_anchors":varos_core::trace::MAX_ANCHORS,"grayscale_levels":8,"request_bytes":crate::MAX_FRAME});
                             v["api_by_tool"]["import_svg"] = json!(["1.2"]);
                             v["tools"].as_array_mut().unwrap().push(json!("import_svg"));
-                            v["api_by_tool"] = json!({"schema":["1.2"],"list_verbs":["1.2"],"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"print":["1.2"],"copy":["1.2"],"cut":["1.2"],"other_tools":["1.0","1.1","1.2"],"import_svg":["1.2"]});
+                            if let Some(tools) = v["tools"].as_array_mut() {
+                                tools.push(json!("import_file"));
+                                tools.push(json!("import_clipboard"));
+                            }
+                            v["api_by_tool"] = json!({"schema":["1.2"],"list_verbs":["1.2"],"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"print":["1.2"],"copy":["1.2"],"cut":["1.2"],"other_tools":["1.0","1.1","1.2"],"import_svg":["1.2"],"import_file":["1.2"],"import_clipboard":["1.2"]});
                             if let Some(tools) = v["tools"].as_array_mut() {
                                 for name in [
                                     "schema",
@@ -642,13 +656,25 @@ impl Service {
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
                 }
-                Request::ImportSvg(v) => {
-                    if v.path.is_none() || v.scope.is_some() {
-                        return Err(Error::new("invalid_argument", "import_svg requires path and no scope"));
+                // ---- Lane H ----
+                Request::ImportSvg(v) | Request::ImportFile(v) | Request::ImportClipboard(v) => {
+                    let clipboard = matches!(req, Request::ImportClipboard(_));
+                    if v.path.is_some() == clipboard
+                        || v.scope.is_some()
+                        || v.format.is_some()
+                        || v.scale.is_some()
+                        || v.ppi.is_some()
+                        || v.transparent.is_some()
+                        || v.quality.is_some()
+                    {
+                        return Err(Error::new(
+                            "invalid_argument",
+                            "import requires only typed options and source path (clipboard has no path)",
+                        ));
                     }
                     let from = self.boards[&v.board].rev;
-                    let imported = host.file_effect("import_svg", v)?;
-                    if !imported.ok {
+                    let imported = host.import_effect(req.tool(), v, cancelled)?;
+                    if !imported.ok || imported.result.as_ref().is_some_and(|r| r["accepted"] == true) {
                         return Ok(imported);
                     }
                     self.observe(host);
@@ -928,7 +954,9 @@ impl Service {
                                 }
                             }
                             done.board = r.board.clone();
-                            done.rev = r.rev;
+                            if done.rev.is_none() {
+                                done.rev = r.rev;
+                            }
                             done.request_id = Some(v.request_id.clone());
                             return Ok(Reply::success(json!({"status":"completed","ticket":ticket,"receipt":done})));
                         }
@@ -962,7 +990,7 @@ impl Service {
                     hash: payload,
                     reply: reply.clone(),
                     ids: matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
-                    export_report: matches!(req, Request::ExportPdf(v) | Request::ExportSvg(v) | Request::ExportRaster(v) if v.api == "1.2"),
+                    export_report: matches!(req, Request::ExportPdf(v) | Request::ExportSvg(v) | Request::ExportRaster(v) | Request::ImportSvg(v) | Request::ImportFile(v) | Request::ImportClipboard(v) if v.api == "1.2"),
                     stroke_fields: req.api() == "1.2",
                 });
                 while client.receipts.len() > 128 {

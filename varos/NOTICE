@@ -86,3 +86,9 @@ varos-core/src/drawing.rs join_touched adapts the already-attributed geom/edit.r
 originally VectorCraft crates/pathops/src/edit.rs @ a469568 (MIT OR Apache-2.0).
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors. Endpoint filtering is Varos code.
 ---- end w2-tools-ui ----
+
+varos-import/src/dxf.rs adapts ASCII entity/layer/unit mapping from
+VectorCraft crates/cad/src/{lib.rs,import.rs}.
+Copyright (c) 2026 ArtCraft Team and VectorCraft contributors. MIT OR Apache-2.0;
+see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+lopdf 0.43.0 — Copyright (c) lopdf contributors; MIT; used only in the foreign import firewall.

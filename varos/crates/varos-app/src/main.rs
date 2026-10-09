@@ -61,7 +61,14 @@ mod recent_files;
 mod recovery_host;
 mod shortcuts;
 mod single_instance;
-mod svg_import;
+// ---- Lane H ----
+mod bridge_import;
+mod clipboard_in;
+mod foreign_import;
+mod import_drop;
+mod import_jobs;
+#[cfg(test)]
+mod import_jobs_tests;
 mod template_jobs;
 mod thumbs;
 // ---- Lane E ----
@@ -953,6 +960,11 @@ fn run_action(
             host::Ran::default()
         }
         host::HostAction::App(cmd) => host::run_command(cmd, ws, ui, dialogs, store, keys, jobs),
+        // ---- Lane H: foreign paste conversion belongs to the file worker ----
+        host::HostAction::Doc(host::DocAction::Key(KeyCode::KeyV, m)) if m.ctrl && !m.alt => {
+            clipboard_in::queue(ws, ui, canvas, dialogs, jobs, m.shift)
+        }
+        // ---- End Lane H ----
         host::HostAction::Doc(a) => {
             if ws.on_home() {
                 return host::Ran::default();
@@ -1043,12 +1055,18 @@ fn raise_doc(
     canvas: egui::Rect,
     ui: &mut dyn host::DocUi,
 ) {
-    if !(pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
+    // ---- Lane H: paste needs the owning host and its background file queue ----
+    let foreign_paste = matches!(a, host::DocAction::Key(KeyCode::KeyV, m) if m.ctrl && !m.alt);
+    if !(!foreign_paste && pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
         pending.push(host::HostAction::Doc(a));
     }
 }
 
 fn main() {
+    // ---- Lane H: parser worker exits before any native UI startup ----
+    if varos_import::worker::worker_main() {
+        return;
+    }
     // The user-facing safety net (ENGINEERING_REVIEW §3.3 #4): ANY panic — including paths no table
     // ever enumerates — writes a crash log and shows a readable dialog instead of dying silently.
     // target/panic.txt stays as the dev breadcrumb.
@@ -1940,6 +1958,15 @@ fn main() {
                     }
                     // red traffic light / OS close: the Quit transaction over every tab (Astra F01; S1
                     // has one window, so Close Window = Quit — work order §6 Q1)
+                    // ---- Lane H: Finder canvas drop is Place, never Open ----
+                    WindowEvent::DroppedFile(path)
+                        if import_drop::on_canvas(
+                            import_drop::position(&window, screen_cursor),
+                            canvas_px(&gui, &window),
+                        ) =>
+                    {
+                        pending.push(host::HostAction::App(AppCommand::PlaceFile(s.id, path)));
+                    }
                     WindowEvent::CloseRequested => pending.push(host::HostAction::App(AppCommand::Quit)),
                     WindowEvent::Resized(size) => {
                         if size.width == 0 || size.height == 0 {
