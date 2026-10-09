@@ -383,9 +383,11 @@ impl RecoveryHost {
                     _ => {}
                 }
                 for s in ws.sessions_mut() {
-                    s.editor.execute(varos_core::EditCommand::SetPasteRemembersLayers(
-                        self.settings.paste_remembers_layers,
-                    ));
+                    if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers {
+                        s.editor.execute(varos_core::EditCommand::SetPasteRemembersLayers(
+                            self.settings.paste_remembers_layers,
+                        ));
+                    }
                 }
                 if let (Some(path), Some(worker)) = (self.settings_path.clone(), &self.worker) {
                     let settings = self.settings;
@@ -414,7 +416,10 @@ impl RecoveryHost {
     }
     pub fn observe(&mut self, ws: &mut Workspace, now: Instant) {
         for s in ws.sessions_mut() {
-            s.editor.execute(varos_core::EditCommand::SetPasteRemembersLayers(self.settings.paste_remembers_layers));
+            if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers {
+                s.editor
+                    .execute(varos_core::EditCommand::SetPasteRemembersLayers(self.settings.paste_remembers_layers));
+            }
         }
         {
             self.pump();
@@ -729,6 +734,21 @@ mod tests {
             self.host.shutdown();
             let _ = std::fs::remove_dir_all(&self.layout.root);
         }
+    }
+
+    #[test]
+    fn unchanged_paste_preference_does_not_execute_or_prune_selection() {
+        let mut r = Rig::new();
+        // An invalid transient id exposes execute's selection-pruning side effect.
+        r.ws.active_mut().unwrap().editor.selected.insert(u32::MAX);
+        r.host.observe(&mut r.ws, r.now);
+        r.host.observe(&mut r.ws, r.now);
+        assert!(r.ws.active().unwrap().editor.selected.contains(&u32::MAX));
+        r.host.handle(&AppCommand::SetPasteRemembersLayers(true), &mut r.ws, r.now);
+        r.complete();
+        r.ws.new_untitled();
+        r.host.observe(&mut r.ws, r.now);
+        assert!(r.ws.active().unwrap().editor.paste_remembers_layers);
     }
 
     #[test]

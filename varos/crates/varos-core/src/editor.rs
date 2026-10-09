@@ -1499,7 +1499,7 @@ impl Editor {
             }
         }
         self.dirty = true;
-        self.commit();
+        self.commit_wave();
     }
     /// How many distinct TOP-LEVEL items the object selection spans — an ungrouped path counts as
     /// one, a whole group (all its member paths) counts as one. The number the smart `Auto` keys on.
@@ -2668,6 +2668,25 @@ impl Editor {
             }
         }
         if cfg.guides && !self.guides_hidden {
+            // Converted path guides are excluded from paint_list; supply their world geometry here.
+            for (pi, p) in self.doc.paths.iter().enumerate() {
+                if !self.doc.guide_paths.contains(&p.id)
+                    || self.doc.eff_hidden(p.id)
+                    || self.objsel.contains(&p.id)
+                    || skip_pids.is_some_and(|ids| ids.contains(&p.id))
+                {
+                    continue;
+                }
+                for q in self
+                    .doc
+                    .world_outline_px(pi, self.ppu)
+                    .into_iter()
+                    .chain(p.holes.iter().flat_map(|ring| self.doc.world_ring_px(ring, pi, self.ppu)))
+                {
+                    txl.push((q[0], q[1], q[1]));
+                    tyl.push((q[1], q[0], q[0]));
+                }
+            }
             // ruler guides are just more snap lines (infinite extent)
             for g in &self.doc.guides {
                 if g.vertical {
@@ -3464,6 +3483,11 @@ impl Editor {
         self.pending = Some(self.doc.clone());
         self.doc.ids = self.id_high_water;
         self.dirty = false;
+    }
+    /// Command-wave transactions publish history only for changed document content.
+    pub(super) fn commit_wave(&mut self) {
+        self.dirty = self.pending.as_ref().is_some_and(|before| !before.content_eq(&self.doc));
+        self.commit();
     }
     pub fn commit(&mut self) {
         self.doc.sync_tree(); // adopt new paths / prune dead + empty nodes / re-flatten z
