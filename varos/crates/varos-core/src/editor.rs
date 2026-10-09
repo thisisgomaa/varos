@@ -470,6 +470,7 @@ pub struct Editor {
     pub view_depth: crate::view_depth::ViewDepth,
     // ---- w3-cmyk ----
     pub colour_preview: crate::colour_preview::State,
+    pub(crate) colour_transforms: crate::colour_transforms::Cache,
     pub requested_canvas: Option<[u8; 3]>,
     pub requested_pan: Option<Pt>,
     pub requested_zoom: Option<f32>,
@@ -575,6 +576,7 @@ impl Editor {
             view_depth: Default::default(),
             // ---- w3-cmyk ----
             colour_preview: Default::default(),
+            colour_transforms: Default::default(),
             requested_canvas: None,
             requested_pan: None,
             requested_zoom: None,

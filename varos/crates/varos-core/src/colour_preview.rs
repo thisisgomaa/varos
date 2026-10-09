@@ -10,13 +10,14 @@ pub struct State {
     pub proof: bool,
     pub overprint: bool,
 }
-struct Proof {
+#[derive(Clone)]
+pub(crate) struct Proof {
     to: Arc<moxcms::TransformF32Executor>,
     back: Arc<moxcms::TransformF32Executor>,
     channels: usize,
 }
 impl Proof {
-    fn new(profile: &IccProfile) -> Result<Self, String> {
+    pub(crate) fn new(profile: &IccProfile) -> Result<Self, String> {
         let output = profile.parse()?;
         let (layout, channels) = match output.color_space {
             moxcms::DataColorSpace::Rgb => (moxcms::Layout::Rgb, 3),
@@ -120,7 +121,7 @@ pub fn present(ed: &Editor, mut scene: Scene) -> Scene {
             .output_profile
             .as_ref()
             .ok_or("Choose an ICC output profile before Proof Colours".into())
-            .and_then(Proof::new)
+            .and_then(|p| ed.colour_transforms.proof(p))
         {
             Ok(p) => Some(p),
             Err(e) => {
