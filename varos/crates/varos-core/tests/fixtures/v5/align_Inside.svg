@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" id="board" width="116.000" height="96.000" viewBox="12.000 12.000 116.000 96.000" overflow="hidden">
+<g id="node-1-Layer_x20_1">
+<title>Layer 1</title>
+<g id="path-10" opacity="0.800">
+<defs><mask id="knockout-10" maskUnits="userSpaceOnUse" x="12.000" y="12.000" width="116.000" height="96.000"><rect x="12.000" y="12.000" width="116.000" height="96.000" fill="white"/><path d="M120.000 100.000L20.000 20.000L120.000 20.000ZM31.403 24.000L116.000 91.677L116.000 24.000Z" fill="black" fill-rule="evenodd"/></mask></defs>
+<path d="M20.000 20.000 L120.000 20.000 L120.000 100.000 L20.000 20.000 Z " fill="#80b3e6" fill-opacity="1.000" fill-rule="evenodd" mask="url(#knockout-10)"/>
+<path d="M120.000 100.000L20.000 20.000L120.000 20.000ZM31.403 24.000L116.000 91.677L116.000 24.000Z" fill="#000000" fill-opacity="0.700" fill-rule="evenodd"/>
+</g>
+</g>
+</svg>

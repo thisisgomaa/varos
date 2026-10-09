@@ -94,7 +94,7 @@ struct Repeat {
 
 /// First normalize and bound all work, before accessing the allocator/staging editor.
 pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
-    let economy = edit.api == "1.1";
+    let economy = ["1.1", "1.2"].contains(&edit.api.as_str());
     if !economy && (edit.defaults.is_some() || edit.receipt.is_some()) {
         return Err(invalid("defaults and receipt require API 1.1"));
     }
@@ -148,7 +148,7 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
     let mut out = Vec::new();
     let mut targets = 0;
     for (index, op) in edit.ops.iter().enumerate() {
-        walk(op, economy, &defaults, 0, [0.0, 0.0], "", index, &[], &mut out, &mut targets)?;
+        walk(op, &edit.api, economy, &defaults, 0, [0.0, 0.0], "", index, &[], &mut out, &mut targets)?;
     }
     if !economy && targets > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
@@ -158,6 +158,7 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
 #[allow(clippy::too_many_arguments)]
 fn walk(
     v: &Value,
+    api: &str,
     economy: bool,
     defaults: &Map<String, Value>,
     depth: usize,
@@ -192,6 +193,7 @@ fn walk(
                     path.push(format!("op:{j}"));
                     walk(
                         child,
+                        api,
                         economy,
                         defaults,
                         depth + 1,
@@ -211,6 +213,14 @@ fn walk(
         }
         let mut normalized = tuple(v)?;
         let m = normalized.as_object_mut().ok_or_else(|| invalid("operation must be an object or creation tuple"))?;
+        if api == "1.2" && m.contains_key("op") {
+            if m.contains_key("verb") {
+                return Err(invalid("use op or verb, not both"));
+            }
+            if let Some(verb) = m.remove("op") {
+                m.insert("verb".into(), verb);
+            }
+        }
         let creation = matches!(m.get("verb").and_then(Value::as_str), Some("add_shape" | "add_path"));
         if depth > 0 && !creation {
             return Err(invalid("repeat children must be creation operations or repeats"));
@@ -225,7 +235,10 @@ fn walk(
             }
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
-        if !crate::EDIT_VERBS.contains(&verb) {
+        if api != "1.2" && (verb == "set_stroke_style" || m.contains_key("stroke_style")) {
+            return Err(Error::new("unsupported", "stroke_style requires explicit API 1.2"));
+        }
+        if !crate::EDIT_VERBS.contains(&verb) && !(api == "1.2" && verb == "set_stroke_style") {
             return Err(Error::new("unsupported", "edit verb is not enabled in this slice"));
         }
         let mut op: Operation = serde_json::from_value(normalized).map_err(|e| invalid(e.to_string()))?;

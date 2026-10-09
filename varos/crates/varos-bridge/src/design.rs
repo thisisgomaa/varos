@@ -12,7 +12,9 @@ use varos_core::{
     EditCommand,
 };
 fn fail(reason: impl Into<String>) -> Error {
-    Error::new("invalid_argument", reason)
+    let reason = reason.into();
+    let code = if reason.contains("limit_exceeded:") { "limit_exceeded" } else { "invalid_argument" };
+    Error::new(code, reason)
 }
 fn canonical(id: &str) -> Result<(&str, u32), Error> {
     let (kind, value) = id.split_once(':').ok_or_else(|| fail("use path:N or node:N"))?;
@@ -191,6 +193,7 @@ pub(crate) fn apply_design_op(
     locals: &mut BTreeMap<String, String>,
     expanded: &mut usize,
     affected: &mut BTreeSet<String>,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<u32>, Error> {
     if op.is_page_verb() {
         return apply_artboard_op(ed, op, locals, affected).map(|()| None);
@@ -208,6 +211,14 @@ pub(crate) fn apply_design_op(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let new_style = match op {
+        Operation::SetStrokeStyle { stroke_style, .. } => Some(stroke_style),
+        Operation::SetPaint { stroke_style, .. } => stroke_style.as_ref(),
+        _ => None,
+    };
+    if new_style.is_some() && ids.iter().any(|id| !id.starts_with("path:")) {
+        return Err(Error::new("unsupported", "stroke style targets must be explicit editable paths"));
+    }
     let paths = if matches!(op, Operation::AddShape { .. } | Operation::AddPath { .. }) {
         vec![]
     } else if matches!(op, Operation::Rename { .. }) {
@@ -235,6 +246,30 @@ pub(crate) fn apply_design_op(
     } else {
         resolve(&ed.doc, &ids, false)?
     };
+    if let Some(style) = new_style {
+        let mut budget = varos_core::stroke::evaluate::StrokeBudget::default();
+        for pid in &paths {
+            let Some(index) = ed.doc.pidx(*pid) else {
+                continue;
+            };
+            let mut proposed = ed.doc.paths[index].clone();
+            proposed.stroke_style = style.clone();
+            if let Operation::SetPaint { stroke_width: Some(width), .. } = op {
+                proposed.stroke_width = *width;
+            }
+            let coverage = varos_core::stroke::evaluate(&proposed, 0.01, cancelled).map_err(|e| {
+                Error::new(
+                    match e {
+                        varos_core::stroke::StrokeError::Cancelled => "cancelled",
+                        varos_core::stroke::StrokeError::LimitExceeded => "limit_exceeded",
+                        _ => "invalid_argument",
+                    },
+                    e.to_string(),
+                )
+            })?;
+            budget.charge(&coverage).map_err(|e| Error::new("limit_exceeded", e.to_string()))?;
+        }
+    }
     *expanded += paths.len();
     if *expanded > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "batch expanded targets exceed 1000"));
@@ -368,18 +403,35 @@ pub(crate) fn apply_design_op(
         Operation::Move { delta, .. } => {
             ed.apply_targeted_op(&TargetEdit::Move { paths, delta: *delta }, 0).map_err(super::service::target_error)?
         }
-        Operation::SetPaint { fill, stroke, stroke_width, opacity, .. } => ed
-            .apply_targeted_op(
-                &TargetEdit::Paint {
-                    paths,
-                    fill: paint(fill)?,
-                    stroke: paint(stroke)?,
-                    stroke_width: *stroke_width,
-                    opacity: *opacity,
-                },
-                0,
-            )
-            .map_err(super::service::target_error)?,
+        Operation::SetStrokeStyle { stroke_style, .. } => {
+            ed.try_execute(EditCommand::SetStrokeStyle { ids: paths, style: stroke_style.clone() }).map_err(fail)?;
+        }
+        Operation::SetPaint { fill, stroke, stroke_width, opacity, stroke_style, .. } => {
+            if fill != &crate::dto::Paint::Unchanged
+                || stroke != &crate::dto::Paint::Unchanged
+                || stroke_width.is_some()
+                || opacity.is_some()
+            {
+                ed.apply_targeted_op(
+                    &TargetEdit::Paint {
+                        paths,
+                        fill: paint(fill)?,
+                        stroke: paint(stroke)?,
+                        stroke_width: *stroke_width,
+                        opacity: *opacity,
+                    },
+                    0,
+                )
+                .map_err(super::service::target_error)?;
+            }
+            if let Some(style) = stroke_style {
+                ed.try_execute(EditCommand::SetStrokeStyle {
+                    ids: ids.iter().map(|id| canonical(id).map(|(_, n)| n)).collect::<Result<Vec<_>, _>>()?,
+                    style: style.clone(),
+                })
+                .map_err(fail)?;
+            }
+        }
         Operation::Rename { name, .. } => {
             let name = clean_name(name)?;
             for id in ids {
@@ -682,6 +734,7 @@ mod tests {
                 &mut BTreeMap::new(),
                 &mut 0,
                 &mut BTreeSet::new(),
+                &|| false,
             )
             .unwrap_err();
             assert_eq!(error.code, "invalid_argument");

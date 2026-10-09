@@ -17,3 +17,5 @@ varos-core/src/geom/kurbo.rs adapts absolute-handle / BezPath conversion from
 VectorCraft crates/geom/src/path.rs @ a469568.
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+kurbo 0.13.1 — Copyright (c) 2018 Raph Levien; Apache-2.0 OR MIT; https://github.com/linebender/kurbo — used for pure curve geometry in varos-core.

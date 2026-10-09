@@ -1,0 +1,12 @@
+## feat/p2-stroke
+- `REPORT.md`: retained both lane reports, including every finding, gate, limitation and historical scope note.
+- `docs/PLAN.md`: retained all geometry/fitter/shapes and StrokeStyle progress rows; no PLAN or GATE_LOG lines removed.
+- `varos/NOTICE`: retained all VectorCraft attribution and the kurbo 0.13.1 attribution.
+- `varos/crates/varos-core/Cargo.toml`: unified kurbo into one exact 0.13.1 dependency with only std enabled, retaining the geometry comment.
+- `varos/crates/varos-core/src/geom.rs`: retained all geometry exports and stroke compatibility exports; one canonical painted_extent includes stroke bounds and remains the source for painted_padding.
+- Adapter unification: canonical `geom/kurbo.rs` exposes its existing contour conversion; `geom/stroke_adapter.rs` re-exports contour and aliases to_bez_path as path, preserving all callers without a second implementation. These two merge-only support edits were required for unification.
+- Other shared shortcuts, commands, settings, stores and Bridge verbs remain intact; no duplicate introduced. All five conflict files are marker-free; both sides' report/plan/NOTICE lines checked verbatim.
+- Validation: `cd varos && cargo fmt --all && cargo build --offline -j 3 --workspace --all-targets` PASS; `git diff --check` PASS.
+- Tests: all use `cargo test --offline -j 3 -p <crate>`; core `--test geometry ""` 14, `geom::` 5, `--test stroke_style ""` 20, `stroke` 18; PDF `--test stroke_v5 ""` 5; Bridge `stroke` 4; raster `stroke` 3; render-wgpu `stroke` 11; app `stroke` 10. Every invocation PASS, zero failures.
+- Evidence: `/tmp/g2-stroke-build.log`, `/tmp/g2-stroke-test-results.json`, `/tmp/g2-{core-geometry,core-geom-unit,core-stroke-style,core-stroke,pdf-stroke-v5,bridge-stroke,raster-stroke,gpu-stroke,app-stroke}.log`.
+- Deferred integration work: none. No Git write command used; moderator owns staging and commit.

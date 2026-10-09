@@ -1,0 +1,260 @@
+%PDF-1.7
+%€€€€
+
+9 0 obj
+<<
+  /Length 60
+>>
+stream
+1 J
+1 j
+q
+1 1 1 rg
+0 0 1080 1080 re
+f*
+Q
+q
+/GS0 gs
+/Fx0 Do
+Q
+endstream
+endobj
+
+10 0 obj
+<<
+  /Type /Page
+  /Parent 2 0 R
+  /MediaBox [0 0 1080 1080]
+  /Contents 9 0 R
+  /Resources <<
+    /ExtGState <<
+      /GS0 8 0 R
+    >>
+    /XObject <<
+      /Fx0 7 0 R
+    >>
+  >>
+>>
+endobj
+
+8 0 obj
+<<
+  /Type /ExtGState
+  /ca 0.8
+  /CA 0.8
+>>
+endobj
+
+7 0 obj
+<<
+  /Length 1958
+  /Type /XObject
+  /Subtype /Form
+  /BBox [12 972 128 1068]
+  /Group <<
+    /Type /Group
+    /S /Transparency
+    /I true
+    /K true
+  >>
+  /Resources <<
+    /ExtGState <<
+      /Gf 5 0 R
+      /Gk 6 0 R
+    >>
+  >>
+>>
+stream
+1 J
+1 j
+q
+/Gf gs
+0.5 0.7 0.9 rg
+20 1060 m
+20 1060 120 1060 120 1060 c
+120 1060 120 980 120 980 c
+120 980 20 1060 20 1060 c
+h
+f*
+Q
+q
+/Gk gs
+0 0 0 RG
+4 w
+0 0 0 rg
+16.00503 1059.7959 m
+16.00106 1060.102 l
+16.020742 1060.4093 l
+16.064455 1060.7162 l
+16.132576 1061.0216 l
+16.225487 1061.324 l
+16.341877 1061.6183 l
+16.479439 1061.8993 l
+16.637049 1062.1663 l
+16.813587 1062.4185 l
+17.00793 1062.655 l
+17.218956 1062.8751 l
+17.445545 1063.0781 l
+17.686573 1063.2632 l
+17.940918 1063.4293 l
+18.20746 1063.5759 l
+18.485077 1063.7023 l
+18.772644 1063.8073 l
+19.069042 1063.8904 l
+19.373148 1063.9508 l
+19.683842 1063.9875 l
+20 1064 l
+120 1064 l
+120.40897 1063.9794 l
+120.80614 1063.9187 l
+121.189476 1063.8202 l
+121.556984 1063.6857 l
+121.90664 1063.5172 l
+122.236435 1063.3169 l
+122.54437 1063.0865 l
+122.82843 1062.8284 l
+123.08659 1062.5443 l
+123.316864 1062.2365 l
+123.51722 1061.9066 l
+123.68566 1061.557 l
+123.82017 1061.1895 l
+123.91873 1060.8062 l
+123.97935 1060.4089 l
+124 1060 l
+124 980 l
+123.98976 979.71344 l
+123.95942 979.43097 l
+123.90952 979.1534 l
+123.84063 978.88165 l
+123.75329 978.61664 l
+123.64804 978.3592 l
+123.52546 978.1102 l
+123.38608 977.87054 l
+123.23045 977.6411 l
+123.05915 977.4228 l
+122.8727 977.21643 l
+122.67167 977.0229 l
+122.45661 976.8431 l
+122.22807 976.67786 l
+121.9866 976.52814 l
+121.73276 976.3948 l
+121.47004 976.2799 l
+121.202286 976.1849 l
+120.93051 976.1096 l
+120.65576 976.05396 l
+120.37906 976.0179 l
+120.10143 976.0012 l
+119.82392 976.00385 l
+119.54755 976.0257 l
+119.27334 976.0665 l
+119.002335 976.12634 l
+118.73556 976.205 l
+118.474045 976.30237 l
+118.21883 976.41833 l
+117.970924 976.55273 l
+117.731384 976.7055 l
+117.50122 976.8765 l
+17.50122 1056.8765 l
+17.262114 1057.0837 l
+17.042488 1057.3065 l
+16.842722 1057.5437 l
+16.663195 1057.7937 l
+16.504284 1058.0554 l
+16.366371 1058.3274 l
+16.249834 1058.6084 l
+16.155052 1058.8971 l
+16.082405 1059.1921 l
+16.03227 1059.4922 l
+h
+20 1060 m
+120 980 l
+120 1060 l
+h
+f*
+Q
+endstream
+endobj
+
+5 0 obj
+<<
+  /Type /ExtGState
+  /ca 1
+>>
+endobj
+
+6 0 obj
+<<
+  /Type /ExtGState
+  /ca 0.7
+  /CA 0.7
+>>
+endobj
+
+2 0 obj
+<<
+  /Type /Pages
+  /Kids [10 0 R]
+  /Count 1
+>>
+endobj
+
+3 0 obj
+<<
+  /Length 1538
+  /Type /EmbeddedFile
+  /Subtype /application#2Fjson
+>>
+stream
+{"varos":5,"doc":{"name":"","description":"","tags":[],"paths":[{"id":10,"anchors":[{"id":11,"p":[20.0,20.0],"hin":null,"hout":null,"smooth":false},{"id":12,"p":[120.0,20.0],"hin":null,"hout":null,"smooth":false},{"id":13,"p":[120.0,100.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[0.5,0.7,0.9,1.0],"stroke":[0.0,0.0,0.0,0.7],"stroke_width":4.0,"stroke_style":{"align":"Outside"},"holes":[],"opacity":0.8,"hidden":false,"locked":false,"name":null}],"groups":[],"group_of":{},"nodes":[{"id":1,"kind":"Layer","name":"Layer 1","parent":null,"children":[101],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":101,"kind":{"Path":10},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"}],"roots":[1],"active_layer":1,"ids":101,"units":{"ppi":72.0,"display":"Px"},"artboards":[],"active":0,"move_art_with_ab":true,"snap":{"enabled":true,"smart":true,"radius_px":8.0,"candidate_max":8,"show_candidates":true,"force_pixel_align":false,"move_whole_px":false,"grid":false,"grid_lines":true,"baseline_grid":false,"guides":true,"artboard":true,"artboard_mids":true,"margins":false,"margin_mids":false,"visible_only":true,"object_bounds":true,"bbox_mids":true,"gaps_and_sizes":true,"key_points":true,"object_geometry":true,"segment_mids":true,"path_intersections":true,"pixel_bounds":false,"alignment_guides":true,"equal_spacing":true,"equal_size":true,"grid_spacing":72.0},"ruler_origin":[0.0,0.0],"guides":[],"guides_locked":false}}
+endstream
+endobj
+
+4 0 obj
+<<
+  /Type /Filespec
+  /F (model.varos.json)
+  /UF (model.varos.json)
+  /EF <<
+    /F 3 0 R
+  >>
+  /AFRelationship /Source
+  /Desc (Varos editable model (source of truth))
+>>
+endobj
+
+1 0 obj
+<<
+  /Type /Catalog
+  /Pages 2 0 R
+  /Names <<
+    /EmbeddedFiles <<
+      /Names [(model.varos.json) 4 0 R]
+    >>
+  >>
+  /AF [4 0 R]
+  /VAROS_Model 3 0 R
+  /VAROS_SchemaVersion 5
+>>
+endobj
+
+xref
+0 11
+0000000000 65535 f
+0000004634 00000 n
+0000002732 00000 n
+0000002797 00000 n
+0000004443 00000 n
+0000002622 00000 n
+0000002671 00000 n
+0000000392 00000 n
+0000000331 00000 n
+0000000016 00000 n
+0000000129 00000 n
+trailer
+<<
+  /Size 11
+  /Root 1 0 R
+>>
+startxref
+4834
+%%EOF

@@ -9,7 +9,7 @@ edition = "2021"
 # Both pure-Rust (no FFI), Apache/MIT → GPL-compatible, honor the hard seam.
 [dependencies]
 # Pure geometry, default std only; no serde/platform features. Offline-reviewed 0.13.1.
-kurbo = "0.13.1"
+kurbo = { version = "=0.13.1", default-features = false, features = ["std"] }
 i_overlay = "7"
 flo_curves = "0.8"
 # Serde spine (Foundations Stage-0): the model derives Serialize/Deserialize so the .varos

@@ -633,6 +633,13 @@ pub const PICKER_HARMONY_STRIP_H: f32 = 32.0;
 pub const PICKER_HARMONY_ROW_H: f32 = 28.0;
 pub const PICKER_HARMONY_SWATCH: f32 = 20.0;
 
+/// Provisional Stroke mirror, sharing the control bar number-field width.
+pub const STROKE_MIRROR_WEIGHT_W: f32 = 64.0;
+pub const STROKE_CHOICE_W: f32 = 110.0;
+pub const STROKE_POPUP_W: f32 = 250.0;
+pub const STROKE_POPUP_H: f32 = 520.0;
+pub const STROKE_POPUP_MARGIN: i8 = 10;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

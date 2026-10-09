@@ -46,6 +46,7 @@ struct Knock {
     /// page with one knockout is byte-identical to the unpooled writer.
     gs_fill: (Ref, f32, bool),
     gs_stroke: (Ref, f32, bool),
+    stroke_fill: bool,
 }
 /// Per-page pool of the knockout-internal ExtGStates, keyed by (is_stroke, quantized alpha).
 type KnockGs = Vec<(bool, f32, Ref)>;
@@ -143,11 +144,13 @@ pub(crate) fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Dra
     // A32) — the exact rule `scene::fill_prims` draws by. The old `p.closed` guard dropped the fill
     // of any shape a deleted anchor had opened, so it filled on screen but vanished in the PDF (FB1).
     let fillable = p.anchors.len() >= 3 && fill.is_some();
-    let strokable = stroke.is_some() && p.anchors.len() >= 2 && p.stroke_width > 0.0;
+    let strokable = stroke.is_some()
+        && (p.anchors.len() >= 2 || (!p.stroke_style.is_default() && !p.anchors.is_empty()))
+        && p.stroke_width > 0.0;
     if !fillable && !strokable {
         return None;
     }
-    let pad = if strokable { p.stroke_width * 0.5 } else { 0.0 };
+    let pad = if strokable { varos_core::geom::painted_padding(p) } else { 0.0 };
     let (x0, y0, x1, y1) = control_bbox(doc, pi); // A7: the WORLD (rotated) extent, so nothing clips away
     let bbox = (x0 - pad, y0 - pad, x1 + pad, y1 + pad);
     Some(Drawn { p, xf, fill, stroke, fillable, strokable, pad, bbox, clip: doc.clip_group_of(p.id) })
@@ -190,6 +193,16 @@ pub(crate) fn write_pages_counted(
     model: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<(Vec<u8>, usize), ExportError> {
+    let mut stroke_budget = varos_core::stroke::evaluate::StrokeBudget::default();
+    for p in &doc.paths {
+        if !p.stroke_style.is_default() {
+            let coverage = varos_core::stroke::evaluate(p, 0.01, &|| cancel.load(Ordering::Relaxed))
+                .map_err(crate::export::stroke_error)?;
+            for _ in pages {
+                stroke_budget.charge(&coverage).map_err(crate::export::stroke_error)?;
+            }
+        }
+    }
     let mut ids = Alloc(0);
     let cat_id = ids.next();
     let tree_id = ids.next();
@@ -346,7 +359,11 @@ pub(crate) fn write_pages_counted(
                 pdf.ext_graphics(k.gs_fill.0).non_stroking_alpha(k.gs_fill.1);
             }
             if k.gs_stroke.2 {
-                pdf.ext_graphics(k.gs_stroke.0).stroking_alpha(k.gs_stroke.1);
+                if knocks.iter().any(|other| other.stroke_fill && other.gs_stroke.0 == k.gs_stroke.0) {
+                    pdf.ext_graphics(k.gs_stroke.0).non_stroking_alpha(k.gs_stroke.1).stroking_alpha(k.gs_stroke.1);
+                } else {
+                    pdf.ext_graphics(k.gs_stroke.0).stroking_alpha(k.gs_stroke.1);
+                }
             }
         }
         page_ids.push(page_id);
@@ -411,6 +428,7 @@ fn paint(
     t: &impl Fn([f32; 2]) -> (f32, f32),
 ) {
     let Drawn { p, xf, fill, stroke, fillable, strokable, bbox, .. } = *d;
+    let baked = !native_stroke(p);
     let fa = fill.map_or(0.0, |f| f[3]) * p.opacity;
     let sa = stroke.map_or(0.0, |s| s[3]) * p.opacity;
 
@@ -429,8 +447,16 @@ fn paint(
             .set_parameters(Name(b"Gk"))
             .set_stroke_rgb(stroke[0], stroke[1], stroke[2])
             .set_line_width(p.stroke_width);
-        emit_rings(&mut ic, p, &xf, t);
-        ic.stroke().restore_state();
+        if baked {
+            ic.set_fill_rgb(stroke[0], stroke[1], stroke[2]);
+            emit_coverage(&mut ic, p, &xf, t);
+            ic.fill_even_odd();
+        } else {
+            emit_rings(&mut ic, p, &xf, t);
+            set_stroke_style(&mut ic, p);
+            ic.stroke();
+        }
+        ic.restore_state();
         let xr = ids.next();
         let bb = page_bbox(bbox, t);
         // paint site: object opacity applied ONCE to the whole unit
@@ -438,7 +464,14 @@ fn paint(
         c.save_state().set_parameters(Name(n.as_bytes()));
         c.x_object(Name(format!("Fx{}", knocks.len()).as_bytes()));
         c.restore_state();
-        knocks.push(Knock { r: xr, content: ic.finish().to_vec(), bbox: bb, gs_fill: gf, gs_stroke: gk });
+        knocks.push(Knock {
+            r: xr,
+            content: ic.finish().to_vec(),
+            bbox: bb,
+            gs_fill: gf,
+            gs_stroke: gk,
+            stroke_fill: baked,
+        });
     } else {
         c.save_state();
         let n = gs_name(gss, ids, fa, sa);
@@ -449,6 +482,21 @@ fn paint(
         if let (true, Some(s)) = (strokable, stroke) {
             c.set_stroke_rgb(s[0], s[1], s[2]);
             c.set_line_width(p.stroke_width);
+            set_stroke_style(c, p);
+        }
+        if baked && strokable {
+            if fillable {
+                emit_rings(c, p, &xf, t);
+                c.fill_even_odd();
+            }
+            if let Some(s) = stroke {
+                let n = gs_name(gss, ids, sa, sa);
+                c.set_parameters(Name(n.as_bytes())).set_fill_rgb(s[0], s[1], s[2]);
+                emit_coverage(c, p, &xf, t);
+                c.fill_even_odd();
+            }
+            c.restore_state();
+            return;
         }
         emit_rings(c, p, &xf, t);
         match (fillable, strokable) {
@@ -529,4 +577,51 @@ fn page_bbox((x0, y0, x1, y1): WRect, t: &impl Fn([f32; 2]) -> (f32, f32)) -> [f
     let (ax0, ay0) = t([x0, y0]);
     let (ax1, ay1) = t([x1, y1]);
     [ax0.min(ax1), ay0.min(ay1), ax0.max(ax1), ay0.max(ay1)]
+}
+
+pub(crate) fn native_stroke(p: &Path) -> bool {
+    use varos_core::stroke::StrokeAlign;
+    (p.stroke_style.is_default() || varos_core::stroke::evaluate::has_length(p))
+        && (p.stroke_style.align == StrokeAlign::Center || !p.closed)
+        && !p.stroke_style.align_dashes_to_corners
+        && (p.closed || (p.stroke_style.arrows.start.is_none() && p.stroke_style.arrows.end.is_none()))
+        && p.stroke_style.dash.iter().all(|v| *v > 0.0)
+}
+fn set_stroke_style(c: &mut Content, p: &Path) {
+    use varos_core::stroke::{StrokeCap, StrokeJoin};
+    if p.stroke_style.is_default() {
+        return;
+    }
+    let s = &p.stroke_style;
+    c.set_line_cap(match s.cap {
+        StrokeCap::Butt => LineCapStyle::ButtCap,
+        StrokeCap::Round => LineCapStyle::RoundCap,
+        StrokeCap::Square => LineCapStyle::ProjectingSquareCap,
+    })
+    .set_line_join(match s.join {
+        StrokeJoin::Miter => LineJoinStyle::MiterJoin,
+        StrokeJoin::Round => LineJoinStyle::RoundJoin,
+        StrokeJoin::Bevel => LineJoinStyle::BevelJoin,
+    })
+    .set_miter_limit(s.miter_limit)
+    .set_dash_pattern(
+        s.dash.iter().copied(),
+        if s.dash.is_empty() { 0.0 } else { s.dash_phase.rem_euclid(s.dash.iter().sum()) },
+    );
+}
+fn emit_coverage(c: &mut Content, p: &Path, xf: &Xform, t: &impl Fn([f32; 2]) -> (f32, f32)) {
+    // write_pages_counted checked the same deterministic geometry before constructing output.
+    if let Ok(coverage) = varos_core::stroke::evaluate(p, 0.01, &|| false) {
+        for ring in coverage.rings {
+            if let Some(first) = ring.first() {
+                let q = t(xf.apply(*first));
+                c.move_to(q.0, q.1);
+                for point in &ring[1..] {
+                    let q = t(xf.apply(*point));
+                    c.line_to(q.0, q.1);
+                }
+                c.close_path();
+            }
+        }
+    }
 }

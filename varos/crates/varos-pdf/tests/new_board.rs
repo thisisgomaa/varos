@@ -50,7 +50,7 @@ fn new_board_with_zero_artboards_saves_reopens_and_exports_its_artwork_bounds() 
     let bytes = write_pdf_checked(&d, &Limits::DEFAULT).expect("a named free board saves");
     let back = load_vrs_bytes(&bytes, &Limits::DEFAULT).unwrap();
     assert_eq!(back.doc, d, "metadata and art survive the PDF container");
-    assert_eq!((back.source_version, back.migrated), (4, false));
+    assert_eq!((back.source_version, back.migrated), (5, false));
     let plan = plan_pdf_export(&back.doc, default_scope(&back.doc)).unwrap();
     assert_eq!(plan.page_count(), 1);
     let rect = plan.pages[0].rect;

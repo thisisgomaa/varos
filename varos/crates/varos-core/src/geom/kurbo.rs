@@ -93,6 +93,12 @@ fn append(out: &mut BezPath, anchors: &[Anchor], closed: bool) {
         out.close_path();
     }
 }
+/// Convert a single contour using the same absolute-handle rules as full paths.
+pub fn contour(anchors: &[Anchor], closed: bool) -> BezPath {
+    let mut out = BezPath::new();
+    append(&mut out, anchors, closed);
+    out
+}
 /// Convert outer and hole contours; handles in the model are absolute, never offsets.
 pub fn to_bez_path(source: &Path) -> BezPath {
     let mut out = BezPath::new();
