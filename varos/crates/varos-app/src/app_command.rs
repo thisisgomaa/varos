@@ -55,9 +55,14 @@ pub enum AppCommand {
     /// DFS S6: File ▸ Export ▸ PDF…, the top-bar Export button and the burger's Export… row — show
     /// the Export PDF sheet (page-scope choice) for this tab. Host-owned: it opens the sheet only.
     ShowExport(SessionId),
+    /// Slice 0.6: File ▸ Export Selection… — the same Export PDF sheet, opened on its Selection scope
+    /// (one page fitted to the selected artwork). Host-owned like `ShowExport`.
+    ShowExportSelection(SessionId),
     /// The Export sheet's Export… — the Export PDF save panel for this tab and scope, then a
     /// background export job (`file_jobs`). Never touches the tab's path, dirty state or Recent.
-    ExportPdf(SessionId, varos_pdf::ExportScope),
+    /// Slice 0.6: the third field is the sheet's ticket (`file_jobs::next_ticket`), carried by the
+    /// job and every `ExportEvent`, so a sheet follows only the export it started.
+    ExportPdf(SessionId, varos_pdf::ExportScope, u64),
     /// A background save / export finished (`file_jobs::FileDone`), applied on the UI thread.
     FileDone(Box<crate::file_jobs::FileDone>),
     /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free
@@ -89,8 +94,18 @@ pub enum AppCommand {
     Save(SessionId),
     /// ⇧⌘S — save this tab under a new name.
     SaveAs(SessionId),
+    /// ⌥⌘S (Illustrator) — write a copy of this tab under another name (the Save dialog suggests
+    /// “<name> copy”). The tab keeps its file, its unsaved-changes state and Recent exactly as they
+    /// were: the copy is a background save released like the Bridge's `save_as` copy.
+    SaveCopy(SessionId),
+    /// F12 (Illustrator) — File ▸ Revert: after a “Revert to the saved version?” question, reload this
+    /// tab's file from disk (its history starts over). Only for a tab with a file and unsaved changes.
+    Revert(SessionId),
     /// ⌘W / the chip's × / middle-click — close this tab (asks first when it has unsaved changes).
     CloseDocument(SessionId),
+    /// ⌥⌘W (Illustrator) — close every tab: the dirty ones are asked about in tab order exactly as
+    /// Quit asks (“Document i of n”); Cancel keeps every tab, otherwise all of them close.
+    CloseAll,
     /// ⌘Q / the red traffic light / the ✕ caption button — the quit transaction over all tabs.
     Quit,
     /// A click on a tab chip.
@@ -116,6 +131,8 @@ pub struct TabView {
     pub label: String,
     /// Unsaved changes (the neutral dot before the name).
     pub dirty: bool,
+    /// Slice 0.6: the tab has a file on disk (File ▸ Revert can reload it).
+    pub file: bool,
     /// The full path, or `Not saved yet`.
     pub tooltip: String,
 }

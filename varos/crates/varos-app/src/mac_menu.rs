@@ -36,6 +36,7 @@ pub fn muda_code(code: KeyCode) -> Option<Code> {
         K::KeyW => Code::KeyW,
         K::KeyX => Code::KeyX,
         K::KeyZ => Code::KeyZ,
+        K::F12 => Code::F12,
         K::Digit0 => Code::Digit0,
         K::Digit1 => Code::Digit1,
         K::Equal => Code::Equal,
@@ -48,7 +49,8 @@ pub fn muda_code(code: KeyCode) -> Option<Code> {
 }
 
 fn accelerator(a: chrome::Accel) -> Option<Accelerator> {
-    let mut m = Modifiers::SUPER; // ⌘
+    // ⌘, except a bare function key (File ▸ Revert = F12, Illustrator)
+    let mut m = if a.cmd { Modifiers::SUPER } else { Modifiers::empty() };
     if a.shift {
         m |= Modifiers::SHIFT;
     }
@@ -69,6 +71,9 @@ pub struct MacMenu {
     recent_paths: RefCell<Vec<PathBuf>>,
     recent_commands: RefCell<HashMap<MenuId, AppCommand>>,
     document_items: Vec<MenuItem>,
+    /// File rows whose enabled state reads more than "a document is showing" (Revert, Export
+    /// Selection — `menus::file_row_enabled`), written every frame by [`MacMenu::sync_file_rows`].
+    file_rows: Vec<(chrome::FileCmd, MenuItem)>,
 }
 
 impl MacMenu {
@@ -88,9 +93,11 @@ impl MacMenu {
         let mut window_menu = None;
         let mut recent = None;
         let mut document_items = vec![];
+        let mut file_rows = vec![];
         for (title, entries) in chrome::menus() {
             let sub = Submenu::new(title, true);
-            fill(&sub, &entries, &mut cmds, &mut checks, &mut recent, &mut document_items)?;
+            let mut rows = Rows { document: &mut document_items, file: &mut file_rows };
+            fill(&sub, &entries, &mut cmds, &mut checks, &mut recent, &mut rows)?;
             menu.append(&sub)?;
             if title == "Window" {
                 window_menu = Some(sub);
@@ -107,6 +114,7 @@ impl MacMenu {
             recent_paths: RefCell::new(vec![]),
             recent_commands: RefCell::new(HashMap::new()),
             document_items,
+            file_rows,
         })
     }
 
@@ -135,6 +143,9 @@ impl MacMenu {
             if item.is_enabled() != active {
                 item.set_enabled(active);
             }
+        }
+        if !active {
+            self.sync_file_rows(crate::menus::DocMenuState::default());
         }
         for (check, item) in &self.checks {
             let enabled = active || matches!(check, Check::Rail | Check::Dock | Check::Picker | Check::Panel(_));
@@ -168,6 +179,17 @@ impl MacMenu {
         Ok(())
     }
 
+    /// Slice 0.6: Revert (a file with unsaved changes) and Export Selection (a selection) follow the
+    /// active document every frame (only the ones that differ are written).
+    pub fn sync_file_rows(&self, state: crate::menus::DocMenuState) {
+        for (f, item) in &self.file_rows {
+            let on = crate::menus::file_row_enabled(*f, state);
+            if item.is_enabled() != on {
+                item.set_enabled(on);
+            }
+        }
+    }
+
     /// Write each check mark from the real state (only the ones that differ).
     pub fn sync(&self, is_on: impl Fn(Check) -> bool) {
         for (c, item) in &self.checks {
@@ -179,13 +201,21 @@ impl MacMenu {
     }
 }
 
+/// Where `fill` files the plain rows whose enabled state the host writes.
+struct Rows<'a> {
+    /// Enabled exactly while a document is showing (`sync_documents`).
+    document: &'a mut Vec<MenuItem>,
+    /// Enabled by the document's state (`sync_file_rows`).
+    file: &'a mut Vec<(chrome::FileCmd, MenuItem)>,
+}
+
 fn fill(
     sub: &Submenu,
     entries: &[Entry],
     cmds: &mut HashMap<MenuId, MenuCmd>,
     checks: &mut Vec<(Check, CheckMenuItem)>,
     recent: &mut Option<Submenu>,
-    document_items: &mut Vec<MenuItem>,
+    rows: &mut Rows<'_>,
 ) -> Result<(), muda::Error> {
     for e in entries {
         match e {
@@ -193,7 +223,7 @@ fn fill(
             Entry::Native(n) => sub.append(&native(*n))?,
             Entry::Sub { label, items } => {
                 let s = Submenu::new(*label, true);
-                fill(&s, items, cmds, checks, recent, document_items)?;
+                fill(&s, items, cmds, checks, recent, rows)?;
                 if *label == "Open Recent" {
                     *recent = Some(s.clone());
                 }
@@ -211,18 +241,15 @@ fn fill(
                     }
                     None => {
                         let item = MenuItem::with_id(mid, *label, true, acc);
-                        if matches!(
-                            cmd,
+                        use chrome::FileCmd as F;
+                        match cmd {
+                            MenuCmd::File(f @ (F::Revert | F::ExportSelection)) => rows.file.push((*f, item.clone())),
                             MenuCmd::Key(_)
-                                | MenuCmd::Plain(_)
-                                | MenuCmd::File(
-                                    chrome::FileCmd::Save
-                                        | chrome::FileCmd::SaveAs
-                                        | chrome::FileCmd::Export
-                                        | chrome::FileCmd::CloseTab
-                                )
-                        ) {
-                            document_items.push(item.clone());
+                            | MenuCmd::Plain(_)
+                            | MenuCmd::File(
+                                F::Save | F::SaveAs | F::SaveCopy | F::Export | F::CloseTab | F::CloseAll,
+                            ) => rows.document.push(item.clone()),
+                            _ => {}
                         }
                         Box::new(item)
                     }
@@ -314,7 +341,9 @@ mod tests {
         for e in chrome::flat_items(&chrome::menus()) {
             if let Entry::Item { id, accel: Some(a), .. } = e {
                 let acc = accelerator(a).unwrap_or_else(|| panic!("{id}: no muda key for {:?}", a.code));
-                assert!(acc.modifiers().contains(Modifiers::SUPER), "{id}: a Mac menu shortcut uses ⌘");
+                // ⌘ exactly when the row says so; the only ⌘-less key is a function key (Revert F12,
+                // `menus::tests::only_function_keys_go_without_command`)
+                assert_eq!(acc.modifiers().contains(Modifiers::SUPER), a.cmd, "{id}: ⌘");
                 assert_eq!(acc.modifiers().contains(Modifiers::SHIFT), a.shift, "{id}");
                 assert_eq!(acc.modifiers().contains(Modifiers::ALT), a.alt, "{id}");
             }

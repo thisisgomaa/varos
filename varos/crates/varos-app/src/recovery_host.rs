@@ -1273,6 +1273,8 @@ mod tests {
             doc: Arc::new(doc),
             plan,
             replace_confirmed: false,
+            cancel: Default::default(),
+            ticket: 0,
         })
     }
 

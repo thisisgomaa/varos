@@ -225,6 +225,28 @@ impl DocumentSession {
         self.memo.set(None);
     }
 
+    /// Slice 0.6, File ▸ Revert: the tab becomes exactly `doc`, just read again from its own file —
+    /// the editor takes it (`replace_doc`: history, selection and transient state start over, `rev`
+    /// moves on so every cache redraws), the checkpoint is that content (clean), and the file identity
+    /// and fingerprint are the ones just read. The path, the view, the tool, the clipboard and the
+    /// recovery identity stay. `repaired` = the read released broken legacy masks (dirty, as on open).
+    pub fn revert_to(
+        &mut self,
+        doc: Document,
+        key: FileKey,
+        fingerprint: Option<varos_app::storage::durable::Fingerprint>,
+        repaired: bool,
+    ) {
+        self.editor.replace_doc(doc);
+        self.saved = self.editor.doc.clone();
+        self.memo.set(None);
+        self.key = Some(key);
+        self.source_fingerprint = fingerprint;
+        self.save_unconfirmed = false;
+        self.repaired_on_open = repaired;
+        self.recovered = None;
+    }
+
     /// Store a freshly computed file key for this tab's path (e.g. `store.key(path)` right after a
     /// successful save, which replaced the file's inode). `mark_saved` takes one too.
     // Frozen S1-A API with no caller in the S1 binary yet (the lifecycle re-keys every tab fresh,
@@ -595,7 +617,7 @@ impl Workspace {
                     Some(p) => p.display().to_string(),
                     None => "Not saved yet".into(),
                 };
-                TabView { id: s.id, label, dirty: s.is_dirty(), tooltip }
+                TabView { id: s.id, label, dirty: s.is_dirty(), file: s.path.is_some(), tooltip }
             })
             .collect()
     }
@@ -668,7 +690,13 @@ mod tests {
         assert_eq!(s.fit_pending, Some(0.45));
         assert_eq!(
             ws.tabs(),
-            vec![TabView { id: s.id, label: "Untitled-1".into(), dirty: false, tooltip: "Not saved yet".into() }]
+            vec![TabView {
+                id: s.id,
+                label: "Untitled-1".into(),
+                dirty: false,
+                file: false,
+                tooltip: "Not saved yet".into()
+            }]
         );
     }
 

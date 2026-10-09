@@ -357,8 +357,13 @@ impl DocStore for DiskStore {
     fn exists(&self, path: &Path) -> bool {
         path.exists()
     }
-    fn write_export(&mut self, path: &Path, bytes: &[u8]) -> Result<(), String> {
-        export_write(&varos_app::storage::durable::RealFs, path, bytes)
+    fn write_export(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::lifecycle::ExportWrite, String> {
+        export_write(&varos_app::storage::durable::RealFs, path, bytes, cancel)
     }
     fn read_existing(&mut self, path: &Path) -> Option<Vec<u8>> {
         let meta = std::fs::metadata(path).ok()?;
@@ -370,10 +375,25 @@ impl DocStore for DiskStore {
 }
 
 /// The export's one durable replace (the same writer as Save: temp + sync + rename). A replace whose
-/// folder sync could not be confirmed still delivered the PDF, so it counts as exported.
-fn export_write(fs: &dyn varos_app::storage::durable::FsPort, path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use varos_app::storage::{checksum::new_nonce, durable::write_replace};
-    write_replace(fs, path, bytes, &new_nonce()).map(|_| ()).map_err(|e| e.reason())
+/// folder sync could not be confirmed still delivered the PDF, so it counts as exported. Slice 0.6:
+/// the sheet's Cancel is honoured up to the rename (the commit boundary): the temp is removed and the
+/// destination is untouched.
+fn export_write(
+    fs: &dyn varos_app::storage::durable::FsPort,
+    path: &Path,
+    bytes: &[u8],
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<crate::lifecycle::ExportWrite, String> {
+    use crate::lifecycle::ExportWrite;
+    use varos_app::storage::{
+        checksum::new_nonce,
+        durable::{write_replace_cancellable, WriteError},
+    };
+    match write_replace_cancellable(fs, path, bytes, &new_nonce(), cancel) {
+        Ok(_) => Ok(ExportWrite::Written),
+        Err(WriteError::Cancelled) => Ok(ExportWrite::Cancelled),
+        Err(e) => Err(e.reason()),
+    }
 }
 
 fn durable_save(

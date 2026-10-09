@@ -45,6 +45,7 @@ mod mac_menu;
 mod mac_open;
 #[cfg(target_os = "macos")]
 mod mac_titlebar;
+mod menus;
 mod os_open;
 mod pacing;
 mod recent_files;
@@ -663,10 +664,12 @@ fn dispatch(
 ) -> host::Ran {
     match action {
         // DFS S6: Export (button, burger row, File ▸ Export ▸ PDF…) opens the Export PDF sheet
-        host::HostAction::App(AppCommand::ShowExport(id)) => {
+        // slice 0.6: File ▸ Export Selection… opens the same sheet on its Selection scope
+        host::HostAction::App(AppCommand::ShowExport(id) | AppCommand::ShowExportSelection(id)) => {
+            let selection = matches!(action, host::HostAction::App(AppCommand::ShowExportSelection(_)));
             if !ws.on_home() {
                 if let Some(s) = ws.get(id) {
-                    gui.show_export(id, &s.editor.doc);
+                    gui.show_export(s, selection);
                 }
             }
             host::Ran::default()
@@ -1526,6 +1529,8 @@ fn main() {
                 }
                 let over_panel = home || gui.wants_pointer();
                 let Some(s) = ws.active_mut() else { return };
+                #[cfg(target_os = "macos")] // the File ▸ Revert row's state (slice 0.6), read before the frame
+                let can_revert = lifecycle::can_revert(s);
                 let (ed, view) = (&mut s.editor, &mut s.view);
                 if egui_consumed {
                     redraw!("egui-consumed");
@@ -1827,6 +1832,12 @@ fn main() {
                         // macOS menu bar: every ✓ is read back from the real state (only changes are written)
                         #[cfg(target_os = "macos")]
                         if let Some(menu) = &mac_menu {
+                            // slice 0.6: Revert (a file with unsaved changes) / Export Selection (a selection)
+                            menu.sync_file_rows(menus::DocMenuState {
+                                active: !home,
+                                can_revert,
+                                has_selection: lifecycle::has_selection(ed),
+                            });
                             use chrome::Check as C;
                             menu.sync(|c| {
                                 editor_check(ed, c).unwrap_or_else(|| match c {

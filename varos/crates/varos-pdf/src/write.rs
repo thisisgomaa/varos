@@ -228,7 +228,14 @@ pub(crate) fn write_pages_counted(
 
         // MASKS_PLAN Stage 5 / §2.4: a clip group's members form ONE contiguous run in paint order (as on
         // the canvas, `scene.rs` Group::Clip), so each run is written as ONE `q <mask rings> W* n … Q`.
-        let items: Vec<Drawn> = drawn_on(doc, ab).collect();
+        // Slice 0.6: `cancel` is also checked every `CANCEL_STRIDE` objects while collecting, painting
+        // and writing the knockouts, so one huge page (Export Selection…) stops promptly too.
+        let mut tick = Tick::default();
+        let mut items: Vec<Drawn> = Vec::new();
+        for d in drawn_on(doc, ab) {
+            tick.check(cancel)?;
+            items.push(d);
+        }
         let page_box = page_rect(ab);
         let mut i = 0;
         while i < items.len() {
@@ -238,6 +245,7 @@ pub(crate) fn write_pages_counted(
             i += run_len;
             let Some(cg) = clip else {
                 for d in run {
+                    tick.check(cancel)?;
                     paint(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t);
                 }
                 continue;
@@ -261,6 +269,7 @@ pub(crate) fn write_pages_counted(
             }
             c.clip_even_odd().end_path();
             for d in members {
+                tick.check(cancel)?;
                 paint(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t);
             }
             c.restore_state();
@@ -305,6 +314,7 @@ pub(crate) fn write_pages_counted(
         });
         let mut shared_res: Vec<(Ref, Ref, Ref)> = Vec::new();
         for k in &knocks {
+            tick.check(cancel)?;
             let res = share.then(|| {
                 let pair = (k.gs_fill.0, k.gs_stroke.0);
                 if let Some(&(_, _, r)) = shared_res.iter().find(|(f, s, _)| (*f, *s) == pair) {
@@ -371,6 +381,23 @@ pub(crate) fn write_pages_counted(
     }
 
     Ok((pdf.finish(), ids.0 as usize))
+}
+
+/// How many objects the writer handles between two looks at the cancel flag (a relaxed atomic load is
+/// cheap; 16 objects are far below a millisecond even on a slow page).
+pub(crate) const CANCEL_STRIDE: u32 = 16;
+
+/// The writer's cancel cadence: [`Tick::check`] looks at the flag once every [`CANCEL_STRIDE`] calls.
+#[derive(Default)]
+struct Tick(u32);
+impl Tick {
+    fn check(&mut self, cancel: &AtomicBool) -> Result<(), ExportError> {
+        self.0 += 1;
+        if self.0.is_multiple_of(CANCEL_STRIDE) && cancel.load(Ordering::Relaxed) {
+            return Err(ExportError::Cancelled);
+        }
+        Ok(())
+    }
 }
 
 /// One path's paint ops (knockout XObject or in-place fill/stroke), appended to the page content.

@@ -9,8 +9,8 @@ use std::sync::atomic::AtomicBool;
 
 use varos_core::model::{Anchor, Artboard, Document, GroupRole, Node, NodeKind, Path, Xform};
 use varos_pdf::{
-    default_scope, export_pdf_bytes, has_embedded_model, load_vrs, plan_pdf_export, save_vrs, write_pdf, ExportError,
-    ExportPlan, ExportScope, ExportUnavailable, PageSpec,
+    default_scope, export_pdf_bytes, has_embedded_model, load_vrs, plan_pdf_export, plan_selection_export, save_vrs,
+    write_pdf, ExportError, ExportPlan, ExportScope, ExportUnavailable, PageSpec,
 };
 
 // ───────────────────────────── document builders ─────────────────────────────
@@ -343,6 +343,91 @@ fn boardless_artwork_bounds_page_matches_padded_bbox() {
     assert!(!ops.iter().any(|o| o.operator == "re"), "artwork bounds are transparent: no background");
     // the rect's top-left world (10,20) → page (0, 82); the line starts at world (200,100) → page (190, 2)
     assert!(has_op(ops, "m", &[0.0, 82.0]) && has_op(ops, "m", &[190.0, 2.0]));
+}
+
+/// Slice 0.6, Export Selection…: one transparent page fitted to the SELECTED art only (boards or
+/// not), with only the selected art on it; the document itself is untouched.
+#[test]
+fn selection_scope_is_one_page_at_the_selection_bounds_with_only_the_selection() {
+    let doc = two_board_doc(); // blue 40,40 100×50 on board A · red 540,60 50×50 on board B
+    let before = doc.clone();
+    let red: std::collections::HashSet<u32> = [2].into();
+    let (narrowed, p) = plan_selection_export(&doc, &red).expect("a selection plans");
+    assert_eq!(doc, before, "the caller's document is not changed");
+    assert_eq!(p.scope, ExportScope::Selection);
+    assert_eq!(p.pages.len(), 1);
+    assert!(close4(p.pages[0].rect, [540.0, 60.0, 50.0, 50.0]) && p.pages[0].background.is_none(), "{:?}", p.pages);
+    let bytes = export_pdf_bytes(&narrowed, &p, &AtomicBool::new(false)).expect("exports");
+    let mb = media_boxes(&bytes);
+    assert!(mb.len() == 1 && close4(mb[0], [0.0, 0.0, 50.0, 50.0]), "{mb:?}");
+    let ops = &page_ops(&bytes)[0];
+    assert!(has_op(ops, "rg", &[1.0, 0.0, 0.0]), "the selected red square is on the page");
+    assert!(!has_op(ops, "rg", &[0.0, 0.0, 1.0]), "the unselected blue square is not");
+    // both selected: the page is the union of the two
+    let both: std::collections::HashSet<u32> = [1, 2].into();
+    let (_, p) = plan_selection_export(&doc, &both).unwrap();
+    assert!(close4(p.pages[0].rect, [40.0, 40.0, 550.0, 70.0]), "{:?}", p.pages);
+}
+
+#[test]
+fn selection_scope_needs_a_visible_selection() {
+    let doc = two_board_doc();
+    let none = std::collections::HashSet::new();
+    assert_eq!(plan_selection_export(&doc, &none).unwrap_err(), ExportUnavailable::NoSelection);
+    assert_eq!(ExportUnavailable::NoSelection.reason(), "Select something to export it.");
+    // without the selection the generic planner cannot plan it
+    assert_eq!(plan_pdf_export(&doc, ExportScope::Selection), Err(ExportUnavailable::NoSelection));
+    // a selected but hidden object leaves nothing to export
+    let mut hidden = doc.clone();
+    hidden.paths[1].hidden = true;
+    let red: std::collections::HashSet<u32> = [2].into();
+    assert_eq!(plan_selection_export(&hidden, &red).unwrap_err(), ExportUnavailable::NothingToExport);
+}
+
+/// Review R5: a selected object that paints nothing (opacity 0) never stretches the Selection page;
+/// a thick stroke pads it by half the stroke width; a clipped member counts only inside its mask.
+#[test]
+fn selection_bounds_skip_invisible_objects_pad_strokes_and_respect_clips() {
+    let set = |ids: &[u32]| ids.iter().copied().collect::<std::collections::HashSet<u32>>();
+    // opacity 0 far away: the page is only the visible square
+    let mut d = Document::default();
+    d.paths.push(rect(1, 1, 10.0, 10.0, 20.0, 20.0, Some([0.0, 0.0, 1.0, 1.0])));
+    let mut ghost = rect(2, 5, 5000.0, 5000.0, 20.0, 20.0, Some([1.0, 0.0, 0.0, 1.0]));
+    ghost.opacity = 0.0;
+    d.paths.push(ghost);
+    let mut clear = rect(3, 9, -4000.0, -4000.0, 20.0, 20.0, Some([1.0, 0.0, 0.0, 0.0])); // alpha-0 fill
+    clear.stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 0.0]);
+    clear.stroke_width = 8.0;
+    d.paths.push(clear);
+    d.ids = 20;
+    d.sync_tree();
+    let (_, p) = plan_selection_export(&d, &set(&[1, 2, 3])).unwrap();
+    assert!(close4(p.pages[0].rect, [10.0, 10.0, 20.0, 20.0]), "{:?}", p.pages);
+    assert_eq!(
+        plan_selection_export(&d, &set(&[2, 3])).unwrap_err(),
+        ExportUnavailable::NothingToExport,
+        "only invisible objects selected: nothing to export"
+    );
+    // a 10-pt stroke: padded by 5 on every side
+    let mut d = Document::default();
+    let mut thick = rect(1, 1, 100.0, 100.0, 50.0, 50.0, None);
+    thick.stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 1.0]);
+    thick.stroke_width = 10.0;
+    d.paths.push(thick);
+    d.ids = 10;
+    d.sync_tree();
+    let (_, p) = plan_selection_export(&d, &set(&[1])).unwrap();
+    assert!(close4(p.pages[0].rect, [95.0, 95.0, 60.0, 60.0]), "{:?}", p.pages);
+    // a clipped selection: the member 0..200 counts only inside its 50..100 mask
+    let mut d = Document::default();
+    d.paths.push(rect(1, 1, 0.0, 0.0, 200.0, 200.0, Some([0.0, 0.0, 1.0, 1.0])));
+    d.paths.push(rect(2, 5, 50.0, 50.0, 50.0, 50.0, Some([1.0, 0.0, 0.0, 1.0])));
+    d.ids = 10;
+    d.sync_tree();
+    d.clip_group(&[1, 2], 2).expect("2 clips 1");
+    let (narrowed, p) = plan_selection_export(&d, &set(&[1])).unwrap();
+    assert!(close4(p.pages[0].rect, [50.0, 50.0, 50.0, 50.0]), "{:?}", p.pages);
+    assert!(!narrowed.paths.iter().find(|q| q.id == 2).unwrap().hidden, "the mask still shapes its clip");
 }
 
 #[test]
@@ -864,4 +949,46 @@ fn artwork_bounds_follow_the_curve_not_its_handles() {
     // and the export's single page has exactly that size
     let mb = media_boxes(&export(&doc, ExportScope::ArtworkBounds));
     assert!(mb.len() == 1 && (mb[0][2] - 102.0).abs() < 1e-3 && (mb[0][3] - 77.0).abs() < 1e-3, "{mb:?}");
+}
+
+/// Slice 0.6 (review R2): the writer looks at the cancel flag inside a page, not only between pages —
+/// a huge ONE-page export (Export Selection… of everything) stops within ~100 ms of Cancel.
+#[test]
+fn a_huge_single_page_export_stops_soon_after_cancel() {
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    const N: u32 = 6_000;
+    let mut doc = Document::default(); // boardless: one page
+    for i in 0..N {
+        let (x, y) = ((i % 200) as f32 * 3.0, (i / 200) as f32 * 3.0);
+        doc.paths.push(rect(i + 1, 10 * (i + 1), x, y, 2.0, 2.0, Some([0.2, 0.4, 0.6, 1.0])));
+    }
+    doc.ids = 10 * (N + 2);
+    doc.sync_tree();
+    let all: std::collections::HashSet<u32> = (1..=N).collect();
+    let (narrowed, plan) = plan_selection_export(&doc, &all).expect("plans");
+    assert_eq!(plan.page_count(), 1, "one page: only an in-page check can stop it");
+    // the uncancelled export of this page takes long enough for a mid-way cancel to mean something
+    let t0 = Instant::now();
+    export_pdf_bytes(&narrowed, &plan, &AtomicBool::new(false)).expect("exports");
+    let full = t0.elapsed();
+    assert!(full > Duration::from_millis(120), "the page must take a while to write (took {full:?})");
+    let flag = Arc::new(AtomicBool::new(false));
+    let raised_at = Arc::new(Mutex::new(None));
+    let setter = {
+        let (flag, raised_at) = (flag.clone(), raised_at.clone());
+        let delay = full / 4;
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            *raised_at.lock().unwrap() = Some(Instant::now());
+        })
+    };
+    let result = export_pdf_bytes(&narrowed, &plan, &flag);
+    let stopped = Instant::now();
+    setter.join().unwrap();
+    assert_eq!(result, Err(ExportError::Cancelled), "raised mid-page: the single page is not finished");
+    let raised = raised_at.lock().unwrap().expect("the flag was raised");
+    let lag = stopped.saturating_duration_since(raised);
+    assert!(lag < Duration::from_millis(100), "stopped {lag:?} after Cancel (full write {full:?})");
 }

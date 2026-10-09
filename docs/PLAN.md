@@ -164,3 +164,4 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | Slice | State | Commit | Notes |
 |---|---|---|---|
 | picker v3 (pre-plan) | done, owner-approved | `214e998` | Wheel/Sliders/Harmony/Mini |
+| 0.6 | implemented, pending review | — (branch `feat/p0-file-menu`) | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection…, export Cancel + Show in Finder, `menus/` split |
