@@ -46,3 +46,45 @@ fn fixture_hashes_are_frozen() {
         assert_eq!(actual.iter().map(|b| format!("{b:02x}")).collect::<String>(), digest);
     }
 }
+
+#[test]
+fn clipboard_wire_preserves_typography_and_binding_origin_validation() {
+    let doc = format::decode_model(include_bytes!("fixtures/v14/path.json"), None, &Limits::DEFAULT).unwrap().doc;
+    let ids: Vec<_> = doc.text_boxes.iter().map(|t| t.id).collect();
+    let clip = varos_core::clipboard::Clipboard::capture_objects(&doc, &[], &ids);
+    let copy: varos_core::clipboard::Clipboard = serde_json::from_slice(&serde_json::to_vec(&clip).unwrap()).unwrap();
+    assert_eq!(clip, copy);
+    let mut target = varos_core::model::Document::default();
+    copy.paste_into(&mut target, [0., 0.]);
+    varos_core::typography::validate(&target).unwrap();
+    assert!(!target.typography.is_empty());
+    let id = target.text_boxes[0].id;
+    target.typography.frames.entry(id).or_default().binding_origin = Some([f32::NAN, 0.]);
+    assert!(varos_core::typography::validate(&target).is_err());
+    target.typography.frames.entry(id).or_default().binding_origin = Some([12., 34.]);
+    let encoded = format::encode_model(&target, &Limits::DEFAULT).unwrap();
+    assert_eq!(
+        format::decode_model(encoded.as_bytes(), None, &Limits::DEFAULT).unwrap().doc.typography,
+        target.typography
+    );
+}
+
+#[test]
+fn ordinary_cut_paste_preserves_typography_and_undo() {
+    let doc = format::decode_model(include_bytes!("fixtures/v14/path.json"), None, &Limits::DEFAULT).unwrap().doc;
+    let mut ed = varos_core::Editor::new();
+    ed.replace_doc(doc.clone());
+    let ids: Vec<_> = doc.text_boxes.iter().map(|t| t.id).chain(doc.paths.iter().map(|p| p.id)).collect();
+    ed.try_execute(varos_core::EditCommand::SelectPaths(ids)).unwrap();
+    ed.cut_selection();
+    assert!(ed.doc.text_boxes.is_empty());
+    varos_core::typography::validate(&ed.doc).unwrap();
+    ed.paste(None);
+    varos_core::typography::validate(&ed.doc).unwrap();
+    assert_eq!(ed.doc.text_boxes[0].source(), doc.text_boxes[0].source());
+    assert!(ed.doc.typography.frames[&ed.doc.text_boxes[0].id].binding.is_some());
+    ed.undo();
+    assert!(ed.doc.text_boxes.is_empty());
+    ed.undo();
+    assert_eq!(ed.doc.typography, doc.typography);
+}

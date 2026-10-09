@@ -320,8 +320,28 @@ pub fn translate_selected(ed: &mut Editor, spec: crate::select_transform::Transf
         }
         let delta = crate::geom::rotate_about(spec.movement, [0., 0.], -xf.rot);
         if let Some(t) = ed.doc.text_boxes.iter_mut().find(|t| t.id == *id) {
+            // ---- Lane H: establish an origin for older v14 bindings on first movement ----
+            if let Some(frame) = ed.doc.typography.frames.get_mut(id).filter(|f| f.binding.is_some()) {
+                frame.binding_origin.get_or_insert(t.frame);
+            }
+            // ---- Lane H end ----
             translate(t, delta);
         }
+        // ---- Lane H: a jointly moved boundary already carries this translation ----
+        let moved_boundary = ed
+            .doc
+            .typography
+            .frames
+            .get(id)
+            .and_then(|f| f.binding)
+            .is_some_and(|b| ed.structural_object_paths().contains(&crate::typography::binding_path(b)));
+        if moved_boundary {
+            if let Some(origin) = ed.doc.typography.frames.get_mut(id).and_then(|f| f.binding_origin.as_mut()) {
+                origin[0] += delta[0];
+                origin[1] += delta[1];
+            }
+        }
+        // ---- Lane H end ----
     }
     !ids.is_empty() && spec.movement != [0., 0.]
 }

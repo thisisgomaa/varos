@@ -277,3 +277,104 @@ fn source_edits_preserve_named_character_style_and_later_updates() {
     assert_eq!(resolved.source(), "سلام عليكم");
     assert_eq!(ed.doc.typography.frames[&id].characters[0].end, resolved.source().len());
 }
+
+#[test]
+fn bound_text_moves_once_and_follows_live_boundary_transform() {
+    for path_mode in [false, true] {
+        let (mut ed, id, path) = scene("سلام Varos");
+        let binding = if path_mode {
+            Binding::Path { path, start: 0., end: 0., offset: 0., flip: false, effect: PathEffect::Rainbow }
+        } else {
+            Binding::Area { path, inset: 8. }
+        };
+        ed.try_execute(EditCommand::Typography(Action::Bind { text: id, binding: Some(binding) })).unwrap();
+        let mut engine = TextLayout::bundled().unwrap();
+        let before = engine.compose_document(&ed.doc, &ed.doc.text_boxes[0], 1.).unwrap();
+        assert!(!before.paths.is_empty());
+        for together in [false, true] {
+            let mut moved = ed.clone();
+            moved.try_execute(EditCommand::SelectPaths(if together { vec![id, path] } else { vec![id] })).unwrap();
+            moved.try_execute(EditCommand::TransformBegin).unwrap();
+            moved
+                .try_execute(EditCommand::TransformLive(varos_core::select_transform::Transform {
+                    movement: [100., 100.],
+                    ..Default::default()
+                }))
+                .unwrap();
+            moved.try_execute(EditCommand::TransformCommit).unwrap();
+            let after = engine.compose_document(&moved.doc, &moved.doc.text_boxes[0], 1.).unwrap();
+            let a = before.paths[0].anchors[0].p;
+            let b = after.paths[0].anchors[0].p;
+            assert!(
+                (b[0] - a[0] - 100.).abs() < 0.02 && (b[1] - a[1] - 100.).abs() < 0.02,
+                "{path_mode} {together}: {a:?} {b:?}"
+            );
+            if path_mode {
+                let map =
+                    varos_text_layout::path_mapping::PathMap::from_document(&moved.doc, id, &after).unwrap().unwrap();
+                let g = &after.layout.lines[0].glyphs[0];
+                let q = [g.x, after.layout.lines[0].baseline];
+                let point = map.point(q).unwrap();
+                assert!((map.unmap(point)[0] - q[0]).abs() < 0.1);
+            }
+        }
+        let unit = ed.doc.unit_of(path).unwrap();
+        // A live boundary rotation changes composition and invalidates the document cache.
+        ed.doc.nodes.iter_mut().find(|n| n.id == unit).unwrap().xform.rot = 0.3;
+        let after = engine.compose_document(&ed.doc, &ed.doc.text_boxes[0], 1.).unwrap();
+        assert_ne!(before.paths, after.paths);
+    }
+}
+#[test]
+fn clipboard_preserves_story_boundaries_features_and_conflicting_styles() {
+    let (mut ed, id, path) = scene("سلام Varos");
+    let mut style = ed.doc.text_boxes[0].runs[0].style.clone();
+    style.size = 42.;
+    ed.try_execute(EditCommand::Typography(Action::DefineCharacter {
+        name: "Title".into(),
+        definition: CharacterStyle { parent: None, style: Some(style) },
+    }))
+    .unwrap();
+    ed.try_execute(EditCommand::Typography(Action::ApplyCharacter {
+        text: id,
+        start: 0,
+        end: "سلام Varos".len(),
+        name: "Title".into(),
+    }))
+    .unwrap();
+    ed.try_execute(EditCommand::Typography(Action::Features { text: id, features: [("liga".into(), 0)].into() }))
+        .unwrap();
+    ed.try_execute(EditCommand::Typography(Action::Bind {
+        text: id,
+        binding: Some(Binding::Area { path, inset: 8. }),
+    }))
+    .unwrap();
+    let second = ed
+        .try_execute_created(EditCommand::AddText { text: default_text("", [300., 40.]).unwrap(), parent: None })
+        .unwrap();
+    ed.try_execute(EditCommand::Typography(Action::Thread { from: id, to: Some(second) })).unwrap();
+    let clip = varos_core::clipboard::Clipboard::capture_objects(&ed.doc, &[], &[second]);
+    let ids = clip.paste_into(&mut ed.doc, [100., 100.]);
+    assert_eq!(ids.len(), 3);
+    varos_core::typography::validate(&ed.doc).unwrap();
+    let root = ed
+        .doc
+        .typography
+        .frames
+        .iter()
+        .find(|(key, f)| ids.contains(key) && f.next.is_some())
+        .map(|(k, _)| *k)
+        .unwrap();
+    let f = &ed.doc.typography.frames[&root];
+    assert_eq!(f.features["liga"], 0);
+    assert_ne!(f.characters[0].name, "Title");
+    assert!(ids.contains(&varos_core::typography::binding_path(f.binding.unwrap())));
+    assert!(ids.contains(&f.next.unwrap()));
+    let text = ed.doc.text_boxes.iter().find(|t| t.id == root).unwrap();
+    assert_eq!(ed.doc.typography.resolved(text).unwrap().runs[0].style.size, 42.);
+    let mut target = Editor::new();
+    clip.paste_into(&mut target.doc, [0., 0.]);
+    varos_core::typography::validate(&target.doc).unwrap();
+    assert_eq!(target.doc.text_boxes.len(), 2);
+    assert_eq!(target.doc.paths.len(), 1);
+}

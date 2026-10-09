@@ -163,7 +163,7 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 ## Progress (moderator-maintained)
 | Slice | State | Commit | Notes |
 |---|---|---|---|
-| Text P5–P8 (Lane H) | implemented (provisional UI, owner design review pending) | uncommitted `feat/w3-text2` | Live shape/path bindings, threaded source, named styles/OpenType, font subsets/ToUnicode and OFL Package fonts; reserved format v14. P7 variable axes remain outstanding. Limits and exact gate evidence: worktree REPORT.md; integrator rechains v10–v14. |
+| Text P5/P6/P8; P7 partial (Lane H) | implemented scope only (provisional UI, owner design review pending); P7 exit OPEN | uncommitted `feat/w3-text2` | Live shape/path bindings, threaded source, named styles/OpenType, font subsets/ToUnicode and OFL Package fonts; reserved format v14. P7 variable axes remain outstanding. Limits and exact gate evidence: worktree REPORT.md; integrator rechains v10–v14. |
 | picker v3 (pre-plan) | done, owner-approved | `214e998` | Wheel/Sliders/Harmony/Mini |
 | 0.1 S0 render fixes | merged + installed, owner hand test pending | `5d422d5` | Exclude engine defect found by 0.3 and fixed in the same branch |
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |

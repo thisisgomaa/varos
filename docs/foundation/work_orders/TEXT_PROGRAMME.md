@@ -97,3 +97,12 @@ The adapter discovers a bounded snapshot of normal-weight 400/500/600 standalone
 faces alongside bundled Inter and IBM Plex Sans Arabic. Font collections, variable axes and
 font packaging are later stages; no font binary is embedded by this lane. Offline dependencies
 were available. The next-version wire additions are recorded in `docs/reference/VRS_FORMAT.md`.
+
+### Lane H fix-round scope clarification — 2026-10-10
+
+P7 is **partial; its programme exit remains open**. This lane delivers named whole-style
+Character/Paragraph inheritance, application/update, static real faces, explicit OpenType
+features and Arabic-zero tracking. Variable axes, their shaping/outline/cache parity tests,
+and per-field cascading remain a follow-up; they are not claimed complete or silently
+encoded as static settings. P5/P6/P8 retain provisional UI and owner acceptance gates.
+This clarification narrows the lane completion claim, not the programme requirement.

@@ -1,30 +1,20 @@
 # Lane H — Text P5–P8 / FORMAT 14
 
-- Branch: feat/w3-text2; worktree-only, uncommitted; no push, GUI, installation or external changes.
-- Status: implemented (provisional UI, owner design review pending); broader P7 exit remains partial (axes).
-- P5: live closed-shape frames, inset/holes/concave intervals, kashida, overset, Command-click threading; one source.
-- P5 allocator: two-line widow/orphan constraints at frame splits, cycle rejection, bounded geometry/cache.
-- P6: open/closed arc paths, draggable start/end brackets, flip/offset, rainbow/skew; RTL source and cluster marks.
-- P6 editing: arc-projected pointer/caret/selection geometry; drag release is one command; Escape cancels.
-- P7: named Character/Paragraph definitions, whole-style inheritance/application/update, OpenType overrides in Type.
-- Arabic-required features cannot be disabled; existing Arabic-zero tracking and real static faces retained.
-- P7 LIMIT: variable axes unsupported by shipped engine; no per-field cascading or rich typography clipboard.
-- Source edits remap named character spans; style/path appearance and native IME require owner review.
-- P8: licence-checked sparse TrueType/composite closure + CID CFF subsets, shaped glyphs, logical ToUnicode.
-- Arabic/Latin extraction uses lopdf; repeated-cluster marks remain vectors with Unicode mapped once.
-- Curved/translucent/disallowed/variable fonts explicitly use outlines; SVG outlines remain default.
-- Package: bundled OFL font bytes, hashes, licences, face identity and manifest; unknown redistribution refused.
-- API: EditCommand::Typography + API 1.2 progressive-disclosure typography verb; CLI apply supports same actions.
-- Bridge: 1.0/1.1 frozen fixtures pass (23,993 B each); 1.2 = 23,919 B / 24,000 B (81 B spare).
-- Format: named pure migrate_v13_to_v14; frozen JSON/PDF/hash/refusal fixtures; legacy assets untouched.
-- INTEGRATOR: replace isolated v9→v14 bridge and reserved-version guard with ordered v10→v14 chain.
-- Legacy PDF tests now compare every object after version/derived-length normalization (two-digit stamps).
-- GATE fmt/dependency/whitespace PASS; ratchets 3/3: font 8/16, size 10/18, radius 15/20, colour 15/31; ui.rs 805/843.
-- GATE cargo test --offline --workspace -j 3 --no-fail-fast: PASS, 2,267 passed / 0 failed / 15 ignored; 150 targets.
-- GATE native Clippy --workspace --all-targets -D warnings: PASS, 0 warnings (3m06s including lock wait).
-- GATE Windows x86_64-pc-windows-msvc Clippy --all-targets -D warnings: PASS, 0 warnings (3m41s with wait).
-- GATE varos-text wasm32-unknown-unknown check: PASS (45.25 s including Cargo lock wait).
-- Focused tests: 9 typography layout + 4 PDF + 8 Bridge tests PASS; v14 fixtures and CLI included in workspace gate.
-- Dependencies: cached ttf-parser 0.25.1 (PDF) and lopdf 0.43 (raster tests); no missing crate or download.
-- No prior-art implementation copied. Detail: docs/foundation/work_orders/TEXT_LANE_H.md.
-- Not merged, built/installed as an app, independently reviewed, or visually accepted.
+- P5/P6/P8 implemented; provisional UI, owner design review pending; original work committed before this fix round.
+- P7 partial: named styles/OpenType/static faces delivered; variable axes and per-field cascading remain OPEN in the programme.
+
+## Fix round
+
+- Reviewed the independent FIX-THEN-MERGE findings; addressed all seven findings within the lane scope.
+- PDF: per-glyph page/clip eligibility prevents off-page extraction; regression covers page and persisted clip-tree exports.
+- Editing: composition, hit testing and scene snapshots remap named spans; deletion/empty/Arabic replacement + undo regression.
+- Clipboard: capture connected stories, boundaries, features and referenced style ancestry; remap IDs/names; cross-document and Cut/Paste/Undo tests.
+- Movement: binding origin + shared boundary-to-text conversion; text/joint translation, live rotation and path-caret tests. Disagree that flattening omitted live transforms: it already used world geometry.
+- Properties: resolved values, staged editable overrides and named-style update from the assigned range; headless regression.
+- Frozen v9: compare every legacy appearance object to the original oracle (only stamp/model normalization), plus real-writer image/shading resources; fixtures untouched.
+- Wire contract updated with v14 keys, limits, coordinate semantics, migrations/refusals; P7 completion claim explicitly narrowed.
+- Integration: per brief, retain isolated v9→14 bridge until integrator supplies real sibling v10–13 chain; sibling CMYK/appearance/effects reconciliation remains integration work.
+- Gates: fmt, dependency directions, whitespace PASS; final workspace: 2,274 passed / 0 failed / 15 ignored, 150 targets.
+- Native + Windows all-target Clippy -D warnings PASS; varos-text wasm32 check PASS; offline builds used -j 3.
+- UI ratchets 3/3 PASS (unchanged); ui.rs 805/843. Bridge 6/6 PASS: 1.0/1.1 frozen 23,993 B; 1.2 23,919/24,000 B.
+- No git writes, push, merge, GUI or installation; independent re-review and owner acceptance pending. Final suite evidence: /tmp/w3-text2-workspace-final.log; other gates: /tmp/w3-text2-*.log.

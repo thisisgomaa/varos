@@ -107,13 +107,22 @@ impl ArcPath {
         Some(([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])], [(b[0] - a[0]) / len, (b[1] - a[1]) / len]))
     }
 }
-fn geometry(doc: &Document, id: u32) -> Result<Vec<Vec<[f32; 2]>>, String> {
+pub fn geometry(doc: &Document, text: &TextBox, id: u32) -> Result<Vec<Vec<[f32; 2]>>, String> {
     let i = doc.pidx(id).ok_or("missing text boundary")?;
     let g = varos_core::flatten::flatten_path(doc, i, 4.);
     let mut rings = vec![g.outline];
     rings.extend(g.holes);
     if rings.iter().map(Vec::len).sum::<usize>() > 65536 {
         return Err("text boundary budget exceeded".into());
+    }
+    // Flattening already applies the boundary live transform. Convert world geometry to
+    // the text unit once; outline consumers apply that unit transform when painting.
+    let xf = varos_core::typography::text_transform(doc, text.id);
+    let origin = doc.typography.frames.get(&text.id).and_then(|f| f.binding_origin).unwrap_or(text.frame);
+    for p in rings.iter_mut().flatten() {
+        *p = xf.inverse_apply(*p);
+        p[0] += text.frame[0] - origin[0];
+        p[1] += text.frame[1] - origin[1];
     }
     Ok(rings)
 }
@@ -243,9 +252,9 @@ impl TextLayout {
         zoom: f32,
     ) -> Result<(Composed, usize), String> {
         match frame.binding {
-            Some(Binding::Area { path, inset }) => self.area(text, frame, geometry(doc, path)?, inset, zoom),
+            Some(Binding::Area { path, inset }) => self.area(text, frame, geometry(doc, text, path)?, inset, zoom),
             Some(Binding::Path { path, start, end, offset, flip, effect }) => {
-                let rings = geometry(doc, path)?;
+                let rings = geometry(doc, text, path)?;
                 let closed = doc.paths.iter().find(|p| p.id == path).is_some_and(|p| p.closed);
                 let arc = ArcPath::new(rings.into_iter().next().unwrap_or_default(), closed)?;
                 self.on_path(text, frame, &arc, [start, end, offset], flip, effect, zoom)

@@ -5,6 +5,9 @@
 use std::sync::atomic::AtomicBool;
 use varos_core::format::{decode_model, encode_model, Limits, LoadError, FORMAT_VERSION};
 
+#[path = "support/format_stamp.rs"]
+mod format_stamp;
+
 const JSON: &[u8] = include_bytes!("../../varos-core/tests/fixtures/v9/mixed.json");
 const VRS: &[u8] = include_bytes!("../../varos-core/tests/fixtures/v9/mixed.vrs");
 
@@ -63,7 +66,21 @@ fn mixed_v9_container_reopens_with_resources_and_rewrites_identically() {
     // Lane H writes real PDF text and the v14 stamp; preserve the frozen v9 fixture.
     let rewritten = varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap();
     assert_eq!(varos_pdf::load_vrs_bytes(&rewritten, &Limits::DEFAULT).unwrap().doc, loaded.doc);
-    assert_eq!(rewritten, varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap());
+    // The approved text substitution is tested by extraction separately. Force the legacy
+    // outlined appearance here and compare EVERY PDF object against the frozen oracle.
+    let outlined = varos_text_layout::outline_document(&loaded.doc).unwrap();
+    let legacy = varos_pdf::images::write_vrs(&outlined, &loaded.blobs, &Limits::DEFAULT).unwrap();
+    let mut actual = format_stamp::objects(&legacy, FORMAT_VERSION, 9);
+    let expected = format_stamp::objects(VRS, 9, 9);
+    let pdf = lopdf::Document::load_mem(VRS).unwrap();
+    let model = pdf.catalog().unwrap().get(b"VAROS_Model").unwrap().as_reference().unwrap();
+    // Only the embedded editable model differs when explicitly outlining the appearance.
+    // Its unoutlined round-trip and frozen key order are independently asserted above.
+    actual.insert(model, expected[&model].clone());
+    assert_eq!(actual, expected);
+    // Also pin non-text resources on the REAL embedded-text writer, whose font
+    // objects legitimately shift indirect object numbers.
+    assert_eq!(non_text_resources(&rewritten), non_text_resources(VRS));
 }
 
 #[test]
@@ -148,4 +165,43 @@ fn each_frozen_gate_refuses_the_next_wave_two_writer() {
         frozen_gate(embedded_model_json(&vrs).as_bytes(), 5),
         Err(LoadError::NewerVersion { found: 6, supported: 5 })
     );
+}
+
+fn non_text_resources(bytes: &[u8]) -> Vec<String> {
+    fn expanded(pdf: &lopdf::Document, object: &lopdf::Object) -> lopdf::Object {
+        use lopdf::Object;
+        match object {
+            Object::Reference(id) => expanded(pdf, pdf.get_object(*id).unwrap()),
+            Object::Array(a) => Object::Array(a.iter().map(|o| expanded(pdf, o)).collect()),
+            Object::Dictionary(d) => {
+                let mut result = lopdf::Dictionary::new();
+                for (k, v) in d {
+                    result.set(k.clone(), expanded(pdf, v));
+                }
+                Object::Dictionary(result)
+            }
+            Object::Stream(s) => {
+                let Object::Dictionary(dict) = expanded(pdf, &Object::Dictionary(s.dict.clone())) else {
+                    unreachable!()
+                };
+                Object::Stream(lopdf::Stream::new(dict, s.content.clone()))
+            }
+            o => o.clone(),
+        }
+    }
+    let pdf = lopdf::Document::load_mem(bytes).unwrap();
+    let mut resources: Vec<_> = pdf
+        .objects
+        .values()
+        .filter(|o| {
+            let dict = o.as_dict().ok().or_else(|| o.as_stream().ok().map(|s| &s.dict));
+            dict.is_some_and(|d| {
+                d.has(b"ShadingType") || d.get(b"Subtype").ok().and_then(|v| v.as_name().ok()) == Some(b"Image")
+            })
+        })
+        .map(|o| format!("{:?}", expanded(&pdf, o)))
+        .collect();
+    resources.sort();
+    assert!(!resources.is_empty());
+    resources
 }

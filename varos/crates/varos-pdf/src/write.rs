@@ -351,7 +351,7 @@ fn write_pages_impl(
                     // integration w2: gradients (resolved through swatches) first, in image documents too
                     if let Item::Path(pd) = d {
                         // ---- Lane H ----
-                        if text.paint(pd.p.id, pd.xf, &mut c, &t) {
+                        if text.paint(pd.p.id, pd.xf, &mut c, &t, &|b| intersect(b, page_box).is_some()) {
                             continue;
                         }
                         if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {
@@ -384,7 +384,9 @@ fn write_pages_impl(
                 tick.check(cancel)?;
                 if let Item::Path(pd) = d {
                     // ---- Lane H ----
-                    if text.paint(pd.p.id, pd.xf, &mut c, &t) {
+                    if text.paint(pd.p.id, pd.xf, &mut c, &t, &|b| {
+                        intersect(b, page_box).is_some_and(|v| mask.iter().any(|m| overlaps(v, m.2)))
+                    }) {
                         continue;
                     }
                     if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {

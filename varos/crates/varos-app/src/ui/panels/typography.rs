@@ -5,6 +5,46 @@ use varos_core::{
     text::TextBox,
     typography::{Action, Binding, CharacterStyle, ParagraphStyle, PathEffect, Typography},
 };
+pub(super) fn properties(ui: &mut egui::Ui, text: &TextBox, styles: &Typography, ops: &mut Vec<Op>) {
+    let Ok(resolved) = styles.resolved(text) else {
+        kit::notice(ui, "Style preview unavailable; finish the text edit first.");
+        return;
+    };
+    let key = doc_id(ui, ("style-overrides", text.id));
+    let pending = ui.ctx().data_mut(|d| d.get_temp::<(TextBox, TextBox)>(key));
+    let mut display = override_preview(&resolved, pending);
+    let frame = styles.frames.get(&text.id).cloned().unwrap_or_default();
+    let named = !frame.characters.is_empty() || frame.paragraph.is_some();
+    let mut edits = Vec::new();
+    type_section(ui, &display, &mut edits);
+    for op in edits {
+        let op = match op {
+            Op::Field(inner) => *inner,
+            op => op,
+        };
+        match op {
+            Op::Text(next) if named => {
+                let mut authored = text.clone();
+                if frame.paragraph.is_none() {
+                    authored.para = next.para.clone();
+                }
+                if frame.characters.is_empty() {
+                    authored.runs = next.runs.clone();
+                }
+                if authored != *text {
+                    ops.push(Op::Text(authored));
+                }
+                display = next;
+            }
+            op => ops.push(op),
+        }
+    }
+    if named && display != resolved {
+        kit::notice(ui, "Style overrides pending. Use Update below to apply to the named style.");
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(key, (resolved, display.clone())));
+    section(ui, &display, styles, ops);
+}
 pub(super) fn section(ui: &mut egui::Ui, text: &TextBox, styles: &Typography, ops: &mut Vec<Op>) {
     if text.id == 0 {
         kit::notice(ui, "Finish typing to apply named styles or path options.");
@@ -40,10 +80,10 @@ pub(super) fn section(ui: &mut egui::Ui, text: &TextBox, styles: &Typography, op
         if kit::action(ui, kit::Control::new(doc_id(ui, "update-character-style"), "Update character style"), false)
             .activated
         {
-            if let Some(run) = text.runs.first() {
+            if let Some(style) = style_at(text, assignment.start) {
                 ops.push(Op::Typography(Action::DefineCharacter {
                     name: assignment.name.clone(),
-                    definition: CharacterStyle { parent: None, style: Some(run.style.clone()) },
+                    definition: CharacterStyle { parent: None, style: Some(style.clone()) },
                 }));
             }
         }
@@ -216,4 +256,46 @@ fn number(
     fields::num_disabled(ui, t::TYPE_FIELD_W, Lab::Letter(""), label, value, 2, 0.1, range, false, ops, |v| {
         Op::Typography(mk(v))
     });
+}
+
+fn style_at(text: &TextBox, byte: usize) -> Option<&varos_core::text::TextStyle> {
+    let mut end = 0;
+    text.runs
+        .iter()
+        .find(|run| {
+            end += run.text.len();
+            byte < end
+        })
+        .map(|run| &run.style)
+}
+fn override_preview(resolved: &TextBox, pending: Option<(TextBox, TextBox)>) -> TextBox {
+    pending.filter(|(base, _)| base == resolved).map_or_else(|| resolved.clone(), |(_, next)| next)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn style_controls_show_resolved_values_and_keep_explicit_overrides() {
+        let mut text = varos_text_layout::default_text("hello", [0., 0.]).unwrap();
+        text.id = 7;
+        let mut styles = Typography::default();
+        let mut style = text.runs[0].style.clone();
+        style.size = 42.;
+        styles.characters.insert("Title".into(), CharacterStyle { parent: None, style: Some(style) });
+        styles.frames.entry(7).or_default().characters.push(varos_core::typography::Assignment {
+            start: 0,
+            end: 5,
+            name: "Title".into(),
+        });
+        let resolved = styles.resolved(&text).unwrap();
+        let shown = override_preview(&resolved, None);
+        assert_eq!(shown.runs[0].style.size, 42.);
+        let mut edited = shown.clone();
+        edited.runs[0].style.size = 56.;
+        let shown = override_preview(&resolved, Some((resolved.clone(), edited)));
+        styles.characters.get_mut("Title").unwrap().style = Some(shown.runs[0].style.clone());
+        let updated = styles.resolved(&text).unwrap();
+        assert_eq!(updated.runs[0].style.size, 56.);
+        assert_eq!(override_preview(&updated, Some((resolved.clone(), resolved))).runs[0].style.size, 56.);
+    }
 }
