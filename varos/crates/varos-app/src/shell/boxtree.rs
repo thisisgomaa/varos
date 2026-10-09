@@ -277,6 +277,19 @@ impl ShellState {
         find_pane(&self.tree, panel).is_some()
     }
 
+    // ---- Lane A: reveal the existing Properties box from an fx badge ----
+    pub fn show_panel(&mut self, panel: PanelId) {
+        if let Some(id) = find_pane(&self.tree, panel) {
+            if let Some(parent) = self.tree.tiles.parent_of(id) {
+                if let Some(Tile::Container(Container::Tabs(t))) = self.tree.tiles.get_mut(parent) {
+                    t.active = Some(id);
+                }
+            }
+        } else {
+            self.toggle_panel(panel);
+        }
+    }
+
     /// The Window-menu action (Ahmed 07-07): CLOSED → open in an AUTOMATIC spot (a tab beside its
     /// family, else beside Properties/Layers, else a fresh box on the root split). OPEN but hidden
     /// behind a sibling tab → bring it forward. OPEN and visible → close it (a toggle).

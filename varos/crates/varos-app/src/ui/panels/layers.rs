@@ -35,6 +35,9 @@ pub(crate) struct ThumbShape {
 /// from geometry via `node_boards`, mirror rows for straddlers, floaters loose at the bottom).
 #[derive(Clone)]
 pub(crate) struct LRow {
+    // ---- Lane A ----
+    pub(crate) fx: bool,
+    pub(crate) mask: bool,
     pub(crate) id: u32, // node id; Board headers use u32::MAX - board index (never collides with node ids)
     pub(crate) depth: u16,
     pub(crate) kind: LKind,
@@ -122,6 +125,10 @@ pub(crate) fn thumb_key(ed: &Editor, pids_zorder: &[u32]) -> u64 {
         pid.hash(&mut state);
         let Some(pi) = ed.doc.pidx(pid) else { continue };
         let path = &ed.doc.paths[pi];
+        // ---- Lane A ----
+        if let Ok(bytes) = serde_json::to_vec(&path.stack) {
+            bytes.hash(&mut state);
+        }
         path.closed.hash(&mut state);
         path.hidden.hash(&mut state);
         path.anchors.len().hash(&mut state);
@@ -247,6 +254,10 @@ pub(crate) fn build_layer_rows(
         // the top-most fully-selected row is the multi-drag unit (its parent isn't fully selected)
         let drag_sel = full_sel && !par.map(|pi| rows[pi].full_sel).unwrap_or(false);
         rows.push(LRow {
+            // ---- Lane A ----
+            fx: n.look.is_some()
+                || paths.iter().filter_map(|id| ed.doc.pidx(*id)).any(|i| !ed.doc.paths[i].stack.is_empty()),
+            mask: n.role.is_mask_group(),
             id: nid,
             depth,
             kind,
@@ -292,6 +303,9 @@ pub(crate) fn build_layer_rows(
         let hid = board_row_id(bi);
         let members: Vec<u32> = memb.iter().filter(|(_, bs)| bs.contains(&bi)).map(|(n, _)| *n).collect();
         rows.push(LRow {
+            // ---- Lane A ----
+            fx: false,
+            mask: false,
             id: hid,
             depth: 0,
             kind: LKind::Board,
@@ -381,13 +395,15 @@ pub(crate) fn thumb_shapes(ed: &Editor, pids_zorder: &[u32]) -> Vec<ThumbShape> 
                 y1 = y1.max(q[1]);
             }
         }
-        let paints = [p.appearance().fill().resolved(&ed.doc), p.appearance().stroke().resolved(&ed.doc)].map(
-            |paint| match paint {
+        // ---- Lane A: thumbnail entries retain their paint order and visibility ----
+        let entries = if p.stack.is_empty() { vec![p.clone()] } else { varos_core::appearance_scene::paint_paths(p) };
+        for entry in entries {
+            let paints = [entry.fill.resolved(&ed.doc), entry.stroke.resolved(&ed.doc)].map(|paint| match paint {
                 varos_core::model::Paint::Gradient(g) => varos_core::model::Paint::Gradient(g.transformed(xf)),
                 paint => paint,
-            },
-        );
-        raw.push((rings, paints, p.opacity));
+            });
+            raw.push((rings.clone(), paints, if p.stack.is_empty() { p.opacity } else { p.opacity * entry.opacity }));
+        }
         // Paint → the UI snapshot's Option<Rgba>
     }
     if raw.is_empty() {
@@ -795,11 +811,26 @@ pub(crate) fn panel_layers(
                                 }
                             }
                         }
+                        // ---- Lane A: the existing thumbnail is the only mask drop target ----
+                        if row.kind != LKind::Board {
+                            if drag.is_some()
+                                && payload.len() == 1
+                                && ptr.is_some_and(|p| thumb.contains(p))
+                                && !forbidden.contains(&row.id)
+                            {
+                                drop_ind = Some((row.id, 4, thumb, row.depth));
+                            }
+                            let badge = egui::Rect::from_min_max(
+                                egui::pos2(rect.right() - varos_app::shell::tokens::APPEARANCE_BADGE_W, rect.top()),
+                                rect.right_bottom(),
+                            );
+                            super::super::appearance::row(ui, badge, row.id, row.fx, row.mask, ops);
+                        }
                         x += if row.kind == LKind::Board { 6.0 } else { 24.0 };
                         // name (auto-names muted; user/layer names bright) — or inline rename
                         let name_rect = egui::Rect::from_min_max(
                             egui::pos2(x, rect.top()),
-                            egui::pos2(rect.right() - 10.0, rect.bottom()),
+                            egui::pos2(rect.right() - varos_app::shell::tokens::APPEARANCE_BADGE_W, rect.bottom()),
                         );
                         let renaming = !rename_shown && rename.as_ref().is_some_and(|(id, _)| *id == row.id);
                         if renaming {
@@ -960,7 +991,16 @@ pub(crate) fn panel_layers(
             if let Some((_, src_sec)) = *drag {
                 if ui.input(|i| i.pointer.any_released()) {
                     if let Some((tid, zone, _, _)) = drop_ind {
-                        if zone == 3 {
+                        // ---- Lane A ----
+                        if zone == 4 && payload.len() == 1 {
+                            ops.push(Op::DocumentSetup(EditCommand::Mask(
+                                varos_core::appearance_edits::MaskEdit::Add {
+                                    node: tid,
+                                    mask: payload[0],
+                                    alpha: true,
+                                },
+                            )));
+                        } else if zone == 3 {
                             let src_board = (src_sec != u32::MAX).then_some(src_sec as usize);
                             ops.push(Op::LayerMoveBoard(payload.clone(), src_board, tid as usize));
                         } else if ui.input(|i| i.modifiers.alt) {

@@ -214,6 +214,13 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    // ---- Lane A ----
+    Appearance {
+        edit: varos_core::appearance_edits::AppearanceEdit,
+    },
+    Mask {
+        edit: varos_core::appearance_edits::MaskEdit,
+    },
     // ---- Lane D: API 1.2 drawing ----
     ShapeTool {
         spec: varos_core::drawing::ShapeSpec,
@@ -638,6 +645,8 @@ impl Operation {
 
     pub fn ids(&self) -> &[String] {
         match self {
+            // ---- Lane A ----
+            Self::Appearance { .. } | Self::Mask { .. } => &[],
             Self::AddText { .. }
             | Self::SetText { .. }
             | Self::ScaleStrokes { .. }

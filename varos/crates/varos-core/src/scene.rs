@@ -105,6 +105,8 @@ pub enum Prim {
 /// stencil vs offscreen-multiply) is its own decision. `members: Vec<Group>` already admits nested clips.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Group {
+    // ---- Lane A ----
+    Composite { opacity: f32, members: Vec<Group>, mask: Option<Vec<Group>> },
     Opaque(Vec<Prim>),
     Knockout(Vec<Prim>),
     Isolated { opacity: f32, prims: Vec<Prim> },
@@ -117,7 +119,8 @@ impl Group {
         match self {
             Group::Opaque(p) | Group::Knockout(p) => p,
             Group::Isolated { prims, .. } => prims,
-            Group::Clip { .. } => &[],
+            // ---- Lane A: recursive containers have no direct primitives ----
+            Group::Clip { .. } | Group::Composite { .. } => &[],
         }
     }
 }
@@ -140,6 +143,8 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     ed.view_depth.hash(&mut state);
     ed.doc.units.ppi.to_bits().hash(&mut state);
     ed.doc.transparency_grid.hash(&mut state);
+    // ---- Lane A ----
+    crate::appearance_scene::hash(&ed.doc, &mut state);
     ed.rev.hash(&mut state);
     frame.hash(&mut state);
     point_hash(view.pan, &mut state);
@@ -1044,6 +1049,10 @@ fn build_scene_impl(
     }
     if !open.is_empty() {
         groups.push(Group::Opaque(open));
+    }
+    // ---- Lane A ----
+    if crate::appearance_scene::needed(&ed.doc) {
+        groups = crate::appearance_scene::compose_cached(ed, ppu, &mut stroke_errors.borrow_mut(), style.is_some());
     }
     // ---- Lane E: cached, viewport-clipped outline pass ----
     if let Some(style) = style {

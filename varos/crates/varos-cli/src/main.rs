@@ -1,5 +1,7 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
 mod colour;
+// ---- Lane A ----
+mod appearance;
 mod document;
 // ---- Lane E ----
 mod images;
@@ -26,6 +28,8 @@ mod text;
 // ---- Lane H ----
 mod import;
 const VERBS: &[&str] = &[
+    "appearance",
+    "mask",
     "view-depth",
     "add-text",
     "set-text",
@@ -245,6 +249,10 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("expected a subcommand: {}", VERBS.join(", ")).into());
     }
     let verb = args.remove(0).into_string().map_err(|_| "subcommand must be UTF-8".to_owned())?;
+    // ---- Lane A ----
+    if ["appearance", "mask"].contains(&verb.as_str()) {
+        return appearance::run(&verb, args).map_err(Failure::from);
+    }
     if verb == "view-depth" {
         return view_depth::run(args).map_err(Failure::from);
     }

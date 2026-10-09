@@ -82,7 +82,14 @@ impl Paint {
 
 impl crate::model::Path {
     pub fn map_gradient_placement(&mut self, f: impl Fn(crate::Pt) -> crate::Pt) {
-        for paint in [&mut self.fill, &mut self.stroke] {
+        // ---- Lane A: extra paints follow the same geometry mapping ----
+        let extra = self.stack.iter_mut().filter_map(|entry| match entry {
+            crate::appearance::StackItem::Fill { paint, .. } | crate::appearance::StackItem::Stroke { paint, .. } => {
+                Some(paint)
+            }
+            _ => None,
+        });
+        for paint in [&mut self.fill, &mut self.stroke].into_iter().chain(extra) {
             if let Paint::Gradient(g) = paint {
                 *g = g.mapped(&f);
             }

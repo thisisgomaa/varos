@@ -24,7 +24,7 @@ pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
 pub use migrate::{
     migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v6, migrate_v6_to_v7,
-    migrate_v7_to_v8, migrate_v8_to_v9, readable_versions,
+    migrate_v7_to_v8, migrate_v8_to_v9, migrate_v9_to_v10, readable_versions,
 };
 pub use structure::check_structure;
 pub use validate::validate;
@@ -54,7 +54,10 @@ pub const CORNERS_VERSION: u32 = 9;
 /// Lane F: the optional PDF-catalog Quick Look preview (`/VAROS_Preview` + `/VAROS_PreviewVersion`)
 /// is container-only (no model key, no reader impact on the JSON body); folded into the v9 bump.
 pub const PREVIEW_FORMAT_VERSION: u32 = CORNERS_VERSION;
-pub const FORMAT_VERSION: u32 = CORNERS_VERSION;
+// ---- Lane A ----
+pub const APPEARANCE_VERSION: u32 = 10;
+pub const FORMAT_VERSION: u32 = APPEARANCE_VERSION;
+mod appearance_keys;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -154,6 +157,10 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
         if container != version {
             return Err(LoadError::VersionMismatch { container, model: version });
         }
+    }
+    // ---- Lane A ----
+    if version < APPEARANCE_VERSION {
+        appearance_keys::refuse(json, version)?;
     }
     if version < ARTBOARD_ID_VERSION {
         refuse_newer_keys(json, version)?; // keys only, before any typed decode
