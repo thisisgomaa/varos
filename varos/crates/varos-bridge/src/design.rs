@@ -192,6 +192,17 @@ pub(crate) fn apply_design_op(
     expanded: &mut usize,
     affected: &mut BTreeSet<String>,
 ) -> Result<Option<u32>, Error> {
+    if let Operation::TraceRgba { rgba, width, height, options } = op {
+        let (paths, _) = varos_core::trace::trace(rgba, *width, *height, options).map_err(fail)?;
+        let before: BTreeSet<_> = ed.doc.paths.iter().map(|p| p.id).collect();
+        ed.try_execute(EditCommand::InsertTracedPaths { paths }).map_err(fail)?;
+        for p in &ed.doc.paths {
+            if !before.contains(&p.id) {
+                affected.insert(format!("path:{}", p.id));
+            }
+        }
+        return Ok(None);
+    }
     if op.is_page_verb() {
         return apply_artboard_op(ed, op, locals, affected).map(|()| None);
     }
@@ -256,6 +267,7 @@ pub(crate) fn apply_design_op(
     }
     let execute = |ed: &mut Editor, command| ed.try_execute(command).map_err(fail);
     match op {
+        Operation::TraceRgba { .. } => return Err(fail("trace dispatch failed")),
         Operation::AddShape { parent, local, name, fill, stroke, stroke_width, opacity, .. }
         | Operation::AddPath { parent, local, name, fill, stroke, stroke_width, opacity, .. } => {
             if let Some(local) = local {

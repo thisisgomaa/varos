@@ -13,7 +13,9 @@ use varos_core::{
 };
 
 // The only CLI verb table. No desktop binary names or UI routing are changed.
-const VERBS: &[&str] = &["describe", "snapshot", "export-pdf", "save-as", "apply", "new", "diff"];
+mod trace;
+
+const VERBS: &[&str] = &["trace", "describe", "snapshot", "export-pdf", "save-as", "apply", "new", "diff"];
 struct Failure {
     reason: String,
     index: Option<usize>,
@@ -168,6 +170,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("unknown subcommand {verb}; expected {}", VERBS.join(", ")).into());
     }
     match verb.as_str() {
+        "trace" => trace::run(args).map_err(Into::into),
         "describe" => {
             let a = parse(args, &["--detail"], 1)?;
             let doc = varos_pdf::load_vrs(&a.positional[0])?;

@@ -46,7 +46,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
     if matches!(
         command,
-        AddPath { .. }
+        InsertTracedPaths { .. }
+            | AddPath { .. }
             | AddShape { .. }
             | GroupSelection
             | Boolean(_)
@@ -107,6 +108,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        InsertTracedPaths { paths } => crate::trace::check_insert(ed, paths),
         AddPath { anchors, parent, fill, stroke, stroke_width, opacity, name, .. } => {
             if !(2..=1000).contains(&anchors.len()) {
                 return Err("path needs 2..1000 anchors".into());

@@ -159,6 +159,13 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    TraceRgba {
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+        #[serde(default)]
+        options: varos_core::trace::TraceOptions,
+    },
     AddShape {
         kind: ShapeKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -361,7 +368,8 @@ pub enum Order {
 impl Operation {
     pub fn ids(&self) -> &[String] {
         match self {
-            Self::AddShape { .. }
+            Self::TraceRgba { .. }
+            | Self::AddShape { .. }
             | Self::AddPath { .. }
             | Self::AddArtboard { .. }
             | Self::ResizeArtboard { .. }

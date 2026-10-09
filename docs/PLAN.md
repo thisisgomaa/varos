@@ -168,3 +168,4 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
 | 0.6 file-menu basics | merged + installed, owner hand test pending | merge | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection, cancellable export + Show in Finder, tickets, menus/ split |
 | Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
+| 3.8 Image Trace engine | implemented (engine only; owner design review pending) | uncommitted Lane M | Pure RGBA8 → filled paths/holes + report; PNG CLI and API 1.2 trace_rgba. Provisional UI/presets deferred: this lane is core engine only; image object/shared fitter absent at base. |
