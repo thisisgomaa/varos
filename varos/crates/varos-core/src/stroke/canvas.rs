@@ -7,7 +7,10 @@ use std::sync::{Arc, Mutex};
 
 pub const ELEMENT_CAP: usize = 60_000;
 const MIN_TOL: f64 = 0.01;
-const MAX_TOL: f64 = 0.25;
+// At 100% this is at most 0.1 px deviation, a tenth of a thin 1 px stroke.
+const MAX_TOL: f64 = 0.1;
+// Offscreen paths keep coverage briefly for panning, then release it.
+const UNSEEN_BUILD_LIMIT: u64 = 8;
 
 pub fn tolerance(ppu: f32) -> f64 {
     let ppu = crate::flatten::bucket_ppu(crate::flatten::zoom_bucket(ppu));
@@ -31,6 +34,7 @@ fn geometry_hash(path: &Path) -> u64 {
     hash.finish()
 }
 struct Entry {
+    last_seen: u64,
     geometry_hash: u64,
     anchors: Vec<Anchor>,
     holes: Vec<Vec<Anchor>>,
@@ -47,6 +51,7 @@ struct Entry {
 struct Cache {
     entries: HashMap<u32, Entry>,
     evaluations: u64,
+    build: u64,
 }
 
 #[derive(Default)]
@@ -61,7 +66,8 @@ impl CanvasStrokeCache {
         let mut cache = self.0.lock().unwrap_or_else(|p| p.into_inner());
         let tolerance = tolerance(ppu);
         let geometry_hash = geometry_hash(path);
-        if let Some(entry) = cache.entries.get(&path.id) {
+        let build = cache.build;
+        if let Some(entry) = cache.entries.get_mut(&path.id) {
             if entry.geometry_hash == geometry_hash
                 && entry.anchors == path.anchors
                 && entry.holes == path.holes
@@ -72,26 +78,26 @@ impl CanvasStrokeCache {
                 && entry.xform == xform
                 && entry.tolerance == tolerance
             {
+                entry.last_seen = build;
                 return entry.coverage.clone();
             }
         }
         let mut coverage = None;
-        // Six bounded attempts, including the requested quality. Non-budget errors fail open too.
-        for step in 0..6 {
+        // Stop immediately after the ceiling fails; never evaluate the same ceiling twice.
+        for attempt_tol in retry_tolerances(tolerance) {
             cache.evaluations += 1;
-            match evaluate_capped(path, tolerance * 2f64.powi(step), ELEMENT_CAP, &|| false) {
+            match evaluate_capped(path, attempt_tol, ELEMENT_CAP, &|| false) {
                 Ok(mut result) => {
                     for point in result.rings.iter_mut().flatten() {
                         *point = xform.apply(*point);
                     }
-                    if super::evaluate::triangles_capped(&result.rings, ELEMENT_CAP).is_err() {
-                        continue;
+                    if super::evaluate::triangles_capped(&result.rings, ELEMENT_CAP).is_ok() {
+                        if attempt_tol > tolerance {
+                            simplified(&mut result.report, path.id, false);
+                        }
+                        coverage = Some(Arc::new(result));
+                        break;
                     }
-                    if step > 0 {
-                        simplified(&mut result.report, path.id);
-                    }
-                    coverage = Some(Arc::new(result));
-                    break;
                 }
                 Err(StrokeError::LimitExceeded) => (),
                 Err(_) => break,
@@ -100,6 +106,7 @@ impl CanvasStrokeCache {
         cache.entries.insert(
             path.id,
             Entry {
+                last_seen: build,
                 geometry_hash,
                 anchors: path.anchors.clone(),
                 holes: path.holes.clone(),
@@ -117,8 +124,10 @@ impl CanvasStrokeCache {
 
     pub fn retain_live(&self, doc: &Document) {
         let mut cache = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        cache.build += 1;
+        let build = cache.build;
         let live: HashSet<_> = doc.paths.iter().map(|p| p.id).collect();
-        cache.entries.retain(|id, _| live.contains(id));
+        cache.entries.retain(|id, entry| live.contains(id) && build - entry.last_seen <= UNSEEN_BUILD_LIMIT);
     }
 
     /// Evaluation counter for headless cache/heat checks.
@@ -127,10 +136,62 @@ impl CanvasStrokeCache {
     }
 }
 
-pub(crate) fn simplified(report: &mut crate::ExportReport, id: u32) {
+pub(crate) fn simplified(report: &mut crate::ExportReport, id: u32, native: bool) {
     report.notes.push(crate::ExportNote {
         kind: "stroke_simplified".into(),
         object_id: Some(id),
-        message: "stroke simplified at this zoom".into(),
+        message: if native {
+            "stroke simplified at this zoom: dashes/arrows/alignment not shown"
+        } else {
+            "stroke simplified at this zoom"
+        }
+        .into(),
     });
+}
+
+// Clamp every attempt, including retries, and include MAX_TOL exactly once.
+fn retry_tolerances(initial: f64) -> impl Iterator<Item = f64> {
+    (0..6).scan(false, move |at_max, step| {
+        if *at_max {
+            return None;
+        }
+        let tol = (initial * 2f64.powi(step)).clamp(MIN_TOL, MAX_TOL);
+        *at_max = tol == MAX_TOL;
+        Some(tol)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_retry_at_100_percent_respects_quality_ceiling() {
+        let attempts: Vec<_> = retry_tolerances(tolerance(1.)).collect();
+        assert_eq!(attempts, vec![0.025, 0.05, MAX_TOL]);
+        assert!(attempts.iter().all(|t| (MIN_TOL..=MAX_TOL).contains(t)));
+    }
+
+    #[test]
+    fn unseen_live_paths_expire_but_recent_paths_remain() {
+        let cache = CanvasStrokeCache::default();
+        let p = Path::new(1, vec![], false, None, None, 1.);
+        let doc = Document { paths: vec![p.clone()], ..Default::default() };
+        cache.retain_live(&doc);
+        cache.lookup(&p, Xform::default(), 1.);
+        for _ in 0..UNSEEN_BUILD_LIMIT {
+            cache.retain_live(&doc);
+        }
+        assert_eq!(cache.0.lock().unwrap().entries.len(), 1);
+        cache.retain_live(&doc);
+        assert!(cache.0.lock().unwrap().entries.is_empty());
+        cache.lookup(&p, Xform::default(), 1.);
+        for _ in 0..UNSEEN_BUILD_LIMIT * 2 {
+            cache.retain_live(&doc);
+            cache.lookup(&p, Xform::default(), 1.);
+        }
+        assert_eq!(cache.0.lock().unwrap().entries.len(), 1);
+        cache.retain_live(&Document::default());
+        assert!(cache.0.lock().unwrap().entries.is_empty());
+    }
 }

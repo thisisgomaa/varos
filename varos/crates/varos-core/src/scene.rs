@@ -600,7 +600,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
                     }
                     Err(e) => {
                         if canvas {
-                            crate::stroke::canvas::simplified(&mut stroke_report.borrow_mut(), p.id);
+                            crate::stroke::canvas::simplified(&mut stroke_report.borrow_mut(), p.id, true);
                         } else {
                             stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
                         }
@@ -626,6 +626,9 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
         if p.anchors.len() >= 2 {
             if let Some(c) = p.stroke.solid() {
                 let clip = clip_rects(pi);
+                // Only the styled canvas fallback needs this expansion; preserve the
+                // ordinary native/export stroke geometry and its frozen vertex counts.
+                let radius = if canvas && !p.stroke_style.is_default() { p.stroke_width * 0.5 } else { 0.0 };
                 let mut push = |pts: Vec<Pt>| match &clip {
                     Some(rects) => {
                         for &r in rects {
@@ -641,6 +644,9 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
                                 },
                                 None => r,
                             };
+                            // Keep any centreline whose round band reaches the clip; the
+                            // unchanged page scissor trims the rendered band at the edge.
+                            let cut = (cut.0 - radius, cut.1 - radius, cut.2 + radius, cut.3 + radius);
                             for run in clip_polyline_rect(&pts, cut) {
                                 if run.len() >= 2 {
                                     out.push(Prim::Stroke {
@@ -654,7 +660,8 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
                         }
                     }
                     None => {
-                        for run in cut_runs(pts, vclip) {
+                        let band_clip = vclip.map(|r| (r.0 - radius, r.1 - radius, r.2 + radius, r.3 + radius));
+                        for run in cut_runs(pts, band_clip) {
                             out.push(Prim::Stroke { pts: run, width: p.stroke_width, color: c, clip: None });
                         }
                     }

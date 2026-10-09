@@ -3866,3 +3866,32 @@ fn progressive_discovery_resolves_every_12_verb_without_mutation() {
     assert_eq!(host.editor.doc, before);
     assert_eq!(host.editor.rev, rev);
 }
+
+#[test]
+fn bridge_stroke_content_change_re_evaluates_only_once() {
+    use varos_core::scene::build_scene;
+    let mut s = Service::new("test-epoch".into());
+    let mut h = FakeHost::new();
+    for p in &mut h.editor.doc.paths {
+        p.stroke = varos_core::model::Paint::Solid([0., 0., 0., 1.]);
+        p.stroke_style.dash = vec![6., 3.];
+    }
+    s.observe(&mut h);
+    build_scene(&h.editor, 1.);
+    let cold = h.editor.canvas_stroke_cache.evaluations();
+    assert_eq!(cold, 2);
+    let op = json!({"api":"1.2","board":"b1","request_id":"r1","expected_rev":h.editor.rev,
+        "ops":[{"op":"set_stroke_style","ids":["path:10"],"stroke_style":{"dash":[8,4]}}]});
+    let r = handle(&mut s, &mut h, req("edit", op.clone()));
+    assert!(r.ok, "{r:?}");
+    build_scene(&h.editor, 1.);
+    assert_eq!(h.editor.canvas_stroke_cache.evaluations(), cold + 1);
+    assert_eq!(r, handle(&mut s, &mut h, req("edit", op)));
+    build_scene(&h.editor, 1.);
+    assert_eq!(h.editor.canvas_stroke_cache.evaluations(), cold + 1);
+    h.editor.undo();
+    build_scene(&h.editor, 1.);
+    assert_eq!(h.editor.canvas_stroke_cache.evaluations(), cold + 2);
+    build_scene(&h.editor, 1.);
+    assert_eq!(h.editor.canvas_stroke_cache.evaluations(), cold + 2);
+}
