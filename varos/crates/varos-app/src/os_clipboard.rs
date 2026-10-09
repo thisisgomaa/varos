@@ -182,7 +182,7 @@ mod tests {
             assert_eq!(editor.clipboard(), &captured);
             assert_eq!(editor.doc.paths.is_empty(), cut);
             if cut {
-                editor.execute(EditCommand::Undo);
+                editor.execute(EditCommand::Undo).unwrap();
             }
             editor.dsel_path = None;
             editor.selected.insert(3);
@@ -212,7 +212,7 @@ mod tests {
             assert_eq!(editor.clipboard(), &captured);
             assert_eq!(captured.len(), 1);
             assert!(editor.doc.paths.is_empty());
-            editor.execute(EditCommand::Undo);
+            editor.execute(EditCommand::Undo).unwrap();
             assert_eq!(editor.doc, before);
         }
     }
@@ -228,7 +228,7 @@ mod tests {
         assert!(report.omitted[0].starts_with("public.png: Selection is too large"));
         assert!(editor.doc.paths.is_empty());
         assert_eq!(editor.clipboard(), &serde_json::from_slice::<Clipboard>(&board.0[0].bytes).unwrap());
-        editor.execute(EditCommand::Undo);
+        editor.execute(EditCommand::Undo).unwrap();
         assert_eq!(editor.doc, before);
     }
     #[test]
@@ -256,7 +256,7 @@ mod tests {
         assert_eq!(board.0, expected_flavours);
         assert_eq!(editor.clipboard(), &expected);
         assert_eq!(editor.doc.paths.iter().map(|p| p.id).collect::<Vec<_>>(), [6]);
-        editor.execute(EditCommand::Undo);
+        editor.execute(EditCommand::Undo).unwrap();
         assert_eq!(editor.doc, before);
     }
     #[test]
@@ -335,7 +335,7 @@ mod tests {
         perform(&mut editor, true, &mut board).unwrap();
         assert!(editor.doc.paths.is_empty());
         assert!(board.flavours[1].bytes.starts_with(b"%PDF-"));
-        editor.execute(EditCommand::Undo);
+        editor.execute(EditCommand::Undo).unwrap();
         assert_eq!(editor.doc, before);
     }
 }

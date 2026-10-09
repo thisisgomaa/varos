@@ -403,10 +403,16 @@ impl RecoveryHost {
                     _ => {}
                 }
                 for s in ws.sessions_mut() {
-                    if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers {
-                        s.editor.execute(varos_core::EditCommand::SetPasteRemembersLayers(
-                            self.settings.paste_remembers_layers,
-                        ));
+                    if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers
+                        && !s
+                            .editor
+                            .execute(varos_core::EditCommand::SetPasteRemembersLayers(
+                                self.settings.paste_remembers_layers,
+                            ))
+                            .is_ok()
+                    {
+                        // A guarded session retries the preference update on the next observation.
+                        continue;
                     }
                 }
                 if let (Some(path), Some(worker)) = (self.settings_path.clone(), &self.worker) {
@@ -464,9 +470,14 @@ impl RecoveryHost {
     }
     pub fn observe(&mut self, ws: &mut Workspace, now: Instant) {
         for s in ws.sessions_mut() {
-            if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers {
-                s.editor
-                    .execute(varos_core::EditCommand::SetPasteRemembersLayers(self.settings.paste_remembers_layers));
+            if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers
+                && !s
+                    .editor
+                    .execute(varos_core::EditCommand::SetPasteRemembersLayers(self.settings.paste_remembers_layers))
+                    .is_ok()
+            {
+                // A guarded session retries the preference update on the next observation.
+                continue;
             }
         }
         {

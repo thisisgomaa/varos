@@ -45,13 +45,13 @@ fn path_guides_keep_geometry_paint_and_roundtrip_then_release_and_clear_undo() {
     e.try_execute(C::View(V::ReleaseGuides)).unwrap();
     assert!(e.doc.guide_paths.is_empty());
     assert_eq!(e.doc.paths[0], original);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.guide_paths, vec![10]);
     e.doc.guides.push(Guide { vertical: true, pos: 42.0 });
     e.try_execute(C::View(V::ClearGuides)).unwrap();
     assert!(e.doc.guides.is_empty() && e.doc.guide_paths.is_empty());
     assert!(e.doc.pidx(10).is_none());
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert!(e.doc.pidx(10).is_some());
     assert_eq!(e.doc.guides.len(), 1);
 }
@@ -61,7 +61,7 @@ fn guide_position_is_exact_undoable_and_refuses_locked_or_missing_guides() {
     e.doc.guides.push(Guide { vertical: true, pos: 42.0 });
     e.try_execute(C::View(V::GuidePosition { index: 0, position: 12.5 })).unwrap();
     assert_eq!(e.doc.guides[0].pos, 12.5);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.guides[0].pos, 42.0);
     e.doc.guides_locked = true;
     assert!(e.try_execute(C::View(V::GuidePosition { index: 0, position: 99.0 })).is_err());
@@ -95,7 +95,7 @@ fn artboard_fit_all_selected_reorder_and_conversion_are_one_step_each() {
     let b = e.artboard_add([100.0, 100.0, 20.0, 20.0], None).unwrap();
     e.try_execute(C::View(V::ReorderArtboard { id: b, position: 0 })).unwrap();
     assert_eq!(e.doc.artboards[0].id, b);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.artboards[0].id, a);
     e.try_execute(C::SelectPaths(vec![10, 20])).unwrap();
     let rev = e.rev;
@@ -103,7 +103,7 @@ fn artboard_fit_all_selected_reorder_and_conversion_are_one_step_each() {
     assert_eq!(e.doc.artboards.len(), 4);
     assert!(e.doc.paths.is_empty());
     assert_eq!(e.rev, rev + 1);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.paths.len(), 2);
     assert_eq!(e.doc.artboards.len(), 2);
 }

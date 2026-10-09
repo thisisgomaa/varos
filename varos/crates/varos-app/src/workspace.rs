@@ -1182,7 +1182,7 @@ mod template_tests {
         assert!(s.is_dirty());
         assert!(s.editor.doc.name.is_empty());
         assert!(s.untitled.is_some());
-        s.editor.execute(varos_core::EditCommand::Undo);
+        s.editor.execute(varos_core::EditCommand::Undo).unwrap();
         assert!(s.is_dirty_exact());
         s.mark_saved(
             PathBuf::from("/test/new.vrs"),

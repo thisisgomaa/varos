@@ -794,7 +794,7 @@ mod template_queue_tests {
         initialize("epoch".into());
         let mut ws = Workspace::new();
         let id = ws.active_id().unwrap();
-        ws.get_mut(id).unwrap().editor.execute(varos_core::EditCommand::SetPpi(300.0));
+        ws.get_mut(id).unwrap().editor.execute(varos_core::EditCommand::SetPpi(300.0)).unwrap();
         let mut jobs = Jobs::default();
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({"api":"1.2","request_id":"r1","board":format!("b{}",id.0),"expected_rev":ws.get(id).unwrap().editor.rev,"path":"queue-only-no-io.vrs"})).unwrap();
@@ -811,7 +811,7 @@ mod template_queue_tests {
         let ticket = reply.result.unwrap()["ticket"].as_u64().unwrap();
         assert!(host.file_pending(ticket));
         assert!(host.ws.get(id).unwrap().saving.is_none());
-        host.ws.get_mut(id).unwrap().editor.execute(varos_core::EditCommand::SetPpi(72.0));
+        host.ws.get_mut(id).unwrap().editor.execute(varos_core::EditCommand::SetPpi(72.0)).unwrap();
         assert!(host.file_effect("new_from_template", &request).unwrap().ok);
         let crate::file_jobs::FileJob::Template(load) = jobs.queued.pop().unwrap() else {
             panic!("template read queue")

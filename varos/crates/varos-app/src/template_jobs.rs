@@ -62,10 +62,10 @@ mod tests {
         let folder = std::env::temp_dir().join(format!("template-job-{}", crate::file_jobs::next_ticket()));
         let path = folder.join("test.vrs");
         let mut ed = varos_core::Editor::new();
-        ed.execute(varos_core::EditCommand::SetPpi(300.0));
+        ed.execute(varos_core::EditCommand::SetPpi(300.0)).unwrap();
         let job =
             Job { ticket: 1, path: path.clone(), document: Some(Arc::new(ed.doc.clone())), cancel: Default::default() };
-        ed.execute(varos_core::EditCommand::SetPpi(72.0));
+        ed.execute(varos_core::EditCommand::SetPpi(72.0)).unwrap();
         assert_eq!(execute(job.clone()).result, Ok(None));
         assert_eq!(varos_pdf::load_vrs(&path).unwrap().units.ppi, 300.0);
         assert_eq!(execute(job.clone()).result.unwrap_err().code, "save_conflict");
