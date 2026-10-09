@@ -46,6 +46,7 @@ fn headless_ui() -> Ui {
         recent_warning: None,
         app_cmds: vec![],
         color_panel: None,
+        picker_board_colors: Default::default(),
         picker_layout: Default::default(),
         layer_icons: super::super::LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, search: None },
         lay_collapsed: std::collections::HashSet::new(),
@@ -106,4 +107,26 @@ fn picker_layout_restores_open_relative_position_and_drawer_without_document_edi
     assert!(!ui.picker_open());
     assert_eq!(ui.picker_layout.position, None);
     assert!(!ui.picker_layout.drawer_open);
+}
+
+#[test]
+fn window_colour_reports_big_panel_preference_while_mini_is_open() {
+    let mut ui = headless_ui();
+    let mut ed = varos_core::editor::Editor::new();
+    ed.doc.artboards.push(varos_core::model::Artboard { id: 40, ..Default::default() });
+    ui.picker_layout.open = true;
+    let snap = ed.doc.snap;
+    apply_picker_frame(&mut ed, snap, vec![Op::OpenMini(40, egui::Rect::NOTHING)], &mut ui.color_panel);
+    assert!(ui.color_panel.as_ref().unwrap().mini());
+    assert!(ui.picker_open());
+    assert!(ui.shell_layout().picker.open);
+    ui.color_panel = None;
+    ui.prepare_picker(&mut ed);
+    assert!(!ui.color_panel.as_ref().unwrap().mini());
+    ui.picker_layout.open = false;
+    apply_picker_frame(&mut ed, snap, vec![Op::OpenMini(40, egui::Rect::NOTHING)], &mut ui.color_panel);
+    assert!(!ui.picker_open());
+    ui.color_panel = None;
+    ui.prepare_picker(&mut ed);
+    assert!(ui.color_panel.is_none());
 }

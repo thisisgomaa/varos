@@ -152,12 +152,17 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, ops: &mut Ve
     ui.painter().add(egui::Shape::mesh(translated(m.cache.triangle(m.hsva[0], triangle_r), c)));
     if m.tab == Tab::Harmony && !m.mini() {
         for [h, s, v] in harmony_rules::linked(m.harmony, [m.hsva[0], m.hsva[1], m.hsva[2]]).into_iter().skip(1) {
-            marker(
-                ui.painter(),
-                ring_pos(c, ring_r - t::PICKER_RING_BAND / 2.0, h),
-                t::PICKER_TRI_MARKER,
-                hsv_c32(h, s, v),
+            let pos = if m.harmony == varos_app::storage::layout::HarmonyRule::Mono {
+                c + sv_pos(h, triangle_r, s, v).to_vec2()
+            } else {
+                ring_pos(c, ring_r - t::PICKER_RING_BAND / 2.0, h)
+            };
+            #[cfg(test)]
+            super::super::fields::tests::probe(
+                "harmony marker",
+                egui::Rect::from_center_size(pos, egui::Vec2::splat(t::PICKER_TRI_MARKER)),
             );
+            marker(ui.painter(), pos, t::PICKER_TRI_MARKER, hsv_c32(h, s, v));
         }
     }
     let color = hsv_c32(m.hsva[0], m.hsva[1], m.hsva[2]);

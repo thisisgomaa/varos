@@ -8,7 +8,7 @@ const RULES: [(Rule, Icon, &str); 8] = [
     (Rule::Tetradic, Icon::HarmonyTetradic, "Tetradic"),
     (Rule::Square, Icon::HarmonySquare, "Square"),
     (Rule::Mono, Icon::HarmonyMono, "Monochromatic"),
-    (Rule::Shades, Icon::HarmonyNone, "Shades"),
+    (Rule::None, Icon::HarmonyNone, "No harmony"),
 ];
 pub(super) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut PickerLayout, ops: &mut Vec<Op>) {
     let (strip, _) = ui.allocate_exact_size(egui::vec2(t::PICKER_W, t::PICKER_HARMONY_STRIP_H), egui::Sense::hover());

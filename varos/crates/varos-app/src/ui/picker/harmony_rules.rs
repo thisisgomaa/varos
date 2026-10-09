@@ -15,7 +15,8 @@ pub(super) fn offsets(rule: Rule) -> &'static [f32] {
 }
 pub(super) fn linked(rule: Rule, base: [f32; 3]) -> Vec<[f32; 3]> {
     match rule {
-        Rule::Mono | Rule::Shades => {
+        Rule::None => vec![base],
+        Rule::Mono => {
             [1.0, 0.78, 0.56, 0.36].iter().map(|k| [base[0], base[1], (base[2] * k).clamp(0.06, 1.0)]).collect()
         }
         _ => {
@@ -28,8 +29,24 @@ pub(super) fn linked(rule: Rule, base: [f32; 3]) -> Vec<[f32; 3]> {
     }
 }
 /// Six chips: original linked set first, then tones from the original Mono progression.
-/// Shades intentionally aliases that recovered brightness rule, rather than inventing new maths.
+/// None keeps only the base hue; Mono continues its brightness steps without duplicate chips.
 pub(super) fn swatches(rule: Rule, base: [f32; 3]) -> Vec<[f32; 3]> {
+    if rule == Rule::None {
+        return std::iter::once(base)
+            .chain([0.78, 0.56, 0.36, 0.22, 0.12].iter().map(|k| [base[0], base[1], (base[2] * k).clamp(0.06, 1.0)]))
+            .collect();
+    }
+    if rule == Rule::Mono {
+        return [1.0, 0.78, 0.56, 0.36, 0.22, 0.12]
+            .iter()
+            .map(|k| [base[0], base[1], (base[2] * k).clamp(0.06, 1.0)])
+            .fold(Vec::new(), |mut out, c| {
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+                out
+            });
+    }
     let mut out = linked(rule, base);
     let seeds = out.clone();
     for k in [0.78, 0.56, 0.36] {

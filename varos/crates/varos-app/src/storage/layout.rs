@@ -34,7 +34,7 @@ pub enum PickerMode {
     Web,
 }
 
-/// Original modal hue rules; Shades uses the original brightness progression.
+/// Original modal hue rules, including the unlinked None rule.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HarmonyRule {
     #[default]
@@ -45,7 +45,7 @@ pub enum HarmonyRule {
     Tetradic,
     Square,
     Mono,
-    Shades,
+    None,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
