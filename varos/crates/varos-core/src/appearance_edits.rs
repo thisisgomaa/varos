@@ -264,15 +264,24 @@ fn mask_node(edit: &MaskEdit) -> u32 {
         | MaskEdit::Release { node } => *node,
     }
 }
-pub fn check_mask(ed: &Editor, edit: &MaskEdit) -> Result<(), String> {
+fn check_mask_shape(ed: &Editor, edit: &MaskEdit) -> Result<(), String> {
     let id = mask_node(edit);
     let n = ed.doc.node(id).ok_or("unknown content row")?;
     if node_locked(&ed.doc, id) || node_hidden(&ed.doc, id) {
         return Err("row is hidden or locked".into());
     }
+    if matches!(edit, MaskEdit::Add { .. } | MaskEdit::Begin { .. })
+        && n.kind == NodeKind::Layer
+        && n.children.iter().any(|id| ed.doc.node(*id).is_some_and(|n| n.kind == NodeKind::Layer))
+    {
+        return Err("mask the contents of each sublayer separately".into());
+    }
     match edit {
         MaskEdit::Add { mask, .. } => {
             let m = ed.doc.node(*mask).ok_or("unknown mask row")?;
+            if m.kind == NodeKind::Layer {
+                return Err("mask source must be a vector or group, not a layer".into());
+            }
             if *mask == id
                 || ed.doc.node_paths(*mask).is_empty()
                 || node_locked(&ed.doc, *mask)
@@ -322,12 +331,45 @@ fn container(id: u32, parent: Option<u32>, name: &str) -> Node {
         look: None,
     }
 }
+/// Selecting a mask row restores its authoritative drawing child.
+pub fn drawing_target(doc: &Document, node: u32) -> u32 {
+    doc.node(node)
+        .filter(|n| n.role.is_mask_group())
+        .and_then(|n| n.mask_child)
+        .filter(|id| doc.node(*id).is_some_and(|n| n.kind == NodeKind::Group))
+        .unwrap_or_else(|| doc.layer_ancestor(node))
+}
+fn staged_mask(ed: &Editor, edit: &MaskEdit) -> Result<Editor, String> {
+    check_mask_shape(ed, edit)?;
+    let mut staged = ed.clone();
+    mutate_mask(&mut staged, edit.clone());
+    crate::format::check_structure(&staged.doc, &crate::format::Limits::DEFAULT).map_err(|e| e.to_string())?;
+    crate::format::validate(&staged.doc, &crate::format::Limits::DEFAULT).map_err(|e| e.to_string())?;
+    Ok(staged)
+}
+pub fn check_mask(ed: &Editor, edit: &MaskEdit) -> Result<(), String> {
+    staged_mask(ed, edit).map(|_| ())
+}
 pub fn apply_mask(ed: &mut Editor, edit: MaskEdit) {
-    if let Err(e) = check_mask(ed, &edit) {
-        ed.last_error = Some(crate::EngineError::Internal { what: e });
-        return;
+    let staged = match staged_mask(ed, &edit) {
+        Ok(staged) => staged,
+        Err(e) => {
+            ed.last_error = Some(crate::EngineError::Internal { what: e });
+            return;
+        }
+    };
+    let own = !ed.transaction_open();
+    if own {
+        ed.begin();
     }
-    ed.begin();
+    ed.doc = staged.doc;
+    ed.group_sel = staged.group_sel;
+    ed.dirty = true;
+    if own {
+        ed.commit();
+    }
+}
+fn mutate_mask(ed: &mut Editor, edit: MaskEdit) {
     let node = mask_node(&edit);
     match edit {
         MaskEdit::Mode { alpha, .. } => {
@@ -352,14 +394,15 @@ pub fn apply_mask(ed: &mut Editor, edit: MaskEdit) {
             ed.doc.active_layer = mask;
         }
     }
-    ed.dirty = true;
-    ed.commit();
 }
 fn wrap(ed: &mut Editor, content: u32, mask: u32, alpha: bool) {
     // Reparenting makes transforms nested; freeze the former world-space units first.
+    let mut baked = std::collections::HashSet::new();
     for node in [content, mask] {
-        if let Some(pid) = ed.doc.node_paths(node).first().copied() {
-            ed.bake_unit_of(pid);
+        for pid in crate::images::node_items(&ed.doc, node) {
+            if ed.doc.unit_of(pid).is_some_and(|unit| baked.insert(unit)) {
+                ed.bake_unit_of(pid);
+            }
         }
     }
     let Some(mut n) = ed.doc.node(content).cloned() else { return };

@@ -22,6 +22,9 @@ pub(crate) struct Snapshot {
     pub stack: Vec<StackItem>,
     pub fill: Paint,
     pub stroke: Paint,
+    pub display_fill: Paint,
+    pub display_stroke: Paint,
+    pub display_stack: Vec<StackItem>,
     pub look: Option<Look>,
     pub role: GroupRole,
 }
@@ -41,8 +44,22 @@ impl Snapshot {
             node,
             path: path.map(|p| p.id),
             stack: path.map_or_else(Vec::new, |p| p.appearance().stack()),
-            fill: path.map_or(Paint::None, |p| p.fill.resolved(&ed.doc)),
-            stroke: path.map_or(Paint::None, |p| p.stroke.resolved(&ed.doc)),
+            fill: path.map_or(Paint::None, |p| p.fill.clone()),
+            stroke: path.map_or(Paint::None, |p| p.stroke.clone()),
+            display_fill: path.map_or(Paint::None, |p| p.fill.resolved(&ed.doc)),
+            display_stroke: path.map_or(Paint::None, |p| p.stroke.resolved(&ed.doc)),
+            display_stack: path.map_or_else(Vec::new, |p| {
+                p.appearance()
+                    .stack()
+                    .into_iter()
+                    .map(|mut item| {
+                        if let StackItem::Fill { paint, .. } | StackItem::Stroke { paint, .. } = &mut item {
+                            *paint = paint.resolved(&ed.doc);
+                        }
+                        item
+                    })
+                    .collect()
+            }),
             look: n.look,
             role: n.role,
         })
@@ -111,6 +128,11 @@ pub(crate) fn section(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
                 StackItem::Fill { paint, .. } => ("Fill", paint),
                 StackItem::Stroke { paint, .. } => ("Stroke", paint),
             };
+            let display_paint = match &s.display_stack[index] {
+                StackItem::Base(BaseSlot::Fill, _) => &s.display_fill,
+                StackItem::Base(BaseSlot::Stroke, _) => &s.display_stroke,
+                StackItem::Fill { paint, .. } | StackItem::Stroke { paint, .. } => paint,
+            };
             let opacity = item.opts().opacity;
             ui.push_id((path, index), |ui| {
                 ui.horizontal(|ui| {
@@ -166,13 +188,13 @@ pub(crate) fn section(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>) {
                         edit(ops, A::Delete { path, index });
                     }
                 });
-                let colour = paint.representative().unwrap_or([0.; 4]);
+                let colour = display_paint.representative().unwrap_or([0.; 4]);
                 if let StackItem::Base(slot, _) = item {
                     let target = match slot {
                         BaseSlot::Fill => super::PaintTarget::Fill,
                         BaseSlot::Stroke => super::PaintTarget::Stroke,
                     };
-                    super::picker::paint_row(ui, target, paint.representative(), false, ops);
+                    super::picker::paint_row(ui, target, display_paint.representative(), false, ops);
                 } else {
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(t::APPEARANCE_SWATCH_W, t::KIT_CONTROL_H), Sense::click());
@@ -347,5 +369,58 @@ mod tests {
         assert_eq!(ed.rev, rev + 1);
         ed.execute(EditCommand::Undo).unwrap();
         assert_eq!(ed.doc, before);
+    }
+    #[test]
+    fn snapshot_options_keep_authored_global_swatches() {
+        use varos_core::{
+            model::{Anchor, Path},
+            swatches::Swatch,
+        };
+        let mut ed = Editor::new();
+        let id = ed.doc.nid();
+        let anchors = [[0., 0.], [20., 0.], [20., 20.]]
+            .into_iter()
+            .map(|p| Anchor { id: ed.doc.nid(), p, hin: None, hout: None, smooth: false })
+            .collect();
+        let mut path = Path::new(id, anchors, true, None, None, 2.);
+        let reference = Paint::SwatchRef { id: 5000 };
+        path.fill = reference.clone();
+        path.stroke = reference.clone();
+        path.stack = varos_core::appearance::base_stack();
+        path.stack.push(StackItem::Fill { paint: reference.clone(), opts: Default::default() });
+        ed.doc.swatches.push(Swatch {
+            id: 5000,
+            name: "Global".into(),
+            paint: Paint::Solid([0.2, 0.4, 0.6, 1.]),
+            global: true,
+            group: String::new(),
+        });
+        ed.doc.paths.push(path);
+        ed.doc.sync_tree();
+        ed.layer_select_set(&[ed.doc.node_of_path(id).unwrap()]);
+        let snapshot = Snapshot::read(&ed).unwrap();
+        assert_eq!(snapshot.display_fill, Paint::Solid([0.2, 0.4, 0.6, 1.]));
+        for (index, item) in snapshot.stack.iter().enumerate() {
+            let paint = match item {
+                StackItem::Base(BaseSlot::Fill, _) => snapshot.fill.clone(),
+                StackItem::Base(BaseSlot::Stroke, _) => snapshot.stroke.clone(),
+                StackItem::Fill { paint, .. } | StackItem::Stroke { paint, .. } => paint.clone(),
+            };
+            ed.try_execute(EditCommand::Appearance(A::SetEntry {
+                path: id,
+                index,
+                paint,
+                opacity: 0.4,
+                visible: false,
+            }))
+            .unwrap();
+        }
+        let path = &ed.doc.paths[ed.doc.pidx(id).unwrap()];
+        assert_eq!(path.fill, reference);
+        assert_eq!(path.stroke, reference);
+        assert!(matches!(&path.stack[2], StackItem::Fill { paint, .. } if *paint == reference));
+        ed.doc.swatches[0].paint = Paint::Solid([1., 0., 0., 1.]);
+        let snapshot = Snapshot::read(&ed).unwrap();
+        assert_eq!(snapshot.display_fill, Paint::Solid([1., 0., 0., 1.]));
     }
 }

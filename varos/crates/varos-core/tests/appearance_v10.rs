@@ -142,15 +142,15 @@ fn scene_signature_and_pan_heat_cache_cover_live_entry_changes() {
     ed.try_execute(EditCommand::Appearance(A::AddFill { path: 10, paint: Paint::Solid([0., 0., 1., 1.]) })).unwrap();
     let before = varos_core::scene::scene_signature(&ed, View::identity(), [100, 100]);
     varos_core::build_scene_for_export(&ed, 1.);
-    let builds = ed.appearance_cache.builds();
+    let misses = ed.flatten_cache.lock().stats().1;
     for pan in 0..25 {
         varos_core::build_scene_in_view(&ed, View { pan: [pan as f32, 0.], zoom: 1. }, [100, 100]);
     }
-    assert_eq!(ed.appearance_cache.builds(), builds);
+    assert_eq!(ed.flatten_cache.lock().stats().1, misses);
     ed.doc.paths[0].stack[2].opts_mut().opacity = 0.4;
     assert_ne!(before, varos_core::scene::scene_signature(&ed, View::identity(), [100, 100]));
     varos_core::build_scene_for_export(&ed, 1.);
-    assert_eq!(ed.appearance_cache.builds(), builds + 1);
+    assert_eq!(ed.flatten_cache.lock().stats().1, misses);
 }
 
 #[test]
@@ -231,4 +231,121 @@ fn clipboard_and_duplication_preserve_stack_group_look_and_alpha_role() {
     let masked = dest.nodes.iter().find(|n| n.role == GroupRole::MaskAlpha).unwrap();
     assert_eq!(masked.look, Some(Look { opacity: 0.6, isolate: true }));
     assert!(dest.paths.iter().any(|p| p.stack.len() == 3));
+}
+
+#[test]
+fn layer_mask_bakes_every_rotated_sibling_and_restores_drawing_target() {
+    let mut ed = editor();
+    for (pid, angle) in [(10, 0.4), (20, -0.7)] {
+        let node = ed.doc.node_of_path(pid).unwrap();
+        ed.doc.set_node_xform(node, varos_core::model::Xform { rot: angle, piv: [0., 0.] });
+    }
+    let before = ed.doc.clone();
+    let world: Vec<_> = before.paths.iter().map(|p| before.unit_xform(p.id).apply(p.anchors[1].p)).collect();
+    ed.try_execute(EditCommand::Mask(M::Begin { node: 1, alpha: true })).unwrap();
+    for (p, expected) in ed.doc.paths.iter().zip(world) {
+        let actual = ed.doc.unit_xform(p.id).apply(p.anchors[1].p);
+        assert!(actual.iter().zip(expected).all(|(a, b)| (a - b).abs() < 1e-4));
+    }
+    let target = ed.doc.active_layer;
+    let group = ed.doc.node(target).unwrap().parent.unwrap();
+    ed.layer_select_set(&[1]);
+    assert_eq!(ed.doc.active_layer, 1);
+    ed.layer_select_set(&[group]);
+    assert_eq!(ed.doc.active_layer, target);
+    ed.set_active_layer(1);
+    ed.layer_toggle(group);
+    assert_eq!(ed.doc.active_layer, target);
+    ed.set_active_layer(group);
+    assert_eq!(ed.doc.active_layer, target);
+    format::encode_model(&ed.doc, &Limits::DEFAULT).unwrap();
+    ed.execute(EditCommand::Undo).unwrap();
+    assert_eq!(ed.doc, before);
+}
+
+#[test]
+fn layer_sources_sublayers_and_overdepth_masks_are_refused_atomically() {
+    let mut ed = editor();
+    let leaf = ed.doc.node_of_path(10).unwrap();
+    let before = ed.doc.clone();
+    assert!(ed.try_execute(EditCommand::Mask(M::Add { node: leaf, mask: 1, alpha: true })).is_err());
+    assert_eq!(ed.doc, before);
+    let mut sublayer = ed.doc.node(1).unwrap().clone();
+    sublayer.id = ed.doc.nid();
+    sublayer.parent = Some(1);
+    sublayer.children.clear();
+    ed.doc.nodes.iter_mut().find(|n| n.id == 1).unwrap().children.push(sublayer.id);
+    ed.doc.nodes.push(sublayer);
+    let before = ed.doc.clone();
+    assert!(ed.try_execute(EditCommand::Mask(M::Begin { node: 1, alpha: false })).is_err());
+    assert_eq!(ed.doc, before);
+    format::encode_model(&ed.doc, &Limits::DEFAULT).unwrap();
+    // Staged validation guards tree limits too, before publishing or opening undo.
+    let mut ed = editor();
+    let mut row = ed.doc.node_of_path(10).unwrap();
+    loop {
+        let before = ed.doc.clone();
+        let rev = ed.rev;
+        if ed.try_execute(EditCommand::Mask(M::Begin { node: row, alpha: true })).is_err() {
+            assert_eq!(ed.doc, before);
+            assert_eq!(ed.rev, rev);
+            format::encode_model(&ed.doc, &Limits::DEFAULT).unwrap();
+            break;
+        }
+        row = ed.doc.node(row).unwrap().parent.unwrap();
+        assert!(ed.rev < 100);
+    }
+}
+
+#[test]
+fn appearance_rebuild_is_bounded_and_canvas_culls_unseen_leaves() {
+    let mut ed = editor();
+    ed.doc.paths = (0..300).map(|i| square(10 + i, i as f32 * 50., 40.)).collect();
+    ed.doc.nodes.clear();
+    ed.doc.artboards.clear();
+    ed.doc.ids = 10000;
+    ed.doc.sync_tree();
+    let start = std::time::Instant::now();
+    varos_core::build_scene_for_export(&ed, 1.);
+    let plain = start.elapsed();
+    ed.try_execute(EditCommand::Appearance(A::AddFill { path: 10, paint: Paint::Solid([0., 0., 1., 1.]) })).unwrap();
+    let start = std::time::Instant::now();
+    varos_core::build_scene_for_export(&ed, 1.);
+    let appearance = start.elapsed();
+    eprintln!("300 leaves: plain={plain:?}, appearance={appearance:?}");
+    assert!(appearance < plain * 20 + std::time::Duration::from_millis(30), "whole-document work per leaf regressed");
+    ed.flatten_cache.lock().clear();
+    varos_core::build_scene_in_view(&ed, View::identity(), [100, 100]);
+    assert!(ed.flatten_cache.lock().stats().1 < 10, "offscreen geometry must stay unevaluated");
+    let misses = ed.flatten_cache.lock().stats().1;
+    ed.doc.paths[299].anchors[0].p[0] += 1.;
+    varos_core::build_scene_in_view(&ed, View::identity(), [100, 100]);
+    assert_eq!(ed.flatten_cache.lock().stats().1, misses, "one edit must not rebuild unrelated geometry");
+}
+
+#[test]
+fn appearance_entries_share_one_export_stroke_budget() {
+    let mut ed = editor();
+    let pi = ed.doc.pidx(10).unwrap();
+    let path = &mut ed.doc.paths[pi];
+    path.anchors.truncate(2);
+    path.anchors[1].p = [20000., 0.];
+    path.closed = false;
+    path.fill = Paint::None;
+    path.stroke = Paint::Solid([0., 0., 0., 1.]);
+    path.stroke_style.dash = vec![1., 1.];
+    let coverage = varos_core::stroke::evaluate::evaluate(path, 0.1, &|| false).unwrap();
+    let count = 1_000_000 / coverage.generated_elements + 1;
+    assert!((2..=62).contains(&count));
+    assert!(varos_core::build_scene_for_export(&ed, 1.).errors.is_empty());
+    let path = &mut ed.doc.paths[pi];
+    path.stack = base_stack();
+    path.stack.extend((0..count).map(|_| StackItem::Stroke {
+        paint: path.stroke.clone(),
+        width: path.stroke_width,
+        style: path.stroke_style.clone(),
+        opts: EntryOpts::default(),
+    }));
+    let scene = varos_core::build_scene_for_export(&ed, 1.);
+    assert!(!scene.errors.is_empty(), "entry evaluation must not reset the aggregate export budget");
 }
