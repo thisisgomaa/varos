@@ -25,6 +25,7 @@ fn modified() -> Layout {
             drawer_open: true,
             drawer_tab: 2,
             mode: Default::default(),
+            harmony: Default::default(),
         },
     }
 }

@@ -210,7 +210,7 @@ raising a ceiling is a review failure):
 | Menu row | none, TEXT | HOVER full-bleed | ✓ mark | MUTED/FAINT + reason | kit ✓ / legacy ✗ | h 32 kit · 26 legacy | legacy ✗ | `kit::menu_row` `kit/mod.rs:392`; legacy `menu_row` `ui.rs:3238-3313` · both |
 | Numeric field | SURFACE, value 13 centred, label FAINT 11.5 ✗ | — (✗ none) | editing: INPUT_WELL + 1 px ACCENT | ✗ none | ACCENT border | h 25 | label ✗ (FAINT) | `num_field` `ui.rs:1762` · ad hoc |
 | Text field | SURFACE + LINE | ✗ none | editing: ACCENT border | ✗ none | ACCENT border | h 26 | ✓ text | `name_field` `ui.rs:5342`; search/rename/hex vary · ad hoc |
-| Colour picker v3 (modeless) | PANEL + LINE, cached angular ring and rotating HSV triangle | live per-gesture preview | TOGGLE_WELL tabs; ACCENT focused target only | Gradient tab: engine pending; Harmony: Soon | K3 field focus ring | 240 pt Board hand; 32 pt header, 28 pt swatch row | Owner native hand test pending; compact glyph hits retain Figma sizing | `ui/picker/{mod,wheel,sliders,modes,cluster,fields,drawer}.rs`; kit fields/icons, L7 layout |
+| Colour picker v3 (modeless) | PANEL + LINE, cached angular ring and rotating HSV triangle | live per-gesture preview | TOGGLE_WELL tabs; ACCENT focused target only | Gradient tab: engine pending; Harmony implemented | K3 field focus ring | 240 pt Board hand; 32 pt header, 28 pt swatch row | Owner native hand test pending; compact glyph hits retain Figma sizing | `ui/picker/{mod,panel,wheel,sliders,modes,harmony,harmony_rules,mini,cluster,fields,drawer}.rs`; kit fields/icons, L7 layout |
 | Colour swatch | colour + LINE2 | white border | ACCENT ring (active target) | — | ✗ | 15-17 ✗ (< 24 hit) | ✗ target | `swatch_strip` `ui.rs:2122`, `ctl_chip` `ui.rs:4095` · ad hoc |
 | Section heading / panel header | MUTED micro 10 `.strong()` | — | — | — | — | — | MUTED ✓; size → 10.5 | `kit::section_heading`; inline `ui.rs:4950,5051,5061` · both |
 | Scrollbar | invisible until body hover | 6→8 px handle | — | — | — | 24 min handle | egui | `tokens.rs:94-97` · egui |
@@ -218,7 +218,7 @@ raising a ceiling is a review failure):
 | Agent presence | none without an edit session | — | 1.5-pt page outline + title-style label; staggered fading 1-pt object bounds, AGENT | — | human azure wins | canvas-only, no hit target | full-strength UI contrast ≥ 3:1; headless clock/pacing tests | `agent_presence.rs`, `ui/canvas_overlay.rs` · host overlay |
 | Native dialogs (Open/Save/Save changes?/errors) | **native by law** (rfd + OS sheets) | OS | OS | OS | OS | OS | OS | `file_ports.rs`, `main.rs` · native, never re-drawn in egui |
 
-Colour picker v3 slices 1–3: Sliders persists its mode in the additive `picker.mode`
+Colour picker v3 slices 1–4: Sliders persists its mode in the additive `picker.mode`
 layout preference (serde default HSB). HSB/HSL/RGB conversions are exact; CMYK is naive
 subtractive sRGB and Lab uses sRGB linearisation and XYZ D65, with no colour management,
 ICC profiles or gamut mapping. Gradients vary one channel at the current other channel
@@ -228,11 +228,43 @@ read-only, so a non-web-safe colour remains intact until edited. Wheel readout f
 chosen mode (Web shows hex). Numeric fields reuse K3 including ↑/↓ ±1 and Shift ±10;
 steps that snap to an unchanged Web value produce no undo step.
 
+Slice 4 (2026-10-09): Harmony's eight original SVG toggles persist `picker.harmony`
+with a serde default of Complementary. `harmony_rules.rs` ports the hue offsets and
+Mono brightness clamps from `da05aca`. The eighth rule is None (⌀, "No harmony"):
+no linked markers, only base-colour tones. Mono member markers sit inside the HSV
+triangle; its result chips continue the brightness progression and dedupe clamped
+values. Other rules complete six 20 pt chips with base/linked-colour tones.
+Clicking a result chip is a change-only atomic step.
+
+Drawer Recent is MRU; Board scans paths belonging to the active artboard using the
+existing outline-overlap membership; Document scans every path. Fill then stroke,
+first appearance, epsilon dedupe, cap 36 (Recent keeps its existing cap 12).
+Board scans only while the picker drawer is open on Board, cached by editor revision,
+active artboard and artboard rectangles (cleared on document switch).
+These are derived artwork colours, not a saved library. Empty chips use plain SURFACE wells.
+The drawer tab and expanded state remain layout preferences.
+
+The Artboard panel and control bar page-colour chips open Mini at their anchor, targeting a stable
+artboard ID. Mini is the same state machine with a 192 pt configuration: shared Wheel,
+hex/alpha/pipette row and seven recent chips plus drawer; no header tabs, readout,
+default buttons or target cluster. Opening either configuration finishes the previous
+configuration's gesture, so only one owns a transaction. Mini closes on Esc or a press
+outside its rect/anchor (K3 fields consume Esc first; an armed canvas click accepts a
+sample). Mini is transient; only the full panel's open state persists. A deleted page
+closes Mini. Dark tokens replace Figma's white chrome; Mini omits the numeric alpha
+box to match the compact reference. Native visual/interaction validation remains pending.
+
+Mini preserves the big panel’s saved open preference; when Mini closes, an open big
+panel returns on the next frame. Window → Colour reflects that big-panel preference.
+Armed Esc reverts/disarms sampling; a second Esc closes Mini. Target loss clears
+the Mini escape-ownership flag. Like kit menus (`kit/mod.rs::menu_with`), an outside
+dismiss press remains available to the canvas; kit menus do not swallow that press.
+
 Only an accepting canvas click commits an eyedropper preview. Disarm, close, Esc,
 field/target focus, panel press, selection change, document keys and Bridge mutations
 cancel unaccepted samples via `PickerCancel`, with no history/default/recent change.
 Completed drags remain committed. Page-colour targets resolve stable artboard IDs;
-a missing ID cancels and falls back to the current Paint target. Idle and armed idle
+a missing ID cancels and falls back to the current Paint target in the full panel (Mini closes). Idle and armed idle
 request no repaint timer. Existing older builds reject this branch's additive layout
 fields and quarantine `layout.json` as `.bad`; compatibility behaviour is retained.
 
@@ -309,7 +341,7 @@ Target: `varos-app/src/ui/` (binary crate first; moving to lib needs U1 types). 
 | `ui/menus.rs` | legacy dropdown 1636-1714, menu rows 3229-3313 (later replaced by `kit::menu`) |
 | `ui/controls.rs` | `Lab`, `doc_id`, `mini_btn`, `refpoint`, `icon_toggle`, `icon_btn`, `hsep` 1716-2030; `info_row/action_row/seg_btn` 5126-5192; `toggle_row/pill_btn` 5378-5420 |
 | `ui/fields.rs` | `settle_field_edits` 1746-1755, `num_field` 1762-1939, `dim_field` 4077, `name_field` 5342-5376 |
-| `ui/picker/{mod,wheel,sliders,modes,cluster,fields,drawer}.rs` | Colour picker v3: modeless hand/lifetime, cached wheel math, target cluster/paint mirrors, K3 fields, swatch drawer |
+| `ui/picker/{mod,panel,wheel,sliders,modes,harmony,harmony_rules,mini,cluster,fields,drawer}.rs` | Colour picker v3: modeless hand/lifetime, cached wheel math, target cluster/paint mirrors, K3 fields, swatch drawer |
 | `ui/rail.rs` | `icon_button/divider` 3006-3034, `board_rail` 3851-3900 |
 | `ui/topbar.rs` (tab strip) | caption buttons 3039-3228, focus seed + `TabDrag` 3315-3421, `build_topbar` 3422-3685, void/recovery/status 3692-3850 |
 | `ui/ctlbar.rs` | `board_ctlbar` 3901-4076, chips/fill-stroke/shape slot 4089-4342 |

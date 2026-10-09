@@ -113,7 +113,7 @@ pub(crate) fn panel_artboard(
                 ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
                 // click → the Color Picker panel (a settings row: no focus semantics to preserve)
                 if resp.clicked() || resp.double_clicked() {
-                    ops.push(Op::OpenPicker(MTarget::Ab(s.id)));
+                    ops.push(Op::OpenMini(s.id, sw));
                 }
                 let _ = col;
                 ui.add_space(8.0);
