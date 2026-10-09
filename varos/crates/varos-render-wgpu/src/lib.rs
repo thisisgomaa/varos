@@ -1,6 +1,11 @@
 //! wgpu renderer: a GPU canvas that draws a varos-core `Scene`. Stencil-then-cover fills,
 //! MSAA, non-sRGB surface, Mailbox present (low latency). Knows nothing about winit/tauri.
 
+// ---- Lane D ----
+pub mod layer_gpu;
+#[path = "../../varos-raster/src/layers.rs"]
+pub mod layers;
+// ---- end Lane D ----
 pub mod images;
 pub mod perf;
 mod tess;

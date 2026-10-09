@@ -1,5 +1,9 @@
 //! Pure CPU rasterisation of the core's renderer-independent scene description.
 
+// ---- Lane D ----
+pub mod layer_scene;
+pub mod layers;
+// ---- end Lane D ----
 pub mod export;
 mod gradient;
 
