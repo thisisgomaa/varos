@@ -1,15 +1,30 @@
-//! Lane F: optional container preview, independent of the editable model version.
+//! Lane F: optional preview introduced by the next native format.
 //! Preview revision 1 uses an unfiltered PNG stream under /VAROS_Preview.
 use lopdf::{dictionary, Document, Object, Stream};
 const MAX_PREVIEW: usize = 2 * 1024 * 1024;
 /// Pure next-container migration: preserves all existing page/model objects and adds a preview.
-/// Calling twice replaces the catalog pointer; no native model keys or FORMAT_VERSION change.
+/// Upgrades the model envelope and catalog together; authored model content is unchanged.
 pub fn embed_preview_next(pdf: &[u8], png: &[u8]) -> Result<Vec<u8>, String> {
     if png.len() > MAX_PREVIEW || !png.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Err("Preview must be a PNG up to 2 MiB".into());
     }
+    let loaded = crate::load_vrs_bytes(pdf, &varos_core::format::Limits::DEFAULT).map_err(|e| e.to_string())?;
     let mut doc = Document::load_mem(pdf).map_err(|e| e.to_string())?;
     let root = doc.trailer.get(b"Root").and_then(Object::as_reference).map_err(|e| e.to_string())?;
+    let model_id = doc
+        .get_dictionary(root)
+        .and_then(|d| d.get(b"VAROS_Model"))
+        .and_then(Object::as_reference)
+        .map_err(|e| e.to_string())?;
+    let model = varos_core::format::encode_model(&loaded.doc, &varos_core::format::Limits::DEFAULT)
+        .map_err(|e| e.to_string())?;
+    doc.get_object_mut(model_id)
+        .and_then(Object::as_stream_mut)
+        .map_err(|e| e.to_string())?
+        .set_content(model.into_bytes());
+    doc.get_dictionary_mut(root)
+        .map_err(|e| e.to_string())?
+        .set("VAROS_SchemaVersion", varos_core::format::FORMAT_VERSION as i64);
     if let Ok(old) = doc.get_dictionary(root).and_then(|d| d.get(b"VAROS_Preview")).and_then(Object::as_reference) {
         doc.objects.remove(&old);
     }
@@ -31,7 +46,18 @@ pub fn preview(pdf: &[u8]) -> Result<Option<Vec<u8>>, String> {
     let doc = Document::load_mem(pdf).map_err(|e| e.to_string())?;
     let root = doc.trailer.get(b"Root").and_then(Object::as_reference).map_err(|e| e.to_string())?;
     let catalog = doc.get_dictionary(root).map_err(|e| e.to_string())?;
-    let Ok(id) = catalog.get(b"VAROS_Preview").and_then(Object::as_reference) else { return Ok(None) };
+    if !catalog.has(b"VAROS_Preview") && !catalog.has(b"VAROS_PreviewVersion") {
+        return Ok(None);
+    }
+    let id = catalog.get(b"VAROS_Preview").and_then(Object::as_reference).map_err(|_| "Invalid preview reference")?;
+    if catalog
+        .get(b"VAROS_SchemaVersion")
+        .and_then(Object::as_i64)
+        .ok()
+        .is_none_or(|v| v < varos_core::format::PREVIEW_FORMAT_VERSION as i64)
+    {
+        return Err("Preview keys require the next native format".into());
+    }
     if catalog.get(b"VAROS_PreviewVersion").and_then(Object::as_i64).ok() != Some(1) {
         return Err("Unsupported container preview version".into());
     }
@@ -89,5 +115,35 @@ mod tests {
         assert!(embed_preview_next(&original, b"not png").is_err());
         assert!(embed_preview_next(b"not pdf", png).is_err());
         assert!(embed_preview_next(&original, &vec![0; MAX_PREVIEW + 1]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod fix_round_tests {
+    use super::*;
+    #[test]
+    fn frozen_next_preview_and_old_stamp_refusal() {
+        let next = include_bytes!("../fixtures/quicklook/next-preview.vrs");
+        let old = include_bytes!("../../varos-core/tests/fixtures/v5/plain.pdf");
+        let loaded = crate::load_vrs_bytes(next, &varos_core::format::Limits::DEFAULT).unwrap();
+        assert_eq!(loaded.source_version, varos_core::format::PREVIEW_FORMAT_VERSION);
+        assert!(!loaded.migrated);
+        assert!(loaded.doc.content_eq(&crate::load_vrs_bytes(old, &varos_core::format::Limits::DEFAULT).unwrap().doc));
+        assert_eq!(preview(next).unwrap().unwrap(), include_bytes!("../fixtures/quicklook/preview-v1.png"));
+        assert!(crate::load_vrs_bytes(
+            include_bytes!("../fixtures/quicklook/refuse-old-stamp.vrs"),
+            &varos_core::format::Limits::DEFAULT
+        )
+        .is_err());
+        // Freeze the previous v5 gate; the next writer is refused before any typed model decode.
+        for pdf in [next.as_slice(), include_bytes!("../../varos-core/tests/fixtures/refused/future_v6.pdf").as_slice()]
+        {
+            let doc = Document::load_mem(pdf).unwrap();
+            let v = doc.catalog().unwrap().get(b"VAROS_SchemaVersion").unwrap().as_i64().unwrap();
+            assert!(v > 5, "the previous reader must refuse this container");
+        }
+        let old_future: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../varos-core/tests/fixtures/refused/future_v6.json")).unwrap();
+        assert!(old_future["varos"].as_u64().unwrap() > 5);
     }
 }

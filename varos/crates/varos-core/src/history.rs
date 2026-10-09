@@ -71,8 +71,8 @@ impl Editor {
         (self.undo.len(), self.redo.len())
     }
     pub fn set_history_depth(&mut self, limit: usize) -> Result<(), String> {
-        if !(5..=1000).contains(&limit) {
-            return Err("History depth must be 5–1000".into());
+        if !(5..=200).contains(&limit) {
+            return Err("History depth must be 5–200".into());
         }
         if self.transaction_open() {
             return Err("Finish the current edit before changing history depth".into());

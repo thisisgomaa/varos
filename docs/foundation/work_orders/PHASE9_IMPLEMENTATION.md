@@ -50,10 +50,21 @@ API 1.2 actions supports start/cancel/stop/replay/undo_mine; history_list/histor
 Help offers docs, the shortcut list and the crash-log folder, also through the typed API 1.2 help tool.
 The Quick Look fallback embeds a current CPU PNG from the thumbs cache into the PDF container.
 Named pure migration: varos-pdf::quicklook::embed_preview_next. Optional catalog keys:
-VAROS_Preview and VAROS_PreviewVersion (preview revision 1). No editable JSON keys or FORMAT_VERSION
-change. Frozen input/PNG/refusal fixtures cover preservation and future-preview refusal. Corrupt
-thumbnail cache entries regenerate. Native signed extension packaging instructions are in
+VAROS_Preview and VAROS_PreviewVersion (preview revision 1). The next FORMAT_VERSION is provisional 6,
+with matching model-envelope/catalog stamps and pure migrate_v5_to_next_preview. No authored JSON keys
+change. Frozen container/PNG/refusal fixtures cover preservation and preview/format refusals. Corrupt
+or oversized thumbnail cache entries regenerate in memory; cache persistence is best-effort. Native signed extension packaging instructions are in
 varos/crates/varos-app/quicklook/README.md; Finder integration is not installed or claimed tested.
 
 All UI is provisional. Independent integration review, moderator merge and owner native tests remain
 required. This lane does not commit, push, launch the GUI, install or package the macOS extension.
+
+## Fix round — 2026-10-09
+
+Preview keys now require the next native format (provisional 6; integrator renumbers in merge order),
+with a named identity migration and frozen container/refusal inputs. Cache reads and decoding are bounded;
+cache persistence is optional. The history ceiling remains 200 until SETTINGS_V2 image-memory evidence.
+Reset leaves held Space and unchanged defaults with incumbent input handling. Rebound document commands
+retain repeats; application commands activate once. Recording coverage lives at document commit: unsupported
+pointer/creation commits refuse the entire recording visibly. Supported steps keep one selection binding;
+Bridge batches validate that binding across requests before recording their committed semantic metadata.

@@ -13,27 +13,42 @@ fn v5_frozen_json_pdf_and_svg_goldens() {
     for name in index.lines() {
         let json = std::fs::read(root.join(format!("{name}.json"))).unwrap();
         let loaded = decode_model(&json, None, &Limits::DEFAULT).unwrap();
-        assert!(!loaded.migrated);
+        assert!(loaded.migrated);
         assert_eq!(
-            varos_core::format::encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().as_bytes(),
+            varos_core::format::encode_model(&loaded.doc, &Limits::DEFAULT)
+                .unwrap()
+                .replacen("\"varos\":6", "\"varos\":5", 1)
+                .as_bytes(),
             json,
             "{name}: JSON"
         );
         let pdf = std::fs::read(root.join(format!("{name}.pdf"))).unwrap();
         assert_eq!(varos_pdf::load_vrs_bytes(&pdf, &Limits::DEFAULT).unwrap().doc, loaded.doc);
-        assert_eq!(varos_pdf::write_pdf(&loaded.doc).unwrap(), pdf, "{name}: PDF");
+        let mut historical = varos_pdf::write_pdf(&loaded.doc).unwrap();
+        // The single-digit stamp update changes neither byte lengths nor xref offsets.
+        for (current, previous) in [
+            (b"\"varos\":6".as_slice(), b"\"varos\":5".as_slice()),
+            (b"/VAROS_SchemaVersion 6".as_slice(), b"/VAROS_SchemaVersion 5".as_slice()),
+        ] {
+            let pos = historical.windows(current.len()).position(|w| w == current).unwrap();
+            historical[pos..pos + current.len()].copy_from_slice(previous);
+        }
+        assert_eq!(historical, pdf, "{name}: PDF apart from the two format stamps");
         let plan = plan_svg_export(&loaded.doc, ExportScope::WholeBoard).unwrap();
         let files = export_svg_files(&loaded.doc, &plan, &AtomicBool::new(false)).unwrap();
         assert_eq!(files[0].bytes, std::fs::read(root.join(format!("{name}.svg"))).unwrap(), "{name}: SVG");
     }
 }
 #[test]
-fn future_v6_refusal_precedes_typed_decode_in_both_containers() {
+fn future_v7_refusal_precedes_typed_decode_in_both_containers() {
     for ext in ["json", "pdf"] {
-        let bytes = std::fs::read(root().join(format!("refused/future_v6.{ext}"))).unwrap();
+        let bytes = std::fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("fixtures/quicklook/future-v7.{ext}")),
+        )
+        .unwrap();
         assert_eq!(
             varos_pdf::load_vrs_bytes(&bytes, &Limits::DEFAULT).unwrap_err(),
-            LoadError::NewerVersion { found: 6, supported: 5 }
+            LoadError::NewerVersion { found: 7, supported: 6 }
         );
     }
 }

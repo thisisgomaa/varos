@@ -111,14 +111,27 @@ pub fn shortcut(
     pressed: bool,
     repeat: bool,
 ) -> bool {
-    if ui.wants_keyboard() {
+    shortcut_route(&ui.phase9.shortcuts, ui.wants_keyboard(), pending, code, m, active, pressed, repeat)
+}
+#[allow(clippy::too_many_arguments)]
+fn shortcut_route(
+    shortcuts: &crate::shortcut_editor::EditorState,
+    wants_keyboard: bool,
+    pending: &mut crate::host::ActionQueue,
+    code: winit::keyboard::KeyCode,
+    m: varos_core::Mods,
+    active: Option<SessionId>,
+    pressed: bool,
+    repeat: bool,
+) -> bool {
+    if wants_keyboard {
         return false;
     }
-    let handler = ui.phase9.shortcuts.route(code, m);
+    let handler = shortcuts.route(code, m);
     if handler.is_none() {
-        return ui.phase9.shortcuts.suppresses_default(code, m);
+        return shortcuts.suppresses_default(code, m);
     }
-    if !pressed || repeat {
+    if !pressed || (repeat && !repeatable(handler)) {
         return true;
     }
     if let Some(handler) = handler {
@@ -142,4 +155,62 @@ pub fn shortcut(
         }
     }
     true
+}
+
+/// Document keys retain incumbent repeat behavior; application commands activate once.
+fn repeatable(handler: Option<crate::menus::MenuCmd>) -> bool {
+    use crate::host::{HostAction, MenuRoute};
+    match handler.and_then(|h| crate::host::menu_route(h, Some(SessionId(1)))) {
+        Some(MenuRoute::Key(k)) => matches!(
+            crate::host::key_action(
+                k.code,
+                varos_core::Mods { ctrl: k.cmd, shift: k.shift, alt: k.alt },
+                Some(SessionId(1))
+            ),
+            HostAction::Doc(_)
+        ),
+        Some(MenuRoute::Plain(_)) => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod fix_round_tests {
+    use super::*;
+    #[test]
+    fn reset_apply_dispatch_passes_space_release_and_arrow_repeats_to_canvas() {
+        let mut shortcuts = crate::shortcut_editor::EditorState::default();
+        shortcuts.effective.reset_defaults();
+        // Apply publishes decoded durable overrides, including defaults written by old Reset.
+        shortcuts
+            .effective
+            .bindings
+            .insert("shortcut.temporary-hand".into(), Some(crate::shortcut_editor::Chord::parse("Space").unwrap()));
+        shortcuts.effective =
+            crate::shortcut_editor::Overrides::decode(&serde_json::to_vec(&shortcuts.effective).unwrap()).unwrap();
+        let mut queue = crate::host::ActionQueue::default();
+        for code in [winit::keyboard::KeyCode::Space, winit::keyboard::KeyCode::ArrowLeft] {
+            for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
+                assert!(!shortcut_route(
+                    &shortcuts,
+                    false,
+                    &mut queue,
+                    code,
+                    varos_core::Mods::default(),
+                    None,
+                    pressed,
+                    repeat
+                ));
+            }
+        }
+    }
+    #[test]
+    fn rebound_document_keys_repeat_but_application_commands_do_not() {
+        use crate::menus::{Accel, MenuCmd};
+        use winit::keyboard::KeyCode;
+        let doc = MenuCmd::Key(Accel { code: KeyCode::ArrowLeft, cmd: false, shift: false, alt: false });
+        assert!(repeatable(Some(doc)));
+        let save = MenuCmd::Key(Accel { code: KeyCode::KeyS, cmd: true, shift: false, alt: false });
+        assert!(!repeatable(Some(save)));
+    }
 }

@@ -7,6 +7,15 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
+<!-- Lane F next-preview fix round -->
+## Implementation status — Lane F next preview format (2026-10-09)
+
+This worktree now stamps JSON `varos:6` and PDF `/VAROS_SchemaVersion 6`, provisional until the
+moderator assigns merge-order numbers. It adds optional container preview keys, with the pure
+`migrate_v5_to_next_preview` step and frozen refusal inputs described at the end of this contract.
+The Lane H status below is historical input to this next writer, not this worktree's current stamp.
+<!-- End Lane F next-preview fix round -->
+
 ## Implementation status — Lane H format 5 (2026-10-09)
 
 The worktree writer stamps JSON `varos:5` and PDF `/VAROS_SchemaVersion 5`. First merged writer takes v5;
@@ -79,6 +88,7 @@ Every Varos-written PDF container carries, in addition to the ordinary page tree
 
 | key | where | meaning |
 |---|---|---|
+| `/VAROS_Preview` + `/VAROS_PreviewVersion` | catalog, optional in next format | PNG stream reference + revision 1; bounded and refused under older stamps (next-preview section). |
 | `/VAROS_Model` | catalog | indirect reference to the embedded-file stream holding the JSON envelope bytes, unfiltered (§2). The fast read path. |
 | `/VAROS_SchemaVersion` | catalog | the same integer as the envelope's `varos` key, repeated so a reader can check the container's own claim without first decoding the model stream. |
 | `EmbeddedFiles` name tree, key `model.varos.json` | `/Names/EmbeddedFiles` | the same stream, reachable by name — the fallback path, and the one most likely to survive a third-party re-save that drops private catalog keys. |
@@ -114,6 +124,7 @@ S5-B now supplies the version-first gate through `format::decode_model`, includi
 | 3 | **legacy, readable through migration** (since 2026-10-07) | builds up to `a5f687b` | v2 plus three `doc` keys: `name` (string), `description` (string), `tags` (array of strings) — board metadata, bounded (§6b). A v1/v2 file carrying any of them is refused. |
 | 4 | **legacy, readable through identity migration** | builds through base `7b48f2c` | v3 plus one key on every artboard: `id` (u32 > 0, unique among artboards, from the document id counter) — stable artboard identity (§6c). `active` must name an artboard (or be 0 on a free canvas). A v1/v2/v3 file carrying an artboard `id` is refused. |
 
+| 6 (provisional next) | **Lane F writer, integration pending** | `feat/w2-app` | optional container `/VAROS_Preview` and `/VAROS_PreviewVersion`; pure identity migration from 5; merge-order renumber required. |
 | 5 | **Lane H writer, merge pending** | `feat/p2-stroke` | optional `doc.paths[].stroke_style`; exact keys and validation in §6d; default authored doc bytes unchanged. |
 
 ## 6. Migration v1 → v2
@@ -505,3 +516,29 @@ The old `v5_future.vrs`/`future_v5_pdf.vrs` remain archived inputs to the frozen
 the current reader accepts their version then refuses their invalid model. The old-reader harness adds
 the base-7b48f2c v4 gate; plain v5 JSON/PDF and `doc:42` demonstrate refusal before typed decode.
 Native save retains editable centrelines/styles; export baking never overwrites authored paths.
+
+<!-- Lane F fix round: next-preview format; moderator renumbers in merge order -->
+### Next native format: optional Quick Look preview (2026-10-09)
+
+This lane's next writer uses provisional format **6**, after stroke's 5. The integrator must renumber
+this step after images, gradients, text and Live Corners in the actual merge order; this lane owns no
+image/blob schema. Both JSON `varos` and PDF `/VAROS_SchemaVersion` advance together for all new saves.
+`migrate_v5_to_next_preview(Document, &Limits)` is a named pure identity migration: preview metadata
+is container-only, with no authored-content change. Existing v1–v5 fixtures are unchanged.
+
+The PDF catalog optionally adds `/VAROS_Preview` (reference to an unfiltered EmbeddedFile PNG stream,
+maximum 2 MiB) and `/VAROS_PreviewVersion 1`. Both keys must be present together. The normal native loader
+refuses these keys with an older or absent schema stamp, malformed references, future preview revisions,
+filtered or oversized streams, and invalid PNG signatures. A previous v5 reader refuses the new format
+before typed decoding. Missing previews remain valid in the next format; no downgrade writer is offered.
+
+Frozen fixtures in `varos-pdf/fixtures/quicklook`: `next-preview.vrs`, `refuse-old-stamp.vrs`,
+`future-v7.json` and `future-v7.pdf`; `fix_round_tests` checks content preservation and the previous
+reader gate. Historical v5 visual goldens compare unchanged output after normalizing only the two
+single-digit format stamps. Their original files and SHA256SUMS remain untouched.
+
+Save validates cached PNGs using bounded reads (2 MiB plus a sentinel byte), strict 544 × 246 dimension
+limits and an 8 MiB decoder budget before decoding, and reuses those validated bytes. Cache writes are
+best-effort; missing/corrupt/unwritable cache falls back to an in-memory thumbnail. The signed macOS
+Quick Look extension and blob-aware integration remain moderator work, requiring native acceptance.
+<!-- End Lane F fix round -->

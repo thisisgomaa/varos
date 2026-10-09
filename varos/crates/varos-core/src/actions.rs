@@ -184,8 +184,55 @@ impl Editor {
             return Err("A recording is already active".into());
         }
         self.action_recording_warning = None;
+        self.action_recording_targets = self.objsel.iter().copied().collect();
+        self.action_recording_targets.sort_unstable();
         self.action_recording = Some(vec![]);
         Ok(())
+    }
+    pub(crate) fn refuse_action_recording(&mut self) {
+        if self.action_recording.take().is_some() {
+            self.action_recording_warning =
+                Some("Unsupported document command stopped recording; no partial action was saved".into());
+        }
+    }
+    pub(crate) fn check_action_targets(&mut self, targets: &[u32]) {
+        let mut targets = targets.to_vec();
+        targets.sort_unstable();
+        if self.action_recording.as_ref().is_some_and(Vec::is_empty) && self.action_recording_targets.is_empty() {
+            self.action_recording_targets = targets.clone();
+        }
+        if self.action_recording.is_some() && targets != self.action_recording_targets {
+            self.action_recording = None;
+            self.action_recording_warning =
+                Some("Recording stopped: action targets changed; no partial action was saved".into());
+        }
+    }
+    /// Publish covered Bridge metadata atomically with its document commit. Other batch callers
+    /// remain unsupported and are caught by the same commit boundary as pointer gestures.
+    pub fn publish_recorded_design_batch(
+        &mut self,
+        batch: crate::bridge::PreparedDesignBatch,
+        targets: &[u32],
+        steps: Result<Vec<Step>, String>,
+    ) -> Result<(), String> {
+        let before = self.rev;
+        let recording = self.action_recording.clone();
+        let warning = self.action_recording_warning.clone();
+        let binding = self.action_recording_targets.clone();
+        if !batch.document().content_eq(&self.doc) {
+            self.check_action_targets(targets);
+        }
+        self.action_batch_covered = true;
+        let result = self.publish_design_batch(batch);
+        self.action_batch_covered = false;
+        if result.is_err() {
+            self.action_recording = recording;
+            self.action_recording_warning = warning;
+            self.action_recording_targets = binding;
+        } else {
+            self.record_action_batch(before, steps);
+        }
+        result
     }
     pub fn finish_action_recording(&mut self, name: String) -> Result<Actions, String> {
         let steps = self.action_recording.as_ref().ok_or("No recording is active")?.clone();
@@ -206,9 +253,7 @@ impl Editor {
     pub(crate) fn record_step(&mut self, step: Option<Step>, before: u64) {
         if self.rev > before && self.history_preview(false).is_some_and(|doc| !doc.content_eq(&self.doc)) {
             if self.action_recording.is_some() && step.is_none() {
-                self.action_recording = None;
-                self.action_recording_warning =
-                    Some("Unsupported document command stopped recording; no partial action was saved".into());
+                self.refuse_action_recording();
                 return;
             }
             if let (Some(steps), Some(step)) = (&mut self.action_recording, step) {
@@ -371,5 +416,109 @@ mod extended_steps {
         assert!(target.doc.paths.is_empty());
         target.undo();
         assert_eq!(target.doc.paths.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod fix_round_tests {
+    use super::*;
+    fn seed() -> (Editor, u32, u32) {
+        let mut ed = Editor::new();
+        let create = || EditCommand::AddShape {
+            kind: ShapeKind::Rect,
+            bounds: [0., 0., 10., 10.],
+            parent: None,
+            fill: Some([1., 0., 0., 1.]),
+            stroke: None,
+            stroke_width: 0.,
+            opacity: 1.,
+            name: None,
+        };
+        let a = ed.try_execute_created(create()).unwrap();
+        let b = ed.try_execute_created(create()).unwrap();
+        ed.try_execute(EditCommand::SelectPaths(vec![a])).unwrap();
+        (ed, a, b)
+    }
+    #[test]
+    fn direct_gesture_commit_refuses_partial_recording() {
+        let (mut ed, a, _) = seed();
+        ed.start_action_recording().unwrap();
+        ed.try_execute(EditCommand::Nudge { x: 1., y: 0. }).unwrap();
+        assert_eq!(ed.action_recording_len(), Some(1));
+        ed.begin();
+        ed.doc.paths.iter_mut().find(|p| p.id == a).unwrap().opacity = 0.25;
+        ed.dirty = true;
+        ed.commit();
+        assert!(ed.finish_action_recording("Partial".into()).is_err());
+        assert!(ed.take_action_recording_warning().unwrap().contains("no partial"));
+    }
+    #[test]
+    fn checked_creation_refuses_partial_recording() {
+        let (mut ed, _, _) = seed();
+        ed.start_action_recording().unwrap();
+        ed.try_execute(EditCommand::Nudge { x: 1., y: 0. }).unwrap();
+        ed.try_execute_created(EditCommand::AddShape {
+            kind: ShapeKind::Rect,
+            bounds: [0., 0., 10., 10.],
+            parent: None,
+            fill: None,
+            stroke: None,
+            stroke_width: 0.,
+            opacity: 1.,
+            name: None,
+        })
+        .unwrap();
+        assert!(ed.finish_action_recording("Partial".into()).is_err());
+        assert!(ed.take_action_recording_warning().is_some());
+    }
+    #[test]
+    fn changing_selection_refuses_recording_instead_of_rebinding_steps() {
+        let (mut ed, _, b) = seed();
+        ed.start_action_recording().unwrap();
+        ed.try_execute(EditCommand::Nudge { x: 1., y: 0. }).unwrap();
+        ed.try_execute(EditCommand::SelectPaths(vec![b])).unwrap();
+        ed.try_execute(EditCommand::Nudge { x: 2., y: 0. }).unwrap();
+        assert!(ed.finish_action_recording("Partial".into()).is_err());
+        assert!(ed.take_action_recording_warning().unwrap().contains("targets changed"));
+    }
+    #[test]
+    fn target_binding_survives_separate_bridge_publications() {
+        let (mut ed, a, b) = seed();
+        ed.start_action_recording().unwrap();
+        for id in [a, b] {
+            let batch = ed
+                .prepare_design_batch(
+                    1,
+                    |stage, _| {
+                        stage.try_execute(EditCommand::SelectPaths(vec![id]))?;
+                        stage.try_execute(EditCommand::Nudge { x: 1., y: 0. })
+                    },
+                    |_, e| e,
+                    || false,
+                )
+                .unwrap();
+            ed.publish_recorded_design_batch(batch, &[id], Ok(vec![Step::Nudge { delta_pt: [1., 0.] }])).unwrap();
+            if id == a {
+                assert_eq!(ed.action_recording_len(), Some(1));
+            }
+        }
+        assert!(ed.finish_action_recording("Partial".into()).is_err());
+        assert!(ed.take_action_recording_warning().unwrap().contains("targets changed"));
+    }
+    #[test]
+    fn direct_undo_refuses_partial_recording() {
+        let (mut ed, _, _) = seed();
+        ed.start_action_recording().unwrap();
+        ed.try_execute(EditCommand::Nudge { x: 1., y: 0. }).unwrap();
+        ed.undo();
+        assert!(ed.finish_action_recording("Partial".into()).is_err());
+        assert!(ed.take_action_recording_warning().is_some());
+    }
+    #[test]
+    fn history_above_original_ceiling_is_refused() {
+        let mut ed = Editor::new();
+        assert!(ed.set_history_depth(200).is_ok());
+        assert!(ed.set_history_depth(201).is_err());
+        assert!(ed.set_history_depth(1000).is_err());
     }
 }

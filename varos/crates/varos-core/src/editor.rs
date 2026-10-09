@@ -496,6 +496,10 @@ pub struct Editor {
     pub keyboard_increment_pt: f32,
     pub(crate) action_recording: Option<Vec<crate::actions::Step>>,
     pub(crate) action_recording_warning: Option<String>,
+    // ---- Lane F: recording coverage at every document commit ----
+    pub(crate) action_recording_targets: Vec<u32>,
+    pub(crate) action_commit_step: Option<crate::actions::Step>,
+    pub(crate) action_batch_covered: bool,
     history_log: history::Log,
     undo: Vec<std::sync::Arc<Document>>,
     redo: Vec<std::sync::Arc<Document>>,
@@ -565,6 +569,9 @@ impl Editor {
             keyboard_increment_pt: 1.0,
             action_recording: None,
             action_recording_warning: None,
+            action_recording_targets: vec![],
+            action_commit_step: None,
+            action_batch_covered: false,
             history_log: history::Log { limit: 200, ..history::Log::default() },
             undo: vec![],
             redo: vec![],
@@ -3647,7 +3654,12 @@ impl Editor {
                 self.undo.push(p);
                 self.trim_history();
                 self.redo.clear();
+                let before_rev = self.rev;
                 self.rev += 1;
+                // ---- Lane F: a direct gesture cannot silently disappear from Actions ----
+                if !self.action_batch_covered {
+                    self.record_step(self.action_commit_step.clone(), before_rev);
+                }
             }
         }
         self.pending = None;
@@ -3689,6 +3701,8 @@ impl Editor {
     /// `active` / `active_layer` stay history-restored (pinned by tests); units and move-art are real
     /// undo steps and stay restored too.
     fn restore_keeping_prefs(&mut self, mut snapshot: Document) {
+        // ---- Lane F: direct undo/redo cannot leave a silently incomplete recording ----
+        self.refuse_action_recording();
         snapshot.snap = self.doc.snap;
         snapshot.guides_locked = self.doc.guides_locked;
         snapshot.ruler_origin = self.doc.ruler_origin;

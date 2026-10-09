@@ -977,14 +977,28 @@ impl Service {
                     if cancelled.load(Ordering::Acquire) {
                         return Err(Error::new("cancelled", "cancelled before commit"));
                     }
-                    a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
                     if recording {
                         let steps = recorded
                             .into_iter()
                             .flatten()
                             .collect::<Result<Vec<_>, _>>()
                             .map(|parts| parts.into_iter().flatten().collect());
-                        a.editor.record_action_batch(from, steps);
+                        let targets = source_targets
+                            .as_deref()
+                            .unwrap_or(&[])
+                            .iter()
+                            .filter_map(|id| id.strip_prefix("path:").and_then(|id| id.parse::<u32>().ok()))
+                            .collect::<Vec<_>>();
+                        let steps = if targets.len() != source_targets.as_ref().map_or(0, Vec::len) {
+                            Err("Only explicit path targets can be recorded".into())
+                        } else {
+                            steps
+                        };
+                        a.editor
+                            .publish_recorded_design_batch(batch, &targets, steps)
+                            .map_err(|reason| Error::new("busy", reason))?;
+                    } else {
+                        a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
                     }
                     a.editor.annotate_history(from, actor, format!("Agent batch · {} operations", v.ops.len()));
                     a.editor.annotate_history_verbs(

@@ -30,23 +30,56 @@ fn with_preview_at(
     let key = crate::thumbs::ThumbKey(canonical.to_string_lossy().into_owned());
     let cached = crate::thumbs::preview_cache_path(root, &key);
     let digest = model_digest(doc)?;
-    let cached_png = std::fs::read(&cached)
-        .ok()
-        .filter(|bytes| bytes.len() <= 2 * 1024 * 1024 && image::load_from_memory(bytes).is_ok());
-    if cached_png.is_none()
-        || std::fs::read_to_string(cached.with_extension("model-sha256")).ok().as_deref() != Some(&digest)
-    {
-        std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
-        let png = varos_raster::rasterize(Arc::new(doc.clone()), [varos_raster::WIDTH, varos_raster::HEIGHT])
-            .into_result()?
-            .encode_png()?;
-        persist(&cached, &png)?;
-        persist(&cached.with_extension("model-sha256"), digest.as_bytes())?;
-    }
-    let bytes = std::fs::read(cached).map_err(|e| e.to_string())?;
+    let cached_png = read_cached_png(&cached).ok().filter(|_| {
+        read_bounded(&cached.with_extension("model-sha256"), 64).ok().as_deref() == Some(digest.as_bytes())
+    });
+    let bytes = match cached_png {
+        Some(bytes) => bytes,
+        None => {
+            let png = varos_raster::rasterize(Arc::new(doc.clone()), [varos_raster::WIDTH, varos_raster::HEIGHT])
+                .into_result()?
+                .encode_png()?;
+            // Optional disk cache cannot make a writable native destination unsaveable.
+            if std::fs::create_dir_all(root).is_ok() {
+                let _ = persist(&cached, &png);
+                let _ = persist(&cached.with_extension("model-sha256"), digest.as_bytes());
+            }
+            png
+        }
+    };
     let next = varos_pdf::quicklook::embed_preview_next(&pdf, &bytes)?;
     varos_pdf::load_vrs_bytes(&next, &varos_core::format::Limits::DEFAULT).map_err(|e| e.to_string())?;
     Ok(next)
+}
+const MAX_PNG: usize = 2 * 1024 * 1024;
+fn read_bounded(path: &Path, max: usize) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|e| e.to_string())?
+        .take(max as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > max {
+        return Err("Preview cache exceeds byte limit".into());
+    }
+    Ok(bytes)
+}
+fn read_cached_png(path: &Path) -> Result<Vec<u8>, String> {
+    let bytes = read_bounded(path, MAX_PNG)?;
+    validate_png(&bytes)?;
+    Ok(bytes)
+}
+fn validate_png(bytes: &[u8]) -> Result<(), String> {
+    // PNG-only, strict thumbnail dimensions and a decoder allocation budget before decode.
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(varos_raster::WIDTH);
+    limits.max_image_height = Some(varos_raster::HEIGHT);
+    limits.max_alloc = Some(8 * 1024 * 1024);
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+    reader.limits(limits);
+    reader.decode().map_err(|e| e.to_string())?;
+    Ok(())
 }
 fn persist(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use varos_app::storage::{
@@ -72,5 +105,36 @@ mod tests {
         let loaded = varos_pdf::load_vrs_bytes(&next, &varos_core::format::Limits::DEFAULT).unwrap().doc;
         assert_eq!(model_digest(&loaded).unwrap(), model_digest(&doc).unwrap());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod fix_round_tests {
+    use super::*;
+    #[test]
+    fn oversized_cache_and_thumbnail_dimensions_are_refused_before_decode() {
+        let path =
+            std::env::temp_dir().join(format!("varos-preview-bounds-{}", varos_app::storage::checksum::new_nonce()));
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(128 * 1024 * 1024).unwrap();
+        assert!(read_cached_png(&path).unwrap_err().contains("byte limit"));
+        std::fs::remove_file(path).unwrap();
+        let image = image::RgbaImage::new(varos_raster::WIDTH + 1, 1);
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        assert!(validate_png(bytes.get_ref()).is_err());
+        assert!(validate_png(b"broken").is_err());
+    }
+    #[test]
+    fn unusable_cache_directory_does_not_prevent_native_save() {
+        let root = std::env::temp_dir()
+            .join(format!("varos-preview-unwritable-{}", varos_app::storage::checksum::new_nonce()));
+        std::fs::write(&root, b"a file cannot be a cache directory").unwrap();
+        let doc = varos_core::board::new_board();
+        let original = varos_pdf::write_pdf_checked(&doc, &varos_core::format::Limits::DEFAULT).unwrap();
+        let saved = with_preview_at(&doc, &root.with_extension("vrs"), original, &root).unwrap();
+        assert!(varos_pdf::quicklook::preview(&saved).unwrap().is_some());
+        assert!(varos_pdf::load_vrs_bytes(&saved, &varos_core::format::Limits::DEFAULT).unwrap().doc.content_eq(&doc));
+        std::fs::remove_file(root).unwrap();
     }
 }

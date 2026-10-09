@@ -699,6 +699,11 @@ impl Editor {
         let snapshot = self.clone();
         let label = crate::command_labels::label(&command);
         let semantic = crate::actions::semantic(&command);
+        // ---- Lane F: bind every supported edit to the recording's original selection ----
+        if semantic.is_some() {
+            self.check_action_targets(&self.objsel.iter().copied().collect::<Vec<_>>());
+        }
+        let previous_step = std::mem::replace(&mut self.action_commit_step, semantic);
         let before = self.rev;
         self.clipping_enablement.get_mut().take();
         let result = crate::guard::catch_panic(|| {
@@ -710,7 +715,7 @@ impl Editor {
         if result.is_err() {
             *self = snapshot;
         } else {
-            self.record_step(semantic, before);
+            self.action_commit_step = previous_step;
             self.annotate_history(before, crate::editor::history::Actor::Human, label.into());
         }
         result
