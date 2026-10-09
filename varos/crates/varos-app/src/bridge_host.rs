@@ -148,6 +148,8 @@ impl Host for Desktop<'_> {
                 doc: std::sync::Arc::new(snapshot),
                 plan,
                 replace_confirmed: false,
+                cancel: Default::default(),
+                ticket: 0, // a Bridge export has no sheet
             })
         } else {
             FileJob::Save(SaveJob { sid: id, ticket, dest: dest.clone(), doc: std::sync::Arc::new(snapshot) })

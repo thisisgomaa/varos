@@ -24,26 +24,31 @@ use winit::keyboard::KeyCode;
 
 use crate::app_command::{AppCommand, OpenOrigin, SessionId, WindowCmd};
 use crate::chrome::{Accel, FileCmd, MenuCmd, SnapRow};
-use crate::file_jobs::{FileDone, FileJob};
+use crate::file_jobs::{ExportEvent, FileDone, FileJob};
 use crate::lifecycle::{Dialogs, DocStore, Lifecycle};
 use crate::ui::WinAction;
 use crate::workspace::Workspace;
 
 /// The File meaning of a shortcut key, if any: ⌘N New · ⌘O Open… · ⌘S Save · ⇧⌘S Save As… ·
-/// ⌘W Close Tab · ⌘Q Quit — the same `FileCmd`s the native File rows carry. `ctrl` is Ctrl or ⌘ (as
-/// `Editor::mods`). Without it the letters stay tool keys (S = Scale…), and ⌥ never means a file
-/// command. Pure.
+/// ⌥⌘S Save a Copy… · ⌘W Close Tab · ⌥⌘W Close All · ⌘Q Quit · F12 Revert (bare, Illustrator) — the
+/// same `FileCmd`s the native File rows carry. `ctrl` is Ctrl or ⌘ (as `Editor::mods`). Without it
+/// the letters stay tool keys (S = Scale…); ⌥ means a file command only in ⌥⌘S / ⌥⌘W. Pure.
 pub fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<FileCmd> {
-    if !ctrl || alt {
+    if code == KeyCode::F12 {
+        return (!ctrl && !shift && !alt).then_some(FileCmd::Revert);
+    }
+    if !ctrl {
         return None;
     }
-    Some(match (code, shift) {
-        (KeyCode::KeyN, false) => FileCmd::New,
-        (KeyCode::KeyO, false) => FileCmd::Open,
-        (KeyCode::KeyS, false) => FileCmd::Save,
-        (KeyCode::KeyS, true) => FileCmd::SaveAs,
-        (KeyCode::KeyW, false) => FileCmd::CloseTab,
-        (KeyCode::KeyQ, false) => FileCmd::Quit,
+    Some(match (code, shift, alt) {
+        (KeyCode::KeyN, false, false) => FileCmd::New,
+        (KeyCode::KeyO, false, false) => FileCmd::Open,
+        (KeyCode::KeyS, false, false) => FileCmd::Save,
+        (KeyCode::KeyS, true, false) => FileCmd::SaveAs,
+        (KeyCode::KeyS, false, true) => FileCmd::SaveCopy,
+        (KeyCode::KeyW, false, false) => FileCmd::CloseTab,
+        (KeyCode::KeyW, false, true) => FileCmd::CloseAll,
+        (KeyCode::KeyQ, false, false) => FileCmd::Quit,
         _ => return None,
     })
 }
@@ -59,16 +64,24 @@ pub fn tab_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<AppC
 }
 
 /// The ONE mapper from a [`FileCmd`] (a native File row, a lifecycle key, the top-bar Export button,
-/// the burger's rows) to its [`AppCommand`]. Save / Save As / Export / Close Tab act on the active
-/// tab; with no active tab (Home, S2's empty workspace) they mean nothing (`None`).
+/// the burger's rows) to its [`AppCommand`]. Save / Save As / Save a Copy / Revert / Export / Close
+/// Tab / Close All act on the active tab(s); with no active tab (Home, S2's empty workspace) they mean
+/// nothing (`None`).
 pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppCommand> {
     Some(match cmd {
         FileCmd::New => AppCommand::NewBoard,
         FileCmd::Open => AppCommand::OpenDialog,
         FileCmd::Save => AppCommand::Save(active?),
         FileCmd::SaveAs => AppCommand::SaveAs(active?),
+        FileCmd::SaveCopy => AppCommand::SaveCopy(active?),
+        FileCmd::Revert => AppCommand::Revert(active?),
         FileCmd::Export => AppCommand::ShowExport(active?),
+        FileCmd::ExportSelection => AppCommand::ShowExportSelection(active?),
         FileCmd::CloseTab => AppCommand::CloseDocument(active?),
+        FileCmd::CloseAll => {
+            active?;
+            AppCommand::CloseAll
+        }
         FileCmd::Quit => AppCommand::Quit,
     })
 }
@@ -452,6 +465,11 @@ pub trait DocUi {
     }
     /// Drop the Ui's per-document caches (layer rows, drag, collapse, search).
     fn document_switched(&mut self);
+    /// Slice 0.6: an export's progress, for the Export sheet (`export_ui`). `true` = the sheet
+    /// showed it; a finished export nobody showed is told with a notice ([`run_lifecycle`]).
+    fn export_event(&mut self, _event: &ExportEvent) -> bool {
+        false
+    }
 }
 
 /// What one lifecycle command leaves for the event loop to do.
@@ -501,7 +519,13 @@ pub fn run_lifecycle(
     if ws.on_home()
         && matches!(
             cmd,
-            AppCommand::Save(_) | AppCommand::SaveAs(_) | AppCommand::ShowExport(_) | AppCommand::ExportPdf(..)
+            AppCommand::Save(_)
+                | AppCommand::SaveAs(_)
+                | AppCommand::SaveCopy(_)
+                | AppCommand::Revert(_)
+                | AppCommand::ShowExport(_)
+                | AppCommand::ShowExportSelection(_)
+                | AppCommand::ExportPdf(..)
         )
     {
         return Ran::default();
@@ -522,11 +546,20 @@ pub fn run_lifecycle(
         s.settle();
     }
     let before = (ws.active_id(), ws.on_home());
-    let effect = Lifecycle { ws: &mut *ws, dialogs, store, jobs }.run(cmd);
+    let effect = Lifecycle { ws: &mut *ws, dialogs: &mut *dialogs, store, jobs }.run(cmd);
     if let Some(s) = ws.active_mut() {
         keys.mirror(&mut s.editor);
     }
     ui.document_switched();
+    for event in &effect.exports {
+        // the Export sheet shows its own done state (Show in Finder); without it, say so once
+        if !ui.export_event(event) {
+            if let ExportEvent::Finished { dest, .. } = event {
+                let name = dest.file_name().map_or_else(|| dest.display().to_string(), |n| n.to_string_lossy().into());
+                dialogs.notice(&format!("Exported {name}"), "Your document has not changed.");
+            }
+        }
+    }
     Ran {
         exit: effect.exit,
         ran: true,
@@ -546,7 +579,10 @@ fn waits_for_fields(cmd: &AppCommand) -> bool {
         cmd,
         C::Save(_)
             | C::SaveAs(_)
+            | C::SaveCopy(_)
+            | C::Revert(_)
             | C::ShowExport(_)
+            | C::ShowExportSelection(_)
             | C::ExportPdf(..)
             | C::NewBoard
             | C::NewWithPreset(_)
@@ -555,6 +591,7 @@ fn waits_for_fields(cmd: &AppCommand) -> bool {
             | C::OpenRecent(_)
             | C::OpenPaths(_, OpenOrigin::Dialog)
             | C::CloseDocument(_)
+            | C::CloseAll
             | C::Quit
             | C::ActivateDocument(_)
             | C::ActivateNext
@@ -607,15 +644,22 @@ impl FileJobs for NoWorker {
     }
 }
 
-/// The tabs whose in-flight background SAVE `cmd` must wait for before it runs: Close Tab and Save As
-/// of that tab, and Quit of every tab — they decide on the saved state, so they decide only after the
-/// save landed (or failed). ⌘S coalesces instead; an export never blocks anything (Quit's drain of
-/// the worker finishes it, like a recovery copy).
+/// The tabs whose in-flight background SAVE `cmd` must wait for before it runs: Close Tab, Save As,
+/// Save a Copy and Revert of that tab, and Quit / Close All of every tab — they decide on the saved
+/// state (or need the tab's one save slot), so they decide only after the save landed (or failed). ⌘S
+/// coalesces instead; an export never blocks anything (Quit's drain of the worker finishes it, like a
+/// recovery copy).
 pub fn save_barrier(cmd: &AppCommand, ws: &Workspace) -> Vec<SessionId> {
     let saving = |id: SessionId| ws.get(id).is_some_and(|s| s.saving.is_some());
     match cmd {
-        AppCommand::CloseDocument(id) | AppCommand::SaveAs(id) if saving(*id) => vec![*id],
-        AppCommand::Quit => ws.sessions().iter().filter(|s| s.saving.is_some()).map(|s| s.id).collect(),
+        AppCommand::CloseDocument(id) | AppCommand::SaveAs(id) | AppCommand::SaveCopy(id) | AppCommand::Revert(id)
+            if saving(*id) =>
+        {
+            vec![*id]
+        }
+        AppCommand::Quit | AppCommand::CloseAll => {
+            ws.sessions().iter().filter(|s| s.saving.is_some()).map(|s| s.id).collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -739,8 +783,27 @@ mod tests {
             (K::KeyQ, false, FileCmd::Quit),
         ] {
             assert_eq!(lifecycle_key(code, true, shift, false), Some(want), "{code:?} shift={shift}");
-            assert_eq!(lifecycle_key(code, true, shift, true), None, "⌥ never makes {code:?} a file command");
         }
+        // slice 0.6 (Illustrator): ⌥ makes a file command only in ⌥⌘S Save a Copy and ⌥⌘W Close All;
+        // F12 alone is Revert
+        for (code, shift, want) in [
+            (K::KeyN, false, None),
+            (K::KeyO, false, None),
+            (K::KeyS, false, Some(FileCmd::SaveCopy)),
+            (K::KeyS, true, None),
+            (K::KeyW, false, Some(FileCmd::CloseAll)),
+            (K::KeyQ, false, None),
+        ] {
+            assert_eq!(lifecycle_key(code, true, shift, true), want, "⌥ {code:?} shift={shift}");
+        }
+        assert_eq!(lifecycle_key(K::F12, false, false, false), Some(FileCmd::Revert));
+        for (ctrl, shift, alt) in [(true, false, false), (false, true, false), (false, false, true)] {
+            assert_eq!(lifecycle_key(K::F12, ctrl, shift, alt), None, "only the bare F12 reverts");
+        }
+        assert_eq!(key_command(K::F12, m(false, false, false), Some(ID)), Some(AppCommand::Revert(ID)));
+        assert_eq!(key_command(K::KeyS, m(true, false, true), Some(ID)), Some(AppCommand::SaveCopy(ID)));
+        assert_eq!(key_command(K::KeyW, m(true, false, true), Some(ID)), Some(AppCommand::CloseAll));
+        assert_eq!(key_command(K::KeyW, m(true, false, true), None), None, "Close All needs a document");
         // Ctrl+Tab / Ctrl+⇧Tab switch tabs (keyboard-only, so not a FileCmd)
         assert_eq!(tab_key(K::Tab, true, false, false), Some(AppCommand::ActivateNext));
         assert_eq!(tab_key(K::Tab, true, true, false), Some(AppCommand::ActivatePrevious));
@@ -807,7 +870,7 @@ mod tests {
                     assert_eq!(menu_route(*cmd, Some(ID)), Some(MenuRoute::App(want)), "{id}");
                     // the key the row SHOWS is the key the keyboard maps to the same command
                     if let Some(k) = accel {
-                        assert_eq!(lifecycle_key(k.code, true, k.shift, k.alt), Some(f), "{id}: shown key ≠ key path");
+                        assert_eq!(lifecycle_key(k.code, k.cmd, k.shift, k.alt), Some(f), "{id}: shown key ≠ key path");
                     }
                     file_rows.push(f);
                 }
@@ -819,7 +882,18 @@ mod tests {
                 _ => {}
             }
         }
-        for f in [FileCmd::New, FileCmd::Open, FileCmd::CloseTab, FileCmd::Save, FileCmd::SaveAs, FileCmd::Quit] {
+        for f in [
+            FileCmd::New,
+            FileCmd::Open,
+            FileCmd::CloseTab,
+            FileCmd::CloseAll,
+            FileCmd::Save,
+            FileCmd::SaveAs,
+            FileCmd::SaveCopy,
+            FileCmd::Revert,
+            FileCmd::ExportSelection,
+            FileCmd::Quit,
+        ] {
             assert!(file_rows.contains(&f), "the menu bar has a {f:?} row");
         }
     }
@@ -1574,5 +1648,98 @@ mod background_tests {
         let s = r.ws.get(a).unwrap();
         assert_eq!(s.path.as_deref(), Some(Path::new("b.vrs")));
         assert!(!s.is_dirty_exact(), "the tab ends clean");
+    }
+
+    /// Slice 0.6, Save a Copy… (⌥⌘S) on the worker: it waits for an in-flight ⌘S like Save As, writes
+    /// the document as it is, and leaves the tab's file, name and unsaved changes alone; a ⌘S pressed
+    /// while the copy is in flight runs after it lands.
+    #[test]
+    fn save_a_copy_on_the_worker_keeps_the_tab_and_its_unsaved_changes() {
+        let mut r = Rig::new();
+        let a = r.saved_tab("a.vrs"); // 2 boards, dirty
+        r.run(AppCommand::Save(a));
+        assert!(r.run(AppCommand::SaveCopy(a)).held, "waits for the in-flight ⌘S, like Save As");
+        r.land();
+        r.edit(a); // 3 boards, dirty again
+        r.dlg.save_as_to = Some(PathBuf::from("a copy.vrs"));
+        assert!(!r.run(AppCommand::SaveCopy(a)).held);
+        assert_eq!(r.log(), ["save-as a copy.vrs"], "the dialog suggests “<name> copy”");
+        assert!(!r.run(AppCommand::Save(a)).held, "⌘S during the copy coalesces, it never waits");
+        assert_eq!(r.worker.queue.len(), 1, "one writer per tab");
+        let ran = r.land();
+        assert_eq!(ran.follow_up_saves, [a], "the ⌘S pressed meanwhile is due now");
+        assert_eq!(r.boards_on_disk("a copy.vrs"), 3, "the copy is the document as it was");
+        assert_eq!(r.boards_on_disk("a.vrs"), 2, "the original file is not touched by the copy");
+        let s = r.ws.get(a).unwrap();
+        assert_eq!(s.path.as_deref(), Some(Path::new("a.vrs")), "the tab keeps its file");
+        assert!(s.is_dirty_exact() && s.saving.is_none(), "still unsaved; the save slot is free");
+    }
+
+    /// Slice 0.6, Close All (⌥⌘W): held for EVERY in-flight save (like Quit), then the per-tab guard.
+    #[test]
+    fn close_all_is_held_for_every_in_flight_save_then_asks_per_dirty_tab() {
+        let mut r = Rig::new();
+        let (a, b) = (r.saved_tab("a.vrs"), r.saved_tab("b.vrs"));
+        r.run(AppCommand::Save(a));
+        assert!(r.run(AppCommand::CloseAll).held);
+        r.land();
+        r.dlg.answers.push_back(SaveDecision::DontSave);
+        let ran = r.run(AppCommand::CloseAll);
+        assert!(!ran.held && !ran.exit, "Close All never quits");
+        assert_eq!(r.log(), ["ask b"], "a was saved by its landed ⌘S; only b is asked");
+        assert!(r.ws.get(a).is_none() && r.ws.get(b).is_none());
+        assert!(r.ws.on_home(), "every tab closed: Home");
+    }
+
+    /// Slice 0.6: a written PDF is shown by the Export sheet when it takes the event; otherwise (the
+    /// sheet was closed, another tab is showing) the host says so with one notice.
+    #[test]
+    fn a_finished_export_nobody_shows_is_told_once() {
+        use crate::file_jobs::{CancelFlag, ExportDone, ExportJob, ExportResult};
+        struct SheetUi(Vec<ExportEvent>);
+        impl DocUi for SheetUi {
+            fn settle(&mut self, _: &mut Editor) -> bool {
+                true
+            }
+            fn document_switched(&mut self) {}
+            fn export_event(&mut self, event: &ExportEvent) -> bool {
+                self.0.push(event.clone());
+                true
+            }
+        }
+        let mut r = Rig::new();
+        let a = r.saved_tab("a.vrs");
+        let doc = std::sync::Arc::new(r.ws.get(a).unwrap().editor.doc.clone());
+        let plan = varos_pdf::plan_pdf_export(&doc, varos_pdf::ExportScope::AllVisibleArtboards).unwrap();
+        // the export report (main's 0.1 seam) rides the Finished event to the sheet's Done state
+        let report = varos_core::ExportReport {
+            notes: vec![varos_core::ExportNote { kind: "note".into(), object_id: None, message: "m".into() }],
+        };
+        let done = || {
+            let job = ExportJob {
+                sid: a,
+                dest: PathBuf::from("/out/a.pdf"),
+                doc: doc.clone(),
+                plan: plan.clone(),
+                replace_confirmed: false,
+                cancel: CancelFlag::default(),
+                ticket: 3,
+            };
+            AppCommand::FileDone(Box::new(FileDone::Exported(ExportDone {
+                job,
+                result: ExportResult::Exported,
+                report: report.clone(),
+            })))
+        };
+        let keys = Keyboard::default();
+        run_lifecycle(done(), &mut r.ws, &mut QuietUi, &mut r.dlg, &mut r.store, &keys, None);
+        assert_eq!(r.log(), ["notice Exported a.pdf"], "no sheet took it: one notice");
+        let mut sheet = SheetUi(vec![]);
+        run_lifecycle(done(), &mut r.ws, &mut sheet, &mut r.dlg, &mut r.store, &keys, None);
+        assert!(r.log().is_empty(), "the sheet shows it: no notice");
+        assert_eq!(
+            sheet.0,
+            [ExportEvent::Finished { sid: a, ticket: 3, dest: PathBuf::from("/out/a.pdf"), report: report.clone() }]
+        );
     }
 }

@@ -424,4 +424,7 @@ impl crate::host::DocUi for crate::ui::Ui {
     fn document_switched(&mut self) {
         crate::ui::Ui::document_switched(self)
     }
+    fn export_event(&mut self, event: &crate::file_jobs::ExportEvent) -> bool {
+        crate::export_ui::on_event(&mut self.export_sheet, event)
+    }
 }

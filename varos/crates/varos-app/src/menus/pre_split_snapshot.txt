@@ -1,0 +1,77 @@
+menu Varos
+  native About
+  ---
+  native Services
+  ---
+  native Hide
+  native HideOthers
+  native ShowAll
+  ---
+  item app.quit | Quit Varos | ⌘KeyQ | File(Quit) | None
+menu File
+  item file.new | New | ⌘KeyN | File(New) | None
+  item file.open | Open… | ⌘KeyO | File(Open) | None
+  sub Open Recent
+  ---
+  item file.close | Close Tab | ⌘KeyW | File(CloseTab) | None
+  item file.save | Save | ⌘KeyS | File(Save) | None
+  item file.saveas | Save As… | ⌘⇧KeyS | File(SaveAs) | None
+  ---
+  sub Export
+    item file.export.pdf | PDF… | - | File(Export) | None
+menu Edit
+  item edit.undo | Undo | ⌘KeyZ | Key(⌘KeyZ) | None
+  item edit.redo | Redo | ⌘⇧KeyZ | Key(⌘⇧KeyZ) | None
+  ---
+  item edit.cut | Cut | ⌘KeyX | Key(⌘KeyX) | None
+  item edit.copy | Copy | ⌘KeyC | Key(⌘KeyC) | None
+  item edit.paste | Paste | ⌘KeyV | Key(⌘KeyV) | None
+  item edit.pasteinplace | Paste in Place | ⌘⇧KeyV | Key(⌘⇧KeyV) | None
+  item edit.delete | Delete | - | Plain(Backspace) | None
+  ---
+  item edit.selectall | Select All | ⌘KeyA | Key(⌘KeyA) | None
+  item edit.deselect | Deselect | ⌘⇧KeyA | Key(⌘⇧KeyA) | None
+menu Object
+  item obj.again | Transform Again | ⌘KeyD | Key(⌘KeyD) | None
+  ---
+  sub Arrange
+    item obj.front | Bring to Front | ⌘⇧BracketRight | Key(⌘⇧BracketRight) | None
+    item obj.forward | Bring Forward | ⌘BracketRight | Key(⌘BracketRight) | None
+    item obj.backward | Send Backward | ⌘BracketLeft | Key(⌘BracketLeft) | None
+    item obj.back | Send to Back | ⌘⇧BracketLeft | Key(⌘⇧BracketLeft) | None
+  ---
+  item obj.group | Group | ⌘KeyG | Key(⌘KeyG) | None
+  item obj.ungroup | Ungroup | ⌘⇧KeyG | Key(⌘⇧KeyG) | None
+menu View
+  item view.fit | Fit in Window | ⌘Digit0 | Key(⌘Digit0) | None
+  item view.actual | Actual Size | ⌘Digit1 | Key(⌘Digit1) | None
+  item view.zoomin | Zoom In | ⌘Equal | Key(⌘Equal) | None
+  item view.zoomout | Zoom Out | ⌘Minus | Key(⌘Minus) | None
+  ---
+  item view.rulers | Rulers | ⌘KeyR | Key(⌘KeyR) | Some(Rulers)
+  item view.guides | Guides | ⌘Semicolon | Key(⌘Semicolon) | Some(Guides)
+  item view.lockguides | Lock Guides | ⌘⌥Semicolon | Key(⌘⌥Semicolon) | Some(GuidesLocked)
+  item view.smart | Smart Guides | ⌘KeyU | Key(⌘KeyU) | Some(SmartGuides)
+  item view.alignguides | Alignment Guides | - | Snap(AlignGuides) | Some(AlignGuides)
+  item view.geomguides | Geometric Guides | - | Snap(GeomGuides) | Some(GeomGuides)
+  ---
+  item view.snapgrid | Snap to Grid | - | Snap(Grid) | Some(SnapGrid)
+  item view.snappoint | Snap to Point | - | Snap(Point) | Some(SnapPoint)
+  ---
+  native Fullscreen
+menu Window
+  native Minimize
+  native Zoom
+  ---
+  item win.rail | Tool rail | - | ToggleRail | Some(Rail)
+  item win.dock | Control bar | - | ToggleDock | Some(Dock)
+  ---
+  item win.panel.Align | Align | - | TogglePanel(Align) | Some(Panel(Align))
+  item win.panel.Pathfinder | Pathfinder | - | TogglePanel(Pathfinder) | Some(Panel(Pathfinder))
+  item win.panel.Properties | Properties | - | TogglePanel(Properties) | Some(Panel(Properties))
+  item win.panel.Layers | Layers | - | TogglePanel(Layers) | Some(Panel(Layers))
+  item win.colour-picker | Colour | - | TogglePicker | Some(Picker)
+  ---
+  item win.reset-layout | Reset layout | - | ResetLayout | None
+  ---
+  native BringAllToFront

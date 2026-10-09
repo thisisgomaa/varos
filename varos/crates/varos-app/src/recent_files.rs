@@ -135,8 +135,13 @@ impl<S: DocStore> DocStore for RecentStore<S> {
         self.inner.exists(path)
     }
     // An export is never a Recent entry: both pass straight through, nothing is recorded.
-    fn write_export(&mut self, path: &Path, bytes: &[u8]) -> Result<(), String> {
-        self.inner.write_export(path, bytes)
+    fn write_export(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::lifecycle::ExportWrite, String> {
+        self.inner.write_export(path, bytes, cancel)
     }
     fn read_existing(&mut self, path: &Path) -> Option<Vec<u8>> {
         self.inner.read_existing(path)
