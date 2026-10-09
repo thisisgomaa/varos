@@ -274,7 +274,7 @@ pub(crate) fn build_ab_chrome(
                             }
                         } else {
                             let col = if is_active { TEXT } else { MUTED };
-                            ui.shaped_label(RichText::new(&ab.name).color(col).size(11.0));
+                            ui.shaped_authored_label(RichText::new(&ab.name).color(col).size(11.0));
                         }
                         // the page size, quietly beside the name (Ahmed 07-07 "المقاس مكتوب جمبه")
                         ui.shaped_label(

@@ -39,7 +39,7 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
                     {
                         ed.execute_ui(EditCommand::Isolate(None));
                     }
-                    ui.shaped_label(t::micro_label(path.join(" / ")));
+                    ui.shaped_authored_label(t::micro_label(path.join(" / ")));
                 });
             });
         });

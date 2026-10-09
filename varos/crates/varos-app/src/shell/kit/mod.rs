@@ -214,10 +214,10 @@ fn paint_control(
         } else {
             response
                 .on_hover_ui(|ui| {
-                    text::label(ui, help, t::small(), t::TEXT);
+                    text::chrome_label(ui, help, t::small(), t::TEXT);
                 })
                 .on_disabled_hover_ui(|ui| {
-                    text::label(ui, help, t::small(), t::TEXT);
+                    text::chrome_label(ui, help, t::small(), t::TEXT);
                 })
         };
         ControlResponse { response, activated }
@@ -334,10 +334,10 @@ pub fn icon_button_sized(
         let activated = enabled && activation(ui, &response, false);
         let response = response
             .on_hover_ui(|ui| {
-                text::label(ui, &help, t::small(), t::TEXT);
+                text::chrome_label(ui, &help, t::small(), t::TEXT);
             })
             .on_disabled_hover_ui(|ui| {
-                text::label(ui, &help, t::small(), t::TEXT);
+                text::chrome_label(ui, &help, t::small(), t::TEXT);
             });
         ControlResponse { response, activated }
     })
@@ -349,11 +349,11 @@ fn elided(ui: &Ui, value: &str, font: egui::FontId, _color: Color32, width: f32)
 }
 
 pub fn section_heading(ui: &mut Ui, label: &str) -> Response {
-    text::label(ui, label, TextStyle::Heading.resolve(ui.style()), t::TEXT)
+    text::chrome_label(ui, label, TextStyle::Heading.resolve(ui.style()), t::TEXT)
 }
 
 pub fn notice(ui: &mut Ui, message: &str) -> Response {
-    text::label(ui, message, TextStyle::Body.resolve(ui.style()), t::MUTED)
+    text::chrome_label(ui, message, TextStyle::Body.resolve(ui.style()), t::MUTED)
 }
 
 /// A kit menu entry: a hand-painted row or a hairline separator.
@@ -657,5 +657,5 @@ pub fn text_dropdown(
 
 /// Informational text with explicit kit typography and ink.
 pub fn text(ui: &mut Ui, text: &str, font: egui::FontId, ink: Color32) -> Response {
-    self::text::label(ui, text, font, ink)
+    self::text::chrome_label(ui, text, font, ink)
 }

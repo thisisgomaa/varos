@@ -29,20 +29,42 @@ impl ShapedPainter for Painter {
         };
         let Some(section) = galley.job.sections.first() else { return };
         let width = galley.job.wrap.max_width;
-        if let Some(label) =
-            layout(self.ctx(), &galley.job.text, &section.format.font_id, Some(width), galley.job.wrap.max_rows == 1)
+        if let Some(mut label) =
+            super::layout_rows(self.ctx(), &galley.job.text, &section.format.font_id, width, galley.job.wrap.max_rows)
         {
+            // Keep each shaped baseline centred in the incumbent row cell, as `label` does.
+            // Clipping must not push the final row below a legacy two-line description cell.
+            let row_height = galley.size().y / galley.rows.len().max(1) as f32;
+            let shaped_height = label.size().y / label.layout.lines.len().max(1) as f32;
+            for (i, line) in std::sync::Arc::make_mut(&mut label.layout).lines.iter_mut().enumerate() {
+                let dy = (i as f32 + 0.5) * (row_height - shaped_height);
+                line.baseline += dy;
+                for glyph in &mut line.glyphs {
+                    glyph.y += dy;
+                }
+            }
+            label.size.y = row_height * label.layout.lines.len() as f32;
             let x = pos.x - label.size().x * galley.job.halign.to_factor();
-            paint(self, egui::pos2(x, pos.y), &label, ink);
+            let cell = Rect::from_min_size(egui::pos2(x, pos.y), egui::vec2(width, galley.size().y));
+            paint(&self.with_clip_rect(cell.intersect(self.clip_rect())), egui::pos2(x, pos.y), &label, ink);
         }
     }
 }
 
 pub trait ShapedUi {
+    /// Authored names/paths: never look them up in the chrome catalog.
+    fn shaped_authored_label(&mut self, text: impl Into<egui::WidgetText>) -> egui::Response;
+    /// Chrome copy: explicitly opt into catalog translation before painting.
     fn shaped_label(&mut self, text: impl Into<egui::WidgetText>) -> egui::Response;
 }
 impl ShapedUi for egui::Ui {
     fn shaped_label(&mut self, text: impl Into<egui::WidgetText>) -> egui::Response {
+        let mut job = text.into().into_layout_job(self.style(), egui::FontSelection::Default, egui::Align::Center);
+        let translated = crate::i18n::translate(self.ctx(), &job.text).into_owned();
+        std::sync::Arc::make_mut(&mut job).text = translated;
+        self.shaped_authored_label(egui::WidgetText::LayoutJob(job))
+    }
+    fn shaped_authored_label(&mut self, text: impl Into<egui::WidgetText>) -> egui::Response {
         let job = text.into().into_layout_job(self.style(), egui::FontSelection::Default, egui::Align::Center);
         let font = job.sections.first().map(|s| s.format.font_id.clone()).unwrap_or_else(crate::shell::tokens::small);
         let color = job

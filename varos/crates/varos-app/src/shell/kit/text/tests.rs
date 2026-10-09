@@ -222,3 +222,41 @@ fn full_atlas_rolls_to_a_live_page_without_losing_the_glyph() {
     assert_eq!(s.retired[0].id(), old);
     assert!(s.glyph(&ctx, &label.layout.lines[0].glyphs[0], 0).is_some());
 }
+
+#[test]
+fn authored_catalog_keys_remain_literal_in_arabic_mode() {
+    let ctx = egui::Context::default();
+    crate::shell::fonts::install(&ctx);
+    crate::i18n::set(&ctx, crate::i18n::Locale::Ar);
+    enable_trace(&ctx);
+    let _ = ctx.run_ui(Default::default(), |ui| {
+        ui.shaped_authored_label("Delete");
+        ui.shaped_label("Delete");
+    });
+    let records = paint_records(&ctx);
+    assert_eq!(records[0].text, "Delete");
+    assert_eq!(records[1].text, "حذف");
+}
+#[test]
+fn galley_row_budget_elides_graphemes_and_clips_cell() {
+    let ctx = egui::Context::default();
+    crate::shell::fonts::install(&ctx);
+    enable_trace(&ctx);
+    let source = "السَّلَامُ عليكم لوحة أولى ".repeat(20);
+    for rows in [1, 2, 3] {
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let mut job = egui::text::LayoutJob::simple(source.clone(), t::small(), t::TEXT, 100.0);
+            job.wrap.max_rows = rows;
+            let galley = ui.fonts_mut(|f| f.layout_job(job));
+            ui.painter().shaped_galley(egui::pos2(10.0, 10.0), galley.clone(), t::TEXT);
+        });
+        let r = paint_records(&ctx).remove(0);
+        assert!(r.lines <= rows);
+        assert!(r.elided && r.displayed_text.ends_with('…'));
+        let end = r.displayed_text.len() - '…'.len_utf8();
+        assert!(source.grapheme_indices(true).any(|(i, _)| i == end));
+        assert!(r.rect.height() <= r.clip_rect.height() + t::UI_TEXT_WIDTH_EPSILON);
+        assert!(r.clip_rect.width() <= 100.0);
+        assert!(r.clip_rect.height() <= rows as f32 * 20.0);
+    }
+}

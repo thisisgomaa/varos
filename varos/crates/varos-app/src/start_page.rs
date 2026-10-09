@@ -1573,7 +1573,7 @@ impl StartPage {
         let right = x + cw;
         let th = l.table_head;
         for (label, lx) in [("#", x + t::SB_NUM_PAD), ("Name", name_x), ("Tags", tags_x), ("Folder", folder_x)] {
-            let g = text(ui, label, roles::MICRO);
+            let g = text(ui, &crate::i18n::translate(ui.ctx(), label), roles::MICRO);
             kb::galley_in_line(&p, lx, th.top(), th.height(), g, t::MUTED);
         }
         let g = text(ui, &crate::i18n::translate(ui.ctx(), "Modified"), roles::MICRO);

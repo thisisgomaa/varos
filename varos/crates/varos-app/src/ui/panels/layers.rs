@@ -586,7 +586,7 @@ pub(crate) fn panel_layers(
                 |ui| {
                     if !rows.iter().any(|row| layer_kind_matches(row.kind, kind_filter)) {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(w, 40.0), egui::Sense::hover());
-                        ui.painter().shaped_text(
+                        ui.painter().shaped_chrome(
                             r.center(),
                             Align2::CENTER_CENTER,
                             if search.trim().is_empty() && kind_filter == 0 {

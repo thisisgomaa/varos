@@ -35,7 +35,7 @@ pub(crate) fn panel_properties(
             }
 
             let measured = s.sel || s.direct; // real numbers below (objects, or a Direct selection — Astra F07)
-            ui.shaped_label(if measured { panel_title(&s.name) } else { panel_title(&s.name).color(MUTED) });
+            ui.shaped_authored_label(if measured { panel_title(&s.name) } else { panel_title(&s.name).color(MUTED) });
             ui.add_space(2.0);
             ui.shaped_label(micro_label("TRANSFORM"));
 
