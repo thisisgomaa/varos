@@ -662,6 +662,14 @@ pub(crate) fn build_topbar(
                 cmds.push(AppCommand::Window(crate::app_command::WindowCmd::ResetLayout));
                 hit = true;
             }
+            for (label, key, command) in [
+                ("Document Setup…", "Ctrl+Alt+P", crate::chrome::FileCmd::DocumentSetup),
+                ("Document Info", "", crate::chrome::FileCmd::DocumentInfo),
+                ("Save as Template…", "", crate::chrome::FileCmd::SaveTemplate),
+                ("New from Template…", "", crate::chrome::FileCmd::NewTemplate),
+            ] {
+                hit |= file_menu_row(ui, label, key, command, file_state, active, "Open a document first.", cmds);
+            }
             if hit {
                 menu_set(ui, menu_id, false);
             }

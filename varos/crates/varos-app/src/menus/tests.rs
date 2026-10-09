@@ -193,6 +193,7 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
     let want = [
         ("file.new", cmd(KeyCode::KeyN).unwrap(), FileCmd::New),
         ("file.open", cmd(KeyCode::KeyO).unwrap(), FileCmd::Open),
+        ("file.document-setup", cmd_alt(KeyCode::KeyP).unwrap(), FileCmd::DocumentSetup),
         ("file.close", cmd(KeyCode::KeyW).unwrap(), FileCmd::CloseTab),
         ("file.save", cmd(KeyCode::KeyS).unwrap(), FileCmd::Save),
         ("file.saveas", cmd_shift(KeyCode::KeyS).unwrap(), FileCmd::SaveAs),
@@ -250,7 +251,16 @@ fn snapshot(menus: &[(&'static str, Vec<Entry>)]) -> String {
 }
 
 /// The rows slice 0.6 added after the split; everything else is the pre-split table.
-const ADDED_AFTER_SPLIT: &[&str] = &["file.closeall", "file.savecopy", "file.revert", "file.exportselection"];
+const ADDED_AFTER_SPLIT: &[&str] = &[
+    "file.closeall",
+    "file.savecopy",
+    "file.revert",
+    "file.exportselection",
+    "file.new-template",
+    "file.save-template",
+    "file.document-setup",
+    "win.document-info",
+];
 
 fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, Vec<Entry>)> {
     fn strip(v: Vec<Entry>) -> Vec<Entry> {
@@ -295,6 +305,9 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.new",
             "file.open",
             "sub Open Recent",
+            "file.new-template",
+            "file.save-template",
+            "file.document-setup",
             "---",
             "file.close",
             "file.closeall",

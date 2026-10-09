@@ -107,6 +107,13 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        EditCommand::SetPpi(ppi) if !crate::document_setup::valid_ppi(*ppi) => Err("ppi must be 1..9600".into()),
+        EditCommand::SetBleed { index, edges }
+            if ed.doc.artboards.get(*index).is_none() || !crate::document_setup::valid_bleed(*edges) =>
+        {
+            Err("invalid bleed or artboard".into())
+        }
+        EditCommand::SetPpi(_) | EditCommand::SetBleed { .. } | EditCommand::SetTransparencyGrid(_) => Ok(()),
         AddPath { anchors, parent, fill, stroke, stroke_width, opacity, name, .. } => {
             if !(2..=1000).contains(&anchors.len()) {
                 return Err("path needs 2..1000 anchors".into());

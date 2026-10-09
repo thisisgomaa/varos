@@ -6,6 +6,7 @@ pub(super) fn rows() -> Vec<Entry> {
     let mut window = vec![
         Entry::Native(Native::Minimize),
         Entry::Native(Native::Zoom),
+        file_row("win.document-info", "Document Info", FileCmd::DocumentInfo),
         Entry::Sep,
         toggle("win.rail", "Tool rail", MenuCmd::ToggleRail, Check::Rail),
         toggle("win.dock", "Control bar", MenuCmd::ToggleDock, Check::Dock),

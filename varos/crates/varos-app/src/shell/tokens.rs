@@ -633,6 +633,13 @@ pub const PICKER_HARMONY_STRIP_H: f32 = 32.0;
 pub const PICKER_HARMONY_ROW_H: f32 = 28.0;
 pub const PICKER_HARMONY_SWATCH: f32 = 20.0;
 
+// Phase 1 provisional Document Setup / Info sheets.
+pub const DOC_SHEET_W: f32 = 320.0;
+pub const DOC_SHEET_FIELD_W: f32 = 240.0;
+pub const DOC_SHEET_TOP: f32 = 180.0;
+pub const DOC_INFO_LIST_H: f32 = 180.0;
+pub const BLEED_GUIDE_W: f32 = 1.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

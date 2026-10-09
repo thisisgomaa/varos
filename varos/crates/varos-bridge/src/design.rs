@@ -192,6 +192,38 @@ pub(crate) fn apply_design_op(
     expanded: &mut usize,
     affected: &mut BTreeSet<String>,
 ) -> Result<Option<u32>, Error> {
+    if let Operation::DocumentSetup { field, value, artboard } = op {
+        use varos_core::document_setup as setup;
+        let command = match field.as_str() {
+            "units" => EditCommand::SetUnits(
+                value.as_str().and_then(varos_core::Unit::parse_suffix).ok_or_else(|| fail("unknown units"))?,
+            ),
+            "ppi" => {
+                let ppi = value.as_f64().ok_or_else(|| fail("ppi must be a number"))? as f32;
+                if !setup::valid_ppi(ppi) {
+                    return Err(fail("ppi must be 1..9600"));
+                }
+                EditCommand::SetPpi(ppi)
+            }
+            "transparency_grid" => {
+                EditCommand::SetTransparencyGrid(value.as_bool().ok_or_else(|| fail("grid must be boolean"))?)
+            }
+            "bleed" => {
+                let edges: [f32; 4] =
+                    serde_json::from_value(value.clone()).map_err(|_| fail("bleed needs top/right/bottom/left"))?;
+                if !setup::valid_bleed(edges) {
+                    return Err(fail("bleed must be finite 0..7200 pt"));
+                }
+                let id = artboard.as_deref().ok_or_else(|| fail("bleed needs artboard:N"))?;
+                let id = artboard_ref(id, locals)?;
+                let index = ed.doc.artboard_index(id).ok_or_else(|| fail("unknown artboard"))?;
+                EditCommand::SetBleed { index, edges }
+            }
+            _ => return Err(fail("unknown setup field")),
+        };
+        ed.try_execute(command).map_err(fail)?;
+        return Ok(None);
+    }
     if op.is_page_verb() {
         return apply_artboard_op(ed, op, locals, affected).map(|()| None);
     }

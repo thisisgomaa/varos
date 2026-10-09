@@ -345,6 +345,7 @@ fn keyboard_ring_order_activation_and_2d_grid_moves() {
             Slot::Filter(_) | Slot::MoreFilters => "filter",
             Slot::View(_) => "view",
             Slot::Card(_) => "card",
+            Slot::Template(_) => "template",
         })
         .collect();
     let mut dedup = kinds.clone();
@@ -731,7 +732,7 @@ fn thumbnails_decode_off_the_ui_thread_and_appear_when_ready() {
     for _ in 0..200 {
         std::thread::sleep(std::time::Duration::from_millis(10));
         let (_, out) = p.frame(&m, vec![]);
-        if textured(&out) {
+        if textured(&out) && p.page.thumb_textures() == 2 {
             seen = true;
             break;
         }

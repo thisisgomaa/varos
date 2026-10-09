@@ -50,6 +50,10 @@ const fn fkey(code: KeyCode) -> Option<Accel> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileCmd {
     New,
+    DocumentSetup,
+    DocumentInfo,
+    SaveTemplate,
+    NewTemplate,
     Open,
     CloseTab,
     CloseAll,
@@ -77,10 +81,13 @@ pub struct DocMenuState {
 /// unsaved changes; Export Selection only with a selection; every other row needs a document.
 pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
     match f {
-        FileCmd::New | FileCmd::Open | FileCmd::Quit => true,
+        FileCmd::New | FileCmd::Open | FileCmd::Quit | FileCmd::NewTemplate => true,
         FileCmd::Revert => s.active && s.can_revert,
         FileCmd::ExportSelection => s.active && s.has_selection,
-        FileCmd::CloseTab
+        FileCmd::DocumentSetup
+        | FileCmd::DocumentInfo
+        | FileCmd::SaveTemplate
+        | FileCmd::CloseTab
         | FileCmd::CloseAll
         | FileCmd::Save
         | FileCmd::SaveAs
@@ -262,6 +269,7 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         K::KeyG => E::G,
         K::KeyN => E::N,
         K::KeyO => E::O,
+        K::KeyP => E::P,
         K::KeyQ => E::Q,
         K::KeyR => E::R,
         K::KeyS => E::S,

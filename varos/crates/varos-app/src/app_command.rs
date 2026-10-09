@@ -68,6 +68,11 @@ pub enum AppCommand {
     /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free
     /// canvas with ZERO artboards (`varos_core::board::new_board`).
     NewBoard,
+    DocumentSetup(SessionId),
+    DocumentInfo(SessionId),
+    SaveTemplate(SessionId),
+    NewTemplate,
+    OpenTemplate(PathBuf),
     /// Start's "…or start with an artboard": a fresh, clean `Untitled-N` board with one artboard from
     /// the core preset table (`varos_core::board::new_board_with_preset`). No "Custom…" preset: a
     /// board with no size chosen up front is `NewBoard` (owner 2026-10-06).

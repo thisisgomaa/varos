@@ -48,6 +48,7 @@ pub fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Optio
         (KeyCode::KeyS, false, true) => FileCmd::SaveCopy,
         (KeyCode::KeyW, false, false) => FileCmd::CloseTab,
         (KeyCode::KeyW, false, true) => FileCmd::CloseAll,
+        (KeyCode::KeyP, false, true) => FileCmd::DocumentSetup,
         (KeyCode::KeyQ, false, false) => FileCmd::Quit,
         _ => return None,
     })
@@ -70,6 +71,10 @@ pub fn tab_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<AppC
 pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppCommand> {
     Some(match cmd {
         FileCmd::New => AppCommand::NewBoard,
+        FileCmd::DocumentSetup => AppCommand::DocumentSetup(active?),
+        FileCmd::DocumentInfo => AppCommand::DocumentInfo(active?),
+        FileCmd::SaveTemplate => AppCommand::SaveTemplate(active?),
+        FileCmd::NewTemplate => AppCommand::NewTemplate,
         FileCmd::Open => AppCommand::OpenDialog,
         FileCmd::Save => AppCommand::Save(active?),
         FileCmd::SaveAs => AppCommand::SaveAs(active?),
@@ -100,6 +105,8 @@ pub fn start_command(action: varos_app::start::StartAction) -> Option<AppCommand
     use varos_app::start::StartAction as A;
     Some(match action {
         A::NewBoard => AppCommand::NewBoard,
+        A::OpenTemplate(path) => AppCommand::OpenTemplate(path),
+        A::NewTemplate => AppCommand::NewTemplate,
         A::NewWithPreset(preset) => AppCommand::NewWithPreset(preset),
         // filter actions are applied to the Start model by the page itself
         A::SetTagFilter(_) | A::SetView(_) => return None,
@@ -522,6 +529,7 @@ pub fn run_lifecycle(
             AppCommand::Save(_)
                 | AppCommand::SaveAs(_)
                 | AppCommand::SaveCopy(_)
+                | AppCommand::SaveTemplate(_)
                 | AppCommand::Revert(_)
                 | AppCommand::ShowExport(_)
                 | AppCommand::ShowExportSelection(_)
@@ -580,10 +588,15 @@ fn waits_for_fields(cmd: &AppCommand) -> bool {
         C::Save(_)
             | C::SaveAs(_)
             | C::SaveCopy(_)
+            | C::SaveTemplate(_)
             | C::Revert(_)
             | C::ShowExport(_)
             | C::ShowExportSelection(_)
             | C::ExportPdf(..)
+            | C::NewTemplate
+            | C::OpenTemplate(_)
+            | C::DocumentSetup(_)
+            | C::DocumentInfo(_)
             | C::NewBoard
             | C::NewWithPreset(_)
             | C::Home
@@ -652,7 +665,11 @@ impl FileJobs for NoWorker {
 pub fn save_barrier(cmd: &AppCommand, ws: &Workspace) -> Vec<SessionId> {
     let saving = |id: SessionId| ws.get(id).is_some_and(|s| s.saving.is_some());
     match cmd {
-        AppCommand::CloseDocument(id) | AppCommand::SaveAs(id) | AppCommand::SaveCopy(id) | AppCommand::Revert(id)
+        AppCommand::CloseDocument(id)
+        | AppCommand::SaveAs(id)
+        | AppCommand::SaveCopy(id)
+        | AppCommand::SaveTemplate(id)
+        | AppCommand::Revert(id)
             if saving(*id) =>
         {
             vec![*id]
