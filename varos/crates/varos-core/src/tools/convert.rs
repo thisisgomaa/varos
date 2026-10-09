@@ -33,8 +33,11 @@ impl Tool for Convert {
             ed.selected.clear();
             ed.selected.insert(aid);
             if ed.doc.anchor(aid).is_some_and(|anchor| anchor.smooth) {
-                ed.execute(crate::EditCommand::AnchorType { anchor: aid, smooth: false });
-                ed.dirty = true;
+                // The guarded execute rolls the document back on an internal error; only a
+                // successful conversion dirties the view.
+                if ed.execute(crate::EditCommand::AnchorType { anchor: aid, smooth: false }).is_ok() {
+                    ed.dirty = true;
+                }
             } else {
                 ed.drag = Drag::ConvPull { aid, down: pos };
             }
