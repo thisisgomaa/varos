@@ -8,6 +8,9 @@ use crate::model::*;
 use crate::tools;
 use std::collections::{BTreeSet, HashSet};
 
+pub const DEFAULT_FILL: Rgba = [0.95, 0.95, 0.96, 1.0];
+pub const DEFAULT_STROKE: Rgba = [0.12, 0.12, 0.13, 1.0];
+
 pub const DRAG_THRESH: f32 = 4.0;
 pub const CLOSE_R: f32 = 11.0;
 pub const ANCHOR_R: f32 = 12.0;
@@ -492,8 +495,8 @@ impl Editor {
             mods: Mods::default(),
             constrain_wh: false,
             space: false,
-            cur_fill: Some([0.95, 0.95, 0.96, 1.0]),
-            cur_stroke: Some([0.12, 0.12, 0.13, 1.0]),
+            cur_fill: Some(DEFAULT_FILL),
+            cur_stroke: Some(DEFAULT_STROKE),
             cur_sw: 2.0,
             paint: PaintTarget::Fill,
             recent_colors: vec![],
@@ -4774,11 +4777,10 @@ impl Editor {
 
     // ---------- colour-picker live session (A6) ----------
     // The picker folds a WHOLE drag into ONE undo step: `picker_begin` snapshots the document on
-    // open, `paint_live` / `ab_color_live` mutate it in place each frame with NO new history, and the
-    // session closes with `picker_commit` (fold into one step) or `picker_cancel` (revert to open).
+    // press, `paint_live` / `ab_color_live` mutate it in place each frame with NO new history, and the
+    // release closes with `picker_commit`. The modeless panel never cancels completed gestures.
 
-    /// Open a picker session: snapshot the document so the whole interaction is a single undo step and
-    /// Escape can revert to exactly the state at open.
+    /// Begin one picker gesture; release commits one undo step. Opening the panel is read-only.
     pub fn picker_begin(&mut self) {
         self.begin();
     }
@@ -4809,9 +4811,17 @@ impl Editor {
             }
         }
     }
-    /// Close the picker session with OK: fold the whole live drag into ONE undo step, set the target's
+    /// Finish the picker gesture: fold the whole live drag into ONE undo step, set the target's
     /// current paint (so the next new shape uses it) and remember the colour in the MRU strip.
     pub fn picker_commit(&mut self, cur: Option<PaintTarget>, color: Rgba) {
+        // Returning to the press colour is a no-op even if intermediate previews marked dirty.
+        if self.pending.as_ref().is_some_and(|before| before.content_eq(&self.doc)) {
+            self.dirty = false;
+            if cur.is_none() || !self.selected_pids().is_empty() {
+                self.commit();
+                return;
+            }
+        }
         match cur {
             Some(PaintTarget::Fill) => self.cur_fill = Some(color),
             Some(PaintTarget::Stroke) => self.cur_stroke = Some(color),
@@ -4820,7 +4830,7 @@ impl Editor {
         self.commit();
         self.push_recent(color);
     }
-    /// Close the picker session with Cancel/Esc: restore the document captured at open — the live
+    /// Cancel an unaccepted sample: restore the document captured at gesture start — the live
     /// preview leaves NO history entry.
     pub fn picker_cancel(&mut self) {
         if let Some(doc) = self.pending.take() {
@@ -4891,8 +4901,8 @@ impl Editor {
         self.apply_current();
     }
     pub fn default_paint(&mut self) {
-        self.cur_fill = Some([0.95, 0.95, 0.96, 1.0]);
-        self.cur_stroke = Some([0.12, 0.12, 0.13, 1.0]);
+        self.cur_fill = Some(DEFAULT_FILL);
+        self.cur_stroke = Some(DEFAULT_STROKE);
         self.apply_current();
     }
     pub fn bump_stroke(&mut self, delta: f32) {
@@ -5318,6 +5328,29 @@ impl Editor {
 mod picker_tests {
     use super::*;
 
+    #[test]
+    fn picker_noop_ignores_id_high_water_after_creation_undo() {
+        let mut ed = Editor::new();
+        ed.doc.paths.push(Path::new(1, vec![], true, Some([1., 0., 0., 1.]), None, 1.));
+        ed.objsel.insert(1);
+        ed.doc.sync_tree();
+        ed.begin();
+        ed.doc.ids += 100;
+        ed.doc.paths.push(Path::new(ed.doc.ids, vec![], true, None, None, 1.));
+        ed.dirty = true;
+        ed.commit();
+        ed.undo();
+        let before = ed.doc.clone();
+        let rev = ed.rev;
+        ed.picker_begin();
+        assert!(ed.doc.ids > before.ids);
+        ed.paint_live(PaintTarget::Fill, Some([0., 1., 0., 1.]));
+        ed.paint_live(PaintTarget::Fill, Some([1., 0., 0., 1.]));
+        ed.picker_commit(Some(PaintTarget::Fill), [1., 0., 0., 1.]);
+        assert_eq!(ed.rev, rev);
+        assert!(!ed.history_available(false));
+        assert!(ed.doc.content_eq(&before));
+    }
     #[test]
     fn picker_unchanged_live_and_ok_do_not_mark_dirty_or_record_history() {
         let mut ed = Editor::new();

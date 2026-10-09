@@ -10,15 +10,16 @@ pub(crate) enum Op {
     Paint(PaintTarget, Option<Rgba>),
     PaintFocus(PaintTarget), // rail fill/stroke control: focus the target (X toggles)
     SwapColors,              // Shift+X
-    DefaultPaint,            // D — white fill / black stroke
-    OpenPicker(MTarget),     // double-click a swatch → open the Color Picker modal for it (a click only focuses)
-    // ---- Color Picker live session (A6): one undo step per whole picker interaction ----
-    PickerLive(MTarget, Rgba), // changed-colour preview: apply the current colour, NO new history
-    PickerCommit(Option<PaintTarget>, Rgba), // OK: fold the drag into ONE step + set current paint + MRU
-    PickerRestore(MTarget, std::sync::Arc<varos_core::model::Document>, bool), // disarm: restore pre-arm paint
-    PickerRemember(MTarget, Rgba), // edited target default/MRU, without closing the session
-    PickerCancel,              // Cancel/Esc: revert to the value captured on open
-    PickerFinish,              // unchanged OK: close the transaction without defaults or MRU writes
+    DefaultPaint,            // D — existing tool default fill / stroke
+    OpenPicker(MTarget),     // double-click a swatch → open the Colour picker panel for it (a click only focuses)
+    // Colour picker v3: transactions exist only during an active gesture.
+    PickerBegin,
+    PickerLive(MTarget, Rgba),
+    PickerCommit(MTarget, Rgba),
+    PickerSet(MTarget, Rgba), // K3 fields and swatches: one atomic gesture
+    PickerFinish,
+    PickerCancel,
+    PickerClose, // UI notification; never reverts paint
     // ---- layers panel (node ids) — the SIMPLE panel (07-03 pivot) ----
     LayerSelectSet(Vec<u32>), // plain click / Shift-range: select these rows' art (replace)
     LayerToggle(u32),         // Ctrl+click a row: toggle its art in/out of the selection
@@ -38,6 +39,7 @@ pub(crate) enum Op {
     AbActive(usize),
     AbRect(usize, Option<f32>, Option<f32>, Option<f32>, Option<f32>), // x,y,w,h (each optional)
     AbName(usize, String),
+    AbColorId(u32, Option<Rgba>),
     AbColor(usize, Option<Rgba>), // None = transparent page
     AbClip(usize),                // toggle
     AbEye(usize),                 // board eye — the Layers section header (piece C)
@@ -82,8 +84,42 @@ pub(crate) fn apply_picker_frame(
     ed: &mut Editor,
     snap: varos_core::model::SnapConfig,
     mut ops: Vec<Op>,
-    modal: &mut Option<ColorModal>,
+    modal: &mut Option<ColorPanel>,
 ) {
+    // A release/close may coincide with a field blur. Finish the older live snapshot before
+    // the field's atomic begin; a new gesture begun in this same frame instead follows the field.
+    if ed.transaction_open()
+        && !ops.iter().any(|op| matches!(op, Op::PickerBegin))
+        && ops.iter().any(|op| matches!(op, Op::PickerCommit(..) | Op::PickerFinish | Op::PickerCancel))
+    {
+        let (mut endings, mut rest): (Vec<_>, Vec<_>) = ops.into_iter().partition(|op| {
+            matches!(op, Op::PickerLive(..) | Op::PickerCommit(..) | Op::PickerFinish | Op::PickerCancel)
+        });
+        endings.append(&mut rest);
+        ops = endings;
+    }
+    // An independent control/field action ends the active gesture before opening another step.
+    if !ops.iter().any(|op| matches!(op, Op::PickerBegin))
+        && ops.iter().any(|op| {
+            !matches!(
+                op,
+                Op::PickerBegin
+                    | Op::PickerLive(..)
+                    | Op::PickerCommit(..)
+                    | Op::PickerFinish
+                    | Op::PickerCancel
+                    | Op::PickerClose
+                    | Op::FieldPending(..)
+            )
+        })
+    {
+        if let Some(m) = modal {
+            let mut finish = vec![];
+            m.finish(&mut finish);
+            finish.append(&mut ops);
+            ops = finish;
+        }
+    }
     let mut request = None;
     ops.retain(|op| match op {
         Op::OpenPicker(t) => {
@@ -98,7 +134,7 @@ pub(crate) fn apply_picker_frame(
     });
     apply_frame(ed, snap, ops);
     if let Some(target) = request {
-        open_picker(modal, target, &Snap::read(ed), ed);
+        open_picker(modal, target, ed);
     }
 }
 
@@ -117,42 +153,54 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::PaintFocus(target) => ed.set_paint_target(target),
             Op::SwapColors => ed.execute(EditCommand::SwapColors),
             Op::DefaultPaint => ed.execute(EditCommand::DefaultPaint),
-            Op::OpenPicker(_) => {} // UI-only: taken out by apply_picker_frame (opens the modal after the frame); never reaches here
+            Op::OpenPicker(_) => {} // UI-only: taken out by apply_picker_frame (opens the panel after the frame); never reaches here
+            Op::PickerLive(..) if !ed.transaction_open() => {}
             Op::PickerLive(target, color) => match target {
                 MTarget::Paint(target) => ed.execute(EditCommand::PickerLivePaint { target, color }),
-                MTarget::Ab(index) => ed.execute(EditCommand::PickerLiveArtboard { index, color }),
+                MTarget::Ab(id) => {
+                    if let Some(index) = ed.doc.artboard_index(id) {
+                        ed.execute(EditCommand::PickerLiveArtboard { index, color });
+                    }
+                }
             },
-            Op::PickerCommit(current, color) => ed.execute(EditCommand::PickerCommit { current, color }),
-            Op::PickerRestore(target, snapshot, dirty) => {
-                ed.dirty = dirty;
-                match target {
-                    MTarget::Paint(target) => {
-                        for path in &mut ed.doc.paths {
-                            if let Some(old) = snapshot.paths.iter().find(|old| old.id == path.id) {
-                                match target {
-                                    PaintTarget::Fill => path.fill = old.fill,
-                                    PaintTarget::Stroke => path.stroke = old.stroke,
-                                }
+            Op::PickerBegin => ed.picker_begin(),
+            Op::PickerCommit(target, color) => {
+                ed.execute(EditCommand::PickerCommit {
+                    current: match target {
+                        MTarget::Paint(t) => Some(t),
+                        MTarget::Ab(_) => None,
+                    },
+                    color,
+                });
+            }
+            Op::PickerSet(target, color) => {
+                let snap = Snap::read(ed);
+                let (old, mixed) = match target {
+                    MTarget::Paint(t) => (snap_target_color(&snap, t), snap.target_mixed(t)),
+                    MTarget::Ab(id) => (ed.doc.artboards.iter().find(|a| a.id == id).and_then(|a| a.page_color), false),
+                };
+                if mixed || old.is_none_or(|c| c.iter().zip(color).any(|(a, b)| (a - b).abs() > 1e-6)) {
+                    ed.picker_begin();
+                    match target {
+                        MTarget::Paint(t) => ed.paint_live(t, Some(color)),
+                        MTarget::Ab(id) => {
+                            if let Some(i) = ed.doc.artboard_index(id) {
+                                ed.ab_color_live(i, Some(color));
                             }
                         }
                     }
-                    MTarget::Ab(i) => {
-                        if let (Some(page), Some(old)) = (ed.doc.artboards.get_mut(i), snapshot.artboards.get(i)) {
-                            page.page_color = old.page_color;
-                        }
-                    }
+                    ed.execute(EditCommand::PickerCommit {
+                        current: match target {
+                            MTarget::Paint(t) => Some(t),
+                            MTarget::Ab(_) => None,
+                        },
+                        color,
+                    });
                 }
-            }
-            Op::PickerRemember(target, color) => {
-                match target {
-                    MTarget::Paint(PaintTarget::Fill) => ed.cur_fill = Some(color),
-                    MTarget::Paint(PaintTarget::Stroke) => ed.cur_stroke = Some(color),
-                    MTarget::Ab(_) => {}
-                }
-                ed.push_recent(color);
             }
             Op::PickerFinish => ed.commit(),
             Op::PickerCancel => ed.execute(EditCommand::PickerCancel),
+            Op::PickerClose => {}
             Op::LayerSelectSet(nids) => ed.layer_select_set(&nids),
             Op::LayerToggle(n) => ed.layer_toggle(n),
             Op::LayerEye(node) => ed.execute(EditCommand::ToggleNodeHidden(node)),
@@ -194,6 +242,11 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
                 ed.execute(EditCommand::SetArtboardRect { index, x, y, width, height })
             }
             Op::AbName(index, name) => ed.execute(EditCommand::RenameArtboard { index, name }),
+            Op::AbColorId(id, color) => {
+                if let Some(index) = ed.doc.artboard_index(id) {
+                    ed.execute(EditCommand::SetArtboardColor { index, color });
+                }
+            }
             Op::AbColor(index, color) => ed.execute(EditCommand::SetArtboardColor { index, color }),
             Op::AbClip(index) => ed.execute(EditCommand::ToggleArtboardClip(index)),
             Op::AbOrient(index) => ed.execute(EditCommand::OrientArtboard(index)),

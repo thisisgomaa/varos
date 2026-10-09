@@ -581,6 +581,14 @@ pub(crate) fn build_topbar(
                 *show_dock = !*show_dock;
                 hit = true;
             }
+            if check_row(
+                ui,
+                "Colour",
+                ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("picker-open"))).unwrap_or(false),
+            ) {
+                cmds.push(AppCommand::Window(crate::app_command::WindowCmd::TogglePicker));
+                hit = true;
+            }
             for pnl in varos_app::shell::PanelId::DOCKABLE {
                 if check_row(ui, pnl.title(), shell.is_open(pnl)) {
                     shell.toggle_panel(pnl);

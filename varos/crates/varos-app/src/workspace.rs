@@ -238,8 +238,8 @@ impl DocumentSession {
     /// mouse release would, so a lifecycle command never saves / closes / switches mid-gesture.
     ///
     /// Also finishes a gesture whose transaction is open without a drag (a Pen click that added or
-    /// deleted an anchor, before its release). Call `Ui::settle` FIRST: it cancels an open colour
-    /// picker, whose transaction must be reverted, not committed here.
+    /// deleted an anchor, before its release). Call `Ui::settle` FIRST: it finishes colour drags
+    /// and reverts any unaccepted eyedropper sample before the document settles.
     pub fn settle(&mut self) {
         let ed = &mut self.editor;
         if !matches!(ed.drag, Drag::None) || !matches!(ed.ab_drag, AbDrag::None) || ed.transaction_open() {

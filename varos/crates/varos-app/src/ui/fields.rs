@@ -105,20 +105,6 @@ fn num_body(
     route(e, ops, mk);
 }
 
-/// A number field inside the colour picker: its value goes to the picker (whose OK/Cancel is the
-/// document step), so a step, a scrub and a commit all just return the new value.
-pub(crate) fn num_value(
-    ui: &mut egui::Ui,
-    w: f32,
-    label: Label<'_>,
-    tip: &str,
-    value: f32,
-    range: std::ops::RangeInclusive<f32>,
-) -> Option<f32> {
-    let e = kf::number_field(ui, NumberField { range, ..number(ui, w, label, tip, value, 0) });
-    e.live.or(e.commit)
-}
-
 /// A name is its text without edge whitespace / invisible marks; empty is not a name.
 fn parse_name(s: &str) -> Result<String, &'static str> {
     let v = varos_core::command::clean_name(s);
@@ -349,28 +335,6 @@ pub(crate) fn board_tags(ui: &mut egui::Ui, w: f32, tags: &[String], ops: &mut V
     route(e, ops, Op::BoardTags);
 }
 
-/// The colour picker's hex field: a colour on commit, the reason while the text is not one.
-pub(crate) fn hex(ui: &mut egui::Ui, w: f32, shown: &str) -> Option<varos_core::geom::Rgba> {
-    let id = doc_id(ui, "cm-hex");
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, t::FIELD_H), egui::Sense::hover());
-    #[cfg(test)]
-    tests::probe("picker hex", rect);
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let f = TextField {
-        id,
-        rect,
-        value: shown,
-        font,
-        framed: true,
-        open: false,
-        hint: if shown.is_empty() { "Mixed" } else { "" },
-    };
-    // The kit treats an empty original + empty buffer as Unchanged (the Mixed placeholder).
-    // a colour is its value: "fff" and "FFFFFF" are the same, unchanged
-    let parse = |s: &str| super::parse_hex(s).map(|c| c.map(|v| (v * 255.0).round() as u8)).ok_or("Type a hex colour");
-    kf::text_field(ui, f, parse).commit.map(|c| c.map(|v| v as f32 / 255.0))
-}
-
 /// The Layers search: live, commits nothing to the document; Esc restores the text it had.
 pub(crate) fn search(ui: &mut egui::Ui, rect: egui::Rect, text: &mut String) {
     let id = doc_id(ui, "lay-search");
@@ -439,8 +403,17 @@ impl crate::host::DocUi for crate::ui::Ui {
     fn settle_fields(&mut self, ed: &mut Editor) -> bool {
         self.commit_fields(ed)
     }
+    fn cancel_picker_sample(&mut self, ed: &mut Editor) {
+        if let Some(m) = &mut self.color_panel {
+            if m.sample_active() {
+                let mut ops = vec![];
+                m.finish(&mut ops);
+                apply_ops(ed, ops);
+            }
+        }
+    }
     fn bridge_preview_active(&self) -> bool {
-        self.color_modal.is_some()
+        self.color_panel.as_ref().is_some_and(|m| m.gesture_active())
             || self.lay_drag.is_some()
             || self.tab_drag_active()
             || self.ctx.input(|i| i.pointer.any_down())

@@ -60,7 +60,7 @@ pub(crate) fn board_ctlbar(
                             Op::AbRect(i, None, None, None, Some(v))
                         });
                         bar_sep(ui);
-                        ctl_ab_color(ui, ab.color, i, ops);
+                        ctl_ab_color(ui, ab.color, ab.id, ops);
                         if IA_CLIP.show(
                             ui,
                             if ab.count == 0 {
@@ -233,7 +233,7 @@ pub(crate) fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarg
 }
 
 /// Control-bar page colour field. Click opens the existing Color Picker for the active artboard.
-pub(crate) fn ctl_ab_color(ui: &mut egui::Ui, color: Option<Rgba>, i: usize, ops: &mut Vec<Op>) {
+pub(crate) fn ctl_ab_color(ui: &mut egui::Ui, color: Option<Rgba>, id: u32, ops: &mut Vec<Op>) {
     let (sw, resp) = ui.allocate_exact_size(egui::vec2(17.0, 17.0), egui::Sense::click());
     let round = CornerRadius::same(2);
     match color {
@@ -253,7 +253,7 @@ pub(crate) fn ctl_ab_color(ui: &mut egui::Ui, color: Option<Rgba>, i: usize, ops
     }
     ui.painter().rect_stroke(sw, round, Stroke::new(1.0, BORDER_2), StrokeKind::Middle);
     if resp.clicked() {
-        ops.push(Op::OpenPicker(MTarget::Ab(i)));
+        ops.push(Op::OpenPicker(MTarget::Ab(id)));
     }
     resp.on_hover_text("Page colour");
     ui.label(

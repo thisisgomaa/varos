@@ -382,6 +382,7 @@ pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> 
         MenuCmd::Plain(code) => MenuRoute::Plain(code),
         MenuCmd::ResetLayout => MenuRoute::App(AppCommand::Window(WindowCmd::ResetLayout)),
         MenuCmd::ToggleRail => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleRail)),
+        MenuCmd::TogglePicker => MenuRoute::App(AppCommand::Window(WindowCmd::TogglePicker)),
         MenuCmd::ToggleDock => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleDock)),
         MenuCmd::TogglePanel(p) => MenuRoute::App(AppCommand::Window(WindowCmd::TogglePanel(p))),
         MenuCmd::Snap(row) => MenuRoute::Snap(row),
@@ -431,7 +432,7 @@ pub fn route_left_release(pressed_on_canvas: bool, panning: bool, over_panel: bo
 /// The Ui side of a lifecycle command (the real `ui::Ui`; a recorder in tests).
 pub trait DocUi {
     /// Close every Ui-side edit still open on the outgoing document: the open text / number field
-    /// commits (K3), the colour picker cancels. `false` = the field's text does not parse — it keeps the
+    /// commits (K3), completed colour gestures stay; unaccepted samples cancel. `false` = the field's text does not parse — it keeps the
     /// keyboard and its reason, and a user command must not run ([`waits_for_fields`]).
     fn settle(&mut self, ed: &mut Editor) -> bool;
     /// K3 before a DOCUMENT action (a key, a menu row): commit the open field to what it was editing.
@@ -439,7 +440,9 @@ pub trait DocUi {
     fn settle_fields(&mut self, ed: &mut Editor) -> bool {
         self.settle(ed)
     }
-    /// Bridge must refuse picker previews instead of cancelling a human preview.
+    /// Revert an unaccepted sample before a Bridge mutation checks document busy state.
+    fn cancel_picker_sample(&mut self, _ed: &mut Editor) {}
+    /// Bridge refuses an active drag; an unaccepted sample can be cancelled.
     fn bridge_preview_active(&self) -> bool {
         false
     }
@@ -470,7 +473,7 @@ pub struct Ran {
 
 /// Run ONE lifecycle command (any `AppCommand` but `Window`) the way work order §3.5 says:
 /// 1. finish every open edit on the active tab — the Ui side first (an open colour picker is
-///    cancelled, not committed), then the pointer gesture (`DocumentSession::settle`);
+///    finishes its active gesture), then the pointer gesture (`DocumentSession::settle`);
 /// 2. run the lifecycle rules over the workspace and the ports;
 /// 3. mirror the keyboard's held keys ([`Keyboard::mirror`]: modifiers + Space) into the (maybe
 ///    new) active editor — never a blanket reset: Control still held after a Ctrl+Tab must still

@@ -423,6 +423,7 @@ pub enum MenuCmd {
     /// The bar's Window menu rows.
     ToggleRail,
     ToggleDock,
+    TogglePicker,
     TogglePanel(PanelId),
     ResetLayout,
     /// A snapping row (View): flips one `SnapConfig` flag. Alignment / Geometric Guides lived only in
@@ -451,6 +452,7 @@ pub enum Check {
     AlignGuides,
     GeomGuides,
     Rail,
+    Picker,
     Dock,
     Panel(PanelId),
 }
@@ -525,6 +527,7 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
         });
     }
     window.extend([
+        toggle("win.colour-picker", "Colour", MenuCmd::TogglePicker, Check::Picker),
         Entry::Sep,
         item("win.reset-layout", "Reset layout", None, MenuCmd::ResetLayout),
         Entry::Sep,
