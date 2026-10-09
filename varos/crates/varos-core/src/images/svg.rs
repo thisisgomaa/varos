@@ -13,7 +13,26 @@ pub fn export(
     preview: bool,
     cancel: &AtomicBool,
 ) -> Result<(Vec<SvgFile>, ExportReport), String> {
+    export_with_options(doc, store, plan, preview, cancel, None)
+}
+/// Integration w2 (review P1/P2): the image-aware writer follows the vector writer's traversal —
+/// callers outline text first; Live Corners are resolved here; gradients and images then paint — and
+/// Lane C's advanced SVG options (precision, styling, ids, minify) apply exactly as for vector files.
+pub fn export_with_options(
+    doc: &Document,
+    store: &BlobStore,
+    plan: &ExportPlan,
+    preview: bool,
+    cancel: &AtomicBool,
+    options: Option<&crate::svg::options::Options>,
+) -> Result<(Vec<SvgFile>, ExportReport), String> {
+    if let Some(options) = options {
+        options.validate()?;
+    }
+    let decimals = options.map(|o| o.decimals);
     crate::format::validate(doc, &crate::format::Limits::DEFAULT).map_err(|e| e.to_string())?;
+    let resolved = crate::live_corners::document(doc);
+    let doc = &resolved;
     let mut report = ExportReport { notes: super::export_notes(doc, store) };
     let mut files = Vec::new();
     for page in &plan.pages {
@@ -73,7 +92,7 @@ pub fn export(
             }
             match kind {
                 NodeKind::Path(id) => {
-                    crate::svg::paint_image_companion(&mut out, doc, id).map_err(|e| e.to_string())?
+                    crate::svg::paint_image_companion(&mut out, doc, id, decimals).map_err(|e| e.to_string())?
                 }
                 NodeKind::Image(id) => {
                     let image = doc.images.iter().find(|i| i.id == id).ok_or("Missing SVG image metadata")?;
@@ -109,6 +128,9 @@ pub fn export(
             }
         }
         out += "</svg>\n";
+        if let Some(options) = options {
+            out = options.apply(&out)?;
+        }
         files.push(SvgFile { page: page.clone(), bytes: out.into_bytes() });
     }
     report.notes.push(ExportNote {

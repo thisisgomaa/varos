@@ -75,24 +75,30 @@ fn mixed_v9_exports_image_gradient_and_text_in_pdf_svg_and_cpu() {
     let svg = std::str::from_utf8(&files[0].bytes).unwrap();
     assert!(svg.contains("<image "), "image element");
     assert!(svg.contains("linearGradient"), "gradient definition");
-    // CPU: the raster draws the red image pixels.
-    let raster = varos_raster_check(doc, &loaded.blobs);
-    assert!(raster, "CPU raster draws the placed image");
-}
-
-fn varos_raster_check(doc: &varos_core::model::Document, blobs: &varos_core::images::BlobStore) -> bool {
-    // Rendered through the scene the canvas uses; the image occupies (10,10)-(12,12).
+    // Live Corners are resolved before painting (review P1): the corner path's SVG geometry is curved.
+    let corner = doc.paths.iter().find(|p| !p.corners.is_empty()).unwrap();
+    let marker = format!("id=\"path-{}", corner.id);
+    let at = svg.find(&marker).expect("corner path element");
+    let element = &svg[at..at + svg[at..].find("</g>").unwrap()];
+    assert!(element.contains(" d=\"M") && element.contains('C'), "rounded corners export as curves: {element}");
+    // CPU scene: image + gradient paint kinds, and the gradient ring follows the rounded outline.
     let mut ed = varos_core::Editor::new();
-    ed.replace_doc(varos_text_layout::outline_document(doc).unwrap());
-    ed.blobs = blobs.clone();
+    ed.replace_doc(outlined.clone());
+    ed.blobs = loaded.blobs.clone();
     let scene = varos_core::scene::build_artwork_scene(&ed, 1.);
-    scene.errors.is_empty()
-        && scene.content.iter().flat_map(|g| g.prims()).any(|p| matches!(p, varos_core::scene::Prim::Image { .. }))
-        && scene
-            .content
-            .iter()
-            .flat_map(|g| g.prims())
-            .any(|p| matches!(p, varos_core::scene::Prim::GradientFill { .. }))
+    assert!(scene.errors.is_empty(), "{:?}", scene.errors);
+    let prims: Vec<_> = scene.content.iter().flat_map(|g| g.prims()).collect();
+    assert!(prims.iter().any(|p| matches!(p, varos_core::scene::Prim::Image { .. })));
+    let ring = prims
+        .iter()
+        .find_map(|p| match p {
+            varos_core::scene::Prim::GradientFill { rings, stroke: false, .. } => Some(rings[0].clone()),
+            _ => None,
+        })
+        .expect("gradient fill");
+    assert!(ring.len() > 8, "a rounded rectangle flattens to more than its four corners");
+    // No ring point sits on the sharp corner (40,40): radius 8 cuts it off.
+    assert!(ring.iter().all(|q| (q[0] - 40.).hypot(q[1] - 40.) > 2.), "corner (40,40) is rounded");
 }
 
 #[test]
