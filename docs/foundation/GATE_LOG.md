@@ -972,20 +972,17 @@ No GUI, commit, push, merge, build/install of the app bundle or Windows runtime 
 - **Fix (system):** canvas path never raises dialogs (one muted status hint per revision); per-path 60k-element cap with tolerance back-off clamped to [0.01, 0.1] doc units, then a native round-stroke fallback whose report note names what is not shown (dashes/arrows/alignment); fallback clips by the visible band (page scissoring kept); cross-frame coverage cache keyed by geometry/style/zoom bucket/transform with expiry after 8 unseen builds and undo/Bridge invalidation; the document-wide budget remains only for export/validate/Bridge where a report note is the right outcome.
 - **Gates:** 1893 passed / 0 failed / 15 ignored; clippy native + Windows PASS; fmt PASS; ratchets unchanged; export goldens unchanged. Astra review ×2 (fallback-vanish and retry-clamp findings fixed). Installed when Varos was closed.
 
-<<<<<<< HEAD
 ## 2026-10-09 — Wave 2, stage 1 (`merge of bdc67f9`): shape + freehand tools, view depth, text product (v8), import
 
 - **Lanes:** 4B shape tools (Rounded Rect, Polygon sides, Star, Line, Arc, Spiral, Rect/Polar Grid + dialogs) + rail flyouts; 4C Pencil N / Smooth / Path Eraser / Join / Curvature ⇧~; Phase 8 Outline ⌘Y, Pixel Preview ⌥⌘Y + Snap to Pixel, Navigator panel, Presentation ⇧F, canvas prefs; Text P2–P4: `NodeKind::Text` (point/area), Type tool T with bidi caret, Properties ▸ Type (font, size, line height, alignment/justify, direction, **kashida policy**), outlines rendering + PDF/SVG export as outlines, Bridge 1.2 text verbs; 7.2–7.5 PDF/AI + DXF import in `varos-import`, OS clipboard in, Finder drag-drop. Each lane: Codex Sol 6.1 / Astra → cross-model review → fix round. Opus integrated (17-file text conflict unioned; one rail; one keyboard-capture predicate; text preview no longer resets the stroke cache; 1.2 tools/list kept under the cap at 23,272 B by trimming inline verb summaries) and fixed a paste bug that refused fractional values.
 - **Format:** text stamped as **v8** now (temporary identity `migrate_v5_to_v8`; stage 2 splits into v6 images / v7 gradients / v8 text and adds v9 corners+preview); v5 fixtures re-save byte-identical apart from the stamp; v6/v7 files refused by this build (none exist yet).
 - **Gates (moderator-run on a clean detached worktree):** 2034 passed / 0 failed / 15 ignored; clippy native + Windows PASS; fmt PASS; dependency directions PASS; wasm32 varos-text PASS; Bridge 1.0/1.1 byte-frozen (23,993 B). Installed while Varos was closed. All UI provisional pending the owner's design review.
-=======
 ## 2026-10-09 — Lane B Phase 5 partial (`feat/w2-gradients`, uncommitted)
 
 - Delivered 5.0 Appearance reader facade with no persisted keys; 45 frozen v4/v5 model byte round-trips. Pure gradient maths is groundwork only; Paint variants, renderer/export/Bridge/migration and 5.2–5.5 are **not delivered**. Gradient tab remains disabled; no provisional UI.
 - `cargo test --offline --workspace -j 3 --no-fail-fast`: exit 0; **1888 primary passed, 0 failed, 15 ignored**, 108 unfiltered summaries; 3 additional filtered subprocess passes. Ten new named tests (2 appearance, 8 maths); final targeted rerun 10/10.
 - Native and Windows MSVC workspace/all-targets offline `-j 3` clippy `-D warnings`: PASS, 0 warnings. fmt, dependency directions and diff whitespace: PASS. Three shell and six Bridge ratchets pass; caps unchanged, ui.rs unchanged at 811/843. Both frozen tools/list byte tests pass; all 15 Bridge fixture files unchanged.
 - Evidence: `REPORT.md` and `varos/target/lane-b-gates/`. No commit/push/merge, GUI launch/install or owner acceptance. **This is not completion of Phase 5**; independent review and remaining implementation are pending.
->>>>>>> integ/w2
 
 ## 2026-10-09 — Wave 2, stage 2 (`merge of ac42eee`): images v6, gradients v7, corners/preview v9, preferences & registry
 
