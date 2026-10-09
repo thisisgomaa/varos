@@ -139,10 +139,14 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
         return Err("Invalid PDF page box".into());
     }
     let rotation = inherited(&pdf, id, b"Rotate").ok().map(number).transpose()?.unwrap_or(0.);
-    if rotation != 0. {
-        return Err("Rotated PDF pages unsupported; export without page rotation".into());
+    if rotation % 90. != 0. {
+        return Err("PDF page rotation must be a multiple of 90 degrees".into());
     }
-    if d.has(b"UserUnit") {
+    let rotation = rotation.rem_euclid(360.) as u32;
+    let width = b[2] - b[0];
+    let height = b[3] - b[1];
+    let (page_width, page_height) = if rotation == 90 || rotation == 270 { (height, width) } else { (width, height) };
+    if inherited(&pdf, id, b"UserUnit").is_ok() {
         return Err("PDF UserUnit unsupported".into());
     }
     let mut report = ImportReport::default();
@@ -186,9 +190,9 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
     }
     let mut doc = Document::default();
     let aid = doc.nid();
-    doc.artboards.push(Artboard { id: aid, w: b[2] - b[0], h: b[3] - b[1], page_color: None, ..Default::default() });
+    doc.artboards.push(Artboard { id: aid, w: page_width, h: page_height, page_color: None, ..Default::default() });
     let mut state = State::default();
-    let page_ring = [[0., 0.], [b[2] - b[0], 0.], [b[2] - b[0], b[3] - b[1]], [0., b[3] - b[1]]]
+    let page_ring = [[0., 0.], [page_width, 0.], [page_width, page_height], [0., page_height]]
         .map(|p| crate::anchor(&mut doc, p))
         .to_vec();
     let parent = doc.active_layer;
@@ -202,7 +206,14 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
         let nums = || op.operands.iter().map(number).collect::<Result<Vec<_>, _>>();
         let map = |x: f32, y: f32| {
             let m = state.matrix;
-            [m[0] * x + m[2] * y + m[4] - b[0], b[3] - (m[1] * x + m[3] * y + m[5])]
+            let x = m[0] * x + m[2] * y + m[4] - b[0];
+            let y = m[1] * x + m[3] * y + m[5] - b[1];
+            match rotation {
+                90 => [y, x],
+                180 => [width - x, y],
+                270 => [height - y, width - x],
+                _ => [x, height - y],
+            }
         };
         match op.operator.as_str() {
             "q" => {
@@ -342,6 +353,15 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
                     if fill && rings.len() > 1 && !op.operator.ends_with('*') {
                         return Err("Nonzero compound PDF fills unsupported; export even-odd outlines".into());
                     }
+                    if fill && rings.len() > 1 && rings.iter().any(|(_, closed)| !closed) {
+                        if stroke {
+                            return Err("Combined compound PDF fill/stroke with open contours unsupported".into());
+                        }
+                        // PDF fills implicitly close each subpath before applying the winding rule.
+                        for (_, closed) in &mut rings {
+                            *closed = true;
+                        }
+                    }
                     let m = state.matrix;
                     let sx = m[0].hypot(m[1]);
                     let sy = m[2].hypot(m[3]);
@@ -363,6 +383,10 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
                         );
                         p.holes = holes;
                         p.stroke_style = state.style.clone();
+                        for dash in &mut p.stroke_style.dash {
+                            *dash *= sx;
+                        }
+                        p.stroke_style.dash_phase *= sx;
                         doc.paths.push(p);
                         crate::node(&mut doc, NodeKind::Path(id), state.parent, "");
                     }

@@ -101,3 +101,41 @@ fn losses_are_reviewed_before_publication_and_native_routing_has_no_fallback() {
     std::fs::remove_file(pdf).unwrap();
     std::fs::remove_file(path).unwrap();
 }
+#[test]
+fn host_completion_refusal_never_settles_or_resets_a_human_transaction() {
+    struct Ui {
+        resets: usize,
+    }
+    impl crate::host::DocUi for Ui {
+        fn settle(&mut self, _: &mut varos_core::Editor) -> bool {
+            panic!("must not settle an import result")
+        }
+        fn document_switched(&mut self) {
+            self.resets += 1;
+        }
+    }
+    let path = source();
+    let mut ws = Workspace::new();
+    ws.new_untitled();
+    let sid = ws.active_id().unwrap();
+    let rev = ws.get(sid).unwrap().editor.rev;
+    let mut ui = Ui { resets: 0 };
+    let mut dialog = Dialog::default();
+    let keys = crate::host::Keyboard::default();
+    let job = Job { path: path.clone(), target: Target::Place { sid, rev }, cancel: Default::default() };
+    let done = execute(job.clone());
+    ws.get_mut(sid).unwrap().editor.begin();
+    let before = ws.get(sid).unwrap().editor.doc.clone();
+    let ran = crate::import_jobs::complete_on_host(done, &mut ws, &mut ui, &mut dialog, &keys);
+    assert!(!ran.ran);
+    assert!(dialog.errors.last().unwrap().contains("busy"));
+    assert!(ws.get(sid).unwrap().editor.transaction_open());
+    assert_eq!(ws.get(sid).unwrap().editor.doc, before);
+    assert_eq!(ui.resets, 0);
+    let done = execute(job.clone());
+    job.cancel.cancel();
+    assert!(!crate::import_jobs::complete_on_host(done, &mut ws, &mut ui, &mut dialog, &keys).ran);
+    assert!(ws.get(sid).unwrap().editor.transaction_open());
+    assert_eq!(ui.resets, 0);
+    std::fs::remove_file(path).unwrap();
+}

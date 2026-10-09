@@ -36,40 +36,75 @@ pub fn execute(job: Job) -> Done {
     })();
     Done { job, result }
 }
-pub fn complete(done: Done, ws: &mut Workspace, dialogs: &mut dyn Dialogs) {
+pub fn complete(done: Done, ws: &mut Workspace, dialogs: &mut dyn Dialogs) -> bool {
     if done.job.cancel.flag().load(Ordering::Acquire) {
-        return;
+        return false;
     }
     let name = done.job.path.file_name().unwrap_or_default().to_string_lossy();
     let (doc, report) = match done.result {
         Ok(v) => v,
         Err(e) => {
             dialogs.open_failed(&name, &e);
-            return;
+            return false;
         }
     };
     if !report.loss_notes.is_empty() && !dialogs.accept_import_losses(&report.loss_notes) {
-        return;
+        return false;
     }
     if done.job.cancel.flag().load(Ordering::Acquire) {
-        return;
+        return false;
     }
     match done.job.target {
         Target::Open => {
             ws.new_imported(*doc);
+            true
         }
         Target::Place { sid, rev } => {
             if let Some(s) = ws.get_mut(sid) {
                 if s.editor.rev != rev {
                     dialogs.open_failed(&name, "Document changed during import; place again");
-                    return;
+                    return false;
                 }
                 if let Err(e) = varos_core::placement::check(&s.editor, &doc) {
                     dialogs.open_failed(&name, &e);
-                    return;
+                    return false;
                 }
-                s.editor.execute_ui(varos_core::EditCommand::PlaceArtwork(doc));
+                if let Err(e) = s.editor.try_execute(varos_core::EditCommand::PlaceArtwork(doc)) {
+                    dialogs.open_failed(&name, &e.to_string());
+                    return false;
+                }
+                true
+            } else {
+                false
             }
         }
     }
+}
+
+/// Import results never settle a human gesture as a side effect of cancellation or refusal.
+pub fn complete_on_host(
+    mut done: Done,
+    ws: &mut Workspace,
+    ui: &mut dyn crate::host::DocUi,
+    dialogs: &mut dyn Dialogs,
+    keys: &crate::host::Keyboard,
+) -> crate::host::Ran {
+    if done.result.is_ok()
+        && !done.job.cancel.flag().load(Ordering::Acquire)
+        && (ui.field_has_focus()
+            || ui.bridge_preview_active()
+            || ws.sessions().iter().any(|s| crate::autosave_host::editor_busy(&s.editor)))
+    {
+        done.result = Err("Document is busy; finish the active gesture or field and import again".into());
+    }
+    let before = ws.active_id();
+    let published = complete(done, ws, dialogs);
+    let switched = before != ws.active_id();
+    if published {
+        if let Some(s) = ws.active_mut() {
+            keys.mirror(&mut s.editor);
+        }
+        ui.document_switched();
+    }
+    crate::host::Ran { ran: published, switched, ..Default::default() }
 }

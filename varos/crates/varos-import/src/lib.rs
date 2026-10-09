@@ -339,6 +339,7 @@ fn segments_touch(a: &[[f32; 2]], b: &[[f32; 2]]) -> bool {
 
 // ---- Lane H: foreign adapters ----
 mod dxf;
+mod dxf_spline;
 pub mod interchange;
 mod pdf;
 pub use dxf::import_dxf;

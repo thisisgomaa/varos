@@ -56,11 +56,23 @@ pub fn isolated_import(
     }
     // DXF/SVG conversion loops have cooperative checkpoints. PDF's parser is isolated.
     if !matches!(format, Format::Pdf | Format::Ai) {
-        let out = crate::import_cancellable(bytes, format, options, Arc::new(AtomicBool::new(false)))?;
-        if cancel.load(Ordering::Acquire) {
-            return Err("Import cancelled".into());
-        }
-        return Ok(out);
+        // Mirror the borrowed host flag into the converter's owned cooperative guard.
+        return std::thread::scope(|scope| {
+            let shared = Arc::new(AtomicBool::new(false));
+            let guard = shared.clone();
+            let converter = scope.spawn(move || crate::import_cancellable(bytes, format, options, guard));
+            while !converter.is_finished() {
+                if cancel.load(Ordering::Acquire) {
+                    shared.store(true, Ordering::Release);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let result = converter.join().map_err(|_| "Import converter failed")?;
+            if cancel.load(Ordering::Acquire) {
+                return Err("Import cancelled".into());
+            }
+            result
+        });
     }
     let data = serde_json::to_vec(&Request { bytes: bytes.to_vec(), format, options }).map_err(|e| e.to_string())?;
     let start = Instant::now();
