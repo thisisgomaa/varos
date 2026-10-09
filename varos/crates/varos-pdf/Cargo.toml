@@ -9,6 +9,7 @@ edition = "2021"
 # ONLY in this crate (the §0 hedge — the container can be swapped with zero model rewrite).
 [dependencies]
 moxcms = "=0.8.1"
+ttf-parser = "=0.25.1"
 varos-text-layout = { path = "../varos-text-layout" }
 varos-core = { path = "../varos-core" }
 pdf-writer = "0.15"

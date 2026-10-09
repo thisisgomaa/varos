@@ -3905,6 +3905,9 @@ impl Editor {
         self.commit();
     }
     pub fn commit(&mut self) {
+        // ---- Lane H ----
+        crate::typography::after_delete(&mut self.doc);
+        // ---- Lane H end ----
         self.doc.sync_tree(); // adopt new paths / prune dead + empty nodes / re-flatten z
                               // ---- Lane E: Phase 11: source edits cannot publish an invalid live object ----
         if let Err(what) = crate::live::validate(&self.doc) {

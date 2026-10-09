@@ -21,6 +21,8 @@ pub enum EditCommand {
     // ---- end Lane B w3-effects ----
     // ---- Lane E: Phase 11 ----
     Live(crate::live::Action),
+    // ---- Lane H ----
+    Typography(crate::typography::Action),
     // ---- Lane D: deterministic drawing boundary ----
     Drawing(crate::drawing::Action),
     // ---- Lane G ----
@@ -470,6 +472,10 @@ impl EditCommand {
             // ---- Lane G ----
             Self::AddText { text, parent } => {
                 let _ = crate::text::add(ed, text, parent);
+            }
+            // ---- Lane H ----
+            Self::Typography(action) => {
+                let _ = crate::typography::execute(ed, action);
             }
             Self::SetText { id, text } => {
                 let _ = crate::text::set(ed, id, text);

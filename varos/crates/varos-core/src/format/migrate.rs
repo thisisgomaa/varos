@@ -29,6 +29,8 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
     (11, migrate_v11_to_v12),
     // ---- Lane E: Phase 11 ----
     (12, migrate_v12_to_v13),
+    // ---- Lane H ----
+    (13, migrate_v13_to_v14),
 ];
 
 /// Every format this build reads: each migration start plus the current writer (integration w2: the
@@ -190,4 +192,10 @@ pub fn migrate_v11_to_v12(doc: Document, _limits: &Limits) -> Result<Document, L
 /// (`live::refuse_older_keys` refuses one before typed decode), so nothing is invented.
 pub fn migrate_v12_to_v13(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
     crate::live::migrate_v12_to_v13(doc, limits)
+}
+// ---- Lane H ----
+/// v13 → v14 (typography: named styles, OpenType features, threaded/area/path text) is identity:
+/// older writers emitted no `doc.typography` (`typography_format::refuse` rejects it before typed decode).
+pub fn migrate_v13_to_v14(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
+    crate::typography_format::migrate_v13_to_v14(doc, limits)
 }

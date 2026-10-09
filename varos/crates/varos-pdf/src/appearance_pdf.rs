@@ -17,6 +17,7 @@ pub(super) fn paint_tree(
     gradients: &mut crate::gradient::Pool,
     images: &[crate::image_write::DrawImage],
     colours: &crate::colour_management::Resources,
+    text: &mut crate::text_embed::Pool,
     cancel: &AtomicBool,
 ) -> Result<Vec<(String, Ref)>, ExportError> {
     struct Builder<'a> {
@@ -30,6 +31,7 @@ pub(super) fn paint_tree(
         gradients: &'a mut crate::gradient::Pool,
         images: &'a [crate::image_write::DrawImage],
         colours: &'a crate::colour_management::Resources,
+        text: &'a mut crate::text_embed::Pool,
         cancel: &'a AtomicBool,
         forms: Vec<(String, Ref)>,
         states: Vec<(String, Ref)>,
@@ -51,6 +53,16 @@ pub(super) fn paint_tree(
                 NodeKind::Path(pid) => {
                     let Some(pi) = self.doc.pidx(pid) else { return Ok(None) };
                     let source = &self.doc.paths[pi];
+                    // integration w3: embedded (selectable) text wins over its outline paths here too, exactly
+                    // as on a flat page; text carries no appearance stack (its paint stays simple).
+                    let page_box = page_rect(self.page);
+                    if let Some(d) = drawable(self.doc, pi, source) {
+                        if self.text.paint(pid, d.xf, &mut content, &t, &|b| intersect(b, page_box).is_some()) {
+                            // the first glyph path paints the whole story; its siblings add nothing
+                            let data = content.finish().to_vec();
+                            return if data.is_empty() { Ok(None) } else { self.form(data, false, true).map(Some) };
+                        }
+                    }
                     let entries = if source.stack.is_empty() { vec![source.clone()] } else { paint_paths(source) };
                     for p in &entries {
                         let Some(d) = drawable(self.doc, pi, p) else { continue };
@@ -154,7 +166,14 @@ pub(super) fn paint_tree(
             form.group().transparency().isolated(isolated).knockout(knockout).color_space().device_rgb();
             {
                 let mut res = form.resources();
-                // integration w3: managed colour spaces are named at page level; forms must carry them too
+                // integration w3: embedded text fonts and managed colour spaces are named at page level;
+                // forms must carry them too
+                if !self.text.fonts.is_empty() {
+                    let mut fonts = res.fonts();
+                    for (name, reference) in &self.text.fonts {
+                        fonts.pair(Name(name.as_bytes()), *reference);
+                    }
+                }
                 if !self.colours.spaces.is_empty() {
                     let mut spaces = res.color_spaces();
                     for (name, r) in &self.colours.spaces {
@@ -217,6 +236,7 @@ pub(super) fn paint_tree(
         gradients,
         images,
         colours,
+        text,
         cancel,
         forms: vec![],
         states: vec![],

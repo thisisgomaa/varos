@@ -33,7 +33,7 @@ fn paint_goldens_json_svg_pdf_and_cpu() {
         );
         let png = cpu.encode_png().unwrap();
         // Frozen v7 sources and the v6-era PDF goldens: only version stamps follow the current writer
-        // (integration w2; single-digit stamps keep every xref offset).
+        // Lane H: normalize stamps and derived lengths; every other object stays frozen.
         let fv = varos_core::format::FORMAT_VERSION;
         assert_eq!(
             String::from_utf8(std::fs::read(core.join(format!("{name}.vrs"))).unwrap()).unwrap().replacen(

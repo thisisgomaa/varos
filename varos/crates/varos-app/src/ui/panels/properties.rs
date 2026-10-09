@@ -16,7 +16,9 @@ pub(crate) fn panel_properties(
     egui::ScrollArea::vertical().id_salt("props-body").auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
             if let Some(text) = &s.text {
-                type_section(ui, text, ops);
+                // ---- Lane H: resolve named values and stage explicit style overrides ----
+                super::typography::properties(ui, text, &s.typography, ops);
+                // ---- Lane H end ----
                 return;
             }
             let inner = ui.available_width();

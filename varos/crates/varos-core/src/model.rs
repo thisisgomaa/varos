@@ -700,6 +700,10 @@ pub struct Document {
     // ---- Lane G: text data ----
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_boxes: Vec<TextBox>,
+    // ---- Lane H ----
+    #[serde(default, skip_serializing_if = "crate::typography::Typography::is_empty")]
+    pub typography: crate::typography::Typography,
+    // ---- Lane H end ----
     pub paths: Vec<Path>,
     /// LEGACY registry (pre-tree files). Deserialized for compatibility, converted by
     /// `migrate_legacy()`, then stays empty. New code never writes it.
@@ -771,6 +775,8 @@ impl Default for Document {
             output_profile: None,
             swatches: vec![],
             text_boxes: vec![],
+            // ---- Lane H ----
+            typography: Default::default(),
             paths: vec![],
             groups: vec![],
             group_of: HashMap::new(),
@@ -851,6 +857,8 @@ impl Document {
             swatches,
             paths,
             text_boxes,
+            // ---- Lane H ----
+            typography,
             groups,
             group_of,
             nodes,
@@ -878,6 +886,8 @@ impl Document {
             && assets == &other.assets
             && raster_effects_ppi == &other.raster_effects_ppi
             && text_boxes == &other.text_boxes
+            // ---- Lane H ----
+            && typography == &other.typography
             && paths.len() == other.paths.len()
             && nodes.len() == other.nodes.len()
             && name == &other.name

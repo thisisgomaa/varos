@@ -108,3 +108,6 @@ mod colour_transforms;
 mod colour_format;
 
 pub mod colour_preview;
+// ---- Lane H ----
+pub mod typography;
+pub mod typography_format;

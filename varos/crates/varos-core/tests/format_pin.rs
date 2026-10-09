@@ -8,15 +8,21 @@ use varos_core::format::{
 #[test]
 fn writer_and_lane_numbers_are_pinned_literally() {
     assert_eq!((IMAGE_VERSION, GRADIENT_VERSION, TEXT_FORMAT_VERSION, CORNERS_VERSION), (6, 7, 8, 9));
-    // ---- Lane E: Phase 11 ----
-    assert_eq!(FORMAT_VERSION, 13);
+    // integration w3: the wave-3 chain v9→v10 appearance→v11 effects→v12 colour→v13 live→v14 typography
+    use varos_core::format::{APPEARANCE_VERSION, COLOUR_VERSION, EFFECTS_VERSION, LIVE_VERSION, TYPOGRAPHY_VERSION};
+    assert_eq!(
+        (APPEARANCE_VERSION, EFFECTS_VERSION, COLOUR_VERSION, LIVE_VERSION, TYPOGRAPHY_VERSION),
+        (10, 11, 12, 13, 14)
+    );
+    assert_eq!(FORMAT_VERSION, 14);
     let blob = encode_model(&varos_core::model::Document::default(), &Limits::DEFAULT).unwrap();
-    assert!(blob.starts_with("{\"varos\":13,\"doc\":{"));
+    assert!(blob.starts_with("{\"varos\":14,\"doc\":{"));
 }
 
 #[test]
 fn the_chain_is_contiguous_and_the_next_number_is_newer() {
-    assert_eq!(varos_core::format::readable_versions(), (1..=FORMAT_VERSION).collect::<Vec<_>>());
+    // integration w3: one named step per era, v1→…→v14, no gaps
+    assert_eq!(varos_core::format::readable_versions(), (1..=14).collect::<Vec<_>>());
     let v5 = std::str::from_utf8(include_bytes!("fixtures/v5/plain.json")).unwrap();
     let next = FORMAT_VERSION + 1;
     let json = v5.replacen("{\"varos\":5,", &format!("{{\"varos\":{next},"), 1);

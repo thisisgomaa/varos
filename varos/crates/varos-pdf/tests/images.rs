@@ -92,7 +92,7 @@ fn frozen_image_container_and_svg_are_stable() {
     let data = include_bytes!("../../varos-core/tests/fixtures/v6-images/embedded-crop.vrs");
     let loaded = varos_pdf::load_vrs_bytes(data, &Limits::DEFAULT).unwrap();
     // The golden pins the v6-era writer bytes; only the two version stamps follow the current
-    // writer (integration w2, same-length single-digit stamps keep every xref offset).
+    // writer. Compare objects so a wider stamp can change derived xref offsets.
     let current = varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap();
     assert_eq!(
         native_era::restamp(&current, varos_core::format::FORMAT_VERSION, 6),
