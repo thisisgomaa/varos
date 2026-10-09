@@ -14,6 +14,8 @@ pub mod error;
 pub mod limits;
 pub mod migrate;
 mod stroke_keys;
+// ---- Lane C ----
+mod corner_keys;
 pub mod structure;
 pub mod validate;
 
@@ -31,7 +33,9 @@ use std::path::Path;
 /// The format this build writes (the wrapper key `varos` and the PDF catalog's `/VAROS_SchemaVersion`).
 /// 3 (2026-10-04): board metadata — `doc.name`, `doc.description`, `doc.tags` (ADR-0008 amendment).
 /// 4 (2026-10-07): stable artboard ids — `doc.artboards[].id` (ADR-0008 amendment, Bridge slice 3).
-pub const FORMAT_VERSION: u32 = 5;
+// ---- Lane C: provisional next writer; integrator assigns number ----
+pub const CORNERS_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = CORNERS_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -130,6 +134,9 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     }
     if version < ARTBOARD_ID_VERSION {
         refuse_newer_keys(json, version)?; // keys only, before any typed decode
+    }
+    if version < CORNERS_VERSION {
+        corner_keys::refuse(json, version)?;
     }
     if version < 5 {
         stroke_keys::refuse(json, version)?;

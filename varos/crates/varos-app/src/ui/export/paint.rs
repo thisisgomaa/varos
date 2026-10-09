@@ -139,6 +139,10 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                 }
             });
             ui.add_space(t::KIT_GAP);
+            if sheet.minimal.advanced {
+                super::advanced::draw(ui, sheet, running);
+                return;
+            }
             kit::notice(ui, "FORMATS");
             ui.horizontal(|ui| {
                 kit::notice(ui, "Format");
@@ -209,17 +213,24 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
     });
     ui.add_space(t::KIT_GAP);
     ui.horizontal(|ui| {
-        let mut advanced = Control::new(Id::new("export-advanced"), "▸ Advanced");
-        advanced.availability = Availability::Disabled("coming");
-        kit::action(ui, advanced, false);
+        let mut advanced =
+            Control::new(Id::new("export-advanced"), if sheet.minimal.advanced { "▾ Advanced" } else { "▸ Advanced" });
+        if running {
+            advanced.availability = Availability::Disabled("Exporting…");
+        }
+        if kit::action(ui, advanced, false).activated {
+            sheet.minimal.advanced = !sheet.minimal.advanced;
+            sheet.minimal.preferences_dirty = true;
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let label = format!("Export {} files", sheet.minimal.cards().count());
+            let files = sheet.minimal.jobs(sheet.sid, 0, Default::default()).len();
+            let label = format!("Export {files} files");
             let mut c = Control::new(Id::new("export-screens"), &label);
             if running {
                 c.availability = Availability::Busy("Exporting…");
             } else if sheet.busy {
                 c.availability = Availability::Disabled(super::BUSY);
-            } else if sheet.minimal.cards().count() == 0 {
+            } else if files == 0 {
                 c.availability = Availability::Disabled("Select a card to export.");
             } else if sheet.minimal.folder.is_empty() {
                 c.availability = Availability::Disabled("Choose an export folder.");
@@ -228,6 +239,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                 let ticket = crate::file_jobs::next_ticket();
                 let cancel = crate::file_jobs::CancelFlag::default();
                 let jobs = sheet.minimal.jobs(sheet.sid, ticket, cancel.clone());
+                sheet.minimal.revealed_folder = false;
                 sheet.minimal.remaining = jobs.len();
                 sheet.minimal.destinations.clear();
                 sheet.minimal.report = Default::default();
@@ -245,7 +257,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
     }
     sheet.minimal.remember();
 }
-fn dropdown(ui: &mut egui::Ui, key: &str, label: &str, labels: &[&str], disabled: bool) -> Option<usize> {
+pub(super) fn dropdown(ui: &mut egui::Ui, key: &str, label: &str, labels: &[&str], disabled: bool) -> Option<usize> {
     let id = Id::new(key);
     let mut c = Control::new(id, label);
     c.icon = Some(Icon::ChevronDown);

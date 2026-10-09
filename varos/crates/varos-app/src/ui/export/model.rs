@@ -90,6 +90,9 @@ pub struct Minimal {
     pub preview_id: u64,
     pub previews: super::previews::Previews,
     pub preferences_dirty: bool,
+    pub advanced: bool,
+    pub revealed_folder: bool,
+    pub screen_settings: varos_raster::screens::Advanced,
 }
 impl Minimal {
     pub fn new(doc: &Document, selection: &HashSet<u32>, selection_tab: bool) -> Self {
@@ -156,6 +159,9 @@ impl Minimal {
             preview_id: hasher.finish(),
             previews: Default::default(),
             preferences_dirty: false,
+            advanced: false,
+            revealed_folder: false,
+            screen_settings: Default::default(),
         }
     }
     pub fn cards(&self) -> &Cards {
@@ -191,7 +197,8 @@ impl Minimal {
             scale: self.options.scale,
             transparent: self.options.transparent,
             quality: self.options.quality,
-            advanced: false,
+            advanced: self.advanced,
+            screen_settings: self.screen_settings.clone(),
         };
         PREFERENCES.with(|prefs| prefs.borrow_mut().insert(self.key.clone(), p));
     }
@@ -200,6 +207,8 @@ impl Minimal {
         let p = PREFERENCES.with(|prefs| prefs.borrow().get(&self.key).cloned());
         if let Some(p) = p {
             self.selection_tab = p.selection_tab && self.selection_reason().is_none();
+            self.advanced = p.advanced;
+            self.screen_settings = p.screen_settings;
             self.list = p.list;
             self.folder = p.folder;
             self.boards.restore_checks(&p.artboard_cards);
@@ -213,6 +222,61 @@ impl Minimal {
         }
     }
     pub fn jobs(&self, sid: SessionId, ticket: u64, cancel: CancelFlag) -> Vec<ScreenJob> {
+        if self.advanced {
+            let assets: Vec<_> = if self.screen_settings.whole_board {
+                self.cards()
+                    .assets
+                    .first()
+                    .and_then(|a| export::plan(&a.doc, &Scope::WholeBoard).ok())
+                    .unwrap_or_default()
+            } else {
+                self.cards()
+                    .assets
+                    .iter()
+                    .zip(&self.cards().checked)
+                    .filter_map(|(a, on)| on.then_some(a.clone()))
+                    .collect()
+            };
+            let mut settings = self.screen_settings.clone();
+            // Range refers to the original artboard grid, before checkbox filtering.
+            settings.range.clear();
+            return settings
+                .expand(&assets, &self.options)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| {
+                    let mut job = screen_job(
+                        sid,
+                        ticket,
+                        p.asset,
+                        p.options,
+                        PathBuf::from(&self.folder).join(p.relative),
+                        cancel.clone(),
+                        true,
+                    );
+                    job.svg_options = p.svg;
+                    if !self.screen_settings.include_bleed {
+                        for page in &mut job.job.plan.pages {
+                            page.bleed = 0.;
+                            page.bleed_edges = [0.; 4];
+                        }
+                    }
+                    if !p.pages.is_empty() {
+                        job.job.plan.pages = p
+                            .pages
+                            .iter()
+                            .map(|a| varos_pdf::PageSpec {
+                                rect: a.page.rect,
+                                background: a.page.background,
+                                bleed: 0.,
+                                bleed_edges: [0.; 4],
+                            })
+                            .collect();
+                    }
+                    job
+                })
+                .collect();
+        }
         self.cards()
             .assets
             .iter()
@@ -269,6 +333,8 @@ pub fn screen_job(
         options,
         collision_names,
         additional: vec![],
+        svg_options: Default::default(),
+        additional_jobs: vec![],
     }
 }
 
@@ -440,5 +506,59 @@ mod fix_round_tests {
         model.preferences_dirty = true;
         model.remember();
         assert_eq!(preferences()["dirty-export-fix"].folder, "/tmp/unmarked");
+    }
+}
+#[cfg(test)]
+mod lane_c_tests {
+    use super::*;
+    #[test]
+    fn advanced_preferences_and_card_row_jobs_roundtrip() {
+        let settings = varos_core::new_document::Settings { count: 2, bleed: 3., ..Default::default() };
+        let doc = settings.document().unwrap();
+        let mut m = Minimal::new(&doc, &HashSet::new(), false);
+        m.restore("lane-c-job".into());
+        m.advanced = true;
+        m.screen_settings.preset(2);
+        m.screen_settings.prefix = "brand-".into();
+        m.screen_settings.subfolders = varos_raster::screens::Subfolders::Format;
+        m.preferences_dirty = true;
+        m.remember();
+        let mut back = Minimal::new(&doc, &HashSet::new(), false);
+        back.restore("lane-c-job".into());
+        assert!(back.advanced);
+        assert_eq!(back.screen_settings, m.screen_settings);
+        let jobs = back.jobs(SessionId(1), 42, Default::default());
+        assert_eq!(jobs.len(), 6);
+        assert!(jobs[2].job.dest.ends_with("png/brand-Artboard 1@2x.png"));
+        back.screen_settings.rows = vec![varos_raster::screens::Row { format: "pdf".into(), ..Default::default() }];
+        back.screen_settings.pdf_single = true;
+        let jobs = back.jobs(SessionId(1), 43, Default::default());
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job.plan.pages.len(), 2);
+    }
+    #[test]
+    fn advanced_worker_keeps_prefix_suffix_and_numbers_collisions() {
+        let doc = varos_core::new_document::Settings::category(3).document().unwrap();
+        let mut m = Minimal::new(&doc, &HashSet::new(), false);
+        m.advanced = true;
+        m.screen_settings.prefix = "icon-".into();
+        m.screen_settings.rows[0].format = "svg".into();
+        m.screen_settings.rows[0].suffix = "@2x".into();
+        let dir = std::env::temp_dir().join(format!("lane-c-names-{}", varos_app::storage::checksum::new_nonce()));
+        m.folder = dir.to_string_lossy().into_owned();
+        for n in 1..=2 {
+            let job = m.jobs(SessionId(1), n, Default::default()).remove(0);
+            let done = crate::file_jobs::execute(
+                crate::file_jobs::FileJob::Screen(Box::new(job)),
+                &mut crate::file_ports::DiskStore,
+            );
+            let crate::file_jobs::FileDone::Exported(done) = done else { panic!("Expected export") };
+            assert!(matches!(done.result, crate::file_jobs::ExportResult::Exported));
+            assert_eq!(
+                done.job.dest.file_name().unwrap().to_string_lossy(),
+                if n == 1 { "icon-Artboard 1@2x.svg" } else { "icon-Artboard 1@2x 2.svg" }
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

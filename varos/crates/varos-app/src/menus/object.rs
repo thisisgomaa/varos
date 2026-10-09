@@ -80,9 +80,13 @@ pub(super) fn rows() -> Vec<Entry> {
             None,
             MenuCmd::Object(varos_core::editor::wave::ObjectAction::ExpandTransform),
         ),
+        // ---- Lane C ----
+        item("obj.expand", "Expand", None, MenuCmd::LaneC("Expand")),
         Entry::Sub {
             label: "Path",
             items: vec![
+                item("obj.outline-stroke", "Outline Stroke", None, MenuCmd::LaneC("Outline Stroke")),
+                item("obj.offset-path", "Offset Path…", None, MenuCmd::LaneC("Offset Path…")),
                 key("obj.join", "Join", cmd(K::KeyJ)),
                 key("obj.average", "Average", cmd_alt(K::KeyJ)),
                 item(

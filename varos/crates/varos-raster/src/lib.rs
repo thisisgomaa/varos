@@ -894,3 +894,6 @@ mod stroke_failure_tests {
         assert!(rasterize_artboard_checked(Arc::new(doc), 0, [100, 100]).unwrap_err().contains("limit_exceeded"));
     }
 }
+
+// ---- Lane C ----
+pub mod screens;

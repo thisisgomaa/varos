@@ -160,6 +160,8 @@ pub fn export_svg_files_with_report(
 ) -> Result<(Vec<SvgFile>, crate::ExportReport), ExportError> {
     cancelled(cancel)?;
     check_document(doc)?;
+    let resolved = crate::live_corners::document(doc);
+    let doc = &resolved;
     if plan.pages.is_empty() {
         return Err(ExportError::NothingToExport);
     }
@@ -547,3 +549,6 @@ mod tests {
         assert_eq!(num(-0.00001), "0.000");
     }
 }
+
+// ---- Lane C ----
+pub mod options;

@@ -144,6 +144,11 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
         for hole in &path.holes {
             hole.len().hash(&mut state);
         }
+        // ---- Lane C ----
+        for corner in &path.corners {
+            f32_hash(corner.radius, &mut state);
+            std::mem::discriminant(&corner.kind).hash(&mut state);
+        }
         path.fill.hash(&mut state);
         path.stroke.hash(&mut state);
         f32_hash(path.stroke_width, &mut state);

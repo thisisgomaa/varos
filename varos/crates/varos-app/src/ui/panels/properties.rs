@@ -31,6 +31,7 @@ pub(crate) fn panel_properties(
             ui.label(if measured { panel_title(&s.name) } else { panel_title(&s.name).color(MUTED) });
             ui.add_space(2.0);
             ui.label(micro_label("TRANSFORM"));
+
             label_gap(ui);
 
             // ── Transform block: [9-pt refpoint] [X/W · Y/H] [link] ──
@@ -98,6 +99,7 @@ pub(crate) fn panel_properties(
                 if IA_FLIP_H.show(ui, flip_state) {
                     ops.push(Op::Flip(true));
                 }
+                super::super::lane_c::scale_strokes(ui, s.scale_strokes, ops);
                 if IA_FLIP_V.show(ui, flip_state) {
                     ops.push(Op::Flip(false));
                 }

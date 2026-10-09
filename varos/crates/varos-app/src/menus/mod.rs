@@ -106,6 +106,8 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
 /// What a clicked item does — each one an EXISTING path in the host.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MenuCmd {
+    // ---- Lane C ----
+    LaneC(&'static str),
     Slice4a(&'static str),
     View(varos_core::editor::view_commands::ViewAction),
     TogglePasteRemembersLayers,

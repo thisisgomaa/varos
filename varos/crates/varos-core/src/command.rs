@@ -13,6 +13,18 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    // ---- Lane C ----
+    PathAdvanced(crate::path_advanced::Action),
+    SetCornersLive {
+        path: u32,
+        corners: Vec<crate::live_corners::CornerParam>,
+    },
+    SetCorners {
+        path: u32,
+        corners: Vec<crate::live_corners::CornerParam>,
+    },
+    SetScaleStrokes(bool),
+    NewDocument(crate::new_document::Settings),
     SetWandOptions(crate::select_transform::WandOptions),
     SetEyedropperOptions(crate::select_transform::PickOptions),
     Transform(crate::select_transform::Transform),
@@ -375,6 +387,26 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            // ---- Lane C ----
+            Self::PathAdvanced(action) => ed.path_advanced(action),
+            Self::SetCornersLive { path, corners } => {
+                if let Some(i) = ed.doc.pidx(path) {
+                    if crate::live_corners::validate(&ed.doc.paths[i], &corners).is_ok() {
+                        ed.doc.paths[i].corners = corners;
+                        ed.dirty = true;
+                    }
+                }
+            }
+            Self::SetCorners { path, corners } => ed.set_corners(path, corners),
+            Self::SetScaleStrokes(on) => ed.select_transform.scale_strokes = on,
+            Self::NewDocument(settings) => {
+                if let Ok(doc) = settings.document() {
+                    ed.begin();
+                    ed.doc = doc;
+                    ed.dirty = true;
+                    ed.commit();
+                }
+            }
             Self::SetWandOptions(options) => {
                 ed.select_transform.wand = options;
                 ed.select_transform.options_requested = true;

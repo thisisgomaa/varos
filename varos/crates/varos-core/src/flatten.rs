@@ -71,6 +71,8 @@ pub fn flatten_path(doc: &Document, pi: usize, ppu: f32) -> PathGeometry {
 /// same order (flatten locally, then map through `xf` unless it is the identity), so the result is
 /// bit-identical to `flatten_path`.
 fn flatten_with(path: &Path, xf: Xform, fppu: f32) -> PathGeometry {
+    let evaluated = crate::live_corners::evaluated(path);
+    let path = &evaluated;
     let world = |ring: Vec<Pt>| -> Vec<Pt> {
         if xf.is_identity() {
             ring
@@ -107,6 +109,7 @@ fn control_bbox_with(path: &Path, xf: Xform) -> Rect {
 }
 
 struct Entry {
+    corners: Vec<crate::live_corners::CornerParam>,
     closed: bool,
     xform: Xform,
     anchors: Vec<Anchor>,
@@ -118,6 +121,7 @@ struct Entry {
 impl Entry {
     fn fresh(path: &Path, xform: Xform) -> Entry {
         Entry {
+            corners: path.corners.clone(),
             closed: path.closed,
             xform,
             anchors: path.anchors.clone(),
@@ -127,7 +131,11 @@ impl Entry {
         }
     }
     fn matches(&self, path: &Path, xform: Xform) -> bool {
-        self.closed == path.closed && self.xform == xform && self.anchors == path.anchors && self.holes == path.holes
+        self.corners == path.corners
+            && self.closed == path.closed
+            && self.xform == xform
+            && self.anchors == path.anchors
+            && self.holes == path.holes
     }
 }
 

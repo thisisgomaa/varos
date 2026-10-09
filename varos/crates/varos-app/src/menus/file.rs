@@ -6,7 +6,7 @@ use super::*;
 pub(super) fn rows() -> Vec<Entry> {
     use KeyCode as K;
     vec![
-        file_key("file.new", "New", cmd(K::KeyN), FileCmd::New),
+        file_key("file.new", "New…", cmd(K::KeyN), FileCmd::New),
         file_key("file.open", "Open\u{2026}", cmd(K::KeyO), FileCmd::Open),
         Entry::Sub { label: "Open Recent", items: vec![] },
         file_row("file.place.svg", "Place SVG\u{2026}", FileCmd::PlaceSvg),
