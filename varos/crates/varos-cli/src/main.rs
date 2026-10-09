@@ -1,5 +1,6 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
 mod document;
+mod images;
 use std::{
     ffi::OsString,
     io::{Read, Write},
@@ -61,6 +62,10 @@ fn response(action: impl FnOnce() -> Result<Value, Failure> + std::panic::Unwind
 fn main() {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
+        Some("image") => {
+            let (value,code)=response(||images::run(args.collect()).map_err(Failure::from));
+            println!("{value}");std::process::exit(code);
+        }
         Some("bridge") => {
             let rest: Vec<String> = args.collect();
             // ADR-0011 owner commands (pair/agents/hosts/register) vs attached tool calls.

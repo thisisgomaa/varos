@@ -33,6 +33,8 @@ pub struct NativeStroke {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prim {
+    // ---- w2-images ----
+    Image { key: crate::images::BlobKey, pixels: Arc<crate::images::Pixels>, corners: [Pt; 4], opacity: f32 },
     Fill { rings: Vec<Vec<Pt>>, color: Rgba }, // outer ring + hole rings — filled even-odd (holes cut through)
     // `clip` (A2): the artboard rect [x0,y0,x1,y1] (world) this stroke is clipped to, if any. The centerline
     // is ALREADY cut to the rect (clip_polyline_rect), but the extruded BAND still overhangs the edge by up
@@ -207,6 +209,7 @@ pub struct Scene {
 /// to double-blend, so no isolated layer needed).
 fn scale_alpha(p: &mut Prim, o: f32) {
     let c = match p {
+        Prim::Image { opacity, .. } => { *opacity *= o; return; },
         Prim::Fill { color, .. } => color,
         Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } => color,
         Prim::Dashed { color, .. } => color,
@@ -282,7 +285,7 @@ fn rect_intersection(a: R4, b: R4) -> Option<R4> {
 /// The whole scene, uncut (no view culling). Used where the entire document must be described —
 /// tests, exports, thumbnails. Shares the cross-frame flatten cache with `build_scene_in_view`.
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
-    build_scene_impl(ed, ppu, None, None)
+    build_scene_impl(ed, ppu, None, None, false)
 }
 
 /// P11.2: the canvas scene for a `frame`-sized viewport seen through `view`. Paths whose world bbox
@@ -290,7 +293,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
 /// entirely; partially visible paths have their rings and stroke runs clipped to that grown rect, reusing
 /// the artboard clippers. Everything inside the frame renders exactly as `build_scene` would.
 pub fn build_scene_in_view(ed: &Editor, view: View, frame: [u32; 2]) -> Scene {
-    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), None)
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), None, false)
 }
 
 /// UI-independent canvas presentation input; exporters use the unstyled entry points.
@@ -299,9 +302,10 @@ pub struct SceneStyle {
     pub checkerboard: [Rgba; 2],
 }
 pub fn build_scene_in_view_styled(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle) -> Scene {
-    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style))
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style), false)
 }
-fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>) -> Scene {
+pub fn build_artwork_scene(ed: &Editor, ppu: f32) -> Scene {build_scene_impl(ed,ppu,None,None,true)}
+fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>, artwork_only: bool) -> Scene {
     let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
     let stroke_budget = std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default());
     let stroke_errors = std::cell::RefCell::new(Vec::new());
@@ -320,6 +324,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     {
         let ab_tool = ed.tool == ToolKind::Artboard;
         for (i, ab) in ed.doc.artboards.iter().enumerate() {
+            if artwork_only {break;} 
             if ab.hidden {
                 continue; // board eye OFF → the page (paper + edge + handles) vanishes with its art
             }
@@ -744,7 +749,32 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     let mut cur_clip: Option<u32> = None;
     let mut clip_members: Vec<Group> = Vec::new();
     let mut clip_open: Vec<Prim> = Vec::new();
-    for (pi, p) in ed.doc.paint_list() {
+    // ---- w2-images ----
+    for item in crate::images::paint_order(&ed.doc) {
+        if let crate::model::NodeKind::Image(id) = item {
+            if ed.doc.eff_hidden(id) || ed.doc.is_mask_source(id) { continue; }
+            let Some(image) = ed.doc.images.iter().find(|i| i.id == id) else { continue };
+            let Some(blob) = ed.blobs.get(&image.blob) else {
+                stroke_errors.borrow_mut().push(format!("Image {id} resource unavailable"));
+                continue;
+            };
+            let corners = crate::images::world_corners(&ed.doc, image);
+            if cull.as_ref().is_some_and(|c| !rects_intersect(crate::images::corner_rect(corners), c.grown(0.0))) { continue; }
+            let unit_clip = ed.doc.clip_group_of(id);
+            if unit_clip != cur_clip {
+                if let Some(c) = cur_clip.take() {
+                    if !clip_open.is_empty() { clip_members.push(Group::Opaque(std::mem::take(&mut clip_open))); }
+                    groups.push(Group::Clip { mask_rings: mask_rings_of(c), members: std::mem::take(&mut clip_members) });
+                }
+                if unit_clip.is_some() && !open.is_empty() { groups.push(Group::Opaque(std::mem::take(&mut open))); }
+                cur_clip = unit_clip;
+            }
+            let prim = Prim::Image { key: image.blob.clone(), pixels: blob.pixels.clone(), corners, opacity: image.opacity };
+            if cur_clip.is_some() { clip_open.push(prim); } else { open.push(prim); }
+            continue;
+        }
+        let crate::model::NodeKind::Path(id) = item else { continue };
+        let Some((pi, p)) = ed.doc.paint_list().find(|(_, p)| p.id == id) else { continue };
         // P11.2: a culled path is skipped exactly like a hidden one — BEFORE the clip-run tracking, so a
         // clip's remaining visible members stay one contiguous run.
         let Some(geom) = geometry[pi].as_deref() else { continue };

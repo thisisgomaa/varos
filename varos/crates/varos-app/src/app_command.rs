@@ -50,6 +50,8 @@ pub enum WindowCmd {
 /// Every document-lifecycle request. In S1, Close Window = `Quit` (one window).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppCommand {
+    // ---- w2-images ----
+    PlaceImage { sid:SessionId,path:std::path::PathBuf,options:crate::image_jobs::Options },
     Clip(SessionId, bool),
     /// Authenticated local attachment; processed on the UI thread through the same FIFO.
     Bridge(Box<varos_bridge::ipc::Pending>),

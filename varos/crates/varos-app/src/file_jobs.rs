@@ -37,6 +37,7 @@ pub const STATUS_DELAY: Duration = Duration::from_millis(300);
 /// A manual save of `doc` (the snapshot taken when the user asked) to `dest`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SaveJob {
+    pub blobs:varos_core::images::BlobStore,
     pub sid: SessionId,
     /// Matches the tab's [`SaveInFlight::ticket`]; a completion with another ticket is stale.
     pub ticket: u64,
@@ -138,6 +139,8 @@ impl ExportEvent {
 /// One unit of background file work.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileJob {
+    // ---- w2-images ----
+    Image(crate::image_jobs::Job),
     Template(crate::template_jobs::Job),
     Save(SaveJob),
     /// Slice 0.6: File ▸ Save a Copy… — the same write as `Save`, but its result only releases the
@@ -182,6 +185,8 @@ pub struct ExportDone {
 /// A finished background job, applied on the UI thread through `AppCommand::FileDone`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileDone {
+    // ---- w2-images ----
+    Image(Box<crate::image_jobs::Done>),
     Template(crate::template_jobs::Done),
     Autosaved(Box<crate::autosave_io::Done>),
     Saved(SaveDone),
@@ -225,7 +230,8 @@ impl FileDone {
     /// What the worker delivers if `job` panicked (a bug): a failure carrying the job's identity.
     pub fn panicked(job: &FileJob) -> FileDone {
         match job {
-            FileJob::Template(j) => FileDone::Template(crate::template_jobs::Done {
+            FileJob::Image(j) => FileDone::Image(Box::new(crate::image_jobs::Done {job:j.clone(),result:Err("Image worker panicked".into())})),
+        FileJob::Template(j) => FileDone::Template(crate::template_jobs::Done {
                 ticket: j.ticket,
                 result: Err(varos_bridge::Error::new("io_error", "template worker panicked")),
             }),
@@ -286,17 +292,18 @@ pub fn next_ticket() -> u64 {
 /// Recent entry, and a save's Recent entry is recorded by the lifecycle when its result is applied.
 pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
     match job {
+        FileJob::Image(j) => FileDone::Image(Box::new(crate::image_jobs::execute(j))),
         FileJob::Template(j) => FileDone::Template(crate::template_jobs::execute(j)),
         FileJob::Bridge(j) => execute_bridge(*j, disk),
         FileJob::Save(j) => {
-            let (result, published) = match disk.save_published(&j.doc, &j.dest) {
+            let (result, published) = match disk.save_resources_published(&j.doc, &j.blobs, &j.dest) {
                 Ok((outcome, published)) => (Ok(outcome), published),
                 Err(reason) => (Err(reason), None),
             };
             FileDone::Saved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result, published })
         }
         FileJob::SaveCopy(j) => {
-            let (result, published) = match disk.save_published(&j.doc, &j.dest) {
+            let (result, published) = match disk.save_resources_published(&j.doc, &j.blobs, &j.dest) {
                 Ok((outcome, published)) => (Ok(outcome), published),
                 Err(reason) => (Err(reason), None),
             };
@@ -316,7 +323,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
             FileJob::Save(s) | FileJob::SaveCopy(s) => &mut s.dest,
             FileJob::Export(e) => &mut e.dest,
             FileJob::Screen(e) => &mut e.job.dest,
-            FileJob::Bridge(_) | FileJob::Template(_) => unreachable!(),
+            FileJob::Image(_) | FileJob::Bridge(_) | FileJob::Template(_) => unreachable!(),
         };
         if let Some((path, expected)) = &j.expected {
             if expected.is_none() || disk.fingerprint(path) != *expected {
@@ -334,8 +341,9 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
         }
         Ok(match j.inner {
             FileJob::Save(s) | FileJob::SaveCopy(s) => {
-                let (result, published) = disk.save_guarded(
+                let (result, published) = disk.save_resources_guarded(
                     &s.doc,
+                    &s.blobs,
                     &s.dest,
                     j.expected.as_ref().and_then(|(_, fp)| fp.as_ref()),
                     j.expected.is_none(),
@@ -359,7 +367,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 };
                 FileDone::Exported(ExportDone { job: e, result, report })
             }
-            FileJob::Bridge(_) | FileJob::Template(_) => unreachable!(),
+            FileJob::Image(_) | FileJob::Bridge(_) | FileJob::Template(_) => unreachable!(),
         })
     })();
     let (reply, done) = match result {
@@ -389,7 +397,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 FileDone::Exported(_) => {
                     varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", "PDF export refused or failed"))
                 }
-                FileDone::Autosaved(_) | FileDone::Bridge { .. } | FileDone::CopySaved(_) | FileDone::Template(_) => {
+                FileDone::Image(_) | FileDone::Autosaved(_) | FileDone::Bridge { .. } | FileDone::CopySaved(_) | FileDone::Template(_) => {
                     unreachable!()
                 }
             };
@@ -706,7 +714,7 @@ mod tests {
         let save = |dest: PathBuf, expected| {
             FileJob::Bridge(Box::new(BridgeFileJob {
                 ticket: 9,
-                inner: FileJob::Save(SaveJob { sid: SessionId(1), ticket: 9, dest, doc: doc.clone() }),
+                inner: FileJob::Save(SaveJob { blobs: Default::default(),  sid: SessionId(1), ticket: 9, dest, doc: doc.clone() }),
                 home: root.clone(),
                 expected,
             }))
@@ -714,7 +722,7 @@ mod tests {
         // No backing file exists yet; fresh Save As is independent of the live editor.
         let fresh = FileJob::Bridge(Box::new(BridgeFileJob {
             ticket: 8,
-            inner: FileJob::Save(SaveJob { sid: SessionId(1), ticket: 8, dest: path.clone(), doc: doc.clone() }),
+            inner: FileJob::Save(SaveJob { blobs: Default::default(),  sid: SessionId(1), ticket: 8, dest: path.clone(), doc: doc.clone() }),
             home: root.clone(),
             expected: None,
         }));

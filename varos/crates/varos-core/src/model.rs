@@ -2,6 +2,8 @@
 //! Stable u32 IDs (never Vec indices) so selection/active survive deletes & joins.
 
 use crate::geom::*;
+// ---- w2-images ----
+use crate::images::{ImageObject,AssetMeta};
 pub use crate::stroke::{ArrowAlign, ArrowHead, StrokeAlign, StrokeArrows, StrokeCap, StrokeJoin, StrokeStyle};
 use crate::units::DocUnits;
 use serde::{Deserialize, Serialize};
@@ -282,6 +284,8 @@ pub enum NodeKind {
     Layer,
     Group,
     Path(u32),
+    // ---- w2-images ----
+    Image(u32),
 }
 
 /// Where a dragged row lands relative to the target row (the 3-zone drag model).
@@ -594,6 +598,13 @@ pub struct Document {
     /// Tags: clean, case-insensitively unique, order kept (`board::normalize_tags`).
     #[serde(default)]
     pub tags: Vec<String>,
+    // ---- w2-images ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageObject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<AssetMeta>,
+    #[serde(default = "crate::images::default_effects_ppi", skip_serializing_if = "crate::images::is_default_effects_ppi")]
+    pub raster_effects_ppi: f32,
     pub paths: Vec<Path>,
     /// LEGACY registry (pre-tree files). Deserialized for compatibility, converted by
     /// `migrate_legacy()`, then stays empty. New code never writes it.
@@ -657,6 +668,9 @@ impl Default for Document {
             name: String::new(),
             description: String::new(),
             tags: vec![],
+            images: vec![],
+            assets: vec![],
+            raster_effects_ppi: crate::images::default_effects_ppi(),
             paths: vec![],
             groups: vec![],
             group_of: HashMap::new(),
@@ -726,6 +740,9 @@ impl Document {
             name,
             description,
             tags,
+            images,
+            assets,
+            raster_effects_ppi,
             paths,
             groups,
             group_of,
@@ -747,7 +764,10 @@ impl Document {
         // the unit settings split in two: ppi is content, the display unit a preference
         let DocUnits { ppi, display: _ } = *units;
         // cheap, discriminating fields first
-        paths.len() == other.paths.len()
+        images == &other.images
+            && assets == &other.assets
+            && raster_effects_ppi == &other.raster_effects_ppi
+            && paths.len() == other.paths.len()
             && nodes.len() == other.nodes.len()
             && name == &other.name
             && description == &other.description
@@ -1214,7 +1234,7 @@ impl Document {
     }
     /// The leaf node representing a path.
     pub fn node_of_path(&self, pid: u32) -> Option<u32> {
-        self.nodes.iter().find(|n| matches!(n.kind, NodeKind::Path(p) if p == pid)).map(|n| n.id)
+        self.nodes.iter().find(|n| matches!(n.kind, NodeKind::Path(p) | NodeKind::Image(p) if p == pid)).map(|n| n.id)
     }
     /// The HIGHEST Group ancestor of a path's leaf (stops at the Layer). None = ungrouped.
     pub fn top_group_of_path(&self, pid: u32) -> Option<u32> {
@@ -1309,6 +1329,8 @@ impl Document {
     }
     /// Effective visibility: the path's own flag OR any ancestor container's (the panel eye cascade).
     pub fn eff_hidden(&self, pid: u32) -> bool {
+        // ---- w2-images ----
+        if self.images.iter().any(|i|i.id==pid) {return crate::images::image_hidden(self,pid);}
         let Some(pi) = self.pidx(pid) else { return true };
         if self.paths[pi].hidden {
             return true;
@@ -1328,6 +1350,8 @@ impl Document {
     }
     /// Effective lock: the path's own flag OR any ancestor container's (cascade).
     pub fn eff_locked(&self, pid: u32) -> bool {
+        // ---- w2-images ----
+        if self.images.iter().any(|i|i.id==pid) {return crate::images::image_locked(self,pid);}
         let Some(pi) = self.pidx(pid) else { return false };
         if self.paths[pi].locked {
             return true;

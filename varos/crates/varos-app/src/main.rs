@@ -61,6 +61,9 @@ mod shortcuts;
 mod single_instance;
 mod svg_import;
 mod template_jobs;
+// ---- w2-images ----
+mod image_jobs;
+mod image_io;
 mod thumbs;
 mod ui;
 mod workspace;

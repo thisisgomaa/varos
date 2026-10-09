@@ -24,6 +24,7 @@ use varos_core::model::Document;
 // The write side lives in `write.rs` (the shared page loop + the native container) and `export.rs`
 // (the pure PDF export: planning + a model-free writer). The bounded read side lives in read.rs;
 // this file keeps the compatible public entry points.
+pub mod images;
 mod clipboard;
 mod export;
 pub use clipboard::{clipboard_vectors, ClipboardVectors};

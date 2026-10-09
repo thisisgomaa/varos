@@ -205,6 +205,8 @@ pub(crate) fn build_layer_rows(
             false
         };
         let (kind, name) = match n.kind {
+            // ---- w2-images ----
+            NodeKind::Image(_) => (LKind::Path, "Image".into()),
             NodeKind::Layer => (LKind::Layer, n.name.clone()),
             NodeKind::Group => (LKind::Group, if n.name.is_empty() { "<Group>".into() } else { n.name.clone() }),
             NodeKind::Path(pid) => (

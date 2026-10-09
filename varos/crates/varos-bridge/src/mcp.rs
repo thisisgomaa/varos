@@ -614,6 +614,8 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
     if let Some(rows) = out["tools"].as_array_mut() {
         rows.push(json!({"name":"import_svg","description":"SVG/SVGZ; files scope; undo; losses.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}), &["api","board","request_id","expected_rev","path"])}));
     }
+    // ---- w2-images ----
+    crate::images::append_tools(&mut out);
     append_export_tools(&mut out);
     append_document_tools(&mut out);
     if let Some(list) = out["tools"].as_array_mut() {

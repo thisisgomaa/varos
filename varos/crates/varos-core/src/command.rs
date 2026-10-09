@@ -13,6 +13,8 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    // ---- w2-images ----
+    Image(crate::images::ImageEdit),
     SetWandOptions(crate::select_transform::WandOptions),
     SetEyedropperOptions(crate::select_transform::PickOptions),
     Transform(crate::select_transform::Transform),
@@ -375,6 +377,7 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            Self::Image(edit) => crate::images::apply(ed, edit),
             Self::SetWandOptions(options) => {
                 ed.select_transform.wand = options;
                 ed.select_transform.options_requested = true;

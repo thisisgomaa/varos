@@ -13,7 +13,7 @@ pub type Step = fn(Document, &Limits) -> Result<Document, LoadError>;
 
 /// The sequential table. Loading format N runs every step from N up to `FORMAT_VERSION`, in order.
 pub const MIGRATIONS: &[(u32, Step)] =
-    &[(1, migrate_v1_to_v2), (2, migrate_v2_to_v3), (3, migrate_v3_to_v4), (4, migrate_v4_to_v5)];
+    &[(1, migrate_v1_to_v2), (2, migrate_v2_to_v3), (3, migrate_v3_to_v4), (4, migrate_v4_to_v5), (5, migrate_v5_to_next_images)];
 
 /// Run the migrations that take a format-`from` document to format `to`, in order.
 pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result<Document, LoadError> {
@@ -114,5 +114,11 @@ pub(crate) fn release_broken_clips(doc: &mut Document) -> bool {
 
 /// v4 → v5 is identity: omitted styles decode as defaults, without allocation or normalization.
 pub fn migrate_v4_to_v5(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
+    Ok(doc)
+}
+
+// ---- w2-images ----
+/// Pure next-version migration: no source bytes or image identities are invented.
+pub fn migrate_v5_to_next_images(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
 }

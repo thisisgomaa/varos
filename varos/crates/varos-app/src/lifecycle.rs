@@ -113,6 +113,16 @@ pub trait DocStore {
     fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
         self.load(path).map(|doc| (doc, None))
     }
+    // ---- w2-images ----
+    fn load_resources(&mut self,path:&Path)->Result<(Document,varos_core::images::BlobStore,Option<&'static str>),String> {
+        self.load_with_notice(path).map(|(doc,notice)|(doc,Default::default(),notice))
+    }
+    fn save_resources_published(&mut self,doc:&Document,blobs:&varos_core::images::BlobStore,path:&Path)->Result<(SaveOutcome,Option<varos_app::storage::durable::Fingerprint>),String> {
+        let _=blobs;if !doc.images.is_empty(){return Err("This store cannot save image resources".into());}self.save_published(doc,path)
+    }
+    fn save_resources_guarded(&mut self,doc:&Document,blobs:&varos_core::images::BlobStore,path:&Path,expected:Option<&varos_app::storage::durable::Fingerprint>,fresh:bool)->Result<(SaveOutcome,Option<varos_app::storage::durable::Fingerprint>),varos_bridge::Error> {
+        let _=blobs;if !doc.images.is_empty(){return Err(varos_bridge::Error::new("unsupported","This store cannot save image resources"));}self.save_guarded(doc,path,expected,fresh)
+    }
     fn save(&mut self, doc: &Document, path: &Path) -> Result<SaveOutcome, String>;
     fn save_published(
         &mut self,
@@ -236,6 +246,10 @@ impl Lifecycle<'_> {
     /// Run one command. `AppCommand::Window(_)` is ignored here (host-owned).
     pub fn run(&mut self, cmd: AppCommand) -> Effect {
         match cmd {
+            // ---- w2-images ----
+            AppCommand::PlaceImage {sid,path,options} => {
+                if let Some(s)=self.ws.get(sid) {let job=crate::image_jobs::Job {sid,ticket:file_jobs::next_ticket(),expected_rev:s.editor.rev,path,options,bridge:false,cancel:Default::default()};let _=self.queue(FileJob::Image(job));}
+            }
             AppCommand::Selection(..)
             | AppCommand::Object(..)
             | AppCommand::View(..)
@@ -435,12 +449,13 @@ impl Lifecycle<'_> {
             self.store.remember(&key.path, old, None);
             return;
         }
-        match self.store.load_with_notice(&path) {
-            Ok((doc, notice)) => {
+        match self.store.load_resources(&path) {
+            Ok((doc, blobs, notice)) => {
                 let board = BoardSummary::of(&doc);
                 let at = key.path.clone();
                 let id = self.ws.add_loaded(doc, at.clone(), key);
                 if let Some(s) = self.ws.get_mut(id) {
+                    s.editor.blobs=blobs;
                     s.source_fingerprint = self.store.fingerprint(&at);
                     // A4: the released-mask repair changed the content → the tab opens dirty.
                     s.repaired_on_open = notice == Some(varos_core::format::RELEASED_MASKS_NOTICE);
@@ -573,7 +588,8 @@ impl Lifecycle<'_> {
             follow_up: false,
             started: std::time::Instant::now(),
         });
-        let _ = self.queue(FileJob::Save(SaveJob { sid: id, ticket, dest, doc }));
+        let blobs=s.editor.blobs.clone();
+        let _ = self.queue(FileJob::Save(SaveJob { blobs, sid: id, ticket, dest, doc }));
     }
 
     /// Hand `job` to the host's worker. Inline mode (no worker) runs it here and applies its result
@@ -590,6 +606,13 @@ impl Lifecycle<'_> {
     /// A background job finished: apply it to its tab (a closed tab is ignored, a stale ticket too).
     fn file_done(&mut self, done: FileDone) -> Effect {
         match done {
+            // ---- w2-images ----
+            FileDone::Image(done) => {
+                let ticket=done.job.ticket;let bridge=done.job.bridge;
+                let reply=match crate::image_jobs::complete(*done,self.ws) {Ok(r)=>r,Err(e)=>{if !bridge {self.dialogs.notice("Couldn’t place image",&e);}varos_bridge::Reply::failure(varos_bridge::Error::new("invalid_argument",e))}};
+                if bridge {crate::bridge_host::file_completed(ticket,reply);}
+                Effect::default()
+            }
             FileDone::Template(done) => {
                 crate::template_jobs::complete(done, self.ws);
                 Effect::default()
@@ -624,6 +647,7 @@ impl Lifecycle<'_> {
                         FileDone::Autosaved(_)
                         | FileDone::Bridge { .. }
                         | FileDone::CopySaved(_)
+                        | FileDone::Image(_)
                         | FileDone::Template(_) => unreachable!(),
                     }
                 } else {
@@ -725,7 +749,8 @@ impl Lifecycle<'_> {
         let ticket = file_jobs::next_ticket();
         let started = std::time::Instant::now();
         s.saving = Some(SaveInFlight { ticket, dest: dest.clone(), doc: doc.clone(), follow_up: false, started });
-        let _ = self.queue(FileJob::SaveCopy(SaveJob { sid: id, ticket, dest, doc }));
+        let blobs=s.editor.blobs.clone();
+        let _ = self.queue(FileJob::SaveCopy(SaveJob { blobs, sid: id, ticket, dest, doc }));
     }
 
     /// A copy (File ▸ Save a Copy… or the Bridge's `save_as`) landed: free the tab's save slot and
@@ -784,12 +809,13 @@ impl Lifecycle<'_> {
         if !self.dialogs.confirm_revert(&s.display_name()) {
             return;
         }
-        match self.store.load_with_notice(&path) {
-            Ok((doc, notice)) => {
+        match self.store.load_resources(&path) {
+            Ok((doc, blobs, notice)) => {
                 let key = self.store.key(&path);
                 let fingerprint = self.store.fingerprint(&path);
                 if let Some(s) = self.ws.get_mut(id) {
                     s.revert_to(doc, key, fingerprint, notice == Some(varos_core::format::RELEASED_MASKS_NOTICE));
+                    s.editor.blobs=blobs;
                 }
             }
             Err(reason) => self.dialogs.open_failed(&file_name(&path), &reason),
@@ -993,7 +1019,7 @@ impl Lifecycle<'_> {
     /// file's inode).
     fn write(&mut self, id: SessionId, dest: &Path) -> Result<SaveOutcome, String> {
         let s = self.ws.get(id).ok_or_else(|| "The document is no longer open.".to_string())?;
-        let (outcome, published) = self.store.save_published(&s.editor.doc, dest)?;
+        let (outcome, published) = self.store.save_resources_published(&s.editor.doc, &s.editor.blobs, dest)?;
         let board = BoardSummary::of(&s.editor.doc);
         let mut key = self.store.key(dest);
         if let Some(fp) = published {
@@ -2622,7 +2648,7 @@ mod tests {
                 follow_up: false,
                 started: std::time::Instant::now(),
             });
-            let mut job = FileJob::Save(crate::file_jobs::SaveJob { sid: id, ticket, dest: path.clone(), doc });
+            let mut job = FileJob::Save(crate::file_jobs::SaveJob { blobs: Default::default(),  sid: id, ticket, dest: path.clone(), doc });
             if bridge {
                 job = FileJob::Bridge(Box::new(crate::file_jobs::BridgeFileJob {
                     ticket,

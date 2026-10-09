@@ -1145,6 +1145,7 @@ mod tests {
         ed.pointer_down([0.0, 0.0]);
         ed.pointer_move([80.0, 60.0]);
         let copy = crate::workspace::RecoveredDocument {
+            blobs:Default::default(),
             doc: Document::default(),
             rid: "claim".into(),
             source: crate::workspace::RecoveredSource {

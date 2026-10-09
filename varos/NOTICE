@@ -80,3 +80,13 @@ VectorCraft crates/engine/src/cmd/layer.rs:142 and menucmds.rs:150-155 @ a469568
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
 Document Setup, Document Info and folder-based Templates: ADAPT field/report and lifecycle conventions from ArtCraft VectorCraft engine cmd/docsetup.rs, docinfo.rs, fileio/save.rs and load.rs, revision a469568. Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors. Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft. Independent Varos implementation; no UI/assets copied.
+
+crates/varos-core/src/images/{metadata,codec,orientation}.rs adapt ImageObject and LinkInfo from
+VectorCraft doc/{node.rs,links.rs}@a469568 and the bounded decoder entry from PhotoCraft
+codecs/lib.rs:39-55@4cb7cf3. orientation.rs copies exif_orientation and its bounded TIFF helpers
+from PhotoCraft codecs/orientation.rs:24-168@4cb7cf3 (the metadata rewriter is omitted).
+Copyright (c) 2026 ArtCraft Team. MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+image 0.25.10 (MIT OR Apache-2.0) and gif 0.13.3 (MIT) decode raster objects; image's GIF feature
+requires uncached gif 0.14.2, so the bounded cached 0.13.3 first-frame adapter is used instead.
+crates/varos-core/src/images/links.rs adapts explicit update/relink and immutable accepted-source
+semantics from VectorCraft engine/cmd/links.rs@a469568 (MIT OR Apache-2.0, ArtCraft Team 2026).

@@ -63,6 +63,8 @@ pub struct RecoveredSource {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecoveredDocument {
+    // ---- w2-images ----
+    pub blobs:varos_core::images::BlobStore,
     pub doc: Document,
     pub source: RecoveredSource,
     pub rid: String,
@@ -506,6 +508,7 @@ impl Workspace {
         let mut s = DocumentSession::untitled(id, 0);
         s.untitled = None;
         s.editor.replace_doc(copy.doc);
+        s.editor.blobs=copy.blobs;
         s.recovery = varos_app::storage::scheduler::SessionRecovery::adopted(copy.rid, copy.generation, s.editor.rev);
         s.recovered = Some(copy.source);
         s.fit_pending = Some(0.9);

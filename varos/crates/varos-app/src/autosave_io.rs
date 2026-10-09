@@ -17,6 +17,8 @@ pub struct Done {
 }
 #[derive(Clone)]
 pub struct Job {
+    // ---- w2-images ----
+    pub blobs:varos_core::images::BlobStore,
     pub sid: SessionId,
     pub ticket: u64,
     pub dest: PathBuf,
@@ -50,7 +52,7 @@ impl Job {
                 .with_permit(self.permit.clone())
                 .map_err(|e| e.to_string())?;
             let mut store = GuardedStore(&fs);
-            let outcome = store.save(&self.doc, &self.dest).map_err(|reason| {
+            let outcome = if self.doc.images.is_empty(){store.save(&self.doc,&self.dest)}else{crate::image_io::save(&fs,&self.doc,&self.blobs,&self.dest).map(|(outcome,_)|outcome)}.map_err(|reason| {
                 if !self.permit.valid() || fs.error().code == "cancelled" {
                     "superseded".into()
                 } else if fs.error().code == "busy" {
@@ -126,6 +128,7 @@ mod tests {
         let doc = Arc::new(varos_core::board::new_board());
         crate::file_ports::DiskStore.save(&doc, &dest).unwrap();
         let job = Job {
+            blobs:Default::default(),
             sid: SessionId(1),
             ticket: 1,
             expected: fingerprint(&RealFs, &dest).unwrap(),

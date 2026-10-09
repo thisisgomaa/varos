@@ -334,18 +334,13 @@ impl RecoveryHost {
                     }
                     let result = store
                         .load_best_decoded(&rid, |blob| {
-                            let text =
-                                std::str::from_utf8(blob).map_err(|_| "This recovery copy is damaged.".to_string())?;
-                            // Recovery copies are written by `doc_to_blob` (the current format). A copy
-                            // left by an older build (e.g. format 2 before 2026-10-04) migrates here and
-                            // its plain migration notice is dropped on purpose: a recovered tab is dirty
-                            // and saving it writes the current format anyway. Released-mask repair is
-                            // v1-only and no build writes v1 recovery copies.
-                            varos_core::file::doc_from_blob(text)
+                            // ---- w2-images ----
+                            varos_pdf::load_vrs_bytes(blob,&varos_core::format::Limits::DEFAULT).map(|loaded|(loaded.doc,loaded.blobs)).map_err(|e|e.to_string())
                         })
                         .map_err(|e| e.reason())
-                        .map(|(loaded, doc)| {
+                        .map(|(loaded, (doc,blobs))| {
                             Box::new(crate::workspace::RecoveredDocument {
+                                blobs,
                                 doc,
                                 rid: rid.clone(),
                                 generation: loaded.generation.clone(),
@@ -573,13 +568,15 @@ impl RecoveryHost {
                     recovered: s.recovered.is_some(),
                 };
                 let doc = s.editor.doc.clone();
+                let blobs=s.editor.blobs.clone();
                 (
                     sid,
                     seq,
                     Box::new(move || {
-                        let result = varos_core::file::doc_to_blob(&doc).and_then(|blob| {
+                        let payload=if doc.images.is_empty(){varos_core::file::doc_to_blob(&doc).map(String::into_bytes)}else{varos_pdf::images::write_vrs(&doc,&blobs,&varos_core::format::Limits::DEFAULT)};
+                        let result = payload.and_then(|blob| {
                             store
-                                .write_generation(&meta, seq, blob.as_bytes(), unix_now())
+                                .write_generation(&meta, seq, &blob, unix_now())
                                 .map(Done::Snapshot)
                                 .map_err(|e| e.reason())
                         });
