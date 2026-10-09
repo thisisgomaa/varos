@@ -29,7 +29,6 @@ pub const BINDINGS: &[Binding] = &[
     b!("KeyP", true, false, true, "Document Setup"),
     b!("KeyZ", true, false, false, "Undo"),
     b!("KeyZ", true, true, false, "Redo"),
-    b!("KeyY", true, false, false, "Redo (legacy alias)"),
     b!("Digit7", true, false, false, "Make Clipping Mask"),
     b!("Digit7", true, false, true, "Release Clipping Mask"),
     b!("KeyC", true, false, false, "Copy"),
@@ -158,6 +157,7 @@ mod tests {
             assert!(seen.insert((b.key, b.primary, b.shift, b.alt)));
             assert!(is_bound(b.key, b.primary, b.shift, b.alt));
         }
-        assert!(is_bound("KeyY", true, false, false), "retain the existing Redo alias");
+        assert!(!is_bound("KeyY", true, false, false), "Command-Y is reserved for Outline");
+        assert!(is_bound("KeyZ", true, true, false));
     }
 }

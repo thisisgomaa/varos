@@ -333,7 +333,6 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
                     ed.execute_ui(EditCommand::Undo)
                 }
             }
-            "KeyY" => ed.execute_ui(EditCommand::Redo),
             "BracketRight" => ed.execute_ui(EditCommand::Arrange(if shift { ZOrder::Front } else { ZOrder::Forward })),
             "BracketLeft" => ed.execute_ui(EditCommand::Arrange(if shift { ZOrder::Back } else { ZOrder::Backward })),
             "Digit7" if !shift => ed.execute_ui(if alt { EditCommand::ClipRelease } else { EditCommand::ClipMake }),
@@ -894,11 +893,11 @@ fn run_action(
 }
 
 /// THE one door for document actions (keys, menu rows), K3: while a text / number field is being
-/// edited, ⌘Z / ⇧⌘Z / ⌘Y belong to the field's own text undo and never reach the document; any other
+/// edited, ⌘Z / ⇧⌘Z belong to the field's own text undo and never reach the document; any other
 /// action first commits the open field to what it was editing (its own undo step), then runs. `false`
 /// = the field's text does not parse: nothing ran, the action must be held.
 fn run_doc(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: egui::Rect, ui: &mut dyn host::DocUi) -> bool {
-    let history = matches!(a, host::DocAction::Key(KeyCode::KeyZ | KeyCode::KeyY, m) if m.ctrl);
+    let history = matches!(a, host::DocAction::Key(KeyCode::KeyZ, m) if m.ctrl);
     if history && ui.field_has_focus() {
         return true;
     }
@@ -3453,6 +3452,22 @@ mod picker_shortcut_tests {
 #[cfg(test)]
 mod view_quick_wins_tests {
     use super::*;
+    #[test]
+    fn command_y_does_not_redo_but_shift_command_z_does() {
+        let mut ed = Editor::new();
+        let mut view = View::identity();
+        let before = ed.doc.artboards.len();
+        ed.artboard_add([500.0, 0.0, 100.0, 100.0], None).unwrap();
+        apply_key(&mut ed, &mut view, [200.0, 200.0], "KeyZ", true, false, false);
+        assert_eq!(ed.doc.artboards.len(), before);
+        let rev = ed.rev;
+        apply_key(&mut ed, &mut view, [200.0, 200.0], "KeyY", true, false, false);
+        assert_eq!(ed.doc.artboards.len(), before);
+        assert_eq!(ed.rev, rev);
+        apply_key(&mut ed, &mut view, [200.0, 200.0], "KeyZ", true, true, false);
+        assert_eq!(ed.doc.artboards.len(), before + 1);
+    }
+
     #[test]
     fn fit_all_tool_keys_and_typed_zoom_route_headless_without_dirtying() {
         let mut ed = Editor::new();
