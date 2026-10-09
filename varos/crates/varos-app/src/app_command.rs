@@ -68,6 +68,8 @@ pub enum AppCommand {
     ExportPdf(SessionId, varos_pdf::ExportScope, u64),
     /// Export for Screens: one immutable card/format job per file.
     ExportScreens(SessionId, Vec<crate::file_jobs::ScreenJob>),
+    ExportPdfOptions(SessionId, varos_pdf::ExportScope, u64, varos_pdf::PdfOptions),
+    Print(SessionId),
     /// A background save / export finished (`file_jobs::FileDone`), applied on the UI thread.
     FileDone(Box<crate::file_jobs::FileDone>),
     /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free

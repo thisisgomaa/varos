@@ -65,6 +65,7 @@ pub enum FileCmd {
     Export,
     ExportPdfPreset,
     ExportSelection,
+    Print,
     Quit,
 }
 
@@ -84,6 +85,7 @@ pub struct DocMenuState {
 pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
     match f {
         FileCmd::New | FileCmd::Open | FileCmd::Quit | FileCmd::NewTemplate => true,
+        FileCmd::Print => s.active && cfg!(target_os = "macos"),
         FileCmd::Revert => s.active && s.can_revert,
         FileCmd::ExportSelection => s.active && s.has_selection,
         FileCmd::DocumentSetup

@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use egui::{Id, Layout, Margin, RichText, Stroke, TextStyle};
-use varos_app::shell::kit::{self, Control};
+use varos_app::shell::kit::{self, Availability, Control};
 use varos_app::shell::tokens as t;
 use varos_core::model::Document;
 use varos_pdf::ExportScope;
@@ -16,6 +16,7 @@ use crate::app_command::SessionId;
 use crate::file_jobs::{CancelFlag, ExportEvent};
 
 /// Why Export… is disabled while this tab's previous export is still on the worker.
+pub const NOTE: &str = "For sharing. Editable Varos data is not included.";
 pub const BUSY: &str = "An export of this document is still running.";
 
 /// The sheet's width (points).
@@ -58,6 +59,9 @@ pub enum Phase {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportSheet {
     pub minimal: minimal::Minimal,
+    pub pdf_scope_mode: bool,
+    pub pdf_options: varos_pdf::PdfOptions,
+    pub pdf_options_expanded: bool,
     pub sid: SessionId,
     pub rows: Vec<ScopeRow>,
     pub selected: ExportScope,
@@ -105,6 +109,9 @@ impl ExportSheet {
             .unwrap_or(default);
         ExportSheet {
             minimal: minimal::Minimal::new(doc, selection, selected == ExportScope::Selection),
+            pdf_scope_mode: false,
+            pdf_options: Default::default(),
+            pdf_options_expanded: false,
             sid,
             rows,
             selected,
@@ -131,6 +138,7 @@ impl ExportSheet {
                 .or_else(|| s.path.as_ref().map(|p| p.to_string_lossy().into_owned()))
                 .unwrap_or_else(|| format!("untitled:{}", s.recovery.rid));
             sheet.minimal.restore(key);
+            sheet.pdf_options = print_settings(s.id).1;
             if selection && sheet.minimal.selection_reason().is_none() {
                 sheet.minimal.selection_tab = true;
                 sheet.minimal.preferences_dirty = true;
@@ -140,7 +148,6 @@ impl ExportSheet {
     }
 
     /// Export… pressed: a fresh ticket, the sheet running. `None` = it cannot export now.
-    #[cfg(test)]
     pub fn start(&mut self) -> Option<u64> {
         if !self.can_export() || !matches!(self.phase, Phase::Choose) {
             return None;
@@ -221,13 +228,11 @@ impl ExportSheet {
     }
 
     /// Export… is enabled: the selected scope can export and no export of this tab is running.
-    #[cfg(test)]
     pub fn can_export(&self) -> bool {
         !self.busy && self.rows.iter().any(|r| r.scope == self.selected && r.available)
     }
 
     /// Why Export… is disabled (an export still running, else the selected scope's reason).
-    #[cfg(test)]
     pub fn reason(&self) -> Option<&str> {
         if self.busy {
             return Some(BUSY);
@@ -236,7 +241,6 @@ impl ExportSheet {
     }
 
     /// Choose `scope` (a disabled row is never selected).
-    #[cfg(test)]
     pub fn select(&mut self, scope: ExportScope) {
         if self.rows.iter().any(|r| r.scope == scope && r.available) {
             self.selected = scope;
@@ -261,6 +265,7 @@ pub enum SheetAction {
 
     /// Show in Finder (the done state): reveal the written PDF; the sheet closes.
     Reveal(PathBuf),
+    Export(SessionId, ExportScope, u64),
     Screens(SessionId, Vec<crate::file_jobs::ScreenJob>),
 }
 
@@ -382,7 +387,71 @@ pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, panel_column: Option<e
                     });
                     return;
                 }
-                paint::minimal(ui, sheet, &mut action);
+                let running = matches!(sheet.phase, Phase::Running { .. });
+                ui.horizontal(|ui| {
+                    for (pdf, label) in [(false, "Export for Screens"), (true, "PDF pages")] {
+                        let mut c = Control::new(Id::new(("export-mode", pdf)), label);
+                        c.selected = sheet.pdf_scope_mode == pdf;
+                        if running {
+                            c.availability = Availability::Disabled("Exporting…");
+                        }
+                        if kit::action(ui, c, false).activated {
+                            sheet.pdf_scope_mode = pdf;
+                        }
+                    }
+                });
+                if !sheet.pdf_scope_mode {
+                    if sheet.minimal.options.format == varos_raster::export::Format::Pdf {
+                        crate::pdf_options::draw(ui, &mut sheet.pdf_options, &mut sheet.pdf_options_expanded, running);
+                        remember_print(sheet.sid, sheet.selected, sheet.pdf_options);
+                    }
+                    paint::minimal(ui, sheet, &mut action);
+                    return;
+                }
+                let running = matches!(sheet.phase, Phase::Running { .. });
+                let cancelling = matches!(sheet.phase, Phase::Running { cancelling: true, .. });
+                let mut picked = None;
+                for row in &sheet.rows {
+                    let mut c = Control::new(Id::new(("export-scope", row.label)), row.label);
+                    c.selected = row.scope == sheet.selected;
+                    if !row.available {
+                        c.availability = Availability::Disabled(&row.detail);
+                    } else if running {
+                        c.availability = Availability::Disabled("Exporting\u{2026}");
+                    }
+                    if kit::list_row(ui, c, &row.detail).activated {
+                        picked = Some(row.scope);
+                    }
+                }
+                if let Some(scope) = picked.filter(|_| !running) {
+                    sheet.select(scope);
+                }
+                ui.add_space(t::KIT_GAP);
+                crate::pdf_options::draw(ui, &mut sheet.pdf_options, &mut sheet.pdf_options_expanded, running);
+                remember_print(sheet.sid, sheet.selected, sheet.pdf_options);
+                kit::notice(ui, NOTE);
+                ui.add_space(t::KIT_GAP);
+                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut export = Control::new(Id::new("export-pdf"), "Export\u{2026}");
+                    if cancelling {
+                        export.availability = Availability::Busy("Cancelling\u{2026}");
+                    } else if running {
+                        export.availability = Availability::Busy("Exporting\u{2026}");
+                    } else if let Some(reason) = sheet.reason() {
+                        export.availability = Availability::Disabled(reason);
+                    }
+                    if kit::action(ui, export, false).activated {
+                        if let Some(ticket) = sheet.start() {
+                            action = SheetAction::Export(sheet.sid, sheet.selected, ticket);
+                        }
+                    }
+                    // running: Cancel raises the job's flag and waits for its outcome; else it closes
+                    if kit::action(ui, Control::new(Id::new("export-cancel"), "Cancel"), false).activated
+                        && !sheet.cancel()
+                    {
+                        action = SheetAction::Close;
+                    }
+                });
             });
     });
     let rect = area.response.rect;
@@ -413,14 +482,25 @@ pub fn dispatch(
     ctx: &egui::Context,
     sheet: &mut Option<ExportSheet>,
     panel_column: Option<egui::Rangef>,
-    _scopes: &mut std::collections::HashMap<SessionId, ExportScope>,
+    scopes: &mut std::collections::HashMap<SessionId, ExportScope>,
     commands: &mut Vec<crate::app_command::AppCommand>,
 ) {
     let Some(open) = sheet.as_mut() else { return };
     match draw(ctx, open, panel_column) {
         SheetAction::Stay => {}
         SheetAction::Close => *sheet = None,
-        SheetAction::Screens(id, jobs) => commands.push(crate::app_command::AppCommand::ExportScreens(id, jobs)),
+        SheetAction::Export(id, scope, ticket) => {
+            if scope != ExportScope::Selection {
+                scopes.insert(id, scope);
+            }
+            commands.push(crate::app_command::AppCommand::ExportPdfOptions(id, scope, ticket, open.pdf_options));
+        }
+        SheetAction::Screens(id, mut jobs) => {
+            for job in &mut jobs {
+                job.job.pdf_options = Box::new(open.pdf_options);
+            }
+            commands.push(crate::app_command::AppCommand::ExportScreens(id, jobs));
+        }
         SheetAction::Reveal(path) => {
             reveal(&path);
             *sheet = None;
@@ -774,4 +854,15 @@ mod repaint_fix_tests {
         assert!(!sheet.minimal.preferences_dirty);
         assert_eq!(preferences()["paint-dirty-fix"].folder, "/tmp/remembered");
     }
+}
+
+thread_local! { static PRINT_SETTINGS: std::cell::RefCell<std::collections::HashMap<SessionId,(Option<ExportScope>,varos_pdf::PdfOptions)>> = std::cell::RefCell::new(Default::default()); }
+fn remember_print(id: SessionId, scope: ExportScope, options: varos_pdf::PdfOptions) {
+    let scope = if scope == ExportScope::Selection { None } else { Some(scope) };
+    PRINT_SETTINGS.with(|s| {
+        s.borrow_mut().insert(id, (scope, options));
+    });
+}
+pub fn print_settings(id: SessionId) -> (Option<ExportScope>, varos_pdf::PdfOptions) {
+    PRINT_SETTINGS.with(|s| s.borrow().get(&id).copied().unwrap_or_default())
 }

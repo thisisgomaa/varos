@@ -47,6 +47,7 @@ pub struct SaveJob {
 /// A pure-PDF export of `doc` (snapshot) with `plan`'s pages to `dest`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportJob {
+    pub pdf_options: Box<varos_pdf::PdfOptions>,
     pub sid: SessionId,
     /// Slice 0.6: the Export sheet's ticket for this export (`AppCommand::ExportPdf`); every
     /// [`ExportEvent`] carries it, so a sheet only ever follows its own export.
@@ -332,15 +333,19 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
             }
             FileJob::Screen(e) => execute_screen(*e, disk, true),
             FileJob::Export(e) => {
-                let (result, report) =
-                    match varos_pdf::export_pdf_bytes_with_report(&e.doc, &e.plan, &AtomicBool::new(false)) {
-                        Ok((bytes, report)) => match disk.export_guarded(&e.dest, &bytes) {
-                            Ok(SaveOutcome::Durable) => (ExportResult::Exported, report),
-                            Ok(SaveOutcome::ReplacedUnconfirmed(e)) => (ExportResult::ExportedUnconfirmed(e), report),
-                            Err(e) => return Err(e),
-                        },
-                        Err(e) => (ExportResult::Failed(e.to_string()), varos_core::ExportReport::default()),
-                    };
+                let (result, report) = match varos_pdf::export_pdf_with_options(
+                    &e.doc,
+                    &e.plan,
+                    &e.pdf_options,
+                    &AtomicBool::new(false),
+                ) {
+                    Ok((bytes, report)) => match disk.export_guarded(&e.dest, &bytes) {
+                        Ok(SaveOutcome::Durable) => (ExportResult::Exported, report),
+                        Ok(SaveOutcome::ReplacedUnconfirmed(e)) => (ExportResult::ExportedUnconfirmed(e), report),
+                        Err(e) => return Err(e),
+                    },
+                    Err(e) => (ExportResult::Failed(e.to_string()), varos_core::ExportReport::default()),
+                };
                 FileDone::Exported(ExportDone { job: e, result, report })
             }
             FileJob::Bridge(_) | FileJob::Template(_) => unreachable!(),
@@ -389,9 +394,9 @@ fn export_to(j: &ExportJob, disk: &mut dyn DocStore) -> (ExportResult, varos_cor
     }
     // Slice 0.6: the Export sheet's Cancel raises `j.cancel`; the writer checks it inside every page
     // (`varos_pdf` write loop), so a cancelled export never produces bytes…
-    let (bytes, report) = match varos_pdf::export_pdf_bytes_with_report(&j.doc, &j.plan, j.cancel.flag()) {
+    let (bytes, report) = match varos_pdf::export_pdf_with_options(&j.doc, &j.plan, &j.pdf_options, j.cancel.flag()) {
         Ok(b) => b,
-        Err(varos_pdf::ExportError::Cancelled) => {
+        Err(ref e) if e == "The export was cancelled." => {
             return (ExportResult::Cancelled, varos_core::ExportReport::default())
         }
         Err(e) => return (ExportResult::Failed(e.to_string()), varos_core::ExportReport::default()),
@@ -552,13 +557,18 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
             return (ExportResult::Cancelled, Default::default());
         }
         let encoded = if screen.options.format == varos_raster::export::Format::Pdf {
-            varos_pdf::export_pdf_bytes_with_report(&screen.asset.doc, &screen.job.plan, screen.job.cancel.flag())
-                .map(|(bytes, report)| varos_raster::export::Output {
-                    name: varos_raster::export::file_name(&screen.asset.name, "", screen.options.format, 1),
-                    bytes,
-                    report,
-                })
-                .map_err(|e| e.to_string())
+            varos_pdf::export_pdf_with_options(
+                &screen.asset.doc,
+                &screen.job.plan,
+                &screen.job.pdf_options,
+                screen.job.cancel.flag(),
+            )
+            .map(|(bytes, report)| varos_raster::export::Output {
+                name: varos_raster::export::file_name(&screen.asset.name, "", screen.options.format, 1),
+                bytes,
+                report,
+            })
+            .map_err(|e| e.to_string())
         } else {
             varos_raster::export::encode(&screen.asset, &screen.options, screen.job.cancel.flag())
         };
@@ -704,6 +714,7 @@ mod tests {
         let job = FileJob::Bridge(Box::new(BridgeFileJob {
             ticket: 10,
             inner: FileJob::Export(ExportJob {
+                pdf_options: Default::default(),
                 sid: SessionId(1),
                 dest: pdf.clone(),
                 doc: doc.clone(),

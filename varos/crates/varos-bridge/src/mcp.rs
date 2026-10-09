@@ -338,6 +338,17 @@ pub fn tools_for_api(api: &str) -> Value {
     }
     append_export_tools(&mut table);
     append_document_tools(&mut table);
+    if let Some(list) = table["tools"].as_array_mut() {
+        if let Some(export) = list.iter_mut().find(|v| v["name"] == "export_pdf") {
+            export["inputSchema"]["properties"]["options"] =
+                json!({"type":"object","description":"PDF preset, image_ppi, compress_streams, boxes and marks"});
+        }
+    }
+    if let Some(list) = table["tools"].as_array_mut() {
+        for name in crate::TOOLS_12 {
+            list.push(json!({"name":name,"description":"API 1.2 desktop host effect. Print opens a prepared PDF in Preview; Copy/Cut publish the current selection to the OS clipboard.","inputSchema": {"type":"object","additionalProperties":false,"properties":{"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"scope":{"enum":["active_artboard","all_visible_artboards","artwork_bounds"]},"options":{"type":"object"}},"required":["api","board","request_id","expected_rev"]}}));
+        }
+    }
     table
 }
 fn rpc_result(id: Value, result: Value) -> Value {
@@ -461,6 +472,7 @@ pub fn serve<T: Transport>(
             "tools/call"
                 if params["name"].as_str().is_none_or(|name| {
                     !TOOLS.contains(&name)
+                        && !crate::TOOLS_12.contains(&name)
                         && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
                             .contains(&name)
                 }) =>
@@ -580,6 +592,9 @@ mod integration_tests {
             "save_template",
             "new_from_template",
             "window_memory",
+            "print",
+            "copy",
+            "cut",
         ] {
             assert!(names.contains(name), "missing {name}");
         }

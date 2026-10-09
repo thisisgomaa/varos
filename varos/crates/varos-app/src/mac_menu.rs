@@ -270,7 +270,8 @@ fn fill(
                             MenuCmd::Key(_)
                             | MenuCmd::Plain(_)
                             | MenuCmd::File(
-                                F::Save
+                                F::Print
+                                | F::Save
                                 | F::SaveAs
                                 | F::SaveCopy
                                 | F::Export

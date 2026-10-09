@@ -3436,3 +3436,72 @@ fn view_quick_wins_are_12_only_and_document_changes_are_real() {
         }
     }
 }
+
+#[test]
+fn phase_one_effects_are_opt_in_revision_pinned_and_idempotent_without_os_calls() {
+    struct Effects {
+        host: FakeHost,
+        calls: Vec<(String, Option<Value>)>,
+    }
+    impl Host for Effects {
+        fn prepare(&mut self, b: &str, m: bool) -> Result<(), Error> {
+            self.host.prepare(b, m)
+        }
+        fn boards(&self) -> Vec<BoardInfo> {
+            self.host.boards()
+        }
+        fn access(&mut self, b: &str) -> Result<BoardAccess<'_>, Error> {
+            self.host.access(b)
+        }
+        fn file_effect(&mut self, verb: &str, r: &varos_bridge::dto::FileEffect) -> Result<Reply, Error> {
+            self.calls.push((verb.into(), r.options.clone()));
+            Ok(Reply::success(json!({"prepared":true})))
+        }
+    }
+    let mut host = Effects { host: FakeHost::new(), calls: vec![] };
+    let mut service = Service::new("test-epoch".into());
+    let rev = host.host.editor.rev;
+    for (i, verb) in ["print", "copy", "cut", "export_pdf"].into_iter().enumerate() {
+        let mut args = json!({"api":"1.2","board":"b1","request_id":format!("r{}",i+1),"expected_rev":rev});
+        if verb == "export_pdf" {
+            args["path"] = json!("/Users/test/output.pdf");
+            args["scope"] = json!("all_visible_artboards");
+        }
+        if ["print", "export_pdf"].contains(&verb) {
+            args["options"] = json!({"preset":"press","image_ppi":150,"marks":{"crop":true}});
+        }
+        let cli =
+            varos_bridge::cli::decode(&serde_json::to_vec(&json!({"tool":verb,"arguments":args})).unwrap()).unwrap();
+        let mcp = varos_bridge::mcp::decode_tool(verb, args.clone()).unwrap();
+        let a = service.handle(&mut host, &ctx(), cli, &AtomicBool::new(false));
+        let b = service.handle(&mut host, &ctx(), mcp, &AtomicBool::new(false));
+        assert!(a.ok, "{a:?}");
+        assert_eq!(a, b);
+        assert_eq!(host.calls.len(), i + 1);
+        let mut legacy = args;
+        legacy["api"] = json!("1.1");
+        legacy["request_id"] = json!("r100");
+        if legacy.get("options").is_some() {
+            assert!(varos_bridge::mcp::decode_tool(verb, legacy.clone()).is_err());
+            assert!(varos_bridge::cli::decode(&serde_json::to_vec(&json!({"tool":verb,"arguments":legacy})).unwrap())
+                .is_err());
+            legacy.as_object_mut().unwrap().remove("options");
+        }
+        if verb != "export_pdf" {
+            assert!(!service.handle(&mut host, &ctx(), req(verb, legacy), &AtomicBool::new(false)).ok);
+        }
+    }
+    let null_options = varos_bridge::mcp::decode_tool(
+        "export_pdf",
+        json!({"api":"1.1","request_id":"r100","board":"b1","expected_rev":rev,"path":"/Users/test/output.pdf","scope":"all_visible_artboards","options":null}),
+    );
+    assert!(null_options.is_err(), "explicit options, including null, require API 1.2");
+    let capability =
+        service.handle(&mut host, &ctx(), req("capabilities", json!({"api":"1.2"})), &AtomicBool::new(false));
+    assert!(capability.ok);
+    assert_eq!(capability.result.unwrap()["api_by_tool"]["cut"], json!(["1.2"]));
+    let old = varos_bridge::mcp::tools();
+    assert_eq!(old, varos_bridge::mcp::tools_for_api("1.1"));
+    let new = varos_bridge::mcp::tools_for_api("1.2");
+    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 8);
+}

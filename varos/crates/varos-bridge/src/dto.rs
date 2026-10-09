@@ -26,6 +26,9 @@ pub enum Request {
     ExportRaster(FileEffect),
     SaveTemplate(FileEffect),
     NewFromTemplate(FileEffect),
+    Print(FileEffect),
+    Copy(FileEffect),
+    Cut(FileEffect),
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -592,6 +595,9 @@ pub struct Status {
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileEffect {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "present_value")]
+    pub options: Option<serde_json::Value>,
     #[serde(default = "api")]
     pub api: String,
     pub request_id: String,
@@ -615,6 +621,8 @@ pub struct FileEffect {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExportFileWire {
+    #[serde(default, deserialize_with = "present_value")]
+    options: Option<serde_json::Value>,
     #[serde(default = "api")]
     pub api: String,
     pub request_id: String,
@@ -646,6 +654,7 @@ impl<'de> Deserialize<'de> for FileEffect {
         let wire = ExportFileWire::deserialize(deserializer)?;
         if wire.api != "1.2" {
             for (key, present) in [
+                ("options", wire.options.is_some()),
                 ("format", wire.format.is_some()),
                 ("scale", wire.scale.is_some()),
                 ("ppi", wire.ppi.is_some()),
@@ -658,6 +667,7 @@ impl<'de> Deserialize<'de> for FileEffect {
             }
         }
         Ok(Self {
+            options: wire.options,
             api: wire.api,
             request_id: wire.request_id,
             board: wire.board,
@@ -693,6 +703,9 @@ impl Request {
             Self::ExportRaster(_) => "export_raster",
             Self::SaveTemplate(_) => "save_template",
             Self::NewFromTemplate(_) => "new_from_template",
+            Self::Print(_) => "print",
+            Self::Copy(_) => "copy",
+            Self::Cut(_) => "cut",
         }
     }
     pub fn api(&self) -> &str {
@@ -711,7 +724,10 @@ impl Request {
             | Self::ExportSvg(v)
             | Self::ExportRaster(v)
             | Self::SaveTemplate(v)
-            | Self::NewFromTemplate(v) => &v.api,
+            | Self::NewFromTemplate(v)
+            | Self::Print(v)
+            | Self::Copy(v)
+            | Self::Cut(v) => &v.api,
         }
     }
     pub fn board(&self) -> Option<&str> {
@@ -724,7 +740,10 @@ impl Request {
             | Self::ExportSvg(v)
             | Self::ExportRaster(v)
             | Self::SaveTemplate(v)
-            | Self::NewFromTemplate(v) => Some(&v.board),
+            | Self::NewFromTemplate(v)
+            | Self::Print(v)
+            | Self::Copy(v)
+            | Self::Cut(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
             Self::Edit(v) => Some(&v.board),
             Self::History(v) => Some(&v.board),
@@ -742,7 +761,10 @@ impl Request {
             | Self::ExportSvg(v)
             | Self::ExportRaster(v)
             | Self::SaveTemplate(v)
-            | Self::NewFromTemplate(v) => Some((&v.request_id, v.expected_rev)),
+            | Self::NewFromTemplate(v)
+            | Self::Print(v)
+            | Self::Copy(v)
+            | Self::Cut(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,
         }
     }

@@ -26,5 +26,6 @@ pub(super) fn rows() -> Vec<Entry> {
             items: vec![file_row("file.export.pdf", "PDF\u{2026}", FileCmd::ExportPdfPreset)],
         },
         file_row("file.exportselection", "Export Selection\u{2026}", FileCmd::ExportSelection),
+        file_key("file.print", "Print…", cmd(K::KeyP), FileCmd::Print),
     ]
 }
