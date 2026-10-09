@@ -36,7 +36,7 @@ fn close(a: Pt, b: Pt) -> bool {
     (a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3
 }
 fn set_bounds(ed: &mut Editor, x: Option<f32>, y: Option<f32>, w: Option<f32>, h: Option<f32>, ax: f32, ay: f32) {
-    ed.execute(EditCommand::SetObjectBounds { x, y, width: w, height: h, anchor_x: ax, anchor_y: ay });
+    ed.execute_ui(EditCommand::SetObjectBounds { x, y, width: w, height: h, anchor_x: ax, anchor_y: ay });
 }
 
 #[test]

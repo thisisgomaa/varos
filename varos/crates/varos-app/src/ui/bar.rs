@@ -610,6 +610,7 @@ pub(crate) fn build_topbar(
                 cmds.push(AppCommand::Home);
                 hit = true;
             }
+            hit |= super::clipping::rows(ui, active, cmds);
             // the View ▸ snapping rows (macOS has them in its native View menu): the same flags,
             // the same transitions — Smart Guides is exactly what Ctrl+U does
             menu_sep(ui);

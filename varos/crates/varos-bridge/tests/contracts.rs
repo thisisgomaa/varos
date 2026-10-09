@@ -124,7 +124,7 @@ fn core_rolls_back_at_every_operation_index_including_history_and_defaults() {
         h.editor.selected.insert(21);
         h.editor.tool = ToolKind::Direct;
         h.editor.paint = PaintTarget::Stroke;
-        h.editor.execute(EditCommand::SetBoardName("human".into()));
+        h.editor.execute_ui(EditCommand::SetBoardName("human".into()));
         h.editor.undo();
         let before = h.editor.doc.clone();
         let rev = h.editor.rev;
@@ -226,7 +226,7 @@ fn idempotency_receipts_are_original_after_human_edits() {
     let mut s = Service::new("test-epoch".into());
     let r = edit("r1", 1);
     let first = handle(&mut s, &mut h, r.clone());
-    h.editor.execute(EditCommand::SetBoardName("human".into()));
+    h.editor.execute_ui(EditCommand::SetBoardName("human".into()));
     let again = handle(&mut s, &mut h, r);
     assert_eq!(first, again);
     assert_eq!(h.editor.rev, 3);
@@ -288,7 +288,7 @@ fn cursors_expire_and_journal_tracks_human_undo_redo() {
     expired["cursor"] = cursor;
     assert_eq!(handle(&mut s, &mut h, req("describe", expired)).error.unwrap().code, "resync_required");
     for i in 0..130 {
-        h.editor.execute(EditCommand::SetBoardName(format!("human-{i}")));
+        h.editor.execute_ui(EditCommand::SetBoardName(format!("human-{i}")));
         s.observe(&mut h);
     }
     assert_eq!(
@@ -327,11 +327,11 @@ fn null_paint_and_noop_are_distinct_from_missing() {
 fn allocator_does_not_reuse_ids_after_undo_branch() {
     let mut h = FakeHost::new();
     h.editor.objsel.insert(10);
-    h.editor.execute(EditCommand::Copy);
-    h.editor.execute(EditCommand::Paste { offset: Some([1., 0.]) });
+    h.editor.execute_ui(EditCommand::Copy);
+    h.editor.execute_ui(EditCommand::Paste { offset: Some([1., 0.]) });
     let used = h.editor.doc.ids;
     h.editor.undo();
-    h.editor.execute(EditCommand::Paste { offset: Some([2., 0.]) });
+    h.editor.execute_ui(EditCommand::Paste { offset: Some([2., 0.]) });
     assert!(h.editor.doc.ids > used);
     assert!(h.editor.doc.paths.last().unwrap().id > used);
 }
@@ -339,8 +339,8 @@ fn allocator_does_not_reuse_ids_after_undo_branch() {
 fn transformed_partial_group_move_leaves_other_world_art_unchanged() {
     let mut h = FakeHost::new();
     h.editor.objsel.extend([10, 20]);
-    h.editor.execute(EditCommand::GroupSelection);
-    h.editor.execute(EditCommand::SetObjectRotation(45.));
+    h.editor.execute_ui(EditCommand::GroupSelection);
+    h.editor.execute_ui(EditCommand::SetObjectRotation(45.));
     let other = h.editor.doc.outline_bbox(h.editor.doc.pidx(20).unwrap());
     let before = h.editor.doc.outline_bbox(h.editor.doc.pidx(10).unwrap());
     h.editor.execute_targeted_batch(vec![TargetEdit::Move { paths: vec![10], delta: [10., 0.] }]).unwrap();
@@ -919,7 +919,7 @@ fn metadata_and_artboard_queries_are_explicit_and_preferences_advance_revision()
     assert_eq!(summary.result.unwrap()["artboards"][0]["ref"], "a0@1");
     let detail = handle(&mut s, &mut h, req("describe", json!({"board":"b1","fields":["metadata","artboards"]})));
     assert_eq!(detail.result.unwrap()["metadata"]["description"], "private description");
-    h.editor.execute(EditCommand::ToggleSnapping);
+    h.editor.execute_ui(EditCommand::ToggleSnapping);
     assert_eq!(h.editor.rev, 1);
     s.observe(&mut h);
     assert_eq!(h.editor.rev, 2);
@@ -932,9 +932,9 @@ fn net_diff_preserves_multiple_fields_and_cancelling_human_changes() {
     let mut s = Service::new("test-epoch".into());
     s.observe(&mut h);
     h.editor.objsel.insert(10);
-    h.editor.execute(EditCommand::SetOpacity(0.5));
+    h.editor.execute_ui(EditCommand::SetOpacity(0.5));
     s.observe(&mut h);
-    h.editor.execute(EditCommand::ApplyPaint { target: PaintTarget::Fill, color: Some([1., 0., 0., 1.]) });
+    h.editor.execute_ui(EditCommand::ApplyPaint { target: PaintTarget::Fill, color: Some([1., 0., 0., 1.]) });
     s.observe(&mut h);
     let r = handle(&mut s, &mut h, req("describe", json!({"board":"b1","since":1})));
     let changes = r.result.unwrap()["changed"].as_array().unwrap().clone();
@@ -985,7 +985,7 @@ fn precommit_failures_leave_request_id_available_with_fresh_revision() {
             "not_found"
         );
         h.busy = false;
-        h.editor.execute(EditCommand::SetBoardName("human advanced revision".into()));
+        h.editor.execute_ui(EditCommand::SetBoardName("human advanced revision".into()));
         let fresh = h.editor.rev;
         assert!(handle(&mut s, &mut h, edit("r1", fresh)).ok);
         assert_eq!(h.editor.rev, fresh + 1);
@@ -1014,7 +1014,7 @@ fn final_validation_failure_replays_only_to_attribute_first_invalid_op() {
 fn legacy_batch_preserves_live_tool_and_clipboard() {
     let mut h = FakeHost::new();
     h.editor.objsel.insert(20);
-    h.editor.execute(EditCommand::Copy);
+    h.editor.execute_ui(EditCommand::Copy);
     let clipboard = h.editor.clipboard().bounds();
     h.editor.tool = ToolKind::Direct;
     h.editor.execute_batch(vec![EditCommand::SelectPaths(vec![10]), EditCommand::Copy]).unwrap();
@@ -1524,8 +1524,8 @@ fn rotation_is_absolute_for_mixed_units_and_rotated_resize_uses_local_size() {
 #[test]
 fn whole_group_rotation_repeats_absolute_angle_and_resets_to_zero() {
     let mut h = FakeHost::new();
-    h.editor.execute(EditCommand::SelectPaths(vec![10, 20]));
-    h.editor.execute(EditCommand::GroupSelection);
+    h.editor.execute_ui(EditCommand::SelectPaths(vec![10, 20]));
+    h.editor.execute_ui(EditCommand::GroupSelection);
     let group = h.editor.doc.top_group_of_path(10).unwrap();
     let mut s = Service::new("test-epoch".into());
     let mut at_ninety = None;
@@ -1804,10 +1804,10 @@ fn explicit_group_leaves_resize_and_undo_without_sibling_changes_partial_rotate_
     for rotated in [false, true] {
         for (verb, degrees) in [("resize", 0), ("rotate", 0), ("rotate", 90)] {
             let mut h = FakeHost::new();
-            h.editor.execute(EditCommand::SelectPaths(vec![10, 20]));
-            h.editor.execute(EditCommand::GroupSelection);
+            h.editor.execute_ui(EditCommand::SelectPaths(vec![10, 20]));
+            h.editor.execute_ui(EditCommand::GroupSelection);
             if rotated {
-                h.editor.execute(EditCommand::SetObjectRotation(30.0));
+                h.editor.execute_ui(EditCommand::SetObjectRotation(30.0));
             }
             let group = h.editor.doc.top_group_of_path(10).unwrap();
             let before = h.editor.doc.clone();
@@ -2322,7 +2322,7 @@ fn describe_sections_do_not_page_with_objects_and_since_composes() {
             .unwrap();
     assert_eq!(board["artboards"].as_array().unwrap().len(), 1);
     assert_eq!(board["more"], true);
-    h.editor.execute(EditCommand::SetBoardName("Changed".into()));
+    h.editor.execute_ui(EditCommand::SetBoardName("Changed".into()));
     let mut diff_args = args;
     diff_args["since"] = json!(1);
     let diff = handle(&mut s, &mut h, req("describe", diff_args.clone())).result.unwrap();
@@ -2360,7 +2360,7 @@ fn describe_all_field_subsets_and_unknown_fields_and_schema() {
     // Observe every boundary so both current and older since requests have retained journals.
     for name in ["One", "Two", "Three"] {
         handle(&mut s, &mut h, req("describe", json!({"board":"b1"})));
-        h.editor.execute(EditCommand::SetBoardName(name.into()));
+        h.editor.execute_ui(EditCommand::SetBoardName(name.into()));
     }
     let rev = h.editor.rev;
     for mask in 0..(1 << fields.len()) {
@@ -2568,7 +2568,7 @@ fn describe_combined_budget_errors_preserve_resync_semantics() {
     let mut h = FakeHost::new();
     let mut s = Service::new("test-epoch".into());
     handle(&mut s, &mut h, req("describe", json!({"board":"b1"})));
-    h.editor.execute(EditCommand::SetBoardName("Changed".into()));
+    h.editor.execute_ui(EditCommand::SetBoardName("Changed".into()));
     h.editor.doc.description = "x".repeat(7500);
     let diff = handle(&mut s, &mut h, req("describe", json!({"board":"b1","since":1})));
     assert!(diff.ok, "{diff:?}");
@@ -2585,7 +2585,7 @@ fn describe_combined_budget_errors_preserve_resync_semantics() {
         anchor.id = 100 + i;
         h.editor.doc.paths[0].anchors.push(anchor);
     }
-    h.editor.execute(EditCommand::SetBoardName("Geometry".into()));
+    h.editor.execute_ui(EditCommand::SetBoardName("Geometry".into()));
     for args in [json!({"board":"b1","since":1}), json!({"board":"b1","ids":["path:10"],"fields":["geometry"]})] {
         let reply = handle(&mut s, &mut h, req("describe", args));
         assert!(reply.ok, "{reply:?}");
@@ -2597,7 +2597,7 @@ fn describe_combined_budget_errors_preserve_resync_semantics() {
     );
     assert_eq!(combined.error.unwrap().code, "resync_required");
     h.editor.doc.artboards.extend((0..120).map(|_| Default::default()));
-    h.editor.execute(EditCommand::SetBoardName("Many pages".into()));
+    h.editor.execute_ui(EditCommand::SetBoardName("Many pages".into()));
     let combined = handle(&mut s, &mut h, req("describe", json!({"board":"b1","fields":["artboards","selection"]})));
     let error = combined.error.unwrap();
     assert_eq!(error.code, "limit_exceeded");
@@ -3130,4 +3130,72 @@ fn economy_legacy_target_count_and_alias_index() {
     args["expected_rev"] = json!(h.editor.rev);
     let r = handle(&mut s, &mut h, req("edit", args));
     assert_eq!(r.error.unwrap().op_index, Some(1));
+}
+
+#[test]
+fn clipping_api_12_matches_core_commands_and_old_apis_refuse_it() {
+    for api in ["1.0", "1.1"] {
+        let mut h = FakeHost::new();
+        let before = h.editor.doc.clone();
+        let mut s = Service::new("test-epoch".into());
+        let r = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":api,"request_id":"r1","board":"b1","expected_rev":1,
+            "ops":[{"verb":"clip","ids":["path:10","path:20"]}]}),
+            ),
+        );
+        assert!(!r.ok);
+        assert_eq!(r.error.unwrap().code, "unsupported");
+        assert_eq!(h.editor.doc, before);
+    }
+    let mut h = FakeHost::new();
+    let mut core = h.editor.clone();
+    core.try_execute(EditCommand::SelectPaths(vec![10, 20])).unwrap();
+    core.try_execute(EditCommand::ClipMake).unwrap();
+    let mut s = Service::new("test-epoch".into());
+    let args = json!({"api":"1.2","request_id":"r1","board":"b1","expected_rev":1,
+        "ops":[{"verb":"clip","ids":["path:10","path:20"]}]});
+    // CLI and MCP decode the same verb before the common service boundary.
+    let cli =
+        varos_bridge::cli::decode(&serde_json::to_vec(&json!({"tool":"edit","arguments":args})).unwrap()).unwrap();
+    let result = handle(&mut s, &mut h, cli);
+    assert!(result.ok, "{:?}", result.error);
+    assert_eq!(h.editor.doc, core.doc);
+    assert_eq!(h.editor.rev, 2);
+    let gid = h.editor.doc.top_group_of_path(10).unwrap();
+    core.try_execute(EditCommand::ClipRelease).unwrap();
+    let release = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","request_id":"r2","board":"b1","expected_rev":2,
+        "ops":[{"verb":"release_clip","ids":[format!("node:{gid}")]}]}),
+        ),
+    );
+    assert!(release.ok, "{:?}", release.error);
+    assert_eq!(h.editor.doc, core.doc);
+    assert_eq!(h.editor.rev, 3);
+    h.editor.execute(EditCommand::Undo).unwrap();
+    assert_eq!(h.editor.doc.node(gid).unwrap().role, varos_core::model::GroupRole::Clip);
+    h.editor.execute(EditCommand::Undo).unwrap();
+    assert_eq!(h.editor.doc, FakeHost::new().editor.doc);
+}
+
+#[test]
+fn api_12_discovery_is_opt_in_and_old_tables_stay_identical() {
+    assert_eq!(varos_bridge::mcp::tools_for_api("1.0"), varos_bridge::mcp::tools());
+    assert_eq!(varos_bridge::mcp::tools_for_api("1.1"), varos_bridge::mcp::tools());
+    let table = varos_bridge::mcp::tools_for_api("1.2");
+    let edit = table["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
+    assert_eq!(edit["inputSchema"]["properties"]["api"]["enum"], json!(["1.0", "1.1", "1.2"]));
+    assert!(edit["inputSchema"]["$defs"]["operation"].to_string().contains("release_clip"));
+    let mut host = FakeHost::new();
+    let mut service = Service::new("test-epoch".into());
+    let reply = handle(&mut service, &mut host, req("capabilities", json!({"api":"1.2"})));
+    assert!(reply.ok);
+    assert!(reply.result.unwrap()["edit_verbs"].as_array().unwrap().contains(&json!("clip")));
 }

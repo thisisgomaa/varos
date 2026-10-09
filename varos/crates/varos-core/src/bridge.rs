@@ -49,6 +49,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         AddPath { .. }
             | AddShape { .. }
             | GroupSelection
+            | ClipMake
             | Boolean(_)
             | Paste { .. }
             | DuplicateMoveLayer { .. }
@@ -284,6 +285,13 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             Ok(())
         }
         Boolean(_) => ed.pathfinder_enabled().map_err(str::to_owned),
+        #[cfg(test)]
+        ForcedPanic => Ok(()),
+        ClipMake => ed
+            .clip_make_enabled()
+            .then_some(())
+            .ok_or_else(|| "clipping requires two complete selected units and a topmost path mask".into()),
+        ClipRelease => ed.clip_release_enabled().then_some(()).ok_or_else(|| "select a clipping group".into()),
         GroupSelection => {
             selection()?;
             if ed.objsel.len() < 2 {
@@ -757,7 +765,7 @@ impl Editor {
             if cancelled() {
                 return Err(error(index, "cancelled before commit".into()));
             }
-            apply(&mut staged, index)?;
+            crate::guard::catch_panic(|| apply(&mut staged, index)).map_err(|e| error(index, e.to_string()))??;
             staged.clear_batch_history();
         }
         if validate_targeted_stage(&staged).is_err() {
@@ -766,7 +774,7 @@ impl Editor {
                 if cancelled() {
                     return Err(error(index, "cancelled before commit".into()));
                 }
-                apply(&mut replay, index)?;
+                crate::guard::catch_panic(|| apply(&mut replay, index)).map_err(|e| error(index, e.to_string()))??;
                 validate_targeted_stage(&replay).map_err(|reason| error(index, reason))?;
                 replay.clear_batch_history();
             }

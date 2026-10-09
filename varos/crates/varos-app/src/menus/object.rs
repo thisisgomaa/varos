@@ -19,5 +19,12 @@ pub(super) fn rows() -> Vec<Entry> {
         Entry::Sep,
         key("obj.group", "Group", cmd(K::KeyG)),
         key("obj.ungroup", "Ungroup", cmd_shift(K::KeyG)),
+        Entry::Sub {
+            label: "Clipping Mask",
+            items: vec![
+                key("obj.clip", "Make", cmd(K::Digit7)),
+                key("obj.release_clip", "Release", cmd_alt(K::Digit7)),
+            ],
+        },
     ]
 }

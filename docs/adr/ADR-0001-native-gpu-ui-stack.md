@@ -28,3 +28,10 @@ GPU rendering is the V1 requirement. A CPU renderer is a possible future option,
 ## Status
 
 Accepted — product owner, 2026-07-11.
+
+## Runtime failure extension — slice 0.2 (2026-10-09)
+The readable GPU failure rule also applies after startup. Device-loss and uncaptured-error callbacks
+record a terminal stopped state. A stopped device performs no further frame submission or retries.
+The app shows “GPU stopped: … — save your work, then relaunch” once and keeps document file commands
+available. There is no automatic CPU fallback or renderer restart. The health transition is tested
+without constructing a Renderer or EventLoop.
