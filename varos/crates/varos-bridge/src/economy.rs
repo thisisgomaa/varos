@@ -284,6 +284,12 @@ fn walk(
                     "outline_stroke",
                     "offset_path",
                     "expand",
+                    // ---- Lane B w3-effects ----
+                    "live_effects",
+                    "width_profile",
+                    "expand_live",
+                    "width_tool",
+                    // ---- end Lane B w3-effects ----
                     "live_corners",
                     "scale_strokes",
                     "new_document",

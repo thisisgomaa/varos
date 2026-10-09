@@ -22,7 +22,8 @@ fn next_version_pdf_fixture_refuses_before_typed_decode() {
     let bytes = include_bytes!("../../varos-core/tests/fixtures/text_next/refuse_newer.pdf");
     assert!(matches!(
         varos_pdf::load_vrs_bytes(bytes, &Limits::DEFAULT),
-        Err(varos_core::format::LoadError::NewerVersion { found: 10, supported: varos_core::format::FORMAT_VERSION })
+        // ---- Lane B w3-effects: v10 malformed payload now reaches typed decoding ----
+        Err(varos_core::format::LoadError::Malformed { .. }) // ---- end Lane B w3-effects ----
     ));
 }
 

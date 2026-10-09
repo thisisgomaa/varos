@@ -100,6 +100,10 @@ fn check_document(doc: &Document) -> Result<(), ExportError> {
 }
 pub fn plan_svg_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan, ExportError> {
     check_document(doc)?;
+    // ---- Lane B w3-effects ----
+    let resolved = crate::effects_document::document(doc).map_err(ExportError::InvalidDocument)?;
+    let doc = resolved.as_ref();
+    // ---- end Lane B w3-effects ----
     let board = |i: usize| {
         let a = &doc.artboards[i];
         PageSpec { rect: [a.x, a.y, a.w, a.h], background: a.page_color, artboard: Some(i), name: a.name.clone() }

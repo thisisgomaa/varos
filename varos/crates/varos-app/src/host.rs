@@ -103,6 +103,11 @@ pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppComm
 /// A shortcut key's lifecycle command, if it has one: [`lifecycle_key`] then [`to_app_command`], or
 /// [`tab_key`].
 pub fn key_command(code: KeyCode, m: Mods, active: Option<SessionId>) -> Option<AppCommand> {
+    // ---- Lane B w3-effects ----
+    if code == KeyCode::KeyE && m.ctrl && m.shift {
+        return Some(AppCommand::PathMenu(active?, if m.alt { "Last Effect…" } else { "Apply Last Effect" }));
+    }
+    // ---- end Lane B w3-effects ----
     match lifecycle_key(code, m.ctrl, m.shift, m.alt) {
         Some(f) => to_app_command(f, active),
         None => tab_key(code, m.ctrl, m.shift, m.alt),

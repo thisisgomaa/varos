@@ -96,7 +96,12 @@ pub fn validate(path: &Path, params: &[CornerParam]) -> Result<(), String> {
 fn handle(cos: f64) -> f64 {
     4. / 3. * ((1. - cos) * 0.5).max(0.).sqrt() / (1. + ((1. + cos) * 0.5).max(0.).sqrt())
 }
+// ---- Lane B w3-effects ----
 pub fn evaluated(path: &Path) -> Path {
+    crate::effects::evaluated(path)
+}
+// ---- end Lane B w3-effects ----
+pub(crate) fn corners_only(path: &Path) -> Path {
     if path.corners.is_empty() {
         return path.clone();
     }
@@ -149,13 +154,8 @@ impl Editor {
     }
 }
 /// Export-side resolution leaves the editable model (and its embedded blob) intact.
+// ---- Lane B w3-effects ----
 pub fn document(source: &crate::model::Document) -> std::borrow::Cow<'_, crate::model::Document> {
-    if source.paths.iter().all(|p| p.corners.is_empty()) {
-        return std::borrow::Cow::Borrowed(source);
-    }
-    let mut doc = source.clone();
-    for p in &mut doc.paths {
-        *p = evaluated(p);
-    }
-    std::borrow::Cow::Owned(doc)
+    crate::effects_document::document(source).unwrap_or(std::borrow::Cow::Borrowed(source))
 }
+// ---- end Lane B w3-effects ----

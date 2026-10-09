@@ -122,6 +122,10 @@ impl StrokeArrows {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StrokeStyle {
+    // ---- Lane B w3-effects ----
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width_profile: Option<crate::width_profile::WidthProfile>,
+    // ---- end Lane B w3-effects ----
     #[serde(skip_serializing_if = "StrokeCap::is_default")]
     pub cap: StrokeCap,
     #[serde(skip_serializing_if = "StrokeJoin::is_default")]
@@ -142,6 +146,7 @@ pub struct StrokeStyle {
 impl Default for StrokeStyle {
     fn default() -> Self {
         Self {
+            width_profile: None,
             cap: StrokeCap::Round,
             join: StrokeJoin::Round,
             miter_limit: 10.0,
@@ -160,6 +165,11 @@ impl StrokeStyle {
     /// Same checked bounds for edit, load and save; errors identify the object and authored field.
     pub fn validate(&self, id: u32) -> Result<(), crate::format::Invalid> {
         use crate::format::Invalid;
+        // ---- Lane B w3-effects ----
+        if let Some(profile) = &self.width_profile {
+            profile.validate().map_err(|reason| Invalid::Stroke { path: id, reason })?;
+        }
+        // ---- end Lane B w3-effects ----
         let range = |field: &str, v: f32, lo: f32, hi: f32| {
             let what = format!("path {id} stroke_style.{field}");
             if !v.is_finite() {
@@ -194,7 +204,7 @@ impl StrokeStyle {
     }
     /// Expanded projection for opt-in Bridge 1.2, separate from the compact persisted encoding.
     pub fn expanded(&self) -> serde_json::Value {
-        serde_json::json!({"cap":self.cap,"join":self.join,"miter_limit":self.miter_limit,
+        serde_json::json!({"width_profile":self.width_profile,"cap":self.cap,"join":self.join,"miter_limit":self.miter_limit,
             "dash":self.dash,"dash_phase":self.dash_phase,"align_dashes_to_corners":self.align_dashes_to_corners,
             "align":self.align,"arrows":{"start":self.arrows.start,"end":self.arrows.end,
             "scale_start":self.arrows.scale_start,"scale_end":self.arrows.scale_end,"align":self.arrows.align}})
@@ -208,6 +218,9 @@ pub use evaluate::{evaluate, StrokeCoverage, StrokeError};
 /// Apply just the fields changed by one inspector gesture to each selected object's own style.
 pub fn apply_difference(base: &StrokeStyle, next: &StrokeStyle, target: &mut StrokeStyle) {
     macro_rules! update { ($($field:ident),*) => {$(if base.$field != next.$field {target.$field=next.$field;})*}; }
+    if base.width_profile != next.width_profile {
+        target.width_profile = next.width_profile.clone();
+    }
     update!(cap, join, miter_limit, dash_phase, align_dashes_to_corners, align);
     if base.dash.len() != next.dash.len() {
         // Enabling/disabling the pattern is a whole-vector operation.

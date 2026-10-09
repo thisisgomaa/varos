@@ -255,6 +255,10 @@ impl<'de> Deserialize<'de> for Paint {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Path {
+    // ---- Lane B w3-effects ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<crate::effects::Effect>,
+    // ---- end Lane B w3-effects ----
     pub id: u32,
     pub anchors: Vec<Anchor>,
     pub closed: bool,
@@ -299,6 +303,9 @@ impl Path {
             stroke_width,
             stroke_style: StrokeStyle::default(),
             corners: vec![],
+            // ---- Lane B w3-effects ----
+            effects: vec![],
+            // ---- end Lane B w3-effects ----
             holes: vec![],
             opacity: 1.0,
             hidden: false,
@@ -1282,6 +1289,9 @@ impl Document {
             .collect();
         Path {
             holes,
+            // ---- Lane B w3-effects ----
+            effects: src.effects.clone(),
+            // ---- end Lane B w3-effects ----
             corners: src.corners.clone(),
             stroke_style: src.stroke_style.clone(),
             fill: src.appearance().fill().resolved(self), // preserve the paint EXACTLY (future gradients too), not a solid snapshot

@@ -1065,6 +1065,13 @@ impl Service {
                     } else {
                         a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
                     }
+                    // ---- Lane B w3-effects ----
+                    // Tool choice is transient: publish_batch intentionally preserves human tools.
+                    // Apply the explicitly requested tool only after the entire batch has succeeded.
+                    if ops.iter().any(|op| matches!(op, Operation::WidthTool { .. })) {
+                        a.editor.execute_ui(varos_core::EditCommand::LiveEffects(varos_core::effects::Action::Tool));
+                    }
+                    // ---- end Lane B w3-effects ----
                     a.editor.annotate_history(from, actor, format!("Agent batch · {} operations", v.ops.len()));
                     a.editor.annotate_history_verbs(
                         from,

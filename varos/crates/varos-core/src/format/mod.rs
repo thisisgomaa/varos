@@ -16,6 +16,9 @@ pub mod limits;
 pub mod migrate;
 mod stroke_keys;
 // ---- Lane C ----
+// ---- Lane B w3-effects ----
+mod effect_keys;
+// ---- end Lane B w3-effects ----
 mod corner_keys;
 pub mod structure;
 pub mod validate;
@@ -54,7 +57,10 @@ pub const CORNERS_VERSION: u32 = 9;
 /// Lane F: the optional PDF-catalog Quick Look preview (`/VAROS_Preview` + `/VAROS_PreviewVersion`)
 /// is container-only (no model key, no reader impact on the JSON body); folded into the v9 bump.
 pub const PREVIEW_FORMAT_VERSION: u32 = CORNERS_VERSION;
-pub const FORMAT_VERSION: u32 = CORNERS_VERSION;
+// ---- Lane B w3-effects ----
+pub const EFFECTS_VERSION: u32 = 11;
+pub const FORMAT_VERSION: u32 = EFFECTS_VERSION;
+// ---- end Lane B w3-effects ----
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -162,6 +168,11 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
         gradient_keys::refuse(json, version)?;
     }
     // ---- Lane C ----
+    // ---- Lane B w3-effects ----
+    if version < EFFECTS_VERSION {
+        effect_keys::refuse(json, version)?;
+    }
+    // ---- end Lane B w3-effects ----
     if version < CORNERS_VERSION {
         corner_keys::refuse(json, version)?;
     }
@@ -430,3 +441,7 @@ pub fn read_bounded(path: &Path, limits: &Limits) -> Result<Vec<u8>, LoadError> 
     }
     Ok(buf)
 }
+
+// ---- Lane B w3-effects ----
+pub use migrate::migrate_v10_to_v11;
+// ---- end Lane B w3-effects ----

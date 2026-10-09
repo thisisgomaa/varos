@@ -122,3 +122,9 @@ Lane C — new_document.rs adapts VectorCraft engine/src/cmd/newdoc.rs:19,125;
 path_advanced.rs adapts pathops/src/offset.rs:79; live_corners.rs adapts
 geom/src/corners.rs:134,149 (a469568, MIT OR Apache-2.0), copyright 2026
 ArtCraft Team and VectorCraft contributors. No UI/assets/dependencies copied.
+
+// ---- Lane B w3-effects ----
+VectorCraft (ArtCraft Team and contributors, 2026), MIT OR Apache-2.0:
+core effects/effects_warp adapt effects/src/{distort,warp,stylize,util}.rs and doc/src/live.rs;
+width_profile/width_geometry/width_geometry_helpers adapt doc/src/appearance.rs, effects/src/stroke/width.rs, geom/src/bez.rs.
+// ---- end Lane B w3-effects ----

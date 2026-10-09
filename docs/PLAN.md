@@ -113,7 +113,7 @@ Columns: Lift · Dep · Bump · ADR/spec · Figma · Size · Owner exit test.
 ### Phase 9 — Application (no bump)
 9.1 Preferences v2 (`settings.json`: keyboard increment, units default, GPU, history depth, recovery, autosave, language; Figma yes; M) · 9.2 Command registry ADR-0015 (one id per behaviour shared by menu/shortcut/Bridge/CLI; `enabled`/`disabled_reason`; menu map toward Illustrator's 9 menus; L) · 9.3 Shortcut editor (⌥⇧⌘K, conflicts, parity default; Figma yes; L) · 9.4 History panel (uses `history_preview` + per-AI history A3-next; Figma yes; M) · 9.5 Actions/batch (record + CLI `apply`; M) · 9.6 Help menu + Quick Look for `.vrs` (S+M) · 9.7 Updates per ADR-0007 (M) · 9.8 Arabic UI per ADR-0012 T2→T3→catalog+RTL (needs ADR-0012 accepted; Figma yes; XL) · 9.9 Accessibility start (AccessKit roles; L).
 
-### Phase 10 — Live objects A (**v9** = Live Corners via export-paths lane; other effects next bump): typed `Effect::{Offset,ZigZag,Transform,Warp}`, per-corner params, `width_profile`; one evaluator for canvas/CPU/PDF/SVG/Expand; per-object cache (ADAPT `VC/effects/src/{distort,warp,stylize,util}.rs`, `VC/doc/src/live.rs:278-400`, `VC/effects/src/stroke/width.rs`; ADR-0016 "Live objects"; L) → 10.1 Effect menu + Appearance rows + Width tool ⇧W (Figma yes; L).
+### Phase 10 — Live objects A (**v9** = Live Corners; **v11** = Lane B effects/width profiles): typed `Effect::{Offset,ZigZag,Transform,Warp}`, per-corner params, `width_profile`; one evaluator for canvas/CPU/PDF/SVG/Expand; per-object cache (ADAPT `VC/effects/src/{distort,warp,stylize,util}.rs`, `VC/doc/src/live.rs:278-400`, `VC/effects/src/stroke/width.rs`; ADR-0016 "Live objects"; L) → 10.1 Effect menu + Appearance rows + Width tool ⇧W (Figma yes; L).
 
 ### Phase 11 — Live objects B (**v10**, **v11**): 11.0 `NodeKind::Live{Blend,Repeat,Envelope}` + Blend tool (W) + Free Transform distort (ADAPT `VC/doc/src/blend.rs:35-380`, `VCe/live.rs:27-117`; XL) · 11.1 Live Paint (K) on planar faces (XL) · 11.2 v11 symbols + brushes (calligraphic/scatter/art/pattern, Paintbrush B / Blob ⇧B, tablet pressure COPY `PC/tablet/src/{macos,appkit}.rs`) + patterns (XL) · 11.3 Perspective grid (COPY `VC/geom/src/projective.rs`; only if asked).
 
@@ -215,3 +215,7 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 9.4 History (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable History, human/agent labels, jump, bounded undo/redo, API 1.2 review/top-agent undo. |
 | 9.5 Actions (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable Actions; supported semantic recording, .vrs-actions load/save, atomic replay, offline CLI apply. |
 | 9.6 Help + Quick Look fallback (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Help/typed Bridge tool; cached PNG embedded in container; native signed QL extension packaging documented and pending. |
+
+<!-- ---- Lane B w3-effects ---- -->
+Phase 10 Lane B: implemented (provisional UI, owner design review pending);
+ADR-0016 proposed. Appearance-stack integration deferred to integrator.

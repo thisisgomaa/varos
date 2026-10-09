@@ -93,3 +93,7 @@ pub mod application;
 
 // ---- Lane F ----
 mod action_recording;
+
+// ---- Lane B w3-effects ----
+mod effects;
+// ---- end Lane B w3-effects ----
