@@ -59,6 +59,8 @@ pub enum FileCmd {
     NewTemplate,
     Open,
     PlaceSvg,
+    Place,
+    Package,
     CloseTab,
     CloseAll,
     Save,
@@ -100,6 +102,8 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
         | FileCmd::SaveAs
         | FileCmd::SaveCopy
         | FileCmd::Export
+        | FileCmd::Place
+        | FileCmd::Package
         | FileCmd::PlaceSvg
         | FileCmd::ExportPdfPreset => s.active,
     }
@@ -108,6 +112,7 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
 /// What a clicked item does — each one an EXISTING path in the host.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MenuCmd {
+    ImageSheet(crate::image_ui::SheetKind),
     Slice4a(&'static str),
     View(varos_core::editor::view_commands::ViewAction),
     TogglePasteRemembersLayers,

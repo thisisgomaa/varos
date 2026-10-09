@@ -87,6 +87,7 @@ pub struct Minimal {
     pub remaining: usize,
     pub destinations: Vec<PathBuf>,
     pub report: varos_core::ExportReport,
+    pub blobs: Arc<varos_core::images::BlobStore>,
     pub preview_id: u64,
     pub previews: super::previews::Previews,
     pub preferences_dirty: bool,
@@ -98,19 +99,19 @@ impl Minimal {
         let mut seen = HashSet::new();
         let mut assets = vec![];
         let mut selection_ids = vec![];
-        for path in &doc.paths {
-            if !selection.contains(&path.id) {
+        for pid in doc.paths.iter().map(|p| p.id).chain(doc.images.iter().map(|i| i.id)) {
+            if !selection.contains(&pid) {
                 continue;
             }
-            let unit = doc.unit_of(path.id).unwrap_or(path.id);
+            let unit = doc.unit_of(pid).unwrap_or(pid);
             if !seen.insert(unit) {
                 continue;
             }
             let members: HashSet<_> = doc
-                .group_members(path.id)
+                .group_members(pid)
                 .into_iter()
                 .filter(|id| selection.contains(id))
-                .chain(std::iter::once(path.id))
+                .chain(std::iter::once(pid))
                 .collect();
             if let Ok(mut planned) = export::plan(doc, &Scope::Selection(members)) {
                 if let Some(mut asset) = planned.pop() {
@@ -153,6 +154,7 @@ impl Minimal {
             remaining: 0,
             destinations: vec![],
             report: Default::default(),
+            blobs: Default::default(),
             preview_id: hasher.finish(),
             previews: Default::default(),
             preferences_dirty: false,
@@ -256,6 +258,7 @@ pub fn screen_job(
     };
     ScreenJob {
         job: ExportJob {
+            blobs: Default::default(),
             pdf_options: Default::default(),
             sid,
             ticket,
@@ -274,6 +277,23 @@ pub fn screen_job(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn selected_image_has_a_real_export_card() {
+        let mut ed = varos_core::Editor::new();
+        let bytes = varos_core::images::codec::encode_png(&varos_core::images::Pixels {
+            budget: None,
+            width: 2,
+            height: 2,
+            rgba: std::sync::Arc::from([255, 0, 0, 255].repeat(4)),
+        })
+        .unwrap();
+        let id =
+            varos_core::images::links::place_bytes(&mut ed, &bytes, [0.; 2], None, Default::default(), None).unwrap().0;
+        let model = super::Minimal::new(&ed.doc, &std::collections::HashSet::from([id]), true);
+        assert!(model.selection_tab);
+        assert_eq!(model.selection.assets.len(), 1);
+    }
+
     use super::*;
     #[test]
     fn toggles_range_double_and_disable() {

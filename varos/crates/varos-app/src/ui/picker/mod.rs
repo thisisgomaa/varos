@@ -320,6 +320,7 @@ pub(crate) fn prepare_canvas_sample(m: &mut ColorPanel, ed: &Editor, view: View,
     if m.arm_snapshot.is_none() {
         m.arm_snapshot = Some(std::sync::Arc::new(ed.doc.clone()));
     }
+    let blobs = &ed.blobs;
     let snapshot = m.arm_snapshot.as_ref().unwrap().clone();
     if crate::cursors::SCREEN_EYEDROPPER {
         m.sampling = None;
@@ -333,8 +334,9 @@ pub(crate) fn prepare_canvas_sample(m: &mut ColorPanel, ed: &Editor, view: View,
     let builds = m.sampling.as_ref().map_or(1, |s| s.builds + 1);
     m.sampling = None;
     let min = [hole.min.x * ppp, hole.min.y * ppp];
-    let raster = varos_raster::rasterize_canvas(
+    let raster = varos_raster::rasterize_canvas_with_images(
         &snapshot,
+        blobs,
         [(hole.width() * ppp).ceil() as u32, (hole.height() * ppp).ceil() as u32],
         [view.pan[0] - min[0], view.pan[1] - min[1]],
         view.zoom,

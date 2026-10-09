@@ -10,6 +10,7 @@ pub struct PrintJob {
     pub bytes: Vec<u8>,
     pub path: PathBuf,
 }
+#[cfg(test)]
 pub fn build(
     doc: &Document,
     scope: ExportScope,
@@ -17,10 +18,22 @@ pub fn build(
     temp: &Path,
     ticket: u64,
 ) -> Result<PrintJob, String> {
+    build_with_images(doc, &Default::default(), scope, options, temp, ticket)
+}
+// ---- w2-images ----
+pub fn build_with_images(
+    doc: &Document,
+    blobs: &varos_core::images::BlobStore,
+    scope: ExportScope,
+    options: &PdfOptions,
+    temp: &Path,
+    ticket: u64,
+) -> Result<PrintJob, String> {
     let plan = varos_pdf::plan_pdf_export(doc, scope).map_err(|e| e.to_string())?;
-    let (bytes, _) = varos_pdf::export_pdf_with_options(doc, &plan, options, &AtomicBool::new(false))?;
+    let (bytes, _) = varos_pdf::images::export_with_options(doc, blobs, &plan, options, &AtomicBool::new(false))?;
     Ok(PrintJob { bytes, path: temp.join(format!("varos-print-{}-{ticket}.pdf", std::process::id())) })
 }
+
 #[cfg(target_os = "macos")]
 pub fn preview_command(path: &Path) -> std::process::Command {
     let mut command = std::process::Command::new("/usr/bin/open");
@@ -46,6 +59,29 @@ pub fn hand_off(job: PrintJob) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn image_print_uses_the_resource_aware_pdf_without_hand_off() {
+        let mut ed = varos_core::Editor::new();
+        let bytes = varos_core::images::codec::encode_png(&varos_core::images::Pixels {
+            budget: None,
+            width: 2,
+            height: 2,
+            rgba: std::sync::Arc::from([255, 0, 0, 255].repeat(4)),
+        })
+        .unwrap();
+        varos_core::images::links::place_bytes(&mut ed, &bytes, [0.; 2], None, Default::default(), None).unwrap();
+        let job = super::build_with_images(
+            &ed.doc,
+            &ed.blobs,
+            varos_pdf::ExportScope::ArtworkBounds,
+            &Default::default(),
+            std::path::Path::new("/tmp"),
+            1,
+        )
+        .unwrap();
+        assert!(job.bytes.windows(b"/Subtype /Image".len()).any(|b| b == b"/Subtype /Image"));
+    }
+
     use super::*;
     #[test]
     fn builder_uses_export_bytes_without_printing() {

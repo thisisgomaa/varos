@@ -44,6 +44,8 @@ pub(crate) fn before_artboard_ids(doc: &Document) -> Result<(), Invalid> {
 /// Root paths/groups are permitted by move_is_legal(Before/After a root); do not require Layer roots.
 /// candidate_max is currently unused (no live-editor bound); do not invent a new file restriction.
 pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
+    // ---- w2-images ----
+    crate::images::validate(doc).map_err(|what| Invalid::NonFinite { what })?;
     let index: HashMap<u32, _> = doc.nodes.iter().map(|n| (n.id, n)).collect();
     let mut leaves = HashSet::with_capacity(doc.paths.len());
     for n in &doc.nodes {

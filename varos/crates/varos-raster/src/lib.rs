@@ -4,6 +4,7 @@ pub mod export;
 
 mod clipboard;
 pub use clipboard::clipboard_png;
+pub mod images;
 use std::sync::Arc;
 use tiny_skia::{
     FillRule, LineCap, LineJoin, Mask, MaskType, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform,
@@ -49,12 +50,26 @@ impl Raster {
 
 /// Render artwork once at the physical canvas size, without selection overlays.
 pub fn rasterize_canvas(snapshot: &Document, size: [u32; 2], pan: [f32; 2], ppu: f32) -> Raster {
+    rasterize_canvas_with_images(snapshot, &varos_core::images::BlobStore::default(), size, pan, ppu)
+}
+/// [`rasterize_canvas`] for documents with placed images: the caller lends the session's resources
+/// (integration w2: Navigator and the canvas eyedropper see images, not a missing-resource error).
+pub fn rasterize_canvas_with_images(
+    snapshot: &Document,
+    blobs: &varos_core::images::BlobStore,
+    size: [u32; 2],
+    pan: [f32; 2],
+    ppu: f32,
+) -> Raster {
     let mut editor = Editor::new();
     let doc = match varos_text_layout::outline_document(snapshot) {
         Ok(doc) => doc,
         Err(e) => return failed_raster(vec![e]),
     };
     editor.replace_doc(doc);
+    if !editor.doc.images.is_empty() {
+        editor.blobs = blobs.clone();
+    }
     let scene = build_scene(&editor, ppu);
     if !scene.errors.is_empty() {
         return failed_raster(scene.errors);
@@ -315,6 +330,9 @@ fn stroke_coverage(prims: &[Prim], width: u32, height: u32, xf: Transform, only:
 fn draw_prims(prims: &[Prim], dst: &mut Pixmap, xf: Transform) {
     for prim in prims {
         match prim {
+            Prim::Image { pixels, corners, opacity, clip, .. } => {
+                crate::images::draw(pixels, *corners, *opacity, *clip, dst, xf)
+            }
             Prim::Fill { rings, color } => {
                 if let Some(path) = rings_path(rings, false) {
                     dst.fill_path(&path, &paint(*color), FillRule::EvenOdd, xf, None);
@@ -435,6 +453,7 @@ fn scene_bounds(groups: &[Group]) -> Option<[f32; 4]> {
         };
         for prim in prims {
             let pts: Box<dyn Iterator<Item = &[f32; 2]> + '_> = match prim {
+                Prim::Image { corners, .. } => Box::new(corners.iter()),
                 Prim::Fill { rings, .. } | Prim::StrokeCoverage { rings, .. } => Box::new(rings.iter().flatten()),
                 Prim::Stroke { pts, .. } | Prim::Dashed { pts, .. } => Box::new(pts.iter()),
                 Prim::Square { c, .. } | Prim::Disc { c, .. } => Box::new(std::iter::once(c)),

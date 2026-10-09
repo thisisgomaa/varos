@@ -380,7 +380,7 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
     let z = size_scale;
     for prim in prims {
         match prim {
-            Prim::Fill { .. } => {}
+            Prim::Fill { .. } | Prim::Image { .. } => {}
             // `clip` is honoured at DRAW time (a GPU scissor set around this stroke's Fg range) — the band
             // is tessellated here in full and trimmed to the page edge by the scissor. See build_content.
             Prim::Stroke { pts, width, color, .. } => {
@@ -418,6 +418,7 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
 /// once — so the stroke blends against what's BEHIND the object, never against its own fill.
 #[derive(Debug, PartialEq)]
 pub enum Draw {
+    Image { key: varos_core::images::BlobKey, range: (u32, u32), scissor: Option<[u32; 4]> },
     Fill { fan: (u32, u32), cover: (u32, u32) },
     // `scissor` = a pixel-space rect [x, y, w, h] to confine this run to (A2: an artboard-clipped OPAQUE
     // stroke, so its extruded band is trimmed to the page edge, not just its centerline). `None` = draw
@@ -540,6 +541,26 @@ fn group_draws(
     let mut draws = Vec::new();
     let mut i = 0;
     while i < prims.len() {
+        if let Prim::Image { key, corners, opacity, clip, .. } = &prims[i] {
+            // Image board clips fail closed offscreen; authored mask clipping remains stencil-based.
+            let scissor = if let Some(r) = clip {
+                let Some(s) = scissor_px(*r, view, w, h) else {
+                    i += 1;
+                    continue;
+                };
+                Some(s)
+            } else {
+                None
+            };
+            let start = fgv.len() as u32;
+            for index in [0usize, 1, 2, 0, 2, 3] {
+                let uv = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]][index];
+                fgv.push(Vertex { pos: ndc(view.w2s(corners[index]), w, h), color: [uv[0], uv[1], *opacity, 0.] });
+            }
+            draws.push(Draw::Image { key: key.clone(), range: (start, 6), scissor });
+            i += 1;
+            continue;
+        }
         if matches!(prims[i], Prim::Fill { .. }) {
             // one fill → its own stencil+cover step (offset into the shared fill buffer)
             let (fv, fr) = build_fills(&prims[i..i + 1], view, w, h);
@@ -554,7 +575,9 @@ fn group_draws(
             // TRANSLUCENT stroke (colour alpha < 1 — from the colour itself or folded object opacity)
             // must paint its overlapping quads + join discs EXACTLY ONCE → stencil-mark + cover step
             // (otherwise every overlap re-blends and the band turns into the blotchy "blur").
-            let j = (i..prims.len()).find(|&k| matches!(prims[k], Prim::Fill { .. })).unwrap_or(prims.len());
+            let j = (i..prims.len())
+                .find(|&k| matches!(prims[k], Prim::Fill { .. } | Prim::Image { .. }))
+                .unwrap_or(prims.len());
             while i < j {
                 if let Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } = &prims[i] {
                     if color[3] < 0.999 {
@@ -1763,3 +1786,27 @@ fn clipped_isolated_tail_has_no_empty_clip_pass() {
 #[cfg(test)]
 #[path = "tess_stroke_tests.rs"]
 mod stroke_tests;
+
+#[test]
+fn image_board_scissor_survives_authored_clip_and_fails_closed_offscreen() {
+    use std::sync::Arc;
+    let image = |clip| Prim::Image {
+        key: varos_core::images::BlobKey("a".repeat(64)),
+        pixels: Arc::new(varos_core::images::Pixels { budget: None, width: 1, height: 1, rgba: Arc::from([255; 4]) }),
+        corners: [[0., 0.], [32., 0.], [32., 32.], [0., 32.]],
+        opacity: 0.5,
+        clip,
+    };
+    let view = View { pan: [0.; 2], zoom: 1. };
+    let groups = vec![Group::Clip {
+        mask_rings: vec![vec![[0., 0.], [32., 0.], [32., 32.], [0., 32.]]],
+        members: vec![Group::Opaque(vec![image(Some([0., 0., 8., 8.]))])],
+    }];
+    let (_, _, _, meta) = build_content(&groups, view, 1., 64., 64.);
+    assert!(
+        matches!(&meta[0],GroupDraw::Clip{members,..} if matches!(&members[0],Draw::Image{scissor:Some([0,0,8,8]),..}))
+    );
+    let (_, fg, _, _) =
+        build_content(&[Group::Opaque(vec![image(Some([100., 100., 120., 120.]))])], view, 1., 64., 64.);
+    assert!(fg.is_empty());
+}

@@ -127,13 +127,26 @@ pub fn plan(doc: &Document, scope: &Scope) -> Result<Vec<Asset>, String> {
 }
 
 pub fn encode(asset: &Asset, options: &Options, cancel: &AtomicBool) -> Result<Output, String> {
+    encode_with_images(asset, options, &varos_core::images::BlobStore::default(), cancel)
+}
+pub fn encode_with_images(
+    asset: &Asset,
+    options: &Options,
+    store: &varos_core::images::BlobStore,
+    cancel: &AtomicBool,
+) -> Result<Output, String> {
     options.validate()?;
     check_cancel(cancel)?;
     // Validate caller-supplied pages and documents before allocation or traversal.
     let plan = svg::ExportPlan { scope: svg::ExportScope::WholeBoard, pages: vec![asset.page.clone()] };
+    // Lane G outlines text for every deliverable; w2-images routes documents with images through the
+    // image-aware SVG writer (integration w2: both).
     let outlined = varos_text_layout::outline_document(&asset.doc)?;
-    let (svg_files, mut report) =
-        svg::export_svg_files_with_report(&outlined, &plan, cancel).map_err(|e| e.to_string())?;
+    let (svg_files, mut report) = if outlined.images.is_empty() {
+        svg::export_svg_files_with_report(&outlined, &plan, cancel).map_err(|e| e.to_string())?
+    } else {
+        varos_core::images::svg::export(&outlined, store, &plan, false, cancel)?
+    };
     if !asset.doc.text_boxes.is_empty() {
         report.notes.extend(varos_text_layout::export_notes(&asset.doc)?);
     }
@@ -170,7 +183,18 @@ pub fn encode(asset: &Asset, options: &Options, cancel: &AtomicBool) -> Result<O
             };
             let index = doc.artboards.len();
             doc.artboards.push(Artboard { x, y, w, h, page_color: background, ..Artboard::default() });
-            let raster = crate::rasterize_artboard(Arc::new(doc), index, size).ok_or("Invalid raster page.")?;
+            let raster = if doc.images.is_empty() {
+                crate::rasterize_artboard(Arc::new(doc), index, size).ok_or("Invalid raster page.")?
+            } else {
+                crate::images::rasterize_with_images(
+                    &doc,
+                    store,
+                    size,
+                    [-x * options.scale, -y * options.scale],
+                    options.scale,
+                    background,
+                )?
+            };
             check_cancel(cancel)?;
             match format {
                 Format::Png => raster.encode_png()?,

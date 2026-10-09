@@ -131,6 +131,7 @@ impl ExportSheet {
         let scope = if selection { Some(ExportScope::Selection) } else { scopes.get(&s.id).copied() };
         {
             let mut sheet = ExportSheet::new(s.id, &ed.doc, &ed.selected_pids(), scope, !s.exports.is_empty());
+            sheet.minimal.blobs = std::sync::Arc::new(ed.blobs.clone());
             let key = s
                 .key
                 .as_ref()

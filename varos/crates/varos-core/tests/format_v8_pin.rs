@@ -11,9 +11,9 @@ fn writer_is_pinned_to_literal_8() {
 }
 
 #[test]
-fn reserved_formats_6_and_7_are_refused_by_this_build() {
+fn reserved_format_7_is_refused_by_this_build() {
     let v5 = std::str::from_utf8(include_bytes!("fixtures/v5/plain.json")).unwrap();
-    for v in [6u32, 7] {
+    for v in [7u32, 7] {
         let json = v5.replacen("{\"varos\":5,", &format!("{{\"varos\":{v},"), 1);
         assert!(
             matches!(

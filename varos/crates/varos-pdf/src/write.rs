@@ -67,6 +67,9 @@ fn knock_gs(pool: &mut KnockGs, ids: &mut Alloc, stroke: bool, alpha: f32) -> (R
 /// The third value is the embedded model's length (stored unfiltered, so it is also the stream's
 /// decoded length the reader bounds).
 pub(crate) fn write_native_counted(doc: &Document, limits: &Limits) -> Result<(Vec<u8>, usize, usize), String> {
+    if !doc.images.is_empty() {
+        return Err("Image documents require the resource-aware writer".into());
+    }
     let blob = encode_model(doc, limits).map_err(|e| e.to_string())?;
     let never = AtomicBool::new(false);
     let (bytes, objects) =
@@ -76,6 +79,9 @@ pub(crate) fn write_native_counted(doc: &Document, limits: &Limits) -> Result<(V
 
 /// The native `.vrs` container: one page per visible board + the embedded editable model.
 pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
+    if !doc.images.is_empty() {
+        return Err("Image documents require the resource-aware writer".into());
+    }
     let blob = doc_to_blob(doc)?;
     let never = AtomicBool::new(false);
     write_pages(doc, &native_pages(doc), Some(&blob), &never).map_err(|e| e.to_string())
@@ -86,7 +92,7 @@ pub fn write_pdf(doc: &Document) -> Result<Vec<u8>, String> {
 /// its default frame; and if EVERY board is hidden we keep the first as a single frame so the container
 /// never degrades to a zero-page (invalid) PDF. (Right for the native file; the pure export plans its
 /// own pages and never uses these fallbacks — see `crate::export::plan_pdf_export`.)
-fn native_pages(doc: &Document) -> Vec<PageSpec> {
+pub(crate) fn native_pages(doc: &Document) -> Vec<PageSpec> {
     let boards: Vec<Artboard> = if doc.artboards.is_empty() {
         vec![Artboard::default()]
     } else {
@@ -193,7 +199,35 @@ pub(crate) fn write_pages_counted(
     model: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<(Vec<u8>, usize), ExportError> {
-    // ---- Lane G: model blob stays authored; only page appearance is outlined ----
+    write_pages_impl(doc, pages, model, cancel, None).map(|(bytes, count, _)| (bytes, count))
+}
+// ---- w2-images: same exact vector writer for mixed artwork ----
+pub(crate) fn write_resource_pages(
+    doc: &Document,
+    store: &varos_core::images::BlobStore,
+    pages: &[PageSpec],
+    model: Option<&str>,
+    ppi: f32,
+    preview: bool,
+    cancel: &AtomicBool,
+) -> Result<(Vec<u8>, varos_core::ExportReport), String> {
+    varos_core::format::validate(doc, &Limits::DEFAULT).map_err(|e| e.to_string())?;
+    if !ppi.is_finite() || !(1.0..=2400.).contains(&ppi) {
+        return Err("Invalid PDF image ppi".into());
+    }
+    write_pages_impl(doc, pages, model, cancel, Some((store, ppi, preview)))
+        .map(|(b, _, r)| (b, r))
+        .map_err(|e| e.to_string())
+}
+fn write_pages_impl(
+    doc: &Document,
+    pages: &[PageSpec],
+    model: Option<&str>,
+    cancel: &AtomicBool,
+    resources: Option<(&varos_core::images::BlobStore, f32, bool)>,
+) -> Result<(Vec<u8>, usize, varos_core::ExportReport), ExportError> {
+    // ---- Lane G: model blob stays authored; only page appearance is outlined (vector and image
+    // documents alike — integration w2) ----
     let outlined;
     let doc = if doc.text_boxes.is_empty() {
         doc
@@ -219,6 +253,13 @@ pub(crate) fn write_pages_counted(
 
     let mut pdf = Pdf::new();
     let mut page_ids = Vec::new();
+    let mut report = varos_core::ExportReport::default();
+    let images = if let Some((store, ppi, preview)) = resources {
+        crate::image_write::prepare(doc, store, ppi, preview || model.is_some(), &mut pdf, &mut ids.0, &mut report)
+            .map_err(ExportError::InvalidDocument)?
+    } else {
+        Vec::new()
+    };
 
     for ab in pages {
         if cancel.load(Ordering::Relaxed) {
@@ -252,33 +293,56 @@ pub(crate) fn write_pages_counted(
         // Slice 0.6: `cancel` is also checked every `CANCEL_STRIDE` objects while collecting, painting
         // and writing the knockouts, so one huge page (Export Selection…) stops promptly too.
         let mut tick = Tick::default();
-        let mut items: Vec<Drawn> = Vec::new();
-        for d in drawn_on(doc, ab) {
-            tick.check(cancel)?;
-            items.push(d);
+        let mut items = Vec::new();
+        if images.is_empty() {
+            for d in drawn_on(doc, ab) {
+                tick.check(cancel)?;
+                items.push(Item::Path(d));
+            }
+        } else {
+            let paths: std::collections::HashMap<_, _> = drawn_on(doc, ab).map(|d| (d.p.id, d)).collect();
+            for leaf in varos_core::images::paint_order(doc) {
+                tick.check(cancel)?;
+                match leaf {
+                    varos_core::model::NodeKind::Path(id) => {
+                        if let Some(d) = paths.get(&id) {
+                            items.push(Item::Path(*d));
+                        }
+                    }
+                    varos_core::model::NodeKind::Image(id) => {
+                        if let Some(im) = images.iter().find(|im| im.id == id) {
+                            items.push(Item::Image(im));
+                        }
+                    }
+                    // text was outlined into paths at the top of `write_pages_impl` (integration w2)
+                    varos_core::model::NodeKind::Text(_)
+                    | varos_core::model::NodeKind::Group
+                    | varos_core::model::NodeKind::Layer => {}
+                }
+            }
         }
         let page_box = page_rect(ab);
         let mut i = 0;
         while i < items.len() {
-            let clip = items[i].clip;
-            let run_len = items[i..].iter().take_while(|d| d.clip == clip).count();
+            let clip = items[i].clip(doc);
+            let run_len = items[i..].iter().take_while(|d| d.clip(doc) == clip).count();
             let run = &items[i..i + run_len];
             i += run_len;
             let Some(cg) = clip else {
                 for d in run {
                     tick.check(cancel)?;
-                    paint(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t);
+                    paint_item(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t, doc);
                 }
                 continue;
             };
             let mask = mask_paths(doc, cg);
             // A member paints only where (its box ∩ the page) meets some mask ring's box; one that
             // doesn't is wholly clipped out on this page and is not written at all.
-            let members: Vec<&Drawn> = run
+            let members: Vec<&Item> = run
                 .iter()
-                .filter(|d| intersect(d.bbox, page_box).is_some_and(|v| mask.iter().any(|m| overlaps(v, m.2))))
+                .filter(|d| intersect(d.bbox(), page_box).is_some_and(|v| mask.iter().any(|m| overlaps(v, m.2))))
                 .collect();
-            let Some(reach) = members.iter().filter_map(|d| intersect(d.bbox, page_box)).reduce(union) else {
+            let Some(reach) = members.iter().filter_map(|d| intersect(d.bbox(), page_box)).reduce(union) else {
                 continue;
             };
             // Only rings whose box meets where the run can paint are written. Exact, not a heuristic: under
@@ -291,7 +355,7 @@ pub(crate) fn write_pages_counted(
             c.clip_even_odd().end_path();
             for d in members {
                 tick.check(cancel)?;
-                paint(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t);
+                paint_item(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t, doc);
             }
             c.restore_state();
         }
@@ -310,8 +374,14 @@ pub(crate) fn write_pages_counted(
                     d.pair(Name(format!("GS{i}").as_bytes()), g.r);
                 }
             }
-            if !knocks.is_empty() {
+            if !knocks.is_empty() || !images.is_empty() {
                 let mut d = res.x_objects();
+                let mut emitted = std::collections::HashSet::new();
+                for im in &images {
+                    if emitted.insert(im.r.get()) {
+                        d.pair(Name(im.name.as_bytes()), im.r);
+                    }
+                }
                 for (i, k) in knocks.iter().enumerate() {
                     d.pair(Name(format!("Fx{i}").as_bytes()), k.r);
                 }
@@ -391,12 +461,27 @@ pub(crate) fn write_pages_counted(
                 .description(TextStr("Varos editable model (source of truth)"));
             fs.finish();
 
+            let assets = if let Some((store, _, _)) = resources {
+                crate::image_write::assets(doc, store, &mut pdf, &mut ids.0).map_err(ExportError::InvalidDocument)?
+            } else {
+                Vec::new()
+            };
             let mut cat = pdf.catalog(cat_id);
             cat.pages(tree_id);
             cat.names().embedded_files().names().insert(Str(MODEL_NAME), fs_id);
             cat.insert(Name(b"AF")).array().item(fs_id);
             cat.pair(Name(b"VAROS_Model"), emb_id);
             cat.pair(Name(b"VAROS_SchemaVersion"), VRS_VERSION as i32);
+            if !assets.is_empty() {
+                let mut table = cat.insert(Name(b"VAROS_Assets")).dict();
+                for (key, original, proxy) in assets {
+                    let mut entry = table.insert(Name(key.0.as_bytes())).dict();
+                    if let Some(r) = original {
+                        entry.pair(Name(b"Original"), r);
+                    }
+                    entry.pair(Name(b"Proxy"), proxy);
+                }
+            }
             cat.finish();
         }
         _ => {
@@ -405,9 +490,61 @@ pub(crate) fn write_pages_counted(
         }
     }
 
-    Ok((pdf.finish(), ids.0 as usize))
+    Ok((pdf.finish(), ids.0 as usize, report))
 }
 
+// ---- w2-images: mixed leaves retain native path cubics and knockout groups ----
+enum Item<'a> {
+    Path(Drawn<'a>),
+    Image(&'a crate::image_write::DrawImage),
+}
+impl Item<'_> {
+    fn clip(&self, doc: &Document) -> Option<u32> {
+        match self {
+            Self::Path(d) => d.clip,
+            Self::Image(i) => doc.clip_group_of(i.id),
+        }
+    }
+    fn bbox(&self) -> WRect {
+        match self {
+            Self::Path(d) => d.bbox,
+            Self::Image(i) => varos_core::images::corner_rect(i.corners),
+        }
+    }
+}
+#[allow(clippy::too_many_arguments)]
+fn paint_item(
+    c: &mut Content,
+    gss: &mut Vec<Gs>,
+    knocks: &mut Vec<Knock>,
+    pool: &mut KnockGs,
+    ids: &mut Alloc,
+    item: &Item,
+    t: &impl Fn([f32; 2]) -> (f32, f32),
+    doc: &Document,
+) {
+    match item {
+        Item::Path(d) => paint(c, gss, knocks, pool, ids, d, t),
+        Item::Image(im) => {
+            c.save_state();
+            if let Some(rects) = varos_core::images::board_clips(doc, im.id) {
+                for r in rects {
+                    let (x, y) = t([r.0, r.3]);
+                    c.rect(x, y, r.2 - r.0, r.3 - r.1);
+                }
+                c.clip_nonzero().end_path();
+            }
+            let n = gs_name(gss, ids, im.opacity, im.opacity);
+            let (ax, ay) = t(im.corners[0]);
+            let (bx, by) = t(im.corners[1]);
+            let (dx, dy) = t(im.corners[3]);
+            c.set_parameters(Name(n.as_bytes()))
+                .transform([bx - ax, by - ay, ax - dx, ay - dy, dx, dy])
+                .x_object(Name(im.name.as_bytes()));
+            c.restore_state();
+        }
+    }
+}
 /// How many objects the writer handles between two looks at the cancel flag (a relaxed atomic load is
 /// cheap; 16 objects are far below a millisecond even on a slow page).
 pub(crate) const CANCEL_STRIDE: u32 = 16;

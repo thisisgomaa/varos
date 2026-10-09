@@ -299,3 +299,8 @@ mod source_tests {
         std::fs::remove_dir_all(home).unwrap();
     }
 }
+
+/// OS account home; never shell variable expansion.
+pub fn account_home() -> std::io::Result<PathBuf> {
+    crate::conn::fsutil::user_home_dir()
+}

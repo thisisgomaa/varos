@@ -540,3 +540,7 @@ The old `v5_future.vrs`/`future_v5_pdf.vrs` remain archived inputs to the frozen
 the current reader accepts their version then refuses their invalid model. The old-reader harness adds
 the base-7b48f2c v4 gate; plain v5 JSON/PDF and `doc:42` demonstrate refusal before typed decode.
 Native save retains editable centrelines/styles; export baking never overwrites authored paths.
+
+### Proposed next writer: images (lane w2-images)
+
+See [the image amendment](../adr/ADR-0008-amendment-next-images.md). Provisional version 6 adds `images`, `assets`, `raster_effects_ppi` and `NodeKind::Image(id)`. Defaults are omitted; the named v5 migration preserves old payloads. Original and proxy binary streams are siblings of the embedded model attachment, joined through immutable asset keys, never JSON pixel arrays. The integrator renumbers this writer if merge order changes.

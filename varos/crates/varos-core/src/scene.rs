@@ -33,18 +33,56 @@ pub struct NativeStroke {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prim {
-    Fill { rings: Vec<Vec<Pt>>, color: Rgba }, // outer ring + hole rings — filled even-odd (holes cut through)
+    // ---- w2-images ----
+    Image {
+        key: crate::images::BlobKey,
+        pixels: Arc<crate::images::Pixels>,
+        corners: [Pt; 4],
+        opacity: f32,
+        clip: Option<[f32; 4]>,
+    },
+    Fill {
+        rings: Vec<Vec<Pt>>,
+        color: Rgba,
+    }, // outer ring + hole rings — filled even-odd (holes cut through)
     // `clip` (A2): the artboard rect [x0,y0,x1,y1] (world) this stroke is clipped to, if any. The centerline
     // is ALREADY cut to the rect (clip_polyline_rect), but the extruded BAND still overhangs the edge by up
     // to half the width — a renderer may honour this rect (e.g. a GPU scissor) to trim that overhang. `None`
     // = draw uncut (a floater or a page that invited bleed). A missed/degenerate rect MUST draw the stroke
     // uncut (overflowing), never clipped-to-nothing — fail-open.
-    Stroke { pts: Vec<Pt>, width: f32, color: Rgba, clip: Option<[f32; 4]> },
-    StrokeCoverage { rings: Vec<Vec<Pt>>, color: Rgba, clip: Option<[f32; 4]>, native: Option<NativeStroke> },
-    Dashed { pts: Vec<Pt>, width: f32, color: Rgba },
-    Square { c: Pt, half: f32, color: Rgba },
-    Disc { c: Pt, r: f32, color: Rgba },
-    Tri { a: Pt, b: Pt, c: Pt, color: Rgba }, // a single filled triangle (icons)
+    Stroke {
+        pts: Vec<Pt>,
+        width: f32,
+        color: Rgba,
+        clip: Option<[f32; 4]>,
+    },
+    StrokeCoverage {
+        rings: Vec<Vec<Pt>>,
+        color: Rgba,
+        clip: Option<[f32; 4]>,
+        native: Option<NativeStroke>,
+    },
+    Dashed {
+        pts: Vec<Pt>,
+        width: f32,
+        color: Rgba,
+    },
+    Square {
+        c: Pt,
+        half: f32,
+        color: Rgba,
+    },
+    Disc {
+        c: Pt,
+        r: f32,
+        color: Rgba,
+    },
+    Tri {
+        a: Pt,
+        b: Pt,
+        c: Pt,
+        color: Rgba,
+    }, // a single filled triangle (icons)
 }
 
 /// A z-ordered draw group. `Opaque` runs paint straight onto the canvas. `Isolated` renders its prims
@@ -139,6 +177,24 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     live_paths.sort_unstable();
     live_paths.dedup();
     for pid in live_paths {
+        if let Some(image) = ed.doc.images.iter().find(|i| i.id == pid) {
+            image.id.hash(&mut state);
+            image.blob.hash(&mut state);
+            for v in [
+                image.xform.a,
+                image.xform.b,
+                image.xform.c,
+                image.xform.d,
+                image.xform.e,
+                image.xform.f,
+                image.opacity,
+            ] {
+                f32_hash(v, &mut state);
+            }
+            for corner in crate::images::world_corners(&ed.doc, image) {
+                point_hash(corner, &mut state);
+            }
+        }
         let Some(path) = ed.doc.paths.iter().find(|path| path.id == pid) else { continue };
         path.id.hash(&mut state);
         path.closed.hash(&mut state);
@@ -215,6 +271,10 @@ pub struct Scene {
 /// to double-blend, so no isolated layer needed).
 fn scale_alpha(p: &mut Prim, o: f32) {
     let c = match p {
+        Prim::Image { opacity, .. } => {
+            *opacity *= o;
+            return;
+        }
         Prim::Fill { color, .. } => color,
         Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } => color,
         Prim::Dashed { color, .. } => color,
@@ -290,7 +350,7 @@ fn rect_intersection(a: R4, b: R4) -> Option<R4> {
 /// The whole scene, uncut (no view culling). Used where the entire document must be described —
 /// tests and canvas previews. Export jobs use `build_scene_for_export`. Shares the cross-frame flatten cache with `build_scene_in_view`.
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
-    build_scene_impl(ed, ppu, None, None, true)
+    build_scene_impl(ed, ppu, None, None, true, false)
 }
 
 /// P11.2: the canvas scene for a `frame`-sized viewport seen through `view`. Paths whose world bbox
@@ -298,7 +358,7 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
 /// entirely; partially visible paths have their rings and stroke runs clipped to that grown rect, reusing
 /// the artboard clippers. Everything inside the frame renders exactly as `build_scene` would.
 pub fn build_scene_in_view(ed: &Editor, view: View, frame: [u32; 2]) -> Scene {
-    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), None, true)
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), None, true, false)
 }
 
 /// UI-independent canvas presentation input; exporters use `build_scene_for_export`.
@@ -311,14 +371,25 @@ pub struct SceneStyle {
 }
 pub fn build_scene_in_view_styled(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle) -> Scene {
     // ---- Lane E ----
-    let scene = build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style), true);
+    let scene = build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style), true, false);
     crate::view_depth_scene::present(ed, view, frame, style, scene)
 }
 /// Full-quality scene for raster/export jobs: original tolerance, aggregate budget and diagnostics.
 pub fn build_scene_for_export(ed: &Editor, ppu: f32) -> Scene {
-    build_scene_impl(ed, ppu, None, None, false)
+    build_scene_impl(ed, ppu, None, None, false, false)
 }
-fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>, canvas: bool) -> Scene {
+/// Export-quality artwork only (no artboard chrome) — CPU image/raster jobs (w2-images).
+pub fn build_artwork_scene(ed: &Editor, ppu: f32) -> Scene {
+    build_scene_impl(ed, ppu, None, None, false, true)
+}
+fn build_scene_impl(
+    ed: &Editor,
+    ppu: f32,
+    cull: Option<ViewCull>,
+    style: Option<SceneStyle>,
+    canvas: bool,
+    artwork_only: bool,
+) -> Scene {
     let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
     let stroke_budget = (!canvas).then(|| std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default()));
     let stroke_errors = std::cell::RefCell::new(Vec::new());
@@ -341,6 +412,9 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     {
         let ab_tool = ed.tool == ToolKind::Artboard;
         for (i, ab) in ed.doc.artboards.iter().enumerate() {
+            if artwork_only {
+                break;
+            }
             if ab.hidden {
                 continue; // board eye OFF → the page (paper + edge + handles) vanishes with its art
             }
@@ -560,14 +634,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
         }
         if !p.stroke_style.is_default() {
             if let Some(color) = p.stroke.solid() {
-                let coverage = if canvas {
-                    ed.canvas_stroke_cache
-                        .lookup(p, ed.doc.unit_xform(p.id), ppu)
-                        .ok_or(crate::stroke::StrokeError::LimitExceeded)
-                } else {
-                    crate::stroke::evaluate(p, 0.025 / f64::from(ppu.max(0.0001)), &|| false).map(Arc::new)
-                };
-                match coverage {
+                match crate::stroke::canvas_seam(ed, p, ppu, canvas) {
                     Ok(coverage) => {
                         if let Some(budget) = &stroke_budget {
                             if let Err(e) = budget.borrow_mut().charge(&coverage) {
@@ -801,7 +868,64 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     let mut cur_clip: Option<u32> = None;
     let mut clip_members: Vec<Group> = Vec::new();
     let mut clip_open: Vec<Prim> = Vec::new();
-    for (pi, p) in ed.doc.paint_list() {
+    // ---- w2-images ----
+    let paths: std::collections::HashMap<_, _> = ed.doc.paint_list().map(|(pi, p)| (p.id, (pi, p))).collect();
+    for item in crate::images::paint_order(&ed.doc) {
+        if let crate::model::NodeKind::Image(id) = item {
+            if ed.doc.eff_hidden(id) || ed.doc.is_mask_source(id) {
+                continue;
+            }
+            let Some(image) = ed.doc.images.iter().find(|i| i.id == id) else { continue };
+            if image.opacity == 0. {
+                continue;
+            }
+            // integration w2 (Lane E × images): an outlined image draws as its box in the outline pass
+            if style.is_some() && crate::view_depth_scene::outlined(ed, id) {
+                continue;
+            }
+            let Some(blob) = ed.blobs.get(&image.blob) else {
+                stroke_errors.borrow_mut().push(format!("Image {id} resource unavailable"));
+                continue;
+            };
+            let corners = crate::images::world_corners(&ed.doc, image);
+            if cull.as_ref().is_some_and(|c| !rects_intersect(crate::images::corner_rect(corners), c.grown(0.0))) {
+                continue;
+            }
+            let unit_clip = ed.doc.clip_group_of(id);
+            if unit_clip != cur_clip {
+                if let Some(c) = cur_clip.take() {
+                    if !clip_open.is_empty() {
+                        clip_members.push(Group::Opaque(std::mem::take(&mut clip_open)));
+                    }
+                    groups
+                        .push(Group::Clip { mask_rings: mask_rings_of(c), members: std::mem::take(&mut clip_members) });
+                }
+                if unit_clip.is_some() && !open.is_empty() {
+                    groups.push(Group::Opaque(std::mem::take(&mut open)));
+                }
+                cur_clip = unit_clip;
+            }
+            let prim = |clip| Prim::Image {
+                key: image.blob.clone(),
+                pixels: blob.pixels.clone(),
+                corners,
+                opacity: image.opacity,
+                clip,
+            };
+            let prims = if let Some(rects) = crate::images::board_clips(&ed.doc, id) {
+                rects.into_iter().map(|r| prim(Some([r.0, r.1, r.2, r.3]))).collect::<Vec<_>>()
+            } else {
+                vec![prim(None)]
+            };
+            if cur_clip.is_some() {
+                clip_open.extend(prims);
+            } else {
+                open.extend(prims);
+            }
+            continue;
+        }
+        let crate::model::NodeKind::Path(id) = item else { continue };
+        let Some(&(pi, p)) = paths.get(&id) else { continue };
         // P11.2: a culled path is skipped exactly like a hidden one — BEFORE the clip-run tracking, so a
         // clip's remaining visible members stay one contiguous run.
         let Some(geom) = geometry[pi].as_deref() else { continue };
@@ -856,6 +980,20 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
                 .chain(geom.holes.iter().flat_map(|h| view_runs(pi, h.clone())))
             {
                 outlines.push(Prim::Stroke { pts, width: 1.0 / ppu.max(0.0001), color: style.outline, clip: None });
+            }
+        }
+        // integration w2: image boxes in Outline (Illustrator draws the frame and both diagonals)
+        for image in &ed.doc.images {
+            if ed.doc.eff_hidden(image.id) || !crate::view_depth_scene::outlined(ed, image.id) {
+                continue;
+            }
+            let c = crate::images::world_corners(&ed.doc, image);
+            if cull.as_ref().is_some_and(|v| !rects_intersect(crate::images::corner_rect(c), v.grown(0.0))) {
+                continue;
+            }
+            let width = 1.0 / ppu.max(0.0001);
+            for pts in [vec![c[0], c[1], c[2], c[3], c[0]], vec![c[0], c[2]], vec![c[1], c[3]]] {
+                outlines.push(Prim::Stroke { pts, width, color: style.outline, clip: None });
             }
         }
         if !outlines.is_empty() {

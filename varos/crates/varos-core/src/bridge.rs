@@ -46,6 +46,7 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
                     EditCommand::Drawing(_)
                         | EditCommand::AddText { .. }
                         | EditCommand::SetText { .. }
+                        | EditCommand::Image(_)
                         | EditCommand::SetWandOptions(_)
                         | EditCommand::SetEyedropperOptions(_)
                         | EditCommand::Transform(_)
@@ -78,6 +79,26 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         AddText { text, parent } => crate::text::check_change(ed, text, None, *parent)?,
         SetText { id, text } => crate::text::check_change(ed, text, Some(*id), None)?,
         _ => {}
+    }
+    // ---- w2-images: mixed leaf selection for clipboard/delete (text leaves are objects too) ----
+    if matches!(command, Copy | Cut | DeleteSelected | Transform(_) | TransformBegin | TransformLive(_))
+        && ed.doc.images.iter().any(|i| ed.objsel.contains(&i.id))
+    {
+        if let Transform(spec) | TransformLive(spec) = command {
+            spec.check()?;
+        }
+        for id in &ed.objsel {
+            if ed.doc.pidx(*id).is_none()
+                && !ed.doc.images.iter().any(|i| i.id == *id)
+                && crate::text::node_id(&ed.doc, *id).is_none()
+            {
+                return Err("Unknown object".into());
+            }
+            if ed.doc.eff_hidden(*id) || ed.doc.eff_locked(*id) {
+                return Err("Object is hidden or locked".into());
+            }
+        }
+        return Ok(());
     }
     if matches!(
         command,
@@ -283,6 +304,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             Ok(())
         }
         Eyedropper { source, .. } => path(*source),
+        Image(edit) => crate::images::check(ed, edit),
         InsertTracedPaths { paths } => crate::trace::check_insert(ed, paths),
         PlaceArtwork(doc) => crate::placement::check(ed, doc),
         ZoomPercent(v) => {
@@ -563,6 +585,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             }
         }
         Paste { offset } => {
+            let mut resources = ed.blobs.clone();
+            ed.clipboard().admit_images(&mut resources)?;
             if ed.clipboard().is_empty() {
                 return Err("clipboard is empty; use Copy or Cut in the batch first".into());
             }
