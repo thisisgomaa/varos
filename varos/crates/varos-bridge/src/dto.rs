@@ -159,6 +159,32 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    Pathfinder {
+        ids: Vec<String>,
+        operation: String,
+    },
+    ShapeBuilder {
+        ids: Vec<String>,
+        points: Vec<[f32; 2]>,
+        delete: bool,
+    },
+    Scissors {
+        ids: Vec<String>,
+        segment: usize,
+        t: f32,
+    },
+    Knife {
+        ids: Vec<String>,
+        points: Vec<[f32; 2]>,
+    },
+    Eraser {
+        ids: Vec<String>,
+        points: Vec<[f32; 2]>,
+        radius: f32,
+    },
+    DivideObjectsBelow {
+        ids: Vec<String>,
+    },
     AddShape {
         kind: ShapeKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -372,7 +398,13 @@ impl Operation {
             | Self::SetArtboardColor { .. }
             | Self::SetArtboardClip { .. }
             | Self::SetActiveArtboard { .. } => &[],
-            Self::Move { ids, .. }
+            Self::Pathfinder { ids, .. }
+            | Self::ShapeBuilder { ids, .. }
+            | Self::Scissors { ids, .. }
+            | Self::Knife { ids, .. }
+            | Self::Eraser { ids, .. }
+            | Self::DivideObjectsBelow { ids }
+            | Self::Move { ids, .. }
             | Self::SetPaint { ids, .. }
             | Self::Resize { ids, .. }
             | Self::Rotate { ids, .. }
@@ -420,7 +452,18 @@ impl Operation {
             if target.starts_with('a') && target.contains('@') && !target.starts_with("artboard:"))
     }
     pub fn destructive(&self) -> bool {
-        matches!(self, Self::Delete { .. } | Self::Ungroup { .. } | Self::DeleteArtboard { .. })
+        matches!(
+            self,
+            Self::Delete { .. }
+                | Self::Ungroup { .. }
+                | Self::DeleteArtboard { .. }
+                | Self::Pathfinder { .. }
+                | Self::ShapeBuilder { .. }
+                | Self::Scissors { .. }
+                | Self::Knife { .. }
+                | Self::Eraser { .. }
+                | Self::DivideObjectsBelow { .. }
+        )
     }
 }
 fn snapshot_width() -> u32 {

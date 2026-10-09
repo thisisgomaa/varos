@@ -185,9 +185,17 @@ pub enum Icon {
     HarmonySquare,
     /// Colour harmony "Monochrome".
     HarmonyMono,
+    PathDivide,
+    PathTrim,
+    PathMerge,
+    PathOutline,
+    PathMinusBack,
+    PathScissors,
+    PathKnife,
+    PathEraser,
 }
 impl Icon {
-    pub const ALL: [Icon; 56] = [
+    pub const ALL: [Icon; 64] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -244,6 +252,14 @@ impl Icon {
         Self::HarmonyTetradic,
         Self::HarmonySquare,
         Self::HarmonyMono,
+        Self::PathDivide,
+        Self::PathTrim,
+        Self::PathMerge,
+        Self::PathOutline,
+        Self::PathMinusBack,
+        Self::PathScissors,
+        Self::PathKnife,
+        Self::PathEraser,
     ];
 
     /// The icon's name and its embedded SVG: the upstream Lucide file, or — for [`Icon::is_original`] —
@@ -316,6 +332,14 @@ impl Icon {
             Self::HarmonyTetradic => varos!("harmony-tetradic"),
             Self::HarmonySquare => varos!("harmony-square"),
             Self::HarmonyMono => varos!("harmony-mono"),
+            Self::PathDivide => varos!("path-divide"),
+            Self::PathTrim => varos!("path-trim"),
+            Self::PathMerge => varos!("path-merge"),
+            Self::PathOutline => varos!("path-outline"),
+            Self::PathMinusBack => varos!("path-minus-back"),
+            Self::PathScissors => varos!("path-scissors"),
+            Self::PathKnife => varos!("path-knife"),
+            Self::PathEraser => varos!("path-eraser"),
         }
     }
 

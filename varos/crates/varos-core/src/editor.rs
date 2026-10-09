@@ -49,6 +49,10 @@ pub enum ToolKind {
     Artboard,
     Rotate,
     Scale,
+    ShapeBuilder,
+    Scissors,
+    Knife,
+    Eraser,
 }
 
 /// What the Pen tool would do at the cursor right now — drives the contextual pen cursor (Illustrator
@@ -78,6 +82,7 @@ impl ToolKind {
 
 pub enum Drag {
     None,
+    Construction { points: Vec<Pt>, delete: bool },
     PenNew { aid: u32, down: Pt, broken: bool },
     PenClose { aid: u32, down: Pt, broken: bool },
     Anchors { start: Pt, items: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
@@ -440,6 +445,7 @@ pub struct Editor {
     /// Document revision — bumps on every committed change, undo and redo. `rev != saved_rev` (held by
     /// the app) = unsaved changes. (`dirty` below is a PER-GESTURE flag for begin/commit, not this.)
     pub rev: u64,
+    pub(crate) construction_cache: crate::construction::SharedConstructionCache,
     pub dirty: bool,
     /// P11.2 cross-frame flatten cache (render-side memo, never serialized, never part of undo). Keyed by
     /// each path's exact geometry inputs, so it can never serve stale geometry — see `flatten.rs`.
@@ -497,6 +503,7 @@ impl Editor {
             paint: PaintTarget::Fill,
             recent_colors: vec![],
             rev: 0,
+            construction_cache: Default::default(),
             dirty: false,
             flatten_cache: Default::default(),
             clipboard: Clipboard::default(),
@@ -1253,7 +1260,7 @@ impl Editor {
     /// Build one path as cubic contours (outer + hole contours) for the boolean engine. A7: the contours are
     /// emitted in WORLD space (unit transform composed), so a rotated participant is fed to the engine at
     /// its true position — the boolean IMPLICITLY bakes rotation and the result is fresh identity geometry.
-    fn path_to_segs(&self, pi: usize) -> Vec<Vec<Seg>> {
+    pub(crate) fn path_to_segs(&self, pi: usize) -> Vec<Vec<Seg>> {
         let p = &self.doc.paths[pi];
         let xf = self.doc.unit_xform(p.id);
         let world = |ring: &[Anchor]| -> Vec<Anchor> {
@@ -1298,7 +1305,7 @@ impl Editor {
         }
         out
     }
-    fn pathfinder_objects(&self) -> HashSet<u32> {
+    pub(crate) fn pathfinder_objects(&self) -> HashSet<u32> {
         self.objsel
             .iter()
             .copied()
@@ -3887,7 +3894,14 @@ impl Editor {
             pos
         };
         self.cursor = pos;
-        tools::get(self.gesture).down(self, pos);
+        if matches!(self.gesture, ToolKind::ShapeBuilder | ToolKind::Knife | ToolKind::Eraser) {
+            self.reset_construction_walk();
+            self.drag = Drag::Construction { points: vec![pos], delete: self.mods.alt };
+        } else if self.gesture == ToolKind::Scissors {
+            self.scissors_at(pos);
+        } else {
+            tools::get(self.gesture).down(self, pos);
+        }
     }
     pub fn pointer_up(&mut self) {
         self.snap_guides.clear();
@@ -3918,6 +3932,11 @@ impl Editor {
         } // rotate/scale/reflect
           // A7: apply the rotate drag's clean end-state — bakes cleanly ONLY if the gesture ended exactly at
           // total-angle-≡-0 (mid-drag zero-crossings stayed live). Must run before `drag = None`.
+        if matches!(self.drag, Drag::Construction { .. }) {
+            if let Drag::Construction { points, delete } = std::mem::replace(&mut self.drag, Drag::None) {
+                self.finish_construction(points, delete);
+            }
+        }
         self.finish_rotate_drag();
         if let Drag::TfPending { down, .. } = self.drag {
             // a click (no drag) relocates the pivot — snapped
@@ -3978,6 +3997,12 @@ impl Editor {
             self.hover_snap(pos); // A10: phantom snap point before the first click of a drawing tool
         }
         match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::Construction { mut points, delete } => {
+                if points.last().is_none_or(|p| dist(*p, pos) > 0.5 / self.ppu) && points.len() < 1000 {
+                    points.push(pos);
+                }
+                self.drag = Drag::Construction { points, delete };
+            }
             Drag::PenNew { aid, down, mut broken } => {
                 if dist(pos, down) >= DRAG_THRESH {
                     if self.mods.alt {

@@ -55,7 +55,11 @@ fn every_registry_icon_resolves_to_an_embedded_svg_that_parses() {
             // A Varos original (UI_SYSTEM §icons rule 2): drawn from scratch, never a relabelled Lucide file.
             originals.insert(name);
             assert!(svg.contains(&format!("class=\"varos varos-{name}\"")), "{name}: the file is the named original");
-            assert!(svg.contains("original Varos glyph, 2026-10-08, drawn from scratch"), "{name}: provenance header");
+            assert!(
+                (svg.contains("original Varos glyph, 2026-10-08, drawn from scratch")
+                    || svg.contains("original Varos glyph, 2026-10-09, drawn from scratch")),
+                "{name}: provenance header"
+            );
             assert!(!svg.contains("lucide"), "{name}: an original carries no Lucide class or licence");
         } else {
             assert!(svg.contains(&format!("lucide-{name}\"")), "{name}: the file is the named Lucide glyph");
@@ -89,7 +93,7 @@ fn every_registry_icon_resolves_to_an_embedded_svg_that_parses() {
             }
         }
     }
-    assert_eq!(originals.len(), 21, "15 panel originals plus six picker originals");
+    assert_eq!(originals.len(), 29, "15 panel originals, six picker originals, eight construction originals");
 }
 
 /// The rail's Artboard tool still paints the inline `LEGACY_ARTBOARD`; it must stay the exact geometry of

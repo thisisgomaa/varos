@@ -172,6 +172,7 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         // crosshair + the tool's own badge, on hover and for the whole drag (owner 2026-09-25)
         ToolKind::Rotate => CK::CrossRotate,
         ToolKind::Scale => CK::CrossScale,
+        ToolKind::ShapeBuilder | ToolKind::Scissors | ToolKind::Knife | ToolKind::Eraser => CK::CrossRect,
         ToolKind::Rect => CK::CrossRect,
         ToolKind::Ellipse => CK::CrossEllipse,
         ToolKind::Triangle => CK::CrossTriangle,
@@ -259,6 +260,10 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Artboard => "Artboard (Shift+O)",
         ToolKind::Rotate => "Rotate (R)",
         ToolKind::Scale => "Scale (S)",
+        ToolKind::ShapeBuilder => "Shape Builder (Shift+M)",
+        ToolKind::Scissors => "Scissors (C)",
+        ToolKind::Knife => "Knife",
+        ToolKind::Eraser => "Eraser (Shift+E)",
     }
 }
 
@@ -324,6 +329,9 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         "KeyV" => ed.set_tool(ToolKind::Object),
         "KeyA" => ed.set_tool(ToolKind::Direct),
         "KeyP" => ed.set_tool(ToolKind::Pen),
+        "KeyM" if shift && !alt => ed.set_tool(ToolKind::ShapeBuilder),
+        "KeyC" if !shift && !alt => ed.set_tool(ToolKind::Scissors),
+        "KeyE" if shift && !alt => ed.set_tool(ToolKind::Eraser),
         "KeyM" => ed.set_tool(ToolKind::Rect),
         "KeyL" => ed.set_tool(ToolKind::Ellipse),
         "KeyR" => ed.set_tool(ToolKind::Rotate), // Rotate tool (Illustrator R)
@@ -3108,5 +3116,38 @@ mod picker_shortcut_tests {
         assert!(if ed.paint == PaintTarget::Fill { ed.cur_fill.is_none() } else { ed.cur_stroke.is_none() });
         apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyI", false, false, false);
         assert!(ed.tool == ToolKind::Eyedropper);
+    }
+}
+
+#[cfg(test)]
+mod construction_shortcuts {
+    use super::*;
+    #[test]
+    fn illustrator_cutting_keys_do_not_replace_plain_rectangle_or_copy() {
+        let mut ed = Editor::new();
+        let mut view = View::identity();
+        for (code, shift, tool) in [
+            ("KeyM", true, ToolKind::ShapeBuilder),
+            ("KeyM", false, ToolKind::Rect),
+            ("KeyC", false, ToolKind::Scissors),
+            ("KeyE", true, ToolKind::Eraser),
+        ] {
+            apply_key(&mut ed, &mut view, [0., 0.], code, false, shift, false);
+            assert!(ed.tool == tool);
+        }
+        ed.set_tool(ToolKind::Object);
+        apply_key(&mut ed, &mut view, [0., 0.], "KeyC", true, false, false);
+        assert!(ed.tool == ToolKind::Object);
+        // Leave sibling Shift+C/plain E slots available; Alt variants must not select our tools.
+        for (code, shift, alt) in [
+            ("KeyC", true, false),
+            ("KeyE", false, false),
+            ("KeyC", false, true),
+            ("KeyE", true, true),
+            ("KeyM", true, true),
+        ] {
+            apply_key(&mut ed, &mut view, [0., 0.], code, false, shift, alt);
+            assert!(!matches!(ed.tool, ToolKind::ShapeBuilder | ToolKind::Scissors | ToolKind::Eraser));
+        }
     }
 }

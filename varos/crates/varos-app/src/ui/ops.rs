@@ -35,6 +35,8 @@ pub(crate) enum Op {
     Flip(bool),
     Align(AlignMode, AlignTarget), // A4: carries the target the align resolves against
     Distribute(DistAxis),
+    Pathfinder(varos_core::planar::PathfinderOp),
+    DivideObjectsBelow,
     Bool(varos_core::boolean::BoolOp), // Pathfinder home + the Properties "Shape" mirror
     // ---- artboard ops (i = artboard index) ----
     AbActive(usize),
@@ -247,6 +249,8 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::Flip(horizontal) => ed.execute(EditCommand::Flip(horizontal)),
             Op::Align(mode, target) => ed.execute(EditCommand::Align { mode, target }),
             Op::Distribute(axis) => ed.execute(EditCommand::Distribute(axis)),
+            Op::Pathfinder(operation) => ed.execute(EditCommand::Pathfinder(operation)),
+            Op::DivideObjectsBelow => ed.execute(EditCommand::DivideObjectsBelow),
             Op::Bool(operation) => ed.execute(EditCommand::Boolean(operation)),
             Op::AbActive(index) => ed.execute(EditCommand::SetActiveArtboard(index)),
             Op::AbRect(index, x, y, width, height) => {
