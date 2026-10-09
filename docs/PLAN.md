@@ -168,6 +168,9 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
 | Night-shift group 1 (0.2, 0.9, 0.8, 0.7, 0.4, 0.5, 1.1, 1.5, 1.6, 1.7, 1.2, 1.3, 1.9, 1.10) | merged + installed `6d03c90`, provisional UI, owner review pending | `6d03c90` | GATE_LOG 2026-10-09 night shift |
 | Night-shift group 2 (2.0, 2.1 v5, 4A, 4B core, 4C core, 4D, 4E, 3.8 engine, 7.1, text programme P-composer/kashida) | merged + installed `5a09800`, provisional UI, owner review pending | `5a09800` | GATE_LOG 2026-10-09; API 1.2 progressive disclosure (ADR-0009 amendment proposed) |
+| Wave 2 stage 1 (4B/4C tools + flyouts, Phase 8, text P2–P4 v8, 7.2–7.5) | merged + installed `0dee21e` | `0dee21e` | GATE_LOG 2026-10-09 |
+| Wave 2 stage 2 (Phase 3 v6, Phase 5 v7, 1.8, 1.4, 2.3, 4F v9, 9.1–9.6) | merged + installed `8d21c1f` | `8d21c1f` | format chain v5→v9; 1.2 tools/list 121 B headroom |
+| Wave 3 (6 v10, 10 v11, 12 v12, render layers/blur/blend, 11 v13, 9.8, 9.9+9.7, text P5–P8 v14) | running (8 lanes) | — | started 2026-10-09 ~22:00 |
 | 0.6 file-menu basics | merged + installed, owner hand test pending | merge | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection, cancellable export + Show in Finder, tickets, menus/ split |
 | Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
 | 2.0 kurbo + adapter (Lane F) | implemented (core only; fix round complete, independent re-review pending) | uncommitted | kurbo 0.13.1, std only, no serde feature; immutable metadata sidecar preserves flags/IDs; pure MIT/Apache dependency already locked; WASM core check passed; 55 JSON fixture paths round-trip. Geometry only, no format/API changes. Gates: fmt/dep directions, workspace 1527 passed / 0 failed / 15 ignored, native + Windows Clippy clean; ratchets and 14 Bridge fixtures unchanged. |
