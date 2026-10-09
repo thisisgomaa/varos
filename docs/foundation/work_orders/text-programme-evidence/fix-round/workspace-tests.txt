@@ -1,0 +1,2084 @@
+   Compiling varos-text v0.1.0 (/Users/gomaa/Documents/AI workspace/varos/.claude/worktrees/text-programme/varos/crates/varos-text)
+   Compiling varos-app v0.1.0 (/Users/gomaa/Documents/AI workspace/varos/.claude/worktrees/text-programme/varos/crates/varos-app)
+    Finished `test` profile [unoptimized] target(s) in 1m 40s
+     Running unittests src/lib.rs (target/debug/deps/varos_app-7d39f84e255caa89)
+
+running 150 tests
+test shell::boxtree::tests::standard_layout_serdes_roundtrip ... ok
+test shell::boxtree::tests::duplicate_repair_keeps_first_in_tree_order_and_detaches_later_copies ... ok
+test shell::boxtree::tests::snapshots_and_loads_normalize_active_like_ensure_active ... ok
+test shell::ratchet_tests::ratchets_scan_every_production_ui_module_and_exclude_test_modules ... ok
+test shell::kit::field::disabled_tests::tab_ring_skips_a_disabled_number_field ... ok
+test shell::ratchet_tests::ui_source_ratchets_only_tighten ... ok
+test shell::tokens::tests::premultiplied_exact ... ok
+test shell::tokens::tests::shortcut_labels_use_the_platform_primary_modifier ... ok
+test start::tests::arrows_do_nothing_outside_lists ... ok
+test start::tests::arrows_in_recovery_keep_their_column_and_stop_at_ends ... ok
+test start::tests::arrows_stay_inside_the_recent_list ... ok
+test start::tests::board_cards_come_from_the_recent_cache ... ok
+test start::tests::clearing_collections_never_panics_on_old_focus ... ok
+test start::tests::elide_middle_keeps_both_ends ... ok
+test start::tests::empty_recent_copy_is_exact ... ok
+test start::tests::filter_counts_and_tags_use_the_one_core_fold ... ok
+test start::tests::focus_survives_rebuilds_and_lands_in_place_after_a_remove ... ok
+test start::tests::keyboard_traversal_visits_only_visible_boards_and_filters_survive_rebuilds ... ok
+test start::tests::missing_rows_are_flagged_not_dropped ... ok
+test start::tests::new_board_actions_and_filter_actions_are_distinct ... ok
+test start::tests::recovery_rows_come_first_when_present ... ok
+test start::tests::relative_time_text_used ... ok
+test start::tests::start_refresh_skips_documents_and_unchanged_inputs ... ok
+test start::tests::tab_from_last_wraps_to_new ... ok
+test start::tests::tab_wraps_and_activate_maps_to_actions ... ok
+test start::tests::tag_counts_group_case_insensitively_most_used_first ... ok
+test start::tests::tag_filter_is_case_insensitive_and_all_restores_every_board ... ok
+test storage::checksum::tests::crc32_known_vector ... ok
+test shell::boxtree::tests::side_column_span_is_none_without_a_right_column ... ok
+test storage::checksum::tests::nonces_are_unique_across_10k ... ok
+test shell::boxtree::tests::every_panel_body_renders_headless ... ok
+test storage::durable::tests::a_cancel_before_the_rename_writes_nothing_and_after_it_is_too_late ... ok
+test storage::durable::tests::dir_sync_failure_reports_replaced_unconfirmed ... ok
+test storage::durable::tests::fail_at_create_keeps_old_file_byte_identical ... ok
+test storage::durable::tests::dir_sync_unsupported_errno_counts_as_durable ... ok
+test storage::durable::tests::disk_full_reason_is_plain_english ... ok
+test storage::durable::tests::fail_at_sync_keeps_old_file_byte_identical ... ok
+test storage::durable::tests::fail_at_rename_keeps_old_file_byte_identical ... ok
+test storage::durable::tests::fail_at_write_keeps_old_file_byte_identical ... ok
+test storage::durable::tests::failed_write_removes_temp ... ok
+test storage::durable::tests::fingerprint_tracks_len_and_mtime ... ok
+test storage::durable::tests::long_names_get_a_capped_temp_name ... ok
+test storage::durable::tests::missing_folder_is_reported ... ok
+test shell::boxtree::tests::side_column_span_is_the_right_column_of_the_standard_tree ... ok
+test storage::durable::tests::read_only_destination_is_refused ... ok
+test storage::durable::tests::permissions_are_preserved ... ok
+test shell::boxtree::tests::panel_menu_esc_and_click_away_close_without_switching_and_focus_stays_on_the_button ... ok
+test storage::durable::tests::unsupported_errno_table_per_os ... ok
+test storage::durable::tests::symlink_destination_replaces_target_not_link ... ok
+test storage::exists_probe::tests::a_blocked_probe_never_blocks_the_caller_and_missing_shows_once_answered ... ok
+test storage::durable::tests::replace_writes_bytes_and_leaves_no_temp ... ok
+test storage::exists_probe::tests::a_dead_volume_bounds_the_queue_and_never_delays_quit ... ok
+test storage::exists_probe::tests::removed_recents_are_pruned_and_never_requeued ... ok
+test storage::durable::tests::two_writes_use_distinct_temps ... ok
+test storage::durable::tests::full_sync_error_falls_back_to_plain_fsync ... ok
+test storage::layout::tests::different_app_build_is_compatible ... ok
+test storage::layout::tests::corrupt_unknown_panel_old_and_future_version_are_quarantined_silently ... ok
+test storage::layout::tests::duplicate_panels_and_stale_active_load_without_quarantine ... ok
+test storage::layout::tests::missing_file_and_unavailable_storage_leave_standard_unwritten ... ok
+test storage::layout::tests::modified_tree_sizes_closed_panel_and_active_tab_roundtrip ... ok
+test storage::layout::tests::failed_atomic_write_keeps_previous_file_and_retries_once_per_second ... ok
+test shell::boxtree::tests::panel_menu_icon_switches_the_panel_by_pointer_and_keyboard ... ok
+test shell::ratchet_tests::ui_rs_only_shrinks_and_icons_have_one_home ... ok
+test shell::boxtree::tests::tabbed_group_renders_headless ... ok
+test shell::boxtree::tests::window_menu_readds_a_panel_after_closing_all ... ok
+test storage::layout::tests::ordinary_frames_never_write_and_derived_column_survives_restore ... ok
+test storage::io_worker::tests::worker_error_becomes_completion_not_panic ... ok
+test storage::layout::tests::one_write_per_burst_and_no_unchanged_or_reverted_write ... ok
+test storage::layout::tests::quit_flushes_before_debounce_expires ... ok
+test storage::paths::tests::layout_names_are_fixed ... ok
+test storage::layout::tests::read_only_directory_stops_after_three_failures_until_real_change ... ok
+test storage::paths::tests::resolver_linux_xdg_then_local_share ... ok
+test storage::paths::tests::resolver_mac_uses_application_support ... ok
+test storage::layout::tests::reset_restores_standard_removes_file_and_cancels_pending_even_on_quit ... ok
+test storage::paths::tests::resolver_none_never_falls_back_to_cwd ... ok
+test storage::layout::tests::read_errors_preserve_layout_and_existing_diagnostic ... ok
+test storage::paths::tests::resolver_override_wins_and_relative_is_rejected ... ok
+test storage::paths::tests::resolver_windows_uses_appdata ... ok
+test storage::recents::tests::cap_is_twenty ... ok
+test storage::recents::tests::dedupe_by_dev_ino_else_exact_path ... ok
+test storage::layout::tests::second_bad_file_preserves_both_diagnostics ... ok
+test storage::layout::tests::non_dockable_panels_and_grids_fall_back_and_quarantine ... ok
+test storage::recents::tests::an_out_of_bounds_cached_summary_is_dropped_on_load ... ok
+test storage::recents::tests::opened_and_saved_record_newest_first ... ok
+test storage::recents::tests::record_board_caches_the_summary_and_a_plain_record_keeps_it ... ok
+test storage::recents::tests::record_is_the_only_call_recents_never_polluted_by_construction ... ok
+test storage::recents::tests::relocate_replaces_entry_in_place_and_bumps_time ... ok
+test storage::io_worker::tests::shutdown_drains_pending_retires ... ok
+test storage::recents::tests::corrupt_file_loads_empty_with_warning_and_is_kept_as_bad ... ok
+test storage::recents::tests::remove_and_clear_touch_only_the_list ... ok
+test storage::recents::tests::summary_of_a_document ... ok
+test storage::recents::tests::older_version_is_worded_as_older_not_newer ... ok
+test storage::io_worker::tests::jobs_run_fifo_and_wake_is_called ... ok
+test shell::boxtree::tests::renders_headless_without_panic ... ok
+test storage::recents::tests::second_corruption_preserves_the_first_bad_file ... ok
+test storage::recents::tests::unknown_version_is_not_overwritten_silently ... ok
+test storage::recents::tests::version_1_list_upgrades_in_memory_and_saves_as_version_2 ... ok
+test storage::recents::tests::save_is_atomic_under_fault ... ok
+test storage::layout::tests::tree_validation_rejects_empty_cycles_dangling_and_sizes ... ok
+test storage::recovery::tests::first_generation_publishes_manifest_last ... ok
+test storage::recovery::tests::both_corrupt_is_damaged_and_retained ... ok
+test storage::recovery::tests::dead_session_becomes_orphan ... ok
+test storage::recovery::tests::hostile_manifest_file_names_are_damage_not_paths ... ok
+test storage::recovery::tests::disk_full_is_reported_and_previous_survives ... ok
+test storage::recovery::tests::failed_retire_rename_keeps_the_session_and_its_lock ... ok
+test storage::recovery::tests::open_reports_unavailable_storage ... ok
+test storage::recovery::tests::live_session_is_not_an_orphan ... ok
+test storage::recovery::tests::corrupt_newest_falls_back_with_flag ... ok
+test storage::recovery::tests::real_document_blob_round_trips_through_the_open_decoder ... ok
+test storage::recovery::tests::newer_manifest_version_is_retained_not_deleted ... ok
+test storage::recovery::tests::out_of_range_manifest_seq_is_damaged_not_a_panic ... ok
+test storage::recovery::tests::repeated_seq_never_overwrites_a_listed_blob ... ok
+test storage::recovery::tests::store_is_send_and_sync ... ok
+test storage::recovery::tests::failed_generation_keeps_previous_two_intact ... ok
+test storage::recovery::tests::older_generation_is_swept_only_after_the_manifest_is_confirmed ... ok
+test storage::recovery::tests::recovered_session_keeps_writing_same_rid ... ok
+test storage::recovery::tests::retire_renames_to_discarded_then_cleanup_removes_dir ... ok
+test storage::recovery::tests::keeps_exactly_two_generations ... ok
+test storage::scheduler::tests::adopted_session_continues_after_the_loaded_generation ... ok
+test storage::scheduler::tests::clean_document_never_snapshots_and_retires_existing ... ok
+test storage::scheduler::tests::completion_for_another_session_is_ignored ... ok
+test storage::recovery::tests::unknown_folder_without_manifest_is_listed_damaged_and_kept ... ok
+test storage::scheduler::tests::deadline_not_reset_by_later_edits ... ok
+test storage::recovery::tests::symlinked_rid_is_never_followed ... ok
+test storage::scheduler::tests::disabled_makes_no_new_copies_but_a_clean_session_still_retires_its_old_ones ... ok
+test storage::recovery::tests::session_takes_a_fresh_rid_after_retire ... ok
+test storage::scheduler::tests::edit_during_retire_keeps_the_30s_deadline_from_the_edit ... ok
+test storage::recovery::tests::scan_claims_orphan_exclusively ... ok
+test storage::scheduler::tests::failure_backs_off_30s_and_retry_is_immediate ... ok
+test storage::scheduler::tests::huge_generation_seq_never_panics_or_wraps ... ok
+test storage::scheduler::tests::in_transaction_defers_with_waiting_action ... ok
+test storage::scheduler::tests::independent_sessions_have_independent_deadlines ... ok
+test storage::scheduler::tests::next_wake_is_earliest_deadline ... ok
+test storage::scheduler::tests::no_snapshot_before_30s ... ok
+test storage::recovery::tests::snapshot_after_partial_retire_survives_cleanup ... ok
+test storage::settings::tests::settings_default_recovery_on ... ok
+test storage::scheduler::tests::one_in_flight_per_session ... ok
+test storage::scheduler::tests::out_of_order_completion_is_ignored ... ok
+test storage::scheduler::tests::retire_for_close_queues_behind_a_job_in_flight ... ok
+test storage::time_text::tests::board_dates_read_like_the_mockup ... ok
+test storage::time_text::tests::board_dates_use_each_instants_own_offset_across_dst_midnight_and_new_year ... ok
+test storage::time_text::tests::clock_is_24h_local ... ok
+test storage::settings::tests::version_mismatch_is_worded_for_the_right_direction ... ok
+test storage::time_text::tests::copy_times_read_inside_a_sentence ... ok
+test storage::settings::tests::second_corruption_preserves_the_first_bad_file ... ok
+test storage::time_text::tests::relative_time_buckets ... ok
+test storage::settings::tests::settings_round_trip ... ok
+test storage::recovery::tests::unreadable_manifest_is_damaged_and_retained ... ok
+test storage::recovery::tests::never_writes_outside_recovery_dir ... ok
+test storage::recovery::tests::too_large_snapshot_is_refused ... ok
+
+test result: ok. 150 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.52s
+
+     Running unittests src/main.rs (target/debug/deps/varos-46fcb40b65c51f53)
+
+running 523 tests
+test action_queue_tests::a_plain_keys_release_follows_its_press_when_ctrl_goes_down_in_between ... ok
+test action_queue_tests::a_command_keys_release_follows_its_press_when_ctrl_goes_up_first ... ok
+test action_queue_tests::held_ctrl_tab_cycles_every_tab_and_wraps ... ok
+test action_queue_tests::undo_after_a_click_on_another_tab_undoes_that_tab ... ok
+test action_queue_tests::undo_between_press_and_release_undoes_the_tab_active_before_the_click ... ok
+test action_queue_tests::home_click_before_undo_and_save_blocks_background_document_actions ... ok
+test action_queue_tests::an_invalid_field_holds_quit_and_undo_until_esc ... ok
+test action_queue_tests::save_then_undo_in_one_batch_saves_pre_undo_content_and_stays_dirty ... ok
+test action_queue_tests::undo_then_save_in_one_batch_saves_post_undo_content_and_is_clean ... ok
+test agent_presence::tests::document_close_and_host_reset_clear_state ... ok
+test agent_presence::tests::agents_stack_by_identity_and_different_pages_remain_independent ... ok
+test agent_presence::tests::geometry_cache_refreshes_after_human_edit_and_hidden_page_schedules_nothing ... ok
+test agent_presence::tests::invisible_unicode_marks_and_line_separators_are_stripped ... ok
+test agent_presence::tests::group_selection_suppresses_both_group_and_descendant_highlights ... ok
+test agent_presence::tests::fifo_host_edit_reveals_in_operation_order_and_keeps_one_undo_step ... ok
+test agent_presence::tests::future_created_group_cannot_reveal_through_an_earlier_descendant_move ... ok
+test agent_presence::tests::labels_are_bounded_unicode_without_controls ... ok
+test agent_presence::tests::duplicated_artwork_precedes_later_moves_and_target_is_the_new_page ... ok
+test agent_presence::tests::deleted_duplicate_artwork_cannot_take_a_later_unnamed_creation ... ok
+test agent_presence::tests::empty_duplicate_cannot_take_a_later_unnamed_creation ... ok
+test agent_presence::tests::child_bounds_do_not_reveal_unchanged_ancestor_group_or_layer ... ok
+test agent_presence::tests::no_session_draws_nothing_and_requests_no_repaint ... ok
+test agent_presence::tests::selection_azure_wins_including_group_and_direct_selection ... ok
+test agent_presence::tests::page_creation_without_local_lights_created_page_not_active_page ... ok
+test agent_presence::tests::transitions_in_flight_done_then_cleared_after_four_seconds ... ok
+test agent_presence::tests::temporary_deleted_creation_does_not_consume_surviving_creation_order ... ok
+test agent_presence::tests::reverse_allocation_blocks_handle_rounded_rects_paths_and_groups ... ok
+test bridge_host::tests::bridge_mutation_cancels_unaccepted_sample_before_busy_check ... ok
+test bridge_fs::unix::unsupported_hardlinks_use_exclusive_rename ... ok
+test agent_presence::tests::new_agent_batch_finishes_other_agents_reveal_quickly ... ok
+test agent_presence::tests::new_batch_collapses_old_stagger_and_deleted_ids_disappear ... ok
+test bridge_host::tests::completion_audit_records_outcome_without_paths ... ok
+test bridge_host::tests::describe_keeps_pending_field_open_without_an_undo_step ... ok
+test bridge_host::tests::field_commits_human_step_then_rechecks_revision ... ok
+test bridge_host::tests::gesture_refuses ... ok
+test bridge_host::tests::export_can_queue_while_save_is_in_flight ... ok
+test bridge_host::tests::invalid_field_refuses_without_dismissal ... ok
+test bridge_host::tests::home_refuses_and_does_not_switch ... ok
+test bridge_host::tests::pen_path_between_clicks_refuses ... ok
+test bridge_host::tests::completion_eviction_and_restart_are_not_pending ... ok
+test chrome::tests::a_press_on_empty_bar_space_drags_the_window ... ok
+test chrome::tests::a_wide_chip_reaches_both_ends_past_narrower_ones ... ok
+test bridge_host::tests::page_snapshot_worker_replies_with_captured_revision_after_human_edit ... ok
+test bridge_host::tests::snapshot_worker_replies_with_captured_revision_after_human_edit ... ok
+test chrome::tests::active_tab_is_placed_when_tabs_overflow ... ok
+test agent_presence::tests::visibility_deadlines_sleep_offscreen_and_at_hold_even_with_queued_reveals ... ok
+test chrome::tests::band_is_12_chip_12 ... ok
+test chrome::tests::brand_is_a_28_square_ending_at_the_zone_right ... ok
+test chrome::tests::caption_exclusions_round_outward ... ok
+test chrome::tests::caption_hit_is_the_empty_band_only ... ok
+test chrome::tests::mac_topbar_controls_centre_on_26 ... ok
+test chrome::tests::lifted_chip_follows_the_pointer_with_its_grab_offset_and_is_clamped ... ok
+test chrome::tests::overflow_drop_after_the_last_visible_tab_stays_visible ... ok
+test bridge_host::tests::file_host_guards_and_open_trust_capability ... ok
+test chrome::tests::overflow_drop_lands_between_its_visible_neighbours_and_stays_visible ... ok
+test chrome::tests::a_press_on_any_tab_slot_or_plus_never_drags_the_window ... ok
+test chrome::tests::overflow_reserves_room_for_plus_n_and_lists_every_hidden_tab ... ok
+test chrome::tests::plus_is_always_placed_even_with_overflowing_tabs ... ok
+test chrome::tests::reflowed_chips_and_the_gap_tile_the_strip_exactly ... ok
+test chrome::tests::the_active_tab_alone_still_fits_with_plus_n_and_plus ... ok
+test chrome::tests::right_zone_falls_back_to_288_at_the_right_edge ... ok
+test chrome::tests::pointer_jitter_on_a_boundary_never_toggles_the_gap ... ok
+test chrome::tests::right_zone_follows_the_panel_column ... ok
+test chrome::tests::tab_width_is_the_name_plus_padding_clamped ... ok
+test chrome::tests::the_band_above_and_below_a_chip_drags_the_window ... ok
+test chrome::tests::the_gap_jumps_a_neighbour_once_the_leading_edge_clears_its_midpoint_both_ways ... ok
+test chrome::tests::windows_topbar_numbers_are_unchanged_and_mac_clears_the_traffic_lights ... ok
+test chrome::tests::the_layout_has_no_export_share_or_window_rect ... ok
+test chrome::tests::the_band_has_no_search_and_its_old_slot_drags_the_window ... ok
+test chrome::tests::overflow_rect_never_drags_the_window ... ok
+test chrome::tests::overflow_slots_with_eight_tabs_are_still_covered ... ok
+test clipboard_key_tests::cmd_x_cuts_as_one_undo_step ... ok
+test clipboard_key_tests::cmd_c_copies_and_cmd_v_pastes_centred_in_the_canvas ... ok
+test clipboard_key_tests::plain_v_and_x_keep_their_tool_and_colour_meaning ... ok
+test clipboard_key_tests::paste_with_an_empty_clipboard_does_nothing ... ok
+test cursor_policy_tests::native_cursor_requires_both_client_containment_and_focus ... ok
+test cursor_policy_tests::native_cursor_restores_unchanged_tool_on_reentry_and_reactivation ... ok
+test cursor_policy_tests::reassert_policy_reapplies_an_unchanged_cursor_every_frame ... ok
+test clipboard_key_tests::shift_cmd_v_pastes_in_place ... ok
+test cursor_policy_tests::resolve_ck_priority_pan_then_space_then_chrome_then_tool ... ok
+test cursors::tests::colorref_decodes_bgr_order ... ok
+test cursors::tests::crosshair_family_shares_the_crosshair_and_each_tool_has_its_own_badge ... ok
+test cursors::tests::arrow_family_shares_one_silhouette_and_the_tip_hotspot ... ok
+test cursor_state_tests::tool_hover_drag_table_picks_the_expected_cursor_and_file ... ok
+test bridge_fs::tests::pinned_writer_refuses_replace_races_and_parent_symlinks ... ok
+test cursors::tests::move_is_select_and_hotspots_match_the_files_map ... ok
+test cursors::tests::portable_cursor_tokens_round_trip ... ok
+test cursors::tests::parse_v1_rejects_bad_data ... ok
+test export_ui::tests::a_reopened_sheet_follows_only_its_own_export ... ok
+test export_ui::tests::boardless_document_selects_artwork_bounds_and_a_disabled_row_is_never_selected ... ok
+test export_ui::tests::export_selection_opens_on_the_selection_row ... ok
+test export_ui::tests::export_sheet_opens_below_the_band ... ok
+test export_ui::tests::show_in_finder_is_open_dash_r_on_the_file ... ok
+test export_ui::tests::the_sheet_follows_its_export_and_cancel_raises_the_flag ... ok
+test cursors::tests::v1_table_covers_every_ck_once_with_hotspots_inside ... ok
+test export_ui::tests::the_done_state_lists_the_export_report_notes ... ok
+test export_ui::tests::the_remembered_scope_wins_when_it_still_exports ... ok
+test export_ui::tests::two_boards_default_to_all_with_page_counts_and_artwork_bounds_disabled ... ok
+test file_jobs::tests::default_export_name_follows_the_document_and_avoids_its_own_pdf ... ok
+test file_jobs::tests::status_appears_only_after_the_delay_and_wakes_once_for_it ... ok
+test file_jobs::tests::with_pdf_forces_the_extension_and_keeps_the_name ... ok
+test file_ports::tests::decision_from_dialog_results_and_unknown_is_cancel ... ok
+test file_ports::tests::discard_only_accepts_the_explicit_custom_button ... ok
+test file_ports::tests::disk_store_keeps_legacy_repair_notice_and_original_bytes ... ok
+test file_ports::tests::a_save_the_reader_would_refuse_fails_before_touching_the_file ... ok
+test file_ports::tests::disk_store_round_trips_through_varos_pdf ... ok
+test file_ports::tests::disk_store_key_sees_symlink_alias ... ok
+test file_ports::tests::not_yet_existing_names_compare_the_way_their_volume_does ... ok
+test file_ports::tests::plain_reason_hides_internal_error_text ... ok
+test file_jobs::tests::bridge_file_jobs_roundtrip_pure_pdf_and_destination_refusals ... ok
+test file_ports::tests::prompt_copy_follows_the_spec ... ok
+test file_ports::tests::frozen_v1_broken_mask_saves_as_current_format_and_reopens_clean_without_notice ... ok
+test file_ports::tests::volume_name_folds_case_unless_the_volume_is_known_case_sensitive_and_always_normalises ... ok
+test gestures::tests::blocked_gestures_leave_the_view_unchanged_and_unblocked_gestures_change_it ... ok
+test gestures::tests::pinch_and_clamped_zoom_keep_the_pointer_world_point ... ok
+test gestures::tests::pinch_is_exponential_continuous_and_handles_invalid_delta ... ok
+test gestures::tests::smart_zoom_toggles_fit_and_pointer_anchored_actual_size ... ok
+test gestures::tests::pixel_pan_is_one_to_one_in_logical_points_at_both_scales ... ok
+test gestures::tests::wheel_lines_and_alt_zoom_keep_existing_behavior ... ok
+test host::background_tests::a_finished_export_nobody_shows_is_told_once ... ok
+test file_ports::tests::durable_save_faults_preserve_old_bytes_and_report_unconfirmed ... ok
+test host::background_tests::a_held_action_and_everything_behind_it_drain_first_in_order ... ok
+test host::background_tests::a_held_save_as_saves_the_document_as_it_is_when_it_runs ... ok
+test host::background_tests::close_all_is_held_for_every_in_flight_save_then_asks_per_dirty_tab ... ok
+test host::background_tests::a_save_that_never_lands_asks_keep_waiting_or_cancel_and_cancel_keeps_the_tab ... ok
+test host::background_tests::close_during_an_in_flight_save_is_held_until_it_lands_and_only_then_decides ... ok
+test host::background_tests::quit_is_held_for_every_in_flight_save ... ok
+test host::background_tests::quit_over_a_save_that_never_lands_can_only_be_cancelled ... ok
+test file_ports::tests::successful_save_cleans_only_old_exact_destination_temps ... ok
+test host::background_tests::save_a_copy_on_the_worker_keeps_the_tab_and_its_unsaved_changes ... ok
+test host::background_tests::save_as_is_held_for_the_in_flight_save_and_a_second_cmd_s_is_not ... ok
+test host::background_tests::without_a_worker_the_jobs_run_inline ... ok
+test host::tests::a_key_after_a_whole_click_waits_behind_the_click ... ok
+test host::tests::a_key_before_a_click_ran_first ... ok
+test host::tests::a_key_between_press_and_release_runs_before_the_click ... ok
+test host::tests::a_drain_before_the_ui_frame_keeps_the_click_and_what_follows_it ... ok
+test host::tests::a_release_goes_where_its_press_went ... ok
+test host::tests::an_invalid_field_holds_user_commands_back ... ok
+test host::tests::a_key_alone_runs_now ... ok
+test host::tests::a_lifecycle_command_settles_the_ui_then_the_gesture_then_resets ... ok
+test host::tests::every_command_source_maps_to_its_app_command ... ok
+test host::tests::every_file_menu_row_reaches_its_lifecycle_command ... ok
+test host::tests::held_space_outlives_a_tab_switch_and_focus_loss_lets_it_go ... ok
+test host::tests::picker_cancel_still_reverts_after_a_click_on_the_chrome ... ok
+test host::tests::lifecycle_key_maps_file_and_tab_keys ... ok
+test host::tests::recovered_result_settles_outgoing_gesture_and_mirrors_held_keys ... ok
+test host::tests::scene_key_differs_between_sessions_with_equal_signature ... ok
+test host::tests::the_active_editor_mirrors_the_keyboard_after_every_command_and_no_op_activation_does_nothing ... ok
+test host::tests::the_keyboard_outlives_a_tab_switch ... ok
+test host::tests::two_clicks_around_a_key_keep_event_order ... ok
+test host::tests::unfilled_marks_go_after_the_frame_and_keys_stop_waiting ... ok
+test host::tests::window_title_names_active_document_and_dirty ... ok
+test instant_zoom_tests::one_zoom_step_reaches_final_zoom_immediately_at_cursor ... ok
+test host::tests::start_board_actions_map_to_new_board_commands_and_filters_stay_on_the_page ... ok
+test host::tests::to_app_command_targets_the_active_tab ... ok
+test instant_zoom_tests::instant_zoom_limits_keep_the_cursor_anchor ... ok
+test lifecycle::tests::a_background_save_caches_the_snapshot_it_wrote_not_later_edits ... ok
+test lifecycle::tests::a_cancelled_export_writes_nothing_and_says_nothing ... ok
+test lifecycle::tests::appended_extension_asks_before_replacing ... ok
+test lifecycle::tests::a_closed_tabs_export_result_is_inert_but_a_written_pdf_is_reported_once ... ok
+test lifecycle::tests::background_save_of_an_untitled_tab_asks_first_and_adopts_the_path_only_when_it_lands ... ok
+test lifecycle::tests::background_save_failure_keeps_dirty_and_the_old_file_then_try_again_saves ... ok
+test lifecycle::tests::background_save_still_asks_about_an_external_change_before_writing ... ok
+test lifecycle::tests::background_save_writes_the_snapshot_taken_at_cmd_s_and_a_later_edit_stays_dirty ... ok
+test lifecycle::tests::bridge_background_save_checkpoint_and_fingerprint_failure_without_dialogs ... ok
+test lifecycle::tests::bridge_save_copy_preserves_backing_dirty_and_recent ... ok
+test lifecycle::tests::a_claimed_new_file_refuses_its_case_variant_on_the_real_disk ... ok
+test lifecycle::tests::clipboard_survives_close_of_active_tab ... ok
+test lifecycle::tests::close_all_runs_the_guard_per_dirty_tab ... ok
+test lifecycle::tests::close_clean_tab_no_prompt ... ok
+test lifecycle::tests::close_dirty_tab_save_dont_save_cancel ... ok
+test lifecycle::tests::close_inactive_dirty_tab_saves_that_tab_only ... ok
+test lifecycle::tests::close_inactive_untitled_suggests_its_own_name ... ok
+test lifecycle::tests::close_save_as_cancel_keeps_tab ... ok
+test lifecycle::tests::export_onto_a_file_a_tab_is_still_saving_is_refused ... ok
+test lifecycle::tests::export_cancel_and_failure_write_nothing_and_say_so ... ok
+test lifecycle::tests::export_over_an_editable_varos_pdf_asks_once_more_before_replacing_it ... ok
+test lifecycle::tests::export_selection_exports_only_the_selection_at_its_bounds ... ok
+test lifecycle::tests::export_of_a_pdf_document_suggests_name_export_and_refuses_its_own_file ... ok
+test lifecycle::tests::failed_open_and_cancelled_missing_leave_start_recents_and_sessions_unchanged ... ok
+test lifecycle::tests::file_intent_opens_canvas_and_successful_recent_open_records_once ... ok
+test lifecycle::tests::external_change_cancel_save_as_and_explicit_replace ... ok
+test lifecycle::tests::export_writes_a_pure_pdf_and_leaves_path_dirty_recents_and_the_vrs_untouched ... ok
+test lifecycle::tests::launch_and_new_from_start_preserve_the_internal_session_without_a_phantom_tab ... ok
+test lifecycle::tests::home_and_return_keep_documents_selection_view_and_dirty_state ... ok
+test lifecycle::tests::locate_validates_before_relocating_and_cancel_changes_nothing ... ok
+test lifecycle::tests::migration_notice_only_after_successful_first_open ... ok
+test lifecycle::tests::new_board_is_a_clean_free_canvas_and_presets_open_with_their_artboard ... ok
+test lifecycle::tests::new_command_adds_clean_boardless_untitled ... ok
+test lifecycle::tests::only_a_successful_save_records_a_recent ... ok
+test lifecycle::tests::open_after_save_still_focuses_the_same_tab ... ok
+test lifecycle::tests::open_already_open_file_focuses_without_reload ... ok
+test lifecycle::tests::open_lands_in_a_new_tab_and_dirty_tab_survives ... ok
+test lifecycle::tests::open_failure_changes_nothing ... ok
+test lifecycle::tests::open_multiple_paths_mixed_success ... ok
+test lifecycle::tests::open_reuses_pristine_untitled ... ok
+test lifecycle::tests::quit_clean_asks_nothing ... ok
+test lifecycle::tests::quit_dont_save_all_exits_and_writes_nothing ... ok
+test lifecycle::tests::quit_cancel_on_second_keeps_everything_and_first_stays_saved ... ok
+test lifecycle::tests::quit_untitled_save_as_cancel_aborts ... ok
+test lifecycle::tests::quit_save_failure_aborts ... ok
+test lifecycle::tests::recent_caches_the_board_summary_only_on_successful_open_and_save ... ok
+test lifecycle::tests::released_mask_repair_opens_dirty_and_save_makes_it_clean ... ok
+test lifecycle::tests::revert_restores_the_file_on_disk_after_the_guard ... ok
+test lifecycle::tests::s4_already_open_file_focuses_its_tab_without_reloading ... ok
+test lifecycle::tests::s4_bad_file_among_good_ones_opens_the_rest_and_leaves_the_dirty_tab_alone ... ok
+test lifecycle::tests::s4_cold_os_open_replaces_start_with_the_file_and_no_untitled ... ok
+test lifecycle::tests::s4_paths_arriving_before_the_host_is_ready_are_buffered_and_drained_once ... ok
+test lifecycle::tests::s4_refused_file_shows_the_notice_and_start_stays_start ... ok
+test lifecycle::tests::s4_several_files_open_as_tabs_in_order ... ok
+test lifecycle::tests::s4_warm_os_open_adds_a_tab_and_the_dirty_tab_survives ... ok
+test lifecycle::tests::save_a_copy_keeps_the_tabs_file_dirty_state_and_recent ... ok
+test lifecycle::tests::save_as_cancel_changes_nothing ... ok
+test lifecycle::tests::save_as_moves_path_only_after_success ... ok
+test lifecycle::tests::save_as_onto_other_open_tab_is_refused ... ok
+test lifecycle::tests::save_failure_keeps_path_and_dirty_then_try_again_succeeds ... ok
+test lifecycle::tests::save_failure_save_as_route ... ok
+test lifecycle::tests::save_on_pdf_path_offers_vrs ... ok
+test lifecycle::tests::save_untitled_goes_through_save_as ... ok
+test lifecycle::tests::switch_reorder_and_window_commands_route_to_the_workspace ... ok
+test lifecycle::tests::second_cmd_s_while_one_is_in_flight_coalesces_into_one_follow_up ... ok
+test lifecycle::tests::the_board_name_is_the_tab_name_and_the_suggested_file_name ... ok
+test lifecycle::tests::two_tabs_have_independent_history ... ok
+test lifecycle::tests::two_untitled_tabs_cannot_both_save_to_one_new_file ... ok
+test lifecycle::tests::unconfirmed_save_adopts_path_keeps_dirty_and_cancels_close ... ok
+test mac_caption::tests::caption_click_sequence_resets_after_drag_and_zoom ... ok
+test lifecycle::tests::undo_back_to_saved_is_clean_end_to_end ... ok
+test mac_caption::tests::caption_double_click_requires_nearby_timely_presses_without_drag ... ok
+test mac_caption::tests::caption_drag_requires_empty_bar_without_egui_hit_or_drag ... ok
+test mac_menu::tests::every_menu_key_has_a_native_key_equivalent ... ok
+test mac_caption::tests::content_view_class_never_lets_appkit_drag_the_window ... ok
+test mac_open::tests::a_class_that_already_answers_open_urls_is_left_alone ... ok
+test mac_open::tests::add_open_urls_adds_once_then_reports_already_ours ... ok
+test mac_titlebar::tests::centred_origin_y_puts_the_button_centre_on_the_band_centre ... ok
+test mac_titlebar::tests::needs_update_is_false_once_placed ... ok
+test mac_titlebar::tests::off_main_thread_is_unavailable ... ok
+test mac_titlebar::tests::only_the_known_title_bar_views_are_touched ... ok
+test menu_mirror_tests::actual_size_row_is_the_ctrl_1_path ... ok
+test menu_mirror_tests::every_checked_shortcut_row_flips_the_state_its_check_mark_reads ... ok
+test menu_mirror_tests::plus_and_keypad_keys_zoom_the_canvas_too ... ok
+test menu_mirror_tests::snap_rows_flip_what_their_check_marks_read ... ok
+test menu_mirror_tests::zoom_rows_are_the_ctrl_plus_minus_path ... ok
+test menus::tests::about_is_the_first_application_menu_row ... ok
+test menus::tests::assembled_menus_are_byte_identical_to_the_pre_split_table ... ok
+test menus::tests::edit_menu_mirrors_select_all_deselect_delete ... ok
+test menus::tests::every_clipboard_row_is_its_shortcut ... ok
+test menus::tests::every_menu_key_can_be_handed_to_a_text_field ... ok
+test mac_open::tests::add_open_urls_imp_enqueues_file_urls_only ... ok
+test mac_open::tests::file_url_paths_keeps_file_urls_only ... ok
+test menus::tests::every_shortcut_item_shows_exactly_the_keystroke_it_sends ... ok
+test menus::tests::file_menu_order_has_the_slice_0_6_rows_in_illustrator_places ... ok
+test menus::tests::file_menu_rows_are_new_open_close_save_saveas_on_their_keys ... ok
+test menus::tests::file_rows_enable_from_the_document_state ... ok
+test menus::tests::only_function_keys_go_without_command ... ok
+test menus::tests::the_bar_has_the_standard_mac_menus_and_mirrors_every_dockable_panel ... ok
+test menus::tests::plain_delete_row_has_no_native_key_equivalent ... ok
+test menus::tests::view_menu_mirrors_every_snapping_row ... ok
+test menus::tests::ids_and_accelerators_are_unique ... ok
+test os_open::tests::early_events_wait_until_drained_once ... ok
+test os_open::tests::relative_and_empty_paths_are_refused ... ok
+test os_open::tests::several_files_keep_their_order_and_duplicates_coalesce ... ok
+test os_open::tests::unicode_and_space_paths_pass_through_unchanged ... ok
+test pacing::tests::a_background_deadline_wakes_a_turn_never_a_frame ... ok
+test pacing::tests::at_rest_the_loop_sleeps_without_a_frame ... ok
+test pacing::tests::egui_deadlines_draw_only_when_due ... ok
+test pacing::tests::egui_self_driven_passes_are_held_to_the_display_rate ... ok
+test pacing::tests::idle_passes_produce_no_frames_with_a_fake_clock ... ok
+test pacing::tests::report_line_covers_the_whole_quiet_interval_and_resets ... ok
+test pacing::tests::window_moves_and_covering_draw_nothing ... ok
+test os_open::tests::bundle_plist_declares_the_vrs_document_type_and_uti ... ok
+test picker_shortcut_tests::existing_routes_cover_x_shift_x_d_none_and_i ... ok
+test picker_shortcut_tests::picker_i_requires_no_modifiers ... ok
+test recent_files::tests::native_recent_menu_is_the_first_ten_start_entries_and_locate_keeps_its_slot ... ok
+test recent_files::tests::recent_persistence_reload_remove_and_clear_never_write_documents ... ok
+test recent_files::tests::a_saved_board_gets_a_thumbnail_key_and_its_png_exists ... ok
+test recent_files::tests::unknown_version_and_unwritable_storage_keep_recent_in_memory_without_overwriting ... ok
+test recovery_host::tests::a_late_scan_is_polled_for_never_left_to_the_recovery_tick ... ok
+test recovery_host::tests::canceled_quit_keeps_copy_committed_discard_and_quit_retire_even_when_disabled ... ok
+test recovery_host::tests::closing_with_snapshot_in_flight_retires_after_the_writer_finishes ... ok
+test lifecycle::tests::a_saved_named_tagged_board_shows_its_card_on_home ... ok
+test recovery_host::tests::export_runs_on_the_shared_worker_even_without_recovery_storage ... ok
+test recovery_host::tests::damaged_and_newer_copies_stay_listed_and_discard_requires_confirmation ... ok
+test recovery_host::tests::failed_discard_keeps_row_and_bytes_with_reason ... ok
+test recovery_host::tests::later_retains_copies_and_relaunch_offers_again ... ok
+test recent_files::tests::remove_deletes_the_png_and_clear_deletes_all ... ok
+test recovery_host::tests::fallback_is_explained_and_new_edits_keep_the_claimed_session ... ok
+test recovery_host::tests::launch_claims_orphans_recovery_is_pathless_dirty_and_never_writes_original ... ok
+test recovery_host::tests::launch_requests_the_orphan_scan_at_startup_not_after_the_first_interval ... ok
+test cursors::tests::every_v1_bitmap_is_non_blank_at_1x_and_2x_with_hotspot_inside ... ok
+test cursors::tests::all_embedded_files_render_distinct_non_blank_bitmaps_at_both_sizes ... ok
+test recovery_host::tests::open_transaction_waits_and_failed_copy_offers_retry_then_recovers ... ok
+test recovery_host::tests::quit_waits_for_an_in_flight_export ... ok
+test recent_files::tests::a_cache_that_cannot_be_written_leaves_the_placeholder_and_no_message ... ok
+test cursors::tests::v1_is_the_default_and_the_reference_override_is_opt_in ... ok
+test recovery_host::tests::review_footer_follows_the_recovery_setting ... ok
+test recovery_host::tests::unavailable_storage_does_not_block_new_documents ... ok
+test recovery_host::tests::recovered_save_as_suggests_safe_name_and_retires_only_after_durable_save ... ok
+test recovery_host::tests::unreadable_settings_switch_applies_for_the_session_and_says_it_was_not_saved ... ok
+test scene_signature_tests::drag_cursor_motion_invalidates_the_scene ... ok
+test scene_signature_tests::idle_pointer_motion_reuses_the_scene_but_hover_does_not ... ok
+test recovery_host::tests::restore_from_the_review_panel_removes_the_row_and_the_last_one_ends_the_notice ... ok
+test scene_signature_tests::live_selected_path_paint_invalidates_before_commit ... ok
+test recovery_host::tests::the_recovery_tick_is_a_pass_not_a_frame_and_rest_is_silent ... ok
+test select_all_key_tests::cmd_a_selects_all_and_shift_cmd_a_deselects ... ok
+test select_all_key_tests::delete_row_runs_delete_selected ... ok
+test single_instance::tests::first_file_arg_ignores_flags ... ok
+test single_instance::tests::first_file_arg_skips_known_flag_values ... ok
+test single_instance::tests::first_file_arg_skips_the_macos_process_serial_argument ... ok
+test thumbs::tests::drop_discards_a_full_queue_promptly ... ok
+test recovery_host::tests::save_with_recovery_switched_off_still_retires_the_sessions_copies ... ok
+test recovery_host::tests::review_rows_say_when_and_where ... ok
+test recovery_host::tests::snapshot_never_touches_source_save_retires_and_later_edit_is_protected ... ok
+test thumbs::tests::startup_cleans_orphan_temps_and_cache_failure_is_tolerated ... ok
+test thumbs::tests::newest_duplicate_request_wins_without_sleep_race ... ok
+test ui::control_bar::idle_tests::control_bar_hides_when_there_is_nothing_to_act_on ... ok
+test ui::fields::tests::a_canvas_press_commits_before_it_selects ... ok
+test thumbs::tests::panic_does_not_leave_key_pending ... ok
+test thumbs::tests::request_writes_png_and_reports_freshness ... ok
+test ui::fields::tests::a_typed_number_never_crosses_into_the_next_tab ... ok
+test ui::fields::tests::a_chrome_press_waits_for_an_invalid_field ... ok
+test recovery_host::tests::valid_checksum_invalid_model_falls_back_or_stays_listed_with_reason ... ok
+test thumbs::tests::forget_and_clear_delete_private_cache_files ... ok
+test ui::fields::tests::arrow_steps_and_scrub_keep_working ... ok
+test ui::fields::tests::board_reasons_quote_the_core_limits ... ok
+test thumbs::tests::eviction_keeps_two_hundred_newest_source_mtimes ... ok
+test ui::fields::tests::an_invalid_edit_reverts_even_when_the_field_vanishes_in_a_second_pass ... ok
+test ui::fields::tests::board_section_hit_targets_are_at_least_24pt ... ok
+test ui::fields::tests::document_commands_commit_the_open_field_first ... ok
+test ui::fields::tests::field_state_is_scoped_to_its_document ... ok
+test ui::fields::tests::board_name_commits_on_blur_and_enter_esc_reverts_and_undo_is_one_step ... ok
+test ui::fields::tests::esc_reverts_without_history ... ok
+test ui::fields::tests::a_valid_edit_commits_once_when_its_panel_goes_away ... ok
+test ui::fields::tests::delete_with_an_open_field_commits_first_and_invalid_text_holds_it ... ok
+test ui::fields::tests::name_field_commits_typed_text_on_click_away ... ok
+test ui::fields::tests::name_field_enter_and_tab_commit_once ... ok
+test ui::fields::tests::board_fields_over_the_limit_keep_the_keyboard_with_the_reason ... ok
+test ui::fields::tests::selection_change_commits_to_old_target ... ok
+test ui::fields::tests::mirrored_fields_commit_through_the_field_that_was_edited ... ok
+test ui::fields::tests::tags_add_by_enter_and_comma_dedupe_remove_by_backspace_and_chip_and_undo ... ok
+test ui::fields::tests::invalid_keeps_focus_with_reason ... ok
+test ui::layout::tests::picker_layout_restores_open_relative_position_and_drawer_without_document_edits ... ok
+test ui::layout::tests::restoring_default_resets_tree_rail_control_bar_and_derived_span ... ok
+test ui::layout::tests::window_colour_reports_big_panel_preference_while_mini_is_open ... ok
+test ui::picker::modes::lab_lightness_is_strictly_monotonic_over_all_byte_greys ... ok
+test ui::picker::modes::tests::every_mode_round_trips_edges_greys_and_colours ... ok
+test ui::picker::modes::tests::hue_wrap_web_snap_and_readout ... ok
+test ui::picker::sliders::grey_wheel_hue_updates_saturation_track_on_return_to_sliders ... ok
+test ui::picker::sliders::tests::tracks_rebuild_only_for_mode_channels_or_alpha ... ok
+test ui::picker::tests::alpha_drag_is_one_step_and_percent_field_is_k3 ... ok
+test ui::fields::tests::too_many_tags_is_refused_with_the_reason ... ok
+test ui::picker::tests::armed_escape_live_reverts_pre_arm_paints_and_keeps_picker_open ... ok
+test ui::picker::tests::artboard_target_survives_reorder_and_missing_id_cancels_without_step ... ok
+test ui::picker::tests::board_drawer_scans_only_when_visible_and_invalidates_its_key ... ok
+test ui::fields::tests::the_description_wraps_three_rows_and_enter_commits ... ok
+test ui::picker::tests::canvas_escape_deselects_while_panel_escape_closes_and_popover_escape_only_closes_popover ... ok
+test ui::picker::tests::canvas_pointer_sampling_uses_retina_scale_camera_and_rejects_chrome ... ok
+test ui::picker::tests::channel_only_edits_preserve_hue_and_degenerate_saturation_without_writes ... ok
+test ui::picker::tests::canvas_escape_while_sampling_preserves_selection_and_panel ... ok
+test ui::picker::tests::changing_target_during_sampling_reverts_the_previous_gesture ... ok
+test ui::picker::tests::control_bar_page_chip_opens_mini ... ok
+test ui::picker::tests::cluster_overlap_resolves_to_the_front_target_and_front_follows_focus ... ok
+test ui::fields::tests::an_invalid_edit_reverts_the_frame_its_panel_goes_away ... ok
+test ui::picker::tests::cluster_square_corner_hits_visible_stroke_ring ... ok
+test ui::picker::tests::drag_returning_to_original_records_no_step ... ok
+test ui::picker::tests::drag_commits_exactly_one_step_and_escape_never_reverts ... ok
+test ui::picker::tests::empty_recent_wells_have_no_mixed_stripes ... ok
+test ui::picker::tests::drawer_real_height_uses_token_and_slider_mode_defaults_and_persists ... ok
+test ui::picker::tests::eyedropper_button_disarms_without_rearming_and_selection_change_reverts ... ok
+test ui::picker::tests::eyedropper_preview_click_commits_once_and_escape_keeps_it ... ok
+test ui::picker::tests::drawer_tabs_choose_three_distinct_sources_and_mini_idle_sleeps ... ok
+test ui::picker::tests::field_blur_then_alpha_drag_have_separate_steps_and_keep_typed_rgb ... ok
+test ui::picker::tests::focus_switch_and_each_swatch_are_separate_undo_steps ... ok
+test ui::picker::tests::follows_selection_same_frame_and_empty_tool_defaults ... ok
+test ui::picker::tests::grey_slider_state_is_invalidated_by_real_wheel_hue_rotation ... ok
+test ui::fields::tests::number_field_commits_once_on_enter_tab_click_away_and_settle ... ok
+test ui::picker::tests::harmony_recovered_angles_wrap_and_original_brightness_are_preserved ... ok
+test ui::picker::tests::grey_field_edits_keep_the_hue_instead_of_snapping_to_red ... ok
+test ui::picker::tests::drawer_disclosure_persists_and_soon_and_disabled_tabs_do_not_write ... ok
+test ui::picker::tests::hsb_sliders_and_wheel_share_black_saturation_after_mode_switch ... ok
+test ui::picker::tests::hex_preserves_alpha_and_lifecycle_settle_commits_pending_field ... ok
+test ui::picker::tests::header_drag_moves_only_the_panel_and_persists_relative_position ... ok
+test ui::picker::tests::independent_op_with_picker_begin_does_not_orphan_transaction ... ok
+test ui::fields::tests::unchanged_commit_is_not_dirty ... ok
+test ui::picker::tests::layout_v1_missing_picker_is_closed_and_new_preferences_round_trip ... ok
+test ui::picker::tests::idle_panel_sleeps_via_pacing_plan ... ok
+test ui::picker::tests::invalid_field_blocks_colour_gestures_without_leaving_a_transaction ... ok
+test ui::picker::tests::mini_armed_escape_disarms_before_closing_and_target_loss_clears_flag ... ok
+test ui::picker::tests::invalid_hex_blocks_pipette_and_sampling_and_unowned_live_is_inert ... ok
+test ui::picker::tests::lifecycle_field_commit_cancels_sample_and_keeps_only_field_step ... ok
+test ui::picker::tests::mini_deleted_page_closes_without_retargeting_or_undo ... ok
+test ui::picker::tests::hex_enter_blur_escape_invalid_and_unchanged_follow_k3 ... ok
+test ui::picker::tests::mono_chips_continue_brightness_without_duplicates ... ok
+test ui::picker::tests::mixed_open_is_read_only_until_first_change_then_applies_to_all ... ok
+test ui::picker::tests::harmony_click_drag_persistence_and_idle_are_change_only ... ok
+test ui::picker::tests::no_selection_edits_defaults_without_document_history ... ok
+test ui::picker::tests::none_hue_drag_seeds_full_saturation_and_brightness ... ok
+test ui::picker::tests::mixed_empty_field_enter_is_unchanged_and_escape_closes_without_a_write ... ok
+test ui::picker::tests::mini_structure_page_drag_escape_outside_and_single_owner ... ok
+test ui::picker::tests::raster_snapshot_is_once_per_view_not_per_live_preview ... ok
+test ui::picker::tests::ring_angles_hits_and_red_seam ... ok
+test ui::picker::tests::open_panel_does_not_reserve_transaction_and_foreign_edit_reseeds ... ok
+test ui::picker::tests::press_and_release_in_one_frame_samples_once ... ok
+test ui::picker::tests::sample_click_outside_canvas_never_accepts ... ok
+test ui::picker::tests::mono_markers_are_in_triangle_and_none_has_no_linked_markers ... ok
+test ui::picker::tests::panel_press_cancels_sample_before_ring_or_alpha_transaction ... ok
+test ui::picker::tests::triangle_outside_drag_clamps_to_an_edge ... ok
+test ui::picker::tests::triangle_round_trip_including_rotation_and_vertices ... ok
+test ui::picker::tests::swatches_focus_on_click_and_open_on_double_click_in_all_homes ... ok
+test ui::picker::tests::slider_drag_is_one_step_and_wheel_readout_follows_every_mode ... ok
+test ui::picker::tests::unchanged_press_release_and_enter_record_nothing ... ok
+test ui::picker::tests::web_wheel_paints_hex_without_empty_label_punctuation ... ok
+test ui::picker::wheel::cache_tests::cached_meshes_rebuild_only_on_size_or_hue_change ... ok
+test ui::pointer::tests::floating_chrome_and_recovery_panel_block_gestures_inside_board_bounds ... ok
+test ui::picker::tests::typed_grey_hue_survives_enter_without_document_change ... ok
+test ui::fields::tests::save_and_tab_switch_commit_first ... ok
+test ui::tests::characterization_tests::apply_ops_delegates_selection_edits_and_preserves_clamps ... ok
+test ui::tests::characterization_tests::apply_ops_preserves_direct_document_and_view_writes ... ok
+test ui::tests::color_tests::hsv_known_values ... ok
+test ui::tests::color_tests::hsv_rgb_roundtrips ... ok
+test ui::tests::dead_control_tests::brand_click_asks_for_about ... ok
+test ui::tests::dead_control_tests::burger_colour_picker_uses_native_window_route ... ok
+test ui::picker::tests::one_frame_taps_ring_triangle_and_alpha_are_single_steps ... ok
+test ui::picker::tests::wheel_geometry_at_1x_and_2x ... ok
+test ui::tests::dead_control_tests::burger_reset_layout_uses_the_same_command_as_the_native_window_menu ... ok
+test ui::tests::band_backdrop_tests::void_painters_use_the_one_backdrop ... ok
+test ui::tests::band_backdrop_tests::editor_tree_starts_at_the_band_bottom ... ok
+test ui::picker::tests::slider_value_enter_blur_invalid_and_mode_menu_are_k3_and_read_only ... ok
+test ui::tests::dead_control_tests::the_editor_band_has_no_search_and_its_old_spot_drags_the_window ... ok
+test ui::tests::home_band_tests::home_frame_paints_nothing_at_the_plus_spot ... ok
+test ui::tests::home_band_tests::home_publishes_no_plus_and_its_spot_drags_the_window ... ok
+test ui::tests::home_band_tests::home_publishes_the_chip_not_the_menu_cell ... ok
+test ui::tests::dead_control_tests::smart_guides_menu_and_shortcut_have_the_same_state_transition ... ok
+test ui::tests::dead_control_tests::burger_window_rows_toggle_the_rail_and_the_panels ... ok
+test ui::picker::tests::sliders_drag_tap_mixed_unchanged_and_value_arrows_follow_k3 ... ok
+test agent_presence::tests::reveal_schedule_and_outline_count_for_one_fifty_four_hundred ... ok
+test ui::tests::icon_action_tests::every_icon_action_is_drawn_and_carries_its_label_as_a_tooltip ... ok
+test ui::tests::icon_action_tests::icon_size_scanner_catches_both_draw_forms ... ok
+test ui::tests::dead_control_tests::burger_rows_either_emit_a_command_or_are_disabled ... ok
+test ui::tests::layer_cache_tests::pointer_only_frames_keep_the_layer_rows_key ... ok
+test ui::tests::layer_cache_tests::thumbnail_key_ignores_selection_but_tracks_geometry ... ok
+test ui::tests::layer_cache_tests::thumbnail_key_tracks_every_paint_component ... ok
+test ui::tests::layer_rename_tests::active_filters_walk_collapsed_boards_layers_and_groups_and_keep_ancestors ... ok
+test ui::tests::icon_action_tests::icon_sizes_come_from_tokens ... ok
+test ui::tests::layer_rename_tests::drawing_snap_reports_active_path_not_stale_selection ... ok
+test ui::tests::dead_control_tests::burger_snapping_rows_flip_their_flags ... ok
+test ui::tests::dead_control_tests::burger_slice_0_6_rows_follow_the_native_rows_and_their_enable_rules ... ok
+test ui::tests::home_page_tests::home_actions_become_app_commands_and_filters_stay_on_the_model ... ok
+test ui::tests::layer_rename_tests::emptied_name_keeps_the_old_one ... ok
+test ui::tests::home_page_tests::home_draws_the_start_page_and_the_band_has_no_search ... ok
+test ui::tests::layer_rename_tests::path_row_rename_shows_in_the_rebuilt_row ... ok
+test cursors::tests::macos_retina_nscursor_is_32pt_with_1x_and_2x_reps ... ok
+test ui::tests::layer_rename_tests::escape_cancels_an_edited_name ... ok
+test ui::tests::layer_rename_tests::double_click_opens_rename_and_enter_commits ... ok
+test ui::tests::menu_owner_absent_for_one_frame_releases_keyboard_and_closes_menu ... ok
+test ui::tests::panel_icons_lane2_tests::document_artboard_navigation_is_bounded_and_uses_the_existing_app_op ... ok
+test ui::tests::panel_icons_lane2_tests::document_unit_dropdown_commits_one_undo_step ... ok
+test ui::tests::panel_icons_lane2_tests::layers_filter_menu_changes_only_visible_kinds_and_is_document_scoped ... ok
+test ui::tests::panel_icons_lane2_tests::properties_mirrors_the_native_view_checks_after_panel_and_menu_edits ... ok
+test ui::tests::home_page_tests::home_frame_removes_document_recovery_card ... ok
+test ui::tests::pathfinder_click_tests::disabled_pathfinder_ink_differs_from_enabled_rest ... ok
+test ui::tests::layer_rename_tests::rename_field_keeps_focus_on_the_frame_it_opens ... ok
+test ui::tests::layer_rename_tests::typing_replaces_the_whole_old_name ... ok
+test ui::tests::polish_pass_tests::captionless_swatches_start_at_the_panel_edge ... ok
+test ui::tests::polish_pass_tests::control_bar_name_slot_is_64_and_elides ... ok
+test ui::tests::polish_pass_tests::informational_text_never_faint ... ok
+test ui::tests::polish_pass_tests::label_gap_and_align_height_are_measured_from_laid_out_rects ... ok
+test ui::tests::polish_pass_tests::layer_names_are_all_12 ... ok
+test ui::tests::polish_pass_tests::micro_label_is_10_5_medium_tracked_muted ... ok
+test ui::tests::polish_pass_tests::number_box_is_44_and_value_is_mono_12 ... ok
+test ui::tests::polish_pass_tests::pf_glyph_fits_16 ... ok
+test ui::tests::layer_rename_tests::right_click_rename_opens_the_same_editor ... ok
+test ui::tests::polish_pass_tests::rail_icons_rest_muted_hover_text_active_white ... ok
+test ui::tests::polish_pass_tests::section_gap_is_12 ... ok
+test ui::tests::polish_pass_tests::toggle_off_track_is_line2 ... ok
+test ui::tests::polish_pass_tests::typing_editor_is_at_least_38_wide ... ok
+test ui::tests::polish_pass_tests::properties_and_pathfinder_height_measurements ... ok
+test ui::tests::pathfinder_click_tests::buttons_are_disabled_with_the_reason_below_two_closed_shapes ... ok
+test ui::tests::tab_strip_tests::a_sub_threshold_click_only_activates ... ok
+test ui::tests::tab_strip_tests::a_workspace_change_mid_drag_cancels_it ... ok
+test ui::tests::tab_strip_tests::click_emits_activate_document ... ok
+test ui::tests::tab_strip_tests::close_x_emits_close_document ... ok
+test ui::tests::tab_strip_tests::dirty_dot_is_drawn_only_when_dirty ... ok
+test ui::tests::tab_strip_tests::drag_reorder_emits_reorder_document_with_the_right_slot ... ok
+test ui::tests::recovery_strip_tests::restored_notice_floats_saves_defers_per_tab_and_yields_to_review ... ok
+test ui::tests::recovery_strip_tests::recovery_card_commands_are_starts_commands ... ok
+test ui::tests::tab_strip_tests::eight_tab_overflow_drag_reorders_and_never_starts_a_window_drag ... ok
+test ui::tests::tab_strip_tests::eight_tab_overflow_lifted_drag_lands_in_the_full_order ... ok
+test ui::tests::tab_strip_tests::hover_turns_the_dot_into_the_close_mark ... ok
+test ui::tests::tab_strip_tests::esc_or_focus_loss_cancels_the_drag_and_restores_the_order ... ok
+test ui::tests::tab_strip_tests::middle_click_emits_close_document ... ok
+test ui::tests::tab_strip_tests::lifted_tab_follows_the_pointer_with_its_grab_offset_clamped_to_the_strip ... ok
+test ui::tests::layer_rename_tests::filtered_click_and_shift_range_skip_hidden_kinds ... ok
+test ui::tests::tab_strip_tests::other_tabs_open_a_gap_that_moves_at_the_neighbours_midpoint ... ok
+test ui::tests::tab_strip_tests::overflow_drop_after_the_last_visible_tab_stays_visible ... ok
+test ui::tests::tab_strip_tests::plus_emits_new_document ... ok
+test ui::tests::tab_strip_tests::overflow_drop_lands_beside_the_visible_neighbours_and_stays_visible ... ok
+test ui::tests::tab_strip_tests::tab_width_ignores_active_state ... ok
+test ui::tests::text_clipboard_tests::menu_clipboard_keys_reach_a_text_field_as_clipboard_events ... ok
+test ui::tests::ui_zoom_tests::cmd_plus_minus_never_scale_the_ui ... ok
+test ui::tests::tab_strip_tests::release_commits_the_gap_slot ... ok
+test ui::tests::window_focus_tests::the_seed_raises_focus_for_a_key_window_and_never_lowers_it ... ok
+test workspace::tests::activate_hands_over_clipboard_and_tool ... ok
+test workspace::tests::add_loaded_reuses_only_a_pristine_active_tab ... ok
+test workspace::tests::dirty_follows_edit_undo_and_mark_saved ... ok
+test workspace::tests::find_file_matches_same_file_key ... ok
+test workspace::tests::remove_picks_right_then_left_and_never_leaves_zero_tabs ... ok
+test workspace::tests::reorder_keeps_identity_and_state ... ok
+test workspace::tests::same_file_survives_an_atomic_save ... ok
+test workspace::tests::settle_finishes_an_in_flight_drag ... ok
+test workspace::tests::starts_with_one_pristine_untitled_1 ... ok
+test workspace::tests::tabs_disambiguate_equal_file_names ... ok
+test workspace::tests::untitled_numbers_increase_and_are_never_reused ... ok
+test ui::tests::window_focus_tests::a_text_field_keeps_its_typed_buffer_once_the_host_seeds_window_focus ... ok
+test workspace::tests::view_only_actions_never_dirty ... ok
+test zero_artboard_fit_tests::fit_on_a_new_board_frames_the_artwork_or_the_fallback_never_nothing ... ok
+test ui::tests::tab_strip_tests::overflow_list_row_activates_its_tab ... ok
+test ui::tests::tab_strip_tests::dragging_any_tab_works_while_egui_believes_the_window_is_unfocused ... ok
+test ui::tests::layer_rename_tests::filtered_drag_payload_contains_only_matching_kinds ... ok
+test ui::tests::layer_rename_tests::escape_or_blur_with_unchanged_name_is_harmless ... ok
+test ui::tests::pathfinder_click_tests::pathfinder_panel_buttons_combine_the_selection ... ok
+test agent_presence::tests::capped_receipt_reveals_all_four_hundred_targets_without_calls ... ok
+test ui::tests::pathfinder_click_tests::properties_shape_row_buttons_combine_the_selection ... ok
+test ui::tests::icon_action_tests::converted_icon_buttons_emit_what_their_text_buttons_emitted ... ok
+
+test result: ok. 523 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.56s
+
+     Running tests/fonts.rs (target/debug/deps/fonts-2e693979f3e84694)
+
+running 10 tests
+test text_layout_and_editing_spike ... ignored, manual U0-A shaping/bidi/caret/grapheme diagnostic; inspect output and the native window
+test start_v2_type_tokens_map_to_static_weight_families ... ok
+test arabic_remains_behind_its_named_family_gate ... ok
+test static_faces_have_the_requested_weights_and_coverage ... ok
+test inter_static_weights_have_distinct_glyph_outlines ... ok
+test weighted_family_keeps_the_builtin_fallback_tail ... ok
+test numeric_value_digits_and_field_width_are_tabular ... ok
+test every_bundled_file_matches_the_manifest_sha256_and_size ... ok
+test fallback_chain_covers_shortcuts_and_mono_digits_are_tabular_at_both_scales ... ok
+test paste_select_all_copy_preserve_logical_names_and_long_paths ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/icons.rs (target/debug/deps/icons-0090c4a802c7aa54)
+
+running 8 tests
+test legacy_artboard_glyph_is_the_registry_frame ... ok
+test tool_is_an_azure_block_and_toggle_is_a_dark_well ... ok
+test disabled_icon_button_never_activates_and_explains_why ... ok
+test icon_button_activates_once_by_pointer_and_by_keyboard_at_1x_and_2x ... ok
+test focus_ring_is_the_same_azure_overlay_outside_the_target_in_every_state ... ok
+test contact_sheet_renders_every_icon_at_1x_and_2x ... ok
+test every_registry_icon_resolves_to_an_embedded_svg_that_parses ... ok
+test panel_glyph_proof_sheets_render_every_new_glyph_in_every_state ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.26s
+
+     Running tests/kit.rs (target/debug/deps/kit-777e2c86afabc97c)
+
+running 10 tests
+test text_and_focus_contrast_meet_the_minimum_kit_contract ... ok
+test segmented_control_paints_one_track_outline ... ok
+test disabled_number_field_is_inert_skipped_transparent_and_explains_why ... ok
+test kit_menu_row_is_a_kit_control_with_a_keyboard_ring_only ... ok
+test pointer_keyboard_repeat_and_host_owned_keyboard_are_single_actions ... ok
+test disabled_busy_and_disabled_parent_never_activate ... ok
+test kit_menu_keyboard_pointer_escape_and_hairline_separator ... ok
+test tab_navigation_skips_disabled_and_ids_survive_row_reordering ... ok
+test kit_icons_are_embedded_svgs_rendered_to_textures ... ok
+test panel_icon_segments_have_lifted_targets_tooltips_and_a_232_pt_harmony_track ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/recovery_card.rs (target/debug/deps/recovery_card-2bc3f454b97fdc34)
+
+running 16 tests
+test card_and_panel_rects_stay_inside_the_board_box ... ok
+test panel_height_uses_the_same_inner_width_as_its_rows ... ok
+test headline_is_singular_for_one_copy ... ok
+test card_sits_centred_24_above_the_board_bottom_and_follows_the_sentence ... ok
+test repeated_tabs_stay_in_the_card_and_walk_backwards ... ok
+test one_copy_reads_singular_and_a_narrow_box_drops_the_second_phrase ... ok
+test restored_notice_keyboard_and_fallback_explanation ... ok
+test rows_leave_one_by_one_and_the_last_closes_the_panel ... ok
+test review_opens_the_panel_in_place_with_a_row_per_copy ... ok
+test tab_order_keyboard_activation_and_focus_ring ... ok
+test card_and_panel_block_the_canvas_pointer ... ok
+test escape_clears_card_and_panel_focus_and_unfocused_keys_do_not_activate ... ok
+test busy_and_damaged_rows_do_not_fire ... ok
+test later_and_the_close_cross_both_defer ... ok
+test properties_number_fields_keep_tab_and_enter_with_every_notice ... ok
+test small_boards_compact_clip_and_scroll_without_collisions ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+
+     Running tests/start_page.rs (target/debug/deps/start_page-697eca4cb79910d9)
+
+running 26 tests
+test folder_text_elides_in_the_middle_and_helpers_match_the_copy ... ok
+test first_launch_is_the_centred_empty_page ... ok
+test filters_and_no_match_copy_come_from_the_model ... ok
+test layout_matches_the_mockup_at_1512_by_982 ... ok
+test command_keys_only_when_the_page_owns_them ... ok
+test a_disabled_or_busy_recover_never_fires_and_leaves_the_tab_ring ... ok
+test identical_frames_rebuild_no_derived_text ... ok
+test filters_that_do_not_fit_go_behind_plus_n_and_the_selected_one_stays_visible ... ok
+test every_start_control_hit_target_is_at_least_24pt ... ok
+test a_maximum_length_selected_tag_never_overlaps_at_the_minimum_width ... ok
+test every_control_emits_its_action_by_pointer ... ok
+test responsive_rule_at_other_window_sizes ... ok
+test list_view_is_the_numbered_table ... ok
+test snapshot_the_mockup_states_on_the_cpu ... ok
+test source_rules_no_default_widgets_no_literals_no_animation ... ok
+test missing_card_menu_has_locate_others_only_remove_and_esc_closes ... ok
+test thumbnail_decode_refuses_oversize_huge_and_corrupt_files ... ok
+test only_tokens_colours_and_azure_only_for_focus_and_the_filter_bar ... ok
+test recovery_status_paints_the_current_host_footer_instead_of_a_fixed_claim ... ok
+test presets_filters_and_recovered_by_keyboard ... ok
+test keyboard_ring_order_activation_and_2d_grid_moves ... ok
+test a_decode_landing_after_its_board_was_removed_is_dropped ... ok
+test shift_f10_opens_a_focused_cards_menu_and_list_rows_have_the_chip ... ok
+test real_fonts_keep_the_mockup_lines_whole ... ok
+test thumbnails_decode_off_the_ui_thread_and_appear_when_ready ... ok
+test painted_controls_sit_on_the_mockup_rects_at_1x_and_2x ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.04s
+
+     Running unittests src/lib.rs (target/debug/deps/varos_bridge-d4efded7cb99b61c)
+
+running 20 tests
+test design::tests::rounded_rect_half_and_clamp_drop_straights ... ok
+test conn::register::tests::registration_text_is_token_free_and_uses_documented_syntax ... 
+running 1 test
+ok
+
+running 1 test
+test design::tests::rotate_rejects_nonfinite_degrees_before_mutation ... ok
+test cli::tests::describe_fields_flag_matches_json_arguments ... ok
+test ipc::tests::blocking_accept_thread_stops_promptly_on_drop ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test conn::credentials::tests::refuses_symlinked_state_before_creating_keys ... ok
+test ipc::tests::both_blocking_accept_threads_stop_promptly_on_drop ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test ipc::tests::hello_cannot_grant_history_or_destructive ... test files::environment_tests::passwd_home_ignores_unset_or_forged_home ... okok
+
+
+test cli::tests::snapshot_writes_only_an_explicit_new_file_and_strips_bytes ... ok
+test ipc::tests::local_handshake_grants_all_scopes_without_pairing_state ... ok
+test files::tests::protected_paths_and_extensions ... ok
+test result: test service::observation_tests::snapshot_worker_checkpoints_cancel_and_pin_owned_revision ... ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.03s
+
+ok
+test service::observation_tests::unchanged_observation_does_not_fingerprint ... test conn::credentials::tests::platform_store_relocates_keys_with_override ... ok
+
+running 1 test
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.06s
+
+ok
+test files::environment_tests::passwd_home_ignores_unset_or_forged_home ... ok
+test conn::credentials::tests::refuses_public_mode_and_symlink_parent ... ok
+test conn::credentials::tests::platform_store_relocates_keys_with_override ... ok
+test conn::credentials::tests::atomic_creators_share_one_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.03s
+
+test files::tests::fake_home_needs_no_grant_and_refuses_overwrite_and_links ... ok
+test conn::credentials::tests::file_round_trip_and_accounts_isolated ... ok
+test files::environment_tests::passwd_home_ignores_unset_or_forged_home ... ok
+test service::observation_tests::ids_pages_fit_text_and_missing_journal_resyncs ... ok
+
+test result: ok. 18 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 1.79s
+
+     Running unittests src/main.rs (target/debug/deps/varos_bridge-6a774d242fa7312b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/artboards.rs (target/debug/deps/artboards-e5cb6385ca7b5e15)
+
+running 12 tests
+test describe_reports_persistent_ids_the_deprecated_alias_and_the_active_page ... ok
+test new_page_ids_are_never_reused_after_undo ... ok
+test legacy_alias_is_refused_in_batches_with_page_verbs ... ok
+test page_verbs_succeed_by_id_and_each_batch_is_one_step ... ok
+test deleting_pages_follows_the_active_rule_without_a_grant ... ok
+test capabilities_and_mcp_schemas_advertise_every_page_verb ... ok
+test duplicate_group_and_clip_allocates_fresh_tree_ids ... ok
+test align_targets_pages_by_id_local_or_the_deprecated_alias ... ok
+test slice4_reorder_duplicate_color_clip_and_rollback ... ok
+test page_snapshots_refuse_unknown_or_malformed_pages ... ok
+test every_page_verb_refuses_with_a_typed_error_at_its_index_and_rolls_back ... ok
+test instagram_story_batch_is_one_undo_step_with_mcp_cli_parity ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/connection.rs (target/debug/deps/connection-28c369c4ea363e8c)
+
+running 14 tests
+test pairing_and_revocation_cli_are_noops_without_accessing_state ... ok
+test private_reads_never_block_on_a_planted_fifo ... ok
+test handshake_happy_path_binds_identity_epoch_and_versions ... ok
+test deterministic_selection_never_guesses ... ok
+test handshake_rejects_wrong_keys_replay_epoch_and_downgrade ... ok
+test socket_path_limit_is_validated ... ok
+test concurrent_first_use_creates_one_profile_without_trust_state ... ok
+test unavailable_credential_store_is_typed_and_does_not_publish_profile ... ok
+test auto_attach_state_machine_with_fake_registry ... ok
+test old_public_profile_without_file_key_requires_new_identity ... ok
+test profiles_are_remembered_per_client_label ... ok
+test registry_round_trip_permissions_stale_cleanup_and_forgery ... ok
+test real_binary_mcp_initializes_and_reports_host_not_running_without_varos ... ok
+test deferred_host_key_never_blocks_start_and_failure_is_reported_once ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.33s
+
+     Running tests/contracts.rs (target/debug/deps/contracts-f6459d0211632a64)
+
+running 74 tests
+test allocator_does_not_reuse_ids_after_undo_branch ... ok
+test core_rolls_back_at_every_operation_index_including_history_and_defaults ... ok
+test auth_refusal_fake_host_cannot_reach_service_or_change_revision ... ok
+test cancellation_at_staging_checkpoint_is_atomic ... ok
+test destructive_edit_without_grant_is_one_undo_and_idempotent ... ok
+test describe_combined_cursor_only_tracks_requested_selection ... ok
+test describe_sections_do_not_page_with_objects_and_since_composes ... ok
+test describe_combined_frozen_transport_parity ... ok
+test distribution_both_axes_order_all_positions_and_partial_groups_refuse ... ok
+test economy_defaults_tuples_ids_retry_and_batch_local_names ... ok
+test economy_legacy_target_count_and_alias_index ... ok
+test economy_nested_repeat_instance_order_locals_handles_and_rollback ... ok
+test align_all_modes_revision_bound_artboards_and_rigid_groups ... ok
+test economy_preserves_api_10_request_projection_and_retry_normalization ... ok
+test economy_rejects_bad_tuple_defaults_and_version_before_execution ... ok
+test distribution_equal_centre_ties_use_stable_ids ... ok
+test economy_schema_size_and_flat_roots ... ok
+test each_design_verb_success_and_indexed_not_found_rollback ... ok
+test describe_combined_budget_errors_preserve_resync_semantics ... ok
+test economy_snapshot_summary_hint_and_revision_pinned_detail ... ok
+test edit_confirm_true_is_refused_and_bare_creation_requires_paint ... ok
+test explicit_group_leaves_resize_and_undo_without_sibling_changes_partial_rotate_refused ... ok
+test final_validation_failure_replays_only_to_attribute_first_invalid_op ... ok
+test design_validation_failures_rollback_every_prefix_and_local_names_are_request_scoped ... ok
+test framing_rejects_oversize_unterminated_and_schema_version ... ok
+test frozen_compact_projection_and_open_history_receipt ... ok
+test frozen_revision_error_parity ... ok
+test economy_actual_mcp_stdio_matches_cli_and_bounded_schema ... ok
+test frozen_describe_and_edit_parity_and_one_undo ... ok
+test history_without_grant_has_idempotent_receipt ... ok
+test idempotency_receipts_are_original_after_human_edits ... ok
+test legacy_batch_preserves_live_tool_and_clipboard ... ok
+test local_host_key_change_resets_session_without_pairing ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test local_service_does_not_gate_scopes ... ok
+test local_socket_authentication_permissions_and_revocation ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test geometry_single_object_byte_budget_and_capabilities_are_honest ... ok
+test geometry_is_explicit_bounded_paginated_and_does_not_mutate ... ok
+test metadata_and_artboard_queries_are_explicit_and_preferences_advance_revision ... ok
+test net_diff_preserves_multiple_fields_and_cancelling_human_changes ... ok
+test noncanonical_board_refused_before_prepare ... ok
+test null_paint_and_noop_are_distinct_from_missing ... ok
+test order_explicit_group_id_moves_as_a_unit ... ok
+test economy_repeat_bounds_collisions_forward_refs_and_cancellation ... ok
+test poster_frozen_fixture_through_actual_mcp_stdio_binding ... ok
+test mcp_fake_host_exercises_actual_binding_parity_errors_and_cancellation ... ok
+test radius_zero_half_and_over_half_through_service ... ok
+test precommit_failures_leave_request_id_available_with_fresh_revision ... ok
+test real_binary_mcp_initialization_call_cancel_and_shared_cli ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test refusals_revisions_scope_and_epoch_do_not_mutate ... ok
+test rotation_is_absolute_for_mixed_units_and_rotated_resize_uses_local_size ... ok
+test same_uid_socket_all_scopes_no_pairing_audit_and_registry_lifecycle ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test selection_defaults_preserved_and_select_is_deliberate ... ok
+test shape_parent_paints_names_and_allocator_failures_are_checked ... ok
+test real_binary_stdio_initialization_has_protocol_only_stdout ... ok
+test slice4_files_scope_and_save_ticket_completion_fake_host ... ok
+test slice4_logo_frozen_fixture_adapter_parity ... ok
+test slice4_path_radius_validation_and_indexed_rollback ... ok
+test slice4_selection_field_and_schema_completeness ... ok
+test poster_fixture_cli_mcp_parity_local_names_atomic_history_and_png ... ok
+test snapshots_refuse_stale_oversized_and_ungranted_reads_without_history ... ok
+test stroke_only_shape_requires_positive_width ... ok
+test successful_create_delete_noop_still_reserves_exposed_identities ... ok
+test transformed_partial_group_move_leaves_other_world_art_unchanged ... ok
+test unknown_fields_and_unsupported_ops_are_indexed ... ok
+test whole_group_rotation_repeats_absolute_angle_and_resets_to_zero ... ok
+test slice4_logo_frozen_fixture_through_actual_mcp_stdio_binding ... ok
+test story_frozen_fixture_through_actual_mcp_stdio_binding ... ok
+test cursors_expire_and_journal_tracks_human_undo_redo ... ok
+test mcp_eof_wait_is_bounded_even_when_transport_does_not_finish ... ok
+test economy_page_snapshot_fit_and_explicit_dimensions ... ok
+test describe_legacy_shapes_and_receipt_cursor_complete ... ok
+test economy_wireframe_byte_gate_exact_document_equivalence_and_receipts ... ok
+test describe_all_field_subsets_and_unknown_fields_and_schema ... ok
+test economy_targets_preallocation_limit_and_large_ids_pagination ... ok
+
+test result: ok. 70 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.06s
+
+     Running tests/export_reports.rs (target/debug/deps/export_reports-7a0cea835efff1c7)
+
+running 2 tests
+test only_export_pdf_advertises_api_12 ... ok
+test worker_report_round_trips_through_bridge_12_and_stays_out_of_legacy_receipts ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/main.rs (target/debug/deps/varos_cli-9bc0ed4672981446)
+
+running 1 test
+test tests::panic_is_a_json_error_with_failure_status ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/commands.rs (target/debug/deps/commands-fc6d8a2efdfe19a6)
+
+running 25 tests
+test bridge_envelope_versions_and_stable_wire_names ... ok
+test diff_arrays_follow_paint_order ... ok
+test checked_command_ranges_and_structure_fail_without_partial_edits ... ok
+test diff_keeps_sub_decimal_geometry_changes_despite_describe_rounding ... ok
+test empty_and_noop_batches_do_not_create_history ... ok
+test atomic_batch_is_one_undo_step_with_redo_and_preserved_prior_history ... ok
+test describe_nested_group_detail_has_parent_children_and_world_bounds ... ok
+test describe_nested_group_matches_golden_json_and_paint_order ... ok
+test failed_batch_preserves_editor_selection_revision_and_redo ... ok
+test apply_refuses_a_symlink_to_the_input ... ok
+test apply_requires_explicit_in_place_for_canonical_input_aliases ... ok
+test non_utf8_output_path_returns_json_even_if_the_filesystem_refuses_it ... ok
+test output_io_failure_does_not_destroy_the_source ... ok
+test invalid_arguments_and_file_errors_are_json_with_nonzero_exit ... ok
+test batch_refusal_is_indexed_and_never_writes_or_truncates ... ok
+test save_validation_failure_is_attributed_to_the_command_that_created_it ... ok
+test export_pdf_artboard_exports_one_page_by_stable_id ... ok
+test rejected_bridge_major_and_empty_export_preserve_existing_output ... ok
+test export_pdf_refuses_to_overwrite_its_input ... ok
+test describe_and_full_geometry_for_every_v3_fixture ... ok
+test apply_and_diff_for_every_v3_fixture_preserve_the_original ... ok
+test diff_reports_added_removed_and_geometry_even_with_unchanged_bounds ... ok
+test pdf_export_is_model_free_and_save_as_reopens_for_every_v3_fixture ... ok
+test new_every_preset_and_compare_to_the_frozen_v3_documents ... ok
+test snapshot_is_a_deterministic_cpu_png_for_every_v3_fixture ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.70s
+
+     Running unittests src/lib.rs (target/debug/deps/varos_core-7a1076ae922f7b93)
+
+running 21 tests
+test geom::tests::asymmetric_painted_extent_pads_every_side ... ok
+test format::limits::tests::amounts_read_like_the_docs ... ok
+test editor::picker_tests::picker_unchanged_live_and_ok_do_not_mark_dirty_or_record_history ... ok
+test editor::picker_tests::picker_noop_ignores_id_high_water_after_creation_undo ... ok
+test editor::picker_tests::picker_session_is_one_undo_step ... ok
+test boolean::tests::area_guard_rejects_nonempty_incomplete_primary_result ... ok
+test editor::picker_tests::picker_cancel_reverts_with_no_history ... ok
+test editor::picker_tests::paint_live_drives_selection_and_undo ... ok
+test bridge::slice4_tests::explicit_path_refuses_nonfinite_points_and_handles_without_allocation ... ok
+test geom::tests::fit_centres_and_scales ... ok
+test editor::picker_tests::mixed_picker_begin_is_read_only_and_cancel_restores_both_targets ... ok
+test geom::tests::fit_degenerate_is_identity ... ok
+test geom::tests::pan_for_anchor_pins_world_under_screen ... ok
+test svg::tests::encoded_names_are_injective_and_xml_name_safe ... ok
+test svg::tests::neighboring_floats_at_decimal_midpoints_format_identically ... ok
+test units::tests::conversions_through_points ... ok
+test units::tests::cycle_visits_every_unit_and_returns_home ... ok
+test units::tests::docunits_round_trips_via_serde ... ok
+test units::tests::parse_handles_suffixes_and_fallback ... ok
+test units::tests::suffix_parse_is_lenient ... ok
+test units::tests::format_uses_display_unit ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/align.rs (target/debug/deps/align-4cee9fc65764de1c)
+
+running 7 tests
+test auto_single_object_without_a_board_is_a_safe_no_op ... ok
+test artboard_target_without_a_board_falls_back_to_selection ... ok
+test align_to_selection_aligns_two_objects_to_each_other ... ok
+test auto_picks_artboard_for_a_single_object ... ok
+test auto_picks_selection_for_multiple_objects ... ok
+test align_to_artboard_moves_a_group_as_one_unit ... ok
+test align_to_artboard_puts_the_object_on_the_board_edge ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/artboard_ids.rs (target/debug/deps/artboard_ids-becaae693a841f40)
+
+running 10 tests
+test format_4_is_current_and_artboard_ids_arrive_with_it ... ok
+test assign_is_idempotent_and_repairs_only_zero_and_repeated_ids ... ok
+test id_headroom_counts_the_ids_the_migration_will_allocate ... ok
+test undo_never_lets_a_new_page_reuse_a_removed_pages_id ... ok
+test drawing_a_page_with_the_artboard_tool_gives_it_an_id_at_commit ... ok
+test presets_and_editor_creation_sites_allocate_unique_ids_from_the_counter ... ok
+test save_assigns_missing_ids_and_clamps_active_on_a_clone_only ... ok
+test v3_files_migrate_with_ids_in_artboard_order_and_the_notice ... ok
+test v4_refuses_missing_duplicate_ids_and_a_dangling_active_index ... ok
+test an_artboard_id_in_a_v1_v2_or_v3_file_is_refused_before_typed_decoding ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/board_meta.rs (target/debug/deps/board_meta-e48af10b83b91073)
+
+running 17 tests
+test display_name_rule ... ok
+test new_board_is_a_free_canvas_with_zero_artboards ... ok
+test set_board_name_is_one_undo_step_dirty_and_no_op_when_unchanged ... ok
+test tags_are_trimmed_emptied_and_deduped_case_insensitively_in_order ... ok
+test checked_edits_return_the_reason_and_change_nothing ... ok
+test set_board_description_and_tags_are_undoable_single_steps ... ok
+test checked_edits_with_valid_input_are_one_undo_step_each ... ok
+test tags_fold_fully_and_leave_arabic_alone ... ok
+test joiners_and_bidi_marks_are_allowed_inside_and_trimmed_only_at_the_edges ... ok
+test metadata_round_trips_through_blob_and_disk_including_arabic ... ok
+test validation_table ... ok
+test presets_create_the_right_artboard ... ok
+test over_bound_metadata_is_refused_on_load_and_on_save ... ok
+test frozen_v3_metadata_fixture_loads_its_exact_metadata ... ok
+test the_replay_command_only_carries_valid_values - should panic ... ok
+test v2_files_migrate_to_v3_with_empty_metadata_and_a_notice ... ok
+test board_keys_in_a_v1_or_v2_file_are_refused_as_unknown ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/boards.rs (target/debug/deps/boards-fda56b134be73924)
+
+running 31 tests
+test a_mirror_row_dropped_where_it_already_lives_stays_put ... ok
+test board_lock_locks_anything_it_holds ... ok
+test artboard_clip_and_move_art_flags_are_undoable ... ok
+test clicking_a_board_to_activate_it_is_not_an_edit ... ok
+test artboard_delete_removes_the_selected_set ... ok
+test alt_drag_artboard_preserves_leaf_and_nested_group_node_flags ... ok
+test deleting_the_last_board_leaves_a_free_canvas ... ok
+test a_clipped_groups_members_never_escape_the_cut ... ok
+test clip_exemption_releases_the_whole_top_level_group_as_one ... ok
+test board_eye_hides_only_that_pages_part ... ok
+test dragging_a_selected_artboard_moves_the_selected_set ... ok
+test a_clip_exempt_item_draws_uncut_while_a_sibling_stays_clipped ... ok
+test dropping_onto_a_coincident_board_still_activates_it ... ok
+test duplicate_artboard_command_carries_art ... ok
+test duplicate_artboard_carries_its_art_when_move_art_is_on ... ok
+test duplicate_artboard_copies_a_clip_group_whose_mask_is_hidden ... ok
+test duplicate_artboard_is_empty_when_move_art_is_off ... ok
+test duplicate_artboard_keeps_a_rotated_copy_glued_to_its_page ... ok
+test duplicate_artboard_copies_a_clip_group_whose_mask_is_locked_or_off_page ... ok
+test membership_is_visible_overlap ... ok
+test floaters_and_bleed_pages_draw_uncut ... ok
+test duplicate_artboard_skips_a_clip_group_that_is_wholly_off_the_page ... ok
+test duplicate_artboard_preserves_leaf_and_nested_group_node_flags ... ok
+test new_documents_open_with_no_artboard ... ok
+test multi_row_drag_travels_together_in_order ... ok
+test panel_drop_moves_art_onto_the_other_board ... ok
+test shift_click_builds_artboard_multi_selection ... ok
+test straddler_renders_once_per_page_cut_to_each ... ok
+test plain_artboard_move_never_moves_locked_clip_art_or_locked_board_art ... ok
+test pre_artboard_files_get_a_non_clipping_page ... ok
+test a_zero_artboard_document_round_trips ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/boolean_corners.rs (target/debug/deps/boolean_corners-b4183327fb4819ba)
+
+running 10 tests
+test pathfinder_enabled_requires_two_distinct_closed_owning_objects ... ok
+test pathfinder_enabled_explains_that_selected_open_paths_are_ineligible ... ok
+test uniting_two_rectangles_yields_only_corner_points ... ok
+test pathfinder_runs_on_two_closed_shapes_and_leaves_a_selected_open_path_untouched ... ok
+test direct_anchor_selection_enables_and_runs_pathfinder_as_one_object_result ... ok
+test pathfinder_promotes_a_direct_path_level_selection_without_selected_anchors ... ok
+test circle_united_with_a_rectangle_keeps_arcs_smooth_and_straight_edges_cornered ... ok
+test every_pathfinder_operation_accepts_direct_selected_owners ... ok
+test uniting_a_zigzag_with_a_bar_keeps_every_zig_a_corner ... ok
+test every_pathfinder_op_on_slanted_rectangles_keeps_clean_corners ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/boolean_props.rs (target/debug/deps/boolean_props-437608536bfd7066)
+
+running 8 tests
+test overlapping_curves_keep_handles_when_area_guard_passes ... ok
+test hexagram_touching_tip_unite_and_minus_front ... ok
+test exclude_overlapping_squares_and_three_operand_fold ... ok
+test seeded_self_and_commutative_identities ... ok
+test seeded_intersect_oracle ... ok
+test seeded_minus_front_oracle ... ok
+test seeded_unite_oracle ... ok
+test seeded_exclude_oracle ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.96s
+
+     Running tests/clipboard.rs (target/debug/deps/clipboard-c2d0af2f36a90bbd)
+
+running 32 tests
+test cut_and_copy_skip_hidden_or_locked_paths_even_if_still_selected ... ok
+test copy_of_a_direct_group_member_does_not_carry_a_hidden_sibling ... ok
+test a_live_rotation_travels_with_the_paste ... ok
+test copy_with_nothing_selected_keeps_the_previous_clipboard ... ok
+test copy_of_a_clip_group_carries_its_hidden_mask_and_stays_clip ... ok
+test copy_leaves_the_document_and_rev_untouched ... ok
+test cut_of_a_clip_group_leaves_the_locked_mask_in_place ... ok
+test copying_a_single_layers_leaf_does_not_carry_its_locked_group_sibling ... ok
+test copy_of_a_clip_group_carries_its_locked_mask_without_touching_the_original ... ok
+test cut_then_paste_in_place_puts_it_back_where_it_was ... ok
+test deleting_a_single_layers_leaf_leaves_its_hidden_group_sibling ... ok
+test empty_selection_cut_is_a_no_op ... ok
+test cut_of_a_group_carries_its_hidden_member_and_flag ... ok
+test delete_defensively_refuses_hidden_or_locked_paths_and_anchors ... ok
+test cut_removes_the_selection_and_one_undo_restores_it ... ok
+test delete_of_a_group_keeps_its_locked_member ... ok
+test empty_clipboard_paste_is_a_no_op ... ok
+test hiding_a_board_drops_its_art_from_the_direct_selection ... ok
+test moving_selected_art_onto_a_locked_board_prunes_it ... ok
+test paste_from_another_tool_shows_the_selection_on_the_selection_tool ... ok
+test multi_item_paste_keeps_relative_z_order ... ok
+test group_and_clip_mask_structure_survive_copy_paste ... ok
+test alt_drag_and_transform_again_carry_a_locked_clip_mask ... ok
+test paste_in_place_keeps_the_coordinates ... ok
+test paste_goes_to_the_active_layer ... ok
+test redo_of_hide_prunes_a_selection_restored_after_undo ... ok
+test paste_with_offset_lands_there_and_selects_the_copy ... ok
+test hiding_or_locking_drops_the_direct_selection_so_cut_cannot_delete_it ... ok
+test pasting_twice_gives_two_independent_copies ... ok
+test the_clipboard_survives_opening_another_document ... ok
+test whole_group_intent_is_derived_after_direct_to_object_marquee_and_select_all ... ok
+test scale_copy_and_transform_again_carry_inert_clip_masks_without_selecting_them ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/colors.rs (target/debug/deps/colors-4ac97d5dc474621c)
+
+running 5 tests
+test document_colors_scan_dedupes_in_first_appearance_order ... ok
+test recent_is_mru_deduped_and_capped ... ok
+test inspector_reads_the_direct_selection_colour ... ok
+test direct_path_level_selection_receives_paint ... ok
+test board_document_and_recent_sources_are_distinct_first_use_and_capped_36 ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/compound_hole_tools.rs (target/debug/deps/compound_hole_tools-75482c99cea9761e)
+
+running 4 tests
+test convert_click_turns_a_smooth_hole_anchor_into_a_corner_in_one_step ... ok
+test pen_deletes_a_hole_anchor_and_reconnects_the_closed_hole_in_one_step ... ok
+test convert_pulls_handles_from_a_hole_corner_in_one_step ... ok
+test alt_direct_duplicates_and_moves_hole_anchors_in_one_step ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/content_checkpoint.rs (target/debug/deps/content_checkpoint-4519067770ab943c)
+
+running 8 tests
+test set_units_is_one_history_step_and_unchanged_is_a_noop ... ok
+test content_eq_ignores_view_and_preference_fields ... ok
+test content_eq_sees_every_authored_change ... ok
+test noop_commit_and_cancelled_picker_stay_content_equal ... ok
+test undo_keeps_current_snap_guide_lock_and_ruler_origin ... ok
+test clipboard_moves_between_editors ... ok
+test undo_and_redo_back_to_a_checkpoint_are_content_equal ... ok
+test pen_resume_from_the_first_anchor_is_one_undoable_edit ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/delete_anchor.rs (target/debug/deps/delete_anchor-44d2944c1ee07a62)
+
+running 16 tests
+test a_split_sends_the_hole_to_the_fragment_that_contains_it ... ok
+test a_split_keeps_uneven_left_hole_on_the_head_fragment ... ok
+test a_split_keeps_a_left_lobe_hole_on_the_left ... ok
+test deleting_an_open_endpoint_just_trims_it ... ok
+test deleting_a_corner_opens_the_ring_at_the_hole ... ok
+test deleting_from_a_hole_drops_it_before_it_can_become_degenerate ... ok
+test deleting_an_interior_point_of_an_open_path_splits_it_in_two ... ok
+test deleting_across_two_shapes_in_one_op_opens_both ... ok
+test deleting_several_anchors_on_three_overlapping_ellipses_never_relinks ... ok
+test one_delete_across_two_circles_opens_both_and_one_undo_restores_both ... ok
+test pen_delete_keeps_a_two_anchor_result_closed ... ok
+test pen_delete_reconnects_a_hole_until_the_ring_would_be_degenerate ... ok
+test pen_delete_from_a_closed_two_anchor_path_removes_it_and_clears_active ... ok
+test pen_delete_reconnects_outer_ring_but_direct_delete_opens_it ... ok
+test an_opened_shape_keeps_its_fill ... ok
+test deleting_one_anchor_of_a_closed_circle_leaves_an_open_three_anchor_arc ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/direct_inspector.rs (target/debug/deps/direct_inspector-c13ddb564228fd8a)
+
+running 12 tests
+test an_object_selection_wins_over_the_direct_measure ... ok
+test hole_anchor_selection_promotes_to_its_object_on_v ... ok
+test nothing_selected_still_reads_as_no_selection ... ok
+test rotated_unit_anchor_is_measured_and_moved_in_world ... ok
+test zero_extent_w_h_edit_is_a_true_noop ... ok
+test several_anchors_report_their_point_bounds ... ok
+test x_y_fields_move_a_single_anchor_as_one_undo_step ... ok
+test w_field_scales_selected_anchors_about_the_reference_point ... ok
+test directly_grabbed_anchor_is_named_and_measured ... ok
+test mixed_outer_and_hole_selection_moves_both_as_one_step ... ok
+test path_level_direct_selection_reports_the_path ... ok
+test hole_only_direct_selection_is_measured_and_moved ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/edit_command.rs (target/debug/deps/edit_command-72cd7ac725c218d2)
+
+running 13 tests
+test rename_path_is_one_undo_step ... ok
+test rename_path_writes_the_name_the_layers_row_reads ... ok
+test rename_path_no_op_does_not_dirty ... ok
+test rename_path_trims_invisible_marks_at_the_edges_only ... ok
+test rename_path_empty_name_keeps_the_old_one ... ok
+test paint_command_sets_the_target_and_commits_the_selected_path ... ok
+test nonundoable_document_settings_keep_their_current_revision_policy ... ok
+test stroke_width_command_owns_history_and_undo_redo ... ok
+test stroke_width_on_a_selection_carries_to_the_next_pen_path ... ok
+test pen_resume_deselects_leftover_objects ... ok
+test stroke_width_while_drawing_lands_on_the_pen_path ... ok
+test pen_new_draft_deselects_leftover_objects ... ok
+test bridge_default_paint_uses_existing_tool_defaults_and_one_undo_step ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/format_v2.rs (target/debug/deps/format_v2-155ce3906bb9b547)
+
+running 28 tests
+test decode_timing_at_caps ... ignored
+test dangling_leaf_refused ... ok
+test counts_over_limits_refused ... ok
+test legacy_group_parent_cycle_refused_without_hang ... ok
+test id_exhaustion_refused ... ok
+test container_version_mismatch_refused ... ok
+test duplicate_ids_refused ... ok
+test limits_default_values_match_documented_numbers ... ok
+test missing_zero_negative_fractional_huge_versions_refused ... ok
+test explicit_empty_artboards_stays_boardless_v1_and_v2 ... ok
+test newer_version_refused_before_typed_decode ... ok
+test broken_v1_clip_released_with_notice_but_v2_and_save_refuse ... ok
+test load_vrs_reads_bounded_and_keeps_its_string_api ... ok
+test save_refuses_non_finite_and_leaves_doc_unchanged ... ok
+test model_bytes_over_limit_refused ... ok
+test stale_ids_counter_raised ... ok
+test node_cycle_refused_without_hang ... ok
+test new_saves_write_the_current_format ... ok
+test v1_masks_and_xform_preserved_through_migration ... ok
+test v1_missing_artboards_gets_legacy_board ... ok
+test v1_blob_migrates_and_reports_notice ... ok
+test user_messages_hide_parser_internals ... ok
+test tree_depth_over_limit_refused ... ok
+test sync_tree_is_noop_on_canonical_v2 ... ok
+test v2_blob_loads_without_migration ... ok
+test every_saved_doc_reopens ... ok
+test unknown_field_fails_closed_envelope_document_node ... ok
+test json_depth_over_limit_refused ... ok
+
+test result: ok. 27 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+     Running tests/format_validate.rs (target/debug/deps/format_validate-d70d3861d0b3e3d7)
+
+running 13 tests
+test nonfinite_identity_pivot_cannot_disappear_during_serialization ... ok
+test refusal_names_the_affected_path ... ok
+test invalid_nested_transform_cannot_be_normalized_away ... ok
+test validate_is_linear ... ignored, manual release timing, no flaky wall-clock assertion
+test json_float_overflow_reports_affected_geometry_on_load ... ok
+test missing_path_leaf_is_adopted_on_save_but_refused_in_v2 ... ok
+test legacy_repair_does_not_hide_other_corruption ... ok
+test every_broken_clip_reference_is_legacy_only_and_reports_notice ... ok
+test root_paths_and_groups_permitted_by_live_model_remain_saveable ... ok
+test valid_editor_documents_pass ... ok
+test kind_and_mask_rules_refuse_structurally_valid_corruption ... ok
+test every_persisted_float_rejects_nan_and_both_infinities_on_save ... ok
+test ranges_refused_on_load_and_save_without_mutation ... ok
+
+test result: ok. 12 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/golden.rs (target/debug/deps/golden-26700fe9ad8ba247)
+
+running 5 tests
+test ancient_pre_artboards_loads_with_legacy_bleed_and_exact_art ... ok
+test pre_paint_enum_raw_option_colours_load_as_paint ... ok
+test legacy_group_registry_migrates_to_tree_without_changing_z_order ... ok
+test frozen_v1_corpus_round_trips_on_disk_by_content ... ok
+test every_golden_fixture_obeys_the_full_round_trip_law ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/groups.rs (target/debug/deps/groups-090dec1b2ee278a5)
+
+running 11 tests
+test duplicating_a_group_stays_grouped ... ok
+test sync_tree_drops_deleted_paths ... ok
+test group_makes_members_contiguous ... ok
+test group_needs_two ... ok
+test duplicating_nested_group_preserves_nesting ... ok
+test re_grouping_single_group_is_noop ... ok
+test group_then_members_and_top ... ok
+test nested_group_ungroup_peels_one_level ... ok
+test shift_click_near_selection_corner_still_selects ... ok
+test ungroup_clears_membership ... ok
+test app_flow_group_two_groups_then_ungroup ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/guides.rs (target/debug/deps/guides-228e17afe9d8d774)
+
+running 3 tests
+test guide_hit_test ... ok
+test object_snaps_to_a_vertical_guide ... ok
+test dragged_out_guide_snaps_to_the_page_edge ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/history_lifecycle.rs (target/debug/deps/history_lifecycle-9d3d450528ca8253)
+
+running 2 tests
+test undo_during_drag_preserves_the_known_stale_pending_snapshot_behavior ... ok
+test completed_drag_commits_once_then_undo_and_redo_restore_each_state ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hit_thick_stroke.rs (target/debug/deps/hit_thick_stroke-98c174cc8fab095f)
+
+running 16 tests
+test painted_band_click_selects_away_from_centreline ... ok
+test big_circle_thick_band_between_samples_at_327_percent ... ok
+test centreline_between_flatten_samples_is_hit ... ok
+test band_reach_is_screen_px_plus_half_width_at_any_zoom ... ok
+test marquee_touching_only_a_donut_hole_rim_selects_it ... ok
+test convert_segment_grab_tolerance_is_screen_constant ... ok
+test hollow_ring_marquee_inside_does_not_catch_ring ... ok
+test hollow_ring_marquee_gesture_leaves_ring_unselected ... ok
+test fill_only_shape_reach_unchanged ... ok
+test pen_add_anchor_near_a_corner_lands_on_the_line ... ok
+test pen_click_on_thick_band_off_centre_does_not_insert ... ok
+test rotate_ring_yields_to_another_objects_band ... ok
+test thin_marquee_crossing_long_edge_selects ... ok
+test pen_add_anchor_tolerance_is_screen_constant ... ok
+test rotate_ring_still_works_over_the_selections_own_thick_band ... ok
+test big_rect_edge_near_corner_centreline_is_hit ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/input_feel.rs (target/debug/deps/input_feel-8e39d3c714af71ca)
+
+running 10 tests
+test space_repositions_a_new_pen_anchor ... ok
+test pen_hover_shows_phantom_point_before_first_click ... ok
+test shape_first_corner_snaps_to_a_nearby_anchor ... ok
+test shape_first_corner_stays_free_when_far ... ok
+test pen_first_click_lands_on_the_snapped_point ... ok
+test pen_hover_over_empty_space_shows_no_phantom ... ok
+test scale_drag_without_constrain_is_free ... ok
+test scale_drag_shift_still_locks_independently ... ok
+test scale_drag_with_constrain_locks_aspect ... ok
+test space_repositions_a_shape_in_progress ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/layers.rs (target/debug/deps/layers-07211f18177d4e66)
+
+running 12 tests
+test a_fresh_document_has_layer_1 ... ok
+test new_paths_are_adopted_into_the_active_layer_in_z_order ... ok
+test legacy_registry_files_migrate_with_z_preserved ... ok
+test a_second_layer_receives_new_drawings ... ok
+test drag_drop_reorders_nests_and_refuses_cycles ... ok
+test ctrl_click_toggles_a_row_even_with_locked_members ... ok
+test arrange_moves_units_within_their_own_parent ... ok
+test a_locked_layer_is_truly_immovable ... ok
+test hiding_or_locking_a_container_cascades ... ok
+test alt_drag_on_canvas_leaves_a_moved_copy ... ok
+test paint_list_is_exactly_doc_paths_until_masks_land ... ok
+test selection_square_moves_and_copies_art_across_layers ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/live_transform.rs (target/debug/deps/live_transform-b12ca470b90c4e03)
+
+running 31 tests
+test convert_handle_on_a_rotated_object_is_one_to_one ... ok
+test marquee_selects_a_rotated_object_by_its_visual_bounds ... ok
+test layer_move_bake_updates_the_frame_angle ... ok
+test layer_panel_reorder_inside_a_rotated_group_keeps_the_angle_live ... ok
+test grouping_comoving_units_hands_the_shared_rotation_to_the_group ... ok
+test grouping_rotated_members_keeps_their_world_geometry ... ok
+test expand_bakes_to_identity_with_world_equivalent_geometry ... ok
+test full_user_flow_draw_group_rotate_reselect_ungroup ... ok
+test layer_panel_drag_across_a_rotated_group_never_moves_the_art ... ok
+test alt_copy_into_a_rotated_group_lands_exactly_on_its_source ... ok
+test move_keeps_rotation_live_and_translates_world ... ok
+test old_vrs_without_xform_loads_as_identity ... ok
+test moving_an_artboard_carries_its_rotated_art_one_to_one ... ok
+test nudge_moves_rotated_marquee_anchors_along_the_world_axis ... ok
+test pen_click_on_a_rotated_segment_inserts_an_anchor_at_the_cursor ... ok
+test rotate_back_to_zero_bakes_cleanly_to_identity ... ok
+test refused_layer_drop_is_a_true_noop_no_bake_no_undo ... ok
+test rotate_composes_into_xform_anchors_unchanged_in_local ... ok
+test multi_unit_rotated_marquee_drag_moves_every_anchor_correctly ... ok
+test rotate_drag_through_zero_keeps_rotating ... ok
+test rotate_drag_writes_a_live_transform ... ok
+test rotation_persists_through_deselect_and_reselect ... ok
+test rotated_object_is_consistent_everywhere ... ok
+test rotating_a_group_stores_a_live_transform_on_the_group_node ... ok
+test then_rotate_composes_two_rotations_exactly ... ok
+test sync_tree_strips_stale_nested_xforms_without_moving_art ... ok
+test panel_xy_with_a_nontop_left_refpoint_on_a_rotated_object_reads_and_writes ... ok
+test ungroup_keeps_the_rotated_world_geometry ... ok
+test ungroup_leaves_the_rotation_live_on_each_member ... ok
+test pen_resume_on_a_rotated_object_places_the_anchor_at_the_cursor ... ok
+test rotate_drag_on_a_group_applies_and_sticks ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/masks.rs (target/debug/deps/masks-42de2204870be1ca)
+
+running 8 tests
+test clip_group_node_serde_round_trips_and_legacy_loads_normal ... ok
+test sync_tree_demotes_a_clip_whose_mask_was_removed ... ok
+test paint_list_excludes_the_mask_source_but_keeps_it_a_first_class_row ... ok
+test dup_paths_remaps_the_clip_to_its_own_mask ... ok
+test clip_group_is_undoable ... ok
+test a_document_with_no_clip_emits_no_clip_group ... ok
+test scene_emits_the_clip_form_with_the_mask_rings ... ok
+test clip_group_builds_the_topology_and_release_tears_it_down ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/math.rs (target/debug/deps/math-444bc5e6401c2759)
+
+running 15 tests
+test cubic_straight_is_linear ... ok
+test cubic_endpoints ... ok
+test mirror_is_point_reflection ... ok
+test point_in_poly_basic ... ok
+test rotate_quarter_turn ... ok
+test scale_about_pivot_round_trip ... ok
+test rotate_round_trip ... ok
+test point_in_path_respects_holes ... ok
+test unite_area ... ok
+test exclude_nested ... ok
+test minus_front_makes_a_hole ... ok
+test minus_front_area ... ok
+test exclude_disjoint ... ok
+test exclude_corner_overlap ... ok
+test intersect_area ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/no_raster_model.rs (target/debug/deps/no_raster_model-f288248c215f6ac3)
+
+running 1 test
+test serde_document_node_path_have_no_byte_blobs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/occlusion.rs (target/debug/deps/occlusion-c03ee52976097702)
+
+running 8 tests
+test covered_point_selects_the_topmost_shape ... ok
+test an_open_but_filled_shape_still_occludes_by_its_fill ... ok
+test an_unfilled_cover_is_click_through_but_its_outline_is_grabbable ... ok
+test a_marquee_inside_a_hollow_open_polyline_does_not_grab_it ... ok
+test lower_thick_band_does_not_steal_from_thin_top_path ... ok
+test a_donuts_inner_rim_is_grabbable_but_its_hole_stays_click_through ... ok
+test a_partly_covered_shape_is_reachable_only_where_it_shows ... ok
+test thick_top_band_occludes_lower_path ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/opacity.rs (target/debug/deps/opacity-111b0c5a31b7f625)
+
+running 6 tests
+test translucent_fill_only_folds_opacity_no_layer ... ok
+test translucent_stroke_on_filled_object_becomes_knockout ... ok
+test opaque_fill_and_stroke_never_isolate ... ok
+test translucent_fill_plus_stroke_becomes_one_isolated_layer ... ok
+test isolated_layer_keeps_its_z_position ... ok
+test opaque_objects_paint_fill_then_own_stroke_in_z_order ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/render_fixes.rs (target/debug/deps/render_fixes-c7d89435e32e2b6d)
+
+running 4 tests
+test thick_stroke_extent_keeps_screen_edge_content ... ok
+test every_paint_field_invalidates_live_signature ... ok
+test copied_clip_keeps_mask_and_round_trips ... ok
+test normalization_never_repairs_unsupported_soft_masks_into_normal_groups ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/segment.rs (target/debug/deps/segment-aba18acd5f48dc66)
+
+running 5 tests
+test hover_alone_does_not_select_a_path ... ok
+test grab_curved_segment_selects_both_anchors ... ok
+test grab_straight_segment_of_rect_selects_both_corners ... ok
+test tight_marquee_on_one_anchor_selects_only_it ... ok
+test marquee_across_a_segment_selects_its_endpoints ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/select_all.rs (target/debug/deps/select_all-2bcdb7727aa5886a)
+
+running 5 tests
+test select_all_ends_pen_draft ... ok
+test select_all_in_direct_selects_anchors ... ok
+test select_all_takes_visible_unlocked_paths_only ... ok
+test select_all_in_artboard_tool_selects_boards ... ok
+test select_all_is_not_an_edit ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/serde_roundtrip.rs (target/debug/deps/serde_roundtrip-3f74458d843c4160)
+
+running 5 tests
+test node_clip_exempt_defaults_false_and_round_trips ... ok
+test paint_reads_and_writes_the_legacy_option_rgba_shape ... ok
+test float_fields_are_exact ... ok
+test empty_document_round_trips ... ok
+test document_json_round_trips ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/snap.rs (target/debug/deps/snap-6163f5754959cba7)
+
+running 6 tests
+test align_panel_aligns_selected_anchors ... ok
+test object_drag_snaps_to_a_non_active_artboard_edge ... ok
+test anchor_aligns_to_same_shape_corner ... ok
+test no_snap_when_far ... ok
+test anchor_snaps_to_path_edge ... ok
+test anchor_snaps_to_other_object_anchor ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/svg_export.rs (target/debug/deps/svg_export-e67f6ad388828ec1)
+
+running 14 tests
+test cancellation_empty_invalid_geometry_and_cyclic_tree_are_errors ... ok
+test opacity_isolation_precedes_knockout_and_zero_alpha_stroke_removes_fill ... ok
+test ordinary_hidden_paths_are_absent_and_visible_lock_does_not_hide_art ... ok
+test open_fill_does_not_close_stroke_and_two_anchors_do_not_fill ... ok
+test overflowing_paint_extents_are_refused_instead_of_emitting_infinity ... ok
+test stroke_padding_and_degenerate_extent_are_real_pages ... ok
+test plans_visible_artboards_active_and_whole_board_floaters ... ok
+test hidden_cascades_locked_exports_and_names_are_safe_unique_ids ... ok
+test empty_masks_hide_only_their_members_and_do_not_erase_other_bounds ... ok
+test curves_keep_handles_closing_cubic_holes_and_world_rotation ... ok
+test clip_source_is_geometry_only_even_when_hidden_and_compound_mask_is_one_path ... ok
+test viewport_dimensions_colors_and_page_ids_match_svg_pixel_conventions ... ok
+test nested_nearest_clip_runs_have_unique_ids_and_keep_paint_order ... ok
+test frozen_raw_fixtures_match_golden_svg_and_rasterize ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/transform.rs (target/debug/deps/transform-5c6970fe9a3f02dc)
+
+running 6 tests
+test pivot_defaults_to_selection_centre ... ok
+test pivot_click_snaps_to_a_nearby_anchor ... ok
+test scale_tool_scales_around_the_pivot ... ok
+test rotate_tool_rotates_around_the_clicked_pivot ... ok
+test alt_drag_rotates_a_copy_and_keeps_the_original ... ok
+test transform_again_repeats_the_rotate_copy ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/undo_selection.rs (target/debug/deps/undo_selection-e838614dfb92766f)
+
+running 2 tests
+test undo_keeps_a_still_present_selection ... ok
+test undo_prunes_selection_of_a_path_that_no_longer_exists ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/view_cull.rs (target/debug/deps/view_cull-03b793331b7f5630)
+
+running 16 tests
+test a_handle_reaching_into_view_from_an_off_screen_anchor_is_kept ... ok
+test a_live_gesture_edit_without_a_rev_bump_never_draws_stale_geometry ... ok
+test culling_an_object_never_merges_the_translucent_strokes_on_either_side_of_it ... ok
+test an_off_screen_stroke_never_changes_an_objects_opacity_treatment ... ok
+test an_off_screen_stroke_never_changes_the_treatment_without_a_mask_either ... ok
+test a_clip_mask_wholly_off_screen_clips_its_members_to_nothing ... ok
+test a_view_showing_everything_gives_the_uncut_scene_exactly ... ok
+test the_cache_returns_exactly_a_fresh_flatten_and_reuses_it ... ok
+test a_path_wholly_outside_the_view_is_culled_while_a_partly_visible_one_is_kept ... ok
+test the_cache_invalidates_on_every_kind_of_geometry_edit ... ok
+test two_adjacent_translucent_strokes_of_one_colour_stay_separate_objects ... ok
+test artboard_clip_and_view_clip_compose ... ok
+test zoom_buckets_are_quarter_octaves_never_coarser_than_the_zoom ... ok
+test the_editor_cache_reuses_geometry_across_frames_and_evicts_deleted_paths ... ok
+test culling_never_drops_a_selected_paths_handles_or_markers_that_are_in_view ... ok
+test view_clipping_leaves_every_on_screen_pixel_unchanged_for_fills_holes_and_strokes ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.82s
+
+     Running tests/vrs.rs (target/debug/deps/vrs-ae13ac271ed9ebbb)
+
+running 5 tests
+test garbage_is_a_clear_error ... ok
+test newer_version_is_refused_not_guessed ... ok
+test open_resets_history_and_selection ... ok
+test vrs_round_trips_identically_on_disk ... ok
+test a_group_still_moves_as_one_after_reopen ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/xform.rs (target/debug/deps/xform-55bd7ced0fee1a0b)
+
+running 1 test
+test xform_field_round_trips_and_unit_xform_defaults_to_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/varos_pdf-b7b5785b402eab1e)
+
+running 1 test
+test read::tests::object_stream_filter_runs_before_inflation_and_preserves_other_streams ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/container.rs (target/debug/deps/container-93c78424d51d5ed0)
+
+running 9 tests
+test the_file_is_a_real_pdf_with_the_model_inside ... ok
+test legacy_raw_json_vrs_still_opens ... ok
+test one_page_per_artboard ... ok
+test groups_survive_the_container_round_trip ... ok
+test container_round_trips_the_document_identically ... ok
+test a_hidden_group_does_not_reach_the_page ... ok
+test legacy_pdf_repair_notice_survives_container_read_without_rewriting_file ... ok
+test a_hidden_board_exports_no_page ... ok
+test every_board_hidden_still_writes_one_valid_page ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/container_bounds.rs (target/debug/deps/container_bounds-4a07950079352bd7)
+
+running 19 tests
+test lopdf_peak_memory_on_large_array ... ignored, manual release /usr/bin/time -l measurement; rejects before lopdf allocation
+test footer_ambiguity_and_wrong_xref_count_are_refused ... ok
+test escaped_trailer_names_cannot_bypass_preflight ... ok
+test missing_catalog_version_is_legacy_compatible ... ok
+test large_direct_arrays_and_deep_objects_are_refused_before_parser_allocation ... ok
+test normal_filtered_streams_are_not_inflated ... ok
+test compressed_xref_and_modern_object_stream_profiles_are_refused ... ok
+test oversized_xref_lines_and_indirect_stream_lengths_are_refused ... ok
+test tiny_limits_exercise_file_object_model_and_stream_budgets ... ok
+test harmless_trailer_strings_comments_and_similar_names_are_not_keys ... ok
+test invalid_private_model_does_not_silently_fall_back ... ok
+test model_filters_never_inflate_or_fall_back_to_raw_bytes ... ok
+test catalog_version_is_checked_before_model_decoding ... ok
+test name_tree_cycles_depth_and_duplicate_models_are_bounded ... ok
+test plain_pdf_has_no_editable_model ... ok
+test trailer_revision_hybrid_and_encryption_are_refused_before_lopdf ... ok
+test only_exact_embedded_model_name_is_accepted ... ok
+test native_current_and_all_frozen_v1_containers_load_through_checked_bytes ... ok
+test malformed_and_truncated_inputs_never_panic ... ok
+
+test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/corpus_check.rs (target/debug/deps/corpus_check-9f3e0c6ccd5c035b)
+
+running 4 tests
+test corpus_check ... ignored, requires VAROS_CORPUS_DIR pointing at personal Varos documents; not fixture/CI acceptance
+test walker_does_not_follow_symlink_cycles_or_external_files ... ok
+test walker_includes_nested_case_insensitive_documents ... ok
+test missing_empty_and_refused_corpora_fail_without_modifying_files ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/export_pdf.rs (target/debug/deps/export_pdf-dbeebea66d9817c5)
+
+running 35 tests
+test all_hidden_is_unavailable_not_a_dummy_page ... ok
+test boardless_empty_is_nothing_to_export ... ok
+test board_scopes_need_boards_and_bounds_needs_none ... ok
+test active_hidden_unavailable ... ok
+test cancel_before_first_page_returns_cancelled ... ok
+test boardless_bounds_of_a_clip_are_the_clipped_extent ... ok
+test artwork_bounds_follow_the_curve_not_its_handles ... ok
+test default_scope_follows_boards ... ok
+test a_mask_with_no_drawable_ring_clips_its_members_to_nothing ... ok
+test export_is_deterministic ... ok
+test clip_uses_every_mask_ring_even_odd ... ok
+test boardless_artwork_bounds_page_matches_padded_bbox ... ok
+test active_scope_one_page ... ok
+test export_has_no_embedded_file_filespec_af_names_or_varos_keys ... ok
+test has_embedded_model_true_for_native_false_for_export ... ok
+test hidden_and_locked_state_change_no_export_byte ... ok
+test all_visible_two_boards_two_pages_sized_like_boards ... ok
+test clip_off_page_leaves_the_page_unclipped ... ok
+test exported_pdf_is_refused_by_load_vrs ... ok
+test native_write_is_byte_identical_to_fixture ... ok
+test clipped_native_file_round_trips ... ok
+test secret_doc_really_hides_what_the_privacy_tests_think_it_hides ... ok
+test selection_bounds_skip_invisible_objects_pad_strokes_and_respect_clips ... ok
+test nested_clip_uses_nearest_mask_only ... ok
+test selection_scope_needs_a_visible_selection ... ok
+test one_clip_scope_per_run_of_members ... ok
+test member_outside_mask_is_not_emitted ... ok
+test clip_member_is_wrapped_in_w_star_n ... ok
+test opacity_and_rotation_survive_export ... ok
+test export_leaks_no_hidden_coordinates_or_names ... ok
+test visible_content_present ... ok
+test selection_scope_is_one_page_at_the_selection_bounds_with_only_the_selection ... ok
+test hidden_board_excluded ... ok
+test hidden_mask_path_far_away_never_reaches_the_file ... ok
+test a_huge_single_page_export_stops_soon_after_cancel ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.62s
+
+     Running tests/export_reports.rs (target/debug/deps/export_reports-e5b5e70034cf3e46)
+
+running 1 test
+test every_accepted_fixture_has_empty_reports_and_identical_bytes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/export_svg.rs (target/debug/deps/export_svg-803ff0b70280132c)
+
+running 1 test
+test every_frozen_container_exports_without_panics_and_binary_twins_match_goldens ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+     Running tests/frozen_v2.rs (target/debug/deps/frozen_v2-ec5427adf6b04dcc)
+
+running 8 tests
+test frozen_fixture_bytes_match_their_sha256sums ... ok
+test frozen_legacy_broken_mask_repairs_only_in_memory_with_notice ... ok
+test frozen_inputs_obey_file_model_and_container_budgets ... ok
+test frozen_v2_twins_load_equal_and_migrate_to_the_frozen_v4_bytes ... ok
+test frozen_art_retains_clip_hole_rotation_boards_and_arabic_name ... ok
+test frozen_v3_twins_load_equal_and_migrate_to_the_frozen_v4_bytes ... ok
+test frozen_v4_twins_are_exact_and_byte_stable ... ok
+test frozen_refusals_keep_their_typed_reason_on_bytes_and_disk ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/golden_pdf.rs (target/debug/deps/golden_pdf-bca595a88e1db8d6)
+
+running 2 tests
+test raw_and_pdf_twins_load_to_the_same_content ... ok
+test frozen_v1_pdf_corpus_round_trips_on_disk_by_content ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/new_board.rs (target/debug/deps/new_board-1aa23b1c5671321b)
+
+running 3 tests
+test over_bound_metadata_is_refused_by_the_native_save_gate ... ok
+test new_board_with_zero_artboards_saves_reopens_and_exports_its_artwork_bounds ... ok
+test preset_boards_save_reopen_and_export_their_one_artboard ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/old_reader_harness.rs (target/debug/deps/old_reader_harness-885db30eb5ca7584)
+
+running 7 tests
+test frozen_v2_gate_still_accepts_v1_and_v2_headers ... ok
+test frozen_v3_gate_still_accepts_v1_v2_and_v3_headers ... ok
+test old_reader_refuses_v2_v3_and_v4_json_before_decode ... ok
+test frozen_gate_still_accepts_v1_headers ... ok
+test v3_reader_refuses_v4_raw_and_pdf_before_decode ... ok
+test v2_reader_refuses_v3_and_v4_raw_and_pdf_before_decode ... ok
+test old_reader_refuses_v2_v3_and_v4_pdf_before_decode ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/open_fill.rs (target/debug/deps/open_fill-90c9837ebed445d2)
+
+running 2 tests
+test an_open_filled_shape_fills_in_the_pdf ... ok
+test a_fill_less_open_line_still_never_fills ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/rotated_export.rs (target/debug/deps/rotated_export-f890f052aa567fc9)
+
+running 3 tests
+test a_rotated_object_is_not_culled_from_its_page ... ok
+test the_embedded_model_preserves_the_rotation ... ok
+test a_rotated_object_exports_rotated_coordinates ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/save_budget.rs (target/debug/deps/save_budget-1ba1b98512f4ff20)
+
+running 4 tests
+test the_largest_allowed_knockout_document_saves_and_reopens ... ignored, slow: maximum-size document; run with -- --ignored (release recommended)
+test the_decoded_stream_budget_is_checked_by_the_writer_and_triggers_the_decode_near_it ... ok
+test a_near_limit_save_runs_the_decoder_and_an_over_limit_one_is_refused_by_the_writer_count ... ok
+test knockouts_share_objects_and_an_ordinary_save_skips_the_decoder ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.08s
+
+     Running unittests src/lib.rs (target/debug/deps/varos_raster-b731ce436914c10a)
+
+running 17 tests
+test tests::fit_rejects_nonfinite_and_bounds_extreme_values ... ok
+test tests::canvas_eyedropper_samples_rendered_fixture_not_selection_overlay ... ok
+test tests::rasterizes_two_thousand_paths_under_release_budget ... ignored, performance probe; run with --release --ignored --nocapture
+test tests::hidden_object_is_absent ... ok
+test tests::empty_board_is_only_dotted_well ... ok
+test tests::render_three_frozen_fixture_samples ... ignored, writes moderator review artifacts to the requested scratchpad
+test tests::snapshot_five_thousand_paths_timings ... ignored, headless 5k-path clone/raster/encode timing probe; run --release --ignored --nocapture
+test clip_preserves_object_opacity_expected_blend ... ok
+test tests::red_square_on_white_artboard_has_expected_pixels ... ok
+test tests::start_snapshot_thumbnails ... ok
+test tests::zero_artboard_fits_free_artwork ... ok
+test tests::clip_group_hides_outside_pixels ... ok
+test tests::raster_and_png_are_deterministic ... ok
+test tests::knockout_stroke_blends_with_backdrop_not_its_fill ... ok
+test tests::artboard_raster_is_the_page_at_its_ratio_with_its_background ... ok
+test svg_tests::svg_frozen_artboard_fixtures_match_cpu_with_edge_tolerance ... ok
+test svg_tests::svg_matches_cpu_for_isolation_knockout_curves_holes_and_clips ... ok
+
+test result: ok. 14 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 1.30s
+
+     Running unittests src/lib.rs (target/debug/deps/varos_render_wgpu-8f2bddfc5106eed4)
+
+running 45 tests
+test gpu_free_tests::fit_to_limit_clamps_only_what_exceeds_the_cap ... ok
+test gpu_free_tests::skipped_frame_frees_are_released_after_the_next_submit ... ok
+test tess::round3_tests::round3_small_angle_sagitta_controls_subdivision ... ok
+test tess::clipped_isolated_object_keeps_opacity_and_order ... ok
+test tess::clipped_isolated_tail_has_no_empty_clip_pass ... ok
+test tess::round3_tests::round3_nonzero_tiny_turn_is_never_elided ... ok
+test tess::round3_tests::round3_short_segments_and_duplicates_keep_the_band_closed ... ok
+test tess::round3_tests::round3_knockout_cover_contains_large_band_with_padding ... ok
+test tess::round3_tests::round3_fan_shares_quad_end_edge_exactly_at_large_coordinates ... ok
+test tess::round3_tests::round3_translucent_cover_contains_large_band_with_padding ... ok
+test tess::tests::a_real_corner_gets_a_round_outer_join ... ok
+test tess::tests::adaptive_subdivision_points_do_not_create_round_join_discs ... ok
+test tess::round3_tests::round3_world_translation_preserves_emitted_geometry ... ok
+test tess::tests::cap_shares_the_end_quad_corners_bit_exact ... ok
+test tess::tests::clip_group_emits_mask_fan_members_and_clear ... ok
+test tess::tests::clipped_opaque_stroke_draws_alone_under_a_scissor ... ok
+test tess::tests::clipped_step_list_preserves_translucent_and_knockout_routes ... ok
+test tess::tests::clipped_stroke_does_not_coalesce_with_its_neighbour ... ok
+test tess::tests::cap_step_count_is_bounded ... ok
+test tess::tests::culling_keeps_one_coverage_draw_per_translucent_object ... ok
+test tess::tests::high_zoom_rotated_turn_is_covered_across_the_whole_wedge ... ok
+test tess::tests::isolated_layer_with_translucent_stroke_knocks_out_inside_the_layer ... ok
+test tess::tests::closed_rings_arrive_with_the_first_point_repeated ... ok
+test tess::tests::knockout_object_emits_band_fan_and_two_covers ... ok
+test tess::tests::opaque_stroke_stays_on_the_fast_path ... ok
+test tess::tests::closed_ring_seam_is_joined_not_capped ... ok
+test tess::tests::scissor_px_clamps_to_the_framebuffer ... ok
+test tess::tests::scissor_px_degenerate_or_offscreen_is_none ... ok
+test tess::tests::round_join_outer_edge_hugs_the_true_circle ... ok
+test tess::tests::scissor_px_honours_the_view_transform ... ok
+test tess::tests::scissor_px_maps_and_rounds_outward ... ok
+test tess::tests::rectangle_seam_corner_is_round_at_4000_percent ... ok
+test tess::tests::thick_arc_turning_either_way_has_no_wedge_gaps ... ok
+test tess::tests::thin_strokes_unchanged ... ok
+test tess::tests::translucent_stroke_goes_through_mark_and_cover ... ok
+test translucent_steps_require_clip_and_preserve_it ... ok
+test tess::tests::zero_length_stroke_is_still_a_round_dot ... ok
+test tess::tests::zero_length_path_renders_a_full_disc ... ok
+test tess::tests::join_coverage_holds_across_the_round_join_threshold ... ok
+test tess::tests::harness_curved_scenes_stroke_vertices_do_not_grow ... ok
+test tess::tests::round_cap_hugs_true_circle_at_100_and_4000_percent ... ok
+test tess::tests::closed_path_seam_is_covered_in_and_out_of_view ... ok
+test tess::round3_tests::round3_seven_point_outer_band ... ok
+test tess::round3_tests::round3_circle_outer_band ... ok
+test tess::tests::thick_curved_stroke_band_is_intact_in_and_out_of_view ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.37s
+
+     Running unittests src/lib.rs (target/debug/deps/varos_text-0b486a3f2ca9cabb)
+
+running 4 tests
+test kashida::tests::visual_space_prefix_matches_quadratic_oracle_with_ties_and_bidi_order ... ok
+test kashida::tests::indexed_candidates_match_join_and_word_oracle ... ok
+test outlines::tests::winding_preserves_glyph_counter ... ok
+test converge::tests::internal_splice_error_rebuilds_instead_of_failing ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/corpus.rs (target/debug/deps/corpus-ebef6f8142f02a22)
+
+running 13 tests
+test ligatures ... ok
+test explicit_direction ... ok
+test joining_controls ... ok
+test mixed_metrics_rotation_limits_and_language ... ok
+test joins ... ok
+test isolates_newlines ... ok
+test style_context ... ok
+test marks ... ok
+test legal_line_breaks_gate ... ok
+test mixed_bidi ... ok
+test wrapping ... ok
+test fallback ... ok
+test geometry_affinity_and_resource_contracts ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/incremental.rs (target/debug/deps/incremental-bd9727593dda8854)
+
+running 10 tests
+test mid_update_cancellation_and_invalid_ranges_never_publish ... ok
+test cancellation_eviction_split_join_and_paint ... ok
+test edits_down_to_empty_and_back ... ok
+test edited_paragraph_cache_matches_cold_and_preserves_neighbors ... ok
+test cancellation_inside_line_fitting_keeps_cache ... ok
+test long_paragraph_counters_prove_reuse ... ok
+test shaped_span_reuse_retains_context_attributes_and_offsets ... ok
+test convergent_edits_with_moving_styles_and_paragraphs ... ok
+test convergent_edits_equal_cold_layout ... ok
+test lookahead_beyond_final_line_end_is_a_dependency has been running for over 60 seconds
+test lookahead_beyond_final_line_end_is_a_dependency ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 466.13s
+
+     Running tests/language.rs (target/debug/deps/language-656b1ef1a904b50c)
+
+running 8 tests
+test real_arabic_font_boundary_matches_context_oracles ... ok
+test language_boundary_context_and_owned_attrs ... ok
+test cosmic_fallback_retry_keeps_run_properties ... ok
+test engine_mixed_language_runs_and_rejection ... ok
+test requested_fallback_preserves_language ... ok
+test common_digits_inherit_paragraph_script_across_bidi_runs ... ok
+test positioned_marks_match_direct_oracle_in_both_paragraph_directions ... ok
+test language_script_oracle_and_cache_alternation ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/path_contract.rs (target/debug/deps/path_contract-7e07fa7c261ad4e6)
+
+running 5 tests
+test malformed_outline_refuses_instead_of_losing_segments ... ok
+test degenerate_and_repeated_contour_closure_is_checked ... ok
+test cubic_close_keeps_incoming_handle_and_winding ... ok
+test rtl_brackets_use_mirrored_glyphs ... ok
+test arabic_ligatures_marks_anchor_conversion_has_pixel_parity ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/production.rs (target/debug/deps/production-0f9e10b61f291d29)
+
+running 4 tests
+test elision_and_bidi_selection_keep_logical_graphemes ... ok
+test font_order_and_script_policy_are_data_driven ... ok
+test byte_fed_identity_and_invalid_ids_are_rejected ... ok
+test labels_obey_entry_payload_lru_and_age_limits ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests/programme.rs (target/debug/deps/programme-db4208b8356d2010)
+
+running 15 tests
+test impossible_single_word_and_invalid_policy_are_explicit ... ok
+test composers_reject_invalid_provider_grapheme_breaks ... ok
+test alignment_modes_and_last_line_contract ... ok
+test discretionary_hyphens_are_measured_rendered_and_source_preserving ... ok
+test source_working_mapping_and_frame_constraints ... ok
+test mixed_size_style_shift_and_empty_caret_follow_composed_metrics ... ok
+test overflowing_discretionary_edge_does_not_hide_a_fitting_whole_word ... ok
+test mark_ink_fits_line_boxes_across_metrics_modes ... ok
+test split_carets_preserve_logical_visual_identity ... ok
+test every_line_is_measured_and_distinct_from_greedy ... ok
+test every_grapheme_has_a_caret_after_wrapping_and_justification ... ok
+test composer_breaks_are_legal_cover_source_and_keep_nbsp ... ok
+test lam_alef_marks_digits_and_latin_unchanged_by_elongation ... ok
+test justification_matrix_two_bundled_arabic_fonts ... ok
+test long_arabic_and_space_heavy_lines_preserve_justification ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 35.27s
+
+     Running tests/wrapping.rs (target/debug/deps/wrapping-c3515c9db306c27d)
+
+running 3 tests
+test local_l1_matches_full_paragraph_oracle ... ok
+test arabic_line_edges_match_direct_shaping_and_refit ... ok
+test legal_units_source_coverage_and_cold_roundtrip ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+   Doc-tests varos_app
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests varos_bridge
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests varos_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests varos_pdf
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests varos_raster
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests varos_render_wgpu
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests varos_text
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

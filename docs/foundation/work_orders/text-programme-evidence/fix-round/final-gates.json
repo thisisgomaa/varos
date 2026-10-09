@@ -1,0 +1,49 @@
+[
+  {
+    "name": "fmt",
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit": 0,
+    "seconds": 3.976
+  },
+  {
+    "name": "workspace-tests-final",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--workspace",
+      "-j",
+      "2",
+      "--no-fail-fast"
+    ],
+    "exit": 0,
+    "seconds": 406.26,
+    "passed": 1533,
+    "failed": 0,
+    "ignored": 15
+  },
+  {
+    "name": "ratchets",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "varos-app",
+      "-j",
+      "2",
+      "ratchet"
+    ],
+    "exit": 0,
+    "seconds": 0.705,
+    "passed": 3,
+    "failed": 0,
+    "ignored": 0
+  }
+]

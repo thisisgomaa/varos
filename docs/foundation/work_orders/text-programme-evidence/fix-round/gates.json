@@ -1,0 +1,145 @@
+[
+  {
+    "name": "fmt",
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit": 0,
+    "seconds": 5.148
+  },
+  {
+    "name": "dependency-directions",
+    "command": [
+      "python3",
+      "../tools/check_dep_directions.py"
+    ],
+    "exit": 0,
+    "seconds": 0.728
+  },
+  {
+    "name": "workspace-tests",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--workspace",
+      "-j",
+      "2",
+      "--no-fail-fast"
+    ],
+    "exit": 0,
+    "seconds": 723.267,
+    "passed": 1533,
+    "failed": 0,
+    "ignored": 15
+  },
+  {
+    "name": "clippy-native",
+    "command": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--workspace",
+      "--all-targets",
+      "-j",
+      "2",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "seconds": 4.16
+  },
+  {
+    "name": "clippy-windows",
+    "command": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--workspace",
+      "--all-targets",
+      "-j",
+      "2",
+      "--target",
+      "x86_64-pc-windows-msvc",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "seconds": 4.074
+  },
+  {
+    "name": "ratchets",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "varos",
+      "-j",
+      "2",
+      "ratchet"
+    ],
+    "exit": 101,
+    "seconds": 0.311
+  },
+  {
+    "name": "bridge-fixtures",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "varos-bridge",
+      "-j",
+      "2",
+      "--test",
+      "contracts"
+    ],
+    "exit": 0,
+    "seconds": 20.468,
+    "passed": 70,
+    "failed": 0,
+    "ignored": 4
+  },
+  {
+    "name": "wasm",
+    "command": [
+      "cargo",
+      "check",
+      "--offline",
+      "-p",
+      "varos-text",
+      "-j",
+      "2",
+      "--target",
+      "wasm32-unknown-unknown"
+    ],
+    "exit": 0,
+    "seconds": 0.746
+  },
+  {
+    "name": "vendor-patches",
+    "command": [
+      "python3",
+      "../tools/check_vendor_patches.py"
+    ],
+    "exit": 2,
+    "seconds": 0.27
+  },
+  {
+    "name": "diff-check",
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0,
+    "seconds": 0.03
+  }
+]
