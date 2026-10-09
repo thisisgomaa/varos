@@ -94,7 +94,7 @@ struct Repeat {
 
 /// First normalize and bound all work, before accessing the allocator/staging editor.
 pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
-    let economy = edit.api == "1.1";
+    let economy = matches!(edit.api.as_str(), "1.1" | "1.2");
     if !economy && (edit.defaults.is_some() || edit.receipt.is_some()) {
         return Err(invalid("defaults and receipt require API 1.1"));
     }
@@ -152,6 +152,9 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
     }
     if !economy && targets > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
+    }
+    if edit.api != "1.2" && out.iter().any(|l| matches!(l.op, Operation::DocumentSetup { .. })) {
+        return Err(Error::new("unsupported", "document_setup requires API 1.2"));
     }
     Ok(out)
 }
@@ -225,7 +228,21 @@ fn walk(
             }
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
-        if !crate::EDIT_VERBS.contains(&verb) {
+        if !crate::EDIT_VERBS.contains(&verb)
+            && ![
+                "document_setup",
+                "clip",
+                "release_clip",
+                "view",
+                "object",
+                "distribute_mode",
+                "distribute_spacing",
+                "anchor_type",
+                "insert_anchor",
+                "delete_anchor",
+            ]
+            .contains(&verb)
+        {
             return Err(Error::new("unsupported", "edit verb is not enabled in this slice"));
         }
         let mut op: Operation = serde_json::from_value(normalized).map_err(|e| invalid(e.to_string()))?;

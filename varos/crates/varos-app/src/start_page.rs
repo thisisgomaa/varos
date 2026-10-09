@@ -33,6 +33,7 @@ use varos_core::board::{PresetId, PRESETS};
 
 use crate::shell::kit::{self, board as kb, Availability, Icon, MenuEntry, MenuLook};
 use crate::shell::tokens as t;
+mod templates;
 use crate::start::{BoardCard, RecoveryRow, StartAction, StartModel, StartView, ThumbKey};
 
 /// How the page sets each kind of text: a type token (lane L1) in the mockup's CSS line box, with the
@@ -499,6 +500,7 @@ pub enum Slot {
     MoreFilters,
     View(StartView),
     Card(String),
+    Template(PathBuf),
 }
 impl Slot {
     /// The row a slot belongs to (←/→ move inside one row).
@@ -510,6 +512,7 @@ impl Slot {
             Slot::Filter(_) | Slot::MoreFilters => (3, ""),
             Slot::View(_) => (4, ""),
             Slot::Card(_) => (5, ""),
+            Slot::Template(_) => (6, ""),
         }
     }
 }
@@ -520,6 +523,7 @@ pub fn tab_order(model: &StartModel, plan: Option<&FilterPlan>) -> Vec<Slot> {
     let mut slots = vec![Slot::New, Slot::Open];
     slots.extend(PRESETS.iter().map(|p| Slot::Preset(p.id)));
     if is_first_launch(model) {
+        slots.extend(model.templates.iter().cloned().map(Slot::Template));
         return slots;
     }
     for r in model.recovery() {
@@ -544,6 +548,7 @@ pub fn tab_order(model: &StartModel, plan: Option<&FilterPlan>) -> Vec<Slot> {
     }
     slots.extend([Slot::View(StartView::Grid), Slot::View(StartView::List)]);
     slots.extend(model.visible_cards().map(|c| Slot::Card(c.key.clone())));
+    slots.extend(model.templates.iter().cloned().map(Slot::Template));
     slots
 }
 
@@ -552,6 +557,7 @@ pub fn activate(slot: &Slot, model: &StartModel) -> Option<StartAction> {
     Some(match slot {
         Slot::New => StartAction::NewBoard,
         Slot::Open => StartAction::Open,
+        Slot::Template(path) => StartAction::OpenTemplate(path.clone()),
         Slot::Preset(p) => StartAction::NewWithPreset(*p),
         Slot::Discard(id) => StartAction::DiscardRecovery(id.clone()),
         Slot::Recover(id) => {
@@ -913,6 +919,7 @@ impl StartPage {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(inner.width(), h), Sense::hover());
             let l = lay.translated(rect.top() - inner.top());
             self.content(ui, &l, &mut f);
+            templates::draw(self, ui, &mut f);
             if moved {
                 if let Some(r) = f.focused_rect {
                     ui.scroll_to_rect(r, None);

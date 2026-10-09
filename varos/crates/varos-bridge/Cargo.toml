@@ -19,3 +19,5 @@ libc = "0.2"
 
 [dev-dependencies]
 png = "0.17"
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = "1"

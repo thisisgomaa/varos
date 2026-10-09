@@ -48,9 +48,45 @@ pub enum HarmonyRule {
     None,
 }
 
+/// Additive export preferences keyed by canonical document identity (path, or untitled session).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ExportPreferences {
+    pub selection_tab: bool,
+    pub list: bool,
+    pub folder: String,
+    pub checked: Vec<bool>,
+    pub artboard_cards: Vec<(String, bool)>,
+    pub selection_cards: Vec<(String, bool)>,
+    pub format: String,
+    pub scale: f32,
+    pub transparent: bool,
+    pub quality: u8,
+    pub advanced: bool,
+}
+impl Default for ExportPreferences {
+    fn default() -> Self {
+        Self {
+            selection_tab: false,
+            list: false,
+            folder: String::new(),
+            checked: vec![],
+            artboard_cards: vec![],
+            selection_cards: vec![],
+            format: "pdf".into(),
+            scale: 1.0,
+            transparent: true,
+            quality: 90,
+            advanced: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Layout {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub exports: std::collections::BTreeMap<String, ExportPreferences>,
     #[serde(default)]
     pub picker: PickerLayout,
     pub tree: serde_json::Value,
@@ -62,6 +98,7 @@ impl Default for Layout {
     fn default() -> Self {
         Self {
             picker: PickerLayout::default(),
+            exports: Default::default(),
             tree: ShellState::standard().layout_value(),
             show_rail: true,
             show_control_bar: true,
@@ -71,7 +108,8 @@ impl Default for Layout {
 
 impl Layout {
     fn valid(&self) -> bool {
-        self.picker.drawer_tab < 3
+        self.exports.values().all(|p| p.scale.is_finite() && p.scale > 0.0 && p.scale <= 64.0 && p.quality <= 100)
+            && self.picker.drawer_tab < 3
             && self.picker.position.is_none_or(|p| p.iter().all(|v| v.is_finite()))
             && ShellState::from_layout_value(self.tree.clone()).is_some()
     }

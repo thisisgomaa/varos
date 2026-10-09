@@ -34,11 +34,20 @@ pub enum ExportScope {
 pub struct PageSpec {
     pub rect: [f32; 4],
     pub background: Option<Rgba>,
+    /// Resolved source-board bleed; bounds/selection pages have no board bleed.
+    pub bleed: f32,
+    /// Canonical document setup edges: top, right, bottom, left.
+    pub bleed_edges: [f32; 4],
 }
 impl PageSpec {
     /// The page an artboard prints as.
     pub fn of_board(ab: &Artboard) -> PageSpec {
-        PageSpec { rect: [ab.x, ab.y, ab.w, ab.h], background: ab.page_color }
+        PageSpec {
+            rect: [ab.x, ab.y, ab.w, ab.h],
+            background: ab.page_color,
+            bleed: ab.bleed.max(0.0),
+            bleed_edges: varos_core::document_setup::bleed(ab),
+        }
     }
 }
 
@@ -261,5 +270,10 @@ fn bounds_page(doc: &Document, reach: Reach) -> Option<PageSpec> {
         return None;
     }
     // a degenerate (zero-width or zero-height) extent still gets a real page, at least 1 pt each way
-    Some(PageSpec { rect: [x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0)], background: None })
+    Some(PageSpec {
+        rect: [x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0)],
+        background: None,
+        bleed: 0.0,
+        bleed_edges: [0.0; 4],
+    })
 }

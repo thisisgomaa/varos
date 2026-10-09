@@ -57,6 +57,9 @@ pub trait Dialogs {
     }
     /// The Open dialog (multi-select). Empty = cancelled.
     fn pick_open(&mut self) -> Vec<PathBuf>;
+    fn pick_template(&mut self, _folder: &Path) -> Option<PathBuf> {
+        self.pick_open().into_iter().next()
+    }
     fn pick_locate(&mut self) -> Option<PathBuf> {
         self.pick_open().into_iter().next()
     }
@@ -105,6 +108,14 @@ pub trait DocStore {
         self.load(path).map(|doc| (doc, None))
     }
     fn save(&mut self, doc: &Document, path: &Path) -> Result<SaveOutcome, String>;
+    fn save_published(
+        &mut self,
+        doc: &Document,
+        path: &Path,
+    ) -> Result<(SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), String> {
+        let outcome = self.save(doc, path)?;
+        Ok((outcome, self.fingerprint(path)))
+    }
     /// Bridge uses a pinned directory on the real disk; in-memory stores reuse their fake writer.
     fn save_guarded(
         &mut self,
@@ -112,14 +123,32 @@ pub trait DocStore {
         path: &Path,
         _expected: Option<&varos_app::storage::durable::Fingerprint>,
         _fresh: bool,
-    ) -> Result<SaveOutcome, varos_bridge::Error> {
-        self.save(doc, path).map_err(|e| varos_bridge::Error::new("io_error", e))
+    ) -> Result<(SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), varos_bridge::Error> {
+        self.save_published(doc, path).map_err(|e| varos_bridge::Error::new("io_error", e))
     }
     fn export_guarded(&mut self, path: &Path, bytes: &[u8]) -> Result<SaveOutcome, varos_bridge::Error> {
         let never = std::sync::atomic::AtomicBool::new(false); // a Bridge export has no Cancel
         self.write_export(path, bytes, &never)
-            .map(|_| SaveOutcome::Durable)
+            .map(|outcome| match outcome {
+                ExportWrite::Unconfirmed(reason) => SaveOutcome::ReplacedUnconfirmed(reason),
+                _ => SaveOutcome::Durable,
+            })
             .map_err(|e| varos_bridge::Error::new("io_error", e))
+    }
+    /// Screens use fresh destinations and preserve the cancellation boundary.
+    fn export_fresh(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<ExportWrite, String> {
+        if self.exists(path) {
+            return Err("Destination appeared during export; nothing replaced.".into());
+        }
+        self.write_export(path, bytes, cancel)
+    }
+    fn export_folder(&mut self, _folder: &Path) -> Result<(), String> {
+        Ok(())
     }
     /// The file's identity: absolute + canonical path (the parent canonicalised for a file that does
     /// not exist yet), plus device/inode on unix.
@@ -159,10 +188,12 @@ pub trait DocStore {
 }
 
 /// How [`DocStore::write_export`] ended without an error.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExportWrite {
     /// The destination holds the PDF (the rename happened: the export is done).
     Written,
+    /// Published, but directory sync failed; the sheet must show the warning.
+    Unconfirmed(String),
     /// Cancelled before the rename: the destination is untouched, the temp removed.
     Cancelled,
 }
@@ -199,7 +230,14 @@ impl Lifecycle<'_> {
     /// Run one command. `AppCommand::Window(_)` is ignored here (host-owned).
     pub fn run(&mut self, cmd: AppCommand) -> Effect {
         match cmd {
-            AppCommand::SetRecoveryEnabled(_)
+            AppCommand::Selection(..)
+            | AppCommand::Object(..)
+            | AppCommand::View(..)
+            | AppCommand::FitAll(_)
+            | AppCommand::SetRecoveryEnabled(_)
+            | AppCommand::TogglePasteRemembersLayers
+            | AppCommand::SetPasteRemembersLayers(_)
+            | AppCommand::SetAutosave(_, _)
             | AppCommand::RetryRecovery(_)
             | AppCommand::Recover(_)
             | AppCommand::DiscardRecovery(_)
@@ -225,6 +263,20 @@ impl Lifecycle<'_> {
             AppCommand::NewWithPreset(preset) => {
                 self.ws.new_untitled_with(varos_core::board::new_board_with_preset(preset));
             }
+            AppCommand::NewTemplate => {
+                if let Some(folder) = varos_app::storage::paths::AppLayout::current().map(|l| l.templates()) {
+                    if let Err(e) = std::fs::create_dir_all(&folder) {
+                        self.dialogs.notice("Templates unavailable", &e.to_string());
+                    } else if let Some(path) = self.dialogs.pick_template(&folder) {
+                        self.open_template(path);
+                    }
+                } else {
+                    self.dialogs.notice("Templates unavailable", "No app data folder is available.");
+                }
+            }
+            AppCommand::OpenTemplate(path) => self.open_template(path),
+            AppCommand::SaveTemplate(id) => self.save_template(id),
+            AppCommand::DocumentSetup(_) | AppCommand::DocumentInfo(_) => {}
             AppCommand::OpenDialog => {
                 let picked = self.dialogs.pick_open();
                 self.open_paths(picked);
@@ -240,8 +292,39 @@ impl Lifecycle<'_> {
             }
             AppCommand::SaveCopy(id) => self.save_copy(id),
             AppCommand::Revert(id) => self.revert(id),
-            AppCommand::ShowExport(_) | AppCommand::ShowExportSelection(_) => {} // host-owned: the Export sheet
-            AppCommand::ExportPdf(id, scope, ticket) => return self.export(id, scope, ticket),
+            AppCommand::ShowExport(_) | AppCommand::ShowExportPdfPreset(_) | AppCommand::ShowExportSelection(_) => {} // host-owned: the Export sheet
+            AppCommand::ExportPdf(id, scope, ticket) => return self.export(id, scope, ticket, Default::default()),
+            AppCommand::ExportScreens(id, jobs) => {
+                let Some(s) = self.ws.get_mut(id) else { return Effect::default() };
+                if !s.exports.is_empty() {
+                    return Effect::default();
+                }
+                let mut effect = Effect::default();
+                for job in &jobs {
+                    s.exports.push(std::time::Instant::now());
+                    effect.exports.push(ExportEvent::Started {
+                        sid: id,
+                        ticket: job.job.ticket,
+                        cancel: job.job.cancel.clone(),
+                    });
+                }
+                for job in jobs {
+                    effect.exports.extend(self.queue(FileJob::Screen(Box::new(job))).exports);
+                }
+                return effect;
+            }
+            AppCommand::ExportPdfOptions(id, scope, ticket, options) => return self.export(id, scope, ticket, options),
+            AppCommand::Print(_) => {} // host-owned
+            AppCommand::AutosaveConfirmation => self.dialogs.notice("Save needs confirmation", "Varos replaced the file but couldn't confirm the disk finished writing. Unsaved changes and recovery copies are kept. Save again to confirm."),
+            AppCommand::AutosaveConflict(id) => match self.dialogs.external_change(&self.name_of(id)) {
+                ExternalChoice::Cancel => {},
+                ExternalChoice::SaveAs => self.start_save(id, None),
+                ExternalChoice::Replace => {
+                    if let Some(path) = self.ws.get(id).and_then(|s| s.path.clone()) {
+                        self.queue_save(id, path);
+                    }
+                }
+            },
             AppCommand::FileDone(done) => return self.file_done(*done),
             AppCommand::CloseDocument(id) => self.close(id),
             AppCommand::CloseAll => self.close_all(),
@@ -258,7 +341,7 @@ impl Lifecycle<'_> {
             AppCommand::ReorderDocument(id, slot) => {
                 self.ws.reorder(id, slot);
             }
-            AppCommand::Window(_) | AppCommand::Bridge(_) => {}
+            AppCommand::Clip(_, _) | AppCommand::Window(_) | AppCommand::Bridge(_) => {}
         }
         Effect::default()
     }
@@ -267,6 +350,37 @@ impl Lifecycle<'_> {
     /// device/inode = an alias) focuses its tab and is never reloaded, even when that tab is dirty.
     /// Otherwise the file is read into a candidate: success → `add_loaded` (which reuses a pristine
     /// active `Untitled`); failure → “Couldn't open …”, and no tab, path, selection or history changes.
+    fn open_template(&mut self, path: PathBuf) {
+        match self.store.load(&path) {
+            Ok(doc) => {
+                self.ws.add_template(doc);
+            }
+            Err(reason) => self.dialogs.open_failed(&file_name(&path), &reason),
+        }
+    }
+    fn save_template(&mut self, id: SessionId) {
+        let Some(folder) = varos_app::storage::paths::AppLayout::current().map(|l| l.templates()) else {
+            self.dialogs.notice("Templates unavailable", "No app data folder is available.");
+            return;
+        };
+        if let Err(e) = std::fs::create_dir_all(&folder) {
+            self.dialogs.notice("Templates unavailable", &e.to_string());
+            return;
+        }
+        let Some(s) = self.ws.get(id).filter(|s| s.saving.is_none()) else {
+            return;
+        };
+        let name = format!("{} template.vrs", s.display_name());
+        let Some(path) = self.dialogs.pick_save(&name, Some(&folder)) else {
+            return;
+        };
+        let dest = folder.join(path.file_name().unwrap_or_default()).with_extension("vrs");
+        if dest != path && self.store.exists(&dest) && !self.dialogs.confirm_replace(&file_name(&dest)) {
+            return;
+        }
+        self.start_copy(id, dest);
+    }
+
     fn open_paths(&mut self, paths: Vec<PathBuf>) {
         for path in paths {
             self.open_one(path, None);
@@ -407,6 +521,9 @@ impl Lifecycle<'_> {
         let Some(dest) = self.prepare_dest(id, target) else {
             return;
         };
+        self.queue_save(id, dest);
+    }
+    fn queue_save(&mut self, id: SessionId, dest: PathBuf) {
         let Some(s) = self.ws.get_mut(id) else {
             return;
         };
@@ -436,6 +553,11 @@ impl Lifecycle<'_> {
     /// A background job finished: apply it to its tab (a closed tab is ignored, a stale ticket too).
     fn file_done(&mut self, done: FileDone) -> Effect {
         match done {
+            FileDone::Template(done) => {
+                crate::template_jobs::complete(done, self.ws);
+                Effect::default()
+            }
+            FileDone::Autosaved(done) => crate::autosave_host::complete(self.ws, *done, std::time::Instant::now()),
             FileDone::Bridge { ticket, copy, result, done } => {
                 crate::bridge_host::file_completed(ticket, result.clone());
                 if let Some(done) = done {
@@ -457,12 +579,15 @@ impl Lifecycle<'_> {
                                     s.untitled = None;
                                     s.save_unconfirmed = true;
                                     s.recovered = None;
-                                    s.source_fingerprint = self.store.fingerprint(&done.dest);
+                                    s.source_fingerprint = done.published;
                                 }
                             }
                         }
                         FileDone::Exported(_) => {}
-                        FileDone::Bridge { .. } | FileDone::CopySaved(_) => unreachable!(),
+                        FileDone::Autosaved(_)
+                        | FileDone::Bridge { .. }
+                        | FileDone::CopySaved(_)
+                        | FileDone::Template(_) => unreachable!(),
                     }
                 } else {
                     let ids: Vec<_> = self.ws.sessions().iter().map(|s| s.id).collect();
@@ -492,13 +617,18 @@ impl Lifecycle<'_> {
         let (id, dest) = (done.sid, done.dest);
         match done.result {
             Ok(SaveOutcome::Durable) => {
-                let key = self.store.key(&dest);
-                let fingerprint = self.store.fingerprint(&dest);
+                let mut key = self.store.key(&dest);
+                let fingerprint = done.published;
+                if let Some(fp) = fingerprint {
+                    key.dev_ino = fp.identity;
+                }
                 let board = BoardSummary::of(&flight.doc); // the snapshot that was written
                 let written = flight.doc.clone(); // the same snapshot renders the Home thumbnail
                 if let Some(s) = self.ws.get_mut(id) {
                     s.mark_saved_snapshot(dest.clone(), key, Arc::unwrap_or_clone(flight.doc));
                     s.source_fingerprint = fingerprint;
+                    s.autosave = Default::default();
+                    s.recovery.retain_after_autosave = false;
                     if flight.follow_up && s.is_dirty_exact() {
                         effect.follow_up_saves.push(id);
                     }
@@ -507,8 +637,11 @@ impl Lifecycle<'_> {
                 self.store.rendered(&dest, written);
             }
             Ok(SaveOutcome::ReplacedUnconfirmed(reason)) => {
-                let key = self.store.key(&dest);
-                let fingerprint = self.store.fingerprint(&dest);
+                let mut key = self.store.key(&dest);
+                let fingerprint = done.published;
+                if let Some(fp) = fingerprint {
+                    key.dev_ino = fp.identity;
+                }
                 if let Some(s) = self.ws.get_mut(id) {
                     s.path = Some(dest.clone());
                     s.key = Some(key);
@@ -516,6 +649,8 @@ impl Lifecycle<'_> {
                     s.save_unconfirmed = true;
                     s.recovered = None;
                     s.source_fingerprint = fingerprint;
+                    s.autosave = Default::default();
+                    s.recovery.retain_after_autosave = false;
                 }
                 self.dialogs.notice("Save needs confirmation", &format!("Saved, but Varos couldn't confirm the disk finished writing. Your document stays open with unsaved changes. Existing recovery copies are kept.\n{reason}"));
             }
@@ -627,7 +762,13 @@ impl Lifecycle<'_> {
     /// Export PDF (the sheet's Export…): plan the pages on a snapshot, ask for the destination with
     /// the Export save panel (`.pdf` forced), refuse an open document's own file, then queue the
     /// pure-PDF job. Nothing about the tab changes — path, checkpoint, dirty state, Recent.
-    fn export(&mut self, id: SessionId, scope: varos_pdf::ExportScope, ticket: u64) -> Effect {
+    fn export(
+        &mut self,
+        id: SessionId,
+        scope: varos_pdf::ExportScope,
+        ticket: u64,
+        options: varos_pdf::PdfOptions,
+    ) -> Effect {
         let Some(s) = self.ws.get(id) else {
             return Effect::default();
         };
@@ -680,7 +821,16 @@ impl Lifecycle<'_> {
         }
         let cancel = CancelFlag::default();
         let started = ExportEvent::Started { sid: id, ticket, cancel: cancel.clone() };
-        let job = ExportJob { sid: id, ticket, dest, doc, plan, replace_confirmed: false, cancel };
+        let job = ExportJob {
+            pdf_options: Box::new(options),
+            sid: id,
+            ticket,
+            dest,
+            doc,
+            plan,
+            replace_confirmed: false,
+            cancel,
+        };
         // inline mode (no worker) lands the result inside `queue`: its events come after `Started`
         let mut effect = Effect { exports: vec![started], ..Effect::default() };
         let landed = self.queue(FileJob::Export(job));
@@ -697,17 +847,24 @@ impl Lifecycle<'_> {
     ///
     /// Slice 0.6: a written PDF is reported as `ExportEvent::Finished` — the Export sheet shows it with
     /// Show in Finder (the host notices it when no sheet does); a cancelled export ends silently.
-    fn export_done(&mut self, done: ExportDone) -> Effect {
+    fn export_done(&mut self, mut done: ExportDone) -> Effect {
         let name = file_name(&done.job.dest);
         let (sid, ticket) = (done.job.sid, done.job.ticket);
         let Some(s) = self.ws.get_mut(sid) else {
-            if done.result == ExportResult::Exported {
-                self.dialogs.notice(&format!("Exported {name}"), "");
+            match &done.result {
+                ExportResult::Exported => self.dialogs.notice(&format!("Exported {name}"), ""),
+                ExportResult::ExportedUnconfirmed(reason) => {
+                    self.dialogs.notice(&format!("Exported {name}; durability unconfirmed"), reason)
+                }
+                _ => {}
             }
             return Effect::default();
         };
         if !s.exports.is_empty() {
             s.exports.remove(0);
+        }
+        if let ExportResult::ExportedUnconfirmed(reason) = &done.result {
+            file_jobs::durability_note(&mut done.report, &done.job.dest, reason);
         }
         let event = match done.result {
             ExportResult::Exported | ExportResult::ExportedUnconfirmed(_) => {
@@ -716,7 +873,14 @@ impl Lifecycle<'_> {
             ExportResult::Cancelled => ExportEvent::Cancelled { sid, ticket },
             ExportResult::Failed(reason) => {
                 let reason = reason.trim().trim_end_matches('.');
-                self.dialogs.notice("Couldn't export PDF.", &format!("{reason}. Your document has not changed."));
+                self.dialogs.notice(
+                    if done.job.dest.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+                        "Couldn't export PDF."
+                    } else {
+                        "Couldn't export."
+                    },
+                    &format!("{reason}. Your document has not changed."),
+                );
                 ExportEvent::Ended { sid, ticket }
             }
             ExportResult::NeedsReplaceConfirm => {
@@ -792,9 +956,12 @@ impl Lifecycle<'_> {
     /// file's inode).
     fn write(&mut self, id: SessionId, dest: &Path) -> Result<SaveOutcome, String> {
         let s = self.ws.get(id).ok_or_else(|| "The document is no longer open.".to_string())?;
-        let outcome = self.store.save(&s.editor.doc, dest)?;
+        let (outcome, published) = self.store.save_published(&s.editor.doc, dest)?;
         let board = BoardSummary::of(&s.editor.doc);
-        let key = self.store.key(dest);
+        let mut key = self.store.key(dest);
+        if let Some(fp) = published {
+            key.dev_ino = fp.identity;
+        }
         if let Some(s) = self.ws.get_mut(id) {
             if outcome == SaveOutcome::Durable {
                 s.mark_saved(dest.to_path_buf(), key);
@@ -805,7 +972,7 @@ impl Lifecycle<'_> {
                 s.save_unconfirmed = true;
                 s.recovered = None; // explicit write adopted this path; uncertainty still forces dirty
             }
-            s.source_fingerprint = self.store.fingerprint(dest);
+            s.source_fingerprint = published;
         }
         if outcome == SaveOutcome::Durable {
             // no shared snapshot exists on this synchronous path: the thumbnail waits for the next
@@ -936,6 +1103,16 @@ mod tests {
     //! prompt) and an in-memory `FakeStore` (per-path load/save failure, aliases, an inode that
     //! changes on every save). No rfd, no file system, no GPU, no EventLoop.
     use super::*;
+    fn no_raster_report() -> varos_core::ExportReport {
+        varos_core::ExportReport {
+            notes: vec![varos_core::ExportNote {
+                kind: "no_raster_content".into(),
+                object_id: None,
+                message: "Image ppi 300: no raster content.".into(),
+            }],
+        }
+    }
+
     use crate::app_command::{OpenOrigin, WindowCmd};
     use crate::workspace::DocumentSession;
     use std::collections::{HashMap, HashSet, VecDeque};
@@ -1236,7 +1413,7 @@ mod tests {
             r.s.put("/d/original.vrs", art([1.0; 4]));
             let id = r.open("/d/original.vrs");
             if dirty {
-                r.ed(id).execute(EditCommand::SetBoardName("changed".into()));
+                r.ed(id).execute_ui(EditCommand::SetBoardName("changed".into()));
             }
             let path = r.get(id).path.clone();
             let key = r.get(id).key.clone();
@@ -1255,7 +1432,13 @@ mod tests {
                 ticket: 7,
                 copy: true,
                 result: varos_bridge::Reply::success(serde_json::json!({"saved":true})),
-                done: Some(Box::new(FileDone::Saved(SaveDone { sid: id, ticket: 7, dest: dest.clone(), result }))),
+                done: Some(Box::new(FileDone::Saved(SaveDone {
+                    sid: id,
+                    ticket: 7,
+                    dest: dest.clone(),
+                    result,
+                    published: None,
+                }))),
             })));
             assert_eq!(r.get(id).path, path);
             assert_eq!(r.get(id).key, key);
@@ -1332,7 +1515,7 @@ mod tests {
             let ab = &s.editor.doc.artboards[0];
             assert_eq!((ab.w, ab.h), (w, h), "{preset:?}");
             assert!(!s.is_dirty_exact() && s.path.is_none(), "{preset:?}: a clean Untitled board");
-            r.ed(id).execute(EditCommand::Undo);
+            r.ed(id).execute_ui(EditCommand::Undo);
             assert_eq!(r.get(id).editor.doc.artboards.len(), 1, "{preset:?}: undo cannot remove the preset page");
         }
         let names = r.names();
@@ -1345,7 +1528,7 @@ mod tests {
         let mut r = Rig::new();
         let id = r.active();
         assert_eq!(r.names(), ["Untitled-1"]);
-        r.ed(id).execute(EditCommand::SetBoardName("شعار / v2".into()));
+        r.ed(id).execute_ui(EditCommand::SetBoardName("شعار / v2".into()));
         assert_eq!(r.names(), ["شعار / v2"], "a named, unsaved board shows its name at once");
         assert_eq!(crate::host::window_title(&r.get(id).display_name(), r.get(id).is_dirty()), "شعار / v2* — Varos");
         r.script([Ans::Pick(None)]);
@@ -1355,7 +1538,7 @@ mod tests {
         r.run(AppCommand::Save(id));
         assert_eq!(r.prompts(), ["save-as شعار - v2.vrs in -"]);
         assert_eq!(r.names(), ["شعار / v2"], "the board name still wins over the file stem");
-        r.ed(id).execute(EditCommand::SetBoardName(String::new()));
+        r.ed(id).execute_ui(EditCommand::SetBoardName(String::new()));
         assert_eq!(r.names(), ["logo"], "no board name → the file stem");
     }
 
@@ -1380,8 +1563,8 @@ mod tests {
         assert_eq!(r.s.recent.entries()[0].name, "Logo");
 
         // an unsaved edit never reaches Recent, not even when the open tab is focused again
-        r.ed(a).execute(EditCommand::SetBoardTags(vec!["draft".into()]));
-        r.ed(a).execute(EditCommand::AddArtboard);
+        r.ed(a).execute_ui(EditCommand::SetBoardTags(vec!["draft".into()]));
+        r.ed(a).execute_ui(EditCommand::AddArtboard);
         r.open("/d/a.vrs");
         assert_eq!(cached(&r), Some(want.clone()), "focusing an open tab keeps the on-disk summary");
 
@@ -1453,9 +1636,9 @@ mod tests {
         let mut r = Rig::new();
         r.s.put("/d/a.vrs", art(RED));
         let a = r.open("/d/a.vrs");
-        r.ed(a).execute(EditCommand::SetBoardName("Written".into()));
+        r.ed(a).execute_ui(EditCommand::SetBoardName("Written".into()));
         let (_, jobs) = r.bg(AppCommand::Save(a));
-        r.ed(a).execute(EditCommand::SetBoardName("Typed after".into())); // while the save is on the worker
+        r.ed(a).execute_ui(EditCommand::SetBoardName("Typed after".into())); // while the save is on the worker
         for job in jobs {
             r.land(job);
         }
@@ -1629,7 +1812,7 @@ mod tests {
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/a.vrs")));
         assert!(s.editor.doc == doc && s.editor.rev == rev && s.editor.objsel == sel);
         assert!(s.is_dirty_exact());
-        r.ed(a).execute(EditCommand::Undo);
+        r.ed(a).execute_ui(EditCommand::Undo);
         assert!(!r.get(a).is_dirty_exact(), "the history is intact: undo still returns to the saved state");
     }
 
@@ -1879,7 +2062,7 @@ mod tests {
         r.run(AppCommand::Save(a));
         draw(r.ed(a), BLUE);
         assert!(r.get(a).is_dirty() && r.ws.tabs()[0].dirty);
-        r.ed(a).execute(EditCommand::Undo);
+        r.ed(a).execute_ui(EditCommand::Undo);
         assert!(!r.get(a).is_dirty() && !r.ws.tabs()[0].dirty, "undo back to the saved content: no dot");
         // …so Close and Quit ask nothing
         assert_eq!(r.run(AppCommand::Quit), Effect { exit: true, ..Effect::default() });
@@ -1906,15 +2089,15 @@ mod tests {
         assert_eq!(r.active(), a);
         assert_eq!(fills(&r.get(a).editor), [Some(RED)], "each tab shows only its own art");
         assert_eq!(fills(&r.get(b).editor), [Some(BLUE)]);
-        r.ed(a).execute(EditCommand::Undo);
+        r.ed(a).execute_ui(EditCommand::Undo);
         assert!(r.get(a).editor.doc.paths.is_empty(), "⌘Z in A undoes A's square");
         assert_eq!(fills(&r.get(b).editor), [Some(BLUE)], "…and only A's");
         assert_eq!(r.get(b).editor.rev, rev_b);
         assert!(!r.get(a).is_dirty_exact() && r.get(b).is_dirty_exact());
         r.run(AppCommand::ActivateDocument(b));
-        r.ed(b).execute(EditCommand::Undo);
+        r.ed(b).execute_ui(EditCommand::Undo);
         assert!(r.get(b).editor.doc.paths.is_empty());
-        r.ed(a).execute(EditCommand::Redo);
+        r.ed(a).execute_ui(EditCommand::Redo);
         assert_eq!(fills(&r.get(a).editor), [Some(RED)], "A's redo stack survived the switches");
     }
 
@@ -2135,7 +2318,7 @@ mod tests {
         {
             let ed = r.ed(a);
             ed.objsel = ed.doc.paths.iter().map(|p| p.id).collect();
-            ed.execute(EditCommand::Copy);
+            ed.execute_ui(EditCommand::Copy);
         }
         r.run(AppCommand::NewBoard);
         let b = r.active();
@@ -2146,7 +2329,7 @@ mod tests {
         assert_eq!(r.prompts(), ["ask Untitled-1"]);
         assert_eq!(r.active(), b);
         assert_eq!(r.get(b).editor.clipboard().len(), 1, "…and survives closing the tab that held it");
-        r.ed(b).execute(EditCommand::Paste { offset: None });
+        r.ed(b).execute_ui(EditCommand::Paste { offset: None });
         assert_eq!(fills(&r.get(b).editor), [Some(RED)], "pasting into the other tab works");
     }
 
@@ -2287,7 +2470,7 @@ mod tests {
         for choice in [ExternalChoice::Cancel, ExternalChoice::SaveAs, ExternalChoice::Replace] {
             let mut r = Rig::new();
             r.s.put("a.vrs", art(RED));
-            r.s.fingerprints.insert(p("a.vrs"), Fingerprint { len: 10, modified: None });
+            r.s.fingerprints.insert(p("a.vrs"), Fingerprint { len: 10, modified: None, ..Default::default() });
             let id = r.open("a.vrs");
             draw(r.ed(id), BLUE);
             // Includes external deletion: an existing fingerprint becomes unavailable.
@@ -2341,6 +2524,107 @@ mod tests {
         jobs.into_iter().next().unwrap()
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn published_baseline_survives_external_replacement_before_completion() {
+        use varos_app::storage::{
+            checksum::new_nonce,
+            durable::{fingerprint, RealFs},
+        };
+        for bridge in [false, true] {
+            let root = std::env::temp_dir().join(format!("published-{}", new_nonce()));
+            std::fs::create_dir(&root).unwrap();
+            let root = root.canonicalize().unwrap();
+            let path = root.join("board.vrs");
+            let doc = art(BLUE);
+            let mut disk = crate::file_ports::DiskStore;
+            disk.save(&doc, &path).unwrap();
+            let mut r = Rig::new();
+            let id = r.ws.add_loaded(doc, path.clone(), disk.key(&path));
+            let expected = disk.fingerprint(&path);
+            r.ws.get_mut(id).unwrap().source_fingerprint = expected;
+            draw(r.ed(id), RED);
+            let ticket = 42;
+            let doc = Arc::new(r.get(id).editor.doc.clone());
+            r.ws.get_mut(id).unwrap().saving = Some(crate::file_jobs::SaveInFlight {
+                ticket,
+                dest: path.clone(),
+                doc: doc.clone(),
+                follow_up: false,
+                started: std::time::Instant::now(),
+            });
+            let mut job = FileJob::Save(crate::file_jobs::SaveJob { sid: id, ticket, dest: path.clone(), doc });
+            if bridge {
+                job = FileJob::Bridge(Box::new(crate::file_jobs::BridgeFileJob {
+                    ticket,
+                    inner: job,
+                    home: root.clone(),
+                    expected: Some((path.clone(), expected)),
+                }));
+            }
+            let done = file_jobs::execute(job, &mut disk);
+            let published = fingerprint(&RealFs, &path);
+            let other = root.join("other.vrs");
+            std::fs::write(&other, b"external replacement").unwrap();
+            std::fs::rename(other, &path).unwrap();
+            Lifecycle { ws: &mut r.ws, dialogs: &mut r.d, store: &mut disk, jobs: None }
+                .run(AppCommand::FileDone(Box::new(done)));
+            assert_eq!(r.get(id).source_fingerprint, published);
+            assert_ne!(published, disk.fingerprint(&path));
+            draw(r.ed(id), BLUE);
+            let gate = Arc::new(varos_app::storage::publication::Gate::default());
+            let t = std::time::Instant::now();
+            let settings = varos_app::storage::settings::Settings::default();
+            crate::autosave_host::observe(&mut r.ws, t, settings, false, &gate);
+            let job = crate::autosave_host::observe(
+                &mut r.ws,
+                t + std::time::Duration::from_secs(120),
+                settings,
+                false,
+                &gate,
+            )
+            .1
+            .unwrap();
+            assert_eq!(job.run().result, Err("conflict".into()));
+            assert_eq!(std::fs::read(&path).unwrap(), b"external replacement");
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn autosave_lifecycle_preserves_configured_recent_file() {
+        use varos_app::storage::checksum::new_nonce;
+        let root = std::env::temp_dir().join(format!("recent-autosave-{}", new_nonce()));
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let path = root.join("board.vrs");
+        let recent = root.join("recent.json");
+        let mut store = crate::recent_files::RecentStore::at(crate::file_ports::DiskStore, Some(recent.clone()));
+        let doc = art(BLUE);
+        store.save(&doc, &path).unwrap();
+        let mut r = Rig::new();
+        let id = r.ws.add_loaded(doc, path.clone(), store.key(&path));
+        r.ws.get_mut(id).unwrap().source_fingerprint = store.fingerprint(&path);
+        store.remember(&path, None, None);
+        let before = std::fs::read(&recent).unwrap();
+        let entries = store.recents.entries().to_vec();
+        draw(r.ed(id), RED);
+        let gate = Arc::new(varos_app::storage::publication::Gate::default());
+        let t = std::time::Instant::now();
+        let settings = varos_app::storage::settings::Settings::default();
+        crate::autosave_host::observe(&mut r.ws, t, settings, false, &gate);
+        let job =
+            crate::autosave_host::observe(&mut r.ws, t + std::time::Duration::from_secs(120), settings, false, &gate)
+                .1
+                .unwrap();
+        Lifecycle { ws: &mut r.ws, dialogs: &mut r.d, store: &mut store, jobs: None }
+            .run(AppCommand::FileDone(Box::new(FileDone::Autosaved(Box::new(job.run())))));
+        assert!(!r.get(id).is_dirty_exact());
+        assert_eq!(store.recents.entries(), entries);
+        assert_eq!(std::fs::read(&recent).unwrap(), before);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn background_save_writes_the_snapshot_taken_at_cmd_s_and_a_later_edit_stays_dirty() {
         let mut r = Rig::new();
@@ -2445,7 +2729,10 @@ mod tests {
         r.s.put("/d/a.vrs", art(BLUE));
         let a = r.open("/d/a.vrs");
         draw(r.ed(a), RED);
-        r.s.fingerprints.insert(p("/d/a.vrs"), varos_app::storage::durable::Fingerprint { len: 1, modified: None });
+        r.s.fingerprints.insert(
+            p("/d/a.vrs"),
+            varos_app::storage::durable::Fingerprint { len: 1, modified: None, ..Default::default() },
+        );
         r.script([Ans::External(ExternalChoice::Cancel)]);
         let (_, jobs) = r.bg(AppCommand::Save(a));
         assert_eq!(r.prompts(), ["external a"]);
@@ -2471,6 +2758,41 @@ mod tests {
     }
 
     #[test]
+    fn unconfirmed_export_reaches_done_with_durability_warning() {
+        let mut r = Rig::new();
+        let sid = two_boards(&mut r, "/d/a.vrs");
+        let doc = r.get(sid).editor.doc.clone();
+        let mut sheet = crate::export_ui::ExportSheet::new(sid, &doc, &std::collections::HashSet::new(), None, false);
+        let ticket = sheet.start().unwrap();
+        sheet.minimal.remaining = 2;
+        for (index, result) in
+            [ExportResult::ExportedUnconfirmed("directory sync failed".into()), ExportResult::Exported]
+                .into_iter()
+                .enumerate()
+        {
+            let job = ExportJob {
+                pdf_options: Default::default(),
+                sid,
+                ticket,
+                dest: p(&format!("/out/{index}.svg")),
+                doc: Arc::new(doc.clone()),
+                plan: varos_pdf::plan_pdf_export(&doc, varos_pdf::ExportScope::AllVisibleArtboards).unwrap(),
+                replace_confirmed: false,
+                cancel: Default::default(),
+            };
+            let (effect, _) = r.bg(AppCommand::FileDone(Box::new(FileDone::Exported(ExportDone {
+                job,
+                result,
+                report: Default::default(),
+            }))));
+            assert!(sheet.on_event(&effect.exports[0]));
+        }
+        let crate::export_ui::Phase::Done { report, .. } = &sheet.phase else { panic!("not done") };
+        assert!(crate::export_ui::report_text(report).unwrap().contains("durability could not be confirmed"));
+        assert_eq!(report.notes.iter().filter(|n| n.kind == "durability").count(), 1);
+    }
+
+    #[test]
     fn export_writes_a_pure_pdf_and_leaves_path_dirty_recents_and_the_vrs_untouched() {
         use varos_pdf::ExportScope;
         let mut r = Rig::new();
@@ -2487,7 +2809,7 @@ mod tests {
         assert!(r.prompts().is_empty(), "the sheet shows the result (the host notices it without one)");
         assert_eq!(
             effect.exports,
-            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/a.pdf"), report: Default::default() }]
+            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/a.pdf"), report: no_raster_report() }]
         );
         let s = r.get(a);
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/a.vrs")), "the path never changes");
@@ -2576,7 +2898,7 @@ mod tests {
         assert_eq!(r.prompts(), ["export a.pdf in /d", "replace-editable old.pdf"]);
         assert_eq!(
             effect.exports,
-            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/old.pdf"), report: Default::default() }]
+            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/old.pdf"), report: no_raster_report() }]
         );
         assert!(!varos_pdf::has_embedded_model(&r.s.exported[&p("/out/old.pdf")]));
     }
@@ -2867,10 +3189,10 @@ mod tests {
         use varos_app::storage::durable::Fingerprint;
         let mut r = Rig::new();
         r.s.put("/d/bridge.vrs", art(RED));
-        let fp = Fingerprint { len: 42, modified: None };
+        let fp = Fingerprint { len: 42, modified: None, ..Default::default() };
         r.s.fingerprints.insert(p("/d/bridge.vrs"), fp);
         let id = r.open("/d/bridge.vrs");
-        r.ed(id).execute(EditCommand::SetBoardName("written".into()));
+        r.ed(id).execute_ui(EditCommand::SetBoardName("written".into()));
         let (_, jobs) = r.bg(AppCommand::Save(id));
         let job = one(jobs);
         let ticket = r.get(id).saving.as_ref().unwrap().ticket;
@@ -2880,7 +3202,7 @@ mod tests {
             home: std::env::temp_dir(),
             expected: Some((p("/d/bridge.vrs"), Some(fp))),
         }));
-        r.ed(id).execute(EditCommand::SetBoardName("later human".into()));
+        r.ed(id).execute_ui(EditCommand::SetBoardName("later human".into()));
         r.land(job);
         assert_eq!(r.s.doc("/d/bridge.vrs").name, "written");
         assert!(r.get(id).is_dirty_exact());
@@ -2888,7 +3210,7 @@ mod tests {
         let (_, jobs) = r.bg(AppCommand::Save(id));
         let inner = one(jobs);
         let ticket = r.get(id).saving.as_ref().unwrap().ticket;
-        r.s.fingerprints.insert(p("/d/bridge.vrs"), Fingerprint { len: 43, modified: None });
+        r.s.fingerprints.insert(p("/d/bridge.vrs"), Fingerprint { len: 43, modified: None, ..Default::default() });
         r.land(FileJob::Bridge(Box::new(BridgeFileJob {
             ticket,
             inner,
@@ -2971,7 +3293,7 @@ mod tests {
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/a.vrs")), "same file, same tab");
         assert!(!s.is_dirty_exact(), "clean after the revert");
         assert_eq!(r.ids(), [a]);
-        r.ed(a).execute(EditCommand::Undo);
+        r.ed(a).execute_ui(EditCommand::Undo);
         assert_eq!(fills(&r.get(a).editor), [Some(RED)], "history starts over: nothing to undo");
         // a file that cannot be read changes nothing
         draw(r.ed(a), BLUE);
@@ -3057,7 +3379,7 @@ mod tests {
         let (effect, _) = r.land(job);
         assert_eq!(
             effect.exports,
-            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/sel.pdf"), report: Default::default() }]
+            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/sel.pdf"), report: no_raster_report() }]
         );
         let pdf = lopdf::Document::load_mem(&r.s.exported[&p("/out/sel.pdf")]).expect("a real PDF");
         assert_eq!(pdf.get_pages().len(), 1);

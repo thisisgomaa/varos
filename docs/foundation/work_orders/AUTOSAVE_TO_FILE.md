@@ -1,4 +1,4 @@
-> **Status:** proposed — slice 1.10 implementation contract; docs only, UI design pending.
+> **Status:** implemented in lane G — provisional UI; owner design review, independent review and native acceptance pending.
 # Autosave to the open file
 
 - Date: 2026-10-09
@@ -102,4 +102,30 @@ Do not show an autosave success for recovery, export or Save a Copy. Coalesce tr
 
 Confirm the proposed interval range and status wording in the later Figma round; default-on and saving into the file are already owner decisions.
 Specify and independently review the publication-permit/disk-coordination mechanism before enabling autosave, especially its residual external-writer race and input latency. These are acceptance gates, not implemented guarantees.
-Verify recovery retention/deduplication against the existing recovery lifecycle before changing clean-session retirement. No code, installation or runtime acceptance is claimed by this document.
+Verify recovery retention/deduplication against the existing recovery lifecycle before changing clean-session retirement. The implementation note below records the branch work; installation and native runtime acceptance are not claimed.
+
+## Implementation note — 2026-10-09, lane G
+
+Owner authorized provisional kit controls tonight, overriding the earlier Figma prerequisite.
+The default is on, 120 seconds; the interval accepts integer seconds from 30 through 1800.
+The event thread owns deadlines and immutable capture; the existing FIFO IO worker owns encoding,
+validation and publication. Recovery is observed first and its in-flight jobs exclude autosave.
+Each event's edit admission shares a mutex with the final rename. Input/menu/Bridge admission
+invalidates the captured permit before mutation. The worker uses try-lock (never waits for input);
+encoding, hashing and sync run outside the admission lock. Within it: parent/leaf identity and
+metadata recheck, then rename. A superseded capture rechecks eligibility after edit admission; IO failures back off at least 30 seconds without shortening a newer edit deadline.
+
+On supported local Unix volumes the existing pinned-directory adapter refuses directory/final
+symlinks, multiply-linked targets, read-only files and changed content (SHA-256), inode or parent.
+Autosave takes a nonblocking advisory directory flock for cooperative writer ownership; inability
+to establish it refuses the write. Windows automatic publication is refused. The app's one worker
+serializes manual/Bridge saves, exports and recovery. Uncooperative external writers can still race
+the final identity/stat check and rename; this is not filesystem compare-and-swap. No absolute
+external-write exclusion or native input latency claim is made. Independent review and native
+latency/long-gesture acceptance remain required before release.
+
+The completion baseline is the temporary file's bytes/identity before publication, not a later
+fingerprint of an unrelated replacement. Autosave completion never calls Recent/thumbnail APIs.
+Recovery's bounded generations survive autosave checkpoints; explicit saves/reverts/clean close
+retain their existing retirement semantics. Launch hides redundant recovery choices only after
+valid decoding and content equality with a stable backing file; copies are not deleted by this check.

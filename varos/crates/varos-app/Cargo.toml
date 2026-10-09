@@ -30,6 +30,7 @@ rfd = "0.15"   # native Save/Open/message dialogs (the 🔖 slice: .vrs on disk)
 egui_tiles = "0.16"                                  # split-tree layout + drag-resize + serde (egui 0.35)
 serde = { version = "1", features = ["derive"] }     # BoxState / PanelId serde — workspaces from day one
 serde_json = "1"
+sha2 = "0.11"
 # Local clock text ("Recovery copy saved at 14:32"). Already in the lock through lopdf with `clock` — no new crate.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # NFC file-name identity for not-yet-existing destinations (FileKey::name_id). Already in the lock.
@@ -45,13 +46,12 @@ libc = "0.2"   # plain fsync fallback when a volume rejects F_FULLFSYNC (storage
 muda = { version = "0.20", default-features = false }
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSGeometry", "NSArray", "NSString", "NSURL"] }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSColor", "NSResponder", "NSView", "NSWindow", "NSCursor", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics", "NSApplication", "NSButton", "NSControl", "NSMenu", "NSMenuItem"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSColor", "NSResponder", "NSView", "NSWindow", "NSCursor", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics", "NSApplication", "NSButton", "NSControl", "NSMenu", "NSMenuItem", "NSPasteboard"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_System_DataExchange", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse"] }
 
 [dev-dependencies]
-sha2 = "0.11"
 # Already locked transitively; inspect actual cmaps rather than egui 0.35 has_glyph false negatives.
 ttf-parser = "0.25.1"
 # Already locked through varos-pdf; tests parse the PDFs the Export path writes (DFS S6).

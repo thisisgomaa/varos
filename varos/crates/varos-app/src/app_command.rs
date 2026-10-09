@@ -50,11 +50,13 @@ pub enum WindowCmd {
 /// Every document-lifecycle request. In S1, Close Window = `Quit` (one window).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppCommand {
+    Clip(SessionId, bool),
     /// Authenticated local attachment; processed on the UI thread through the same FIFO.
     Bridge(Box<varos_bridge::ipc::Pending>),
     /// DFS S6: File ▸ Export ▸ PDF…, the top-bar Export button and the burger's Export… row — show
     /// the Export PDF sheet (page-scope choice) for this tab. Host-owned: it opens the sheet only.
     ShowExport(SessionId),
+    ShowExportPdfPreset(SessionId),
     /// Slice 0.6: File ▸ Export Selection… — the same Export PDF sheet, opened on its Selection scope
     /// (one page fitted to the selected artwork). Host-owned like `ShowExport`.
     ShowExportSelection(SessionId),
@@ -62,12 +64,26 @@ pub enum AppCommand {
     /// background export job (`file_jobs`). Never touches the tab's path, dirty state or Recent.
     /// Slice 0.6: the third field is the sheet's ticket (`file_jobs::next_ticket`), carried by the
     /// job and every `ExportEvent`, so a sheet follows only the export it started.
+    #[allow(dead_code)] // retained legacy PDF command and its lifecycle tests
     ExportPdf(SessionId, varos_pdf::ExportScope, u64),
+    /// Export for Screens: one immutable card/format job per file.
+    ExportScreens(SessionId, Vec<crate::file_jobs::ScreenJob>),
+    ExportPdfOptions(SessionId, varos_pdf::ExportScope, u64, varos_pdf::PdfOptions),
+    Print(SessionId),
     /// A background save / export finished (`file_jobs::FileDone`), applied on the UI thread.
     FileDone(Box<crate::file_jobs::FileDone>),
     /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free
     /// canvas with ZERO artboards (`varos_core::board::new_board`).
+    FitAll(SessionId),
+    View(SessionId, varos_core::editor::view_commands::ViewAction),
+    Selection(SessionId, varos_core::editor::wave::Selection),
+    Object(SessionId, varos_core::editor::wave::ObjectAction),
     NewBoard,
+    DocumentSetup(SessionId),
+    DocumentInfo(SessionId),
+    SaveTemplate(SessionId),
+    NewTemplate,
+    OpenTemplate(PathBuf),
     /// Start's "…or start with an artboard": a fresh, clean `Untitled-N` board with one artboard from
     /// the core preset table (`varos_core::board::new_board_with_preset`). No "Custom…" preset: a
     /// board with no size chosen up front is `NewBoard` (owner 2026-10-06).
@@ -79,6 +95,11 @@ pub enum AppCommand {
     RemoveRecent(PathBuf),
     ClearRecent,
     SetRecoveryEnabled(bool),
+    TogglePasteRemembersLayers,
+    SetPasteRemembersLayers(bool),
+    SetAutosave(bool, u64),
+    AutosaveConflict(SessionId),
+    AutosaveConfirmation,
     RetryRecovery(SessionId),
     /// Restore a recovery copy (Start's Recovered band, the editor's Review panel).
     Recover(String),

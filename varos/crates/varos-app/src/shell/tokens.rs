@@ -633,6 +633,31 @@ pub const PICKER_HARMONY_STRIP_H: f32 = 32.0;
 pub const PICKER_HARMONY_ROW_H: f32 = 28.0;
 pub const PICKER_HARMONY_SWATCH: f32 = 20.0;
 
+/// Width of the Windows command submenu; keeps nested Illustrator labels readable.
+pub const GUIDE_HIT_HALF: f32 = 3.0;
+pub const GUIDE_FIELD_INSET: f32 = 24.0;
+pub const GUIDE_FIELD_PAD: i8 = 6;
+pub const GUIDE_FIELD_W: f32 = 160.0;
+pub const STATUS_ZOOM_W: f32 = 78.0;
+pub const KIT_COMMAND_MENU_W: f32 = 250.0;
+// Export sheet v2 Minimal — owner-approved 600 pt composition.
+pub const EXPORT_SHEET_W: f32 = 600.0;
+pub const EXPORT_LEFT_W: f32 = 300.0;
+pub const EXPORT_CARD_W: f32 = 72.0;
+pub const EXPORT_CARD_H: f32 = 90.0;
+pub const EXPORT_CHECK: f32 = 14.0;
+pub const EXPORT_GRID_H: f32 = 230.0;
+pub const EXPORT_FIELD_W: f32 = 210.0;
+// Phase 1 provisional Document Setup / Info sheets.
+pub const DOC_SHEET_W: f32 = 320.0;
+pub const DOC_SHEET_FIELD_W: f32 = 240.0;
+pub const DOC_SHEET_TOP: f32 = 180.0;
+pub const DOC_INFO_LIST_H: f32 = 180.0;
+pub const BLEED_GUIDE_W: f32 = 1.0;
+
+// Phase 1 document transparency furniture (canvas only).
+pub const DOC_CHECKERBOARD: [[f32; 4]; 2] = [[0.18, 0.18, 0.18, 1.0], [0.24, 0.24, 0.24, 1.0]];
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

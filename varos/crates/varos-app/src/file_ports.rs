@@ -124,6 +124,13 @@ impl Dialogs for RfdDialogs {
             .unwrap_or_default()
     }
 
+    fn pick_template(&mut self, folder: &Path) -> Option<PathBuf> {
+        FileDialog::new()
+            .set_title("New from Template")
+            .set_directory(folder)
+            .add_filter("Varos templates", &["vrs"])
+            .pick_file()
+    }
     fn pick_locate(&mut self) -> Option<PathBuf> {
         FileDialog::new().set_title("Locate Varos Document").add_filter("Varos documents", &["vrs", "pdf"]).pick_file()
     }
@@ -305,17 +312,27 @@ impl DocStore for DiskStore {
     fn save(&mut self, doc: &Document, path: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
         durable_save(&varos_app::storage::durable::RealFs, doc, path, &varos_core::format::Limits::DEFAULT)
     }
+    fn save_published(
+        &mut self,
+        doc: &Document,
+        path: &Path,
+    ) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), String> {
+        durable_save_published(&varos_app::storage::durable::RealFs, doc, path, &varos_core::format::Limits::DEFAULT)
+    }
     fn save_guarded(
         &mut self,
         doc: &Document,
         path: &Path,
         expected: Option<&varos_app::storage::durable::Fingerprint>,
         fresh: bool,
-    ) -> Result<crate::lifecycle::SaveOutcome, varos_bridge::Error> {
+    ) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), varos_bridge::Error>
+    {
         #[cfg(unix)]
         {
             let fs = crate::bridge_fs::Pinned::new(path, expected, fresh).map_err(|e| e.bridge())?;
-            durable_save(&fs, doc, path, &varos_core::format::Limits::DEFAULT).map_err(|_| fs.error())
+            durable_save(&fs, doc, path, &varos_core::format::Limits::DEFAULT)
+                .map(|outcome| (outcome, fs.published()))
+                .map_err(|_| fs.error())
         }
         #[cfg(not(unix))]
         {
@@ -365,6 +382,69 @@ impl DocStore for DiskStore {
     ) -> Result<crate::lifecycle::ExportWrite, String> {
         export_write(&varos_app::storage::durable::RealFs, path, bytes, cancel)
     }
+    fn export_folder(&mut self, folder: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(folder).map_err(|e| e.to_string())
+    }
+    fn export_fresh(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::lifecycle::ExportWrite, String> {
+        #[cfg(unix)]
+        {
+            let canonical = path
+                .parent()
+                .ok_or("Missing export folder.")?
+                .canonicalize()
+                .map_err(|e| e.to_string())?
+                .join(path.file_name().ok_or("Missing filename.")?);
+            let path = canonical.as_path();
+            let fs = crate::bridge_fs::Pinned::new(path, None, true).map_err(|e| e.bridge().reason)?;
+            use varos_app::storage::{
+                checksum::new_nonce,
+                durable::{write_replace_cancellable, WriteError},
+            };
+            match write_replace_cancellable(&fs, path, bytes, &new_nonce(), cancel) {
+                Ok(varos_app::storage::durable::WriteOutcome::Durable) => Ok(crate::lifecycle::ExportWrite::Written),
+                Ok(varos_app::storage::durable::WriteOutcome::ReplacedUnconfirmed(e)) => {
+                    Ok(crate::lifecycle::ExportWrite::Unconfirmed(varos_app::storage::durable::io_reason(&e)))
+                }
+                Err(WriteError::Cancelled) => Ok(crate::lifecycle::ExportWrite::Cancelled),
+                Err(error) => Err(error.reason()),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            // Encode/write into a sibling temp; hard-link publication is exclusive and is the commit boundary.
+            use std::io::Write;
+            use std::sync::atomic::Ordering;
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(crate::lifecycle::ExportWrite::Cancelled);
+            }
+            let parent = path.parent().ok_or("Missing export folder.")?;
+            let temp = parent.join(format!(".varos-export-{}.tmp", varos_app::storage::checksum::new_nonce()));
+            let result = (|| {
+                let mut file =
+                    std::fs::OpenOptions::new().write(true).create_new(true).open(&temp).map_err(|e| e.to_string())?;
+                for chunk in bytes.chunks(64 * 1024) {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Ok(crate::lifecycle::ExportWrite::Cancelled);
+                    }
+                    file.write_all(chunk).map_err(|e| e.to_string())?;
+                }
+                file.sync_all().map_err(|e| e.to_string())?;
+                drop(file);
+                if cancel.load(Ordering::Relaxed) {
+                    return Ok(crate::lifecycle::ExportWrite::Cancelled);
+                }
+                std::fs::hard_link(&temp, path).map_err(|e| e.to_string())?;
+                Ok(crate::lifecycle::ExportWrite::Written)
+            })();
+            let _ = std::fs::remove_file(temp);
+            result
+        }
+    }
     fn read_existing(&mut self, path: &Path) -> Option<Vec<u8>> {
         let meta = std::fs::metadata(path).ok()?;
         if !meta.is_file() || meta.len() > varos_pdf::HAS_MODEL_SCAN_CAP as u64 {
@@ -390,33 +470,45 @@ fn export_write(
         durable::{write_replace_cancellable, WriteError},
     };
     match write_replace_cancellable(fs, path, bytes, &new_nonce(), cancel) {
-        Ok(_) => Ok(ExportWrite::Written),
+        Ok(varos_app::storage::durable::WriteOutcome::Durable) => Ok(ExportWrite::Written),
+        Ok(varos_app::storage::durable::WriteOutcome::ReplacedUnconfirmed(e)) => {
+            Ok(ExportWrite::Unconfirmed(varos_app::storage::durable::io_reason(&e)))
+        }
         Err(WriteError::Cancelled) => Ok(ExportWrite::Cancelled),
         Err(e) => Err(e.reason()),
     }
 }
 
-fn durable_save(
+pub(crate) fn durable_save(
     fs: &dyn varos_app::storage::durable::FsPort,
     doc: &Document,
     path: &Path,
     limits: &varos_core::format::Limits,
 ) -> Result<crate::lifecycle::SaveOutcome, String> {
+    durable_save_published(fs, doc, path, limits).map(|(outcome, _)| outcome)
+}
+fn durable_save_published(
+    fs: &dyn varos_app::storage::durable::FsPort,
+    doc: &Document,
+    path: &Path,
+    limits: &varos_core::format::Limits,
+) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), String> {
     use crate::lifecycle::SaveOutcome;
     use varos_app::storage::{
         checksum::new_nonce,
-        durable::{io_reason, write_replace, WriteOutcome},
+        durable::{io_reason, write_replace_published, WriteOutcome},
     };
     // A1: decided BEFORE anything replaces the file — a save never produces a file Varos later refuses.
     // Cheap: writer-side object/token counts against the reader's own limits; the full reopen decode
     // runs only within 10 % of a limit (`varos_pdf::write_pdf_checked_report`).
     let bytes = varos_pdf::write_pdf_checked(doc, limits).map_err(|e| plain_reason(&e, NOT_WRITTEN))?;
-    match write_replace(fs, path, &bytes, &new_nonce()).map_err(|e| e.reason())? {
+    let mut published = None;
+    match write_replace_published(fs, path, &bytes, &new_nonce(), &mut published).map_err(|e| e.reason())? {
         WriteOutcome::Durable => {
             cleanup_stale_save_temps(fs, path);
-            Ok(SaveOutcome::Durable)
+            Ok((SaveOutcome::Durable, published))
         }
-        WriteOutcome::ReplacedUnconfirmed(e) => Ok(SaveOutcome::ReplacedUnconfirmed(io_reason(&e))),
+        WriteOutcome::ReplacedUnconfirmed(e) => Ok((SaveOutcome::ReplacedUnconfirmed(io_reason(&e)), published)),
     }
 }
 
@@ -867,5 +959,24 @@ mod tests {
         std::fs::create_dir_all(dir.0.join("other")).unwrap();
         assert!(!upper.same_file(&file_key(&dir.0.join("other").join("A.vrs"))));
         assert!(!upper.same_file(&file_key(&dir.0.join("other").join("a.vrs"))));
+    }
+}
+
+#[cfg(test)]
+mod export_durability_tests {
+    #[test]
+    fn directory_sync_failure_keeps_published_bytes_and_warning() {
+        use varos_app::storage::durable::{Fault, FaultFs, Step};
+        let path = std::env::temp_dir().join(format!("export-sync-{}", varos_app::storage::checksum::new_nonce()));
+        let result = super::export_write(
+            &FaultFs::new(vec![Fault::at(Step::SyncDir)]),
+            &path,
+            b"svg bytes",
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(matches!(result, crate::lifecycle::ExportWrite::Unconfirmed(_)));
+        assert_eq!(std::fs::read(&path).unwrap(), b"svg bytes");
+        std::fs::remove_file(path).unwrap();
     }
 }

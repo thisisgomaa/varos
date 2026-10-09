@@ -46,8 +46,11 @@ pub fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Optio
         (KeyCode::KeyS, false, false) => FileCmd::Save,
         (KeyCode::KeyS, true, false) => FileCmd::SaveAs,
         (KeyCode::KeyS, false, true) => FileCmd::SaveCopy,
+        (KeyCode::KeyE, false, true) => FileCmd::Export,
         (KeyCode::KeyW, false, false) => FileCmd::CloseTab,
         (KeyCode::KeyW, false, true) => FileCmd::CloseAll,
+        (KeyCode::KeyP, false, true) => FileCmd::DocumentSetup,
+        (KeyCode::KeyP, false, false) => FileCmd::Print,
         (KeyCode::KeyQ, false, false) => FileCmd::Quit,
         _ => return None,
     })
@@ -69,13 +72,19 @@ pub fn tab_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<AppC
 /// nothing (`None`).
 pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppCommand> {
     Some(match cmd {
+        FileCmd::Print => AppCommand::Print(active?),
         FileCmd::New => AppCommand::NewBoard,
+        FileCmd::DocumentSetup => AppCommand::DocumentSetup(active?),
+        FileCmd::DocumentInfo => AppCommand::DocumentInfo(active?),
+        FileCmd::SaveTemplate => AppCommand::SaveTemplate(active?),
+        FileCmd::NewTemplate => AppCommand::NewTemplate,
         FileCmd::Open => AppCommand::OpenDialog,
         FileCmd::Save => AppCommand::Save(active?),
         FileCmd::SaveAs => AppCommand::SaveAs(active?),
         FileCmd::SaveCopy => AppCommand::SaveCopy(active?),
         FileCmd::Revert => AppCommand::Revert(active?),
         FileCmd::Export => AppCommand::ShowExport(active?),
+        FileCmd::ExportPdfPreset => AppCommand::ShowExportPdfPreset(active?),
         FileCmd::ExportSelection => AppCommand::ShowExportSelection(active?),
         FileCmd::CloseTab => AppCommand::CloseDocument(active?),
         FileCmd::CloseAll => {
@@ -100,6 +109,8 @@ pub fn start_command(action: varos_app::start::StartAction) -> Option<AppCommand
     use varos_app::start::StartAction as A;
     Some(match action {
         A::NewBoard => AppCommand::NewBoard,
+        A::OpenTemplate(path) => AppCommand::OpenTemplate(path),
+        A::NewTemplate => AppCommand::NewTemplate,
         A::NewWithPreset(preset) => AppCommand::NewWithPreset(preset),
         // filter actions are applied to the Start model by the page itself
         A::SetTagFilter(_) | A::SetView(_) => return None,
@@ -232,6 +243,10 @@ pub enum HostAction {
 /// A document action a key or a menu row raises (not a lifecycle command).
 #[derive(Clone, Copy)]
 pub enum DocAction {
+    FitAll,
+    View(varos_core::editor::view_commands::ViewAction),
+    Selection(varos_core::editor::wave::Selection),
+    Object(varos_core::editor::wave::ObjectAction),
     /// A document shortcut key (`main.rs`'s `doc_key`) with the modifiers held when it was pressed.
     Key(KeyCode, Mods),
     /// A View-menu snapping row (formerly the magnet quick-menu's).
@@ -376,6 +391,8 @@ pub fn open_paths_command(paths: Vec<PathBuf>, origin: OpenOrigin) -> Option<App
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuRoute {
+    Selection(varos_core::editor::wave::Selection),
+    Object(varos_core::editor::wave::ObjectAction),
     /// A command for the one dispatch (File rows, Quit, the Window rows).
     App(AppCommand),
     /// A ⌘-row: the keyboard's own shortcut path (handed to a focused text field instead).
@@ -390,6 +407,8 @@ pub enum MenuRoute {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> {
     Some(match cmd {
+        MenuCmd::View(s) => MenuRoute::App(AppCommand::View(active?, s)),
+        MenuCmd::TogglePasteRemembersLayers => MenuRoute::App(AppCommand::TogglePasteRemembersLayers),
         MenuCmd::File(f) => MenuRoute::App(to_app_command(f, active)?),
         MenuCmd::Key(k) => MenuRoute::Key(k),
         MenuCmd::Plain(code) => MenuRoute::Plain(code),
@@ -399,6 +418,8 @@ pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> 
         MenuCmd::ToggleDock => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleDock)),
         MenuCmd::TogglePanel(p) => MenuRoute::App(AppCommand::Window(WindowCmd::TogglePanel(p))),
         MenuCmd::Snap(row) => MenuRoute::Snap(row),
+        MenuCmd::Selection(s) => MenuRoute::Selection(s),
+        MenuCmd::Object(s) => MenuRoute::Object(s),
     })
 }
 
@@ -444,6 +465,9 @@ pub fn route_left_release(pressed_on_canvas: bool, panning: bool, over_panel: bo
 
 /// The Ui side of a lifecycle command (the real `ui::Ui`; a recorder in tests).
 pub trait DocUi {
+    fn queue_app_command(&mut self, _cmd: AppCommand) -> bool {
+        false
+    }
     /// Close every Ui-side edit still open on the outgoing document: the open text / number field
     /// commits (K3), completed colour gestures stay; unaccepted samples cancel. `false` = the field's text does not parse — it keeps the
     /// keyboard and its reason, and a user command must not run ([`waits_for_fields`]).
@@ -522,16 +546,28 @@ pub fn run_lifecycle(
             AppCommand::Save(_)
                 | AppCommand::SaveAs(_)
                 | AppCommand::SaveCopy(_)
+                | AppCommand::SaveTemplate(_)
                 | AppCommand::Revert(_)
                 | AppCommand::ShowExport(_)
+                | AppCommand::ShowExportPdfPreset(_)
                 | AppCommand::ShowExportSelection(_)
                 | AppCommand::ExportPdf(..)
+                | AppCommand::ExportScreens(..)
+                | AppCommand::ExportPdfOptions(..)
+                | AppCommand::Print(_)
         )
     {
         return Ran::default();
     }
     if !ws.on_home() && matches!(cmd, AppCommand::ActivateDocument(id) if ws.active_id() == Some(id)) {
         return Ran::default();
+    }
+    if matches!(&cmd, AppCommand::AutosaveConflict(_) | AppCommand::AutosaveConfirmation)
+        && (ui.field_has_focus()
+            || ui.bridge_preview_active()
+            || ws.sessions().iter().any(|s| crate::autosave_host::editor_busy(&s.editor)))
+    {
+        return Ran { held: true, ..Ran::default() };
     }
     if matches!(&cmd, AppCommand::FileDone(done) if done.is_quiet()) {
         let effect = Lifecycle { ws: &mut *ws, dialogs, store, jobs }.run(cmd);
@@ -580,10 +616,19 @@ fn waits_for_fields(cmd: &AppCommand) -> bool {
         C::Save(_)
             | C::SaveAs(_)
             | C::SaveCopy(_)
+            | C::SaveTemplate(_)
             | C::Revert(_)
             | C::ShowExport(_)
+            | C::ShowExportPdfPreset(_)
             | C::ShowExportSelection(_)
             | C::ExportPdf(..)
+            | C::ExportScreens(..)
+            | C::NewTemplate
+            | C::OpenTemplate(_)
+            | C::DocumentSetup(_)
+            | C::DocumentInfo(_)
+            | C::ExportPdfOptions(..)
+            | C::Print(_)
             | C::NewBoard
             | C::NewWithPreset(_)
             | C::Home
@@ -652,7 +697,11 @@ impl FileJobs for NoWorker {
 pub fn save_barrier(cmd: &AppCommand, ws: &Workspace) -> Vec<SessionId> {
     let saving = |id: SessionId| ws.get(id).is_some_and(|s| s.saving.is_some());
     match cmd {
-        AppCommand::CloseDocument(id) | AppCommand::SaveAs(id) | AppCommand::SaveCopy(id) | AppCommand::Revert(id)
+        AppCommand::CloseDocument(id)
+        | AppCommand::SaveAs(id)
+        | AppCommand::SaveCopy(id)
+        | AppCommand::SaveTemplate(id)
+        | AppCommand::Revert(id)
             if saving(*id) =>
         {
             vec![*id]
@@ -942,7 +991,7 @@ mod tests {
         let mut ws = Workspace::new();
         ws.new_untitled();
         let s = ws.active_mut().unwrap();
-        s.editor.execute(EditCommand::AddArtboard);
+        s.editor.execute_ui(EditCommand::AddArtboard);
         assert_eq!(window_title(&s.display_name(), s.is_dirty()), "Untitled-2* — Varos");
     }
 
@@ -989,8 +1038,8 @@ mod tests {
             ed.doc.paths.push(line(1));
             ed.doc.sync_tree();
             ed.objsel.insert(1);
-            ed.execute(EditCommand::PickerBegin);
-            ed.execute(EditCommand::PickerLivePaint { target: PaintTarget::Stroke, color: [0.0, 0.0, 1.0, 1.0] });
+            ed.execute_ui(EditCommand::PickerBegin);
+            ed.execute_ui(EditCommand::PickerLivePaint { target: PaintTarget::Stroke, color: [0.0, 0.0, 1.0, 1.0] });
             ed
         };
         let stroke = |ed: &Editor| ed.doc.paths[0].stroke.solid();
@@ -999,12 +1048,12 @@ mod tests {
         if let LeftRelease::Canvas { .. } = route_left_release(false, false, true) {
             ed.pointer_up();
         }
-        ed.execute(EditCommand::PickerCancel);
+        ed.execute_ui(EditCommand::PickerCancel);
         assert_eq!(stroke(&ed), Some(red), "Cancel reverts the live colour");
         // the old routing (every release → pointer_up) is what broke it
         let mut ed = setup();
         ed.pointer_up();
-        ed.execute(EditCommand::PickerCancel);
+        ed.execute_ui(EditCommand::PickerCancel);
         assert_ne!(stroke(&ed), Some(red), "premise: a stray pointer_up ends the picker session");
     }
 
@@ -1148,8 +1197,14 @@ mod tests {
         let mut ws = Workspace::new();
         let first = ws.active_id().unwrap();
         let mut ui = FakeUi { invalid_field: true, ..FakeUi::default() };
-        for cmd in [AppCommand::NewBoard, AppCommand::Quit, AppCommand::CloseDocument(first), AppCommand::ActivateNext]
-        {
+        for cmd in [
+            AppCommand::NewBoard,
+            AppCommand::Quit,
+            AppCommand::CloseDocument(first),
+            AppCommand::ActivateNext,
+            AppCommand::Print(first),
+            AppCommand::ExportPdfOptions(first, varos_pdf::ExportScope::AllVisibleArtboards, 1, Default::default()),
+        ] {
             assert_eq!(run(&mut ws, &mut ui, cmd), Ran { held: true, ..Ran::default() }, "held, did not run");
         }
         assert_eq!(ws.active_id(), Some(first), "no tab was opened, closed or switched");
@@ -1236,6 +1291,10 @@ mod tests {
                 HostAction::App(c) => format!("{c:?}"),
                 HostAction::Doc(DocAction::Key(code, _)) => format!("Key({code:?})"),
                 HostAction::Doc(DocAction::Snap(row)) => format!("Snap({row:?})"),
+                HostAction::Doc(DocAction::Selection(s)) => format!("Selection({s:?})"),
+                HostAction::Doc(DocAction::FitAll) => "FitAll".into(),
+                HostAction::Doc(DocAction::View(s)) => format!("View({s:?})"),
+                HostAction::Doc(DocAction::Object(s)) => format!("Object({s:?})"),
             })
             .collect()
     }
@@ -1480,13 +1539,13 @@ mod background_tests {
         fn saved_tab(&mut self, name: &str) -> SessionId {
             let id = self.ws.new_untitled();
             let s = self.ws.get_mut(id).unwrap();
-            s.editor.execute(EditCommand::AddArtboard);
+            s.editor.execute_ui(EditCommand::AddArtboard);
             s.mark_saved(PathBuf::from(name), FileKey { path: PathBuf::from(name), dev_ino: None, name_id: None });
-            s.editor.execute(EditCommand::AddArtboard);
+            s.editor.execute_ui(EditCommand::AddArtboard);
             id
         }
         fn edit(&mut self, id: SessionId) {
-            self.ws.get_mut(id).unwrap().editor.execute(EditCommand::AddArtboard);
+            self.ws.get_mut(id).unwrap().editor.execute_ui(EditCommand::AddArtboard);
         }
         fn log(&self) -> Vec<String> {
             std::mem::take(&mut *self.log.borrow_mut())
@@ -1717,6 +1776,7 @@ mod background_tests {
         };
         let done = || {
             let job = ExportJob {
+                pdf_options: Default::default(),
                 sid: a,
                 dest: PathBuf::from("/out/a.pdf"),
                 doc: doc.clone(),
