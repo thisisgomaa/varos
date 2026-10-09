@@ -22,7 +22,7 @@ fn next_version_pdf_fixture_refuses_before_typed_decode() {
     let bytes = include_bytes!("../../varos-core/tests/fixtures/text_next/refuse_newer.pdf");
     assert!(matches!(
         varos_pdf::load_vrs_bytes(bytes, &Limits::DEFAULT),
-        Err(varos_core::format::LoadError::NewerVersion { found: 7, supported: 6 })
+        Err(varos_core::format::LoadError::NewerVersion { found: 9, supported: 8 })
     ));
 }
 

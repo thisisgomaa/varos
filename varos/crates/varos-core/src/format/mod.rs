@@ -19,7 +19,7 @@ pub mod validate;
 
 pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
-pub use migrate::{migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5};
+pub use migrate::{migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v8};
 pub use structure::check_structure;
 pub use validate::validate;
 
@@ -31,8 +31,12 @@ use std::path::Path;
 /// The format this build writes (the wrapper key `varos` and the PDF catalog's `/VAROS_SchemaVersion`).
 /// 3 (2026-10-04): board metadata — `doc.name`, `doc.description`, `doc.tags` (ADR-0008 amendment).
 /// 4 (2026-10-07): stable artboard ids — `doc.artboards[].id` (ADR-0008 amendment, Bridge slice 3).
-// ---- Lane G: next writer version; integrator assigns merge-order number ----
-pub const TEXT_FORMAT_VERSION: u32 = 6;
+/// 8 (2026-10-09): editable text — `doc.text_boxes`, `NodeKind::Text` (wave-2 text lane). Pinned at
+/// integration so files saved before wave-2 stage 2 lands stay valid: 6 is reserved for images and 7
+/// for gradients (both optional keys with defaults), 9 for Live Corners; this build has neither 6 nor 7.
+pub const TEXT_FORMAT_VERSION: u32 = 8;
+/// The last format before editable text (stroke styles, 2026-10-08).
+pub const PRE_TEXT_FORMAT_VERSION: u32 = 5;
 pub const FORMAT_VERSION: u32 = TEXT_FORMAT_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
