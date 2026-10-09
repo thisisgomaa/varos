@@ -114,6 +114,8 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
 /// What a clicked item does — each one an EXISTING path in the host.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MenuCmd {
+    // ---- Lane G ----
+    Release(crate::release_ui::DesktopAction),
     ImageSheet(crate::image_ui::SheetKind),
     // ---- Lane C ----
     LaneC(&'static str),
@@ -242,6 +244,8 @@ fn app_rows() -> Vec<Entry> {
     use KeyCode as K;
     vec![
         Entry::Native(Native::About),
+        // ---- Lane G ----
+        item("app.updates", "Check for Updates…", None, MenuCmd::Release(crate::release_ui::DesktopAction::Check)),
         item(
             "app.preferences",
             "Preferences…",

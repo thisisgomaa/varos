@@ -50,6 +50,8 @@ pub enum WindowCmd {
 /// Every document-lifecycle request. In S1, Close Window = `Quit` (one window).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppCommand {
+    // ---- Lane G ----
+    Release(crate::release_ui::DesktopAction),
     // ---- w2-images ----
     ImageWorkflow(SessionId, crate::image_workflows::Action),
     PlaceDialog(SessionId),

@@ -66,6 +66,8 @@ mod print_job;
 mod quicklook;
 mod recent_files;
 mod recovery_host;
+// ---- Lane G ----
+mod release_ui;
 mod shortcut_editor;
 mod shortcuts;
 mod single_instance;
@@ -889,6 +891,11 @@ fn dispatch(
             }
             host::Ran::default()
         }
+        // ---- Lane G ----
+        host::HostAction::App(AppCommand::Release(a)) => {
+            gui.release.handle(a, &gui.accessibility_context());
+            host::Ran { ran: true, ..Default::default() }
+        }
         host::HostAction::App(AppCommand::Phase9(a)) => {
             phase9_host::desktop(a, gui, ws.document_target().is_some());
             host::Ran::default()
@@ -1456,7 +1463,14 @@ fn main() {
         varos_app::storage::paths::AppLayout::current().map(|p| p.shell_layout()),
         std::env::var("VAROS_RESET_LAYOUT").as_deref() == Ok("1"),
     );
-    let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
+    let mut gui = ui::Ui::new(&window);
+    // ---- Lane G: async accessibility/update completions wake Wait without idle polling ----
+    let release_proxy = event_loop.create_proxy();
+    gui.accessibility_context().set_request_repaint_callback(move |info| {
+        if info.delay.is_zero() {
+            let _ = release_proxy.send_event(());
+        }
+    });
     gui.phase9.gpu_effective.clone_from(&renderer.adapter_description);
     gui.restore_shell_layout(shell_layout);
     if let Some(index) = store.thumb_index() {
@@ -1993,6 +2007,10 @@ fn main() {
                 // background result `observe` picked up only needs one more pass (`turn_now`, no frame)
                 if pending.has_new() {
                     redraw!("queue");
+                }
+                // ---- Lane G ----
+                if gui.accessibility_context().has_requested_repaint() {
+                    redraw!("accessibility-update");
                 }
                 let turn_now = recovery.has_file_done();
                 // "Finishing save of “name”…" while a command waits for it; else "Saving “name”…" /

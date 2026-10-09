@@ -82,6 +82,10 @@ impl SnapshotJob {
 }
 /// Only the desktop host supplies owning-thread mutable access. No transport knows an Editor.
 pub trait Host {
+    // ---- Lane G ----
+    fn release(&mut self, _v: &crate::release::Request) -> Result<Reply, Error> {
+        Err(Error::new("unsupported_host", "desktop release surface unavailable"))
+    }
     fn shortcuts(&mut self, _v: &crate::application::ShortcutsRequest) -> Result<Reply, Error> {
         Err(Error::new("unsupported", "host has no shortcut writer"))
     }
@@ -420,6 +424,8 @@ impl Service {
             return Reply::failure(Error::new("unsupported", "import requires API 1.2"));
         }
         if [
+            // ---- Lane G ----
+            "release",
             "shortcuts",
             "command_index",
             "help",
@@ -510,6 +516,8 @@ impl Service {
                 }
             }
             match req {
+                // ---- Lane G ----
+                Request::Release(v) => crate::release::dispatch(host, v),
                 Request::Help(v) => host.help(v),
                 Request::Preferences(v) => host.preferences(v),
                 Request::Shortcuts(v) => host.shortcuts(v),
