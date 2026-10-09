@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 # The desktop shell (winit) + glue. Later: Tauri drops in here behind the same seam.
 [dependencies]
+varos-text-layout = { path = "../varos-text-layout" }
 varos-import = { path = "../varos-import" }
 varos-text = { path = "../varos-text" }
 varos-bridge = { path = "../varos-bridge" }

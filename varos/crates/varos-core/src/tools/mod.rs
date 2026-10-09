@@ -24,7 +24,7 @@ pub fn get(kind: ToolKind) -> &'static dyn Tool {
         ToolKind::Pen => &pen::Pen,
         ToolKind::Direct => &direct::Direct,
         ToolKind::Object | ToolKind::FreeTransform => &object::Object,
-        ToolKind::Hand | ToolKind::Zoom => &object::Object, // view gestures are owned by the app
+        ToolKind::Text | ToolKind::Hand | ToolKind::Zoom => &object::Object, // view gestures are owned by the app
         ToolKind::Lasso => &anchor_edit::Lasso,
         ToolKind::AddAnchor => &anchor_edit::Add,
         ToolKind::DeleteAnchor => &anchor_edit::Delete,

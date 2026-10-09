@@ -159,6 +159,10 @@ pub fn export_svg_files_with_report(
     cancel: &AtomicBool,
 ) -> Result<(Vec<SvgFile>, crate::ExportReport), ExportError> {
     cancelled(cancel)?;
+    // ---- Lane G ----
+    if !doc.text_boxes.is_empty() {
+        return Err(ExportError::InvalidDocument("text needs the text-layout export adapter".into()));
+    }
     check_document(doc)?;
     if plan.pages.is_empty() {
         return Err(ExportError::NothingToExport);

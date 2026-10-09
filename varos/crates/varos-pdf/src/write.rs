@@ -193,6 +193,14 @@ pub(crate) fn write_pages_counted(
     model: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<(Vec<u8>, usize), ExportError> {
+    // ---- Lane G: model blob stays authored; only page appearance is outlined ----
+    let outlined;
+    let doc = if doc.text_boxes.is_empty() {
+        doc
+    } else {
+        outlined = varos_text_layout::outline_document(doc).map_err(ExportError::InvalidDocument)?;
+        &outlined
+    };
     let mut stroke_budget = varos_core::stroke::evaluate::StrokeBudget::default();
     for p in &doc.paths {
         if !p.stroke_style.is_default() {

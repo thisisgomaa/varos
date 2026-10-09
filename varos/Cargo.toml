@@ -3,7 +3,7 @@
 [workspace]
 resolver = "2"
 exclude = ["spikes/text-p1"]
-members = ["crates/varos-import", "crates/varos-text", "crates/varos-core", "crates/varos-render-wgpu", "crates/varos-app", "crates/varos-pdf", "crates/varos-raster", "crates/varos-cli", "crates/varos-bridge"]
+members = ["crates/varos-text-layout", "crates/varos-import", "crates/varos-text", "crates/varos-core", "crates/varos-render-wgpu", "crates/varos-app", "crates/varos-pdf", "crates/varos-raster", "crates/varos-cli", "crates/varos-bridge"]
 
 [profile.dev]
 debug = 0           # lighter/faster build loop (we judge feel, not step-debug)

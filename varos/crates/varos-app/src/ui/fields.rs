@@ -420,7 +420,8 @@ impl crate::host::DocUi for crate::ui::Ui {
         }
     }
     fn bridge_preview_active(&self) -> bool {
-        self.color_panel.as_ref().is_some_and(|m| m.gesture_active())
+        self.text_tool.session.is_some()
+            || self.color_panel.as_ref().is_some_and(|m| m.gesture_active())
             || self.lay_drag.is_some()
             || self.tab_drag_active()
             || self.ctx.input(|i| i.pointer.any_down())

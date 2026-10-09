@@ -201,6 +201,10 @@ pub(crate) fn apply_design_op(
     affected: &mut BTreeSet<String>,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<u32>, Error> {
+    // ---- Lane G ----
+    if crate::text::apply(ed, op, locals, affected)? {
+        return Ok(None);
+    }
     if op.slice4a() {
         let mut resolved = op.clone();
         let ids = match &mut resolved {

@@ -12,7 +12,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{Pt, View};
-use varos_core::scene::{build_scene_in_view_styled, scene_signature, SceneStyle};
+use varos_core::scene::{scene_signature, SceneStyle};
+// ---- Lane G ----
+mod text_product;
 use varos_core::EditCommand;
 use varos_render_wgpu::Renderer;
 #[cfg(windows)]
@@ -165,6 +167,7 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
     }
     let idle = matches!(ed.drag, Drag::None); // hover badges only between gestures
     match ed.eff_tool() {
+        ToolKind::Text => CK::CrossRect,
         ToolKind::Object if !idle => CK::Select, // marquee / guide drag
         ToolKind::Object => match ed.transform_hit(world) {
             Some(TfHit::Scale(i)) => resize_ck(i, ed.obj_angle),
@@ -264,6 +267,7 @@ fn rotate_ck(corner: u8, angle: f32) -> CK {
 /// The control bar's idle label for the current tool (`ui.rs`).
 fn tool_name(t: ToolKind) -> &'static str {
     match t {
+        ToolKind::Text => "Type (T)",
         ToolKind::Pen => "Pen (P)",
         ToolKind::Direct => "Direct Select (A)",
         ToolKind::Object => "Select (V)",
@@ -376,6 +380,7 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
     }
     let s = if shift { 10.0 } else { 1.0 };
     match code {
+        "KeyT" => ed.set_tool(ToolKind::Text),
         "KeyV" => ed.set_tool(ToolKind::Object),
         "KeyA" => ed.set_tool(ToolKind::Direct),
         "KeyP" => ed.set_tool(ToolKind::Pen),
@@ -1345,7 +1350,7 @@ fn main() {
             if initial_home {
                 renderer.render_ui(&Default::default(), view, &jobs, &tdelta, &screen);
             } else {
-                let world = build_scene_in_view_styled(
+                let world = gui.text_tool.scene(
                     ed,
                     view,
                     [sz0.width, sz0.height],
@@ -1848,6 +1853,11 @@ fn main() {
                 #[cfg(target_os = "macos")] // the File ▸ Revert row's state (slice 0.6), read before the frame
                 let can_revert = lifecycle::can_revert(s);
                 let (ed, view) = (&mut s.editor, &mut s.view);
+                // ---- Lane G: egui receives text input, canvas tools do not receive it twice ----
+                if gui.text_tool.owns_native(&event, ed, *view, screen_cursor, over_panel, gui.text_field_focused()) {
+                    redraw!("text-input");
+                    return;
+                }
                 if egui_consumed {
                     redraw!("egui-consumed");
                 }
@@ -2268,11 +2278,12 @@ fn main() {
                             // keyed by WHICH tab too: equal signatures of two tabs must never share art
                             let signature = host::scene_key(s.id, scene_signature(ed, *view, [psz.width, psz.height]));
                             let scene_start = Instant::now();
+                            let signature = signature.wrapping_add(gui.text_tool.generation.rotate_left(17));
                             let cache_hit = last_scene_signature == Some(signature);
                             let rendered = if cache_hit {
                                 renderer.render_ui_cached(&jobs, &tdelta, &screen)
                             } else {
-                                let world = build_scene_in_view_styled(
+                                let world = gui.text_tool.scene(
                                     ed,
                                     *view,
                                     [psz.width, psz.height],

@@ -1,0 +1,84 @@
+%PDF-1.7
+%€€€€
+1 0 obj
+<</Type/Catalog/Pages 2 0 R/Names<</EmbeddedFiles<</Names[(model.varos.json) 4 0 R]>>>>/AF[4 0 R]/VAROS_Model 3 0 R/VAROS_SchemaVersion 7>>
+endobj
+2 0 obj
+<</Type/Pages/Kids[10 0 R]/Count 1>>
+endobj
+3 0 obj
+<</Length 20/Type/EmbeddedFile/Subtype/application#2Fjson>>stream
+{"varos":7,"doc":42}
+endstream 
+endobj
+4 0 obj
+<</Type/Filespec/F(model.varos.json)/UF(model.varos.json)/EF<</F 3 0 R>>/AFRelationship/Source/Desc(Varos editable model (source of truth))>>
+endobj
+5 0 obj
+<</Type/ExtGState/ca 1>>
+endobj
+6 0 obj
+<</Type/ExtGState/CA 0.7>>
+endobj
+7 0 obj
+<</Length 192/Type/XObject/Subtype/Form/BBox[18 978 122 1062]/Group<</Type/Group/S/Transparency/I true/K true>>/Resources<</ExtGState<</Gf 5 0 R/Gk 6 0 R>>>>>>stream
+1 J
+1 j
+q
+/Gf gs
+0.5 0.7 0.9 rg
+20 1060 m
+20 1060 120 1060 120 1060 c
+120 1060 120 980 120 980 c
+f*
+Q
+q
+/Gk gs
+0 0 0 RG
+4 w
+20 1060 m
+20 1060 120 1060 120 1060 c
+120 1060 120 980 120 980 c
+S
+Q
+endstream 
+endobj
+8 0 obj
+<</Type/ExtGState/ca 0.8/CA 0.8>>
+endobj
+9 0 obj
+<</Length 60>>stream
+1 J
+1 j
+q
+1 1 1 rg
+0 0 1080 1080 re
+f*
+Q
+q
+/GS0 gs
+/Fx0 Do
+Q
+endstream 
+endobj
+10 0 obj
+<</Type/Page/Parent 2 0 R/MediaBox[0 0 1080 1080]/Contents 9 0 R/Resources<</ExtGState<</GS0 8 0 R>>/XObject<</Fx0 7 0 R>>>>>>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000015 00000 n 
+0000000170 00000 n 
+0000000222 00000 n 
+0000000335 00000 n 
+0000000492 00000 n 
+0000000532 00000 n 
+0000000574 00000 n 
+0000000959 00000 n 
+0000001008 00000 n 
+0000001116 00000 n 
+trailer
+<</Size 11/Root 1 0 R>>
+startxref
+1259
+%%EOF

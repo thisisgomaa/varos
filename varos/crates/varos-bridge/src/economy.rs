@@ -170,7 +170,11 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
     if !economy && targets > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
     }
-    if edit.api != "1.2" && out.iter().any(|l| matches!(l.op, Operation::DocumentSetup { .. })) {
+    if edit.api != "1.2"
+        && out.iter().any(|l| {
+            matches!(l.op, Operation::DocumentSetup { .. } | Operation::AddText { .. } | Operation::SetText { .. })
+        })
+    {
         return Err(Error::new("unsupported", "document_setup requires API 1.2"));
     }
     Ok(out)
@@ -261,7 +265,7 @@ fn walk(
             return Err(Error::new("unsupported", "stroke_style requires explicit API 1.2"));
         }
         if !crate::EDIT_VERBS.contains(&verb)
-            && !(api == "1.2" && verb == "set_stroke_style")
+            && !(api == "1.2" && ["set_stroke_style", "add_text", "set_text"].contains(&verb))
             && !(construction && (crate::CONSTRUCTION_VERBS.contains(&verb) || verb == "trace_rgba"))
             && !(api == "1.2"
                 && ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"].contains(&verb))
@@ -336,9 +340,9 @@ pub(crate) fn preflight_targets(doc: &varos_core::model::Document, leaves: &[Lea
     for (i, leaf) in leaves.iter().enumerate() {
         let result = (|| {
             let (local, creation, parent) = match &leaf.op {
-                Operation::AddShape { local, parent, .. } | Operation::AddPath { local, parent, .. } => {
-                    (local, true, parent.clone())
-                }
+                Operation::AddText { local, parent, .. }
+                | Operation::AddShape { local, parent, .. }
+                | Operation::AddPath { local, parent, .. } => (local, true, parent.clone()),
                 Operation::Group { local, .. }
                 | Operation::AddArtboard { local, .. }
                 | Operation::DuplicateArtboard { local, .. } => (local, false, None),

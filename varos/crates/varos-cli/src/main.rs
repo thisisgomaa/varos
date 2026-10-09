@@ -15,7 +15,11 @@ use varos_core::{
 
 // The only CLI verb table. No desktop binary names or UI routing are changed.
 mod trace;
+// ---- Lane G ----
+mod text;
 const VERBS: &[&str] = &[
+    "add-text",
+    "set-text",
     "trace",
     "import-svg",
     "describe",
@@ -222,6 +226,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("unknown subcommand {verb}; expected {}", VERBS.join(", ")).into());
     }
     match verb.as_str() {
+        "add-text" | "set-text" => text::run(&verb, args).map_err(Into::into),
         "trace" => trace::run(args).map_err(Into::into),
         "import-svg" => {
             let a = parse(args, &["--out"], 1)?;

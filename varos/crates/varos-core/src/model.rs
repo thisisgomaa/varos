@@ -3,6 +3,7 @@
 
 use crate::geom::*;
 pub use crate::stroke::{ArrowAlign, ArrowHead, StrokeAlign, StrokeArrows, StrokeCap, StrokeJoin, StrokeStyle};
+use crate::text::TextBox;
 use crate::units::DocUnits;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -282,6 +283,8 @@ pub enum NodeKind {
     Layer,
     Group,
     Path(u32),
+    // ---- Lane G: text data ----
+    Text(u32),
 }
 
 /// Where a dragged row lands relative to the target row (the 3-zone drag model).
@@ -594,6 +597,9 @@ pub struct Document {
     /// Tags: clean, case-insensitively unique, order kept (`board::normalize_tags`).
     #[serde(default)]
     pub tags: Vec<String>,
+    // ---- Lane G: text data ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_boxes: Vec<TextBox>,
     pub paths: Vec<Path>,
     /// LEGACY registry (pre-tree files). Deserialized for compatibility, converted by
     /// `migrate_legacy()`, then stays empty. New code never writes it.
@@ -657,6 +663,7 @@ impl Default for Document {
             name: String::new(),
             description: String::new(),
             tags: vec![],
+            text_boxes: vec![],
             paths: vec![],
             groups: vec![],
             group_of: HashMap::new(),
@@ -727,6 +734,7 @@ impl Document {
             description,
             tags,
             paths,
+            text_boxes,
             groups,
             group_of,
             nodes,
@@ -747,7 +755,8 @@ impl Document {
         // the unit settings split in two: ppi is content, the display unit a preference
         let DocUnits { ppi, display: _ } = *units;
         // cheap, discriminating fields first
-        paths.len() == other.paths.len()
+        text_boxes == &other.text_boxes
+            && paths.len() == other.paths.len()
             && nodes.len() == other.nodes.len()
             && name == &other.name
             && description == &other.description
@@ -1641,6 +1650,9 @@ impl Document {
     /// Detach a node from its parent (or roots) and drop it from the arena. Children are NOT touched —
     /// callers re-home them first when that matters.
     pub(crate) fn remove_node(&mut self, id: u32) {
+        if let Some(NodeKind::Text(text)) = self.node(id).map(|n| n.kind) {
+            self.text_boxes.retain(|t| t.id != text);
+        }
         match self.node(id).and_then(|n| n.parent) {
             Some(par) => {
                 if let Some(pn) = self.node_mut(par) {

@@ -670,6 +670,11 @@ pub const BLEED_GUIDE_W: f32 = 1.0;
 // Phase 1 document transparency furniture (canvas only).
 pub const DOC_CHECKERBOARD: [[f32; 4]; 2] = [[0.18, 0.18, 0.18, 1.0], [0.24, 0.24, 0.24, 1.0]];
 
+// ---- Lane G: provisional Type kit dimensions ----
+pub const TEXT_CARET_W: f32 = 1.0;
+pub const TYPE_FIELD_W: f32 = 140.0;
+pub const TEXT_OVERSET_SIZE: f32 = 11.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

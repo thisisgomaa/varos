@@ -15,3 +15,6 @@ pub(crate) use stroke::*;
 
 mod construction;
 pub(crate) use construction::*;
+
+mod type_section;
+pub(crate) use type_section::*;
