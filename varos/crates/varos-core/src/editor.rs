@@ -442,6 +442,9 @@ pub struct Editor {
     pub select_transform: crate::select_transform::State,
     pub drawing: crate::drawing::State,
     pub last_error: Option<crate::guard::EngineError>,
+    // ---- w2-images ----
+    pub blobs: crate::images::BlobStore,
+    image_drag: Option<crate::images::input::Gesture>,
     pub doc: Document,
     pub tool: ToolKind,
     pub gesture: ToolKind,
@@ -530,6 +533,8 @@ impl Editor {
             select_transform: Default::default(),
             drawing: Default::default(),
             last_error: None,
+            blobs: crate::images::BlobStore::default(),
+            image_drag: None,
             doc: Document::default(),
             tool: ToolKind::Object,
             gesture: ToolKind::Object,
@@ -765,6 +770,15 @@ impl Editor {
         }
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &pid in &self.objsel {
+            // ---- w2-images: shared mixed-leaf frame ----
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                for q in crate::images::world_corners(&self.doc, image) {
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 // A7 seam: transform each unit's outline to WORLD before the AABB. Identity ⇒ today's box.
                 let xf = self.doc.unit_xform(pid);
@@ -800,6 +814,16 @@ impl Editor {
         let th = -self.obj_angle;
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &pid in &self.objsel {
+            // ---- w2-images: shared mixed-leaf frame ----
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                for q in crate::images::world_corners(&self.doc, image) {
+                    let q = rotate_about(q, [0., 0.], -self.obj_angle);
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 let xf = self.doc.unit_xform(pid);
                 for q in self.doc.outline(pi, 8) {
@@ -1102,6 +1126,20 @@ impl Editor {
             return false;
         }
         for pid in self.doc.node_paths(unit) {
+            if let Some(image) = self.doc.images.iter_mut().find(|i| i.id == pid) {
+                let a = image.xform;
+                let p = xf.apply([a.e, a.f]);
+                let x = xf.apply([a.e + a.a, a.f + a.b]);
+                let y = xf.apply([a.e + a.c, a.f + a.d]);
+                image.xform = crate::images::ImageAffine {
+                    a: x[0] - p[0],
+                    b: x[1] - p[1],
+                    c: y[0] - p[0],
+                    d: y[1] - p[1],
+                    e: p[0],
+                    f: p[1],
+                };
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 for a in &mut self.doc.paths[pi].anchors {
                     a.p = xf.apply(a.p);
@@ -1200,6 +1238,19 @@ impl Editor {
             a.p = xf.inverse_apply(wp);
             a.hin = whin.map(|h| xf.inverse_apply(h));
             a.hout = whout.map(|h| xf.inverse_apply(h));
+        }
+    }
+    // ---- w2-images: distinct corner base, never encoded as anchor IDs ----
+    fn transform_image_base(&mut self, map: impl Fn(Pt) -> Pt) {
+        let Some(before) = self.pending.clone() else { return };
+        let images: Vec<_> = before
+            .images
+            .iter()
+            .filter(|i| self.objsel.contains(&i.id))
+            .map(|i| (i.id, crate::images::world_corners(&before, i)))
+            .collect();
+        for (id, c) in images {
+            crate::images::input::write_world_corners(&mut self.doc, id, [map(c[0]), map(c[1]), map(c[3])]);
         }
     }
     /// WORLD anchors of the object selection (each mapped through its unit transform) — the base for
@@ -1406,6 +1457,15 @@ impl Editor {
     fn unit_local_bbox(&self, unit: u32) -> Option<(f32, f32, f32, f32)> {
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for pid in self.doc.node_paths(unit) {
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                let xf = self.doc.node_xform(unit);
+                for q in crate::images::world_corners(&self.doc, image).map(|q| xf.inverse_apply(q)) {
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 for q in self.doc.outline(pi, 8) {
                     x0 = x0.min(q[0]);
@@ -1895,6 +1955,7 @@ impl Editor {
         let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
         let base = self.objsel_base();
         let tf = |p: Pt| if horizontal { [2.0 * cx - p[0], p[1]] } else { [p[0], 2.0 * cy - p[1]] };
+        self.transform_image_base(tf);
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
                 a.p = tf(*p0);
@@ -1959,6 +2020,7 @@ impl Editor {
         }
         let base = self.objsel_base();
         let tf = |p: Pt| [fx + (p[0] - fx) * sx + tx, fy + (p[1] - fy) * sy + ty];
+        self.transform_image_base(tf);
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
                 a.p = tf(*p0);
@@ -2031,6 +2093,11 @@ impl Editor {
             return;
         }
         self.begin();
+        let xf = self.doc.node_xform(unit);
+        self.transform_image_base(|p| {
+            let p = xf.apply(scale_local(xf.inverse_apply(p)));
+            [p[0] + tx, p[1] + ty]
+        });
         if !no_scale {
             for pid in self.doc.node_paths(unit) {
                 if let Some(pi) = self.doc.pidx(pid) {
@@ -2090,6 +2157,10 @@ impl Editor {
     }
 
     // ---------- grouping (Ctrl+G / Ctrl+Shift+G) ----------
+    // ---- w2-images ----
+    pub fn selected_image_groups(&self) -> impl Iterator<Item = u32> + '_ {
+        self.group_sel.iter().copied()
+    }
     pub fn group_selection(&mut self) {
         self.group_selection_with_clip(None);
     }
@@ -3585,6 +3656,7 @@ impl Editor {
         staged.requested_zoom = self.requested_zoom;
         staged.requested_canvas = self.requested_canvas;
         staged.paste_remembers_layers = self.paste_remembers_layers;
+        staged.blobs = self.blobs.clone();
         staged.cur_fill = self.cur_fill;
         staged.cur_stroke = self.cur_stroke;
         staged.cur_sw = self.cur_sw;
@@ -3607,6 +3679,7 @@ impl Editor {
             staged.doc != self.doc
         } {
             self.begin();
+            self.blobs = staged.blobs;
             self.doc = staged.doc;
             self.dirty = true;
             self.commit();
@@ -3661,6 +3734,15 @@ impl Editor {
         self.undo.clear();
         self.redo.clear();
     }
+    // ---- w2-images ----
+    pub fn image_pins(&self) -> std::collections::HashSet<crate::images::BlobKey> {
+        std::iter::once(&self.doc)
+            .chain(self.undo.iter().map(std::sync::Arc::as_ref))
+            .chain(self.redo.iter().map(std::sync::Arc::as_ref))
+            .chain(self.pending.iter().map(std::sync::Arc::as_ref))
+            .flat_map(|d| d.images.iter().map(|i| i.blob.clone()))
+            .collect()
+    }
     pub fn history_preview(&self, redo: bool) -> Option<&Document> {
         if redo { self.redo.last() } else { self.undo.last() }.map(std::sync::Arc::as_ref)
     }
@@ -3691,11 +3773,16 @@ impl Editor {
         self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
             if let Some(p) = self.pending.take() {
+                // Retire only dropped history keys; staged batch resources stay admitted.
+                let mut retired: std::collections::HashSet<_> =
+                    self.redo.iter().flat_map(|d| d.images.iter().map(|i| i.blob.clone())).collect();
                 self.undo.push(p);
                 if self.undo.len() > 200 {
-                    self.undo.remove(0);
+                    retired.extend(self.undo.remove(0).images.iter().map(|i| i.blob.clone()));
                 }
                 self.redo.clear();
+                let pins = self.image_pins();
+                self.blobs.retire(&retired, &pins);
                 self.rev += 1;
             }
         }
@@ -3764,7 +3851,11 @@ impl Editor {
             self.dirty = false;
         }
         // ---- end w2-tools-ui ----
-        self.objsel.retain(|&p| self.doc.pidx(p).is_some() || crate::text::node_id(&self.doc, p).is_some());
+        self.objsel.retain(|&p| {
+            self.doc.pidx(p).is_some()
+                || self.doc.images.iter().any(|i| i.id == p)
+                || crate::text::node_id(&self.doc, p).is_some()
+        });
         self.selected.retain(|&a| self.doc.anchor_address(a).is_some());
         self.absel.retain(|&i| i < self.doc.artboards.len());
         if self.dsel_path.is_some_and(|p| self.doc.pidx(p).is_none()) {
@@ -3780,13 +3871,17 @@ impl Editor {
     /// Enforce the selection invariant after any visibility/lock mutation: hidden or locked paths
     /// cannot remain selected through either object selection, Direct path selection, or grabbed anchors.
     pub(crate) fn prune_inert_selection(&mut self) {
-        let allowed = self.select_transform.isolation.map(|n| self.doc.node_paths(n));
+        let allowed = self.select_transform.isolation.map(|n| {
+            let mut ids = self.doc.node_paths(n);
+            ids.extend(self.doc.images.iter().filter(|i| self.in_isolation(i.id)).map(|i| i.id));
+            ids
+        });
         // ---- Lane G ----
         let texts = crate::text::selected_ids(self);
         let doc = &self.doc;
         self.objsel.retain(|&pid| {
             texts.contains(&pid)
-                || doc.pidx(pid).is_some()
+                || (doc.pidx(pid).is_some() || doc.images.iter().any(|i| i.id == pid))
                     && allowed.as_ref().is_none_or(|a| a.contains(&pid))
                     && !doc.eff_hidden(pid)
                     && !doc.eff_locked(pid)
@@ -3818,6 +3913,7 @@ impl Editor {
         self.requested_pan = None;
         self.requested_zoom = None;
         self.requested_canvas = None;
+        self.image_drag = None;
         self.stroke_error = None;
         self.select_transform = Default::default();
         self.drawing = Default::default();
@@ -4178,6 +4274,25 @@ impl Editor {
         if self.view_depth.presentation {
             return;
         }
+        if self.tool == ToolKind::Object {
+            if let Some(hit) = self.transform_hit(pos) {
+                self.begin();
+                self.start_transform(hit, pos);
+                return;
+            }
+        }
+        if let Some(g) = crate::images::input::gesture(self, pos) {
+            if !self.mods.shift && !self.objsel.contains(&g.id) {
+                self.objsel.clear();
+                self.selected.clear();
+                self.group_sel.clear();
+            }
+            self.objsel.extend(self.doc.group_members(g.id));
+            self.refresh_obj_angle();
+            self.begin();
+            self.image_drag = Some(g);
+            return;
+        }
         self.cursor = pos;
         self.begin();
         self.gesture_copy = false;
@@ -4225,6 +4340,10 @@ impl Editor {
         }
     }
     pub fn pointer_up(&mut self) {
+        if self.image_drag.take().is_some() {
+            self.commit_wave();
+            return;
+        }
         if crate::drawing::up(self) {
             return;
         }
@@ -4317,6 +4436,17 @@ impl Editor {
     }
     pub fn pointer_move(&mut self, pos: Pt) {
         if self.view_depth.presentation {
+            return;
+        }
+        if let Some(g) = self.image_drag.clone() {
+            if let Some(before) = self.pending.clone() {
+                self.doc = (*before).clone();
+                self.transform_geometry(crate::select_transform::Transform {
+                    movement: sub(pos, g.start),
+                    ..Default::default()
+                });
+            }
+            self.cursor = pos;
             return;
         }
         if crate::drawing::movement(self, pos) {
@@ -4589,6 +4719,15 @@ impl Editor {
                         }
                     }
                 }
+                for image in &self.doc.images {
+                    if !self.in_isolation(image.id) || self.doc.eff_hidden(image.id) || self.doc.eff_locked(image.id) {
+                        continue;
+                    }
+                    let q = crate::images::corner_rect(crate::images::world_corners(&self.doc, image));
+                    if q.0 <= x1 && q.2 >= x0 && q.1 <= y1 && q.3 >= y0 {
+                        self.objsel.insert(image.id);
+                    }
+                }
                 // a marquee that catches any group member selects the whole group
                 let expanded: Vec<u32> = self.objsel.iter().flat_map(|&p| self.doc.group_members(p)).collect();
                 self.objsel.extend(expanded);
@@ -4670,6 +4809,7 @@ impl Editor {
                 for (unit, base_xf) in &piv_base {
                     self.doc.set_node_xform(*unit, base_xf.translated(d));
                 }
+                self.transform_image_base(|p| add(p, d));
                 self.drag = Drag::Object { down, base, base_world, piv_base };
                 self.dirty = true;
             }
@@ -4715,6 +4855,7 @@ impl Editor {
                 };
                 // A7: base is WORLD; write the scaled world point back THROUGH each unit's transform so a
                 // rotated object stays rotated (θ preserved) and the panel W/H tracks the true local dims.
+                self.transform_image_base(tf);
                 for (aid, p0, hin0, hout0) in &base {
                     self.write_anchor_world(*aid, tf(*p0), hin0.map(tf), hout0.map(tf));
                 }
@@ -4800,6 +4941,7 @@ impl Editor {
                 }
                 let sc = |p: Pt| [pivot[0] + (p[0] - pivot[0]) * sx, pivot[1] + (p[1] - pivot[1]) * sy];
                 // A7: base is WORLD; write back through each unit's transform so θ is preserved.
+                self.transform_image_base(sc);
                 for (aid, p0, hin0, hout0) in &base {
                     self.write_anchor_world(*aid, sc(*p0), hin0.map(sc), hout0.map(sc));
                 }
@@ -4883,6 +5025,12 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        if self.image_drag.take().is_some() {
+            if let Some(before) = self.pending.take() {
+                self.doc = std::sync::Arc::unwrap_or_clone(before);
+            }
+            self.dirty = false;
+        }
         crate::drawing::finish(self, true);
         if self.select_transform.preview.is_some() {
             self.transform_end(true);
@@ -4936,6 +5084,17 @@ impl Editor {
                 self.selected.extend(p.anchors.iter().chain(p.holes.iter().flatten()).map(|a| a.id));
             }
         } else {
+            // ---- w2-images: select visible, unlocked image leaves and their mixed groups ----
+            let image_ids: Vec<_> = self
+                .doc
+                .images
+                .iter()
+                .map(|i| i.id)
+                .filter(|&id| self.in_isolation(id) && !self.doc.eff_hidden(id) && !self.doc.eff_locked(id))
+                .collect();
+            for id in image_ids {
+                self.objsel.extend(self.doc.group_members(id));
+            }
             for pi in pickable {
                 let members = self.doc.group_members(self.doc.paths[pi].id);
                 if let Some(group) = self.doc.top_group_of_path(self.doc.paths[pi].id) {
@@ -4978,6 +5137,23 @@ impl Editor {
         self.commit();
     }
     pub fn delete_selected(&mut self) {
+        let images: Vec<_> = self.doc.images.iter().filter(|i| self.objsel.contains(&i.id)).map(|i| i.id).collect();
+        if !images.is_empty() {
+            let mut staged = self.clone();
+            staged.objsel.retain(|id| staged.doc.pidx(*id).is_some());
+            let mut ops: Vec<_> = images
+                .into_iter()
+                .map(|id| crate::EditCommand::Image(crate::images::ImageEdit::Delete { id }))
+                .collect();
+            if !staged.objsel.is_empty() || !staged.selected.is_empty() || staged.dsel_path.is_some() {
+                ops.push(crate::EditCommand::DeleteSelected);
+            }
+            if staged.execute_batch(ops).is_ok() {
+                self.publish_batch(staged, true);
+            }
+            return;
+        }
+
         if self.tool == ToolKind::Artboard {
             self.ab_delete(self.doc.active);
             return;
@@ -5080,12 +5256,24 @@ impl Editor {
         {
             included.insert(pid);
         }
-        self.doc.paths.iter().filter(|path| included.contains(&path.id)).map(|path| path.id).collect()
+        let mut ids: Vec<_> =
+            self.doc.paths.iter().filter(|path| included.contains(&path.id)).map(|path| path.id).collect();
+        ids.extend(
+            self.doc
+                .images
+                .iter()
+                .filter(|i| self.objsel.contains(&i.id) && !self.doc.eff_hidden(i.id) && !self.doc.eff_locked(i.id))
+                .map(|i| i.id),
+        );
+        ids
     }
     /// Fresh detached payload using the same source rules as Copy/Cut. No editor mutation.
     /// Desktop adapters can publish it before a destructive Cut; anchors alone capture nothing.
     pub fn capture_selection_clipboard(&self, cut: bool) -> Clipboard {
-        Clipboard::capture_objects(&self.doc, &self.clipboard_sources(!cut), &crate::text::selected_ids(self))
+        let mut copy =
+            Clipboard::capture_objects(&self.doc, &self.clipboard_sources(!cut), &crate::text::selected_ids(self));
+        copy.pin_images(&self.blobs);
+        copy
     }
     /// Edit ▸ Copy (⌘C): put a deep copy of the selection (groups, clip masks and live transforms kept)
     /// on the in-app clipboard. The document is untouched — no history entry, no `rev` bump. With
@@ -5107,6 +5295,8 @@ impl Editor {
         let gone: HashSet<u32> = pids.into_iter().collect();
         self.begin();
         self.doc.paths.retain(|p| !gone.contains(&p.id));
+        self.doc.images.retain(|i| !gone.contains(&i.id));
+        self.doc.assets.retain(|a| self.doc.images.iter().any(|i| i.blob == a.key));
         crate::text::remove(&mut self.doc, &texts);
         self.objsel.clear();
         self.group_sel.clear();
@@ -5128,7 +5318,12 @@ impl Editor {
         if self.clipboard.is_empty() {
             return;
         }
+        let mut resources = self.blobs.clone();
+        if self.clipboard.admit_images(&mut resources).is_err() {
+            return;
+        }
         self.begin();
+        self.blobs = resources;
         let new = self.clipboard.paste_into_remembering_layers(
             &mut self.doc,
             offset.unwrap_or([0.0, 0.0]),
@@ -5550,7 +5745,7 @@ impl Editor {
             if matches!(self.doc.node(nid).map(|n| &n.kind), Some(NodeKind::Group)) {
                 self.group_sel.insert(nid);
             }
-            for p in self.doc.node_paths(nid) {
+            for p in crate::images::node_items(&self.doc, nid) {
                 if !self.doc.eff_locked(p) && !self.doc.eff_hidden(p) {
                     self.objsel.insert(p);
                 }
@@ -5566,9 +5761,7 @@ impl Editor {
     /// objsel, so requiring them too made deselect unreachable for mixed-lock rows (07-04 review bug #1).
     pub fn layer_toggle(&mut self, nid: u32) {
         self.tool = ToolKind::Object;
-        let paths: Vec<u32> = self
-            .doc
-            .node_paths(nid)
+        let paths: Vec<u32> = crate::images::node_items(&self.doc, nid)
             .into_iter()
             .filter(|&p| !self.doc.eff_locked(p) && !self.doc.eff_hidden(p))
             .collect();
@@ -5584,12 +5777,12 @@ impl Editor {
             }
             if matches!(self.doc.node(nid).map(|n| &n.kind), Some(NodeKind::Group)) {
                 self.group_sel.insert(nid);
-            } else if let Some(descendant) = self.doc.node_paths(nid).first().copied() {
+            } else if let Some(descendant) = crate::images::node_items(&self.doc, nid).first().copied() {
                 let ancestors: Vec<u32> = self
                     .group_sel
                     .iter()
                     .copied()
-                    .filter(|&group| self.doc.node_paths(group).contains(&descendant))
+                    .filter(|&group| crate::images::node_items(&self.doc, group).contains(&descendant))
                     .collect();
                 for group in ancestors {
                     self.group_sel.remove(&group);

@@ -29,6 +29,9 @@ pub enum Request {
     // ---- Lane H ----
     ImportFile(FileEffect),
     ImportClipboard(FileEffect),
+    // ---- w2-images ----
+    AddImage(FileEffect),
+    ImageAction(FileEffect),
     ExportSvg(FileEffect),
     ExportRaster(FileEffect),
     SaveTemplate(FileEffect),
@@ -884,6 +887,8 @@ impl Request {
             Self::ImportSvg(_) => "import_svg",
             Self::ImportFile(_) => "import_file",
             Self::ImportClipboard(_) => "import_clipboard",
+            Self::AddImage(_) => "add_image",
+            Self::ImageAction(_) => "image_action",
             Self::ExportSvg(_) => "export_svg",
             Self::ExportRaster(_) => "export_raster",
             Self::SaveTemplate(_) => "save_template",
@@ -915,6 +920,8 @@ impl Request {
             | Self::Copy(v)
             | Self::ImportClipboard(v)
             | Self::ImportFile(v)
+            | Self::AddImage(v)
+            | Self::ImageAction(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => &v.api,
         }
@@ -934,6 +941,8 @@ impl Request {
             | Self::Copy(v)
             | Self::ImportClipboard(v)
             | Self::ImportFile(v)
+            | Self::AddImage(v)
+            | Self::ImageAction(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
@@ -958,6 +967,8 @@ impl Request {
             | Self::Copy(v)
             | Self::ImportClipboard(v)
             | Self::ImportFile(v)
+            | Self::AddImage(v)
+            | Self::ImageAction(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,

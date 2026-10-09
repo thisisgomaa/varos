@@ -331,5 +331,21 @@ pub fn translate_objects(ed: &mut Editor, spec: crate::select_transform::Transfo
             }
         }
     }
+    // integration w2: a mixed text + image selection moves its (editable) images too
+    let images: Vec<u32> = ed
+        .doc
+        .images
+        .iter()
+        .map(|i| i.id)
+        .filter(|id| ed.objsel.contains(id) && !ed.doc.eff_hidden(*id) && !ed.doc.eff_locked(*id))
+        .collect();
+    for id in images {
+        let xf = ed.doc.unit_xform(id);
+        let delta = crate::geom::rotate_about(spec.movement, [0., 0.], -xf.rot);
+        if let Some(image) = ed.doc.images.iter_mut().find(|i| i.id == id) {
+            image.xform.e += delta[0];
+            image.xform.f += delta[1];
+        }
+    }
     changed
 }

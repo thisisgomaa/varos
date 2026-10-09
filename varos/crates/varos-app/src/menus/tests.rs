@@ -195,8 +195,7 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
     let want = [
         ("file.new", cmd(KeyCode::KeyN).unwrap(), FileCmd::New),
         ("file.open", cmd(KeyCode::KeyO).unwrap(), FileCmd::Open),
-        // ---- Lane H ----
-        ("file.place.svg", cmd_shift(KeyCode::KeyP).unwrap(), FileCmd::PlaceSvg),
+        // Lane H's artwork Place now shares the ONE ⇧⌘P Place… (integration w2; "file.place" below)
         ("file.document-setup", cmd_alt(KeyCode::KeyP).unwrap(), FileCmd::DocumentSetup),
         ("file.close", cmd(KeyCode::KeyW).unwrap(), FileCmd::CloseTab),
         ("file.save", cmd(KeyCode::KeyS).unwrap(), FileCmd::Save),
@@ -207,6 +206,7 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
         ("file.revert", fkey(KeyCode::F12).unwrap(), FileCmd::Revert),
         ("file.export", cmd_alt(KeyCode::KeyE).unwrap(), FileCmd::Export),
         ("file.print", cmd(KeyCode::KeyP).unwrap(), FileCmd::Print),
+        ("file.place", cmd_shift(KeyCode::KeyP).unwrap(), FileCmd::Place),
     ];
     for (id, accel, fc) in want {
         assert!(rows.iter().any(|&(i, a, f)| i == id && a == accel && f == fc), "File menu misses {id}");
@@ -269,6 +269,12 @@ const ADDED_AFTER_SPLIT: &[&str] = &[
     "view.canvas.mid",
     "view.canvas.light",
     "win.panel.Navigator",
+    "file.place",
+    "file.package",
+    "win.panel.Links",
+    "obj.image.trace",
+    "obj.image.rasterize",
+    "obj.image.crop",
     "file.closeall",
     "file.savecopy",
     "file.revert",
@@ -357,6 +363,8 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.new",
             "file.open",
             "sub Open Recent",
+            "file.place",
+            "file.package",
             "file.place.svg",
             "file.new-template",
             "file.save-template",
@@ -420,14 +428,21 @@ fn file_rows_enable_from_the_document_state() {
 
 #[test]
 fn artwork_place_row_is_namespaced_and_uses_illustrator_shortcut() {
+    // Integration w2: ⇧⌘P belongs to the ONE Place… (images + artwork, routed by file type); the
+    // vector-only row keeps its id and command without a second binding.
     let rows = super::file::rows();
     let row = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "file.place.svg"));
     assert!(matches!(
         row,
+        Some(Entry::Item { label: "Place artwork…", accel: None, cmd: MenuCmd::File(FileCmd::PlaceSvg), .. })
+    ));
+    let place = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "file.place"));
+    assert!(matches!(
+        place,
         Some(Entry::Item {
-            label: "Place artwork…",
+            label: "Place…",
             accel: Some(Accel { code: KeyCode::KeyP, shift: true, alt: false, cmd: true }),
-            cmd: MenuCmd::File(FileCmd::PlaceSvg),
+            cmd: MenuCmd::File(FileCmd::Place),
             ..
         })
     ));

@@ -50,6 +50,21 @@ pub enum WindowCmd {
 /// Every document-lifecycle request. In S1, Close Window = `Quit` (one window).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppCommand {
+    // ---- w2-images ----
+    ImageWorkflow(SessionId, crate::image_workflows::Action),
+    PlaceDialog(SessionId),
+    ChooseImage(SessionId, crate::image_jobs::Options),
+    ImageSheet(SessionId, crate::image_ui::SheetKind),
+    PasteBitmap {
+        sid: SessionId,
+        bytes: std::sync::Arc<[u8]>,
+        at: [f32; 2],
+    },
+    PlaceImage {
+        sid: SessionId,
+        path: std::path::PathBuf,
+        options: crate::image_jobs::Options,
+    },
     Clip(SessionId, bool),
     /// Authenticated local attachment; processed on the UI thread through the same FIFO.
     Bridge(Box<varos_bridge::ipc::Pending>),

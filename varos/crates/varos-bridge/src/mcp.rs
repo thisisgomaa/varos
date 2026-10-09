@@ -627,6 +627,8 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
     if let Some(rows) = out["tools"].as_array_mut() {
         rows.push(json!({"name":"import_clipboard","description":"Paste the highest supported OS artwork flavour; no silent bitmap fallback; one undo step.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"options":{"type":"object","additionalProperties":false,"properties":{"loss_policy":{"enum":["refuse","allow_reported"]},"page":{"type":"integer","minimum":1,"maximum":100}}}}), &["api","board","request_id","expected_rev"])}));
     }
+    // ---- w2-images ----
+    crate::images::append_tools(&mut out);
     append_export_tools(&mut out);
     append_document_tools(&mut out);
     if let Some(list) = out["tools"].as_array_mut() {
@@ -915,6 +917,17 @@ pub fn tools_for(api: &str) -> Value {
         return legacy_tools_list();
     }
     let mut out = full_tools_for(api);
+    // Progressive disclosure for tool options (integration w2): a structured `options` object is
+    // listed as a plain object; `schema api 1.2 tool NAME` returns its full shape and the decoder
+    // still validates every field. Keeps the combined wave-2 list within the 24,000 B cap.
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows.iter_mut() {
+            let options = &mut row["inputSchema"]["properties"]["options"];
+            if options.get("properties").is_some() {
+                *options = json!({"type":"object"});
+            }
+        }
+    }
     if let Some(rows) = out["tools"].as_array_mut() {
         if let Some(edit) = rows.iter_mut().find(|row| row["name"] == "edit") {
             let root = edit["inputSchema"].clone();
@@ -946,6 +959,37 @@ pub fn tools_for(api: &str) -> Value {
             edit["inputSchema"]["$defs"]["operation"]["anyOf"] = json!(alternatives);
             prune_definitions(&mut edit["inputSchema"]);
             edit["description"] = json!("Atomic typed edits; core params inline. Extended verbs: call schema api 1.2 tool edit verb NAME before use; list_verbs groups all verbs. Decoder validates all params.");
+        }
+    }
+    // Progressive disclosure keeps full constraints in schema while removing explanatory prose.
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows {
+            if row["name"] == "image_action" {
+                row["inputSchema"]["properties"]["options"] = json!({"type":"object","properties":{"action":{"enum":crate::images::ACTIONS}},"required":["action"]});
+            }
+        }
+    }
+    fn economical(v: &mut Value) {
+        match v {
+            Value::Object(m) => {
+                m.remove("description");
+                for c in m.values_mut() {
+                    economical(c);
+                }
+            }
+            Value::Array(a) => {
+                for c in a {
+                    economical(c)
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows {
+            economical(&mut row["inputSchema"]);
+            row["description"] =
+                json!(format!("Use schema api 1.2 tool {} for details.", row["name"].as_str().unwrap_or_default()));
         }
     }
     out
@@ -1079,6 +1123,10 @@ pub fn schema(tool: &str, verb: Option<&str>) -> Result<Value, Error> {
         }
         return Ok(root.clone());
     };
+    if tool == "image_action" {
+        return crate::images::operation_schema(verb)
+            .ok_or_else(|| Error::new("invalid_argument", "unknown image action"));
+    }
     if tool != "edit" {
         return Err(Error::new("invalid_argument", "verb discovery requires tool edit"));
     }
@@ -1131,7 +1179,7 @@ pub fn list_verbs() -> Value {
             }
         }
     }
-    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","verbs":core},{"tool":"edit","group":"extended","verbs":extended},{"group":"tools","verbs":tools}]})
+    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","verbs":core},{"tool":"edit","group":"extended","verbs":extended},{"tool":"image_action","group":"images","verbs":crate::images::ACTIONS.iter().map(|name|json!({"name":name,"description":format!("Image operation {name}; call schema with tool image_action and verb {name}")})).collect::<Vec<_>>()},{"group":"tools","verbs":tools}]})
 }
 
 pub fn stroke_style_schema() -> Value {

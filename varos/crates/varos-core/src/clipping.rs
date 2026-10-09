@@ -24,7 +24,7 @@ impl<'a> ClipIndex<'a> {
                 .nodes
                 .iter()
                 .filter_map(|n| match n.kind {
-                    NodeKind::Path(pid) => Some((pid, n.id)),
+                    NodeKind::Path(pid) | NodeKind::Image(pid) => Some((pid, n.id)),
                     _ => None,
                 })
                 .collect(),
@@ -52,7 +52,7 @@ impl<'a> ClipIndex<'a> {
                 continue;
             }
             if let Some(n) = self.nodes.get(&id) {
-                if let NodeKind::Path(pid) = n.kind {
+                if let NodeKind::Path(pid) | NodeKind::Image(pid) = n.kind {
                     paths.push(pid);
                 }
                 todo.extend(n.children.iter().copied());
@@ -108,8 +108,14 @@ impl Editor {
         if units.iter().any(|u| index.paths(*u).iter().any(|p| !self.objsel.contains(p))) {
             return None;
         }
-        let ranks: std::collections::HashMap<_, _> =
-            self.doc.paths.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+        let ranks: std::collections::HashMap<_, _> = crate::images::paint_order(&self.doc)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(rank, kind)| match kind {
+                NodeKind::Path(id) | NodeKind::Image(id) => Some((id, rank)),
+                _ => None,
+            })
+            .collect();
         let top = units.iter().max_by_key(|u| index.paths(**u).iter().filter_map(|p| ranks.get(p)).max().copied())?;
         let node = self.doc.node(*top)?;
         if !matches!(node.kind, NodeKind::Path(_)) {
@@ -124,6 +130,14 @@ impl Editor {
         let mut groups = self.group_sel.clone();
         if self.objsel.is_empty() && groups.is_empty() {
             return Vec::new();
+        }
+        // ---- w2-images ----
+        for id in &self.objsel {
+            if self.doc.images.iter().any(|i| i.id == *id) && !self.doc.eff_locked(*id) && !self.doc.eff_hidden(*id) {
+                if let Some(group) = self.doc.clip_group_of(*id) {
+                    groups.insert(group);
+                }
+            }
         }
         let index = ClipIndex::new(self);
         // Traverse each selected unit once, even when every descendant is selected.

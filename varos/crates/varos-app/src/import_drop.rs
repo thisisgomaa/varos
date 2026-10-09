@@ -22,6 +22,13 @@ pub fn position(window: &winit::window::Window, fallback: Pt) -> Pt {
 pub fn position(_: &winit::window::Window, fallback: Pt) -> Pt {
     fallback
 }
+/// Vector artwork Place routes to the import worker (SVG/SVGZ/PDF/AI/DXF); everything else is a
+/// raster image candidate (integration w2: one Place… for both lanes).
+pub fn is_artwork(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| ["svg", "svgz", "pdf", "ai", "dxf"].iter().any(|k| e.eq_ignore_ascii_case(k)))
+}
 pub fn on_canvas(point: Pt, canvas: egui::Rect) -> bool {
     point.iter().all(|v| v.is_finite()) && canvas.contains(egui::pos2(point[0], point[1]))
 }

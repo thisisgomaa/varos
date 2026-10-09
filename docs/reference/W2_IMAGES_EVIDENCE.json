@@ -1,0 +1,149 @@
+{
+  "lane": "w2-images",
+  "date": "2026-10-09",
+  "baseline_wip": "a205728",
+  "memory": {
+    "method": "fresh subprocess per probe; Python resource.getrusage(RUSAGE_CHILDREN).ru_maxrss; Darwin bytes",
+    "corpus": "2048x2048 RGBA PNG, 200 transforms, 200 distinct 256x256 PNG replacements",
+    "results": {
+      "undo": {
+        "exit": 0,
+        "rss": 181043200,
+        "platform": "darwin",
+        "stderr": "RAM probe: 2048x2048 PNG, encoded=86134, resources before/after 200 transforms=17125494/17125494, model=1573\nRAM probe: after 200 distinct 256x256 replacements resources=122365284, originals=468324, process CPU charged=121896960\n",
+        "stdout": "\nrunning 1 test\ntest representative_undo_memory_probe ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 1.43s\n\n"
+      },
+      "decode": {
+        "exit": 0,
+        "rss": 53018624,
+        "platform": "darwin",
+        "stderr": "mode=decode encoded=86135 resource=17125495 decode_ms=360\n",
+        "stdout": ""
+      },
+      "save": {
+        "exit": 0,
+        "rss": 112410624,
+        "platform": "darwin",
+        "stderr": "mode=save encoded=86135 resource=17125495 decode_ms=360\nnative bytes=16868324 reopened images=1\n",
+        "stdout": ""
+      },
+      "export": {
+        "exit": 0,
+        "rss": 61849600,
+        "platform": "darwin",
+        "stderr": "mode=export encoded=86135 resource=17125495 decode_ms=366\nPDF bytes=16778207 notes=0\n",
+        "stdout": ""
+      }
+    }
+  },
+  "cli_smoke": {
+    "passed": 11,
+    "results_path": "/var/folders/bq/2st8236n5xn501l970c3ny0w0000gn/T/w2-cli-smoke-woha8bkn/results.json"
+  },
+  "runtime": "GUI/GPU/native OS workflows not run per worktree brief; owner review pending",
+  "bridge_fixtures": [
+    {
+      "file": "describe-1.0.json",
+      "sha256": "5c9b65e43bc47801afe76baada961eaa45b32bc5f074cc7baee64cb1fca561d0",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "describe-1.0.txt",
+      "sha256": "15e9e11dabbcf6e5a5c59331ee2a24da2ab0d17673b167f47191687bfc8c5c38",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "describe-combined-1.0.json",
+      "sha256": "f67157e7ec1c965d38d62262254c58794c6f90ff55747f6c26b5b22e036efedb",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "edit-1.0.json",
+      "sha256": "0f242a6b68a81f267370f7de9f6b3a13bc0170cd5c309793655cfebd4da2c6cf",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "error-1.0.json",
+      "sha256": "b4125d9db2c123dcdd1c585d43acdf811cb41caae70dee8f048c4fbf585562b2",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "logo-request-1.0.json",
+      "sha256": "400b6bfeab95fc5d11218f3cc97c0b5258d1d6a9ed34a7089a40603afbd3e757",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "logo-result-1.0.json",
+      "sha256": "a675a7de6cf4a12efced7359ec99060a18eecca4abcf52100925f82bcb890eda",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "mcp_tools_list_1_0.json",
+      "sha256": "b8511e5b6594607eef33dbd42f51716abc91285c13abcc5a55e083f5c6cdf683",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "mcp_tools_list_1_1.json",
+      "sha256": "b8511e5b6594607eef33dbd42f51716abc91285c13abcc5a55e083f5c6cdf683",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "poster-request-1.0.json",
+      "sha256": "c4f1b925e736438c4d20e1b5c59690add9c73a35dcf5c4d7e41d0360ce1954c1",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "poster-result-1.0.json",
+      "sha256": "e548af31b094f3353f6da85f72af0039b25630b9c45c0df6049d5fb935d24d62",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "story-request-1.0.json",
+      "sha256": "dbe545c01dd68049a0b2644fa4749744a8d00693013a5fcf1d210b7fff44a0bf",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "story-result-1.0.json",
+      "sha256": "400e240edc49a735196a25ca93ce3e8b64d7cb78b4cff652e8a5700cc12cafb7",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "wireframe-receipt-1.1.json",
+      "sha256": "ab9ca5a7fb4c5f9fb7ba46a8629783ee130131f384ae5f115732fdb4d06e031c",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "wireframe-request-1.1.json",
+      "sha256": "782b7d745129c8242037eaac788d31584f195b273de3da2fa8c79b8e190a10b5",
+      "unchanged_from_main": true
+    },
+    {
+      "file": "wireframe-source-1.1.json",
+      "sha256": "f94837f8cf465a9a9b12040b9171b20e555f8a464bd774d5b930d2bb9d02de37",
+      "unchanged_from_main": true
+    }
+  ],
+  "ratchets": {
+    "shell_tests": 3,
+    "bridge_tests": 6,
+    "api_1_0_tools_bytes": 23993,
+    "api_1_1_tools_bytes": 23993,
+    "api_1_2_tools_bytes": 22828,
+    "api_1_2_cap_bytes": 24000,
+    "ui_rs_lines": 811,
+    "ui_rs_cap_lines": 843,
+    "ratchet_source_unchanged": true
+  },
+  "final_gates": {
+    "fmt": "PASS",
+    "dependency_directions": "PASS",
+    "workspace": {
+      "passed": 1916,
+      "failed": 0,
+      "ignored": 15
+    },
+    "native_clippy_all_targets_D_warnings": "PASS",
+    "windows_x86_64_pc_windows_msvc_clippy_all_targets_D_warnings": "PASS",
+    "logs": "/tmp/w2-handoff-{tests,native,windows}.log"
+  }
+}

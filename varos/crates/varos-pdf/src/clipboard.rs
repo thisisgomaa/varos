@@ -27,7 +27,11 @@ pub fn clipboard_vectors(doc: &Document, clipboard: &Clipboard) -> Result<Clipbo
     };
     let (narrowed, plan) = crate::plan_selection_export(doc, &selected).map_err(|e| e.to_string())?;
     let cancel = AtomicBool::new(false);
-    let pdf = crate::export_pdf_bytes(&narrowed, &plan, &cancel).map_err(|e| e.to_string())?;
+    let pdf = if narrowed.images.is_empty() {
+        crate::export_pdf_bytes(&narrowed, &plan, &cancel).map_err(|e| e.to_string())?
+    } else {
+        crate::images::export_pdf(&narrowed, &clipboard.resources, &plan.pages, 300., false, &cancel)?.0
+    };
     let page = plan.pages[0];
     let svg_plan = varos_core::svg::ExportPlan {
         scope: varos_core::svg::ExportScope::WholeBoard,
@@ -38,12 +42,15 @@ pub fn clipboard_vectors(doc: &Document, clipboard: &Clipboard) -> Result<Clipbo
             name: String::new(),
         }],
     };
-    let svg = varos_core::svg::export_svg_files(&narrowed, &svg_plan, &cancel)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .next()
-        .ok_or("No SVG page")?
-        .bytes;
+    let svg = if narrowed.images.is_empty() {
+        varos_core::svg::export_svg_files(&narrowed, &svg_plan, &cancel).map_err(|e| e.to_string())?
+    } else {
+        varos_core::images::svg::export(&narrowed, &clipboard.resources, &svg_plan, false, &cancel)?.0
+    }
+    .into_iter()
+    .next()
+    .ok_or("No SVG page")?
+    .bytes;
     Ok(ClipboardVectors {
         internal: serde_json::to_vec(clipboard).map_err(|e| e.to_string())?,
         pdf,

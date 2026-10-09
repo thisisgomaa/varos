@@ -208,6 +208,8 @@ pub(crate) fn build_layer_rows(
         };
         let (kind, name) = match n.kind {
             NodeKind::Text(_) => (LKind::Path, "Text".into()),
+            // ---- w2-images ----
+            NodeKind::Image(_) => (LKind::Path, "Image".into()),
             NodeKind::Layer => (LKind::Layer, n.name.clone()),
             NodeKind::Group => (LKind::Group, if n.name.is_empty() { "<Group>".into() } else { n.name.clone() }),
             NodeKind::Path(pid) => (
@@ -228,7 +230,8 @@ pub(crate) fn build_layer_rows(
                 shapes
             }
         };
-        let full_sel = !paths.is_empty() && paths.iter().all(|p| ed.objsel.contains(p));
+        let items = varos_core::images::node_items(&ed.doc, nid);
+        let full_sel = !items.is_empty() && items.iter().all(|p| ed.objsel.contains(p));
         // the top-most fully-selected row is the multi-drag unit (its parent isn't fully selected)
         let drag_sel = full_sel && !par.map(|pi| rows[pi].full_sel).unwrap_or(false);
         rows.push(LRow {

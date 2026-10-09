@@ -36,6 +36,7 @@ pub struct ThumbDone {
 struct Request {
     key: ThumbKey,
     snapshot: Arc<Document>,
+    blobs: Arc<varos_core::images::BlobStore>,
     mtime: SystemTime,
     panic_for_test: bool,
     asset: Option<varos_raster::export::Asset>,
@@ -100,11 +101,27 @@ impl ThumbService {
     }
 
     pub fn request(&self, key: ThumbKey, snapshot: Arc<Document>, mtime: SystemTime) {
-        self.enqueue(Request { key, snapshot, mtime, panic_for_test: false, asset: None });
+        self.enqueue(Request { key, snapshot, blobs: Default::default(), mtime, panic_for_test: false, asset: None });
     }
 
+    // ---- w2-images ----
+    pub fn request_resources(
+        &self,
+        key: ThumbKey,
+        snapshot: Arc<Document>,
+        blobs: Arc<varos_core::images::BlobStore>,
+        mtime: SystemTime,
+    ) {
+        self.enqueue(Request { key, snapshot, blobs, mtime, panic_for_test: false, asset: None });
+    }
     /// Export cards reuse the bounded worker/cache; each accepted request emits a completion, including failures.
-    pub fn request_export(&self, key: ThumbKey, asset: varos_raster::export::Asset, mtime: SystemTime) -> bool {
+    pub fn request_export(
+        &self,
+        key: ThumbKey,
+        asset: varos_raster::export::Asset,
+        blobs: Arc<varos_core::images::BlobStore>,
+        mtime: SystemTime,
+    ) -> bool {
         if self.shutdown.load(Ordering::Acquire) {
             return false;
         }
@@ -117,7 +134,7 @@ impl ThumbService {
         }
         latest.insert(
             key.clone(),
-            Request { key, snapshot: asset.doc.clone(), mtime, panic_for_test: false, asset: Some(asset) },
+            Request { key, snapshot: asset.doc.clone(), blobs, mtime, panic_for_test: false, asset: Some(asset) },
         );
         drop(latest);
         if let Some(wake) = &self.wake {
@@ -288,7 +305,9 @@ fn render_write_inner(root: &Path, req: &Request) -> Result<PathBuf, String> {
             scale: (varos_app::shell::tokens::EXPORT_CARD_W / asset.page.rect[2].max(asset.page.rect[3])).min(64.0),
             ..Default::default()
         };
-        if let Some(index) = asset.page.artboard {
+        if !asset.doc.images.is_empty() {
+            varos_raster::export::encode_with_images(asset, &options, &req.blobs, &AtomicBool::new(false))?.bytes
+        } else if let Some(index) = asset.page.artboard {
             let side = varos_app::shell::tokens::EXPORT_CARD_W as u32;
             raster::rasterize_artboard(asset.doc.clone(), index, [side, side])
                 .ok_or("Invalid thumbnail page.")?
@@ -297,7 +316,11 @@ fn render_write_inner(root: &Path, req: &Request) -> Result<PathBuf, String> {
             varos_raster::export::encode(asset, &options, &AtomicBool::new(false))?.bytes
         }
     } else {
-        raster::rasterize(req.snapshot.clone(), [raster::WIDTH, raster::HEIGHT]).into_result()?.encode_png()?
+        if req.snapshot.images.is_empty() {
+            raster::rasterize(req.snapshot.clone(), [raster::WIDTH, raster::HEIGHT]).into_result()?.encode_png()?
+        } else {
+            raster::images::fitted(&req.snapshot, &req.blobs, [raster::WIDTH, raster::HEIGHT], None)?.encode_png()?
+        }
     };
     let path = cache_path(root, &req.key);
     write_atomic(root, &path, &bytes)?;
@@ -359,6 +382,32 @@ pub mod navigator;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn image_thumbnail_keeps_snapshot_resources() {
+        let dir = TestDir::new("image-thumbnail");
+        let mut ed = varos_core::Editor::new();
+        let bytes = varos_core::images::codec::encode_png(&varos_core::images::Pixels {
+            budget: None,
+            width: 2,
+            height: 2,
+            rgba: std::sync::Arc::from([255, 0, 0, 255].repeat(4)),
+        })
+        .unwrap();
+        varos_core::images::links::place_bytes(&mut ed, &bytes, [0.; 2], None, Default::default(), None).unwrap();
+        let req = Request {
+            key: ThumbKey("image".into()),
+            snapshot: Arc::new(ed.doc.clone()),
+            blobs: Arc::new(ed.blobs.clone()),
+            mtime: UNIX_EPOCH,
+            panic_for_test: false,
+            asset: None,
+        };
+        drop(ed);
+        let path = render_write_inner(&dir.join("Thumbs"), &req).unwrap();
+        let png = image::load_from_memory(&std::fs::read(path).unwrap()).unwrap().to_rgba8();
+        assert!(png.pixels().any(|p| p.0 == [255, 0, 0, 255]));
+    }
+
     use super::*;
     use std::time::{Duration, Instant};
 
@@ -424,6 +473,7 @@ mod tests {
         service.enqueue(Request {
             key: key.clone(),
             snapshot: Arc::new(Document::default()),
+            blobs: Default::default(),
             mtime: UNIX_EPOCH,
             panic_for_test: true,
             asset: None,
@@ -447,6 +497,7 @@ mod tests {
                     Request {
                         key,
                         snapshot: Arc::new(Document::default()),
+                        blobs: Default::default(),
                         mtime: UNIX_EPOCH,
                         panic_for_test: false,
                         asset: None,

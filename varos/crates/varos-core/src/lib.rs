@@ -8,6 +8,7 @@ mod clipping;
 pub mod command;
 mod construction;
 pub mod guard;
+pub mod images;
 pub use guard::EngineError;
 pub mod editor;
 pub mod flatten;

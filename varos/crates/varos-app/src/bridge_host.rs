@@ -143,6 +143,107 @@ impl Host for Desktop<'_> {
         verb: &str,
         request: &varos_bridge::dto::FileEffect,
     ) -> Result<varos_bridge::Reply, Error> {
+        // ---- w2-images ----
+        if verb == "image_action" {
+            let sid = session(&request.board)?;
+            let s = self.ws.get_mut(sid).ok_or_else(|| Error::new("not_found", "board closed"))?;
+            if s.editor.rev != request.expected_rev
+                || s.editor.transaction_open()
+                || !matches!(s.editor.drag, varos_core::editor::Drag::None)
+            {
+                return Err(Error::new("busy", "image target changed or gesture active"));
+            }
+            let options =
+                request.options.clone().ok_or_else(|| Error::new("invalid_argument", "image operation required"))?;
+            if matches!(options["action"].as_str(), Some("relink" | "update")) {
+                let id = options["id"]
+                    .as_u64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or_else(|| Error::new("invalid_argument", "image id required"))?;
+                let image = s
+                    .editor
+                    .doc
+                    .images
+                    .iter()
+                    .find(|i| i.id == id)
+                    .ok_or_else(|| Error::new("not_found", "image unavailable"))?;
+                let path = if options["action"] == "relink" {
+                    std::path::PathBuf::from(
+                        options["path"]
+                            .as_str()
+                            .ok_or_else(|| Error::new("invalid_argument", "image source required"))?,
+                    )
+                } else {
+                    varos_core::images::links::update_path(image, &s.editor.blobs)
+                        .map_err(|e| Error::new("invalid_argument", e))?
+                };
+                if FILE_PENDING.with(|r| r.borrow().len() >= 8) {
+                    return Err(Error::new("busy", "eight file jobs are already pending"));
+                }
+                let ticket = crate::file_jobs::next_ticket();
+                let job = crate::image_jobs::Job {
+                    sid,
+                    ticket,
+                    expected_rev: request.expected_rev,
+                    path,
+                    replace: Some(id),
+                    bytes: None,
+                    options: crate::image_jobs::Options { mode: image.placement, ..Default::default() },
+                    bridge: true,
+                    cancel: crate::file_jobs::CancelFlag::from_shared(self.cancel.clone()),
+                };
+                self.files
+                    .as_deref_mut()
+                    .ok_or_else(|| Error::new("busy", "file worker unavailable"))?
+                    .submit(crate::file_jobs::FileJob::Image(Box::new(job)))
+                    .map_err(|_| Error::new("busy", "file worker unavailable"))?;
+                FILE_PENDING.with(|r| r.borrow_mut().insert(ticket));
+                return Ok(varos_bridge::Reply::success(serde_json::json!({"accepted":true,"ticket":ticket})));
+            }
+            if options["action"] == "package" {
+                let path =
+                    options["path"].as_str().ok_or_else(|| Error::new("invalid_argument", "package path required"))?;
+                varos_pdf::package::package(&s.editor.doc, &s.editor.blobs, std::path::Path::new(path))
+                    .map_err(|e| Error::new("file_error", e))?;
+                return Ok(varos_bridge::Reply::success(serde_json::json!({"packaged":true})));
+            }
+            let op = serde_json::from_value(options).map_err(|e| Error::new("invalid_argument", e.to_string()))?;
+            let result = varos_bridge::images::run(&mut s.editor, op).map_err(|e| Error::new("invalid_argument", e))?;
+            return Ok(varos_bridge::Reply::success(result));
+        }
+        if verb == "add_image" {
+            let sid = session(&request.board)?;
+            let s = self.ws.get(sid).ok_or_else(|| Error::new("not_found", "board closed"))?;
+            if s.editor.rev != request.expected_rev {
+                return Err(Error::new("stale_revision", "document changed"));
+            }
+            if FILE_PENDING.with(|r| r.borrow().len() >= 8) {
+                return Err(Error::new("busy", "eight file jobs are already pending"));
+            }
+            let options = serde_json::from_value(request.options.clone().unwrap_or_else(|| serde_json::json!({})))
+                .map_err(|e| Error::new("invalid_argument", e.to_string()))?;
+            let ticket = crate::file_jobs::next_ticket();
+            let job = crate::image_jobs::Job {
+                sid,
+                ticket,
+                expected_rev: request.expected_rev,
+                path: std::path::PathBuf::from(
+                    request.path.as_deref().ok_or_else(|| Error::new("invalid_argument", "image path required"))?,
+                ),
+                options,
+                replace: None,
+                bytes: None,
+                bridge: true,
+                cancel: crate::file_jobs::CancelFlag::from_shared(self.cancel.clone()),
+            };
+            self.files
+                .as_deref_mut()
+                .ok_or_else(|| Error::new("busy", "file worker unavailable"))?
+                .submit(crate::file_jobs::FileJob::Image(Box::new(job)))
+                .map_err(|_| Error::new("busy", "file worker unavailable"))?;
+            FILE_PENDING.with(|r| r.borrow_mut().insert(ticket));
+            return Ok(varos_bridge::Reply::success(serde_json::json!({"accepted":true,"ticket":ticket})));
+        }
         if ["save_template", "new_from_template"].contains(&verb) {
             let name =
                 request.path.as_deref().ok_or_else(|| Error::new("invalid_argument", "template name required"))?;
@@ -192,8 +293,9 @@ impl Host for Desktop<'_> {
                     Some("artwork_bounds") => varos_pdf::ExportScope::ArtworkBounds,
                     _ => return Err(Error::new("invalid_argument", "invalid print scope")),
                 };
-                let job = crate::print_job::build(
+                let job = crate::print_job::build_with_images(
                     &session.editor.doc,
+                    &session.editor.blobs,
                     scope,
                     &options,
                     &std::env::temp_dir(),
@@ -258,7 +360,7 @@ impl Host for Desktop<'_> {
             path
         };
         varos_bridge::files::validate_path(&dest, extension)?;
-        let inner = if matches!(verb, "export_svg" | "export_raster") {
+        let mut inner = if matches!(verb, "export_svg" | "export_raster") {
             FileJob::Screen(Box::new(crate::export_ui::bridge_job(
                 id,
                 ticket,
@@ -295,6 +397,7 @@ impl Host for Desktop<'_> {
             let plan =
                 varos_pdf::plan_pdf_export(&snapshot, scope).map_err(|e| Error::new("invalid_argument", e.reason()))?;
             FileJob::Export(ExportJob {
+                blobs: std::sync::Arc::new(s.editor.blobs.clone()),
                 pdf_options: request
                     .options
                     .clone()
@@ -311,8 +414,19 @@ impl Host for Desktop<'_> {
                 ticket: 0, // a Bridge export has no sheet
             })
         } else {
-            FileJob::Save(SaveJob { sid: id, ticket, dest: dest.clone(), doc: std::sync::Arc::new(snapshot) })
+            FileJob::Save(SaveJob {
+                blobs: std::sync::Arc::new(s.editor.blobs.clone()),
+                sid: id,
+                ticket,
+                dest: dest.clone(),
+                doc: std::sync::Arc::new(snapshot),
+            })
         };
+        match &mut inner {
+            FileJob::Export(e) => e.blobs = std::sync::Arc::new(s.editor.blobs.clone()),
+            FileJob::Screen(e) => e.job.blobs = std::sync::Arc::new(s.editor.blobs.clone()),
+            _ => {}
+        }
         let save = if let FileJob::Save(j) = &inner { Some(j.doc.clone()) } else { None };
         let worker = self.files.as_deref_mut().ok_or_else(|| Error::new("busy", "file worker unavailable"))?;
         worker
@@ -323,8 +437,14 @@ impl Host for Desktop<'_> {
             FILE_AUDIT.with(|r| r.borrow_mut().insert(ticket, audit));
         }
         if let Some(doc) = save {
-            self.ws.get_mut(id).expect("session").saving =
-                Some(SaveInFlight { ticket, dest, doc, follow_up: false, started: std::time::Instant::now() });
+            self.ws.get_mut(id).expect("session").saving = Some(SaveInFlight {
+                blobs: std::sync::Arc::new(self.ws.get(id).map(|s| s.editor.blobs.clone()).unwrap_or_default()),
+                ticket,
+                dest,
+                doc,
+                follow_up: false,
+                started: std::time::Instant::now(),
+            });
         }
         Ok(varos_bridge::Reply::success(serde_json::json!({"accepted":true,"ticket":ticket})))
     }
@@ -543,6 +663,7 @@ mod tests {
         let s = ws.get_mut(id).unwrap();
         s.editor.doc.artboards.push(varos_core::model::Artboard { id: 100, w: 100.0, h: 100.0, ..Default::default() });
         s.saving = Some(crate::file_jobs::SaveInFlight {
+            blobs: Default::default(),
             ticket: 999,
             dest: "/tmp/original.vrs".into(),
             doc: std::sync::Arc::new(s.editor.doc.clone()),

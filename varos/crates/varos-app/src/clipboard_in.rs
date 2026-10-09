@@ -38,6 +38,17 @@ impl Pasteboard for SystemPasteboard {
         0
     }
 }
+/// True when the pasteboard offers a bitmap and no Varos/SVG/PDF flavour: that paste is a raster image
+/// (w2-images), not a foreign vector import (integration w2). Snapshot failures answer `false` so the
+/// import path reports them.
+pub fn bitmap_only(board: &mut dyn Pasteboard) -> bool {
+    board.snapshot().is_ok_and(|s| snapshot_is_bitmap_only(&s))
+}
+pub fn snapshot_is_bitmap_only(snapshot: &Snapshot) -> bool {
+    let vector = ["org.varos.clipboard", "public.svg-image", "image/svg+xml", "com.adobe.pdf", "application/pdf"];
+    !vector.iter().any(|k| snapshot.find(k).is_some())
+        && ["public.png", "public.tiff"].iter().any(|k| snapshot.find(k).is_some())
+}
 /// Only bounded snapshotting and internal-flavour validation happen on the UI thread.
 pub fn capture(editor: &Editor, board: &mut dyn Pasteboard) -> Result<Option<Snapshot>, String> {
     let snapshot = board.snapshot()?;
@@ -206,6 +217,19 @@ mod tests {
         assert!(stage(&editor, &mut fake, ImportOptions::default()).unwrap().is_none());
         fake.snapshot.flavours[0].1 = b"{}".to_vec();
         assert!(stage(&editor, &mut fake, ImportOptions::default()).is_err());
+    }
+    #[test]
+    fn bitmap_only_pasteboard_routes_to_the_image_job() {
+        let snap = |kinds: &[&str]| Snapshot {
+            generation: 1,
+            flavours: kinds.iter().map(|k| ((*k).into(), vec![1])).collect(),
+        };
+        assert!(snapshot_is_bitmap_only(&snap(&["public.png"])));
+        assert!(snapshot_is_bitmap_only(&snap(&["public.tiff"])));
+        assert!(!snapshot_is_bitmap_only(&snap(&["public.png", "com.adobe.pdf"])));
+        assert!(!snapshot_is_bitmap_only(&snap(&["public.png", "org.varos.clipboard"])));
+        assert!(!snapshot_is_bitmap_only(&snap(&["public.svg-image"])));
+        assert!(!snapshot_is_bitmap_only(&snap(&[])));
     }
     /// Own Copy of ordinary artwork (non-dyadic f32 coordinates/colours) must paste as the trusted clipboard.
     #[test]

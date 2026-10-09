@@ -2,6 +2,8 @@
 //! Stable u32 IDs (never Vec indices) so selection/active survive deletes & joins.
 
 use crate::geom::*;
+// ---- w2-images ----
+use crate::images::{AssetMeta, ImageObject};
 pub use crate::stroke::{ArrowAlign, ArrowHead, StrokeAlign, StrokeArrows, StrokeCap, StrokeJoin, StrokeStyle};
 use crate::text::TextBox;
 use crate::units::DocUnits;
@@ -283,6 +285,8 @@ pub enum NodeKind {
     Layer,
     Group,
     Path(u32),
+    // ---- w2-images ----
+    Image(u32),
     // ---- Lane G: text data ----
     Text(u32),
 }
@@ -597,6 +601,16 @@ pub struct Document {
     /// Tags: clean, case-insensitively unique, order kept (`board::normalize_tags`).
     #[serde(default)]
     pub tags: Vec<String>,
+    // ---- w2-images ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageObject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<AssetMeta>,
+    #[serde(
+        default = "crate::images::default_effects_ppi",
+        skip_serializing_if = "crate::images::is_default_effects_ppi"
+    )]
+    pub raster_effects_ppi: f32,
     // ---- Lane G: text data ----
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_boxes: Vec<TextBox>,
@@ -663,6 +677,9 @@ impl Default for Document {
             name: String::new(),
             description: String::new(),
             tags: vec![],
+            images: vec![],
+            assets: vec![],
+            raster_effects_ppi: crate::images::default_effects_ppi(),
             text_boxes: vec![],
             paths: vec![],
             groups: vec![],
@@ -733,6 +750,9 @@ impl Document {
             name,
             description,
             tags,
+            images,
+            assets,
+            raster_effects_ppi,
             paths,
             text_boxes,
             groups,
@@ -755,7 +775,10 @@ impl Document {
         // the unit settings split in two: ppi is content, the display unit a preference
         let DocUnits { ppi, display: _ } = *units;
         // cheap, discriminating fields first
-        text_boxes == &other.text_boxes
+        images == &other.images
+            && assets == &other.assets
+            && raster_effects_ppi == &other.raster_effects_ppi
+            && text_boxes == &other.text_boxes
             && paths.len() == other.paths.len()
             && nodes.len() == other.nodes.len()
             && name == &other.name
@@ -910,6 +933,10 @@ impl Document {
         for pid in self.node_paths(nid) {
             if let Some(pi) = self.pidx(pid) {
                 for bi in self.path_boards(pi) {
+                    on[bi] = true;
+                }
+            } else if let Some(image) = self.images.iter().find(|i| i.id == pid) {
+                for bi in crate::images::image_boards(self, image) {
                     on[bi] = true;
                 }
             }
@@ -1223,7 +1250,7 @@ impl Document {
     }
     /// The leaf node representing a path.
     pub fn node_of_path(&self, pid: u32) -> Option<u32> {
-        self.nodes.iter().find(|n| matches!(n.kind, NodeKind::Path(p) if p == pid)).map(|n| n.id)
+        self.nodes.iter().find(|n| matches!(n.kind, NodeKind::Path(p) | NodeKind::Image(p) if p == pid)).map(|n| n.id)
     }
     /// The HIGHEST Group ancestor of a path's leaf (stops at the Layer). None = ungrouped.
     pub fn top_group_of_path(&self, pid: u32) -> Option<u32> {
@@ -1262,7 +1289,7 @@ impl Document {
     /// All path ids in `nid`'s subtree, front-first (traversal order).
     fn collect_paths(&self, nid: u32, out: &mut Vec<u32>) {
         if let Some(n) = self.node(nid) {
-            if let NodeKind::Path(p) = n.kind {
+            if let NodeKind::Path(p) | NodeKind::Image(p) = n.kind {
                 out.push(p);
             }
             for &c in &n.children {
@@ -1318,6 +1345,10 @@ impl Document {
     }
     /// Effective visibility: the path's own flag OR any ancestor container's (the panel eye cascade).
     pub fn eff_hidden(&self, pid: u32) -> bool {
+        // ---- w2-images ----
+        if self.images.iter().any(|i| i.id == pid) {
+            return crate::images::image_hidden(self, pid);
+        }
         let Some(pi) = self.pidx(pid) else { return true };
         if self.paths[pi].hidden {
             return true;
@@ -1337,6 +1368,10 @@ impl Document {
     }
     /// Effective lock: the path's own flag OR any ancestor container's (cascade).
     pub fn eff_locked(&self, pid: u32) -> bool {
+        // ---- w2-images ----
+        if self.images.iter().any(|i| i.id == pid) {
+            return crate::images::image_locked(self, pid);
+        }
         let Some(pi) = self.pidx(pid) else { return false };
         if self.paths[pi].locked {
             return true;
@@ -1483,6 +1518,14 @@ impl Document {
         let mut pmap: HashMap<u32, u32> = HashMap::new();
         let mut new_pids = vec![];
         for &s in srcs {
+            // ---- w2-images: duplicate metadata only, retaining the immutable resource key ----
+            if let Some(mut image) = self.images.iter().find(|i| i.id == s).cloned() {
+                image.id = self.nid();
+                pmap.insert(s, image.id);
+                new_pids.push(image.id);
+                self.images.push(image);
+                continue;
+            }
             if self.pidx(s).is_none() {
                 continue;
             }
@@ -1538,7 +1581,11 @@ impl Document {
                 let (hidden, locked) = self.node(old_leaf).map(|n| (n.hidden, n.locked)).unwrap_or_default();
                 self.nodes.push(Node {
                     id: nl,
-                    kind: NodeKind::Path(new_p),
+                    kind: if self.images.iter().any(|i| i.id == new_p) {
+                        NodeKind::Image(new_p)
+                    } else {
+                        NodeKind::Path(new_p)
+                    },
                     name: String::new(),
                     parent: None,
                     children: vec![],

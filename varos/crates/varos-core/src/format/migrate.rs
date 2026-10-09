@@ -17,12 +17,18 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
     (2, migrate_v2_to_v3),
     (3, migrate_v3_to_v4),
     (4, migrate_v4_to_v5),
-    // TEMPORARY (integration 2026-10-09): text was pinned to 8 before images (6) and gradients (7)
-    // landed, so this single identity step spans 5 → 8. Wave-2 stage 2 MUST split it into
-    // migrate_v5_to_v6 (images), migrate_v6_to_v7 (gradients) and migrate_v7_to_v8 (text, i.e.
-    // `crate::text_format::migrate_to_text_boxes`). A 6 or 7 file has no step here and is refused.
-    (5, migrate_v5_to_v8),
+    (5, migrate_v5_to_v6),
+    // TEMPORARY until the gradients merge: one identity step spans 6 → 8 (7 = gradients, reserved).
+    (6, migrate_v6_to_v8),
 ];
+
+/// Every format this build reads: each migration start plus the current writer (integration w2: the
+/// Bridge 1.2 `readable_vrs` list derives from this, so reserved/skipped numbers are never advertised).
+pub fn readable_versions() -> Vec<u32> {
+    let mut v: Vec<u32> = MIGRATIONS.iter().map(|(from, _)| *from).collect();
+    v.push(super::FORMAT_VERSION);
+    v
+}
 
 /// Run the migrations that take a format-`from` document to format `to`, in order.
 pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result<Document, LoadError> {
@@ -38,18 +44,18 @@ pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result
 }
 
 /// The format a step starting at `from` produces. Every step is `N → N+1` except the temporary
-/// `migrate_v5_to_v8` (see `MIGRATIONS`), which stage 2 replaces with three single steps.
+/// `migrate_v6_to_v8` (see `MIGRATIONS`), which the gradients merge splits.
 fn step_target(from: u32) -> u32 {
-    if from == super::PRE_TEXT_FORMAT_VERSION {
+    if from == super::IMAGE_VERSION {
         super::TEXT_FORMAT_VERSION
     } else {
         from + 1
     }
 }
 
-/// TEMPORARY v5 → v8 identity (formats 6 and 7 are reserved for images and gradients, not yet in this
-/// build). Text: legacy readers supplied the empty default; never fabricates source/fonts.
-pub fn migrate_v5_to_v8(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
+/// TEMPORARY v6 → v8 identity (format 7 is reserved for gradients). Text: legacy readers supplied
+/// the empty default; never fabricates source/fonts.
+pub fn migrate_v6_to_v8(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
     crate::text_format::migrate_to_text_boxes(doc, limits)
 }
 
@@ -141,5 +147,11 @@ pub(crate) fn release_broken_clips(doc: &mut Document) -> bool {
 
 /// v4 → v5 is identity: omitted styles decode as defaults, without allocation or normalization.
 pub fn migrate_v4_to_v5(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
+    Ok(doc)
+}
+
+// ---- w2-images ----
+/// v5 → v6 (images) is identity: no source bytes or image identities are invented.
+pub fn migrate_v5_to_v6(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
 }

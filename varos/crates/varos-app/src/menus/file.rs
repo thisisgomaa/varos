@@ -9,7 +9,12 @@ pub(super) fn rows() -> Vec<Entry> {
         file_key("file.new", "New", cmd(K::KeyN), FileCmd::New),
         file_key("file.open", "Open\u{2026}", cmd(K::KeyO), FileCmd::Open),
         Entry::Sub { label: "Open Recent", items: vec![] },
-        file_key("file.place.svg", "Place artwork\u{2026}", cmd_shift(K::KeyP), FileCmd::PlaceSvg),
+        // Integration w2: ONE Place… on ⇧⌘P (Illustrator) for images AND vector artwork; the chosen
+        // file routes by type (raster → image job, SVG/PDF/AI/DXF → import job). The vector-only row
+        // stays as a plain (keyless) entry for its existing callers.
+        file_key("file.place", "Place…", cmd_shift(K::KeyP), FileCmd::Place),
+        file_row("file.package", "Package…", FileCmd::Package),
+        file_row("file.place.svg", "Place artwork\u{2026}", FileCmd::PlaceSvg),
         file_row("file.new-template", "New from Template…", FileCmd::NewTemplate),
         file_row("file.save-template", "Save as Template…", FileCmd::SaveTemplate),
         file_key("file.document-setup", "Document Setup…", cmd_alt(K::KeyP), FileCmd::DocumentSetup),

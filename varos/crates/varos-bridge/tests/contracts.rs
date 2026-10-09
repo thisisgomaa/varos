@@ -3512,7 +3512,8 @@ fn phase_one_effects_are_opt_in_revision_pinned_and_idempotent_without_os_calls(
     let old = varos_bridge::mcp::tools();
     assert_eq!(old, varos_bridge::mcp::tools_for_api("1.1"));
     let new = varos_bridge::mcp::tools_for_api("1.2");
-    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11 + 2);
+    // 11 base + 2 Lane H imports + 2 w2-images (add_image, image_action)
+    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11 + 2 + 2);
 }
 
 #[test]
@@ -3577,7 +3578,7 @@ fn stroke_api_12_schemas_capabilities_and_limit_errors() {
     let mut h = FakeHost::new();
     let reply = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"})));
     assert!(reply.ok, "{reply:?}");
-    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([5]));
+    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([varos_core::format::FORMAT_VERSION]));
     assert!(reply.result.as_ref().unwrap()["stroke_operations_schema"].is_object());
     h.editor.doc.paths[0].stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 1.0]);
     let rev = h.editor.rev;
@@ -3619,8 +3620,14 @@ fn stroke_scene_failure_is_a_snapshot_error_for_board_and_page() {
     doc.set_node_xform(unit, Xform { rot: 0.7, piv: [0.0, 0.0] });
     doc.artboards = vec![Artboard { id: 100, w: 6000.0, h: 6000.0, clip: false, ..Default::default() }];
     for artboard in [None, Some(100)] {
-        let reply = varos_bridge::service::SnapshotJob { document: doc.clone(), rev: 1, size: [100, 100], artboard }
-            .render(&AtomicBool::new(false));
+        let reply = varos_bridge::service::SnapshotJob {
+            blobs: Default::default(),
+            document: doc.clone(),
+            rev: 1,
+            size: [100, 100],
+            artboard,
+        }
+        .render(&AtomicBool::new(false));
         assert!(!reply.ok);
         assert!(reply.result.is_none());
         let error = reply.error.unwrap();
@@ -3786,6 +3793,10 @@ fn progressive_discovery_resolves_every_12_verb_without_mutation() {
                 let params = reply.result.unwrap();
                 check_refs(&params, &params);
                 assert!(params.is_object());
+            } else if group["tool"] == "image_action" {
+                let params = varos_bridge::mcp::schema("image_action", Some(name)).unwrap();
+                check_refs(&params, &params);
+                assert_eq!(params["properties"]["action"]["const"], name);
             } else {
                 assert!(varos_bridge::mcp::schema(name, None).is_ok(), "{name}");
             }
