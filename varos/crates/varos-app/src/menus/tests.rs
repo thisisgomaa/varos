@@ -255,7 +255,10 @@ const ADDED_AFTER_SPLIT: &[&str] = &["file.closeall", "file.savecopy", "file.rev
 fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, Vec<Entry>)> {
     fn strip(v: Vec<Entry>) -> Vec<Entry> {
         v.into_iter()
-            .filter(|e| !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str())))
+            .filter(|e| {
+                !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str()))
+                    && !matches!(e, Entry::Sub { label: "Transform" | "Layers", .. })
+            })
             .map(|e| match e {
                 Entry::Sub { label, items } => Entry::Sub { label, items: strip(items) },
                 e => e,

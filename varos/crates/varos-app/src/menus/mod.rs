@@ -92,6 +92,7 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
 /// What a clicked item does — each one an EXISTING path in the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuCmd {
+    Slice4a(&'static str),
     /// The ⌘ + key shortcut, fed to the same dispatch the keyboard uses (`main.rs`).
     Key(Accel),
     /// A PLAIN key (no modifier) fed to that same dispatch — for a click-only row that shows NO key

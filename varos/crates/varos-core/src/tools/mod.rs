@@ -11,6 +11,7 @@ pub mod eyedropper;
 pub mod object;
 pub mod pen;
 pub mod rotate;
+pub mod select_transform;
 pub mod shapes;
 
 pub trait Tool {
@@ -21,10 +22,12 @@ pub fn get(kind: ToolKind) -> &'static dyn Tool {
     match kind {
         ToolKind::Pen => &pen::Pen,
         ToolKind::Direct => &direct::Direct,
-        ToolKind::Object => &object::Object,
+        ToolKind::Object | ToolKind::FreeTransform => &object::Object,
         ToolKind::Convert => &convert::Convert,
         ToolKind::Eyedropper => &eyedropper::Eyedropper,
-        ToolKind::Rotate | ToolKind::Scale => &rotate::Transform,
+        ToolKind::Rotate | ToolKind::Scale | ToolKind::Reflect | ToolKind::Shear | ToolKind::MagicWand => {
+            &rotate::Transform
+        }
         ToolKind::Rect | ToolKind::Ellipse | ToolKind::Triangle | ToolKind::Polygon => &shapes::Shapes,
         // The Artboard tool is handled by `Editor::ab_down` before `get` is ever called — this arm only
         // keeps the match exhaustive (the value is never used).

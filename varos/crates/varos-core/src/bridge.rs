@@ -27,7 +27,7 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
     let envelope: Envelope = serde_json::from_slice(bytes)
         .map_err(|e| BatchError { index: 0, reason: format!("expected Bridge batch envelope: {e}") })?;
     let version = envelope.api.split('.').collect::<Vec<_>>();
-    if version.len() != 2 || version[0] != "0" || version[1].parse::<u32>().is_err() {
+    if envelope.api != "1.2" && (version.len() != 2 || version[0] != "0" || version[1].parse::<u32>().is_err()) {
         return Err(BatchError {
             index: 0,
             reason: format!("unsupported Bridge API {}; expected major 0 (0.1)", envelope.api),
@@ -37,7 +37,29 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
     values
         .into_iter()
         .enumerate()
-        .map(|(index, v)| serde_json::from_value(v).map_err(|e| BatchError { index, reason: e.to_string() }))
+        .map(|(index, v)| {
+            let command: EditCommand =
+                serde_json::from_value(v).map_err(|e| BatchError { index, reason: e.to_string() })?;
+            if envelope.api != "1.2"
+                && matches!(
+                    command,
+                    EditCommand::SetWandOptions(_)
+                        | EditCommand::SetEyedropperOptions(_)
+                        | EditCommand::Transform(_)
+                        | EditCommand::TransformBegin
+                        | EditCommand::TransformLive(_)
+                        | EditCommand::TransformCommit
+                        | EditCommand::TransformCancel
+                        | EditCommand::MagicWand { .. }
+                        | EditCommand::Eyedropper { .. }
+                        | EditCommand::Isolate(_)
+                        | EditCommand::LayerFamily { .. }
+                )
+            {
+                return Err(BatchError { index, reason: "slice 4A commands require API 1.2".into() });
+            }
+            Ok(command)
+        })
         .collect()
 }
 
@@ -59,6 +81,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             | Paste { .. }
             | DuplicateMoveLayer { .. }
             | DuplicateArtboard(_)
+            | Transform(crate::select_transform::Transform { copy: true, .. })
+            | LayerFamily { .. }
     ) {
         // Reserve an entire format-sized arena before an allocating edit. Existing allocators use
         // u32 ids; refusing near exhaustion is safer than overflowing before post-validation.
@@ -85,7 +109,9 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     let path = |id: u32| {
-        if ed.doc.pidx(id).is_none() {
+        if !ed.in_isolation(id) {
+            Err(format!("path {id} is outside isolation"))
+        } else if ed.doc.pidx(id).is_none() {
             Err(format!("unknown path id {id}"))
         } else if ed.doc.eff_hidden(id) || ed.doc.eff_locked(id) {
             Err(format!("path {id} is hidden or locked"))
@@ -130,6 +156,16 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             }
             Ok(())
         }
+        SetEyedropperOptions(_) => Ok(()),
+        SetWandOptions(options) => {
+            for v in [options.colour, options.weight, options.opacity] {
+                finite(v)?;
+                if v < 0. {
+                    return Err("tolerance must be nonnegative".into());
+                }
+            }
+            Ok(())
+        }
         Pathfinder(_) => {
             selection()?;
             ed.pathfinder_enabled().map_err(str::to_owned)
@@ -165,6 +201,56 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             }
         }
         DivideObjectsBelow => selection(),
+        Transform(s) | TransformLive(s) => {
+            s.check()?;
+            selection()
+        }
+        TransformBegin => selection(),
+        TransformCommit | TransformCancel => Ok(()),
+        Isolate(n) => {
+            if let Some(n) = n {
+                node(*n)?;
+                if ed.doc.node(*n).is_none_or(|n| n.kind != NodeKind::Group) {
+                    return Err("isolation requires a group".into());
+                }
+            }
+            Ok(())
+        }
+        LayerFamily { action, nodes } => {
+            use crate::select_transform::LayerAction as A;
+            if matches!(action, A::ReleaseBuild) {
+                ed.check_release_build(nodes, format::Limits::DEFAULT)?;
+            }
+            for n in nodes {
+                node(*n)?;
+                let Some(row) = ed.doc.node(*n) else { return Err("unknown node".into()) };
+                if matches!(action, A::ReleaseSequence | A::ReleaseBuild | A::Merge) && row.kind != NodeKind::Layer {
+                    return Err("operation requires layers".into());
+                }
+                if !matches!(action, A::Locate) && (row.hidden || row.locked) {
+                    return Err("layer target is hidden or locked".into());
+                }
+                let mut parent = row.parent;
+                while let Some(p) = parent {
+                    if nodes.contains(&p) {
+                        return Err("targets must not overlap ancestors".into());
+                    }
+                    parent = ed.doc.node(p).and_then(|n| n.parent);
+                }
+            }
+            Ok(())
+        }
+        MagicWand { source, options, .. } => {
+            path(*source)?;
+            for v in [options.colour, options.weight, options.opacity] {
+                finite(v)?;
+                if v < 0. {
+                    return Err("tolerance must be nonnegative".into());
+                }
+            }
+            Ok(())
+        }
+        Eyedropper { source, .. } => path(*source),
         AddPath { anchors, parent, fill, stroke, stroke_width, opacity, name, .. } => {
             if !(2..=1000).contains(&anchors.len()) {
                 return Err("path needs 2..1000 anchors".into());
