@@ -141,6 +141,15 @@ pub trait FsPort: Send + Sync {
     /// cleanup (piece C: retired session folders, stale temp folders).
     fn remove_dir(&self, path: &Path) -> io::Result<()>;
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
+    // ---- Lane F: bounded preferences reads; fake ports retain their fault hooks ----
+    fn read_limited(&self, path: &Path, max: usize) -> io::Result<Vec<u8>> {
+        let bytes = self.read(path)?;
+        if bytes.len() > max {
+            Err(io::Error::new(io::ErrorKind::InvalidData, "Settings exceed their read limit"))
+        } else {
+            Ok(bytes)
+        }
+    }
     /// Bounded descriptor-based hashing; unsupported adapters fail closed.
     fn content_hash(&self, _path: &Path) -> Option<[u8; 32]> {
         None
@@ -160,6 +169,32 @@ pub trait FsPort: Send + Sync {
 pub struct RealFs;
 
 impl FsPort for RealFs {
+    // ---- Lane F ----
+    fn read_limited(&self, path: &Path, max: usize) -> io::Result<Vec<u8>> {
+        use std::io::Read;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        let file = options.open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.len() > max as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Settings must be a regular file within their read limit",
+            ));
+        }
+        let mut bytes = vec![];
+        file.take(max as u64 + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > max {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Settings exceed their read limit"));
+        }
+        Ok(bytes)
+    }
+
     fn content_hash(&self, path: &Path) -> Option<[u8; 32]> {
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
@@ -356,7 +391,32 @@ pub const TEMP_NAME_MAX_BYTES: usize = 128;
 /// `nonce` makes the temp name unique — pass [`super::checksum::new_nonce`]; it must be a plain
 /// name fragment (no path separators).
 pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) -> Result<WriteOutcome, WriteError> {
-    write_replace_inner(fs, dest, bytes, nonce, None, None)
+    write_replace_inner(fs, dest, bytes, nonce, None, None, None)
+}
+
+// ---- Lane F: bounded settings compare at publication ----
+/// Recheck disk evidence after syncing the temporary file and immediately before replacement.
+/// This detects prior external changes; it is not a cross-process filesystem transaction.
+pub fn write_replace_if_unchanged(
+    fs: &dyn FsPort,
+    dest: &Path,
+    bytes: &[u8],
+    nonce: &str,
+    expected: Option<&[u8]>,
+    max: usize,
+) -> Result<WriteOutcome, WriteError> {
+    let guard = || {
+        let current = match fs.read_limited(dest, max) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        };
+        if current.as_deref() != expected {
+            return Err(io::Error::other("Settings changed on disk; reconcile before retrying"));
+        }
+        Ok(())
+    };
+    write_replace_inner(fs, dest, bytes, nonce, None, None, Some(&guard))
 }
 
 /// [`write_replace`] that can be called off (slice 0.6, the Export sheet's Cancel). `cancel` is checked
@@ -371,7 +431,7 @@ pub fn write_replace_cancellable(
     nonce: &str,
     cancel: &AtomicBool,
 ) -> Result<WriteOutcome, WriteError> {
-    write_replace_inner(fs, dest, bytes, nonce, Some(cancel), None)
+    write_replace_inner(fs, dest, bytes, nonce, Some(cancel), None, None)
 }
 
 /// Capture the temporary file identity before publication, never the destination after rename.
@@ -382,7 +442,7 @@ pub fn write_replace_published(
     nonce: &str,
     published: &mut Option<Fingerprint>,
 ) -> Result<WriteOutcome, WriteError> {
-    write_replace_inner(fs, dest, bytes, nonce, None, Some(published))
+    write_replace_inner(fs, dest, bytes, nonce, None, Some(published), None)
 }
 
 /// Hash only regular files, with bounded memory and the native reader's file-size ceiling.
@@ -425,6 +485,7 @@ fn write_replace_inner(
     nonce: &str,
     cancel: Option<&AtomicBool>,
     published: Option<&mut Option<Fingerprint>>,
+    guard: Option<&dyn Fn() -> io::Result<()>>,
 ) -> Result<WriteOutcome, WriteError> {
     let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
     debug_assert!(!nonce.is_empty() && !nonce.contains(['/', '\\']), "nonce must be a plain name fragment");
@@ -485,6 +546,13 @@ fn write_replace_inner(
     if cancelled() {
         let _ = fs.remove_file(&temp);
         return Err(WriteError::Cancelled);
+    }
+    // ---- Lane F: settings publication guard ----
+    if let Some(guard) = guard {
+        if let Err(e) = guard() {
+            let _ = fs.remove_file(&temp);
+            return Err(WriteError::Replace(e));
+        }
     }
     let baseline = published.as_ref().and_then(|_| fingerprint(fs, &temp));
     if let Err(e) = fs.rename(&temp, &dest) {
@@ -801,6 +869,23 @@ mod tests {
 
     fn temps(d: &TestDir) -> Vec<String> {
         d.names().into_iter().filter(|n| n.ends_with(".varos-tmp")).collect()
+    }
+
+    #[test]
+    fn settings_guard_refuses_replacement_at_publication_boundary() {
+        let (dir, dest) = setup("settings-publication-guard");
+        let guard = || {
+            // Runs after the new temporary file is fully written and synced.
+            assert!(!temps(&dir).is_empty());
+            std::fs::write(&dest, b"external replacement")?;
+            Err(io::Error::other("Settings changed on disk"))
+        };
+        let result = write_replace_inner(&RealFs, &dest, NEW, &new_nonce(), None, None, Some(&guard));
+        assert!(matches!(result, Err(WriteError::Replace(_))));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"external replacement");
+        assert!(temps(&dir).is_empty());
+        assert!(write_replace_if_unchanged(&RealFs, &dest, NEW, &new_nonce(), Some(OLD), 65536).is_err());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"external replacement");
     }
 
     #[test]

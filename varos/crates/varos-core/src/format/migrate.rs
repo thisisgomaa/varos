@@ -154,9 +154,10 @@ pub fn migrate_v6_to_v7(doc: Document, _limits: &Limits) -> Result<Document, Loa
     Ok(doc)
 }
 
-// ---- Lane C ----
-/// v8 → v9 (Live Corners) is identity: older writers did not emit `Path.corners`. The app lane's
-/// embedded preview is container-level (PDF catalog) and needs no model step.
+// ---- Lane C + Lane F ----
+/// v8 → v9 (Live Corners + optional container preview) is identity: older writers did not emit
+/// `Path.corners`, and the Quick Look preview (Lane F, formerly `migrate_v5_to_next_preview`) adds
+/// only optional PDF-catalog keys — authored content is unchanged.
 pub fn migrate_v8_to_v9(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
 }

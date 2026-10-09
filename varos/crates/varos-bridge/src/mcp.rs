@@ -637,6 +637,11 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
     }
     // ---- w2-images ----
     crate::images::append_tools(&mut out);
+    // ---- Lane F ----
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.extend(crate::application::schemas());
+        rows.extend(crate::application::extra_schemas());
+    }
     append_export_tools(&mut out);
     append_document_tools(&mut out);
     if let Some(list) = out["tools"].as_array_mut() {
@@ -1023,6 +1028,18 @@ pub fn tools_for(api: &str) -> Value {
             });
         }
     }
+    // Lane F: full schemas remain on demand, keeping the existing tools/list budget.
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows {
+            if ["help", "preferences", "history_list", "history_jump", "actions", "shortcuts", "command_index"]
+                .iter()
+                .any(|name| row["name"] == *name)
+            {
+                row["inputSchema"] = json!({"type":"object","properties":{"api":{"const":"1.2"}},"required":["api"]});
+                row["description"] = json!("Params: schema."); // integration w2: one wording for every row
+            }
+        }
+    }
     out
 }
 
@@ -1196,7 +1213,7 @@ pub fn list_verbs() -> Value {
                     for op in ops {
                         let expanded = expand_schema(op, root);
                         if let Some(verb) = schema_verb(&expanded) {
-                            let entry = json!({"name":verb,"description":verb_description(verb)});
+                            let entry = json!({"name":verb,"id":varos_core::registry::edit_id(verb),"description":verb_description(verb),"enabled":false,"disabled_reason":"needs_arguments"});
                             if core_verb(verb) {
                                 core.push(entry);
                             } else {
@@ -1206,7 +1223,8 @@ pub fn list_verbs() -> Value {
                     }
                 }
             } else {
-                tools.push(json!({"name":name,"description":row["description"]}));
+                let enabled = matches!(name, "capabilities" | "list_boards" | "list_verbs");
+                tools.push(json!({"name":name,"id":varos_core::registry::tool_id(name),"description":row["description"],"enabled":enabled,"disabled_reason":if enabled { None } else { Some("needs_arguments") }}));
             }
         }
     }

@@ -20,6 +20,9 @@ pub const BINDINGS: &[Binding] = &[
     b!("KeyY", true, false, true, "Pixel Preview"),
     b!("KeyF", false, true, false, "Presentation Mode"),
     b!("KeyT", false, false, false, "Type"),
+    // ---- Lane F ----
+    b!("KeyK", true, false, false, "Preferences"),
+    b!("KeyK", true, true, true, "Keyboard Shortcuts"),
     b!("KeyN", true, false, false, "New"),
     b!("KeyO", true, false, false, "Open"),
     b!("KeyS", true, false, false, "Save"),

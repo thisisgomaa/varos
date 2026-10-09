@@ -3515,7 +3515,8 @@ fn phase_one_effects_are_opt_in_revision_pinned_and_idempotent_without_os_calls(
     assert_eq!(old, varos_bridge::mcp::tools_for_api("1.1"));
     let new = varos_bridge::mcp::tools_for_api("1.2");
     // 11 base + 2 Lane H imports + 2 w2-images (add_image, image_action) + 1 Lane C (export_screens)
-    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11 + 2 + 2 + 1);
+    // + 7 Lane F (help, preferences, history_list, history_jump, actions, shortcuts, command_index)
+    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11 + 2 + 2 + 1 + 7);
 }
 
 #[test]

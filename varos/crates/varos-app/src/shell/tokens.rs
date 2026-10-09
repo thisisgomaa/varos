@@ -710,6 +710,14 @@ pub const EXPORT_SUFFIX_W: f32 = 76.0;
 pub const LIVE_CORNER_RADIUS: f32 = 4.0;
 pub const LIVE_CORNER_OFFSET: f32 = 16.0;
 
+// ---- Lane F ----
+/// Requested view-only pasteboard; does not alter artboard paint, UI theme or export.
+/// Integration w2: one canvas colour for Lane E and Lane F (`MatchUi` = the UI canvas #141313).
+pub fn preferences_pasteboard(colour: crate::storage::preferences::CanvasColour) -> [f32; 4] {
+    let rgb = crate::storage::preferences::canvas_rgb(colour);
+    [rgb[0] as f32 / 255.0, rgb[1] as f32 / 255.0, rgb[2] as f32 / 255.0, 1.0]
+}
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

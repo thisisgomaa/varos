@@ -27,8 +27,14 @@ struct VsOut { @builtin(position) clip: vec4<f32>, @location(0) color: vec4<f32>
 "#;
 
 mod gradient;
+// ---- Lane F ----
+pub use wgpu::PowerPreference;
+
 pub mod health;
 pub struct Renderer {
+    // ---- Lane F ----
+    pasteboard: [f32; 4],
+    pub adapter_description: String,
     pub health: health::DeviceHealth,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -252,6 +258,18 @@ impl Renderer {
     /// surface) — so it returns a human-readable Err instead of panicking; the app shows it in a dialog
     /// (ENGINEERING_REVIEW §3.3: "GPU/Win32/external edges never panic; internal invariants may").
     pub async fn new(target: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_power(target, width, height, wgpu::PowerPreference::HighPerformance).await
+    }
+    // ---- Lane F ----
+    pub fn set_pasteboard(&mut self, colour: [f32; 4]) {
+        self.pasteboard = colour;
+    }
+    pub async fn new_with_power(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+        power: wgpu::PowerPreference,
+    ) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -261,7 +279,7 @@ impl Renderer {
             .map_err(|e| format!("couldn't create a draw surface on the window: {e}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: power,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
@@ -658,6 +676,8 @@ impl Renderer {
         Ok(Renderer {
             image_cache,
             gradients,
+            adapter_description: format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend),
+            pasteboard: BG,
             health,
             surface,
             device,
@@ -981,7 +1001,9 @@ impl Renderer {
         canvas: Option<[f32; 4]>,
         pixelate: bool,
     ) {
-        let c = canvas.unwrap_or([BG[0], BG[1], BG[2], 1.0]);
+        // Integration w2: the scene's canvas colour (Lane E) and the pasteboard preference (Lane F)
+        // come from ONE setting; a scene without a canvas (Home/thumbnails) uses the pasteboard.
+        let c = canvas.unwrap_or(self.pasteboard);
         let clearc = wgpu::Color { r: c[0] as f64, g: c[1] as f64, b: c[2] as f64, a: c[3] as f64 };
         // bg pass — clear the scene target and lay the dot grid
         {

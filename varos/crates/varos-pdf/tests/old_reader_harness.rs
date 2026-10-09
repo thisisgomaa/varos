@@ -242,7 +242,10 @@ fn v4_reader_refuses_v5_before_decode() {
     let doc = sample_doc();
     let raw = varos_core::file::doc_to_blob(&doc).unwrap();
     let pdf = embedded_model_json(&varos_pdf::write_pdf(&doc).unwrap());
-    for body in [raw.as_str(), pdf.as_str()] {
+    // Historical v5 evidence remains v5 after later writer bumps (Lane F).
+    let raw_v5 = include_str!("../../varos-core/tests/fixtures/v5/plain.json");
+    let pdf_v5 = embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v5/plain.pdf"));
+    for body in [raw.as_str(), pdf.as_str(), raw_v5, pdf_v5.as_str(), r#"{"varos":5,"doc":42}"#] {
         assert_eq!(
             v4_gate(body).unwrap_err(),
             varos_core::format::LoadError::NewerVersion {
@@ -344,3 +347,16 @@ fn frozen_v5_gate_refuses_current_gradient_writer_output() {
     assert_eq!(frozen_paint_gate(embedded_model_json(&pdf).as_bytes(), 5), expected);
 }
 // ---- end w2-gradients ----
+#[test]
+fn current_next_writer_is_refused_by_frozen_v4_gate() {
+    let doc = sample_doc();
+    let raw = varos_core::file::doc_to_blob(&doc).unwrap();
+    let pdf = embedded_model_json(&varos_pdf::write_pdf(&doc).unwrap());
+    for body in [raw.as_str(), pdf.as_str()] {
+        assert_eq!(
+            v4_gate(body).unwrap_err(),
+            varos_core::format::LoadError::NewerVersion { found: varos_core::format::FORMAT_VERSION, supported: 4 }
+                .to_string()
+        );
+    }
+}

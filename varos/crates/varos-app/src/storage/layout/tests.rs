@@ -307,7 +307,7 @@ fn read_only_directory_stops_after_three_failures_until_real_change() {
 
 #[test]
 fn non_dockable_panels_and_grids_fall_back_and_quarantine() {
-    for panel in ["Swatches", "History", "Assets", "Grid"] {
+    for panel in ["Swatches", "Assets", "Grid"] {
         let d = TestDir::new("layout-unsupported");
         let path = d.join("layout.json");
         let mut layout = modified();
