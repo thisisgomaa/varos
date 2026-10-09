@@ -123,6 +123,14 @@ pub fn default_scope(doc: &Document) -> ExportScope {
 
 /// Plan the pages `scope` exports, or say why it can't. Never a dummy page.
 pub fn plan_pdf_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan, ExportUnavailable> {
+    // ---- Lane G ----
+    let outlined;
+    let doc = if doc.text_boxes.is_empty() {
+        doc
+    } else {
+        outlined = varos_text_layout::outline_document(doc).map_err(|_| ExportUnavailable::NothingToExport)?;
+        &outlined
+    };
     let pages: Vec<PageSpec> = match scope {
         ExportScope::AllVisibleArtboards => {
             if doc.artboards.is_empty() {
@@ -202,6 +210,10 @@ pub fn export_pdf_bytes_with_report(
     }
     let bytes = write_pages(doc, &plan.pages, None, cancel)?;
     let mut report = varos_core::ExportReport::default();
+    // ---- Lane G ----
+    if !doc.text_boxes.is_empty() {
+        report.notes.extend(varos_text_layout::export_notes(doc).map_err(ExportError::InvalidDocument)?);
+    }
     for p in &doc.paths {
         if !p.stroke_style.is_default() {
             let coverage = varos_core::stroke::evaluate(p, 0.01, &|| cancel.load(std::sync::atomic::Ordering::Relaxed))

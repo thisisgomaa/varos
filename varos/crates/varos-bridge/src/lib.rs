@@ -81,3 +81,5 @@ pub const TOOLS_12: &[&str] = &["print", "copy", "cut"];
 
 // ---- Lane E ----
 mod view_depth;
+// ---- Lane G ----
+mod text;

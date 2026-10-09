@@ -8,15 +8,16 @@ import subprocess
 import sys
 
 EDGES = {
+    "varos-text-layout": {"varos-core", "varos-text"},
     "varos-core": set(),
     "varos-import": {"varos-core"},
     "varos-text": set(),
     "varos-render-wgpu": {"varos-core"},
-    "varos-pdf": {"varos-core"},
-    "varos-app": {"varos-import", "varos-text", "varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
-    "varos-raster": {"varos-core", "varos-pdf"},  # PDF is test-only.
+    "varos-pdf": {"varos-text-layout", "varos-core"},
+    "varos-app": {"varos-text-layout", "varos-import", "varos-text", "varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
+    "varos-raster": {"varos-text-layout", "varos-core", "varos-pdf"},  # PDF is test-only.
     "varos-bridge": {"varos-core", "varos-raster"},
-    "varos-cli": {"varos-import", "varos-core", "varos-pdf", "varos-raster", "varos-bridge"},
+    "varos-cli": {"varos-text-layout", "varos-import", "varos-core", "varos-pdf", "varos-raster", "varos-bridge"},
 }
 
 
@@ -39,7 +40,7 @@ def validate(metadata, app_source):
         exact(f"{name} internal dependencies", internal, allowed)
         for dependency in dependencies:
             normalized = dependency["name"].replace("_", "-")
-            if name in {"varos-import", "varos-text", "varos-core", "varos-raster", "varos-cli", "varos-bridge"} and re.match(
+            if name in {"varos-import", "varos-text", "varos-text-layout", "varos-core", "varos-raster", "varos-cli", "varos-bridge"} and re.match(
                 r"^(wgpu|winit|epaint(?:-|$)|egui(?:-|$)|windows(?:-|$))", normalized
             ):
                 violations.append(f"{name} forbidden UI/GPU/platform dependency: {dependency['name']}")

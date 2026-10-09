@@ -49,3 +49,51 @@ Greedy remains the incremental cache's existing policy until composed cache keys
 and convergence get their own oracle tests. Every-line work must be bounded and
 resource refusal explicit. Hyphenation is a provider seam, no heuristic dictionary.
 No headless result substitutes for owner visual acceptance or WASM runtime parity.
+
+## Lane G product implementation — 2026-10-09
+
+The owner's Lane G instruction authorizes P2–P4 and provisional existing-kit UI,
+superseding the engine-only hold above for this worktree. Owner design review is
+still pending. `varos-core::text` owns source runs, immutable font hash references,
+point/area frame data and checked commands. `varos-text-layout` depends on core
+and the byte-fed text leaf; app/PDF/raster/CLI use that adapter. Core never imports
+the text engine. The dependency checker explicitly enforces this seam.
+
+The named `migrate_to_text_boxes` step is the next writer version (provisional 6;
+merge moderator renumbers after images/gradients). New keys are `doc.text_boxes`,
+`NodeKind::Text(id)` and each TextBox's `id`, `box_kind`, `frame`, `runs` (text/style:
+font family/weight/hash, size, letter_spacing, fill), `para` (align, direction,
+kashida, line_height). Font hash is lowercase SHA-256 hex, not embedded bytes.
+Older fixtures are unchanged; their writer-version assertions now follow the
+named current version, with all non-version plain-path bytes still checked.
+
+Layout preserves source, uses NonZero coverage per glyph, and normalizes that
+coverage for the existing even-odd fill pipeline. Cache identity includes all
+source/style/frame data, font snapshot and zoom bucket. Area overflow is retained
+as editable source and explicitly reported on export. Layout refuses above 64 KiB
+source/16,384 glyphs per frame and 250,000 outline vertices; cached outlines are
+bounded to 500,000 vertices. Fonts are supplied as immutable bytes; bounded host
+TTF/OTF discovery lives in the adapter, not in core or the shaping leaf.
+
+CLI: `add-text INPUT --text SOURCE --at X,Y --out OUTPUT`; `set-text INPUT --id ID
+--text SOURCE --out OUTPUT`. Optional `--area X,Y,W,H`, `--size N`; full styled
+runs/paragraph changes also use `apply --batch` with API 1.2 AddText/SetText.
+Bridge API 1.2 advertises `add_text`/`set_text` through list_verbs/schema; describe
+supports the `text` field. Source changes publish one undo entry per committed
+edit batch. Native GUI, OS IME/clipboard, and visual Arabic acceptance remain
+owner checks; headless input and shape tests are not native acceptance.
+
+### Resume completion notes — Lane G
+
+Point alignment applies separately to each baseline around the authored anchor; area frames
+retain their width and paragraph composer. Text selection paints the engine's source-aware
+rectangles, including split bidi ranges. Native menu shortcuts forward to the same text events
+as the keyboard. A provisional Type edit made during typing changes the draft, so source and
+format publish together as one AddText/SetText undo batch. A missing saved font is labelled
+explicitly rather than showing a different family as selected. Headless tests cover these paths;
+OS IME, system clipboard and owner visual acceptance still require the permitted later GUI run.
+
+The adapter discovers a bounded snapshot of normal-weight 400/500/600 standalone system TTF/OTF
+faces alongside bundled Inter and IBM Plex Sans Arabic. Font collections, variable axes and
+font packaging are later stages; no font binary is embedded by this lane. Offline dependencies
+were available. The next-version wire additions are recorded in `docs/reference/VRS_FORMAT.md`.

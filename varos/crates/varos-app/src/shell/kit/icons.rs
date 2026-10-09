@@ -101,6 +101,7 @@ pub enum Icon {
     DrawSelect,
     DrawDirect,
 
+    Type,
     Hand,
     ZoomIn,
     Lasso,
@@ -352,6 +353,10 @@ impl Icon {
             Self::DrawCurvature => varos!("draw-curvature"),
             Self::DrawSelect => varos!("draw-select"),
             Self::DrawDirect => varos!("draw-direct"),
+            Self::Type => (
+                "type",
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6V4H20V6M12 4V20M8 20H16"/></svg>"#,
+            ),
             Self::Hand => svg!("hand"),
             Self::ZoomIn => svg!("zoom-in"),
             Self::Lasso => svg!("lasso"),

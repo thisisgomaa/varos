@@ -44,6 +44,8 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
                 && matches!(
                     command,
                     EditCommand::Drawing(_)
+                        | EditCommand::AddText { .. }
+                        | EditCommand::SetText { .. }
                         | EditCommand::SetWandOptions(_)
                         | EditCommand::SetEyedropperOptions(_)
                         | EditCommand::Transform(_)
@@ -70,6 +72,12 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     // ---- Lane D: validate before staging ----
     if let Drawing(action) = command {
         return crate::drawing::check(ed, action);
+    }
+    // ---- Lane G ----
+    match command {
+        AddText { text, parent } => crate::text::check_change(ed, text, None, *parent)?,
+        SetText { id, text } => crate::text::check_change(ed, text, Some(*id), None)?,
+        _ => {}
     }
     if matches!(
         command,
@@ -138,7 +146,11 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     let artboard = |i: usize| ed.doc.artboards.get(i).map(|_| ()).ok_or_else(|| format!("unknown artboard index {i}"));
     let selection = || {
         for id in &ed.objsel {
-            path(*id)?;
+            if crate::text::node_id(&ed.doc, *id).is_some() {
+                crate::text::editable(ed, *id)?;
+            } else {
+                path(*id)?;
+            }
         }
         for id in &ed.selected {
             let pid = ed.doc.pid_of_anchor(*id).ok_or_else(|| format!("unknown anchor id {id}"))?;
@@ -155,6 +167,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     };
     match command {
         Drawing(action) => crate::drawing::check(ed, action),
+        AddText { .. } | SetText { .. } => Ok(()),
         SetStrokeStyle { ids, style } => {
             if ids.is_empty() {
                 return Err("stroke style targets must not be empty".into());
@@ -218,6 +231,9 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
         DivideObjectsBelow => selection(),
         Transform(s) | TransformLive(s) => {
+            if !crate::text::selected_ids(ed).is_empty() && !crate::text::translation_only(*s) {
+                return Err("text objects currently support translation only".into());
+            }
             s.check()?;
             selection()
         }
@@ -516,7 +532,11 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
         SelectPaths(ids) => {
             for id in ids {
-                path(*id)?;
+                if crate::text::node_id(&ed.doc, *id).is_some() {
+                    crate::text::editable(ed, *id)?;
+                } else {
+                    path(*id)?;
+                }
             }
             Ok(())
         }
@@ -805,6 +825,16 @@ pub fn elements(doc: &crate::model::Document, detail: bool) -> BTreeMap<String, 
         let mut v = json!({"id":id,"kind":if n.kind==NodeKind::Layer {"layer"} else {"group"},
             "name":n.name,"bounds":bounds(doc,&doc.node_paths(n.id)),"fill":null,"stroke":null,
             "hidden":n.hidden,"locked":n.locked,"parent":n.parent.map(|id|format!("node:{id}"))});
+        // ---- Lane G: describe source, no engine-derived bounds in core ----
+        if let NodeKind::Text(id) = n.kind {
+            v["kind"] = json!("text");
+            if let Some(text) = doc.text_boxes.iter().find(|t| t.id == id) {
+                v["text"] = json!(text);
+                if let crate::text::TextBoxKind::Area(rect) = text.box_kind {
+                    v["bounds"] = json!([rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]]);
+                }
+            }
+        }
         if detail {
             v["geometry"] = json!(n);
         }

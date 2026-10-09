@@ -690,6 +690,11 @@ pub const CANVAS_MID: [u8; 3] = [95, 92, 89];
 pub const NAVIGATOR_PROXY: [u32; 2] = [224, 126];
 pub const NAVIGATOR_IMAGE_TINT: Color32 = Color32::WHITE;
 
+// ---- Lane G: provisional Type kit dimensions ----
+pub const TEXT_CARET_W: f32 = 1.0;
+pub const TYPE_FIELD_W: f32 = 140.0;
+pub const TEXT_OVERSET_SIZE: f32 = 11.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

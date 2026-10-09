@@ -13,6 +13,8 @@ pub(crate) const GROUPS: &[&[ToolKind]] = &[
     &[ToolKind::Object, ToolKind::Direct, ToolKind::Lasso],
     &[ToolKind::Artboard],
     &[ToolKind::Pen, ToolKind::Curvature, ToolKind::AddAnchor, ToolKind::DeleteAnchor, ToolKind::Convert],
+    // Lane G: Type sits after the Pen group (Illustrator toolbar order)
+    &[ToolKind::Text],
     SHAPES,
     LINES,
     FREEHAND,
@@ -72,6 +74,7 @@ fn icon(tool: ToolKind) -> Icon {
         ToolKind::Curvature => Icon::DrawCurvature,
         ToolKind::PathEraser | ToolKind::Eraser => Icon::PathEraser,
         ToolKind::Join => Icon::Link,
+        ToolKind::Text => Icon::Type,
         ToolKind::Hand => Icon::Hand,
         ToolKind::Zoom => Icon::ZoomIn,
         ToolKind::Lasso => Icon::Lasso,

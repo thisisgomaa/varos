@@ -15,6 +15,15 @@ use crate::model::{DropPos, SnapConfig};
 pub enum EditCommand {
     // ---- Lane D: deterministic drawing boundary ----
     Drawing(crate::drawing::Action),
+    // ---- Lane G ----
+    AddText {
+        text: crate::text::TextBox,
+        parent: Option<u32>,
+    },
+    SetText {
+        id: u32,
+        text: crate::text::TextBox,
+    },
     SetWandOptions(crate::select_transform::WandOptions),
     SetEyedropperOptions(crate::select_transform::PickOptions),
     Transform(crate::select_transform::Transform),
@@ -393,6 +402,13 @@ impl EditCommand {
             Self::TransformCancel => ed.transform_end(true),
             Self::MagicWand { source, options, mode } => ed.magic_wand(source, options, mode),
             Self::Eyedropper { source, options, colour_only } => ed.sample_options(source, options, colour_only),
+            // ---- Lane G ----
+            Self::AddText { text, parent } => {
+                let _ = crate::text::add(ed, text, parent);
+            }
+            Self::SetText { id, text } => {
+                let _ = crate::text::set(ed, id, text);
+            }
             Self::Isolate(n) => ed.isolate(n),
             Self::LayerFamily { action, nodes } => ed.layer_family(action, nodes),
             Self::InsertTracedPaths { paths } => {
@@ -616,6 +632,8 @@ impl Editor {
     fn execute_created_inner(&mut self, command: EditCommand) -> Result<u32, String> {
         crate::bridge::check(&command, self)?;
         match command {
+            // ---- Lane G ----
+            EditCommand::AddText { text, parent } => crate::text::add(self, text, parent),
             EditCommand::AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
                 self.add_shape(kind, bounds, parent, fill, stroke, stroke_width, opacity, name)
             }
