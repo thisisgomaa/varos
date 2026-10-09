@@ -82,6 +82,21 @@ impl Host for Desktop<'_> {
         verb: &str,
         request: &varos_bridge::dto::FileEffect,
     ) -> Result<varos_bridge::Reply, Error> {
+        if verb == "import_svg" {
+            let id = session(&request.board)?;
+            let path = std::path::Path::new(
+                request.path.as_deref().ok_or_else(|| Error::new("invalid_argument", "source path required"))?,
+            );
+            let extension =
+                if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svgz")) { "svgz" } else { "svg" };
+            varos_bridge::files::validate_path(path, extension)?;
+            let bytes = varos_bridge::files::read_source(path, extension, varos_import::MAX_BYTES)?;
+            let (doc, report) = varos_import::import_svg(&bytes).map_err(|e| Error::new("invalid_argument", e))?;
+            let s = self.ws.get_mut(id).ok_or_else(|| Error::new("not_found", "board closed"))?;
+            varos_core::placement::check(&s.editor, &doc).map_err(|e| Error::new("invalid_argument", e))?;
+            s.editor.execute(varos_core::EditCommand::PlaceArtwork(Box::new(doc)));
+            return Ok(varos_bridge::Reply::success(serde_json::json!({"rev":s.editor.rev,"report":report})));
+        }
         use crate::file_jobs::{BridgeFileJob, ExportJob, FileJob, SaveInFlight, SaveJob};
         if FILE_PENDING.with(|r| r.borrow().len() >= 8) {
             return Err(Error::new("busy", "eight file jobs are already pending"));

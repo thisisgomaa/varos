@@ -39,6 +39,8 @@ pub enum EditCommand {
     InsertTracedPaths {
         paths: Vec<crate::model::Path>,
     },
+    /// Place normalized artwork as one group with fresh ids and one undo entry.
+    PlaceArtwork(Box<crate::model::Document>),
     /// Deterministic creation; checked callers use `try_execute_created` for the allocated path id.
     AddShape {
         kind: crate::model::ShapeKind,
@@ -372,6 +374,7 @@ impl EditCommand {
                 ed.dirty = true;
                 ed.commit();
             }
+            Self::PlaceArtwork(doc) => crate::placement::place(ed, *doc),
             Self::AddPath { .. } => {
                 let _ = ed.try_execute_created(self);
             }

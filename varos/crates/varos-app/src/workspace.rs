@@ -436,6 +436,16 @@ impl Workspace {
         id
     }
 
+    /// Foreign artwork opens without a backing path and must be saved before it can be discarded.
+    pub fn new_imported(&mut self, doc: Document) -> SessionId {
+        let id = self.new_untitled_with(doc);
+        if let Some(s) = self.get_mut(id) {
+            s.saved = Document::default();
+            s.memo.set(None);
+        }
+        id
+    }
+
     /// A new clean `Untitled-N` board that starts as `doc` (a preset board, Start v2): like
     /// [`Self::new_untitled`], then the editor takes `doc` (`replace_doc`) and the checkpoint is taken
     /// after that, so the tab opens clean and its first undo cannot remove the preset artboard.
