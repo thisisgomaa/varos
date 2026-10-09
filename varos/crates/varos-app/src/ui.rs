@@ -31,16 +31,19 @@ use varos_app::shell::kit::icons::{
     LEGACY_RECT, LEGACY_ROTATE, LEGACY_SCALE, LEGACY_SELECT, LEGACY_STROKEW, LEGACY_TRIANGLE,
 };
 use varos_app::shell::kit::{self, Icon};
-mod fields;
+mod export;
+pub(crate) mod fields;
+mod guide_field;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 mod bar;
 mod canvas_overlay;
+mod clipping;
 mod control_bar;
 mod controls;
 mod layout;
 mod menus;
-mod ops;
+pub(crate) mod ops;
 mod panels;
 mod picker;
 mod pointer;
@@ -62,12 +65,10 @@ use rail::*;
 use snap::*;
 use style::*;
 // ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
-
 mod icon_actions;
 mod isolation;
 pub(crate) mod select_transform;
 use icon_actions::*;
-
 /// A window action the custom title bar asks the host (winit) to perform.
 pub enum WinAction {
     Minimize,
@@ -76,14 +77,12 @@ pub enum WinAction {
     /// The band's V mark (4b, macOS): the native About panel.
     About,
 }
-
 struct ToolBtn {
     pub(crate) kind: ToolKind,
     pub(crate) tip: &'static str,
     pub(crate) tex: Option<egui::TextureHandle>,
     pub(crate) group_end: bool,
 }
-
 pub struct Ui {
     ctx: egui::Context,
     state: egui_winit::State,
@@ -98,6 +97,7 @@ pub struct Ui {
     /// last laid out (the band's right zone with the V mark, and the sheet's right edge — one frame late).
     export_sheet: Option<crate::export_ui::ExportSheet>,
     panel_column: Option<egui::Rangef>,
+    pub document_sheet: Option<crate::document_ui::Sheet>,
     export_scopes: std::collections::HashMap<SessionId, varos_pdf::ExportScope>,
     tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
     shapes: Vec<ToolBtn>,   // the shape tools, collapsed into one rail slot (right-click → flyout)
@@ -147,7 +147,6 @@ pub struct Ui {
     pub board_px: Option<egui::Rect>,    // same, in PHYSICAL px — main.rs fits the view to it
     field_pending: Option<fields::Pending>, // K3: what the open field would commit now
 }
-
 /// The Layers-panel icon set (rasterized Lucide, white).
 struct LayerIcons {
     pub(crate) eye: Option<egui::TextureHandle>,
@@ -156,7 +155,6 @@ struct LayerIcons {
     pub(crate) unlock: Option<egui::TextureHandle>,
     pub(crate) search: Option<egui::TextureHandle>,
 }
-
 /// Native menu-bar mirrors (macOS, docs/foundation/MAC_CHROME.md §C): the SAME state the bar's Window
 /// menu rows flip, and the keyboard hand-off for a focused text field.
 #[cfg(target_os = "macos")]
@@ -201,33 +199,13 @@ impl Ui {
         }
     }
 }
-
 impl Ui {
     pub fn new(window: &Window) -> Self {
         let ctx = egui::Context::default();
         install_fonts(&ctx);
         install_style(&ctx);
         disable_ui_keyboard_zoom(&ctx);
-        // rail singletons — Artboard sits with Selection + Direct Selection (Ahmed), then Pen, Eyedropper.
-        let defs: [(ToolKind, &str, &str, bool); 7] = [
-            (ToolKind::Object, LEGACY_SELECT, "Selection (V)", false),
-            (ToolKind::Direct, LEGACY_DIRECT, "Direct Selection (A)", false),
-            (ToolKind::Artboard, LEGACY_ARTBOARD, "Artboard (Shift+O)", true), // ends the selection group
-            (ToolKind::Pen, LEGACY_PEN, "Pen (P)", true),                      // ends the pen group
-            (ToolKind::Rotate, LEGACY_ROTATE, "Rotate (R)", false),            // transform group ↓
-            (ToolKind::Scale, LEGACY_SCALE, "Scale (S)", true),                // ends the transform group
-            (ToolKind::Eyedropper, LEGACY_EYE, "Eyedropper (I)", false),
-        ];
-        let tools = defs
-            .iter()
-            .enumerate()
-            .map(|(i, (kind, svg, tip, grp))| ToolBtn {
-                kind: *kind,
-                tip,
-                tex: legacy_texture(&ctx, &format!("ic-{i}"), svg, false),
-                group_end: *grp,
-            })
-            .collect();
+        let tools = rail::tools(&ctx);
         // shape tools collapse into ONE rail slot: left-click uses the current shape, right-click flyouts all four.
         let shape_defs: [(ToolKind, &str, &str); 4] = [
             (ToolKind::Rect, LEGACY_RECT, "Rectangle (M)"),
@@ -275,6 +253,7 @@ impl Ui {
             repaint_at: None,
             recovery: Default::default(),
             file_status: String::new(),
+            document_sheet: None,
             export_sheet: None,
             panel_column: None,
             export_scopes: Default::default(),
@@ -350,7 +329,7 @@ impl Ui {
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
     pub fn wants_keyboard(&self) -> bool {
-        wants_keyboard(&self.ctx)
+        export::wants_keyboard(self)
     }
     /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
     /// cancels the drag) and must not also reach the canvas.
@@ -428,6 +407,7 @@ impl Ui {
     /// K3: commit the open field into `ed` now (before a canvas press, which may change the selection
     /// the field edits). `false` = its text does not parse — it keeps the keyboard; drop the press.
     pub fn commit_fields(&mut self, ed: &mut Editor) -> bool {
+        crate::document_ui::settle(&mut self.document_sheet, ed);
         self.commit_picker_fields(ed)
     }
     /// A text / number field is being edited right now.
@@ -597,7 +577,8 @@ impl Ui {
         let mut show_rail = self.show_rail;
         let mut show_dock = self.show_dock;
         let mut snap_cfg = ed.doc.snap; // the Windows burger's snapping rows edit this (non-undoable mode flag)
-        let has_selection = crate::lifecycle::has_selection(ed); // the burger's Export Selection… row
+        let has_selection = crate::lifecycle::has_selection(ed);
+        clipping::seed(&self.ctx, ed);
         let doc_tabs = std::mem::take(&mut self.doc_tabs);
         let doc_active = self.doc_active;
         // an accumulating queue: nothing drains it until S1-D wires `take_app_commands` into the host,
@@ -632,24 +613,10 @@ impl Ui {
                 false,
                 cfg!(target_os = "macos"),
             );
-            if let Some(sheet) = export_sheet.as_mut() {
-                match crate::export_ui::draw(ctx, sheet, panel_column) {
-                    crate::export_ui::SheetAction::Stay => {}
-                    crate::export_ui::SheetAction::Close => export_sheet = None,
-                    crate::export_ui::SheetAction::Export(id, scope, ticket) => {
-                        if scope != varos_pdf::ExportScope::Selection {
-                            export_scopes.insert(id, scope); // Selection is asked for, never remembered
-                        }
-                        app_cmds.push(AppCommand::ExportPdf(id, scope, ticket));
-                        // the sheet stays: Cancel / done
-                    }
-                    crate::export_ui::SheetAction::Reveal(path) => {
-                        crate::export_ui::reveal(&path);
-                        export_sheet = None;
-                    }
-                }
-            }
-            build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request, status);
+            crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
+            crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
+            crate::document_ui::draw(ctx, &mut self.document_sheet, ed, doc_active, &mut ops);
+            build_statusbar(root, (absnap.active, absnap.count), view.zoom, ic_fit, &mut fit_request, status, &mut ops);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
             // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
             // frame's hole (one-frame lag on resize, healed by the request_repaint below). ──
@@ -672,6 +639,7 @@ impl Ui {
                                 board_rulers(ui, inner, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops);
                                 inner = egui::Rect::from_min_max(inner.min + egui::vec2(RULER, RULER), inner.max);
                             }
+                            guide_field::show(ui, inner, view, ppp, ed, &mut ops);
                             if show_rail {
                                 board_rail(ui.ctx(), inner, tools, shapes, &mut shape_active, &snap, &mut ops);
                             }

@@ -28,15 +28,15 @@ fn selected_square() -> Editor {
 fn stroke_width_command_owns_history_and_undo_redo() {
     let mut ed = selected_square();
 
-    ed.execute(EditCommand::SetStrokeWidth(-4.0));
+    ed.execute_ui(EditCommand::SetStrokeWidth(-4.0));
     assert_eq!(ed.doc.paths[0].stroke_width, 0.0);
     assert_eq!(ed.rev, 1);
 
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.paths[0].stroke_width, 3.0);
     assert_eq!(ed.rev, 2);
 
-    ed.execute(EditCommand::Redo);
+    ed.execute_ui(EditCommand::Redo);
     assert_eq!(ed.doc.paths[0].stroke_width, 0.0);
     assert_eq!(ed.rev, 3);
 }
@@ -46,12 +46,12 @@ fn nonundoable_document_settings_keep_their_current_revision_policy() {
     let mut ed = selected_square();
     ed.doc.snap.enabled = false;
 
-    ed.execute(EditCommand::SetRulerOrigin([13.0, 17.0]));
-    ed.execute(EditCommand::ToggleSnapping);
+    ed.execute_ui(EditCommand::SetRulerOrigin([13.0, 17.0]));
+    ed.execute_ui(EditCommand::ToggleSnapping);
     assert!(ed.doc.snap.enabled);
     let mut config = ed.doc.snap;
     config.smart = false;
-    ed.execute(EditCommand::SetSnapConfig(config));
+    ed.execute_ui(EditCommand::SetSnapConfig(config));
 
     assert_eq!(ed.doc.ruler_origin, [13.0, 17.0]);
     assert_eq!(ed.origin_preview, Some([13.0, 17.0]));
@@ -63,7 +63,7 @@ fn nonundoable_document_settings_keep_their_current_revision_policy() {
 fn paint_command_sets_the_target_and_commits_the_selected_path() {
     let mut ed = selected_square();
 
-    ed.execute(EditCommand::ApplyPaint { target: PaintTarget::Stroke, color: None });
+    ed.execute_ui(EditCommand::ApplyPaint { target: PaintTarget::Stroke, color: None });
 
     assert!(ed.paint == PaintTarget::Stroke);
     assert_eq!(ed.doc.paths[0].stroke, Paint::None);
@@ -81,7 +81,7 @@ fn stroke_width_on_a_selection_carries_to_the_next_pen_path() {
     // on a SELECTED path must also make it the current weight (Illustrator: last-used appearance).
     let mut ed = selected_square();
     assert_eq!(ed.cur_sw, 2.0);
-    ed.execute(EditCommand::SetStrokeWidth(80.0));
+    ed.execute_ui(EditCommand::SetStrokeWidth(80.0));
     assert_eq!(ed.doc.paths[0].stroke_width, 80.0, "the selection gets the weight");
     assert_eq!(ed.cur_sw, 80.0, "…and it becomes the current weight");
 
@@ -105,13 +105,13 @@ fn stroke_width_while_drawing_lands_on_the_pen_path() {
     assert!(ed.objsel.is_empty() && ed.active.is_some(), "mid-draw: no object selection, an active path");
     let rev0 = ed.rev;
 
-    ed.execute(EditCommand::SetStrokeWidth(80.0));
+    ed.execute_ui(EditCommand::SetStrokeWidth(80.0));
 
     let pi = ed.repr_path().expect("the inspector shows the in-progress path");
     assert_eq!(ed.doc.paths[pi].stroke_width, 80.0, "the in-progress Pen path takes the weight");
     assert_eq!(ed.cur_sw, 80.0);
     assert_eq!(ed.rev, rev0 + 1, "one committed, undoable edit");
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.paths[pi].stroke_width, 2.0);
 }
 
@@ -141,7 +141,7 @@ fn rename_path_writes_the_name_the_layers_row_reads() {
     let mut ed = one_open_path();
     let leaf = ed.doc.node_of_path(1).expect("the path has a leaf node");
     let leaf_name = ed.doc.node(leaf).unwrap().name.clone();
-    ed.execute(EditCommand::RenamePath { path: 1, name: "  Logo  ".into() });
+    ed.execute_ui(EditCommand::RenamePath { path: 1, name: "  Logo  ".into() });
     assert_eq!(ed.doc.paths[0].name.as_deref(), Some("Logo"), "trimmed, stored on the path");
     assert_eq!(ed.doc.node(leaf).unwrap().name, leaf_name, "the leaf node's name is not the displayed one");
 }
@@ -149,24 +149,24 @@ fn rename_path_writes_the_name_the_layers_row_reads() {
 #[test]
 fn rename_path_is_one_undo_step() {
     let mut ed = one_open_path();
-    ed.execute(EditCommand::RenamePath { path: 1, name: "Logo".into() });
+    ed.execute_ui(EditCommand::RenamePath { path: 1, name: "Logo".into() });
     assert_eq!(ed.rev, 1, "one edit");
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.paths[0].name, None, "undo restores the auto-name");
-    ed.execute(EditCommand::Redo);
+    ed.execute_ui(EditCommand::Redo);
     assert_eq!(ed.doc.paths[0].name.as_deref(), Some("Logo"));
 }
 
 #[test]
 fn rename_path_empty_name_keeps_the_old_one() {
     let mut ed = one_open_path();
-    ed.execute(EditCommand::RenamePath { path: 1, name: "Logo".into() });
+    ed.execute_ui(EditCommand::RenamePath { path: 1, name: "Logo".into() });
     let rev = ed.rev;
     // blank, or made only of invisible direction/format marks (RLM, ALM, LRM, RLO, ZWSP, BOM, isolates)
     for empty in
         ["", "   ", "\t", "\u{200F}", "\u{061C} \u{200E}", "\u{202E}\u{202A}", "\u{200B}\u{FEFF}", "\u{2067}\u{2069}"]
     {
-        ed.execute(EditCommand::RenamePath { path: 1, name: empty.into() });
+        ed.execute_ui(EditCommand::RenamePath { path: 1, name: empty.into() });
         assert_eq!(ed.doc.paths[0].name.as_deref(), Some("Logo"), "{empty:?} must keep the old name");
     }
     assert_eq!(ed.rev, rev, "an emptied field is not an edit");
@@ -175,23 +175,23 @@ fn rename_path_empty_name_keeps_the_old_one() {
 #[test]
 fn rename_path_trims_invisible_marks_at_the_edges_only() {
     let mut ed = one_open_path();
-    ed.execute(EditCommand::RenamePath { path: 1, name: "\u{200F} شعار \u{200F}".into() });
+    ed.execute_ui(EditCommand::RenamePath { path: 1, name: "\u{200F} شعار \u{200F}".into() });
     assert_eq!(ed.doc.paths[0].name.as_deref(), Some("شعار"));
-    ed.execute(EditCommand::RenamePath { path: 1, name: "شعار\u{200F}2".into() });
+    ed.execute_ui(EditCommand::RenamePath { path: 1, name: "شعار\u{200F}2".into() });
     assert_eq!(ed.doc.paths[0].name.as_deref(), Some("شعار\u{200F}2"), "a mark inside the name is kept");
 }
 
 #[test]
 fn rename_path_no_op_does_not_dirty() {
     let mut ed = one_open_path();
-    ed.execute(EditCommand::RenamePath { path: 1, name: "Logo".into() });
+    ed.execute_ui(EditCommand::RenamePath { path: 1, name: "Logo".into() });
     let rev = ed.rev;
-    ed.execute(EditCommand::RenamePath { path: 1, name: "Logo".into() });
-    ed.execute(EditCommand::RenamePath { path: 1, name: " Logo\u{200E}".into() });
-    ed.execute(EditCommand::RenamePath { path: 99, name: "Ghost".into() }); // no such path
+    ed.execute_ui(EditCommand::RenamePath { path: 1, name: "Logo".into() });
+    ed.execute_ui(EditCommand::RenamePath { path: 1, name: " Logo\u{200E}".into() });
+    ed.execute_ui(EditCommand::RenamePath { path: 99, name: "Ghost".into() }); // no such path
     assert_eq!(ed.rev, rev, "an unchanged name (or a missing path) leaves the document clean");
     // …and it pushed no history: one Undo goes straight back to the auto-name
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.paths[0].name, None);
 }
 
@@ -209,7 +209,7 @@ fn pen_new_draft_deselects_leftover_objects() {
     assert!(ed.objsel.is_empty() && ed.dsel_path.is_none(), "the old selection is dropped when the draft starts");
     assert_eq!(ed.obj_angle, 0.0);
     // the inspector's X field acts on the draft, never on the old square
-    ed.execute(EditCommand::SetObjectBounds {
+    ed.execute_ui(EditCommand::SetObjectBounds {
         x: Some(500.0),
         y: None,
         width: None,

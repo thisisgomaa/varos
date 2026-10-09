@@ -84,6 +84,21 @@ pub fn legacy_texture(ctx: &Context, name: &str, inner: &str, filled: bool) -> O
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
+    Hand,
+    ZoomIn,
+    Lasso,
+    PenTool,
+    PenLine,
+    PenOff,
+    DistributeLeft,
+    DistributeCenter,
+    DistributeRight,
+    DistributeTop,
+    DistributeMiddle,
+    DistributeBottom,
+
+    ExportGrid,
+    ExportCheck,
     // ── Start / Home / Recent ──
     Home,
     New,
@@ -195,7 +210,7 @@ pub enum Icon {
     PathEraser,
 }
 impl Icon {
-    pub const ALL: [Icon; 64] = [
+    pub const ALL: [Icon; 78] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -260,6 +275,20 @@ impl Icon {
         Self::PathScissors,
         Self::PathKnife,
         Self::PathEraser,
+        Self::Lasso,
+        Self::PenTool,
+        Self::PenLine,
+        Self::PenOff,
+        Self::DistributeLeft,
+        Self::DistributeCenter,
+        Self::DistributeRight,
+        Self::DistributeTop,
+        Self::DistributeMiddle,
+        Self::DistributeBottom,
+        Self::Hand,
+        Self::ZoomIn,
+        Self::ExportGrid,
+        Self::ExportCheck,
     ];
 
     /// The icon's name and its embedded SVG: the upstream Lucide file, or — for [`Icon::is_original`] —
@@ -276,6 +305,20 @@ impl Icon {
             };
         }
         match self {
+            Self::Hand => svg!("hand"),
+            Self::ZoomIn => svg!("zoom-in"),
+            Self::Lasso => svg!("lasso"),
+            Self::PenTool => svg!("pen-tool"),
+            Self::PenLine => svg!("pen-line"),
+            Self::PenOff => svg!("pen-off"),
+            Self::DistributeLeft => svg!("align-horizontal-distribute-start"),
+            Self::DistributeCenter => svg!("align-horizontal-distribute-center"),
+            Self::DistributeRight => svg!("align-horizontal-distribute-end"),
+            Self::DistributeTop => svg!("align-vertical-distribute-start"),
+            Self::DistributeMiddle => svg!("align-vertical-distribute-center"),
+            Self::DistributeBottom => svg!("align-vertical-distribute-end"),
+            Self::ExportGrid => svg!("grid-2x2"),
+            Self::ExportCheck => svg!("check"),
             Self::Home => svg!("house"),
             Self::New => svg!("file-plus"),
             Self::Open => svg!("folder-open"),

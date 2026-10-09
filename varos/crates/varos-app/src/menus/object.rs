@@ -32,5 +32,84 @@ pub(super) fn rows() -> Vec<Entry> {
         Entry::Sep,
         key("obj.group", "Group", cmd(K::KeyG)),
         key("obj.ungroup", "Ungroup", cmd_shift(K::KeyG)),
+        Entry::Sub {
+            label: "Clipping Mask",
+            items: vec![
+                key("obj.clip", "Make", cmd(K::Digit7)),
+                key("obj.release_clip", "Release", cmd_alt(K::Digit7)),
+            ],
+        },
+        Entry::Sep,
+        Entry::Sub {
+            label: "Layers",
+            items: vec![
+                Entry::Item {
+                    id: "obj.pastelayers".into(),
+                    label: "Paste Remembers Layers",
+                    accel: None,
+                    cmd: MenuCmd::TogglePasteRemembersLayers,
+                    check: Some(Check::PasteRemembersLayers),
+                },
+                item(
+                    "obj.newlayer",
+                    "New Layer",
+                    None,
+                    MenuCmd::Object(varos_core::editor::wave::ObjectAction::NewLayer),
+                ),
+                item(
+                    "obj.newsublayer",
+                    "New Sublayer",
+                    None,
+                    MenuCmd::Object(varos_core::editor::wave::ObjectAction::NewSublayer),
+                ),
+                item(
+                    "obj.currentlayer",
+                    "Send to Current Layer",
+                    None,
+                    MenuCmd::Object(varos_core::editor::wave::ObjectAction::SendToCurrentLayer),
+                ),
+            ],
+        },
+        Entry::Sub { label: "Lock", items: vec![key("obj.lock", "Selection", cmd(K::Digit2))] },
+        key("obj.unlock", "Unlock All", cmd_alt(K::Digit2)),
+        Entry::Sub { label: "Hide", items: vec![key("obj.hide", "Selection", cmd(K::Digit3))] },
+        key("obj.show", "Show All", cmd_alt(K::Digit3)),
+        item(
+            "obj.expandtransform",
+            "Expand Transform",
+            None,
+            MenuCmd::Object(varos_core::editor::wave::ObjectAction::ExpandTransform),
+        ),
+        Entry::Sub {
+            label: "Path",
+            items: vec![
+                key("obj.join", "Join", cmd(K::KeyJ)),
+                key("obj.average", "Average", cmd_alt(K::KeyJ)),
+                item(
+                    "obj.addanchors",
+                    "Add Anchor Points",
+                    None,
+                    MenuCmd::Object(varos_core::editor::wave::ObjectAction::AddAnchors),
+                ),
+                item(
+                    "obj.reverse",
+                    "Reverse Path Direction",
+                    None,
+                    MenuCmd::Object(varos_core::editor::wave::ObjectAction::Reverse),
+                ),
+                item("obj.cleanup", "Clean Up", None, MenuCmd::Object(varos_core::editor::wave::ObjectAction::CleanUp)),
+            ],
+        },
+        Entry::Sub {
+            label: "Compound Path",
+            items: vec![
+                key("obj.compound.make", "Make", cmd(K::Digit8)),
+                key(
+                    "obj.compound.release",
+                    "Release",
+                    Some(Accel { code: K::Digit8, cmd: true, shift: true, alt: true }),
+                ),
+            ],
+        },
     ]
 }

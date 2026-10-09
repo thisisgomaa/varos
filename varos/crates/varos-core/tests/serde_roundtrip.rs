@@ -62,6 +62,7 @@ fn sample_doc() -> Document {
         description: "Logo board — نسخة أولى".to_string(),
         tags: vec!["client".to_string(), "عربي".to_string()],
         paths: vec![body, mark],
+        guide_paths: vec![],
         // deliberately LEGACY-shaped: registry populated, tree empty — load paths migrate it
         groups: vec![Group { id: 100, name: "Logo".to_string(), parent: None }],
         group_of,
@@ -81,6 +82,7 @@ fn sample_doc() -> Document {
                 h: 600.0,
                 name: "Page".to_string(),
                 bleed: 9.0,
+                bleed_edges: None,
                 page_color: Some([1.0, 1.0, 1.0, 1.0]),
                 clip: true,
                 hidden: true, // board eye/lock (piece C) — non-default so the round-trip proves them
@@ -94,6 +96,7 @@ fn sample_doc() -> Document {
                 h: 1080.0,
                 name: "Logo".to_string(),
                 bleed: 0.0,
+                bleed_edges: None,
                 page_color: None,
                 clip: false,
                 hidden: false,
@@ -114,6 +117,7 @@ fn sample_doc() -> Document {
         ruler_origin: [12.0, 34.0], // non-default ruler zero-point exercises the new field
         guides: vec![Guide { vertical: true, pos: 100.0 }, Guide { vertical: false, pos: 250.0 }],
         guides_locked: true,
+        transparency_grid: false,
     }
 }
 

@@ -16,6 +16,7 @@ fn modified() -> Layout {
         }
     }
     Layout {
+        exports: Default::default(),
         tree,
         show_rail: false,
         show_control_bar: true,
@@ -355,4 +356,25 @@ fn duplicate_panels_and_stale_active_load_without_quarantine() {
     assert!(shell.is_open(PanelId::Align));
     assert!(!shell.is_open(PanelId::Properties));
     assert_eq!(d.names(), ["layout.json"]);
+}
+
+#[test]
+fn export_preferences_are_additive_and_roundtrip_per_document() {
+    let mut layout = Layout::default();
+    layout.exports.insert(
+        "document:one".into(),
+        ExportPreferences {
+            folder: "/tmp/Export".into(),
+            format: "png".into(),
+            scale: 2.0,
+            checked: vec![true, false],
+            ..Default::default()
+        },
+    );
+    let bytes = serde_json::to_vec(&layout).unwrap();
+    assert_eq!(serde_json::from_slice::<Layout>(&bytes).unwrap(), layout);
+    let mut value = serde_json::to_value(&layout).unwrap();
+    value.as_object_mut().unwrap().remove("exports");
+    let legacy: Layout = serde_json::from_value(value).unwrap();
+    assert!(legacy.exports.is_empty());
 }

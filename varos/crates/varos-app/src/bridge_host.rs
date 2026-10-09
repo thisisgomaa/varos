@@ -17,6 +17,7 @@ struct Desktop<'a> {
     ui: Option<&'a mut dyn DocUi>,
     snapshot: Option<varos_bridge::service::SnapshotJob>,
     files: Option<&'a mut dyn crate::host::FileJobs>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     audit: Option<(varos_bridge::conn::Paths, varos_bridge::conn::audit::Entry)>,
 }
 thread_local! {
@@ -63,6 +64,26 @@ fn session(board: &str) -> Result<SessionId, Error> {
         .ok_or_else(|| Error::new("invalid_argument", "board must be a session handle bN"))
 }
 impl Host for Desktop<'_> {
+    fn set_paste_remembers_layers(&mut self, board: &str, enabled: bool) -> Result<(), Error> {
+        if !self
+            .ui
+            .as_deref_mut()
+            .is_some_and(|ui| ui.queue_app_command(crate::app_command::AppCommand::SetPasteRemembersLayers(enabled)))
+        {
+            return Err(Error::new("unsupported", "desktop settings queue unavailable"));
+        }
+        self.access(board)?
+            .editor
+            .execute(varos_core::EditCommand::SetPasteRemembersLayers(enabled))
+            .map_err(|reason| Error::new("internal", reason.to_string()))?;
+        Ok(())
+    }
+    fn window_memory(&mut self) -> Result<varos_bridge::Reply, Error> {
+        let path = varos_app::storage::paths::AppLayout::current().map(|l| l.window_json());
+        let (_, geometry) = varos_app::storage::window::WindowStore::load(&varos_app::storage::durable::RealFs, path);
+        Ok(varos_bridge::Reply::success(serde_json::json!({"geometry":geometry,"source":"window.json"})))
+    }
+
     fn snapshot(
         &mut self,
         job: varos_bridge::service::SnapshotJob,
@@ -94,22 +115,105 @@ impl Host for Desktop<'_> {
             let (doc, report) = varos_import::import_svg(&bytes).map_err(|e| Error::new("invalid_argument", e))?;
             let s = self.ws.get_mut(id).ok_or_else(|| Error::new("not_found", "board closed"))?;
             varos_core::placement::check(&s.editor, &doc).map_err(|e| Error::new("invalid_argument", e))?;
-            s.editor.execute(varos_core::EditCommand::PlaceArtwork(Box::new(doc)));
+            s.editor
+                .try_execute(varos_core::EditCommand::PlaceArtwork(Box::new(doc)))
+                .map_err(|e| Error::new("invalid_argument", e))?;
             return Ok(varos_bridge::Reply::success(serde_json::json!({"rev":s.editor.rev,"report":report})));
         }
+        if ["save_template", "new_from_template"].contains(&verb) {
+            let name =
+                request.path.as_deref().ok_or_else(|| Error::new("invalid_argument", "template name required"))?;
+            let path = varos_bridge::templates::path(name)?;
+            if FILE_PENDING.with(|r| r.borrow().len() >= 8) {
+                return Err(Error::new("busy", "eight file jobs are already pending"));
+            }
+            let s = self.ws.get(session(&request.board)?).ok_or_else(|| Error::new("not_found", "board closed"))?;
+            let document = (verb == "save_template").then(|| std::sync::Arc::new(s.editor.doc.clone()));
+            let ticket = crate::file_jobs::next_ticket();
+            let job = crate::template_jobs::Job {
+                ticket,
+                path,
+                document,
+                cancel: crate::file_jobs::CancelFlag::from_shared(self.cancel.clone()),
+            };
+            self.files
+                .as_deref_mut()
+                .ok_or_else(|| Error::new("busy", "file worker unavailable"))?
+                .submit(crate::file_jobs::FileJob::Template(job))
+                .map_err(|_| Error::new("busy", "file worker unavailable"))?;
+            FILE_PENDING.with(|r| r.borrow_mut().insert(ticket));
+            if let Some(audit) = self.audit.clone() {
+                FILE_AUDIT.with(|r| r.borrow_mut().insert(ticket, audit));
+            }
+            return Ok(varos_bridge::Reply::success(serde_json::json!({"accepted":true,"ticket":ticket})));
+        }
         use crate::file_jobs::{BridgeFileJob, ExportJob, FileJob, SaveInFlight, SaveJob};
+        if ["print", "copy", "cut"].contains(&verb) {
+            let id = session(&request.board)?;
+            let session = self.ws.get_mut(id).ok_or_else(|| Error::new("not_found", "board closed"))?;
+            if request.path.is_some() {
+                return Err(Error::new("invalid_argument", "host effect does not take a destination"));
+            }
+            if verb == "print" {
+                let options = request
+                    .options
+                    .clone()
+                    .map(serde_json::from_value::<varos_pdf::PdfOptions>)
+                    .transpose()
+                    .map_err(|e| Error::new("invalid_argument", e.to_string()))?
+                    .unwrap_or_default();
+                let scope = match request.scope.as_deref() {
+                    None => varos_pdf::default_scope(&session.editor.doc),
+                    Some("active_artboard") => varos_pdf::ExportScope::ActiveArtboard,
+                    Some("all_visible_artboards") => varos_pdf::ExportScope::AllVisibleArtboards,
+                    Some("artwork_bounds") => varos_pdf::ExportScope::ArtworkBounds,
+                    _ => return Err(Error::new("invalid_argument", "invalid print scope")),
+                };
+                let job = crate::print_job::build(
+                    &session.editor.doc,
+                    scope,
+                    &options,
+                    &std::env::temp_dir(),
+                    crate::file_jobs::next_ticket(),
+                )
+                .map_err(|e| Error::new("invalid_argument", e))?;
+                crate::print_job::hand_off(job).map_err(|e| Error::new("io_error", e))?;
+                return Ok(varos_bridge::Reply::success(
+                    serde_json::json!({"opened_preview":true,"instruction":"Choose File > Print in Preview"}),
+                ));
+            }
+            if request.scope.is_some() || request.options.is_some() {
+                return Err(Error::new("invalid_argument", "clipboard effects use current selection and no options"));
+            }
+            let report = crate::os_clipboard::perform(
+                &mut session.editor,
+                verb == "cut",
+                &mut crate::os_clipboard::SystemPasteboard,
+            )
+            .map_err(|e| Error::new("io_error", e))?;
+            return Ok(varos_bridge::Reply::success(serde_json::json!(report)));
+        }
+
         if FILE_PENDING.with(|r| r.borrow().len() >= 8) {
             return Err(Error::new("busy", "eight file jobs are already pending"));
         }
         let id = session(&request.board)?;
         let s = self.ws.get(id).ok_or_else(|| Error::new("not_found", "board closed"))?;
-        if verb != "export_pdf" && s.saving.is_some() {
+        if !verb.starts_with("export_") && s.saving.is_some() {
             return Err(Error::new("busy", "save in progress"));
         }
         let mut snapshot = s.editor.doc.clone();
         let ticket = crate::file_jobs::next_ticket();
         let home = varos_bridge::conn::fsutil::user_home_dir()
             .map_err(|e| Error::new("io_error", format!("user home unavailable: {e}")))?;
+        let extension = match verb {
+            "export_svg" => "svg",
+            "export_raster" => varos_raster::export::Format::parse(request.format.as_deref().unwrap_or("png"))
+                .map_err(|e| Error::new("invalid_argument", e))?
+                .extension(),
+            "export_pdf" => "pdf",
+            _ => "vrs",
+        };
         let expected =
             if verb == "save" {
                 Some((
@@ -127,11 +231,21 @@ impl Host for Desktop<'_> {
             let path = std::path::PathBuf::from(
                 request.path.as_ref().ok_or_else(|| Error::new("invalid_argument", "path required"))?,
             );
-            varos_bridge::files::validate_path(&path, if verb == "export_pdf" { "pdf" } else { "vrs" })?;
+            varos_bridge::files::validate_path(&path, extension)?;
             path
         };
-        varos_bridge::files::validate_path(&dest, if verb == "export_pdf" { "pdf" } else { "vrs" })?;
-        let inner = if verb == "export_pdf" {
+        varos_bridge::files::validate_path(&dest, extension)?;
+        let inner = if matches!(verb, "export_svg" | "export_raster") {
+            FileJob::Screen(Box::new(crate::export_ui::bridge_job(
+                id,
+                ticket,
+                &snapshot,
+                &s.editor.selected_pids(),
+                dest.clone(),
+                request,
+                verb,
+            )?))
+        } else if verb == "export_pdf" {
             let scope = match request.scope.as_deref() {
                 Some("all_visible_artboards") => varos_pdf::ExportScope::AllVisibleArtboards,
                 Some("artwork_bounds") => varos_pdf::ExportScope::ArtworkBounds,
@@ -158,6 +272,13 @@ impl Host for Desktop<'_> {
             let plan =
                 varos_pdf::plan_pdf_export(&snapshot, scope).map_err(|e| Error::new("invalid_argument", e.reason()))?;
             FileJob::Export(ExportJob {
+                pdf_options: request
+                    .options
+                    .clone()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|e| Error::new("invalid_argument", e.to_string()))?
+                    .unwrap_or_default(),
                 sid: id,
                 dest: dest.clone(),
                 doc: std::sync::Arc::new(snapshot),
@@ -267,7 +388,14 @@ pub fn unavailable_text(reason: &str) -> String {
 pub fn observe(ws: &mut Workspace) {
     SERVICE.with(|s| {
         if let Some(service) = s.borrow_mut().as_mut() {
-            service.observe(&mut Desktop { ws, ui: None, snapshot: None, files: None, audit: None });
+            service.observe(&mut Desktop {
+                ws,
+                ui: None,
+                snapshot: None,
+                files: None,
+                cancel: Default::default(),
+                audit: None,
+            });
         }
     });
 }
@@ -277,14 +405,28 @@ pub fn run_with_files<'a>(
     ui: &'a mut dyn DocUi,
     files: Option<&'a mut dyn crate::host::FileJobs>,
 ) -> crate::host::Ran {
+    let before = ws.document_target();
     let accepted = crate::agent_presence::accept(&request, ws, std::time::Instant::now());
-    let mut desktop = Desktop { ws, ui: Some(ui), snapshot: None, files, audit: request.file_audit.clone() };
+    let mut desktop = Desktop {
+        ws,
+        ui: Some(ui),
+        snapshot: None,
+        files,
+        cancel: request.cancelled.clone(),
+        audit: request.file_audit.clone(),
+    };
     let reply = SERVICE.with(|s| match s.borrow_mut().as_mut() {
         Some(service) => service.handle_borrowed(&mut desktop, &request.context, &request.request, &request.cancelled),
         None => varos_bridge::Reply::failure(Error::new("unsupported", "attachment listener unavailable")),
     });
     crate::agent_presence::complete(accepted, &reply, &request.request, desktop.ws, std::time::Instant::now());
     let changed = reply.ok && reply.request_id.is_some();
+    let switched = before != desktop.ws.document_target();
+    if switched {
+        if let Some(ui) = desktop.ui.as_mut() {
+            ui.document_switched();
+        }
+    }
     if let Some(job) = desktop.snapshot.take().filter(|_| reply.ok) {
         // No Workspace/Editor/UI reference crosses this boundary. The existing reply channel
         // delivers the pinned image; cancellation is checked before raster, encode and reply.
@@ -306,7 +448,7 @@ pub fn run_with_files<'a>(
     } else {
         let _ = request.reply.send(reply);
     }
-    crate::host::Ran { ran: changed, ..Default::default() }
+    crate::host::Ran { ran: changed, switched, ..Default::default() }
 }
 #[cfg(test)]
 pub fn run(request: varos_bridge::ipc::Pending, ws: &mut Workspace, ui: &mut dyn DocUi) -> crate::host::Ran {
@@ -322,7 +464,7 @@ mod tests {
     impl DocUi for Fields {
         fn settle(&mut self, ed: &mut varos_core::editor::Editor) -> bool {
             if self.commit {
-                ed.execute(varos_core::EditCommand::SetBoardName("human field".into()));
+                ed.execute_ui(varos_core::EditCommand::SetBoardName("human field".into()));
                 self.commit = false;
             }
             self.valid
@@ -387,7 +529,14 @@ mod tests {
         let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({"request_id":"r1","board":format!("b{}",id.0),"expected_rev":s.editor.rev,"path":varos_bridge::conn::fsutil::user_home_dir().unwrap().join("copy.PDF"),"scope":"all_visible_artboards"})).unwrap();
         assert_eq!(request.api, "1.0");
         let mut jobs = Jobs::default();
-        let mut host = Desktop { ws: &mut ws, ui: None, snapshot: None, files: Some(&mut jobs), audit: None };
+        let mut host = Desktop {
+            ws: &mut ws,
+            ui: None,
+            snapshot: None,
+            files: Some(&mut jobs),
+            cancel: Default::default(),
+            audit: None,
+        };
         assert_eq!(host.file_effect("save_as", &request).unwrap_err().code, "busy");
         assert!(host.file_effect("export_pdf", &request).unwrap().ok);
         assert_eq!(host.ws.get(id).unwrap().saving.as_ref().unwrap().ticket, 999);
@@ -424,7 +573,8 @@ mod tests {
         initialize("epoch".into());
         let mut ws = Workspace::new();
         let board = format!("b{}", ws.active_id().unwrap().0);
-        let mut host = Desktop { ws: &mut ws, ui: None, snapshot: None, files: None, audit: None };
+        let mut host =
+            Desktop { ws: &mut ws, ui: None, snapshot: None, files: None, cancel: Default::default(), audit: None };
         for (verb, path, code) in [
             ("save_as", "/tmp/copy.vrs", "scope_refused"),
             ("export_pdf", "/tmp/export.pdf", "scope_refused"),
@@ -439,6 +589,12 @@ mod tests {
             ("export_pdf", "/Library/export.pdf", "scope_refused"),
         ] {
             let request = varos_bridge::dto::FileEffect {
+                format: None,
+                scale: None,
+                ppi: None,
+                quality: None,
+                transparent: None,
+                options: None,
                 api: "1.0".into(),
                 request_id: "r1".into(),
                 board: board.clone(),
@@ -469,7 +625,8 @@ mod tests {
         }
         assert!(FILE_EVICTED.with(|r| r.borrow().contains(&1)));
         let mut ws = Workspace::new();
-        let host = Desktop { ws: &mut ws, ui: None, snapshot: None, files: None, audit: None };
+        let host =
+            Desktop { ws: &mut ws, ui: None, snapshot: None, files: None, cancel: Default::default(), audit: None };
         assert!(!host.file_pending(1));
         FILE_PENDING.with(|r| r.borrow_mut().insert(9000));
         assert!(host.file_pending(9000));
@@ -524,7 +681,7 @@ mod tests {
         assert!(fields.commit);
         assert_eq!(ws.active().unwrap().editor.doc, before);
         assert!(!ws.active().unwrap().editor.history_available(false));
-        ws.active_mut().unwrap().editor.execute(varos_core::EditCommand::SetBoardName("later human edit".into()));
+        ws.active_mut().unwrap().editor.execute_ui(varos_core::EditCommand::SetBoardName("later human edit".into()));
         let reply = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         assert!(reply.ok, "{reply:?}");
         assert_eq!(reply.board, Some(board));
@@ -588,7 +745,7 @@ mod tests {
         struct Sample;
         impl DocUi for Sample {
             fn cancel_picker_sample(&mut self, ed: &mut varos_core::Editor) {
-                ed.execute(varos_core::EditCommand::PickerCancel);
+                ed.execute_ui(varos_core::EditCommand::PickerCancel);
             }
             fn settle(&mut self, _: &mut varos_core::Editor) -> bool {
                 true
@@ -629,5 +786,57 @@ mod tests {
         assert!(!editor.transaction_open());
         assert_eq!(request(&mut ws, &mut Fields { valid: true, commit: false }).error.unwrap().code, "busy");
         assert_eq!(ws.active().unwrap().editor.active, Some(1));
+    }
+}
+
+#[cfg(test)]
+mod template_queue_tests {
+    use super::*;
+    #[derive(Default)]
+    struct Jobs {
+        wait: crate::host::SaveWait,
+        queued: Vec<crate::file_jobs::FileJob>,
+    }
+    impl crate::host::FileJobs for Jobs {
+        fn submit(&mut self, job: crate::file_jobs::FileJob) -> Result<(), crate::file_jobs::FileJob> {
+            self.queued.push(job);
+            Ok(())
+        }
+        fn save_wait(&mut self) -> &mut crate::host::SaveWait {
+            &mut self.wait
+        }
+    }
+    #[test]
+    fn template_host_only_queues_revision_snapshot_and_cancel_flag() {
+        initialize("epoch".into());
+        let mut ws = Workspace::new();
+        let id = ws.active_id().unwrap();
+        ws.get_mut(id).unwrap().editor.execute(varos_core::EditCommand::SetPpi(300.0)).unwrap();
+        let mut jobs = Jobs::default();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({"api":"1.2","request_id":"r1","board":format!("b{}",id.0),"expected_rev":ws.get(id).unwrap().editor.rev,"path":"queue-only-no-io.vrs"})).unwrap();
+        let mut host = Desktop {
+            ws: &mut ws,
+            ui: None,
+            snapshot: None,
+            files: Some(&mut jobs),
+            cancel: cancel.clone(),
+            audit: None,
+        };
+        let reply = host.file_effect("save_template", &request).unwrap();
+        assert_eq!(reply.result.as_ref().unwrap()["accepted"], true);
+        let ticket = reply.result.unwrap()["ticket"].as_u64().unwrap();
+        assert!(host.file_pending(ticket));
+        assert!(host.ws.get(id).unwrap().saving.is_none());
+        host.ws.get_mut(id).unwrap().editor.execute(varos_core::EditCommand::SetPpi(72.0)).unwrap();
+        assert!(host.file_effect("new_from_template", &request).unwrap().ok);
+        let crate::file_jobs::FileJob::Template(load) = jobs.queued.pop().unwrap() else {
+            panic!("template read queue")
+        };
+        assert!(load.document.is_none());
+        let crate::file_jobs::FileJob::Template(job) = jobs.queued.pop().unwrap() else { panic!("template queue") };
+        assert_eq!(job.document.as_ref().unwrap().units.ppi, 300.0);
+        cancel.store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(crate::template_jobs::execute(job).result.unwrap_err().code, "cancelled");
     }
 }

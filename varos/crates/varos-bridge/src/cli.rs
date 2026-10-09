@@ -122,7 +122,12 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
         .map_err(|e| e.to_string())?;
         return Ok(0);
     }
-    if !crate::TOOLS.contains(&verb.as_str()) && verb != "import_svg" {
+    if !crate::TOOLS.contains(&verb.as_str())
+        && verb != "import_svg"
+        && !crate::TOOLS_12.contains(&verb.as_str())
+        && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
+            .contains(&verb.as_str())
+    {
         return Err(format!("unsupported tool {verb}"));
     }
     if (verb == "snapshot") != output_path.is_some() {

@@ -139,18 +139,18 @@ fn noop_commit_and_cancelled_picker_stay_content_equal() {
     assert!(ed.doc.content_eq(&saved), "…but the content is unchanged ⇒ clean");
 
     // renaming a board to its own name
-    ed.execute(EditCommand::RenameArtboard { index: 0, name: "A".into() });
+    ed.execute_ui(EditCommand::RenameArtboard { index: 0, name: "A".into() });
     assert!(ed.doc.content_eq(&saved), "an unchanged board name is not an edit");
 
     // the colour picker: live preview is in flight (transaction open + dirty), Cancel restores
     assert!(!ed.transaction_open());
-    ed.execute(EditCommand::PickerBegin);
+    ed.execute_ui(EditCommand::PickerBegin);
     assert!(ed.transaction_open(), "PickerBegin opens one history transaction");
-    ed.execute(EditCommand::PickerLivePaint { target: PaintTarget::Fill, color: [0.0, 0.0, 1.0, 1.0] });
+    ed.execute_ui(EditCommand::PickerLivePaint { target: PaintTarget::Fill, color: [0.0, 0.0, 1.0, 1.0] });
     assert!(ed.transaction_open() && ed.dirty, "a live preview is an in-flight change");
     assert!(!ed.doc.content_eq(&saved), "the preview is visible in the document");
     let rev1 = ed.rev;
-    ed.execute(EditCommand::PickerCancel);
+    ed.execute_ui(EditCommand::PickerCancel);
     assert!(!ed.transaction_open(), "Cancel closes the transaction");
     assert_eq!(ed.rev, rev1, "Cancel leaves no history step");
     assert!(ed.doc.content_eq(&saved), "a cancelled picker leaves the content exactly as saved");
@@ -161,28 +161,28 @@ fn undo_and_redo_back_to_a_checkpoint_are_content_equal() {
     let mut ed = sample();
     let saved = ed.doc.clone();
 
-    ed.execute(EditCommand::SetStrokeWidth(9.0));
+    ed.execute_ui(EditCommand::SetStrokeWidth(9.0));
     assert!(!ed.doc.content_eq(&saved), "an edit is dirty");
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert!(ed.doc.content_eq(&saved), "undo back to the saved state is clean again");
-    ed.execute(EditCommand::Redo);
+    ed.execute_ui(EditCommand::Redo);
     assert!(!ed.doc.content_eq(&saved), "redo re-applies the edit");
 
     // save AFTER the edit, then undo + redo back to it
     let saved2 = ed.doc.clone();
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert!(!ed.doc.content_eq(&saved2), "undo past the save point is dirty");
-    ed.execute(EditCommand::Redo);
+    ed.execute_ui(EditCommand::Redo);
     assert!(ed.doc.content_eq(&saved2), "redo back to the save point is clean");
 
     // units and move-art stay undoable history steps, but never content
     let rev = ed.rev;
-    ed.execute(EditCommand::CycleUnits);
-    ed.execute(EditCommand::SetMoveArtWithArtboard(!ed.doc.move_art_with_ab));
+    ed.execute_ui(EditCommand::CycleUnits);
+    ed.execute_ui(EditCommand::SetMoveArtWithArtboard(!ed.doc.move_art_with_ab));
     assert_eq!(ed.rev, rev + 2, "both are still history steps");
     assert!(ed.doc.content_eq(&saved2), "…that never dirty the document");
-    ed.execute(EditCommand::Undo);
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert!(ed.doc.content_eq(&saved2));
 }
 
@@ -193,22 +193,22 @@ fn undo_keeps_current_snap_guide_lock_and_ruler_origin() {
     let (snap0, locked0, origin0) = (ed.doc.snap, ed.doc.guides_locked, ed.doc.ruler_origin);
     let active0 = ed.doc.active;
 
-    ed.execute(EditCommand::SetStrokeWidth(9.0)); // one real history step
-    ed.execute(EditCommand::ToggleSnapping);
-    ed.execute(EditCommand::ToggleSmartGuides);
-    ed.execute(EditCommand::ToggleGuidesLocked);
-    ed.execute(EditCommand::SetRulerOrigin([500.0, 700.0]));
+    ed.execute_ui(EditCommand::SetStrokeWidth(9.0)); // one real history step
+    ed.execute_ui(EditCommand::ToggleSnapping);
+    ed.execute_ui(EditCommand::ToggleSmartGuides);
+    ed.execute_ui(EditCommand::ToggleGuidesLocked);
+    ed.execute_ui(EditCommand::SetRulerOrigin([500.0, 700.0]));
     let (snap1, locked1, origin1) = (ed.doc.snap, ed.doc.guides_locked, ed.doc.ruler_origin);
     assert!(snap1 != snap0 && locked1 != locked0 && origin1 != origin0, "all three preferences changed");
 
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.paths[0].stroke_width, w0, "the edit is undone");
     assert_eq!(ed.doc.snap, snap1, "undo keeps the CURRENT snapping config");
     assert_eq!(ed.doc.guides_locked, locked1, "undo keeps the CURRENT guide lock");
     assert_eq!(ed.doc.ruler_origin, origin1, "undo keeps the CURRENT ruler origin");
 
-    ed.execute(EditCommand::ToggleGuidesLocked); // change a preference between undo and redo
-    ed.execute(EditCommand::Redo);
+    ed.execute_ui(EditCommand::ToggleGuidesLocked); // change a preference between undo and redo
+    ed.execute_ui(EditCommand::Redo);
     assert_eq!(ed.doc.paths[0].stroke_width, 9.0, "the edit is redone");
     assert_eq!(ed.doc.guides_locked, locked0, "redo keeps the CURRENT guide lock too");
     assert_eq!(ed.doc.snap, snap1);
@@ -223,7 +223,7 @@ fn clipboard_moves_between_editors() {
     let (rev_a, rev_b) = (a.rev, b.rev);
     let doc_a = a.doc.clone();
 
-    a.execute(EditCommand::Copy);
+    a.execute_ui(EditCommand::Copy);
     assert_eq!(a.clipboard().len(), 1);
     let clip = a.take_clipboard();
     assert!(a.clipboard().is_empty(), "take_clipboard leaves the source empty");
@@ -234,7 +234,7 @@ fn clipboard_moves_between_editors() {
     assert_eq!(a.doc, doc_a, "the source document is untouched");
 
     b.set_tool(ToolKind::Object);
-    b.execute(EditCommand::Paste { offset: None });
+    b.execute_ui(EditCommand::Paste { offset: None });
     assert_eq!(b.doc.paths.len(), 1, "B pastes A's art");
     assert_eq!(b.doc.paths[0].anchors[0].p, doc_a.paths[0].anchors[0].p, "in place");
     assert_eq!(b.clipboard().len(), 1, "pasting keeps the clipboard");
@@ -272,7 +272,7 @@ fn pen_resume_from_the_first_anchor_is_one_undoable_edit() {
     assert_eq!(ed.rev, rev + 1, "…as a recorded edit");
     assert!(!ed.doc.content_eq(&saved), "…that makes the document dirty");
 
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(order(&ed), [1, 2, 3], "one Undo restores the order");
     assert!(ed.doc.content_eq(&saved), "…and the document is clean again");
 
@@ -294,16 +294,16 @@ fn set_units_is_one_history_step_and_unchanged_is_a_noop() {
     let mut ed = Editor::new();
     let before = ed.doc.clone();
     let rev = ed.rev;
-    ed.execute(EditCommand::SetUnits(before.units.display));
+    ed.execute_ui(EditCommand::SetUnits(before.units.display));
     assert_eq!(ed.rev, rev);
     assert!(!ed.dirty);
-    ed.execute(EditCommand::SetUnits(Unit::In));
+    ed.execute_ui(EditCommand::SetUnits(Unit::In));
     assert_eq!(ed.rev, rev + 1);
     assert!(ed.doc.content_eq(&before));
-    ed.execute(EditCommand::SetUnits(Unit::In));
+    ed.execute_ui(EditCommand::SetUnits(Unit::In));
     assert_eq!(ed.rev, rev + 1);
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.units.display, before.units.display);
-    ed.execute(EditCommand::Redo);
+    ed.execute_ui(EditCommand::Redo);
     assert_eq!(ed.doc.units.display, Unit::In);
 }

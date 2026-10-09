@@ -4,8 +4,11 @@
 pub mod board;
 pub mod boolean;
 pub mod clipboard;
+mod clipping;
 pub mod command;
 mod construction;
+pub mod guard;
+pub use guard::EngineError;
 pub mod editor;
 pub mod flatten;
 pub mod format;
@@ -31,6 +34,7 @@ pub mod bridge;
 pub mod export;
 pub use export::{ExportNote, ExportReport};
 
+pub mod document_setup;
 pub mod placement;
 pub mod select_transform;
 pub mod trace;

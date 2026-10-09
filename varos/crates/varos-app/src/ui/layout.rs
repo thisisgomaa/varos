@@ -54,6 +54,7 @@ impl Ui {
 
     pub fn shell_layout(&self) -> Layout {
         Layout {
+            exports: crate::export_ui::preferences(),
             tree: self.shell.layout_value(),
             show_rail: self.show_rail,
             show_control_bar: self.show_dock,
@@ -62,6 +63,7 @@ impl Ui {
     }
 
     pub fn restore_shell_layout(&mut self, layout: Layout) {
+        crate::export_ui::restore_preferences(layout.exports.clone());
         self.shell = varos_app::shell::ShellState::from_layout_value(layout.tree)
             .unwrap_or_else(varos_app::shell::ShellState::standard);
         self.picker_layout = layout.picker;

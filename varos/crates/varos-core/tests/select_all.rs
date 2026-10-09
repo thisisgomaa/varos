@@ -110,7 +110,7 @@ fn select_all_is_not_an_edit() {
     let mut ed = canvas();
     // one real edit first, so an extra history entry would show on undo
     ed.objsel.insert(1);
-    ed.execute(EditCommand::SetOpacity(0.5));
+    ed.execute_ui(EditCommand::SetOpacity(0.5));
     let rev = ed.rev;
     let doc_before = serde_json::to_string(&ed.doc).unwrap();
 
@@ -122,7 +122,7 @@ fn select_all_is_not_an_edit() {
     ed.escape(); // Deselect (⇧⌘A) is the same kind of change
     assert_eq!(ed.rev, rev);
 
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     let p1 = ed.doc.pidx(1).unwrap();
     assert_eq!(ed.doc.paths[p1].opacity, 1.0, "one ⌘Z undoes the real edit — Select All left no history step");
 }

@@ -131,7 +131,7 @@ pub enum LayerAction {
     HideOthers,
     LockOthers,
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct State {
     pub isolation: Option<u32>,
     pub selection_requested: bool,

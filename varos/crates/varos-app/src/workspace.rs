@@ -71,6 +71,7 @@ pub struct RecoveredDocument {
 
 /// One open document (one tab).
 pub struct DocumentSession {
+    pub autosave: varos_app::storage::autosave::State,
     pub id: SessionId,
     pub editor: Editor,
     pub view: View,
@@ -88,6 +89,7 @@ pub struct DocumentSession {
     /// Opening changed the content in memory (A4: broken v1 clipping masks were released). The tab
     /// is dirty from the start — dot, asterisk, Close/Quit prompt — until a Save writes the repair.
     pub repaired_on_open: bool,
+    pub template_unsaved: bool,
     pub recovered: Option<RecoveredSource>,
     pub recovery: varos_app::storage::scheduler::SessionRecovery,
     /// A manual save running on the background worker (`file_jobs`), until its result is applied.
@@ -115,8 +117,10 @@ impl DocumentSession {
             saved,
             memo: Cell::new(None),
             source_fingerprint: None,
+            autosave: Default::default(),
             save_unconfirmed: false,
             repaired_on_open: false,
+            template_unsaved: false,
             recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
             saving: None,
@@ -138,8 +142,10 @@ impl DocumentSession {
             saved,
             memo: Cell::new(None),
             source_fingerprint: None,
+            autosave: Default::default(),
             save_unconfirmed: false,
             repaired_on_open: false,
+            template_unsaved: false,
             recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
             saving: None,
@@ -168,7 +174,7 @@ impl DocumentSession {
     /// would be missed by the memo only until the next `rev` change, which is why
     /// every Save / Close / Quit decision uses `is_dirty_exact` instead. `mark_saved` resets the memo.
     pub fn is_dirty(&self) -> bool {
-        if self.save_unconfirmed || self.repaired_on_open || self.recovered.is_some() {
+        if self.template_unsaved || self.save_unconfirmed || self.repaired_on_open || self.recovered.is_some() {
             return true;
         }
         let ed = &self.editor;
@@ -187,6 +193,7 @@ impl DocumentSession {
     pub fn is_dirty_exact(&self) -> bool {
         let ed = &self.editor;
         self.save_unconfirmed
+            || self.template_unsaved
             || self.repaired_on_open
             || self.recovered.is_some()
             || self.content_dirty()
@@ -201,8 +208,11 @@ impl DocumentSession {
     /// A save to `path` succeeded: the tab takes that path/name, the checkpoint becomes the current
     /// content (clean), and it stops being `Untitled-n`.
     pub fn mark_saved(&mut self, path: PathBuf, key: FileKey) {
+        self.autosave = Default::default();
+        self.recovery.retain_after_autosave = false;
         self.save_unconfirmed = false;
         self.repaired_on_open = false;
+        self.template_unsaved = false;
         self.recovered = None;
         self.path = Some(path);
         self.key = Some(key);
@@ -217,6 +227,7 @@ impl DocumentSession {
     pub fn mark_saved_snapshot(&mut self, path: PathBuf, key: FileKey, snapshot: Document) {
         self.save_unconfirmed = false;
         self.repaired_on_open = false;
+        self.template_unsaved = false;
         self.recovered = None;
         self.path = Some(path);
         self.key = Some(key);
@@ -242,6 +253,8 @@ impl DocumentSession {
         self.memo.set(None);
         self.key = Some(key);
         self.source_fingerprint = fingerprint;
+        self.autosave = Default::default();
+        self.recovery.retain_after_autosave = false;
         self.save_unconfirmed = false;
         self.repaired_on_open = repaired;
         self.recovered = None;
@@ -449,6 +462,16 @@ impl Workspace {
     /// A new clean `Untitled-N` board that starts as `doc` (a preset board, Start v2): like
     /// [`Self::new_untitled`], then the editor takes `doc` (`replace_doc`) and the checkpoint is taken
     /// after that, so the tab opens clean and its first undo cannot remove the preset artboard.
+    pub fn add_template(&mut self, mut doc: Document) -> SessionId {
+        doc.name.clear();
+        let id = self.new_untitled_with(doc);
+        if let Some(s) = self.get_mut(id) {
+            s.template_unsaved = true;
+            s.memo.set(None);
+        }
+        id
+    }
+
     pub fn new_untitled_with(&mut self, doc: Document) -> SessionId {
         let id = self.new_untitled();
         if let Some(s) = self.get_mut(id) {
@@ -741,7 +764,7 @@ mod tests {
         {
             let ed = &mut ws.active_mut().unwrap().editor;
             ed.objsel = ed.doc.paths.iter().map(|p| p.id).collect();
-            ed.execute(EditCommand::Copy);
+            ed.execute_ui(EditCommand::Copy);
             assert_eq!(ed.clipboard().len(), 1);
             ed.set_tool(ToolKind::Pen);
             ed.recent_colors = vec![[0.1, 0.2, 0.3, 1.0]];
@@ -785,7 +808,7 @@ mod tests {
             let ed = &mut ws.get_mut(c).unwrap().editor;
             draw(ed, [0.0, 0.0]);
             ed.objsel = ed.doc.paths.iter().map(|p| p.id).collect();
-            ed.execute(EditCommand::Copy);
+            ed.execute_ui(EditCommand::Copy);
         }
         // close the active MIDDLE tab → its right neighbour
         assert!(ws.activate(b));
@@ -987,12 +1010,12 @@ mod tests {
         let s = ws.active().unwrap();
         assert!(s.is_dirty() && s.is_dirty_exact() && !s.is_pristine());
         assert!(ws.tabs()[0].dirty);
-        ws.active_mut().unwrap().editor.execute(EditCommand::Undo);
+        ws.active_mut().unwrap().editor.execute_ui(EditCommand::Undo);
         assert!(
             !ws.active().unwrap().is_dirty() && !ws.active().unwrap().is_dirty_exact(),
             "undo back to the checkpoint is clean"
         );
-        ws.active_mut().unwrap().editor.execute(EditCommand::Redo);
+        ws.active_mut().unwrap().editor.execute_ui(EditCommand::Redo);
         assert!(ws.active().unwrap().is_dirty());
         // save
         ws.active_mut().unwrap().mark_saved(PathBuf::from("/docs/a.vrs"), key("/docs/a.vrs"));
@@ -1004,9 +1027,9 @@ mod tests {
         assert!(!s.is_pristine(), "a saved file is never pristine");
         assert_eq!(ws.find_file(&key("/docs/a.vrs")), Some(id));
         // undo PAST the save point is dirty; redo back is clean
-        ws.active_mut().unwrap().editor.execute(EditCommand::Undo);
+        ws.active_mut().unwrap().editor.execute_ui(EditCommand::Undo);
         assert!(ws.active().unwrap().is_dirty());
-        ws.active_mut().unwrap().editor.execute(EditCommand::Redo);
+        ws.active_mut().unwrap().editor.execute_ui(EditCommand::Redo);
         assert!(!ws.active().unwrap().is_dirty());
         // an in-flight gesture (transaction open + changed) shows dirty before it commits
         {
@@ -1029,14 +1052,14 @@ mod tests {
         ws.active_mut().unwrap().mark_saved(PathBuf::from("/docs/a.vrs"), key("/docs/a.vrs"));
         {
             let ed = &mut ws.active_mut().unwrap().editor;
-            ed.execute(EditCommand::PickerBegin);
-            ed.execute(EditCommand::PickerLivePaint {
+            ed.execute_ui(EditCommand::PickerBegin);
+            ed.execute_ui(EditCommand::PickerLivePaint {
                 target: varos_core::editor::PaintTarget::Fill,
                 color: [0.0, 1.0, 0.0, 1.0],
             });
         }
         assert!(ws.active().unwrap().is_dirty(), "the live preview shows dirty while the picker is open");
-        ws.active_mut().unwrap().editor.execute(EditCommand::PickerCancel);
+        ws.active_mut().unwrap().editor.execute_ui(EditCommand::PickerCancel);
         assert!(!ws.active().unwrap().is_dirty() && !ws.active().unwrap().is_dirty_exact(), "Cancel is clean again");
     }
 
@@ -1058,22 +1081,22 @@ mod tests {
         }
         clean(&ws, "pan / zoom / fit");
         let ed = &mut ws.active_mut().unwrap().editor;
-        ed.execute(EditCommand::SetActiveArtboard(1));
+        ed.execute_ui(EditCommand::SetActiveArtboard(1));
         assert_eq!(ed.doc.active, 1);
         ed.toggle_rulers_visibility();
         ed.toggle_guides_visibility();
         let mut cfg = ed.doc.snap;
         cfg.grid = !cfg.grid;
-        ed.execute(EditCommand::SetSnapConfig(cfg));
-        ed.execute(EditCommand::ToggleSnapping);
-        ed.execute(EditCommand::ToggleSmartGuides);
-        ed.execute(EditCommand::ToggleGuidesLocked);
-        ed.execute(EditCommand::SetRulerOrigin([7.0, 9.0]));
+        ed.execute_ui(EditCommand::SetSnapConfig(cfg));
+        ed.execute_ui(EditCommand::ToggleSnapping);
+        ed.execute_ui(EditCommand::ToggleSmartGuides);
+        ed.execute_ui(EditCommand::ToggleGuidesLocked);
+        ed.execute_ui(EditCommand::SetRulerOrigin([7.0, 9.0]));
         let rev = ed.rev;
-        ed.execute(EditCommand::CycleUnits);
-        ed.execute(EditCommand::SetMoveArtWithArtboard(false));
+        ed.execute_ui(EditCommand::CycleUnits);
+        ed.execute_ui(EditCommand::SetMoveArtWithArtboard(false));
         assert_eq!(ed.rev, rev + 2, "units and move-art are still history steps");
-        ed.execute(EditCommand::RenameArtboard { index: 0, name: "A".into() });
+        ed.execute_ui(EditCommand::RenameArtboard { index: 0, name: "A".into() });
         assert_eq!(ed.rev, rev + 3, "an unchanged board name is still a (no-op) commit");
         // select / deselect
         ed.objsel = ed.doc.paths.iter().map(|p| p.id).collect();
@@ -1100,7 +1123,7 @@ mod tests {
         clean(&ws, "a board-body click");
         // a real edit is still seen
         let ed = &mut ws.active_mut().unwrap().editor;
-        ed.execute(EditCommand::RenameArtboard { index: 0, name: "Cover".into() });
+        ed.execute_ui(EditCommand::RenameArtboard { index: 0, name: "Cover".into() });
         assert!(ws.active().unwrap().is_dirty(), "a real rename is an edit");
     }
 
@@ -1120,7 +1143,7 @@ mod tests {
         assert!(!s.editor.transaction_open(), "its transaction is closed");
         assert_eq!(s.editor.rev, rev + 1, "the gesture committed as one step");
         assert!(s.is_dirty_exact(), "…and it is an edit");
-        s.editor.execute(EditCommand::Undo);
+        s.editor.execute_ui(EditCommand::Undo);
         assert!(!s.is_dirty_exact(), "which undoes as one step");
         // an Artboard-tool drag settles too
         s.editor.set_tool(ToolKind::Artboard);
@@ -1150,5 +1173,31 @@ mod tests {
         let rev = s.editor.rev;
         s.settle();
         assert_eq!(s.editor.rev, rev);
+    }
+}
+
+#[cfg(test)]
+mod template_tests {
+    use super::*;
+    #[test]
+    fn template_opens_untitled_dirty_without_path_or_history() {
+        let mut ws = Workspace::new();
+        let mut doc = varos_core::board::new_board();
+        doc.name = "Template title".into();
+        let id = ws.add_template(doc);
+        let s = ws.get_mut(id).unwrap();
+        assert!(s.path.is_none());
+        assert!(s.key.is_none());
+        assert!(s.is_dirty_exact());
+        assert!(s.is_dirty());
+        assert!(s.editor.doc.name.is_empty());
+        assert!(s.untitled.is_some());
+        s.editor.execute(varos_core::EditCommand::Undo).unwrap();
+        assert!(s.is_dirty_exact());
+        s.mark_saved(
+            PathBuf::from("/test/new.vrs"),
+            FileKey { path: PathBuf::from("/test/new.vrs"), dev_ino: None, name_id: None },
+        );
+        assert!(!s.is_dirty_exact());
     }
 }

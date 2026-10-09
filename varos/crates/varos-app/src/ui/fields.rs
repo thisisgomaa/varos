@@ -400,6 +400,10 @@ pub(crate) fn settle(
 pub(crate) mod tests;
 
 impl crate::host::DocUi for crate::ui::Ui {
+    fn queue_app_command(&mut self, cmd: crate::app_command::AppCommand) -> bool {
+        self.app_cmds.push(cmd);
+        true
+    }
     fn settle(&mut self, ed: &mut Editor) -> bool {
         crate::ui::Ui::settle(self, ed)
     }

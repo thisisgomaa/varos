@@ -60,7 +60,7 @@ Fresh implementation validation is recorded in [GATE_LOG](GATE_LOG.md). Historic
 ## Open items and operating rules
 
 - P21 (4) — moving an artboard moves clip content without its hidden mask — remains open in [PAINS_LOG](../PAINS_LOG.md).
-- Mac screen eyedropper and window geometry persistence remain pending.
+- Mac screen eyedropper remains pending. Window geometry persistence is implemented provisionally in lane D (uncommitted worktree); merge/install and owner relaunch acceptance remain pending.
 - Every submitted branch passes tests, clippy and format checks. Merge to `main` still requires independent review; local implementation verification is not merge approval.
 - Owner decisions: Mac-first; Windows compile-only; visible user-controlled updates; protect the pure-core boundary; no UI motion **except the box glide**, which stays (owner, 2026-10-06: do not spend effort removing it). Icon stage 2, MCP and web work are parked (2026-10-06). Accepted ADRs remain authoritative.
 - GitHub's billing hold is confirmed by the run annotations on 2026-09-27. The annotations do not specify whether a missing payment method is the cause; account settings were not inspected or changed. The owner's [2026-07-11 decision](../history/STATUS_THROUGH_2026-09-26.md#external-action-items-outside-the-repo) defers billing verification indefinitely: local gates remain authoritative, with independent review before merge. Hosted success is not a new merge prerequisite. Triggers stay enabled; rerun CI on the current tip when the hold clears. Branch protection remains deferred.

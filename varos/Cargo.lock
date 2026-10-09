@@ -1903,10 +1903,13 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png 0.18.1",
  "tiff",
+ "zune-core 0.5.1",
+ "zune-jpeg 0.5.15",
 ]
 
 [[package]]
@@ -4304,9 +4307,11 @@ dependencies = [
  "getrandom 0.3.4",
  "libc",
  "png 0.17.16",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "syn 2.0.118",
  "varos-core",
  "varos-raster",
 ]
@@ -4316,6 +4321,7 @@ name = "varos-cli"
 version = "0.1.0"
 dependencies = [
  "image",
+ "serde_json",
  "varos-bridge",
  "varos-core",
  "varos-import",
@@ -4330,6 +4336,7 @@ dependencies = [
  "flo_curves",
  "i_overlay",
  "kurbo 0.13.1",
+ "proc-macro2",
  "resvg",
  "roxmltree",
  "serde",
@@ -4366,6 +4373,7 @@ dependencies = [
 name = "varos-raster"
 version = "0.1.0"
 dependencies = [
+ "image",
  "resvg",
  "tiny-skia",
  "varos-core",

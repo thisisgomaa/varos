@@ -11,7 +11,7 @@ fn scene(n: usize) -> (Workspace, SessionId, Vec<String>) {
     ed.doc.artboards.push(Artboard { id: 22, x: 600.0, w: 500.0, h: 500.0, ..Default::default() });
     ed.doc.ids = 22; // reserve page identities in the same monotonic allocation arena
     for i in 0..n {
-        ed.execute(EditCommand::AddShape {
+        ed.execute_ui(EditCommand::AddShape {
             kind: ShapeKind::Rect,
             bounds: [i as f32 * 5.0, 0.0, 4.0, 4.0],
             parent: None,
@@ -405,7 +405,7 @@ fn geometry_cache_refreshes_after_human_edit_and_hidden_page_schedules_nothing()
     editor.objsel.clear();
     let moved = p.frame(board, editor, now).objects[0].bounds;
     assert_eq!(moved[0], first[0] + 10.0);
-    editor.execute(EditCommand::ToggleArtboardHidden(0));
+    editor.execute_ui(EditCommand::ToggleArtboardHidden(0));
     let f = p.frame(board, editor, now);
     assert!(f.pages.is_empty() && f.objects.is_empty());
     assert_eq!(f.repaint_after, None);
