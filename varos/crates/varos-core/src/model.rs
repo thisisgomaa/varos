@@ -5,6 +5,7 @@
 use crate::geom::*;
 // ---- w2-images ----
 use crate::images::{AssetMeta, ImageObject};
+use crate::live_corners::CornerParam;
 pub use crate::stroke::{ArrowAlign, ArrowHead, StrokeAlign, StrokeArrows, StrokeCap, StrokeJoin, StrokeStyle};
 use crate::text::TextBox;
 use crate::units::DocUnits;
@@ -264,6 +265,9 @@ pub struct Path {
     pub stroke_width: f32,
     #[serde(default, skip_serializing_if = "StrokeStyle::is_default")]
     pub stroke_style: StrokeStyle,
+    // ---- Lane C ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corners: Vec<CornerParam>,
     /// extra hole contours (editable bezier anchors) — e.g. from boolean ops. A compound path: the
     /// outer `anchors` plus these inner rings, filled even-odd so holes cut through. Normally empty.
     pub holes: Vec<Vec<Anchor>>,
@@ -294,6 +298,7 @@ impl Path {
             stroke: Paint::from_opt(stroke),
             stroke_width,
             stroke_style: StrokeStyle::default(),
+            corners: vec![],
             holes: vec![],
             opacity: 1.0,
             hidden: false,
@@ -1126,11 +1131,13 @@ impl Document {
 
     /// Outer outline of a path (steps per segment).
     pub fn outline(&self, pi: usize, steps: usize) -> Vec<Pt> {
-        Self::ring(&self.paths[pi].anchors, self.paths[pi].closed, steps)
+        let path = crate::live_corners::evaluated(&self.paths[pi]);
+        Self::ring(&path.anchors, path.closed, steps)
     }
     /// Resolution-independent outer outline (`ppu` = view zoom) — smooth at any zoom.
     pub fn outline_px(&self, pi: usize, ppu: f32) -> Vec<Pt> {
-        Self::ring_px(&self.paths[pi].anchors, self.paths[pi].closed, ppu)
+        let path = crate::live_corners::evaluated(&self.paths[pi]);
+        Self::ring_px(&path.anchors, path.closed, ppu)
     }
     /// WORLD-space outer outline (the A7 render seam): `outline_px` mapped through the path's unit
     /// transform. Identity ⇒ returns the local polyline UNTOUCHED (byte-for-byte today's geometry).
@@ -1275,6 +1282,8 @@ impl Document {
             .collect();
         Path {
             holes,
+            corners: src.corners.clone(),
+            stroke_style: src.stroke_style.clone(),
             fill: src.appearance().fill().resolved(self), // preserve the paint EXACTLY (future gradients too), not a solid snapshot
             stroke: src.appearance().stroke().resolved(self),
             opacity: src.opacity,

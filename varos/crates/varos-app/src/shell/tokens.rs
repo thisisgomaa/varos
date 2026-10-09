@@ -704,6 +704,12 @@ pub const GRADIENT_LIST_H: f32 = 72.0;
 pub const GRADIENT_BODY_H: f32 = 500.0;
 pub const COLOUR_GUIDE_ROW_H: f32 = 24.0;
 
+// ---- Lane C ----
+pub const EXPORT_SCALE_W: f32 = 64.0;
+pub const EXPORT_SUFFIX_W: f32 = 76.0;
+pub const LIVE_CORNER_RADIUS: f32 = 4.0;
+pub const LIVE_CORNER_OFFSET: f32 = 16.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

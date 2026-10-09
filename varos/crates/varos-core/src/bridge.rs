@@ -49,6 +49,11 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
                         | EditCommand::SetText { .. }
                         | EditCommand::Image(_)
                         | EditCommand::Colour(_)
+                        | EditCommand::PathAdvanced(_)
+                        | EditCommand::SetCorners { .. }
+                        | EditCommand::SetCornersLive { .. }
+                        | EditCommand::SetScaleStrokes(_)
+                        | EditCommand::NewDocument(_)
                         | EditCommand::SetWandOptions(_)
                         | EditCommand::SetEyedropperOptions(_)
                         | EditCommand::Transform(_)
@@ -108,7 +113,11 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     }
     if matches!(
         command,
-        InsertTracedPaths { .. }
+        PathAdvanced(_)
+            | SetCornersLive { .. }
+            | SetCorners { .. }
+            | NewDocument(_)
+            | InsertTracedPaths { .. }
             | View(crate::editor::view_commands::ViewAction::ConvertArtboards)
             | InsertAnchor { .. }
             | AddPath { .. }
@@ -196,6 +205,15 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         Drawing(action) => crate::drawing::check(ed, action),
         AddText { .. } | SetText { .. } => Ok(()),
         Colour(c) => crate::colour_commands::check(ed, c),
+        // ---- Lane C ----
+        PathAdvanced(action) => crate::path_advanced::check(ed, *action),
+        SetCornersLive { path: id, corners } | SetCorners { path: id, corners } => {
+            path(*id)?;
+            let p = ed.doc.paths.iter().find(|p| p.id == *id).ok_or("unknown path")?;
+            crate::live_corners::validate(p, corners)
+        }
+        SetScaleStrokes(_) => Ok(()),
+        NewDocument(settings) => settings.document().map(|_| ()),
         SetStrokeStyle { ids, style } => {
             if ids.is_empty() {
                 return Err("stroke style targets must not be empty".into());

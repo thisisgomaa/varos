@@ -21,6 +21,8 @@ pub const BUSY: &str = "An export of this document is still running.";
 
 /// The sheet's width (points).
 const SHEET_W: f32 = t::EXPORT_SHEET_W;
+#[path = "ui/export/advanced.rs"]
+mod advanced;
 #[path = "ui/export/model.rs"]
 mod minimal;
 #[path = "ui/export/paint.rs"]
@@ -487,6 +489,14 @@ pub fn dispatch(
     commands: &mut Vec<crate::app_command::AppCommand>,
 ) {
     let Some(open) = sheet.as_mut() else { return };
+    if matches!(open.phase, Phase::Done { .. })
+        && open.minimal.advanced
+        && open.minimal.screen_settings.open_folder
+        && !open.minimal.revealed_folder
+    {
+        open.minimal.revealed_folder = true;
+        reveal(std::path::Path::new(&open.minimal.folder));
+    }
     match draw(ctx, open, panel_column) {
         SheetAction::Stay => {}
         SheetAction::Close => *sheet = None,
@@ -529,6 +539,26 @@ pub fn bridge_job(
         }
         _ => return Err(error("Unknown export scope.".into())),
     };
+    // ---- Lane C ----
+    let source = request.options.clone().unwrap_or_else(|| serde_json::json!({}));
+    if source.get("screens").is_some() {
+        let settings: varos_raster::screens::Advanced =
+            serde_json::from_value(source["screens"].clone()).map_err(|e| error(e.to_string()))?;
+        let assets =
+            export::plan(doc, &if settings.whole_board { Scope::WholeBoard } else { scope.clone() }).map_err(error)?;
+        let plans = settings.expand(&assets, &Options::default()).map_err(error)?;
+        let parent = dest.parent().unwrap_or(std::path::Path::new("."));
+        let mut jobs = plans
+            .into_iter()
+            .map(|p| minimal::planned_screen_job(sid, ticket, p, parent.to_path_buf(), Default::default(), false))
+            .collect::<Vec<_>>();
+        if jobs.is_empty() {
+            return Err(error("Nothing to export".into()));
+        }
+        let mut first = jobs.remove(0);
+        first.additional_jobs = jobs;
+        return Ok(first);
+    }
     let mut assets = export::plan(doc, &scope).map_err(error)?;
     if assets.is_empty() {
         return Err(error("Nothing to export.".into()));
@@ -553,6 +583,10 @@ pub fn bridge_job(
     options.validate().map_err(error)?;
     let mut job = minimal::screen_job(sid, ticket, assets.remove(0), options, dest, Default::default(), false);
     job.additional = assets;
+    if let Some(svg) = source.get("svg") {
+        job.svg_options = serde_json::from_value(svg.clone()).map_err(|e| error(e.to_string()))?;
+        job.svg_options.validate().map_err(error)?;
+    }
     Ok(job)
 }
 

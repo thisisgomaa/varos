@@ -74,6 +74,10 @@ pub struct ScreenJob {
     pub collision_names: bool,
     /// Additional pages from an all-artboards Bridge request (sheet submits one job per card).
     pub additional: Vec<varos_raster::export::Asset>,
+    // ---- Lane C ----
+    pub svg_options: varos_core::svg::options::Options,
+    pub additional_jobs: Vec<ScreenJob>,
+    pub folder_root: Option<PathBuf>,
 }
 
 /// A shared cancel flag (one per export job). Two flags are equal only when they are the SAME flag.
@@ -333,6 +337,10 @@ pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
 
 fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
     let result = (|| -> Result<FileDone, varos_bridge::Error> {
+        // ---- Lane C: authorize the root before creating Advanced sub-folders ----
+        if let FileJob::Screen(screen) = &mut j.inner {
+            crate::export_folders::prepare_screen(screen, &j.home)?;
+        }
         let dest = match &mut j.inner {
             FileJob::Save(s) | FileJob::SaveCopy(s) => &mut s.dest,
             FileJob::Export(e) => &mut e.dest,
@@ -534,7 +542,8 @@ pub fn durability_note(report: &mut varos_core::ExportReport, path: &Path, reaso
 /// Encode once through the shared library; honour cancellation through the durable commit boundary.
 fn execute_screen(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: bool) -> FileDone {
     let extra = std::mem::take(&mut screen.additional);
-    if extra.is_empty() {
+    let additional_jobs = std::mem::take(&mut screen.additional_jobs);
+    if extra.is_empty() && additional_jobs.is_empty() {
         return execute_screen_one(screen, disk, guarded);
     }
     let parent = screen.job.dest.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -546,6 +555,7 @@ fn execute_screen(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: bool)
         page.asset = asset;
         jobs.push(page);
     }
+    jobs.extend(additional_jobs);
     let mut names = std::collections::HashSet::new();
     if jobs.iter().any(|j| !names.insert(j.job.dest.clone()) || disk.exists(&j.job.dest)) {
         return FileDone::Exported(ExportDone {
@@ -616,11 +626,12 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
             })
             .map_err(|e| e.to_string())
         } else {
-            varos_raster::export::encode_with_images(
+            varos_raster::export::encode_with_images_and_svg_options(
                 &screen.asset,
                 &screen.options,
                 &screen.job.blobs,
                 screen.job.cancel.flag(),
+                &screen.svg_options,
             )
         };
         let output = match encoded {
@@ -636,6 +647,13 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
                 )
             }
         };
+        if guarded {
+            if let (Some(root), Some(folder)) = (&screen.folder_root, screen.job.dest.parent()) {
+                if let Err(reason) = crate::export_folders::ensure(root, folder) {
+                    return (ExportResult::Failed(reason), output.report);
+                }
+            }
+        }
         if screen.collision_names {
             if let Some(folder) = screen.job.dest.parent() {
                 if let Err(e) = disk.export_folder(folder) {
@@ -643,11 +661,11 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
                 }
             }
             let parent = screen.job.dest.parent().unwrap_or(Path::new(".")).to_path_buf();
+            let stem = screen.job.dest.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let mut n = 1;
             while disk.exists(&screen.job.dest) {
                 n += 1;
-                screen.job.dest =
-                    parent.join(varos_raster::export::file_name(&screen.asset.name, "", screen.options.format, n));
+                screen.job.dest = parent.join(varos_raster::export::file_name(&stem, "", screen.options.format, n));
                 if n > 10000 {
                     return (ExportResult::Failed("Too many filename collisions.".into()), output.report);
                 }
@@ -919,5 +937,57 @@ mod screen_durability_tests {
                 assert!(receipt["report"]["notes"].as_array().unwrap().iter().any(|n| n["kind"] == "durability"));
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod lane_c_folder_tests {
+    use super::*;
+    #[test]
+    fn bridge_advanced_batch_creates_format_folder_and_refuses_repeat() {
+        let dir = std::env::temp_dir().join(format!("lane-c-guarded-{}", varos_app::storage::checksum::new_nonce()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let doc = varos_core::new_document::Settings { count: 2, ..Default::default() }.document().unwrap();
+        let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({
+            "api":"1.2", "board":"b1", "request_id":"r1", "expected_rev":0,
+            "path":dir.join("export.svg"), "scope":"all_visible_artboards",
+            "options":{"screens":{"subfolders":"format","rows":[{"format":"svg"}]}}
+        }))
+        .unwrap();
+        let job = crate::export_ui::bridge_job(
+            SessionId(1),
+            1,
+            &doc,
+            &Default::default(),
+            dir.join("export.svg"),
+            &request,
+            "export_raster",
+        )
+        .unwrap();
+        let result = execute(
+            FileJob::Bridge(Box::new(BridgeFileJob {
+                ticket: 1,
+                inner: FileJob::Screen(Box::new(job.clone())),
+                home: dir.clone(),
+                expected: None,
+            })),
+            &mut crate::file_ports::DiskStore,
+        );
+        assert!(matches!(result, FileDone::Bridge { ref result, .. } if result.ok), "{result:?}");
+        for n in 1..=2 {
+            assert!(dir.join(format!("svg/Artboard {n}.svg")).is_file());
+        }
+        let result = execute(
+            FileJob::Bridge(Box::new(BridgeFileJob {
+                ticket: 2,
+                inner: FileJob::Screen(Box::new(job)),
+                home: dir.clone(),
+                expected: None,
+            })),
+            &mut crate::file_ports::DiskStore,
+        );
+        assert!(matches!(result, FileDone::Bridge { ref result, .. } if !result.ok));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

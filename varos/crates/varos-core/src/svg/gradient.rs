@@ -21,7 +21,7 @@ fn reference(out: &mut String, paint: &Paint, key: &str, xf: Xform) -> (String, 
                 Spread::Reflect => "reflect",
                 Spread::Repeat => "repeat",
             };
-            out.push_str(&format!("<defs><{kind} id=\"{key}\" gradientUnits=\"userSpaceOnUse\" {coords} spreadMethod=\"{spread}\" gradientTransform=\"matrix({})\">",numbers(&g.placement)));
+            out.push_str(&format!("<defs><{kind} id=\"{key}\" gradientUnits=\"userSpaceOnUse\" {coords} spreadMethod=\"{spread}\" gradientTransform=\"matrix({})\">",numbers(&g.placement, None)));
             // Explicit stop breakpoints preserve hard transitions; midpoint samples preserve the engine curve.
             let mut samples: Vec<(f32, crate::Rgba)> = g
                 .stops
@@ -56,7 +56,7 @@ pub(super) fn paint(out: &mut String, d: &Drawn<'_>, doc: &Document) -> Result<(
     let s = p.appearance().stroke().resolved(doc);
     let (fill, fa) = reference(out, &f, &format!("gradient-{}-fill", p.id), d.xf);
     let (stroke, sa) = reference(out, &s, &format!("gradient-{}-stroke", p.id), d.xf);
-    let data = path_data(p, &d.xf);
+    let data = path_data(p, &d.xf, None);
     out.push_str(&format!(
         "<g id=\"{}\" opacity=\"{}\">\n",
         id("path", p.id as usize, p.name.as_deref().unwrap_or("")),
@@ -66,7 +66,7 @@ pub(super) fn paint(out: &mut String, d: &Drawn<'_>, doc: &Document) -> Result<(
         title(out, name);
     }
     let cov = crate::stroke::evaluate(p, 0.01, &|| false).map_err(stroke_error)?;
-    let band = stroke::coverage_data(&cov.rings, &d.xf);
+    let band = stroke::coverage_data(&cov.rings, &d.xf, None);
     let translucent = match &s {
         Paint::Gradient(g) => g.stops.iter().any(|s| s.colour[3] * s.opacity < 0.999),
         Paint::Solid(c) => c[3] < 0.999,

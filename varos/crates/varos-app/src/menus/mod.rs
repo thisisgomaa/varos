@@ -113,6 +113,8 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MenuCmd {
     ImageSheet(crate::image_ui::SheetKind),
+    // ---- Lane C ----
+    LaneC(&'static str),
     Slice4a(&'static str),
     View(varos_core::editor::view_commands::ViewAction),
     TogglePasteRemembersLayers,

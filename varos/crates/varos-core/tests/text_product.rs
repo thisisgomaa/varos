@@ -30,13 +30,29 @@ fn source_roundtrip_and_undo_batches() {
 }
 #[test]
 fn refuses_legacy_keys_bad_tracking_and_newer_before_decode() {
-    for data in [
-        include_bytes!("fixtures/text_next/refuse_text_in_v5.json").as_slice(),
-        include_bytes!("fixtures/text_next/refuse_arabic_tracking.json").as_slice(),
-        include_bytes!("fixtures/text_next/refuse_newer.json").as_slice(),
+    // integration w2: text is format 8; each refusal asserts its specific error.
+    use varos_core::format::{Invalid, LoadError};
+    for (data, version) in [
+        (include_bytes!("fixtures/text_next/refuse_text_in_v5.json").as_slice(), 5),
+        (include_bytes!("fixtures/text_next/refuse_text_in_v7.json").as_slice(), 7),
     ] {
-        assert!(format::decode_model(data, None, &Limits::DEFAULT).is_err());
+        assert_eq!(
+            format::decode_model(data, None, &Limits::DEFAULT).unwrap_err(),
+            LoadError::Invalid(Invalid::FieldNotInFormat { field: "text_boxes/Text", version })
+        );
     }
+    let tracking =
+        format::decode_model(include_bytes!("fixtures/text_next/refuse_arabic_tracking.json"), None, &Limits::DEFAULT)
+            .unwrap_err();
+    assert!(
+        matches!(&tracking, LoadError::Malformed { detail, .. } if detail == "Arabic letter spacing must be zero"),
+        "{tracking:?}"
+    );
+    assert_eq!(
+        format::decode_model(include_bytes!("fixtures/text_next/refuse_newer.json"), None, &Limits::DEFAULT)
+            .unwrap_err(),
+        LoadError::NewerVersion { found: 10, supported: format::FORMAT_VERSION }
+    );
     let mut d = fixture();
     d.nodes.iter_mut().find(|n| matches!(n.kind, varos_core::model::NodeKind::Text(_))).unwrap().children.push(1);
     assert!(format::encode_model(&d, &Limits::DEFAULT).is_err());

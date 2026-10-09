@@ -239,6 +239,9 @@ fn write_pages_impl(
         outlined = varos_text_layout::outline_document(doc).map_err(ExportError::InvalidDocument)?;
         &outlined
     };
+    // ---- Lane C: page appearance uses resolved live corners (the embedded model keeps them live) ----
+    let resolved = varos_core::live_corners::document(doc);
+    let doc = &resolved;
     // ---- w2-gradients ----
     crate::gradient::check_budget(doc, pages.len())?;
     let mut stroke_budget = varos_core::stroke::evaluate::StrokeBudget::default();

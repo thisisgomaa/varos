@@ -32,8 +32,10 @@ use varos_app::shell::kit::icons::{
 };
 use varos_app::shell::kit::{self, Icon};
 mod export;
+// ---- Lane C ----
 pub(crate) mod fields;
 mod guide_field;
+mod lane_c;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 mod bar;
@@ -457,6 +459,7 @@ impl Ui {
                 self.recent_warning.as_deref(),
                 maximized,
             );
+            lane_c::sheets(root.ctx(), &mut self.app_cmds, &mut Vec::new(), None);
         });
         // K3: Home draws no document field; any edit left open (an invalid one a non-user command
         // passed) is closed here — there is no document to commit into
@@ -618,6 +621,7 @@ impl Ui {
                 false,
                 cfg!(target_os = "macos"),
             );
+            lane_c::sheets(ctx, &mut app_cmds, &mut ops, doc_active);
             crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
             crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
             crate::document_ui::draw(ctx, &mut self.document_sheet, ed, doc_active, &mut ops);
@@ -730,6 +734,7 @@ impl Ui {
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
             drawing::draw(ctx, ed, hole, view, ppp);
             select_transform::draw(ctx, ed, hole);
+            lane_c::corners(ctx, ed, &view, ppp, hole, doc_active);
             isolation::draw(ctx, ed, hole);
             crate::image_ui::draw(ctx, ed, doc_active, hole, &mut app_cmds, view, ppp);
             build_ab_chrome(

@@ -4,6 +4,8 @@ mod document;
 // ---- Lane E ----
 mod images;
 mod view_depth;
+// ---- Lane C ----
+mod lane_c;
 use std::{
     ffi::OsString,
     io::{Read, Write},
@@ -27,6 +29,8 @@ const VERBS: &[&str] = &[
     "view-depth",
     "add-text",
     "set-text",
+    "new-document",
+    "export-screens",
     "trace",
     "import-svg",
     "import",
@@ -243,6 +247,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
     let verb = args.remove(0).into_string().map_err(|_| "subcommand must be UTF-8".to_owned())?;
     if verb == "view-depth" {
         return view_depth::run(args).map_err(Failure::from);
+    }
+    if ["new-document", "export-screens"].contains(&verb.as_str()) {
+        return lane_c::run(&verb, args).map_err(Into::into);
     }
     if ["document-info", "document-setup", "save-template", "new-from-template"].contains(&verb.as_str()) {
         return document::run(&verb, args).map_err(Into::into);
