@@ -26,6 +26,7 @@ pub fn counts(doc: &Document) -> Value {
 }
 pub fn info(doc: &Document) -> Value {
     let mut colours: Vec<[f32; 4]> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for c in doc
         .paths
         .iter()
@@ -33,7 +34,7 @@ pub fn info(doc: &Document) -> Value {
         .flatten()
         .chain(doc.artboards.iter().filter_map(|a| a.page_color))
     {
-        if !colours.contains(&c) {
+        if seen.insert(c.map(|v| if v == 0.0 { 0 } else { v.to_bits() })) {
             colours.push(c);
         }
     }
@@ -65,6 +66,43 @@ mod tests {
         assert_eq!(ed.doc.units, before.units);
     }
     #[test]
+    fn scrub_is_one_undo_and_net_zero_preserves_history() {
+        let mut ed = Editor::new();
+        ed.execute(EditCommand::SetUnits(Unit::Mm));
+        let rev = ed.rev;
+        ed.begin();
+        for ppi in [100.0, 200.0, 300.0] {
+            ed.execute(EditCommand::SetPpi(ppi));
+        }
+        assert_eq!(ed.rev, rev);
+        ed.finish_document_setup();
+        assert_eq!(ed.rev, rev + 1);
+        ed.undo();
+        assert_eq!(ed.doc.units.ppi, 72.0);
+        let rev = ed.rev;
+        ed.begin();
+        ed.execute(EditCommand::SetPpi(144.0));
+        ed.execute(EditCommand::SetPpi(72.0));
+        ed.finish_document_setup();
+        assert_eq!(ed.rev, rev);
+        assert!(ed.history_available(true));
+        ed.undo();
+        assert_eq!(ed.doc.units.display, Unit::Px);
+    }
+    #[test]
+    fn colours_deduplicate_in_first_seen_order_and_counts_are_independent() {
+        let doc = Document {
+            artboards: vec![
+                Artboard { page_color: Some([0.0, 0.25, 0.5, 1.0]), ..Default::default() },
+                Artboard { page_color: Some([-0.0, 0.25, 0.5, 1.0]), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let info = info(&doc);
+        assert_eq!(info["counts"], json!({"paths":0,"groups":0,"layers":1,"artboards":2}));
+        assert_eq!(info["colours"], json!([[0.0, 0.25, 0.5, 1.0]]));
+    }
+    #[test]
     fn guide_geometry_and_info() {
         let ab = Artboard {
             x: 10.0,
@@ -94,11 +132,23 @@ mod scene_tests {
         ed.doc.artboards.push(Artboard { w: 100.0, h: 100.0, page_color: None, ..Default::default() });
         let plain = crate::build_scene(&ed, 1.0);
         ed.execute(crate::EditCommand::SetTransparencyGrid(true));
-        let checker = crate::build_scene(&ed, 1.0);
+        let style = crate::scene::SceneStyle { checkerboard: [[0.1; 4], [0.2; 4]] };
+        let draw = |ed: &crate::Editor| {
+            crate::scene::build_scene_in_view_styled(ed, crate::View::identity(), [1000, 1000], style)
+        };
+        let checker = draw(&ed);
         let count = |s: &crate::Scene| s.content.iter().map(|g| g.prims().len()).sum::<usize>();
         assert!(count(&checker) > count(&plain));
         assert!(count(&checker) < 17000);
         ed.doc.artboards[0].page_color = Some([0.0; 4]);
-        assert_eq!(count(&crate::build_scene(&ed, 1.0)), count(&plain));
+        assert_eq!(count(&draw(&ed)), count(&checker));
+        ed.doc.artboards[0].page_color = Some([1.0, 0.0, 0.0, 0.5]);
+        let partial = draw(&ed);
+        assert_eq!(count(&partial), count(&checker) + 1);
+        let prims: Vec<_> = partial.content.iter().flat_map(|g| g.prims()).collect();
+        assert!(matches!(prims[0], crate::Prim::Fill { color, .. } if *color == style.checkerboard[0]));
+        assert!(matches!(prims.last(), Some(crate::Prim::Fill { color, .. }) if *color == [1.0,0.0,0.0,0.5]));
+        ed.doc.artboards[0].page_color = Some([1.0; 4]);
+        assert_eq!(count(&draw(&ed)), count(&plain));
     }
 }

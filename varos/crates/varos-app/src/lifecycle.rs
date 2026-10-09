@@ -484,6 +484,10 @@ impl Lifecycle<'_> {
     /// A background job finished: apply it to its tab (a closed tab is ignored, a stale ticket too).
     fn file_done(&mut self, done: FileDone) -> Effect {
         match done {
+            FileDone::Template(done) => {
+                crate::template_jobs::complete(done, self.ws);
+                Effect::default()
+            }
             FileDone::Bridge { ticket, copy, result, done } => {
                 crate::bridge_host::file_completed(ticket, result.clone());
                 if let Some(done) = done {
@@ -510,7 +514,7 @@ impl Lifecycle<'_> {
                             }
                         }
                         FileDone::Exported(_) => {}
-                        FileDone::Bridge { .. } | FileDone::CopySaved(_) => unreachable!(),
+                        FileDone::Bridge { .. } | FileDone::CopySaved(_) | FileDone::Template(_) => unreachable!(),
                     }
                 } else {
                     let ids: Vec<_> = self.ws.sessions().iter().map(|s| s.id).collect();

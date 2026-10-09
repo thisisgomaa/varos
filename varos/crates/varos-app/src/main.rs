@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{Pt, View};
-use varos_core::scene::{build_scene_in_view, scene_signature};
+use varos_core::scene::{build_scene_in_view_styled, scene_signature, SceneStyle};
 use varos_core::EditCommand;
 use varos_render_wgpu::Renderer;
 #[cfg(windows)]
@@ -52,6 +52,7 @@ mod pacing;
 mod recent_files;
 mod recovery_host;
 mod single_instance;
+mod template_jobs;
 mod thumbs;
 mod ui;
 mod workspace;
@@ -1171,7 +1172,12 @@ fn main() {
             if initial_home {
                 renderer.render_ui(&Default::default(), view, &jobs, &tdelta, &screen);
             } else {
-                let world = build_scene_in_view(ed, view, [sz0.width, sz0.height]);
+                let world = build_scene_in_view_styled(
+                    ed,
+                    view,
+                    [sz0.width, sz0.height],
+                    SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+                );
                 renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
             }
         }
@@ -1942,7 +1948,12 @@ fn main() {
                             let rendered = if cache_hit {
                                 renderer.render_ui_cached(&jobs, &tdelta, &screen)
                             } else {
-                                let world = build_scene_in_view(ed, *view, [psz.width, psz.height]);
+                                let world = build_scene_in_view_styled(
+                                    ed,
+                                    *view,
+                                    [psz.width, psz.height],
+                                    SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+                                );
                                 renderer.render_ui(&world, *view, &jobs, &tdelta, &screen)
                             };
                             last_scene_signature = rendered.then_some(signature);
