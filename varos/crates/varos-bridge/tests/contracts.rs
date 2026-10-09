@@ -3512,7 +3512,7 @@ fn phase_one_effects_are_opt_in_revision_pinned_and_idempotent_without_os_calls(
     let old = varos_bridge::mcp::tools();
     assert_eq!(old, varos_bridge::mcp::tools_for_api("1.1"));
     let new = varos_bridge::mcp::tools_for_api("1.2");
-    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 17);
+    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 18);
 }
 
 #[test]

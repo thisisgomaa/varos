@@ -1,0 +1,31 @@
+//! Lane F: semantic human history labels, separate from localized surface placements.
+use crate::EditCommand;
+pub(crate) fn label(command: &EditCommand) -> &'static str {
+    use EditCommand::*;
+    match command {
+        Nudge { .. } => "Move",
+        SetOpacity(_) => "Change opacity",
+        AddShape { .. } => "Draw shape",
+        AddPath { .. } => "Draw path",
+        DeleteSelected | DeleteAnchor(_) => "Delete",
+        ApplyPaint { .. } | SwapColors | DefaultPaint => "Change paint",
+        SetStrokeWidth(_) | SetStrokeStyle { .. } => "Change stroke",
+        SetObjectBounds { .. } => "Transform bounds",
+        SetObjectRotation(_) | Transform(_) | TransformCommit => "Transform",
+        GroupSelection => "Group",
+        UngroupSelection => "Ungroup",
+        Arrange(_) => "Arrange",
+        ClipMake => "Make clipping mask",
+        ClipRelease => "Release clipping mask",
+        Copy => "Copy",
+        Cut => "Cut",
+        Paste { .. } => "Paste",
+        SetBoardName(_) | SetBoardDescription(_) | SetBoardTags(_) => "Edit document information",
+        PlaceArtwork(_) => "Place artwork",
+        InsertTracedPaths { .. } => "Trace image",
+        Pathfinder(_) => "Pathfinder",
+        InsertAnchor { .. } | AnchorType { .. } => "Edit anchors",
+        LayerFamily { .. } => "Edit layers",
+        _ => "Edit artwork",
+    }
+}

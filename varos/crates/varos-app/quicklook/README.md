@@ -23,6 +23,6 @@ The macOS extension is deliberately **not packaged, signed or installed by this 
 Offline CLI Actions example (selection rebound explicitly; created locals are remapped):
 `varos-cli apply board.vrs --batch move.vrs-actions --ids 7,12 --out moved.vrs`
 Attached API 1.2: use `list_verbs`, then `schema` for `preferences`, `shortcuts`, `command_index`,
-`history_list`, `history_jump` or `actions`; attached CLI exposes the same typed tools.
-Actions v1 records committed nudges and opacity changes. Replay also supports creating rectangles
-and selecting their symbolic local IDs. Unsupported commands are outside this initial recorder.
+`history_list`, `history_jump`, `actions` or `help`; attached CLI exposes the same typed tools.
+Actions v1 records committed moves, paint, opacity, stroke width, rotation, delete, group and ungroup. Replay also supports creating rectangles
+and selecting their symbolic local IDs. Unsupported committed document commands stop recording with a reason. File, UI and history commands are excluded.

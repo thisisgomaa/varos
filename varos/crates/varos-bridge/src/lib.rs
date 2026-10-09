@@ -79,3 +79,6 @@ pub const TOOLS_12: &[&str] = &["print", "copy", "cut"];
 
 // ---- Lane F ----
 pub mod application;
+
+// ---- Lane F ----
+mod action_recording;

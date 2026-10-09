@@ -30,7 +30,12 @@ fn with_preview_at(
     let key = crate::thumbs::ThumbKey(canonical.to_string_lossy().into_owned());
     let cached = crate::thumbs::preview_cache_path(root, &key);
     let digest = model_digest(doc)?;
-    if std::fs::read_to_string(cached.with_extension("model-sha256")).ok().as_deref() != Some(&digest) {
+    let cached_png = std::fs::read(&cached)
+        .ok()
+        .filter(|bytes| bytes.len() <= 2 * 1024 * 1024 && image::load_from_memory(bytes).is_ok());
+    if cached_png.is_none()
+        || std::fs::read_to_string(cached.with_extension("model-sha256")).ok().as_deref() != Some(&digest)
+    {
         std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let png = varos_raster::rasterize(Arc::new(doc.clone()), [varos_raster::WIDTH, varos_raster::HEIGHT])
             .into_result()?

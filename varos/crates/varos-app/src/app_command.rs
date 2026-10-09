@@ -53,9 +53,12 @@ pub enum AppCommand {
     // ---- Lane F ----
     Phase9(crate::phase9::DesktopAction),
     ApplyPreferences(varos_app::storage::settings::Settings, u64, bool),
-    ApplyShortcuts(crate::shortcut_editor::Overrides),
+    ApplyShortcuts(crate::shortcut_editor::Overrides, u64),
+    ReconcilePreferences,
+    LoadAction,
     HistoryJump(SessionId, usize),
     RecordAction(SessionId, bool),
+    CancelActionRecording(SessionId),
     ReplayAction(SessionId, varos_core::actions::Actions),
     SaveAction(varos_core::actions::Actions),
     Clip(SessionId, bool),

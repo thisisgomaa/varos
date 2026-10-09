@@ -796,7 +796,7 @@ fn dispatch(
             host::Ran::default()
         }
         host::HostAction::App(AppCommand::Phase9(a)) => {
-            phase9_host::desktop(a, gui);
+            phase9_host::desktop(a, gui, ws.document_target().is_some());
             host::Ran::default()
         }
         host::HostAction::App(AppCommand::HistoryJump(id, depth)) => {
@@ -809,16 +809,31 @@ fn dispatch(
             }
             host::Ran::default()
         }
+        host::HostAction::App(AppCommand::CancelActionRecording(id)) => {
+            if let Some(s) = ws.get_mut(id) {
+                s.editor.cancel_action_recording();
+            }
+            gui.phase9.recording = false;
+            gui.phase9.error = None;
+            host::Ran::default()
+        }
         host::HostAction::App(AppCommand::RecordAction(id, start)) => {
             phase9_host::record(gui, ws, id, start);
             host::Ran::default()
         }
         host::HostAction::App(AppCommand::ReplayAction(id, a)) => {
             if let Some(s) = ws.get_mut(id) {
+                if !gui.commit_fields(&mut s.editor) {
+                    return host::Ran::default();
+                }
                 if let Err(e) = a.replay(&mut s.editor) {
                     gui.phase9.error = Some(e);
                 }
             }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::LoadAction) => {
+            phase9_host::load_action(gui);
             host::Ran::default()
         }
         host::HostAction::App(AppCommand::SaveAction(a)) => {
@@ -1292,6 +1307,7 @@ fn main() {
         std::env::var("VAROS_RESET_LAYOUT").as_deref() == Ok("1"),
     );
     let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
+    gui.phase9.gpu_effective.clone_from(&renderer.adapter_description);
     gui.restore_shell_layout(shell_layout);
     if let Some(index) = store.thumb_index() {
         gui.set_thumb_source(std::sync::Arc::new(index)); // Home decodes thumbnails off the UI thread
@@ -1801,7 +1817,19 @@ fn main() {
                         menu.sync_shortcuts(&recovery.shortcuts);
                     }
                 }
-                gui.phase9.shortcuts.effective = recovery.shortcuts.clone();
+                if gui.phase9.shortcuts.effective != recovery.shortcuts {
+                    command_registry::publish_shortcuts(recovery.shortcuts.clone());
+                }
+                gui.phase9.sync_shortcuts(recovery.shortcuts.clone(), recovery.preferences_generation);
+                gui.phase9.history_depths = ws.sessions().iter().map(|s| s.editor.history_depths()).collect();
+                gui.phase9.recording = ws.active().is_some_and(|s| s.editor.action_recording_len().is_some());
+                if let Some(warning) = ws.active_mut().and_then(|s| s.editor.take_action_recording_warning()) {
+                    gui.phase9.error = Some(warning);
+                    redraw!("actions-warning");
+                }
+                if gui.phase9.sheet.is_some() && recovery_changed {
+                    gui.phase9.error.clone_from(&recovery.warning);
+                }
                 let recovery_ui = recovery.presentation(ws.active());
                 if gui.recovery != recovery_ui {
                     gui.recovery = recovery_ui;
@@ -2295,6 +2323,14 @@ fn main() {
                                 can_revert,
                                 has_selection: lifecycle::has_selection(ed),
                             });
+                            menu.sync_registry(
+                                menus::DocMenuState {
+                                    active: !home,
+                                    can_revert,
+                                    has_selection: lifecycle::has_selection(ed),
+                                },
+                                Some(ed),
+                            );
                             use chrome::Check as C;
                             menu.sync(|c| {
                                 editor_check(ed, c).unwrap_or_else(|| match c {

@@ -6,6 +6,9 @@ use serde::{
 };
 use serde_json::{Map, Value};
 pub const MAX_BYTES: usize = 65536;
+#[path = "settings_json.rs"]
+mod settings_json;
+use settings_json::UniqueValue;
 struct Unique(Map<String, Value>);
 impl<'de> Deserialize<'de> for Unique {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -17,8 +20,8 @@ impl<'de> Deserialize<'de> for Unique {
             }
             fn visit_map<M: MapAccess<'de>>(self, mut m: M) -> Result<Unique, M::Error> {
                 let mut map = Map::new();
-                while let Some((key, value)) = m.next_entry::<String, Value>()? {
-                    if map.insert(key, value).is_some() {
+                while let Some((key, value)) = m.next_entry::<String, UniqueValue>()? {
+                    if map.insert(key, value.0).is_some() {
                         return Err(M::Error::custom("Duplicate settings key"));
                     }
                 }
@@ -83,6 +86,7 @@ mod tests {
             assert_eq!(decode(bytes.as_bytes()).unwrap().0.recovery_enabled, flag);
         }
         assert!(decode(br#"{"version":2,"version":2}"#).is_err());
+        assert!(decode(br#"{"version":2,"opaque":[{"x":1,"x":2}]}"#).is_err());
         assert!(decode(br#"{"version":"2"}"#).is_err());
         assert!(decode(br#"{"version":1,"recovery_enabled":0}"#).is_err());
         let (s, invalid) =
@@ -101,7 +105,7 @@ pub fn write_explicit(
     reset: bool,
 ) -> Result<(super::durable::WriteOutcome, Vec<u8>), String> {
     use std::io::Write;
-    let source = match fs.read(path) {
+    let source = match fs.read_limited(path, MAX_BYTES) {
         Ok(bytes) => Some(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.to_string()),
@@ -119,10 +123,14 @@ pub fn write_explicit(
             Ok((_, invalid)) => !invalid.is_empty(),
         };
         if damaged {
-            if !reset {
-                return Err(
-                    "Settings require repair. Reset to Defaults, then Apply to preserve and repair the file".into()
-                );
+            let unsupported_version = parsed
+                .as_ref()
+                .ok()
+                .and_then(|m| m.get("version"))
+                .and_then(Value::as_u64)
+                .is_some_and(|v| v != 1 && v != 2);
+            if unsupported_version && !reset {
+                return Err("Unsupported settings version; writes locked. Reset to Defaults, then Apply to preserve and repair the file".into());
             }
             let backup = path.with_file_name(format!("settings.preserved-{}.json", super::checksum::new_nonce()));
             let mut file = fs.create_new(&backup).map_err(|e| format!("Couldn't preserve settings: {e}"))?;
@@ -149,7 +157,7 @@ pub fn write_explicit(
         return Err("Settings exceed 64 KiB".into());
     }
     // Recheck after preservation as well: a stale repair cannot replace a new external file.
-    let actual = match fs.read(path) {
+    let actual = match fs.read_limited(path, MAX_BYTES) {
         Ok(bytes) => Some(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.to_string()),
@@ -157,8 +165,15 @@ pub fn write_explicit(
     if actual.as_deref() != expected {
         return Err("Settings changed while preserving evidence".into());
     }
-    let outcome =
-        super::durable::write_replace(fs, path, &bytes, &super::checksum::new_nonce()).map_err(|e| e.reason())?;
+    let outcome = super::durable::write_replace_if_unchanged(
+        fs,
+        path,
+        &bytes,
+        &super::checksum::new_nonce(),
+        expected,
+        MAX_BYTES,
+    )
+    .map_err(|e| e.reason())?;
     Ok((outcome, bytes))
 }
 #[cfg(test)]
@@ -197,5 +212,64 @@ mod writer_tests {
             write_explicit(&fs, &path, &Settings::default(), Some(bytes), false).unwrap().0,
             WriteOutcome::ReplacedUnconfirmed(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod frozen_fixtures {
+    use super::*;
+    use crate::storage::{
+        durable::{Fault, FaultFs, RealFs, Step},
+        testdir::TestDir,
+    };
+    #[test]
+    fn frozen_migration_and_refusal_inputs() {
+        let full = include_bytes!("../../fixtures/settings-v2/full.json");
+        assert_eq!(decode(full).unwrap().0, Settings::default());
+        let old = include_bytes!("../../fixtures/settings-v2/v1-off.json");
+        let map = migrate_v1(envelope(old).unwrap()).unwrap();
+        assert_eq!(map["future_key"]["x"], 42);
+        assert_eq!(map["recovery_enabled"], false);
+        assert_eq!(migrate_v1(map.clone()).unwrap(), map);
+        let minimal = decode(include_bytes!("../../fixtures/settings-v2/minimal.json")).unwrap().0;
+        assert!(!minimal.autosave_enabled && !minimal.recovery_enabled);
+        assert_eq!(minimal.autosave_interval_seconds, 30);
+        assert_eq!(minimal.preferences.history_depth, 200);
+        assert!(decode(include_bytes!("../../fixtures/settings-v2/duplicate.json")).is_err());
+        assert!(decode(include_bytes!("../../fixtures/settings-v2/future.json")).is_err());
+        let (invalid, reasons) = decode(include_bytes!("../../fixtures/settings-v2/invalid-v2.json")).unwrap();
+        assert_eq!(reasons.len(), 2);
+        assert_eq!(invalid.preferences.language.requested(), "ar");
+        assert_eq!(invalid.preferences.canvas_colour.to_string(), "#AB12EF");
+    }
+    #[test]
+    fn damaged_evidence_existing_bad_and_failed_preservation_survive() {
+        let dir = TestDir::new("settings-preserve");
+        let path = dir.join("settings.json");
+        let bytes = include_bytes!("../../fixtures/settings-v2/invalid-v2.json");
+        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(dir.join("settings.json.bad"), b"older evidence").unwrap();
+        let fs = FaultFs::new(vec![Fault::at(Step::Write { after: 0 })]);
+        assert!(write_explicit(&fs, &path, &Settings::default(), Some(bytes), false).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        write_explicit(&RealFs, &path, &Settings::default(), Some(bytes), false).unwrap();
+        assert_eq!(std::fs::read(dir.join("settings.json.bad")).unwrap(), b"older evidence");
+        assert!(dir.names().iter().filter(|n| n.starts_with("settings.preserved-")).any(|n| std::fs::read(
+            dir.join(n)
+        )
+        .unwrap()
+            == bytes));
+    }
+    #[test]
+    fn each_prepublication_fault_keeps_effective_source() {
+        for step in [Step::Create, Step::Write { after: 0 }, Step::Sync, Step::Rename] {
+            let dir = TestDir::new("settings-fault");
+            let path = dir.join("settings.json");
+            let bytes = include_bytes!("../../fixtures/settings-v2/full.json");
+            std::fs::write(&path, bytes).unwrap();
+            let fs = FaultFs::new(vec![Fault::at(step)]);
+            assert!(write_explicit(&fs, &path, &Settings::default(), Some(bytes), false).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
     }
 }

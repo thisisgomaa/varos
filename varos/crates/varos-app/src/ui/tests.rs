@@ -2353,7 +2353,7 @@ mod dead_control_tests {
     #[test]
     fn burger_reset_layout_uses_the_same_command_as_the_native_window_menu() {
         let mut bar = Bar::new();
-        let at = bar.burger_row(23, 5);
+        let at = bar.burger_row(18 + varos_app::shell::PanelId::DOCKABLE.len(), 5);
         let cmds = bar.click(at);
         assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::ResetLayout)]);
         assert_eq!(

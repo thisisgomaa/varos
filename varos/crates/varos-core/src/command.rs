@@ -520,7 +520,14 @@ impl EditCommand {
             Self::Copy => ed.copy_selection(),
             Self::Cut => ed.cut_selection(),
             Self::Paste { offset } => ed.paste(offset),
-            Self::Nudge { x, y } => ed.nudge(x, y),
+            Self::Nudge { x, y } => {
+                // ---- Lane F: one keyboard increment for object and anchor selections ----
+                if ed.selected.is_empty() {
+                    ed.move_explicit(&ed.objsel.iter().copied().collect::<Vec<_>>(), [x, y]);
+                } else {
+                    ed.nudge(x, y);
+                }
+            }
             Self::SetActiveArtboard(index) => ed.ab_set_active(index),
             Self::SetArtboardRect { index, x, y, width, height } => ed.ab_set_rect(index, x, y, width, height),
             Self::RenameArtboard { index, name } => ed.ab_rename(index, name),
@@ -690,15 +697,7 @@ impl Editor {
     pub fn execute(&mut self, command: EditCommand) -> Result<(), crate::EngineError> {
         // Immutable history handles bound rollback cost independently of retained artwork.
         let snapshot = self.clone();
-        let label = match &command {
-            EditCommand::Nudge { .. } => "Move",
-            EditCommand::SetOpacity(_) => "Change opacity",
-            EditCommand::AddShape { .. } => "Draw shape",
-            EditCommand::AddPath { .. } => "Draw path",
-            EditCommand::DeleteSelected => "Delete",
-            EditCommand::ApplyPaint { .. } => "Change paint",
-            _ => "Edit artwork",
-        };
+        let label = crate::command_labels::label(&command);
         let semantic = crate::actions::semantic(&command);
         let before = self.rev;
         self.clipping_enablement.get_mut().take();

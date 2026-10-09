@@ -279,7 +279,7 @@ fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, V
         v.into_iter()
             .filter(|e| {
                 !matches!(e, Entry::Sub { label: "Clipping Mask" | "Transform" | "Layers", .. })
-                    && !matches!(e, Entry::Item { id, .. } if (ADDED_AFTER_SPLIT.contains(&id.as_str()) || ["app.preferences","app.shortcuts","app.actions","win.panel.History"].contains(&id.as_str())))
+                    && !matches!(e, Entry::Item { id, .. } if (ADDED_AFTER_SPLIT.contains(&id.as_str()) || ["app.preferences","app.shortcuts","app.actions","win.panel.History","win.panel.Actions"].contains(&id.as_str())))
             })
             .map(|e| match e {
                 Entry::Item { id, .. } if id == "view.snapgrid" => {

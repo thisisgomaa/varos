@@ -41,4 +41,5 @@ pub mod trace;
 
 // ---- Lane F ----
 pub mod actions;
+mod command_labels;
 pub mod registry;

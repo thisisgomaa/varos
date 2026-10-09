@@ -358,6 +358,11 @@ fn evict(root: &Path, limit: usize) {
     }
 }
 
+// ---- Lane F ----
+pub(crate) fn preview_cache_path(root: &Path, key: &ThumbKey) -> PathBuf {
+    cache_path(root, key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,9 +520,4 @@ mod tests {
         service.request(ThumbKey("x".into()), Arc::new(Document::default()), UNIX_EPOCH);
         assert!(wait_for(&service, UNIX_EPOCH).path.is_none());
     }
-}
-
-// ---- Lane F ----
-pub(crate) fn preview_cache_path(root: &Path, key: &ThumbKey) -> PathBuf {
-    cache_path(root, key)
 }

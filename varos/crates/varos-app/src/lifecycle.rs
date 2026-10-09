@@ -237,7 +237,7 @@ impl Lifecycle<'_> {
     pub fn run(&mut self, cmd: AppCommand) -> Effect {
         match cmd {
             // ---- Lane F ----
-            AppCommand::Phase9(_) | AppCommand::ApplyPreferences(..) | AppCommand::ApplyShortcuts(_) | AppCommand::HistoryJump(..) | AppCommand::RecordAction(..) | AppCommand::ReplayAction(..) | AppCommand::SaveAction(_)
+            AppCommand::Phase9(_) | AppCommand::ApplyPreferences(..) | AppCommand::ApplyShortcuts(..) | AppCommand::HistoryJump(..) | AppCommand::RecordAction(..) | AppCommand::CancelActionRecording(_) | AppCommand::ReplayAction(..) | AppCommand::SaveAction(_) | AppCommand::LoadAction | AppCommand::ReconcilePreferences
             | AppCommand::Selection(..)
             | AppCommand::Object(..)
             | AppCommand::View(..)
