@@ -23,11 +23,12 @@ fn enabled() -> bool {
 }
 
 /// App-wide settings, persisted across launches.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
-    // ---- Lane E ----
-    #[serde(default = "default_canvas")]
-    pub canvas_color: [u8; 3],
+    /// Lane F Preferences v2. Integration w2: `preferences.canvas_colour` is ALSO Lane E's canvas
+    /// colour (View ▸ Canvas presets) — one setting, see [`Settings::canvas_color`].
+    #[serde(flatten)]
+    pub preferences: crate::storage::preferences::Preferences,
     /// Autosave/recovery snapshots (§3.5/§3.6). On by default.
     pub recovery_enabled: bool,
     #[serde(default)]
@@ -41,7 +42,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            canvas_color: default_canvas(),
+            preferences: crate::storage::preferences::Preferences::default(),
             recovery_enabled: true,
             paste_remembers_layers: false,
             autosave_enabled: true,
@@ -59,27 +60,37 @@ impl Settings {
                 "Autosave interval must be 30–1800 seconds",
             )));
         }
+        crate::storage::preferences::validate(self)
+            .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidInput, e)))?;
         let doc = OnDisk {
+            preferences: self.preferences,
             version: SETTINGS_VERSION,
-            canvas_color: self.canvas_color,
             recovery_enabled: self.recovery_enabled,
             paste_remembers_layers: self.paste_remembers_layers,
             autosave_enabled: self.autosave_enabled,
             autosave_interval_seconds: self.autosave_interval_seconds,
         };
         // Additive lane settings: preserve keys owned by sibling lanes at the FIFO writer.
-        let mut value = match fs.read(path) {
+        let mut value = match fs.read_limited(path, super::settings_codec::MAX_BYTES) {
             Ok(bytes) => {
-                let existing: OnDisk = serde_json::from_slice(&bytes)
+                let existing = super::settings_codec::envelope(&bytes)
                     .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
-                if existing.version != 1 && existing.version != SETTINGS_VERSION {
+                let version = existing.get("version").and_then(serde_json::Value::as_u64);
+                if version != Some(1) && version != Some(2) {
                     return Err(WriteError::Write(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        "Settings version changed; existing settings were kept.",
+                        "Unsupported settings version; writes locked",
                     )));
                 }
-                serde_json::from_slice::<serde_json::Value>(&bytes)
-                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?
+                let (_, invalid) = super::settings_codec::decode(&bytes)
+                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+                if !invalid.is_empty() {
+                    return Err(WriteError::Write(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Preserve and repair invalid settings before replacement",
+                    )));
+                }
+                serde_json::Value::Object(existing)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => serde_json::json!({}),
             Err(e) => return Err(WriteError::Write(e)),
@@ -88,17 +99,22 @@ impl Settings {
             serde_json::to_value(doc).map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
         if let (Some(existing), Some(owned)) = (value.as_object_mut(), owned.as_object()) {
             existing.extend(owned.clone());
+            // integration w2: Lane E's stage-1 key now lives in `canvas_colour`; never keep two copies
+            existing.remove(super::settings_codec::LEGACY_CANVAS_KEY);
         }
         let bytes = serde_json::to_vec_pretty(&value)
             .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+        if bytes.len() > super::settings_codec::MAX_BYTES {
+            return Err(WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, "Settings exceed 64 KiB")));
+        }
         durable::write_replace(fs, path, &bytes, &new_nonce())
     }
 }
 
 #[derive(Serialize, Deserialize)]
 struct OnDisk {
-    #[serde(default = "default_canvas")]
-    canvas_color: [u8; 3],
+    #[serde(flatten)]
+    preferences: crate::storage::preferences::Preferences,
     version: u32,
     recovery_enabled: bool,
     #[serde(default)]
@@ -107,11 +123,6 @@ struct OnDisk {
     autosave_enabled: bool,
     #[serde(default = "default_interval")]
     autosave_interval_seconds: u64,
-}
-
-#[derive(Deserialize)]
-struct VersionProbe {
-    version: u32,
 }
 
 fn bad_path(path: &Path) -> PathBuf {
@@ -123,30 +134,31 @@ fn bad_path(path: &Path) -> PathBuf {
 /// Missing file → default (Recovery on), no warning. Corrupt JSON → default + warning, moved aside
 /// to `<name>.bad`. A version this build does not recognise → default + warning, file untouched.
 pub fn load(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
-    let bytes = match fs.read(path) {
+    let bytes = match fs.read_limited(path, super::settings_codec::MAX_BYTES) {
         Ok(b) => b,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return (Settings::default(), None),
         Err(e) => return (Settings::default(), Some(format!("Couldn't read settings: {}", durable::io_reason(&e)))),
     };
-    let probe: VersionProbe = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
+    let map = match super::settings_codec::envelope(&bytes) {
+        Ok(map) => map,
         Err(_) => return corrupt(fs, path),
     };
-    if probe.version != 1 && probe.version != SETTINGS_VERSION {
-        return (Settings::default(), Some(version_mismatch_warning(probe.version)));
+    let Some(version) = map.get("version").and_then(serde_json::Value::as_u64).and_then(|v| u32::try_from(v).ok())
+    else {
+        return corrupt(fs, path);
+    };
+    if version != 1 && version != SETTINGS_VERSION {
+        return (Settings::default(), Some(version_mismatch_warning(version)));
     }
-    match serde_json::from_slice::<OnDisk>(&bytes) {
-        Ok(doc) if valid_autosave_interval(doc.autosave_interval_seconds) => (
-            Settings {
-                canvas_color: doc.canvas_color,
-                recovery_enabled: doc.recovery_enabled,
-                paste_remembers_layers: doc.paste_remembers_layers,
-                autosave_enabled: doc.autosave_enabled,
-                autosave_interval_seconds: doc.autosave_interval_seconds,
+    match super::settings_codec::decode(&bytes) {
+        Ok((settings, invalid)) => (
+            settings,
+            if invalid.is_empty() {
+                None
+            } else {
+                Some(format!("Invalid settings retained on disk: {}", invalid.join(", ")))
             },
-            None,
         ),
-        Ok(_) => corrupt(fs, path),
         Err(_) => corrupt(fs, path),
     }
 }
@@ -170,9 +182,16 @@ fn corrupt(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
     (Settings::default(), Some("Settings were damaged and have been reset.".to_string()))
 }
 
-// ---- Lane E ----
-fn default_canvas() -> [u8; 3] {
-    crate::shell::tokens::CANVAS_DARK
+// ---- Lane E × Lane F (integration w2): one canvas colour setting ----
+impl Settings {
+    /// THE canvas colour as RGB (Lane E's canvas furniture and Lane F's pasteboard read the same value).
+    pub fn canvas_color(&self) -> [u8; 3] {
+        crate::storage::preferences::canvas_rgb(self.preferences.canvas_colour)
+    }
+    /// View ▸ Canvas presets write the Preferences value (the UI default is stored as `match_ui`).
+    pub fn set_canvas_color(&mut self, rgb: [u8; 3]) {
+        self.preferences.canvas_colour = crate::storage::preferences::CanvasColour::from_rgb(rgb);
+    }
 }
 
 #[cfg(test)]
@@ -198,6 +217,25 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), future);
     }
 
+    /// Integration w2: Lane E's stage-1 `canvas_color` seeds the one Preferences canvas colour, and
+    /// the next save keeps a single key (`canvas_colour`).
+    #[test]
+    fn stage_one_canvas_color_migrates_into_the_preference() {
+        let d = TestDir::new("settings-canvas-legacy");
+        let path = d.join("settings.json");
+        std::fs::write(&path, br#"{"version":1,"recovery_enabled":true,"canvas_color":[95,92,89]}"#).unwrap();
+        let (s, warning) = load(&RealFs, &path);
+        assert!(warning.is_none(), "{warning:?}");
+        assert_eq!(s.canvas_color(), [95, 92, 89]);
+        s.save(&RealFs, &path).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(saved.get("canvas_color").is_none());
+        assert_eq!(saved["canvas_colour"], "#5F5C59");
+        let mut dark = Settings::default();
+        dark.set_canvas_color(crate::shell::tokens::CANVAS_DARK);
+        assert_eq!(dark.preferences.canvas_colour, crate::storage::preferences::CanvasColour::MatchUi);
+    }
+
     #[test]
     fn settings_default_recovery_on() {
         assert!(Settings::default().recovery_enabled);
@@ -212,7 +250,10 @@ mod tests {
         let d = TestDir::new("settings-roundtrip");
         let path = d.join("settings.json");
         let s = Settings {
-            canvas_color: [210, 208, 206],
+            preferences: crate::storage::preferences::Preferences {
+                canvas_colour: crate::storage::preferences::CanvasColour::Custom([210, 208, 206]),
+                ..Default::default()
+            },
             recovery_enabled: false,
             paste_remembers_layers: true,
             autosave_enabled: false,

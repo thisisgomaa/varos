@@ -21,6 +21,11 @@ use crate::model::{Anchor, Document, GroupRole, Node, NodeKind, Path};
 /// fresh ids, so pasting the same clipboard twice gives two fully independent copies.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Clipboard {
+    // ---- w2-images: clipboard resources are outside Document and undo snapshots ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    images: Vec<crate::images::ImageObject>,
+    #[serde(skip)]
+    pub resources: crate::images::BlobStore,
     /// Copied paths, back → front (z order at copy time).
     paths: Vec<Path>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -39,15 +44,15 @@ pub struct Clipboard {
 impl Clipboard {
     /// Original path ids, for public clipboard export from the source snapshot.
     pub fn source_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.paths.iter().map(|p| p.id).chain(self.texts.iter().map(|t| t.id))
+        self.paths.iter().map(|p| p.id).chain(self.images.iter().map(|i| i.id)).chain(self.texts.iter().map(|t| t.id))
     }
     /// Nothing copied yet (Paste is then a no-op).
     pub fn is_empty(&self) -> bool {
-        self.paths.is_empty() && self.texts.is_empty()
+        self.paths.is_empty() && self.images.is_empty() && self.texts.is_empty()
     }
-    /// Number of copied paths.
+    /// Number of copied objects (paths, images, text boxes).
     pub fn len(&self) -> usize {
-        self.paths.len() + self.texts.len()
+        self.paths.len() + self.images.len() + self.texts.len()
     }
     /// World AABB of the copied art as it was when copied.
     pub fn bounds(&self) -> Option<(f32, f32, f32, f32)> {
@@ -63,12 +68,36 @@ impl Clipboard {
     pub fn capture(doc: &Document, pids: &[u32]) -> Clipboard {
         Self::capture_objects(doc, pids, &[])
     }
-    // ---- Lane G: one detached tree for mixed path/text selections. ----
+    // ---- Lane G: one detached tree for mixed path/image/text selections. ----
     pub fn capture_objects(doc: &Document, pids: &[u32], texts: &[u32]) -> Clipboard {
-        // the copied paths, deduped, back → front
+        let mut all = pids.to_vec();
+        for i in &doc.images {
+            if pids.contains(&i.id) {
+                let mut node = doc.node_of_path(i.id);
+                while let Some(id) = node {
+                    let Some(n) = doc.node(id) else { break };
+                    if n.role == GroupRole::Clip {
+                        if let Some(mask) = n.mask_child {
+                            all.extend(doc.node_paths(mask));
+                        }
+                    }
+                    node = n.parent;
+                }
+            }
+        }
+        let pids = all.as_slice();
+        // the copied paths and image leaves, deduped, back → front
         let mut seen = HashSet::new();
-        let mut sel: Vec<(usize, u32)> =
-            pids.iter().copied().filter(|p| seen.insert(*p)).filter_map(|p| doc.pidx(p).map(|i| (i, p))).collect();
+        let mut sel: Vec<(usize, u32)> = pids
+            .iter()
+            .copied()
+            .filter(|p| seen.insert(*p))
+            .filter_map(|p| {
+                doc.pidx(p)
+                    .or_else(|| doc.images.iter().position(|i| i.id == p).map(|i| doc.paths.len() + i))
+                    .map(|i| (i, p))
+            })
+            .collect();
         sel.sort_by_key(|(i, _)| *i);
         if sel.is_empty() && texts.is_empty() {
             return Clipboard::default();
@@ -146,6 +175,15 @@ impl Clipboard {
         // world bounds, live transforms composed (the same AABB the selection frame / align use)
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &(pi, _) in &sel {
+            if pi >= doc.paths.len() {
+                let i = &doc.images[pi - doc.paths.len()];
+                let b = crate::images::corner_rect(crate::images::world_corners(doc, i));
+                x0 = x0.min(b.0);
+                y0 = y0.min(b.1);
+                x1 = x1.max(b.2);
+                y1 = y1.max(b.3);
+                continue;
+            }
             if doc.paths[pi].anchors.is_empty() {
                 continue;
             }
@@ -178,9 +216,25 @@ impl Clipboard {
             })
             .collect();
         Clipboard {
+            images: sel
+                .iter()
+                .filter(|(pi, _)| *pi >= doc.paths.len())
+                .map(|(pi, _)| doc.images[*pi - doc.paths.len()].clone())
+                .collect(),
+            resources: Default::default(),
             layers,
             texts: doc.text_boxes.iter().filter(|t| texts.contains(&t.id)).cloned().collect(),
-            paths: sel.iter().map(|&(pi, _)| doc.paths[pi].clone()).collect(),
+            // w2-gradients: copied paints are resolved (a swatch table is per document)
+            paths: sel
+                .iter()
+                .filter(|(pi, _)| *pi < doc.paths.len())
+                .map(|&(pi, _)| {
+                    let mut p = doc.paths[pi].clone();
+                    p.fill = p.fill.resolved(doc);
+                    p.stroke = p.stroke.resolved(doc);
+                    p
+                })
+                .collect(),
             nodes,
             roots: roots.into_iter().map(|(_, id)| id).collect(),
             bounds: (x0 <= x1).then_some((x0, y0, x1, y1)),
@@ -255,7 +309,9 @@ impl Clipboard {
             let anchors: Vec<Anchor> = src.anchors.iter().map(&mut fresh).collect();
             let holes: Vec<Vec<Anchor>> = src.holes.iter().map(|h| h.iter().map(&mut fresh).collect()).collect();
             pmap.insert(src.id, id);
-            new_paths.push(Path { id, anchors, holes, ..src.clone() });
+            let mut path = Path { id, anchors, holes, ..src.clone() };
+            path.map_gradient_placement(moved);
+            new_paths.push(path);
         }
         let mut text_ids = Vec::new();
         for src in &self.texts {
@@ -265,6 +321,15 @@ impl Clipboard {
             text_ids.push(text.id);
             crate::text::translate(&mut text, offset);
             doc.text_boxes.push(text);
+        }
+        let mut new_images = vec![];
+        for src in &self.images {
+            let mut image = src.clone();
+            image.id = doc.nid();
+            image.xform.e += offset[0];
+            image.xform.f += offset[1];
+            pmap.insert(src.id, image.id);
+            new_images.push(image);
         }
         let mut nmap: HashMap<u32, u32> = HashMap::new();
         for n in &self.nodes {
@@ -279,6 +344,10 @@ impl Clipboard {
                 },
                 NodeKind::Text(id) => match pmap.get(&id) {
                     Some(id) => NodeKind::Text(*id),
+                    None => continue,
+                },
+                NodeKind::Image(p) => match pmap.get(&p) {
+                    Some(&np) => NodeKind::Image(np),
                     None => continue,
                 },
                 k => k,
@@ -308,9 +377,36 @@ impl Clipboard {
                 *at += 1;
             }
         }
-        let ids: Vec<u32> = new_paths.iter().map(|p| p.id).chain(text_ids).collect();
+        let ids: Vec<u32> =
+            new_paths.iter().map(|p| p.id).chain(new_images.iter().map(|i| i.id)).chain(text_ids).collect();
+        for i in &new_images {
+            if !doc.assets.iter().any(|a| a.key == i.blob) {
+                if let Some(b) = self.resources.get(&i.blob) {
+                    doc.assets.push(b.meta.clone());
+                }
+            }
+        }
+        doc.images.extend(new_images);
         doc.paths.extend(new_paths);
         doc.flatten();
         ids
+    }
+}
+
+impl Clipboard {
+    pub fn pin_images(&mut self, store: &crate::images::BlobStore) {
+        let mut resources = store.clone();
+        resources.collect(&self.images.iter().map(|i| i.blob.clone()).collect());
+        self.resources = resources;
+    }
+    pub fn image_keys(&self) -> impl Iterator<Item = &crate::images::BlobKey> {
+        self.images.iter().map(|i| &i.blob)
+    }
+    pub fn admit_images(&self, store: &mut crate::images::BlobStore) -> Result<(), String> {
+        for i in &self.images {
+            let b = self.resources.get(&i.blob).ok_or("Clipboard image original unavailable")?;
+            store.insert((**b).clone())?;
+        }
+        Ok(())
     }
 }

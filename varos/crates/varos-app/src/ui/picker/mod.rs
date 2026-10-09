@@ -7,6 +7,7 @@ pub(crate) use board_cache::BoardColors;
 mod cluster;
 mod drawer;
 mod fields;
+mod gradient;
 mod harmony;
 mod harmony_rules;
 mod mini;
@@ -28,6 +29,7 @@ pub(crate) enum Tab {
     Wheel,
     Sliders,
     Harmony,
+    Gradient,
 }
 #[derive(Clone, Copy, PartialEq)]
 enum Gesture {
@@ -39,6 +41,7 @@ enum Gesture {
 }
 
 pub(crate) struct ColorPanel {
+    gradient: gradient::State,
     pub(crate) target: MTarget,
     pub(crate) hsva: Rgba,
     pub(crate) mixed: bool,
@@ -80,6 +83,7 @@ impl ColorPanel {
         let c = seed.unwrap_or([1.0, 0.0, 0.0, 1.0]);
         let h = rgb_to_hsv(c);
         Self {
+            gradient: Default::default(),
             target,
             hsva: [h[0], h[1], h[2], c[3]],
             mixed,
@@ -210,6 +214,10 @@ impl ColorPanel {
         }
     }
     pub(crate) fn finish(&mut self, ops: &mut Vec<Op>) {
+        if self.gradient.dragging.take().is_some() || self.gradient.editing {
+            ops.push(Op::Colour(varos_core::colour_commands::ColourCommand::Commit));
+            self.gradient.editing = false;
+        }
         self.eyedropping = false;
         self.sampling = None;
         self.arm_snapshot = None;
@@ -258,11 +266,15 @@ pub(crate) fn open_picker(panel: &mut Option<ColorPanel>, target: MTarget, ed: &
     } else {
         *panel = Some(ColorPanel::new(target, c, mixed));
     }
-    panel.as_mut().unwrap().selection = ed.selected_pids();
-    panel.as_mut().unwrap().config = Config::Full;
+    if let Some(m) = panel.as_mut() {
+        m.selection = ed.selected_pids();
+        m.config = Config::Full;
+        gradient::seed(m, ed);
+    }
 }
 /// Selection and external paint edits re-seed; our live drag retains its HSV (including grey hue).
 pub(crate) fn follow_selection(m: &mut ColorPanel, ed: &mut Editor) {
+    gradient::seed(m, ed);
     let snap = Snap::read(ed);
     let target = match m.target {
         MTarget::Paint(_) => MTarget::Paint(snap.paint),
@@ -320,6 +332,7 @@ pub(crate) fn prepare_canvas_sample(m: &mut ColorPanel, ed: &Editor, view: View,
     if m.arm_snapshot.is_none() {
         m.arm_snapshot = Some(std::sync::Arc::new(ed.doc.clone()));
     }
+    let blobs = &ed.blobs;
     let snapshot = m.arm_snapshot.as_ref().unwrap().clone();
     if crate::cursors::SCREEN_EYEDROPPER {
         m.sampling = None;
@@ -333,8 +346,9 @@ pub(crate) fn prepare_canvas_sample(m: &mut ColorPanel, ed: &Editor, view: View,
     let builds = m.sampling.as_ref().map_or(1, |s| s.builds + 1);
     m.sampling = None;
     let min = [hole.min.x * ppp, hole.min.y * ppp];
-    let raster = varos_raster::rasterize_canvas(
+    let raster = varos_raster::rasterize_canvas_with_images(
         &snapshot,
+        blobs,
         [(hole.width() * ppp).ceil() as u32, (hole.height() * ppp).ceil() as u32],
         [view.pan[0] - min[0], view.pan[1] - min[1]],
         view.zoom,

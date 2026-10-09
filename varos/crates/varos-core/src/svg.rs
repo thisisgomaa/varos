@@ -2,6 +2,7 @@
 //! No disk I/O. Coordinates remain world-space; viewBox equals artboard bounds. WholeBoard is
 //! the headless `--all` equivalent. Paint order/transforms/nearest clips mirror PDF; opacity
 //! follows scene::Group (isolation before knockout). SVG knockout uses a luminance mask.
+mod gradient;
 mod stroke;
 use crate::flatten::{control_bbox, Rect};
 use crate::format::{check_structure, validate::authored, Limits};
@@ -86,7 +87,7 @@ fn check_document(doc: &Document) -> Result<(), ExportError> {
             continue;
         }
         let b = control_bbox(doc, pi);
-        let pad = if p.stroke.solid().is_some() { crate::geom::painted_padding(p) } else { 0.0 };
+        let pad = if p.appearance().stroke().is_painted() { crate::geom::painted_padding(p) } else { 0.0 };
         let extent = [b.0 - pad, b.1 - pad, b.2 + pad, b.3 + pad];
         if extent.iter().any(|v| !v.is_finite())
             || !(extent[2] - extent[0]).is_finite()
@@ -142,6 +143,7 @@ pub fn plan_selection_svg_export(
             path.hidden = true;
         }
     }
+    crate::images::hide_unselected(&mut narrowed, selected);
     let page = artwork_bounds(&narrowed).ok_or(ExportError::NothingToExport)?;
     Ok((narrowed, ExportPlan { scope: ExportScope::WholeBoard, pages: vec![page] }))
 }
@@ -158,26 +160,66 @@ pub fn export_svg_files_with_report(
     plan: &ExportPlan,
     cancel: &AtomicBool,
 ) -> Result<(Vec<SvgFile>, crate::ExportReport), ExportError> {
+    export_svg_files_precise(doc, plan, cancel, None)
+}
+
+// ---- Lane C: explicit precision at the initial serialization boundary ----
+pub fn export_svg_files_with_options(
+    doc: &Document,
+    plan: &ExportPlan,
+    cancel: &AtomicBool,
+    options: &options::Options,
+) -> Result<(Vec<SvgFile>, crate::ExportReport), ExportError> {
+    options.validate().map_err(ExportError::InvalidDocument)?;
+    let (mut files, report) = export_svg_files_precise(doc, plan, cancel, Some(options.decimals))?;
+    for file in &mut files {
+        let source = std::str::from_utf8(&file.bytes).map_err(|e| ExportError::InvalidDocument(e.to_string()))?;
+        file.bytes = options.apply(source).map_err(ExportError::InvalidDocument)?.into_bytes();
+    }
+    Ok((files, report))
+}
+fn export_svg_files_precise(
+    doc: &Document,
+    plan: &ExportPlan,
+    cancel: &AtomicBool,
+    decimals: Option<u8>,
+) -> Result<(Vec<SvgFile>, crate::ExportReport), ExportError> {
     cancelled(cancel)?;
     // ---- Lane G ----
     if !doc.text_boxes.is_empty() {
         return Err(ExportError::InvalidDocument("text needs the text-layout export adapter".into()));
     }
     check_document(doc)?;
+    let resolved = crate::live_corners::document(doc);
+    let doc = &resolved;
     if plan.pages.is_empty() {
         return Err(ExportError::NothingToExport);
     }
     let mut report = crate::ExportReport::default();
     let mut stroke_budget = crate::stroke::evaluate::StrokeBudget::default();
+    let paint_elements: usize = doc
+        .paths
+        .iter()
+        .flat_map(|p| [p.appearance().fill(), p.appearance().stroke()])
+        .map(|p| match p.resolved(doc) {
+            crate::model::Paint::Gradient(g) => g.stops.len().saturating_mul(34),
+            _ => 0,
+        })
+        .sum();
+    if paint_elements.saturating_mul(plan.pages.len()) > 1_000_000 {
+        return Err(ExportError::LimitExceeded);
+    }
     for p in &doc.paths {
-        if !p.stroke_style.is_default() {
+        if !p.stroke_style.is_default()
+            || matches!(p.appearance().stroke().resolved(doc), crate::model::Paint::Gradient(_))
+        {
             let coverage =
                 crate::stroke::evaluate(p, 0.01, &|| cancel.load(Ordering::Relaxed)).map_err(stroke_error)?;
             for _ in &plan.pages {
                 stroke_budget.charge(&coverage).map_err(stroke_error)?;
             }
             report.notes.extend(coverage.report.notes);
-            if !stroke::native(p) {
+            if !stroke::native(p) || matches!(p.appearance().stroke().resolved(doc), crate::model::Paint::Gradient(_)) {
                 report.notes.push(crate::ExportNote {
                     kind: "stroke_baked".into(),
                     object_id: Some(p.id),
@@ -199,7 +241,7 @@ pub fn export_svg_files_with_report(
         {
             return Err(ExportError::InvalidPage);
         }
-        files.push(SvgFile { page: page.clone(), bytes: write_page(doc, page, cancel)?.into_bytes() });
+        files.push(SvgFile { page: page.clone(), bytes: write_page(doc, page, cancel, decimals)?.into_bytes() });
     }
     Ok((files, report))
 }
@@ -231,8 +273,8 @@ fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Drawn<'a>> {
     if doc.eff_hidden(p.id) {
         return None;
     }
-    let fill = p.fill.solid().filter(|_| p.anchors.len() >= 3);
-    let stroke = p.stroke.solid().filter(|_| {
+    let fill = p.appearance().fill().resolved(doc).drawable_colour().filter(|_| p.anchors.len() >= 3);
+    let stroke = p.appearance().stroke().resolved(doc).drawable_colour().filter(|_| {
         (p.anchors.len() >= 2 || (!p.stroke_style.is_default() && !p.anchors.is_empty())) && p.stroke_width > 0.0
     });
     if fill.is_none() && stroke.is_none() {
@@ -291,6 +333,11 @@ fn artwork_bounds(doc: &Document) -> Option<PageSpec> {
         }
         bounds = Some(bounds.map_or(b, |old| union(old, b)));
     }
+    for i in &doc.images {
+        if let Some(b) = crate::images::visible_bounds(doc, i) {
+            bounds = Some(bounds.map_or(b, |old| union(old, b)));
+        }
+    }
     bounds.map(|b| PageSpec {
         rect: [b.0, b.1, (b.2 - b.0).max(1.0), (b.3 - b.1).max(1.0)],
         background: None,
@@ -298,11 +345,17 @@ fn artwork_bounds(doc: &Document) -> Option<PageSpec> {
         name: doc.name.clone(),
     })
 }
-fn write_page(doc: &Document, page: &PageSpec, cancel: &AtomicBool) -> Result<String, ExportError> {
+fn write_page(
+    doc: &Document,
+    page: &PageSpec,
+    cancel: &AtomicBool,
+    decimals: Option<u8>,
+) -> Result<String, ExportError> {
+    let num = |v| number(v, decimals);
     let [x, y, w, h] = page.rect;
     let page_box = (x, y, x + w, y + h);
     let root = page.artboard.map_or_else(|| "board".into(), |i| id("artboard", i + 1, &page.name));
-    let mut out=format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" id=\"{root}\" width=\"{}\" height=\"{}\" viewBox=\"{}\" overflow=\"hidden\">\n",num(w),num(h),numbers(&page.rect));
+    let mut out=format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" id=\"{root}\" width=\"{}\" height=\"{}\" viewBox=\"{}\" overflow=\"hidden\">\n",num(w),num(h),numbers(&page.rect, decimals));
     title(&mut out, &page.name);
     if let Some(bg) = page.background {
         writeln!(
@@ -341,7 +394,7 @@ fn write_page(doc: &Document, page: &PageSpec, cancel: &AtomicBool) -> Result<St
             };
             let mut data = String::new();
             for (p, xf, _) in masks.iter().filter(|m| intersection(m.2, reach).is_some()) {
-                data.push_str(&path_data(p, xf));
+                data.push_str(&path_data(p, xf, decimals));
             }
             // One compound path: SVG clipPath children union, while the model's rings XOR.
             writeln!(out,"<defs><clipPath id=\"clip-{c}-{i}\" clipPathUnits=\"userSpaceOnUse\"><path d=\"{data}\" clip-rule=\"evenodd\"/></clipPath></defs>\n<g clip-path=\"url(#clip-{c}-{i})\">").unwrap();
@@ -373,11 +426,7 @@ fn write_page(doc: &Document, page: &PageSpec, cancel: &AtomicBool) -> Result<St
                 }
             }
             open = ancestors;
-            if d.p.stroke_style.is_default() {
-                paint(&mut out, d);
-            } else {
-                stroke::paint(&mut out, d)?;
-            }
+            paint_drawn(&mut out, d, doc, decimals)?;
         }
         for _ in open {
             out.push_str("</g>\n");
@@ -389,9 +438,27 @@ fn write_page(doc: &Document, page: &PageSpec, cancel: &AtomicBool) -> Result<St
     out.push_str("</svg>\n");
     Ok(out)
 }
-fn paint(out: &mut String, d: &Drawn<'_>) {
+// ---- w2-images: one vector-paint dispatch for standalone and image companion paths ----
+/// THE per-object SVG dispatch (integration w2): vector documents and the image-aware writer's
+/// companions both route gradients (resolved through swatches) before the solid/stroke-style paths,
+/// so a gradient in an image document never exports as the solid placeholder. Lane C's coordinate
+/// precision applies to solid and styled-stroke paths (gradient bands use the default precision).
+fn paint_drawn(out: &mut String, d: &Drawn<'_>, doc: &Document, decimals: Option<u8>) -> Result<(), ExportError> {
+    if matches!(d.p.appearance().fill().resolved_ref(doc), crate::model::Paint::Gradient(_))
+        || matches!(d.p.appearance().stroke().resolved_ref(doc), crate::model::Paint::Gradient(_))
+    {
+        gradient::paint(out, d, doc)
+    } else if d.p.stroke_style.is_default() {
+        paint(out, d, decimals);
+        Ok(())
+    } else {
+        stroke::paint(out, d, decimals)
+    }
+}
+fn paint(out: &mut String, d: &Drawn<'_>, decimals: Option<u8>) {
+    let num = |v| number(v, decimals);
     let p = d.p;
-    let data = path_data(p, &d.xf);
+    let data = path_data(p, &d.xf, decimals);
     writeln!(
         out,
         "<g id=\"{}\" opacity=\"{}\">",
@@ -415,7 +482,7 @@ fn paint(out: &mut String, d: &Drawn<'_>) {
             p.id
         )
         .unwrap();
-        stroke(out, &data, d.stroke.unwrap(), p.stroke_width);
+        stroke(out, &data, d.stroke.unwrap(), p.stroke_width, decimals);
     } else {
         let fill = d.fill.map_or_else(|| "none".into(), color);
         let stroke = d.stroke.map_or_else(|| "none".into(), color);
@@ -423,18 +490,20 @@ fn paint(out: &mut String, d: &Drawn<'_>) {
     }
     out.push_str("</g>\n");
 }
-fn stroke(out: &mut String, data: &str, c: Rgba, width: f32) {
+fn stroke(out: &mut String, data: &str, c: Rgba, width: f32, decimals: Option<u8>) {
+    let num = |v| number(v, decimals);
     writeln!(out,"<path d=\"{data}\" fill=\"none\" stroke=\"{}\" stroke-opacity=\"{}\" stroke-width=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",color(c),num(c[3]),num(width)).unwrap();
 }
-fn path_data(p: &Path, xf: &Xform) -> String {
+fn path_data(p: &Path, xf: &Xform, decimals: Option<u8>) -> String {
     let mut data = String::new();
-    ring(&mut data, &p.anchors, p.closed, xf);
+    ring(&mut data, &p.anchors, p.closed, xf, decimals);
     for h in &p.holes {
-        ring(&mut data, h, true, xf);
+        ring(&mut data, h, true, xf, decimals);
     }
     data
 }
-fn ring(out: &mut String, anchors: &[Anchor], closed: bool, xf: &Xform) {
+fn ring(out: &mut String, anchors: &[Anchor], closed: bool, xf: &Xform, decimals: Option<u8>) {
+    let numbers = |v: &[f32]| numbers(v, decimals);
     if anchors.len() < 2 {
         return;
     }
@@ -470,8 +539,11 @@ fn num(v: f32) -> String {
         format!("{rounded:.3}")
     }
 }
-fn numbers(v: &[f32]) -> String {
-    v.iter().map(|v| num(*v)).collect::<Vec<_>>().join(" ")
+fn number(v: f32, decimals: Option<u8>) -> String {
+    decimals.map_or_else(|| num(v), |d| options::format_number(f64::from(v), d))
+}
+fn numbers(v: &[f32], decimals: Option<u8>) -> String {
+    v.iter().map(|v| number(*v, decimals)).collect::<Vec<_>>().join(" ")
 }
 fn color(c: Rgba) -> String {
     format!(
@@ -528,6 +600,21 @@ fn title(out: &mut String, name: &str) {
     out.push_str("</title>\n");
 }
 
+// ---- w2-images ----
+pub(crate) fn image_clip_data(doc: &Document, clip: u32) -> String {
+    mask_paths(doc, clip).iter().map(|(p, xf, _)| path_data(p, xf, None)).collect()
+}
+pub(crate) fn paint_image_companion(
+    out: &mut String,
+    doc: &Document,
+    id: u32,
+    decimals: Option<u8>,
+) -> Result<(), ExportError> {
+    let Some(pi) = doc.pidx(id) else { return Ok(()) };
+    let Some(d) = drawable(doc, pi, &doc.paths[pi]) else { return Ok(()) };
+    paint_drawn(out, &d, doc, decimals)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,3 +638,6 @@ mod tests {
         assert_eq!(num(-0.00001), "0.000");
     }
 }
+
+// ---- Lane C ----
+pub mod options;

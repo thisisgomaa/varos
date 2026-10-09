@@ -2,6 +2,10 @@
 //! background. See docs/foundation/MAC_CHROME.md. Nothing here decides behaviour — a click becomes
 //! a `chrome::MenuCmd` that `main.rs` runs through the SAME paths the keyboard / buttons use.
 
+// ---- Lane F ----
+#[path = "native_registry.rs"]
+mod native_registry;
+
 use crate::app_command::AppCommand;
 use crate::chrome::{self, Check, Entry, MenuCmd, Native};
 use muda::accelerator::{Accelerator, Code, Modifiers};
@@ -31,6 +35,8 @@ pub fn muda_code(code: KeyCode) -> Option<Code> {
         K::KeyE => Code::KeyE,
         K::KeyG => Code::KeyG,
         K::KeyJ => Code::KeyJ,
+        // ---- Lane F ----
+        K::KeyK => Code::KeyK,
         K::KeyN => Code::KeyN,
         K::KeyO => Code::KeyO,
         K::KeyP => Code::KeyP,
@@ -57,6 +63,38 @@ pub fn muda_code(code: KeyCode) -> Option<Code> {
         K::Semicolon => Code::Semicolon,
         K::BracketLeft => Code::BracketLeft,
         K::BracketRight => Code::BracketRight,
+        K::KeyB => Code::KeyB,
+        K::KeyH => Code::KeyH,
+        K::KeyI => Code::KeyI,
+        K::KeyL => Code::KeyL,
+        K::KeyM => Code::KeyM,
+        K::KeyT => Code::KeyT,
+        K::Digit4 => Code::Digit4,
+        K::Digit9 => Code::Digit9,
+        K::F1 => Code::F1,
+        K::F2 => Code::F2,
+        K::F3 => Code::F3,
+        K::F4 => Code::F4,
+        K::F5 => Code::F5,
+        K::F6 => Code::F6,
+        K::F7 => Code::F7,
+        K::F8 => Code::F8,
+        K::F9 => Code::F9,
+        K::F10 => Code::F10,
+        K::F11 => Code::F11,
+        K::ArrowUp => Code::ArrowUp,
+        K::ArrowDown => Code::ArrowDown,
+        K::ArrowLeft => Code::ArrowLeft,
+        K::ArrowRight => Code::ArrowRight,
+        K::Backspace => Code::Backspace,
+        K::Delete => Code::Delete,
+        K::Enter => Code::Enter,
+        K::Escape => Code::Escape,
+        K::Tab => Code::Tab,
+        K::Space => Code::Space,
+        K::Slash => Code::Slash,
+        K::NumpadAdd => Code::NumpadAdd,
+        K::NumpadSubtract => Code::NumpadSubtract,
         _ => return None,
     })
 }

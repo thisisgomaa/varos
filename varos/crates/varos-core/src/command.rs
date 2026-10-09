@@ -24,6 +24,26 @@ pub enum EditCommand {
         id: u32,
         text: crate::text::TextBox,
     },
+    // ---- w2-images ----
+    Image(crate::images::ImageEdit),
+    // ---- w2-gradients ----
+    Colour(crate::colour_commands::ColourCommand),
+    // ---- Lane C ----
+    PathAdvanced(crate::path_advanced::Action),
+    SetCornersLive {
+        path: u32,
+        corners: Vec<crate::live_corners::CornerParam>,
+    },
+    SetCorners {
+        path: u32,
+        corners: Vec<crate::live_corners::CornerParam>,
+    },
+    SetScaleStrokes(bool),
+    NewDocument(crate::new_document::Settings),
+    // ---- Lane F ----
+    HistoryJump {
+        undo_depth: usize,
+    },
     SetWandOptions(crate::select_transform::WandOptions),
     SetEyedropperOptions(crate::select_transform::PickOptions),
     Transform(crate::select_transform::Transform),
@@ -387,6 +407,29 @@ impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
             Self::Drawing(action) => crate::drawing::apply(ed, action),
+            Self::Image(edit) => crate::images::apply(ed, edit),
+            // Checked colour command dispatch.
+            Self::Colour(c) => crate::colour_commands::apply(ed, c),
+            // ---- Lane C ----
+            Self::PathAdvanced(action) => ed.path_advanced(action),
+            Self::SetCornersLive { path, corners } => {
+                if let Some(i) = ed.doc.pidx(path) {
+                    if crate::live_corners::validate(&ed.doc.paths[i], &corners).is_ok() {
+                        ed.doc.paths[i].corners = corners;
+                        ed.dirty = true;
+                    }
+                }
+            }
+            Self::SetCorners { path, corners } => ed.set_corners(path, corners),
+            Self::SetScaleStrokes(on) => ed.select_transform.scale_strokes = on,
+            Self::NewDocument(settings) => {
+                if let Ok(doc) = settings.document() {
+                    ed.begin();
+                    ed.doc = doc;
+                    ed.dirty = true;
+                    ed.commit();
+                }
+            }
             Self::SetWandOptions(options) => {
                 ed.select_transform.wand = options;
                 ed.select_transform.options_requested = true;
@@ -535,7 +578,14 @@ impl EditCommand {
             Self::Copy => ed.copy_selection(),
             Self::Cut => ed.cut_selection(),
             Self::Paste { offset } => ed.paste(offset),
-            Self::Nudge { x, y } => ed.nudge(x, y),
+            Self::Nudge { x, y } => {
+                // ---- Lane F: one keyboard increment for object and anchor selections ----
+                if ed.selected.is_empty() {
+                    ed.move_explicit(&ed.objsel.iter().copied().collect::<Vec<_>>(), [x, y]);
+                } else {
+                    ed.nudge(x, y);
+                }
+            }
             Self::SetActiveArtboard(index) => ed.ab_set_active(index),
             Self::SetArtboardRect { index, x, y, width, height } => ed.ab_set_rect(index, x, y, width, height),
             Self::RenameArtboard { index, name } => ed.ab_rename(index, name),
@@ -602,6 +652,9 @@ impl EditCommand {
                 if valid_replay(board::check_tags(&tags)) && tags != ed.doc.tags {
                     edit_board(ed, |d| d.tags = tags);
                 }
+            }
+            Self::HistoryJump { undo_depth } => {
+                let _ = ed.history_jump(undo_depth);
             }
             Self::Undo => ed.undo(),
             Self::Redo => ed.redo(),
@@ -704,6 +757,14 @@ impl Editor {
     pub fn execute(&mut self, command: EditCommand) -> Result<(), crate::EngineError> {
         // Immutable history handles bound rollback cost independently of retained artwork.
         let snapshot = self.clone();
+        let label = crate::command_labels::label(&command);
+        let semantic = crate::actions::semantic(&command);
+        // ---- Lane F: bind every supported edit to the recording's original selection ----
+        if semantic.is_some() {
+            self.check_action_targets(&self.objsel.iter().copied().collect::<Vec<_>>());
+        }
+        let previous_step = std::mem::replace(&mut self.action_commit_step, semantic);
+        let before = self.rev;
         self.clipping_enablement.get_mut().take();
         let result = crate::guard::catch_panic(|| {
             command.apply(self);
@@ -713,6 +774,9 @@ impl Editor {
         });
         if result.is_err() {
             *self = snapshot;
+        } else {
+            self.action_commit_step = previous_step;
+            self.annotate_history(before, crate::editor::history::Actor::Human, label.into());
         }
         result
     }

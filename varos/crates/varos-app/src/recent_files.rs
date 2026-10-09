@@ -208,6 +208,14 @@ impl<S: DocStore> DocStore for RecentStore<S> {
         self.recents.clear();
         self.persist();
     }
+    // ---- w2-images ----
+    fn rendered_resources(&mut self, path: &Path, snapshot: Arc<Document>, blobs: Arc<varos_core::images::BlobStore>) {
+        let (Some(service), Some(entry)) = (&self.thumbs, self.recents.entries().iter().find(|e| e.path == path))
+        else {
+            return;
+        };
+        service.request_resources(self.thumb_key(path), snapshot, blobs, thumbs::unix(entry.modified));
+    }
     fn rendered(&mut self, path: &Path, snapshot: Arc<Document>) {
         let (Some(service), Some(entry)) = (&self.thumbs, self.recents.entries().iter().find(|e| e.path == path))
         else {

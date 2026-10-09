@@ -31,6 +31,10 @@ fn construction_tools(api: &str) -> Value {
             crate::select_transform::schemas(&mut extra, &mut ops);
             // ---- Lane D: schemas feed both list_verbs and progressive schema ----
             crate::drawing::schemas(&mut extra, &mut ops);
+            // ---- w2-gradients ----
+            crate::colour::schemas(&mut extra, &mut ops);
+            // ---- Lane C ----
+            crate::path_advanced::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }
@@ -108,6 +112,10 @@ fn construction_tools(api: &str) -> Value {
 }
 
 pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
+    // ---- Lane C ----
+    if name == "export_screens" && (args["api"] != "1.2" || args["options"].get("screens").is_none()) {
+        return Err(Error::new("invalid_argument", "export_screens requires API 1.2 and options.screens"));
+    }
     if name == "edit" {
         let edit: Edit =
             serde_json::from_value(args.clone()).map_err(|e| Error::new("invalid_argument", e.to_string()))?;
@@ -534,7 +542,7 @@ pub fn serve<T: Transport>(
                         && name != "import_svg"
                         && name != "import_file"
                         && name != "import_clipboard"
-                        && !["schema", "list_verbs"].contains(&name)
+                        && !["schema", "list_verbs", "export_screens"].contains(&name)
                         && !crate::TOOLS_12.contains(&name)
                         && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
                             .contains(&name)
@@ -627,6 +635,13 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
     if let Some(rows) = out["tools"].as_array_mut() {
         rows.push(json!({"name":"import_clipboard","description":"Paste the highest supported OS artwork flavour; no silent bitmap fallback; one undo step.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"options":{"type":"object","additionalProperties":false,"properties":{"loss_policy":{"enum":["refuse","allow_reported"]},"page":{"type":"integer","minimum":1,"maximum":100}}}}), &["api","board","request_id","expected_rev"])}));
     }
+    // ---- w2-images ----
+    crate::images::append_tools(&mut out);
+    // ---- Lane F ----
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.extend(crate::application::schemas());
+        rows.extend(crate::application::extra_schemas());
+    }
     append_export_tools(&mut out);
     append_document_tools(&mut out);
     if let Some(list) = out["tools"].as_array_mut() {
@@ -658,6 +673,7 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
                 "import_clipboard",
                 "export_svg",
                 "export_raster",
+                "export_screens",
                 "save_template",
                 "new_from_template",
                 "window_memory",
@@ -671,8 +687,14 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
             }
             if name == "describe" {
                 if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
-                    fields.push(json!("stroke_style"));
-                    fields.push(json!("text"));
+                    fields.extend([
+                        json!("stroke_style"),
+                        json!("text"),
+                        json!("swatches"),
+                        json!("palette_gpl"),
+                        json!("palette_ase"),
+                        json!("palette_native"),
+                    ]);
                 }
             }
             if name == "edit" {
@@ -915,6 +937,26 @@ pub fn tools_for(api: &str) -> Value {
         return legacy_tools_list();
     }
     let mut out = full_tools_for(api);
+    // Progressive disclosure for tool options (integration w2): a structured `options` object is
+    // listed as a plain object; `schema api 1.2 tool NAME` returns its full shape and the decoder
+    // still validates every field. Keeps the combined wave-2 list within the 24,000 B cap.
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows.iter_mut() {
+            let options = &mut row["inputSchema"]["properties"]["options"];
+            if options.get("properties").is_some() {
+                *options = json!({"type":"object"});
+            }
+        }
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows
+            .iter_mut()
+            .filter(|r| matches!(r["name"].as_str(), Some("export_svg" | "export_raster" | "export_screens")))
+        {
+            row["inputSchema"]["properties"]["options"] =
+                json!({"type":"object","description":"Call schema API 1.2 for SVG/screens options."});
+        }
+    }
     if let Some(rows) = out["tools"].as_array_mut() {
         if let Some(edit) = rows.iter_mut().find(|row| row["name"] == "edit") {
             let root = edit["inputSchema"].clone();
@@ -942,10 +984,60 @@ pub fn tools_for(api: &str) -> Value {
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
-            alternatives.push(json!({"type":"object","properties":{"verb":{"enum":extended},"op":{"enum":extended}},"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}],"description":descriptions}));
+            // integration w2: the extended-verb enum is listed once and shared by `verb` and `op`.
+            alternatives.push(json!({"type":"object","properties":{"verb":{"$ref":"#/$defs/extended_verbs"},"op":{"$ref":"#/$defs/extended_verbs"}},"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}],"description":descriptions}));
             edit["inputSchema"]["$defs"]["operation"]["anyOf"] = json!(alternatives);
+            edit["inputSchema"]["$defs"]["extended_verbs"] = json!({"enum":extended});
             prune_definitions(&mut edit["inputSchema"]);
             edit["description"] = json!("Atomic typed edits; core params inline. Extended verbs: call schema api 1.2 tool edit verb NAME before use; list_verbs groups all verbs. Decoder validates all params.");
+        }
+    }
+    // Progressive disclosure keeps full constraints in schema while removing explanatory prose.
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows {
+            if row["name"] == "image_action" {
+                row["inputSchema"]["properties"]["options"] = json!({"type":"object","properties":{"action":{"enum":crate::images::ACTIONS}},"required":["action"]});
+            }
+        }
+    }
+    fn economical(v: &mut Value) {
+        match v {
+            Value::Object(m) => {
+                m.remove("description");
+                for c in m.values_mut() {
+                    economical(c);
+                }
+            }
+            Value::Array(a) => {
+                for c in a {
+                    economical(c)
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows {
+            economical(&mut row["inputSchema"]);
+            // integration w2: the "how to get params" instruction is stated once (on `schema`); every
+            // other row points at it in two words, keeping the combined list inside 24,000 B.
+            row["description"] = json!(match row["name"].as_str() {
+                Some("schema") => "Full params of any tool: schema api 1.2 tool NAME (edit: also verb NAME).",
+                Some("list_verbs") => "Grouped edit verbs.",
+                _ => "Params: schema.",
+            });
+        }
+    }
+    // Lane F: full schemas remain on demand, keeping the existing tools/list budget.
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows {
+            if ["help", "preferences", "history_list", "history_jump", "actions", "shortcuts", "command_index"]
+                .iter()
+                .any(|name| row["name"] == *name)
+            {
+                row["inputSchema"] = json!({"type":"object","properties":{"api":{"const":"1.2"}},"required":["api"]});
+                row["description"] = json!("Params: schema."); // integration w2: one wording for every row
+            }
         }
     }
     out
@@ -1079,6 +1171,10 @@ pub fn schema(tool: &str, verb: Option<&str>) -> Result<Value, Error> {
         }
         return Ok(root.clone());
     };
+    if tool == "image_action" {
+        return crate::images::operation_schema(verb)
+            .ok_or_else(|| Error::new("invalid_argument", "unknown image action"));
+    }
     if tool != "edit" {
         return Err(Error::new("invalid_argument", "verb discovery requires tool edit"));
     }
@@ -1117,7 +1213,7 @@ pub fn list_verbs() -> Value {
                     for op in ops {
                         let expanded = expand_schema(op, root);
                         if let Some(verb) = schema_verb(&expanded) {
-                            let entry = json!({"name":verb,"description":verb_description(verb)});
+                            let entry = json!({"name":verb,"id":varos_core::registry::edit_id(verb),"description":verb_description(verb),"enabled":false,"disabled_reason":"needs_arguments"});
                             if core_verb(verb) {
                                 core.push(entry);
                             } else {
@@ -1127,11 +1223,12 @@ pub fn list_verbs() -> Value {
                     }
                 }
             } else {
-                tools.push(json!({"name":name,"description":row["description"]}));
+                let enabled = matches!(name, "capabilities" | "list_boards" | "list_verbs");
+                tools.push(json!({"name":name,"id":varos_core::registry::tool_id(name),"description":row["description"],"enabled":enabled,"disabled_reason":if enabled { None } else { Some("needs_arguments") }}));
             }
         }
     }
-    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","verbs":core},{"tool":"edit","group":"extended","verbs":extended},{"group":"tools","verbs":tools}]})
+    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","verbs":core},{"tool":"edit","group":"extended","verbs":extended},{"tool":"image_action","group":"images","verbs":crate::images::ACTIONS.iter().map(|name|json!({"name":name,"description":format!("Image operation {name}; call schema with tool image_action and verb {name}")})).collect::<Vec<_>>()},{"group":"tools","verbs":tools}]})
 }
 
 pub fn stroke_style_schema() -> Value {
@@ -1147,8 +1244,9 @@ pub fn stroke_style_schema() -> Value {
 
 fn append_export_tools(result: &mut Value) {
     let Some(list) = result.get_mut("tools").and_then(Value::as_array_mut) else { return };
-    for name in ["export_svg", "export_raster"] {
+    for name in ["export_svg", "export_raster", "export_screens"] {
         let mut properties = json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer","minimum":0},"path":{"type":"string"},"scope":{"type":"string","description":"all_visible_artboards, whole_board, artwork_bounds, selection or artboard:N"}});
+        properties["options"] = crate::path_advanced::export_schema(name);
         if name == "export_raster" {
             properties["format"] = json!({"enum":["png","jpeg","webp","tiff"],"default":"png"});
             properties["scale"] = json!({"type":"number","exclusiveMinimum":0,"maximum":64,"default":1});

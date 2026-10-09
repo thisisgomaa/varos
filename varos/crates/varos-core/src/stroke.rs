@@ -227,3 +227,23 @@ pub fn apply_difference(base: &StrokeStyle, next: &StrokeStyle, target: &mut Str
 }
 
 pub mod inspection;
+
+/// THE stroke seam every scene path uses (solid and gradient strokes alike; integration w2).
+/// `canvas = true` routes through main's `stroke/canvas.rs` hotfix (cross-frame cache, 60k cap,
+/// tolerance back-off, native fallback; rings come back already in world space). `canvas = false` is the
+/// strict export evaluation (local rings; the caller charges the aggregate budget and transforms).
+pub fn canvas_seam(
+    editor: &crate::Editor,
+    path: &crate::model::Path,
+    ppu: f32,
+    canvas: bool,
+) -> Result<std::sync::Arc<evaluate::StrokeCoverage>, evaluate::StrokeError> {
+    if canvas {
+        editor
+            .canvas_stroke_cache
+            .lookup(path, editor.doc.unit_xform(path.id), ppu)
+            .ok_or(evaluate::StrokeError::LimitExceeded)
+    } else {
+        evaluate(path, 0.025 / f64::from(ppu.max(0.0001)), &|| false).map(std::sync::Arc::new)
+    }
+}

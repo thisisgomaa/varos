@@ -27,6 +27,7 @@ pub struct BoardAccess<'a> {
 }
 /// Owned, revision-pinned CPU work. Capture on the owning thread, render on a host worker.
 pub struct SnapshotJob {
+    pub blobs: varos_core::images::BlobStore,
     pub document: Document,
     pub rev: u64,
     pub size: [u32; 2],
@@ -45,16 +46,21 @@ impl SnapshotJob {
                 }
             };
             checkpoint()?;
-            let raster = match self.artboard {
-                None => varos_raster::rasterize(std::sync::Arc::new(self.document), self.size),
-                Some(id) => {
-                    let index = self
-                        .document
-                        .artboard_index(id)
-                        .ok_or_else(|| Error::new("not_found", format!("unknown artboard:{id}")))?;
-                    varos_raster::rasterize_artboard_checked(std::sync::Arc::new(self.document), index, self.size)
-                        .map_err(|e| Error::new("limit_exceeded", e))?
-                        .ok_or_else(|| Error::new("invalid_argument", "artboard cannot be rendered"))?
+            let raster = if !self.document.images.is_empty() {
+                varos_raster::images::fitted(&self.document, &self.blobs, self.size, self.artboard)
+                    .map_err(|e| Error::new("limit_exceeded", e))?
+            } else {
+                match self.artboard {
+                    None => varos_raster::rasterize(std::sync::Arc::new(self.document), self.size),
+                    Some(id) => {
+                        let index = self
+                            .document
+                            .artboard_index(id)
+                            .ok_or_else(|| Error::new("not_found", format!("unknown artboard:{id}")))?;
+                        varos_raster::rasterize_artboard_checked(std::sync::Arc::new(self.document), index, self.size)
+                            .map_err(|e| Error::new("limit_exceeded", e))?
+                            .ok_or_else(|| Error::new("invalid_argument", "artboard cannot be rendered"))?
+                    }
                 }
             };
             let raster = raster.into_result().map_err(|e| Error::new("limit_exceeded", e))?;
@@ -76,6 +82,28 @@ impl SnapshotJob {
 }
 /// Only the desktop host supplies owning-thread mutable access. No transport knows an Editor.
 pub trait Host {
+    fn shortcuts(&mut self, _v: &crate::application::ShortcutsRequest) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no shortcut writer"))
+    }
+    fn command_index(&self, _v: &crate::application::CommandIndex) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no desktop command index"))
+    }
+    // ---- Lane F ----
+    fn help(&mut self, _v: &crate::application::HelpRequest) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no desktop Help surface"))
+    }
+    fn application_commands_available(&self) -> bool {
+        false
+    }
+    fn preferences(&mut self, _request: &crate::application::Preferences) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no preferences writer"))
+    }
+    fn history_actor(&self, client: &str) -> varos_core::editor::history::Actor {
+        varos_core::editor::history::Actor::Agent {
+            profile_id: client.split(':').next().unwrap_or(client).into(),
+            label: client.into(),
+        }
+    }
     fn set_paste_remembers_layers(&mut self, board: &str, enabled: bool) -> Result<(), Error> {
         self.access(board)?
             .editor
@@ -152,6 +180,7 @@ impl Settings {
     }
 }
 struct Observed {
+    has_images: bool,
     settings: Settings,
     dirty: bool,
     rev: u64,
@@ -248,6 +277,7 @@ impl Service {
                 if old.selection != selection {
                     old.selection_rev += 1;
                 }
+                old.has_images = !ed.doc.images.is_empty();
                 old.settings = settings;
                 old.dirty = ed.dirty;
                 old.rev = ed.rev;
@@ -260,6 +290,7 @@ impl Service {
                 self.boards.insert(
                     b,
                     Observed {
+                        has_images: !ed.doc.images.is_empty(),
                         settings,
                         dirty: ed.dirty,
                         rev: ed.rev,
@@ -377,12 +408,25 @@ impl Service {
         if ![API, "1.1", "1.2"].contains(&req.api()) {
             return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0, 1.1 or 1.2"));
         }
-        if matches!(req, Request::ImportSvg(_) | Request::ImportFile(_) | Request::ImportClipboard(_))
-            && req.api() != "1.2"
+        if matches!(
+            req,
+            Request::ImportSvg(_)
+                | Request::ImportFile(_)
+                | Request::ImportClipboard(_)
+                | Request::AddImage(_)
+                | Request::ImageAction(_)
+        ) && req.api() != "1.2"
         {
             return Reply::failure(Error::new("unsupported", "import requires API 1.2"));
         }
         if [
+            "shortcuts",
+            "command_index",
+            "help",
+            "preferences",
+            "history_list",
+            "history_jump",
+            "actions",
             "schema",
             "list_verbs",
             "print",
@@ -466,8 +510,83 @@ impl Service {
                 }
             }
             match req {
+                Request::Help(v) => host.help(v),
+                Request::Preferences(v) => host.preferences(v),
+                Request::Shortcuts(v) => host.shortcuts(v),
+                Request::CommandIndex(v) => host.command_index(v),
+                Request::HistoryList(v) => crate::application::history_list(host, v),
+                Request::HistoryJump(v) => {
+                    let a = host.access(&v.board)?;
+                    let from = a.editor.rev;
+                    a.editor
+                        .try_execute(varos_core::EditCommand::HistoryJump { undo_depth: v.undo_depth })
+                        .map_err(|e| Error::new("invalid_argument", e))?;
+                    self.observe(host);
+                    let mut reply = self.edit_receipt(&v.board, from);
+                    reply.undo_steps = 0;
+                    Ok(reply)
+                }
+                Request::Actions(v) => {
+                    let actor = host.history_actor(&ctx.client);
+                    let a = host.access(&v.board)?;
+                    let from = a.editor.rev;
+                    let result = match &v.action {
+                        crate::application::Action::Cancel {} => {
+                            a.editor.cancel_action_recording();
+                            json!({"recording":false})
+                        }
+                        crate::application::Action::Start {} => {
+                            a.editor.start_action_recording().map_err(|e| Error::new("busy", e))?;
+                            json!({"recording":true})
+                        }
+                        crate::application::Action::Stop { name } => {
+                            json!({"actions":a.editor.finish_action_recording(name.clone()).map_err(|e|Error::new("invalid_argument",e))?})
+                        }
+                        crate::application::Action::Replay { actions } => {
+                            actions.replay(a.editor).map_err(|e| Error::new("invalid_argument", e))?;
+                            a.editor.annotate_history(from, actor, "Replay Actions".into());
+                            json!({"replayed":true})
+                        }
+                        crate::application::Action::UndoMine {} => {
+                            let profile = match actor {
+                                varos_core::editor::history::Actor::Agent { profile_id, .. } => profile_id,
+                                _ => String::new(),
+                            };
+                            a.editor.undo_agent(&profile).map_err(|e| Error::new("invalid_argument", e))?;
+                            json!({"undone":true})
+                        }
+                    };
+                    self.observe(host);
+                    let mut reply = self.edit_receipt(&v.board, from);
+                    if !matches!(v.action, crate::application::Action::Replay { .. }) {
+                        reply.undo_steps = 0;
+                    }
+                    reply.result = Some(result);
+                    Ok(reply)
+                }
                 Request::Schema(v) => Ok(Reply::success(crate::mcp::schema(&v.tool, v.verb.as_deref())?)),
-                Request::ListVerbs(_) => Ok(Reply::success(crate::mcp::list_verbs())),
+                Request::ListVerbs(_) => {
+                    let mut value = crate::mcp::list_verbs();
+                    if !host.application_commands_available() {
+                        if let Some(groups) = value["groups"].as_array_mut() {
+                            for group in groups {
+                                if let Some(rows) = group["verbs"].as_array_mut() {
+                                    for row in rows {
+                                        if matches!(
+                                            row["name"].as_str(),
+                                            Some("help" | "preferences" | "shortcuts" | "command_index")
+                                        ) {
+                                            row["enabled"] = json!(false);
+                                            row["disabled_reason"] = json!("unsupported_host");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    value["epoch"] = json!(self.epoch);
+                    Ok(Reply::success(value))
+                }
                 Request::WindowMemory(v) => {
                     if v.api != "1.2" {
                         return Err(Error::new("unsupported", "window_memory requires API 1.2"));
@@ -490,8 +609,8 @@ impl Service {
                         if let Some(v) = &mut r.result {
                             v["api"] = json!("1.2");
                             v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
-                            v["readable_vrs"] = json!([1, 2, 3, 4, 5]);
-                            v["writable_vrs"] = json!([5]);
+                            v["readable_vrs"] = json!(varos_core::format::readable_versions());
+                            v["writable_vrs"] = json!([varos_core::format::FORMAT_VERSION]);
                             v["stroke_style_schema"] = crate::mcp::stroke_style_schema();
                             let tools = crate::mcp::full_tools_for("1.2");
                             if let Some(edit) =
@@ -555,6 +674,11 @@ impl Service {
                             }
                             v["slice4a_verbs"] =
                                 json!(["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]);
+                            // ---- Lane C ----
+                            v["api_by_tool"]["export_screens"] = json!(["1.2"]);
+                            if let Some(tools) = v["tools"].as_array_mut() {
+                                tools.push(json!("export_screens"));
+                            }
                             if let Some(verbs) = v["edit_verbs"].as_array_mut() {
                                 verbs.extend(
                                     ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]
@@ -654,7 +778,19 @@ impl Service {
                             Some(n)
                         }
                     };
-                    Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
+                    let blobs = host.access(&v.board)?.editor.blobs.clone();
+                    Ok(host.snapshot(
+                        SnapshotJob { blobs, document, rev: v.rev, size: [width, height], artboard },
+                        cancelled,
+                    ))
+                }
+                // ---- w2-images ----
+                Request::ImageAction(v) => host.file_effect("image_action", v),
+                Request::AddImage(v) => {
+                    if v.path.is_none() || v.scope.is_some() {
+                        return Err(Error::new("invalid_argument", "add_image requires a local path and no scope"));
+                    }
+                    host.file_effect("add_image", v)
                 }
                 // ---- Lane H ----
                 Request::ImportSvg(v) | Request::ImportFile(v) | Request::ImportClipboard(v) => {
@@ -704,7 +840,10 @@ impl Service {
                 | Request::Print(v)
                 | Request::Copy(v)
                 | Request::Cut(v) => {
-                    if v.options.is_some() && (v.api != "1.2" || !["export_pdf", "print"].contains(&req.tool())) {
+                    if v.options.is_some()
+                        && (v.api != "1.2"
+                            || !["export_pdf", "print", "export_svg", "export_raster"].contains(&req.tool()))
+                    {
                         return Err(Error::new("invalid_argument", "PDF options require export_pdf API 1.2"));
                     }
                     match req {
@@ -782,7 +921,7 @@ impl Service {
                 Request::Edit(v) => {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
-                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a()) {
+                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a() || op.lane_c()) {
                         return Err(Error::new("unsupported", "slice 4A verbs require API 1.2"));
                     }
                     // ---- Lane D: version opt-in ----
@@ -810,6 +949,7 @@ impl Service {
                     {
                         return Err(Error::new("unsupported", "command wave, clip and release_clip require API 1.2"));
                     }
+                    let actor = host.history_actor(&ctx.client);
                     let a = host.access(&v.board)?;
                     if crate::economy::edit_enabled(&v.api) {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
@@ -830,6 +970,10 @@ impl Service {
                     let mut locals = BTreeMap::new();
                     let mut expanded = 0usize;
                     let mut affected = std::collections::BTreeSet::new();
+                    let recording = a.editor.action_recording_len().is_some();
+                    let mut recorded: Vec<Option<Result<Vec<varos_core::actions::Step>, String>>> =
+                        vec![None; ops.len()];
+                    let source_targets = ops.iter().find(|op| !op.ids().is_empty()).map(|op| op.ids().to_vec());
                     let batch = a.editor.prepare_design_batch(
                         ops.len(),
                         |staged, index| {
@@ -838,6 +982,7 @@ impl Service {
                                 expanded = 0;
                                 affected.clear();
                             }
+                            let recording_before = recording.then(|| staged.doc.clone());
                             let created = apply_design_op(
                                 staged,
                                 ops[index],
@@ -863,6 +1008,17 @@ impl Service {
                                         Some(format!("{label} {id}"));
                                 }
                             }
+                            if let Some(before) = recording_before {
+                                recorded[index] = if before.content_eq(&staged.doc) {
+                                    None
+                                } else {
+                                    Some(if source_targets.as_deref() != Some(ops[index].ids()) {
+                                        Err("Action targets changed within the recorded batch".into())
+                                    } else {
+                                        crate::action_recording::steps(ops[index])
+                                    })
+                                };
+                            }
                             Ok(())
                         },
                         |index, reason| {
@@ -886,7 +1042,38 @@ impl Service {
                     if cancelled.load(Ordering::Acquire) {
                         return Err(Error::new("cancelled", "cancelled before commit"));
                     }
-                    a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
+                    if recording {
+                        let steps = recorded
+                            .into_iter()
+                            .flatten()
+                            .collect::<Result<Vec<_>, _>>()
+                            .map(|parts| parts.into_iter().flatten().collect());
+                        let targets = source_targets
+                            .as_deref()
+                            .unwrap_or(&[])
+                            .iter()
+                            .filter_map(|id| id.strip_prefix("path:").and_then(|id| id.parse::<u32>().ok()))
+                            .collect::<Vec<_>>();
+                        let steps = if targets.len() != source_targets.as_ref().map_or(0, Vec::len) {
+                            Err("Only explicit path targets can be recorded".into())
+                        } else {
+                            steps
+                        };
+                        a.editor
+                            .publish_recorded_design_batch(batch, &targets, steps)
+                            .map_err(|reason| Error::new("busy", reason))?;
+                    } else {
+                        a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
+                    }
+                    a.editor.annotate_history(from, actor, format!("Agent batch · {} operations", v.ops.len()));
+                    a.editor.annotate_history_verbs(
+                        from,
+                        ops.iter()
+                            .filter_map(|op| {
+                                serde_json::to_value(op).ok().and_then(|v| v["verb"].as_str().map(str::to_owned))
+                            })
+                            .collect(),
+                    );
                     self.observe(host);
                     let mut reply = if v.receipt.as_deref() == Some("ids") {
                         self.ids_receipt(&v.board, from)
@@ -1064,6 +1251,17 @@ impl Service {
         r
     }
     fn describe(&self, v: &Describe, host: &mut dyn Host) -> Result<Reply, Error> {
+        // ---- w2-images ----
+        if v.api == "1.2" && v.fields.as_ref().is_some_and(|f| f.as_slice() == ["images"]) {
+            let a = host.access(&v.board)?;
+            if v.rev.is_some_and(|r| r != a.editor.rev) {
+                return Err(Error::new("stale_revision", "document changed"));
+            }
+            return Ok(Reply::success(crate::images::describe(a.editor)));
+        }
+        if v.api != "1.2" && self.boards[&v.board].has_images {
+            return Err(Error::new("unsupported_version", "image detail requires API 1.2"));
+        }
         if v.api == "1.2" && v.fields.as_ref().is_some_and(|f| f.as_slice() == ["document_info"]) {
             let b = &self.boards[&v.board];
             if v.rev.is_some_and(|r| r != b.rev) {
@@ -1128,6 +1326,37 @@ impl Service {
             }
             return Ok(Reply::success(out));
         }
+        // ---- w2-gradients ----
+        if v.fields.as_ref().is_some_and(|f| f.iter().any(|s| s == "swatches" || s.starts_with("palette_"))) {
+            if v.api != "1.2" {
+                return Err(Error::new("unsupported", "swatches require API 1.2"));
+            }
+            let access = host.access(&v.board)?;
+            let mut result = json!({});
+            for field in v.fields.as_ref().into_iter().flatten() {
+                let format = match field.as_str() {
+                    "swatches" => {
+                        result[field] = json!(access.editor.doc.swatches);
+                        continue;
+                    }
+                    "palette_gpl" => varos_core::palette_io::PaletteFormat::Gpl,
+                    "palette_ase" => varos_core::palette_io::PaletteFormat::Ase,
+                    "palette_native" => varos_core::palette_io::PaletteFormat::Native,
+                    _ => {
+                        return Err(Error::new(
+                            "invalid_argument",
+                            "palette query only accepts swatches / palette formats",
+                        ))
+                    }
+                };
+                result[field] = json!(varos_core::palette_io::encode(&access.editor.doc.swatches, format)
+                    .map_err(|e| Error::new("unsupported", e))?);
+            }
+            if result.to_string().len() > MAX_TEXT {
+                return Err(Error::new("limit_exceeded", "palette exceeds reply budget"));
+            }
+            return Ok(Reply::success(result));
+        }
         let fields = v.fields.as_deref().unwrap_or(&[]);
         if let Some(f) = fields.iter().find(|f| {
             ![
@@ -1142,16 +1371,18 @@ impl Service {
                 "geometry",
                 "stroke_style",
                 "text",
+                "swatches",
             ]
             .contains(&f.as_str())
         }) {
             return Err(Error::new("invalid_argument", format!("unknown describe field {f}")));
         }
-        if v.api != "1.2" && fields.iter().any(|f| f == "stroke_style" || f == "text") {
+        if v.api != "1.2" && fields.iter().any(|f| f == "stroke_style" || f == "text" || f == "swatches") {
             return Err(Error::new("unsupported", "stroke_style requires API 1.2"));
         }
         // state alone or with object fields retains its API 1.0 object meaning.
-        let board_fields = fields.iter().any(|f| ["metadata", "artboards", "selection"].contains(&f.as_str()));
+        let board_fields =
+            fields.iter().any(|f| ["metadata", "artboards", "selection", "swatches"].contains(&f.as_str()));
         let object_fields = fields
             .iter()
             .any(|f| ["bounds", "paint", "parent", "name", "geometry", "stroke_style", "text"].contains(&f.as_str()));
@@ -1388,7 +1619,11 @@ impl Service {
                             out["stroke_style"] = source["stroke_style"].clone();
                         }
                         for key in ["fill", "stroke", "stroke_width", "opacity"] {
-                            out[key] = source[key].clone();
+                            out[key] = if v.api != "1.2" && source[key].is_object() {
+                                json!("not-solid")
+                            } else {
+                                source[key].clone()
+                            };
                         }
                     }
                     "state" => {
@@ -1531,6 +1766,10 @@ pub(crate) fn resolve(doc: &Document, ids: &[String], empty: bool) -> Result<Vec
     Ok(out.into_iter().collect())
 }
 fn color(v: &Value) -> Value {
+    // Typed 1.2 paints; legacy never projects a gradient as null.
+    if v.is_object() {
+        return v.clone();
+    }
     let Some(c) = v.as_array() else {
         return Value::Null;
     };
@@ -1894,6 +2133,7 @@ fn strip_stroke_style(value: &mut Value) {
     match value {
         Value::Object(map) => {
             map.remove("stroke_style");
+            map.remove("corners");
             for v in map.values_mut() {
                 strip_stroke_style(v);
             }
@@ -2021,10 +2261,22 @@ mod observation_tests {
 
     #[test]
     fn snapshot_worker_checkpoints_cancel_and_pin_owned_revision() {
-        let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40], artboard: None };
+        let job = SnapshotJob {
+            blobs: Default::default(),
+            document: Document::default(),
+            rev: 7,
+            size: [80, 40],
+            artboard: None,
+        };
         let reply = job.render(&AtomicBool::new(true));
         assert_eq!(reply.error.unwrap().code, "cancelled");
-        let job = SnapshotJob { document: Document::default(), rev: 7, size: [80, 40], artboard: None };
+        let job = SnapshotJob {
+            blobs: Default::default(),
+            document: Document::default(),
+            rev: 7,
+            size: [80, 40],
+            artboard: None,
+        };
         let reply = job.render(&AtomicBool::new(false));
         assert_eq!(reply.result.unwrap()["rev"], 7);
     }

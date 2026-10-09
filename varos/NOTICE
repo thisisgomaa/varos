@@ -92,3 +92,33 @@ VectorCraft crates/cad/src/{lib.rs,import.rs}.
 Copyright (c) 2026 ArtCraft Team and VectorCraft contributors. MIT OR Apache-2.0;
 see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
 lopdf 0.43.0 — Copyright (c) lopdf contributors; MIT; used only in the foreign import firewall.
+
+crates/varos-core/src/images/{metadata,codec,orientation}.rs adapt ImageObject and LinkInfo from
+VectorCraft doc/{node.rs,links.rs}@a469568 and the bounded decoder entry from PhotoCraft
+codecs/lib.rs:39-55@4cb7cf3. orientation.rs copies exif_orientation and its bounded TIFF helpers
+from PhotoCraft codecs/orientation.rs:24-168@4cb7cf3 (the metadata rewriter is omitted).
+Copyright (c) 2026 ArtCraft Team. MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+image 0.25.10 (MIT OR Apache-2.0) and gif 0.13.3 (MIT) decode raster objects; image's GIF feature
+requires uncached gif 0.14.2, so the bounded cached 0.13.3 first-frame adapter is used instead.
+crates/varos-core/src/images/links.rs adapts explicit update/relink and immutable accepted-source
+semantics from VectorCraft engine/cmd/links.rs@a469568 (MIT OR Apache-2.0, ArtCraft Team 2026).
+crates/varos-pdf/src/package.rs and varos-core/src/images/links.rs adapt package/link contracts
+from VectorCraft engine/cmd/{package.rs,links.rs}@a469568. Copyright (c) 2026 ArtCraft Team.
+MIT OR Apache-2.0; independent filesystem/UI implementation; no prior UI/assets copied.
+
+Lane B gradient mathematics:
+Adapted from VectorCraft color/src/gradient.rs @ a469568 (MIT OR Apache-2.0).
+Placement, spread and validation are Varos additions; see varos-core/src/gradient.rs.
+Appearance entry options/read-view shape: adapted from VectorCraft
+doc/src/appearance.rs @ a469568 (MIT OR Apache-2.0); no effects or new persisted keys.
+Lane B swatches, palette codecs/library shape and Lab recoloring:
+Adapted from VectorCraft color/src/{swatch,palette_io,libraries,recolor}.rs and
+color/src/cms/lab.rs @ a469568. Copyright (c) 2026 ArtCraft Team and contributors.
+MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+Lane B GPU radial ray/circle equation idea: PhotoCraft gpu/src/compose.wgsl:632-680
+@ a469568 (MIT OR Apache-2.0); independent Varos LUT/dither/stencil pipeline.
+
+Lane C — new_document.rs adapts VectorCraft engine/src/cmd/newdoc.rs:19,125;
+path_advanced.rs adapts pathops/src/offset.rs:79; live_corners.rs adapts
+geom/src/corners.rs:134,149 (a469568, MIT OR Apache-2.0), copyright 2026
+ArtCraft Team and VectorCraft contributors. No UI/assets/dependencies copied.

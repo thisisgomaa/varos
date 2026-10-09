@@ -35,7 +35,10 @@ mod bridge_fs;
 mod bridge_host;
 mod chrome;
 mod cursors;
+// ---- Lane F ----
+mod command_registry;
 mod document_ui;
+mod export_folders;
 mod export_ui;
 mod file_jobs;
 mod file_ports;
@@ -54,11 +57,16 @@ mod menus;
 mod os_clipboard;
 mod os_open;
 mod pacing;
+mod parity_registry;
 #[path = "ui/export/pdf_options.rs"]
 mod pdf_options;
+mod phase9;
+mod phase9_host;
 mod print_job;
+mod quicklook;
 mod recent_files;
 mod recovery_host;
+mod shortcut_editor;
 mod shortcuts;
 mod single_instance;
 // ---- Lane H ----
@@ -70,6 +78,11 @@ mod import_jobs;
 #[cfg(test)]
 mod import_jobs_tests;
 mod template_jobs;
+// ---- w2-images ----
+mod image_io;
+mod image_jobs;
+mod image_ui;
+mod image_workflows;
 mod thumbs;
 // ---- Lane E ----
 mod ui;
@@ -177,6 +190,7 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
     let idle = matches!(ed.drag, Drag::None); // hover badges only between gestures
     match ed.eff_tool() {
         ToolKind::Text => CK::CrossRect,
+        ToolKind::Gradient => CK::CrossRotate,
         ToolKind::Object if !idle => CK::Select, // marquee / guide drag
         ToolKind::Object => match ed.transform_hit(world) {
             Some(TfHit::Scale(i)) => resize_ck(i, ed.obj_angle),
@@ -290,6 +304,7 @@ fn rotate_ck(corner: u8, angle: f32) -> CK {
 fn tool_name(t: ToolKind) -> &'static str {
     match t {
         ToolKind::Text => "Type (T)",
+        ToolKind::Gradient => "Gradient (G)",
         ToolKind::Pen => "Pen (P)",
         ToolKind::Direct => "Direct Select (A)",
         ToolKind::Object => "Select (V)",
@@ -425,7 +440,8 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
     if ui::drawing_key(ed, code, shift, alt) {
         return;
     }
-    let s = if shift { 10.0 } else { 1.0 };
+    // ---- Lane F: Preferences ▸ keyboard increment ----
+    let s = ed.keyboard_increment_pt * if shift { 10.0 } else { 1.0 };
     match code {
         "KeyT" => ed.set_tool(ToolKind::Text),
         "KeyV" => ed.set_tool(ToolKind::Object),
@@ -446,6 +462,8 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         "KeyS" => ed.set_tool(ToolKind::Scale),  // Scale tool (Illustrator S)
         "KeyE" if !shift => ed.set_tool(ToolKind::FreeTransform),
         "KeyY" if !shift => ed.set_tool(ToolKind::MagicWand),
+        // ---- w2-gradients ----
+        "KeyG" => ed.execute_ui(EditCommand::Colour(varos_core::colour_commands::ColourCommand::Tool)),
         "KeyI" => ed.set_tool(ToolKind::Eyedropper),
         "KeyO" => {
             if shift {
@@ -821,12 +839,31 @@ fn dispatch(
             }
             if let Some(s) = ws.get(id) {
                 let (scope, options) = crate::export_ui::print_settings(id);
-                match print_job::build(&s.editor.doc, scope.unwrap_or_else(|| varos_pdf::default_scope(&s.editor.doc)), &options, &std::env::temp_dir(), file_jobs::next_ticket()).and_then(print_job::hand_off) {
+                match print_job::build_with_images(&s.editor.doc, &s.editor.blobs, scope.unwrap_or_else(|| varos_pdf::default_scope(&s.editor.doc)), &options, &std::env::temp_dir(), file_jobs::next_ticket()).and_then(print_job::hand_off) {
                     Ok(()) => dialogs.notice("Print", "The PDF opened in Preview. Choose File ▸ Print… there. The temporary PDF remains available for reprinting."),
                     Err(reason) => dialogs.notice("Print", &reason),
                 }
             }
             ran
+        }
+        // ---- Lane C ----
+        host::HostAction::App(AppCommand::ShowNewDocument) => {
+            gui.lane_c_new_document();
+            host::Ran { ran: true, ..Default::default() }
+        }
+        host::HostAction::App(AppCommand::PathMenu(id, name)) => {
+            if let Some(s) = ws.get_mut(id) {
+                match name {
+                    "Outline Stroke" => s
+                        .editor
+                        .execute_ui(varos_core::EditCommand::PathAdvanced(varos_core::path_advanced::Action::Outline)),
+                    "Expand" => s
+                        .editor
+                        .execute_ui(varos_core::EditCommand::PathAdvanced(varos_core::path_advanced::Action::Expand)),
+                    _ => gui.lane_c_offset(id),
+                }
+            }
+            host::Ran { ran: true, ..Default::default() }
         }
         // DFS S6: Export (button, burger row, File ▸ Export ▸ PDF…) opens the Export PDF sheet
         // slice 0.6: File ▸ Export Selection… opens the same sheet on its Selection scope
@@ -850,6 +887,51 @@ fn dispatch(
                     s.editor.execute_ui(if release { EditCommand::ClipRelease } else { EditCommand::ClipMake });
                 }
             }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::Phase9(a)) => {
+            phase9_host::desktop(a, gui, ws.document_target().is_some());
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::HistoryJump(id, depth)) => {
+            if let Some(s) = ws.get_mut(id) {
+                if gui.commit_fields(&mut s.editor) {
+                    if let Err(e) = s.editor.history_jump(depth) {
+                        gui.phase9.error = Some(e);
+                    }
+                }
+            }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::CancelActionRecording(id)) => {
+            if let Some(s) = ws.get_mut(id) {
+                s.editor.cancel_action_recording();
+            }
+            gui.phase9.recording = false;
+            gui.phase9.error = None;
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::RecordAction(id, start)) => {
+            phase9_host::record(gui, ws, id, start);
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::ReplayAction(id, a)) => {
+            if let Some(s) = ws.get_mut(id) {
+                if !gui.commit_fields(&mut s.editor) {
+                    return host::Ran::default();
+                }
+                if let Err(e) = a.replay(&mut s.editor) {
+                    gui.phase9.error = Some(e);
+                }
+            }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::LoadAction) => {
+            phase9_host::load_action(gui);
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::SaveAction(a)) => {
+            phase9_host::save_action(gui, &a);
             host::Ran::default()
         }
         host::HostAction::App(AppCommand::DocumentSetup(id) | AppCommand::DocumentInfo(id)) => {
@@ -962,6 +1044,30 @@ fn run_action(
         host::HostAction::App(cmd) => host::run_command(cmd, ws, ui, dialogs, store, keys, jobs),
         // ---- Lane H: foreign paste conversion belongs to the file worker ----
         host::HostAction::Doc(host::DocAction::Key(KeyCode::KeyV, m)) if m.ctrl && !m.alt => {
+            // Integration w2: a pasteboard holding ONLY a bitmap (no Varos/SVG/PDF flavour) is an image
+            // (w2-images bitmap job); everything else keeps Lane H's priority order.
+            if !ws.on_home() && clipboard_in::bitmap_only(&mut clipboard_in::SystemPasteboard) {
+                if let Some(s) = ws.active_mut() {
+                    if !ui.settle_fields(&mut s.editor) {
+                        return host::Ran { held: true, ..Default::default() };
+                    }
+                    match os_clipboard::bitmap_bytes() {
+                        Ok(Some(bytes)) => {
+                            let cmd = AppCommand::PasteBitmap {
+                                sid: s.id,
+                                bytes,
+                                at: s.view.s2w([canvas.center().x, canvas.center().y]),
+                            };
+                            return host::run_command(cmd, ws, ui, dialogs, store, keys, jobs);
+                        }
+                        Err(reason) => {
+                            dialogs.notice("Bitmap paste", &reason);
+                            return host::Ran::default();
+                        }
+                        Ok(None) => {}
+                    }
+                }
+            }
             clipboard_in::queue(ws, ui, canvas, dialogs, jobs, m.shift)
         }
         // ---- End Lane H ----
@@ -970,6 +1076,27 @@ fn run_action(
                 return host::Ran::default();
             }
             if let Some(s) = ws.active_mut() {
+                // ---- w2-images ----
+                if matches!(a,host::DocAction::Key(KeyCode::KeyV,m) if m.ctrl) {
+                    if !ui.settle_fields(&mut s.editor) {
+                        return host::Ran { held: true, ..Default::default() };
+                    }
+                    match os_clipboard::bitmap_bytes() {
+                        Ok(Some(bytes)) => {
+                            let cmd = AppCommand::PasteBitmap {
+                                sid: s.id,
+                                bytes,
+                                at: s.view.s2w([canvas.center().x, canvas.center().y]),
+                            };
+                            return host::run_command(cmd, ws, ui, dialogs, store, keys, jobs);
+                        }
+                        Err(reason) => {
+                            dialogs.notice("Bitmap paste", &reason);
+                            return host::Ran::default();
+                        }
+                        Ok(None) => {}
+                    }
+                }
                 if !run_doc(a, &mut s.editor, &mut s.view, canvas, ui) {
                     return host::Ran { held: true, ..host::Ran::default() }; // K3: an invalid field holds it
                 }
@@ -1032,6 +1159,17 @@ fn command_key(
     pressed: bool,
     repeat: bool,
 ) -> bool {
+    let m = keyboard.held();
+    if m.ctrl && code == KeyCode::KeyK && ((!m.shift && !m.alt) || (m.shift && m.alt)) {
+        if pressed && !repeat {
+            pending.push(host::HostAction::App(AppCommand::Phase9(if m.alt {
+                phase9::DesktopAction::Shortcuts
+            } else {
+                phase9::DesktopAction::Preferences
+            })));
+        }
+        return true;
+    }
     match keyboard.key(code, pressed, repeat, active) {
         host::KeyRoute::Queue(cmd) => {
             pending.push(host::HostAction::App(cmd));
@@ -1055,9 +1193,9 @@ fn raise_doc(
     canvas: egui::Rect,
     ui: &mut dyn host::DocUi,
 ) {
-    // ---- Lane H: paste needs the owning host and its background file queue ----
-    let foreign_paste = matches!(a, host::DocAction::Key(KeyCode::KeyV, m) if m.ctrl && !m.alt);
-    if !(!foreign_paste && pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
+    // ---- Lane H + w2-images: paste needs the owning host (file queue / bitmap job) ----
+    let host_paste = matches!(a, host::DocAction::Key(KeyCode::KeyV, m) if m.ctrl);
+    if !(!host_paste && pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
         pending.push(host::HostAction::Doc(a));
     }
 }
@@ -1288,7 +1426,18 @@ fn main() {
     #[cfg(target_os = "macos")]
     mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "visible");
     let mut gpu_notice_shown = false;
-    let mut renderer = match pollster::block_on(Renderer::new(window.clone(), size.width, size.height)) {
+    let mut renderer = match pollster::block_on(Renderer::new_with_power(
+        window.clone(),
+        size.width,
+        size.height,
+        match recovery.settings.preferences.gpu_preference {
+            varos_app::storage::preferences::GpuPreference::Auto => varos_render_wgpu::PowerPreference::None,
+            varos_app::storage::preferences::GpuPreference::LowPower => varos_render_wgpu::PowerPreference::LowPower,
+            varos_app::storage::preferences::GpuPreference::HighPerformance => {
+                varos_render_wgpu::PowerPreference::HighPerformance
+            }
+        },
+    )) {
         Ok(r) => r,
         Err(e) => {
             fatal("Varos couldn't start its graphics engine.\nUpdating your graphics driver usually fixes this.", &e)
@@ -1308,6 +1457,7 @@ fn main() {
         std::env::var("VAROS_RESET_LAYOUT").as_deref() == Ok("1"),
     );
     let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
+    gui.phase9.gpu_effective.clone_from(&renderer.adapter_description);
     gui.restore_shell_layout(shell_layout);
     if let Some(index) = store.thumb_index() {
         gui.set_thumb_source(std::sync::Arc::new(index)); // Home decodes thumbnails off the UI thread
@@ -1333,6 +1483,11 @@ fn main() {
         }),
     );
     let mut start_refresh = varos_app::start::StartRefresh::default();
+    renderer
+        .set_pasteboard(varos_app::shell::tokens::preferences_pasteboard(recovery.settings.preferences.canvas_colour));
+    if let Some(layout) = varos_app::storage::paths::AppLayout::current() {
+        quicklook::enable_cache(layout.thumbs());
+    }
     let mut recovery_gen = 0u64;
     // The orphan scan was submitted with the host (before the window / GPU setup): take its result
     // now (bounded wait) so frame 0 already carries the "closed unexpectedly" strip / Start's
@@ -1427,7 +1582,7 @@ fn main() {
                     SceneStyle {
                         checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD,
                         outline: varos_app::shell::tokens::OUTLINE_RGBA,
-                        canvas: crate::view_modes::canvas_rgba(recovery.settings.canvas_color),
+                        canvas: crate::view_modes::canvas_rgba(recovery.settings.canvas_color()),
                     },
                 );
                 renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
@@ -1667,6 +1822,7 @@ fn main() {
                         }
                         let reset_layout =
                             matches!(&action, host::HostAction::App(AppCommand::Window(WindowCmd::ResetLayout)));
+                        let new_blank = matches!(action, host::HostAction::App(AppCommand::NewBoard));
                         let before = recovery_host::RecoveryHost::before_close(&ws);
                         let (ds, keys) = (&mut dialogs, &keyboard);
                         let jobs = &mut recovery;
@@ -1691,6 +1847,11 @@ fn main() {
                         // the document (`bridge_host::run` reports a mutation as `ran`)
                         ran_any |= !bridge || ran.ran;
                         recovery.after_dispatch(before, &mut ws, ran.exit, Instant::now());
+                        if new_blank {
+                            if let Some(tab) = ws.active_mut() {
+                                tab.editor.doc.units.display = recovery.settings.preferences.default_units.core();
+                            }
+                        }
                         // a coalesced second ⌘S runs as a normal ⌘S, behind what is already waiting
                         pending
                             .extend(ran.follow_up_saves.iter().map(|&id| host::HostAction::App(AppCommand::Save(id))));
@@ -1795,6 +1956,34 @@ fn main() {
                     sync_home(&mut gui, ws.on_home(), &store, &recovery, &mut probe, &mut start_refresh, recovery_gen);
                     redraw!("home-sync");
                 }
+                let prefs_changed = gui.phase9.generation != recovery.preferences_generation;
+                gui.phase9.sync(recovery.settings, recovery.preferences_generation);
+                if prefs_changed {
+                    last_scene_signature = None;
+                    renderer.set_pasteboard(varos_app::shell::tokens::preferences_pasteboard(
+                        recovery.settings.preferences.canvas_colour,
+                    ));
+                    redraw!("preferences");
+                }
+                #[cfg(target_os = "macos")]
+                if gui.phase9.shortcuts.effective != recovery.shortcuts {
+                    if let Some(menu) = &mac_menu {
+                        menu.sync_shortcuts(&recovery.shortcuts);
+                    }
+                }
+                if gui.phase9.shortcuts.effective != recovery.shortcuts {
+                    command_registry::publish_shortcuts(recovery.shortcuts.clone());
+                }
+                gui.phase9.sync_shortcuts(recovery.shortcuts.clone(), recovery.preferences_generation);
+                gui.phase9.history_depths = ws.sessions().iter().map(|s| s.editor.history_depths()).collect();
+                gui.phase9.recording = ws.active().is_some_and(|s| s.editor.action_recording_len().is_some());
+                if let Some(warning) = ws.active_mut().and_then(|s| s.editor.take_action_recording_warning()) {
+                    gui.phase9.error = Some(warning);
+                    redraw!("actions-warning");
+                }
+                if gui.phase9.sheet.is_some() && recovery_changed {
+                    gui.phase9.error.clone_from(&recovery.warning);
+                }
                 let recovery_ui = recovery.presentation(ws.active());
                 if gui.recovery != recovery_ui {
                     gui.recovery = recovery_ui;
@@ -1867,6 +2056,16 @@ fn main() {
                     }
                     _ => {}
                 }
+                // ---- w2-images: Finder drop uses the bounded Place worker ----
+                if let WindowEvent::DroppedFile(path) = &event {
+                    if let Some(s) = ws.active_mut() {
+                        pending.push(host::HostAction::App(AppCommand::PlaceImage {
+                            sid: s.id,
+                            path: path.clone(),
+                            options: Default::default(),
+                        }));
+                    }
+                }
                 if let WindowEvent::Focused(false) = &event {
                     panning = false;
                     zoom_drag = None;
@@ -1893,7 +2092,15 @@ fn main() {
                     WindowEvent::KeyboardInput { event: k, .. } => match k.physical_key {
                         PhysicalKey::Code(c) => {
                             let pressed = k.state == ElementState::Pressed;
-                            command_key(&mut pending, &mut keyboard, c, ws.document_target(), pressed, k.repeat)
+                            phase9_host::shortcut(
+                                &gui,
+                                &mut pending,
+                                c,
+                                keyboard.held(),
+                                ws.document_target(),
+                                pressed,
+                                k.repeat,
+                            ) || command_key(&mut pending, &mut keyboard, c, ws.document_target(), pressed, k.repeat)
                         }
                         _ => false,
                     },
@@ -1922,7 +2129,7 @@ fn main() {
                     // re-check the current Recent list in the background; answers arrive via AboutToWait
                     probe.refresh(&store.recent_paths());
                 }
-                let over_panel = home || gui.wants_pointer();
+                let over_panel = home || gui.wants_pointer() || gui.image_sheet_open();
                 let Some(s) = ws.active_mut() else { return };
                 #[cfg(target_os = "macos")] // the File ▸ Revert row's state (slice 0.6), read before the frame
                 let can_revert = lifecycle::can_revert(s);
@@ -2309,6 +2516,14 @@ fn main() {
                                 can_revert,
                                 has_selection: lifecycle::has_selection(ed),
                             });
+                            menu.sync_registry(
+                                menus::DocMenuState {
+                                    active: !home,
+                                    can_revert,
+                                    has_selection: lifecycle::has_selection(ed),
+                                },
+                                Some(ed),
+                            );
                             use chrome::Check as C;
                             menu.sync(|c| {
                                 editor_check(ed, c).unwrap_or_else(|| match c {
@@ -2365,7 +2580,7 @@ fn main() {
                                     s.id,
                                     crate::view_modes::signature(
                                         scene_signature(ed, *view, [psz.width, psz.height]),
-                                        recovery.settings.canvas_color,
+                                        recovery.settings.canvas_color(),
                                     ),
                                 )
                             });
@@ -2385,7 +2600,7 @@ fn main() {
                                 s.id,
                                 crate::view_modes::signature(
                                     scene_signature(ed, *view, [psz.width, psz.height]),
-                                    recovery.settings.canvas_color,
+                                    recovery.settings.canvas_color(),
                                 ),
                             );
                             let scene_start = Instant::now();
@@ -2401,7 +2616,7 @@ fn main() {
                                     SceneStyle {
                                         checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD,
                                         outline: varos_app::shell::tokens::OUTLINE_RGBA,
-                                        canvas: crate::view_modes::canvas_rgba(recovery.settings.canvas_color),
+                                        canvas: crate::view_modes::canvas_rgba(recovery.settings.canvas_color()),
                                     },
                                 );
                                 if gui.canvas_hint.observe(s.id, ed.rev, &world.report) {

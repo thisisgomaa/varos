@@ -11,15 +11,21 @@
 //! mutated, and a refusal never touches the file on disk.
 
 pub mod error;
+mod gradient_keys;
 pub mod limits;
 pub mod migrate;
 mod stroke_keys;
+// ---- Lane C ----
+mod corner_keys;
 pub mod structure;
 pub mod validate;
 
 pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
-pub use migrate::{migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v8};
+pub use migrate::{
+    migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v6, migrate_v6_to_v7,
+    migrate_v7_to_v8, migrate_v8_to_v9, readable_versions,
+};
 pub use structure::check_structure;
 pub use validate::validate;
 
@@ -31,13 +37,24 @@ use std::path::Path;
 /// The format this build writes (the wrapper key `varos` and the PDF catalog's `/VAROS_SchemaVersion`).
 /// 3 (2026-10-04): board metadata — `doc.name`, `doc.description`, `doc.tags` (ADR-0008 amendment).
 /// 4 (2026-10-07): stable artboard ids — `doc.artboards[].id` (ADR-0008 amendment, Bridge slice 3).
-/// 8 (2026-10-09): editable text — `doc.text_boxes`, `NodeKind::Text` (wave-2 text lane). Pinned at
-/// integration so files saved before wave-2 stage 2 lands stay valid: 6 is reserved for images and 7
-/// for gradients (both optional keys with defaults), 9 for Live Corners; this build has neither 6 nor 7.
+/// 5 (2026-10-08): stroke styles — `doc.paths[].stroke_style`.
+/// 6 (2026-10-09, wave 2): raster images — `doc.images`, `doc.assets`, `doc.raster_effects_ppi`,
+/// `NodeKind::Image` (w2-images).
+pub const IMAGE_VERSION: u32 = 6;
+/// 7 (2026-10-09, wave 2): gradient paints, swatch references and `doc.swatches` (w2-gradients).
+pub const GRADIENT_VERSION: u32 = 7;
+/// 8 (2026-10-09): editable text — `doc.text_boxes`, `NodeKind::Text` (wave-2 text lane), stamped
+/// first so files saved before wave-2 stage 2 stay valid.
 pub const TEXT_FORMAT_VERSION: u32 = 8;
-/// The last format before editable text (stroke styles, 2026-10-08).
-pub const PRE_TEXT_FORMAT_VERSION: u32 = 5;
-pub const FORMAT_VERSION: u32 = TEXT_FORMAT_VERSION;
+/// The last format before editable text (the declared version a pre-text file may carry).
+pub const PRE_TEXT_FORMAT_VERSION: u32 = GRADIENT_VERSION;
+/// 9 (2026-10-09, wave 2): Live Corners — `doc.paths[].corners` (w2-export-paths), plus the
+/// app lane's container-level embedded preview in the same bump.
+pub const CORNERS_VERSION: u32 = 9;
+/// Lane F: the optional PDF-catalog Quick Look preview (`/VAROS_Preview` + `/VAROS_PreviewVersion`)
+/// is container-only (no model key, no reader impact on the JSON body); folded into the v9 bump.
+pub const PREVIEW_FORMAT_VERSION: u32 = CORNERS_VERSION;
+pub const FORMAT_VERSION: u32 = CORNERS_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -70,6 +87,8 @@ struct VrsFileRef<'a> {
 pub struct Loaded {
     /// The document, in the current format's canonical form.
     pub doc: Document,
+    // ---- w2-images ----
+    pub blobs: crate::images::BlobStore,
     /// The format number the file was written in.
     pub source_version: u32,
     /// True when an older format was migrated up in memory (the file on disk is untouched).
@@ -80,7 +99,9 @@ pub struct Loaded {
 impl Loaded {
     /// The notice to show after opening, if any.
     pub fn notice(&self) -> Option<&'static str> {
-        if self.released_legacy_masks {
+        if !self.blobs.load_notes.is_empty() {
+            Some("Some image originals could not fit in the decoded cache; proxy previews are shown. Original streams are retained.")
+        } else if self.released_legacy_masks {
             Some(RELEASED_MASKS_NOTICE)
         } else {
             self.migrated.then_some(MIGRATION_NOTICE)
@@ -137,9 +158,18 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     if version < ARTBOARD_ID_VERSION {
         refuse_newer_keys(json, version)?; // keys only, before any typed decode
     }
+    if version < GRADIENT_VERSION {
+        gradient_keys::refuse(json, version)?;
+    }
+    // ---- Lane C ----
+    if version < CORNERS_VERSION {
+        corner_keys::refuse(json, version)?;
+    }
     if version < 5 {
         stroke_keys::refuse(json, version)?;
     }
+    // ---- w2-images ----
+    crate::images::refuse_older_keys(json, version)?;
     crate::text_format::refuse_legacy_text(json, version)?;
     let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     let mut doc = file.doc;
@@ -171,7 +201,7 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
             doc
         }
     };
-    Ok(Loaded { doc, source_version: version, migrated, released_legacy_masks })
+    Ok(Loaded { doc, blobs: Default::default(), source_version: version, migrated, released_legacy_masks })
 }
 
 /// A file that claims a format older than the one that introduced a key must not carry it: no writer

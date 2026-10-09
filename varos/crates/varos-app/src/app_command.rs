@@ -50,6 +50,32 @@ pub enum WindowCmd {
 /// Every document-lifecycle request. In S1, Close Window = `Quit` (one window).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppCommand {
+    // ---- w2-images ----
+    ImageWorkflow(SessionId, crate::image_workflows::Action),
+    PlaceDialog(SessionId),
+    ChooseImage(SessionId, crate::image_jobs::Options),
+    ImageSheet(SessionId, crate::image_ui::SheetKind),
+    PasteBitmap {
+        sid: SessionId,
+        bytes: std::sync::Arc<[u8]>,
+        at: [f32; 2],
+    },
+    PlaceImage {
+        sid: SessionId,
+        path: std::path::PathBuf,
+        options: crate::image_jobs::Options,
+    },
+    // ---- Lane F ----
+    Phase9(crate::phase9::DesktopAction),
+    ApplyPreferences(varos_app::storage::settings::Settings, u64, bool),
+    ApplyShortcuts(crate::shortcut_editor::Overrides, u64),
+    ReconcilePreferences,
+    LoadAction,
+    HistoryJump(SessionId, usize),
+    RecordAction(SessionId, bool),
+    CancelActionRecording(SessionId),
+    ReplayAction(SessionId, varos_core::actions::Actions),
+    SaveAction(varos_core::actions::Actions),
     Clip(SessionId, bool),
     /// Authenticated local attachment; processed on the UI thread through the same FIFO.
     Bridge(Box<varos_bridge::ipc::Pending>),
@@ -81,6 +107,10 @@ pub enum AppCommand {
     Selection(SessionId, varos_core::editor::wave::Selection),
     Object(SessionId, varos_core::editor::wave::ObjectAction),
     NewBoard,
+    // ---- Lane C ----
+    ShowNewDocument,
+    CreateDocument(varos_core::new_document::Settings),
+    PathMenu(SessionId, &'static str),
     DocumentSetup(SessionId),
     DocumentInfo(SessionId),
     SaveTemplate(SessionId),

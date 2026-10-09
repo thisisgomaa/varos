@@ -4336,13 +4336,17 @@ name = "varos-core"
 version = "0.1.0"
 dependencies = [
  "flo_curves",
+ "gif",
  "i_overlay",
+ "image",
  "kurbo 0.13.1",
+ "libc",
  "proc-macro2",
  "resvg",
  "roxmltree",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "syn 2.0.118",
  "unicode-normalization",
 ]
@@ -4364,6 +4368,7 @@ dependencies = [
 name = "varos-pdf"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "lopdf",
  "pdf-writer",
  "resvg",
@@ -4380,6 +4385,8 @@ version = "0.1.0"
 dependencies = [
  "image",
  "resvg",
+ "serde",
+ "serde_json",
  "tiny-skia",
  "varos-core",
  "varos-pdf",

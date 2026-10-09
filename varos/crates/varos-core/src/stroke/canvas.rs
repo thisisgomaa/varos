@@ -39,6 +39,8 @@ struct Entry {
     anchors: Vec<Anchor>,
     holes: Vec<Vec<Anchor>>,
     closed: bool,
+    // integration w2: Live Corners change the evaluated outline without touching anchors
+    corners: Vec<crate::live_corners::CornerParam>,
     style: super::StrokeStyle,
     width: f32,
     painted: bool,
@@ -72,6 +74,7 @@ impl CanvasStrokeCache {
                 && entry.anchors == path.anchors
                 && entry.holes == path.holes
                 && entry.closed == path.closed
+                && entry.corners == path.corners
                 && entry.style == path.stroke_style
                 && entry.width == path.stroke_width
                 && entry.painted == path.stroke.solid().is_some()
@@ -111,6 +114,7 @@ impl CanvasStrokeCache {
                 anchors: path.anchors.clone(),
                 holes: path.holes.clone(),
                 closed: path.closed,
+                corners: path.corners.clone(),
                 style: path.stroke_style.clone(),
                 width: path.stroke_width,
                 painted: path.stroke.solid().is_some(),

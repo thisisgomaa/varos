@@ -37,6 +37,7 @@ pub const STATUS_DELAY: Duration = Duration::from_millis(300);
 /// A manual save of `doc` (the snapshot taken when the user asked) to `dest`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SaveJob {
+    pub blobs: std::sync::Arc<varos_core::images::BlobStore>,
     pub sid: SessionId,
     /// Matches the tab's [`SaveInFlight::ticket`]; a completion with another ticket is stale.
     pub ticket: u64,
@@ -47,6 +48,7 @@ pub struct SaveJob {
 /// A pure-PDF export of `doc` (snapshot) with `plan`'s pages to `dest`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportJob {
+    pub blobs: std::sync::Arc<varos_core::images::BlobStore>,
     pub pdf_options: Box<varos_pdf::PdfOptions>,
     pub sid: SessionId,
     /// Slice 0.6: the Export sheet's ticket for this export (`AppCommand::ExportPdf`); every
@@ -72,6 +74,10 @@ pub struct ScreenJob {
     pub collision_names: bool,
     /// Additional pages from an all-artboards Bridge request (sheet submits one job per card).
     pub additional: Vec<varos_raster::export::Asset>,
+    // ---- Lane C ----
+    pub svg_options: varos_core::svg::options::Options,
+    pub additional_jobs: Vec<ScreenJob>,
+    pub folder_root: Option<PathBuf>,
 }
 
 /// A shared cancel flag (one per export job). Two flags are equal only when they are the SAME flag.
@@ -140,6 +146,8 @@ impl ExportEvent {
 pub enum FileJob {
     // ---- Lane H ----
     Import(crate::import_jobs::Job),
+    // ---- w2-images ----
+    Image(Box<crate::image_jobs::Job>),
     Template(crate::template_jobs::Job),
     Save(SaveJob),
     /// Slice 0.6: File ▸ Save a Copy… — the same write as `Save`, but its result only releases the
@@ -186,6 +194,8 @@ pub struct ExportDone {
 pub enum FileDone {
     // ---- Lane H ----
     Import(crate::import_jobs::Done),
+    // ---- w2-images ----
+    Image(Box<crate::image_jobs::Done>),
     Template(crate::template_jobs::Done),
     Autosaved(Box<crate::autosave_io::Done>),
     Saved(SaveDone),
@@ -233,6 +243,10 @@ impl FileDone {
                 job: j.clone(),
                 result: Err("Import worker panicked".into()),
             }),
+            FileJob::Image(j) => FileDone::Image(Box::new(crate::image_jobs::Done {
+                job: j.as_ref().clone(),
+                result: Err("Image worker panicked".into()),
+            })),
             FileJob::Template(j) => FileDone::Template(crate::template_jobs::Done {
                 ticket: j.ticket,
                 result: Err(varos_bridge::Error::new("io_error", "template worker panicked")),
@@ -274,6 +288,7 @@ impl FileDone {
 /// The UI thread's record of a manual save running on the worker (`DocumentSession::saving`).
 #[derive(Clone, Debug)]
 pub struct SaveInFlight {
+    pub blobs: Arc<varos_core::images::BlobStore>,
     pub ticket: u64,
     pub dest: PathBuf,
     /// The snapshot being written: it becomes the checkpoint when the save lands.
@@ -295,17 +310,18 @@ pub fn next_ticket() -> u64 {
 pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
     match job {
         FileJob::Import(j) => FileDone::Import(crate::import_jobs::execute(j)),
+        FileJob::Image(j) => FileDone::Image(Box::new(crate::image_jobs::execute(*j))),
         FileJob::Template(j) => FileDone::Template(crate::template_jobs::execute(j)),
         FileJob::Bridge(j) => execute_bridge(*j, disk),
         FileJob::Save(j) => {
-            let (result, published) = match disk.save_published(&j.doc, &j.dest) {
+            let (result, published) = match disk.save_resources_published(&j.doc, &j.blobs, &j.dest) {
                 Ok((outcome, published)) => (Ok(outcome), published),
                 Err(reason) => (Err(reason), None),
             };
             FileDone::Saved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result, published })
         }
         FileJob::SaveCopy(j) => {
-            let (result, published) = match disk.save_published(&j.doc, &j.dest) {
+            let (result, published) = match disk.save_resources_published(&j.doc, &j.blobs, &j.dest) {
                 Ok((outcome, published)) => (Ok(outcome), published),
                 Err(reason) => (Err(reason), None),
             };
@@ -321,11 +337,15 @@ pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
 
 fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
     let result = (|| -> Result<FileDone, varos_bridge::Error> {
+        // ---- Lane C: authorize the root before creating Advanced sub-folders ----
+        if let FileJob::Screen(screen) = &mut j.inner {
+            crate::export_folders::prepare_screen(screen, &j.home)?;
+        }
         let dest = match &mut j.inner {
             FileJob::Save(s) | FileJob::SaveCopy(s) => &mut s.dest,
             FileJob::Export(e) => &mut e.dest,
             FileJob::Screen(e) => &mut e.job.dest,
-            FileJob::Bridge(_) | FileJob::Template(_) | FileJob::Import(_) => unreachable!(),
+            FileJob::Image(_) | FileJob::Bridge(_) | FileJob::Template(_) | FileJob::Import(_) => unreachable!(),
         };
         if let Some((path, expected)) = &j.expected {
             if expected.is_none() || disk.fingerprint(path) != *expected {
@@ -343,8 +363,9 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
         }
         Ok(match j.inner {
             FileJob::Save(s) | FileJob::SaveCopy(s) => {
-                let (result, published) = disk.save_guarded(
+                let (result, published) = disk.save_resources_guarded(
                     &s.doc,
+                    &s.blobs,
                     &s.dest,
                     j.expected.as_ref().and_then(|(_, fp)| fp.as_ref()),
                     j.expected.is_none(),
@@ -353,8 +374,9 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
             }
             FileJob::Screen(e) => execute_screen(*e, disk, true),
             FileJob::Export(e) => {
-                let (result, report) = match varos_pdf::export_pdf_with_options(
+                let (result, report) = match varos_pdf::images::export_with_options(
                     &e.doc,
+                    &e.blobs,
                     &e.plan,
                     &e.pdf_options,
                     &AtomicBool::new(false),
@@ -368,7 +390,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 };
                 FileDone::Exported(ExportDone { job: e, result, report })
             }
-            FileJob::Bridge(_) | FileJob::Template(_) | FileJob::Import(_) => unreachable!(),
+            FileJob::Image(_) | FileJob::Bridge(_) | FileJob::Template(_) | FileJob::Import(_) => unreachable!(),
         })
     })();
     let (reply, done) = match result {
@@ -402,7 +424,8 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 | FileDone::Bridge { .. }
                 | FileDone::CopySaved(_)
                 | FileDone::Template(_)
-                | FileDone::Import(_) => {
+                | FileDone::Import(_)
+                | FileDone::Image(_) => {
                     unreachable!()
                 }
             };
@@ -420,13 +443,14 @@ fn export_to(j: &ExportJob, disk: &mut dyn DocStore) -> (ExportResult, varos_cor
     }
     // Slice 0.6: the Export sheet's Cancel raises `j.cancel`; the writer checks it inside every page
     // (`varos_pdf` write loop), so a cancelled export never produces bytes…
-    let (bytes, report) = match varos_pdf::export_pdf_with_options(&j.doc, &j.plan, &j.pdf_options, j.cancel.flag()) {
-        Ok(b) => b,
-        Err(ref e) if e == "The export was cancelled." => {
-            return (ExportResult::Cancelled, varos_core::ExportReport::default())
-        }
-        Err(e) => return (ExportResult::Failed(e.to_string()), varos_core::ExportReport::default()),
-    };
+    let (bytes, report) =
+        match varos_pdf::images::export_with_options(&j.doc, &j.blobs, &j.plan, &j.pdf_options, j.cancel.flag()) {
+            Ok(b) => b,
+            Err(ref e) if e == "The export was cancelled." => {
+                return (ExportResult::Cancelled, varos_core::ExportReport::default())
+            }
+            Err(e) => return (ExportResult::Failed(e.to_string()), varos_core::ExportReport::default()),
+        };
     // …and inside the durable write up to its rename (the commit boundary: after it, the PDF is
     // there and reported as exported, whatever the flag says)
     let result = match disk.write_export(&j.dest, &bytes, j.cancel.flag()) {
@@ -518,7 +542,8 @@ pub fn durability_note(report: &mut varos_core::ExportReport, path: &Path, reaso
 /// Encode once through the shared library; honour cancellation through the durable commit boundary.
 fn execute_screen(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: bool) -> FileDone {
     let extra = std::mem::take(&mut screen.additional);
-    if extra.is_empty() {
+    let additional_jobs = std::mem::take(&mut screen.additional_jobs);
+    if extra.is_empty() && additional_jobs.is_empty() {
         return execute_screen_one(screen, disk, guarded);
     }
     let parent = screen.job.dest.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -530,6 +555,7 @@ fn execute_screen(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: bool)
         page.asset = asset;
         jobs.push(page);
     }
+    jobs.extend(additional_jobs);
     let mut names = std::collections::HashSet::new();
     if jobs.iter().any(|j| !names.insert(j.job.dest.clone()) || disk.exists(&j.job.dest)) {
         return FileDone::Exported(ExportDone {
@@ -586,8 +612,9 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
             return (ExportResult::Cancelled, Default::default());
         }
         let encoded = if screen.options.format == varos_raster::export::Format::Pdf {
-            varos_pdf::export_pdf_with_options(
+            varos_pdf::images::export_with_options(
                 &screen.asset.doc,
+                &screen.job.blobs,
                 &screen.job.plan,
                 &screen.job.pdf_options,
                 screen.job.cancel.flag(),
@@ -599,7 +626,13 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
             })
             .map_err(|e| e.to_string())
         } else {
-            varos_raster::export::encode(&screen.asset, &screen.options, screen.job.cancel.flag())
+            varos_raster::export::encode_with_images_and_svg_options(
+                &screen.asset,
+                &screen.options,
+                &screen.job.blobs,
+                screen.job.cancel.flag(),
+                &screen.svg_options,
+            )
         };
         let output = match encoded {
             Ok(output) => output,
@@ -614,6 +647,13 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
                 )
             }
         };
+        if guarded {
+            if let (Some(root), Some(folder)) = (&screen.folder_root, screen.job.dest.parent()) {
+                if let Err(reason) = crate::export_folders::ensure(root, folder) {
+                    return (ExportResult::Failed(reason), output.report);
+                }
+            }
+        }
         if screen.collision_names {
             if let Some(folder) = screen.job.dest.parent() {
                 if let Err(e) = disk.export_folder(folder) {
@@ -621,11 +661,11 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
                 }
             }
             let parent = screen.job.dest.parent().unwrap_or(Path::new(".")).to_path_buf();
+            let stem = screen.job.dest.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let mut n = 1;
             while disk.exists(&screen.job.dest) {
                 n += 1;
-                screen.job.dest =
-                    parent.join(varos_raster::export::file_name(&screen.asset.name, "", screen.options.format, n));
+                screen.job.dest = parent.join(varos_raster::export::file_name(&stem, "", screen.options.format, n));
                 if n > 10000 {
                     return (ExportResult::Failed("Too many filename collisions.".into()), output.report);
                 }
@@ -683,8 +723,14 @@ mod tests {
         assert_eq!(status_text(&ws, t0), "");
         assert_eq!(next_status_wake(&ws, t0), None);
         let doc = Arc::new(ws.get(id).unwrap().editor.doc.clone());
-        ws.get_mut(id).unwrap().saving =
-            Some(SaveInFlight { ticket: 1, dest: "/w/a.vrs".into(), doc, follow_up: false, started: t0 });
+        ws.get_mut(id).unwrap().saving = Some(SaveInFlight {
+            blobs: Default::default(),
+            ticket: 1,
+            dest: "/w/a.vrs".into(),
+            doc,
+            follow_up: false,
+            started: t0,
+        });
         // a quick save never shows a "saving" state
         assert_eq!(status_text(&ws, t0 + Duration::from_millis(299)), "");
         assert_eq!(next_status_wake(&ws, t0), Some(t0 + STATUS_DELAY));
@@ -719,7 +765,13 @@ mod tests {
         let save = |dest: PathBuf, expected| {
             FileJob::Bridge(Box::new(BridgeFileJob {
                 ticket: 9,
-                inner: FileJob::Save(SaveJob { sid: SessionId(1), ticket: 9, dest, doc: doc.clone() }),
+                inner: FileJob::Save(SaveJob {
+                    blobs: Default::default(),
+                    sid: SessionId(1),
+                    ticket: 9,
+                    dest,
+                    doc: doc.clone(),
+                }),
                 home: root.clone(),
                 expected,
             }))
@@ -727,7 +779,13 @@ mod tests {
         // No backing file exists yet; fresh Save As is independent of the live editor.
         let fresh = FileJob::Bridge(Box::new(BridgeFileJob {
             ticket: 8,
-            inner: FileJob::Save(SaveJob { sid: SessionId(1), ticket: 8, dest: path.clone(), doc: doc.clone() }),
+            inner: FileJob::Save(SaveJob {
+                blobs: Default::default(),
+                sid: SessionId(1),
+                ticket: 8,
+                dest: path.clone(),
+                doc: doc.clone(),
+            }),
             home: root.clone(),
             expected: None,
         }));
@@ -747,6 +805,7 @@ mod tests {
         let job = FileJob::Bridge(Box::new(BridgeFileJob {
             ticket: 10,
             inner: FileJob::Export(ExportJob {
+                blobs: Default::default(),
                 pdf_options: Default::default(),
                 sid: SessionId(1),
                 dest: pdf.clone(),
@@ -878,5 +937,57 @@ mod screen_durability_tests {
                 assert!(receipt["report"]["notes"].as_array().unwrap().iter().any(|n| n["kind"] == "durability"));
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod lane_c_folder_tests {
+    use super::*;
+    #[test]
+    fn bridge_advanced_batch_creates_format_folder_and_refuses_repeat() {
+        let dir = std::env::temp_dir().join(format!("lane-c-guarded-{}", varos_app::storage::checksum::new_nonce()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let doc = varos_core::new_document::Settings { count: 2, ..Default::default() }.document().unwrap();
+        let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({
+            "api":"1.2", "board":"b1", "request_id":"r1", "expected_rev":0,
+            "path":dir.join("export.svg"), "scope":"all_visible_artboards",
+            "options":{"screens":{"subfolders":"format","rows":[{"format":"svg"}]}}
+        }))
+        .unwrap();
+        let job = crate::export_ui::bridge_job(
+            SessionId(1),
+            1,
+            &doc,
+            &Default::default(),
+            dir.join("export.svg"),
+            &request,
+            "export_raster",
+        )
+        .unwrap();
+        let result = execute(
+            FileJob::Bridge(Box::new(BridgeFileJob {
+                ticket: 1,
+                inner: FileJob::Screen(Box::new(job.clone())),
+                home: dir.clone(),
+                expected: None,
+            })),
+            &mut crate::file_ports::DiskStore,
+        );
+        assert!(matches!(result, FileDone::Bridge { ref result, .. } if result.ok), "{result:?}");
+        for n in 1..=2 {
+            assert!(dir.join(format!("svg/Artboard {n}.svg")).is_file());
+        }
+        let result = execute(
+            FileJob::Bridge(Box::new(BridgeFileJob {
+                ticket: 2,
+                inner: FileJob::Screen(Box::new(job)),
+                home: dir.clone(),
+                expected: None,
+            })),
+            &mut crate::file_ports::DiskStore,
+        );
+        assert!(matches!(result, FileDone::Bridge { ref result, .. } if !result.ok));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

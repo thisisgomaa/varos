@@ -127,13 +127,68 @@ pub fn plan(doc: &Document, scope: &Scope) -> Result<Vec<Asset>, String> {
 }
 
 pub fn encode(asset: &Asset, options: &Options, cancel: &AtomicBool) -> Result<Output, String> {
+    encode_inner(asset, options, &varos_core::images::BlobStore::default(), cancel, None)
+}
+pub fn encode_with_images(
+    asset: &Asset,
+    options: &Options,
+    store: &varos_core::images::BlobStore,
+    cancel: &AtomicBool,
+) -> Result<Output, String> {
+    encode_inner(asset, options, store, cancel, None)
+}
+// ---- Lane C: shared advanced SVG encoding for app, Bridge and CLI ----
+pub fn encode_with_svg_options(
+    asset: &Asset,
+    options: &Options,
+    cancel: &AtomicBool,
+    svg_options: &svg::options::Options,
+) -> Result<Output, String> {
+    encode_with_images_and_svg_options(asset, options, &varos_core::images::BlobStore::default(), cancel, svg_options)
+}
+/// Integration w2: Lane C's advanced SVG options and w2-images' resources in one encoder (the app's
+/// export worker has both).
+pub fn encode_with_images_and_svg_options(
+    asset: &Asset,
+    options: &Options,
+    store: &varos_core::images::BlobStore,
+    cancel: &AtomicBool,
+    svg_options: &svg::options::Options,
+) -> Result<Output, String> {
+    svg_options.validate()?;
+    encode_inner(asset, options, store, cancel, Some(svg_options))
+}
+fn encode_inner(
+    asset: &Asset,
+    options: &Options,
+    store: &varos_core::images::BlobStore,
+    cancel: &AtomicBool,
+    svg_options: Option<&svg::options::Options>,
+) -> Result<Output, String> {
     options.validate()?;
     check_cancel(cancel)?;
     // Validate caller-supplied pages and documents before allocation or traversal.
     let plan = svg::ExportPlan { scope: svg::ExportScope::WholeBoard, pages: vec![asset.page.clone()] };
+    // Lane G outlines text for every deliverable; w2-images routes documents with images through the
+    // image-aware SVG writer; Lane C's advanced SVG options apply to vector documents (integration w2).
     let outlined = varos_text_layout::outline_document(&asset.doc)?;
-    let (svg_files, mut report) =
-        svg::export_svg_files_with_report(&outlined, &plan, cancel).map_err(|e| e.to_string())?;
+    let (svg_files, mut report) = if outlined.images.is_empty() {
+        match svg_options.filter(|_| options.format == Format::Svg) {
+            Some(svg_options) => svg::export_svg_files_with_options(&outlined, &plan, cancel, svg_options),
+            None => svg::export_svg_files_with_report(&outlined, &plan, cancel),
+        }
+        .map_err(|e| e.to_string())?
+    } else {
+        // integration w2 (review P2): advanced SVG options apply to image documents too
+        varos_core::images::svg::export_with_options(
+            &outlined,
+            store,
+            &plan,
+            false,
+            cancel,
+            svg_options.filter(|_| options.format == Format::Svg),
+        )?
+    };
     if !asset.doc.text_boxes.is_empty() {
         report.notes.extend(varos_text_layout::export_notes(&asset.doc)?);
     }
@@ -148,7 +203,8 @@ pub fn encode(asset: &Asset, options: &Options, cancel: &AtomicBool) -> Result<O
                 return Err("Raster export exceeds 64 million pixels or 16384 pixels per side.".into());
             }
             let size = dimensions.map(|v| v.round().max(1.0) as u32);
-            let mut doc = (*asset.doc).clone();
+            // integration w2: the outlined copy, so text also reaches image-document rasters
+            let mut doc = outlined.clone();
             // Export has no canvas ghost paper. Suppress other artboards' paper; artwork stays.
             for ab in &mut doc.artboards {
                 ab.page_color = Some([0.0; 4]);
@@ -170,7 +226,18 @@ pub fn encode(asset: &Asset, options: &Options, cancel: &AtomicBool) -> Result<O
             };
             let index = doc.artboards.len();
             doc.artboards.push(Artboard { x, y, w, h, page_color: background, ..Artboard::default() });
-            let raster = crate::rasterize_artboard(Arc::new(doc), index, size).ok_or("Invalid raster page.")?;
+            let raster = if doc.images.is_empty() {
+                crate::rasterize_artboard(Arc::new(doc), index, size).ok_or("Invalid raster page.")?
+            } else {
+                crate::images::rasterize_with_images(
+                    &doc,
+                    store,
+                    size,
+                    [-x * options.scale, -y * options.scale],
+                    options.scale,
+                    background,
+                )?
+            };
             check_cancel(cancel)?;
             match format {
                 Format::Png => raster.encode_png()?,

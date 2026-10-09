@@ -649,7 +649,7 @@ fn mixed_empty_field_enter_is_unchanged_and_escape_closes_without_a_write() {
     assert_eq!(r.ed.doc, before);
 }
 #[test]
-fn drawer_disclosure_persists_and_soon_and_disabled_tabs_do_not_write() {
+fn drawer_and_all_tabs_are_read_only_until_explicit_interaction() {
     let mut r = Rig::new(selected(false));
     let before = r.ed.doc.clone();
     let at = egui::pos2(524.0, 411.0);
@@ -665,9 +665,25 @@ fn drawer_disclosure_persists_and_soon_and_disabled_tabs_do_not_write() {
     let at = egui::pos2(419.0, 100.0);
     r.frame(pointer(at, true), None);
     r.frame(pointer(at, false), None);
-    assert!(r.panel.as_ref().unwrap().tab == Tab::Harmony);
+    assert!(r.panel.as_ref().unwrap().tab == Tab::Gradient);
     assert_eq!(r.ed.doc, before);
     assert_eq!(r.ed.rev, 0);
+    r.ed.execute_ui(varos_core::EditCommand::Colour(varos_core::colour_commands::ColourCommand::Paint {
+        target: PaintTarget::Fill,
+        paint: varos_core::model::Paint::Gradient(Default::default()),
+    }));
+    r.frame(vec![], None);
+    assert_eq!(r.ed.rev, 1);
+    r.ed.undo();
+    let rev = r.ed.rev;
+    r.frame(vec![], None);
+    assert_eq!(r.ed.doc, before);
+    assert_eq!(r.ed.rev, rev);
+    // Switching to another solid selection with the tab open is also read-only.
+    r.ed.doc.paths[0].fill = varos_core::model::Paint::Solid([0., 1., 0., 1.]);
+    let solid = r.ed.doc.clone();
+    r.frame(vec![], None);
+    assert_eq!(r.ed.doc, solid);
 }
 
 #[test]
@@ -1538,4 +1554,34 @@ fn empty_recent_wells_have_no_mixed_stripes() {
         ctx.run_ui(RawInput::default(), |ui| drawer::show(ui, &mut m, &s, &mut PickerLayout::default(), &mut vec![]));
     // The only line is the row divider; empty slots are plain SURFACE rectangles.
     assert_eq!(out.shapes.iter().filter(|s| matches!(s.shape, egui::Shape::LineSegment { .. })).count(), 1);
+}
+
+#[test]
+fn gradient_bar_drag_is_one_undo_idle_is_stable_and_fields_fit() {
+    let mut r = Rig::new(selected(false));
+    r.panel.as_mut().unwrap().tab = Tab::Gradient;
+    r.frame(vec![], None);
+    let original = r.ed.doc.clone();
+    let rev = r.ed.rev;
+    super::super::fields::tests::clear_probes();
+    r.frame(vec![], None);
+    let bar = super::super::fields::tests::probed_rect("gradient bar", 0);
+    let colour = super::super::fields::tests::probed_rect("gradient colour", 0);
+    let panel = r.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new("picker-panel-rect"))).unwrap();
+    assert!(panel.contains_rect(colour), "panel {panel:?}, field {colour:?}");
+    let start = egui::pos2(bar.left() + 1., bar.center().y);
+    r.frame(pointer(start, true), None);
+    for fraction in [0.1, 0.2, 0.3] {
+        r.frame(vec![Event::PointerMoved(egui::pos2(bar.left() + bar.width() * fraction, bar.center().y))], None);
+    }
+    r.frame(pointer(egui::pos2(bar.left() + bar.width() * 0.3, bar.center().y), false), None);
+    assert_eq!(r.ed.rev, rev + 1);
+    let stable = r.ed.doc.clone();
+    for _ in 0..4 {
+        r.frame(vec![], None);
+    }
+    assert_eq!(r.ed.rev, rev + 1);
+    assert_eq!(r.ed.doc, stable);
+    r.ed.undo();
+    assert_eq!(r.ed.doc, original);
 }

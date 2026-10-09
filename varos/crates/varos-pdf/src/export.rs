@@ -187,6 +187,7 @@ pub fn plan_selection_export(
             p.hidden = true;
         }
     }
+    varos_core::images::hide_unselected(&mut narrowed, selected);
     // the page reaches as far as the selection PAINTS: the outline grown by the shared painted extent
     // (`varos_core::geom::painted_padding` — the one rule cull and hit-test use too)
     let page = bounds_page(&narrowed, Reach::Painted).ok_or(ExportUnavailable::NothingToExport)?;
@@ -215,11 +216,27 @@ pub fn export_pdf_bytes_with_report(
         report.notes.extend(varos_text_layout::export_notes(doc).map_err(ExportError::InvalidDocument)?);
     }
     for p in &doc.paths {
-        if !p.stroke_style.is_default() {
+        if [p.appearance().fill(), p.appearance().stroke()]
+            .iter()
+            .any(|p| matches!(p.resolved(doc), varos_core::model::Paint::Gradient(_)))
+        {
+            report.notes.push(varos_core::ExportNote {
+                kind: "gradient_sampled".into(),
+                object_id: Some(p.id),
+                message:
+                    "PDF: axial/radial shading uses a 4096-sample, 16-bit function; midpoint and spread are sampled"
+                        .into(),
+            });
+        }
+        if !p.stroke_style.is_default()
+            || matches!(p.appearance().stroke().resolved(doc), varos_core::model::Paint::Gradient(_))
+        {
             let coverage = varos_core::stroke::evaluate(p, 0.01, &|| cancel.load(std::sync::atomic::Ordering::Relaxed))
                 .map_err(stroke_error)?;
             report.notes.extend(coverage.report.notes);
-            if !crate::write::native_stroke(p) {
+            if !crate::write::native_stroke(p)
+                || matches!(p.appearance().stroke().resolved(doc), varos_core::model::Paint::Gradient(_))
+            {
                 report.notes.push(varos_core::ExportNote {
                     kind: "stroke_baked".into(),
                     object_id: Some(p.id),
@@ -256,12 +273,14 @@ enum Reach {
 /// A path that leaves no mark: fully transparent (opacity 0), or neither a visible fill nor a visible
 /// stroke. Exhaustive over `Paint`, so a new paint kind must decide here.
 fn paints_nothing(p: &varos_core::model::Path) -> bool {
-    let alpha = |paint: Paint| match paint {
+    let alpha = |paint: &Paint| match paint {
         Paint::None => 0.0,
         Paint::Solid(c) => c[3],
+        Paint::Gradient(g) => g.stops.iter().map(|s| s.colour[3] * s.opacity).fold(0., f32::max),
+        Paint::SwatchRef { .. } => 1.,
     };
-    let stroke = if p.stroke_width > 0.0 { alpha(p.stroke) } else { 0.0 };
-    p.opacity <= 0.0 || (alpha(p.fill) <= 0.0 && stroke <= 0.0)
+    let stroke = if p.stroke_width > 0.0 { alpha(p.appearance().stroke()) } else { 0.0 };
+    p.opacity <= 0.0 || (alpha(p.appearance().fill()) <= 0.0 && stroke <= 0.0)
 }
 
 /// The boardless page: the union of `doc.outline_bbox` (the canvas's own WORLD extent, xform-aware,
@@ -297,6 +316,14 @@ fn bounds_page(doc: &Document, reach: Reach) -> Option<PageSpec> {
         y0 = y0.min(b[1]);
         x1 = x1.max(b[2]);
         y1 = y1.max(b[3]);
+    }
+    for i in &doc.images {
+        if let Some(b) = varos_core::images::visible_bounds(doc, i) {
+            x0 = x0.min(b.0);
+            y0 = y0.min(b.1);
+            x1 = x1.max(b.2);
+            y1 = y1.max(b.3);
+        }
     }
     if x0 > x1 || y0 > y1 {
         return None;

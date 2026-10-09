@@ -165,3 +165,37 @@ fn degenerate_styled_caps_use_shared_coverage_instead_of_native_zero_line_rules(
     p.stroke_style.cap = StrokeCap::Square;
     compare(board(vec![p]), "single-anchor square cap");
 }
+
+#[test]
+fn gradients_match_cpu_for_spread_radial_focal_transform_and_knockout() {
+    use varos_core::gradient::{Gradient, GradientKind, Spread};
+    for kind in [GradientKind::Linear, GradientKind::Radial] {
+        for spread in [Spread::Pad, Spread::Repeat, Spread::Reflect] {
+            for stroke_gradient in [false, true] {
+                let mut g = Gradient {
+                    kind,
+                    spread,
+                    placement: [30., 5., -4., 35., 40., 45.],
+                    focal: [0.25, -0.2],
+                    ..Default::default()
+                };
+                g.stops[0].colour = [0.8, 0.2, 0.1, 0.5];
+                g.stops[0].midpoint = 0.2;
+                g.stops[1].colour = [0.1, 0.3, 0.7, 0.8];
+                let mut p = rect(2, [15., 15.], [70., 70.]);
+                p.stroke_width = 8.;
+                p.opacity = 0.6;
+                if stroke_gradient {
+                    p.stroke = Paint::Gradient(g);
+                } else {
+                    p.fill = Paint::Gradient(g);
+                    p.stroke = Paint::Solid([0.1, 0.7, 0.3, 0.4]);
+                }
+                let mut d = board(vec![p]);
+                let unit = d.unit_of(2).unwrap();
+                d.set_node_xform(unit, Xform { rot: 0.1, piv: [50., 50.] });
+                compare(d, &format!("{kind:?} {spread:?} stroke={stroke_gradient}"));
+            }
+        }
+    }
+}

@@ -351,8 +351,14 @@ fn file_menu_row(
     why: &str,
     cmds: &mut Vec<AppCommand>,
 ) -> bool {
-    match crate::host::to_app_command(f, active).filter(|_| crate::menus::file_row_enabled(f, state)) {
-        Some(cmd) if menu_row(ui, label, shortcut) => {
+    let registry =
+        crate::command_registry::commands().into_iter().find(|c| c.handler == crate::menus::MenuCmd::File(f));
+    let label = registry.as_ref().map_or(label, |c| c.label);
+    let hint = registry.as_ref().map(crate::command_registry::shortcut_text).unwrap_or_else(|| shortcut.into());
+    match crate::host::to_app_command(f, active)
+        .filter(|_| registry.as_ref().is_some_and(|c| crate::command_registry::availability(c, state).enabled))
+    {
+        Some(cmd) if menu_row(ui, label, &hint) => {
             cmds.push(cmd);
             true
         }
@@ -663,7 +669,9 @@ pub(crate) fn build_topbar(
                 cmds.push(AppCommand::Window(crate::app_command::WindowCmd::TogglePicker));
                 hit = true;
             }
-            for pnl in varos_app::shell::PanelId::DOCKABLE {
+            for pnl in
+                varos_app::shell::PanelId::DOCKABLE.into_iter().filter(|p| *p != varos_app::shell::PanelId::History)
+            {
                 if check_row(ui, pnl.title(), shell.is_open(pnl)) {
                     shell.toggle_panel(pnl);
                     hit = true;
@@ -672,6 +680,20 @@ pub(crate) fn build_topbar(
             menu_sep(ui);
             if menu_row(ui, "Reset layout", "") {
                 cmds.push(AppCommand::Window(crate::app_command::WindowCmd::ResetLayout));
+                hit = true;
+            }
+            // ---- Lane F ----
+            for command in crate::command_registry::commands() {
+                if let crate::menus::MenuCmd::Phase9(action) = command.handler {
+                    if menu_row(ui, command.label, &crate::command_registry::shortcut_text(&command)) {
+                        cmds.push(AppCommand::Phase9(action));
+                        hit = true;
+                    }
+                }
+            }
+
+            if check_row(ui, "History", shell.is_open(varos_app::shell::PanelId::History)) {
+                shell.toggle_panel(varos_app::shell::PanelId::History);
                 hit = true;
             }
             for (label, key, command) in [
@@ -910,6 +932,8 @@ fn command_rows(ui: &mut egui::Ui, id: SessionId, cmds: &mut Vec<AppCommand>) ->
                         MenuCmd::View(s) => Some(AppCommand::View(id, s)),
                         MenuCmd::Selection(s) => Some(AppCommand::Selection(id, s)),
                         MenuCmd::Object(s) => Some(AppCommand::Object(id, s)),
+                        // ---- Lane C ----
+                        MenuCmd::LaneC(name) => Some(AppCommand::PathMenu(id, name)),
                         MenuCmd::Key(k) => match (k.code, k.shift, k.alt) {
                             (K::KeyA, false, false) => Some(AppCommand::Selection(id, S::All)),
                             (K::KeyA, true, false) => Some(AppCommand::Selection(id, S::Deselect)),

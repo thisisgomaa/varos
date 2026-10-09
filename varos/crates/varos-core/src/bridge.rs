@@ -1,3 +1,4 @@
+// ---- Lane B: additive Appearance reader routing; persisted storage unchanged ----
 //! Provisional headless contracts. No file I/O, UI or renderer dependencies.
 //! Bridge API 0.x spellings are pinned in `EditCommand`'s serde table.
 use crate::{
@@ -46,6 +47,13 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
                     EditCommand::Drawing(_)
                         | EditCommand::AddText { .. }
                         | EditCommand::SetText { .. }
+                        | EditCommand::Image(_)
+                        | EditCommand::Colour(_)
+                        | EditCommand::PathAdvanced(_)
+                        | EditCommand::SetCorners { .. }
+                        | EditCommand::SetCornersLive { .. }
+                        | EditCommand::SetScaleStrokes(_)
+                        | EditCommand::NewDocument(_)
                         | EditCommand::SetWandOptions(_)
                         | EditCommand::SetEyedropperOptions(_)
                         | EditCommand::Transform(_)
@@ -79,9 +87,37 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         SetText { id, text } => crate::text::check_change(ed, text, Some(*id), None)?,
         _ => {}
     }
+    // ---- w2-images: mixed leaf selection for clipboard/delete (text leaves are objects too) ----
+    if matches!(command, Copy | Cut | DeleteSelected | Transform(_) | TransformBegin | TransformLive(_))
+        && ed.doc.images.iter().any(|i| ed.objsel.contains(&i.id))
+    {
+        if let Transform(spec) | TransformLive(spec) = command {
+            spec.check()?;
+        }
+        for id in &ed.objsel {
+            if ed.doc.pidx(*id).is_none()
+                && !ed.doc.images.iter().any(|i| i.id == *id)
+                && crate::text::node_id(&ed.doc, *id).is_none()
+            {
+                return Err("Unknown object".into());
+            }
+            if ed.doc.eff_hidden(*id) || ed.doc.eff_locked(*id) {
+                return Err("Object is hidden or locked".into());
+            }
+        }
+        return Ok(());
+    }
+    // ---- w2-gradients ----
+    if let Colour(c) = command {
+        return crate::colour_commands::check(ed, c);
+    }
     if matches!(
         command,
-        InsertTracedPaths { .. }
+        PathAdvanced(_)
+            | SetCornersLive { .. }
+            | SetCorners { .. }
+            | NewDocument(_)
+            | InsertTracedPaths { .. }
             | View(crate::editor::view_commands::ViewAction::ConvertArtboards)
             | InsertAnchor { .. }
             | AddPath { .. }
@@ -168,6 +204,23 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     match command {
         Drawing(action) => crate::drawing::check(ed, action),
         AddText { .. } | SetText { .. } => Ok(()),
+        Colour(c) => crate::colour_commands::check(ed, c),
+        // ---- Lane C ----
+        PathAdvanced(action) => crate::path_advanced::check(ed, *action),
+        SetCornersLive { path: id, corners } | SetCorners { path: id, corners } => {
+            path(*id)?;
+            let p = ed.doc.paths.iter().find(|p| p.id == *id).ok_or("unknown path")?;
+            crate::live_corners::validate(p, corners)
+        }
+        SetScaleStrokes(_) => Ok(()),
+        NewDocument(settings) => settings.document().map(|_| ()),
+        HistoryJump { undo_depth } => {
+            if ed.transaction_open() || *undo_depth > ed.history_depths().0 + ed.history_depths().1 {
+                Err("History position unavailable or edit in progress".into())
+            } else {
+                Ok(())
+            }
+        }
         SetStrokeStyle { ids, style } => {
             if ids.is_empty() {
                 return Err("stroke style targets must not be empty".into());
@@ -283,6 +336,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             Ok(())
         }
         Eyedropper { source, .. } => path(*source),
+        Image(edit) => crate::images::check(ed, edit),
         InsertTracedPaths { paths } => crate::trace::check_insert(ed, paths),
         PlaceArtwork(doc) => crate::placement::check(ed, doc),
         ZoomPercent(v) => {
@@ -548,9 +602,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             Ok(())
         }
         Nudge { x, y } => {
-            if ed.selected.is_empty() {
-                return Err("Nudge requires SelectAnchors (use SetObjectBounds for objects)".into());
-            }
+            // ---- Lane F: checked nudge accepts either explicit object or anchor selection ----
+            selection()?;
             finite(*x)?;
             finite(*y)
         }
@@ -563,6 +616,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             }
         }
         Paste { offset } => {
+            let mut resources = ed.blobs.clone();
+            ed.clipboard().admit_images(&mut resources)?;
             if ed.clipboard().is_empty() {
                 return Err("clipboard is empty; use Copy or Cut in the batch first".into());
             }
@@ -807,7 +862,7 @@ pub fn elements(doc: &crate::model::Document, detail: bool) -> BTreeMap<String, 
         let id = format!("path:{}", p.id);
         let n = doc.node_of_path(p.id).and_then(|id| doc.node(id));
         let mut v = json!({"id":id,"kind":"path","name":p.name,"bounds":bounds(doc,&[p.id]),
-            "fill":p.fill,"stroke":{"paint":p.stroke,"width":p.stroke_width},"opacity":p.opacity,
+            "fill":p.appearance().fill(),"stroke":{"paint":p.appearance().stroke(),"width":p.stroke_width},"opacity":p.opacity,
             "hidden":doc.eff_hidden(p.id),"locked":doc.eff_locked(p.id),
             "parent":n.and_then(|n| n.parent).map(|id|format!("node:{id}"))});
         if detail {
