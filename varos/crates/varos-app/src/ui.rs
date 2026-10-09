@@ -304,7 +304,8 @@ impl Ui {
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
     pub fn wants_keyboard(&self) -> bool {
-        export::wants_keyboard(self)
+        // ---- Lane D: numeric sheets own canvas shortcuts ----
+        drawing::blocks_keyboard(&self.ctx) || export::wants_keyboard(self)
     }
     /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
     /// cancels the drag) and must not also reach the canvas.

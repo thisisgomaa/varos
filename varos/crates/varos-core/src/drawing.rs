@@ -166,6 +166,8 @@ pub fn check(ed: &Editor, action: &Action) -> Result<(), String> {
             {
                 return Err("invalid shape parameters".into());
             }
+            let paths = shape_paths(*s);
+            check_insert(ed, &paths)?;
             return allocation_check(ed);
         }
         Action::Options { options } => {
@@ -184,10 +186,60 @@ pub fn check(ed: &Editor, action: &Action) -> Result<(), String> {
     {
         return Err("drawing requires 2–16384 finite points and valid options".into());
     }
+    if matches!(action, Action::Pencil { .. } | Action::Curvature { .. }) {
+        if pts.windows(2).all(|w| w[0] == w[1]) {
+            return Err("drawing needs distinct points".into());
+        }
+        if matches!(action, Action::Curvature { closed: true, .. }) && pts.len() < 3 {
+            return Err("closed curvature needs at least three points".into());
+        }
+        // A fitted stroke cannot add more anchors than the input polyline.
+        let limits = crate::format::Limits::DEFAULT;
+        let count: usize =
+            ed.doc.paths.iter().map(|p| p.anchors.len() + p.holes.iter().map(Vec::len).sum::<usize>()).sum();
+        if count + pts.len() > limits.max_anchors {
+            return Err("drawing exceeds document anchor limit".into());
+        }
+        let dummy = geom::shapes::line(pts[0], pts[pts.len() - 1]);
+        check_insert(ed, &[dummy])?;
+    }
+    if matches!(action, Action::PathErase { .. } | Action::Join { .. })
+        && selected(ed).iter().any(|id| ed.doc.is_mask_source(*id))
+    {
+        return Err("path eraser and join cannot replace mask sources".into());
+    }
     allocation_check(ed)
 }
+fn check_insert(ed: &Editor, paths: &[Path]) -> Result<(), String> {
+    let mut parent = Some(ed.doc.active_layer);
+    let mut remaining = ed.doc.nodes.len();
+    while let Some(id) = parent {
+        if remaining == 0 {
+            return Err("drawing destination has cyclic ancestors".into());
+        }
+        remaining -= 1;
+        let node = ed.doc.node(id).ok_or("unknown drawing destination")?;
+        if node.locked || node.hidden {
+            return Err("drawing destination must be visible and unlocked".into());
+        }
+        parent = node.parent;
+    }
+    let limits = crate::format::Limits::DEFAULT;
+    if ed.doc.paths.len() + paths.len() > limits.max_paths || ed.doc.nodes.len() + paths.len() > limits.max_nodes {
+        return Err("drawing exceeds document path/node limit".into());
+    }
+    let count: usize =
+        ed.doc.paths.iter().chain(paths).map(|p| p.anchors.len() + p.holes.iter().map(Vec::len).sum::<usize>()).sum();
+    if count > limits.max_anchors {
+        return Err("drawing exceeds document anchor limit".into());
+    }
+    Ok(())
+}
 fn allocation_check(ed: &Editor) -> Result<(), String> {
-    if ed.doc.ids > u32::MAX - 1_000_000 {
+    let limits = crate::format::Limits::DEFAULT;
+    if u64::from(ed.allocation_floor()) + (limits.max_nodes + limits.max_paths + limits.max_anchors) as u64
+        >= u64::from(u32::MAX)
+    {
         Err("drawing id arena exhausted".into())
     } else {
         Ok(())
@@ -214,9 +266,9 @@ fn selected(ed: &Editor) -> Vec<u32> {
         .selected_pids()
         .into_iter()
         .filter(|p| {
-            ed.doc
-                .pidx(*p)
-                .is_some_and(|i| !ed.doc.eff_locked(ed.doc.paths[i].id) && !ed.doc.eff_hidden(ed.doc.paths[i].id))
+            ed.doc.pidx(*p).is_some_and(|i| {
+                ed.in_isolation(*p) && !ed.doc.eff_locked(ed.doc.paths[i].id) && !ed.doc.eff_hidden(ed.doc.paths[i].id)
+            })
         })
         .collect();
     ids.sort_unstable();
@@ -268,6 +320,7 @@ pub fn apply(ed: &mut Editor, action: Action) {
                 .enumerate()
                 .filter(|(i, p)| {
                     !p.closed
+                        && ed.in_isolation(p.id)
                         && p.holes.is_empty()
                         && !p.anchors.is_empty()
                         && !ed.doc.eff_locked(ed.doc.paths[*i].id)
@@ -286,7 +339,7 @@ pub fn apply(ed: &mut Editor, action: Action) {
                     }
                 }
                 if let Some(a) = ed.doc.paths[i].anchors.last_mut() {
-                    a.hout = p.anchors[0].hout;
+                    a.hout = p.anchors[0].hout.map(|h| geom::add(h, geom::sub(a.p, p.anchors[0].p)));
                 }
                 for mut a in p.anchors.into_iter().skip(1) {
                     a.id = ed.doc.nid();
@@ -336,6 +389,7 @@ pub fn apply(ed: &mut Editor, action: Action) {
                     let p = &ed.doc.paths[i];
                     let xf = ed.doc.unit_xform(*id);
                     !p.closed
+                        && ed.in_isolation(p.id)
                         && p.holes.is_empty()
                         && p.anchors.first().zip(p.anchors.last()).is_some_and(|(a, b)| {
                             near_walk(xf.apply(a.p), &points, options.brush_radius)
@@ -503,7 +557,8 @@ fn drag_spec(ed: &Editor, pos: Pt) -> ShapeSpec {
     let start = ed.drawing.start.unwrap_or(pos);
     let mut delta = geom::sub(pos, start);
     let kind = shape_kind(ed.gesture).unwrap_or(ed.drawing.shape.kind);
-    if ed.mods.shift {
+    let radial = matches!(kind, Shape::Polygon | Shape::Star | Shape::Spiral);
+    if ed.mods.shift && !radial {
         if kind == Shape::Line {
             let length = geom::dist(start, pos);
             let angle = (delta[1].atan2(delta[0]) / std::f32::consts::FRAC_PI_4).round() * std::f32::consts::FRAC_PI_4;
@@ -513,7 +568,6 @@ fn drag_spec(ed: &Editor, pos: Pt) -> ShapeSpec {
             delta = [d * delta[0].signum(), d * delta[1].signum()];
         }
     }
-    let radial = matches!(kind, Shape::Polygon | Shape::Star | Shape::Spiral);
     if radial {
         let radius = if kind == Shape::Star {
             ed.drawing.star_outer.unwrap_or(geom::length(delta))
@@ -604,8 +658,23 @@ pub fn up(ed: &mut Editor) -> bool {
             }
         }
     };
-    ed.execute_ui(EditCommand::Drawing(action));
+    if points_are_stationary(&action) {
+        ed.commit();
+    } else {
+        ed.execute_ui(EditCommand::Drawing(action));
+        // A refused pointer edit still has to settle its untouched down snapshot.
+        ed.commit();
+    }
     true
+}
+fn points_are_stationary(action: &Action) -> bool {
+    match action {
+        Action::Pencil { points, .. }
+        | Action::Smooth { points, .. }
+        | Action::PathErase { points, .. }
+        | Action::Join { points, .. } => points.windows(2).all(|w| w[0] == w[1]),
+        _ => false,
+    }
 }
 pub fn finish(ed: &mut Editor, cancel: bool) {
     // Never commit another tool's pending transaction.

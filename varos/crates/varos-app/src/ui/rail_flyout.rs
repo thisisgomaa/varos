@@ -42,6 +42,7 @@ impl Flyout {
     fn hold(&mut self, now: f64, down: bool) -> bool {
         if !down {
             self.pressed = None;
+            self.held = false;
             return false;
         }
         let start = *self.pressed.get_or_insert(now);
@@ -102,9 +103,14 @@ pub(crate) fn slot(ui: &mut egui::Ui, group: &[ToolKind], active: ToolKind, ops:
         super::drawing::tool_name(state.last),
         IconState::Tool(active == state.last),
     );
+    if group.len() > 1 {
+        result.response.clone().on_hover_text("Right-click or hold for more tools");
+    }
     let now = ui.input(|i| i.time);
     let down = result.response.is_pointer_button_down_on();
-    state.hold(now, down);
+    if down && group.len() > 1 {
+        state.hold(now, true);
+    }
     if down && !state.held && group.len() > 1 {
         ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(t::DRAW_HOLD_SECONDS));
     }
@@ -115,7 +121,7 @@ pub(crate) fn slot(ui: &mut egui::Ui, group: &[ToolKind], active: ToolKind, ops:
         ops.push(Op::Tool(state.last));
     }
     if !down {
-        state.held = false;
+        state.hold(now, false);
     }
     if state.open {
         let pop = egui::Area::new(id.with("popover"))
@@ -164,6 +170,11 @@ mod tests {
         assert!(m.hold(1. + t::DRAW_HOLD_SECONDS, true));
         assert!(m.open);
         assert!(!m.hold(3., true));
+        assert!(!m.hold(4., false));
+        m.open = false;
+        assert!(!m.hold(5., true));
+        assert!(m.hold(5. + t::DRAW_HOLD_SECONDS, true));
+        assert!(m.open);
     }
     #[test]
     fn catalogue_has_every_lane_tool_and_only_illustrator_keys() {

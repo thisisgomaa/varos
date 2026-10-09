@@ -322,3 +322,93 @@ fn join_miss_does_not_bake_an_unrelated_transform() {
     assert_eq!(e.doc, before);
     assert_eq!(e.rev, rev);
 }
+
+#[test]
+fn stationary_freehand_clicks_are_noops_and_close_the_gesture() {
+    for tool in [ToolKind::Pencil, ToolKind::Smooth, ToolKind::PathEraser, ToolKind::Join] {
+        let mut e = Editor::new();
+        e.set_tool(tool);
+        let before = e.doc.clone();
+        e.pointer_down([10., 10.]);
+        e.pointer_up();
+        assert_eq!(e.doc, before);
+        assert!(!e.transaction_open());
+        assert!(!e.history_available(false));
+        assert!(e.stroke_error.is_none());
+    }
+    let mut e = Editor::new();
+    assert!(e
+        .try_execute(EditCommand::Drawing(Action::Pencil {
+            points: vec![[10., 10.], [10., 10.]],
+            options: Options::default(),
+        }))
+        .is_err());
+}
+
+#[test]
+fn shift_radial_drag_preserves_pointer_radius() {
+    for tool in [ToolKind::Polygon, ToolKind::Star, ToolKind::Spiral] {
+        let mut e = Editor::new();
+        e.set_tool(tool);
+        e.mods.shift = true;
+        e.pointer_down([0., 0.]);
+        e.pointer_move([80., 60.]);
+        let p = &e.drawing.preview[0];
+        let radius = varos_core::geom::length(p.anchors[0].p);
+        assert!((radius - 100.).abs() < 0.001, "radius {radius}");
+        e.pointer_up();
+    }
+}
+
+#[test]
+fn drawing_refuses_protected_destination_and_mask_replacement_before_history() {
+    let mut e = Editor::new();
+    let layer = e.doc.active_layer;
+    let index = e.doc.nodes.iter().position(|n| n.id == layer).unwrap();
+    e.doc.nodes[index].locked = true;
+    let before = e.doc.clone();
+    assert!(e.try_execute(EditCommand::Drawing(Action::Shape { spec: ShapeSpec::default() })).is_err());
+    assert_eq!(e.doc, before);
+    assert!(!e.history_available(false));
+    e.doc.nodes[index].locked = false;
+    let a = line(&mut e, [0., 0.], [100., 0.]);
+    let b = line(&mut e, [0., 20.], [100., 0.]);
+    e.try_execute(EditCommand::SelectPaths(vec![a, b])).unwrap();
+    e.try_execute(EditCommand::ClipMake).unwrap();
+    let mask = [a, b].into_iter().find(|id| e.doc.is_mask_source(*id)).unwrap();
+    e.try_execute(EditCommand::SelectPaths(vec![mask])).unwrap();
+    for action in [
+        Action::PathErase { points: vec![[50., -50.], [50., 50.]], options: Options::default() },
+        Action::Join { points: vec![[0., -50.], [100., 50.]], options: Options::default() },
+    ] {
+        let before = e.doc.clone();
+        let rev = e.rev;
+        assert!(e.try_execute(EditCommand::Drawing(action)).is_err());
+        assert_eq!(e.doc, before);
+        assert_eq!(e.rev, rev);
+        assert!(!e.transaction_open());
+    }
+}
+
+#[test]
+fn pencil_continuation_stays_inside_isolation_and_offsets_join_handle() {
+    let mut e = Editor::new();
+    let a = line(&mut e, [0., 0.], [100., 0.]);
+    let b = line(&mut e, [0., 40.], [100., 0.]);
+    let outside = line(&mut e, [300., 0.], [100., 0.]);
+    let group = e.doc.group(&[a, b]).unwrap();
+    e.select_transform.isolation = Some(group);
+    let source = e.doc.paths[e.doc.pidx(outside).unwrap()].clone();
+    draw(&mut e, Action::Pencil { points: vec![[402., 0.], [450., 0.]], options: Options::default() });
+    assert_eq!(e.doc.paths[e.doc.pidx(outside).unwrap()], source);
+    draw(
+        &mut e,
+        Action::Pencil {
+            points: vec![[102., 0.], [150., 0.]],
+            options: Options { smoothness: 0., ..Default::default() },
+        },
+    );
+    let p = &e.doc.paths[e.doc.pidx(a).unwrap()];
+    assert_eq!(p.anchors[1].p, [100., 0.]);
+    assert!((p.anchors[1].hout.unwrap()[0] - 116.).abs() < 0.001);
+}
