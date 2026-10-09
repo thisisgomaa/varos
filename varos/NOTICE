@@ -122,3 +122,10 @@ Lane C — new_document.rs adapts VectorCraft engine/src/cmd/newdoc.rs:19,125;
 path_advanced.rs adapts pathops/src/offset.rs:79; live_corners.rs adapts
 geom/src/corners.rs:134,149 (a469568, MIT OR Apache-2.0), copyright 2026
 ArtCraft Team and VectorCraft contributors. No UI/assets/dependencies copied.
+
+Lane D: varos-raster/src/layers.rs adapts premultiplied compositing / effect coverage
+from PhotoCraft crates/compose/src/{effects.rs,psblend.rs} and crates/color/src/blend.rs @ 4cb7cf3.
+varos-render-wgpu/src/{layer_gpu.rs,layer_pass.wgsl} rebuilds separable map pass ideas
+from PhotoCraft crates/gpu/src/compose.wgsl:1029-1178 @ 4cb7cf3.
+Copyright (c) 2026 ArtCraft Team and the PhotoCraft contributors. MIT OR Apache-2.0;
+see LICENSE-MIT.photocraft and LICENSE-APACHE.photocraft. No new third-party dependencies.
