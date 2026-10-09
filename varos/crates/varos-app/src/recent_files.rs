@@ -27,7 +27,7 @@ impl<S: DocStore> RecentStore<S> {
     pub fn new(inner: S) -> Self {
         Self::at(inner, paths::data_root().map(|root| AppLayout { root }.recents()))
     }
-    fn at(inner: S, destination: Option<PathBuf>) -> Self {
+    pub(crate) fn at(inner: S, destination: Option<PathBuf>) -> Self {
         let (recents, warning) = destination.as_deref().map(|p| recents::load(&RealFs, p)).unwrap_or_else(|| {
             (
                 Recents::default(),
@@ -124,6 +124,23 @@ impl<S: DocStore> DocStore for RecentStore<S> {
     }
     fn save(&mut self, doc: &Document, path: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
         self.inner.save(doc, path)
+    }
+    fn save_published(
+        &mut self,
+        doc: &Document,
+        path: &Path,
+    ) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), String> {
+        self.inner.save_published(doc, path)
+    }
+    fn save_guarded(
+        &mut self,
+        doc: &Document,
+        path: &Path,
+        expected: Option<&varos_app::storage::durable::Fingerprint>,
+        fresh: bool,
+    ) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), varos_bridge::Error>
+    {
+        self.inner.save_guarded(doc, path, expected, fresh)
     }
     fn fingerprint(&self, path: &Path) -> Option<varos_app::storage::durable::Fingerprint> {
         self.inner.fingerprint(path)

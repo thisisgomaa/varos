@@ -94,6 +94,7 @@ pub(crate) fn document_section(
     });
     hsep(ui, w);
     let (recovery, commands) = recovery;
+    super::autosave::settings(ui, w, recovery, commands);
     if toggle_row(ui, w, "Recovery (all documents)", recovery.enabled) {
         commands.push(AppCommand::SetRecoveryEnabled(!recovery.enabled));
     }
