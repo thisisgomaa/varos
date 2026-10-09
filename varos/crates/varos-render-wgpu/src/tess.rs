@@ -295,27 +295,15 @@ fn dashed_poly(v: &mut Vec<Vertex>, pts: &[Pt], width: f32, col: [f32; 4], w: f3
     }
 }
 
-/// Infinite ADAPTIVE dot grid. The dots live in WORLD space (they pan & zoom with the board), and the
-/// spacing snaps to base-5 "nice" levels (…1·5·25·125…) so the on-screen density stays comfortable at
-/// any zoom. Two consecutive levels crossfade (the finer one fades out as it gets too dense) so moving
-/// between scales is smooth, never a pop — giving a sense of depth and of where you are on the board.
-/// This is also the spatial reference the future snapping system will lock onto.
-pub fn build_bg(view: View, w: f32, h: f32) -> Vec<Vertex> {
+/// Document dot grid in world space. Spacing matches snapping; hide dots below 9px
+/// density without changing the snap lattice. Integer iteration bounds large pans.
+pub fn build_bg(view: View, w: f32, h: f32, spacing: Option<f32>) -> Vec<Vertex> {
     let mut v = Vec::new();
+    let Some(step) = spacing.filter(|v| v.is_finite() && *v > 0.0) else { return v };
     let zoom = view.zoom.max(1e-4);
-    const TARGET: f32 = 30.0; // desired screen px between dots
-    const MIN_PX: f32 = 9.0; // skip a level finer than this (perf + anti-clutter)
-    const BG: [f32; 3] = [0.078, 0.075, 0.075]; // board background (#141313)
-    const DOT: [f32; 3] = [0.34, 0.34, 0.37]; // a dot at full strength (clearly visible on #141313)
-
-    // base-5 level whose world step lands near TARGET px on screen
-    let scale = (TARGET / zoom).max(1e-6);
-    let level = scale.ln() / 5f32.ln();
-    let k0 = level.floor();
-    let t = level - k0; // 0..1 within the level
-    let step_fine = 5f32.powf(k0);
-    let step_coarse = 5f32.powf(k0 + 1.0);
-
+    const MIN_PX: f32 = 9.0;
+    const BG: [f32; 3] = [0.078, 0.075, 0.075];
+    const DOT: [f32; 3] = [0.34, 0.34, 0.37];
     // visible world rect (+1 step padding so dots don't pop at the edges)
     let tl = view.s2w([0.0, 0.0]);
     let br = view.s2w([w, h]);
@@ -329,22 +317,17 @@ pub fn build_bg(view: View, w: f32, h: f32) -> Vec<Vertex> {
         // composite the faded dot over the board once (no blend-state dependency): opaque colour.
         let col =
             [BG[0] + (DOT[0] - BG[0]) * alpha, BG[1] + (DOT[1] - BG[1]) * alpha, BG[2] + (DOT[2] - BG[2]) * alpha, 1.0];
-        let mut gx = (wx0 / step).floor() * step;
-        while gx <= wx1 {
-            let mut gy = (wy0 / step).floor() * step;
-            while gy <= wy1 {
-                sq(&mut v, view.w2s([gx, gy]), 1.0, col, w, h);
-                gy += step;
+        let x0 = (wx0 / step).floor() as i64;
+        let x1 = ((wx1 / step).ceil() as i64).min(x0.saturating_add(4096));
+        let y0 = (wy0 / step).floor() as i64;
+        let y1 = ((wy1 / step).ceil() as i64).min(y0.saturating_add(4096));
+        for ix in x0..=x1 {
+            for iy in y0..=y1 {
+                sq(&mut v, view.w2s([ix as f32 * step, iy as f32 * step]), 1.0, col, w, h);
             }
-            gx += step;
         }
     };
-    // THREE levels crossfade with NO pop: the finest fades OUT as it gets too dense (1-t), the middle
-    // is the steady full-strength anchor (1.0), and the next-coarser fades IN (t) so it's already there
-    // when it becomes the new anchor. Every level enters/leaves through 0 → no appear/disappear snap.
-    grid(step_fine, 1.0 - t);
-    grid(step_coarse, 1.0);
-    grid(5f32.powf(k0 + 2.0), t);
+    grid(step, 1.0);
     v
 }
 

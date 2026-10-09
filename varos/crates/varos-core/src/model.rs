@@ -506,6 +506,22 @@ pub struct SnapConfig {
 
     // ── grid spacing (so the engine has no magic constant) ──
     pub grid_spacing: f32, // world pt
+    #[serde(default = "grid_visible_default", skip_serializing_if = "grid_visible")]
+    pub show_grid: bool,
+    #[serde(default = "grid_subdivisions_default", skip_serializing_if = "grid_one")]
+    pub grid_subdivisions: u32,
+}
+fn grid_visible_default() -> bool {
+    true
+}
+fn grid_visible(v: &bool) -> bool {
+    *v
+}
+fn grid_subdivisions_default() -> u32 {
+    1
+}
+fn grid_one(v: &u32) -> bool {
+    *v == 1
 }
 impl Default for SnapConfig {
     /// Defaults follow the spec: Smart Guides + object/page snapping + feedback ON; grid/pixel/margins/
@@ -540,6 +556,8 @@ impl Default for SnapConfig {
             equal_spacing: true,
             equal_size: true,
             grid_spacing: 72.0,
+            show_grid: true,
+            grid_subdivisions: 1,
         }
     }
 }
@@ -614,6 +632,9 @@ pub struct Document {
     /// User ruler guides (dragged out of the rulers). `#[serde(default)]` so older files still load.
     #[serde(default)]
     pub guides: Vec<Guide>,
+    /// Path guides retain their original geometry and appearance for Release Guides.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guide_paths: Vec<u32>,
     /// Guides locked (can't be grabbed/moved) — Illustrator's Alt+Ctrl+; . Persisted with the doc.
     #[serde(default)]
     pub guides_locked: bool,
@@ -653,6 +674,7 @@ impl Default for Document {
             snap: SnapConfig::default(),
             ruler_origin: [0.0, 0.0],
             guides: vec![],
+            guide_paths: vec![],
             guides_locked: false,
         }
     }
@@ -707,6 +729,7 @@ impl Document {
             snap: _,
             ruler_origin: _,
             guides,
+            guide_paths,
             guides_locked: _,
         } = self;
         // the unit settings split in two: ppi is content, the display unit a preference
@@ -720,6 +743,7 @@ impl Document {
             && ppi == other.units.ppi
             && roots == &other.roots
             && artboards == &other.artboards
+            && guide_paths == &other.guide_paths
             && guides == &other.guides
             && paths == &other.paths
             && nodes == &other.nodes
@@ -785,7 +809,10 @@ impl Document {
     /// NOT for hit-test / the Layers panel / editing overlays — a mask source stays a first-class,
     /// clickable row there; those keep reading `paths`.
     pub fn paint_list(&self) -> impl Iterator<Item = (usize, &Path)> {
-        self.paths.iter().enumerate().filter(|(_, p)| self.paint_role(p.id) != PaintRole::MaskSource)
+        self.paths
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| self.paint_role(p.id) != PaintRole::MaskSource && !self.guide_paths.contains(&p.id))
     }
     /// What a path IS to the paint pass (LAYERS_VISION §5). `MaskSource` for any path inside some clip
     /// group's `mask_child` subtree — that geometry SHAPES the clip and must not paint as itself, so
@@ -1722,6 +1749,7 @@ impl Document {
     /// migrate legacy registries, prune leaves of deleted paths + emptied Groups, adopt new paths
     /// under the ACTIVE layer (at its front), guarantee ≥1 Layer + a valid active_layer, re-flatten.
     pub fn sync_tree(&mut self) {
+        self.guide_paths.retain(|id| self.paths.iter().any(|p| p.id == *id));
         use std::collections::HashSet;
         self.migrate_legacy();
         let live: HashSet<u32> = self.paths.iter().map(|p| p.id).collect();

@@ -32,6 +32,34 @@ pub(crate) fn panel_artboard(
                     ui.label(RichText::new(format!("{at} / {}", s.count)).color(MUTED).font(numeric_value(11.5)));
                 });
             });
+            ui.horizontal(|ui| {
+                use varos_core::editor::view_commands::ViewAction as V;
+                for (action, position) in
+                    [(IA_AB_EARLIER, i.checked_sub(1)), (IA_AB_LATER, (i + 1 < s.count).then_some(i + 1))]
+                {
+                    if action.show(
+                        ui,
+                        if position.is_some() {
+                            kit::IconState::Action
+                        } else {
+                            kit::IconState::Disabled("Already at the end of the artboard order")
+                        },
+                    ) {
+                        if let Some(position) = position {
+                            ops.push(Op::View(V::ReorderArtboard { id: s.id, position }));
+                        }
+                    }
+                }
+                if IA_AB_FIT_ART.show(ui, kit::IconState::Action) {
+                    ops.push(Op::View(V::FitArtboard { id: s.id, selected: false }));
+                }
+                if IA_AB_FIT_SELECTION.show(ui, kit::IconState::Action) {
+                    ops.push(Op::View(V::FitArtboard { id: s.id, selected: true }));
+                }
+                if IA_AB_CONVERT.show(ui, kit::IconState::Action) {
+                    ops.push(Op::View(V::ConvertArtboards));
+                }
+            });
             fields::name(ui, inner, &s.name, "dock", ops, |v| Op::AbName(i, v));
 
             ui.add_space(2.0);

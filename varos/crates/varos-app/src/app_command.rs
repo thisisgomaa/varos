@@ -67,6 +67,10 @@ pub enum AppCommand {
     FileDone(Box<crate::file_jobs::FileDone>),
     /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free
     /// canvas with ZERO artboards (`varos_core::board::new_board`).
+    FitAll(SessionId),
+    View(SessionId, varos_core::editor::view_commands::ViewAction),
+    Selection(SessionId, varos_core::editor::wave::Selection),
+    Object(SessionId, varos_core::editor::wave::ObjectAction),
     NewBoard,
     /// Start's "…or start with an artboard": a fresh, clean `Untitled-N` board with one artboard from
     /// the core preset table (`varos_core::board::new_board_with_preset`). No "Custom…" preset: a
@@ -79,6 +83,8 @@ pub enum AppCommand {
     RemoveRecent(PathBuf),
     ClearRecent,
     SetRecoveryEnabled(bool),
+    TogglePasteRemembersLayers,
+    SetPasteRemembersLayers(bool),
     RetryRecovery(SessionId),
     /// Restore a recovery copy (Start's Recovered band, the editor's Review panel).
     Recover(String),

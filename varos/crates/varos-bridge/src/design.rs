@@ -195,6 +195,22 @@ pub(crate) fn apply_design_op(
     if op.is_page_verb() {
         return apply_artboard_op(ed, op, locals, affected).map(|()| None);
     }
+    if let Operation::Object { ids, action, anchors } = op {
+        if anchors.is_some() && *action != varos_core::editor::wave::ObjectAction::Average {
+            return Err(fail("anchors are only accepted by average"));
+        }
+        use varos_core::editor::wave::ObjectAction as O;
+        if matches!(action, O::UnlockAll | O::ShowAll | O::CleanUp | O::NewLayer | O::NewSublayer) {
+            if !ids.is_empty() {
+                return Err(fail("global object action must omit targets"));
+            }
+            if op.destructive() {
+                affected.extend(ed.doc.paths.iter().map(|p| format!("path:{}", p.id)));
+            }
+            ed.try_execute(EditCommand::Object(*action)).map_err(fail)?;
+            return Ok(None);
+        }
+    }
     let mut created = None;
     let ids = op
         .ids()
@@ -209,6 +225,19 @@ pub(crate) fn apply_design_op(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let paths = if matches!(op, Operation::AddShape { .. } | Operation::AddPath { .. }) {
+        vec![]
+    } else if matches!(op, Operation::View { action, .. } if !matches!(action,
+        varos_core::editor::view_commands::ViewAction::MakeGuides
+        | varos_core::editor::view_commands::ViewAction::ReleaseGuides
+        | varos_core::editor::view_commands::ViewAction::ConvertArtboards
+        | varos_core::editor::view_commands::ViewAction::FitArtboard { selected: true, .. }))
+    {
+        if !ids.is_empty() {
+            return Err(fail("global view action requires empty ids"));
+        }
+        if matches!(op, Operation::View { action: varos_core::editor::view_commands::ViewAction::ClearGuides, .. }) {
+            affected.extend(ed.doc.guide_paths.iter().map(|p| format!("path:{p}")));
+        }
         vec![]
     } else if matches!(op, Operation::Rename { .. }) {
         if ids.is_empty() {
@@ -255,6 +284,24 @@ pub(crate) fn apply_design_op(
         }
     }
     let execute = |ed: &mut Editor, command| ed.try_execute(command).map_err(fail);
+    if let Operation::View { ids, action } = op {
+        use varos_core::editor::view_commands::ViewAction as V;
+        let targeted = matches!(
+            action,
+            V::MakeGuides | V::ReleaseGuides | V::ConvertArtboards | V::FitArtboard { selected: true, .. }
+        );
+        if targeted {
+            if ids.is_empty() {
+                return Err(fail("view action requires explicit artwork targets"));
+            }
+            whole_units(ed, &paths)?;
+            execute(ed, EditCommand::SelectPaths(paths.clone()))?;
+        } else if !ids.is_empty() {
+            return Err(fail("global view action requires empty ids"));
+        }
+        execute(ed, EditCommand::View(*action))?;
+        return Ok(None);
+    }
     match op {
         Operation::AddShape { parent, local, name, fill, stroke, stroke_width, opacity, .. }
         | Operation::AddPath { parent, local, name, fill, stroke, stroke_width, opacity, .. } => {
@@ -431,10 +478,70 @@ pub(crate) fn apply_design_op(
                 }
                 units.into_iter().collect()
             } else {
-                whole_units(ed, &paths)?
+                if matches!(
+                    op,
+                    Operation::AnchorType { .. } | Operation::InsertAnchor { .. } | Operation::DeleteAnchor { .. }
+                ) {
+                    Vec::new()
+                } else {
+                    whole_units(ed, &paths)?
+                }
             };
             ed.try_execute(EditCommand::SelectPaths(paths.clone())).map_err(fail)?;
             match op {
+                Operation::InsertAnchor { segment, t, .. } => {
+                    if paths.len() != 1 {
+                        return Err(fail("insert_anchor needs one path"));
+                    }
+                    execute(ed, EditCommand::InsertAnchor { path: paths[0], segment: *segment, t: *t })?;
+                }
+                Operation::AnchorType { anchor, smooth, .. } => {
+                    if paths.len() != 1 || ed.doc.pid_of_anchor(*anchor) != Some(paths[0]) {
+                        return Err(fail("anchor_type needs its one owning path"));
+                    }
+                    execute(ed, EditCommand::AnchorType { anchor: *anchor, smooth: *smooth })?;
+                }
+                Operation::DeleteAnchor { anchor, .. } => {
+                    if paths.len() != 1 || ed.doc.pid_of_anchor(*anchor) != Some(paths[0]) {
+                        return Err(fail("delete_anchor needs its one owning path"));
+                    }
+                    execute(ed, EditCommand::DeleteAnchor(*anchor))?;
+                }
+                Operation::DistributeMode { mode, .. } => execute(
+                    ed,
+                    EditCommand::DistributeMode(match mode {
+                        Alignment::Left => AlignMode::Left,
+                        Alignment::Center => AlignMode::CenterH,
+                        Alignment::Right => AlignMode::Right,
+                        Alignment::Top => AlignMode::Top,
+                        Alignment::Middle => AlignMode::Middle,
+                        Alignment::Bottom => AlignMode::Bottom,
+                    }),
+                )?,
+                Operation::Object { action, anchors, .. } => {
+                    if let Some(anchors) = anchors {
+                        if *action != varos_core::editor::wave::ObjectAction::Average {
+                            return Err(fail("anchors are only accepted by average"));
+                        }
+                        if anchors.len() > MAX_TARGETS
+                            || anchors.iter().any(|id| ed.doc.pid_of_anchor(*id).is_none_or(|p| !paths.contains(&p)))
+                        {
+                            return Err(fail("average anchors must belong to explicit targets, at most 1000"));
+                        }
+                        execute(ed, EditCommand::SelectAnchors(anchors.clone()))?;
+                    }
+                    execute(ed, EditCommand::Object(*action))?;
+                }
+                Operation::DistributeSpacing { axis, gap, .. } => execute(
+                    ed,
+                    EditCommand::DistributeSpacing {
+                        axis: match axis {
+                            Axis::H => DistAxis::Horizontal,
+                            Axis::V => DistAxis::Vertical,
+                        },
+                        gap: *gap,
+                    },
+                )?,
                 Operation::Resize { bounds, .. } => {
                     let b = if units.len() == 1 && !ed.doc.node_xform(units[0]).is_identity() {
                         ed.obj_local_bbox()
@@ -482,6 +589,8 @@ pub(crate) fn apply_design_op(
                             return Err(fail("selection alignment requires at least two units"));
                         }
                         AlignTarget::Selection
+                    } else if target == "key_object" {
+                        AlignTarget::KeyObject
                     } else {
                         if target.eq_ignore_ascii_case("auto") {
                             return Err(Error::new("unsupported", "Auto alignment is not enabled"));

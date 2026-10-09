@@ -232,6 +232,10 @@ pub enum HostAction {
 /// A document action a key or a menu row raises (not a lifecycle command).
 #[derive(Clone, Copy)]
 pub enum DocAction {
+    FitAll,
+    View(varos_core::editor::view_commands::ViewAction),
+    Selection(varos_core::editor::wave::Selection),
+    Object(varos_core::editor::wave::ObjectAction),
     /// A document shortcut key (`main.rs`'s `doc_key`) with the modifiers held when it was pressed.
     Key(KeyCode, Mods),
     /// A View-menu snapping row (formerly the magnet quick-menu's).
@@ -376,6 +380,8 @@ pub fn open_paths_command(paths: Vec<PathBuf>, origin: OpenOrigin) -> Option<App
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuRoute {
+    Selection(varos_core::editor::wave::Selection),
+    Object(varos_core::editor::wave::ObjectAction),
     /// A command for the one dispatch (File rows, Quit, the Window rows).
     App(AppCommand),
     /// A ⌘-row: the keyboard's own shortcut path (handed to a focused text field instead).
@@ -390,6 +396,8 @@ pub enum MenuRoute {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> {
     Some(match cmd {
+        MenuCmd::View(s) => MenuRoute::App(AppCommand::View(active?, s)),
+        MenuCmd::TogglePasteRemembersLayers => MenuRoute::App(AppCommand::TogglePasteRemembersLayers),
         MenuCmd::File(f) => MenuRoute::App(to_app_command(f, active)?),
         MenuCmd::Key(k) => MenuRoute::Key(k),
         MenuCmd::Plain(code) => MenuRoute::Plain(code),
@@ -399,6 +407,8 @@ pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> 
         MenuCmd::ToggleDock => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleDock)),
         MenuCmd::TogglePanel(p) => MenuRoute::App(AppCommand::Window(WindowCmd::TogglePanel(p))),
         MenuCmd::Snap(row) => MenuRoute::Snap(row),
+        MenuCmd::Selection(s) => MenuRoute::Selection(s),
+        MenuCmd::Object(s) => MenuRoute::Object(s),
     })
 }
 
@@ -444,6 +454,9 @@ pub fn route_left_release(pressed_on_canvas: bool, panning: bool, over_panel: bo
 
 /// The Ui side of a lifecycle command (the real `ui::Ui`; a recorder in tests).
 pub trait DocUi {
+    fn queue_app_command(&mut self, _cmd: AppCommand) -> bool {
+        false
+    }
     /// Close every Ui-side edit still open on the outgoing document: the open text / number field
     /// commits (K3), completed colour gestures stay; unaccepted samples cancel. `false` = the field's text does not parse — it keeps the
     /// keyboard and its reason, and a user command must not run ([`waits_for_fields`]).
@@ -1236,6 +1249,10 @@ mod tests {
                 HostAction::App(c) => format!("{c:?}"),
                 HostAction::Doc(DocAction::Key(code, _)) => format!("Key({code:?})"),
                 HostAction::Doc(DocAction::Snap(row)) => format!("Snap({row:?})"),
+                HostAction::Doc(DocAction::Selection(s)) => format!("Selection({s:?})"),
+                HostAction::Doc(DocAction::FitAll) => "FitAll".into(),
+                HostAction::Doc(DocAction::View(s)) => format!("View({s:?})"),
+                HostAction::Doc(DocAction::Object(s)) => format!("Object({s:?})"),
             })
             .collect()
     }

@@ -5,6 +5,14 @@ use crate::geom::{dist, sub, Pt};
 pub struct Direct;
 impl Tool for Direct {
     fn down(&self, ed: &mut Editor, pos: Pt) {
+        // Option-click climbs groups; a real drag retains Direct's existing duplicate gesture.
+        if ed.mods.alt {
+            let anchor = ed.nearest_anchor(pos, ANCHOR_R, false);
+            if let Some(pid) = anchor.and_then(|id| ed.doc.pid_of_anchor(id)).or_else(|| ed.path_under(pos)) {
+                ed.drag = Drag::GroupClick { path: pid, down: pos, anchor };
+            }
+            return;
+        }
         // handle FIRST — so Alt over a handle BREAKS it (must beat the Alt-duplicate below)
         if let Some(aid) = ed.handle_hit(pos) {
             // A7: reshaping a rotated unit bakes its rotation into geometry first, then edits in world
@@ -35,22 +43,6 @@ impl Tool for Direct {
             ed.dirty = true;
             ed.drag = Drag::Handle { aid, out, couple, opp_len, grab: sub(hp, pos) };
             return;
-        }
-        // Alt + anchor/path => duplicate (only once a real drag starts)
-        if ed.mods.alt {
-            if let Some(aid) = ed.nearest_anchor(pos, ANCHOR_R, false) {
-                let Some(pid) = ed.doc.pid_of_anchor(aid) else { return };
-                if !ed.mods.shift {
-                    ed.selected.clear();
-                }
-                ed.selected.insert(aid);
-                ed.drag = Drag::DupPending { srcs: vec![pid], down: pos, object: false };
-                return;
-            }
-            if let Some(pid) = ed.path_under(pos) {
-                ed.drag = Drag::DupPending { srcs: vec![pid], down: pos, object: false };
-                return;
-            }
         }
         // an anchor — the white arrow grabs ANY anchor directly (Illustrator), even on an unselected path.
         // Grabbing an already-selected anchor moves the whole selection; an unselected one selects just it.

@@ -3051,7 +3051,7 @@ fn economy_actual_mcp_stdio_matches_cli_and_bounded_schema() {
     let schema = varos_bridge::mcp::tools();
     let edit = schema["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
     let schema = &edit["inputSchema"];
-    assert_eq!(schema["properties"]["api"]["enum"], json!(["1.0", "1.1"]));
+    assert_eq!(schema["properties"]["api"]["enum"], json!(["1.0", "1.1", "1.2"]));
     assert!(schema["$defs"].get("repeat4").is_none());
     assert_eq!(schema["$defs"]["repeat3"]["properties"]["ops"]["items"]["anyOf"].as_array().unwrap().len(), 1);
 }
@@ -3130,4 +3130,225 @@ fn economy_legacy_target_count_and_alias_index() {
     args["expected_rev"] = json!(h.editor.rev);
     let r = handle(&mut s, &mut h, req("edit", args));
     assert_eq!(r.error.unwrap().op_index, Some(1));
+}
+
+#[test]
+fn command_wave_select_modes_are_12_only_and_legacy_serialization_is_unchanged() {
+    for api in ["1.0", "1.1", "1.2"] {
+        let mut s = Service::new("test-epoch".into());
+        let mut h = FakeHost::new();
+        let reply = handle(
+            &mut s,
+            &mut h,
+            req("select", json!({"api":api,"request_id":"r1","board":"b1","expected_rev":1,"ids":[],"mode":"all"})),
+        );
+        assert_eq!(reply.error.is_none(), api == "1.2", "{api}: {reply:?}");
+        assert_eq!(h.editor.objsel.len(), if api == "1.2" { 2 } else { 0 });
+        assert_eq!(h.editor.rev, 1);
+    }
+    let legacy = json!({"api":"1.0","request_id":"r1","board":"b1","expected_rev":1,"ids":["path:10"]});
+    let parsed: varos_bridge::dto::Select = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), legacy);
+}
+#[test]
+fn command_wave_legacy_edits_refuse_without_mutation() {
+    for api in ["1.0", "1.1"] {
+        let mut s = Service::new("test-epoch".into());
+        let mut h = FakeHost::new();
+        let before = h.editor.doc.clone();
+        let reply = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":api,"request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"object","ids":["path:10"],"action":"lock"}]}),
+            ),
+        );
+        assert_eq!(reply.error.unwrap().code, "unsupported");
+        assert_eq!(h.editor.doc, before);
+    }
+}
+#[test]
+fn command_wave_12_lock_hide_unlock_show_are_undoable() {
+    for (action, global, flag) in [("lock", "unlock_all", true), ("hide", "show_all", false)] {
+        let mut s = Service::new("test-epoch".into());
+        let mut h = FakeHost::new();
+        let first = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":"1.2","request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"object","ids":["path:10"],"action":action}]}),
+            ),
+        );
+        assert!(first.error.is_none(), "{first:?}");
+        assert_eq!(h.editor.rev, 2);
+        assert!(if flag { h.editor.doc.paths[0].locked } else { h.editor.doc.paths[0].hidden });
+        let second = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":"1.2","request_id":"r2","board":"b1","expected_rev":2,"ops":[{"verb":"object","ids":[],"action":global}]}),
+            ),
+        );
+        assert!(second.error.is_none(), "{second:?}");
+        assert!(!h.editor.doc.paths[0].locked && !h.editor.doc.paths[0].hidden);
+        h.editor.execute(EditCommand::Undo);
+        assert!(if flag { h.editor.doc.paths[0].locked } else { h.editor.doc.paths[0].hidden });
+    }
+}
+#[test]
+fn command_wave_12_failed_batch_rolls_back_geometry_and_flags() {
+    let mut s = Service::new("test-epoch".into());
+    let mut h = FakeHost::new();
+    let before = h.editor.doc.clone();
+    let reply = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"object","ids":["path:10"],"action":"reverse"},{"verb":"object","ids":["path:999"],"action":"lock"}]}),
+        ),
+    );
+    assert!(reply.error.is_some());
+    assert_eq!(h.editor.doc, before);
+    assert_eq!(h.editor.rev, 1);
+}
+#[test]
+fn command_wave_12_average_uses_explicit_anchor_targets() {
+    let mut s = Service::new("test-epoch".into());
+    let mut h = FakeHost::new();
+    let reply = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"object","ids":["path:10"],"action":"average","anchors":[11,12]}]}),
+        ),
+    );
+    assert!(reply.error.is_none(), "{reply:?}");
+    assert_eq!(h.editor.doc.paths[0].anchors[0].p, [60.0, 20.0]);
+    assert_eq!(h.editor.doc.paths[0].anchors[1].p, [60.0, 20.0]);
+}
+#[test]
+fn command_wave_12_key_object_selection_and_layer_creation_are_real() {
+    let mut s = Service::new("test-epoch".into());
+    let mut h = FakeHost::new();
+    let reply = handle(
+        &mut s,
+        &mut h,
+        req(
+            "select",
+            json!({"api":"1.2","request_id":"r1","board":"b1","expected_rev":1,"ids":["path:10","path:20"],"mode":{"key_object":10}}),
+        ),
+    );
+    assert!(reply.error.is_none(), "{reply:?}");
+    assert_eq!(h.editor.key_object, Some(10));
+    let key = h.editor.doc.paths[0].clone();
+    let reply = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","request_id":"r2","board":"b1","expected_rev":1,"ops":[{"verb":"align","ids":["path:10","path:20"],"mode":"left","target":"key_object"}]}),
+        ),
+    );
+    assert!(reply.error.is_none(), "{reply:?}");
+    assert_eq!(h.editor.doc.paths[0], key);
+    let count = h.editor.doc.roots.len();
+    let rev = h.editor.rev;
+    let reply = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","request_id":"r3","board":"b1","expected_rev":rev,"ops":[{"verb":"object","ids":[],"action":"new_layer"}]}),
+        ),
+    );
+    assert!(reply.error.is_none(), "{reply:?}");
+    assert_eq!(h.editor.doc.roots.len(), count + 1);
+}
+#[test]
+fn command_wave_lasso_anchor_edits_and_paste_setting_are_opt_in() {
+    for api in ["1.0", "1.1", "1.2"] {
+        let mut s = Service::new("test-epoch".into());
+        let mut h = FakeHost::new();
+        let r = handle(
+            &mut s,
+            &mut h,
+            req(
+                "select",
+                json!({"api":api,"request_id":"r1","board":"b1","expected_rev":1,"ids":[],"paste_remembers_layers":true}),
+            ),
+        );
+        assert_eq!(r.error.is_none(), api == "1.2", "{r:?}");
+        assert_eq!(h.editor.paste_remembers_layers, api == "1.2");
+        let r = handle(
+            &mut s,
+            &mut h,
+            req(
+                "select",
+                json!({"api":api,"request_id":"r2","board":"b1","expected_rev":1,"ids":[],"lasso":{"points":[[0,0],[150,0],[150,150],[0,150]],"objects":false,"additive":false}}),
+            ),
+        );
+        assert_eq!(r.error.is_none(), api == "1.2", "{r:?}");
+        assert_eq!(h.editor.selected.is_empty(), api != "1.2");
+        let r = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":api,"request_id":"r3","board":"b1","expected_rev":1,"ops":[{"verb":"insert_anchor","ids":["path:10"],"segment":0,"t":0.5}]}),
+            ),
+        );
+        assert_eq!(r.error.is_none(), api == "1.2", "{r:?}");
+        if api == "1.2" {
+            let id = h.editor.doc.paths[0].anchors[1].id;
+            let revision = h.editor.rev;
+            let r = handle(
+                &mut s,
+                &mut h,
+                req(
+                    "edit",
+                    json!({"api":api,"request_id":"r4","board":"b1","expected_rev":revision,"ops":[{"verb":"delete_anchor","ids":["path:10"],"anchor":id}]}),
+                ),
+            );
+            assert!(r.error.is_none(), "{r:?}");
+            assert_eq!(h.editor.doc.paths[0].anchors.len(), 4);
+        }
+    }
+}
+#[test]
+fn view_quick_wins_are_12_only_and_document_changes_are_real() {
+    for api in ["1.0", "1.1", "1.2"] {
+        let mut s = Service::new("test-epoch".into());
+        let mut h = FakeHost::new();
+        let r = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":api,"request_id":"r1","board":"b1","expected_rev":1,"ops":[{"verb":"view","ids":["path:10"],"action":"make_guides"}]}),
+            ),
+        );
+        assert_eq!(r.error.is_none(), api == "1.2", "{r:?}");
+        assert_eq!(h.editor.doc.guide_paths.len(), usize::from(api == "1.2"));
+        let rev = h.editor.rev;
+        let r = handle(
+            &mut s,
+            &mut h,
+            req(
+                "edit",
+                json!({"api":api,"request_id":"r2","board":"b1","expected_rev":rev,"ops":[{"verb":"view","ids":[],"action":{"grid":{"spacing":24.0,"subdivisions":3}}},{"verb":"view","ids":[],"action":"toggle_grid"}]}),
+            ),
+        );
+        assert_eq!(r.error.is_none(), api == "1.2", "{r:?}");
+        if api == "1.2" {
+            assert_eq!(h.editor.document_grid_step(), 8.0);
+            assert!(!h.editor.doc.snap.show_grid);
+            // The service journals persisted preferences even though core undo omits them.
+            assert_eq!(h.editor.rev, rev + 1);
+        }
+    }
 }

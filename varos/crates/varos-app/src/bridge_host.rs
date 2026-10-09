@@ -63,6 +63,17 @@ fn session(board: &str) -> Result<SessionId, Error> {
         .ok_or_else(|| Error::new("invalid_argument", "board must be a session handle bN"))
 }
 impl Host for Desktop<'_> {
+    fn set_paste_remembers_layers(&mut self, board: &str, enabled: bool) -> Result<(), Error> {
+        if !self
+            .ui
+            .as_deref_mut()
+            .is_some_and(|ui| ui.queue_app_command(crate::app_command::AppCommand::SetPasteRemembersLayers(enabled)))
+        {
+            return Err(Error::new("unsupported", "desktop settings queue unavailable"));
+        }
+        self.access(board)?.editor.execute(varos_core::EditCommand::SetPasteRemembersLayers(enabled));
+        Ok(())
+    }
     fn snapshot(
         &mut self,
         job: varos_bridge::service::SnapshotJob,

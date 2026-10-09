@@ -9,7 +9,7 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
         // A4: the reference switch sits ABOVE the buttons — you pick what "align" means, then act.
         let _label = ui.label(micro_label("ALIGN TO"));
         label_gap(ui);
-        let targets = [AlignTarget::Auto, AlignTarget::Selection, AlignTarget::Artboard];
+        let targets = [AlignTarget::Auto, AlignTarget::Selection, AlignTarget::Artboard, AlignTarget::KeyObject];
         let help = [
             "Align to: Auto — Smart default: many objects align to each other; a single object or group aligns to the artboard",
             "Align to: Selection — Align objects within the selection's combined bounds",
@@ -20,7 +20,7 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
             if let Some(index) = panel_segments(
                 ui,
                 "align-target",
-                &[(Icon::AlignAuto, help[0]), (Icon::AlignSelection, help[1]), (Icon::Frame, help[2])],
+                &[(Icon::AlignAuto, help[0]), (Icon::AlignSelection, help[1]), (Icon::Frame, help[2]), (Icon::AlignSelection, "Align to: Key Object — last clicked selected object")],
                 selected,
                 None,
             ) {
@@ -58,15 +58,33 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
         let _label = ui.label(micro_label("DISTRIBUTE"));
         label_gap(ui);
         let _controls = ui.horizontal(|ui| {
-            if icon_btn(ui, &ic.align[6], "Distribute horizontal centres") {
-                ops.push(Op::Distribute(DistAxis::Horizontal));
-            }
-            if icon_btn(ui, &ic.align[7], "Distribute vertical centres") {
-                ops.push(Op::Distribute(DistAxis::Vertical));
+            for (mode, icon, tip) in [
+                (AlignMode::Left, Icon::DistributeLeft, "Distribute left edges"),
+                (AlignMode::CenterH, Icon::DistributeCenter, "Distribute horizontal centres"),
+                (AlignMode::Right, Icon::DistributeRight, "Distribute right edges"),
+                (AlignMode::Top, Icon::DistributeTop, "Distribute top edges"),
+                (AlignMode::Middle, Icon::DistributeMiddle, "Distribute vertical centres"),
+                (AlignMode::Bottom, Icon::DistributeBottom, "Distribute bottom edges"),
+            ] {
+                if kit::icon_button_sized(ui, ui.make_persistent_id(tip), icon, tip, kit::IconState::Action, egui::vec2(ICON_BTN_W, ICON_BTN_H), ICON_LG).activated {
+                    ops.push(Op::DistributeMode(mode));
+                }
             }
         });
         #[cfg(test)]
         align_probes::record_gap(_label.rect, _controls.response.rect);
+        ui.add_space(ALIGN_SECTION_GAP);
+        ui.label(micro_label("DISTRIBUTE SPACING"));
+        let gap_id = doc_id(ui,"distribute-gap");
+        let gap = ui.data(|d| d.get_temp::<f32>(gap_id).unwrap_or(0.0));
+        let ctx = ui.ctx().clone();
+        fields::num(ui,ui.available_width(),varos_app::shell::kit::field::Label::Letter("Gap"),"Spacing",gap,2,1.0,0.0..=1.0e6,ops,|v| {
+            ctx.data_mut(|d| d.insert_temp(gap_id,v)); Op::DistributeGap(v)
+        });
+        ui.horizontal(|ui| {
+            if icon_btn(ui,&ic.align[6],"Distribute horizontal spacing") { ops.push(Op::DistributeSpacing(DistAxis::Horizontal)); }
+            if icon_btn(ui,&ic.align[7],"Distribute vertical spacing") { ops.push(Op::DistributeSpacing(DistAxis::Vertical)); }
+        });
     });
 }
 

@@ -1,7 +1,13 @@
 use super::*;
 
 pub(crate) enum Op {
+    View(varos_core::editor::view_commands::ViewAction),
+    Zoom(f32),
     Tool(ToolKind),
+    NewLayer(bool),
+    DistributeMode(AlignMode),
+    DistributeSpacing(DistAxis),
+    DistributeGap(f32),
     SetBBox(Option<f32>, Option<f32>, Option<f32>, Option<f32>, f32, f32), // nx,ny,nw,nh + ref ax,ay
     SetRot(f32),
     SetOpacity(f32),
@@ -33,8 +39,7 @@ pub(crate) enum Op {
     LayerDupMove(Vec<u32>, u32, u8), // Alt+drag: duplicate the rows' art into the target
     LayerMoveBoard(Vec<u32>, Option<usize>, usize), // cross-section drop: srcs, source board, target board
     Flip(bool),
-    Align(AlignMode, AlignTarget), // A4: carries the target the align resolves against
-    Distribute(DistAxis),
+    Align(AlignMode, AlignTarget),     // A4: carries the target the align resolves against
     Bool(varos_core::boolean::BoolOp), // Pathfinder home + the Properties "Shape" mirror
     // ---- artboard ops (i = artboard index) ----
     AbActive(usize),
@@ -152,7 +157,17 @@ pub(crate) fn apply_picker_frame(
 pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
     for op in ops {
         match op {
+            Op::View(action) => ed.execute(EditCommand::View(action)),
+            Op::Zoom(value) => ed.execute(EditCommand::ZoomPercent(value)),
             Op::Tool(t) => ed.set_tool(t),
+            Op::NewLayer(sub) => ed.execute(EditCommand::Object(if sub {
+                varos_core::editor::wave::ObjectAction::NewSublayer
+            } else {
+                varos_core::editor::wave::ObjectAction::NewLayer
+            })),
+            Op::DistributeMode(mode) => ed.execute(EditCommand::DistributeMode(mode)),
+            Op::DistributeSpacing(axis) => ed.execute(EditCommand::DistributeSpacing { axis, gap: ed.distribute_gap }),
+            Op::DistributeGap(gap) => ed.execute(EditCommand::SetDistributeGap(gap)),
             Op::SetBBox(x, y, width, height, anchor_x, anchor_y) => {
                 ed.execute(EditCommand::SetObjectBounds { x, y, width, height, anchor_x, anchor_y })
             }
@@ -246,7 +261,6 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             }
             Op::Flip(horizontal) => ed.execute(EditCommand::Flip(horizontal)),
             Op::Align(mode, target) => ed.execute(EditCommand::Align { mode, target }),
-            Op::Distribute(axis) => ed.execute(EditCommand::Distribute(axis)),
             Op::Bool(operation) => ed.execute(EditCommand::Boolean(operation)),
             Op::AbActive(index) => ed.execute(EditCommand::SetActiveArtboard(index)),
             Op::AbRect(index, x, y, width, height) => {
