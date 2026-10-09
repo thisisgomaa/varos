@@ -232,6 +232,8 @@ fn write_pages_impl(
 ) -> Result<(Vec<u8>, usize, varos_core::ExportReport), ExportError> {
     // ---- Lane G: model blob stays authored; only page appearance is outlined (vector and image
     // documents alike — integration w2) ----
+    // ---- Lane H ----
+    let authored = doc;
     let outlined;
     let doc = if doc.text_boxes.is_empty() {
         doc
@@ -263,6 +265,9 @@ fn write_pages_impl(
     let mut pdf = Pdf::new();
     let mut page_ids = Vec::new();
     let mut report = varos_core::ExportReport::default();
+    // ---- Lane H ----
+    let mut text = crate::text_embed::prepare(authored, doc, &mut pdf, &mut ids.0, &mut report)
+        .map_err(ExportError::InvalidDocument)?;
     let images = if let Some((store, ppi, preview)) = resources {
         crate::image_write::prepare(doc, store, ppi, preview || model.is_some(), &mut pdf, &mut ids.0, &mut report)
             .map_err(ExportError::InvalidDocument)?
@@ -271,6 +276,8 @@ fn write_pages_impl(
     };
 
     for ab in pages {
+        // ---- Lane H ----
+        text.page();
         if cancel.load(Ordering::Relaxed) {
             return Err(ExportError::Cancelled);
         }
@@ -343,6 +350,10 @@ fn write_pages_impl(
                     tick.check(cancel)?;
                     // integration w2: gradients (resolved through swatches) first, in image documents too
                     if let Item::Path(pd) = d {
+                        // ---- Lane H ----
+                        if text.paint(pd.p.id, pd.xf, &mut c, &t) {
+                            continue;
+                        }
                         if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {
                             continue;
                         }
@@ -372,6 +383,10 @@ fn write_pages_impl(
             for d in members {
                 tick.check(cancel)?;
                 if let Item::Path(pd) = d {
+                    // ---- Lane H ----
+                    if text.paint(pd.p.id, pd.xf, &mut c, &t) {
+                        continue;
+                    }
                     if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {
                         continue;
                     }
@@ -389,6 +404,13 @@ fn write_pages_impl(
         page.parent(tree_id).media_box(Rect::new(0.0, 0.0, ab_w, ab_h)).contents(cont_id);
         {
             let mut res = page.resources();
+            // ---- Lane H ----
+            if !text.fonts.is_empty() {
+                let mut fonts = res.fonts();
+                for (name, reference) in &text.fonts {
+                    fonts.pair(Name(name.as_bytes()), *reference);
+                }
+            }
             if !gradients.is_empty() {
                 {
                     let mut sh = res.shadings();
@@ -817,4 +839,13 @@ pub(super) fn emit_coverage(c: &mut Content, p: &Path, xf: &Xform, t: &impl Fn([
             }
         }
     }
+}
+
+// ---- Lane H ----
+pub(crate) fn write_text_report(
+    doc: &Document,
+    pages: &[PageSpec],
+    cancel: &AtomicBool,
+) -> Result<(Vec<u8>, varos_core::ExportReport), ExportError> {
+    write_pages_impl(doc, pages, None, cancel, None).map(|(bytes, _, report)| (bytes, report))
 }

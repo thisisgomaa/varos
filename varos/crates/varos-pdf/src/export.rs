@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicBool;
 use varos_core::model::{Artboard, Document, GroupRole, Paint};
 use varos_core::Rgba;
 
-use crate::write::{drawable, mask_paths, write_pages};
+use crate::write::{drawable, mask_paths};
 
 /// Which pages an export produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -209,11 +209,16 @@ pub fn export_pdf_bytes_with_report(
     if plan.pages.is_empty() {
         return Err(ExportError::Unavailable(ExportUnavailable::NothingToExport));
     }
-    let bytes = write_pages(doc, &plan.pages, None, cancel)?;
-    let mut report = varos_core::ExportReport::default();
+    // ---- Lane H ----
+    let (bytes, mut report) = crate::write::write_text_report(doc, &plan.pages, cancel)?;
     // ---- Lane G ----
     if !doc.text_boxes.is_empty() {
-        report.notes.extend(varos_text_layout::export_notes(doc).map_err(ExportError::InvalidDocument)?);
+        report.notes.extend(
+            varos_text_layout::export_notes(doc)
+                .map_err(ExportError::InvalidDocument)?
+                .into_iter()
+                .filter(|n| n.kind != "text_outlines"),
+        );
     }
     for p in &doc.paths {
         if [p.appearance().fill(), p.appearance().stroke()]

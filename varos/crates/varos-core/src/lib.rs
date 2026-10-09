@@ -73,3 +73,7 @@ mod gradient_transform;
 pub mod actions;
 mod command_labels;
 pub mod registry;
+
+// ---- Lane H ----
+pub mod typography;
+pub mod typography_format;

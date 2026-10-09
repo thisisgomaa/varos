@@ -67,6 +67,7 @@ struct Entry {
 }
 pub struct TextLayout {
     engine: Engine,
+    flow_cache: Option<flow::Cache>,
     cache: HashMap<u32, Entry>,
     shaping: HashMap<u32, (TextBox, Layout, u64)>,
     clock: u64,
@@ -74,7 +75,14 @@ pub struct TextLayout {
 }
 impl TextLayout {
     pub fn new(fonts: FontSet) -> Result<Self, String> {
-        Ok(Self { engine: Engine::new(fonts)?, cache: HashMap::new(), shaping: HashMap::new(), clock: 0, layouts: 0 })
+        Ok(Self {
+            engine: Engine::new(fonts)?,
+            flow_cache: None,
+            cache: HashMap::new(),
+            shaping: HashMap::new(),
+            clock: 0,
+            layouts: 0,
+        })
     }
     pub fn bundled() -> Result<Self, String> {
         Self::new(bundled_fonts()?)
@@ -195,6 +203,13 @@ impl TextLayout {
         Ok(&self.cache[&text.id].output)
     }
     fn shape(&mut self, text: &TextBox) -> Result<Layout, String> {
+        self.shape_features(text, &Default::default())
+    }
+    fn shape_features(
+        &mut self,
+        text: &TextBox,
+        features: &std::collections::BTreeMap<String, u32>,
+    ) -> Result<Layout, String> {
         let source = text.source();
         if source.len() > 65_536 {
             return Err("text layout limit exceeded: 64 KiB per frame".into());
@@ -219,6 +234,12 @@ impl TextLayout {
         };
         let mut req = Request::new(&source, first.style.size, width);
         req.face = resolve(&first.style)?;
+        for (tag, value) in features {
+            req.features.push(varos_text::Feature {
+                tag: tag.as_bytes().try_into().map_err(|_| "invalid feature tag")?,
+                value: *value,
+            });
+        }
         req.direction = match text.para.direction {
             Direction::Auto => varos_text::Direction::Auto,
             Direction::Ltr => varos_text::Direction::Ltr,
@@ -294,7 +315,7 @@ impl TextLayout {
     pub fn outlined(&mut self, source: &Document, zoom: f32) -> Result<Document, String> {
         let mut doc = source.clone();
         for text in &source.text_boxes {
-            let output = self.compose(text, zoom)?.clone();
+            let output = self.compose_document(source, text, zoom)?;
             let index = doc.nodes.iter().position(|n| n.kind == NodeKind::Text(text.id)).ok_or("missing text leaf")?;
             let extra = output.paths.iter().map(path_vertices).sum::<usize>() + output.paths.len() * 2;
             if u64::from(doc.ids) + extra as u64 > u64::from(u32::MAX) {
@@ -331,6 +352,7 @@ impl TextLayout {
             }
         }
         doc.text_boxes.clear();
+        doc.typography = Default::default();
         doc.sync_tree();
         Ok(doc)
     }
@@ -415,13 +437,7 @@ pub fn outline_document(doc: &Document) -> Result<Document, String> {
     if doc.text_boxes.is_empty() {
         return Ok(doc.clone());
     }
-    let fonts = bundled_fonts()?;
-    let bundled = doc
-        .text_boxes
-        .iter()
-        .flat_map(|t| &t.runs)
-        .all(|r| fonts.faces().iter().any(|f| font_hash(f.content_hash) == r.style.font.hash));
-    TextLayout::new(if bundled { fonts } else { host_fonts::snapshot()? })?.outlined(doc, 1.)
+    TextLayout::new(font_export::snapshot(doc)?)?.outlined(doc, 1.)
 }
 pub fn export_note() -> varos_core::ExportNote {
     varos_core::ExportNote {
@@ -445,15 +461,9 @@ pub fn export_notes(doc: &Document) -> Result<Vec<varos_core::ExportNote>, Strin
         return Ok(vec![]);
     }
     let mut notes = vec![export_note()];
-    let fonts = bundled_fonts()?;
-    let bundled = doc
-        .text_boxes
-        .iter()
-        .flat_map(|t| &t.runs)
-        .all(|r| fonts.faces().iter().any(|f| font_hash(f.content_hash) == r.style.font.hash));
-    let mut engine = TextLayout::new(if bundled { fonts } else { host_fonts::snapshot()? })?;
+    let mut engine = TextLayout::new(font_export::snapshot(doc)?)?;
     for text in &doc.text_boxes {
-        if engine.compose(text, 1.)?.overset {
+        if engine.compose_document(doc, text, 1.)?.overset {
             notes.push(varos_core::ExportNote {
                 kind: "text_overset".into(),
                 object_id: Some(text.id),
@@ -465,3 +475,10 @@ pub fn export_notes(doc: &Document) -> Result<Vec<varos_core::ExportNote>, Strin
 }
 
 mod tracking;
+
+// ---- Lane H ----
+pub mod flow;
+mod frame_split;
+pub mod path_mapping;
+
+pub mod font_export;

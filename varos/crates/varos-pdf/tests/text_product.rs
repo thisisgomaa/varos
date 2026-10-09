@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use varos_core::{format::Limits, EditCommand, Editor};
 #[test]
-fn text_native_reopens_editable_deliverable_is_outlines() {
+fn text_native_reopens_editable_deliverable_embeds_text() {
     let mut ed = Editor::new();
     let t = varos_text_layout::default_text("مرحبا Varos", [20., 80.]).unwrap();
     ed.try_execute_created(EditCommand::AddText { text: t, parent: None }).unwrap();
@@ -10,11 +10,12 @@ fn text_native_reopens_editable_deliverable_is_outlines() {
     assert_eq!(loaded.doc.text_boxes, ed.doc.text_boxes);
     let plan = varos_pdf::plan_pdf_export(&ed.doc, varos_pdf::ExportScope::ArtworkBounds).unwrap();
     let (pdf, report) = varos_pdf::export_pdf_bytes_with_report(&ed.doc, &plan, &AtomicBool::new(false)).unwrap();
-    assert!(report.notes.iter().any(|n| n.message == "text exported as outlines"));
+    assert!(report.notes.iter().any(|n| n.kind == "text_embedded"));
     assert!(!varos_pdf::has_embedded_model(&pdf));
     let out = varos_text_layout::outline_document(&ed.doc).unwrap();
     let plan2 = varos_pdf::plan_pdf_export(&out, varos_pdf::ExportScope::ArtworkBounds).unwrap();
-    assert_eq!(pdf, varos_pdf::export_pdf_bytes(&out, &plan2, &AtomicBool::new(false)).unwrap());
+    assert_ne!(pdf, varos_pdf::export_pdf_bytes(&out, &plan2, &AtomicBool::new(false)).unwrap());
+    assert_eq!(lopdf::Document::load_mem(&pdf).unwrap().extract_text(&[1]).unwrap().trim(), "مرحبا Varos");
 }
 
 #[test]

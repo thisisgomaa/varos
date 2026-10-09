@@ -1,6 +1,7 @@
 use super::*;
 
 pub(crate) struct Snap {
+    pub(crate) typography: varos_core::typography::Typography,
     pub(crate) text: Option<varos_core::text::TextBox>,
     pub(crate) scale_strokes: bool,
     pub(crate) tool: ToolKind,
@@ -126,6 +127,7 @@ impl Snap {
         };
         let inspection = ed.stroke_inspection.read(ed);
         Snap {
+            typography: ed.doc.typography.clone(),
             text: None,
             scale_strokes: ed.select_transform.scale_strokes,
             tool: ed.tool,

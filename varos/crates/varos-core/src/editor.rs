@@ -3845,6 +3845,9 @@ impl Editor {
         self.commit();
     }
     pub fn commit(&mut self) {
+        // ---- Lane H ----
+        crate::typography::after_delete(&mut self.doc);
+        // ---- Lane H end ----
         self.doc.sync_tree(); // adopt new paths / prune dead + empty nodes / re-flatten z
         self.doc.assign_artboard_ids(); // a new or duplicated page gets its stable id (format 4)
         self.id_high_water = self.id_high_water.max(self.doc.ids);

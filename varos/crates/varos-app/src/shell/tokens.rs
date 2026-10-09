@@ -718,6 +718,10 @@ pub fn preferences_pasteboard(colour: crate::storage::preferences::CanvasColour)
     [rgb[0] as f32 / 255.0, rgb[1] as f32 / 255.0, rgb[2] as f32 / 255.0, 1.0]
 }
 
+// ---- Lane H: provisional type-on-path bracket handles ----
+pub const TEXT_PATH_BRACKET_HALF: f32 = 8.0;
+pub const TEXT_PATH_HIT_RADIUS: f32 = 8.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

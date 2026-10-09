@@ -27,6 +27,8 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
 /// Bridge 1.2 `readable_vrs` list derives from this, so reserved/skipped numbers are never advertised).
 pub fn readable_versions() -> Vec<u32> {
     let mut v: Vec<u32> = MIGRATIONS.iter().map(|(from, _)| *from).collect();
+    // ---- Lane H: isolated v9 base; integrator inserts v10-v13 steps ----
+    v.push(9);
     v.push(super::FORMAT_VERSION);
     v
 }
@@ -35,6 +37,13 @@ pub fn readable_versions() -> Vec<u32> {
 pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result<Document, LoadError> {
     let mut v = from;
     while v < to {
+        // ---- Lane H: temporary integration bridge, no invented v10-v13 migrations ----
+        if v == 9 && to == crate::typography_format::VERSION {
+            doc = crate::typography_format::migrate_v13_to_v14(doc, limits)?;
+            v = crate::typography_format::VERSION;
+            continue;
+        }
+        // ---- Lane H end ----
         let Some(&(_, step)) = MIGRATIONS.iter().find(|(f, _)| *f == v) else {
             return Err(LoadError::MigrationFailed { from: v, reason: format!("no migration from format {v}") });
         };

@@ -125,6 +125,7 @@ pub fn contains_arabic(text: &str) -> bool {
 }
 
 pub fn validate_document(doc: &Document) -> Result<(), String> {
+    crate::typography::validate(doc)?;
     if doc.text_boxes.len() > 4096 {
         return Err("text box limit exceeded".into());
     }
@@ -215,6 +216,11 @@ pub fn set(ed: &mut Editor, id: u32, mut text: TextBox) -> Result<(), String> {
         return Ok(());
     }
     ed.begin();
+    if ed.doc.text_boxes[index].source() != text.source() {
+        if let Some(frame) = ed.doc.typography.frames.get_mut(&id) {
+            crate::typography::remap_characters(frame, &ed.doc.text_boxes[index].source(), &text.source());
+        }
+    }
     ed.doc.text_boxes[index] = text;
     ed.dirty = true;
     ed.commit();
@@ -253,6 +259,19 @@ pub fn check_change(ed: &Editor, text: &TextBox, replacing: Option<u32>, parent:
         + text.runs.iter().map(|r| r.text.len()).sum::<usize>();
     if bytes > 8 * 1024 * 1024 {
         return Err("text document budget exceeded".into());
+    }
+    if let Some(id) = replacing {
+        let mut doc = ed.doc.clone();
+        if let Some(old) = doc.text_boxes.iter_mut().find(|t| t.id == id) {
+            if old.source() != text.source() {
+                if let Some(f) = doc.typography.frames.get_mut(&id) {
+                    crate::typography::remap_characters(f, &old.source(), &text.source());
+                }
+            }
+            *old = text.clone();
+            old.id = id;
+        }
+        crate::typography::validate(&doc)?;
     }
     Ok(())
 }
