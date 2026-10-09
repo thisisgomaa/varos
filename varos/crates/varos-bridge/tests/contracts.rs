@@ -3997,3 +3997,29 @@ fn swatch_bridge_export_and_recolor_are_atomic_and_budgeted() {
     host.editor.undo();
     assert_eq!(host.editor.doc, before);
 }
+
+/// Integration w2: every extended API 1.2 edit verb of every wave-2 lane (drawing, view, text,
+/// images, colour, Lane C) is discoverable through list_verbs AND has a schema; legacy lists stay frozen.
+#[test]
+fn wave_two_extended_verbs_are_all_listed_and_schematised() {
+    let table = varos_bridge::mcp::tools_for_api("1.2");
+    let edit = table["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
+    let extended: Vec<String> = edit["inputSchema"]["$defs"]["extended_verbs"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    for verb in ["shape_tool", "pencil", "view", "add_text", "set_text", "colour", "outline_stroke", "live_corners"] {
+        assert!(extended.iter().any(|v| v == verb), "{verb} missing from the 1.2 edit enum");
+    }
+    let listed = varos_bridge::mcp::list_verbs().to_string();
+    for verb in &extended {
+        assert!(listed.contains(&format!("\"{verb}\"")), "{verb} missing from list_verbs");
+        assert!(varos_bridge::mcp::schema("edit", Some(verb)).is_ok(), "{verb} has no schema");
+    }
+    for tool in ["add_image", "image_action", "import_file", "import_clipboard", "export_screens", "preferences"] {
+        assert!(table["tools"].as_array().unwrap().iter().any(|t| t["name"] == tool), "{tool} not listed");
+        assert!(varos_bridge::mcp::schema(tool, None).is_ok(), "{tool} has no schema");
+    }
+}

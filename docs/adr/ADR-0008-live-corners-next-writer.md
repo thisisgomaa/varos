@@ -1,3 +1,8 @@
+> **Integration w2 (2026-10-09):** Live Corners are final format **9** (`CORNERS_VERSION`), together
+> with Lane F's container-only Quick Look preview. The named migration is `migrate_v8_to_v9` (identity;
+> formerly `migrate_v5_to_live_corners`). Fixtures restamped 6 → 9; new refusals
+> `refused_corners_on_v8.json` and `refused_future.json` (10). See VRS_FORMAT "Wave-2 formats 6–9".
+
 # ADR-0008 amendment — live corners, next writer (Lane C)
 
 Status: implemented in feat/w2-export-paths; provisional UI and owner design review pending.

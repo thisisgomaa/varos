@@ -1,3 +1,8 @@
+> **Integration w2 (2026-10-09):** the image writer is final format **6**. The named migration is
+> `migrate_v5_to_v6` (identity; formerly `migrate_v5_to_next_images`). Gradients took 7, text 8,
+> Live Corners + preview 9; the `v6-images` fixtures stay stamped 6 (they load as migrated and re-save
+> byte-identical apart from the stamp), the refused-future fixture is 10. See VRS_FORMAT "Wave-2 formats 6–9".
+
 # ADR-0008 amendment: next image writer (proposed)
 
 Image lane implements the proposed ADR-0014. Version **6 is provisional**: the integrator assigns the actual next writer version in merge order, before gradients/text. Existing v1–v5 fixtures and Bridge 1.0/1.1 wire fixtures remain frozen.

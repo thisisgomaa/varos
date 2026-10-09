@@ -7,17 +7,24 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
-## Format 8 — editable text (stamped 2026-10-09, `integ/w2`)
+## Wave-2 formats 6–9 (stamped 2026-10-09, `integ/w2`) — current writer **9**
 
-Text is pinned to its FINAL number **8** (`TEXT_FORMAT_VERSION = FORMAT_VERSION = 8`) before images
-(**6**) and gradients (**7**) land, so files saved meanwhile stay valid; **9** is reserved for Live
-Corners (export-paths lane). JSON `varos:8` and PDF `/VAROS_SchemaVersion 8` always agree.
-Until wave-2 stage 2, `MIGRATIONS` holds one TEMPORARY identity step `migrate_v5_to_v8` (it runs
-`text_format::migrate_to_text_boxes`, creating no source, fonts or outlines); stage 2 splits it into
-v5→v6 (images), v6→v7 (gradients), v7→v8 (text). This build refuses a `varos:6`/`varos:7` file
-(`MigrationFailed`, no step). Forward contract: images/gradients keys are optional with defaults,
-so a v8 file without them reads on the stage-2 reader. A plain v5 file re-saves byte-identical
-apart from the stamp (`varos-core/tests/format_v8_pin.rs`).
+Final numbers, binding merge order: **6** images · **7** gradients + swatches · **8** editable text ·
+**9** Live Corners + the optional Quick Look preview (one bump). `FORMAT_VERSION = CORNERS_VERSION = 9`;
+`IMAGE_VERSION = 6`, `GRADIENT_VERSION = 7`, `TEXT_FORMAT_VERSION = 8`, `PREVIEW_FORMAT_VERSION = 9`
+(pinned literally by `varos-core/tests/format_pin.rs`). JSON `varos` and PDF `/VAROS_SchemaVersion`
+always agree. `MIGRATIONS` is the contiguous named pure chain `migrate_v5_to_v6` (images, identity),
+`migrate_v6_to_v7` (gradients, identity, no validation), `migrate_v7_to_v8` (text,
+`text_format::migrate_to_text_boxes`), `migrate_v8_to_v9` (corners + preview, identity); Bridge 1.2
+`readable_vrs` is derived from that table (1–9). Each era's keys are refused under an older stamp
+before typed decode: images (<6), gradient paints/swatches (<7), text (<8), corners (<9) and the
+PDF-catalog preview keys (<9). Every new key is optional with a default, so plain documents keep
+their bytes apart from the stamp. `Document` key order (frozen by `fixtures/v9/mixed.json`):
+`name, description, tags, images, assets, raster_effects_ppi, swatches, text_boxes, paths, …`.
+Each lane's refused-future fixture is format **10**. Old-reader gates v4–v8 are frozen in
+`varos-pdf/tests/{old_reader_harness,format_v9}.rs` (raw JSON and PDF container).
+
+### Format 8 — editable text
 
 New optional `doc.text_boxes` stores TextBox records; each has `id`, `box_kind` (`Point` or
 `{"Area":[x,y,width,height]}`), baseline `frame:[x,y]`, `runs:[{text,style}]`, and `para`.
@@ -34,18 +41,15 @@ outline vertices. Unknown/missing font snapshots fail explicitly when rendering/
 Omitted text storage remains omitted for plain-path files. Declaring a pre-text version while
 carrying either text key is refused. Frozen `fixtures/text_next/` includes mixed source and
 legacy-key, Arabic-tracking, future-JSON/PDF refusal cases, with SHA256SUMS (restamped 2026-10-09:
-`mixed.json` and `refuse_arabic_tracking.json` → 8; `refuse_newer.json`/`.pdf` → 9; `refuse_text_in_v5.json` stays 5).
+`mixed.json` and `refuse_arabic_tracking.json` → 8; `refuse_newer.json`/`.pdf` → 10; `refuse_text_in_v5.json`
+stays 5; new `refuse_text_in_v7.json`).
 The PDF tests exercise the frozen v5 reader gate against current text output before typed decode.
 Native files retain editable source; PDF/SVG deliverables report **text exported as outlines**.
 
-<!-- Lane F next-preview fix round -->
-## Implementation status — Lane F next preview format (2026-10-09)
+## Implementation status — Lane F preview (2026-10-09, merged)
 
-This worktree now stamps JSON `varos:6` and PDF `/VAROS_SchemaVersion 6`, provisional until the
-moderator assigns merge-order numbers. It adds optional container preview keys, with the pure
-`migrate_v5_to_next_preview` step and frozen refusal inputs described at the end of this contract.
-The Lane H status below is historical input to this next writer, not this worktree's current stamp.
-<!-- End Lane F next-preview fix round -->
+The Lane F branch stamped a provisional 6; integration folded its container-only preview keys into
+format **9** (see "Wave-2 formats 6–9" above and the preview section at the end of this contract).
 
 ## Implementation status — Lane H format 5 (2026-10-09)
 
@@ -156,13 +160,10 @@ S5-B now supplies the version-first gate through `format::decode_model`, includi
 | 4 | **legacy, readable through identity migration** | builds through base `7b48f2c` | v3 plus one key on every artboard: `id` (u32 > 0, unique among artboards, from the document id counter) — stable artboard identity (§6c). `active` must name an artboard (or be 0 on a free canvas). A v1/v2/v3 file carrying an artboard `id` is refused. |
 
 | 5 | **legacy, readable through identity migration** | `feat/p2-stroke` builds through main `c852a55` | optional `doc.paths[].stroke_style`; exact keys and validation in §6d; default authored doc bytes unchanged. |
-| 6 | **reserved — images** (wave-2 stage 2, not stamped) | — | image objects + assets; refused by the 8 build until the real v5→v6 step lands. |
-| 7 | **reserved — gradients + swatches** (wave-2 stage 2, not stamped) | — | `Paint` gradients, swatch table; refused by the 8 build until v6→v7 lands. |
-| 8 | **current writer — STAMPED 2026-10-09** | `integ/w2` | optional `doc.text_boxes`, `NodeKind::Text` (section "Format 8" above). |
-| 9 | **reserved — Live Corners** (export-paths lane, not stamped) | — | per-corner params. |
-
-| 6 (provisional next) | **Lane F writer, integration pending** | `feat/w2-app` | optional container `/VAROS_Preview` and `/VAROS_PreviewVersion`; pure identity migration from 5; merge-order renumber required. |
-| 5 | **Lane H writer, merge pending** | `feat/p2-stroke` | optional `doc.paths[].stroke_style`; exact keys and validation in §6d; default authored doc bytes unchanged. |
+| 6 | **legacy, readable through identity migration** (stamped 2026-10-09) | `integ/w2` intermediate | images: optional `doc.images`, `doc.assets`, `doc.raster_effects_ppi`, `NodeKind::Image`; binary resources in the PDF container ([ADR-0008 images amendment](../adr/ADR-0008-amendment-next-images.md)). |
+| 7 | **legacy, readable through identity migration** (stamped 2026-10-09) | `integ/w2` intermediate | gradients: tagged `fill`/`stroke` gradient and `swatch_ref` paints, optional `doc.swatches` ([gradients amendment](../adr/ADR-0008-amendment-next-gradients.md)). |
+| 8 | **legacy, readable through migration** (STAMPED 2026-10-09; shipped by stage 1) | `integ/w2` stage 1 | editable text: optional `doc.text_boxes`, `NodeKind::Text` (section "Format 8"). |
+| 9 | **current writer** (stamped 2026-10-09) | `integ/w2` | Live Corners: optional `doc.paths[].corners` ([live corners amendment](../adr/ADR-0008-live-corners-next-writer.md)); optional PDF-catalog `/VAROS_Preview` + `/VAROS_PreviewVersion` (Lane F, container-only). |
 
 ## 6. Migration v1 → v2
 
@@ -554,11 +555,11 @@ the current reader accepts their version then refuses their invalid model. The o
 the base-7b48f2c v4 gate; plain v5 JSON/PDF and `doc:42` demonstrate refusal before typed decode.
 Native save retains editable centrelines/styles; export baking never overwrites authored paths.
 
-### Proposed next writer: images (lane w2-images)
+### Format 6: images (lane w2-images; provisional 6 confirmed at integration)
 
 See [the image amendment](../adr/ADR-0008-amendment-next-images.md). Provisional version 6 adds `images`, `assets`, `raster_effects_ppi` and `NodeKind::Image(id)`. Defaults are omitted; the named v5 migration preserves old payloads. Original and proxy binary streams are siblings of the embedded model attachment, joined through immutable asset keys, never JSON pixel arrays. The integrator renumbers this writer if merge order changes.
 
-### Next-format gradient paints and document swatches (lane B)
+### Format 7: gradient paints and document swatches (lane B; renumbered 6 → 7 at integration)
 
 The writer in `feat/w2-gradients` emits `NEXT_GRADIENT_VERSION` (provisional 6 against the
 format-5 base; the moderator renumbers after the image lane). The normative keys, limits,
@@ -569,7 +570,7 @@ Tagged gradient/reference paints are refused under earlier version stamps before
 Frozen v4/v5 fixture files are unchanged. Whole container version stamps advance on Save.
 
 <!-- Lane F fix round: next-preview format; moderator renumbers in merge order -->
-### Next native format: optional Quick Look preview (2026-10-09)
+### Format 9 container key: optional Quick Look preview (Lane F; renumbered 6 → 9 at integration)
 
 This lane's next writer uses provisional format **6**, after stroke's 5. The integrator must renumber
 this step after images, gradients, text and Live Corners in the actual merge order; this lane owns no
@@ -583,8 +584,8 @@ refuses these keys with an older or absent schema stamp, malformed references, f
 filtered or oversized streams, and invalid PNG signatures. A previous v5 reader refuses the new format
 before typed decoding. Missing previews remain valid in the next format; no downgrade writer is offered.
 
-Frozen fixtures in `varos-pdf/fixtures/quicklook`: `next-preview.vrs`, `refuse-old-stamp.vrs`,
-`future-v7.json` and `future-v7.pdf`; `fix_round_tests` checks content preservation and the previous
+Frozen fixtures in `varos-pdf/fixtures/quicklook`: `next-preview.vrs` (restamped 9), `refuse-old-stamp.vrs`
+(5), `refuse-v8-stamp.vrs` (8), `future-v10.json` and `future-v10.pdf`; `fix_round_tests` checks content preservation and the previous
 reader gate. Historical v5 visual goldens compare unchanged output after normalizing only the two
 single-digit format stamps. Their original files and SHA256SUMS remain untouched.
 
