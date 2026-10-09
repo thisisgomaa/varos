@@ -500,6 +500,8 @@ pub fn scissor_px(rect: [f32; 4], view: View, w: f32, h: f32) -> Option<[u32; 4]
 /// `mask_fan`/`mask_clear` are ranges into the shared FILL buffer (the ring fan + its bbox cover quad).
 #[derive(Debug, PartialEq)]
 pub enum GroupDraw {
+    // ---- Lane A ----
+    Nested { members: Vec<GroupDraw>, mask: Option<Vec<GroupDraw>>, quad: (u32, u32) },
     Opaque { draws: Vec<Draw> },
     Layer { draws: Vec<Draw>, quad: (u32, u32) },
     ClippedLayer { draws: Vec<Draw>, quad: (u32, u32), mask_fan: (u32, u32) },
@@ -551,7 +553,7 @@ fn knock_draws(
 }
 
 /// Does this (single-object) prim set need knockout? = has a fill AND a translucent stroke.
-fn needs_knockout(prims: &[Prim]) -> bool {
+pub(crate) fn needs_knockout(prims: &[Prim]) -> bool {
     prims.iter().any(|p| matches!(p, Prim::Fill { .. } | Prim::GradientFill{stroke:false,..}))
         && prims
             .iter()
@@ -765,6 +767,13 @@ pub fn build_content(
     let mut fgv = Vec::new();
     let mut opv = Vec::new();
     let mut metas: Vec<GroupDraw> = Vec::new();
+    // ---- Lane A ----
+    if crate::appearance_layers::recursive(groups) {
+        for g in groups {
+            metas.push(crate::appearance_layers::append(g, view, zoom, w, h, (&mut fillv, &mut fgv, &mut opv)));
+        }
+        return (fillv, fgv, opv, metas);
+    }
     for g in groups {
         // a CLIPPING MASK is its own self-contained render pass (mask fan → clip-tested members → clear):
         // it never coalesces with the opaque run, so its clip bit can't leak into neighbours.
@@ -820,7 +829,7 @@ fn push_group(metas: &mut Vec<GroupDraw>, opv: &mut Vec<Vertex>, g: &Group, draw
 }
 
 /// A full-NDC quad (two triangles); the object opacity rides in colour.a for the composite shader.
-fn fullscreen_quad(v: &mut Vec<Vertex>, opacity: f32) {
+pub(crate) fn fullscreen_quad(v: &mut Vec<Vertex>, opacity: f32) {
     let col = [0.0, 0.0, 0.0, opacity];
     let (a, b, c, d) = ([-1.0f32, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]);
     for p in [a, b, c, a, c, d] {
@@ -1094,6 +1103,7 @@ mod tests {
                     | GroupDraw::Layer { draws, .. }
                     | GroupDraw::ClippedLayer { draws, .. } => draws.iter(),
                     GroupDraw::Clip { members, .. } => members.iter(),
+                    GroupDraw::Nested { .. } => [].iter(),
                 })
                 .filter(|d| matches!(d, Draw::StrokeCov { .. }))
                 .count()

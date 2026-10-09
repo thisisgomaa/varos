@@ -2,6 +2,8 @@
 
 pub mod export;
 mod gradient;
+// ---- Lane A ----
+mod appearance_budget;
 
 mod clipboard;
 pub use clipboard::clipboard_png;
@@ -75,6 +77,9 @@ pub fn rasterize_canvas_with_images(
     if !scene.errors.is_empty() {
         return failed_raster(scene.errors);
     }
+    if let Err(e) = appearance_budget::check(&scene.content, size) {
+        return failed_raster(vec![e]);
+    }
     let mut pixmap = Pixmap::new(size[0].max(1), size[1].max(1)).expect("non-zero canvas size");
     pixmap.fill(tiny_skia::Color::from_rgba8(20, 19, 19, 255));
     draw_groups(&scene.content, &mut pixmap, Transform::from_row(ppu, 0.0, 0.0, ppu, pan[0], pan[1]));
@@ -127,6 +132,9 @@ pub fn rasterize_with_blobs(snapshot: Arc<Document>, blobs: &varos_core::images:
     if !scene.errors.is_empty() {
         return failed_raster(scene.errors);
     }
+    if let Err(e) = appearance_budget::check(&scene.content, size) {
+        return failed_raster(vec![e]);
+    }
     let bounds = scene_bounds(&scene.content);
     let (scale, ox, oy) = bounds.map_or((1.0, 0.0, 0.0), |b| fit(b, w, h));
     let xf = Transform::from_row(scale, 0.0, 0.0, scale, ox, oy);
@@ -175,6 +183,7 @@ pub fn rasterize_artboard_checked(
         return Err(scene.errors.join("; "));
     }
     let xf = Transform::from_row(scale, 0.0, 0.0, scale, -page.x * scale, -page.y * scale);
+    appearance_budget::check(&scene.content, size)?;
     let Some(mut pixmap) = Pixmap::new(size[0], size[1]) else {
         return Err("raster allocation failed".into());
     };
@@ -244,6 +253,24 @@ fn draw_grid(dst: &mut Pixmap, scale: f32) {
 fn draw_groups(groups: &[Group], dst: &mut Pixmap, xf: Transform) {
     for group in groups {
         match group {
+            // ---- Lane A ----
+            Group::Composite { opacity, members, mask } => {
+                let Some(mut layer) = Pixmap::new(dst.width(), dst.height()) else { continue };
+                draw_groups(members, &mut layer, xf);
+                if let Some(groups) = mask {
+                    let Some(mut mask_layer) = Pixmap::new(dst.width(), dst.height()) else { continue };
+                    draw_groups(groups, &mut mask_layer, xf);
+                    layer.apply_mask(&Mask::from_pixmap(mask_layer.as_ref(), MaskType::Alpha));
+                }
+                dst.draw_pixmap(
+                    0,
+                    0,
+                    layer.as_ref(),
+                    &PixmapPaint { opacity: *opacity, ..PixmapPaint::default() },
+                    Transform::identity(),
+                    None,
+                );
+            }
             Group::Opaque(prims) => draw_prims(prims, dst, xf),
             Group::Knockout(prims) => draw_knockout(prims, dst, xf),
             Group::Isolated { opacity, prims } => {
@@ -462,6 +489,10 @@ fn scene_bounds(groups: &[Group]) -> Option<[f32; 4]> {
     fn visit(group: &Group, out: &mut Option<[f32; 4]>) {
         let prims = match group {
             Group::Opaque(p) | Group::Knockout(p) | Group::Isolated { prims: p, .. } => p,
+            Group::Composite { members, .. } => {
+                members.iter().for_each(|g| visit(g, out));
+                return;
+            }
             Group::Clip { mask_rings, members } => {
                 let mut member_bounds = None;
                 members.iter().for_each(|g| visit(g, &mut member_bounds));

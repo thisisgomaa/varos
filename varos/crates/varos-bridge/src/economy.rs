@@ -271,6 +271,8 @@ fn walk(
         // ---- Lane D: opt-in drawing verb expansion ----
         if !crate::EDIT_VERBS.contains(&verb)
             && !(construction && crate::drawing::VERBS.contains(&verb))
+            // ---- Lane A ----
+            && !(api == "1.2" && ["appearance", "mask"].contains(&verb))
             && !(api == "1.2" && ["set_stroke_style", "add_text", "set_text"].contains(&verb))
             && !(construction && (crate::CONSTRUCTION_VERBS.contains(&verb) || verb == "trace_rgba"))
             && !(api == "1.2"

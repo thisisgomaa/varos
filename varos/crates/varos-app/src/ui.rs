@@ -36,6 +36,8 @@ mod export;
 pub(crate) mod fields;
 mod guide_field;
 mod lane_c;
+// ---- Lane A ----
+mod appearance;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 // ---- Lane F ----
@@ -501,6 +503,10 @@ impl Ui {
         };
         let recovery = &self.recovery;
         let ic_fit = &self.ic_fit; // the status strip's Fit control shares the artboard panel's icon
+                                   // ---- Lane A ----
+        if self.ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("appearance-open"))).unwrap_or(false) {
+            self.shell.show_panel(varos_app::shell::PanelId::Properties);
+        }
         let shell = &mut self.shell; // Stage 4: the box tree hosting the whole workspace
         let prev_hole = self.board_hole; // last frame's canvas hole (the seam underlay paints around it)
         let mut new_hole: Option<egui::Rect> = None;
@@ -522,6 +528,7 @@ impl Ui {
         let mut lay_drag = self.lay_drag;
         let mut lay_anchor = self.lay_anchor;
         let mut ops: Vec<Op> = Vec::new();
+        appearance::settle(&self.ctx, &mut ops);
         let mut refpt = self.refpt;
         let mut lock = self.lock;
         let mut ab_lock = self.ab_lock;

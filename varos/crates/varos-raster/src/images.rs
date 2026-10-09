@@ -76,6 +76,8 @@ pub fn rasterize_with_images(
     if !scene.errors.is_empty() {
         return Err(scene.errors.join("; "));
     }
+    // ---- Lane A ----
+    super::appearance_budget::check(&scene.content, size)?;
     let mut dst = Pixmap::new(size[0], size[1]).ok_or("Raster allocation refused")?;
     if let Some(c) = background {
         dst.fill(tiny_skia::Color::from_rgba(c[0], c[1], c[2], c[3]).ok_or("Invalid background")?);

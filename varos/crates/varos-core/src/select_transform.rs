@@ -329,6 +329,16 @@ impl Editor {
                     *dash *= scale;
                 }
                 path.stroke_style.dash_phase *= scale;
+                // ---- Lane A ----
+                for entry in &mut path.stack {
+                    if let crate::appearance::StackItem::Stroke { width, style, .. } = entry {
+                        *width *= scale;
+                        for dash in &mut style.dash {
+                            *dash *= scale;
+                        }
+                        style.dash_phase *= scale;
+                    }
+                }
             }
             if s.scale != [1., 1.] || s.shear != 0. {
                 *path = crate::live_corners::evaluated(path);
@@ -684,6 +694,8 @@ impl Editor {
             clip_exempt: false,
             xform: Xform::default(),
             role: GroupRole::Normal,
+            // ---- Lane A ----
+            look: None,
             mask_child: None,
         });
         if let Some(p) = parent {

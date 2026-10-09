@@ -304,7 +304,27 @@ fn write_pages_impl(
         let mut gradients = crate::gradient::Pool::new();
         let mut tick = Tick::default();
         let mut items = Vec::new();
-        if images.is_empty() {
+        // ---- Lane A ----
+        let appearance_forms = if varos_core::appearance_scene::needed(doc) {
+            appearance::paint_tree(
+                doc,
+                ab,
+                &mut c,
+                &mut pdf,
+                &mut ids,
+                &mut gss,
+                &mut knocks,
+                &mut knock_pool,
+                &mut gradients,
+                &images,
+                cancel,
+            )?
+        } else {
+            vec![]
+        };
+        if !appearance_forms.is_empty() {
+            // Recursive forms already painted the artwork; legacy traversal stays byte frozen.
+        } else if images.is_empty() {
             for d in drawn_on(doc, ab) {
                 tick.check(cancel)?;
                 items.push(Item::Path(d));
@@ -417,8 +437,16 @@ fn write_pages_impl(
                     d.pair(Name(format!("GS{i}").as_bytes()), g.r);
                 }
             }
-            if !knocks.is_empty() || !images.is_empty() || gradients.iter().any(|g| g.form.is_some()) {
+            if !appearance_forms.is_empty()
+                || !knocks.is_empty()
+                || !images.is_empty()
+                || gradients.iter().any(|g| g.form.is_some())
+            {
                 let mut d = res.x_objects();
+                // ---- Lane A ----
+                for (name, r) in &appearance_forms {
+                    d.pair(Name(name.as_bytes()), *r);
+                }
                 let mut emitted = std::collections::HashSet::new();
                 for im in &images {
                     if emitted.insert(im.r.get()) {
@@ -818,3 +846,7 @@ pub(super) fn emit_coverage(c: &mut Content, p: &Path, xf: &Xform, t: &impl Fn([
         }
     }
 }
+
+// ---- Lane A ----
+#[path = "appearance_pdf.rs"]
+mod appearance;

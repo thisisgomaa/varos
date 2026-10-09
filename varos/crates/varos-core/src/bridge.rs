@@ -45,6 +45,9 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
                 && matches!(
                     command,
                     EditCommand::Drawing(_)
+                        // ---- Lane A ----
+                        | EditCommand::Appearance(_)
+                        | EditCommand::Mask(_)
                         | EditCommand::AddText { .. }
                         | EditCommand::SetText { .. }
                         | EditCommand::Image(_)
@@ -83,6 +86,9 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     }
     // ---- Lane G ----
     match command {
+        // ---- Lane A ----
+        Appearance(edit) => return crate::appearance_edits::check(ed, edit),
+        Mask(edit) => return crate::appearance_edits::check_mask(ed, edit),
         AddText { text, parent } => crate::text::check_change(ed, text, None, *parent)?,
         SetText { id, text } => crate::text::check_change(ed, text, Some(*id), None)?,
         _ => {}
@@ -202,6 +208,9 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        // ---- Lane A ----
+        Appearance(edit) => crate::appearance_edits::check(ed, edit),
+        Mask(edit) => crate::appearance_edits::check_mask(ed, edit),
         Drawing(action) => crate::drawing::check(ed, action),
         AddText { .. } | SetText { .. } => Ok(()),
         Colour(c) => crate::colour_commands::check(ed, c),

@@ -128,9 +128,8 @@ pub(crate) fn panel_properties(
 
             hsep(ui, inner);
 
-            // Fill / Stroke swatches + stroke weight
-            paint_row(ui, PaintTarget::Fill, s.fill, s.fill_mixed, ops);
-            paint_row(ui, PaintTarget::Stroke, s.stroke, s.stroke_mixed, ops);
+            // ---- Lane A: the one Appearance home replaces legacy Fill/Stroke rows ----
+            super::super::appearance::section(ui, s, ops);
             stroke_section(ui, s, ic, inner, ops);
 
             hsep(ui, inner);

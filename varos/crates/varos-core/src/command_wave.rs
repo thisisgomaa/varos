@@ -748,6 +748,8 @@ impl Editor {
             clip_exempt: false,
             xform: Default::default(),
             role: GroupRole::Normal,
+            // ---- Lane A ----
+            look: None,
             mask_child: None,
         });
         if let Some(parent) = parent {

@@ -39,6 +39,15 @@ fn frozen_refusals_gate_tagged_values_before_typed_decode() {
         let bytes =
             std::fs::read(format!("{}/tests/fixtures/next_gradients/refused/{name}.vrs", env!("CARGO_MANIFEST_DIR")))
                 .unwrap();
+        let bytes = if name == "future" {
+            std::fs::read(format!(
+                "{}/tests/fixtures/next_gradients/refused/future_v11.vrs",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap()
+        } else {
+            bytes
+        };
         let error = decode_model(&bytes, None, &Limits::DEFAULT).unwrap_err();
         use varos_core::format::{Invalid, LoadError};
         match name {
@@ -51,7 +60,7 @@ fn frozen_refusals_gate_tagged_values_before_typed_decode() {
                 error,
                 LoadError::Invalid(Invalid::FieldNotInFormat { field: "gradient paints / swatches", version: 6 })
             ),
-            "future" => assert_eq!(error, LoadError::NewerVersion { found: 10, supported: FORMAT_VERSION }),
+            "future" => assert_eq!(error, LoadError::NewerVersion { found: 11, supported: FORMAT_VERSION }),
             "unknown_stop" => assert!(
                 matches!(error, LoadError::Malformed { detail, .. } if detail.contains("unknown field `future`"))
             ),
