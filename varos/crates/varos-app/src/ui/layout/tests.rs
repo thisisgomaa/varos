@@ -26,7 +26,6 @@ fn headless_ui() -> Ui {
         ic_opacity: None,
         ic_strokew: None,
         ic_fit: None,
-        ic_pipette: None,
         align_icons: Default::default(),
         cursor: egui::CursorIcon::Default,
         refpt: (0.0, 0.0),
@@ -46,7 +45,8 @@ fn headless_ui() -> Ui {
         start_model: varos_app::start::StartModel::without_recovery(&Default::default(), 0, |_| false),
         recent_warning: None,
         app_cmds: vec![],
-        color_modal: None,
+        color_panel: None,
+        picker_layout: Default::default(),
         layer_icons: super::super::LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, search: None },
         lay_collapsed: std::collections::HashSet::new(),
         lay_search: String::new(),
@@ -73,4 +73,36 @@ fn restoring_default_resets_tree_rail_control_bar_and_derived_span() {
     ui.restore_shell_layout(Layout::default());
     assert_eq!(ui.shell_layout(), Layout::default());
     assert_eq!(ui.panel_column, None);
+}
+
+#[test]
+fn picker_layout_restores_open_relative_position_and_drawer_without_document_edits() {
+    let mut ui = headless_ui();
+    let layout = varos_app::storage::layout::Layout {
+        picker: varos_app::storage::layout::PickerLayout {
+            open: true,
+            position: Some([28.0, 60.0]),
+            drawer_open: true,
+            drawer_tab: 2,
+            mode: Default::default(),
+        },
+        ..Default::default()
+    };
+    ui.restore_shell_layout(layout.clone());
+    let mut ed = varos_core::editor::Editor::new();
+    let before = ed.doc.clone();
+    ui.prepare_picker(&mut ed);
+    assert!(ui.picker_open());
+    assert!(ui.color_panel.is_some());
+    assert!(!ed.transaction_open());
+    assert_eq!(ui.shell_layout(), layout);
+    ui.arm_picker(&mut ed);
+    assert!(ui.picking_screen());
+    ui.toggle_picker(&mut ed);
+    assert!(!ui.picker_open());
+    assert_eq!(ed.doc, before);
+    ui.restore_shell_layout(Default::default());
+    assert!(!ui.picker_open());
+    assert_eq!(ui.picker_layout.position, None);
+    assert!(!ui.picker_layout.drawer_open);
 }

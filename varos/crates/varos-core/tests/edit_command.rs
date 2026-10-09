@@ -242,3 +242,19 @@ fn pen_resume_deselects_leftover_objects() {
     assert_eq!(ed.active, Some(9), "resumed");
     assert!(ed.objsel.is_empty(), "resuming a path drops the leftover square selection");
 }
+
+#[test]
+fn bridge_default_paint_uses_existing_tool_defaults_and_one_undo_step() {
+    use varos_core::editor::{DEFAULT_FILL, DEFAULT_STROKE};
+    let fresh = Editor::new();
+    assert_eq!((fresh.cur_fill, fresh.cur_stroke), (Some(DEFAULT_FILL), Some(DEFAULT_STROKE)));
+    let mut ed = selected_square();
+    let before = ed.doc.clone();
+    let commands = varos_core::bridge::parse_batch(br#"{"api":"0.1","commands":["DefaultPaint"]}"#).unwrap();
+    ed.execute_batch(commands).unwrap();
+    assert_eq!(ed.doc.paths[0].fill.solid(), Some(DEFAULT_FILL));
+    assert_eq!(ed.doc.paths[0].stroke.solid(), Some(DEFAULT_STROKE));
+    assert_eq!(ed.rev, 1);
+    ed.undo();
+    assert_eq!(ed.doc, before);
+}

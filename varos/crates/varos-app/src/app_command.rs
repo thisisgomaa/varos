@@ -40,6 +40,7 @@ pub enum WindowCmd {
     ToggleMaximize,
     ToggleRail,
     ToggleDock,
+    TogglePicker,
     TogglePanel(PanelId),
     ResetLayout,
     /// The band's V mark (4b): the native About panel — the same one Varos ▸ About opens.

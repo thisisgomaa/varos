@@ -449,6 +449,14 @@ pub struct NumberField<'a> {
 /// drag to scrub (↔), click to type (value pre-selected). While typing: ↑/↓ ±1, ⇧ ±10, Ctrl ±0.1 (A20);
 /// commits by the K3 law.
 pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
+    number_field_with(ui, f, false, None)
+}
+/// Compact picker value: no label column, right-aligned numeric ink; identical K3 behaviour.
+/// An optional arrow step overrides the modifier ladder (e.g. one Web-safe step).
+pub fn number_value(ui: &mut Ui, f: NumberField<'_>, arrow_step: Option<f32>) -> Edit<f32> {
+    number_field_with(ui, f, true, arrow_step)
+}
+fn number_field_with(ui: &mut Ui, f: NumberField<'_>, compact: bool, arrow_step: Option<f32>) -> Edit<f32> {
     let ctx = ui.ctx().clone();
     let id = f.id;
     if !f.disabled {
@@ -457,7 +465,7 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
     let (lo, hi) = (*f.range.start(), *f.range.end());
     let (row, _) = ui.allocate_exact_size(egui::vec2(f.width, t::FIELD_H), Sense::hover());
     let p = ui.painter().clone();
-    let labw = t::FIELD_LABEL_W;
+    let labw = if compact { 0.0 } else { t::FIELD_LABEL_W };
     let ink = if f.disabled { t::DISABLED } else { t::MUTED };
     match f.label {
         Label::Letter(s) => {
@@ -471,7 +479,10 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
         }
         Label::Icon(None) => {}
     }
-    let bx = Rect::from_min_max(egui::pos2(row.left() + labw + t::FIELD_LABEL_BOX_GAP, row.top()), row.max);
+    let bx = Rect::from_min_max(
+        egui::pos2(row.left() + labw + if compact { 0.0 } else { t::FIELD_LABEL_BOX_GAP }, row.top()),
+        row.max,
+    );
     let mut out = Edit::new(id, bx);
     let decimals = f.decimals;
     let fmt = move |v: f32| format!("{v:.decimals$}");
@@ -485,25 +496,17 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
         sess = begin(&ctx, id, &shown);
     }
     let Some(mut s) = sess else {
-        idle_box(ui, &f, bx, &shown, &mut out);
+        idle_box(ui, &f, bx, &shown, &mut out, compact);
         return out;
     };
     let tab = take_tab(ui, id);
     p.rect(bx, t::r_ctrl(), t::INPUT_WELL, Stroke::new(t::KIT_STROKE, t::ACCENT), StrokeKind::Middle); // the dark input well
     let mut buf = s.buf.clone();
-    ui.put(
-        bx.shrink2(egui::vec2(t::NUM_INSET_X, t::FIELD_INSET_Y)),
-        egui::TextEdit::singleline(&mut buf)
-            .id(id)
-            .frame(egui::Frame::NONE)
-            .font(t::numeric_value(t::NUM_TEXT))
-            .text_color(t::TEXT),
-    );
     if ctx.memory(|m| m.has_focus(id)) {
         let dv = ui.input_mut(|i| {
             // A20: Shift = 10 leap · Ctrl = fine (0.1) · plain = 1 — a clear keyboard step ladder
             // (Shift and Ctrl first: `consume_key` ignores an extra Shift)
-            let steps = [
+            let steps: [(Modifiers, Key, f32); 6] = [
                 (Modifiers::SHIFT, Key::ArrowUp, 10.0),
                 (Modifiers::SHIFT, Key::ArrowDown, -10.0),
                 (Modifiers::CTRL, Key::ArrowUp, 0.1),
@@ -511,9 +514,14 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
                 (Modifiers::NONE, Key::ArrowUp, 1.0),
                 (Modifiers::NONE, Key::ArrowDown, -1.0),
             ];
-            steps.into_iter().filter(|(m, k, _)| i.consume_key(*m, *k)).map(|(_, _, d)| d).sum::<f32>()
+            steps
+                .into_iter()
+                .filter(|(m, k, _)| i.consume_key(*m, *k))
+                .map(|(_, _, d)| arrow_step.map_or(d, |step| d.signum() * step))
+                .sum::<f32>()
         });
         if dv != 0.0 {
+            ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
             // FB4: step a PRECISE value, not the rounded text — trusted while it still renders to what
             // is shown (else the user typed something new and the text wins)
             let base = s.acc.filter(|a| fmt(*a) == buf).unwrap_or_else(|| buf.trim().parse::<f32>().unwrap_or(f.value));
@@ -529,6 +537,20 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
             out.live = Some(nv);
         }
     }
+    ui.put(
+        bx.shrink2(egui::vec2(t::NUM_INSET_X, t::FIELD_INSET_Y)),
+        egui::TextEdit::singleline(&mut buf)
+            .id(id)
+            .frame(egui::Frame::NONE)
+            .font(t::numeric_value(t::NUM_TEXT))
+            .text_color(t::TEXT),
+    );
+    ctx.memory_mut(|m| {
+        m.set_focus_lock_filter(
+            id,
+            egui::EventFilter { vertical_arrows: true, horizontal_arrows: true, ..Default::default() },
+        )
+    });
     let acc = s.acc;
     let parse = move |txt: &str| -> Result<f32, &'static str> {
         let typed = txt.trim().parse::<f32>().ok().filter(|v| v.is_finite()).ok_or(NOT_A_NUMBER)?;
@@ -544,14 +566,20 @@ pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
 }
 
 /// The number field at rest: hover, scrub and click-to-type.
-fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut Edit<f32>) {
+fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut Edit<f32>, compact: bool) {
     let (lo, hi) = (*f.range.start(), *f.range.end());
     let p = ui.painter().clone();
     let sense = if f.disabled { Sense::hover() } else { Sense::click_and_drag() };
-    let resp: Response = ui.interact(bx, f.id.with("box"), sense);
+    let resp: Response = ui.interact(bx, f.id, sense);
     if f.disabled {
         p.rect(bx, t::r_ctrl(), egui::Color32::TRANSPARENT, Stroke::new(t::KIT_STROKE, t::LINE), StrokeKind::Middle);
-        p.text(bx.center(), Align2::CENTER_CENTER, shown, t::numeric_value(t::NUM_TEXT), t::DISABLED);
+        p.text(
+            if compact { bx.right_center() - egui::vec2(t::NUM_INSET_X, 0.0) } else { bx.center() },
+            if compact { Align2::RIGHT_CENTER } else { Align2::CENTER_CENTER },
+            shown,
+            t::numeric_value(t::NUM_TEXT),
+            t::DISABLED,
+        );
         if !f.tip.is_empty() {
             resp.on_hover_text(f.tip).on_disabled_hover_text(f.tip);
         }
@@ -564,7 +592,13 @@ fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut E
     } else {
         p.rect_filled(bx, t::r_ctrl(), t::SURFACE);
     }
-    p.text(bx.center(), Align2::CENTER_CENTER, shown, t::numeric_value(t::NUM_TEXT), t::TEXT);
+    p.text(
+        if compact { bx.right_center() - egui::vec2(t::NUM_INSET_X, 0.0) } else { bx.center() },
+        if compact { Align2::RIGHT_CENTER } else { Align2::CENTER_CENTER },
+        shown,
+        t::numeric_value(t::NUM_TEXT),
+        t::TEXT,
+    );
     if resp.dragged() {
         let dx = resp.drag_delta().x;
         if dx != 0.0 {

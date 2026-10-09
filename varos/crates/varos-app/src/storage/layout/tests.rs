@@ -15,7 +15,18 @@ fn modified() -> Layout {
             }
         }
     }
-    Layout { tree, show_rail: false, show_control_bar: true }
+    Layout {
+        tree,
+        show_rail: false,
+        show_control_bar: true,
+        picker: PickerLayout {
+            open: true,
+            position: Some([35.0, 104.0]),
+            drawer_open: true,
+            drawer_tab: 2,
+            mode: Default::default(),
+        },
+    }
 }
 
 #[test]

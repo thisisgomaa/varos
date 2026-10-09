@@ -563,6 +563,65 @@ pub const TRANSFORM_REFPOINT_SIZE: f32 = 38.0;
 pub const KIT_MENU_MIN_W: f32 = 176.0;
 pub const KIT_MENU_GAP: f32 = 4.0;
 
+// Colour picker v3 — measured from owner Figma exports at 2x, 2026-10-09.
+// Explicit contract sizes win for the 36/44 pt cluster and 20 pt default squares.
+pub const PICKER_MIXED_STROKE: f32 = 2.0;
+pub const PICKER_MIXED_GAP: f32 = 6.0;
+pub const PICKER_W: f32 = 240.0;
+pub const PICKER_H: f32 = 341.0;
+pub const PICKER_HEADER_H: f32 = 32.0;
+pub const PICKER_BODY_H: f32 = 248.0;
+pub const PICKER_RING_R: f32 = 99.0;
+pub const PICKER_RING_BAND: f32 = 14.0;
+pub const PICKER_RING_CENTER: [f32; 2] = [123.0, 118.0];
+pub const PICKER_TRIANGLE_R: f32 = 84.0;
+pub const PICKER_TAB_W: f32 = 26.0;
+pub const PICKER_TAB_H: f32 = 24.0;
+pub const PICKER_TAB_GAP: f32 = 4.0;
+pub const PICKER_CHECKER: f32 = 4.0;
+pub const PICKER_PAD: f32 = 8.0;
+pub const PICKER_GLYPH: f32 = 16.0;
+pub const PICKER_STROKE_CENTER: [f32; 2] = [192.0, 213.0];
+pub const PICKER_FILL_CENTER: [f32; 2] = [210.0, 227.0];
+pub const PICKER_STROKE_R: f32 = 18.0;
+pub const PICKER_STROKE_BAND: f32 = 8.0;
+pub const PICKER_FILL_R: f32 = 22.0;
+pub const PICKER_FOCUS: f32 = 1.5;
+pub const PICKER_RING_MARKER: f32 = 6.0;
+pub const PICKER_TRI_MARKER: f32 = 5.0;
+pub const PICKER_MARKER_STROKE: f32 = 2.0;
+pub const PICKER_MARKER_HALO: f32 = 1.0;
+pub const PICKER_DEFAULT_SIZE: f32 = 20.0;
+pub const PICKER_DEFAULT_POS: [f32; 2] = [188.0, 12.0];
+pub const PICKER_READOUT_POS: [f32; 2] = [14.0, 210.0];
+pub const PICKER_READOUT_LINE: f32 = 14.0;
+pub const PICKER_SWAP_POS: [f32; 2] = [222.0, 204.0];
+pub const PICKER_NONE_POS: [f32; 2] = [182.0, 238.0];
+pub const PICKER_NONE_SIZE: f32 = 14.0;
+pub const PICKER_FIELD_ROW_H: f32 = 33.0;
+pub const PICKER_HEX_W: f32 = 68.0;
+pub const PICKER_ALPHA_W: f32 = 80.0;
+pub const PICKER_PERCENT_W: f32 = 52.0;
+pub const PICKER_ALPHA_TRACK: f32 = 8.0;
+pub const PICKER_ALPHA_KNOB: f32 = 7.0;
+pub const PICKER_SWATCH_ROW_H: f32 = 28.0;
+pub const PICKER_SWATCH: f32 = 16.0;
+pub const PICKER_SWATCH_GAP: f32 = 4.0;
+pub const PICKER_DRAWER_H: f32 = 100.0;
+pub const PICKER_DEFAULT_OFFSET: [f32; 2] = [12.0, 56.0];
+pub const CHECKER_DARK: Color32 = rgb(0x5a5a5a);
+pub const CHECKER_LIGHT: Color32 = rgb(0x8c8c8c);
+pub const PICKER_WHITE: Color32 = rgb(0xffffff);
+pub const PICKER_BLACK: Color32 = rgb(0x000000);
+
+// Sliders body, measured from the Picker / Sliders export.
+pub const PICKER_MODE_W: f32 = 100.0;
+pub const PICKER_SLIDER_HEADER_H: f32 = 72.0;
+pub const PICKER_SLIDER_CLUSTER_Y: f32 = 188.0;
+pub const PICKER_SLIDER_ROW_H: f32 = 24.0;
+pub const PICKER_SLIDER_LABEL_W: f32 = 18.0;
+pub const PICKER_SLIDER_W: f32 = 140.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

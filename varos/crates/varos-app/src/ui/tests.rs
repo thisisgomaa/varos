@@ -58,7 +58,12 @@ mod polish_pass_tests {
             "ui/panels/align.rs",
             "ui/panels/layers.rs",
             "ui/panels/properties.rs",
-            "ui/picker.rs",
+            "ui/picker/mod.rs",
+            "ui/picker/wheel.rs",
+            "ui/picker/cluster.rs",
+            "ui/picker/fields.rs",
+            "ui/picker/drawer.rs",
+            "ui/picker/sliders.rs",
         ]
         .map(src)
         .join("\n");
@@ -2242,15 +2247,27 @@ mod dead_control_tests {
         let first = varos_app::shell::PanelId::DOCKABLE[0];
         let mut bar = Bar::new();
         let was = bar.shell.is_open(first);
-        let at = bar.burger_row(13, 4);
+        let at = bar.burger_row(14, 4);
         let _ = bar.click(at);
         assert_ne!(bar.shell.is_open(first), was, "burger ▸ {} toggles it", first.title());
     }
 
     #[test]
+    fn burger_colour_picker_uses_native_window_route() {
+        let mut bar = Bar::new();
+        let at = bar.burger_row(13, 4);
+        let cmds = bar.click(at);
+        assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::TogglePicker)]);
+        assert_eq!(
+            crate::host::menu_route(crate::chrome::MenuCmd::TogglePicker, None),
+            Some(crate::host::MenuRoute::App(cmds[0].clone()))
+        );
+    }
+
+    #[test]
     fn burger_reset_layout_uses_the_same_command_as_the_native_window_menu() {
         let mut bar = Bar::new();
-        let at = bar.burger_row(17, 5);
+        let at = bar.burger_row(18, 5);
         let cmds = bar.click(at);
         assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::ResetLayout)]);
         assert_eq!(
@@ -2966,7 +2983,7 @@ mod recovery_strip_tests {
 #[cfg(test)]
 pub(super) mod icon_action_tests {
     use super::{
-        build_color_modal, panel_artboard, panel_layers, panel_properties, AbSnap, ColorModal, DockIcons, IconAction,
+        build_color_panel, panel_artboard, panel_layers, panel_properties, AbSnap, ColorPanel, DockIcons, IconAction,
         LayerIcons, MTarget, Op, Snap, ICON_ACTIONS,
     };
     use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
@@ -2991,7 +3008,7 @@ pub(super) mod icon_action_tests {
             Op::Flip(h) => format!("Flip({h})"),
             Op::Paint(PaintTarget::Fill, None) => "Paint(Fill, None)".into(),
             Op::Paint(PaintTarget::Stroke, None) => "Paint(Stroke, None)".into(),
-            Op::PickerCancel => "PickerCancel".into(),
+            Op::PickerClose => "PickerClose".into(),
             Op::AbColor(_, Some(_)) => "Opaque".into(),
             Op::AbClip(i) => format!("AbClip({i})"),
             Op::AbMoveArt(value) => format!("AbMoveArt({value})"),
@@ -3031,7 +3048,7 @@ pub(super) mod icon_action_tests {
         ed: Editor,
         lock: bool,
         fit: Option<usize>,
-        modal: Option<ColorModal>,
+        modal: Option<ColorPanel>,
     }
 
     impl Rig {
@@ -3046,7 +3063,7 @@ pub(super) mod icon_action_tests {
             ed.select_all();
             ed.execute(varos_core::command::EditCommand::AddArtboard);
             ed.doc.artboards[0].clip = true;
-            let modal = Some(ColorModal::new(MTarget::Paint(PaintTarget::Fill), None, false));
+            let modal = Some(ColorPanel::new(MTarget::Paint(PaintTarget::Fill), None, false));
             let ctx = egui::Context::default();
             varos_app::shell::fonts::install(&ctx);
             let mut rig = Rig { ctx, t: 1.0, scene, ed, lock: false, fit: None, modal };
@@ -3088,6 +3105,7 @@ pub(super) mod icon_action_tests {
                 Scene::Artboard { count, portrait } => {
                     let (w, h) = if portrait { (595.0, 842.0) } else { (842.0, 595.0) };
                     let s = AbSnap {
+                        id: 1,
                         count,
                         active: 0,
                         name: "Artboard 1".into(),
@@ -3115,7 +3133,9 @@ pub(super) mod icon_action_tests {
                     snapshot.artboard_names = vec!["First".into(), "Second".into()];
                     super::document_section(ui, &snapshot, 264.0, &mut ops, (&Default::default(), &mut vec![]));
                 }
-                Scene::Picker => build_color_modal(ui.ctx(), modal, &snap, &None, &mut ops, None),
+                Scene::Picker => {
+                    build_color_panel(ui.ctx(), modal, &snap, &mut ops, None, ui.max_rect(), &mut Default::default())
+                }
             });
             let mut out: Vec<String> = ops.iter().filter_map(describe).collect();
             if self.lock != lock0 {
@@ -3191,7 +3211,7 @@ pub(super) mod icon_action_tests {
             (IA_FLIP_V, Scene::Properties, vec!["Flip(false)"]),
             (IA_NO_FILL, Scene::Properties, vec!["Paint(Fill, None)"]),
             (IA_NO_STROKE, Scene::Properties, vec!["Paint(Stroke, None)"]),
-            (IA_PICKER_CLOSE, Scene::Picker, vec!["PickerCancel"]),
+            (IA_PICKER_CLOSE, Scene::Picker, vec!["PickerClose"]),
             (IA_TRANSPARENT, two, vec!["Opaque"]),
             (IA_TRANSPARENT, Scene::Artboard { count: 0, portrait: true }, vec![]),
             (IA_CLIP, two, vec!["AbClip(0)"]),
@@ -3701,536 +3721,4 @@ fn menu_owner_absent_for_one_frame_releases_keyboard_and_closes_menu() {
     let _ = ctx.run_ui(Default::default(), |_| {});
     assert!(!super::wants_keyboard(&ctx));
     assert!(!kit::is_menu_open(&ctx, owner));
-}
-
-#[cfg(test)]
-mod picker_live_tests {
-    use super::*;
-    use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
-
-    fn selected() -> Editor {
-        let mut ed = Editor::new();
-        for (id, color) in [(1, [1.0, 0.0, 0.0, 1.0]), (2, [0.0, 0.0, 1.0, 1.0])] {
-            ed.doc.paths.push(varos_core::model::Path::new(id, vec![], true, Some(color), Some(color), 2.0));
-            ed.objsel.insert(id);
-        }
-        ed.doc.sync_tree();
-        ed
-    }
-    fn key(key: Key) -> Event {
-        Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }
-    }
-    fn pointer(pos: Pos2, down: bool) -> Vec<Event> {
-        vec![
-            Event::PointerMoved(pos),
-            Event::PointerButton { pos, button: PointerButton::Primary, pressed: down, modifiers: Modifiers::NONE },
-        ]
-    }
-    struct Rig {
-        ctx: egui::Context,
-        ed: Editor,
-        modal: Option<ColorModal>,
-        time: f64,
-        repaint_delay: std::time::Duration,
-    }
-    impl Rig {
-        fn new(ed: Editor, target: PaintTarget) -> Self {
-            let ctx = egui::Context::default();
-            varos_app::shell::fonts::install(&ctx);
-            let mut rig = Self { ctx, ed, modal: None, time: 0.0, repaint_delay: std::time::Duration::ZERO };
-            rig.open(target);
-            rig
-        }
-        fn open(&mut self, target: PaintTarget) {
-            open_picker(&mut self.modal, MTarget::Paint(target), &Snap::read(&self.ed), &mut self.ed);
-        }
-        fn frame(&mut self, events: Vec<Event>, sample: Option<Rgba>) -> Vec<Op> {
-            self.time += 0.02;
-            let mut ops = vec![];
-            let snap = Snap::read(&self.ed);
-            let output = self.ctx.run_ui(
-                RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1200.0, 900.0))),
-                    time: Some(self.time),
-                    events,
-                    ..Default::default()
-                },
-                |ui| build_color_modal(ui.ctx(), &mut self.modal, &snap, &None, &mut ops, sample),
-            );
-            self.repaint_delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
-            ops
-        }
-        fn apply(&mut self, ops: Vec<Op>) {
-            apply_ops(&mut self.ed, ops);
-        }
-    }
-
-    #[test]
-    fn mixed_open_and_unchanged_enter_do_not_write() {
-        for target in [PaintTarget::Fill, PaintTarget::Stroke] {
-            let mut r = Rig::new(selected(), target);
-            let before = r.ed.doc.clone();
-            assert!(r.modal.as_ref().unwrap().mixed);
-            for _ in 0..3 {
-                assert!(r.frame(vec![], None).is_empty());
-            }
-            let ops = r.frame(vec![key(Key::Enter)], None);
-            assert!(matches!(ops.as_slice(), [Op::PickerFinish]));
-            r.apply(ops);
-            assert_eq!(r.ed.doc, before);
-            assert_eq!(r.ed.rev, 0);
-            assert!(!r.ed.history_available(false));
-            assert!(!r.ed.dirty);
-            assert!(!r.ed.transaction_open());
-            assert!(r.ed.recent_colors.is_empty());
-        }
-    }
-
-    #[test]
-    fn first_drag_applies_to_all_and_cancel_restores_mixed() {
-        for target in [PaintTarget::Fill, PaintTarget::Stroke] {
-            let mut r = Rig::new(selected(), target);
-            let before = r.ed.doc.clone();
-            r.frame(vec![], None);
-            r.frame(vec![], None);
-            // Existing 240px plane: dialog starts at (332,84), plane below the header.
-            let ops = r.frame(pointer(egui::pos2(410.0, 210.0), true), None);
-            assert!(ops.iter().any(|o| matches!(o, Op::PickerLive(t, _) if *t == MTarget::Paint(target))));
-            r.apply(ops);
-            assert!(!Snap::read(&r.ed).target_mixed(target));
-            assert!(!r.ed.history_available(false));
-            let ops = r.frame(pointer(egui::pos2(410.0, 210.0), false), None);
-            r.apply(ops);
-            assert!(r.frame(vec![], None).is_empty(), "stationary frames send nothing");
-            let ops = r.frame(vec![key(Key::Escape)], None);
-            r.apply(ops);
-            assert_eq!(r.ed.doc, before);
-            assert_eq!(r.ed.rev, 0);
-            assert!(!r.ed.dirty);
-        }
-    }
-
-    #[test]
-    fn target_switch_keeps_one_snapshot_and_one_undo_step() {
-        let mut r = Rig::new(selected(), PaintTarget::Fill);
-        let before = r.ed.doc.clone();
-        for target in [PaintTarget::Fill, PaintTarget::Stroke] {
-            r.open(target);
-            modal_adopt(r.modal.as_mut().unwrap(), [0.2, 0.6, 0.3, 1.0]);
-            let ops = r.frame(vec![], None);
-            r.apply(ops);
-        }
-        let ops = r.frame(vec![key(Key::Enter)], None);
-        r.apply(ops);
-        assert_eq!(r.ed.rev, 1);
-        r.ed.undo();
-        assert_eq!(r.ed.doc, before);
-        assert!(!r.ed.history_available(false));
-    }
-
-    #[test]
-    fn no_selection_edited_ok_sets_default_without_document_history() {
-        let mut r = Rig::new(Editor::new(), PaintTarget::Fill);
-        let before = r.ed.doc.clone();
-        assert!(r.frame(vec![], None).is_empty());
-        modal_adopt(r.modal.as_mut().unwrap(), [1.0, 0.0, 0.0, 1.0]);
-        let ops = r.frame(vec![], None);
-        r.apply(ops);
-        assert_eq!(r.ed.doc, before);
-        let ops = r.frame(vec![key(Key::Enter)], None);
-        r.apply(ops);
-        assert_eq!(r.ed.cur_fill, Some([1.0, 0.0, 0.0, 1.0]));
-        assert!(!r.ed.history_available(false));
-        assert_eq!(r.ed.rev, 0);
-    }
-
-    #[test]
-    fn eyedropper_preview_click_and_escape_stay_inside_picker_transaction() {
-        let mut r = Rig::new(selected(), PaintTarget::Fill);
-        let before = r.ed.doc.clone();
-        r.frame(vec![], None);
-        r.modal.as_mut().unwrap().eyedropping = true;
-        let c = [0.0, 1.0, 0.0, 1.0];
-        let ops = r.frame(vec![], Some(c));
-        r.apply(ops);
-        assert_eq!(r.ed.doc.paths[0].fill.solid(), Some(c));
-        let ops = r.frame(pointer(egui::pos2(100.0, 100.0), true), Some(c));
-        r.apply(ops);
-        assert!(!r.modal.as_ref().unwrap().eyedropping);
-        let ops = r.frame(vec![key(Key::Escape)], None);
-        r.apply(ops);
-        assert_eq!(r.ed.doc, before);
-        assert!(!r.ed.history_available(false));
-    }
-
-    #[test]
-    fn canvas_pointer_sampling_uses_retina_scale_camera_and_rejects_chrome() {
-        let ctx = egui::Context::default();
-        let mut ed = Editor::new();
-        ed.doc.artboards.push(varos_core::model::Artboard {
-            x: 20.0,
-            y: 30.0,
-            w: 100.0,
-            h: 100.0,
-            page_color: Some([0.0, 1.0, 0.0, 1.0]),
-            ..Default::default()
-        });
-        let view = View { pan: [40.0, 50.0], zoom: 2.0 };
-        let hole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(300.0, 300.0));
-        let mut sample = None;
-        for (pos, chrome) in
-            [(egui::pos2(60.0, 75.0), false), (egui::pos2(400.0, 400.0), false), (egui::pos2(60.0, 75.0), true)]
-        {
-            let _ = ctx.run_ui(RawInput { events: vec![Event::PointerMoved(pos)], ..Default::default() }, |ui| {
-                if chrome {
-                    egui::Area::new(egui::Id::new("sample-chrome"))
-                        .order(egui::Order::Foreground)
-                        .fixed_pos(egui::pos2(40.0, 50.0))
-                        .show(ui.ctx(), |ui| {
-                            ui.allocate_space(egui::vec2(80.0, 80.0));
-                        });
-                }
-                let mut modal = ColorModal::new(MTarget::Paint(PaintTarget::Fill), None, false);
-                modal.eyedropping = true;
-                prepare_canvas_sample(&mut modal, &ed, view, 2.0, hole);
-                sample = picker_canvas_sample(ui.ctx(), &modal);
-            });
-            if !chrome && hole.contains(pos) {
-                assert_eq!(sample, Some([0.0, 1.0, 0.0, 1.0]));
-            } else {
-                assert!(sample.is_none());
-            }
-        }
-    }
-
-    #[test]
-    fn picker_hex_obeys_enter_blur_and_escape_field_law() {
-        for end in [Key::Enter, Key::Escape] {
-            let mut r = Rig::new(selected(), PaintTarget::Fill);
-            fields::tests::clear_probes();
-            r.frame(vec![], None);
-            r.frame(vec![], None);
-            let at = fields::tests::probed_rect("picker hex", 0).center();
-            r.frame(pointer(at, true), None);
-            r.frame(pointer(at, false), None);
-            assert!(r.frame(vec![Event::Text("00FF00".into())], None).is_empty());
-            let ops = r.frame(vec![key(end)], None);
-            assert!(r.modal.is_some(), "the key belongs to the field, not OK/Cancel");
-            if end == Key::Enter {
-                assert!(ops.iter().any(|o| matches!(o, Op::PickerLive(_, [0.0, 1.0, 0.0, 1.0]))));
-                r.apply(ops);
-                assert!(!r.ed.history_available(false));
-            } else {
-                assert!(ops.is_empty());
-                assert!(Snap::read(&r.ed).fill_mixed);
-            }
-        }
-        // A valid hex also joins the same live transaction on click-away.
-        let mut r = Rig::new(selected(), PaintTarget::Fill);
-        fields::tests::clear_probes();
-        r.frame(vec![], None);
-        r.frame(vec![], None);
-        let at = fields::tests::probed_rect("picker hex", 0).center();
-        r.frame(pointer(at, true), None);
-        r.frame(pointer(at, false), None);
-        r.frame(vec![Event::Text("00FF00".into())], None);
-        let mut ops = r.frame(pointer(egui::pos2(100.0, 100.0), true), None);
-        ops.extend(r.frame(pointer(egui::pos2(100.0, 100.0), false), None));
-        ops.extend(r.frame(vec![], None));
-        assert!(ops.iter().any(|o| matches!(o, Op::PickerLive(_, [0.0, 1.0, 0.0, 1.0]))));
-        assert!(r.modal.is_some());
-    }
-
-    #[test]
-    fn unchanged_single_selection_and_default_ok_keep_defaults_and_saved_revision() {
-        for has_selection in [false, true] {
-            let mut ed = if has_selection { selected() } else { Editor::new() };
-            ed.objsel.remove(&2);
-            ed.rev = 3;
-            let before = (ed.doc.clone(), ed.cur_fill, ed.cur_stroke);
-            let mut r = Rig::new(ed, PaintTarget::Fill);
-            assert!(r.frame(vec![], None).is_empty());
-            let ops = r.frame(vec![key(Key::Enter)], None);
-            r.apply(ops);
-            assert_eq!((r.ed.doc.clone(), r.ed.cur_fill, r.ed.cur_stroke), before);
-            assert_eq!(r.ed.rev, 3);
-            assert!(!r.ed.dirty);
-            assert!(!r.ed.history_available(false));
-        }
-    }
-
-    #[test]
-    fn swatches_focus_on_click_and_open_on_double_click_in_all_homes() {
-        for home in 0..3 {
-            for target in [PaintTarget::Fill, PaintTarget::Stroke] {
-                let ctx = egui::Context::default();
-                let ed = selected();
-                let snap = Snap::read(&ed);
-                let mut time = 0.0;
-                let mut swatch = egui::Rect::NOTHING;
-                let mut frame = |events| {
-                    time += 0.05;
-                    let mut ops = vec![];
-                    let _ = ctx.run_ui(RawInput { time: Some(time), events, ..Default::default() }, |ui| {
-                        let start = ui.cursor().min;
-                        match home {
-                            0 => {
-                                fill_stroke_control(ui, &snap, &mut ops);
-                                let (offset, size) = match target {
-                                    PaintTarget::Fill => (egui::vec2(0.0, 3.0), egui::vec2(20.0, 20.0)),
-                                    PaintTarget::Stroke => (egui::vec2(20.0, 25.0), egui::vec2(10.0, 10.0)),
-                                };
-                                swatch = egui::Rect::from_min_size(start + offset, size);
-                            }
-                            1 => {
-                                paint_row(
-                                    ui,
-                                    target,
-                                    snap_target_color(&snap, target),
-                                    snap.target_mixed(target),
-                                    &mut ops,
-                                );
-                                swatch = paint_probes::swatches().last().unwrap().1;
-                            }
-                            _ => {
-                                ctl_chip(
-                                    ui,
-                                    snap_target_color(&snap, target),
-                                    target,
-                                    snap.target_mixed(target),
-                                    &mut ops,
-                                );
-                                swatch = egui::Rect::from_min_size(start, egui::vec2(17.0, 17.0));
-                            }
-                        }
-                    });
-                    (ops, swatch.center())
-                };
-                let (_, at) = frame(vec![]);
-                frame(vec![]);
-                for click in 0..2 {
-                    frame(pointer(at, true));
-                    let (ops, _) = frame(pointer(at, false));
-                    assert!(
-                        ops.iter().any(|o| matches!(o, Op::OpenPicker(MTarget::Paint(t)) if *t == target))
-                            == (click == 1),
-                        "home {home}, click {click}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn tap_press_and_release_in_one_frame_picks_canvas() {
-        if crate::cursors::SCREEN_EYEDROPPER {
-            return;
-        }
-        let mut r = Rig::new(selected(), PaintTarget::Fill);
-        r.frame(vec![], None);
-        r.modal.as_mut().unwrap().arm();
-        let at = egui::pos2(100.0, 100.0);
-        let mut tap = pointer(at, true);
-        tap.extend(pointer(at, false));
-        let ops = r.frame(tap, Some([0.0, 1.0, 0.0, 1.0]));
-        assert!(!r.modal.as_ref().unwrap().eyedropping);
-        assert!(ops.iter().any(|o| matches!(o, Op::PickerLive(_, [0.0, 1.0, 0.0, 1.0]))));
-        assert!(r.ed.transaction_open());
-    }
-
-    #[test]
-    fn empty_mixed_hex_blurs_and_enter_closes_only_the_field() {
-        for enter in [false, true] {
-            let mut r = Rig::new(selected(), PaintTarget::Fill);
-            fields::tests::clear_probes();
-            r.frame(vec![], None);
-            r.frame(vec![], None);
-            let at = fields::tests::probed_rect("picker hex", 0).center();
-            r.frame(pointer(at, true), None);
-            r.frame(pointer(at, false), None);
-            assert!(kit::field::any_open(&r.ctx));
-            let ops =
-                r.frame(if enter { vec![key(Key::Enter)] } else { pointer(egui::pos2(100.0, 100.0), true) }, None);
-            assert!(ops.is_empty());
-            if !enter {
-                assert!(r.frame(pointer(egui::pos2(100.0, 100.0), false), None).is_empty());
-                assert!(r.frame(vec![], None).is_empty());
-            }
-            assert!(!kit::field::any_open(&r.ctx), "enter={enter}");
-            assert!(!kit::field::blocked(&r.ctx));
-            assert!(r.modal.as_ref().unwrap().mixed);
-        }
-    }
-
-    #[test]
-    fn edited_fill_then_untouched_stroke_ok_remembers_only_fill() {
-        for selected_art in [false, true] {
-            let mut r = Rig::new(if selected_art { selected() } else { Editor::new() }, PaintTarget::Fill);
-            let stroke = r.ed.cur_stroke;
-            let c = [0.0, 1.0, 0.0, 1.0];
-            modal_adopt(r.modal.as_mut().unwrap(), c);
-            let ops = r.frame(vec![], None);
-            r.apply(ops);
-            let original = r.modal.as_ref().unwrap().orig;
-            r.open(PaintTarget::Stroke);
-            assert_eq!(r.modal.as_ref().unwrap().orig, original);
-            let ops = r.frame(vec![key(Key::Enter)], None);
-            assert!(matches!(ops.last(), Some(Op::PickerFinish)));
-            assert!(!ops.iter().any(|o| matches!(o, Op::PickerCommit(..))));
-            r.apply(ops);
-            assert_eq!(r.ed.cur_stroke, stroke);
-            assert_eq!(r.ed.cur_fill, Some(c));
-            assert_eq!(r.ed.recent_colors, vec![c]);
-            assert!(!r.ed.transaction_open());
-            if selected_art {
-                assert_eq!(r.ed.rev, 1);
-            } else {
-                assert_eq!(r.ed.rev, 0);
-            }
-        }
-    }
-
-    #[test]
-    fn armed_escape_live_reverts_pre_arm_paints_and_keeps_picker_open() {
-        if crate::cursors::SCREEN_EYEDROPPER {
-            return;
-        }
-        for mixed in [false, true] {
-            let mut ed = selected();
-            if !mixed {
-                ed.objsel.remove(&2);
-            }
-            let mut r = Rig::new(ed, PaintTarget::Fill);
-            r.frame(vec![], None);
-            if !mixed {
-                modal_adopt(r.modal.as_mut().unwrap(), [0.0, 0.0, 1.0, 1.0]);
-                let ops = r.frame(vec![], None);
-                r.apply(ops);
-            }
-            let before_arm = r.ed.doc.clone();
-            r.modal.as_mut().unwrap().arm();
-            prepare_canvas_sample(
-                r.modal.as_mut().unwrap(),
-                &r.ed,
-                View { pan: [0.0; 2], zoom: 1.0 },
-                1.0,
-                egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(300.0, 300.0)),
-            );
-            let ops = r.frame(vec![], Some([0.0, 1.0, 0.0, 1.0]));
-            r.apply(ops);
-            assert_ne!(r.ed.doc, before_arm);
-            let ops = r.frame(vec![key(Key::Escape)], None);
-            assert!(!ops.iter().any(|o| matches!(o, Op::PickerCancel)));
-            r.apply(ops);
-            assert_eq!(r.ed.doc, before_arm);
-            let modal = r.modal.as_ref().unwrap();
-            assert!(!modal.eyedropping);
-            assert_eq!(modal.mixed, mixed);
-            assert!(r.ed.transaction_open());
-            let ops = r.frame(vec![key(Key::Enter)], None);
-            r.apply(ops);
-            assert_eq!(r.ed.recent_colors.is_empty(), mixed);
-            assert_eq!(r.ed.history_available(false), !mixed);
-            assert_eq!(r.ed.rev, if mixed { 0 } else { 1 });
-        }
-    }
-
-    #[test]
-    fn armed_still_pointer_sleeps_and_cache_rebuilds_only_for_view() {
-        if crate::cursors::SCREEN_EYEDROPPER {
-            return;
-        }
-        let mut ed = Editor::new();
-        ed.doc.artboards.push(varos_core::model::Artboard {
-            x: 0.0,
-            y: 0.0,
-            w: 300.0,
-            h: 300.0,
-            page_color: Some([1.0, 0.0, 0.0, 0.5]),
-            ..Default::default()
-        });
-        let mut r = Rig::new(ed, PaintTarget::Fill);
-        let mut view = View { pan: [0.0; 2], zoom: 1.0 };
-        let mut hole = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(300.0, 300.0));
-        r.modal.as_mut().unwrap().arm();
-        prepare_canvas_sample(r.modal.as_mut().unwrap(), &r.ed, view, 1.0, hole);
-        let before = r.modal.as_ref().unwrap().sampling.as_ref().unwrap().raster.sample([100.0, 100.0]);
-        // Live edits must not affect this snapshot, including on subsequent view rebuilds.
-        r.ed.doc.artboards[0].page_color = Some([0.0, 1.0, 0.0, 0.5]);
-        r.frame(vec![Event::PointerMoved(egui::pos2(100.0, 100.0))], before);
-        for _ in 0..20 {
-            prepare_canvas_sample(r.modal.as_mut().unwrap(), &r.ed, view, 1.0, hole);
-            r.frame(vec![], before);
-        }
-        assert_eq!(r.repaint_delay, std::time::Duration::MAX, "armed canvas must have no repaint timer");
-        assert_eq!(r.modal.as_ref().unwrap().sampling.as_ref().unwrap().builds, 1);
-        assert_eq!(r.modal.as_ref().unwrap().sampling.as_ref().unwrap().raster.sample([100.0, 100.0]), before);
-        for change in 0..3 {
-            match change {
-                0 => view.zoom = 2.0,
-                1 => view.pan = [4.0, 5.0],
-                _ => hole.max.x += 10.0,
-            }
-            prepare_canvas_sample(r.modal.as_mut().unwrap(), &r.ed, view, 1.0, hole);
-            prepare_canvas_sample(r.modal.as_mut().unwrap(), &r.ed, view, 1.0, hole);
-            let cached = r.modal.as_ref().unwrap().sampling.as_ref().unwrap();
-            assert_eq!(cached.builds, change + 2);
-            assert_eq!(cached.raster.sample([100.0, 100.0]), before);
-        }
-    }
-
-    #[test]
-    fn field_blur_and_picker_open_same_frame_keep_both_undo_boundaries() {
-        for cancel in [false, true] {
-            let ctx = egui::Context::default();
-            let mut ed = selected();
-            ed.objsel.remove(&2);
-            let mut modal = None;
-            let mut pending = None;
-            let mut time = 0.0;
-            let mut frame = |events: Vec<Event>, open: bool, ed: &mut Editor| {
-                time += 0.05;
-                let mut ops = vec![];
-                let _ = ctx.run_ui(RawInput { time: Some(time), events, ..Default::default() }, |ui| {
-                    fields::name(ui, 120.0, &ed.doc.name, "picker-blur", &mut ops, Op::BoardName);
-                    if open {
-                        ops.push(Op::OpenPicker(MTarget::Paint(PaintTarget::Fill)));
-                    }
-                });
-                fields::finish_frame(&ctx, None, &mut ops, &mut pending);
-                ops
-            };
-            frame(vec![], false, &mut ed);
-            let at = ctx.memory(|m| m.focused());
-            assert!(at.is_none());
-            // The standalone name field occupies (8,8)..(128,34).
-            frame(pointer(egui::pos2(50.0, 18.0), true), false, &mut ed);
-            frame(pointer(egui::pos2(50.0, 18.0), false), false, &mut ed);
-            frame(vec![Event::Text("Blurred board".into())], false, &mut ed);
-            let focused = ctx.memory(|m| m.focused()).expect("name field must have focus");
-            // A swatch press transfers focus; the released click opens the picker in the
-            // same frame that the field reports its blur commit.
-            ctx.memory_mut(|m| m.surrender_focus(focused));
-            let ops = frame(pointer(egui::pos2(250.0, 100.0), false), true, &mut ed);
-            assert!(ops.iter().any(|o| matches!(o, Op::Field(_))), "blur must produce a real K3 commit");
-            let snap = ed.doc.snap;
-            apply_picker_frame(&mut ed, snap, ops, &mut modal);
-            assert!(ed.doc.name.contains("Blurred board"));
-            assert!(ed.transaction_open());
-            let after_blur = ed.doc.clone();
-            ed.execute(EditCommand::PickerLivePaint { target: PaintTarget::Fill, color: [0.0, 1.0, 0.0, 1.0] });
-            if cancel {
-                ed.picker_cancel();
-                assert_eq!(ed.doc, after_blur);
-                ed.undo();
-                assert_ne!(ed.doc.name, after_blur.name);
-            } else {
-                ed.picker_commit(Some(PaintTarget::Fill), [0.0, 1.0, 0.0, 1.0]);
-                ed.undo();
-                assert_eq!(ed.doc, after_blur);
-                ed.undo();
-                assert_ne!(ed.doc.name, after_blur.name);
-            }
-        }
-    }
 }
