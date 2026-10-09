@@ -16,6 +16,7 @@ fn headless_ui() -> Ui {
         repaint_at: None,
         recovery: Default::default(),
         file_status: String::new(),
+        canvas_hint: Default::default(),
         document_sheet: None,
         export_sheet: None,
         panel_column: None,

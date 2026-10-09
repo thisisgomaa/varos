@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tiny_skia::{
     FillRule, LineCap, LineJoin, Mask, MaskType, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform,
 };
-use varos_core::{build_scene, editor::Editor, geom::Rgba, model::Document, Group, Prim};
+use varos_core::{build_scene_for_export as build_scene, editor::Editor, geom::Rgba, model::Document, Group, Prim};
 
 pub const WIDTH: u32 = 544;
 pub const HEIGHT: u32 = 246;
