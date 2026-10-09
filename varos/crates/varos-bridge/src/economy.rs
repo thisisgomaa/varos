@@ -256,6 +256,8 @@ fn walk(
         if !crate::EDIT_VERBS.contains(&verb)
             && !(api == "1.2" && verb == "set_stroke_style")
             && !(construction && crate::CONSTRUCTION_VERBS.contains(&verb))
+            && !(api == "1.2"
+                && ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"].contains(&verb))
         {
             return Err(Error::new("unsupported", "edit verb is not enabled in this slice"));
         }

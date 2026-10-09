@@ -432,7 +432,20 @@ impl Service {
                                 fn standalone(value: &Value, root: &Value) -> Value {
                                     if let Some(reference) = value["$ref"].as_str().and_then(|r| r.strip_prefix('#')) {
                                         if let Some(target) = root.pointer(reference) {
-                                            return standalone(target, root);
+                                            let target = standalone(target, root);
+                                            let mut siblings = value.as_object().unwrap().clone();
+                                            siblings.remove("$ref");
+                                            if siblings.is_empty() {
+                                                return target;
+                                            }
+                                            let mut expanded = standalone(&Value::Object(siblings), root);
+                                            let constraints = expanded
+                                                .as_object_mut()
+                                                .unwrap()
+                                                .entry("allOf")
+                                                .or_insert_with(|| json!([]));
+                                            constraints.as_array_mut().unwrap().push(target);
+                                            return expanded;
                                         }
                                     }
                                     match value {
@@ -460,6 +473,14 @@ impl Service {
                             v["api_by_tool"] = json!({"edit":["1.0","1.1","1.2"],"capabilities":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1","1.2"]});
                             if let Some(unsupported) = v["unsupported"].as_array_mut() {
                                 unsupported.retain(|v| v != "pathfinder");
+                            }
+                            v["slice4a_verbs"] =
+                                json!(["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]);
+                            if let Some(verbs) = v["edit_verbs"].as_array_mut() {
+                                verbs.extend(
+                                    ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]
+                                        .map(|verb| json!(verb)),
+                                );
                             }
                         }
                     }
@@ -547,6 +568,9 @@ impl Service {
                 Request::Edit(v) => {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
+                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a()) {
+                        return Err(Error::new("unsupported", "slice 4A verbs require API 1.2"));
+                    }
                     let a = host.access(&v.board)?;
                     if matches!(v.api.as_str(), "1.1" | "1.2") {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;

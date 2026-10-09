@@ -4,7 +4,7 @@
 //! right INSPECTOR DOCK (Transform / Appearance / Fill / Stroke). Solid panels, one light GPU shadow,
 //! no glass. Panels read a per-frame snapshot of the editor and push deferred `Op`s, applied to
 //! `&mut Editor` after layout (no IPC, no borrow fights). varos-core itself is untouched.
-
+use crate::app_command::{AppCommand, SessionId, TabView};
 use egui::{Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, RichText, Stroke, StrokeKind};
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
@@ -12,10 +12,7 @@ use varos_core::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, 
 use varos_core::geom::{Pt, Rgba, View};
 use varos_core::EditCommand;
 use winit::event::WindowEvent;
-
-use crate::app_command::{AppCommand, SessionId, TabView};
 use winit::window::Window;
-
 // The law palette (warm ramp; tokens.rs) is shared with the split UI modules.
 // Legacy colour aliases retain the established body names.
 use varos_app::shell::tokens::{
@@ -37,7 +34,6 @@ use varos_app::shell::kit::{self, Icon};
 mod fields;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
-
 mod bar;
 mod canvas_overlay;
 mod control_bar;
@@ -53,7 +49,6 @@ mod snap;
 mod style;
 #[cfg(test)]
 mod tests;
-
 use bar::*;
 use canvas_overlay::*;
 use control_bar::*;
@@ -69,6 +64,8 @@ use style::*;
 // ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
 
 mod icon_actions;
+mod isolation;
+pub(crate) mod select_transform;
 use icon_actions::*;
 
 /// A window action the custom title bar asks the host (winit) to perform.
@@ -543,6 +540,7 @@ impl Ui {
             ed,
             &input,
         );
+        select_transform::prepare(self, ed);
         self.prepare_picker(ed);
         let mut snap = Snap::read(ed);
         snap.board_colors = self.picker_board_colors.read(
@@ -740,6 +738,8 @@ impl Ui {
                 new_column = shell.side_column_span();
             }
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
+            select_transform::draw(ctx, ed, hole);
+            isolation::draw(ctx, ed, hole);
             build_ab_chrome(
                 ctx,
                 view,

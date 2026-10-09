@@ -26,3 +26,19 @@
 - Tests: 15 targeted invocations using `cargo test --offline -j 3 -p <crate> <filter>` (including full integration-test targets): core geometry/stroke/construction/planar/cache; Bridge artboards/contracts; app construction/pathfinder/stroke; CLI planar; PDF/raster/GPU stroke — 198 passed, 0 failed, 4 existing ignored.
 - Evidence: `/tmp/g2-planar-build.log`, `/tmp/g2-planar-test-results.json`, `/tmp/g2-planar-*.log`, `/tmp/g2-schema.json`.
 - Deferred merge work: none. No Git write commands used; moderator owns staging and commit.
+
+## feat/p4-tools
+- `REPORT.md`: retained every geometry, stroke, planar and tools report line, finding, gate and limitation from both sides.
+- `docs/PLAN.md`: retained all prior lane rows and added the 4A progress row; no PLAN/GATE_LOG line removed.
+- `varos/NOTICE`: retained geometry/kurbo, planar/construction and select/transform attribution with shared license rows intact.
+- `varos/crates/varos-app/src/main.rs`: combined cursors/tool names and kept both shortcut test modules; Shift+E now expects the merged Eraser while plain E remains Free Transform.
+- `varos/crates/varos-app/src/shell/tokens.rs`: retained both Stroke and namespaced 4A token families without duplicate constants.
+- `varos/crates/varos-bridge/src/dto.rs`: combined every construction and 4A operation plus their target-ID routing in one enum/match.
+- `varos/crates/varos-bridge/src/economy.rs`: unified equivalent API checks; preserved stroke/construction gates and enabled all six 4A verbs only with explicit API 1.2.
+- `varos/crates/varos-bridge/src/service.rs`: retained broad 1.2 support, v5/stroke schemas, construction and 4A capability verbs once; standalone schema expansion preserves referenced constraints and siblings.
+- `varos/crates/varos-cli/tests/commands.rs`: retained both complete headless CLI tests as separate test functions.
+- `varos/crates/varos-core/src/bridge.rs`: retained stroke evaluation/budgets, construction refusals and all transform/options/isolation/layer validation arms.
+- `varos/crates/varos-core/src/editor.rs`: kept every ToolKind and both document-replacement resets; preserved both lanes' merged gesture routing.
+- Merge-only repair in `varos/crates/varos-bridge/src/mcp.rs`: shared equivalent discriminator/type/repeat/property schemas and duplicate definitions, retaining definition aliases and every verb/constraint; compacted opt-in descriptions. API 1.2 tools/list is 23,979/24,000 bytes; all 218 references resolve. Canonical painted_extent and geom/kurbo.rs unchanged; no duplicate shortcut/command/setting/store/adapter introduced.
+- Validation: fmt and offline -j 3 workspace/all-targets build PASS; 16 targeted core/Bridge/app/CLI invocations cover both lanes plus geometry/stroke regressions: 201 passed, 0 failed, 4 existing ignored; markers absent, both-side report/PLAN/NOTICE lines retained, git diff --check PASS. Evidence: /tmp/g2-tools-build.log, /tmp/g2-tools-test-results.json, /tmp/g2-tools-*.log and /tmp/g2-tools-schema.json.
+- Deferred merge work: none. No Git write commands used; moderator owns staging and commit.

@@ -564,6 +564,7 @@ pub(crate) fn panel_layers(
                         }
                         prev_sec = row.sec;
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click_and_drag());
+                        crate::ui::select_transform::locate_row(ui, row.id, rect);
                         if resp.drag_started() && row.kind != LKind::Board && layer_kind_matches(row.kind, kind_filter)
                         {
                             *drag = Some((row.id, row.sec));

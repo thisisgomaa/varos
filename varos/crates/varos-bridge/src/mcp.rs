@@ -264,9 +264,10 @@ pub fn tools() -> Value {
         definitions.insert(format!("repeat{depth}"), object(json!({"verb":{"const":"repeat"},"ops":{"type":"array","minItems":1,"maxItems":100,"items":{"anyOf":alternatives}},"count":{"type":"integer","minimum":1,"maximum":100},"dx":{"type":"number"},"dy":{"type":"number"}}), &["verb","ops","count","dx","dy"]));
     }
     all_ops.push(json!({"$ref":"#/$defs/repeat0"}));
+    crate::select_transform::schemas(&mut definitions, &mut all_ops);
     definitions.insert("operation".into(), json!({"anyOf":all_ops}));
     let edit = schemas.get_mut("edit").unwrap();
-    edit["properties"]["api"] = json!({"enum":["1.0","1.1"]});
+    edit["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"]});
     edit["properties"]["ops"]["items"] = json!({"$ref":"#/$defs/operation"});
     edit["properties"]["defaults"] = object(
         json!({"parent":{"type":"string","pattern":"^node:[1-9][0-9]*$"},"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"radius":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),
@@ -287,6 +288,11 @@ pub fn tools() -> Value {
         schemas.get_mut(tool).unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1"],"default":"1.0"});
     }
     schemas.get_mut("export_pdf").unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+    for tool in ["capabilities", "select"] {
+        if let Some(schema) = schemas.get_mut(tool) {
+            schema["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+        }
+    }
     let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
         "capabilities"=>"Negotiate Bridge API 1.0/1.1; export_pdf additionally supports 1.2 reports; local user trust grants every scope. Inspect limits and file mistake-guards.",
         "list_boards"=>"List authorized open boards, never files or Recent entries.",
@@ -601,6 +607,107 @@ pub fn tools_for(api: &str) -> Value {
             for (name, original) in shared {
                 share(schema, &original, &json!({"$ref":format!("#/$defs/{name}")}));
                 schema["$defs"][name] = original;
+            }
+        }
+    }
+    // Compact only the combined 1.2 projection; retain standalone named definitions.
+    if let Some(tools) = out["tools"].as_array_mut() {
+        for tool in tools.iter_mut() {
+            let description = match tool["name"].as_str() {
+                Some("capabilities") => Some("Negotiate APIs, limits and locally granted scopes."),
+                Some("list_boards") => Some("List authorized open boards."),
+                Some("describe") => Some("Inspect scoped, paged details or revision changes."),
+                Some("select") => Some("Replace selection without a document undo step."),
+                Some("history") => Some("Shared undo/redo with revision and idempotency checks."),
+                Some("request_status") => Some("Poll this client's retained request receipt."),
+                Some("snapshot") => Some("Revision-pinned board/page PNG; maximum 1024 pixels."),
+                Some("edit") => Some("Atomic explicit-target batch; one undo; retains selection. API 1.1 tuples or object operations; page verbs use persistent artboard:N IDs."),
+                Some("save") => Some("Queue revision-pinned work; returns accepted/ticket, poll request_status. Fresh .vrs/.pdf only under passwd home, /Volumes/<volume>/ or iCloud/CloudStorage providers. Reject /tmp, /private/var, other ~/Library, system roots, app bundle, dot components, existing files and network volumes. Existing parents and canonical containment required. FAT32/exFAT: exclusive-rename fallback after linkat; real volumes unverified."),
+                Some("save_as" | "export_pdf") => {
+                    Some("Queue revision-pinned file work; poll request_status. All save safeguards apply.")
+                }
+                _ => None,
+            };
+            if let Some(description) = description {
+                tool["description"] = json!(description);
+            }
+        }
+        if let Some(edit) = tools.iter_mut().find(|t| t["name"] == "edit") {
+            let schema = &mut edit["inputSchema"];
+            let defs = schema["$defs"].as_object_mut().unwrap();
+            // oneOf already rejects the case where both discriminator keys are present.
+            defs["op_key"]["oneOf"] = json!([{"required":["verb"]},{"required":["op"]}]);
+            defs["op_key"]["type"] = json!("object");
+            for definition in defs.values_mut() {
+                if definition["allOf"][0] == json!({"$ref":"#/$defs/op_key"}) {
+                    let m = definition.as_object_mut().unwrap();
+                    m.remove("type");
+                    let mut constraints = m.remove("allOf").unwrap().as_array().unwrap().clone();
+                    m.insert("$ref".into(), json!("#/$defs/op_key"));
+                    constraints.remove(0);
+                    if !constraints.is_empty() {
+                        m.insert("allOf".into(), json!(constraints));
+                    }
+                }
+            }
+            // Repeat depth changes only its children, not its common fields or closure.
+            let mut base = defs["repeat0"].clone();
+            base["properties"]["ops"] = json!({});
+            defs.insert("repeat_base".into(), base);
+            for depth in 0..4 {
+                let name = format!("repeat{depth}");
+                let ops = defs[&name]["properties"]["ops"].clone();
+                defs.insert(name, json!({"$ref":"#/$defs/repeat_base","properties":{"ops":ops}}));
+            }
+            // Preserve every public definition name while sharing identical constraints.
+            let mut seen = std::collections::BTreeMap::<String, String>::new();
+            let mut aliases = Vec::new();
+            for (name, definition) in defs.iter() {
+                let key = definition.to_string();
+                if let Some(canonical) = seen.get(&key) {
+                    aliases.push((name.clone(), canonical.clone(), definition.clone()));
+                } else {
+                    seen.insert(key, name.clone());
+                }
+            }
+            for (name, canonical, original) in aliases {
+                share(schema, &original, &json!({"$ref":format!("#/$defs/{canonical}")}));
+                schema["$defs"][&canonical] = original;
+                schema["$defs"][name] = json!({"$ref":format!("#/$defs/{canonical}")});
+            }
+            fn count_constraints(value: &Value, counts: &mut std::collections::BTreeMap<String, (usize, Value)>) {
+                match value {
+                    Value::Object(m) => {
+                        if ["type", "anyOf", "oneOf", "enum", "const"].iter().any(|k| m.contains_key(*k))
+                            && value["properties"]["verb"].is_null()
+                            && value["properties"]["op"].is_null()
+                        {
+                            let entry = counts.entry(value.to_string()).or_insert((0, value.clone()));
+                            entry.0 += 1;
+                        }
+                        for child in m.values() {
+                            count_constraints(child, counts);
+                        }
+                    }
+                    Value::Array(a) => {
+                        for child in a {
+                            count_constraints(child, counts);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let mut counts = std::collections::BTreeMap::new();
+            count_constraints(schema, &mut counts);
+            let mut next = 0;
+            for (key, (count, original)) in counts {
+                let name = format!("merged{next}");
+                let reference = json!({"$ref":format!("#/$defs/{name}")});
+                if count > 1 && count * key.len() > key.len() + name.len() + 5 + count * reference.to_string().len() {
+                    share(schema, &original, &reference);
+                    schema["$defs"][name] = original;
+                    next += 1;
+                }
             }
         }
     }

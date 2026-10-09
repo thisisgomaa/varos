@@ -53,6 +53,10 @@ pub enum ToolKind {
     Scissors,
     Knife,
     Eraser,
+    Reflect,
+    Shear,
+    FreeTransform,
+    MagicWand,
 }
 
 /// What the Pen tool would do at the cursor right now — drives the contextual pen cursor (Illustrator
@@ -398,6 +402,7 @@ fn seg_touches_rect(a: Pt, b: Pt, r: (f32, f32, f32, f32)) -> bool {
 }
 
 pub struct Editor {
+    pub select_transform: crate::select_transform::State,
     pub doc: Document,
     pub tool: ToolKind,
     pub gesture: ToolKind,
@@ -471,6 +476,7 @@ impl Default for Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor {
+            select_transform: Default::default(),
             doc: Document::default(),
             tool: ToolKind::Object,
             gesture: ToolKind::Object,
@@ -545,7 +551,7 @@ impl Editor {
         let r = r / self.ppu;
         let mut best: Option<(u32, f32)> = None;
         for p in &self.doc.paths {
-            if shown_only && !self.path_shown(p.id) {
+            if !self.in_isolation(p.id) || (shown_only && !self.path_shown(p.id)) {
                 continue;
             }
             // A7 seam: anchors are drawn at their WORLD positions → hit them in world.
@@ -591,7 +597,7 @@ impl Editor {
         let edge_r = EDGE_R / self.ppu;
         for pi in (0..self.doc.paths.len()).rev() {
             let id = self.doc.paths[pi].id;
-            if self.doc.eff_hidden(id) || self.doc.eff_locked(id) {
+            if !self.in_isolation(id) || self.doc.eff_hidden(id) || self.doc.eff_locked(id) {
                 continue; // not clickable (cascades)
             }
             // A7 seam: map the cursor into the path's UNIT-local frame, then run the existing local-space
@@ -904,7 +910,7 @@ impl Editor {
     }
     /// Did a press land on a transform handle (scale) or a corner's rotate ring (just outside)?
     pub fn transform_hit(&self, pos: Pt) -> Option<TfHit> {
-        if self.tool != ToolKind::Object {
+        if !matches!(self.tool, ToolKind::Object | ToolKind::FreeTransform) {
             return None;
         }
         let hs = self.frame_handles()?;
@@ -3432,6 +3438,9 @@ impl Editor {
         staged.selected = self.selected.clone();
         staged.group_sel = self.group_sel.clone();
         staged.tool = self.tool;
+        staged.select_transform.isolation = self.select_transform.isolation;
+        staged.select_transform.wand = self.select_transform.wand;
+        staged.select_transform.pick = self.select_transform.pick;
         staged.dsel_path = self.dsel_path;
         staged.absel = self.absel.clone();
         staged.clipboard = self.clipboard.clone();
@@ -3456,6 +3465,18 @@ impl Editor {
             self.doc = staged.doc;
             self.dirty = true;
             self.commit();
+        }
+        self.select_transform.isolation = staged.select_transform.isolation;
+        self.select_transform.located = staged.select_transform.located;
+        if staged.select_transform.options_requested {
+            self.select_transform.wand = staged.select_transform.wand;
+            self.select_transform.pick = staged.select_transform.pick;
+        }
+        if staged.select_transform.selection_requested {
+            self.objsel = staged.objsel.clone();
+            self.selected.clear();
+            self.group_sel.clear();
+            self.dsel_path = None;
         }
         if preserve_transient {
             self.refresh_obj_angle();
@@ -3586,16 +3607,30 @@ impl Editor {
     /// Enforce the selection invariant after any visibility/lock mutation: hidden or locked paths
     /// cannot remain selected through either object selection, Direct path selection, or grabbed anchors.
     pub(crate) fn prune_inert_selection(&mut self) {
+        let allowed = self.select_transform.isolation.map(|n| self.doc.node_paths(n));
         let doc = &self.doc;
-        self.objsel.retain(|&pid| doc.pidx(pid).is_some() && !doc.eff_hidden(pid) && !doc.eff_locked(pid));
+        self.objsel.retain(|&pid| {
+            doc.pidx(pid).is_some()
+                && allowed.as_ref().is_none_or(|a| a.contains(&pid))
+                && !doc.eff_hidden(pid)
+                && !doc.eff_locked(pid)
+        });
         self.group_sel.retain(|&gid| {
             let editable: Vec<u32> =
                 doc.node_paths(gid).into_iter().filter(|&pid| !doc.eff_hidden(pid) && !doc.eff_locked(pid)).collect();
             !editable.is_empty() && editable.iter().all(|pid| self.objsel.contains(pid))
         });
-        self.selected
-            .retain(|&aid| doc.pid_of_anchor(aid).is_some_and(|pid| !doc.eff_hidden(pid) && !doc.eff_locked(pid)));
-        if self.dsel_path.is_some_and(|pid| doc.pidx(pid).is_none() || doc.eff_hidden(pid) || doc.eff_locked(pid)) {
+        self.selected.retain(|&aid| {
+            doc.pid_of_anchor(aid).is_some_and(|pid| {
+                allowed.as_ref().is_none_or(|a| a.contains(&pid)) && !doc.eff_hidden(pid) && !doc.eff_locked(pid)
+            })
+        });
+        if self.dsel_path.is_some_and(|pid| {
+            doc.pidx(pid).is_none()
+                || allowed.as_ref().is_some_and(|a| !a.contains(&pid))
+                || doc.eff_hidden(pid)
+                || doc.eff_locked(pid)
+        }) {
             self.dsel_path = None;
         }
     }
@@ -3603,6 +3638,7 @@ impl Editor {
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
         self.stroke_error = None;
+        self.select_transform = Default::default();
         self.doc = doc;
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
         self.doc.assign_artboard_ids(); // in-memory pages built without an id (format 4)
@@ -3869,7 +3905,7 @@ impl Editor {
         if self.tool == ToolKind::Artboard {
             return ToolKind::Artboard;
         } // Artboard tool never morphs
-        if self.mods.ctrl {
+        if self.mods.ctrl && self.tool != ToolKind::FreeTransform {
             ToolKind::Direct
         } else if self.tool == ToolKind::Pen && self.mods.alt {
             ToolKind::Convert
@@ -3963,6 +3999,9 @@ impl Editor {
         // a locked/hidden object is inert on canvas: drop it from the selection so grabbing the transform
         // frame can never move it (the hit-test already refuses to newly pick it). This is the REAL lock.
         self.prune_inert_selection();
+        if crate::tools::select_transform::down(self, pos) {
+            return;
+        }
         if self.gesture == ToolKind::Artboard {
             self.ab_down(pos);
             return;
@@ -3994,6 +4033,9 @@ impl Editor {
         }
     }
     pub fn pointer_up(&mut self) {
+        if crate::tools::select_transform::up(self) {
+            return;
+        }
         self.snap_guides.clear();
         self.snap_hud = None; // snap feedback is per-gesture
         if self.tool == ToolKind::Artboard {
@@ -4069,6 +4111,10 @@ impl Editor {
         }
     }
     pub fn pointer_move(&mut self, pos: Pt) {
+        if crate::tools::select_transform::movement(self, pos) {
+            self.cursor = pos;
+            return;
+        }
         let prev = self.cursor;
         self.cursor = pos;
         if self.tool == ToolKind::Artboard {
@@ -4235,7 +4281,7 @@ impl Editor {
                 let inside = |p: Pt| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1;
                 let mut sel: HashSet<u32> = base.iter().copied().collect();
                 for p in &self.doc.paths {
-                    if self.doc.eff_hidden(p.id) || self.doc.eff_locked(p.id) {
+                    if !self.in_isolation(p.id) || self.doc.eff_hidden(p.id) || self.doc.eff_locked(p.id) {
                         continue;
                     } // locked/hidden = not marquee-able
                     let xf = self.doc.unit_xform(p.id); // A7 seam: test WORLD anchor positions
@@ -4286,7 +4332,7 @@ impl Editor {
                 self.group_sel = base_groups.iter().copied().collect();
                 for pi in 0..self.doc.paths.len() {
                     let id = self.doc.paths[pi].id;
-                    if self.doc.eff_locked(id) || self.doc.eff_hidden(id) {
+                    if !self.in_isolation(id) || self.doc.eff_locked(id) || self.doc.eff_hidden(id) {
                         continue;
                     } // locked/hidden = not marquee-able
                     if self.path_in_rect(pi, x0, y0, x1, y1) {
@@ -4299,6 +4345,7 @@ impl Editor {
                 // a marquee that catches any group member selects the whole group
                 let expanded: Vec<u32> = self.objsel.iter().flat_map(|&p| self.doc.group_members(p)).collect();
                 self.objsel.extend(expanded);
+                self.prune_inert_selection();
                 self.drag = Drag::ObjMarquee { start, base, base_groups };
             }
             Drag::DupPending { srcs, down, object } => {
@@ -4552,7 +4599,11 @@ impl Editor {
         } else {
             self.absel.clear();
         }
-        if matches!(t, ToolKind::Rotate | ToolKind::Scale) && self.objsel.is_empty() {
+        if matches!(
+            t,
+            ToolKind::Rotate | ToolKind::Scale | ToolKind::Reflect | ToolKind::Shear | ToolKind::FreeTransform
+        ) && self.objsel.is_empty()
+        {
             // the transform tools act on whole objects — promote any anchor selection (coming from Direct)
             let pids: Vec<u32> = self.selected.iter().filter_map(|&aid| self.doc.pid_of_anchor(aid)).collect();
             for pid in pids {
@@ -4576,6 +4627,14 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        if self.select_transform.preview.is_some() {
+            self.transform_end(true);
+            self.select_transform.down = None;
+        }
+        if self.select_transform.isolation.take().is_some() {
+            self.escape_selection();
+            return;
+        }
         self.active = None;
         self.selected.clear();
         self.objsel.clear();
@@ -4608,7 +4667,7 @@ impl Editor {
         let pickable: Vec<usize> = (0..self.doc.paths.len())
             .filter(|&pi| {
                 let id = self.doc.paths[pi].id;
-                !self.doc.eff_hidden(id) && !self.doc.eff_locked(id)
+                self.in_isolation(id) && !self.doc.eff_hidden(id) && !self.doc.eff_locked(id)
             })
             .collect();
         self.selected.clear();
@@ -4625,7 +4684,7 @@ impl Editor {
                 if let Some(group) = self.doc.top_group_of_path(self.doc.paths[pi].id) {
                     self.group_sel.insert(group);
                 }
-                self.objsel.extend(members);
+                self.objsel.extend(members.into_iter().filter(|p| self.in_isolation(*p)).collect::<Vec<_>>());
             }
         }
         self.refresh_obj_angle(); // one unit keeps its stored rotation; several axis-align (A7)
@@ -4812,7 +4871,15 @@ impl Editor {
         self.active = None; // a pen path in progress ends, as on any selection change
         self.drag = Drag::None;
         self.ab_drag = AbDrag::None;
-        if !matches!(self.tool, ToolKind::Object | ToolKind::Direct | ToolKind::Rotate | ToolKind::Scale) {
+        if !matches!(
+            self.tool,
+            ToolKind::Object
+                | ToolKind::Direct
+                | ToolKind::Rotate
+                | ToolKind::Scale
+                | ToolKind::Reflect
+                | ToolKind::Shear
+        ) {
             // the pasted art must show as selected (the same hand-off the Layers Alt-drag copy makes)
             self.tool = ToolKind::Object;
         }
@@ -4836,6 +4903,18 @@ impl Editor {
         false
     }
     pub fn double_click(&mut self, pos: Pt) {
+        if let Some(pid) = self.path_under(pos) {
+            if self.tool == ToolKind::Object {
+                if let Some(group) = self.doc.top_group_of_path(pid) {
+                    self.execute(crate::EditCommand::Isolate(Some(group)));
+                    return;
+                }
+            }
+        } else if self.select_transform.isolation.is_some() {
+            self.execute(crate::EditCommand::Isolate(None));
+            return;
+        }
+
         if self.guide_at(pos).is_some() {
             // double-click a guide → delete it
             if let Some(idx) = self.guide_at(pos) {
