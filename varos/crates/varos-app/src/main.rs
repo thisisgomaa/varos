@@ -680,20 +680,6 @@ fn view_centre_paste_offset(ed: &Editor, view: &View, canvas_centre: Pt) -> Opti
 
 /// ⌘V = Paste centred in the canvas · ⇧⌘V = Paste in Place (the copied coordinates).
 fn paste_key(ed: &mut Editor, view: &View, canvas_centre: Pt, in_place: bool) {
-    // ---- Lane H: both keyboard and menu use this paste entry ----
-    match clipboard_in::paste(ed, view, canvas_centre, in_place) {
-        Ok(true) => return,
-        Ok(false) => {}
-        Err(error) => {
-            #[cfg(not(test))]
-            {
-                rfd::MessageDialog::new().set_title("Paste artwork").set_description(&error).show();
-            }
-            #[cfg(test)]
-            let _ = error;
-            return;
-        }
-    }
     let offset = if in_place { None } else { view_centre_paste_offset(ed, view, canvas_centre) };
     ed.execute_ui(EditCommand::Paste { offset });
 }
@@ -917,6 +903,11 @@ fn run_action(
             host::Ran::default()
         }
         host::HostAction::App(cmd) => host::run_command(cmd, ws, ui, dialogs, store, keys, jobs),
+        // ---- Lane H: foreign paste conversion belongs to the file worker ----
+        host::HostAction::Doc(host::DocAction::Key(KeyCode::KeyV, m)) if m.ctrl && !m.alt => {
+            clipboard_in::queue(ws, ui, canvas, dialogs, jobs, m.shift)
+        }
+        // ---- End Lane H ----
         host::HostAction::Doc(a) => {
             if ws.on_home() {
                 return host::Ran::default();
@@ -1007,7 +998,9 @@ fn raise_doc(
     canvas: egui::Rect,
     ui: &mut dyn host::DocUi,
 ) {
-    if !(pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
+    // ---- Lane H: paste needs the owning host and its background file queue ----
+    let foreign_paste = matches!(a, host::DocAction::Key(KeyCode::KeyV, m) if m.ctrl && !m.alt);
+    if !(!foreign_paste && pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
         pending.push(host::HostAction::Doc(a));
     }
 }

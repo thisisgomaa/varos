@@ -206,8 +206,7 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
         let nums = || op.operands.iter().map(number).collect::<Result<Vec<_>, _>>();
         let map = |x: f32, y: f32| {
             let m = state.matrix;
-            let x = m[0] * x + m[2] * y + m[4] - b[0];
-            let y = m[1] * x + m[3] * y + m[5] - b[1];
+            let [x, y] = [m[0] * x + m[2] * y + m[4] - b[0], m[1] * x + m[3] * y + m[5] - b[1]];
             match rotation {
                 90 => [y, x],
                 180 => [width - x, y],

@@ -124,3 +124,77 @@ fn sources_outside_files_scope_are_refused_before_reading() {
         assert!(varos_bridge::files::read_source(std::path::Path::new(path), "svg", 100).is_err());
     }
 }
+
+#[test]
+fn distinct_file_and_import_handlers_preserve_dispatch_and_pending_reports() {
+    struct Distinct(ImportHost);
+    impl Host for Distinct {
+        fn boards(&self) -> Vec<BoardInfo> {
+            self.0.boards()
+        }
+        fn prepare(&mut self, _: &str, _: bool) -> Result<(), Error> {
+            Ok(())
+        }
+        fn access(&mut self, _: &str) -> Result<BoardAccess<'_>, Error> {
+            self.0.access("b1")
+        }
+        fn file_effect(&mut self, verb: &str, _: &varos_bridge::dto::FileEffect) -> Result<Reply, Error> {
+            assert!(!verb.starts_with("import"));
+            Ok(Reply::success(json!({"handler":"file"})))
+        }
+        fn import_effect(
+            &mut self,
+            verb: &str,
+            _: &varos_bridge::dto::FileEffect,
+            _: &AtomicBool,
+        ) -> Result<Reply, Error> {
+            assert!(verb.starts_with("import"));
+            Ok(Reply::success(json!({"accepted":true,"ticket":7})))
+        }
+        fn file_status(&mut self, _: u64) -> Option<Reply> {
+            let mut r = Reply::success(json!({"report":{"paths":1},"rev":9}));
+            r.rev = Some(9);
+            Some(r)
+        }
+    }
+    let mut host = Distinct(ImportHost { editor: Editor::new(), calls: 0 });
+    let mut service = Service::new("test".into());
+    let ctx = Context { client: "dispatch".into(), epoch: "test".into() };
+    for (i, verb) in
+        ["save", "save_as", "export_pdf", "export_svg", "export_raster", "print", "copy", "cut", "import_file"]
+            .into_iter()
+            .enumerate()
+    {
+        let mut args = json!({"api":"1.2","request_id":format!("r{}", i+1),"board":"b1","expected_rev":0});
+        if ["save_as", "export_pdf", "export_svg", "export_raster", "import_file"].contains(&verb) {
+            args["path"] = json!("/tmp/art.pdf");
+        }
+        if verb.starts_with("export") {
+            args["scope"] = json!("artwork_bounds");
+        }
+        if verb == "export_raster" {
+            args["format"] = json!("png");
+        }
+        let reply = service.handle(
+            &mut host,
+            &ctx,
+            varos_bridge::mcp::decode_tool(verb, args).unwrap(),
+            &AtomicBool::new(false),
+        );
+        assert!(reply.ok, "{verb}: {reply:?}");
+        if verb == "import_file" {
+            assert_eq!(reply.result.unwrap()["ticket"], 7);
+        } else {
+            assert_eq!(reply.result.unwrap()["handler"], "file");
+        }
+    }
+    let status = service.handle(
+        &mut host,
+        &ctx,
+        varos_bridge::mcp::decode_tool("request_status", json!({"api":"1.2","request_id":"r9"})).unwrap(),
+        &AtomicBool::new(false),
+    );
+    let result = status.result.unwrap();
+    assert_eq!(result["receipt"]["rev"], 9);
+    assert_eq!(result["receipt"]["result"]["report"]["paths"], 1);
+}

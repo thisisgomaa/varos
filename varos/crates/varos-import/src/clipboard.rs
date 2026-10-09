@@ -1,7 +1,7 @@
 //! Detached pasteboard snapshot. Highest supported flavour never falls back after failure.
 use crate::{Format, ImportOptions, ImportReport, MAX_BYTES};
 use varos_core::model::Document;
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub generation: i64,
     pub flavours: Vec<(String, Vec<u8>)>,
@@ -26,6 +26,13 @@ pub const TYPES: &[&str] = &[
 ];
 /// The host validates its own internal flavour before calling foreign import.
 pub fn stage(snapshot: &Snapshot, options: ImportOptions) -> Result<(Document, ImportReport, String), String> {
+    stage_cancellable(snapshot, options, &std::sync::atomic::AtomicBool::new(false))
+}
+pub fn stage_cancellable(
+    snapshot: &Snapshot,
+    options: ImportOptions,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(Document, ImportReport, String), String> {
     if snapshot.flavours.iter().any(|(_, b)| b.len() > MAX_BYTES) {
         return Err("Clipboard exceeds import byte limit".into());
     }
@@ -38,8 +45,7 @@ pub fn stage(snapshot: &Snapshot, options: ImportOptions) -> Result<(Document, I
         ("public.tiff", Format::Bitmap),
     ] {
         if let Some(bytes) = snapshot.find(k) {
-            let (doc, mut report) =
-                crate::worker::isolated_import(bytes, f, options, &std::sync::atomic::AtomicBool::new(false))?;
+            let (doc, mut report) = crate::worker::isolated_import(bytes, f, options, cancel)?;
             report.source_flavour = Some(k.into());
             return Ok((doc, report, k.into()));
         }

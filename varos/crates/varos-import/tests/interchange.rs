@@ -228,3 +228,12 @@ fn pdf_evenodd_fill_implicitly_closes_subpaths_before_hole_detection() {
     let combined = pdf("20 30 m 100 30 l 100 100 l 20 100 l 40 40 m 80 40 l 80 80 l 40 80 l B*", "");
     assert!(import_file(&combined, Format::Pdf, options()).is_err());
 }
+
+#[test]
+fn pdf_non_diagonal_ctm_uses_original_coordinates_before_crop_offset() {
+    let input = pdf("0 1 -1 0 100 20 cm 10 20 m 20 20 l 20 30 l h f", "");
+    let (doc, report) = import_file(&input, Format::Pdf, ImportOptions::default()).unwrap();
+    assert!(report.loss_notes.is_empty());
+    let p = doc.paths.last().unwrap();
+    assert_eq!(p.anchors.iter().map(|a| a.p).collect::<Vec<_>>(), vec![[70., 90.], [70., 80.], [60., 80.]]);
+}

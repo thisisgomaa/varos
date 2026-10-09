@@ -48,7 +48,7 @@ fn worker_cancel_stale_revision_place_and_dirty_pathless_open() {
     let rev = ws.get(sid).unwrap().editor.rev;
     let before = ws.get(sid).unwrap().editor.doc.clone();
     let mut dialog = Dialog::default();
-    let job = Job { path: path.clone(), target: Target::Place { sid, rev }, cancel: Default::default() };
+    let job = Job::new(path.clone(), Target::Place { sid, rev });
     let mut stale = job.clone();
     stale.target = Target::Place { sid, rev: rev + 1 };
     complete(execute(stale), &mut ws, &mut dialog);
@@ -60,17 +60,13 @@ fn worker_cancel_stale_revision_place_and_dirty_pathless_open() {
     assert_eq!(ws.get(sid).unwrap().editor.doc, before);
     let cancelled = execute(job);
     assert!(cancelled.result.unwrap_err().contains("cancelled"));
-    let job = Job { path: path.clone(), target: Target::Place { sid, rev }, cancel: Default::default() };
+    let job = Job::new(path.clone(), Target::Place { sid, rev });
     complete(execute(job), &mut ws, &mut dialog);
     let ed = &mut ws.get_mut(sid).unwrap().editor;
     assert_eq!(ed.doc.paths.len(), 1);
     ed.execute_ui(varos_core::EditCommand::Undo);
     assert_eq!(ed.doc, before);
-    complete(
-        execute(Job { path: path.clone(), target: Target::Open, cancel: Default::default() }),
-        &mut ws,
-        &mut dialog,
-    );
+    complete(execute(Job::new(path.clone(), Target::Open)), &mut ws, &mut dialog);
     let imported = ws.active().unwrap();
     assert!(imported.path.is_none());
     assert!(imported.is_dirty());
@@ -84,7 +80,7 @@ fn losses_are_reviewed_before_publication_and_native_routing_has_no_fallback() {
     ws.new_untitled();
     let count = ws.sessions().len();
     let mut dialog = Dialog::default();
-    let job = Job { path: path.clone(), target: Target::Open, cancel: Default::default() };
+    let job = Job::new(path.clone(), Target::Open);
     let done = execute(job.clone());
     assert!(!done.result.as_ref().unwrap().1.loss_notes.is_empty());
     complete(done, &mut ws, &mut dialog);
@@ -122,7 +118,7 @@ fn host_completion_refusal_never_settles_or_resets_a_human_transaction() {
     let mut ui = Ui { resets: 0 };
     let mut dialog = Dialog::default();
     let keys = crate::host::Keyboard::default();
-    let job = Job { path: path.clone(), target: Target::Place { sid, rev }, cancel: Default::default() };
+    let job = Job::new(path.clone(), Target::Place { sid, rev });
     let done = execute(job.clone());
     ws.get_mut(sid).unwrap().editor.begin();
     let before = ws.get(sid).unwrap().editor.doc.clone();
@@ -138,4 +134,128 @@ fn host_completion_refusal_never_settles_or_resets_a_human_transaction() {
     assert!(ws.get(sid).unwrap().editor.transaction_open());
     assert_eq!(ui.resets, 0);
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn clipboard_jobs_capture_without_conversion_and_guard_publication() {
+    use varos_import::clipboard::{Pasteboard, Snapshot};
+    struct Board(Snapshot);
+    impl Pasteboard for Board {
+        fn snapshot(&mut self) -> Result<Snapshot, String> {
+            Ok(self.0.clone())
+        }
+        fn generation(&self) -> i64 {
+            self.0.generation
+        }
+    }
+    let mut ws = Workspace::new();
+    let s = ws.active().unwrap();
+    let sid = s.id;
+    let rev = s.editor.rev;
+    let before = s.editor.doc.clone();
+    let mut board =
+        Board(Snapshot { generation: 4, flavours: vec![("public.svg-image".into(), b"malformed svg".to_vec())] });
+    let captured = crate::clipboard_in::capture(&s.editor, &mut board).unwrap().unwrap();
+    let mut job = Job::new("Clipboard".into(), Target::Place { sid, rev });
+    job.clipboard = Some(Box::new(captured));
+    assert!(execute(job.clone()).result.is_err(), "conversion belongs to worker");
+    let svg = source();
+    job.clipboard.as_mut().unwrap().flavours[0].1 = std::fs::read(&svg).unwrap();
+    std::fs::remove_file(svg).unwrap();
+    let mut dialog = Dialog::default();
+    let done = execute(job.clone());
+    assert!(!crate::import_jobs::complete_with_generation(done, &mut ws, &mut dialog, 5));
+    assert_eq!(ws.get(sid).unwrap().editor.doc, before);
+    let done = execute(job.clone());
+    job.cancel.cancel();
+    assert!(!crate::import_jobs::complete_with_generation(done, &mut ws, &mut dialog, 4));
+    assert!(execute(job.clone()).result.unwrap_err().contains("cancelled"));
+    job.cancel = Default::default();
+    let done = execute(job.clone());
+    ws.get_mut(sid).unwrap().editor.begin();
+    assert!(!crate::import_jobs::complete_with_generation(done, &mut ws, &mut dialog, 4));
+    assert_eq!(ws.get(sid).unwrap().editor.doc, before);
+    ws.get_mut(sid).unwrap().editor.commit();
+    job.centre = Some([100., 100.]);
+    assert!(crate::import_jobs::complete_with_generation(execute(job), &mut ws, &mut dialog, 4));
+    assert_eq!(ws.get(sid).unwrap().editor.doc.paths[0].anchors[0].p, [90., 95.]);
+    ws.get_mut(sid).unwrap().editor.execute_ui(varos_core::EditCommand::Undo);
+    assert_eq!(ws.get(sid).unwrap().editor.doc, before);
+}
+
+#[test]
+fn explicit_job_page_and_unit_choices_reach_conversion() {
+    let svg = source();
+    let path = svg.with_extension("dxf");
+    std::fs::remove_file(svg).unwrap();
+    std::fs::write(&path, "0\nSECTION\n2\nENTITIES\n0\nLINE\n10\n0\n20\n0\n11\n2\n21\n0\n0\nENDSEC\n0\nEOF\n").unwrap();
+    let mut job = Job::new(path.clone(), Target::Open);
+    assert!(execute(job.clone()).result.unwrap_err().contains("unit"));
+    job.options.points_per_unit = Some(3.);
+    let (doc, _) = execute(job).result.unwrap();
+    assert_eq!(doc.paths[0].anchors[1].p[0], 6.);
+    std::fs::remove_file(path).unwrap();
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 100 100] >>",
+        "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+        "<< /Length 23 >>\nstream\n0 0 m 10 0 l 0 10 l h f\nendstream",
+    ];
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = vec![0];
+    for (i, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf += &format!("{} 0 obj\n{object}\nendobj\n", i + 1);
+    }
+    let xref = pdf.len();
+    pdf += "xref\n0 6\n0000000000 65535 f \n";
+    for offset in offsets.iter().skip(1) {
+        pdf += &format!("{offset:010} 00000 n \n");
+    }
+    pdf += &format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+    let svg = source();
+    let path = svg.with_extension("pdf");
+    std::fs::remove_file(svg).unwrap();
+    std::fs::write(&path, pdf).unwrap();
+    let mut job = Job::new(path.clone(), Target::Open);
+    let convert = |job| {
+        crate::import_jobs::execute_using(job, |bytes, format, options, _| {
+            varos_import::import_file(bytes, format, options)
+        })
+    };
+    assert!(convert(job.clone()).result.unwrap_err().contains("page"));
+    job.options.page = Some(2);
+    assert!(convert(job.clone()).result.is_ok());
+    job.options.page = Some(3);
+    assert!(convert(job).result.is_err());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn paste_keys_are_deferred_even_when_document_actions_can_run_immediately() {
+    struct Ui;
+    impl crate::host::DocUi for Ui {
+        fn settle(&mut self, _: &mut varos_core::Editor) -> bool {
+            panic!("paste must reach host queue before touching fields");
+        }
+        fn document_switched(&mut self) {}
+    }
+    for shift in [false, true] {
+        let mut editor = varos_core::Editor::new();
+        let before = editor.doc.clone();
+        let mut view = varos_core::geom::View::identity();
+        let mut pending = crate::host::ActionQueue::default();
+        crate::raise_doc(
+            &mut pending,
+            crate::host::DocAction::Key(winit::keyboard::KeyCode::KeyV, crate::Mods { ctrl: true, shift, alt: false }),
+            &mut editor,
+            &mut view,
+            egui::Rect::NOTHING,
+            &mut Ui,
+        );
+        assert!(!pending.is_empty());
+        assert_eq!(editor.doc, before);
+        assert_eq!(editor.rev, 0);
+    }
 }

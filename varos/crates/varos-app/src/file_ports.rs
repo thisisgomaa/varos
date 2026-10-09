@@ -90,6 +90,9 @@ pub struct RfdDialogs;
 
 impl Dialogs for RfdDialogs {
     // ---- Lane H ----
+    fn import_options(&mut self, path: &Path) -> Option<varos_import::ImportOptions> {
+        crate::foreign_import::choose_options(path)
+    }
     fn accept_import_losses(&mut self, notes: &[String]) -> bool {
         crate::foreign_import::accept_losses(notes)
     }

@@ -30,7 +30,7 @@ pub enum LossPolicy {
     Refuse,
     AllowReported,
 }
-#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ImportOptions {
     pub loss_policy: LossPolicy,

@@ -11,7 +11,7 @@ canvas drops retain named layers as groups and use the existing checked `PlaceAr
 Locally cached lopdf 0.43.0 (MIT) is used because hayro/hayro-interpret are absent. The supported
 PDF profile is classic xref, static DeviceRGB/Gray paths, transforms, fill/stroke styles, dashes,
 CropBox/MediaBox, orthogonal page rotation and representable clipping. One page is imported; multi-page input needs the typed
-one-based `page` option in CLI/Bridge. UserUnit, compressed object/xref streams, encryption,
+one-based `page` option in CLI/Bridge or the provisional desktop page chooser. UserUnit, compressed object/xref streams, encryption,
 nonzero compound fills/clips, Form XObjects, CMYK/ICC/spot/pattern/transparency operators refuse.
 Text has no verified glyph-outline API in lopdf: omission is reported and requires acceptance.
 PDF images are reported omissions because this checkout has no native image/blob node.
@@ -24,7 +24,11 @@ text/hatches and unsupported line styles/colours refuse. Arc radial tolerance is
 
 Clipboard preference is trusted current Varos bytes, SVG, PDF, then bitmap. Unknown/malformed
 internal data refuses; other Varos sessions' detached selection decoding is deferred. Snapshot
-and publication recheck the NSPasteboard generation; losses are confirmed before mutation.
+and publication recheck the NSPasteboard generation; desktop losses are confirmed before mutation.
+Desktop and Bridge conversions run on the existing IO worker, with revision/busy/cancellation
+guards at publication. Bridge returns an accepted ticket; request_status carries the completion
+report and committed revision. Desktop DXF offers declared units or explicit millimetre/point
+overrides; selected page/unit options are owned by the queued job.
 CLI `import`, `import-pdf`, `import-ai`, `import-dxf` require a fresh `.vrs` output; `--allow-loss`
 is explicit. Bridge 1.2 `import_file` and `import_clipboard` expose typed options through schema
 and list_verbs; native file scope and existing revision/idempotency receipts remain in force.
