@@ -4286,6 +4286,7 @@ dependencies = [
  "unicode-normalization",
  "varos-bridge",
  "varos-core",
+ "varos-import",
  "varos-pdf",
  "varos-raster",
  "varos-render-wgpu",
@@ -4317,6 +4318,7 @@ dependencies = [
  "image",
  "varos-bridge",
  "varos-core",
+ "varos-import",
  "varos-pdf",
  "varos-raster",
 ]
@@ -4334,6 +4336,17 @@ dependencies = [
  "serde_json",
  "syn 2.0.118",
  "unicode-normalization",
+]
+
+[[package]]
+name = "varos-import"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "roxmltree",
+ "serde",
+ "usvg",
+ "varos-core",
 ]
 
 [[package]]

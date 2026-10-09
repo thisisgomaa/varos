@@ -57,6 +57,9 @@ pub trait Dialogs {
     }
     /// The Open dialog (multi-select). Empty = cancelled.
     fn pick_open(&mut self) -> Vec<PathBuf>;
+    fn pick_place_svg(&mut self) -> Option<PathBuf> {
+        None
+    }
     fn pick_locate(&mut self) -> Option<PathBuf> {
         self.pick_open().into_iter().next()
     }
@@ -100,6 +103,9 @@ pub trait Dialogs {
 /// Every file operation the lifecycle performs.
 pub trait DocStore {
     fn load(&mut self, path: &Path) -> Result<Document, String>;
+    fn import_svg(&mut self, _path: &Path) -> Result<(Document, Vec<String>), String> {
+        Err("SVG import unavailable".into())
+    }
     /// Additive notice seam; existing stores need not produce migration notices.
     fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
         self.load(path).map(|doc| (doc, None))
@@ -225,6 +231,25 @@ impl Lifecycle<'_> {
             AppCommand::NewWithPreset(preset) => {
                 self.ws.new_untitled_with(varos_core::board::new_board_with_preset(preset));
             }
+            AppCommand::PlaceSvg(id) => {
+                if let Some(path) = self.dialogs.pick_place_svg() {
+                    match self.store.import_svg(&path) {
+                        Ok((doc, notes)) => {
+                            if let Some(s) = self.ws.get_mut(id) {
+                                if let Err(e) = varos_core::placement::check(&s.editor, &doc) {
+                                    self.dialogs.open_failed(&file_name(&path), &e);
+                                    return Effect::default();
+                                }
+                                s.editor.execute(varos_core::EditCommand::PlaceArtwork(Box::new(doc)));
+                            }
+                            if !notes.is_empty() {
+                                self.dialogs.notice("SVG import losses", &notes.join("\n"));
+                            }
+                        }
+                        Err(e) => self.dialogs.open_failed(&file_name(&path), &e),
+                    }
+                }
+            }
             AppCommand::OpenDialog => {
                 let picked = self.dialogs.pick_open();
                 self.open_paths(picked);
@@ -278,6 +303,18 @@ impl Lifecycle<'_> {
         }
     }
     fn open_one(&mut self, path: PathBuf, old: Option<&Path>) {
+        if crate::svg_import::is_svg(&path) {
+            match self.store.import_svg(&path) {
+                Ok((doc, notes)) => {
+                    self.ws.new_imported(doc);
+                    if !notes.is_empty() {
+                        self.dialogs.notice("SVG import losses", &notes.join("\n"));
+                    }
+                }
+                Err(e) => self.dialogs.open_failed(&file_name(&path), &e),
+            }
+            return;
+        }
         let key = self.store.key(&path);
         if let Some(id) = self.open_tab_of(&key, None) {
             self.ws.activate(id);
@@ -979,6 +1016,12 @@ mod tests {
         }
     }
     impl Dialogs for FakeDialogs {
+        fn pick_place_svg(&mut self) -> Option<PathBuf> {
+            match self.next("place-svg".into()) {
+                Ans::Pick(p) => p,
+                a => panic!("unexpected {a:?}"),
+            }
+        }
         fn external_change(&mut self, name: &str) -> ExternalChoice {
             match self.next(format!("external {name}")) {
                 Ans::External(choice) => choice,
@@ -1096,6 +1139,9 @@ mod tests {
         }
     }
     impl DocStore for FakeStore {
+        fn import_svg(&mut self, path: &Path) -> Result<(Document, Vec<String>), String> {
+            self.load(path).map(|d| (d, vec![]))
+        }
         fn fingerprint(&self, path: &Path) -> Option<varos_app::storage::durable::Fingerprint> {
             self.fingerprints.get(path).copied()
         }
@@ -1463,6 +1509,29 @@ mod tests {
         assert_eq!(e.board.as_ref().map(|b| b.name.as_str()), Some("Written"));
         assert_eq!(e.name, "Written");
         assert!(r.get(a).is_dirty_exact(), "the later rename is still unsaved");
+    }
+
+    #[test]
+    fn svg_open_is_dirty_untitled_and_place_is_one_undo_step() {
+        let mut r = Rig::new();
+        let (doc, _) = varos_import::import_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 30"><rect width="20" height="10"/></svg>"#,
+        )
+        .unwrap();
+        r.s.put("/d/art.svg", doc);
+        r.run(AppCommand::OpenPaths(vec![p("/d/art.svg")], OpenOrigin::Dialog));
+        let id = r.active();
+        assert!(r.get(id).path.is_none());
+        assert!(r.get(id).is_dirty_exact());
+        assert!(r.get(id).display_name().starts_with("Untitled"));
+        assert_eq!(r.get(id).editor.doc.artboards[0].w, 50.);
+        r.script([Ans::Pick(Some(p("/d/art.svg")))]);
+        r.run(AppCommand::PlaceSvg(id));
+        assert_eq!(r.get(id).editor.doc.paths.len(), 2);
+        r.ed(id).execute(EditCommand::Undo);
+        assert_eq!(r.get(id).editor.doc.paths.len(), 1);
+        r.run(AppCommand::OpenPaths(vec![p("/d/missing.svgz")], OpenOrigin::Dialog));
+        assert_eq!(r.active(), id);
     }
 
     #[test]

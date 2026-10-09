@@ -424,7 +424,9 @@ pub fn serve<T: Transport>(
             "ping" => rpc_result(id, json!({})),
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
             "tools/list" => rpc_result(id, tools_for_api(params.get("api").and_then(Value::as_str).unwrap_or("1.0"))),
-            "tools/call" if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name)) => {
+            "tools/call"
+                if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name) && name != "import_svg") =>
+            {
                 rpc_error(id, -32602, "unknown or missing tool name")
             }
             "tools/call" => {
@@ -502,6 +504,7 @@ pub fn tools_for(api: &str) -> Value {
     if api != "1.2" {
         return out;
     }
+    out["tools"].as_array_mut().unwrap().push(json!({"name":"import_svg","description":"SVG/SVGZ; files scope; undo; losses.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}), &["api","board","request_id","expected_rev","path"])}));
     let style = stroke_style_schema();
     if let Some(tools) = out["tools"].as_array_mut() {
         for tool in tools {
@@ -622,17 +625,17 @@ pub fn tools_for(api: &str) -> Value {
     if let Some(tools) = out["tools"].as_array_mut() {
         for tool in tools.iter_mut() {
             let description = match tool["name"].as_str() {
-                Some("capabilities") => Some("APIs, limits, local scopes."),
-                Some("list_boards") => Some("Authorized open boards."),
-                Some("describe") => Some("Scoped/paged details or revision changes."),
-                Some("select") => Some("Replace selection; no document undo."),
-                Some("history") => Some("Undo/redo; revision + idempotency checks."),
-                Some("request_status") => Some("Poll retained client receipt."),
-                Some("snapshot") => Some("Pinned board/page PNG; max 1024px."),
-                Some("edit") => Some("Atomic explicit-target batch; one undo; selection retained. Tuples/object ops, repeat, defaults, IDs receipts; trace_rgba uses pixel coordinates. Page IDs: artboard:N."),
-                Some("save") => Some("Queue revision-pinned work; accepted/ticket, poll request_status. Fresh .vrs/.pdf under passwd home, /Volumes/<volume>/, iCloud/CloudStorage only. Deny /tmp, /private/var, other ~/Library, system roots, app bundle, dot components, existing files, network volumes. Require existing parents + canonical containment. FAT32/exFAT: exclusive rename after linkat; real volumes unverified."),
+                Some("capabilities") => Some("APIs/limits/scopes."),
+                Some("list_boards") => Some("Open boards."),
+                Some("describe") => Some("Paged detail/diff."),
+                Some("select") => Some("Select; no undo."),
+                Some("history") => Some("Checked undo/redo."),
+                Some("request_status") => Some("Poll receipt."),
+                Some("snapshot") => Some("Pinned PNG; <=1024px."),
+                Some("edit") => Some("Atomic targets; one undo; selection retained. Tuples/objects, repeat, defaults, IDs receipts. Trace: pixels. Pages: artboard:N."),
+                Some("save") => Some("Pinned file job; poll request_status. Fresh .vrs/.pdf in home/Volumes/iCloud/CloudStorage; local volumes, existing canonical parents. Protected/dot/symlink/hardlink/overwrite guards; see capabilities."),
                 Some("save_as" | "export_pdf") => {
-                    Some("Pinned file work; poll request_status; save safeguards apply.")
+                    Some("Pinned file job; save guards; poll request_status.")
                 }
                 _ => None,
             };

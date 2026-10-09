@@ -58,3 +58,17 @@
 - `varos/crates/varos-core/src/lib.rs`: exported both select_transform and trace once. Canonical painted_extent and geom/kurbo.rs unchanged; no duplicate shortcut, command, setting, store or adapter introduced.
 - Merge-only support repair `varos/crates/varos-bridge/src/mcp.rs`: moved trace schema into the explicit 1.2 projection; retained every verb/constraint/public operation definition, removed a duplicate capability API assignment, shortened private shared references and descriptions; default and 1.2 size ratchets pass.
 - Validation: fmt + offline -j 3 workspace/all-targets build PASS; 15 targeted core/Bridge/CLI/app invocations PASS (240 passed, 0 failed, 4 existing ignored); markers absent, all report/PLAN/NOTICE rows and contract tests retained, git diff --check PASS. Evidence: /tmp/g2-trace-build.log, /tmp/g2-trace-test-results.json, /tmp/g2-trace-*.log. Deferred merge work: none. No Git write commands used; moderator owns staging/commit.
+
+## feat/p7-svgimport
+- `REPORT.md`: retained both complete lane reports, every finding, gate, limitation and historical note.
+- `docs/PLAN.md`: retained all existing progress rows and added SVG import; both sides checked verbatim.
+- `varos/crates/varos-bridge/src/mcp.rs`: unified tools/list through the existing API projection; import_svg appears once for explicit 1.2, remains callable, and preserves all sibling tools/verbs/schema constraints. Shortened only opt-in descriptions: 23,988/24,000 bytes, all 237 references resolve.
+- `varos/crates/varos-bridge/src/service.rs`: retained broad API 1.2 support, v5/stroke/construction/transform/trace capabilities; added import_svg once with its 1.2-only gate and tool API mapping. Merge-only receipt repair tracks originating API so request_status preserves API 1.2 stroke fields and byte-identical import receipts; legacy filtering remains intact.
+- `varos/crates/varos-cli/src/main.rs`: one verb table and dispatch retain trace plus import-svg, including source/output guards and loss reports.
+- `varos/crates/varos-cli/tests/commands.rs`: reconstructed separate test functions; every test from both stages retained exactly once.
+- `varos/crates/varos-core/src/bridge.rs`: retained all stroke/construction/transform/trace validation and added checked PlaceArtwork preflight.
+- `varos/crates/varos-core/src/command.rs`: retained every existing command/execution arm and added one PlaceArtwork variant/arm using checked, ID-remapped, single-undo placement.
+- `varos/crates/varos-core/src/lib.rs`: exported select_transform, trace and placement exactly once.
+- Unifications: one CLI verb table, MCP projection and capability response; no duplicate shortcut/command/setting/store/adapter or Bridge verb. Canonical painted_extent, geom/kurbo.rs, NOTICE and GATE_LOG byte-identical to HEAD; all nine conflict files marker-free.
+- Validation: cargo fmt --all and cargo build --offline -j 3 --workspace --all-targets PASS; git diff --check PASS. Thirteen cargo test --offline -j 3 -p <crate> <filter> invocations cover import/placement/app menus, trace core/Bridge/CLI, full CLI commands/Bridge contracts/artboards, geometry/stroke/construction/select_transform: 248 passed, 0 failed, 4 existing ignored.
+- Evidence: /tmp/g2-svg-build.log, /tmp/g2-svg-test-results.json, /tmp/g2-svg-*.log and /tmp/g2-svg-schema.json. Deferred merge work: none. No Git write command used; moderator owns staging/commit.

@@ -152,6 +152,7 @@ struct RetainedReceipt {
     reply: Reply,
     ids: bool,
     export_report: bool,
+    stroke_fields: bool,
 }
 #[derive(Default)]
 struct Client {
@@ -315,7 +316,11 @@ impl Service {
                 }
             }
         }
-        if req.api() != "1.2" {
+        // Status returns the original mutation's receipt, including its API 1.2 fields.
+        let retained_stroke_fields = matches!(req, Request::RequestStatus(v) if self.clients.get(&ctx.client)
+            .and_then(|c| c.receipts.iter().find(|r| r.id == v.request_id))
+            .is_some_and(|r| r.stroke_fields));
+        if req.api() != "1.2" && !retained_stroke_fields {
             if let Some(result) = &mut reply.result {
                 strip_stroke_style(result);
             }
@@ -339,6 +344,9 @@ impl Service {
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
         if ![API, "1.1", "1.2"].contains(&req.api()) {
             return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0, 1.1 or 1.2"));
+        }
+        if matches!(req, Request::ImportSvg(_)) && req.api() != "1.2" {
+            return Reply::failure(Error::new("unsupported", "import_svg requires API 1.2"));
         }
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
@@ -484,6 +492,8 @@ impl Service {
                             }
                             v["economy_hint"] = json!("API 1.2 edit inherits 1.1 defaults, creation tuples, repeat, automatic names and IDs receipts; other tools retain the APIs listed in api_by_tool.");
                             v["trace"] = json!({"input":"RGBA8 array; alpha below 128 omitted","coordinates":"input pixels, y down","max_pixels":varos_core::trace::MAX_PIXELS,"max_anchors":varos_core::trace::MAX_ANCHORS,"grayscale_levels":8,"request_bytes":crate::MAX_FRAME});
+                            v["api_by_tool"]["import_svg"] = json!(["1.2"]);
+                            v["tools"].as_array_mut().unwrap().push(json!("import_svg"));
                         }
                     }
                     Ok(r)
@@ -529,6 +539,25 @@ impl Service {
                         }
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
+                }
+                Request::ImportSvg(v) => {
+                    if v.path.is_none() || v.scope.is_some() {
+                        return Err(Error::new("invalid_argument", "import_svg requires path and no scope"));
+                    }
+                    let from = self.boards[&v.board].rev;
+                    let imported = host.file_effect("import_svg", v)?;
+                    if !imported.ok {
+                        return Ok(imported);
+                    }
+                    self.observe(host);
+                    self.observe_selection(host, &v.board);
+                    let report = imported.result.as_ref().and_then(|r| r.get("report"));
+                    let mut reply =
+                        self.edit_receipt_reserved(&v.board, from, report.map_or(0, |r| r.to_string().len()));
+                    if let (Some(result), Some(report)) = (reply.result.as_mut(), report) {
+                        result["report"] = report.clone();
+                    }
+                    Ok(reply)
                 }
                 Request::Save(v) | Request::SaveAs(v) | Request::ExportPdf(v) => {
                     match req {
@@ -753,6 +782,7 @@ impl Service {
                     reply: reply.clone(),
                     ids: matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
                     export_report: matches!(req, Request::ExportPdf(v) if v.api == "1.2"),
+                    stroke_fields: req.api() == "1.2",
                 });
                 while client.receipts.len() > 128 {
                     client.receipts.pop_front();

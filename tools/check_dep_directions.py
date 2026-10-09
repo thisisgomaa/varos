@@ -9,13 +9,14 @@ import sys
 
 EDGES = {
     "varos-core": set(),
+    "varos-import": {"varos-core"},
     "varos-text": set(),
     "varos-render-wgpu": {"varos-core"},
     "varos-pdf": {"varos-core"},
-    "varos-app": {"varos-text", "varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
+    "varos-app": {"varos-import", "varos-text", "varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
     "varos-raster": {"varos-core", "varos-pdf"},  # PDF is test-only.
     "varos-bridge": {"varos-core", "varos-raster"},
-    "varos-cli": {"varos-core", "varos-pdf", "varos-raster", "varos-bridge"},
+    "varos-cli": {"varos-import", "varos-core", "varos-pdf", "varos-raster", "varos-bridge"},
 }
 
 
@@ -38,7 +39,7 @@ def validate(metadata, app_source):
         exact(f"{name} internal dependencies", internal, allowed)
         for dependency in dependencies:
             normalized = dependency["name"].replace("_", "-")
-            if name in {"varos-text", "varos-core", "varos-raster", "varos-cli", "varos-bridge"} and re.match(
+            if name in {"varos-import", "varos-text", "varos-core", "varos-raster", "varos-cli", "varos-bridge"} and re.match(
                 r"^(wgpu|winit|epaint(?:-|$)|egui(?:-|$)|windows(?:-|$))", normalized
             ):
                 violations.append(f"{name} forbidden UI/GPU/platform dependency: {dependency['name']}")
@@ -71,7 +72,7 @@ def main():
         graph_unresolved = False
         try:
             graph = subprocess.run(
-                ["cargo", "tree", "--locked", "-e", "features", "-p", "varos-text",
+                ["cargo", "tree", "--offline", "--locked", "-e", "features", "-p", "varos-text",
                  "--manifest-path", str(root / "varos/Cargo.toml")],
                 check=True, capture_output=True, text=True,
             ).stdout
@@ -97,7 +98,7 @@ def main():
         print("dependency edges checked; isolated features not verified", file=sys.stderr)
         return 2
     print("check_dep_directions: PASS")
-    print("internal edges: Bridge -> core, raster; raster -> core (+ pdf tests); CLI -> Bridge, core, pdf, raster; app -> core, renderer, pdf, raster, Bridge")
+    print("internal edges: import -> core; app and CLI -> import; core -> import forbidden; Bridge -> core, raster; raster -> core (+ pdf tests); CLI -> Bridge, core, pdf, raster; app -> core, renderer, pdf, raster, Bridge")
     print("varos-text: pure leaf; app -> text allowed; core -> text forbidden until T4; isolated features clean")
     print("egui_tiles code use: varos-app/src/shell/boxtree.rs only")
     return 0
