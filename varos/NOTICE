@@ -80,3 +80,9 @@ VectorCraft crates/engine/src/cmd/layer.rs:142 and menucmds.rs:150-155 @ a469568
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
 Document Setup, Document Info and folder-based Templates: ADAPT field/report and lifecycle conventions from ArtCraft VectorCraft engine cmd/docsetup.rs, docinfo.rs, fileio/save.rs and load.rs, revision a469568. Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors. Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft. Independent Varos implementation; no UI/assets copied.
+
+Lane B gradient mathematics:
+Adapted from VectorCraft color/src/gradient.rs @ a469568 (MIT OR Apache-2.0).
+Placement, spread and validation are Varos additions; see varos-core/src/gradient.rs.
+Appearance entry options/read-view shape: adapted from VectorCraft
+doc/src/appearance.rs @ a469568 (MIT OR Apache-2.0); no effects or new persisted keys.

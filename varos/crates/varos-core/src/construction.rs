@@ -132,7 +132,7 @@ impl Editor {
                 path.stroke = Paint::None;
             }
             if !piece.closed {
-                path.stroke = source.fill;
+                path.stroke = *source.appearance().fill();
                 path.fill = Paint::None;
                 if path.stroke_width <= 0.0 {
                     path.stroke_width = 1.0;
@@ -167,7 +167,12 @@ impl Editor {
         let keys: Vec<_> = sources
             .iter()
             .enumerate()
-            .map(|(i, p)| sources[..i].iter().position(|q| q.fill == p.fill && q.opacity == p.opacity).unwrap_or(i))
+            .map(|(i, p)| {
+                sources[..i]
+                    .iter()
+                    .position(|q| *q.appearance().fill() == *p.appearance().fill() && q.opacity == p.opacity)
+                    .unwrap_or(i)
+            })
             .collect();
         let pieces = planar::pathfinder(op, &shapes, &keys);
         self.construction_replace(

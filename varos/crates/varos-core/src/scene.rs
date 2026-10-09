@@ -1,3 +1,4 @@
+// ---- Lane B: additive Appearance reader routing; persisted storage unchanged ----
 //! The HARD SEAM: the core describes WHAT to draw as render-agnostic primitives.
 //! No wgpu, no triangles, no NDC here — a renderer turns these into pixels however it likes.
 //!
@@ -144,8 +145,8 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
         for hole in &path.holes {
             hole.len().hash(&mut state);
         }
-        path.fill.hash(&mut state);
-        path.stroke.hash(&mut state);
+        path.appearance().fill().hash(&mut state);
+        path.appearance().stroke().hash(&mut state);
         f32_hash(path.stroke_width, &mut state);
         f32_hash(path.opacity, &mut state);
         for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
@@ -482,7 +483,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
         // between the endpoints) — so deleting an anchor to open a shape keeps its fill (A32). Only paths
         // that actually carry a fill colour reach here; a bare stroke line (fill None) never fills.
         if p.anchors.len() >= 3 {
-            if let Some(c) = p.fill.solid() {
+            if let Some(c) = p.appearance().fill().solid() {
                 // A7 seam: WORLD-space rings (unit transform composed). Identity ⇒ today's geometry.
                 let mut rings = Vec::with_capacity(1 + geom.holes.len());
                 rings.push(geom.outline.clone());
@@ -530,7 +531,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
         if !p.stroke_style.is_default() {
-            if let Some(color) = p.stroke.solid() {
+            if let Some(color) = p.appearance().stroke().solid() {
                 match crate::stroke::evaluate(p, 0.025 / f64::from(ppu.max(0.0001)), &|| false) {
                     Ok(coverage) => {
                         if let Err(e) = stroke_budget.borrow_mut().charge(&coverage) {
@@ -595,7 +596,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
             return out;
         }
         if p.anchors.len() >= 2 {
-            if let Some(c) = p.stroke.solid() {
+            if let Some(c) = p.appearance().stroke().solid() {
                 let clip = clip_rects(pi);
                 let mut push = |pts: Vec<Pt>| match &clip {
                     Some(rects) => {
@@ -674,7 +675,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     // accumulators (MASKS_PLAN §2.4: members reuse every branch, they only land in a different vec).
     let emit_object = |pi: usize, p: &Path, geom: &PathGeometry, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
         let o = p.opacity * if ed.in_isolation(p.id) { 1.0 } else { 0.25 };
-        let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
+        let s_alpha = p.appearance().stroke().solid().map_or(1.0, |c| c[3]);
         let vclip = view_clip[pi];
         let mut fp = fill_prims(pi, geom, vclip);
         let mut sp = stroke_prims(pi, geom, vclip);

@@ -1,3 +1,4 @@
+// ---- Lane B: additive Appearance reader routing; persisted storage unchanged ----
 //! The document data model: anchors, paths, the document. Plus pure geometry queries.
 //! Stable u32 IDs (never Vec indices) so selection/active survive deletes & joins.
 
@@ -1191,8 +1192,8 @@ impl Document {
             .collect();
         Path {
             holes,
-            fill: src.fill, // preserve the paint EXACTLY (future gradients too), not a solid snapshot
-            stroke: src.stroke,
+            fill: *src.appearance().fill(), // preserve the paint EXACTLY (future gradients too), not a solid snapshot
+            stroke: *src.appearance().stroke(),
             opacity: src.opacity,
             hidden: src.hidden,
             locked: src.locked,

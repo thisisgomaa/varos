@@ -98,7 +98,7 @@ impl Snap {
         let (fill, stroke, sw, opacity) = match repr {
             Some(pi) => {
                 let p = &ed.doc.paths[pi];
-                (p.fill.solid(), p.stroke.solid(), p.stroke_width, p.opacity)
+                (p.appearance().fill().solid(), p.appearance().stroke().solid(), p.stroke_width, p.opacity)
             }
             None => (ed.cur_fill, ed.cur_stroke, ed.cur_sw, 1.0),
         };

@@ -138,8 +138,8 @@ impl Editor {
                     .filter(|id| {
                         self.doc.pidx(*id).is_some_and(|i| {
                             let b = &self.doc.paths[i];
-                            let fill = a.fill == b.fill;
-                            let stroke = a.stroke == b.stroke;
+                            let fill = *a.appearance().fill() == *b.appearance().fill();
+                            let stroke = *a.appearance().stroke() == *b.appearance().stroke();
                             match mode {
                                 Same::Fill => fill,
                                 Same::Stroke => stroke,
@@ -414,7 +414,8 @@ impl Editor {
                         !self.doc.eff_locked(p.id)
                             && !self.doc.eff_hidden(p.id)
                             && (p.anchors.len() < 2
-                                || (p.fill == crate::model::Paint::None && p.stroke == crate::model::Paint::None))
+                                || (*p.appearance().fill() == crate::model::Paint::None
+                                    && *p.appearance().stroke() == crate::model::Paint::None))
                     })
                     .map(|p| p.id)
                     .collect();

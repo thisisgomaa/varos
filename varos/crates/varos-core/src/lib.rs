@@ -38,3 +38,7 @@ pub mod document_setup;
 pub mod placement;
 pub mod select_transform;
 pub mod trace;
+
+// ---- Lane B: appearance and gradient mathematics ----
+pub mod appearance;
+pub mod gradient;

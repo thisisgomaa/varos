@@ -139,7 +139,7 @@ pub(crate) fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Dra
     // (cubics are affine-invariant → mapping control points is exact). Identity ⇒ today's output.
     let xf = doc.unit_xform(p.id);
     // resolve each paint to its drawable solid ONCE (Paint::None — and future gradients — ⇒ None)
-    let (fill, stroke) = (p.fill.solid(), p.stroke.solid());
+    let (fill, stroke) = (p.appearance().fill().solid(), p.appearance().stroke().solid());
     // WYSIWYG with the canvas: an OPEN path still FILLS (implied straight close between endpoints,
     // A32) — the exact rule `scene::fill_prims` draws by. The old `p.closed` guard dropped the fill
     // of any shape a deleted anchor had opened, so it filled on screen but vanished in the PDF (FB1).

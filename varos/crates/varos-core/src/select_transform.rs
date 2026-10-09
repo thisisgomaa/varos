@@ -319,8 +319,8 @@ impl Editor {
                 self.in_isolation(q.id)
                     && !self.doc.eff_hidden(q.id)
                     && !self.doc.eff_locked(q.id)
-                    && (!options.pick.fill || close(p.fill, q.fill))
-                    && (!options.pick.stroke || close(p.stroke, q.stroke))
+                    && (!options.pick.fill || close(*p.appearance().fill(), *q.appearance().fill()))
+                    && (!options.pick.stroke || close(*p.appearance().stroke(), *q.appearance().stroke()))
                     && (!options.pick.weight || (p.stroke_width - q.stroke_width).abs() <= options.weight)
                     && (!options.pick.opacity || (p.opacity - q.opacity).abs() <= options.opacity)
             })
@@ -343,23 +343,23 @@ impl Editor {
         let Some(p) = self.doc.paths.iter().find(|p| p.id == source).cloned() else { return };
         let ids = self.selected_pids();
         if colour_only {
-            let colour = p.fill.solid().or(p.stroke.solid());
+            let colour = p.appearance().fill().solid().or(p.appearance().stroke().solid());
             self.apply_paint(colour);
             return;
         }
         if pick.fill {
-            self.cur_fill = p.fill.solid();
+            self.cur_fill = p.appearance().fill().solid();
         }
         if pick.stroke {
-            self.cur_stroke = p.stroke.solid();
+            self.cur_stroke = p.appearance().stroke().solid();
         }
         if pick.weight {
             self.cur_sw = p.stroke_width;
         }
         let changed = ids.iter().filter_map(|id| self.doc.pidx(*id)).any(|i| {
             let q = &self.doc.paths[i];
-            (pick.fill && q.fill != p.fill)
-                || (pick.stroke && q.stroke != p.stroke)
+            (pick.fill && *q.appearance().fill() != *p.appearance().fill())
+                || (pick.stroke && *q.appearance().stroke() != *p.appearance().stroke())
                 || (pick.weight && q.stroke_width != p.stroke_width)
                 || (pick.opacity && q.opacity != p.opacity)
         });
@@ -374,10 +374,10 @@ impl Editor {
             if let Some(i) = self.doc.pidx(id) {
                 let q = &mut self.doc.paths[i];
                 if pick.fill {
-                    q.fill = p.fill;
+                    q.fill = *p.appearance().fill();
                 }
                 if pick.stroke {
-                    q.stroke = p.stroke;
+                    q.stroke = *p.appearance().stroke();
                 }
                 if pick.weight {
                     q.stroke_width = p.stroke_width;

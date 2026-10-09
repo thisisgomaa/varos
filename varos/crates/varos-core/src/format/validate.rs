@@ -1,3 +1,4 @@
+// ---- Lane B: additive Appearance reader routing; persisted storage unchanged ----
 //! Semantic checks on authored content. Structural checks run first; these checks never walk the
 //! tree recursively or repair it. Both load and save check authored values BEFORE normalization,
 //! so pruning a group or clearing a nested transform cannot hide an invalid number.
@@ -109,10 +110,10 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
             stroke_budget.charge(&coverage).map_err(|e| Invalid::Stroke { path: p.id, reason: e.to_string() })?;
         }
         unit(p.opacity, &label, "opacity")?;
-        if let Some(c) = p.fill.solid() {
+        if let Some(c) = p.appearance().fill().solid() {
             color(c, &label, "fill")?;
         }
-        if let Some(c) = p.stroke.solid() {
+        if let Some(c) = p.appearance().stroke().solid() {
             color(c, &label, "stroke")?;
         }
     }
