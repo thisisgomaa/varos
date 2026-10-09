@@ -421,6 +421,7 @@ impl Ui {
     /// K3: commit the open field into `ed` now (before a canvas press, which may change the selection
     /// the field edits). `false` = its text does not parse — it keeps the keyboard; drop the press.
     pub fn commit_fields(&mut self, ed: &mut Editor) -> bool {
+        crate::document_ui::settle(&mut self.document_sheet, ed);
         self.commit_picker_fields(ed)
     }
     /// A text / number field is being edited right now.

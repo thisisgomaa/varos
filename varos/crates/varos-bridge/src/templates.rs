@@ -19,7 +19,23 @@ pub fn path(name: &str) -> Result<PathBuf, Error> {
         .join(leaf))
 }
 pub fn save_new(doc: &varos_core::model::Document, dest: &Path) -> Result<(), Error> {
+    save_new_cancellable(doc, dest, &std::sync::atomic::AtomicBool::new(false))
+}
+pub fn save_new_cancellable(
+    doc: &varos_core::model::Document,
+    dest: &Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<(), Error> {
+    let check = || {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            Err(Error::new("cancelled", "template job cancelled"))
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
     let bytes = varos_core::file::doc_to_blob(doc).map_err(|e| Error::new("invalid_argument", e))?;
+    check()?;
     let folder = dest.parent().ok_or_else(|| Error::new("invalid_argument", "template folder missing"))?;
     std::fs::create_dir_all(folder).map_err(|e| Error::new("io_error", e.to_string()))?;
     let temp = folder.join(format!(".template-{}-{}.tmp", std::process::id(), crate::conn::random_hex(16)?));
@@ -27,13 +43,22 @@ pub fn save_new(doc: &varos_core::model::Document, dest: &Path) -> Result<(), Er
         let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
         file.write_all(bytes.as_bytes())?;
         file.sync_all()?;
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "template job cancelled"));
+        }
         // Publication refuses both an existing file and a symlink, including a race.
         std::fs::hard_link(&temp, dest)
     })();
     let _ = std::fs::remove_file(&temp);
     result.map_err(|e| {
         Error::new(
-            if e.kind() == std::io::ErrorKind::AlreadyExists { "save_conflict" } else { "io_error" },
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                "save_conflict"
+            } else if e.kind() == std::io::ErrorKind::Interrupted {
+                "cancelled"
+            } else {
+                "io_error"
+            },
             e.to_string(),
         )
     })

@@ -129,5 +129,39 @@ fn schemas_are_opt_in() {
         varos_bridge::mcp::tools_12()["tools"].as_array().unwrap().len(),
         varos_bridge::mcp::tools()["tools"].as_array().unwrap().len() + 3
     );
+    let schema = varos_bridge::mcp::tools_12();
+    let tools = schema["tools"].as_array().unwrap();
+    let edit = tools.iter().find(|t| t["name"] == "edit").unwrap();
+    assert_eq!(edit["inputSchema"]["$defs"]["document_setup"]["required"], json!(["verb", "field", "value"]));
+    assert!(edit["inputSchema"]["$defs"]["operation"]["anyOf"]
+        .as_array()
+        .unwrap()
+        .contains(&json!({"$ref":"#/$defs/document_setup"})));
+    let legacy = varos_bridge::mcp::tools();
+    let legacy_edit = legacy["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
+    assert!(legacy_edit["inputSchema"]["$defs"].get("document_setup").is_none());
+    for name in ["save_template", "new_from_template"] {
+        let t = tools.iter().find(|t| t["name"] == name).unwrap();
+        assert_eq!(t["inputSchema"]["properties"]["api"]["const"], "1.2");
+        assert_eq!(t["inputSchema"]["required"], json!(["api", "board", "request_id", "expected_rev", "path"]));
+    }
     let _ = FakeHost::empty();
+}
+
+#[test]
+fn units_only_publishes_once_and_noop_has_no_history() {
+    let mut h = FakeHost::two_pages();
+    let mut s = Service::new("test-epoch".into());
+    let rev = h.editor.rev;
+    let args = |rev, id| json!({"api":"1.2","board":"b1","expected_rev":rev,"request_id":id,"ops":[{"verb":"document_setup","field":"units","value":"mm"}]});
+    assert!(invoke(&mut s, &mut h, "edit", args(rev, "r1")).ok);
+    assert_eq!(h.editor.doc.units.display, varos_core::Unit::Mm);
+    assert_eq!(h.editor.rev, rev + 1);
+    assert!(invoke(&mut s, &mut h, "edit", args(rev + 1, "r2")).ok);
+    assert_eq!(h.editor.rev, rev + 1);
+    h.editor.undo();
+    assert_eq!(h.editor.doc.units.display, varos_core::Unit::Px);
+    assert!(!h.editor.history_available(false));
+    h.editor.redo();
+    assert_eq!(h.editor.doc.units.display, varos_core::Unit::Mm);
 }

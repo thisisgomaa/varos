@@ -421,7 +421,7 @@ pub fn tools_12() -> Value {
     let mut out = tools();
     if let Some(list) = out["tools"].as_array_mut() {
         for name in ["save_template", "new_from_template"] {
-            list.push(json!({"name":name,"description":"API 1.2 folder-convention template; path is a plain NAME.vrs, opens Untitled and dirty.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}),&["api","board","request_id","expected_rev","path"])}));
+            list.push(json!({"name":name,"description":"API 1.2 folder-convention template; path is a plain NAME.vrs. Returns accepted/ticket; poll receipt for completion. Opening creates Untitled and dirty.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}),&["api","board","request_id","expected_rev","path"])}));
         }
         list.push(json!({"name":"window_memory","description":"API 1.2 persisted window geometry query.","inputSchema":object(json!({"api":{"const":"1.2"}}),&["api"])}));
         for tool in list.iter_mut() {

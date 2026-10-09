@@ -65,6 +65,9 @@ pub struct ExportJob {
 #[derive(Clone, Debug, Default)]
 pub struct CancelFlag(Arc<AtomicBool>);
 impl CancelFlag {
+    pub fn from_shared(flag: Arc<AtomicBool>) -> Self {
+        Self(flag)
+    }
     /// Ask the job to stop (the Export sheet's Cancel).
     pub fn cancel(&self) {
         self.0.store(true, Ordering::Relaxed);
@@ -122,6 +125,7 @@ impl ExportEvent {
 /// One unit of background file work.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileJob {
+    Template(crate::template_jobs::Job),
     Save(SaveJob),
     /// Slice 0.6: File ▸ Save a Copy… — the same write as `Save`, but its result only releases the
     /// tab's save slot (path, checkpoint, dirty state and Recent stay), like the Bridge's copy.
@@ -163,6 +167,7 @@ pub struct ExportDone {
 /// A finished background job, applied on the UI thread through `AppCommand::FileDone`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileDone {
+    Template(crate::template_jobs::Done),
     Saved(SaveDone),
     /// A Save a Copy… landed (`FileJob::SaveCopy`).
     CopySaved(SaveDone),
@@ -188,9 +193,13 @@ impl FileDone {
     /// A durable save: nothing to ask or tell, so the host applies it without settling the active tab
     /// (a background save landing must not end the user's drag).
     pub fn is_quiet(&self) -> bool {
+        if matches!(self, FileDone::Template(crate::template_jobs::Done { result: Ok(Some(_)), .. })) {
+            return false; // opening a tab must settle the human gesture and refresh document UI
+        }
         matches!(
             self,
             FileDone::Bridge { .. }
+                | FileDone::Template(_)
                 | FileDone::Saved(SaveDone { result: Ok(SaveOutcome::Durable), .. })
                 | FileDone::CopySaved(SaveDone { result: Ok(SaveOutcome::Durable), .. })
         )
@@ -199,6 +208,10 @@ impl FileDone {
     /// What the worker delivers if `job` panicked (a bug): a failure carrying the job's identity.
     pub fn panicked(job: &FileJob) -> FileDone {
         match job {
+            FileJob::Template(j) => FileDone::Template(crate::template_jobs::Done {
+                ticket: j.ticket,
+                result: Err(varos_bridge::Error::new("io_error", "template worker panicked")),
+            }),
             FileJob::Bridge(j) => FileDone::Bridge {
                 ticket: j.ticket,
                 copy: j.expected.is_none(),
@@ -249,6 +262,7 @@ pub fn next_ticket() -> u64 {
 /// Recent entry, and a save's Recent entry is recorded by the lifecycle when its result is applied.
 pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
     match job {
+        FileJob::Template(j) => FileDone::Template(crate::template_jobs::execute(j)),
         FileJob::Bridge(j) => execute_bridge(*j, disk),
         FileJob::Save(j) => {
             let result = disk.save(&j.doc, &j.dest);
@@ -270,7 +284,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
         let dest = match &mut j.inner {
             FileJob::Save(s) | FileJob::SaveCopy(s) => &mut s.dest,
             FileJob::Export(e) => &mut e.dest,
-            FileJob::Bridge(_) => unreachable!(),
+            FileJob::Bridge(_) | FileJob::Template(_) => unreachable!(),
         };
         if let Some((path, expected)) = &j.expected {
             if expected.is_none() || disk.fingerprint(path) != *expected {
@@ -308,7 +322,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                     };
                 FileDone::Exported(ExportDone { job: e, result, report })
             }
-            FileJob::Bridge(_) => unreachable!(),
+            FileJob::Bridge(_) | FileJob::Template(_) => unreachable!(),
         })
     })();
     let (reply, done) = match result {
@@ -338,7 +352,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 FileDone::Exported(_) => {
                     varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", "PDF export refused or failed"))
                 }
-                FileDone::Bridge { .. } | FileDone::CopySaved(_) => unreachable!(),
+                FileDone::Bridge { .. } | FileDone::CopySaved(_) | FileDone::Template(_) => unreachable!(),
             };
             (reply, Some(Box::new(done)))
         }

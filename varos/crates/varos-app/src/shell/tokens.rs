@@ -640,6 +640,9 @@ pub const DOC_SHEET_TOP: f32 = 180.0;
 pub const DOC_INFO_LIST_H: f32 = 180.0;
 pub const BLEED_GUIDE_W: f32 = 1.0;
 
+// Phase 1 document transparency furniture (canvas only).
+pub const DOC_CHECKERBOARD: [[f32; 4]; 2] = [[0.18, 0.18, 0.18, 1.0], [0.24, 0.24, 0.24, 1.0]];
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

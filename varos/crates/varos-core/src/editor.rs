@@ -3358,7 +3358,11 @@ impl Editor {
         // A successful create-then-delete/group-then-ungroup batch may expose allocated identities
         // while leaving no authored change. Reserve them even when no undo entry is published.
         self.id_high_water = self.id_high_water.max(staged.allocation_floor());
-        if if preserve_transient { !staged.doc.content_eq(&self.doc) } else { staged.doc != self.doc } {
+        if if preserve_transient {
+            !staged.doc.content_eq(&self.doc) || staged.doc.units.display != self.doc.units.display
+        } else {
+            staged.doc != self.doc
+        } {
             self.begin();
             self.doc = staged.doc;
             self.dirty = true;
@@ -3427,6 +3431,13 @@ impl Editor {
         }
         self.pending = None;
         self.dirty = false;
+    }
+    /// Finish a setup scrub, dropping a gesture that returned to its starting value.
+    pub fn finish_document_setup(&mut self) {
+        if let Some(before) = &self.pending {
+            self.dirty = !self.doc.content_eq(before) || self.doc.units != before.units;
+            self.commit();
+        }
     }
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
