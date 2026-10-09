@@ -670,6 +670,15 @@ pub const BLEED_GUIDE_W: f32 = 1.0;
 // Phase 1 document transparency furniture (canvas only).
 pub const DOC_CHECKERBOARD: [[f32; 4]; 2] = [[0.18, 0.18, 0.18, 1.0], [0.24, 0.24, 0.24, 1.0]];
 
+// ---- w2-gradients: provisional controls; owner design review pending ----
+pub const GRADIENT_BAR_W: f32 = 216.0;
+pub const GRADIENT_BAR_H: f32 = 28.0;
+pub const GRADIENT_STOP_R: f32 = 4.0;
+pub const GRADIENT_NUMBER_W: f32 = 204.0;
+pub const GRADIENT_LIST_H: f32 = 72.0;
+pub const GRADIENT_BODY_H: f32 = 500.0;
+pub const COLOUR_GUIDE_ROW_H: f32 = 24.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

@@ -60,6 +60,8 @@ fn stroke_targets(ed: &mut Editor, change: impl Fn(&mut varos_core::stroke::Stro
 }
 
 pub(crate) enum Op {
+    Colour(varos_core::colour_commands::ColourCommand),
+    PaletteFile { path: String, export: bool },
     View(varos_core::editor::view_commands::ViewAction),
     Zoom(f32),
     DocumentSetup(EditCommand),
@@ -225,8 +227,15 @@ pub(crate) fn apply_picker_frame(
 pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
     for op in ops {
         match op {
+            Op::PaletteFile { path, export } => colour_tools::file(ed, path, export),
+            Op::Colour(c) => {
+                ed.colour_error = ed.try_execute(EditCommand::Colour(c)).err();
+            }
             Op::View(action) => ed.execute_ui(EditCommand::View(action)),
             Op::Zoom(value) => ed.execute_ui(EditCommand::ZoomPercent(value)),
+            Op::Tool(ToolKind::Gradient) => {
+                ed.execute_ui(EditCommand::Colour(varos_core::colour_commands::ColourCommand::Tool))
+            }
             Op::Tool(t) => ed.set_tool(t),
             Op::NewLayer(sub) => ed.execute_ui(EditCommand::Object(if sub {
                 varos_core::editor::wave::ObjectAction::NewSublayer

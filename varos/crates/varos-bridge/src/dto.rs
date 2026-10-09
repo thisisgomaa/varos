@@ -198,6 +198,11 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    // ---- w2-gradients ----
+    Colour {
+        ids: Vec<String>,
+        command: varos_core::colour_commands::ColourCommand,
+    },
     Pathfinder {
         ids: Vec<String>,
         operation: String,
@@ -515,7 +520,8 @@ impl Operation {
     pub fn slice4a(&self) -> bool {
         matches!(
             self,
-            Self::ToolOptions { .. }
+            Self::Colour { .. }
+                | Self::ToolOptions { .. }
                 | Self::Transform { .. }
                 | Self::MagicWand { .. }
                 | Self::Eyedropper { .. }
@@ -540,7 +546,8 @@ impl Operation {
             | Self::SetArtboardColor { .. }
             | Self::SetArtboardClip { .. }
             | Self::SetActiveArtboard { .. } => &[],
-            Self::Pathfinder { ids, .. }
+            Self::Colour { ids, .. }
+            | Self::Pathfinder { ids, .. }
             | Self::ShapeBuilder { ids, .. }
             | Self::Scissors { ids, .. }
             | Self::Knife { ids, .. }

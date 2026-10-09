@@ -188,8 +188,8 @@ fn v4_migration_doc_bytes_and_refusal_order() {
         ));
     }
     assert!(matches!(
-        decode_model(br#"{"varos":6,"doc":42}"#, None, &Limits::DEFAULT),
-        Err(LoadError::NewerVersion { found: 6, supported: 5 })
+        decode_model(br#"{"varos":7,"doc":42}"#, None, &Limits::DEFAULT),
+        Err(LoadError::NewerVersion { found: 7, supported: 6 })
     ));
 }
 #[test]

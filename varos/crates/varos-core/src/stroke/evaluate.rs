@@ -197,7 +197,7 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
         return Err(StrokeError::Numeric);
     }
     let mut result = StrokeCoverage::default();
-    if path.stroke_width == 0.0 || path.appearance().stroke().solid().is_none() {
+    if path.stroke_width == 0.0 || !path.appearance().stroke().is_painted() {
         return Ok(result);
     }
     if cancelled() {

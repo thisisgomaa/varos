@@ -9,6 +9,7 @@ pub mod anchor_edit;
 pub mod convert;
 pub mod direct;
 pub mod eyedropper;
+pub mod gradient;
 pub mod object;
 pub mod pen;
 pub mod rotate;
@@ -21,6 +22,7 @@ pub trait Tool {
 
 pub fn get(kind: ToolKind) -> &'static dyn Tool {
     match kind {
+        ToolKind::Gradient => &object::Object,
         ToolKind::Pen => &pen::Pen,
         ToolKind::Direct => &direct::Direct,
         ToolKind::Object | ToolKind::FreeTransform => &object::Object,

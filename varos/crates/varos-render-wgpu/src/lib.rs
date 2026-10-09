@@ -25,6 +25,7 @@ struct VsOut { @builtin(position) clip: vec4<f32>, @location(0) color: vec4<f32>
 @fragment fn fs(in: VsOut) -> @location(0) vec4<f32> { return in.color; }
 "#;
 
+mod gradient;
 pub mod health;
 pub struct Renderer {
     pub health: health::DeviceHealth,
@@ -32,6 +33,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    gradients: gradient::Gradients,
     pipe_main: wgpu::RenderPipeline,
     pipe_stencil: wgpu::RenderPipeline,
     pipe_cover: wgpu::RenderPipeline,
@@ -414,6 +416,15 @@ impl Renderer {
         let pipe_main =
             make_pipe(&device, &layout, &shader, config.format, samples, true, wgpu::StencilState::default());
         let pipe_stencil = make_pipe(&device, &layout, &shader, config.format, samples, false, st_fan);
+        let gradients = gradient::Gradients::new(
+            &device,
+            config.format,
+            samples,
+            st_cov.clone(),
+            st_cover_clip.clone(),
+            st_knock.clone(),
+            clipped_cover_state(false),
+        );
         let pipe_cover = make_pipe(&device, &layout, &shader, config.format, samples, true, st_cov);
         let pipe_smark = make_pipe(&device, &layout, &shader, config.format, samples, false, st_mark);
         let pipe_cover_knock = make_pipe(&device, &layout, &shader, config.format, samples, true, st_knock);
@@ -594,6 +605,7 @@ impl Renderer {
             },
         );
         Ok(Renderer {
+            gradients,
             health,
             surface,
             device,
@@ -721,6 +733,59 @@ impl Renderer {
     fn draw_steps<'a>(&'a self, rp: &mut wgpu::RenderPass<'a>, draws: &[Draw], clip: bool) {
         for d in draws {
             match d {
+                Draw::Gradient { fan, cover, key, mask, .. } => {
+                    if let Some(bg) = self.gradients.group(*key) {
+                        if let Some((band, _)) = mask {
+                            rp.set_vertex_buffer(0, self.fg_buf.slice(..));
+                            rp.set_pipeline(&self.pipe_smark);
+                            rp.set_stencil_reference(0x80);
+                            rp.draw(band.0..band.0 + band.1, 0..1);
+                            rp.set_stencil_reference(0);
+                        }
+                        rp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                        rp.set_pipeline(&self.pipe_stencil);
+                        rp.draw(fan.0..fan.0 + fan.1, 0..1);
+                        if clip {
+                            rp.set_stencil_reference(0x03);
+                        }
+                        rp.set_pipeline(match (mask.is_some(), clip) {
+                            (true, true) => &self.gradients.knockout_clip,
+                            (true, false) => &self.gradients.knockout,
+                            (false, true) => &self.gradients.clipped,
+                            (false, false) => &self.gradients.normal,
+                        });
+                        rp.set_bind_group(0, bg, &[]);
+                        rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                        if let Some((_, clear)) = mask {
+                            rp.set_stencil_reference(0);
+                            rp.set_pipeline(&self.pipe_bits_clear);
+                            rp.draw(clear.0..clear.0 + clear.1, 0..1);
+                        }
+                        if clip {
+                            rp.set_stencil_reference(0);
+                            rp.set_pipeline(&self.pipe_fill_clear);
+                            rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                        }
+                    }
+                }
+                Draw::MaskedFill { fan, cover, band, clear } => {
+                    rp.set_vertex_buffer(0, self.fg_buf.slice(..));
+                    rp.set_pipeline(&self.pipe_smark);
+                    rp.set_stencil_reference(0x80);
+                    rp.draw(band.0..band.0 + band.1, 0..1);
+                    rp.set_stencil_reference(0);
+                    rp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                    rp.set_pipeline(&self.pipe_stencil);
+                    rp.draw(fan.0..fan.0 + fan.1, 0..1);
+                    if clip {
+                        rp.set_stencil_reference(0x03);
+                    }
+                    rp.set_pipeline(if clip { &self.pipe_cover_knock_clip } else { &self.pipe_cover_knock });
+                    rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                    rp.set_stencil_reference(0);
+                    rp.set_pipeline(&self.pipe_bits_clear);
+                    rp.draw(clear.0..clear.0 + clear.1, 0..1);
+                }
                 Draw::Fill { fan, cover } => {
                     rp.set_vertex_buffer(0, self.fill_buf.slice(..));
                     rp.set_pipeline(&self.pipe_stencil);
@@ -1001,6 +1066,7 @@ impl Renderer {
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
         let bg = build_bg(view, fw, fh, world.grid_step);
         let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+        self.gradients.prepare(&self.device, &self.queue, &metas);
         let ov_start = fgv.len() as u32;
         fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh)); // editing chrome: constant screen size
         fgv.extend(build_fg(ui, View::identity(), 1.0, fw, fh)); // toolbar: screen-fixed
@@ -1185,6 +1251,7 @@ impl Renderer {
             let bg = build_bg(view, fw, fh, world.grid_step);
             let content_start = std::time::Instant::now();
             let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+            self.gradients.prepare(&self.device, &self.queue, &metas);
             let content_elapsed = content_start.elapsed();
             let ov_start = fgv.len() as u32;
             fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh));

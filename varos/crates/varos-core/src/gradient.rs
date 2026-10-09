@@ -1,6 +1,6 @@
 //! Adapted from VectorCraft color/src/gradient.rs@a469568 (MIT OR Apache-2.0).
 //! Lane B: bounded gradient data and midpoint interpolation; placement maps unit space to path space.
-//! Preparation only: this type is not yet a document Paint variant or a format promise.
+//! Persisted next-format gradient paint; shared interpolation for all backends.
 use crate::geom::{Pt, Rgba};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,6 +157,31 @@ impl Gradient {
         let o = xf.apply([e, f]);
         let x = xf.apply([e + a, f + b]);
         let y = xf.apply([e + c, f + d]);
+        g.placement = [x[0] - o[0], x[1] - o[1], y[0] - o[0], y[1] - o[1], o[0], o[1]];
+        g
+    }
+}
+
+impl std::hash::Hash for Gradient {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(&self.kind).hash(state);
+        std::mem::discriminant(&self.spread).hash(state);
+        for v in self.placement.iter().chain(self.focal.iter()).chain(
+            self.stops.iter().flat_map(|s| [&s.offset, &s.opacity, &s.midpoint].into_iter().chain(s.colour.iter())),
+        ) {
+            (if *v == 0.0 { 0 } else { v.to_bits() }).hash(state);
+        }
+        self.stops.len().hash(state);
+    }
+}
+
+impl Gradient {
+    pub fn mapped(&self, f: impl Fn(crate::Pt) -> crate::Pt) -> Self {
+        let mut g = self.clone();
+        let [a, b, c, d, e, ff] = g.placement;
+        let o = f([e, ff]);
+        let x = f([e + a, ff + b]);
+        let y = f([e + c, ff + d]);
         g.placement = [x[0] - o[0], x[1] - o[1], y[0] - o[0], y[1] - o[1], o[0], o[1]];
         g
     }

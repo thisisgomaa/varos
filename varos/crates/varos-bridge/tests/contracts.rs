@@ -3577,7 +3577,7 @@ fn stroke_api_12_schemas_capabilities_and_limit_errors() {
     let mut h = FakeHost::new();
     let reply = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"})));
     assert!(reply.ok, "{reply:?}");
-    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([5]));
+    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([varos_core::format::FORMAT_VERSION]));
     assert!(reply.result.as_ref().unwrap()["stroke_operations_schema"].is_object());
     h.editor.doc.paths[0].stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 1.0]);
     let rev = h.editor.rev;
@@ -3865,4 +3865,93 @@ fn progressive_discovery_resolves_every_12_verb_without_mutation() {
     server.join().unwrap();
     assert_eq!(host.editor.doc, before);
     assert_eq!(host.editor.rev, rev);
+}
+
+// ---- Lane B gradients ----
+#[test]
+fn gradient_commands_discover_roundtrip_replay_and_refuse_older_apis() {
+    let mut host = FakeHost::new();
+    let mut service = Service::new("test-epoch".into());
+    service.observe(&mut host);
+    let paint =
+        serde_json::to_value(varos_core::model::Paint::Gradient(varos_core::gradient::Gradient::default())).unwrap();
+    let operation =
+        json!({"verb":"colour","ids":["path:10"],"command":{"action":"paint","target":"Fill","paint":paint}});
+    for api in ["1.0", "1.1"] {
+        assert_eq!(varos_bridge::mcp::decode_tool("edit",json!({"api":api,"board":"b1","request_id":"reject","expected_rev":host.editor.rev,"ops":[operation.clone()]})).unwrap_err().code,"unsupported");
+    }
+    let index = handle(&mut service, &mut host, req("list_verbs", json!({"api":"1.2"}))).result.unwrap();
+    assert!(index["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|g| g["verbs"].as_array().unwrap())
+        .any(|v| v["name"] == "colour"));
+    let schema = handle(&mut service, &mut host, req("schema", json!({"api":"1.2","tool":"edit","verb":"colour"})));
+    assert!(schema.ok, "{schema:?}");
+    assert!(schema.result.unwrap().to_string().contains("midpoint"));
+    let before = host.editor.doc.clone();
+    let rev = host.editor.rev;
+    let edit = json!({"api":"1.2","board":"b1","request_id":"r101","expected_rev":rev,"ops":[operation]});
+    let reply = handle(&mut service, &mut host, req("edit", edit.clone()));
+    assert!(reply.ok, "{reply:?}");
+    assert_eq!(reply.undo_steps, 1);
+    assert_eq!(reply, handle(&mut service, &mut host, req("edit", edit)));
+    let described = handle(
+        &mut service,
+        &mut host,
+        req("describe", json!({"api":"1.2","board":"b1","ids":["path:10"],"fields":["paint"]})),
+    );
+    assert!(described.ok, "{described:?}");
+    assert_eq!(described.result.unwrap()["objects"][0]["fill"], paint);
+    let legacy = handle(
+        &mut service,
+        &mut host,
+        req("describe", json!({"api":"1.1","board":"b1","ids":["path:10"],"fields":["paint"]})),
+    );
+    assert!(legacy.result.unwrap().to_string().contains("not-solid"));
+    host.editor.undo();
+    assert_eq!(host.editor.doc, before);
+}
+#[test]
+fn swatch_bridge_export_and_recolor_are_atomic_and_budgeted() {
+    let mut host = FakeHost::new();
+    let mut service = Service::new("test-epoch".into());
+    service.observe(&mut host);
+    let before = host.editor.doc.clone();
+    let ops = json!([
+        {"verb":"colour","ids":[],"command":{"action":"upsert_swatch","swatch":{"id":1,"name":"Ink","paint":[0,1,0,1],"global":true,"group":"Brand"}}},
+        {"verb":"colour","ids":["path:10"],"command":{"action":"paint","target":"Fill","paint":{"type":"swatch_ref","value":{"id":1}}}}
+    ]);
+    let rev = host.editor.rev;
+    let reply = handle(
+        &mut service,
+        &mut host,
+        req("edit", json!({"api":"1.2","board":"b1","request_id":"r102","expected_rev":rev,"ops":ops})),
+    );
+    assert!(reply.ok, "{reply:?}");
+    assert_eq!(reply.undo_steps, 1);
+    for field in ["swatches", "palette_ase", "palette_native"] {
+        let r = handle(
+            &mut service,
+            &mut host,
+            req("describe", json!({"api":"1.2","board":"b1","ids":[],"fields":[field]})),
+        );
+        assert!(r.ok, "{field}: {r:?}");
+        assert!(r.result.unwrap().get(field).is_some());
+    }
+    let accepted = host.editor.doc.clone();
+    let rev = host.editor.rev;
+    let reply = handle(
+        &mut service,
+        &mut host,
+        req(
+            "edit",
+            json!({"api":"1.2","board":"b1","request_id":"r103","expected_rev":rev,"ops":[{"verb":"colour","ids":["path:10"],"command":{"action":"recolor","palette":[[1,0,0,1]]}},{"verb":"colour","ids":["path:20"],"command":{"action":"paint","target":"Fill","paint":{"type":"swatch_ref","value":{"id":999}}}}]}),
+        ),
+    );
+    assert!(!reply.ok);
+    assert_eq!(host.editor.doc, accepted);
+    host.editor.undo();
+    assert_eq!(host.editor.doc, before);
 }

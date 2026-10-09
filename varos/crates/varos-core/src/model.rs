@@ -1,4 +1,4 @@
-// ---- Lane B: additive Appearance reader routing; persisted storage unchanged ----
+// ---- w2-gradients: Appearance routing and next-format paint integration ----
 //! The document data model: anchors, paths, the document. Plus pure geometry queries.
 //! Stable u32 IDs (never Vec indices) so selection/active survive deletes & joins.
 
@@ -134,16 +134,29 @@ pub fn compose_is_degenerate(rot: f32, dtheta: f32) -> bool {
 ///
 /// `Copy` holds only while every variant is `Copy` (`Rgba` is). A future `Gradient(Vec<..>)` variant
 /// will drop `Copy`; the handful of `p.fill` copy sites get revisited then.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum Paint {
     #[default]
     None,
     Solid(Rgba),
+    Gradient(crate::gradient::Gradient),
+    SwatchRef {
+        id: u32,
+    },
+}
+// Tagged paints retain the legacy null/array encoding.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case", deny_unknown_fields)]
+enum TaggedPaint {
+    Gradient(crate::gradient::Gradient),
+    SwatchRef { id: u32 },
 }
 impl std::hash::Hash for Paint {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
+            Self::Gradient(g) => g.hash(state),
+            Self::SwatchRef { id } => id.hash(state),
             Self::None => {}
             Self::Solid(c) => {
                 for v in c {
@@ -168,16 +181,18 @@ impl Paint {
     /// The drawable solid colour if this paint resolves to one today — `None` for `Paint::None` (and,
     /// once they exist, for gradients / unresolved swatch-refs: callers treat those as "nothing solid
     /// to draw" until the render path grows a branch for them).
-    pub fn solid(self) -> Option<Rgba> {
+    pub fn solid(&self) -> Option<Rgba> {
         match self {
-            Paint::Solid(c) => Some(c),
-            Paint::None => None,
+            Paint::Solid(c) => Some(*c),
+            _ => None,
         }
     }
 }
 impl Serialize for Paint {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
+            Paint::Gradient(g) => TaggedPaint::Gradient(g.clone()).serialize(s),
+            Paint::SwatchRef { id } => TaggedPaint::SwatchRef { id: *id }.serialize(s),
             Paint::None => s.serialize_none(), // ⇒ JSON null  (old Option::None)
             Paint::Solid(c) => c.serialize(s), // ⇒ [r,g,b,a]  (old Option::Some)
         }
@@ -192,6 +207,13 @@ impl<'de> Deserialize<'de> for Paint {
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str("null or an [r,g,b,a] colour array")
             }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Paint, A::Error> {
+                let tagged = TaggedPaint::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(match tagged {
+                    TaggedPaint::Gradient(g) => Paint::Gradient(g),
+                    TaggedPaint::SwatchRef { id } => Paint::SwatchRef { id },
+                })
+            }
             fn visit_unit<E: Error>(self) -> Result<Paint, E> {
                 Ok(Paint::None) // JSON null
             }
@@ -199,6 +221,9 @@ impl<'de> Deserialize<'de> for Paint {
                 let mut c = [0.0f32; 4];
                 for (i, ch) in c.iter_mut().enumerate() {
                     *ch = seq.next_element()?.ok_or_else(|| A::Error::invalid_length(i, &self))?;
+                }
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(A::Error::invalid_length(5, &self));
                 }
                 Ok(Paint::Solid(c))
             }
@@ -595,6 +620,8 @@ pub struct Document {
     /// Tags: clean, case-insensitively unique, order kept (`board::normalize_tags`).
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub swatches: Vec<crate::swatches::Swatch>,
     pub paths: Vec<Path>,
     /// LEGACY registry (pre-tree files). Deserialized for compatibility, converted by
     /// `migrate_legacy()`, then stays empty. New code never writes it.
@@ -658,6 +685,7 @@ impl Default for Document {
             name: String::new(),
             description: String::new(),
             tags: vec![],
+            swatches: vec![],
             paths: vec![],
             groups: vec![],
             group_of: HashMap::new(),
@@ -727,6 +755,7 @@ impl Document {
             name,
             description,
             tags,
+            swatches,
             paths,
             groups,
             group_of,
@@ -752,6 +781,7 @@ impl Document {
             && nodes.len() == other.nodes.len()
             && name == &other.name
             && description == &other.description
+            && swatches == &other.swatches
             && tags == &other.tags
             && transparency_grid == &other.transparency_grid
             && ppi == other.units.ppi
@@ -1192,8 +1222,8 @@ impl Document {
             .collect();
         Path {
             holes,
-            fill: *src.appearance().fill(), // preserve the paint EXACTLY (future gradients too), not a solid snapshot
-            stroke: *src.appearance().stroke(),
+            fill: src.appearance().fill().resolved(self), // preserve the paint EXACTLY (future gradients too), not a solid snapshot
+            stroke: src.appearance().stroke().resolved(self),
             opacity: src.opacity,
             hidden: src.hidden,
             locked: src.locked,

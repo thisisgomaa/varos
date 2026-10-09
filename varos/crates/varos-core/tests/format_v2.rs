@@ -172,14 +172,18 @@ fn tiny(f: impl FnOnce(&mut Limits)) -> Limits {
 #[test]
 fn new_saves_write_the_current_format() {
     // format 4 since 2026-10-07 (artboard ids); this file's other checks keep their v2-era names
-    assert_eq!(FORMAT_VERSION, 5);
+    assert_eq!(FORMAT_VERSION, varos_core::format::NEXT_GRADIENT_VERSION);
     assert_eq!(VRS_VERSION, FORMAT_VERSION, "the old constant is an alias");
     assert_eq!(MIN_READ_VERSION, 1);
     for (name, d) in corpus() {
         let s = enc(&d);
-        assert!(s.starts_with(r#"{"varos":5,"doc":{"#), "{name}: the wrapper says format 4, got {}", &s[..20]);
+        assert!(
+            s.starts_with(&format!("{{\"varos\":{FORMAT_VERSION},\"doc\":{{")),
+            "{name}: the wrapper says format 4, got {}",
+            &s[..20]
+        );
         assert_eq!(doc_to_blob(&d).unwrap(), s, "{name}: doc_to_blob delegates to encode_model");
-        assert_eq!(peek_version(s.as_bytes()), Ok(5));
+        assert_eq!(peek_version(s.as_bytes()), Ok(FORMAT_VERSION));
     }
 }
 
@@ -198,7 +202,10 @@ fn v1_blob_migrates_and_reports_notice() {
             .unwrap();
     let l = decode_model(&legacy, None, &Limits::DEFAULT).expect("legacy v1 loads");
     assert!(l.migrated && l.doc.groups.is_empty() && l.doc.group_of.is_empty());
-    assert!(enc(&l.doc).starts_with(r#"{"varos":5,"#), "saving the migrated file writes the current format");
+    assert!(
+        enc(&l.doc).starts_with(&format!("{{\"varos\":{FORMAT_VERSION},")),
+        "saving the migrated file writes the current format"
+    );
 }
 
 #[test]
@@ -216,10 +223,15 @@ fn v2_blob_loads_without_migration() {
 #[test]
 fn newer_version_refused_before_typed_decode() {
     // `"doc": 42` would be `Malformed` if the typed decode ran first
-    let e = dec(r#"{"varos":6,"doc":42}"#).unwrap_err();
-    assert_eq!(e, LoadError::NewerVersion { found: 6, supported: 5 });
+    let e = dec(&format!("{{\"varos\":{},\"doc\":42}}", FORMAT_VERSION + 1)).unwrap_err();
+    assert_eq!(e, LoadError::NewerVersion { found: FORMAT_VERSION + 1, supported: FORMAT_VERSION });
     let msg = e.to_string();
-    assert!(msg.contains("newer") && msg.contains("file format 6") && msg.contains("up to 5"), "{msg}");
+    assert!(
+        msg.contains("newer")
+            && msg.contains(&format!("file format {}", FORMAT_VERSION + 1))
+            && msg.contains(&format!("up to {FORMAT_VERSION}")),
+        "{msg}"
+    );
     // a newer version wins over an inconsistent container number too
     let e = decode_model(br#"{"varos":9999,"doc":{}}"#, Some(2), &Limits::DEFAULT).unwrap_err();
     assert!(matches!(e, LoadError::NewerVersion { found: 9999, .. }), "{e:?}");
@@ -314,9 +326,9 @@ fn explicit_empty_artboards_stays_boardless_v1_and_v2() {
 fn container_version_mismatch_refused() {
     let s = enc(&doc_with(1));
     let e = decode_model(s.as_bytes(), Some(1), &Limits::DEFAULT).unwrap_err();
-    assert_eq!(e, LoadError::VersionMismatch { container: 1, model: 5 });
-    assert!(e.to_string().contains("format 1") && e.to_string().contains("format 5"));
-    assert!(decode_model(s.as_bytes(), Some(5), &Limits::DEFAULT).is_ok());
+    assert_eq!(e, LoadError::VersionMismatch { container: 1, model: FORMAT_VERSION });
+    assert!(e.to_string().contains("format 1") && e.to_string().contains(&format!("format {FORMAT_VERSION}")));
+    assert!(decode_model(s.as_bytes(), Some(FORMAT_VERSION), &Limits::DEFAULT).is_ok());
     let v1 = blob_as(&doc_with(1), 1).to_string();
     assert!(decode_model(v1.as_bytes(), Some(1), &Limits::DEFAULT).is_ok(), "a v1 PDF with a v1 catalog");
     assert_eq!(

@@ -204,7 +204,8 @@ pub(crate) fn apply_design_op(
     if op.slice4a() {
         let mut resolved = op.clone();
         let ids = match &mut resolved {
-            Operation::Transform { ids, .. }
+            Operation::Colour { ids, .. }
+            | Operation::Transform { ids, .. }
             | Operation::MagicWand { ids, .. }
             | Operation::Eyedropper { ids, .. }
             | Operation::Isolation { ids, .. }

@@ -34,7 +34,7 @@ fn attrs(p: &Path) -> String {
     }
     out
 }
-fn coverage_data(rings: &[Vec<crate::Pt>], xf: &Xform) -> String {
+pub(super) fn coverage_data(rings: &[Vec<crate::Pt>], xf: &Xform) -> String {
     let mut out = String::new();
     for r in rings {
         if let Some(first) = r.first() {
