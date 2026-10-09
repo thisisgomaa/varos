@@ -1,12 +1,12 @@
 //! Lane G: pure next-version migration and fail-closed legacy-key gate.
 use crate::{
-    format::{Invalid, Limits, LoadError, TEXT_FORMAT_VERSION},
+    format::{Invalid, Limits, LoadError, PRE_TEXT_FORMAT_VERSION, TEXT_FORMAT_VERSION},
     model::Document,
 };
 pub fn migrate_to_text_boxes(doc: Document, _: &Limits) -> Result<Document, LoadError> {
     // Legacy readers supplied the empty default. Migration never fabricates source/fonts.
     if !doc.text_boxes.is_empty() {
-        return Err(Invalid::FieldNotInFormat { field: "text_boxes", version: TEXT_FORMAT_VERSION - 1 }.into());
+        return Err(Invalid::FieldNotInFormat { field: "text_boxes", version: PRE_TEXT_FORMAT_VERSION }.into());
     }
     Ok(doc)
 }
