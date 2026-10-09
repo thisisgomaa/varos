@@ -1,0 +1,15 @@
+> Status: provisional implementation contract, owner design review pending (2026-10-09).
+# Phase 1 document basics — lane D
+The owner lifted the Figma gate for slices 1.1, 1.5 and 1.6. Existing warm-black kit fields and sheet frames are the visual authority; no new shortcuts except Illustrator Document Setup ⌥⌘P.
+
+Document Setup edits the active artboard's bleed in document units, converting to world points. Link is sheet-local: each field commit sets all four edges when linked, otherwise one edge. Existing uniform `bleed` remains the fallback (maximum edge for conservative legacy consumers); optional `bleed_edges` is written only for asymmetric values. Units, ppi (1–9600), bleed (0–7200 pt per edge) and the document transparency-grid flag travel through EditCommand. Geometry never rescales when ppi changes. Undo reverses each field commit. Optional fields are omitted at their defaults; format stays v4. A thin red canvas guide is never export content; the checkerboard replaces only transparent ghost paper, and page exports already strip ghost paper.
+
+Document Info shares object-kind counts with Bridge describe. It counts unique solid fill/stroke/page colours and reports artboard name, dimensions and document ppi. Links/fonts remain “—”.
+
+Templates are ordinary .vrs files under the app data root's Templates folder. Saving keeps the current tab's path/checkpoint/Recent. Opening clears the title, creates Untitled with no backing path, and stays dirty even for an empty template. Start lists up to 200 folder entries without parsing documents during paint. Bridge/CLI template publication refuses overwrites.
+
+Window geometry uses additive version-1 window.json: normal physical-pixel position/size plus maximised/fullscreen flags. A trailing one-second debounce shares the host wake scheduler; quit flushes pending geometry. Invalid content is quarantined as .bad; unknown versions are retained. Restore chooses an intersecting screen, else the first available screen, and clamps position/size. Fullscreen/maximised resize events never replace normal geometry.
+
+Bridge: API 1.2 edit operation `document_setup` with `field`, `value`, optional `artboard`; bleed value is [top,right,bottom,left] in pt. `describe` fields ["document_info"], `save_template` / `new_from_template` (path is plain NAME.vrs), and `window_memory` query are opt-in. `tools/list` params {api:"1.2"} exposes additive schemas; legacy schemas and fixtures remain unchanged. CLI: document-info FILE; document-setup FILE --batch EDIT_COMMANDS_JSON OUT.vrs; save-template FILE NAME.vrs; new-from-template TEMPLATE.vrs OUT.vrs; attached Bridge supports the same 1.2 verbs.
+
+Prior-art attribution: VectorCraft a469568 docsetup.rs fields, docinfo.rs report categories, fileio/save.rs:56 and load.rs:281 lifecycle conventions; independent implementation and NOTICE row. Evidence: GAP_1 §A Document setup / Document Info / Templates / Window size, §D bleed and transparency-grid rows; GAP_2 app/preferences scope. No CMYK or format flag is introduced.

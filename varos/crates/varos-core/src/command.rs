@@ -251,6 +251,12 @@ pub enum EditCommand {
     CycleUnits,
     #[serde(rename = "SetUnits")]
     SetUnits(crate::units::Unit),
+    SetPpi(f32),
+    SetBleed {
+        index: usize,
+        edges: [f32; 4],
+    },
+    SetTransparencyGrid(bool),
     #[serde(rename = "SetSnapConfig")]
     SetSnapConfig(SnapConfig),
     #[serde(rename = "ToggleSnapping")]
@@ -359,7 +365,31 @@ impl EditCommand {
             }
             Self::CommitGuide => ed.commit_guide(),
             Self::CycleUnits => ed.cycle_units(),
-            Self::SetUnits(unit) => ed.set_units(unit),
+            Self::SetUnits(unit) => {
+                if ed.doc.units.display != unit {
+                    edit_board(ed, |d| d.units.display = unit);
+                }
+            }
+            Self::SetPpi(ppi) => {
+                if crate::document_setup::valid_ppi(ppi) && ed.doc.units.ppi != ppi {
+                    edit_board(ed, |d| d.units.ppi = ppi);
+                }
+            }
+            Self::SetBleed { index, edges } => {
+                if crate::document_setup::valid_bleed(edges)
+                    && ed.doc.artboards.get(index).is_some_and(|a| crate::document_setup::bleed(a) != edges)
+                {
+                    edit_board(ed, |d| {
+                        d.artboards[index].bleed = edges.iter().copied().fold(0.0_f32, f32::max);
+                        d.artboards[index].bleed_edges = (edges.iter().any(|v| *v != edges[0])).then_some(edges);
+                    });
+                }
+            }
+            Self::SetTransparencyGrid(on) => {
+                if ed.doc.transparency_grid != on {
+                    edit_board(ed, |d| d.transparency_grid = on);
+                }
+            }
             Self::SetSnapConfig(config) => ed.doc.snap = config,
             Self::ToggleSnapping => ed.doc.snap.enabled = !ed.doc.snap.enabled,
             Self::ToggleGuidesLocked => ed.doc.guides_locked = !ed.doc.guides_locked,

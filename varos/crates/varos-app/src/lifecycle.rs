@@ -57,6 +57,9 @@ pub trait Dialogs {
     }
     /// The Open dialog (multi-select). Empty = cancelled.
     fn pick_open(&mut self) -> Vec<PathBuf>;
+    fn pick_template(&mut self, _folder: &Path) -> Option<PathBuf> {
+        self.pick_open().into_iter().next()
+    }
     fn pick_locate(&mut self) -> Option<PathBuf> {
         self.pick_open().into_iter().next()
     }
@@ -225,6 +228,20 @@ impl Lifecycle<'_> {
             AppCommand::NewWithPreset(preset) => {
                 self.ws.new_untitled_with(varos_core::board::new_board_with_preset(preset));
             }
+            AppCommand::NewTemplate => {
+                if let Some(folder) = varos_app::storage::paths::AppLayout::current().map(|l| l.templates()) {
+                    if let Err(e) = std::fs::create_dir_all(&folder) {
+                        self.dialogs.notice("Templates unavailable", &e.to_string());
+                    } else if let Some(path) = self.dialogs.pick_template(&folder) {
+                        self.open_template(path);
+                    }
+                } else {
+                    self.dialogs.notice("Templates unavailable", "No app data folder is available.");
+                }
+            }
+            AppCommand::OpenTemplate(path) => self.open_template(path),
+            AppCommand::SaveTemplate(id) => self.save_template(id),
+            AppCommand::DocumentSetup(_) | AppCommand::DocumentInfo(_) => {}
             AppCommand::OpenDialog => {
                 let picked = self.dialogs.pick_open();
                 self.open_paths(picked);
@@ -267,6 +284,37 @@ impl Lifecycle<'_> {
     /// device/inode = an alias) focuses its tab and is never reloaded, even when that tab is dirty.
     /// Otherwise the file is read into a candidate: success → `add_loaded` (which reuses a pristine
     /// active `Untitled`); failure → “Couldn't open …”, and no tab, path, selection or history changes.
+    fn open_template(&mut self, path: PathBuf) {
+        match self.store.load(&path) {
+            Ok(doc) => {
+                self.ws.add_template(doc);
+            }
+            Err(reason) => self.dialogs.open_failed(&file_name(&path), &reason),
+        }
+    }
+    fn save_template(&mut self, id: SessionId) {
+        let Some(folder) = varos_app::storage::paths::AppLayout::current().map(|l| l.templates()) else {
+            self.dialogs.notice("Templates unavailable", "No app data folder is available.");
+            return;
+        };
+        if let Err(e) = std::fs::create_dir_all(&folder) {
+            self.dialogs.notice("Templates unavailable", &e.to_string());
+            return;
+        }
+        let Some(s) = self.ws.get(id).filter(|s| s.saving.is_none()) else {
+            return;
+        };
+        let name = format!("{} template.vrs", s.display_name());
+        let Some(path) = self.dialogs.pick_save(&name, Some(&folder)) else {
+            return;
+        };
+        let dest = folder.join(path.file_name().unwrap_or_default()).with_extension("vrs");
+        if dest != path && self.store.exists(&dest) && !self.dialogs.confirm_replace(&file_name(&dest)) {
+            return;
+        }
+        self.start_copy(id, dest);
+    }
+
     fn open_paths(&mut self, paths: Vec<PathBuf>) {
         for path in paths {
             self.open_one(path, None);

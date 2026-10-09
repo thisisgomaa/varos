@@ -4314,6 +4314,7 @@ dependencies = [
 name = "varos-cli"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "varos-bridge",
  "varos-core",
  "varos-pdf",

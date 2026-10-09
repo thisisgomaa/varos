@@ -343,8 +343,12 @@ pub fn serve<T: Transport>(
             }
             "ping" => rpc_result(id, json!({})),
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
-            "tools/list" => rpc_result(id, tools()),
-            "tools/call" if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name)) => {
+            "tools/list" => rpc_result(id, if params["api"] == "1.2" { tools_12() } else { tools() }),
+            "tools/call"
+                if params["name"].as_str().is_none_or(|name| {
+                    !TOOLS.contains(&name) && !["save_template", "new_from_template", "window_memory"].contains(&name)
+                }) =>
+            {
                 rpc_error(id, -32602, "unknown or missing tool name")
             }
             "tools/call" => {
@@ -410,4 +414,36 @@ pub fn serve<T: Transport>(
         let _ = worker.join();
     }
     Ok(())
+}
+
+/// Additive opt-in schema projection. Legacy tools/list remains byte-identical.
+pub fn tools_12() -> Value {
+    let mut out = tools();
+    if let Some(list) = out["tools"].as_array_mut() {
+        for name in ["save_template", "new_from_template"] {
+            list.push(json!({"name":name,"description":"API 1.2 folder-convention template; path is a plain NAME.vrs, opens Untitled and dirty.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}),&["api","board","request_id","expected_rev","path"])}));
+        }
+        list.push(json!({"name":"window_memory","description":"API 1.2 persisted window geometry query.","inputSchema":object(json!({"api":{"const":"1.2"}}),&["api"])}));
+        for tool in list.iter_mut() {
+            if ["edit", "describe", "capabilities"].contains(&tool["name"].as_str().unwrap_or_default()) {
+                tool["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+            }
+            if tool["name"] == "edit" {
+                tool["inputSchema"]["$defs"]["document_setup"] = object(
+                    json!({"verb":{"const":"document_setup"},"field":{"enum":["units","ppi","bleed","transparency_grid"]},"value":{},"artboard":{"type":"string","pattern":"^artboard:[1-9][0-9]*$"}}),
+                    &["verb", "field", "value"],
+                );
+                if let Some(ops) = tool["inputSchema"]["$defs"]["operation"]["anyOf"].as_array_mut() {
+                    ops.push(json!({"$ref":"#/$defs/document_setup"}));
+                }
+                tool["description"]=json!("API 1.2 adds ops {verb:document_setup, field:units|ppi|bleed|transparency_grid, value, artboard?:artboard:N}; bleed is top/right/bottom/left in pt.");
+            }
+            if tool["name"] == "describe" {
+                if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
+                    fields.push(json!("document_info"));
+                }
+            }
+        }
+    }
+    out
 }

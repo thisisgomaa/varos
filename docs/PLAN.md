@@ -168,3 +168,7 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
 | 0.6 file-menu basics | merged + installed, owner hand test pending | merge | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection, cancellable export + Show in Finder, tickets, menus/ split |
 | Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
+| 1.1 Document Setup + bleed | implemented (provisional UI, owner design review pending) | uncommitted lane D | ⌥⌘P kit sheet; units/ppi/asymmetric bleed/grid EditCommands, canvas bleed guide, Bridge 1.2 + CLI; evidence GAP_1 §A Document setup / §D bleed and transparency grid; spec PHASE1_DOCUMENT_BASICS.md |
+| 1.5 Document Info | implemented (provisional UI, owner design review pending) | uncommitted lane D | Window row, shared Bridge counts/solid colours/artboard dimensions+ppi, links/fonts placeholders; evidence GAP_1 §A Document Info |
+| 1.6 Templates | implemented (provisional UI, owner design review pending) | uncommitted lane D | Folder convention, Save/New menu rows, Start section; opens Untitled dirty, no path; Bridge 1.2 + CLI; evidence GAP_1 §A Templates |
+| 1.7 Window memory | implemented (provisional UI, owner design review pending) | uncommitted lane D | Debounced window.json, quarantine/validation, monitor clamp, normal geometry + maximised/fullscreen; evidence GAP_1 §A Window size, STATUS:63; owner relaunch test pending |

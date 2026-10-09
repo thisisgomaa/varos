@@ -1,6 +1,7 @@
 use super::*;
 
 pub(crate) enum Op {
+    DocumentSetup(EditCommand),
     Tool(ToolKind),
     SetBBox(Option<f32>, Option<f32>, Option<f32>, Option<f32>, f32, f32), // nx,ny,nw,nh + ref ax,ay
     SetRot(f32),
@@ -281,6 +282,7 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::BoardTags(tags) => {
                 let _ = ed.try_set_board_tags(tags);
             }
+            Op::DocumentSetup(command) => ed.execute(command),
             Op::Units(unit) => ed.execute(EditCommand::SetUnits(unit)),
             Op::FitArtboard(_) => {} // UI-only, intercepted by run
             Op::ToggleGuidesLock => ed.execute(EditCommand::ToggleGuidesLocked),

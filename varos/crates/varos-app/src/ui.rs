@@ -4,7 +4,7 @@
 //! right INSPECTOR DOCK (Transform / Appearance / Fill / Stroke). Solid panels, one light GPU shadow,
 //! no glass. Panels read a per-frame snapshot of the editor and push deferred `Op`s, applied to
 //! `&mut Editor` after layout (no IPC, no borrow fights). varos-core itself is untouched.
-
+use crate::app_command::{AppCommand, SessionId, TabView};
 use egui::{Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, RichText, Stroke, StrokeKind};
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
@@ -12,10 +12,7 @@ use varos_core::editor::{AlignMode, AlignTarget, DistAxis, Editor, PaintTarget, 
 use varos_core::geom::{Pt, Rgba, View};
 use varos_core::EditCommand;
 use winit::event::WindowEvent;
-
-use crate::app_command::{AppCommand, SessionId, TabView};
 use winit::window::Window;
-
 // The law palette (warm ramp; tokens.rs) is shared with the split UI modules.
 // Legacy colour aliases retain the established body names.
 use varos_app::shell::tokens::{
@@ -34,17 +31,16 @@ use varos_app::shell::kit::icons::{
     LEGACY_RECT, LEGACY_ROTATE, LEGACY_SCALE, LEGACY_SELECT, LEGACY_STROKEW, LEGACY_TRIANGLE,
 };
 use varos_app::shell::kit::{self, Icon};
-mod fields;
+pub(crate) mod fields;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
-
 mod bar;
 mod canvas_overlay;
 mod control_bar;
 mod controls;
 mod layout;
 mod menus;
-mod ops;
+pub(crate) mod ops;
 mod panels;
 mod picker;
 mod pointer;
@@ -53,7 +49,6 @@ mod snap;
 mod style;
 #[cfg(test)]
 mod tests;
-
 use bar::*;
 use canvas_overlay::*;
 use control_bar::*;
@@ -67,10 +62,8 @@ use rail::*;
 use snap::*;
 use style::*;
 // ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
-
 mod icon_actions;
 use icon_actions::*;
-
 /// A window action the custom title bar asks the host (winit) to perform.
 pub enum WinAction {
     Minimize,
@@ -79,14 +72,12 @@ pub enum WinAction {
     /// The band's V mark (4b, macOS): the native About panel.
     About,
 }
-
 struct ToolBtn {
     pub(crate) kind: ToolKind,
     pub(crate) tip: &'static str,
     pub(crate) tex: Option<egui::TextureHandle>,
     pub(crate) group_end: bool,
 }
-
 pub struct Ui {
     ctx: egui::Context,
     state: egui_winit::State,
@@ -101,6 +92,7 @@ pub struct Ui {
     /// last laid out (the band's right zone with the V mark, and the sheet's right edge — one frame late).
     export_sheet: Option<crate::export_ui::ExportSheet>,
     panel_column: Option<egui::Rangef>,
+    pub document_sheet: Option<crate::document_ui::Sheet>,
     export_scopes: std::collections::HashMap<SessionId, varos_pdf::ExportScope>,
     tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
     shapes: Vec<ToolBtn>,   // the shape tools, collapsed into one rail slot (right-click → flyout)
@@ -150,7 +142,6 @@ pub struct Ui {
     pub board_px: Option<egui::Rect>,    // same, in PHYSICAL px — main.rs fits the view to it
     field_pending: Option<fields::Pending>, // K3: what the open field would commit now
 }
-
 /// The Layers-panel icon set (rasterized Lucide, white).
 struct LayerIcons {
     pub(crate) eye: Option<egui::TextureHandle>,
@@ -159,7 +150,6 @@ struct LayerIcons {
     pub(crate) unlock: Option<egui::TextureHandle>,
     pub(crate) search: Option<egui::TextureHandle>,
 }
-
 /// Native menu-bar mirrors (macOS, docs/foundation/MAC_CHROME.md §C): the SAME state the bar's Window
 /// menu rows flip, and the keyboard hand-off for a focused text field.
 #[cfg(target_os = "macos")]
@@ -204,7 +194,6 @@ impl Ui {
         }
     }
 }
-
 impl Ui {
     pub fn new(window: &Window) -> Self {
         let ctx = egui::Context::default();
@@ -278,6 +267,7 @@ impl Ui {
             repaint_at: None,
             recovery: Default::default(),
             file_status: String::new(),
+            document_sheet: None,
             export_sheet: None,
             panel_column: None,
             export_scopes: Default::default(),
@@ -651,6 +641,8 @@ impl Ui {
                     }
                 }
             }
+            crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
+            crate::document_ui::draw(ctx, &mut self.document_sheet, ed, doc_active, &mut ops);
             build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request, status);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
             // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last

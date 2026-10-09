@@ -296,11 +296,37 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
                 continue; // board eye OFF → the page (paper + edge + handles) vanishes with its art
             }
             let (x0, y0, x1, y1) = ab.rect();
+            if cull.as_ref().is_some_and(|c| !rects_intersect((x0, y0, x1, y1), c.grown(0.0))) {
+                continue;
+            }
             let ring = vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
             // page fill: a solid colour, or — when transparent — a faint translucent white so the page
             // still reads on the dark board instead of vanishing into it.
             let paper = ab.page_color.unwrap_or(AB_GHOST);
-            open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+            if ab.page_color.is_none() && ed.doc.transparency_grid {
+                // Bounded canvas furniture: at most 128² tiles per page, no export involvement.
+                let step = (8.0 / ppu.max(0.001)).max(ab.w.max(ab.h) / 128.0);
+                let rows = (ab.h / step).ceil() as usize;
+                let cols = (ab.w / step).ceil() as usize;
+                for row in 0..rows {
+                    for col in 0..cols {
+                        let x = x0 + col as f32 * step;
+                        let y = y0 + row as f32 * step;
+                        let shade = if (row + col) % 2 == 0 { 0.18 } else { 0.24 };
+                        open.push(Prim::Fill {
+                            rings: vec![vec![
+                                [x, y],
+                                [(x + step).min(x1), y],
+                                [(x + step).min(x1), (y + step).min(y1)],
+                                [x, (y + step).min(y1)],
+                            ]],
+                            color: [shade, shade, shade, 1.0],
+                        });
+                    }
+                }
+            } else {
+                open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+            }
             let active = ab_tool && i == ed.doc.active;
             let selected = ab_tool && ed.ab_is_selected(i);
             let edge_col = if selected {

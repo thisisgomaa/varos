@@ -153,6 +153,9 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
     if !economy && targets > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
     }
+    if edit.api != "1.2" && out.iter().any(|l| matches!(l.op, Operation::DocumentSetup { .. })) {
+        return Err(Error::new("unsupported", "document_setup requires API 1.2"));
+    }
     Ok(out)
 }
 #[allow(clippy::too_many_arguments)]
@@ -225,7 +228,7 @@ fn walk(
             }
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
-        if !crate::EDIT_VERBS.contains(&verb) {
+        if !crate::EDIT_VERBS.contains(&verb) && !(verb == "document_setup") {
             return Err(Error::new("unsupported", "edit verb is not enabled in this slice"));
         }
         let mut op: Operation = serde_json::from_value(normalized).map_err(|e| invalid(e.to_string()))?;
