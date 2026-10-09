@@ -49,6 +49,7 @@ fn flat(
     tolerance: f64,
     cancelled: &dyn Fn() -> bool,
     generated: &mut usize,
+    element_cap: usize,
 ) -> Result<Vec<Vec<[f64; 2]>>, StrokeError> {
     let mut rings = Vec::new();
     let mut ring = Vec::new();
@@ -97,13 +98,13 @@ fn flat(
                 };
                 if distance(c.p1).max(distance(c.p2)) <= tolerance {
                     *generated += 1;
-                    if *generated > MAX_ELEMENTS {
+                    if *generated > element_cap {
                         return Err(StrokeError::LimitExceeded);
                     }
                     checked([c.p3.x, c.p3.y])?;
                     ring.push([c.p3.x, c.p3.y]);
                 } else {
-                    if depth == 48 || pending.len() > MAX_ELEMENTS {
+                    if depth == 48 || pending.len() > element_cap {
                         return Err(StrokeError::LimitExceeded);
                     }
                     pending.push((c.subsegment(0.5..1.0), depth + 1));
@@ -112,7 +113,7 @@ fn flat(
             }
         } else {
             *generated += 1;
-            if *generated > MAX_ELEMENTS {
+            if *generated > element_cap {
                 return Err(StrokeError::LimitExceeded);
             }
         }
@@ -192,9 +193,24 @@ fn point_at(segs: &[(PathSeg, f64)], mut distance: f64) -> (Point, Vec2) {
 }
 /// Evaluation is checked and cancellable; no cache is stored in Document.
 pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Result<StrokeCoverage, StrokeError> {
+    evaluate_capped(path, tolerance, MAX_ELEMENTS, cancelled)
+}
+
+/// Checked evaluation with a caller-owned per-path cap; exports retain their original cap.
+pub fn evaluate_capped(
+    path: &Path,
+    tolerance: f64,
+    element_cap: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<StrokeCoverage, StrokeError> {
     path.stroke_style.validate(path.id).map_err(|e| StrokeError::Invalid(e.to_string()))?;
     if !tolerance.is_finite() || tolerance <= 0.0 || !path.stroke_width.is_finite() || path.stroke_width < 0.0 {
         return Err(StrokeError::Numeric);
+    }
+    if element_cap < MAX_ELEMENTS
+        && path.anchors.len().saturating_add(path.holes.iter().map(Vec::len).sum::<usize>()) > element_cap / 4
+    {
+        return Err(StrokeError::LimitExceeded);
     }
     let mut result = StrokeCoverage::default();
     if path.stroke_width == 0.0 || path.stroke.solid().is_none() {
@@ -278,8 +294,10 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
                         size,
                         if s.arrows.align == ArrowAlign::Extend { inset } else { 0.0 },
                     );
-                    heads_region
-                        .extend(normalized(&flat(&placed, tolerance, cancelled, &mut generated)?, FillRule::EvenOdd));
+                    heads_region.extend(normalized(
+                        &flat(&placed, tolerance, cancelled, &mut generated, element_cap)?,
+                        FillRule::EvenOdd,
+                    ));
                 }
             }
         }
@@ -295,7 +313,7 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
                     } else {
                         kurbo::Rect::new(x - r, y - r, x + r, y + r).to_path(tolerance)
                     };
-                    shaft.extend(flat(&shape, tolerance, cancelled, &mut generated)?);
+                    shaft.extend(flat(&shape, tolerance, cancelled, &mut generated, element_cap)?);
                 }
             }
             continue;
@@ -331,7 +349,10 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
                 let scale = if s.align_dashes_to_corners { span / (n * period) } else { 1.0 };
                 let pattern: Vec<f64> = s.dash.iter().map(|v| f64::from(*v) * scale).collect();
                 let per = period * scale;
-                if !per.is_finite() || per <= 0.0 || span / per * (pattern.len() / 2) as f64 > MAX_RUNS as f64 {
+                if !per.is_finite()
+                    || per <= 0.0
+                    || span / per * (pattern.len() / 2) as f64 > MAX_RUNS.min(element_cap / 8) as f64
+                {
                     return Err(StrokeError::LimitExceeded);
                 }
                 let phase =
@@ -348,7 +369,7 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
                         }
                         at += pair[0] + pair[1];
                         runs_count += 1;
-                        if runs_count > MAX_RUNS {
+                        if runs_count > MAX_RUNS.min(element_cap / 8) {
                             return Err(StrokeError::LimitExceeded);
                         }
                     }
@@ -395,8 +416,8 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
                 return Err(StrokeError::Cancelled);
             }
             let outline = kurbo::stroke(p, &style, &kurbo::StrokeOpts::default(), tolerance);
-            shaft.extend(flat(&outline, tolerance, cancelled, &mut generated)?);
-            if shaft.iter().map(Vec::len).sum::<usize>() > MAX_ELEMENTS {
+            shaft.extend(flat(&outline, tolerance, cancelled, &mut generated, element_cap)?);
+            if shaft.iter().map(Vec::len).sum::<usize>() > element_cap {
                 return Err(StrokeError::LimitExceeded);
             }
         }
@@ -413,13 +434,16 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
                 tolerance,
                 cancelled,
                 &mut generated,
+                element_cap,
             )?);
         }
     }
     let mut region = normalized(&shaft, FillRule::NonZero);
     if align != StrokeAlign::Center {
-        let inside =
-            normalized(&flat(&stroke_adapter::path(path), tolerance, cancelled, &mut generated)?, FillRule::EvenOdd);
+        let inside = normalized(
+            &flat(&stroke_adapter::path(path), tolerance, cancelled, &mut generated, element_cap)?,
+            FillRule::EvenOdd,
+        );
         region = region
             .overlay_as::<i64>(
                 &inside,
@@ -441,13 +465,13 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
     if cancelled() {
         return Err(StrokeError::Cancelled);
     }
-    if region.iter().map(Vec::len).sum::<usize>() > MAX_ELEMENTS {
+    if region.iter().map(Vec::len).sum::<usize>() > element_cap {
         return Err(StrokeError::LimitExceeded);
     }
     result.rings = region.into_iter().map(|r| r.into_iter().map(checked).collect()).collect::<Result<_, _>>()?;
     generated = generated.saturating_add(result.rings.iter().map(Vec::len).sum::<usize>());
-    generated = generated.saturating_add(triangles(&result.rings)?.len().saturating_mul(3));
-    if generated > MAX_ELEMENTS {
+    generated = generated.saturating_add(triangles_capped(&result.rings, element_cap)?.len().saturating_mul(3));
+    if generated > element_cap {
         return Err(StrokeError::LimitExceeded);
     }
     result.generated_elements = generated;
@@ -456,6 +480,10 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
 /// Disjoint trapezoids of a normalized even-odd polygon region, for positive coverage triangles.
 /// Horizontal bands preserve holes; no fan triangle can leak outside a concave contour.
 pub fn triangles(rings: &[Vec<Pt>]) -> Result<Vec<[Pt; 3]>, StrokeError> {
+    triangles_capped(rings, MAX_ELEMENTS)
+}
+
+pub(crate) fn triangles_capped(rings: &[Vec<Pt>], element_cap: usize) -> Result<Vec<[Pt; 3]>, StrokeError> {
     if rings.iter().flatten().flatten().any(|value| !value.is_finite()) {
         return Err(StrokeError::Numeric);
     }
@@ -493,7 +521,7 @@ pub fn triangles(rings: &[Vec<Pt>]) -> Result<Vec<[Pt; 3]>, StrokeError> {
                 checked([x(*a, *b, y[1]), y[1]])?,
             ];
             out.extend([[q[0], q[1], q[2]], [q[0], q[2], q[3]]]);
-            if out.len() * 3 > MAX_ELEMENTS {
+            if out.len() * 3 > element_cap {
                 return Err(StrokeError::LimitExceeded);
             }
         }
