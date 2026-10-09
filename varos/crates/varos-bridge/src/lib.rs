@@ -76,6 +76,8 @@ mod select_transform;
 mod drawing;
 // ---- Lane C ----
 mod path_advanced;
+// ---- Lane E: Phase 11 ----
+mod live;
 pub mod storage_paths;
 
 pub mod templates;

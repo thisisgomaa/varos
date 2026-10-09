@@ -408,6 +408,14 @@ fn build_scene_impl(
     canvas: bool,
     artwork_only: bool,
 ) -> Scene {
+    // ---- Lane E: Phase 11 ----
+    let evaluated;
+    let ed = if crate::live::has_live(&ed.doc) {
+        evaluated = crate::live::scene_editor(ed);
+        &evaluated
+    } else {
+        ed
+    };
     let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
     let stroke_budget = (!canvas).then(|| std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default()));
     let stroke_errors = std::cell::RefCell::new(Vec::new());

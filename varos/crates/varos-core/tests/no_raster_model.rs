@@ -6,7 +6,7 @@ fn walk(ty: &Type, defs: &HashMap<String, Vec<Type>>, seen: &mut HashSet<String>
     match ty {
         Type::Path(p) => {
             for seg in &p.path.segments {
-                if ["crate", "gradient", "swatches"].iter().any(|v| seg.ident == *v) {
+                if ["crate", "gradient", "swatches", "live"].iter().any(|v| seg.ident == *v) {
                     continue;
                 }
                 let name = seg.ident.to_string();
@@ -29,7 +29,7 @@ fn walk(ty: &Type, defs: &HashMap<String, Vec<Type>>, seen: &mut HashSet<String>
                     }
                 } else {
                     assert!(
-                        ["Vec", "HashMap", "Option", "String", "bool", "u32", "usize", "f32", "f64"]
+                        ["Vec", "HashMap", "Option", "String", "bool", "u16", "u32", "usize", "f32", "f64"]
                             .contains(&name.as_str()),
                         "classify new model type before allowing it: {name}"
                     );
@@ -58,6 +58,7 @@ fn serde_document_node_path_have_no_byte_blobs() {
         include_str!("../src/gradient.rs"),
         include_str!("../src/swatches.rs"),
         include_str!("../src/live_corners.rs"),
+        include_str!("../src/live/mod.rs"),
     ] {
         for item in syn::parse_file(source).unwrap().items {
             match item {

@@ -1,3 +1,6 @@
+// ---- Lane E: Phase 11: current-reader future gate, frozen fixture retained ----
+#[path = "support/future.rs"]
+mod future;
 use varos_core::{
     format::{self, Limits},
     text::*,
@@ -49,9 +52,13 @@ fn refuses_legacy_keys_bad_tracking_and_newer_before_decode() {
         "{tracking:?}"
     );
     assert_eq!(
-        format::decode_model(include_bytes!("fixtures/text_next/refuse_newer.json"), None, &Limits::DEFAULT)
-            .unwrap_err(),
-        LoadError::NewerVersion { found: 10, supported: format::FORMAT_VERSION }
+        format::decode_model(
+            &future::promote(include_bytes!("fixtures/text_next/refuse_newer.json")),
+            None,
+            &Limits::DEFAULT
+        )
+        .unwrap_err(),
+        LoadError::NewerVersion { found: format::FORMAT_VERSION + 1, supported: format::FORMAT_VERSION }
     );
     let mut d = fixture();
     d.nodes.iter_mut().find(|n| matches!(n.kind, varos_core::model::NodeKind::Text(_))).unwrap().children.push(1);

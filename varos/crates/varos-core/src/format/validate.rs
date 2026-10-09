@@ -46,6 +46,8 @@ pub(crate) fn before_artboard_ids(doc: &Document) -> Result<(), Invalid> {
 /// candidate_max is currently unused (no live-editor bound); do not invent a new file restriction.
 pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
     // ---- w2-images ----
+    // ---- Lane E: Phase 11 ----
+    crate::live::validate(doc).map_err(|what| Invalid::NonFinite { what })?;
     crate::images::validate(doc).map_err(|what| Invalid::NonFinite { what })?;
     // ---- w2-gradients ----
     crate::swatches::validate_document(doc).map_err(|what| Invalid::NonFinite { what })?;

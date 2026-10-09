@@ -219,6 +219,7 @@ pub(crate) fn build_layer_rows(
             false
         };
         let (kind, name) = match n.kind {
+            NodeKind::Live(_) => (LKind::Group, "Live".into()),
             NodeKind::Text(_) => (LKind::Path, "Text".into()),
             // ---- w2-images ----
             NodeKind::Image(_) => (LKind::Path, "Image".into()),

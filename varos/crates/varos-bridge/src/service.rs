@@ -921,7 +921,7 @@ impl Service {
                 Request::Edit(v) => {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
-                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a() || op.lane_c()) {
+                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a() || op.lane_c() || op.live()) {
                         return Err(Error::new("unsupported", "slice 4A verbs require API 1.2"));
                     }
                     // ---- Lane D: version opt-in ----

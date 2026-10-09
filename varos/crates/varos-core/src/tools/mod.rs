@@ -35,7 +35,7 @@ pub fn get(kind: ToolKind) -> &'static dyn Tool {
         | ToolKind::PathEraser
         | ToolKind::Join
         | ToolKind::Curvature => &object::Object,
-        ToolKind::Gradient => &object::Object,
+        ToolKind::Blend | ToolKind::Gradient => &object::Object,
         ToolKind::Pen => &pen::Pen,
         ToolKind::Direct => &direct::Direct,
         ToolKind::Object | ToolKind::FreeTransform => &object::Object,

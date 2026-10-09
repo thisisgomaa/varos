@@ -44,7 +44,8 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
             if envelope.api != "1.2"
                 && matches!(
                     command,
-                    EditCommand::Drawing(_)
+                    EditCommand::Live(_)
+                        | EditCommand::Drawing(_)
                         | EditCommand::AddText { .. }
                         | EditCommand::SetText { .. }
                         | EditCommand::Image(_)
@@ -202,6 +203,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        // ---- Lane E: Phase 11 ----
+        Live(action) => crate::live::check(ed, action),
         Drawing(action) => crate::drawing::check(ed, action),
         AddText { .. } | SetText { .. } => Ok(()),
         Colour(c) => crate::colour_commands::check(ed, c),

@@ -4384,6 +4384,7 @@ name = "varos-raster"
 version = "0.1.0"
 dependencies = [
  "image",
+ "lopdf",
  "resvg",
  "serde",
  "serde_json",

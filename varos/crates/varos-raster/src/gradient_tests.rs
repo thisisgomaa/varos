@@ -41,15 +41,8 @@ fn paint_goldens_json_svg_pdf_and_cpu() {
             ),
             json
         );
-        let mut pdf_golden = std::fs::read(root.join(format!("{name}.pdf"))).unwrap();
-        for (a, b) in [
-            ("\"varos\":6".to_owned(), format!("\"varos\":{fv}")),
-            ("/VAROS_SchemaVersion 6".to_owned(), format!("/VAROS_SchemaVersion {fv}")),
-        ] {
-            let at = pdf_golden.windows(a.len()).position(|w| w == a.as_bytes()).expect("stamp");
-            pdf_golden.splice(at..at + a.len(), b.bytes());
-        }
-        assert_eq!(pdf_golden, pdf, "{name}.pdf");
+        let pdf_golden = std::fs::read(root.join(format!("{name}.pdf"))).unwrap();
+        pdf_objects::assert_same(&pdf, &pdf_golden, 6);
         for (ext, data) in [("svg", svg.bytes.as_slice()), ("png", png.as_slice())] {
             assert_eq!(std::fs::read(root.join(format!("{name}.{ext}"))).unwrap(), data, "{name}.{ext}");
         }
@@ -65,3 +58,6 @@ fn paint_goldens_json_svg_pdf_and_cpu() {
         assert!(mean < 0.35, "{name}: SVG/CPU mean channel error {mean}");
     }
 }
+
+#[path = "../../varos-pdf/tests/support/pdf_golden.rs"]
+mod pdf_objects;

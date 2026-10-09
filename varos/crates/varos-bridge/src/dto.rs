@@ -214,6 +214,28 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    // ---- Lane E: Phase 11 ----
+    LiveMake {
+        ids: Vec<String>,
+        kind: varos_core::live::Kind,
+    },
+    LiveOptions {
+        node: String,
+        kind: varos_core::live::Kind,
+    },
+    LiveRelease {
+        node: String,
+    },
+    LiveExpand {
+        node: String,
+    },
+    LiveIsolate {
+        node: Option<String>,
+    },
+    LiveSpine {
+        node: String,
+        path: String,
+    },
     // ---- Lane D: API 1.2 drawing ----
     ShapeTool {
         spec: varos_core::drawing::ShapeSpec,
@@ -598,6 +620,18 @@ pub enum Order {
     Back,
 }
 impl Operation {
+    // ---- Lane E: Phase 11 ----
+    pub fn live(&self) -> bool {
+        matches!(
+            self,
+            Self::LiveMake { .. }
+                | Self::LiveOptions { .. }
+                | Self::LiveRelease { .. }
+                | Self::LiveExpand { .. }
+                | Self::LiveIsolate { .. }
+                | Self::LiveSpine { .. }
+        )
+    }
     pub fn drawing(&self) -> bool {
         matches!(
             self,
@@ -638,6 +672,13 @@ impl Operation {
 
     pub fn ids(&self) -> &[String] {
         match self {
+            // ---- Lane E: Phase 11 ----
+            Self::LiveMake { ids, .. } => ids,
+            Self::LiveOptions { .. }
+            | Self::LiveRelease { .. }
+            | Self::LiveExpand { .. }
+            | Self::LiveIsolate { .. }
+            | Self::LiveSpine { .. } => &[],
             Self::AddText { .. }
             | Self::SetText { .. }
             | Self::ScaleStrokes { .. }

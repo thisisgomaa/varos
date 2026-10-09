@@ -1,3 +1,6 @@
+// ---- Lane E: Phase 11: current-reader future gate, frozen fixture retained ----
+#[path = "support/future.rs"]
+mod future;
 use varos_core::{
     format::{self, Limits},
     live_corners::{CornerParam, Kind},
@@ -220,8 +223,9 @@ fn frozen_next_fixture_and_refusals() {
         .unwrap_err();
     assert_eq!(negative, LoadError::Invalid(Invalid::NonFinite { what: "path 10 corners".into() }));
     assert_eq!(
-        format::decode_model(include_bytes!("fixtures/lane_c/refused_future.json"), None, &limits).unwrap_err(),
-        LoadError::NewerVersion { found: 10, supported: format::FORMAT_VERSION }
+        format::decode_model(&future::promote(include_bytes!("fixtures/lane_c/refused_future.json")), None, &limits)
+            .unwrap_err(),
+        LoadError::NewerVersion { found: format::FORMAT_VERSION + 1, supported: format::FORMAT_VERSION }
     );
 }
 

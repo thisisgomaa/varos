@@ -594,3 +594,7 @@ limits and an 8 MiB decoder budget before decoding, and reuses those validated b
 best-effort; missing/corrupt/unwritable cache falls back to an in-memory thumbnail. The signed macOS
 Quick Look extension and blob-aware integration remain moderator work, requiring native acceptance.
 <!-- End Lane F fix round -->
+
+<!-- Lane E: Phase 11 -->
+## Reserved wave-3 v13: live nodes
+`nodes[].kind.Live` stores source-child Blend, Repeat and Envelope parameters; derived paths are runtime only. `migrate_v12_to_v13` is pure identity. Versions ≤12 must not contain `Live`. Lane-local preceding identity rows are integration placeholders, not implementations of sibling phases. Full contract: [LIVE_NODES_V13.md](LIVE_NODES_V13.md). Frozen fixture family: `varos-core/tests/fixtures/v13/`.
