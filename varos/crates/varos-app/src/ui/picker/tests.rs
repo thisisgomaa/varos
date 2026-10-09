@@ -649,7 +649,7 @@ fn mixed_empty_field_enter_is_unchanged_and_escape_closes_without_a_write() {
     assert_eq!(r.ed.doc, before);
 }
 #[test]
-fn drawer_disclosure_and_solid_tabs_do_not_write_but_gradient_tab_applies() {
+fn drawer_and_all_tabs_are_read_only_until_explicit_interaction() {
     let mut r = Rig::new(selected(false));
     let before = r.ed.doc.clone();
     let at = egui::pos2(524.0, 411.0);
@@ -666,11 +666,24 @@ fn drawer_disclosure_and_solid_tabs_do_not_write_but_gradient_tab_applies() {
     r.frame(pointer(at, true), None);
     r.frame(pointer(at, false), None);
     assert!(r.panel.as_ref().unwrap().tab == Tab::Gradient);
-    assert!(matches!(r.ed.doc.paths[0].fill, varos_core::model::Paint::Gradient(_)));
-    assert_ne!(r.ed.doc, before);
+    assert_eq!(r.ed.doc, before);
+    assert_eq!(r.ed.rev, 0);
+    r.ed.execute_ui(varos_core::EditCommand::Colour(varos_core::colour_commands::ColourCommand::Paint {
+        target: PaintTarget::Fill,
+        paint: varos_core::model::Paint::Gradient(Default::default()),
+    }));
+    r.frame(vec![], None);
     assert_eq!(r.ed.rev, 1);
     r.ed.undo();
+    let rev = r.ed.rev;
+    r.frame(vec![], None);
     assert_eq!(r.ed.doc, before);
+    assert_eq!(r.ed.rev, rev);
+    // Switching to another solid selection with the tab open is also read-only.
+    r.ed.doc.paths[0].fill = varos_core::model::Paint::Solid([0., 1., 0., 1.]);
+    let solid = r.ed.doc.clone();
+    r.frame(vec![], None);
+    assert_eq!(r.ed.doc, solid);
 }
 
 #[test]

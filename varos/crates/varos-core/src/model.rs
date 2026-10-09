@@ -171,6 +171,23 @@ impl std::hash::Hash for Paint {
     }
 }
 impl Paint {
+    // ---- w2-gradients: resolved-paint readers ----
+    /// Representative UI colour; callers resolve document references first.
+    pub fn representative(&self) -> Option<Rgba> {
+        match self {
+            Self::Solid(c) => Some(*c),
+            Self::Gradient(g) => Some(g.sample(0.5)),
+            _ => None,
+        }
+    }
+    /// Geometry recipe placeholder for gradients; never turn no-paint into white artwork.
+    pub fn drawable_colour(&self) -> Option<Rgba> {
+        match self {
+            Self::Gradient(_) => Some([1.; 4]),
+            _ => self.solid(),
+        }
+    }
+    // ---- end w2-gradients ----
     /// From the legacy optional-colour shape: `None ⇒ Paint::None`, `Some(c) ⇒ Paint::Solid(c)`.
     pub fn from_opt(c: Option<Rgba>) -> Self {
         match c {
@@ -178,9 +195,8 @@ impl Paint {
             None => Paint::None,
         }
     }
-    /// The drawable solid colour if this paint resolves to one today — `None` for `Paint::None` (and,
-    /// once they exist, for gradients / unresolved swatch-refs: callers treat those as "nothing solid
-    /// to draw" until the render path grows a branch for them).
+    /// Solid colour only. Resolve references first; gradient readers use their own paint branch
+    /// or `representative` for a colour chip. `None` here does not mean unpainted.
     pub fn solid(&self) -> Option<Rgba> {
         match self {
             Paint::Solid(c) => Some(*c),

@@ -69,12 +69,15 @@ impl Tool for Pen {
             }
         }
         // else: extend the active path, or start a new one
+        let starting = ed.active.is_none();
         let pid = match ed.active {
             Some(i) => i,
             None => {
                 let id = ed.doc.nid();
                 let (f, st, sw) = (ed.cur_fill, ed.cur_stroke, ed.cur_sw);
-                ed.doc.paths.push(Path::new(id, vec![], false, f, st, sw));
+                let mut path = Path::new(id, vec![], false, f, st, sw);
+                ed.inherit_current_paints(&mut path);
+                ed.doc.paths.push(path);
                 ed.active = Some(id);
                 ed.selected.clear();
                 deselect_other_art(ed);
@@ -94,6 +97,9 @@ impl Tool for Pen {
         };
         let aid = ed.doc.nid();
         ed.doc.paths[pi].anchors.push(Anchor { id: aid, p: pos, hin: None, hout: None, smooth: false });
+        if starting {
+            ed.refresh_drawing_paints(pi);
+        }
         ed.selected.insert(aid);
         ed.dirty = true;
         ed.drag = Drag::PenNew { aid, down: pos, broken: false };

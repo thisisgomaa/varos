@@ -139,10 +139,10 @@ pub(crate) fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Dra
     // point before the world→page map, so the exported PDF matches the rotated canvas exactly
     // (cubics are affine-invariant → mapping control points is exact). Identity ⇒ today's output.
     let xf = doc.unit_xform(p.id);
-    // resolve each paint to its drawable solid ONCE (Paint::None — and future gradients — ⇒ None)
+    // Resolve before classification; only gradient geometry uses a white placeholder.
     let (fill, stroke) = (
-        p.appearance().fill().resolved(doc).solid().or_else(|| p.fill.is_painted().then_some([1.; 4])),
-        p.appearance().stroke().resolved(doc).solid().or_else(|| p.stroke.is_painted().then_some([1.; 4])),
+        p.appearance().fill().resolved(doc).drawable_colour(),
+        p.appearance().stroke().resolved(doc).drawable_colour(),
     );
     // WYSIWYG with the canvas: an OPEN path still FILLS (implied straight close between endpoints,
     // A32) — the exact rule `scene::fill_prims` draws by. The old `p.closed` guard dropped the fill

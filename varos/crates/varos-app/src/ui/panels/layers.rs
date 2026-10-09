@@ -1,4 +1,6 @@
 use super::super::*;
+#[path = "layers_gradient.rs"]
+mod gradient_thumb;
 
 pub(crate) struct TopIcons {
     /// Windows' burger. min/max/close are painted glyphs (`winctl`); the 4b band's Home, `+`, "+N",
@@ -24,6 +26,8 @@ pub(crate) struct ThumbShape {
     pub(crate) rings: Vec<Vec<Pt>>,
     pub(crate) fill: Option<Rgba>,
     pub(crate) stroke: Option<Rgba>,
+    pub(crate) paints: [varos_core::model::Paint; 2],
+    pub(crate) opacity: f32,
 }
 
 /// One rendered row of the Layers panel (a flattened, display-ordered view of the scene tree,
@@ -123,10 +127,14 @@ pub(crate) fn thumb_key(ed: &Editor, pids_zorder: &[u32]) -> u64 {
         for hole in &path.holes {
             hole.len().hash(&mut state);
         }
-        path.appearance().fill().hash(&mut state);
-        path.appearance().stroke().hash(&mut state);
+        path.appearance().fill().resolved(&ed.doc).hash(&mut state);
+        path.appearance().stroke().resolved(&ed.doc).hash(&mut state);
         hash_f32(path.stroke_width, &mut state);
         hash_f32(path.opacity, &mut state);
+        let xf = ed.doc.unit_xform(pid);
+        for value in [xf.rot, xf.piv[0], xf.piv[1]] {
+            hash_f32(value, &mut state);
+        }
         for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
             anchor.id.hash(&mut state);
             hash_f32(anchor.p[0], &mut state);
@@ -334,7 +342,7 @@ pub(crate) fn build_layer_rows(
     rows.into_iter().zip(keep).filter(|(_, k)| *k).map(|(r, _)| r).collect()
 }
 /// One path's raw thumbnail ingredients before bbox-fitting: `(rings, fill, stroke)`.
-type RawThumb = (Vec<Vec<Pt>>, Option<Rgba>, Option<Rgba>);
+type RawThumb = (Vec<Vec<Pt>>, [varos_core::model::Paint; 2], f32);
 /// Build a row's thumbnail: gather every path (already in back→front z order), collect its outline
 /// rings + paint in pixel space, then fit the ONE combined bbox to the unit square (Y down, shorter
 /// axis centred) so the composite preview keeps each shape's real position, size and colour.
@@ -348,6 +356,10 @@ pub(crate) fn thumb_shapes(ed: &Editor, pids_zorder: &[u32]) -> Vec<ThumbShape> 
         for h in &p.holes {
             rings.push(varos_core::model::Document::ring_px(h, true, 1.0));
         }
+        let xf = ed.doc.unit_xform(p.id);
+        for q in rings.iter_mut().flatten() {
+            *q = xf.apply(*q);
+        }
         for r in &rings {
             for q in r {
                 x0 = x0.min(q[0]);
@@ -356,7 +368,13 @@ pub(crate) fn thumb_shapes(ed: &Editor, pids_zorder: &[u32]) -> Vec<ThumbShape> 
                 y1 = y1.max(q[1]);
             }
         }
-        raw.push((rings, p.appearance().fill().solid(), p.appearance().stroke().solid()));
+        let paints = [p.appearance().fill().resolved(&ed.doc), p.appearance().stroke().resolved(&ed.doc)].map(
+            |paint| match paint {
+                varos_core::model::Paint::Gradient(g) => varos_core::model::Paint::Gradient(g.transformed(xf)),
+                paint => paint,
+            },
+        );
+        raw.push((rings, paints, p.opacity));
         // Paint → the UI snapshot's Option<Rgba>
     }
     if raw.is_empty() {
@@ -366,13 +384,23 @@ pub(crate) fn thumb_shapes(ed: &Editor, pids_zorder: &[u32]) -> Vec<ThumbShape> 
     let s = 1.0 / w.max(h);
     let (ox, oy) = ((1.0 - w * s) * 0.5, (1.0 - h * s) * 0.5); // centre the shorter axis
     raw.into_iter()
-        .map(|(rings, fill, stroke)| ThumbShape {
-            rings: rings
-                .into_iter()
-                .map(|r| r.into_iter().map(|q| [ox + (q[0] - x0) * s, oy + (q[1] - y0) * s]).collect())
-                .collect(),
-            fill,
-            stroke,
+        .map(|(rings, paints, opacity)| {
+            let paints = paints.map(|paint| match paint {
+                varos_core::model::Paint::Gradient(g) => {
+                    varos_core::model::Paint::Gradient(g.mapped(|q| [ox + (q[0] - x0) * s, oy + (q[1] - y0) * s]))
+                }
+                paint => paint,
+            });
+            ThumbShape {
+                rings: rings
+                    .into_iter()
+                    .map(|r| r.into_iter().map(|q| [ox + (q[0] - x0) * s, oy + (q[1] - y0) * s]).collect())
+                    .collect(),
+                fill: paints[0].representative(),
+                stroke: paints[1].representative(),
+                paints,
+                opacity,
+            }
         })
         .collect()
 }
@@ -716,6 +744,9 @@ pub(crate) fn panel_layers(
                                 StrokeKind::Middle,
                             );
                             for sh in &row.thumb {
+                                if gradient_thumb::paint(&p, thumb, sh, dim) {
+                                    continue;
+                                }
                                 let fill = sh.fill.map(|c| with_a(rgba_c32a(c), dim)).unwrap_or(Color32::TRANSPARENT);
                                 let stroke = sh
                                     .stroke

@@ -30,7 +30,12 @@ pub fn info(doc: &Document) -> Value {
     for c in doc
         .paths
         .iter()
-        .flat_map(|p| [p.appearance().fill().solid(), p.appearance().stroke().solid()])
+        .flat_map(|p| {
+            [
+                p.appearance().fill().resolved(doc).representative(),
+                p.appearance().stroke().resolved(doc).representative(),
+            ]
+        })
         .flatten()
         .chain(doc.artboards.iter().filter_map(|a| a.page_color))
     {

@@ -124,7 +124,6 @@ pub fn migrate_v4_to_v5(doc: Document, _limits: &Limits) -> Result<Document, Loa
 
 /// Pure next-format migration: old paints and absent swatches are already the canonical stored form.
 // ---- w2-gradients: pure identity migration, validated before publication ----
-pub fn migrate_v5_to_next_gradients(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
-    super::validate(&doc, limits)?;
+pub fn migrate_v5_to_next_gradients(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
 }

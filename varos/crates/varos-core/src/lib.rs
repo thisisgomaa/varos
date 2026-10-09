@@ -41,7 +41,9 @@ pub mod trace;
 
 // ---- Lane B: appearance and gradient mathematics ----
 pub mod appearance;
+mod current_paint;
 pub mod gradient;
+mod gradient_canvas;
 
 // ---- w2-gradients ----
 pub mod colour_commands;

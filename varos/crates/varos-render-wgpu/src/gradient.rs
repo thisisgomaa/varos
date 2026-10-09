@@ -7,13 +7,26 @@ use std::{
 };
 use varos_core::{geom::View, gradient::Gradient};
 use wgpu::util::DeviceExt;
-pub fn key(g: &Gradient, view: View, frame: [f32; 2], opacity: f32) -> u64 {
+/// A draw binding is stable across viewport changes. Its uniform is refreshed in place.
+pub fn key(g: &Gradient, _view: View, _frame: [f32; 2], opacity: f32) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     g.hash(&mut h);
-    for v in view.pan.into_iter().chain([view.zoom, frame[0], frame[1], opacity]) {
-        v.to_bits().hash(&mut h);
+    opacity.to_bits().hash(&mut h);
+    h.finish()
+}
+/// LUT pixels depend only on stops and interpolation, never placement, spread or viewport.
+fn lut_key(g: &Gradient) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for stop in &g.stops {
+        for v in [stop.offset, stop.opacity, stop.midpoint].into_iter().chain(stop.colour) {
+            v.to_bits().hash(&mut h);
+        }
     }
     h.finish()
+}
+struct Binding {
+    group: wgpu::BindGroup,
+    uniform: wgpu::Buffer,
 }
 const SHADER: &str = include_str!("gradient.wgsl");
 pub struct Gradients {
@@ -22,7 +35,9 @@ pub struct Gradients {
     pub clipped: wgpu::RenderPipeline,
     pub knockout: wgpu::RenderPipeline,
     pub knockout_clip: wgpu::RenderPipeline,
-    groups: HashMap<u64, wgpu::BindGroup>,
+    groups: HashMap<u64, Binding>,
+    luts: HashMap<u64, wgpu::TextureView>,
+    sampler: wgpu::Sampler,
 }
 impl Gradients {
     pub fn new(
@@ -81,10 +96,17 @@ impl Gradients {
             clipped: super::make_pipe(d, &pl, &sh, fmt, samples, true, clipped),
             layout,
             groups: HashMap::new(),
+            luts: HashMap::new(),
+            sampler: d.create_sampler(&wgpu::SamplerDescriptor {
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }),
         }
     }
     pub fn prepare(&mut self, d: &wgpu::Device, q: &wgpu::Queue, metas: &[super::GroupDraw]) {
         let mut used = std::collections::HashSet::new();
+        let mut used_luts = std::collections::HashSet::new();
         for m in metas {
             let draws = match m {
                 super::GroupDraw::Opaque { draws }
@@ -95,9 +117,8 @@ impl Gradients {
             for draw in draws {
                 if let super::Draw::Gradient { key, gradient, pan, zoom, opacity, .. } = draw {
                     used.insert(*key);
-                    if self.groups.contains_key(key) {
-                        continue;
-                    }
+                    let lut = lut_key(gradient);
+                    used_luts.insert(lut);
                     let [a, b, c, e, x, y] = gradient.placement;
                     let det = a * e - b * c;
                     let params = [
@@ -115,61 +136,70 @@ impl Gradients {
                         ],
                         [gradient.focal[0], gradient.focal[1], 0., 0.],
                     ];
+                    if let Some(binding) = self.groups.get(key) {
+                        q.write_buffer(&binding.uniform, 0, bytemuck::cast_slice(&params));
+                        continue;
+                    }
                     let buffer = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("gradient placement"),
                         contents: bytemuck::cast_slice(&params),
-                        usage: wgpu::BufferUsages::UNIFORM,
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     });
-                    let tex = d.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("gradient LUT"),
-                        size: wgpu::Extent3d { width: 1024, height: 1, depth_or_array_layers: 1 },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                        view_formats: &[],
-                    });
-                    let bytes: Vec<u8> = gradient
-                        .lut()
-                        .into_iter()
-                        .flatten()
-                        .map(|v| (v * 255.).round().clamp(0., 255.) as u8)
-                        .collect();
-                    q.write_texture(
-                        wgpu::TexelCopyTextureInfo {
-                            texture: &tex,
-                            mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        &bytes,
-                        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4096), rows_per_image: Some(1) },
-                        wgpu::Extent3d { width: 1024, height: 1, depth_or_array_layers: 1 },
-                    );
-                    let view = tex.create_view(&Default::default());
-                    let sampler = d.create_sampler(&wgpu::SamplerDescriptor {
-                        mag_filter: wgpu::FilterMode::Linear,
-                        min_filter: wgpu::FilterMode::Linear,
-                        ..Default::default()
+                    let view = self.luts.entry(lut).or_insert_with(|| {
+                        let tex = d.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("gradient LUT"),
+                            size: wgpu::Extent3d { width: 1024, height: 1, depth_or_array_layers: 1 },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                            view_formats: &[],
+                        });
+                        let bytes: Vec<u8> = gradient
+                            .lut()
+                            .into_iter()
+                            .flatten()
+                            .map(|v| (v * 255.).round().clamp(0., 255.) as u8)
+                            .collect();
+                        q.write_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &tex,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &bytes,
+                            wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(4096),
+                                rows_per_image: Some(1),
+                            },
+                            wgpu::Extent3d { width: 1024, height: 1, depth_or_array_layers: 1 },
+                        );
+                        tex.create_view(&Default::default())
                     });
                     let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("gradient"),
                         layout: &self.layout,
                         entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&self.sampler),
+                            },
                             wgpu::BindGroupEntry { binding: 2, resource: buffer.as_entire_binding() },
                         ],
                     });
-                    self.groups.insert(*key, bg);
+                    self.groups.insert(*key, Binding { group: bg, uniform: buffer });
                 }
             }
         }
         self.groups.retain(|key, _| used.contains(key));
+        self.luts.retain(|key, _| used_luts.contains(key));
     }
     pub fn group(&self, key: u64) -> Option<&wgpu::BindGroup> {
-        self.groups.get(&key)
+        self.groups.get(&key).map(|b| &b.group)
     }
 }
 
@@ -198,7 +228,15 @@ mod routing_tests {
         let mut changed = g.clone();
         changed.stops[0].midpoint = 0.2;
         assert_ne!(k, key(&changed, View::identity(), [100., 100.], 1.));
-        assert_ne!(k, key(&g, View { pan: [10., 0.], zoom: 1. }, [100., 100.], 1.));
+        assert_eq!(k, key(&g, View { pan: [10., 0.], zoom: 2. }, [200., 200.], 1.));
+        assert_ne!(lut_key(&g), lut_key(&changed));
+        let mut placed = g.clone();
+        placed.placement[4] = 80.;
+        placed.kind = varos_core::gradient::GradientKind::Radial;
+        placed.focal = [0.1, 0.1];
+        placed.spread = varos_core::gradient::Spread::Repeat;
+        assert_eq!(lut_key(&g), lut_key(&placed));
+        assert_ne!(k, key(&placed, View::identity(), [100., 100.], 1.));
         let rings = vec![vec![[0., 0.], [80., 0.], [80., 80.], [0., 80.]]];
         let fill = Prim::GradientFill { rings: rings.clone(), gradient: g.clone(), opacity: 1., stroke: false };
         let mut stroke = g;

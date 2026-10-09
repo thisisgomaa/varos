@@ -54,8 +54,7 @@ pub fn live(
 
 pub fn world_path(doc: &Document, path: &Path) -> Path {
     let mut owned = path.clone();
-    owned.fill = path.appearance().fill().resolved(doc);
-    owned.stroke = path.appearance().stroke().resolved(doc);
+    materialize(&mut owned, [path.appearance().fill().resolved(doc), path.appearance().stroke().resolved(doc)]);
     owned.map_gradient_placement(|p| doc.unit_xform(path.id).apply(p));
     owned
 }

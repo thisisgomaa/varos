@@ -242,20 +242,10 @@ fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Drawn<'a>> {
     if doc.eff_hidden(p.id) {
         return None;
     }
-    let fill = p
-        .appearance()
-        .fill()
-        .resolved(doc)
-        .solid()
-        .or_else(|| p.fill.is_painted().then_some([1.; 4]))
-        .filter(|_| p.anchors.len() >= 3);
-    let stroke =
-        p.appearance().stroke().resolved(doc).solid().or_else(|| p.stroke.is_painted().then_some([1.; 4])).filter(
-            |_| {
-                (p.anchors.len() >= 2 || (!p.stroke_style.is_default() && !p.anchors.is_empty()))
-                    && p.stroke_width > 0.0
-            },
-        );
+    let fill = p.appearance().fill().resolved(doc).drawable_colour().filter(|_| p.anchors.len() >= 3);
+    let stroke = p.appearance().stroke().resolved(doc).drawable_colour().filter(|_| {
+        (p.anchors.len() >= 2 || (!p.stroke_style.is_default() && !p.anchors.is_empty())) && p.stroke_width > 0.0
+    });
     if fill.is_none() && stroke.is_none() {
         return None;
     }
