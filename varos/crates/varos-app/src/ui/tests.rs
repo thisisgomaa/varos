@@ -409,6 +409,40 @@ mod layer_cache_tests {
     }
 
     #[test]
+    fn thumbnail_key_tracks_every_paint_component() {
+        use varos_core::model::Paint;
+        for slot in 0..2 {
+            for channel in 0..4 {
+                let mut ed = editor_with_path();
+                ed.doc.paths[0].fill = Paint::Solid([0.2; 4]);
+                ed.doc.paths[0].stroke = Paint::Solid([0.3; 4]);
+                let before = thumb_key(&ed, &[7]);
+                let mut c = if slot == 0 { [0.2; 4] } else { [0.3; 4] };
+                c[channel] = 0.7;
+                if slot == 0 {
+                    ed.doc.paths[0].fill = Paint::Solid(c)
+                } else {
+                    ed.doc.paths[0].stroke = Paint::Solid(c)
+                };
+                assert_ne!(before, thumb_key(&ed, &[7]));
+            }
+        }
+        for slot in 0..4 {
+            let mut ed = editor_with_path();
+            ed.doc.paths[0].fill = Paint::Solid([0.2; 4]);
+            let before = thumb_key(&ed, &[7]);
+            let p = &mut ed.doc.paths[0];
+            match slot {
+                0 => p.fill = Paint::None,
+                1 => p.stroke = Paint::Solid([0.1; 4]),
+                2 => p.stroke_width = 77.,
+                _ => p.opacity = 0.37,
+            };
+            assert_ne!(before, thumb_key(&ed, &[7]));
+        }
+    }
+
+    #[test]
     fn thumbnail_key_ignores_selection_but_tracks_geometry() {
         let mut ed = editor_with_path();
         let before = thumb_key(&ed, &[7]);

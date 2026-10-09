@@ -135,10 +135,19 @@ pub fn plan_pdf_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan,
 /// Write the pure PDF for `plan`: its pages and a bare catalog, nothing else. `cancel` is checked
 /// before every page. Deterministic: the same document and plan give the same bytes.
 pub fn export_pdf_bytes(doc: &Document, plan: &ExportPlan, cancel: &AtomicBool) -> Result<Vec<u8>, ExportError> {
+    export_pdf_bytes_with_report(doc, plan, cancel).map(|(output, _)| output)
+}
+
+/// Export bytes together with explicit diagnostics.
+pub fn export_pdf_bytes_with_report(
+    doc: &Document,
+    plan: &ExportPlan,
+    cancel: &AtomicBool,
+) -> Result<(Vec<u8>, varos_core::ExportReport), ExportError> {
     if plan.pages.is_empty() {
         return Err(ExportError::Unavailable(ExportUnavailable::NothingToExport));
     }
-    write_pages(doc, &plan.pages, None, cancel)
+    write_pages(doc, &plan.pages, None, cancel).map(|bytes| (bytes, varos_core::ExportReport::default()))
 }
 
 /// Does this file carry an embedded Varos model (a native `.vrs` container)? Bounded byte scan for

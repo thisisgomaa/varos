@@ -88,6 +88,7 @@ pub struct ExportDone {
     /// The job as submitted (a confirmed retry resubmits it).
     pub job: ExportJob,
     pub result: ExportResult,
+    pub report: varos_core::ExportReport,
 }
 
 /// A finished background job, applied on the UI thread through `AppCommand::FileDone`.
@@ -132,6 +133,7 @@ impl FileDone {
             FileJob::Export(j) => FileDone::Exported(ExportDone {
                 job: j.clone(),
                 result: ExportResult::Failed("Varos couldn't write the PDF.".into()),
+                report: varos_core::ExportReport::default(),
             }),
         }
     }
@@ -166,8 +168,8 @@ pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
             FileDone::Saved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result })
         }
         FileJob::Export(j) => {
-            let result = export_to(&j, disk);
-            FileDone::Exported(ExportDone { job: j, result })
+            let (result, report) = export_to(&j, disk);
+            FileDone::Exported(ExportDone { job: j, result, report })
         }
     }
 }
@@ -204,15 +206,16 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 FileDone::Saved(SaveDone { sid: s.sid, ticket: s.ticket, dest: s.dest, result: Ok(result) })
             }
             FileJob::Export(e) => {
-                let result = match varos_pdf::export_pdf_bytes(&e.doc, &e.plan, &AtomicBool::new(false)) {
-                    Ok(bytes) => match disk.export_guarded(&e.dest, &bytes) {
-                        Ok(SaveOutcome::Durable) => ExportResult::Exported,
-                        Ok(SaveOutcome::ReplacedUnconfirmed(e)) => ExportResult::ExportedUnconfirmed(e),
-                        Err(e) => return Err(e),
-                    },
-                    Err(e) => ExportResult::Failed(e.to_string()),
-                };
-                FileDone::Exported(ExportDone { job: e, result })
+                let (result, report) =
+                    match varos_pdf::export_pdf_bytes_with_report(&e.doc, &e.plan, &AtomicBool::new(false)) {
+                        Ok((bytes, report)) => match disk.export_guarded(&e.dest, &bytes) {
+                            Ok(SaveOutcome::Durable) => (ExportResult::Exported, report),
+                            Ok(SaveOutcome::ReplacedUnconfirmed(e)) => (ExportResult::ExportedUnconfirmed(e), report),
+                            Err(e) => return Err(e),
+                        },
+                        Err(e) => (ExportResult::Failed(e.to_string()), varos_core::ExportReport::default()),
+                    };
+                FileDone::Exported(ExportDone { job: e, result, report })
             }
             FileJob::Bridge(_) => unreachable!(),
         })
@@ -230,12 +233,14 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 FileDone::Saved(SaveDone { result: Err(reason), .. }) => {
                     varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", reason))
                 }
-                FileDone::Exported(ExportDone { result: ExportResult::Exported, .. }) => {
-                    varos_bridge::Reply::success(serde_json::json!({"exported":true,"durable":true}))
+                FileDone::Exported(ExportDone { result: ExportResult::Exported, report, .. }) => {
+                    varos_bridge::Reply::success(serde_json::json!({"exported":true,"durable":true,"report":report}))
                 }
-                FileDone::Exported(ExportDone { result: ExportResult::ExportedUnconfirmed(reason), .. }) => {
-                    varos_bridge::Reply::success(serde_json::json!({"exported":true,"durable":false,"reason":reason}))
-                }
+                FileDone::Exported(ExportDone {
+                    result: ExportResult::ExportedUnconfirmed(reason), report, ..
+                }) => varos_bridge::Reply::success(
+                    serde_json::json!({"exported":true,"durable":false,"reason":reason,"report":report}),
+                ),
                 FileDone::Exported(ExportDone { result: ExportResult::Failed(reason), .. }) => {
                     varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", reason))
                 }
@@ -252,20 +257,21 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
 
 /// The export body: the destination check (a bounded byte scan, off the UI thread), the pure PDF,
 /// then one durable replace. Nothing is written unless the bytes were produced.
-fn export_to(j: &ExportJob, disk: &mut dyn DocStore) -> ExportResult {
+fn export_to(j: &ExportJob, disk: &mut dyn DocStore) -> (ExportResult, varos_core::ExportReport) {
     if !j.replace_confirmed && disk.read_existing(&j.dest).is_some_and(|bytes| varos_pdf::has_embedded_model(&bytes)) {
-        return ExportResult::NeedsReplaceConfirm;
+        return (ExportResult::NeedsReplaceConfirm, varos_core::ExportReport::default());
     }
     // No Cancel control exists yet (the S6 cancel contract needs a real mechanism, not a decoration),
     // so the flag is never raised.
-    let bytes = match varos_pdf::export_pdf_bytes(&j.doc, &j.plan, &AtomicBool::new(false)) {
+    let (bytes, report) = match varos_pdf::export_pdf_bytes_with_report(&j.doc, &j.plan, &AtomicBool::new(false)) {
         Ok(b) => b,
-        Err(e) => return ExportResult::Failed(e.to_string()),
+        Err(e) => return (ExportResult::Failed(e.to_string()), varos_core::ExportReport::default()),
     };
-    match disk.write_export(&j.dest, &bytes) {
+    let result = match disk.write_export(&j.dest, &bytes) {
         Ok(()) => ExportResult::Exported,
         Err(reason) => ExportResult::Failed(reason),
-    }
+    };
+    (result, report)
 }
 
 /// The Export save panel's suggested name: `<name>.pdf`, except for a document that is itself a

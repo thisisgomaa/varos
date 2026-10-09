@@ -23,3 +23,5 @@ unicode-normalization = "0.1.25"
 # SVG parsing/raster validation only; the exporter uses std and the existing core model.
 resvg = { version = "0.45", default-features = false }
 roxmltree = "0.20"
+# Source-model traversal for ADR-0014's no-raster-blob guard (headless, test-only).
+syn = { version = "2", features = ["full"] }
