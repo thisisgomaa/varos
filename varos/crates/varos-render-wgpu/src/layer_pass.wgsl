@@ -25,8 +25,8 @@ fn channel(b:f32,s:f32,m:u32)->f32 {
  switch m {
  case 1u:{return b*s;} case 2u:{return b+s-b*s;} case 3u:{return hard(s,b);}
  case 4u:{return min(b,s);} case 5u:{return max(b,s);}
- case 6u:{if b<=0.0001 {return 0.0;} if s>=1.0 {return 1.0;} return min(b/(1.0-s),1.0);}
- case 7u:{if b>=0.9999 {return 1.0;} if s<=0.0 {return 0.0;} return 1.0-min((1.0-b)/s,1.0);}
+ case 6u:{if b==0.0 {return 0.0;} if s>=1.0 {return 1.0;} return min(b/(1.0-s),1.0);}
+ case 7u:{if b==1.0 {return 1.0;} if s<=0.0 {return 0.0;} return 1.0-min((1.0-b)/s,1.0);}
  case 8u:{return hard(b,s);}
  case 9u:{if s<=0.5 {return b-(1.0-2.0*s)*b*(1.0-b);}
  var d=sqrt(b); if b<=0.25 {d=((16.0*b-12.0)*b+4.0)*b;} return b+(2.0*s-1.0)*(d-b);}
