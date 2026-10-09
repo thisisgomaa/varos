@@ -24,7 +24,11 @@ pub(crate) fn apply(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let paths = resolve(&ed.doc, &ids, matches!(op, Operation::ScaleStrokes { .. } | Operation::NewDocument { .. }))?;
+    let paths = resolve(
+        &ed.doc,
+        &ids,
+        matches!(op, Operation::WidthTool { .. } | Operation::ScaleStrokes { .. } | Operation::NewDocument { .. }),
+    )?;
     *expanded += paths.len();
     if *expanded > 1000 {
         return Err(fail("Expanded targets exceed 1000".into()));
@@ -33,6 +37,19 @@ pub(crate) fn apply(
         ed.try_execute(EditCommand::SelectPaths(paths.clone())).map_err(fail)?;
     }
     let command = match op {
+        // ---- Lane B w3-effects ----
+        Operation::WidthTool { .. } => EditCommand::LiveEffects(varos_core::effects::Action::Tool),
+        Operation::LiveEffects { effects, .. } => {
+            EditCommand::LiveEffects(varos_core::effects::Action::Set { ids: paths.clone(), effects: effects.clone() })
+        }
+        Operation::WidthProfile { profile, .. } => EditCommand::LiveEffects(varos_core::effects::Action::Width {
+            ids: paths.clone(),
+            profile: profile.clone(),
+        }),
+        Operation::ExpandLive { .. } => {
+            EditCommand::LiveEffects(varos_core::effects::Action::Expand { ids: paths.clone() })
+        }
+        // ---- end Lane B w3-effects ----
         Operation::OutlineStroke { .. } => EditCommand::PathAdvanced(Action::Outline),
         Operation::OffsetPath { delta, join, miter, .. } => {
             EditCommand::PathAdvanced(Action::Offset { delta: *delta, join: *join, miter: *miter })

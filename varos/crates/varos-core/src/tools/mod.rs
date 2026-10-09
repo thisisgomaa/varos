@@ -22,6 +22,9 @@ pub trait Tool {
 
 pub fn get(kind: ToolKind) -> &'static dyn Tool {
     match kind {
+        // ---- Lane B w3-effects ----
+        ToolKind::Width => &object::Object,
+        // ---- end Lane B w3-effects ----
         // ---- Lane D: handled before stateless tool dispatch ----
         ToolKind::RoundedRect
         | ToolKind::Star

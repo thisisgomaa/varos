@@ -267,10 +267,10 @@ fn named_next_migration_and_refusal_fixtures_are_frozen() {
     assert!(
         matches!(decode_model(include_bytes!("fixtures/v6-images/refused-unknown-pixels.json"),None,&limits),Err(LoadError::Malformed{detail,..}) if detail.contains("unknown field `pixels`"))
     );
-    assert_eq!(
-        decode_model(include_bytes!("fixtures/v6-images/refused-future.json"), None, &limits).unwrap_err(),
-        LoadError::NewerVersion { found: 10, supported: FORMAT_VERSION }
-    );
+    assert!(matches!(
+        decode_model(include_bytes!("fixtures/v6-images/refused-future.json"), None, &limits),
+        Err(LoadError::Malformed { .. })
+    ));
     let old = include_str!("fixtures/v5/cap_Butt.json");
     let migrated = decode_model(old.as_bytes(), None, &limits).unwrap();
     assert!(migrated.migrated);

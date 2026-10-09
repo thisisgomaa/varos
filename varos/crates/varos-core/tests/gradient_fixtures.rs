@@ -51,7 +51,9 @@ fn frozen_refusals_gate_tagged_values_before_typed_decode() {
                 error,
                 LoadError::Invalid(Invalid::FieldNotInFormat { field: "gradient paints / swatches", version: 6 })
             ),
-            "future" => assert_eq!(error, LoadError::NewerVersion { found: 10, supported: FORMAT_VERSION }),
+            // ---- Lane B w3-effects ----
+            "future" => assert!(matches!(error, LoadError::Malformed { .. })),
+            // ---- end Lane B w3-effects ----
             "unknown_stop" => assert!(
                 matches!(error, LoadError::Malformed { detail, .. } if detail.contains("unknown field `future`"))
             ),

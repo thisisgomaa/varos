@@ -219,10 +219,12 @@ fn frozen_next_fixture_and_refusals() {
     let negative = format::decode_model(include_bytes!("fixtures/lane_c/refused_negative_radius.json"), None, &limits)
         .unwrap_err();
     assert_eq!(negative, LoadError::Invalid(Invalid::NonFinite { what: "path 10 corners".into() }));
-    assert_eq!(
-        format::decode_model(include_bytes!("fixtures/lane_c/refused_future.json"), None, &limits).unwrap_err(),
-        LoadError::NewerVersion { found: 10, supported: format::FORMAT_VERSION }
-    );
+    // ---- Lane B w3-effects: v10 is now readable; frozen malformed body still refuses ----
+    assert!(matches!(
+        format::decode_model(include_bytes!("fixtures/lane_c/refused_future.json"), None, &limits),
+        Err(LoadError::Malformed { .. })
+    ));
+    // ---- end Lane B w3-effects ----
 }
 
 #[test]

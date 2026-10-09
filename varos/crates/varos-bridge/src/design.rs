@@ -588,7 +588,10 @@ pub(crate) fn apply_design_op(
         Operation::Move { delta, .. } => {
             ed.apply_targeted_op(&TargetEdit::Move { paths, delta: *delta }, 0).map_err(super::service::target_error)?
         }
-        Operation::OutlineStroke { .. }
+        // ---- Lane B w3-effects ----
+        Operation::WidthTool { .. } | Operation::LiveEffects { .. } | Operation::WidthProfile { .. } | Operation::ExpandLive { .. }
+        // ---- end Lane B w3-effects ----
+        | Operation::OutlineStroke { .. }
         | Operation::OffsetPath { .. }
         | Operation::Expand { .. }
         | Operation::LiveCorners { .. }

@@ -48,11 +48,12 @@ fn refuses_legacy_keys_bad_tracking_and_newer_before_decode() {
         matches!(&tracking, LoadError::Malformed { detail, .. } if detail == "Arabic letter spacing must be zero"),
         "{tracking:?}"
     );
-    assert_eq!(
-        format::decode_model(include_bytes!("fixtures/text_next/refuse_newer.json"), None, &Limits::DEFAULT)
-            .unwrap_err(),
-        LoadError::NewerVersion { found: 10, supported: format::FORMAT_VERSION }
-    );
+    // ---- Lane B w3-effects: frozen v10 malformed body is no longer a future era ----
+    assert!(matches!(
+        format::decode_model(include_bytes!("fixtures/text_next/refuse_newer.json"), None, &Limits::DEFAULT),
+        Err(LoadError::Malformed { .. })
+    ));
+    // ---- end Lane B w3-effects ----
     let mut d = fixture();
     d.nodes.iter_mut().find(|n| matches!(n.kind, varos_core::model::NodeKind::Text(_))).unwrap().children.push(1);
     assert!(format::encode_model(&d, &Limits::DEFAULT).is_err());

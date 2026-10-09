@@ -38,6 +38,7 @@ pub(crate) fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::AddAnchor => "Add Anchor (+)",
         ToolKind::DeleteAnchor => "Delete Anchor (-)",
         ToolKind::Artboard => "Artboard (Shift+O)",
+        ToolKind::Width => "Width (Shift+W)",
         ToolKind::Text => "Type (T)",
         ToolKind::Gradient => "Gradient (G)",
         ToolKind::Hand => "Hand (H)",

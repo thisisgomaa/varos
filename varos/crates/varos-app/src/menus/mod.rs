@@ -12,6 +12,9 @@ use winit::keyboard::KeyCode;
 mod edit;
 mod file;
 mod help;
+// ---- Lane B w3-effects ----
+mod effect;
+// ---- end Lane B w3-effects ----
 mod object;
 mod select;
 #[cfg(test)]
@@ -231,6 +234,9 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
         ("Edit", edit::rows()),
         ("Select", select::rows()),
         ("Object", object::rows()),
+        // ---- Lane B w3-effects ----
+        ("Effect", effect::rows()),
+        // ---- end Lane B w3-effects ----
         ("View", view::rows()),
         ("Window", window::rows()),
         ("Help", help::rows()),

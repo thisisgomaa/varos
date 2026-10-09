@@ -319,7 +319,7 @@ fn v2_files_migrate_to_v3_with_empty_metadata_and_a_notice() {
         // the migrated v2 file saves as exactly the frozen v4 twin (no artboards, so no ids allocated)
         if name.ends_with("v2_boardless.vrs") {
             let frozen = std::fs::read(fixture("v4/v4_boardless.vrs")).unwrap();
-            assert_eq!(&doc_to_blob(&l.doc).unwrap().as_bytes()[10..], &frozen[10..]);
+            assert_eq!(body(doc_to_blob(&l.doc).unwrap().as_bytes()), body(&frozen));
         }
     }
     // the named step is the identity on an already-decoded v2 document
@@ -341,11 +341,11 @@ fn frozen_v3_metadata_fixture_loads_its_exact_metadata() {
     assert_eq!(l.doc.description, "Brand mark, round two. نسخة ثانية للشعار.");
     assert_eq!(l.doc.tags, tags(&["client", "عربي", "logo"]));
     let v4 = std::fs::read(fixture("v4/v4_board_meta.vrs")).unwrap();
-    assert_eq!(&doc_to_blob(&l.doc).unwrap().as_bytes()[10..], &v4[10..], "saves as the frozen v4 twin");
+    assert_eq!(body(doc_to_blob(&l.doc).unwrap().as_bytes()), body(&v4), "saves as the frozen v4 twin");
     let l4 = decode_model(&v4, None, &Limits::DEFAULT).unwrap();
     assert_eq!((l4.source_version, l4.migrated, l4.notice()), (4, true, Some(MIGRATION_NOTICE)));
     assert_eq!(l4.doc, l.doc);
-    assert_eq!(&doc_to_blob(&l4.doc).unwrap().as_bytes()[10..], &v4[10..], "byte-stable");
+    assert_eq!(body(doc_to_blob(&l4.doc).unwrap().as_bytes()), body(&v4), "byte-stable");
 }
 
 fn stamped(d: &Document, version: u32) -> Value {
@@ -426,3 +426,10 @@ fn over_bound_metadata_is_refused_on_load_and_on_save() {
         "This document can't be saved: the board name is 121 characters long; the limit is 120. It is still open."
     );
 }
+
+// ---- Lane B w3-effects: version-only normalization supports double-digit eras ----
+fn body(bytes: &[u8]) -> &[u8] {
+    let at = bytes.windows(7).position(|w| w == b",\"doc\":").unwrap();
+    &bytes[at..]
+}
+// ---- end Lane B w3-effects ----

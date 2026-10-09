@@ -2,6 +2,7 @@
 //! global swatch, Live Corners, editable text) pins the combined `Document` key order, round-trips
 //! byte-for-byte, exports image + gradient through PDF/SVG/CPU, and is refused by every frozen older
 //! reader gate (v5/v6/v7/v8) before any typed decode, in raw JSON and in the PDF container.
+mod effects_support;
 use std::sync::atomic::AtomicBool;
 use varos_core::format::{decode_model, encode_model, Limits, LoadError, FORMAT_VERSION};
 
@@ -32,10 +33,13 @@ fn frozen_gate(body: &[u8], supported: u32) -> Result<u32, LoadError> {
 
 #[test]
 fn mixed_v9_round_trips_and_pins_document_key_order() {
-    assert_eq!(FORMAT_VERSION, 9);
+    assert_eq!(FORMAT_VERSION, 11);
     let loaded = decode_model(JSON, None, &Limits::DEFAULT).unwrap();
-    assert_eq!((loaded.source_version, loaded.migrated), (9, false));
-    assert_eq!(encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().as_bytes(), JSON);
+    assert_eq!((loaded.source_version, loaded.migrated), (9, FORMAT_VERSION > 9));
+    assert_eq!(
+        encode_model(&loaded.doc, &Limits::DEFAULT).unwrap(),
+        std::str::from_utf8(JSON).unwrap().replacen("\"varos\":9", &format!("\"varos\":{FORMAT_VERSION}"), 1)
+    );
     let value: serde_json::Value = serde_json::from_slice(JSON).unwrap();
     let keys: Vec<&str> = value["doc"].as_object().unwrap().keys().map(String::as_str).collect();
     // serde_json's Map keeps insertion order only with preserve_order; compare the raw byte order.
@@ -56,7 +60,12 @@ fn mixed_v9_container_reopens_with_resources_and_rewrites_identically() {
     let loaded = varos_pdf::load_vrs_bytes(VRS, &Limits::DEFAULT).unwrap();
     assert_eq!(loaded.doc, decode_model(JSON, None, &Limits::DEFAULT).unwrap().doc);
     assert!(loaded.blobs.get(&loaded.doc.images[0].blob).is_some());
-    assert_eq!(varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap(), VRS);
+    assert_eq!(
+        effects_support::normalized(
+            &varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap()
+        ),
+        effects_support::normalized(VRS)
+    );
 }
 
 #[test]

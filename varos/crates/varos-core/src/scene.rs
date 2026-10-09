@@ -207,6 +207,13 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
         path.id.hash(&mut state);
         path.closed.hash(&mut state);
         path.hidden.hash(&mut state);
+        // ---- Lane B w3-effects ----
+        if !path.effects.is_empty() || path.stroke_style.width_profile.is_some() {
+            if let Ok(bytes) = serde_json::to_vec(&(&path.effects, &path.stroke_style.width_profile)) {
+                bytes.hash(&mut state);
+            }
+        }
+        // ---- end Lane B w3-effects ----
         path.anchors.len().hash(&mut state);
         path.holes.len().hash(&mut state);
         for hole in &path.holes {
@@ -408,6 +415,23 @@ fn build_scene_impl(
     canvas: bool,
     artwork_only: bool,
 ) -> Scene {
+    // ---- Lane B w3-effects ----
+    let resolved_editor = if ed
+        .doc
+        .paths
+        .iter()
+        .any(|p| p.effects.iter().any(|e| matches!(e,crate::effects::Effect::Transform{copies,..} if *copies>0)))
+    {
+        crate::effects_document::document(&ed.doc).ok().map(|doc| {
+            let mut e = ed.clone();
+            e.doc = doc.into_owned();
+            e
+        })
+    } else {
+        None
+    };
+    let ed = resolved_editor.as_ref().unwrap_or(ed);
+    // ---- end Lane B w3-effects ----
     let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
     let stroke_budget = (!canvas).then(|| std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default()));
     let stroke_errors = std::cell::RefCell::new(Vec::new());

@@ -61,10 +61,9 @@ pub fn bucket_ppu(bucket: i32) -> f32 {
 /// once per path per frame instead of once per ring.
 pub fn flatten_path(doc: &Document, pi: usize, ppu: f32) -> PathGeometry {
     let fppu = bucket_ppu(zoom_bucket(ppu));
-    PathGeometry {
-        outline: doc.world_outline_px(pi, fppu),
-        holes: doc.paths[pi].holes.iter().map(|hole| doc.world_ring_px(hole, pi, fppu)).collect(),
-    }
+    // ---- Lane B w3-effects ----
+    flatten_with(&doc.paths[pi], doc.unit_xform(doc.paths[pi].id), fppu)
+    // ---- end Lane B w3-effects ----
 }
 
 /// `world_outline_px` / `world_ring_px` with the unit transform already in hand — the same steps in the
@@ -95,6 +94,10 @@ pub fn control_bbox(doc: &Document, pi: usize) -> Rect {
 }
 
 fn control_bbox_with(path: &Path, xf: Xform) -> Rect {
+    // ---- Lane B w3-effects ----
+    let resolved = crate::effects::evaluated(path);
+    let path = &resolved;
+    // ---- end Lane B w3-effects ----
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
         for q in [Some(anchor.p), anchor.hin, anchor.hout].into_iter().flatten() {
@@ -109,6 +112,7 @@ fn control_bbox_with(path: &Path, xf: Xform) -> Rect {
 }
 
 struct Entry {
+    effects: Vec<crate::effects::Effect>,
     corners: Vec<crate::live_corners::CornerParam>,
     closed: bool,
     xform: Xform,
@@ -121,6 +125,7 @@ struct Entry {
 impl Entry {
     fn fresh(path: &Path, xform: Xform) -> Entry {
         Entry {
+            effects: path.effects.clone(),
             corners: path.corners.clone(),
             closed: path.closed,
             xform,
@@ -131,7 +136,8 @@ impl Entry {
         }
     }
     fn matches(&self, path: &Path, xform: Xform) -> bool {
-        self.corners == path.corners
+        self.effects == path.effects
+            && self.corners == path.corners
             && self.closed == path.closed
             && self.xform == xform
             && self.anchors == path.anchors

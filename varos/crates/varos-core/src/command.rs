@@ -13,6 +13,9 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    // ---- Lane B w3-effects ----
+    LiveEffects(crate::effects::Action),
+    // ---- end Lane B w3-effects ----
     // ---- Lane D: deterministic drawing boundary ----
     Drawing(crate::drawing::Action),
     // ---- Lane G ----
@@ -406,6 +409,9 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            // ---- Lane B w3-effects ----
+            Self::LiveEffects(action) => crate::effects::apply(ed, action),
+            // ---- end Lane B w3-effects ----
             Self::Drawing(action) => crate::drawing::apply(ed, action),
             Self::Image(edit) => crate::images::apply(ed, edit),
             // Checked colour command dispatch.
@@ -755,6 +761,18 @@ impl Editor {
 
     /// Fallible command boundary. The interactive facade retains errors for its existing notice path.
     pub fn execute(&mut self, command: EditCommand) -> Result<(), crate::EngineError> {
+        // ---- Lane B w3-effects ----
+        if !matches!(
+            &command,
+            EditCommand::LiveEffects(
+                crate::effects::Action::Preview { .. }
+                    | crate::effects::Action::PreviewAppend { .. }
+                    | crate::effects::Action::EndPreview { .. }
+            )
+        ) {
+            crate::effects_preview::cancel(self);
+        }
+        // ---- end Lane B w3-effects ----
         // Immutable history handles bound rollback cost independently of retained artwork.
         let snapshot = self.clone();
         let label = crate::command_labels::label(&command);
