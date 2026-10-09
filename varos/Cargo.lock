@@ -1558,6 +1558,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "log",
  "peniko",
+ "png 0.18.1",
  "skrifa 0.42.1",
  "smallvec",
  "vello_common",
@@ -4284,9 +4285,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "skrifa 0.42.1",
  "tiny-skia",
  "ttf-parser",
  "unicode-normalization",
+ "unicode-segmentation",
  "varos-bridge",
  "varos-core",
  "varos-import",
@@ -4295,6 +4298,7 @@ dependencies = [
  "varos-render-wgpu",
  "varos-text",
  "varos-text-layout",
+ "vello_cpu",
  "windows",
  "winit",
 ]
@@ -4447,6 +4451,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "log",
  "peniko",
+ "png 0.18.1",
  "smallvec",
  "thiserror 2.0.18",
 ]
@@ -4460,6 +4465,7 @@ dependencies = [
  "bytemuck",
  "glifo",
  "hashbrown 0.17.1",
+ "png 0.18.1",
  "vello_common",
 ]
 

@@ -13,6 +13,11 @@ use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{Pt, View};
 use varos_core::scene::{scene_signature, SceneStyle};
+// ---- Lane F: headless Arabic catalog contract ----
+#[cfg(test)]
+mod arabic_ui_tests;
+// ---- end Lane F ----
+
 // ---- Lane G ----
 mod text_product;
 use varos_core::EditCommand;
@@ -1440,6 +1445,9 @@ fn main() {
         // 4b: the traffic lights on the band's centre line (re-applied every redraw — idempotent)
         mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "startup");
     }
+    // ---- Lane F: native chrome locale (existing Preferences command) ----
+    varos_app::i18n::configure_native(recovery.settings.preferences.language.requested());
+    // ---- end Lane F ----
     // macOS: the native menu bar; installed on the first NewEvents (after the app finished launching).
     #[cfg(target_os = "macos")]
     let mac_menu = match mac_menu::MacMenu::build(event_loop.create_proxy()) {

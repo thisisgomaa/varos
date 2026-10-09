@@ -1,4 +1,7 @@
 //! Lane E provisional Navigator; existing box shell and kit typography.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::*;
 use varos_core::view_depth::{navigator_bounds, navigator_camera, DepthAction};
 #[allow(clippy::too_many_arguments)] // Panel snapshot plus deferred commands; follows incumbent panel builders.
@@ -52,7 +55,7 @@ pub(super) fn draw(
         }
     }
     ui.add_space(LABEL_GAP);
-    ui.label(micro_label(format!("{:.0}%", view.zoom * 100.0)));
+    ui.shaped_label(micro_label(format!("{:.0}%", view.zoom * 100.0)));
     let (track, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), varos_app::shell::tokens::KIT_CONTROL_H),
         egui::Sense::click_and_drag(),

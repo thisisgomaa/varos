@@ -148,7 +148,9 @@ impl MacMenu {
         let mut file_rows = vec![];
         let mut clip_rows = vec![];
         for (title, entries) in chrome::menus() {
-            let sub = Submenu::new(title, true);
+            // ---- Lane F ----
+            let sub = Submenu::new(varos_app::i18n::native_label(title), true);
+            // ---- end Lane F ----
             let mut rows = Rows { document: &mut document_items, file: &mut file_rows, clip: &mut clip_rows };
             fill(&sub, &entries, &mut cmds, &mut checks, &mut recent, &mut rows)?;
             menu.append(&sub)?;
@@ -283,7 +285,9 @@ fn fill(
             Entry::Sep => sub.append(&PredefinedMenuItem::separator())?,
             Entry::Native(n) => sub.append(&native(*n))?,
             Entry::Sub { label, items } => {
-                let s = Submenu::new(*label, true);
+                // ---- Lane F ----
+                let s = Submenu::new(varos_app::i18n::native_label(label), true);
+                // ---- end Lane F ----
                 fill(&s, items, cmds, checks, recent, rows)?;
                 if *label == "Open Recent" {
                     *recent = Some(s.clone());
@@ -291,6 +295,9 @@ fn fill(
                 sub.append(&s)?;
             }
             Entry::Item { id, label, accel, cmd, check } => {
+                // ---- Lane F ----
+                let label = &varos_app::i18n::native_label(label);
+                // ---- end Lane F ----
                 let acc = accel.and_then(accelerator);
                 let mid = MenuId::new(id);
                 cmds.insert(mid.clone(), *cmd);
@@ -334,9 +341,11 @@ fn fill(
 }
 
 fn native(n: Native) -> PredefinedMenuItem {
+    // ---- Lane F: native API accepts localized labels; AppKit retains shaping and shortcuts ----
+    let tr = varos_app::i18n::native_label;
     match n {
         Native::About => PredefinedMenuItem::about(
-            Some("About Varos"),
+            Some(tr("About Varos")),
             Some(AboutMetadata {
                 name: Some("Varos".into()),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -344,16 +353,17 @@ fn native(n: Native) -> PredefinedMenuItem {
                 ..Default::default()
             }),
         ),
-        Native::Services => PredefinedMenuItem::services(None),
-        Native::Hide => PredefinedMenuItem::hide(Some("Hide Varos")),
-        Native::HideOthers => PredefinedMenuItem::hide_others(None),
-        Native::ShowAll => PredefinedMenuItem::show_all(None),
-        Native::Minimize => PredefinedMenuItem::minimize(None),
-        Native::Zoom => PredefinedMenuItem::maximize(Some("Zoom")),
-        Native::Fullscreen => PredefinedMenuItem::fullscreen(None),
-        Native::BringAllToFront => PredefinedMenuItem::bring_all_to_front(None),
+        Native::Services => PredefinedMenuItem::services(Some(tr("Services"))),
+        Native::Hide => PredefinedMenuItem::hide(Some(tr("Hide Varos"))),
+        Native::HideOthers => PredefinedMenuItem::hide_others(Some(tr("Hide Others"))),
+        Native::ShowAll => PredefinedMenuItem::show_all(Some(tr("Show All"))),
+        Native::Minimize => PredefinedMenuItem::minimize(Some(tr("Minimize"))),
+        Native::Zoom => PredefinedMenuItem::maximize(Some(tr("Zoom"))),
+        Native::Fullscreen => PredefinedMenuItem::fullscreen(Some(tr("Enter Full Screen"))),
+        Native::BringAllToFront => PredefinedMenuItem::bring_all_to_front(Some(tr("Bring All to Front"))),
     }
 }
+// ---- end Lane F ----
 
 /// The band's V mark (4b): run Varos ▸ About — muda's own predefined item, so the panel is the same
 /// one by construction. `chrome::menus()` puts `Native::About` first in the first (application) menu

@@ -1,5 +1,6 @@
 //! Lane F: provisional existing-kit sheets; owner design review pending.
 use crate::app_command::{AppCommand, SessionId};
+use varos_app::shell::kit::text::ShapedUi as _;
 use varos_app::{
     shell::{
         kit::{self, Control},
@@ -30,6 +31,7 @@ pub struct State {
     pub gpu_effective: String,
     pub history_depths: Vec<(usize, usize)>,
     launch_gpu: Option<preferences::GpuPreference>,
+    launch_language: Option<varos_app::i18n::Locale>,
     pub shortcuts: crate::shortcut_editor::EditorState,
     pub actions: Option<varos_core::actions::Actions>,
 }
@@ -63,6 +65,12 @@ impl State {
         self.shortcuts.generation = generation;
     }
     pub fn draw(&mut self, ctx: &egui::Context, commands: &mut Vec<AppCommand>, sid: Option<SessionId>) {
+        static SYSTEM: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let system = SYSTEM.get_or_init(varos_app::i18n::system_locale);
+        let locale = *self
+            .launch_language
+            .get_or_insert_with(|| varos_app::i18n::resolve(self.effective.preferences.language.requested(), system));
+        varos_app::i18n::set(ctx, locale);
         let Some(sheet) = self.sheet else { return };
         let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !kit::field::any_open(ctx);
         egui::Area::new(egui::Id::new("lane-f-sheet"))
@@ -83,7 +91,7 @@ impl State {
                             DesktopAction::Help => "Varos Help",
                             DesktopAction::ReportProblem => "Report a problem",
                         };
-                        ui.label(egui::RichText::new(title).font(t::small()).color(t::TEXT));
+                        ui.shaped_label(egui::RichText::new(title).font(t::small()).color(t::TEXT));
                         egui::ScrollArea::vertical().max_height(ctx.content_rect().height() * 0.65).show(ui, |ui| {
                             match sheet {
                                 DesktopAction::Preferences => self.preferences(ui, commands),
@@ -93,7 +101,7 @@ impl State {
                             }
                         });
                         if let Some(error) = &self.error {
-                            ui.label(egui::RichText::new(error).font(t::small()).color(t::TEXT));
+                            ui.shaped_label(egui::RichText::new(error).font(t::small()).color(t::TEXT));
                         }
                         if kit::menu_row(ui, Control::new(ui.id().with("reconcile"), "Reconcile disk before retry"))
                             .activated
@@ -117,10 +125,10 @@ impl State {
             if category != spec.category {
                 category = spec.category;
                 kit::separator(ui);
-                ui.label(egui::RichText::new(category).font(t::small()).color(t::MUTED));
+                ui.shaped_label(egui::RichText::new(category).font(t::small()).color(t::MUTED));
             }
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(spec.label).font(t::small()).color(t::TEXT));
+                ui.shaped_label(egui::RichText::new(spec.label).font(t::small()).color(t::TEXT));
                 let current = spec.value(draft);
                 let id = ui.id().with(spec.key);
                 let enabled = !matches!(spec.typed, preferences::Key::Interval) || draft.autosave_enabled;
@@ -188,7 +196,7 @@ impl State {
                     }
                 });
             });
-            ui.label(egui::RichText::new(spec.timing).font(t::small()).color(t::MUTED));
+            ui.shaped_label(egui::RichText::new(spec.timing).font(t::small()).color(t::MUTED));
             if matches!(spec.typed, preferences::Key::History) {
                 let discarded = self
                     .history_depths
@@ -199,17 +207,23 @@ impl State {
                     })
                     .sum::<usize>();
                 if discarded > 0 {
-                    ui.label(
-                        egui::RichText::new(format!("Apply discards {discarded} retained history steps"))
-                            .font(t::small())
-                            .color(t::TEXT),
+                    ui.shaped_label(
+                        egui::RichText::new(varos_app::i18n::message(
+                            ui.ctx(),
+                            "Apply discards {discarded} retained history steps",
+                            &[("discarded", &discarded.to_string())],
+                        ))
+                        .font(t::small())
+                        .color(t::TEXT),
                     );
                 }
             }
             if matches!(spec.typed, preferences::Key::Language)
                 && matches!(draft.preferences.language, preferences::Language::Unavailable { .. })
+                && varos_app::i18n::Locale::from_tag(draft.preferences.language.requested())
+                    == varos_app::i18n::Locale::En
             {
-                ui.label(
+                ui.shaped_label(
                     egui::RichText::new(
                         "Requested catalog unavailable; English fallback. Choose System or English to change it.",
                     )
@@ -218,16 +232,26 @@ impl State {
                 );
             }
             if matches!(spec.typed, preferences::Key::Gpu) {
-                ui.label(
-                    egui::RichText::new(format!("Active adapter: {}", self.gpu_effective))
-                        .font(t::small())
-                        .color(t::MUTED),
+                ui.shaped_label(
+                    egui::RichText::new(varos_app::i18n::message(
+                        ui.ctx(),
+                        "Active adapter: {adapter}",
+                        &[("adapter", &self.gpu_effective)],
+                    ))
+                    .font(t::small())
+                    .color(t::MUTED),
                 );
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Effective launch hint: {:?}; requested: {:?}. Restart required.",
-                        self.launch_gpu.unwrap_or(self.effective.preferences.gpu_preference),
-                        draft.preferences.gpu_preference
+                ui.shaped_label(
+                    egui::RichText::new(varos_app::i18n::message(
+                        ui.ctx(),
+                        "Effective launch hint: {effective}; requested: {requested}. Restart required.",
+                        &[
+                            (
+                                "effective",
+                                &format!("{:?}", self.launch_gpu.unwrap_or(self.effective.preferences.gpu_preference)),
+                            ),
+                            ("requested", &format!("{:?}", draft.preferences.gpu_preference)),
+                        ],
                     ))
                     .font(t::small())
                     .color(t::MUTED),
@@ -251,7 +275,7 @@ impl State {
         });
     }
     pub(crate) fn actions(&mut self, ui: &mut egui::Ui, commands: &mut Vec<AppCommand>, sid: Option<SessionId>) {
-        ui.label(egui::RichText::new("Records committed moves, paint, opacity, stroke width, rotation, delete, group and ungroup. Replay binds the current selection; file and UI commands are excluded.").font(t::small()).color(t::MUTED));
+        ui.shaped_label(egui::RichText::new("Records committed moves, paint, opacity, stroke width, rotation, delete, group and ungroup. Replay binds the current selection; file and UI commands are excluded.").font(t::small()).color(t::MUTED));
         if let Some(sid) = sid {
             if self.recording
                 && kit::menu_row(ui, Control::new(ui.id().with("discard-recording"), "Discard Recording")).activated
@@ -272,14 +296,22 @@ impl State {
                 }
             }
         } else {
-            ui.label(egui::RichText::new("Open a document to record or replay").font(t::small()).color(t::MUTED));
+            ui.shaped_label(
+                egui::RichText::new("Open a document to record or replay").font(t::small()).color(t::MUTED),
+            );
         }
         if kit::menu_row(ui, Control::new(ui.id().with("load"), "Load .vrs-actions…")).activated {
             commands.push(AppCommand::LoadAction);
         }
         if let Some(a) = &self.actions {
-            ui.label(
-                egui::RichText::new(format!("{} · {} steps", a.name, a.steps.len())).font(t::small()).color(t::TEXT),
+            ui.shaped_label(
+                egui::RichText::new(varos_app::i18n::message(
+                    ui.ctx(),
+                    "{name} · {count} steps",
+                    &[("name", &a.name), ("count", &a.steps.len().to_string())],
+                ))
+                .font(t::small())
+                .color(t::TEXT),
             );
             if kit::menu_row(ui, Control::new(ui.id().with("save"), "Save .vrs-actions…")).activated {
                 commands.push(AppCommand::SaveAction(a.clone()));
@@ -292,7 +324,7 @@ pub fn history(ui: &mut egui::Ui, ed: &varos_core::Editor, sid: Option<SessionId
     let Some(sid) = sid else { return };
     let depth = ed.history_depths().0;
     if depth == 0 {
-        ui.label(egui::RichText::new("No undo steps").font(t::small()).color(t::MUTED));
+        ui.shaped_label(egui::RichText::new("No undo steps").font(t::small()).color(t::MUTED));
     }
     if kit::menu_row(ui, Control::new(ui.id().with("initial"), "Earliest retained state")).activated {
         commands.push(AppCommand::HistoryJump(sid, 0));
@@ -311,7 +343,7 @@ pub fn history(ui: &mut egui::Ui, ed: &varos_core::Editor, sid: Option<SessionId
             varos_core::editor::history::Actor::Agent { label, .. } => format!("{label} · {}", entry.label),
         };
         if i >= depth {
-            label.push_str(" · undone");
+            label = varos_app::i18n::message(ui.ctx(), "{label} · undone", &[("label", &label)]);
         }
         let mut row = Control::new(ui.id().with(("history", entry.rev_after)), &label);
         row.selected = i + 1 == depth;
@@ -320,10 +352,15 @@ pub fn history(ui: &mut egui::Ui, ed: &varos_core::Editor, sid: Option<SessionId
         }
         let colour =
             if matches!(entry.actor, varos_core::editor::history::Actor::Agent { .. }) { t::AGENT } else { t::MUTED };
-        ui.label(
-            egui::RichText::new(format!(
-                "{} created · {} changed · {} removed",
-                entry.summary.created, entry.summary.changed, entry.summary.removed
+        ui.shaped_label(
+            egui::RichText::new(varos_app::i18n::message(
+                ui.ctx(),
+                "{created} created · {changed} changed · {removed} removed",
+                &[
+                    ("created", &entry.summary.created.to_string()),
+                    ("changed", &entry.summary.changed.to_string()),
+                    ("removed", &entry.summary.removed.to_string()),
+                ],
             ))
             .font(t::small())
             .color(colour),

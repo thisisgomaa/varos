@@ -1,3 +1,6 @@
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
 use super::*;
 use varos_app::storage::layout::HarmonyRule as Rule;
 const RULES: [(Rule, Icon, &str); 8] = [
@@ -53,7 +56,7 @@ pub(super) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
             checker(&ui.painter_at(r), r, t::PICKER_CHECKER);
         }
         ui.painter().rect(r, t::r_ctrl(), rgba_c32a(color), t::hairline(), StrokeKind::Inside);
-        if ui.interact(r, ui.id().with(("harmony", i)), egui::Sense::click()).on_hover_text(hex_of(color)).clicked()
+        if ui.interact(r, ui.id().with(("harmony", i)), egui::Sense::click()).shaped_hover_text(hex_of(color)).clicked()
             && !kit::field::blocked(ui.ctx())
         {
             ops.push(Op::PickerSet(m.target, color));
@@ -72,7 +75,7 @@ pub(super) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
             ui.painter().rect_filled(r, t::r_ctrl(), rgba_c32a(colour));
             if ui
                 .interact(r, ui.id().with(("guide", row_index, i)), egui::Sense::click())
-                .on_hover_text(hex_of(colour))
+                .shaped_hover_text(hex_of(colour))
                 .clicked()
                 && !kit::field::blocked(ui.ctx())
             {

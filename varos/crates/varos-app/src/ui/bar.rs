@@ -1,3 +1,6 @@
+// ---- Lane F: shared label and tooltip adapters ----
+use varos_app::shell::kit::text::{ShapedPainter as _, ShapedResponse as _};
+// ---- end Lane F ----
 use super::*;
 use varos_app::shell::tokens::{FIELD_H, STATUS_ZOOM_W};
 
@@ -201,13 +204,15 @@ pub(crate) fn tab_item(
     let lit = active || lifted;
     let name_right = rect.left() + t::TAB_PAD_L + (rect.width() - t::TAB_NAME_CLIP).max(0.0);
     let name_clip = egui::Rect::from_min_max(rect.min, egui::pos2(name_right, rect.bottom()));
-    p.with_clip_rect(name_clip.intersect(p.clip_rect())).text(
-        egui::pos2(rect.left() + t::TAB_PAD_L, rect.center().y),
-        Align2::LEFT_CENTER,
+    // ---- Lane F: bounded tab name ----
+    varos_app::shell::kit::text::cell(
+        p,
+        egui::Rect::from_min_max(egui::pos2(rect.left() + t::TAB_PAD_L, rect.top()), name_clip.max),
         &tab.label,
         if active { t::small_medium() } else { t::small() },
         if lit { TEXT } else { MUTED },
     );
+    // ---- end Lane F ----
     if tab.dirty && !hov {
         // the neutral unsaved-changes dot — never azure (azure is a scalpel)
         p.circle_filled(x_r.center(), t::TAB_DOT / 2.0, if lit { TEXT } else { MUTED });
@@ -217,7 +222,9 @@ pub(crate) fn tab_item(
         }
         Icon::Remove.paint(p, x_r.center(), t::TAB_CLOSE_ICON, if xr.hovered() { TEXT } else { MUTED });
     }
-    let resp = resp.on_hover_text(tab.tooltip.clone());
+    // ---- Lane F: shared text paint ----
+    let resp = resp.shaped_hover_text(tab.tooltip.clone());
+    // ---- end Lane F ----
     (resp, xr.clicked())
 }
 
@@ -434,7 +441,9 @@ pub(crate) fn build_topbar(
         let sense = if mac { egui::Sense::click() } else { egui::Sense::hover() };
         let vr = band_button(ui, &p, layout.brand, "tb-brand", sense, false);
         paint_brand(&p, layout.brand, if vr.hovered() { HOVER } else { SEAM });
-        if vr.on_hover_text("Varos").clicked() && mac {
+        // ---- Lane F: shared text paint ----
+        if vr.shaped_hover_text("Varos").clicked() && mac {
+            // ---- end Lane F ----
             *win_action = Some(WinAction::About);
         }
 
@@ -447,7 +456,9 @@ pub(crate) fn build_topbar(
             let sense = if home { egui::Sense::CLICK } else { egui::Sense::click() };
             let hr = band_button(ui, &p, chip, "home-chip", sense, home);
             Icon::Home.paint(&p, chip.center(), ICON_MD, band_ink(&hr, home));
-            let hr = hr.on_hover_text("Home");
+            // ---- Lane F: shared text paint ----
+            let hr = hr.shaped_hover_text("Home");
+            // ---- end Lane F ----
             if hr.clicked() {
                 cmds.push(AppCommand::Home);
             }
@@ -520,16 +531,20 @@ pub(crate) fn build_topbar(
                 t::BAND_OVERFLOW_TEXT,
                 egui::FontFamily::Name(varos_app::shell::fonts::UI_400.into()),
             );
-            p.text(
+            // ---- Lane F: shared text paint ----
+            p.shaped_text(
                 egui::pos2(ov.left() + t::BAND_OVERFLOW_TEXT_X, ov.center().y),
                 Align2::LEFT_CENTER,
                 count,
                 font,
                 ink,
             );
+            // ---- end Lane F ----
             let chev = egui::pos2(ov.left() + t::BAND_OVERFLOW_CHEV_X + t::BAND_OVERFLOW_CHEV / 2.0, ov.center().y);
             Icon::ChevronDown.paint(&p, chev, t::BAND_OVERFLOW_CHEV, ink);
-            if orr.on_hover_text("Hidden tabs").clicked() {
+            // ---- Lane F: shared text paint ----
+            if orr.shaped_hover_text("Hidden tabs").clicked() {
+                // ---- end Lane F ----
                 if open {
                     kit::close_menu(ui.ctx());
                 } else {
@@ -546,7 +561,9 @@ pub(crate) fn build_topbar(
         if let Some(plus_r) = layout.plus {
             let pr = band_button(ui, &p, plus_r, "tb-plus", egui::Sense::click(), false);
             Icon::Plus.paint(&p, plus_r.center(), ICON_MD, band_ink(&pr, false));
-            if pr.on_hover_text("New board").clicked() {
+            // ---- Lane F: shared text paint ----
+            if pr.shaped_hover_text("New board").clicked() {
+                // ---- end Lane F ----
                 cmds.push(AppCommand::NewBoard);
             }
         }
@@ -897,19 +914,25 @@ pub(crate) fn build_statusbar(
                 fcol,
             );
         }
-        p.text(egui::pos2(fit_r.left() + 17.0, cy), Align2::LEFT_CENTER, "Fit", f11.clone(), fcol);
+        // ---- Lane F: shared text paint ----
+        p.shaped_chrome(egui::pos2(fit_r.left() + 17.0, cy), Align2::LEFT_CENTER, "Fit", f11.clone(), fcol);
+        // ---- end Lane F ----
         if fresp.clicked() {
             *fit_request = Some(ab_active);
         }
         if ab_count > 0 {
-            let nr = p.text(
+            // ---- Lane F: shared text paint ----
+            let nr = p.shaped_text(
                 egui::pos2(fit_r.left() - 14.0, cy),
                 Align2::RIGHT_CENTER,
                 format!("{} / {}", ab_active + 1, ab_count),
                 m11,
                 MUTED,
             );
-            p.text(egui::pos2(nr.left() - 4.0, cy), Align2::RIGHT_CENTER, "Artboard", f11, MUTED);
+            // ---- end Lane F ----
+            // ---- Lane F: shared text paint ----
+            p.shaped_chrome(egui::pos2(nr.left() - 4.0, cy), Align2::RIGHT_CENTER, "Artboard", f11, MUTED);
+            // ---- end Lane F ----
         }
     });
 }

@@ -3,6 +3,9 @@
 //! Immutable card snapshots, per-document layout preferences, explicit reports and cancellation.
 //! Legacy PDF scope planning remains covered by headless compatibility tests.
 
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -354,7 +357,7 @@ pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, panel_column: Option<e
             .show(ui, |ui| {
                 ui.set_width(SHEET_W - t::KIT_PAD * 4.0);
                 ui.spacing_mut().item_spacing = egui::vec2(t::KIT_GAP, t::KIT_TEXT_GAP);
-                ui.label(RichText::new("Export for Screens").text_style(TextStyle::Button).color(t::TEXT));
+                ui.shaped_label(RichText::new("Export for Screens").text_style(TextStyle::Button).color(t::TEXT));
                 ui.add_space(t::KIT_GAP);
                 if let Phase::Done { dest, report } = &sheet.phase {
                     let name =
@@ -833,20 +836,15 @@ mod minimal_paint_tests {
             report: Default::default()
         }));
         let ctx = egui::Context::default();
+        varos_app::shell::kit::text::enable_trace(&ctx);
         let _ = ctx.run_ui(egui::RawInput::default(), |_| {
             let _ = draw(&ctx, &mut sheet, None);
         });
-        let output = ctx.run_ui(egui::RawInput::default(), |_| {
+        let _output = ctx.run_ui(egui::RawInput::default(), |_| {
             let _ = draw(&ctx, &mut sheet, None);
         });
-        fn text(shape: &egui::Shape) -> String {
-            match shape {
-                egui::Shape::Text(t) => t.galley.text().into(),
-                egui::Shape::Vec(shapes) => shapes.iter().map(text).collect::<Vec<_>>().join(" "),
-                _ => String::new(),
-            }
-        }
-        let copy = output.shapes.iter().map(|s| text(&s.shape)).collect::<Vec<_>>().join(" ");
+        let copy =
+            varos_app::shell::kit::text::paint_records(&ctx).into_iter().map(|r| r.text).collect::<Vec<_>>().join(" ");
         assert!(copy.contains("JPEG has no transparency"), "{copy}");
         assert!(copy.contains("Exported one.jpg"));
         assert!(copy.contains("Exported two.jpg"));

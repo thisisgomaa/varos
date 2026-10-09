@@ -1,3 +1,9 @@
+// ---- Lane F: shaped chrome ----
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::super::*;
 
 /// The Align pane body — THE home of align/distribute (ONE-HOME rule; the control bar mirrors it).
@@ -7,7 +13,7 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
     egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(PANEL_ITEM_GAP_X, 5.0);
         // A4: the reference switch sits ABOVE the buttons — you pick what "align" means, then act.
-        let _label = ui.label(micro_label("ALIGN TO"));
+        let _label = ui.shaped_label(micro_label("ALIGN TO"));
         label_gap(ui);
         let targets = [AlignTarget::Auto, AlignTarget::Selection, AlignTarget::Artboard, AlignTarget::KeyObject];
         let help = [
@@ -30,7 +36,7 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
         #[cfg(test)]
         align_probes::record_gap(_label.rect, _track.response.rect);
         ui.add_space(ALIGN_SECTION_GAP);
-        let _label = ui.label(micro_label("ALIGN OBJECTS"));
+        let _label = ui.shaped_label(micro_label("ALIGN OBJECTS"));
         label_gap(ui);
         let _controls = ui.horizontal(|ui| {
             if icon_btn(ui, &ic.align[0], "Align left") {
@@ -55,7 +61,7 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
         #[cfg(test)]
         align_probes::record_gap(_label.rect, _controls.response.rect);
         ui.add_space(ALIGN_SECTION_GAP);
-        let _label = ui.label(micro_label("DISTRIBUTE"));
+        let _label = ui.shaped_label(micro_label("DISTRIBUTE"));
         label_gap(ui);
         let _controls = ui.horizontal(|ui| {
             for (mode, icon, tip) in [
@@ -74,7 +80,7 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
         #[cfg(test)]
         align_probes::record_gap(_label.rect, _controls.response.rect);
         ui.add_space(ALIGN_SECTION_GAP);
-        ui.label(micro_label("DISTRIBUTE SPACING"));
+        ui.shaped_label(micro_label("DISTRIBUTE SPACING"));
         let gap_id = doc_id(ui,"distribute-gap");
         let gap = ui.data(|d| d.get_temp::<f32>(gap_id).unwrap_or(0.0));
         let ctx = ui.ctx().clone();
@@ -92,7 +98,7 @@ pub(crate) fn panel_align(ui: &mut egui::Ui, ic: &DockIcons, align_target: &mut 
 pub(crate) fn panel_pathfinder(ui: &mut egui::Ui, pf: Result<(), &'static str>, ops: &mut Vec<Op>) {
     egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 5.0);
-        ui.label(micro_label("SHAPE MODES"));
+        ui.shaped_label(micro_label("SHAPE MODES"));
         label_gap(ui);
         pathfinder_row(ui, ops, false, pf); // the roomier dock home
         super::construction_row(ui, pf, ops);
@@ -175,7 +181,7 @@ pub(crate) fn pf_btn(
     }
     let state = off.map_or(kit::IconState::Action, kit::IconState::Disabled);
     let help = kit::icon_tooltip(tip, state);
-    off.is_none() & resp.on_hover_text(&help).on_disabled_hover_text(&help).clicked()
+    off.is_none() & resp.shaped_hover_text(&help).shaped_disabled_hover_text(&help).clicked()
 }
 
 pub(crate) fn pf_btn_ink(disabled: bool, hot: bool) -> Color32 {

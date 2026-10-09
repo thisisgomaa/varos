@@ -1,9 +1,12 @@
 //! Lane G: Properties > Type, implemented (provisional UI, owner design review pending).
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::super::*;
 use varos_app::shell::tokens::TYPE_FIELD_W;
 use varos_core::text::{Alignment, Direction, Kashida, TextBox};
 pub(crate) fn type_section(ui: &mut egui::Ui, text: &TextBox, ops: &mut Vec<Op>) {
-    ui.label(panel_title("Type"));
+    ui.shaped_label(panel_title("Type"));
     let mut next = text.clone();
     let Some(first) = text.runs.first() else {
         return;
@@ -19,7 +22,7 @@ pub(crate) fn type_section(ui: &mut egui::Ui, text: &TextBox, ops: &mut Vec<Op>)
         .iter()
         .position(|f| varos_text_layout::font_hash(f.content_hash) == first.style.font.hash)
         .map(|i| names[i]);
-    let missing = format!("Missing: {}", first.style.font.family);
+    let missing = varos_app::i18n::message(ui.ctx(), "Missing: {font}", &[("font", &first.style.font.family)]);
     if let Some(index) = kit::text_dropdown(
         ui,
         doc_id(ui, "type-family"),
@@ -103,7 +106,14 @@ fn choice(ui: &mut egui::Ui, label: &str, names: &[&str], selected: usize) -> Op
     kit::text_dropdown(
         ui,
         doc_id(ui, ("type", label)),
-        &format!("{label}: {}", names[selected]),
+        &varos_app::i18n::message(
+            ui.ctx(),
+            "{label}: {value}",
+            &[
+                ("label", &varos_app::i18n::translate(ui.ctx(), label)),
+                ("value", &varos_app::i18n::translate(ui.ctx(), names[selected])),
+            ],
+        ),
         names,
         TYPE_FIELD_W,
         label,
@@ -119,6 +129,6 @@ fn number(
     ops: &mut Vec<Op>,
     mk: impl Fn(f32) -> Op,
 ) {
-    ui.label(micro_label(label));
+    ui.shaped_label(micro_label(label));
     fields::num_disabled(ui, TYPE_FIELD_W, Lab::Letter(""), label, value, 2, 0.1, range, disabled, ops, mk);
 }

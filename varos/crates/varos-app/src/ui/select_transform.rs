@@ -1,4 +1,7 @@
 //! Provisional 4A kit sheets and small tool-options popovers; owner design review pending.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use varos_app::shell::{
     kit::{
         self,
@@ -145,7 +148,7 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
         |ui| {
             frame().show(ui, |ui| {
                 ui.set_width(t::SLICE4A_TOOLS_SHEET_W);
-                ui.label(t::panel_title(title));
+                ui.shaped_label(t::panel_title(title));
                 let mut changed = false;
                 if tool == ToolKind::Scale || spec.each {
                     let mut x = spec.scale[0] * 100.;
@@ -344,21 +347,18 @@ mod tests {
         let hole = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 900.));
         ctx.run_ui(egui::RawInput { screen_rect: Some(hole), events, ..Default::default() }, |_| draw(ctx, ed, hole))
     }
-    fn text_position(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
-        fn find(shape: &egui::epaint::Shape, label: &str) -> Option<egui::Pos2> {
-            match shape {
-                egui::epaint::Shape::Text(t) if t.galley.job.text == label => {
-                    Some(t.pos + t.galley.rect.center().to_vec2())
-                }
-                egui::epaint::Shape::Vec(shapes) => shapes.iter().find_map(|s| find(s, label)),
-                _ => None,
-            }
-        }
-        output.shapes.iter().find_map(|s| find(&s.shape, label)).expect("visible control label")
+    fn text_position(ctx: &egui::Context, label: &str) -> egui::Pos2 {
+        varos_app::shell::kit::text::paint_records(ctx)
+            .into_iter()
+            .find(|r| r.text == label)
+            .expect("visible kit action")
+            .rect
+            .center()
     }
     fn click(ctx: &egui::Context, ed: &mut Editor, label: &str) {
-        let output = render(ctx, ed, vec![]);
-        let pos = text_position(&output, label);
+        varos_app::shell::kit::text::enable_trace(ctx);
+        let _output = render(ctx, ed, vec![]);
+        let pos = text_position(ctx, label);
         for pressed in [true, false] {
             render(
                 ctx,

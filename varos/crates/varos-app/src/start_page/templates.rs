@@ -1,4 +1,7 @@
 //! Provisional Templates section: reuse Recent's kit table rows and manual keyboard ring.
+// ---- Lane F: shaped chrome ----
+use crate::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::{Frame, Slot, StartPage};
 use crate::{
     shell::{
@@ -9,7 +12,7 @@ use crate::{
 };
 pub(super) fn draw(page: &mut StartPage, ui: &mut egui::Ui, f: &mut Frame<'_>) {
     ui.add_space(t::KIT_GAP);
-    ui.label(egui::RichText::new("Templates").color(t::TEXT).font(t::body()));
+    ui.shaped_label(egui::RichText::new("Templates").color(t::TEXT).font(t::body()));
     let model = f.model;
     for path in &model.templates {
         let label = path.file_stem().unwrap_or_default().to_string_lossy();

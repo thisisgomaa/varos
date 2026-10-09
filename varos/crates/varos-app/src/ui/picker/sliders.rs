@@ -1,4 +1,7 @@
 //! Channel tracks cache sRGB meshes per (mode, channels, alpha). Web controls snap to six values.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedPainter as _;
+// ---- end Lane F ----
 use super::*;
 use modes::{channels, Mode};
 use varos_app::shell::kit::field::{self as kf, Label, NumberField};
@@ -74,7 +77,7 @@ pub(super) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
             egui::pos2(body.left() + t::PICKER_PAD, y),
             egui::vec2(t::PICKER_W - t::PICKER_PAD * 2.0, t::PICKER_SLIDER_ROW_H),
         );
-        ui.painter().text(row.left_center(), Align2::LEFT_CENTER, label, t::mono(), t::MUTED);
+        ui.painter().shaped_text(row.left_center(), Align2::LEFT_CENTER, label, t::mono(), t::MUTED);
         let track = egui::Rect::from_center_size(
             egui::pos2(row.left() + t::PICKER_SLIDER_LABEL_W + t::PICKER_SLIDER_W / 2.0, row.center().y),
             egui::vec2(t::PICKER_SLIDER_W, t::PICKER_ALPHA_TRACK),

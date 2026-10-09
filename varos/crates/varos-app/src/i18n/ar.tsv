@@ -1,0 +1,634 @@
++ Add	+ إضافة
++N	+N
+30–1800 seconds	30–1800 ثانية
+<Group>	<مجموعة>
+<Path>	<مسار>
+A .vrs file from disk	ملف .vrs من القرص
+A board is a free canvas with a name, a short description and tags. Artboards inside are optional — add one when a piece needs a fixed size.	اللوحة مساحة حرة لها اسم ووصف قصير ووسوم. مساحات الرسم بداخلها اختيارية — أضف واحدة عندما يحتاج العمل إلى مقاس ثابت.
+A file was cancelled or failed; files already exported remain in the folder.	أُلغي ملف أو تعذّر تصديره؛ تبقى الملفات المصدّرة في المجلد.
+A name can't be empty	لا يمكن أن يكون الاسم فارغًا
+ALIGN OBJECTS	محاذاة الكائنات
+ALIGN TO	محاذاة إلى
+APPEARANCE	المظهر
+ARTBOARD CLIP	قص لوحة الرسم
+About Varos	حول Varos
+Actions	الإجراءات
+Actions…	الإجراءات…
+Active adapter: {adapter}	معالج الرسوميات النشط: {adapter}
+Active artboard	لوحة الرسم النشطة
+Actual Size	الحجم الفعلي
+Add Anchor	إضافة نقطة ارتكاز
+Add Anchor Points	إضافة نقاط ارتكاز
+After inactivity (seconds)	بعد عدم النشاط (ثوانٍ)
+Align	محاذاة
+Align centre	محاذاة للوسط أفقيًا
+Align left	محاذاة لليسار
+Align middle	محاذاة للوسط رأسيًا
+Align right	محاذاة لليمين
+Align to: Artboard	المحاذاة إلى: مساحة الرسم
+Align to: Artboard — Align each object to the active artboard's edges	محاذاة إلى لوحة الرسم — محاذاة كل كائن إلى حواف لوحة الرسم النشطة
+Align to: Auto	المحاذاة إلى: تلقائي
+Align to: Auto — Smart default: many objects align to each other; a single object or group aligns to the artboard	محاذاة تلقائية — محاذاة الكائنات المتعددة إلى بعضها، والكائن أو المجموعة الواحدة إلى لوحة الرسم
+Align to: Key Object — last clicked selected object	محاذاة إلى الكائن الرئيسي — آخر كائن محدد تم النقر عليه
+Align to: Selection — Align objects within the selection's combined bounds	محاذاة إلى التحديد — محاذاة الكائنات داخل الحدود المشتركة للتحديد
+Align to: Selection — within the selection's combined bounds	المحاذاة إلى: التحديد — ضمن حدوده المجمّعة
+Alignment	المحاذاة
+Alignment Guides	أدلة المحاذاة
+All	الكل
+All artboards	كل مساحات الرسم
+All on Active Artboard	الكل في لوحة الرسم النشطة
+Already at the end of the artboard order	وصلت إلى نهاية ترتيب لوحات الرسم
+An export of this document is still running.	تصدير هذا المستند ما زال قيد التنفيذ.
+Anchor Point	نقطة ارتكاز
+Angle °	الزاوية °
+Appearance	المظهر
+Apply	تطبيق
+Apply crop	تطبيق الاقتصاص
+Apply discards {discarded} retained history steps	يحذف التطبيق {discarded} خطوة محفوظة من السجل
+Apply raster effects PPI	تطبيق دقة التأثيرات النقطية
+Apply transform	تطبيق التحويل
+Arrange	ترتيب
+Artboard	لوحة الرسم
+Artboard count	عدد لوحات الرسم
+Artboard presets	إعدادات لوحات الرسم الجاهزة
+Artboards	لوحات الرسم
+Artwork bounds	حدود العمل الفني
+Assets	الأصول
+Auto	تلقائي
+Autosave to file	الحفظ التلقائي في الملف
+Average	توسيط النقاط
+Axis °	المحور °
+Background: transparent	الخلفية: شفافة
+Background: white	الخلفية: بيضاء
+Balanced	متوازن
+Black and white	أبيض وأسود
+Board	لوحة
+Board actions	إجراءات اللوحة
+Bring All to Front	إحضار الكل إلى المقدمة
+Bring Forward	إحضار إلى الأمام
+Bring to Front	إحضار إلى المقدمة
+Brush radius	نصف قطر الفرشاة
+By format	حسب الصيغة
+By scale	حسب المقياس
+Cancel	إلغاء
+Cancel / Close	إلغاء / إغلاق
+Canvas Colour: Dark	لون مساحة العمل: داكن
+Canvas Colour: Light	لون مساحة العمل: فاتح
+Canvas Colour: Medium	لون مساحة العمل: متوسط
+Canvas colour	لون مساحة العمل
+Canvas shortcuts; text fields retain their native editing keys.	اختصارات مساحة العمل؛ تحتفظ حقول النص بمفاتيح التحرير الخاصة بها.
+Centre	وسط
+Change this panel to…	تغيير هذه اللوحة إلى…
+Check source status	فحص حالة المصدر
+Choose an absolute folder path.	اختر مسارًا مطلقًا للمجلد.
+Choose an export folder.	اختر مجلدًا للتصدير.
+Choose export folder	اختيار مجلد التصدير
+Choose image…	اختيار صورة…
+Choose scale or ppi, not both.	اختر المقياس أو الدقة، وليس كليهما.
+Clean Up	تنظيف
+Clear Guides	مسح الأدلة
+Clear Menu	مسح القائمة
+Click the canvas for position; drag to set bounds.	انقر على اللوحة لتحديد الموضع؛ اسحب لتحديد الحدود.
+Clip to artboard	قصّ عند حدود مساحة الرسم
+Clip to artboard — off lets this object bleed	القصّ عند حدود مساحة الرسم — إيقافه يسمح للكائن بتجاوز الحدود
+Clip to page	قص إلى الصفحة
+Clipping Mask	قناع قص
+Clipping Mask > Make	قناع القصّ > إنشاء
+Clipping Mask > Release	قناع القصّ > تحرير
+Close	إغلاق
+Close All	إغلاق الكل
+Close Tab	إغلاق علامة التبويب
+Collect in New Layer	تجميع في طبقة جديدة
+Colour	اللون
+Colour RGB	لون RGB
+Colour mode	نمط اللون
+Colour tolerance	تفاوت اللون
+Compound Path	مسار مركب
+Compress streams	ضغط تدفقات البيانات
+Continue distance	مسافة الاستمرار
+Control bar	شريط التحكم
+Copy	نسخ
+Corner radius	نصف قطر الزاوية
+Create	إنشاء
+Create an artboard to set bleed.	أنشئ مساحة رسم لتحديد امتداد الطباعة.
+Crop	اقتصاص
+Crop Image…	اقتصاص الصورة…
+Crop image	اقتصاص الصورة
+Crop marks	علامات القصّ
+Crop to bounds	اقتصاص عند الحدود
+Cut	قص
+DISTRIBUTE	توزيع
+DISTRIBUTE SPACING	توزيع المسافات
+DOCUMENT	المستند
+Default Paint	الألوان الافتراضية
+Default colours (D)	الألوان الافتراضية (D)
+Default units	الوحدات الافتراضية
+Delete	حذف
+Delete Anchor	حذف نقطة ارتكاز
+Description	الوصف
+Deselect	إلغاء التحديد
+Deselect/Cancel	إلغاء التحديد / إلغاء
+Direct Selection	التحديد المباشر
+Direction	الاتجاه
+Discard Recording	تجاهل التسجيل
+Display	العرض
+Distribute	توزيع
+Divide	تقسيم
+Divide Objects Below	تقسيم الكائنات في الأسفل
+Document Info	معلومات المستند
+Document Setup	إعداد المستند
+Document Setup…	إعداد المستند…
+Document units	وحدات المستند
+Done	تم
+Double-click to rename	انقر مرتين لإعادة التسمية
+Drawing path…	رسم مسار…
+Duplicate	تكرار
+EXPORT TO	التصدير إلى
+Earliest retained state	أقدم حالة محفوظة
+Edit	تحرير
+Edit artboards ⇧O	تحرير مساحات الرسم ⇧O
+Effect	تأثير
+Effective launch hint: {effective}; requested: {requested}. Restart required.	تفضيل بدء التشغيل الفعلي: {effective}؛ المطلوب: {requested}. يلزم إعادة التشغيل.
+Ellipse	شكل بيضاوي
+Embed is the default. Missing originals retain accepted pixels.	التضمين هو الخيار الافتراضي. عند فقدان الأصل تُحتفظ بالبكسلات المعتمدة.
+Embedded bitmap	صورة نقطية مضمّنة
+Enter Full Screen	ملء الشاشة
+Enter a key	أدخل مفتاحًا
+Enter a length in pt, px, pc, mm, cm or in	أدخل طولًا بوحدة pt أو px أو pc أو mm أو cm أو in
+Enter a number	أدخل رقمًا
+Eraser	الممحاة
+Exit isolation (Esc)	الخروج من العزل (Esc)
+Expand	توسيع
+Expand Transform	تثبيت التحويل
+Expands accepted pixels to editable paths; one undo.	يحوّل البكسلات المعتمدة إلى مسارات قابلة للتحرير؛ بخطوة تراجع واحدة.
+Export	تصدير
+Export Selection…	تصدير التحديد…
+Export cancelled. Nothing was written.	أُلغي التصدير. لم يُكتب أي ملف.
+Export for Screens	تصدير للشاشات
+Export scale	مقياس التصدير
+Export {count} files	تصدير {count} ملف
+Export…	تصدير…
+Eyedropper	القطارة
+Fidelity (canvas units)	الدقة (بوحدات مساحة العمل)
+File	ملف
+File not found	الملف غير موجود
+Fill	التعبئة
+Fill & Stroke	التعبئة والحد
+Fill / Stroke — click to focus; double-click to edit (X toggles focus)	التعبئة / الحد — انقر للتركيز، وانقر مرتين للتحرير (X يبدّل التركيز)
+Fill Color	لون التعبئة
+Filter layers by kind	تصفية الطبقات حسب النوع
+Finish	إنهاء
+Finish valid field edits before Apply	أكمل إدخال قيم صحيحة في الحقول قبل التطبيق
+Fit	ملاءمة
+Fit All	ملاءمة الكل
+Fit Artboard	ملاءمة لوحة الرسم
+Fit Artboard in Window	ملاءمة لوحة الرسم للنافذة
+Fit in Window	ملاءمة النافذة
+Fit in window	ملاءمة النافذة
+Flatten Artwork	تسطيح الرسم
+Flip gradient	عكس التدرج
+Font discovery failed	تعذر العثور على الخطوط
+Font family	عائلة الخط
+Font size	حجم الخط
+Fonts: —	الخطوط: —
+For sharing. Editable Varos data is not included.	للمشاركة. لا يتضمن بيانات Varos القابلة للتحرير.
+Format options	خيارات الصيغة
+Free Transform	التحويل الحر
+Free canvas, no size needed	مساحة حرة، لا تحتاج إلى مقاس
+Freehand options	خيارات الرسم الحر
+From centre	من المركز
+General	عام
+Geometric Guides	الأدلة الهندسية
+Go To	انتقال إلى
+Gradient spread	انتشار التدرج
+Gradient type	نوع التدرج
+Graphics processor	معالج الرسوميات
+Grid	الشبكة
+Grid dots — always shown (no switch yet)	نقاط الشبكة — ظاهرة دائمًا (لا يوجد مفتاح تبديل بعد)
+Grid spacing	تباعد الشبكة
+Grid subdivisions	تقسيمات الشبكة
+Group	تجميع
+Groups	المجموعات
+Guide position	موضع الدليل
+Guides	الأدلة
+Guides ⌘;	الأدلة ⌘;
+Hand	اليد
+Height	الارتفاع
+Height: nothing to scale (the selected anchors have no vertical extent)	الارتفاع: لا يوجد ما يمكن تحجيمه (نقاط الارتساء المحددة بلا امتداد رأسي)
+Help	مساعدة
+Hidden tabs	علامات التبويب المخفية
+Hide	إخفاء
+Hide Others	إخفاء الآخرين
+Hide Varos	إخفاء Varos
+History	السجل
+History steps	خطوات السجل
+Home	الرئيسية
+Horizontal %	أفقي %
+Image	صورة
+Image Trace	تتبّع الصورة
+Image Trace preset	إعداد مسبق لتتبّع الصورة
+Image Trace → editable paths	تتبّع الصورة ← مسارات قابلة للتحرير
+Image Trace…	تتبع الصورة…
+Image ppi: no raster content. Colour bars and PDF/X come later.	دقة الصورة: لا يوجد محتوى نقطي. ستُضاف أشرطة الألوان وPDF/X لاحقًا.
+Include IDs	تضمين المعرّفات
+Include artboard colour	تضمين لون مساحة الرسم
+Include bleed	تضمين امتداد الطباعة
+Inline styling	تنسيق مضمّن
+Inner / outer	داخلي / خارجي
+Interface	الواجهة
+Invalid artboard id.	معرّف مساحة الرسم غير صالح.
+Invalid or reserved chord	اختصار غير صالح أو محجوز
+Inverse	عكس التحديد
+JPEG quality 0–100	جودة JPEG من 0 إلى 100
+Join	وصل
+Justify	ضبط النص
+Kashida	الكشيدة
+Keeps separate recovery copies	يحتفظ بنسخ استرداد منفصلة
+Keyboard Shortcuts	اختصارات لوحة المفاتيح
+Keyboard Shortcuts…	اختصارات لوحة المفاتيح…
+Keyboard increment (pt)	خطوة لوحة المفاتيح (pt)
+Keyboard shortcuts	اختصارات لوحة المفاتيح
+Landscape	أفقي
+Language	اللغة
+Lasso	التحديد الحر
+Layers	الطبقات
+Left	يسار
+Left to right	من اليسار إلى اليمين
+Letter spacing	تباعد الحروف
+Letter spacing (Arabic: 0)	تباعد الحروف (العربية: 0)
+Line height	ارتفاع السطر
+Link bleed edges	ربط حواف امتداد الطباعة
+Links	الروابط
+Links: —	الروابط: —
+Load .vrs-actions…	تحميل .vrs-actions…
+Locate Object	العثور على الكائن
+Locate or remove from Recent	حدّد الموقع أو أزل من الملفات الأخيرة
+Lock	قفل
+Lock Guides	قفل الأدلة
+Lock Others	قفل الآخرين
+Lock guides ⌥⌘;	قفل الأدلة ⌥⌘;
+Lock/Unlock	قفل / إلغاء القفل
+Lock/Unlock board	قفل / إلغاء قفل اللوحة
+Magic Wand	العصا السحرية
+Make	إنشاء
+Make Guides	إنشاء أدلة
+Make landscape	تحويل إلى أفقي
+Make portrait	تحويل إلى رأسي
+Match fill	مطابقة التعبئة
+Match opacity	مطابقة العتامة
+Match stroke	مطابقة الحد
+Match weight	مطابقة السُمك
+Merge	دمج
+Merge Selected Layers	دمج الطبقات المحددة
+Minimal	أقل قدر
+Minimize	تصغير النافذة
+Minus Back	طرح الخلفي
+Missing: {font}	غير متوفر: {font}
+Mixed	مختلط
+More tags	مزيد من الوسوم
+Move Whole Pixels	التحريك ببكسلات كاملة
+Move X	إزاحة X
+Move Y	إزاحة Y
+Move artwork with artboard	نقل العمل الفني مع مساحة الرسم
+N anchors	عدد نقاط الارتساء
+Name	الاسم
+Navigator	المستعرض
+New	جديد
+New Document	مستند جديد
+New Layer	طبقة جديدة
+New Sublayer	طبقة فرعية جديدة
+New blank documents	المستندات الفارغة الجديدة
+New board	لوحة جديدة
+New document	مستند جديد
+New from Template…	جديد من قالب…
+New…	جديد…
+Next Document	المستند التالي
+Next Object Above	الكائن التالي في الأعلى
+Next Object Below	الكائن التالي في الأسفل
+Next artboard	مساحة الرسم التالية
+Next nudge; Shift ×10; px = pt at 72 ppi	التحريك التالي؛ Shift ×10؛ px = pt عند 72 ppi
+Next settled history boundary; older steps are discarded	عند اكتمال خطوة السجل التالية؛ تُحذف الخطوات الأقدم
+No artboard in this direction	لا توجد لوحة رسم في هذا الاتجاه
+No artboard to change	لا توجد لوحة رسم لتعديلها
+No artboard to clip	لا توجد لوحة رسم لقصها
+No artboard to fit	لا توجد لوحة رسم لملاءمتها
+No artboards	لا توجد لوحات رسم
+No bleed set	لم يُحدّد امتداد الطباعة
+No colours yet	لا توجد ألوان بعد
+No harmony	بلا تناغم لوني
+No layers yet	لا توجد طبقات بعد
+No matching layers	لا توجد طبقات مطابقة
+No path separators	لا يُسمح بفواصل المسار
+No recent boards yet.	لا توجد لوحات حديثة بعد.
+No recent documents	لا توجد مستندات حديثة
+No selection	لا يوجد تحديد
+No sub-folders	بلا مجلدات فرعية
+No undo steps	لا توجد خطوات تراجع
+None Paint	بلا لون
+Nothing to export	لا يوجد ما يمكن تصديره
+Nothing to export.	لا يوجد ما يمكن تصديره.
+Nudge Down	تحريك لأسفل
+Nudge Down ×10	تحريك لأسفل ×10
+Nudge Left	تحريك لليسار
+Nudge Left ×10	تحريك لليسار ×10
+Nudge Right	تحريك لليمين
+Nudge Right ×10	تحريك لليمين ×10
+Nudge Up	تحريك لأعلى
+Nudge Up ×10	تحريك لأعلى ×10
+Object	كائن
+Off	إيقاف
+Offset Path	إزاحة المسار
+Offset Path…	إزاحة المسار…
+On	تشغيل
+Opacity	التعتيم
+Opacity %	العتامة %
+Opacity tolerance	تفاوت العتامة
+Open	فتح
+Open Recent	فتح ملف حديث
+Open a document first.	افتح مستندًا أولًا.
+Open a document to record or replay	افتح مستندًا للتسجيل أو إعادة التشغيل
+Open board	فتح لوحة
+Open file	فتح ملف
+Open folder after export	فتح المجلد بعد التصدير
+Opening…	جارٍ الفتح…
+Open…	فتح…
+Outline	حدود المسارات
+Outline (primary-click to restore Preview)	حدود المسارات (انقر بالزر الأساسي لاستعادة المعاينة)
+Outline Stroke	تحويل الحد إلى مسار
+Overset text	نص فائض
+PDF options…	خيارات PDF…
+PDF pages	صفحات PDF
+PDF: per artboard	PDF: ملف لكل مساحة رسم
+PDF: single file	PDF: ملف واحد
+PDF…	PDF…
+Package…	تجميع ملفات المشروع…
+Page colour	لون الصفحة
+Page information	معلومات الصفحة
+Paste	لصق
+Paste Remembers Layers	اللصق يحتفظ بالطبقات
+Paste in Place	لصق في الموضع نفسه
+Pasteboard only; artboards and export unchanged	مساحة العمل فقط؛ لا تتغير لوحات الرسم أو التصدير
+Path	مسار
+Path Eraser	ممحاة المسار
+Pathfinder	عمليات المسارات
+Paths	المسارات
+Pen	القلم
+Performance	الأداء
+Pick fill	التقاط التعبئة
+Pick opacity	التقاط العتامة
+Pick stroke	التقاط الحد
+Pick weight	التقاط السُمك
+Pixel Preview	معاينة البكسلات
+Pixels per inch	بكسل لكل بوصة
+Place artwork…	إدراج رسم…
+Place image	إدراج صورة
+Place image…	إدراج صورة…
+Place or drop an image to manage its source here.	أدرج صورة أو أفلتها لإدارة مصدرها هنا.
+Placement: Embed	الإدراج: تضمين
+Placement: Link	الإدراج: ربط
+Place…	إدراج…
+Polar Grid	شبكة قطبية
+Portrait	رأسي
+Preferences	التفضيلات
+Preferences…	التفضيلات…
+Presentation Mode	وضع العرض التقديمي
+Presets…	إعدادات جاهزة…
+Previous Document	المستند السابق
+Previous artboard	مساحة الرسم السابقة
+Printing is currently available on macOS only.	الطباعة متاحة حاليًا على macOS فقط.
+Print…	طباعة…
+Properties	الخصائص
+Quit Varos	إنهاء Varos
+Range (empty = All)	النطاق (فارغ = الكل)
+Raster content only; this document has no raster content.	للمحتوى النقطي فقط؛ هذا المستند لا يحتوي على محتوى نقطي.
+Raster effects PPI	دقة التأثيرات النقطية
+Rasterize…	تحويل إلى صورة نقطية…
+Recent	الأخيرة
+Recent / Board / Document colours	الألوان الأخيرة / ألوان اللوحة / ألوان المستند
+Recent boards	اللوحات الحديثة
+Recent colour — empty	لون حديث — فارغ
+Reconcile disk before retry	أعد قراءة حالة القرص قبل المحاولة
+Records committed moves, paint, opacity, stroke width, rotation, delete, group and ungroup. Replay binds the current selection; file and UI commands are excluded.	يسجل التحريك واللون والتعتيم وعرض الحد والتدوير والحذف والتجميع وفك التجميع بعد اعتمادها. تُطبق إعادة التشغيل على التحديد الحالي؛ لا تشمل أوامر الملفات والواجهة.
+Recovered 1 unsaved copy	استُعيدت نسخة واحدة غير محفوظة
+Recovered N unsaved copies	نسخ غير محفوظة مستعادة
+Recovered N unsaved copies  from your last session	نسخ غير محفوظة مستعادة من جلستك الأخيرة
+Recovered copies	النسخ المستعادة
+Recovery (all documents)	الاسترداد (كل المستندات)
+Recovery copies	نسخ الاسترداد
+Recovery on	الاستعادة مفعّلة
+Rectangle	مستطيل
+Rectangular Grid	شبكة مستطيلة
+Redo	إعادة
+Reflect axis °	محور الانعكاس °
+Reflect…	انعكاس…
+Registration marks	علامات التسجيل
+Release	تحرير
+Release Guides	تحرير الأدلة
+Release to Layers (Build)	فصل إلى طبقات (تراكمي)
+Release to Layers (Sequence)	فصل إلى طبقات (متسلسل)
+Remove from Recent	إزالة من الملفات الأخيرة
+Remove {name}	إزالة {name}
+Rename	إعادة تسمية
+Replay	إعادة التشغيل
+Report a problem	الإبلاغ عن مشكلة
+Requested catalog unavailable; English fallback. Choose System or English to change it.	الترجمة المطلوبة غير متاحة؛ تُستخدم الإنجليزية. اختر لغة النظام أو الإنجليزية لتغييرها.
+Reselect	إعادة التحديد
+Reset layout	إعادة ضبط التخطيط
+Reset to Defaults	استعادة الإعدادات الافتراضية
+Reset to Illustrator defaults	استعادة اختصارات Illustrator الافتراضية
+Restart required; System falls back to English	يلزم إعادة التشغيل؛ لغة النظام تستخدم الإنجليزية عند عدم توفر ترجمة
+Restart required; adapter hint	يلزم إعادة التشغيل؛ تفضيل معالج الرسوميات
+Retry	إعادة المحاولة
+Reverse Path Direction	عكس اتجاه المسار
+Revert	استعادة النسخة المحفوظة
+Revert needs a saved document with unsaved changes.	الرجوع يتطلب مستندًا محفوظًا يحتوي على تغييرات غير محفوظة.
+Right	يمين
+Right to left	من اليمين إلى اليسار
+Right-click or hold for more tools	انقر بزر الفأرة الأيمن أو اضغط مطولًا لعرض مزيد من الأدوات
+Rotate gradient 90 degrees	تدوير التدرج 90 درجة
+Rotate…	تدوير…
+Rotation °	الدوران °
+Rounded Rectangle	مستطيل بزوايا مستديرة
+Rulers	المساطر
+Rulers ⌘R	المساطر ⌘R
+SHAPE	الشكل
+SHAPE MODES	أوضاع الأشكال
+SIZE	الحجم
+SVG decimal precision	عدد المنازل العشرية في SVG
+SVG options…	خيارات SVG…
+Same	المماثل
+Save	حفظ
+Save .vrs-actions…	حفظ .vrs-actions…
+Save As…	حفظ باسم…
+Save a Copy…	حفظ نسخة…
+Save as Template…	حفظ كقالب…
+Save document	حفظ المستند
+Saves changes to the open file	يحفظ التغييرات في الملف المفتوح
+Saves changes to the open file. Recovery copies are off.	يحفظ التغييرات في الملف المفتوح. نسخ الاسترداد متوقفة.
+Saves changes to the open file. Recovery copies stay on.	يحفظ التغييرات في الملف المفتوح. تظل نسخ الاسترداد مفعلة.
+Saving	الحفظ
+Scale · Suffix · Format · ×	المقياس · اللاحقة · الصيغة · ×
+Scale…	تحجيم…
+Scissors	المقص
+Search	بحث
+Search commands	البحث في الأوامر
+Search layers	بحث في الطبقات
+Select	تحديد
+Select (V) · No selection	التحديد (V) · لا يوجد تحديد
+Select All	تحديد الكل
+Select a card to export.	حدّد بطاقة لتصديرها.
+Select an image first.	حدّد صورة أولًا.
+Select artwork for this clipping command.	حدّد عملًا فنيًا لتنفيذ أمر القصّ.
+Select artwork to apply a gradient	حدّد عملًا فنيًا لتطبيق التدرج
+Select something to export it.	حدّد شيئًا لتصديره.
+Selected {count} · {count} files	المحدد: {count} · عدد الملفات: {count}
+Selection	التحديد
+Selection PDFs export as separate files to preserve each asset	تُصدّر ملفات PDF للتحديد منفصلة للحفاظ على كل أصل
+Send Backward	إرسال إلى الوراء
+Send to Back	إرسال إلى الخلف
+Send to Current Layer	نقل إلى الطبقة الحالية
+Services	الخدمات
+Shape Builder	منشئ الأشكال
+Shear °	الإمالة °
+Shear…	إمالة…
+Shortcut file damaged; original retained	ملف الاختصارات تالف؛ احتُفظ بالأصل
+Shortcut file exceeds 64 KiB	ملف الاختصارات يتجاوز 64 KiB
+Shortcuts	اختصارات لوحة المفاتيح
+Shortcuts changed on disk; reopen the draft	تغيّرت الاختصارات على القرص؛ أعد فتح المسودة
+Show All	إظهار الكل
+Show Grid	إظهار الشبكة
+Show in Finder	إظهار في Finder
+Show/Hide (primary-click for Outline)	إظهار / إخفاء (انقر بالزر الأساسي لحدود المسارات)
+Show/Hide board	إظهار / إخفاء اللوحة
+Size: natural physical size	المقاس: الحجم المادي الأصلي
+Size: specified bounds	المقاس: الحدود المحددة
+Smart Guides	الأدلة الذكية
+Smart guides ⌘U	الأدلة الذكية ⌘U
+Snap to Grid	انطباق على الشبكة
+Snap to Pixel	انطباق على البكسلات
+Snap to Point	انطباق على النقاط
+Snap to grid	المحاذاة إلى الشبكة
+Snap to point	المحاذاة إلى النقطة
+Space · held gesture	Space · ضغط مستمر
+Split complementary	متكامل منقسم
+Start Recording	بدء التسجيل
+Start with a board	ابدأ بلوحة
+Start °	البداية °
+Stop Recording	إيقاف التسجيل
+Stroke	الحد
+Stroke Color	لون الحد
+Stroke Weight	سُمك الحد
+Stroke simplified at this zoom	تم تبسيط الحد عند مستوى التكبير هذا
+Sub	فرعي
+Swap Fill/Stroke	تبديل التعبئة والحد
+Swap fill & stroke (Shift+X)	تبديل التعبئة والحد (Shift+X)
+Swatches	عينات الألوان
+Sweep °	زاوية الامتداد °
+TRANSFORM	تحويل
+Tags	الوسوم
+Templates	القوالب
+Temporary Hand	اليد مؤقتًا
+Temporary Hand uses a held Space gesture and cannot be rebound	أداة اليد المؤقتة تعمل بالضغط المستمر على Space ولا يمكن تغيير اختصارها
+Text	نص
+There is no visible artwork to export.	لا يوجد عمل فني ظاهر يمكن تصديره.
+This chord is reserved by the operating system	هذا الاختصار محجوز لنظام التشغيل
+Toggle Fill/Stroke	التبديل بين التعبئة والحد
+Tool rail	شريط الأدوات
+Trace and expand	تتبّع وتوسيع
+Trace preset	إعداد مسبق للتتبّع
+Transform	تحويل
+Transform / selection options	خيارات التحويل / التحديد
+Transform Again	تكرار التحويل
+Transform Each	تحويل كل عنصر
+Transform Each…	تحويل كل كائن…
+Transparency Grid	شبكة الشفافية
+Transparency grid	شبكة الشفافية
+Transparent	شفاف
+Transparent background	خلفية شفافة
+Transparent page	صفحة شفافة
+Trim	تشذيب
+Trim View	عرض مقصوص
+Type	نص
+Type a number	أدخل رقمًا
+Unclip	إلغاء القص
+Undo	تراجع
+Ungroup	فك التجميع
+Units	الوحدات
+Unknown export scope.	نطاق التصدير غير معروف.
+Unlock All	إلغاء قفل الكل
+Unsupported physical key	مفتاح مادي غير مدعوم
+Unsupported shortcut version	إصدار اختصارات غير مدعوم
+Use 0.001–1296 points	استخدم قيمة من 0.001 إلى 1296 نقطة
+Use 30–1800 seconds	استخدم مدة من 30 إلى 1800 ثانية
+Use 5–200 steps	استخدم عددًا من 5 إلى 200 خطوة
+Use Primary, Shift, Alt and a physical key name	استخدم المفتاح الأساسي وShift وAlt واسم مفتاح مادي
+Use a catalog identifier up to 64 ASCII characters	استخدم معرّف ترجمة حتى 64 حرف ASCII
+Use document bleed	استخدام امتداد طباعة المستند
+Use match_ui, white or #RRGGBB	استخدم match_ui أو white أو #RRGGBB
+Use the Artboards tab to export the whole board	استخدم تبويب مساحات الرسم لتصدير اللوحة كاملة
+VAROS	VAROS
+Value outside supported range	القيمة خارج النطاق المسموح
+Varos	Varos
+Varos Help	مساعدة Varos
+Vertical %	رأسي %
+View	عرض
+Weight tolerance	تفاوت السُمك
+White background	خلفية بيضاء
+Whole board as one file	اللوحة كاملة في ملف واحد
+Width	العرض
+Width: nothing to scale (the selected anchors have no horizontal extent)	العرض: لا يوجد ما يمكن تحجيمه (نقاط الارتساء المحددة بلا امتداد أفقي)
+Window	نافذة
+X position	الموضع X
+Y position	الموضع Y
+Zoom	التكبير
+Zoom In	تكبير
+Zoom Out	تصغير
+Zoom percent	نسبة التكبير
+ar	العربية
+en	English
+system	لغة النظام
+{created} created · {changed} changed · {removed} removed	تم إنشاء {created} · تعديل {changed} · إزالة {removed}
+{label} ({shortcut})	{label} ({shortcut})
+{label} {number}	{label} {number}
+{label} · undone	{label} · تم التراجع
+{label} — {reason}	{label} — {reason}
+{label}: {value}	{label}: {value}
+{name} · {count} steps	{name} · عدد الخطوات: {count}
+◆	◆
+◉	◉
+Folder	المجلد
+Modified	آخر تعديل
+Apply Last Effect	تطبيق آخر تأثير
+Arc Lower…	قوس سفلي…
+Arc Upper…	قوس علوي…
+Arch…	قنطرة…
+Arc…	قوس…
+Blend	مزج
+Bulge…	انتفاخ…
+Distort & Transform	تشويه وتحويل
+Envelope Distort	تشويه بالغلاف
+Fisheye…	عين السمكة…
+Fish…	سمكة…
+Flag…	راية…
+Grid…	شبكة…
+Inflate…	نفخ…
+Last Effect…	آخر تأثير…
+Make with Mesh…	إنشاء بشبكة…
+Make with Warp…	إنشاء بالالتواء…
+Mirror…	مرآة…
+Offset…	إزاحة…
+Options…	خيارات…
+Radial…	شعاعي…
+Repeat	تكرار
+Replace Spine	استبدال مسار المزج
+Rise…	صعود…
+Shell Lower…	صدفة سفلية…
+Shell Upper…	صدفة علوية…
+Squeeze…	ضغط…
+Transform Effect…	تأثير التحويل…
+Twist…	لفّ…
+Warp	التواء
+Wave…	موجة…
+Width Profile…	ملف العرض…
+Width Tool	أداة العرض
+Zig Zag…	تعرّج…

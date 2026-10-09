@@ -727,6 +727,13 @@ pub const APPEARANCE_BADGE_W: f32 = 44.0;
 // ---- Lane H: provisional type-on-path bracket handles ----
 pub const TEXT_PATH_BRACKET_HALF: f32 = 8.0;
 pub const TEXT_PATH_HIT_RADIUS: f32 = 8.0;
+// ---- Lane F: Arabic UI text ----
+pub const UI_TEXT_LEADING: f32 = 1.5;
+pub const UI_CHROME_LABEL_INSET: f32 = 12.0;
+pub const UI_TEXT_WIDTH_EPSILON: f32 = 0.01; // floating-point cell subtraction, below a physical pixel
+pub const UI_ATLAS_SIDE: usize = 2048;
+pub const UI_ATLAS_DIMENSIONS: usize = 2;
+// ---- end Lane F ----
 
 #[cfg(test)]
 mod tests {
