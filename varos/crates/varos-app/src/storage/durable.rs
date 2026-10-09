@@ -127,6 +127,9 @@ pub struct FileMeta {
 /// The file-system operations storage code may perform. [`RealFs`] is `std::fs`; [`FaultFs`]
 /// wraps it with injected failures and an operation log.
 pub trait FsPort: Send + Sync {
+    fn identity(&self, _path: &Path) -> Option<(u64, u64)> {
+        None
+    }
     /// Create a new file, failing if it already exists (O_EXCL).
     fn create_new(&self, path: &Path) -> io::Result<Box<dyn SyncWrite>>;
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
@@ -138,6 +141,10 @@ pub trait FsPort: Send + Sync {
     /// cleanup (piece C: retired session folders, stale temp folders).
     fn remove_dir(&self, path: &Path) -> io::Result<()>;
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
+    /// Bounded descriptor-based hashing; unsupported adapters fail closed.
+    fn content_hash(&self, _path: &Path) -> Option<[u8; 32]> {
+        None
+    }
     fn metadata(&self, path: &Path) -> io::Result<FileMeta>;
     fn create_dir_all(&self, path: &Path) -> io::Result<()>;
     /// Entries of a directory (full paths, unsorted).
@@ -153,6 +160,29 @@ pub trait FsPort: Send + Sync {
 pub struct RealFs;
 
 impl FsPort for RealFs {
+    fn content_hash(&self, path: &Path) -> Option<[u8; 32]> {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        hash_regular_file(options.open(path).ok()?).ok()
+    }
+    fn identity(&self, path: &Path) -> Option<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let m = std::fs::metadata(path).ok()?;
+            Some((m.dev(), m.ino()))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            None
+        }
+    }
     fn create_new(&self, path: &Path) -> io::Result<Box<dyn SyncWrite>> {
         let f = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
         Ok(Box::new(f))
@@ -326,7 +356,7 @@ pub const TEMP_NAME_MAX_BYTES: usize = 128;
 /// `nonce` makes the temp name unique — pass [`super::checksum::new_nonce`]; it must be a plain
 /// name fragment (no path separators).
 pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) -> Result<WriteOutcome, WriteError> {
-    write_replace_inner(fs, dest, bytes, nonce, None)
+    write_replace_inner(fs, dest, bytes, nonce, None, None)
 }
 
 /// [`write_replace`] that can be called off (slice 0.6, the Export sheet's Cancel). `cancel` is checked
@@ -341,7 +371,48 @@ pub fn write_replace_cancellable(
     nonce: &str,
     cancel: &AtomicBool,
 ) -> Result<WriteOutcome, WriteError> {
-    write_replace_inner(fs, dest, bytes, nonce, Some(cancel))
+    write_replace_inner(fs, dest, bytes, nonce, Some(cancel), None)
+}
+
+/// Capture the temporary file identity before publication, never the destination after rename.
+pub fn write_replace_published(
+    fs: &dyn FsPort,
+    dest: &Path,
+    bytes: &[u8],
+    nonce: &str,
+    published: &mut Option<Fingerprint>,
+) -> Result<WriteOutcome, WriteError> {
+    write_replace_inner(fs, dest, bytes, nonce, None, Some(published))
+}
+
+/// Hash only regular files, with bounded memory and the native reader's file-size ceiling.
+pub fn hash_regular_file(mut file: std::fs::File) -> io::Result<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let before = file.metadata()?;
+    let limit = varos_core::format::Limits::DEFAULT.max_file_bytes;
+    if !before.is_file() || before.len() > limit {
+        return Err(io::Error::other("unsafe file size or type"));
+    }
+    let mut hash = Sha256::new();
+    let mut buf = [0u8; 65536];
+    let mut total = 0u64;
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        if total > limit {
+            return Err(io::Error::other("file exceeds size limit"));
+        }
+        hash.update(&buf[..n]);
+    }
+    let after = file.metadata()?;
+    if total != before.len() || before.len() != after.len() || before.modified().ok() != after.modified().ok() {
+        return Err(io::Error::other("file changed while hashing"));
+    }
+    Ok(hash.finalize().into())
 }
 
 /// How many bytes [`write_replace_cancellable`] writes between two looks at its flag.
@@ -353,6 +424,7 @@ fn write_replace_inner(
     bytes: &[u8],
     nonce: &str,
     cancel: Option<&AtomicBool>,
+    published: Option<&mut Option<Fingerprint>>,
 ) -> Result<WriteOutcome, WriteError> {
     let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
     debug_assert!(!nonce.is_empty() && !nonce.contains(['/', '\\']), "nonce must be a plain name fragment");
@@ -414,9 +486,14 @@ fn write_replace_inner(
         let _ = fs.remove_file(&temp);
         return Err(WriteError::Cancelled);
     }
+    let baseline = published.as_ref().and_then(|_| fingerprint(fs, &temp));
     if let Err(e) = fs.rename(&temp, &dest) {
         let _ = fs.remove_file(&temp);
         return Err(WriteError::Replace(e));
+    }
+
+    if let Some(published) = published {
+        *published = baseline;
     }
 
     // 5. Make the rename itself durable (Unix). Windows has no directory sync.
@@ -433,9 +510,15 @@ fn write_replace_inner(
     }
 }
 
-/// Size + modification time of a file, for "was it changed by another app?" checks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Content hash plus file identity, size and modification time for external-change checks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fingerprint {
+    #[serde(default)]
+    pub hash: [u8; 32],
+    #[serde(default)]
+    pub identity: Option<(u64, u64)>,
+    #[serde(default)]
+    pub parent_identity: Option<(u64, u64)>,
     pub len: u64,
     pub modified: Option<SystemTime>,
 }
@@ -443,7 +526,21 @@ pub struct Fingerprint {
 /// The file's current [`Fingerprint`], or `None` when it cannot be read (missing, no access).
 pub fn fingerprint(fs: &dyn FsPort, path: &Path) -> Option<Fingerprint> {
     let m = fs.metadata(path).ok()?;
-    (!m.is_dir).then_some(Fingerprint { len: m.len, modified: m.modified })
+    if m.is_dir {
+        return None;
+    }
+    let identity = fs.identity(path);
+    let parent_identity = path.parent().and_then(|parent| fs.identity(parent));
+    let hash = fs.content_hash(path)?;
+    let after = fs.metadata(path).ok()?;
+    if m.len != after.len
+        || m.modified != after.modified
+        || identity != fs.identity(path)
+        || parent_identity != path.parent().and_then(|parent| fs.identity(parent))
+    {
+        return None;
+    }
+    Some(Fingerprint { len: m.len, modified: m.modified, hash, identity, parent_identity })
 }
 
 // ─────────────────────────────────── fault injection ───────────────────────────────────
@@ -1090,5 +1187,31 @@ mod tests {
         assert!(write_replace_cancellable(&fs, &fresh, &big, &new_nonce(), &fs.flag).is_ok());
         assert_eq!(std::fs::read(&fresh).unwrap().len(), big.len());
         assert!(temps(&d).is_empty());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod fingerprint_regressions {
+    use super::*;
+    #[test]
+    fn fingerprint_refuses_fifo_directory_and_oversize_with_bounded_reads() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = std::env::temp_dir().join(super::super::checksum::new_nonce());
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("target");
+        let cpath = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: valid pathname; the test owns the containing directory.
+        assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+        assert!(fingerprint(&RealFs, &path).is_none());
+        std::fs::remove_file(&path).unwrap();
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(varos_core::format::Limits::DEFAULT.max_file_bytes + 1).unwrap();
+        assert!(fingerprint(&RealFs, &path).is_none());
+        assert!(fingerprint(&RealFs, &root).is_none());
+        std::fs::write(&path, b"abc").unwrap();
+        use sha2::{Digest, Sha256};
+        let expected: [u8; 32] = Sha256::digest(b"abc").into();
+        assert_eq!(fingerprint(&RealFs, &path).unwrap().hash, expected);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

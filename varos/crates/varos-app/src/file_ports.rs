@@ -305,17 +305,27 @@ impl DocStore for DiskStore {
     fn save(&mut self, doc: &Document, path: &Path) -> Result<crate::lifecycle::SaveOutcome, String> {
         durable_save(&varos_app::storage::durable::RealFs, doc, path, &varos_core::format::Limits::DEFAULT)
     }
+    fn save_published(
+        &mut self,
+        doc: &Document,
+        path: &Path,
+    ) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), String> {
+        durable_save_published(&varos_app::storage::durable::RealFs, doc, path, &varos_core::format::Limits::DEFAULT)
+    }
     fn save_guarded(
         &mut self,
         doc: &Document,
         path: &Path,
         expected: Option<&varos_app::storage::durable::Fingerprint>,
         fresh: bool,
-    ) -> Result<crate::lifecycle::SaveOutcome, varos_bridge::Error> {
+    ) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), varos_bridge::Error>
+    {
         #[cfg(unix)]
         {
             let fs = crate::bridge_fs::Pinned::new(path, expected, fresh).map_err(|e| e.bridge())?;
-            durable_save(&fs, doc, path, &varos_core::format::Limits::DEFAULT).map_err(|_| fs.error())
+            durable_save(&fs, doc, path, &varos_core::format::Limits::DEFAULT)
+                .map(|outcome| (outcome, fs.published()))
+                .map_err(|_| fs.error())
         }
         #[cfg(not(unix))]
         {
@@ -396,27 +406,36 @@ fn export_write(
     }
 }
 
-fn durable_save(
+pub(crate) fn durable_save(
     fs: &dyn varos_app::storage::durable::FsPort,
     doc: &Document,
     path: &Path,
     limits: &varos_core::format::Limits,
 ) -> Result<crate::lifecycle::SaveOutcome, String> {
+    durable_save_published(fs, doc, path, limits).map(|(outcome, _)| outcome)
+}
+fn durable_save_published(
+    fs: &dyn varos_app::storage::durable::FsPort,
+    doc: &Document,
+    path: &Path,
+    limits: &varos_core::format::Limits,
+) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), String> {
     use crate::lifecycle::SaveOutcome;
     use varos_app::storage::{
         checksum::new_nonce,
-        durable::{io_reason, write_replace, WriteOutcome},
+        durable::{io_reason, write_replace_published, WriteOutcome},
     };
     // A1: decided BEFORE anything replaces the file — a save never produces a file Varos later refuses.
     // Cheap: writer-side object/token counts against the reader's own limits; the full reopen decode
     // runs only within 10 % of a limit (`varos_pdf::write_pdf_checked_report`).
     let bytes = varos_pdf::write_pdf_checked(doc, limits).map_err(|e| plain_reason(&e, NOT_WRITTEN))?;
-    match write_replace(fs, path, &bytes, &new_nonce()).map_err(|e| e.reason())? {
+    let mut published = None;
+    match write_replace_published(fs, path, &bytes, &new_nonce(), &mut published).map_err(|e| e.reason())? {
         WriteOutcome::Durable => {
             cleanup_stale_save_temps(fs, path);
-            Ok(SaveOutcome::Durable)
+            Ok((SaveOutcome::Durable, published))
         }
-        WriteOutcome::ReplacedUnconfirmed(e) => Ok(SaveOutcome::ReplacedUnconfirmed(io_reason(&e))),
+        WriteOutcome::ReplacedUnconfirmed(e) => Ok((SaveOutcome::ReplacedUnconfirmed(io_reason(&e)), published)),
     }
 }
 

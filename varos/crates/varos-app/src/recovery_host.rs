@@ -25,6 +25,8 @@ use varos_app::storage::{
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct RecoveryUi {
     pub enabled: bool,
+    pub autosave_enabled: bool,
+    pub autosave_interval_seconds: u64,
     pub status: String,
     pub detail: String,
     pub last_copy: String,
@@ -49,6 +51,8 @@ enum Finished {
 }
 pub struct RecoveryHost {
     scheduler: Scheduler,
+    pub settings: Settings,
+    autosave_wake: Option<Instant>,
     worker: Option<IoWorker<Finished>>,
     store: Option<Arc<RecoveryStore>>,
     settings_path: Option<PathBuf>,
@@ -116,6 +120,8 @@ impl RecoveryHost {
     fn at(layout: Option<AppLayout>, wake: Box<dyn Fn() + Send>) -> Self {
         let mut host = Self {
             scheduler: Scheduler::default(),
+            settings: Settings::default(),
+            autosave_wake: None,
             worker: None,
             store: None,
             settings_path: None,
@@ -147,6 +153,7 @@ impl RecoveryHost {
         };
         let (settings, warning) = settings::load(&RealFs, &layout.settings());
         host.scheduler.set_enabled(settings.recovery_enabled);
+        host.settings = settings;
         if warning.is_none() {
             host.settings_path = Some(layout.settings());
         }
@@ -198,7 +205,9 @@ impl RecoveryHost {
         let store = Arc::clone(store);
         let job = Box::new(move || {
             store.cleanup_completed();
-            Finished::Scanned(store.scan())
+            Finished::Scanned(
+                store.scan().into_iter().filter(|row| !crate::autosave_io::matches_backing(&store, row)).collect(),
+            )
         });
         if worker.submit(job, Finished::ScanFailed).is_err() {
             self.warning = Some("Recovery scan unavailable.".into());
@@ -276,10 +285,11 @@ impl RecoveryHost {
     }
     pub fn handle_read(&mut self, cmd: &AppCommand, dialogs: &mut dyn crate::lifecycle::Dialogs) -> bool {
         match cmd {
-            AppCommand::SetRecoveryEnabled(_) => {
+            AppCommand::SetRecoveryEnabled(_) | AppCommand::SetAutosave(_, _) => {
                 if let Some(reason) = &self.settings_unsaved {
                     // The switch still applies for this session (`handle`); say it won't persist.
-                    dialogs.notice("Recovery", &format!("Recovery setting could not be saved: {reason}"));
+                    let title = if matches!(cmd, AppCommand::SetAutosave(_, _)) { "Autosave" } else { "Recovery" };
+                    dialogs.notice(title, &format!("{title} setting could not be saved: {reason}"));
                 }
                 false
             }
@@ -359,14 +369,31 @@ impl RecoveryHost {
     /// deadline, or — while the launch scan is still out — a short poll for its result.
     pub fn next_wake(&self) -> Option<Instant> {
         let poll = self.scan_pending.then_some(self.scan_poll).flatten();
-        [self.scheduler.next_wake(), poll].into_iter().flatten().min()
+        [self.scheduler.next_wake(), self.autosave_wake, poll].into_iter().flatten().min()
     }
     pub fn handle(&mut self, cmd: &AppCommand, ws: &mut Workspace, now: Instant) -> bool {
         match cmd {
-            AppCommand::SetRecoveryEnabled(enabled) => {
-                self.scheduler.set_enabled(*enabled);
+            AppCommand::SetRecoveryEnabled(_) | AppCommand::SetAutosave(_, _) => {
+                match cmd {
+                    AppCommand::SetRecoveryEnabled(enabled) => {
+                        self.scheduler.set_enabled(*enabled);
+                        self.settings.recovery_enabled = *enabled;
+                    }
+                    AppCommand::SetAutosave(enabled, seconds) => {
+                        if !settings::valid_autosave_interval(*seconds) {
+                            self.warning = Some("Autosave interval must be 30–1800 seconds".into());
+                            return true;
+                        }
+                        self.settings.autosave_enabled = *enabled;
+                        self.settings.autosave_interval_seconds = *seconds;
+                        for s in ws.sessions_mut() {
+                            s.autosave.reset();
+                        }
+                    }
+                    _ => {}
+                }
                 if let (Some(path), Some(worker)) = (self.settings_path.clone(), &self.worker) {
-                    let settings = Settings { recovery_enabled: *enabled };
+                    let settings = self.settings;
                     let job = Box::new(move || {
                         Finished::Settings(settings.save(&RealFs, &path).map_err(|e| e.reason()).and_then(|outcome| {
                             match outcome {
@@ -376,7 +403,7 @@ impl RecoveryHost {
                         }))
                     });
                     if worker.submit(job, Finished::Settings(Err("Settings writer failed.".into()))).is_err() {
-                        self.warning = Some("Couldn't save the Recovery setting.".into());
+                        self.warning = Some("Couldn't save preferences.".into());
                     }
                 }
                 true
@@ -388,6 +415,34 @@ impl RecoveryHost {
                 true
             }
             _ => false,
+        }
+    }
+    pub fn observe_autosave(
+        &mut self,
+        ws: &mut Workspace,
+        now: Instant,
+        blocked: bool,
+        gate: &Arc<varos_app::storage::publication::Gate>,
+    ) {
+        let blocked = blocked
+            || self.worker.is_none()
+            || self.scan_pending
+            || !self.busy.is_empty()
+            || !self.file_done.is_empty();
+        let (wake, job) = crate::autosave_host::observe(ws, now, self.settings, blocked, gate);
+        self.autosave_wake = wake;
+        if let (Some(job), Some(worker)) = (job, &self.worker) {
+            let failed = crate::file_jobs::FileDone::Autosaved(Box::new(job.failed("Autosave writer failed")));
+            let fallback = failed.clone();
+            if worker
+                .submit(
+                    Box::new(move || Finished::File(crate::file_jobs::FileDone::Autosaved(Box::new(job.run())))),
+                    Finished::File(failed),
+                )
+                .is_err()
+            {
+                self.file_done.push_back(fallback);
+            }
         }
     }
     pub fn observe(&mut self, ws: &mut Workspace, now: Instant) {
@@ -433,7 +488,7 @@ impl RecoveryHost {
                     }
                     Finished::Settings(result) => {
                         if let Err(e) = result {
-                            self.warning = Some(format!("Couldn't save the Recovery setting. {e}"));
+                            self.warning = Some(format!("Couldn't save preferences. {e}"));
                         }
                     }
                 }
@@ -452,7 +507,7 @@ impl RecoveryHost {
                 sid: s.id,
                 rev: s.editor.rev,
                 clean,
-                transaction_open: s.editor.transaction_open(),
+                transaction_open: s.editor.transaction_open() || s.saving.is_some(),
                 recovery: &mut s.recovery,
             }
         });
@@ -559,6 +614,8 @@ impl RecoveryHost {
     pub fn presentation(&self, session: Option<&DocumentSession>) -> RecoveryUi {
         let mut ui = RecoveryUi {
             enabled: self.scheduler.enabled(),
+            autosave_enabled: self.settings.autosave_enabled,
+            autosave_interval_seconds: self.settings.autosave_interval_seconds,
             sid: session.map(|s| s.id),
             banner: !self.deferred && !self.orphans.is_empty(),
             ..Default::default()
@@ -641,7 +698,7 @@ impl crate::host::FileJobs for RecoveryHost {
     }
 }
 
-fn unix_now() -> u64 {
+pub(crate) fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 

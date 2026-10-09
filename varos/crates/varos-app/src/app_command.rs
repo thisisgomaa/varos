@@ -79,6 +79,9 @@ pub enum AppCommand {
     RemoveRecent(PathBuf),
     ClearRecent,
     SetRecoveryEnabled(bool),
+    SetAutosave(bool, u64),
+    AutosaveConflict(SessionId),
+    AutosaveConfirmation,
     RetryRecovery(SessionId),
     /// Restore a recovery copy (Start's Recovered band, the editor's Review panel).
     Recover(String),

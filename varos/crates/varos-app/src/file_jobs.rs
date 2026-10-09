@@ -132,6 +132,7 @@ pub enum FileJob {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SaveDone {
+    pub published: Option<varos_app::storage::durable::Fingerprint>,
     pub sid: SessionId,
     pub ticket: u64,
     pub dest: PathBuf,
@@ -163,6 +164,7 @@ pub struct ExportDone {
 /// A finished background job, applied on the UI thread through `AppCommand::FileDone`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileDone {
+    Autosaved(Box<crate::autosave_io::Done>),
     Saved(SaveDone),
     /// A Save a Copy… landed (`FileJob::SaveCopy`).
     CopySaved(SaveDone),
@@ -190,7 +192,8 @@ impl FileDone {
     pub fn is_quiet(&self) -> bool {
         matches!(
             self,
-            FileDone::Bridge { .. }
+            FileDone::Autosaved(_)
+                | FileDone::Bridge { .. }
                 | FileDone::Saved(SaveDone { result: Ok(SaveOutcome::Durable), .. })
                 | FileDone::CopySaved(SaveDone { result: Ok(SaveOutcome::Durable), .. })
         )
@@ -206,12 +209,14 @@ impl FileDone {
                 done: None,
             },
             FileJob::Save(j) => FileDone::Saved(SaveDone {
+                published: None,
                 sid: j.sid,
                 ticket: j.ticket,
                 dest: j.dest.clone(),
                 result: Err("Varos couldn't write the document.".into()),
             }),
             FileJob::SaveCopy(j) => FileDone::CopySaved(SaveDone {
+                published: None,
                 sid: j.sid,
                 ticket: j.ticket,
                 dest: j.dest.clone(),
@@ -251,12 +256,18 @@ pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
     match job {
         FileJob::Bridge(j) => execute_bridge(*j, disk),
         FileJob::Save(j) => {
-            let result = disk.save(&j.doc, &j.dest);
-            FileDone::Saved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result })
+            let (result, published) = match disk.save_published(&j.doc, &j.dest) {
+                Ok((outcome, published)) => (Ok(outcome), published),
+                Err(reason) => (Err(reason), None),
+            };
+            FileDone::Saved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result, published })
         }
         FileJob::SaveCopy(j) => {
-            let result = disk.save(&j.doc, &j.dest);
-            FileDone::CopySaved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result })
+            let (result, published) = match disk.save_published(&j.doc, &j.dest) {
+                Ok((outcome, published)) => (Ok(outcome), published),
+                Err(reason) => (Err(reason), None),
+            };
+            FileDone::CopySaved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result, published })
         }
         FileJob::Export(j) => {
             let (result, report) = export_to(&j, disk);
@@ -288,13 +299,13 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
         }
         Ok(match j.inner {
             FileJob::Save(s) | FileJob::SaveCopy(s) => {
-                let result = disk.save_guarded(
+                let (result, published) = disk.save_guarded(
                     &s.doc,
                     &s.dest,
                     j.expected.as_ref().and_then(|(_, fp)| fp.as_ref()),
                     j.expected.is_none(),
                 )?;
-                FileDone::Saved(SaveDone { sid: s.sid, ticket: s.ticket, dest: s.dest, result: Ok(result) })
+                FileDone::Saved(SaveDone { sid: s.sid, ticket: s.ticket, dest: s.dest, result: Ok(result), published })
             }
             FileJob::Export(e) => {
                 let (result, report) =
@@ -338,7 +349,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 FileDone::Exported(_) => {
                     varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", "PDF export refused or failed"))
                 }
-                FileDone::Bridge { .. } | FileDone::CopySaved(_) => unreachable!(),
+                FileDone::Autosaved(_) | FileDone::Bridge { .. } | FileDone::CopySaved(_) => unreachable!(),
             };
             (reply, Some(Box::new(done)))
         }
@@ -416,6 +427,9 @@ pub fn status_text(ws: &Workspace, now: Instant) -> String {
     let mut order: Vec<&DocumentSession> = ws.sessions().iter().filter(|s| Some(s.id) == active).collect();
     order.extend(ws.sessions().iter().filter(|s| Some(s.id) != active));
     for s in order {
+        if s.autosave.ticket.is_some() {
+            return "Autosaving…".into();
+        }
         if s.saving.as_ref().is_some_and(|f| due(f.started)) {
             return format!("Saving “{}”…", s.display_name());
         }
@@ -519,6 +533,10 @@ mod tests {
         }));
         let done = execute(fresh, &mut crate::file_ports::DiskStore);
         assert!(matches!(done, FileDone::Bridge { result: varos_bridge::Reply { ok: true, .. }, .. }));
+        let FileDone::Bridge { done: Some(done), .. } = done else { panic!("missing save completion") };
+        let FileDone::Saved(saved) = *done else { panic!("missing saved snapshot") };
+        assert_eq!(saved.published, crate::file_ports::DiskStore.fingerprint(&path));
+        assert!(saved.published.is_some());
         let reopened = varos_pdf::load_vrs(&path).unwrap();
         assert!(reopened.content_eq(&doc));
         let fp = crate::file_ports::DiskStore.fingerprint(&path).unwrap();
