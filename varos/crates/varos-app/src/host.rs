@@ -562,6 +562,13 @@ pub fn run_lifecycle(
     if !ws.on_home() && matches!(cmd, AppCommand::ActivateDocument(id) if ws.active_id() == Some(id)) {
         return Ran::default();
     }
+    if matches!(&cmd, AppCommand::AutosaveConflict(_) | AppCommand::AutosaveConfirmation)
+        && (ui.field_has_focus()
+            || ui.bridge_preview_active()
+            || ws.sessions().iter().any(|s| crate::autosave_host::editor_busy(&s.editor)))
+    {
+        return Ran { held: true, ..Ran::default() };
+    }
     if matches!(&cmd, AppCommand::FileDone(done) if done.is_quiet()) {
         let effect = Lifecycle { ws: &mut *ws, dialogs, store, jobs }.run(cmd);
         return Ran { follow_up_saves: effect.follow_up_saves, ..Ran::default() };

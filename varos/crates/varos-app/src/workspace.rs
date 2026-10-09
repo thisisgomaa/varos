@@ -71,6 +71,7 @@ pub struct RecoveredDocument {
 
 /// One open document (one tab).
 pub struct DocumentSession {
+    pub autosave: varos_app::storage::autosave::State,
     pub id: SessionId,
     pub editor: Editor,
     pub view: View,
@@ -116,6 +117,7 @@ impl DocumentSession {
             saved,
             memo: Cell::new(None),
             source_fingerprint: None,
+            autosave: Default::default(),
             save_unconfirmed: false,
             repaired_on_open: false,
             template_unsaved: false,
@@ -140,6 +142,7 @@ impl DocumentSession {
             saved,
             memo: Cell::new(None),
             source_fingerprint: None,
+            autosave: Default::default(),
             save_unconfirmed: false,
             repaired_on_open: false,
             template_unsaved: false,
@@ -205,6 +208,8 @@ impl DocumentSession {
     /// A save to `path` succeeded: the tab takes that path/name, the checkpoint becomes the current
     /// content (clean), and it stops being `Untitled-n`.
     pub fn mark_saved(&mut self, path: PathBuf, key: FileKey) {
+        self.autosave = Default::default();
+        self.recovery.retain_after_autosave = false;
         self.save_unconfirmed = false;
         self.repaired_on_open = false;
         self.template_unsaved = false;
@@ -248,6 +253,8 @@ impl DocumentSession {
         self.memo.set(None);
         self.key = Some(key);
         self.source_fingerprint = fingerprint;
+        self.autosave = Default::default();
+        self.recovery.retain_after_autosave = false;
         self.save_unconfirmed = false;
         self.repaired_on_open = repaired;
         self.recovered = None;

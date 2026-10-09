@@ -24,5 +24,7 @@ pub mod time_text;
 #[cfg(test)]
 pub(crate) mod testdir;
 
+pub mod autosave;
+pub mod publication;
 pub mod templates;
 pub mod window;
