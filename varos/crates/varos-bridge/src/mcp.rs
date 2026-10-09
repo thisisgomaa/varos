@@ -343,8 +343,18 @@ pub fn serve<T: Transport>(
             }
             "ping" => rpc_result(id, json!({})),
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
-            "tools/list" => rpc_result(id, tools()),
-            "tools/call" if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name)) => {
+            "tools/list" => {
+                let mut list = tools();
+                if params["api"] == "1.2" {
+                    if let Some(rows) = list["tools"].as_array_mut() {
+                        rows.push(json!({"name":"import_svg","description":"API 1.2: place an SVG/SVGZ source as an undoable group under files scope; returns loss report.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}), &["api","board","request_id","expected_rev","path"])}));
+                    }
+                }
+                rpc_result(id, list)
+            }
+            "tools/call"
+                if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name) && name != "import_svg") =>
+            {
                 rpc_error(id, -32602, "unknown or missing tool name")
             }
             "tools/call" => {

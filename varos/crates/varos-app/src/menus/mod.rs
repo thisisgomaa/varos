@@ -51,6 +51,7 @@ const fn fkey(code: KeyCode) -> Option<Accel> {
 pub enum FileCmd {
     New,
     Open,
+    PlaceSvg,
     CloseTab,
     CloseAll,
     Save,
@@ -85,7 +86,8 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
         | FileCmd::Save
         | FileCmd::SaveAs
         | FileCmd::SaveCopy
-        | FileCmd::Export => s.active,
+        | FileCmd::Export
+        | FileCmd::PlaceSvg => s.active,
     }
 }
 

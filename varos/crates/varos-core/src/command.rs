@@ -13,6 +13,8 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    /// Place normalized artwork as one group with fresh ids and one undo entry.
+    PlaceArtwork(Box<crate::model::Document>),
     /// Deterministic creation; checked callers use `try_execute_created` for the allocated path id.
     AddShape {
         kind: crate::model::ShapeKind,
@@ -281,6 +283,7 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            Self::PlaceArtwork(doc) => crate::placement::place(ed, *doc),
             Self::AddPath { .. } => {
                 let _ = ed.try_execute_created(self);
             }

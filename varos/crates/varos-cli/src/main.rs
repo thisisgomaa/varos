@@ -13,7 +13,7 @@ use varos_core::{
 };
 
 // The only CLI verb table. No desktop binary names or UI routing are changed.
-const VERBS: &[&str] = &["describe", "snapshot", "export-pdf", "save-as", "apply", "new", "diff"];
+const VERBS: &[&str] = &["describe", "snapshot", "export-pdf", "save-as", "apply", "new", "diff", "import-svg"];
 struct Failure {
     reason: String,
     index: Option<usize>,
@@ -168,6 +168,23 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("unknown subcommand {verb}; expected {}", VERBS.join(", ")).into());
     }
     match verb.as_str() {
+        "import-svg" => {
+            let a = parse(args, &["--out"], 1)?;
+            let out = required(a.out, "--out")?;
+            if same_file(&a.positional[0], &out)? {
+                return Err("import output must differ from source".to_owned().into());
+            }
+            let mut bytes = Vec::new();
+            std::fs::File::open(&a.positional[0])
+                .map_err(|e| e.to_string())?
+                .take((varos_import::MAX_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+                .map_err(|e| e.to_string())?;
+            let (doc, report) = varos_import::import_svg(&bytes)?;
+            let bytes = varos_pdf::write_pdf_checked(&doc, &Limits::DEFAULT)?;
+            write_output(&out, &bytes)?;
+            Ok(json!({"out":out.to_string_lossy(), "report":report}))
+        }
         "describe" => {
             let a = parse(args, &["--detail"], 1)?;
             let doc = varos_pdf::load_vrs(&a.positional[0])?;

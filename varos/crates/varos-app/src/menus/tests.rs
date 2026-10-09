@@ -249,8 +249,9 @@ fn snapshot(menus: &[(&'static str, Vec<Entry>)]) -> String {
     out
 }
 
-/// The rows slice 0.6 added after the split; everything else is the pre-split table.
-const ADDED_AFTER_SPLIT: &[&str] = &["file.closeall", "file.savecopy", "file.revert", "file.exportselection"];
+/// Rows added after the split (0.6 and SVG Place 7.1); the remaining table stays frozen.
+const ADDED_AFTER_SPLIT: &[&str] =
+    &["file.closeall", "file.savecopy", "file.revert", "file.exportselection", "file.place.svg"];
 
 fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, Vec<Entry>)> {
     fn strip(v: Vec<Entry>) -> Vec<Entry> {
@@ -295,6 +296,7 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.new",
             "file.open",
             "sub Open Recent",
+            "file.place.svg",
             "---",
             "file.close",
             "file.closeall",
@@ -343,4 +345,14 @@ fn file_rows_enable_from_the_document_state() {
     assert!(!file_row_enabled(FileCmd::Revert, DocMenuState { active: false, ..dirty_file }));
     assert!(!file_row_enabled(FileCmd::ExportSelection, doc), "no selection");
     assert!(file_row_enabled(FileCmd::ExportSelection, selected));
+}
+
+#[test]
+fn svg_place_row_is_namespaced_and_has_no_shortcut() {
+    let rows = super::file::rows();
+    let row = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "file.place.svg"));
+    assert!(matches!(
+        row,
+        Some(Entry::Item { label: "Place SVG…", accel: None, cmd: MenuCmd::File(FileCmd::PlaceSvg), .. })
+    ));
 }

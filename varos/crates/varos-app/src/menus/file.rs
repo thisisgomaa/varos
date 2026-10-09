@@ -9,6 +9,7 @@ pub(super) fn rows() -> Vec<Entry> {
         file_key("file.new", "New", cmd(K::KeyN), FileCmd::New),
         file_key("file.open", "Open\u{2026}", cmd(K::KeyO), FileCmd::Open),
         Entry::Sub { label: "Open Recent", items: vec![] },
+        file_row("file.place.svg", "Place SVG\u{2026}", FileCmd::PlaceSvg),
         Entry::Sep,
         file_key("file.close", "Close Tab", cmd(K::KeyW), FileCmd::CloseTab),
         file_key("file.closeall", "Close All", cmd_alt(K::KeyW), FileCmd::CloseAll),

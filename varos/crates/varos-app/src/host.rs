@@ -71,6 +71,7 @@ pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppComm
     Some(match cmd {
         FileCmd::New => AppCommand::NewBoard,
         FileCmd::Open => AppCommand::OpenDialog,
+        FileCmd::PlaceSvg => AppCommand::PlaceSvg(active?),
         FileCmd::Save => AppCommand::Save(active?),
         FileCmd::SaveAs => AppCommand::SaveAs(active?),
         FileCmd::SaveCopy => AppCommand::SaveCopy(active?),
