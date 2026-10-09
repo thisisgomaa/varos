@@ -212,7 +212,14 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
                     None => varos_pdf::default_scope(&doc),
                 };
                 let plan = varos_pdf::plan_pdf_export(&doc, scope).map_err(|e| e.to_string())?;
-                varos_pdf::export_pdf_bytes(&doc, &plan, &AtomicBool::new(false)).map_err(|e| e.to_string())?
+                {
+                    let (bytes, report) = varos_pdf::export_pdf_bytes_with_report(&doc, &plan, &AtomicBool::new(false))
+                        .map_err(|e| e.to_string())?;
+                    for note in report.notes {
+                        eprintln!("{}: {}", note.kind, note.message);
+                    }
+                    bytes
+                }
             } else {
                 varos_pdf::write_pdf_checked(&doc, &Limits::DEFAULT)?
             };

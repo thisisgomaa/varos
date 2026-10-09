@@ -711,7 +711,7 @@ impl Lifecycle<'_> {
         }
         let event = match done.result {
             ExportResult::Exported | ExportResult::ExportedUnconfirmed(_) => {
-                ExportEvent::Finished { sid, ticket, dest: done.job.dest.clone() }
+                ExportEvent::Finished { sid, ticket, dest: done.job.dest.clone(), report: done.report.clone() }
             }
             ExportResult::Cancelled => ExportEvent::Cancelled { sid, ticket },
             ExportResult::Failed(reason) => {
@@ -2485,7 +2485,10 @@ mod tests {
         assert_eq!(effect.exports, [ExportEvent::Started { sid: a, ticket: TK, cancel: job_cancel(&job) }]);
         let (effect, _) = r.land(job);
         assert!(r.prompts().is_empty(), "the sheet shows the result (the host notices it without one)");
-        assert_eq!(effect.exports, [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/a.pdf") }]);
+        assert_eq!(
+            effect.exports,
+            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/a.pdf"), report: Default::default() }]
+        );
         let s = r.get(a);
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/a.vrs")), "the path never changes");
         assert!(s.is_dirty_exact(), "the dot stays: an export is not a save");
@@ -2571,7 +2574,10 @@ mod tests {
         assert_eq!(job_cancel(&confirmed), cancel, "the confirmed retry keeps the sheet's Cancel");
         let (effect, _) = r.land(confirmed);
         assert_eq!(r.prompts(), ["export a.pdf in /d", "replace-editable old.pdf"]);
-        assert_eq!(effect.exports, [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/old.pdf") }]);
+        assert_eq!(
+            effect.exports,
+            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/old.pdf"), report: Default::default() }]
+        );
         assert!(!varos_pdf::has_embedded_model(&r.s.exported[&p("/out/old.pdf")]));
     }
 
@@ -3049,7 +3055,10 @@ mod tests {
         assert!(hidden(&e.doc, blue) && !hidden(&e.doc, red), "the job's copy holds only the selection");
         assert!(!hidden(&r.get(a).editor.doc, blue), "the tab's own document is not touched");
         let (effect, _) = r.land(job);
-        assert_eq!(effect.exports, [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/sel.pdf") }]);
+        assert_eq!(
+            effect.exports,
+            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/sel.pdf"), report: Default::default() }]
+        );
         let pdf = lopdf::Document::load_mem(&r.s.exported[&p("/out/sel.pdf")]).expect("a real PDF");
         assert_eq!(pdf.get_pages().len(), 1);
     }

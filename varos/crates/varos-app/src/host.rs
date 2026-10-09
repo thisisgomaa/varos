@@ -1711,6 +1711,10 @@ mod background_tests {
         let a = r.saved_tab("a.vrs");
         let doc = std::sync::Arc::new(r.ws.get(a).unwrap().editor.doc.clone());
         let plan = varos_pdf::plan_pdf_export(&doc, varos_pdf::ExportScope::AllVisibleArtboards).unwrap();
+        // the export report (main's 0.1 seam) rides the Finished event to the sheet's Done state
+        let report = varos_core::ExportReport {
+            notes: vec![varos_core::ExportNote { kind: "note".into(), object_id: None, message: "m".into() }],
+        };
         let done = || {
             let job = ExportJob {
                 sid: a,
@@ -1721,7 +1725,11 @@ mod background_tests {
                 cancel: CancelFlag::default(),
                 ticket: 3,
             };
-            AppCommand::FileDone(Box::new(FileDone::Exported(ExportDone { job, result: ExportResult::Exported })))
+            AppCommand::FileDone(Box::new(FileDone::Exported(ExportDone {
+                job,
+                result: ExportResult::Exported,
+                report: report.clone(),
+            })))
         };
         let keys = Keyboard::default();
         run_lifecycle(done(), &mut r.ws, &mut QuietUi, &mut r.dlg, &mut r.store, &keys, None);
@@ -1729,6 +1737,9 @@ mod background_tests {
         let mut sheet = SheetUi(vec![]);
         run_lifecycle(done(), &mut r.ws, &mut sheet, &mut r.dlg, &mut r.store, &keys, None);
         assert!(r.log().is_empty(), "the sheet shows it: no notice");
-        assert_eq!(sheet.0, [ExportEvent::Finished { sid: a, ticket: 3, dest: PathBuf::from("/out/a.pdf") }]);
+        assert_eq!(
+            sheet.0,
+            [ExportEvent::Finished { sid: a, ticket: 3, dest: PathBuf::from("/out/a.pdf"), report: report.clone() }]
+        );
     }
 }

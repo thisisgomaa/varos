@@ -15,6 +15,14 @@ Still relevant: P21 (4) artboard move vs clip mask; QW6 panel icon size (micro l
 
 ---
 
+## Fixed — Pathfinder touching rings and Exclude (2026-10-09)
+
+**Engine defect:** Exclude joined `A−B` and `B−A` with `path_add`, which could restore both original rings (area 800 instead of 350 for the overlapping-square repro). The hexagram at the origin also lost a tip: grouping used a boundary vertex as the containment representative (Unite 175 instead of 275; B−A 25 instead of 75).
+
+**Fix:** group each XOR difference separately, concatenate, and fold pairwise for additional operands. Ring nesting now uses an interior point near an edge. Independently compare the primary result area with unsimplified `i_overlay` rings and fall back above 0.2% tolerance. This preserves curves when the primary result passes the guard.
+
+**Regression:** hard square, three-operand XOR, and original/translated hexagram assertions; separate 200-case oracles for all four operations. No hexagram test ignored. Offline engine checks pass; no GUI validation performed in this round.
+
 ## Open — PDF knockout differs from canvas/SVG (2026-10-06)
 
 PDF uses stroke alpha × object opacity to choose knockout before isolation

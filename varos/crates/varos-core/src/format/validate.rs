@@ -62,7 +62,9 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
         }
         let bad_mask = |reason| Invalid::BadMask { group: n.id, reason };
         match n.role {
-            GroupRole::MaskAlpha | GroupRole::MaskLuma => return Err(bad_mask("soft masks are not supported")),
+            role if role.is_mask_group() && role != GroupRole::Clip => {
+                return Err(bad_mask("soft masks are not supported"))
+            }
             GroupRole::Normal if n.mask_child.is_some() => {
                 return Err(bad_mask("an ordinary node cannot have a mask shape"))
             }

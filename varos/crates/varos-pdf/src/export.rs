@@ -132,7 +132,7 @@ pub fn plan_pdf_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan,
             if !doc.artboards.is_empty() {
                 return Err(ExportUnavailable::NotBoardless);
             }
-            vec![artwork_bounds_page(doc).ok_or(ExportUnavailable::NothingToExport)?]
+            vec![bounds_page(doc, Reach::HalfStroke).ok_or(ExportUnavailable::NothingToExport)?]
         }
         ExportScope::Selection => return Err(ExportUnavailable::NoSelection),
     };
@@ -166,19 +166,28 @@ pub fn plan_selection_export(
             p.hidden = true;
         }
     }
-    // TODO(0.1 merge): use painted_extent — the bounds are the flattened outline padded by half the
-    // stroke (`artwork_bounds_page`), which can miss a long miter join or a curve's painted bulge.
-    let page = artwork_bounds_page(&narrowed).ok_or(ExportUnavailable::NothingToExport)?;
+    // the page reaches as far as the selection PAINTS: the outline grown by the shared painted extent
+    // (`varos_core::geom::painted_padding` — the one rule cull and hit-test use too)
+    let page = bounds_page(&narrowed, Reach::Painted).ok_or(ExportUnavailable::NothingToExport)?;
     Ok((narrowed, ExportPlan { scope: ExportScope::Selection, pages: vec![page] }))
 }
 
 /// Write the pure PDF for `plan`: its pages and a bare catalog, nothing else. `cancel` is checked
 /// before every page. Deterministic: the same document and plan give the same bytes.
 pub fn export_pdf_bytes(doc: &Document, plan: &ExportPlan, cancel: &AtomicBool) -> Result<Vec<u8>, ExportError> {
+    export_pdf_bytes_with_report(doc, plan, cancel).map(|(output, _)| output)
+}
+
+/// Export bytes together with explicit diagnostics.
+pub fn export_pdf_bytes_with_report(
+    doc: &Document,
+    plan: &ExportPlan,
+    cancel: &AtomicBool,
+) -> Result<(Vec<u8>, varos_core::ExportReport), ExportError> {
     if plan.pages.is_empty() {
         return Err(ExportError::Unavailable(ExportUnavailable::NothingToExport));
     }
-    write_pages(doc, &plan.pages, None, cancel)
+    write_pages(doc, &plan.pages, None, cancel).map(|bytes| (bytes, varos_core::ExportReport::default()))
 }
 
 /// Does this file carry an embedded Varos model (a native `.vrs` container)? Bounded byte scan for
@@ -196,6 +205,13 @@ pub fn has_embedded_model(bytes: &[u8]) -> bool {
 /// The scan cap for `has_embedded_model` — the same 256 MiB the Export flow reads a destination up to.
 pub const HAS_MODEL_SCAN_CAP: usize = 256 * 1024 * 1024;
 
+/// How far past its outline a path reaches on a bounds page ([`bounds_page`]).
+#[derive(Clone, Copy)]
+enum Reach {
+    HalfStroke,
+    Painted,
+}
+
 /// A path that leaves no mark: fully transparent (opacity 0), or neither a visible fill nor a visible
 /// stroke. Exhaustive over `Paint`, so a new paint kind must decide here.
 fn paints_nothing(p: &varos_core::model::Path) -> bool {
@@ -211,12 +227,19 @@ fn paints_nothing(p: &varos_core::model::Path) -> bool {
 /// curves flattened — not the control-point hull) over every drawn path, padded by half its stroke; a
 /// clip member counts only where it overlaps its mask's outline box. Transparent background. `None`
 /// when nothing visible draws.
-fn artwork_bounds_page(doc: &Document) -> Option<PageSpec> {
+///
+/// `reach` = how far past its outline a path counts: half its drawn stroke (Artwork bounds, whose
+/// pages are pinned) or its painted extent (`varos_core::geom::painted_padding`, Export Selection…).
+fn bounds_page(doc: &Document, reach: Reach) -> Option<PageSpec> {
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for (pi, p) in doc.paint_list() {
         let Some(d) = drawable(doc, pi, p) else { continue };
         let (bx0, by0, bx1, by1) = doc.outline_bbox(pi);
-        let mut b = [bx0 - d.pad, by0 - d.pad, bx1 + d.pad, by1 + d.pad];
+        let pad = match reach {
+            Reach::HalfStroke => d.pad,
+            Reach::Painted => varos_core::geom::painted_padding(p).max(d.pad),
+        };
+        let mut b = [bx0 - pad, by0 - pad, bx1 + pad, by1 + pad];
         if let Some(c) = d.clip {
             let mut m = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
             for (mp, _, _) in mask_paths(doc, c) {
