@@ -51,6 +51,13 @@ impl Settings {
             _ => Self::default(),
         }
     }
+    /// Change the display unit without resizing the configured physical document.
+    pub fn set_units(&mut self, units: Unit) {
+        for value in [&mut self.width, &mut self.height, &mut self.spacing, &mut self.bleed] {
+            *value = crate::units::from_pt(to_pt(*value, self.units, self.ppi), units, self.ppi);
+        }
+        self.units = units;
+    }
     pub fn document(&self) -> Result<Document, String> {
         if !crate::document_setup::valid_ppi(self.ppi)
             || !(1..=100).contains(&self.count)

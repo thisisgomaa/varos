@@ -549,31 +549,7 @@ pub fn bridge_job(
         let parent = dest.parent().unwrap_or(std::path::Path::new("."));
         let mut jobs = plans
             .into_iter()
-            .map(|p| {
-                let mut job = minimal::screen_job(
-                    sid,
-                    ticket,
-                    p.asset,
-                    p.options,
-                    parent.join(p.relative),
-                    Default::default(),
-                    false,
-                );
-                job.svg_options = p.svg;
-                if !p.pages.is_empty() {
-                    job.job.plan.pages = p
-                        .pages
-                        .iter()
-                        .map(|a| varos_pdf::PageSpec {
-                            rect: a.page.rect,
-                            background: a.page.background,
-                            bleed: 0.,
-                            bleed_edges: [0.; 4],
-                        })
-                        .collect();
-                }
-                job
-            })
+            .map(|p| minimal::planned_screen_job(sid, ticket, p, parent.to_path_buf(), Default::default(), false))
             .collect::<Vec<_>>();
         if jobs.is_empty() {
             return Err(error("Nothing to export".into()));

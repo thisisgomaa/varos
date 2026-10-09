@@ -34,6 +34,7 @@ mod bridge_host;
 mod chrome;
 mod cursors;
 mod document_ui;
+mod export_folders;
 mod export_ui;
 mod file_jobs;
 mod file_ports;

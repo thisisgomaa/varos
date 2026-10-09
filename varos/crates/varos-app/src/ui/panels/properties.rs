@@ -69,6 +69,8 @@ pub(crate) fn panel_properties(
                 }
             });
 
+            super::super::lane_c::scale_strokes(ui, s.scale_strokes, ops);
+
             // ── Angle + flip ──
             // Rotate/flip act on OBJECTS only; for a Direct selection (Astra F07) they would silently do
             // nothing, so they are shown disabled with the reason on the rotation field's tooltip.
@@ -99,7 +101,6 @@ pub(crate) fn panel_properties(
                 if IA_FLIP_H.show(ui, flip_state) {
                     ops.push(Op::Flip(true));
                 }
-                super::super::lane_c::scale_strokes(ui, s.scale_strokes, ops);
                 if IA_FLIP_V.show(ui, flip_state) {
                     ops.push(Op::Flip(false));
                 }

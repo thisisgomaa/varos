@@ -545,6 +545,11 @@ impl Service {
                             }
                             v["slice4a_verbs"] =
                                 json!(["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]);
+                            // ---- Lane C ----
+                            v["api_by_tool"]["export_screens"] = json!(["1.2"]);
+                            if let Some(tools) = v["tools"].as_array_mut() {
+                                tools.push(json!("export_screens"));
+                            }
                             if let Some(verbs) = v["edit_verbs"].as_array_mut() {
                                 verbs.extend(
                                     ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]

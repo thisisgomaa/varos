@@ -223,7 +223,15 @@ impl Minimal {
     }
     pub fn jobs(&self, sid: SessionId, ticket: u64, cancel: CancelFlag) -> Vec<ScreenJob> {
         if self.advanced {
-            let assets: Vec<_> = if self.screen_settings.whole_board {
+            let range = if self.selection_tab || self.screen_settings.whole_board {
+                vec![true; self.cards().assets.len()]
+            } else {
+                match self.screen_settings.checks(self.boards.assets.len()) {
+                    Ok(range) => range,
+                    Err(_) => return vec![],
+                }
+            };
+            let assets: Vec<_> = if self.screen_settings.whole_board && !self.selection_tab {
                 self.cards()
                     .assets
                     .first()
@@ -234,7 +242,8 @@ impl Minimal {
                     .assets
                     .iter()
                     .zip(&self.cards().checked)
-                    .filter_map(|(a, on)| on.then_some(a.clone()))
+                    .zip(range)
+                    .filter_map(|((a, on), ranged)| (*on && ranged).then_some(a.clone()))
                     .collect()
             };
             let mut settings = self.screen_settings.clone();
@@ -244,37 +253,7 @@ impl Minimal {
                 .expand(&assets, &self.options)
                 .unwrap_or_default()
                 .into_iter()
-                .map(|p| {
-                    let mut job = screen_job(
-                        sid,
-                        ticket,
-                        p.asset,
-                        p.options,
-                        PathBuf::from(&self.folder).join(p.relative),
-                        cancel.clone(),
-                        true,
-                    );
-                    job.svg_options = p.svg;
-                    if !self.screen_settings.include_bleed {
-                        for page in &mut job.job.plan.pages {
-                            page.bleed = 0.;
-                            page.bleed_edges = [0.; 4];
-                        }
-                    }
-                    if !p.pages.is_empty() {
-                        job.job.plan.pages = p
-                            .pages
-                            .iter()
-                            .map(|a| varos_pdf::PageSpec {
-                                rect: a.page.rect,
-                                background: a.page.background,
-                                bleed: 0.,
-                                bleed_edges: [0.; 4],
-                            })
-                            .collect();
-                    }
-                    job
-                })
+                .map(|p| planned_screen_job(sid, ticket, p, PathBuf::from(&self.folder), cancel.clone(), true))
                 .collect();
         }
         self.cards()
@@ -295,6 +274,38 @@ impl Minimal {
             })
             .collect()
     }
+}
+/// Advanced expansion already resolved colour and bleed into each page rectangle.
+/// Keep PDF bleed metadata empty so Press options cannot expand the same bleed twice.
+pub fn planned_screen_job(
+    sid: SessionId,
+    ticket: u64,
+    p: varos_raster::screens::Planned,
+    folder: PathBuf,
+    cancel: CancelFlag,
+    collision_names: bool,
+) -> ScreenJob {
+    let mut job = screen_job(sid, ticket, p.asset, p.options, folder.join(p.relative), cancel, collision_names);
+    job.svg_options = p.svg;
+    job.folder_root = Some(folder);
+    if !p.pages.is_empty() {
+        job.job.plan.pages = p
+            .pages
+            .iter()
+            .map(|a| varos_pdf::PageSpec {
+                rect: a.page.rect,
+                background: a.page.background,
+                bleed: 0.,
+                bleed_edges: [0.; 4],
+            })
+            .collect();
+    } else {
+        for page in &mut job.job.plan.pages {
+            page.bleed = 0.;
+            page.bleed_edges = [0.; 4];
+        }
+    }
+    job
 }
 pub fn screen_job(
     sid: SessionId,
@@ -335,6 +346,7 @@ pub fn screen_job(
         additional: vec![],
         svg_options: Default::default(),
         additional_jobs: vec![],
+        folder_root: None,
     }
 }
 
@@ -560,5 +572,54 @@ mod lane_c_tests {
             );
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    #[test]
+    fn restored_range_applies_to_grid_before_checklist_filtering() {
+        let doc = varos_core::new_document::Settings { count: 3, ..Default::default() }.document().unwrap();
+        let mut m = Minimal::new(&doc, &HashSet::new(), false);
+        m.advanced = true;
+        m.screen_settings.range = "2-3".into();
+        m.boards.checked[1] = false;
+        let jobs = m.jobs(SessionId(1), 1, Default::default());
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].asset.name, "Artboard 3");
+    }
+    #[test]
+    fn advanced_pdf_resolves_bleed_once_and_invalid_range_cannot_export() {
+        let doc = varos_core::new_document::Settings { count: 2, bleed: 3., ..Default::default() }.document().unwrap();
+        let mut m = Minimal::new(&doc, &HashSet::new(), false);
+        m.advanced = true;
+        m.screen_settings.rows[0].format = "pdf".into();
+        for bleed in [false, true] {
+            m.screen_settings.include_bleed = bleed;
+            let jobs = m.jobs(SessionId(1), 1, Default::default());
+            let page = &jobs[0].job.plan.pages[0];
+            assert_eq!(page.bleed_edges, [0.; 4]);
+            let expected = doc.artboards[0].w + if bleed { 2. * doc.artboards[0].bleed } else { 0. };
+            assert!((page.rect[2] - expected).abs() < 0.001);
+            let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({
+                "api":"1.2", "board":"b1", "request_id":"r1", "expected_rev":0,
+                "path":"/tmp/export.pdf", "scope":"all_visible_artboards", "options":{"screens":m.screen_settings}
+            }))
+            .unwrap();
+            let bridge = crate::export_ui::bridge_job(
+                SessionId(1),
+                1,
+                &doc,
+                &HashSet::new(),
+                "/tmp/export.pdf".into(),
+                &request,
+                "export_raster",
+            )
+            .unwrap();
+            assert_eq!(bridge.job.plan.pages, jobs[0].job.plan.pages);
+        }
+        m.screen_settings.range = "999".into();
+        assert!(m.jobs(SessionId(1), 1, Default::default()).is_empty());
     }
 }

@@ -711,7 +711,7 @@ impl Ui {
             }
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
             select_transform::draw(ctx, ed, hole);
-            lane_c::corners(ctx, ed, &view, ppp, hole);
+            lane_c::corners(ctx, ed, &view, ppp, hole, doc_active);
             isolation::draw(ctx, ed, hole);
             build_ab_chrome(
                 ctx,

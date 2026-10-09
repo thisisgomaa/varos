@@ -90,6 +90,9 @@ pub fn check(ed: &Editor, action: Action) -> Result<(), String> {
         if ed.doc.eff_locked(id) || ed.doc.eff_hidden(id) || !ed.in_isolation(id) {
             return Err("Path is unavailable".into());
         }
+        if ed.doc.is_mask_source(id) && matches!(action, Action::Outline | Action::Expand) {
+            return Err("Release the clipping mask before converting its source stroke".into());
+        }
         match action {
             Action::Outline | Action::Expand => {
                 outline(p)?;
@@ -120,10 +123,22 @@ impl Editor {
             })
             .collect();
         let Ok(prepared) = prepared else { return };
+        if matches!(action, Action::Outline) && prepared.iter().all(|p| p.anchors.is_empty()) {
+            return;
+        }
         self.begin();
+        let mut bake = std::collections::BTreeSet::new();
         for (id, mut generated) in ids.into_iter().zip(prepared) {
+            if matches!(action, Action::Outline) && generated.anchors.is_empty() {
+                continue;
+            }
             let Some(pi) = self.doc.pidx(id) else { continue };
             if matches!(action, Action::Expand) {
+                let unit = self.doc.unit_of(id);
+                let xf = self.doc.unit_xform(id);
+                if let Some(unit) = unit {
+                    bake.insert(unit);
+                }
                 let mut fill = live_corners::evaluated(&self.doc.paths[pi]);
                 fill.stroke = Paint::None;
                 fill.stroke_width = 0.;
@@ -135,10 +150,10 @@ impl Editor {
                 }
                 self.doc.paths[pi] = fill;
                 if !generated.anchors.is_empty() {
-                    let xf = self.doc.unit_xform(id);
                     let parent = self.doc.node_of_path(id).and_then(|n| self.doc.node(n)).and_then(|n| n.parent);
+                    let source_leaf = self.doc.node_of_path(id);
+                    let clip_exempt = source_leaf.is_some_and(|n| self.doc.node_clip_exempt(n));
                     let active = self.doc.active_layer;
-                    self.doc.active_layer = parent.unwrap_or(active);
                     generated.id = self.doc.nid();
                     for a in generated.anchors.iter_mut().chain(generated.holes.iter_mut().flatten()) {
                         a.id = self.doc.nid();
@@ -147,19 +162,47 @@ impl Editor {
                     self.doc.paths.push(generated);
                     self.doc.sync_tree();
                     self.doc.active_layer = active;
-                    if parent == Some(active) {
+                    if let Some(leaf) = self.doc.node_of_path(generated_id) {
+                        self.doc.set_node_clip_exempt(leaf, clip_exempt);
+                        let old_parent = self.doc.node(leaf).and_then(|n| n.parent);
+                        if let Some(old) = old_parent.and_then(|n| self.doc.node_mut(n)) {
+                            old.children.retain(|n| *n != leaf);
+                        }
+                        if let Some(node) = self.doc.node_mut(leaf) {
+                            node.parent = parent;
+                        }
+                        if let Some(parent) = parent.and_then(|n| self.doc.node_mut(n)) {
+                            parent.children.retain(|n| *n != leaf);
+                            if let Some(i) = source_leaf.and_then(|n| parent.children.iter().position(|c| *c == n)) {
+                                parent.children.insert(i, leaf);
+                            } else {
+                                parent.children.push(leaf);
+                            }
+                        }
+                        self.doc.sync_tree();
+                    }
+                    // Group children inherit the group transform. Standalone leaves need a copy.
+                    if self.doc.unit_of(generated_id) == self.doc.node_of_path(generated_id) {
                         if let Some(node) = self.doc.node_of_path(generated_id).and_then(|n| self.doc.node_mut(n)) {
                             node.xform = xf;
                         }
-                        self.bake_unit_of(generated_id);
+                        if let Some(unit) = self.doc.unit_of(generated_id) {
+                            bake.insert(unit);
+                        }
                     }
                 }
-                self.bake_unit_of(id);
             } else {
                 for a in generated.anchors.iter_mut().chain(generated.holes.iter_mut().flatten()) {
                     a.id = self.doc.nid();
                 }
                 self.doc.paths[pi] = generated;
+            }
+        }
+        // Bake only after every prepared local region has been inserted.
+        // Baking a shared group inside the loop would transform later fills but not their strokes.
+        for unit in bake {
+            if let Some(pid) = self.doc.node_paths(unit).first().copied() {
+                self.bake_unit_of(pid);
             }
         }
         self.dirty = true;
