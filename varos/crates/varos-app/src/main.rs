@@ -27,6 +27,8 @@ use winit::{
 
 mod agent_presence;
 mod app_command;
+mod autosave_host;
+mod autosave_io;
 mod bridge_fs;
 mod bridge_host;
 mod chrome;
@@ -1069,6 +1071,8 @@ fn main() {
         }
     };
     let recovery_proxy = event_loop.create_proxy();
+    let mut autosave_input_pending = false;
+    let autosave_gate = std::sync::Arc::new(varos_app::storage::publication::Gate::default());
     let mut recovery = recovery_host::RecoveryHost::new(Box::new(move || {
         let _ = recovery_proxy.send_event(());
     }));
@@ -1363,6 +1367,32 @@ fn main() {
                         .show();
                 }
             }
+            match &event {
+                Event::WindowEvent { event: WindowEvent::RedrawRequested, .. } => autosave_input_pending = false,
+                Event::WindowEvent { event, .. } => {
+                    if matches!(
+                        event,
+                        WindowEvent::MouseInput { .. }
+                            | WindowEvent::KeyboardInput { .. }
+                            | WindowEvent::Ime(_)
+                            | WindowEvent::Touch(_)
+                            | WindowEvent::MouseWheel { .. }
+                    ) {
+                        autosave_input_pending = true;
+                        autosave_gate.invalidate();
+                    }
+                    if matches!(event, WindowEvent::CloseRequested | WindowEvent::DroppedFile(_)) {
+                        autosave_gate.invalidate();
+                    }
+                }
+                Event::UserEvent(_) => autosave_gate.invalidate(),
+                _ => {}
+            }
+            if !pending.is_empty() {
+                autosave_gate.invalidate();
+            }
+            let _edit_admission = autosave_gate.lock.lock().unwrap_or_else(|e| e.into_inner());
+
             if pace.enabled() {
                 pace.wake(pacing_event_kind(&event));
             }
@@ -1374,6 +1404,7 @@ fn main() {
             // it draws only if it changed the document (`ran_any` below) — an agent reading
             // (capabilities / describe / list_boards / snapshot) never makes a frame.
             for request in bridge_rx.try_iter() {
+                autosave_gate.invalidate();
                 pending.push(host::HostAction::App(AppCommand::Bridge(Box::new(request))));
                 pace.wake("bridge-request");
             }
@@ -1405,6 +1436,7 @@ fn main() {
                 // Quit / Window rows as commands, the other rows as the SAME document action their key
                 // queues — except a ⌘-row while typing, which goes to the focused field
                 for action in menu.drain() {
+                    autosave_gate.invalidate();
                     let cmd = match action {
                         mac_menu::NativeAction::App(cmd) => {
                             pending.push(host::HostAction::App(cmd));
@@ -1609,10 +1641,32 @@ fn main() {
                     Instant::now(),
                 );
                 let _ = window_store.tick(&varos_app::storage::durable::RealFs, Instant::now());
+                // All document/Bridge dispatch is finished. Do not hold edit admission while
+                // submitting the idle job: even a tiny encoder may reach publication immediately.
+                drop(_edit_admission);
                 layout_store.observe(gui.shell_layout(), Instant::now());
                 let _ = layout_store.tick(&varos_app::storage::durable::RealFs, Instant::now());
                 agent_presence::retain(&ws, Instant::now());
                 recovery.observe(&mut ws, Instant::now());
+                if ws.sessions().iter().any(|s| s.recovery.in_flight.is_some()) {
+                    autosave_gate.invalidate();
+                }
+                let autosave_blocked = autosave_input_pending
+                    || canvas_gesture
+                    || gui.editing_field()
+                    || host::DocUi::bridge_preview_active(&gui)
+                    || !pending.is_empty();
+                recovery.observe_autosave(&mut ws, Instant::now(), autosave_blocked, &autosave_gate);
+                if !autosave_blocked && ws.sessions().iter().all(|s| !s.editor.transaction_open() && s.saving.is_none())
+                {
+                    if let Some(s) = ws.sessions_mut().iter_mut().find(|s| s.autosave.confirmation) {
+                        s.autosave.confirmation = false;
+                        pending.push(host::HostAction::App(AppCommand::AutosaveConfirmation));
+                    }
+                    if let Some(id) = autosave_host::pending_conflict(&mut ws) {
+                        pending.push(host::HostAction::App(AppCommand::AutosaveConflict(id)));
+                    }
+                }
                 let recovered = recovery.take_recovered();
                 if !recovered.is_empty() {
                     pending.extend(
@@ -1648,7 +1702,14 @@ fn main() {
                 // "Finishing save of “name”…" while a command waits for it; else "Saving “name”…" /
                 // "Exporting PDF…" only after 300 ms (no flicker) — plain text
                 let now = Instant::now();
-                let file_status = recovery.save_wait.status().unwrap_or_else(|| file_jobs::status_text(&ws, now));
+                let file_status = recovery.save_wait.status().unwrap_or_else(|| {
+                    let status = file_jobs::status_text(&ws, now);
+                    if status.is_empty() {
+                        ws.active().map(|s| s.autosave.status.clone()).unwrap_or_default()
+                    } else {
+                        status
+                    }
+                });
                 if gui.file_status != file_status {
                     gui.file_status = file_status;
                     redraw!("file-status");

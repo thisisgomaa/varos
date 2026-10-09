@@ -59,3 +59,18 @@
 - Necessary merge-only fixes: `varos/crates/varos-app/src/shortcuts/parity.rs` registers Print once; `ui/export/model.rs` fills PDF job options and source-board bleed; `file_jobs.rs` applies options to screen PDF exports; `os_clipboard.rs` propagates merged fallible core execution and keeps crash-safe UI dispatch; `varos/crates/varos-bridge/tests/phase1.rs` counts all opt-in tools.
 - Necessary cross-lane bleed reconciliation: `varos/crates/varos-pdf/src/export.rs` carries canonical document_setup edges alongside legacy scalar bleed; `src/options.rs` applies asymmetric Media/Bleed/Trim boxes and marks; `tests/export_pdf.rs` updates the page literal; `tests/options.rs` adds independent asymmetric geometry/mark assertions. Coincident-board and historic PDF fixtures retained.
 - Validation: cargo fmt --all; cargo build --offline -j 3 --workspace --all-targets PASS; cargo test --offline -j 3 -p <crate> '' PASS: core 484, Bridge 142, app 785, raster 18, CLI 31, PDF 103 (1563 passed, zero failed, 15 existing ignores). All 21 marker scans, report/PLAN retention and git diff --check PASS; logs /tmp/g1-pdfprint-*.log; existing unused-Result warnings remain. Deferred: none; no Git write commands, commits, GUI or installation.
+
+## feat/p1-autosave
+- `REPORT.md`: preserved both complete reports and every evidence/gate line.
+- `docs/PLAN.md`: preserved all existing progress rows and added slice 1.10.
+- `docs/foundation/GATE_LOG.md`: retained complete command/view and autosave histories.
+- `app_command.rs`: retained paste preference commands and all autosave commands, each once.
+- `file_jobs.rs`: united Template/Autosaved completion variants, quiet policy and exhaustive Bridge handling; kept publication fingerprints/export jobs.
+- `lifecycle.rs`: united host-owned commands, export/PDF/print dispatch and autosave confirmation/conflict paths; retained template and autosave completions/tests.
+- `main.rs`: retained GPU notices and window geometry persistence alongside edit-publication admission/invalidation; releases the permit before idle autosave submission.
+- `recovery_host.rs`: unified duplicate settings field, initialization and load assignment; one settings command/writer path handles recovery, paste and autosave, retaining all callers and scheduler resets.
+- `storage/mod.rs`: retained templates/window plus autosave/publication modules.
+- `storage/settings.rs`: one v2 settings schema/writer retains paste + recovery + autosave; migrates v1, validates intervals, preserves additive keys, refuses unsupported versions; retained both test sets and strengthened combined-field migration/round-trip coverage.
+- `ui/bar.rs`: retained command-menu helper and autosave status module/controls; no shortcut duplication.
+- Validation: `cargo fmt --all` and `cargo build --offline -j 3 --workspace --all-targets` PASS; `cargo test --offline -j 3 -p <crate> ''` PASS: app 806, core 484, Bridge 144; zero failures, 9 ignored; marker scan, documentation line-preservation check and `git diff --check` PASS. Logs: `/tmp/g1-p1-autosave-build-final.log`, `/tmp/g1-p1-autosave-{app,core,bridge}-tests.log`.
+- Deferred: none. Existing unused-Result warnings remain; canonical `painted_extent`/`geom/kurbo.rs`, NOTICE, shortcuts and Bridge verbs preserved. No Git writes, commit, push, installation or GUI actions; moderator owns staging/commit.

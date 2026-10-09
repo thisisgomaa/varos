@@ -16,6 +16,8 @@ mod unix {
     #[derive(Clone, Copy, Debug)]
     pub enum PinnedError {
         SaveConflict,
+        Superseded,
+        Busy,
         IoError,
         NetworkVolume,
     }
@@ -31,6 +33,8 @@ mod unix {
                     varos_bridge::Error::new("save_conflict", "destination exists or backing file changed")
                 }
                 Self::NetworkVolume => varos_bridge::Error::new("scope_refused", "network volume not supported"),
+                Self::Busy => varos_bridge::Error::new("busy", "publication lock busy"),
+                Self::Superseded => varos_bridge::Error::new("cancelled", "autosave superseded"),
                 Self::IoError => varos_bridge::Error::new("io_error", "file IO failed"),
             }
         }
@@ -42,6 +46,8 @@ mod unix {
         dest: PathBuf,
         expected: Option<Fingerprint>,
         fresh: bool,
+        permit: Option<varos_app::storage::publication::Permit>,
+        published: std::sync::Mutex<Option<Fingerprint>>,
     }
     fn name(s: &std::ffi::OsStr) -> io::Result<CString> {
         CString::new(s.as_bytes()).map_err(|_| io::Error::other("invalid filename"))
@@ -127,9 +133,40 @@ mod unix {
                 dest: dest.to_owned(),
                 expected: expected.cloned(),
                 fresh,
+                permit: None,
+                published: std::sync::Mutex::new(None),
             };
             pinned.check_destination()?;
             Ok(pinned)
+        }
+        pub fn with_permit(mut self, permit: varos_app::storage::publication::Permit) -> io::Result<Self> {
+            // Cooperative autosave hosts own the pinned directory until completion. Refuse unsupported coordination.
+            // SAFETY: valid descriptor; nonblocking flock never changes directory contents.
+            check(unsafe { libc::flock(self.dir.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) })?;
+            self.permit = Some(permit);
+            Ok(self)
+        }
+        pub fn published(&self) -> Option<Fingerprint> {
+            self.published.lock().ok().and_then(|p| *p)
+        }
+        fn file_fingerprint(f: File) -> io::Result<Fingerprint> {
+            use std::os::unix::fs::MetadataExt;
+            let m = f.metadata()?;
+            if !m.is_file() || m.nlink() != 1 || m.permissions().readonly() {
+                return Err(io::Error::other("unsafe destination"));
+            }
+            let hash = varos_app::storage::durable::hash_regular_file(f.try_clone()?)?;
+            let after = f.metadata()?;
+            if m.len() != after.len() || m.modified().ok() != after.modified().ok() {
+                return Err(io::Error::other("file changed while reading"));
+            }
+            Ok(Fingerprint {
+                len: m.len(),
+                modified: m.modified().ok(),
+                hash,
+                identity: Some((m.dev(), m.ino())),
+                parent_identity: None,
+            })
         }
         fn open_directory(parent: &Path) -> io::Result<File> {
             let root = CString::new("/").expect("literal");
@@ -180,11 +217,20 @@ mod unix {
             })
         }
         pub fn error(&self) -> varos_bridge::Error {
-            self.failure.lock().unwrap().unwrap_or(PinnedError::IoError).bridge()
+            self.failure.lock().ok().and_then(|error| *error).unwrap_or(PinnedError::IoError).bridge()
         }
         fn record(&self, error: PinnedError) -> io::Error {
-            *self.failure.lock().unwrap() = Some(error);
+            if let Ok(mut failure) = self.failure.lock() {
+                *failure = Some(error);
+            }
             io::Error::other("pinned publication refused")
+        }
+        fn fingerprint(&self, path: &Path) -> io::Result<Fingerprint> {
+            use std::os::unix::fs::MetadataExt;
+            let mut got = Self::file_fingerprint(self.open(path)?)?;
+            let parent = self.dir.metadata()?;
+            got.parent_identity = Some((parent.dev(), parent.ino()));
+            Ok(got)
         }
         fn check_destination(&self) -> Result<(), PinnedError> {
             match self.open(&self.dest) {
@@ -192,18 +238,14 @@ mod unix {
                 Ok(_) if self.fresh => Err(PinnedError::SaveConflict),
                 Ok(f) => {
                     let m = f.metadata()?;
-                    let got = Fingerprint { len: m.len(), modified: m.modified().ok() };
+                    let got = self.fingerprint(&self.dest).map_err(|_| PinnedError::SaveConflict)?;
                     if !m.is_file() || Some(&got) != self.expected.as_ref() {
                         Err(PinnedError::SaveConflict)
                     } else {
                         Ok(())
                     }
                 }
-                Err(e) => Err(if !self.fresh && e.kind() == io::ErrorKind::NotFound {
-                    PinnedError::SaveConflict
-                } else {
-                    e.into()
-                }),
+                Err(e) => Err(if !self.fresh { PinnedError::SaveConflict } else { e.into() }),
             }
         }
     }
@@ -225,8 +267,34 @@ mod unix {
             if to != self.dest {
                 return Err(io::Error::other("unexpected destination"));
             }
-            self.parent_unchanged()?;
+            // Hash the temp outside edit admission; preserve its identity as the completion baseline.
+            let baseline = Some(self.fingerprint(from)?);
             self.check_destination().map_err(|e| self.record(e))?;
+            let _publication = if let Some(p) = &self.permit {
+                let guard = p.gate.lock.try_lock().map_err(|_| self.record(PinnedError::Busy))?;
+                if !p.valid() {
+                    return Err(self.record(PinnedError::Superseded));
+                }
+                Some(guard)
+            } else {
+                None
+            };
+            self.parent_unchanged().map_err(|_| self.record(PinnedError::SaveConflict))?;
+            if let Some(expected) = &self.expected {
+                use std::os::unix::fs::MetadataExt;
+                let m = self
+                    .open(&self.dest)
+                    .and_then(|f| f.metadata())
+                    .map_err(|_| self.record(PinnedError::SaveConflict))?;
+                if expected.identity != Some((m.dev(), m.ino()))
+                    || expected.len != m.len()
+                    || expected.modified != m.modified().ok()
+                    || m.nlink() != 1
+                    || m.permissions().readonly()
+                {
+                    return Err(self.record(PinnedError::SaveConflict));
+                }
+            }
             let from = self.leaf(from)?;
             let to = self.leaf(to)?;
             if self.fresh {
@@ -258,6 +326,9 @@ mod unix {
                         PinnedError::IoError
                     })
                 })?;
+                if let Ok(mut published) = self.published.lock() {
+                    *published = baseline;
+                }
                 if renamed {
                     Ok(())
                 } else {
@@ -266,7 +337,13 @@ mod unix {
                 }
             } else {
                 // SAFETY: atomic replacement stays in the pinned directory.
-                check(unsafe { libc::renameat(self.dir.as_raw_fd(), from.as_ptr(), self.dir.as_raw_fd(), to.as_ptr()) })
+                check(unsafe {
+                    libc::renameat(self.dir.as_raw_fd(), from.as_ptr(), self.dir.as_raw_fd(), to.as_ptr())
+                })?;
+                if let Ok(mut published) = self.published.lock() {
+                    *published = baseline;
+                }
+                Ok(())
             }
         }
         fn sync_dir(&self, _: &Path) -> io::Result<()> {

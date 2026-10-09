@@ -1,5 +1,6 @@
 mod align;
 mod artboard;
+mod autosave;
 mod document;
 mod layers;
 mod properties;

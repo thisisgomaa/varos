@@ -843,14 +843,7 @@ pub(crate) fn build_statusbar(
             bar.min + egui::vec2(10.0, 0.0),
             egui::pos2((bar.right() - 240.0).max(bar.left() + 10.0), bar.bottom()),
         );
-        p.with_clip_rect(status_rect).text(
-            egui::pos2(status_rect.left(), cy),
-            Align2::LEFT_CENTER,
-            recovery_status,
-            f11.clone(),
-            MUTED,
-        );
-        ui.interact(status_rect, ui.id().with("recovery-status"), egui::Sense::hover()).on_hover_text(recovery_status);
+        status::hint(ui, status_rect, recovery_status);
         // right, laid right→left: zoom % · Fit · Artboard i/n (gap 14)
         let zr = egui::Rect::from_center_size(
             egui::pos2(bar.right() - STATUS_ZOOM_W * 0.5 - 10.0, cy),
@@ -982,3 +975,5 @@ fn command_rows(ui: &mut egui::Ui, id: SessionId, cmds: &mut Vec<AppCommand>) ->
     }
     hit
 }
+#[path = "status.rs"]
+mod status;
