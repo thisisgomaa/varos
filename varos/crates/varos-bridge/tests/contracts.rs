@@ -3113,7 +3113,7 @@ fn economy_schema_size_and_flat_roots() {
         assert!(tuple["prefixItems"].is_array());
         assert!(tuple.get("items").is_none());
     }
-    assert!(edit["description"].as_str().unwrap().contains("object operations"));
+    assert_eq!(edit["description"], "edit"); // Frozen legacy projection.
 }
 
 #[test]
@@ -3510,7 +3510,7 @@ fn phase_one_effects_are_opt_in_revision_pinned_and_idempotent_without_os_calls(
     let old = varos_bridge::mcp::tools();
     assert_eq!(old, varos_bridge::mcp::tools_for_api("1.1"));
     let new = varos_bridge::mcp::tools_for_api("1.2");
-    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 9);
+    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11);
 }
 
 #[test]
@@ -3568,7 +3568,8 @@ fn stroke_api_12_schemas_capabilities_and_limit_errors() {
     let schema = varos_bridge::mcp::tools_for("1.2");
     let edit = schema["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
     assert!(edit["inputSchema"]["$defs"]["set_paint"]["properties"]["stroke_style"].is_object());
-    assert_eq!(edit["inputSchema"]["$defs"]["set_stroke_style"]["properties"]["op"]["const"], "set_stroke_style");
+    let stroke = varos_bridge::mcp::schema("edit", Some("set_stroke_style")).unwrap();
+    assert_eq!(stroke["properties"]["op"]["const"], "set_stroke_style");
     assert_eq!(varos_bridge::mcp::tools_for("1.1"), varos_bridge::mcp::tools());
     let mut s = Service::new("test-epoch".into());
     let mut h = FakeHost::new();
@@ -3739,4 +3740,127 @@ fn trace_api12_preflights_expanded_targets_before_allocation() {
     assert!(error.op_index.is_some());
     assert_eq!(h.editor.doc, before);
     assert_eq!(h.editor.history_preview(false), undo.as_ref());
+}
+
+#[test]
+fn progressive_discovery_resolves_every_12_verb_without_mutation() {
+    fn check_refs(value: &Value, root: &Value) {
+        if let Some(reference) = value.get("$ref").and_then(Value::as_str) {
+            assert!(root.pointer(reference.strip_prefix('#').unwrap()).is_some(), "{reference}");
+        }
+        match value {
+            Value::Object(map) => {
+                for child in map.values() {
+                    check_refs(child, root);
+                }
+            }
+            Value::Array(array) => {
+                for child in array {
+                    check_refs(child, root);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut host = FakeHost::new();
+    let mut service = Service::new("test-epoch".into());
+    let before = host.editor.doc.clone();
+    let rev = host.editor.rev;
+    let caps = handle(&mut service, &mut host, req("capabilities", json!({"api":"1.2"}))).result.unwrap();
+    let index = handle(&mut service, &mut host, req("list_verbs", json!({"api":"1.2"})));
+    assert!(index.ok, "{index:?}");
+    let index = index.result.unwrap();
+    let mut names = std::collections::BTreeSet::new();
+    for group in index["groups"].as_array().unwrap() {
+        for verb in group["verbs"].as_array().unwrap() {
+            let name = verb["name"].as_str().unwrap();
+            assert!(!verb["description"].as_str().unwrap().is_empty());
+            assert!(!verb["description"].as_str().unwrap().contains('\n'));
+            if group["tool"] == "edit" {
+                assert!(names.insert(name.to_owned()), "duplicate {name}");
+                let reply =
+                    handle(&mut service, &mut host, req("schema", json!({"api":"1.2","tool":"edit","verb":name})));
+                assert!(reply.ok, "{name}: {reply:?}");
+                let params = reply.result.unwrap();
+                check_refs(&params, &params);
+                assert!(params.is_object());
+            } else {
+                assert!(varos_bridge::mcp::schema(name, None).is_ok(), "{name}");
+            }
+        }
+    }
+    for verb in caps["edit_verbs"].as_array().unwrap() {
+        assert!(names.contains(verb.as_str().unwrap()), "missing {verb}");
+    }
+    assert!(names.contains("repeat"));
+    assert_eq!(
+        varos_bridge::mcp::schema("edit", Some("stroke_style")).unwrap(),
+        varos_bridge::mcp::schema("edit", Some("set_stroke_style")).unwrap()
+    );
+    let table = varos_bridge::mcp::tools_for_api("1.2");
+    for row in table["tools"].as_array().unwrap() {
+        check_refs(&row["inputSchema"], &row["inputSchema"]);
+    }
+    for api in ["1.0", "1.1"] {
+        for tool in ["schema", "list_verbs"] {
+            let args =
+                if tool == "schema" { json!({"api":api,"tool":"edit","verb":"move"}) } else { json!({"api":api}) };
+            let reply = handle(&mut service, &mut host, req(tool, args));
+            assert_eq!(reply.error.unwrap().code, "unsupported");
+        }
+    }
+    for args in [
+        json!({"api":"1.2","tool":"edit","verb":"unknown"}),
+        json!({"api":"1.2","tool":"unknown"}),
+        json!({"api":"1.2","tool":"edit"}),
+        json!({"api":"1.2","tool":"select","verb":"move"}),
+    ] {
+        let reply = handle(&mut service, &mut host, req("schema", args));
+        assert_eq!(reply.error.unwrap().code, "invalid_argument");
+    }
+    assert!(varos_bridge::mcp::decode_tool("schema", json!({"api":"1.2","tool":"edit","verb":"move","extra":true}))
+        .is_err());
+    // Exercise both discovery tools through the real MCP framing and CLI decoder.
+    let transport = FakeTransport {
+        state: std::sync::Arc::new(std::sync::Mutex::new((Service::new("test-epoch".into()), FakeHost::new()))),
+        cancellations: Default::default(),
+    };
+    let (input_tx, input) = std::sync::mpsc::channel();
+    let (output, receive) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        varos_bridge::mcp::serve(
+            &mut std::io::BufReader::new(ChannelRead { rx: input, current: std::io::Cursor::new(vec![]) }),
+            ChannelWrite { tx: output, bytes: vec![] },
+            transport,
+        )
+        .unwrap();
+    });
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{},"capabilities":{}}}),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    ] {
+        let mut bytes = serde_json::to_vec(&msg).unwrap();
+        bytes.push(b'\n');
+        input_tx.send(bytes).unwrap();
+    }
+    receive.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    for (name, args) in
+        [("list_verbs", json!({"api":"1.2"})), ("schema", json!({"api":"1.2","tool":"edit","verb":"stroke_style"}))]
+    {
+        let envelope = json!({"tool":name,"arguments":args});
+        let cli = varos_bridge::cli::decode(&serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let expected = handle(&mut service, &mut host, cli);
+        assert!(expected.ok);
+        let msg = json!({"jsonrpc":"2.0","id":name,"method":"tools/call","params":{"name":name,"arguments":args}});
+        let mut bytes = serde_json::to_vec(&msg).unwrap();
+        bytes.push(b'\n');
+        input_tx.send(bytes).unwrap();
+        let result: Value =
+            serde_json::from_slice(&receive.recv_timeout(std::time::Duration::from_secs(3)).unwrap()).unwrap();
+        assert_eq!(result["result"], varos_bridge::mcp::tool_result(&expected));
+    }
+    drop(input_tx);
+    server.join().unwrap();
+    assert_eq!(host.editor.doc, before);
+    assert_eq!(host.editor.rev, rev);
 }

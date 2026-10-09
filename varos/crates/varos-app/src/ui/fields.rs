@@ -391,7 +391,7 @@ pub(crate) fn settle(
     *pending = None;
     apply_ops(ed, ops);
     if ed.select_transform.preview.is_some() {
-        ed.execute(varos_core::EditCommand::TransformCommit);
+        ed.execute_ui(varos_core::EditCommand::TransformCommit);
     }
     true
 }

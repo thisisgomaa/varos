@@ -28,7 +28,7 @@ impl Host for ImportHost {
         assert_eq!(request.path.as_deref(), Some("/allowed/art.svg"));
         self.calls += 1;
         let mut artwork = Editor::new();
-        artwork.execute(EditCommand::AddShape {
+        artwork.execute_ui(EditCommand::AddShape {
             kind: varos_core::model::ShapeKind::Rect,
             bounds: [0., 0., 20., 20.],
             parent: None,
@@ -38,7 +38,7 @@ impl Host for ImportHost {
             opacity: 1.,
             name: None,
         });
-        self.editor.execute(EditCommand::PlaceArtwork(Box::new(artwork.doc)));
+        self.editor.execute_ui(EditCommand::PlaceArtwork(Box::new(artwork.doc)));
         Ok(Reply::success(json!({"rev":self.editor.rev,"report":{"paths":1,"loss_notes":["Text omitted"]}})))
     }
 }
@@ -94,9 +94,9 @@ fn import_is_12_only_revision_pinned_and_idempotent() {
     assert_eq!(next_reply.undo_steps, 1);
     assert_eq!(host.calls, 2);
     assert_eq!(host.editor.doc.paths.len(), 2);
-    host.editor.execute(EditCommand::Undo);
+    host.editor.execute_ui(EditCommand::Undo);
     assert_eq!(host.editor.doc.paths.len(), 1);
-    host.editor.execute(EditCommand::Undo);
+    host.editor.execute_ui(EditCommand::Undo);
     assert!(host.editor.doc.paths.is_empty());
     let stale = varos_bridge::mcp::decode_tool(
         "import_svg",

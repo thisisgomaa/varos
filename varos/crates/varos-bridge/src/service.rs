@@ -373,6 +373,8 @@ impl Service {
             return Reply::failure(Error::new("unsupported", "import_svg requires API 1.2"));
         }
         if [
+            "schema",
+            "list_verbs",
             "print",
             "copy",
             "cut",
@@ -454,6 +456,8 @@ impl Service {
                 }
             }
             match req {
+                Request::Schema(v) => Ok(Reply::success(crate::mcp::schema(&v.tool, v.verb.as_deref())?)),
+                Request::ListVerbs(_) => Ok(Reply::success(crate::mcp::list_verbs())),
                 Request::WindowMemory(v) => {
                     if v.api != "1.2" {
                         return Err(Error::new("unsupported", "window_memory requires API 1.2"));
@@ -479,7 +483,7 @@ impl Service {
                             v["readable_vrs"] = json!([1, 2, 3, 4, 5]);
                             v["writable_vrs"] = json!([5]);
                             v["stroke_style_schema"] = crate::mcp::stroke_style_schema();
-                            let tools = crate::mcp::tools_for("1.2");
+                            let tools = crate::mcp::full_tools_for("1.2");
                             if let Some(edit) =
                                 tools["tools"].as_array().and_then(|tools| tools.iter().find(|t| t["name"] == "edit"))
                             {
@@ -547,13 +551,15 @@ impl Service {
                                         .map(|verb| json!(verb)),
                                 );
                             }
-                            v["economy_hint"] = json!("API 1.2 edit inherits 1.1 defaults, creation tuples, repeat, automatic names and IDs receipts; other tools retain the APIs listed in api_by_tool.");
+                            v["economy_hint"] = json!("API 1.2 tools/list publishes core schemas and a compact extended verb enum. Use list_verbs for grouped names and one-line descriptions; request schema {api:1.2,tool:edit,verb:NAME} for full params before an extended edit. Existing typed calls, defaults, tuples, repeat and IDs receipts are unchanged.");
                             v["trace"] = json!({"input":"RGBA8 array; alpha below 128 omitted","coordinates":"input pixels, y down","max_pixels":varos_core::trace::MAX_PIXELS,"max_anchors":varos_core::trace::MAX_ANCHORS,"grayscale_levels":8,"request_bytes":crate::MAX_FRAME});
                             v["api_by_tool"]["import_svg"] = json!(["1.2"]);
                             v["tools"].as_array_mut().unwrap().push(json!("import_svg"));
-                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"print":["1.2"],"copy":["1.2"],"cut":["1.2"],"other_tools":["1.0","1.1","1.2"],"import_svg":["1.2"]});
+                            v["api_by_tool"] = json!({"schema":["1.2"],"list_verbs":["1.2"],"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"print":["1.2"],"copy":["1.2"],"cut":["1.2"],"other_tools":["1.0","1.1","1.2"],"import_svg":["1.2"]});
                             if let Some(tools) = v["tools"].as_array_mut() {
                                 for name in [
+                                    "schema",
+                                    "list_verbs",
                                     "export_svg",
                                     "export_raster",
                                     "save_template",

@@ -108,8 +108,8 @@ fn wand_eyedropper_isolation_and_layer_verbs() {
     );
     assert!(r.ok, "{r:?}");
     assert_eq!(h.0.doc.paths[h.0.doc.pidx(a).unwrap()].opacity, 0.5);
-    h.0.execute(EditCommand::SelectPaths(vec![a, b]));
-    h.0.execute(EditCommand::GroupSelection);
+    h.0.execute(EditCommand::SelectPaths(vec![a, b])).expect("test selection succeeds");
+    h.0.execute(EditCommand::GroupSelection).expect("test grouping succeeds");
     let group = h.0.doc.top_group_of_path(a).unwrap();
     let r = call(
         &mut s,

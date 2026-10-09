@@ -106,7 +106,6 @@ pub(crate) enum Op {
     LayerMoveBoard(Vec<u32>, Option<usize>, usize), // cross-section drop: srcs, source board, target board
     Flip(bool),
     Align(AlignMode, AlignTarget), // A4: carries the target the align resolves against
-    Distribute(DistAxis),
     Pathfinder(varos_core::planar::PathfinderOp),
     DivideObjectsBelow,
     Bool(varos_core::boolean::BoolOp), // Pathfinder home + the Properties "Shape" mirror
@@ -349,7 +348,6 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::Align(mode, target) => ed.execute_ui(EditCommand::Align { mode, target }),
             Op::Bool(operation) => ed.execute_ui(EditCommand::Boolean(operation)),
             Op::AbActive(index) => ed.execute_ui(EditCommand::SetActiveArtboard(index)),
-            Op::Distribute(axis) => ed.execute_ui(EditCommand::Distribute(axis)),
             Op::Pathfinder(operation) => ed.execute_ui(EditCommand::Pathfinder(operation)),
             Op::DivideObjectsBelow => ed.execute_ui(EditCommand::DivideObjectsBelow),
             Op::AbRect(index, x, y, width, height) => {

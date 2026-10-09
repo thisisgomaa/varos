@@ -21,7 +21,7 @@ fn selected() -> Editor {
     let mut ed = Editor::new();
     let a = rect(&mut ed, 0.);
     let b = rect(&mut ed, 10.);
-    ed.execute(C::SelectPaths(vec![a, b]));
+    ed.execute_ui(C::SelectPaths(vec![a, b]));
     ed
 }
 fn shape(p: &varos_core::model::Path) -> Vec<Vec<[f64; 2]>> {
@@ -55,9 +55,9 @@ fn six_pathfinder_commands_undo_and_keep_appearance() {
             let want = if matches!(op, PathfinderOp::Crop | PathfinderOp::MinusBack) { 200. } else { 600. };
             assert!((area(&ed) - want).abs() < 0.001, "{op:?}");
         }
-        ed.execute(C::Undo);
+        ed.execute_ui(C::Undo);
         assert!(ed.doc.content_eq(&before));
-        ed.execute(C::Redo);
+        ed.execute_ui(C::Redo);
         assert_eq!(ed.rev, rev + 3);
     }
 }
@@ -73,7 +73,7 @@ fn shape_builder_merge_delete_and_fast_gesture() {
             assert_eq!(ed.doc.paths.len(), 1);
             assert!((area(&ed) - 600.).abs() < 0.001);
         }
-        ed.execute(C::Undo);
+        ed.execute_ui(C::Undo);
         assert!(ed.doc.content_eq(&before));
     }
     let mut ed = selected();
@@ -84,7 +84,7 @@ fn shape_builder_merge_delete_and_fast_gesture() {
     assert_eq!(highlight.len(), 3);
     ed.pointer_up();
     assert_eq!(ed.doc.paths.len(), 1);
-    ed.execute(C::Undo);
+    ed.execute_ui(C::Undo);
     assert_eq!(ed.doc.paths.len(), 2);
 }
 #[test]
@@ -109,17 +109,17 @@ fn scissors_circle_preserves_cubics_and_open_path_splits() {
     assert_eq!(p.anchors.len(), 6);
     assert_eq!(p.anchors[0].p, p.anchors[5].p);
     assert!(p.anchors.iter().any(|a| a.hout.is_some()));
-    ed.execute(C::Undo);
+    ed.execute_ui(C::Undo);
     assert!(ed.doc.content_eq(&before));
-    ed.execute(C::Scissors { path: pid, segment: 0, t: 0.5 });
-    ed.execute(C::Scissors { path: pid, segment: 2, t: 0.5 });
+    ed.execute_ui(C::Scissors { path: pid, segment: 0, t: 0.5 });
+    ed.execute_ui(C::Scissors { path: pid, segment: 2, t: 0.5 });
     assert_eq!(ed.doc.paths.len(), 2);
 }
 #[test]
 fn knife_freehand_partitions_fill_and_is_one_undo_step() {
     let mut ed = Editor::new();
     let pid = rect(&mut ed, 0.);
-    ed.execute(C::SelectPaths(vec![pid]));
+    ed.execute_ui(C::SelectPaths(vec![pid]));
     let before = ed.doc.clone();
     let rev = ed.rev;
     ed.set_tool(ToolKind::Knife);
@@ -130,22 +130,22 @@ fn knife_freehand_partitions_fill_and_is_one_undo_step() {
     assert_eq!(ed.doc.paths.len(), 2);
     assert!((area(&ed) - 400.).abs() < 0.001);
     assert_eq!(ed.rev, rev + 1);
-    ed.execute(C::Undo);
+    ed.execute_ui(C::Undo);
     assert!(ed.doc.content_eq(&before));
 }
 #[test]
 fn eraser_brush_subtracts_and_preserves_holes_undo() {
     let mut ed = Editor::new();
     let pid = rect(&mut ed, 0.);
-    ed.execute(C::SelectPaths(vec![pid]));
+    ed.execute_ui(C::SelectPaths(vec![pid]));
     let before = ed.doc.clone();
     ed.try_execute(C::Eraser { points: vec![[10., -2.], [10., 22.]], radius: 2. }).unwrap();
     assert_eq!(ed.doc.paths.len(), 2);
     assert!((area(&ed) - 320.).abs() < 0.01);
-    ed.execute(C::Undo);
+    ed.execute_ui(C::Undo);
     assert!(ed.doc.content_eq(&before));
-    ed.execute(C::SelectPaths(vec![pid]));
-    ed.execute(C::Eraser { points: vec![[10., 10.]], radius: 2. });
+    ed.execute_ui(C::SelectPaths(vec![pid]));
+    ed.execute_ui(C::Eraser { points: vec![[10., 10.]], radius: 2. });
     assert_eq!(ed.doc.paths[0].holes.len(), 1);
 }
 #[test]
@@ -153,11 +153,11 @@ fn divide_objects_below_keeps_lower_paint_consumes_cutter_and_skips_locked() {
     let mut ed = selected();
     let cutter = ed.doc.paths.last().unwrap().id;
     let before = ed.doc.clone();
-    ed.execute(C::SelectPaths(vec![cutter]));
+    ed.execute_ui(C::SelectPaths(vec![cutter]));
     ed.try_execute(C::DivideObjectsBelow).unwrap();
     assert_eq!(ed.doc.paths.len(), 2);
     assert!((area(&ed) - 400.).abs() < 0.001);
-    ed.execute(C::Undo);
+    ed.execute_ui(C::Undo);
     assert!(ed.doc.content_eq(&before));
 }
 #[test]
@@ -197,11 +197,11 @@ fn open_edges_split_faces_and_builder_keeps_the_cutting_path() {
             name: None,
         })
         .unwrap();
-    ed.execute(C::SelectPaths(vec![square, line]));
+    ed.execute_ui(C::SelectPaths(vec![square, line]));
     let fs = ed.construction_faces();
     assert_eq!(fs.len(), 2);
     assert!((fs.iter().map(|f| planar::area(&f.shape)).sum::<f64>() - 400.).abs() < 0.001);
-    ed.execute(C::ShapeBuilder { points: vec![[10., 5.]], delete: true });
+    ed.execute_ui(C::ShapeBuilder { points: vec![[10., 5.]], delete: true });
     assert_eq!(ed.doc.paths.len(), 2);
     assert!(ed.doc.pidx(line).is_some());
     assert!(
@@ -226,7 +226,7 @@ fn merge_discards_strokes_before_comparing_visible_paint() {
     let mut ed = selected();
     ed.doc.paths[0].stroke = varos_core::model::Paint::Solid([0., 0., 0., 1.]);
     ed.doc.paths[0].stroke_width = 5.;
-    ed.execute(C::Pathfinder(PathfinderOp::Merge));
+    ed.execute_ui(C::Pathfinder(PathfinderOp::Merge));
     assert_eq!(ed.doc.paths.len(), 1);
     assert_eq!(ed.doc.paths[0].stroke, varos_core::model::Paint::None);
     assert!((area(&ed) - 600.).abs() < 0.001);
@@ -237,9 +237,9 @@ fn divide_below_leaves_locked_lower_objects_and_cutter_when_no_editable_hits() {
     let cutter = ed.doc.paths[1].id;
     ed.doc.paths[0].locked = true;
     let before = ed.doc.clone();
-    ed.execute(C::SelectPaths(vec![cutter]));
+    ed.execute_ui(C::SelectPaths(vec![cutter]));
     let rev = ed.rev;
-    ed.execute(C::DivideObjectsBelow);
+    ed.execute_ui(C::DivideObjectsBelow);
     assert!(ed.doc.content_eq(&before));
     assert_eq!(ed.rev, rev);
 }
@@ -254,7 +254,7 @@ fn scissors_refuses_compound_cut_without_changing_hole_coverage_or_undo() {
     let contains = |ed: &Editor| planar::faces(&[shape(&ed.doc.paths[0])]).iter().any(|f| f.contains([5., 5.]));
     assert!(!contains(&ed));
     assert!(ed.try_execute(C::Scissors { path: pid, segment: 0, t: 0.5 }).is_err());
-    ed.execute(C::Scissors { path: pid, segment: 0, t: 0.5 });
+    ed.execute_ui(C::Scissors { path: pid, segment: 0, t: 0.5 });
     assert!(!contains(&ed));
     assert!(ed.doc.content_eq(&before));
     assert_eq!(ed.rev, rev);
@@ -272,7 +272,7 @@ fn alt_builder_drag_deletes_one_face_as_one_edit() {
     ed.pointer_up();
     assert_eq!(ed.rev, rev + 1);
     assert!((area(&ed) - 400.).abs() < 0.001);
-    ed.execute(C::Undo);
+    ed.execute_ui(C::Undo);
     assert!(ed.doc.content_eq(&before));
 }
 
@@ -320,8 +320,8 @@ fn builder_retains_distant_cubic_path_and_selection_verbatim() {
         .unwrap();
     let original = ed.doc.paths[ed.doc.pidx(ellipse).unwrap()].clone();
     let ids = ed.doc.paths.iter().map(|p| p.id).collect();
-    ed.execute(C::SelectPaths(ids));
-    ed.execute(C::ShapeBuilder { points: vec![[5., 5.]], delete: true });
+    ed.execute_ui(C::SelectPaths(ids));
+    ed.execute_ui(C::ShapeBuilder { points: vec![[5., 5.]], delete: true });
     assert_eq!(ed.doc.paths[ed.doc.pidx(ellipse).unwrap()], original);
     assert!(ed.objsel.contains(&ellipse));
 }
@@ -329,15 +329,15 @@ fn builder_retains_distant_cubic_path_and_selection_verbatim() {
 fn builder_isolated_merge_is_noop_including_ids_revision_and_undo() {
     let mut ed = Editor::new();
     let pid = rect(&mut ed, 0.);
-    ed.execute(C::SelectPaths(vec![pid]));
+    ed.execute_ui(C::SelectPaths(vec![pid]));
     let before = ed.doc.clone();
     let rev = ed.rev;
-    ed.execute(C::ShapeBuilder { points: vec![[5., 5.]], delete: false });
+    ed.execute_ui(C::ShapeBuilder { points: vec![[5., 5.]], delete: false });
     assert!(ed.doc.content_eq(&before));
 
     assert_eq!(ed.rev, rev);
     assert_eq!(ed.doc.ids, before.ids);
-    ed.execute(C::Undo);
+    ed.execute_ui(C::Undo);
     assert!(ed.doc.paths.is_empty(), "undo must undo AddShape, with no intermediate no-op");
 }
 #[test]
@@ -355,7 +355,7 @@ fn construction_replacements_reject_mask_sources_atomically() {
         let mask = ed.doc.node_mask_child(group);
         let before = ed.doc.clone();
         let rev = ed.rev;
-        ed.execute(command);
+        ed.execute_ui(command);
         assert!(ed.doc.content_eq(&before));
         assert_eq!(ed.doc.node_mask_child(group), mask);
         assert_eq!(ed.rev, rev);

@@ -48,9 +48,14 @@ fn bridge_ratchet_counts_schema_compaction_and_expansion_calls() {
 
 #[test]
 fn tools_list_size_ratchet_all_api_versions() {
+    // Economy samples at a00dd9d: legacy 23,152 B; combined 1.2 32,172 B.
+    // Progressive disclosure sample: 1.2 22,759 B; ceiling remains 24,000 B.
     for api in ["1.0", "1.1", "1.2"] {
         let bytes = serde_json::to_vec(&varos_bridge::mcp::tools_for_api(api)).expect("serialize tools/list").len();
         println!("API {api} tools/list: {bytes} B");
+        if api != "1.2" {
+            assert_eq!(bytes, 23_152, "legacy schema size is frozen");
+        }
         assert!(bytes <= 24_000, "API {api} tools/list grew to {bytes} B");
     }
 }

@@ -11,6 +11,8 @@ fn page() -> usize {
 #[serde(tag = "tool", content = "arguments", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Capabilities(Capabilities),
+    Schema(Schema),
+    ListVerbs(Capabilities),
     WindowMemory(Capabilities),
     ListBoards(ListBoards),
     Describe(Describe),
@@ -31,6 +33,14 @@ pub enum Request {
     Print(FileEffect),
     Copy(FileEffect),
     Cut(FileEffect),
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Schema {
+    pub api: String,
+    pub tool: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verb: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -789,6 +799,8 @@ impl Request {
     /// Wire tool name (for audit records; never carries arguments).
     pub fn tool(&self) -> &'static str {
         match self {
+            Self::Schema(_) => "schema",
+            Self::ListVerbs(_) => "list_verbs",
             Self::Capabilities(_) => "capabilities",
             Self::WindowMemory(_) => "window_memory",
             Self::ListBoards(_) => "list_boards",
@@ -813,7 +825,8 @@ impl Request {
     }
     pub fn api(&self) -> &str {
         match self {
-            Self::Capabilities(v) | Self::WindowMemory(v) => &v.api,
+            Self::Capabilities(v) | Self::WindowMemory(v) | Self::ListVerbs(v) => &v.api,
+            Self::Schema(v) => &v.api,
             Self::ListBoards(v) => &v.api,
             Self::Describe(v) => &v.api,
             Self::Select(v) => &v.api,
