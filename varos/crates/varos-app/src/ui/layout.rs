@@ -5,7 +5,7 @@ use varos_app::storage::layout::Layout;
 impl Ui {
     /// Is the modeless colour panel open? Canvas shortcuts remain available.
     pub fn picker_open(&self) -> bool {
-        self.picker_layout.open
+        self.color_panel.is_some()
     }
     pub fn picker_owns_escape(&self) -> bool {
         picker_owns_escape(&self.ctx, self.color_panel.is_some())
@@ -74,7 +74,8 @@ impl Ui {
 }
 
 pub(super) fn picker_owns_escape(ctx: &egui::Context, open: bool) -> bool {
-    open && (varos_app::shell::kit::menu_open(ctx)
+    open && (ctx.data(|d| d.get_temp::<bool>(egui::Id::new("picker-mini")).unwrap_or(false))
+        || varos_app::shell::kit::menu_open(ctx)
         || varos_app::shell::kit::field::any_open(ctx)
         || ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| {
             ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new("picker-panel-rect"))).is_some_and(|r| r.contains(p))

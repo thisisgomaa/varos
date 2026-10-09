@@ -98,23 +98,32 @@ fn marker(p: &egui::Painter, c: egui::Pos2, r: f32, color: Color32) {
     p.circle_stroke(c, r, Stroke::new(t::PICKER_MARKER_STROKE, t::PICKER_WHITE));
 }
 pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, ops: &mut Vec<Op>) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(t::PICKER_W, t::PICKER_BODY_H), egui::Sense::hover());
+    let (width, height, ring_r, triangle_r, center) = if m.mini() {
+        (
+            t::PICKER_MINI_W,
+            t::PICKER_MINI_BODY_H,
+            t::PICKER_MINI_RING_R,
+            t::PICKER_MINI_TRIANGLE_R,
+            t::PICKER_MINI_CENTER,
+        )
+    } else {
+        (t::PICKER_W, t::PICKER_BODY_H, t::PICKER_RING_R, t::PICKER_TRIANGLE_R, t::PICKER_RING_CENTER)
+    };
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     #[cfg(test)]
     super::super::fields::tests::probe("picker wheel", rect);
-    let c = rect.min + egui::vec2(t::PICKER_RING_CENTER[0], t::PICKER_RING_CENTER[1]);
+    let c = rect.min + egui::vec2(center[0], center[1]);
     let hit = ui.interact(
-        egui::Rect::from_center_size(c, egui::Vec2::splat(t::PICKER_RING_R * 2.0)),
+        egui::Rect::from_center_size(c, egui::Vec2::splat(ring_r * 2.0)),
         ui.id().with("wheel"),
         if kit::field::blocked(ui.ctx()) { egui::Sense::hover() } else { egui::Sense::click_and_drag() },
     );
     let pos = hit.interact_pointer_pos();
     if (hit.is_pointer_button_down_on() || hit.clicked()) && m.gesture.is_none() {
         if let Some(p) = pos {
-            if ring_hit(c, p, t::PICKER_RING_R, t::PICKER_RING_BAND) {
+            if ring_hit(c, p, ring_r, t::PICKER_RING_BAND) {
                 m.start(Gesture::Ring, ops);
-            } else if barycentric(egui::Pos2::ZERO + (p - c), vertices(m.hsva[0], t::PICKER_TRIANGLE_R))
-                .iter()
-                .all(|w| *w >= 0.0)
+            } else if barycentric(egui::Pos2::ZERO + (p - c), vertices(m.hsva[0], triangle_r)).iter().all(|w| *w >= 0.0)
             {
                 m.start(Gesture::Triangle, ops);
             }
@@ -130,7 +139,7 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, ops: &mut Ve
                 }
                 Some(Gesture::Triangle) => {
                     m.channel_state = None;
-                    let [s, v] = pos_sv(m.hsva[0], t::PICKER_TRIANGLE_R, egui::Pos2::ZERO + (p - c));
+                    let [s, v] = pos_sv(m.hsva[0], triangle_r, egui::Pos2::ZERO + (p - c));
                     m.hsva[1] = s;
                     m.hsva[2] = v;
                     m.change_requested = true;
@@ -139,22 +148,35 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, ops: &mut Ve
             }
         }
     }
-    ui.painter().add(egui::Shape::mesh(translated(m.cache.ring(t::PICKER_RING_R), c)));
-    ui.painter().add(egui::Shape::mesh(translated(m.cache.triangle(m.hsva[0], t::PICKER_TRIANGLE_R), c)));
+    ui.painter().add(egui::Shape::mesh(translated(m.cache.ring(ring_r), c)));
+    ui.painter().add(egui::Shape::mesh(translated(m.cache.triangle(m.hsva[0], triangle_r), c)));
+    if m.tab == Tab::Harmony && !m.mini() {
+        for [h, s, v] in harmony_rules::linked(m.harmony, [m.hsva[0], m.hsva[1], m.hsva[2]]).into_iter().skip(1) {
+            marker(
+                ui.painter(),
+                ring_pos(c, ring_r - t::PICKER_RING_BAND / 2.0, h),
+                t::PICKER_TRI_MARKER,
+                hsv_c32(h, s, v),
+            );
+        }
+    }
     let color = hsv_c32(m.hsva[0], m.hsva[1], m.hsva[2]);
     marker(
         ui.painter(),
-        ring_pos(c, t::PICKER_RING_R - t::PICKER_RING_BAND / 2.0, m.hsva[0]),
+        ring_pos(c, ring_r - t::PICKER_RING_BAND / 2.0, m.hsva[0]),
         t::PICKER_RING_MARKER,
         hsv_c32(m.hsva[0], 1.0, 1.0),
     );
     marker(
         ui.painter(),
-        c + sv_pos(m.hsva[0], t::PICKER_TRIANGLE_R, m.hsva[1], m.hsva[2]).to_vec2(),
+        c + sv_pos(m.hsva[0], triangle_r, m.hsva[1], m.hsva[2]).to_vec2(),
         t::PICKER_TRI_MARKER,
         color,
     );
     hit.on_hover_text("Hue ring / saturation and brightness triangle");
+    if m.mini() {
+        return;
+    }
     let default = egui::Rect::from_min_size(
         rect.min + egui::vec2(t::PICKER_DEFAULT_POS[0], t::PICKER_DEFAULT_POS[1]),
         egui::vec2(t::PICKER_DEFAULT_SIZE * 2.0, t::PICKER_DEFAULT_SIZE),

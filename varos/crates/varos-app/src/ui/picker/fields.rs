@@ -27,7 +27,18 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, ops: &mut Vec<Op>, wit
         if !with_hex {
             kit::text(ui, "A", t::mono(), t::MUTED);
         }
-        alpha(ui, m, ops, if with_hex { t::PICKER_ALPHA_W } else { t::PICKER_SLIDER_W + t::PICKER_ALPHA_KNOB * 2.0 });
+        alpha(
+            ui,
+            m,
+            ops,
+            if m.mini() {
+                t::PICKER_MINI_ALPHA_W
+            } else if with_hex {
+                t::PICKER_ALPHA_W
+            } else {
+                t::PICKER_SLIDER_W + t::PICKER_ALPHA_KNOB * 2.0
+            },
+        );
     });
 }
 pub(super) fn hex(ui: &mut egui::Ui, m: &mut ColorPanel, ops: &mut Vec<Op>) {
@@ -95,6 +106,27 @@ pub(super) fn alpha(ui: &mut egui::Ui, m: &mut ColorPanel, ops: &mut Vec<Op>, wi
     let knob = egui::pos2(track.left() + m.hsva[3] * track.width(), track.center().y);
     ui.painter().circle(knob, t::PICKER_ALPHA_KNOB, t::PICKER_WHITE, Stroke::new(t::KIT_STROKE, t::PICKER_BLACK));
     response.on_hover_text("Alpha");
+    if m.mini() {
+        if kit::icon_button_sized(
+            ui,
+            ui.id().with("mini-eye"),
+            Icon::Pipette,
+            "Eyedropper (I)",
+            kit::IconState::Toggle(m.eyedropping),
+            egui::vec2(t::PICKER_TAB_W, t::PICKER_TAB_H),
+            t::PICKER_GLYPH,
+        )
+        .activated
+            && !kf::blocked(ui.ctx())
+        {
+            if m.eyedropping {
+                m.finish(ops);
+            } else {
+                m.arm();
+            }
+        }
+        return;
+    }
     let shown = format!("{:.0}%", m.hsva[3] * 100.0);
     let (r, _) = ui.allocate_exact_size(egui::vec2(t::PICKER_PERCENT_W, t::FIELD_H), egui::Sense::hover());
     #[cfg(test)]

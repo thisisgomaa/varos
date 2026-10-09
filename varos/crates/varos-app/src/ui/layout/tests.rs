@@ -85,6 +85,7 @@ fn picker_layout_restores_open_relative_position_and_drawer_without_document_edi
             drawer_open: true,
             drawer_tab: 2,
             mode: Default::default(),
+            harmony: Default::default(),
         },
         ..Default::default()
     };

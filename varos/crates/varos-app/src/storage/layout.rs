@@ -20,6 +20,7 @@ pub struct PickerLayout {
     pub drawer_open: bool,
     pub drawer_tab: u8,
     pub mode: PickerMode,
+    pub harmony: HarmonyRule,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +32,20 @@ pub enum PickerMode {
     Cmyk,
     Lab,
     Web,
+}
+
+/// Original modal hue rules; Shades uses the original brightness progression.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HarmonyRule {
+    #[default]
+    Complementary,
+    Analogous,
+    Split,
+    Triadic,
+    Tetradic,
+    Square,
+    Mono,
+    Shades,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

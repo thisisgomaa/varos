@@ -27,6 +27,9 @@ pub(crate) fn probed_rect(name: &str, index: usize) -> egui::Rect {
         .unwrap_or_else(|| panic!("field {name:?} #{index} was not laid out"))
 }
 
+pub(crate) fn probe_count(name: &str) -> usize {
+    PROBE.with(|p| p.borrow().iter().filter(|(field, _)| field == name).count())
+}
 pub(crate) fn clear_probes() {
     PROBE.with(|p| p.borrow_mut().clear());
 }
