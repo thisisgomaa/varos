@@ -858,12 +858,49 @@ fn artboard_target_survives_reorder_and_missing_id_cancels_without_step() {
 #[test]
 fn cluster_square_corner_hits_visible_stroke_ring() {
     let mut r = Rig::new(selected(false));
-    // Inside Fill's square, outside its circle, and on the visible Stroke ring.
-    let at = egui::pos2(499., 321.);
+    // Inside Fill's bounding square (so Fill's interact rect can win the egui click), outside its
+    // circle, and on the visible Stroke ring — derived from the tokens so a radius change keeps the
+    // case meaningful. Panel origin in this rig = (300, 116).
+    let local = egui::vec2(
+        t::PICKER_FILL_CENTER[0] - t::PICKER_FILL_R + 10.0,
+        t::PICKER_FILL_CENTER[1] - t::PICKER_FILL_R + 1.0,
+    );
+    let fc = egui::pos2(t::PICKER_FILL_CENTER[0], t::PICKER_FILL_CENTER[1]);
+    let sc = egui::pos2(t::PICKER_STROKE_CENTER[0], t::PICKER_STROKE_CENTER[1]);
+    let lp = egui::pos2(local.x, local.y);
+    assert!(lp.distance(fc) > t::PICKER_FILL_R, "outside the fill circle");
+    assert!((t::PICKER_STROKE_R - t::PICKER_STROKE_BAND..=t::PICKER_STROKE_R).contains(&lp.distance(sc)));
+    let at = egui::pos2(300., 116.) + local;
     r.frame(pointer(at, true), None);
     r.frame(pointer(at, false), None);
     assert!(r.panel.as_ref().unwrap().target == MTarget::Paint(PaintTarget::Stroke));
     assert_eq!(r.ed.rev, 0);
+}
+#[test]
+fn cluster_overlap_resolves_to_the_front_target_and_front_follows_focus() {
+    use super::cluster::{cluster_front, cluster_target};
+    let origin = egui::pos2(0., 0.);
+    // A point on the stroke ring that also lies inside the fill circle (the overlap).
+    let sc = egui::pos2(t::PICKER_STROKE_CENTER[0], t::PICKER_STROKE_CENTER[1]);
+    let fc = egui::pos2(t::PICKER_FILL_CENTER[0], t::PICKER_FILL_CENTER[1]);
+    let dir = (fc - sc).normalized();
+    let overlap = sc + dir * (t::PICKER_STROKE_R - t::PICKER_STROKE_BAND / 2.0);
+    assert!(overlap.distance(fc) <= t::PICKER_FILL_R, "test point must be inside the fill circle");
+    assert!(cluster_target(origin, overlap, PaintTarget::Fill) == Some(PaintTarget::Fill));
+    assert!(cluster_target(origin, overlap, PaintTarget::Stroke) == Some(PaintTarget::Stroke));
+    // Outside the overlap the owner is unambiguous whatever is in front.
+    assert!(cluster_target(origin, fc, PaintTarget::Stroke) == Some(PaintTarget::Fill));
+    let ring_only = sc + egui::vec2(-(t::PICKER_STROKE_R - 2.0), 0.0);
+    assert!(cluster_target(origin, ring_only, PaintTarget::Fill) == Some(PaintTarget::Stroke));
+    assert!(cluster_target(origin, sc, PaintTarget::Stroke).is_none());
+    // The front target is the focused paint target; page-colour editing shows Fill in front.
+    let mut r = Rig::new(selected(false));
+    r.frame(vec![], None);
+    let m = r.panel.as_mut().unwrap();
+    m.target = MTarget::Paint(PaintTarget::Stroke);
+    assert!(cluster_front(m) == PaintTarget::Stroke);
+    m.target = MTarget::Paint(PaintTarget::Fill);
+    assert!(cluster_front(m) == PaintTarget::Fill);
 }
 #[test]
 fn sliders_drag_tap_mixed_unchanged_and_value_arrows_follow_k3() {
