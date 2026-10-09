@@ -179,6 +179,7 @@ pub fn plan_selection_export(
             p.hidden = true;
         }
     }
+    varos_core::images::hide_unselected(&mut narrowed, selected);
     // the page reaches as far as the selection PAINTS: the outline grown by the shared painted extent
     // (`varos_core::geom::painted_padding` — the one rule cull and hit-test use too)
     let page = bounds_page(&narrowed, Reach::Painted).ok_or(ExportUnavailable::NothingToExport)?;
@@ -285,6 +286,14 @@ fn bounds_page(doc: &Document, reach: Reach) -> Option<PageSpec> {
         y0 = y0.min(b[1]);
         x1 = x1.max(b[2]);
         y1 = y1.max(b[3]);
+    }
+    for i in &doc.images {
+        if let Some(b) = varos_core::images::visible_bounds(doc, i) {
+            x0 = x0.min(b.0);
+            y0 = y0.min(b.1);
+            x1 = x1.max(b.2);
+            y1 = y1.max(b.3);
+        }
     }
     if x0 > x1 || y0 > y1 {
         return None;

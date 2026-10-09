@@ -22,7 +22,22 @@ fn bound(kind: LimitKind, found: usize, max: usize) -> Result<(), LoadError> {
 }
 
 pub fn load_vrs_checked(path: &Path, limits: &Limits) -> Result<Loaded, LoadError> {
-    load_vrs_bytes(&read_bounded(path, limits)?, limits)
+    let mut loaded = load_vrs_bytes(&read_bounded(path, limits)?, limits)?;
+    loaded.blobs.document_dir = path.parent().map(Path::to_path_buf);
+    for image in &loaded.doc.images {
+        if image.placement == varos_core::images::PlacementMode::Link {
+            if let Ok(source) = varos_core::images::links::resolve(image, path.parent(), None) {
+                if let Ok(bytes) = varos_core::images::links::read_original(&source) {
+                    if let Ok(decoded) = varos_core::images::codec::decode(&bytes) {
+                        if loaded.doc.assets.contains(&decoded.blob.meta) {
+                            let _ = loaded.blobs.insert(decoded.blob);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(loaded)
 }
 pub fn load_vrs_bytes(bytes: &[u8], limits: &Limits) -> Result<Loaded, LoadError> {
     if bytes.len() as u64 > limits.max_file_bytes {
@@ -53,7 +68,7 @@ pub fn load_vrs_bytes(bytes: &[u8], limits: &Limits) -> Result<Loaded, LoadError
     bound(LimitKind::DecodedStreams, stream.content.len(), limits.max_decoded_stream_bytes)?;
     // ---- w2-images ----
     let mut loaded = decode_model(&stream.content, version, limits)?;
-    crate::images::load_assets(&pdf,catalog,&mut loaded,limits)?;
+    crate::images::load_assets(&pdf, catalog, &mut loaded, limits)?;
     Ok(loaded)
 }
 

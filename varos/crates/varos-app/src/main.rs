@@ -62,8 +62,10 @@ mod single_instance;
 mod svg_import;
 mod template_jobs;
 // ---- w2-images ----
-mod image_jobs;
 mod image_io;
+mod image_jobs;
+mod image_ui;
+mod image_workflows;
 mod thumbs;
 mod ui;
 mod workspace;
@@ -760,7 +762,7 @@ fn dispatch(
             }
             if let Some(s) = ws.get(id) {
                 let (scope, options) = crate::export_ui::print_settings(id);
-                match print_job::build(&s.editor.doc, scope.unwrap_or_else(|| varos_pdf::default_scope(&s.editor.doc)), &options, &std::env::temp_dir(), file_jobs::next_ticket()).and_then(print_job::hand_off) {
+                match print_job::build_with_images(&s.editor.doc, &s.editor.blobs, scope.unwrap_or_else(|| varos_pdf::default_scope(&s.editor.doc)), &options, &std::env::temp_dir(), file_jobs::next_ticket()).and_then(print_job::hand_off) {
                     Ok(()) => dialogs.notice("Print", "The PDF opened in Preview. Choose File ▸ Print… there. The temporary PDF remains available for reprinting."),
                     Err(reason) => dialogs.notice("Print", &reason),
                 }
@@ -904,6 +906,27 @@ fn run_action(
                 return host::Ran::default();
             }
             if let Some(s) = ws.active_mut() {
+                // ---- w2-images ----
+                if matches!(a,host::DocAction::Key(KeyCode::KeyV,m) if m.ctrl) {
+                    if !ui.settle_fields(&mut s.editor) {
+                        return host::Ran { held: true, ..Default::default() };
+                    }
+                    match os_clipboard::bitmap_bytes() {
+                        Ok(Some(bytes)) => {
+                            let cmd = AppCommand::PasteBitmap {
+                                sid: s.id,
+                                bytes,
+                                at: s.view.s2w([canvas.center().x, canvas.center().y]),
+                            };
+                            return host::run_command(cmd, ws, ui, dialogs, store, keys, jobs);
+                        }
+                        Err(reason) => {
+                            dialogs.notice("Bitmap paste", &reason);
+                            return host::Ran::default();
+                        }
+                        Ok(None) => {}
+                    }
+                }
                 if !run_doc(a, &mut s.editor, &mut s.view, canvas, ui) {
                     return host::Ran { held: true, ..host::Ran::default() }; // K3: an invalid field holds it
                 }
@@ -989,7 +1012,9 @@ fn raise_doc(
     canvas: egui::Rect,
     ui: &mut dyn host::DocUi,
 ) {
-    if !(pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
+    if matches!(a,host::DocAction::Key(KeyCode::KeyV,m) if m.ctrl)
+        || !(pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui))
+    {
         pending.push(host::HostAction::Doc(a));
     }
 }
@@ -1791,6 +1816,16 @@ fn main() {
                     }
                     _ => {}
                 }
+                // ---- w2-images: Finder drop uses the bounded Place worker ----
+                if let WindowEvent::DroppedFile(path) = &event {
+                    if let Some(s) = ws.active_mut() {
+                        pending.push(host::HostAction::App(AppCommand::PlaceImage {
+                            sid: s.id,
+                            path: path.clone(),
+                            options: Default::default(),
+                        }));
+                    }
+                }
                 if let WindowEvent::Focused(false) = &event {
                     panning = false;
                     zoom_drag = None;
@@ -1846,7 +1881,7 @@ fn main() {
                     // re-check the current Recent list in the background; answers arrive via AboutToWait
                     probe.refresh(&store.recent_paths());
                 }
-                let over_panel = home || gui.wants_pointer();
+                let over_panel = home || gui.wants_pointer() || gui.image_sheet_open();
                 let Some(s) = ws.active_mut() else { return };
                 #[cfg(target_os = "macos")] // the File ▸ Revert row's state (slice 0.6), read before the frame
                 let can_revert = lifecycle::can_revert(s);

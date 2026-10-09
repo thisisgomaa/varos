@@ -49,6 +49,7 @@ pub fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Optio
         (KeyCode::KeyE, false, true) => FileCmd::Export,
         (KeyCode::KeyW, false, false) => FileCmd::CloseTab,
         (KeyCode::KeyW, false, true) => FileCmd::CloseAll,
+        (KeyCode::KeyP, true, false) => FileCmd::Place,
         (KeyCode::KeyP, false, true) => FileCmd::DocumentSetup,
         (KeyCode::KeyP, false, false) => FileCmd::Print,
         (KeyCode::KeyQ, false, false) => FileCmd::Quit,
@@ -79,6 +80,8 @@ pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppComm
         FileCmd::SaveTemplate => AppCommand::SaveTemplate(active?),
         FileCmd::NewTemplate => AppCommand::NewTemplate,
         FileCmd::Open => AppCommand::OpenDialog,
+        FileCmd::Place => AppCommand::PlaceDialog(active?),
+        FileCmd::Package => AppCommand::ImageWorkflow(active?, crate::image_workflows::Action::Package),
         FileCmd::PlaceSvg => AppCommand::PlaceSvg(active?),
         FileCmd::Save => AppCommand::Save(active?),
         FileCmd::SaveAs => AppCommand::SaveAs(active?),
@@ -411,6 +414,7 @@ pub enum MenuRoute {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> {
     Some(match cmd {
+        MenuCmd::ImageSheet(kind) => MenuRoute::App(AppCommand::ImageSheet(active?, kind)),
         MenuCmd::Slice4a(name) => MenuRoute::Slice4a(name),
         MenuCmd::View(s) => MenuRoute::App(AppCommand::View(active?, s)),
         MenuCmd::TogglePasteRemembersLayers => MenuRoute::App(AppCommand::TogglePasteRemembersLayers),
@@ -470,6 +474,9 @@ pub fn route_left_release(pressed_on_canvas: bool, panning: bool, over_panel: bo
 
 /// The Ui side of a lifecycle command (the real `ui::Ui`; a recorder in tests).
 pub trait DocUi {
+    fn image_sheet(&mut self, _sid: SessionId, _kind: crate::image_ui::SheetKind) -> bool {
+        false
+    }
     fn queue_app_command(&mut self, _cmd: AppCommand) -> bool {
         false
     }
@@ -545,6 +552,18 @@ pub fn run_lifecycle(
     jobs: Option<&mut Vec<FileJob>>,
 ) -> Ran {
     debug_assert!(!matches!(cmd, AppCommand::Window(_)), "window commands are the host's");
+    match &cmd {
+        AppCommand::PlaceDialog(sid) => {
+            if ui.image_sheet(*sid, crate::image_ui::SheetKind::Place) {
+                return Ran::default();
+            }
+        }
+        AppCommand::ImageSheet(sid, kind) => {
+            ui.image_sheet(*sid, *kind);
+            return Ran::default();
+        }
+        _ => {}
+    }
     if ws.on_home()
         && matches!(
             cmd,
@@ -1145,7 +1164,7 @@ mod tests {
         ed.pointer_down([0.0, 0.0]);
         ed.pointer_move([80.0, 60.0]);
         let copy = crate::workspace::RecoveredDocument {
-            blobs:Default::default(),
+            blobs: Default::default(),
             doc: Document::default(),
             rid: "claim".into(),
             source: crate::workspace::RecoveredSource {
@@ -1783,6 +1802,7 @@ mod background_tests {
         };
         let done = || {
             let job = ExportJob {
+                blobs: Default::default(),
                 pdf_options: Default::default(),
                 sid: a,
                 dest: PathBuf::from("/out/a.pdf"),

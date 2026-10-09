@@ -3,7 +3,7 @@
 
 use crate::geom::*;
 // ---- w2-images ----
-use crate::images::{ImageObject,AssetMeta};
+use crate::images::{AssetMeta, ImageObject};
 pub use crate::stroke::{ArrowAlign, ArrowHead, StrokeAlign, StrokeArrows, StrokeCap, StrokeJoin, StrokeStyle};
 use crate::units::DocUnits;
 use serde::{Deserialize, Serialize};
@@ -603,7 +603,10 @@ pub struct Document {
     pub images: Vec<ImageObject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<AssetMeta>,
-    #[serde(default = "crate::images::default_effects_ppi", skip_serializing_if = "crate::images::is_default_effects_ppi")]
+    #[serde(
+        default = "crate::images::default_effects_ppi",
+        skip_serializing_if = "crate::images::is_default_effects_ppi"
+    )]
     pub raster_effects_ppi: f32,
     pub paths: Vec<Path>,
     /// LEGACY registry (pre-tree files). Deserialized for compatibility, converted by
@@ -1330,7 +1333,9 @@ impl Document {
     /// Effective visibility: the path's own flag OR any ancestor container's (the panel eye cascade).
     pub fn eff_hidden(&self, pid: u32) -> bool {
         // ---- w2-images ----
-        if self.images.iter().any(|i|i.id==pid) {return crate::images::image_hidden(self,pid);}
+        if self.images.iter().any(|i| i.id == pid) {
+            return crate::images::image_hidden(self, pid);
+        }
         let Some(pi) = self.pidx(pid) else { return true };
         if self.paths[pi].hidden {
             return true;
@@ -1351,7 +1356,9 @@ impl Document {
     /// Effective lock: the path's own flag OR any ancestor container's (cascade).
     pub fn eff_locked(&self, pid: u32) -> bool {
         // ---- w2-images ----
-        if self.images.iter().any(|i|i.id==pid) {return crate::images::image_locked(self,pid);}
+        if self.images.iter().any(|i| i.id == pid) {
+            return crate::images::image_locked(self, pid);
+        }
         let Some(pi) = self.pidx(pid) else { return false };
         if self.paths[pi].locked {
             return true;

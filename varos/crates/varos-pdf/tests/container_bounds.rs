@@ -80,8 +80,8 @@ fn catalog_version_is_checked_before_model_decoding() {
         assert!(matches!(load(&save(&mut pdf)), Err(LoadError::InvalidVersion(_))));
     }
     catalog_mut(&mut pdf).remove(b"VAROS_SchemaVersion");
-    pdf.get_object_mut(id).unwrap().as_stream_mut().unwrap().set_content(br#"{"varos":6,"doc":42}"#.to_vec());
-    assert!(matches!(load(&save(&mut pdf)), Err(LoadError::NewerVersion { found: 6, supported: 5 })));
+    pdf.get_object_mut(id).unwrap().as_stream_mut().unwrap().set_content(br#"{"varos":7,"doc":42}"#.to_vec());
+    assert!(matches!(load(&save(&mut pdf)), Err(LoadError::NewerVersion { found: 7, supported: 6 })));
 }
 #[test]
 fn missing_catalog_version_is_legacy_compatible() {

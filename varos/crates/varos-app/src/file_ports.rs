@@ -125,6 +125,12 @@ impl Dialogs for RfdDialogs {
             .unwrap_or_default()
     }
 
+    fn pick_image(&mut self) -> Option<PathBuf> {
+        FileDialog::new()
+            .set_title("Place image")
+            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "tif", "tiff", "bmp"])
+            .pick_file()
+    }
     fn pick_place_svg(&mut self) -> Option<PathBuf> {
         FileDialog::new().set_title("Place SVG").add_filter("SVG artwork", &["svg", "svgz"]).pick_file()
     }
@@ -308,17 +314,48 @@ pub struct DiskStore;
 
 impl DocStore for DiskStore {
     // ---- w2-images ----
-    fn load_resources(&mut self,path:&Path)->Result<(Document,varos_core::images::BlobStore,Option<&'static str>),String> {
-        let loaded=varos_pdf::load_vrs_checked(path,&varos_core::format::Limits::DEFAULT).map_err(|e|plain_reason(&e.to_string(),NOT_VAROS))?;
-        let notice=loaded.notice();Ok((loaded.doc,loaded.blobs,notice))
+    fn load_resources(
+        &mut self,
+        path: &Path,
+    ) -> Result<(Document, varos_core::images::BlobStore, Option<&'static str>), String> {
+        let loaded = varos_pdf::load_vrs_checked(path, &varos_core::format::Limits::DEFAULT)
+            .map_err(|e| plain_reason(&e.to_string(), NOT_VAROS))?;
+        let notice = loaded.notice();
+        Ok((loaded.doc, loaded.blobs, notice))
     }
-    fn save_resources_published(&mut self,doc:&Document,blobs:&varos_core::images::BlobStore,path:&Path)->Result<(crate::lifecycle::SaveOutcome,Option<varos_app::storage::durable::Fingerprint>),String> {
-        if doc.images.is_empty(){return self.save_published(doc,path);}crate::image_io::save(&varos_app::storage::durable::RealFs,doc,blobs,path)
+    fn save_resources_published(
+        &mut self,
+        doc: &Document,
+        blobs: &varos_core::images::BlobStore,
+        path: &Path,
+    ) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), String> {
+        if doc.images.is_empty() {
+            return self.save_published(doc, path);
+        }
+        crate::image_io::save(&varos_app::storage::durable::RealFs, doc, blobs, path)
     }
-    fn save_resources_guarded(&mut self,doc:&Document,blobs:&varos_core::images::BlobStore,path:&Path,expected:Option<&varos_app::storage::durable::Fingerprint>,fresh:bool)->Result<(crate::lifecycle::SaveOutcome,Option<varos_app::storage::durable::Fingerprint>),varos_bridge::Error> {
-        if doc.images.is_empty(){return self.save_guarded(doc,path,expected,fresh);}
-        #[cfg(unix)] {let fs=crate::bridge_fs::Pinned::new(path,expected,fresh).map_err(|e|e.bridge())?;crate::image_io::save(&fs,doc,blobs,path).map_err(|reason|varos_bridge::Error::new("io_error",reason))}
-        #[cfg(not(unix))] {let _=(blobs,path,expected,fresh);Err(varos_bridge::Error::new("unsupported","Pinned image save unavailable"))}
+    fn save_resources_guarded(
+        &mut self,
+        doc: &Document,
+        blobs: &varos_core::images::BlobStore,
+        path: &Path,
+        expected: Option<&varos_app::storage::durable::Fingerprint>,
+        fresh: bool,
+    ) -> Result<(crate::lifecycle::SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), varos_bridge::Error>
+    {
+        if doc.images.is_empty() {
+            return self.save_guarded(doc, path, expected, fresh);
+        }
+        #[cfg(unix)]
+        {
+            let fs = crate::bridge_fs::Pinned::new(path, expected, fresh).map_err(|e| e.bridge())?;
+            crate::image_io::save(&fs, doc, blobs, path).map_err(|reason| varos_bridge::Error::new("io_error", reason))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (blobs, path, expected, fresh);
+            Err(varos_bridge::Error::new("unsupported", "Pinned image save unavailable"))
+        }
     }
 
     fn import_svg(&mut self, path: &Path) -> Result<(Document, Vec<String>), String> {

@@ -14,6 +14,7 @@ type Pixels = HashMap<String, Option<Option<egui::ColorImage>>>;
 struct Request {
     key: String,
     asset: Asset,
+    blobs: Arc<varos_core::images::BlobStore>,
 }
 struct Runtime {
     tx: mpsc::SyncSender<Request>,
@@ -38,7 +39,13 @@ impl PartialEq for Previews {
     }
 }
 impl Previews {
-    pub fn pixels(&self, ctx: &egui::Context, key: String, asset: &Asset) -> Option<egui::ColorImage> {
+    pub fn pixels(
+        &self,
+        ctx: &egui::Context,
+        key: String,
+        asset: &Asset,
+        blobs: &varos_core::images::BlobStore,
+    ) -> Option<egui::ColorImage> {
         let mut slot = self.0.lock().ok()?;
         if slot.is_none() {
             let root = varos_app::storage::paths::AppLayout::current()?.thumbs().join("Export");
@@ -53,7 +60,11 @@ impl Previews {
             return None;
         }
         pixels.insert(key.clone(), None);
-        if runtime.tx.try_send(Request { key: key.clone(), asset: asset.clone() }).is_err() {
+        if runtime
+            .tx
+            .try_send(Request { key: key.clone(), asset: asset.clone(), blobs: Arc::new(blobs.clone()) })
+            .is_err()
+        {
             pixels.remove(&key);
         }
         None
@@ -88,7 +99,12 @@ fn start(root: PathBuf, ctx: egui::Context) -> Option<Runtime> {
                         let key = ThumbKey(request.key);
                         if let Some(Lookup::Fresh(path)) = service.lookup(&key, SystemTime::UNIX_EPOCH) {
                             complete(&output, &ctx, &stop, key.0, Some(path));
-                        } else if service.request_export(key.clone(), request.asset, SystemTime::UNIX_EPOCH) {
+                        } else if service.request_export(
+                            key.clone(),
+                            request.asset,
+                            request.blobs,
+                            SystemTime::UNIX_EPOCH,
+                        ) {
                             pending.insert(key);
                         } else {
                             complete(&output, &ctx, &stop, key.0, None);
@@ -144,7 +160,7 @@ mod tests {
         .unwrap();
         let asset = varos_raster::export::plan(&doc, &varos_raster::export::Scope::WholeBoard).unwrap().remove(0);
         runtime.pixels.lock().unwrap().insert("failed".into(), None);
-        runtime.tx.send(Request { key: "failed".into(), asset }).unwrap();
+        runtime.tx.send(Request { key: "failed".into(), asset, blobs: Default::default() }).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while runtime.pixels.lock().unwrap().get("failed") != Some(&Some(None)) {
             assert!(std::time::Instant::now() < deadline);
@@ -170,7 +186,7 @@ mod tests {
         .unwrap();
         let asset = varos_raster::export::plan(&doc, &varos_raster::export::Scope::WholeBoard).unwrap().remove(0);
         for index in 0..100 {
-            previews.pixels(&egui::Context::default(), index.to_string(), &asset);
+            previews.pixels(&egui::Context::default(), index.to_string(), &asset, &Default::default());
         }
         assert_eq!(pixels.lock().unwrap().len(), LIMIT);
         drop(previews);

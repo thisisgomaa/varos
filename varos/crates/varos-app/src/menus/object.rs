@@ -5,6 +5,9 @@ use super::*;
 pub(super) fn rows() -> Vec<Entry> {
     use KeyCode as K;
     vec![
+        item("obj.image.trace", "Image Trace…", None, MenuCmd::ImageSheet(crate::image_ui::SheetKind::Trace)),
+        item("obj.image.rasterize", "Rasterize…", None, MenuCmd::ImageSheet(crate::image_ui::SheetKind::Rasterize)),
+        item("obj.image.crop", "Crop Image…", None, MenuCmd::ImageSheet(crate::image_ui::SheetKind::Crop)),
         key("obj.again", "Transform Again", cmd(K::KeyD)),
         Entry::Sep,
         Entry::Sub {
