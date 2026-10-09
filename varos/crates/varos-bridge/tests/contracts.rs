@@ -3131,3 +3131,116 @@ fn economy_legacy_target_count_and_alias_index() {
     let r = handle(&mut s, &mut h, req("edit", args));
     assert_eq!(r.error.unwrap().op_index, Some(1));
 }
+
+#[test]
+fn stroke_api_12_is_atomic_versioned_and_undoable() {
+    let mut s = Service::new("test-epoch".into());
+    let mut h = FakeHost::new();
+    s.observe(&mut h);
+    let rev = h.editor.rev;
+    for api in ["1.0", "1.1"] {
+        let error=varos_bridge::mcp::decode_tool("edit",json!({"api":api,"board":"b1","request_id":"r1","expected_rev":rev,"ops":[{"verb":"set_stroke_style","ids":["path:10"],"stroke_style":{"cap":"Butt"}}]})).unwrap_err();
+        assert_eq!(error.code, "unsupported");
+        assert_eq!(h.editor.rev, rev);
+    }
+    let op = json!({"api":"1.2","board":"b1","request_id":"r3","expected_rev":rev,"ops":[{"op":"set_stroke_style","ids":["path:10"],"stroke_style":{"cap":"Butt","dash":[6,3]}}]});
+    let r = handle(&mut s, &mut h, req("edit", op.clone()));
+    assert!(r.ok, "{r:?}");
+    assert_eq!(h.editor.doc.paths[0].stroke_style.cap, varos_core::stroke::StrokeCap::Butt);
+    assert_eq!(r, handle(&mut s, &mut h, req("edit", op)));
+    for api in ["1.0", "1.1", "1.2"] {
+        let r = handle(
+            &mut s,
+            &mut h,
+            req("describe", json!({"api":api,"board":"b1","ids":["path:10"],"fields":["paint"]})),
+        );
+        assert!(r.ok);
+        assert_eq!(r.result.as_ref().unwrap()["objects"][0].get("stroke_style").is_some(), api == "1.2");
+    }
+    let r = handle(
+        &mut s,
+        &mut h,
+        req("describe", json!({"api":"1.2","board":"b1","ids":["path:10"],"fields":["stroke_style"]})),
+    );
+    assert!(r.ok, "{r:?}");
+    assert_eq!(r.result.unwrap()["objects"][0]["stroke_style"]["miter_limit"], 10.0);
+    let before = h.editor.doc.clone();
+    let rev = h.editor.rev;
+    let r = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","board":"b1","request_id":"r4","expected_rev":rev,"ops":[{"verb":"set_stroke_style","ids":["path:10"],"stroke_style":{}},{"verb":"set_stroke_style","ids":["path:20"],"stroke_style":{"dash":[0,0]}}]}),
+        ),
+    );
+    assert!(!r.ok);
+    assert_eq!(h.editor.doc, before);
+    h.editor.undo();
+    assert!(h.editor.doc.paths[0].stroke_style.is_default());
+    h.editor.redo();
+    assert_eq!(h.editor.doc, before);
+}
+
+#[test]
+fn stroke_api_12_schemas_capabilities_and_limit_errors() {
+    let schema = varos_bridge::mcp::tools_for("1.2");
+    let edit = schema["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
+    assert!(edit["inputSchema"]["$defs"]["set_paint"]["properties"]["stroke_style"].is_object());
+    assert_eq!(edit["inputSchema"]["$defs"]["set_stroke_style"]["properties"]["op"]["const"], "set_stroke_style");
+    assert_eq!(varos_bridge::mcp::tools_for("1.1"), varos_bridge::mcp::tools());
+    let mut s = Service::new("test-epoch".into());
+    let mut h = FakeHost::new();
+    let reply = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"})));
+    assert!(reply.ok, "{reply:?}");
+    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([5]));
+    assert!(reply.result.as_ref().unwrap()["stroke_operations_schema"].is_object());
+    h.editor.doc.paths[0].stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 1.0]);
+    let rev = h.editor.rev;
+    let before = h.editor.doc.clone();
+    let reply = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","board":"b1","request_id":"r1","expected_rev":rev,"ops":[{"op":"set_stroke_style","ids":["path:10"],"stroke_style":{"dash":[0.0001,0.0001]}}]}),
+        ),
+    );
+    assert_eq!(reply.error.unwrap().code, "limit_exceeded");
+    assert_eq!(h.editor.doc, before);
+}
+
+#[test]
+fn stroke_scene_failure_is_a_snapshot_error_for_board_and_page() {
+    use varos_core::{
+        model::{Artboard, Xform},
+        stroke::{StrokeCap, StrokeStyle},
+    };
+    let h = FakeHost::new();
+    let mut doc = h.editor.doc.clone();
+    let p = &mut doc.paths[0];
+    p.anchors.truncate(2);
+    p.anchors[0].p = [0.0, 0.0];
+    p.anchors[1].p = [4000.0, 0.0];
+    for a in &mut p.anchors {
+        a.hin = None;
+        a.hout = None;
+    }
+    p.closed = false;
+    p.stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 1.0]);
+    p.stroke_width = 1.0;
+    p.stroke_style = StrokeStyle { cap: StrokeCap::Butt, dash: vec![1.0, 1.0], ..Default::default() };
+    let pid = p.id;
+    let unit = doc.unit_of(pid).unwrap();
+    doc.set_node_xform(unit, Xform { rot: 0.7, piv: [0.0, 0.0] });
+    doc.artboards = vec![Artboard { id: 100, w: 6000.0, h: 6000.0, clip: false, ..Default::default() }];
+    for artboard in [None, Some(100)] {
+        let reply = varos_bridge::service::SnapshotJob { document: doc.clone(), rev: 1, size: [100, 100], artboard }
+            .render(&AtomicBool::new(false));
+        assert!(!reply.ok);
+        assert!(reply.result.is_none());
+        let error = reply.error.unwrap();
+        assert_eq!(error.code, "limit_exceeded");
+        assert!(error.reason.contains("path"));
+    }
+}

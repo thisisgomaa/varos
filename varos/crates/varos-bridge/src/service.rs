@@ -52,10 +52,12 @@ impl SnapshotJob {
                         .document
                         .artboard_index(id)
                         .ok_or_else(|| Error::new("not_found", format!("unknown artboard:{id}")))?;
-                    varos_raster::rasterize_artboard(std::sync::Arc::new(self.document), index, self.size)
+                    varos_raster::rasterize_artboard_checked(std::sync::Arc::new(self.document), index, self.size)
+                        .map_err(|e| Error::new("limit_exceeded", e))?
                         .ok_or_else(|| Error::new("invalid_argument", "artboard cannot be rendered"))?
                 }
             };
+            let raster = raster.into_result().map_err(|e| Error::new("limit_exceeded", e))?;
             checkpoint()?;
             let png = raster.encode_png().map_err(|e| Error::new("invalid_argument", e))?;
             checkpoint()?;
@@ -294,6 +296,30 @@ impl Service {
         if matches!(&req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")) && reply.ok {
             reply = page_ids(reply, None).unwrap_or_else(Reply::failure);
         }
+        if req.api() == "1.2" && reply.ok && matches!(req, Request::Edit(v) if v.receipt.as_deref()!=Some("ids")) {
+            if let Some(board) = req.board() {
+                if let Ok(access) = host.access(board) {
+                    let mut report = varos_core::ExportReport::default();
+                    for p in &access.editor.doc.paths {
+                        if !p.stroke_style.is_default() {
+                            if let Ok(coverage) = varos_core::stroke::evaluate(p, 0.01, &|| false) {
+                                report.notes.extend(coverage.report.notes);
+                            }
+                        }
+                    }
+                    if !report.notes.is_empty() {
+                        if let Some(result) = &mut reply.result {
+                            result["report"] = json!(report);
+                        }
+                    }
+                }
+            }
+        }
+        if req.api() != "1.2" {
+            if let Some(result) = &mut reply.result {
+                strip_stroke_style(result);
+            }
+        }
         if compact(&reply).len() > MAX_TEXT {
             if reply.ok && req.mutation().is_some() {
                 // The receipt still proves commit; a large selection/detail must be read in pages.
@@ -311,11 +337,8 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api()) && !(req.api() == "1.2" && matches!(req, Request::ExportPdf(_))) {
-            return Reply::failure(Error::new(
-                "unsupported",
-                "Bridge API must be 1.0 or 1.1 (export_pdf also supports 1.2)",
-            ));
+        if ![API, "1.1", "1.2"].contains(&req.api()) {
+            return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0, 1.1 or 1.2"));
         }
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
@@ -392,6 +415,26 @@ impl Service {
                         v["api_by_tool"] = json!({"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
                         v["edit_verbs"].as_array_mut().unwrap().push(json!("repeat"));
                         v["economy_hint"] = json!("Use API 1.1 defaults and omit decorative names; compact rect/ellipse/path plus repeat for identical rows; request IDs receipts, a budgeted summary or since-revision diff, and an economy snapshot only when needed; inspect specific IDs/fields for detail and ask for larger images explicitly.");
+                    }
+                    if req.api() == "1.2" {
+                        if let Some(v) = &mut r.result {
+                            v["api"] = json!("1.2");
+                            v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
+                            v["readable_vrs"] = json!([1, 2, 3, 4, 5]);
+                            v["writable_vrs"] = json!([5]);
+                            v["stroke_style_schema"] = crate::mcp::stroke_style_schema();
+                            let tools = crate::mcp::tools_for("1.2");
+                            if let Some(edit) =
+                                tools["tools"].as_array().and_then(|tools| tools.iter().find(|t| t["name"] == "edit"))
+                            {
+                                v["stroke_operations_schema"] = json!({"set_stroke_style":edit["inputSchema"]["$defs"]["set_stroke_style"],"set_paint":edit["inputSchema"]["$defs"]["set_paint"]});
+                            }
+                            v["edit_verbs"] = json!(crate::EDIT_VERBS
+                                .iter()
+                                .copied()
+                                .chain(std::iter::once("set_stroke_style"))
+                                .collect::<Vec<_>>());
+                        }
                     }
                     Ok(r)
                 }
@@ -512,6 +555,7 @@ impl Service {
                                 &mut locals,
                                 &mut expanded,
                                 &mut affected,
+                                &|| cancelled.load(Ordering::Acquire),
                             )
                             .map_err(|e| leaves[index].error(e))?;
                             if v.api == "1.1" {
@@ -535,6 +579,8 @@ impl Service {
                             leaves[index.min(leaves.len() - 1)].error(Error::new(
                                 if reason == "active gesture" {
                                     "busy"
+                                } else if reason.contains("limit_exceeded:") {
+                                    "limit_exceeded"
                                 } else if reason.starts_with("cancelled") {
                                     "cancelled"
                                 } else {
@@ -778,15 +824,30 @@ impl Service {
         }
         let fields = v.fields.as_deref().unwrap_or(&[]);
         if let Some(f) = fields.iter().find(|f| {
-            !["metadata", "artboards", "selection", "state", "bounds", "paint", "parent", "name", "geometry"]
-                .contains(&f.as_str())
+            ![
+                "metadata",
+                "artboards",
+                "selection",
+                "state",
+                "bounds",
+                "paint",
+                "parent",
+                "name",
+                "geometry",
+                "stroke_style",
+            ]
+            .contains(&f.as_str())
         }) {
             return Err(Error::new("invalid_argument", format!("unknown describe field {f}")));
         }
+        if v.api != "1.2" && fields.iter().any(|f| f == "stroke_style") {
+            return Err(Error::new("unsupported", "stroke_style requires API 1.2"));
+        }
         // state alone or with object fields retains its API 1.0 object meaning.
         let board_fields = fields.iter().any(|f| ["metadata", "artboards", "selection"].contains(&f.as_str()));
-        let object_fields =
-            fields.iter().any(|f| ["bounds", "paint", "parent", "name", "geometry"].contains(&f.as_str()));
+        let object_fields = fields
+            .iter()
+            .any(|f| ["bounds", "paint", "parent", "name", "geometry", "stroke_style"].contains(&f.as_str()));
         // Preserve the existing dedicated board pages and object-only wire shapes.
         let legacy_board = v.ids.is_none()
             && ((!fields.is_empty() && fields.iter().all(|f| ["metadata", "artboards"].contains(&f.as_str())))
@@ -1016,6 +1077,9 @@ impl Service {
                         }
                     }
                     "paint" => {
+                        if v.api == "1.2" && source["kind"] == "path" {
+                            out["stroke_style"] = source["stroke_style"].clone();
+                        }
                         for key in ["fill", "stroke", "stroke_width", "opacity"] {
                             out[key] = source[key].clone();
                         }
@@ -1192,6 +1256,11 @@ fn projection(doc: &Document) -> (BTreeMap<String, Value>, Value, Vec<String>) {
         o["fill"] = color(&v["fill"]);
         o["stroke"] = color(&v["stroke"]["paint"]);
         o["stroke_width"] = v["stroke"]["width"].clone();
+        if let Some(pid) = id.strip_prefix("path:").and_then(|n| n.parse::<u32>().ok()) {
+            if let Some(p) = doc.paths.iter().find(|p| p.id == pid) {
+                o["stroke_style"] = p.stroke_style.expanded();
+            }
+        }
         // A hash detects geometry edits that keep the same bounds; geometry itself never leaks.
         o["geometry_digest"] = json!(geometry_digest(&details[id]));
         objects.insert(id.into(), o);
@@ -1501,6 +1570,7 @@ fn text_value(v: &Value) -> String {
 
 pub(crate) fn target_error(e: varos_core::bridge::TargetError) -> Error {
     let code = match e.code {
+        TargetErrorCode::LimitExceeded => "limit_exceeded",
         TargetErrorCode::NotFound => "not_found",
         TargetErrorCode::LockedTarget => "locked_target",
         TargetErrorCode::HiddenTarget => "hidden_target",
@@ -1511,6 +1581,23 @@ pub(crate) fn target_error(e: varos_core::bridge::TargetError) -> Error {
     let mut error = Error::new(code, e.reason).at(e.index);
     error.ids = e.ids.iter().map(|id| format!("path:{id}")).collect();
     error
+}
+
+fn strip_stroke_style(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.remove("stroke_style");
+            for v in map.values_mut() {
+                strip_stroke_style(v);
+            }
+        }
+        Value::Array(values) => {
+            for v in values {
+                strip_stroke_style(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]

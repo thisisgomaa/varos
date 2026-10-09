@@ -107,6 +107,23 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        SetStrokeStyle { ids, style } => {
+            if ids.is_empty() {
+                return Err("stroke style targets must not be empty".into());
+            }
+            let mut stroke_budget = crate::stroke::evaluate::StrokeBudget::default();
+            for id in ids {
+                path(*id)?;
+                style.validate(*id).map_err(|e| e.to_string())?;
+                if let Some(index) = ed.doc.pidx(*id) {
+                    let mut proposed = ed.doc.paths[index].clone();
+                    proposed.stroke_style = style.clone();
+                    let coverage = crate::stroke::evaluate(&proposed, 0.01, &|| false).map_err(|e| e.to_string())?;
+                    stroke_budget.charge(&coverage).map_err(|e| e.to_string())?;
+                }
+            }
+            Ok(())
+        }
         AddPath { anchors, parent, fill, stroke, stroke_width, opacity, name, .. } => {
             if !(2..=1000).contains(&anchors.len()) {
                 return Err("path needs 2..1000 anchors".into());
@@ -561,6 +578,10 @@ pub(crate) fn check_document(ed: &Editor) -> Result<(), String> {
 /// Deliberately separate from wire DTOs and the interactive command enum.
 #[derive(Clone, Debug)]
 pub enum TargetEdit {
+    StrokeStyle {
+        paths: Vec<u32>,
+        style: crate::stroke::StrokeStyle,
+    },
     Move {
         paths: Vec<u32>,
         delta: [f32; 2],
@@ -575,6 +596,7 @@ pub enum TargetEdit {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TargetErrorCode {
+    LimitExceeded,
     NotFound,
     LockedTarget,
     HiddenTarget,
@@ -646,9 +668,11 @@ impl Editor {
                 replay.apply_targeted_op(op, index)?;
                 if let Err(reason) = validate_targeted_stage(&replay) {
                     let ids = match op {
-                        TargetEdit::Move { paths, .. } | TargetEdit::Paint { paths, .. } => paths.clone(),
+                        TargetEdit::Move { paths, .. }
+                        | TargetEdit::Paint { paths, .. }
+                        | TargetEdit::StrokeStyle { paths, .. } => paths.clone(),
                     };
-                    return Err(TargetError { code: TargetErrorCode::InvalidArgument, index, ids, reason });
+                    return Err(TargetError { code: target_reason_code(&reason), index, ids, reason });
                 }
                 replay.clear_batch_history();
             }
@@ -667,7 +691,9 @@ impl Editor {
     }
     pub fn apply_targeted_op(&mut self, op: &TargetEdit, index: usize) -> Result<(), TargetError> {
         let paths = match op {
-            TargetEdit::Move { paths, .. } | TargetEdit::Paint { paths, .. } => paths,
+            TargetEdit::Move { paths, .. }
+            | TargetEdit::Paint { paths, .. }
+            | TargetEdit::StrokeStyle { paths, .. } => paths,
         };
         let fail = |code, reason: String| TargetError { code, index, ids: paths.clone(), reason };
         if paths.is_empty() {
@@ -687,6 +713,9 @@ impl Editor {
         let result = (|| -> Result<(), String> {
             self.try_execute(EditCommand::SelectPaths(paths.clone()))?;
             match op {
+                TargetEdit::StrokeStyle { style, .. } => {
+                    self.try_execute(EditCommand::SetStrokeStyle { ids: paths.clone(), style: style.clone() })?;
+                }
                 TargetEdit::Move { delta, .. } => {
                     if !delta.iter().all(|v| v.is_finite()) {
                         return Err("delta must be finite".into());
@@ -719,8 +748,16 @@ impl Editor {
             }
             Ok(())
         })();
-        result.map_err(|reason| fail(TargetErrorCode::InvalidArgument, reason))?;
+        result.map_err(|reason| fail(target_reason_code(&reason), reason))?;
         Ok(())
+    }
+}
+
+fn target_reason_code(reason: &str) -> TargetErrorCode {
+    if reason.contains("limit_exceeded:") {
+        TargetErrorCode::LimitExceeded
+    } else {
+        TargetErrorCode::InvalidArgument
     }
 }
 

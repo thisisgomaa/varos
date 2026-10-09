@@ -17,10 +17,25 @@ pub struct Raster {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>,
+    pub errors: Vec<String>,
 }
 
+fn failed_raster(errors: Vec<String>) -> Raster {
+    Raster { width: 0, height: 0, pixels: vec![], errors }
+}
 impl Raster {
+    /// Refuse scene failures before a caller can publish incomplete output.
+    pub fn into_result(self) -> Result<Self, String> {
+        if self.errors.is_empty() {
+            Ok(self)
+        } else {
+            Err(self.errors.join("; "))
+        }
+    }
     pub fn encode_png(&self) -> Result<Vec<u8>, String> {
+        if !self.errors.is_empty() {
+            return Err(self.errors.join("; "));
+        }
         Pixmap::from_vec(self.pixels.clone(), tiny_skia::IntSize::from_wh(self.width, self.height).ok_or("bad size")?)
             .ok_or_else(|| "bad pixel buffer".to_string())?
             .encode_png()
@@ -33,15 +48,21 @@ pub fn rasterize_canvas(snapshot: &Document, size: [u32; 2], pan: [f32; 2], ppu:
     let mut editor = Editor::new();
     editor.replace_doc(snapshot.clone());
     let scene = build_scene(&editor, ppu);
+    if !scene.errors.is_empty() {
+        return failed_raster(scene.errors);
+    }
     let mut pixmap = Pixmap::new(size[0].max(1), size[1].max(1)).expect("non-zero canvas size");
     pixmap.fill(tiny_skia::Color::from_rgba8(20, 19, 19, 255));
     draw_groups(&scene.content, &mut pixmap, Transform::from_row(ppu, 0.0, 0.0, ppu, pan[0], pan[1]));
-    Raster { width: pixmap.width(), height: pixmap.height(), pixels: pixmap.take() }
+    Raster { width: pixmap.width(), height: pixmap.height(), pixels: pixmap.take(), errors: vec![] }
 }
 
 impl Raster {
     /// Read a cached pixel; no scene construction or raster work occurs here.
     pub fn sample(&self, pixel: [f32; 2]) -> Option<Rgba> {
+        if !self.errors.is_empty() {
+            return None;
+        }
         if !pixel.iter().all(|v| v.is_finite() && *v >= 0.0)
             || pixel[0] >= self.width as f32
             || pixel[1] >= self.height as f32
@@ -67,6 +88,9 @@ pub fn rasterize(snapshot: Arc<Document>, size: [u32; 2]) -> Raster {
     let mut editor = Editor::new();
     editor.replace_doc(Arc::try_unwrap(snapshot).unwrap_or_else(|snapshot| (*snapshot).clone()));
     let scene = build_scene(&editor, 1.0);
+    if !scene.errors.is_empty() {
+        return failed_raster(scene.errors);
+    }
     let bounds = scene_bounds(&scene.content);
     let (scale, ox, oy) = bounds.map_or((1.0, 0.0, 0.0), |b| fit(b, w, h));
     let xf = Transform::from_row(scale, 0.0, 0.0, scale, ox, oy);
@@ -74,7 +98,7 @@ pub fn rasterize(snapshot: Arc<Document>, size: [u32; 2]) -> Raster {
     pixmap.fill(tiny_skia::Color::from_rgba8(0x14, 0x13, 0x13, 0xff));
     draw_grid(&mut pixmap, scale);
     draw_groups(&scene.content, &mut pixmap, xf);
-    Raster { width: w, height: h, pixels: pixmap.take() }
+    Raster { width: w, height: h, pixels: pixmap.take(), errors: vec![] }
 }
 
 /// Render ONE page of an immutable document snapshot (Bridge slice 3): the image is exactly the page
@@ -83,8 +107,21 @@ pub fn rasterize(snapshot: Arc<Document>, size: [u32; 2]) -> Raster {
 /// outside the page is outside the image. The caller's document is not modified; other pages' papers
 /// still paint in scene order, as on canvas. `None` for an unknown index or a degenerate page.
 pub fn rasterize_artboard(snapshot: Arc<Document>, index: usize, max_size: [u32; 2]) -> Option<Raster> {
-    let page = snapshot.artboards.get(index)?.clone();
-    let (size, scale) = page_fit([page.w, page.h], max_size)?;
+    rasterize_artboard_checked(snapshot, index, max_size).ok().flatten()
+}
+
+/// Checked page rendering for exporters: scene failures retain their diagnostic.
+pub fn rasterize_artboard_checked(
+    snapshot: Arc<Document>,
+    index: usize,
+    max_size: [u32; 2],
+) -> Result<Option<Raster>, String> {
+    let Some(page) = snapshot.artboards.get(index).cloned() else {
+        return Ok(None);
+    };
+    let Some((size, scale)) = page_fit([page.w, page.h], max_size) else {
+        return Ok(None);
+    };
     let mut doc = Arc::try_unwrap(snapshot).unwrap_or_else(|snapshot| (*snapshot).clone());
     // a transparent page paints a faint ghost paper on canvas (`scene::AB_GHOST`) so it reads on the
     // dark board; a page image has no board behind it, so that canvas aid is dropped from this copy
@@ -98,15 +135,20 @@ pub fn rasterize_artboard(snapshot: Arc<Document>, index: usize, max_size: [u32;
     let mut editor = Editor::new();
     editor.replace_doc(doc);
     let scene = build_scene(&editor, 1.0);
+    if !scene.errors.is_empty() {
+        return Err(scene.errors.join("; "));
+    }
     let xf = Transform::from_row(scale, 0.0, 0.0, scale, -page.x * scale, -page.y * scale);
-    let mut pixmap = Pixmap::new(size[0], size[1])?;
+    let Some(mut pixmap) = Pixmap::new(size[0], size[1]) else {
+        return Err("raster allocation failed".into());
+    };
     if let Some(c) = page.page_color {
         if let Some(color) = tiny_skia::Color::from_rgba(c[0], c[1], c[2], c[3]) {
             pixmap.fill(color);
         }
     }
     draw_groups(&scene.content, &mut pixmap, xf);
-    Some(Raster { width: size[0], height: size[1], pixels: pixmap.take() })
+    Ok(Some(Raster { width: size[0], height: size[1], pixels: pixmap.take(), errors: vec![] }))
 }
 
 /// The pixel size of a `page` (w, h in points) fitted inside `max` at its own aspect ratio, and the
@@ -170,7 +212,13 @@ fn draw_groups(groups: &[Group], dst: &mut Pixmap, xf: Transform) {
             Group::Knockout(prims) => draw_knockout(prims, dst, xf),
             Group::Isolated { opacity, prims } => {
                 let mut layer = Pixmap::new(dst.width(), dst.height()).unwrap();
-                draw_prims(prims, &mut layer, xf);
+                if prims.iter().any(|p| matches!(p,Prim::StrokeCoverage {color,..} if color[3]<0.999))
+                    && prims.iter().any(|p| matches!(p, Prim::Fill { .. }))
+                {
+                    draw_knockout(prims, &mut layer, xf);
+                } else {
+                    draw_prims(prims, &mut layer, xf);
+                }
                 let paint = PixmapPaint { opacity: *opacity, ..PixmapPaint::default() };
                 dst.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::identity(), None);
             }
@@ -190,7 +238,8 @@ fn draw_groups(groups: &[Group], dst: &mut Pixmap, xf: Transform) {
 
 fn draw_knockout(prims: &[Prim], dst: &mut Pixmap, xf: Transform) {
     let mut fill_layer = Pixmap::new(dst.width(), dst.height()).unwrap();
-    let fills: Vec<_> = prims.iter().filter(|p| !matches!(p, Prim::Stroke { .. })).cloned().collect();
+    let fills: Vec<_> =
+        prims.iter().filter(|p| !matches!(p, Prim::Stroke { .. } | Prim::StrokeCoverage { .. })).cloned().collect();
     draw_prims(&fills, &mut fill_layer, xf);
 
     let coverage = stroke_coverage(prims, dst.width(), dst.height(), xf, None);
@@ -201,7 +250,7 @@ fn draw_knockout(prims: &[Prim], dst: &mut Pixmap, xf: Transform) {
 
     let mut colors: Vec<Rgba> = Vec::new();
     for color in prims.iter().filter_map(|p| match p {
-        Prim::Stroke { color, .. } => Some(*color),
+        Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } => Some(*color),
         _ => None,
     }) {
         if !colors.contains(&color) {
@@ -230,6 +279,14 @@ fn stroke_coverage(prims: &[Prim], width: u32, height: u32, xf: Transform, only:
     let mut white = Paint::default();
     white.set_color_rgba8(255, 255, 255, 255);
     for prim in prims {
+        if let Prim::StrokeCoverage { rings, color, clip, native } = prim {
+            if only.is_some_and(|wanted| wanted != *color) {
+                continue;
+            }
+            let mask = clip.and_then(|r| rect_mask(width, height, r, xf));
+            styled_coverage(&mut coverage, rings, native.as_ref(), &white, xf, mask.as_ref());
+            continue;
+        }
         let Prim::Stroke { pts, width: stroke_width, color, clip } = prim else { continue };
         if only.is_some_and(|wanted| wanted != *color) {
             continue;
@@ -250,6 +307,10 @@ fn draw_prims(prims: &[Prim], dst: &mut Pixmap, xf: Transform) {
                 if let Some(path) = rings_path(rings, false) {
                     dst.fill_path(&path, &paint(*color), FillRule::EvenOdd, xf, None);
                 }
+            }
+            Prim::StrokeCoverage { rings, color, clip, native } => {
+                let mask = clip.and_then(|r| rect_mask(dst.width(), dst.height(), r, xf));
+                styled_coverage(dst, rings, native.as_ref(), &paint(*color), xf, mask.as_ref());
             }
             Prim::Stroke { pts, width, color, clip } => {
                 if let Some(path) = line_path(pts) {
@@ -362,7 +423,7 @@ fn scene_bounds(groups: &[Group]) -> Option<[f32; 4]> {
         };
         for prim in prims {
             let pts: Box<dyn Iterator<Item = &[f32; 2]> + '_> = match prim {
-                Prim::Fill { rings, .. } => Box::new(rings.iter().flatten()),
+                Prim::Fill { rings, .. } | Prim::StrokeCoverage { rings, .. } => Box::new(rings.iter().flatten()),
                 Prim::Stroke { pts, .. } | Prim::Dashed { pts, .. } => Box::new(pts.iter()),
                 Prim::Square { c, .. } | Prim::Disc { c, .. } => Box::new(std::iter::once(c)),
                 Prim::Tri { a, b, c, .. } => Box::new([a, b, c].into_iter()),
@@ -508,7 +569,7 @@ mod tests {
         let mut pixmap = Pixmap::new(100, 100).unwrap();
         pixmap.fill(tiny_skia::Color::from_rgba8(20, 19, 19, 255));
         draw_groups(&[group], &mut pixmap, Transform::identity());
-        let r = Raster { width: 100, height: 100, pixels: pixmap.take() };
+        let r = Raster { width: 100, height: 100, pixels: pixmap.take(), errors: vec![] };
         assert_eq!(pixel(&r, 50, 50), [255, 255, 255, 255]);
         let band = pixel(&r, 20, 50);
         assert!(band[0] > 125 && band[0] < 145 && band[1] < 15, "{band:?}");
@@ -744,4 +805,88 @@ fn clip_preserves_object_opacity_expected_blend() {
         assert!((a - b).abs() <= 1. / 255. + f32::EPSILON);
     }
     assert_ne!(clipped.sample([15., 15.]), outside.sample([15., 15.]));
+}
+
+fn styled_coverage(
+    dst: &mut Pixmap,
+    rings: &[Vec<[f32; 2]>],
+    native: Option<&varos_core::scene::NativeStroke>,
+    paint: &Paint,
+    xf: Transform,
+    mask: Option<&Mask>,
+) {
+    use varos_core::stroke::{StrokeCap, StrokeJoin};
+    if let Some(native) = native {
+        let s = &native.style;
+        let stroke = Stroke {
+            width: native.width,
+            miter_limit: s.miter_limit,
+            line_cap: match s.cap {
+                StrokeCap::Butt => LineCap::Butt,
+                StrokeCap::Round => LineCap::Round,
+                StrokeCap::Square => LineCap::Square,
+            },
+            line_join: match s.join {
+                StrokeJoin::Miter => LineJoin::Miter,
+                StrokeJoin::Round => LineJoin::Round,
+                StrokeJoin::Bevel => LineJoin::Bevel,
+            },
+            dash: if s.dash.is_empty() { None } else { tiny_skia::StrokeDash::new(s.dash.clone(), s.dash_phase) },
+        };
+        // One native path paints all subpaths once, so translucent overlapping contours are a union.
+        let mut builder = PathBuilder::new();
+        for pts in &native.contours {
+            if let Some(first) = pts.first() {
+                builder.move_to(first[0], first[1]);
+                for point in &pts[1..] {
+                    builder.line_to(point[0], point[1]);
+                }
+                if pts.first() == pts.last() {
+                    builder.close();
+                }
+            }
+        }
+        if let Some(path) = builder.finish() {
+            dst.stroke_path(&path, paint, &stroke, xf, mask);
+        }
+    } else if let Some(path) = rings_path(rings, false) {
+        dst.fill_path(&path, paint, FillRule::EvenOdd, xf, mask);
+    }
+}
+
+#[cfg(test)]
+mod stroke_failure_tests {
+    use super::*;
+    #[test]
+    fn rotated_dash_world_budget_refuses_pixels_png_canvas_and_page() {
+        use varos_core::{
+            model::{Anchor, Path, Xform},
+            stroke::{StrokeCap, StrokeStyle},
+        };
+        let mut doc = Document::default();
+        let anchors = [[0.0, 0.0], [4000.0, 0.0]]
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| Anchor { id: 11 + i as u32, p, hin: None, hout: None, smooth: false })
+            .collect();
+        let mut path = Path::new(10, anchors, false, None, Some([0.0, 0.0, 0.0, 1.0]), 1.0);
+        path.stroke_style = StrokeStyle { cap: StrokeCap::Butt, dash: vec![1.0, 1.0], ..Default::default() };
+        let coverage = varos_core::stroke::evaluate(&path, 0.025, &|| false).unwrap();
+        assert!(varos_core::stroke::evaluate::triangles(&coverage.rings).is_ok());
+        doc.paths.push(path);
+        doc.ids = 100;
+        doc.sync_tree();
+        let unit = doc.unit_of(10).unwrap();
+        doc.set_node_xform(unit, Xform { rot: 0.7, piv: [0.0, 0.0] });
+        let image = rasterize(Arc::new(doc.clone()), [100, 100]);
+        assert!(image.errors[0].contains("limit_exceeded"));
+        assert!(image.pixels.is_empty());
+        assert!(image.encode_png().is_err());
+        assert!(image.sample([0.0, 0.0]).is_none());
+        assert!(image.into_result().is_err());
+        assert!(rasterize_canvas(&doc, [100, 100], [0.0, 0.0], 1.0).into_result().is_err());
+        doc.artboards.push(varos_core::model::Artboard { w: 6000.0, h: 6000.0, clip: false, ..Default::default() });
+        assert!(rasterize_artboard(Arc::new(doc.clone()), 0, [100, 100]).is_none());
+        assert!(rasterize_artboard_checked(Arc::new(doc), 0, [100, 100]).unwrap_err().contains("limit_exceeded"));
+    }
 }

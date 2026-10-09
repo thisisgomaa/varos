@@ -7,6 +7,11 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
+## Implementation status — Lane H format 5 (2026-10-09)
+
+The worktree writer stamps JSON `varos:5` and PDF `/VAROS_SchemaVersion 5`. First merged writer takes v5;
+this branch is not merged or installed. Phase 2 adds only optional `Path.stroke_style`. Default paths omit it.
+
 ## Implementation status — 2026-10-07 (format 4)
 
 The writer emits **v4** (stable artboard ids: `doc.artboards[].id` — Bridge slice 3, ADR-0008
@@ -107,7 +112,9 @@ S5-B now supplies the version-first gate through `format::decode_model`, includi
 | 1 | **legacy, readable through migration** | every `.vrs`-capable build since `7a5b3c8` (2026-07-02) | a *family* of eras, all stamped `1` — raw JSON, pre-artboards, legacy group registry, pre-`Paint` enum, pre-tree, and (the hole) masks/rotation added under this same number. See ADR-0008 §Context. |
 | 2 | **legacy, readable through migration** (since 2026-10-04) | S5-B builds up to `f21c20e` | same `Document` shape as 1; the reader contract tightens (§6, §9). No schema change — see ADR-0008 §"v2 is the same model with a stricter reader". |
 | 3 | **legacy, readable through migration** (since 2026-10-07) | builds up to `a5f687b` | v2 plus three `doc` keys: `name` (string), `description` (string), `tags` (array of strings) — board metadata, bounded (§6b). A v1/v2 file carrying any of them is refused. |
-| 4 | **current writer** since 2026-10-07 | current build | v3 plus one key on every artboard: `id` (u32 > 0, unique among artboards, from the document id counter) — stable artboard identity (§6c). `active` must name an artboard (or be 0 on a free canvas). A v1/v2/v3 file carrying an artboard `id` is refused. |
+| 4 | **legacy, readable through identity migration** | builds through base `7b48f2c` | v3 plus one key on every artboard: `id` (u32 > 0, unique among artboards, from the document id counter) — stable artboard identity (§6c). `active` must name an artboard (or be 0 on a free canvas). A v1/v2/v3 file carrying an artboard `id` is refused. |
+
+| 5 | **Lane H writer, merge pending** | `feat/p2-stroke` | optional `doc.paths[].stroke_style`; exact keys and validation in §6d; default authored doc bytes unchanged. |
 
 ## 6. Migration v1 → v2
 
@@ -221,6 +228,34 @@ assign_artboard_ids` — a copy inserted after its source gets the new id), undo
 with the same id, and a page created after an undo never reuses a removed page's id. Indices stay
 internal (export planning, Layers artboard sections, `path_boards`/`node_boards`, the `active`
 preference, `ExportScope::ActiveArtboard`); the Bridge and `varos-cli export-pdf --artboard` speak ids.
+
+## 6d. Migration v4 → v5 and exact stored style
+
+`format::migrate_v4_to_v5(Document, &Limits)` is a pure identity step, registered after v3→v4.
+Formats 1–4 reject presence of `stroke_style`, including `{}` and null, before typed decoding:
+`Invalid::FieldNotInFormat { field: "stroke_style", version }`. Format 6 is refused before typed decode.
+Existing v4 files retain disk bytes on open; Save updates only the wrapper/catalog and container offsets
+for an unstyled document. Every default nested field is omitted; all three new structs deny unknown fields.
+
+| Key | Exact wire values / type | Default | Limits |
+|---|---|---|---|
+| cap | Butt, Round, Square | Round | known enum only |
+| join | Miter, Round, Bevel | Round | known enum only |
+| miter_limit | f32 | 10 | finite 1–1000 |
+| dash | array of f32 | [] | 0/2/4/6 entries; finite 0–1,000,000; positives ≥0.0001; each pair positive sum |
+| dash_phase | f32 | 0 | finite absolute value ≤1,000,000 |
+| align_dashes_to_corners | bool | false | strict boolean |
+| align | Center, Inside, Outside | Center | known enum only |
+| arrows.start/end | nullable enum | null | 29 names below; omitted on save when absent |
+| arrows.scale_start/scale_end | f32 | 1 | finite 0.01–100 |
+| arrows.align | Tip, Extend | Tip | known enum only |
+
+Arrow enum: Triangle, TriangleOpen, Circle, CircleOpen, Square, SquareOpen, Bar, Diamond, Arrow,
+ArrowOpen, Barbed, HalfArrowLeft, HalfArrowRight, Concave, DoubleBar, Feather, DotOnBar, Chevron,
+DoubleArrow, Target, Star, Cross, Plus, Hexagon, HexagonOpen, Tag, TagOpen, HalfCircle, Drop.
+Null style/arrows, unknown fields/enums, odd dash arrays and zero-sum pairs fail closed. Shared validation
+runs on load, edit and save. Geometry overflow/work-budget errors identify the path and refuse output.
+
 
 ## 7. v2 required keys and the unknown-field policy
 
@@ -457,3 +492,16 @@ the home directory (excluding Library/build/cache trees), iCloud/CloudStorage an
 locations found only project fixtures, with no scan errors. The personal-file run is therefore
 not applicable to the currently available corpus, not a passing manual test. Run it if personal
 documents are found later (DFS_S5_FORMAT_V2.md §1; ADR-0008 §Consequences, R3).
+
+### Format 5 fixtures and refusals (§§7–9, 12–13)
+
+`varos-core/tests/fixtures/v5/INDEX` indexes canonical JSON, native PDF and SVG goldens for plain,
+cap/join, 1/2/3 dash pairs and phase signs, corner fitting, alignments and all 29 arrow kinds.
+`stroke_style.rs` covers load/edit/save validation, undo, notes, coverage and v4 doc byte identity.
+`varos-pdf/tests/stroke_v5.rs` verifies round trips and frozen outputs; frozen v4 tests retain their original
+SHA256 corpus and compare doc subtree/page content bytes across the bump.
+`refused/future_v6.json` and `future_v6.pdf` freeze matched version-6 stamps with undecodable models.
+The old `v5_future.vrs`/`future_v5_pdf.vrs` remain archived inputs to the frozen v4 reader gate;
+the current reader accepts their version then refuses their invalid model. The old-reader harness adds
+the base-7b48f2c v4 gate; plain v5 JSON/PDF and `doc:42` demonstrate refusal before typed decode.
+Native save retains editable centrelines/styles; export baking never overwrites authored paths.

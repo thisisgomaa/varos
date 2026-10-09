@@ -9,6 +9,7 @@ pub mod shapes;
 pub use edit::{add_anchor_points, average_anchors, join_open_paths, simplify, smooth, AverageAxis};
 pub use fit::fit_points;
 pub use shapes::{arc, line, polar_grid, polygon, rectangular_grid, rounded_rectangle, spiral, star, ArcClosure};
+pub mod stroke_adapter;
 
 pub type Pt = [f32; 2];
 pub type Rgba = [f32; 4];
@@ -117,8 +118,7 @@ pub fn point_in_poly(poly: &[Pt], pt: Pt) -> bool {
     inside
 }
 
-/// Conservative local painted bounds. Current strokes use round joins, so miter allowance is zero.
-/// Future joins, arrowheads and effects extend this single function.
+/// Conservative local painted bounds, including miter allowances and evaluated arrow outlines.
 pub fn painted_extent(path: &crate::model::Path) -> crate::flatten::Rect {
     let mut r = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for a in path.anchors.iter().chain(path.holes.iter().flatten()) {
@@ -127,7 +127,28 @@ pub fn painted_extent(path: &crate::model::Path) -> crate::flatten::Rect {
         }
     }
     let pad = if path.stroke == crate::model::Paint::None { 0.0 } else { (path.stroke_width * 0.5).max(0.0) };
-    (r.0 - pad, r.1 - pad, r.2 + pad, r.3 + pad)
+    if path.stroke_style.is_default() {
+        return (r.0 - pad, r.1 - pad, r.2 + pad, r.3 + pad);
+    }
+    use crate::stroke::{StrokeAlign, StrokeJoin};
+    let style = &path.stroke_style;
+    let radius = if style.align == StrokeAlign::Center || !path.closed { pad } else { pad * 2.0 };
+    let allowance = radius
+        * if style.join == StrokeJoin::Miter {
+            std::f32::consts::SQRT_2.max(style.miter_limit)
+        } else {
+            std::f32::consts::SQRT_2
+        };
+    let mut extent = (r.0 - allowance, r.1 - allowance, r.2 + allowance, r.3 + allowance);
+    if let Ok(coverage) = crate::stroke::evaluate(path, 0.01, &|| false) {
+        for q in coverage.rings.iter().flatten() {
+            extent.0 = extent.0.min(q[0]);
+            extent.1 = extent.1.min(q[1]);
+            extent.2 = extent.2.max(q[0]);
+            extent.3 = extent.3.max(q[1]);
+        }
+    }
+    extent
 }
 /// Reach beyond the geometry hull, derived from the shared painted extent.
 pub fn painted_padding(path: &crate::model::Path) -> f32 {
@@ -143,7 +164,12 @@ pub fn painted_padding(path: &crate::model::Path) -> f32 {
     if hull.0 == f32::MAX {
         0.0
     } else {
-        extent_padding(hull, painted_extent(path))
+        let padding = extent_padding(hull, painted_extent(path));
+        if path.stroke_style.is_default() {
+            padding
+        } else {
+            padding * std::f32::consts::SQRT_2
+        }
     }
 }
 

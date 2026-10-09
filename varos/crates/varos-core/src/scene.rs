@@ -26,6 +26,12 @@ pub const SEG_HI: Rgba = [0.35, 0.80, 1.0, 1.0]; // grabbed/selected path segmen
 pub const GUIDE: Rgba = [0.0, 0.72, 0.92, 0.9]; // ruler guide line — cyan (Illustrator default)
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct NativeStroke {
+    pub contours: Vec<Vec<Pt>>,
+    pub width: f32,
+    pub style: crate::stroke::StrokeStyle,
+}
+#[derive(Clone, Debug, PartialEq)]
 pub enum Prim {
     Fill { rings: Vec<Vec<Pt>>, color: Rgba }, // outer ring + hole rings — filled even-odd (holes cut through)
     // `clip` (A2): the artboard rect [x0,y0,x1,y1] (world) this stroke is clipped to, if any. The centerline
@@ -34,6 +40,7 @@ pub enum Prim {
     // = draw uncut (a floater or a page that invited bleed). A missed/degenerate rect MUST draw the stroke
     // uncut (overflowing), never clipped-to-nothing — fail-open.
     Stroke { pts: Vec<Pt>, width: f32, color: Rgba, clip: Option<[f32; 4]> },
+    StrokeCoverage { rings: Vec<Vec<Pt>>, color: Rgba, clip: Option<[f32; 4]>, native: Option<NativeStroke> },
     Dashed { pts: Vec<Pt>, width: f32, color: Rgba },
     Square { c: Pt, half: f32, color: Rgba },
     Disc { c: Pt, r: f32, color: Rgba },
@@ -183,7 +190,9 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
 #[derive(Default)]
 pub struct Scene {
     pub content: Vec<Group>, // artwork groups (z-ordered): opaque runs + isolated translucent layers
-    pub overlay: Vec<Prim>,  // editing chrome: constant screen size, positions follow the view
+    pub report: crate::ExportReport,
+    pub errors: Vec<String>,
+    pub overlay: Vec<Prim>, // editing chrome: constant screen size, positions follow the view
 }
 
 /// Multiply a primitive's colour alpha — folds object-opacity into a single-primitive object (no overlap
@@ -191,7 +200,7 @@ pub struct Scene {
 fn scale_alpha(p: &mut Prim, o: f32) {
     let c = match p {
         Prim::Fill { color, .. } => color,
-        Prim::Stroke { color, .. } => color,
+        Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } => color,
         Prim::Dashed { color, .. } => color,
         Prim::Square { color, .. } => color,
         Prim::Disc { color, .. } => color,
@@ -277,6 +286,9 @@ pub fn build_scene_in_view(ed: &Editor, view: View, frame: [u32; 2]) -> Scene {
 }
 
 fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
+    let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
+    let stroke_budget = std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default());
+    let stroke_errors = std::cell::RefCell::new(Vec::new());
     let mut s = Scene::default();
     // content = z-ordered Groups. Opaque prims accumulate into the current run in PER-OBJECT paint order
     // (each object's fill immediately followed by its own stroke — Illustrator stacking: an object above
@@ -471,6 +483,71 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
     let stroke_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
+        if !p.stroke_style.is_default() {
+            if let Some(color) = p.stroke.solid() {
+                match crate::stroke::evaluate(p, 0.025 / f64::from(ppu.max(0.0001)), &|| false) {
+                    Ok(coverage) => {
+                        if let Err(e) = stroke_budget.borrow_mut().charge(&coverage) {
+                            stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                            return out;
+                        }
+                        stroke_report.borrow_mut().notes.extend(coverage.report.notes);
+                        let xf = ed.doc.unit_xform(p.id);
+                        let rings: Vec<Vec<Pt>> =
+                            coverage.rings.into_iter().map(|r| r.into_iter().map(|q| xf.apply(q)).collect()).collect();
+                        let style = &p.stroke_style;
+                        let native = (crate::stroke::evaluate::has_length(p)
+                            && (style.align == crate::stroke::StrokeAlign::Center || !p.closed)
+                            && !style.align_dashes_to_corners
+                            && style.dash.iter().all(|v| *v > 0.0)
+                            && (p.closed || (style.arrows.start.is_none() && style.arrows.end.is_none())))
+                        .then(|| NativeStroke {
+                            contours: std::iter::once(geom.outline.clone())
+                                .chain(geom.holes.iter().map(|r| {
+                                    let mut r = r.clone();
+                                    if let Some(first) = r.first().copied() {
+                                        r.push(first);
+                                    }
+                                    r
+                                }))
+                                .collect(),
+                            width: p.stroke_width,
+                            style: style.clone(),
+                        });
+                        match clip_rects(pi) {
+                            Some(rects) => {
+                                for r in rects {
+                                    out.push(Prim::StrokeCoverage {
+                                        rings: rings
+                                            .iter()
+                                            .map(|ring| clip_poly_rect(ring, r))
+                                            .filter(|ring| ring.len() >= 3)
+                                            .collect(),
+                                        color,
+                                        clip: Some([r.0, r.1, r.2, r.3]),
+                                        native: native.clone(),
+                                    });
+                                }
+                            }
+                            None => out.push(Prim::StrokeCoverage { rings, color, clip: None, native }),
+                        }
+                    }
+                    Err(e) => {
+                        stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                    }
+                }
+            }
+            // The renderer tessellates WORLD/clipped rings, whose band scan can cost more than
+            // local coverage after rotation. Reject that cost here so it produces a visible error.
+            if let Some(error) = out.iter().find_map(|prim| match prim {
+                Prim::StrokeCoverage { rings, .. } => crate::stroke::evaluate::triangles(rings).err(),
+                _ => None,
+            }) {
+                stroke_errors.borrow_mut().push(format!("path {}: {error}", p.id));
+                out.clear();
+            }
+            return out;
+        }
         if p.anchors.len() >= 2 {
             if let Some(c) = p.stroke.solid() {
                 let clip = clip_rects(pi);
@@ -909,6 +986,8 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         }
     }
 
+    s.report = stroke_report.into_inner();
+    s.errors = stroke_errors.into_inner();
     s
 }
 

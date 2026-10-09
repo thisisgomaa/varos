@@ -18,6 +18,13 @@ pub(crate) struct Snap {
     pub(crate) fill_mixed: bool,
     pub(crate) stroke_mixed: bool,
     pub(crate) sw: f32,
+    pub(crate) stroke_style: varos_core::stroke::StrokeStyle,
+    pub(crate) stroke_style_mixed: bool,
+    pub(crate) stroke_mixed_fields: [bool; 6],
+    pub(crate) stroke_error: Option<String>,
+    pub(crate) stroke_open: bool,
+    pub(crate) stroke_closed: bool,
+    pub(crate) stroke_no_tangent: bool,
     pub(crate) opacity: f32,
     pub(crate) clip_exempt: bool, // A30: the selection's clip unit is released from artboard clip
     pub(crate) any_clip: bool,    // any board clips → the "Clip to artboard" toggle is relevant to show
@@ -53,6 +60,13 @@ fn paint_mixed(ed: &Editor, target: PaintTarget) -> bool {
     paints.next().is_some_and(|first| paints.any(|paint| paint != first))
 }
 impl Snap {
+    pub(crate) fn stroke_field_mixed(&self, field: StrokeField) -> bool {
+        self.stroke_mixed_fields[StrokeField::ALL
+            .iter()
+            .position(|f| std::mem::discriminant(f) == std::mem::discriminant(&field))
+            .unwrap_or(0)]
+    }
+
     pub(crate) fn target_mixed(&self, target: PaintTarget) -> bool {
         match target {
             PaintTarget::Fill => self.fill_mixed,
@@ -98,6 +112,7 @@ impl Snap {
         } else {
             format!("{n} objects")
         };
+        let inspection = ed.stroke_inspection.read(ed);
         Snap {
             tool: ed.tool,
             name,
@@ -116,6 +131,13 @@ impl Snap {
             fill_mixed: paint_mixed(ed, PaintTarget::Fill),
             stroke_mixed: paint_mixed(ed, PaintTarget::Stroke),
             sw,
+            stroke_style: inspection.style,
+            stroke_error: ed.stroke_error.clone(),
+            stroke_mixed_fields: inspection.fields,
+            stroke_style_mixed: inspection.mixed,
+            stroke_open: inspection.open,
+            stroke_no_tangent: inspection.no_tangent,
+            stroke_closed: inspection.closed,
             opacity,
             clip_exempt: ed.sel_clip_exempt(),
             any_clip: ed.doc.artboards.iter().any(|a| a.clip),

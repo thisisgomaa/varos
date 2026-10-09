@@ -122,7 +122,7 @@ const V3_REFUSES_V4: &str = "This file needs a newer Varos. It uses file format 
 /// before typed decode, naming the file's own number.
 #[test]
 fn old_reader_refuses_v2_v3_and_v4_json_before_decode() {
-    let fresh = varos_core::file::doc_to_blob(&sample_doc()).unwrap();
+    let fresh = include_str!("../../varos-core/tests/fixtures/v4/v4_board_meta.vrs").to_owned();
     let v2 = include_str!("../../varos-core/tests/fixtures/v2/v2_masked_rotated.vrs");
     assert_eq!(old_gate(v2).unwrap_err(), "this file was saved by a newer Varos (v2) — please update");
     let v3 = include_str!("../../varos-core/tests/fixtures/v3/v3_board_meta.vrs");
@@ -135,7 +135,7 @@ fn old_reader_refuses_v2_v3_and_v4_json_before_decode() {
 /// The same gate proof through fresh and frozen PDF model streams (not an old binary run).
 #[test]
 fn old_reader_refuses_v2_v3_and_v4_pdf_before_decode() {
-    let fresh = varos_pdf::write_pdf(&sample_doc()).unwrap();
+    let fresh = include_bytes!("../../varos-core/tests/fixtures/v4/v4_board_meta_pdf.vrs").to_vec();
     let v2 = include_bytes!("../../varos-core/tests/fixtures/v2/v2_masked_rotated_pdf.vrs");
     assert_eq!(
         old_gate(&embedded_model_json(v2)).unwrap_err(),
@@ -164,9 +164,8 @@ fn v2_reader_refuses_v3_and_v4_raw_and_pdf_before_decode() {
     for body in [frozen_raw, frozen_pdf.as_str()] {
         assert_eq!(v2_gate(body).unwrap_err(), V2_REFUSES_V3);
     }
-    let doc = sample_doc();
-    let fresh_raw = varos_core::file::doc_to_blob(&doc).unwrap();
-    let fresh_pdf = embedded_model_json(&varos_pdf::write_pdf(&doc).unwrap());
+    let fresh_raw = include_str!("../../varos-core/tests/fixtures/v4/v4_board_meta.vrs").to_owned();
+    let fresh_pdf = embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v4/v4_board_meta_pdf.vrs"));
     let frozen_raw = include_str!("../../varos-core/tests/fixtures/v4/v4_board_meta.vrs");
     let frozen_pdf = embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v4/v4_board_meta_pdf.vrs"));
     for body in [fresh_raw.as_str(), fresh_pdf.as_str(), frozen_raw, frozen_pdf.as_str()] {
@@ -181,9 +180,8 @@ fn v2_reader_refuses_v3_and_v4_raw_and_pdf_before_decode() {
 /// can never open a board, drop its artboard ids as unknown, and save the loss.
 #[test]
 fn v3_reader_refuses_v4_raw_and_pdf_before_decode() {
-    let doc = sample_doc();
-    let fresh_raw = varos_core::file::doc_to_blob(&doc).unwrap();
-    let fresh_pdf = embedded_model_json(&varos_pdf::write_pdf(&doc).unwrap());
+    let fresh_raw = include_str!("../../varos-core/tests/fixtures/v4/v4_board_meta.vrs").to_owned();
+    let fresh_pdf = embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v4/v4_board_meta_pdf.vrs"));
     let frozen_raw = include_str!("../../varos-core/tests/fixtures/v4/v4_board_meta.vrs");
     let frozen_pdf = embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v4/v4_board_meta_pdf.vrs"));
     for body in [fresh_raw.as_str(), fresh_pdf.as_str(), frozen_raw, frozen_pdf.as_str()] {
@@ -212,5 +210,46 @@ fn frozen_gate_still_accepts_v1_headers() {
     assert_eq!(
         old_gate(&embedded_model_json(include_bytes!("../../varos-core/tests/fixtures/v1/v1_masked_pdf.vrs"))),
         Ok(())
+    );
+}
+
+/// Frozen v4 gate from base 7b48f2c. Typed decode is deliberately absent.
+fn v4_gate(body: &str) -> Result<u32, String> {
+    #[derive(serde::Deserialize)]
+    struct Head {
+        #[serde(default, deserialize_with = "present")]
+        varos: Option<serde_json::Value>,
+    }
+    fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<serde_json::Value>, D::Error> {
+        <serde_json::Value as serde::Deserialize>::deserialize(d).map(Some)
+    }
+    let head: Head = serde_json::from_str(body).map_err(|e| format!("malformed: {e}"))?;
+    let value = head.varos.ok_or("missing version")?;
+    let version = match value.as_u64() {
+        Some(0) | None => return Err(format!("invalid version {value}")),
+        Some(v) => u32::try_from(v).map_err(|_| format!("invalid version {value}"))?,
+    };
+    if version > 4 {
+        return Err(format!(
+            "This file needs a newer Varos. It uses file format {version}; this build supports up to 4. \
+             Update Varos to open it. The file has not been changed."
+        ));
+    }
+    Ok(version)
+}
+#[test]
+fn v4_reader_refuses_v5_before_decode() {
+    let doc = sample_doc();
+    let raw = varos_core::file::doc_to_blob(&doc).unwrap();
+    let pdf = embedded_model_json(&varos_pdf::write_pdf(&doc).unwrap());
+    for body in [raw.as_str(), pdf.as_str(), r#"{"varos":5,"doc":42}"#] {
+        assert_eq!(
+            v4_gate(body).unwrap_err(),
+            varos_core::format::LoadError::NewerVersion { found: 5, supported: 4 }.to_string()
+        );
+    }
+    assert_eq!(
+        v4_gate(include_str!("../../varos-core/tests/fixtures/refused/v5_future.vrs")).unwrap_err(),
+        varos_core::format::LoadError::NewerVersion { found: 5, supported: 4 }.to_string()
     );
 }

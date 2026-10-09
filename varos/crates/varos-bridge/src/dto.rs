@@ -239,8 +239,14 @@ pub enum Operation {
         ids: Vec<String>,
         delta: [f32; 2],
     },
+    SetStrokeStyle {
+        ids: Vec<String>,
+        stroke_style: varos_core::stroke::StrokeStyle,
+    },
     SetPaint {
         ids: Vec<String>,
+        #[serde(default, deserialize_with = "optional_stroke_style", skip_serializing_if = "Option::is_none")]
+        stroke_style: Option<varos_core::stroke::StrokeStyle>,
         #[serde(default, skip_serializing_if = "Paint::unchanged")]
         fill: Paint,
         #[serde(default, skip_serializing_if = "Paint::unchanged")]
@@ -374,6 +380,7 @@ impl Operation {
             | Self::SetActiveArtboard { .. } => &[],
             Self::Move { ids, .. }
             | Self::SetPaint { ids, .. }
+            | Self::SetStrokeStyle { ids, .. }
             | Self::Resize { ids, .. }
             | Self::Rotate { ids, .. }
             | Self::Rename { ids, .. }
@@ -632,4 +639,10 @@ impl Reply {
     pub fn failure(error: Error) -> Self {
         Self { ok: false, result: None, request_id: None, board: None, rev: None, undo_steps: 0, error: Some(error) }
     }
+}
+
+fn optional_stroke_style<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<varos_core::stroke::StrokeStyle>, D::Error> {
+    varos_core::stroke::StrokeStyle::deserialize(d).map(Some)
 }

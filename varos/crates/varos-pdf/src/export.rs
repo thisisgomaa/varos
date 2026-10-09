@@ -88,11 +88,15 @@ impl fmt::Display for ExportUnavailable {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExportError {
     Cancelled,
+    InvalidDocument(String),
+    LimitExceeded,
     Unavailable(ExportUnavailable),
 }
 impl fmt::Display for ExportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ExportError::InvalidDocument(e) => write!(f, "Cannot export this board: {e}"),
+            ExportError::LimitExceeded => f.write_str("limit_exceeded: stroke geometry budget"),
             ExportError::Cancelled => f.write_str("The export was cancelled."),
             ExportError::Unavailable(u) => f.write_str(u.reason()),
         }
@@ -187,7 +191,23 @@ pub fn export_pdf_bytes_with_report(
     if plan.pages.is_empty() {
         return Err(ExportError::Unavailable(ExportUnavailable::NothingToExport));
     }
-    write_pages(doc, &plan.pages, None, cancel).map(|bytes| (bytes, varos_core::ExportReport::default()))
+    let bytes = write_pages(doc, &plan.pages, None, cancel)?;
+    let mut report = varos_core::ExportReport::default();
+    for p in &doc.paths {
+        if !p.stroke_style.is_default() {
+            let coverage = varos_core::stroke::evaluate(p, 0.01, &|| cancel.load(std::sync::atomic::Ordering::Relaxed))
+                .map_err(stroke_error)?;
+            report.notes.extend(coverage.report.notes);
+            if !crate::write::native_stroke(p) {
+                report.notes.push(varos_core::ExportNote {
+                    kind: "stroke_baked".into(),
+                    object_id: Some(p.id),
+                    message: "PDF: aligned, fitted, dotted, degenerate or arrowed coverage".into(),
+                });
+            }
+        }
+    }
+    Ok((bytes, report))
 }
 
 /// Does this file carry an embedded Varos model (a native `.vrs` container)? Bounded byte scan for
@@ -262,4 +282,12 @@ fn bounds_page(doc: &Document, reach: Reach) -> Option<PageSpec> {
     }
     // a degenerate (zero-width or zero-height) extent still gets a real page, at least 1 pt each way
     Some(PageSpec { rect: [x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0)], background: None })
+}
+
+pub(crate) fn stroke_error(e: varos_core::stroke::StrokeError) -> ExportError {
+    match e {
+        varos_core::stroke::StrokeError::LimitExceeded => ExportError::LimitExceeded,
+        varos_core::stroke::StrokeError::Cancelled => ExportError::Cancelled,
+        _ => ExportError::InvalidDocument(e.to_string()),
+    }
 }
