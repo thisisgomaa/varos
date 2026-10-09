@@ -614,6 +614,11 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
     if let Some(rows) = out["tools"].as_array_mut() {
         rows.push(json!({"name":"import_svg","description":"SVG/SVGZ; files scope; undo; losses.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}), &["api","board","request_id","expected_rev","path"])}));
     }
+    // ---- Lane F ----
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.extend(crate::application::schemas());
+        rows.extend(crate::application::extra_schemas());
+    }
     append_export_tools(&mut out);
     append_document_tools(&mut out);
     if let Some(list) = out["tools"].as_array_mut() {
@@ -924,6 +929,23 @@ pub fn tools_for(api: &str) -> Value {
             edit["description"] = json!("Atomic typed edits; core params inline. Extended verbs: call schema api 1.2 tool edit verb NAME before use; list_verbs groups all verbs. Decoder validates all params.");
         }
     }
+    // Lane F: full schemas remain on demand, keeping the existing tools/list budget.
+    if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows {
+            if ["preferences", "history_list", "history_jump", "actions", "shortcuts", "command_index"]
+                .iter()
+                .any(|name| row["name"] == *name)
+            {
+                let properties = row["inputSchema"]["properties"].as_object().cloned().unwrap_or_default();
+                let mut compact = serde_json::Map::new();
+                for key in properties.keys() {
+                    compact.insert(key.clone(), if key == "api" { json!({"const":"1.2"}) } else { json!({}) });
+                }
+                row["inputSchema"]["properties"] = json!(compact);
+                row["description"]=json!("API 1.2 typed application command. Call schema with this tool before use; full arguments validated by the typed decoder.");
+            }
+        }
+    }
     out
 }
 
@@ -1086,7 +1108,7 @@ pub fn list_verbs() -> Value {
                     for op in ops {
                         let expanded = expand_schema(op, root);
                         if let Some(verb) = schema_verb(&expanded) {
-                            let entry = json!({"name":verb,"description":verb_description(verb)});
+                            let entry = json!({"name":verb,"id":varos_core::registry::edit_id(verb),"description":verb_description(verb),"enabled":true,"disabled_reason":null});
                             if core_verb(verb) {
                                 core.push(entry);
                             } else {
@@ -1096,7 +1118,7 @@ pub fn list_verbs() -> Value {
                     }
                 }
             } else {
-                tools.push(json!({"name":name,"description":row["description"]}));
+                tools.push(json!({"name":name,"id":varos_core::registry::tool_id(name),"description":row["description"],"enabled":true,"disabled_reason":null}));
             }
         }
     }

@@ -5,6 +5,14 @@ use super::*;
 pub(super) fn rows() -> Vec<Entry> {
     use KeyCode as K;
     vec![
+        // ---- Lane F ----
+        item(
+            "app.shortcuts",
+            "Keyboard Shortcuts…",
+            Some(Accel { code: K::KeyK, cmd: true, shift: true, alt: true }),
+            MenuCmd::Phase9(crate::phase9::DesktopAction::Shortcuts),
+        ),
+        item("app.actions", "Actions…", None, MenuCmd::Phase9(crate::phase9::DesktopAction::Actions)),
         key("edit.undo", "Undo", cmd(K::KeyZ)),
         key("edit.redo", "Redo", cmd_shift(K::KeyZ)),
         Entry::Sep,

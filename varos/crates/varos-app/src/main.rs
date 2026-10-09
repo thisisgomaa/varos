@@ -33,6 +33,8 @@ mod bridge_fs;
 mod bridge_host;
 mod chrome;
 mod cursors;
+// ---- Lane F ----
+mod command_registry;
 mod document_ui;
 mod export_ui;
 mod file_jobs;
@@ -52,11 +54,16 @@ mod menus;
 mod os_clipboard;
 mod os_open;
 mod pacing;
+mod parity_registry;
 #[path = "ui/export/pdf_options.rs"]
 mod pdf_options;
+mod phase9;
+mod phase9_host;
 mod print_job;
+mod quicklook;
 mod recent_files;
 mod recovery_host;
+mod shortcut_editor;
 mod shortcuts;
 mod single_instance;
 mod svg_import;
@@ -374,7 +381,7 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         }
         return;
     }
-    let s = if shift { 10.0 } else { 1.0 };
+    let s = ed.keyboard_increment_pt * if shift { 10.0 } else { 1.0 };
     match code {
         "KeyV" => ed.set_tool(ToolKind::Object),
         "KeyA" => ed.set_tool(ToolKind::Direct),
@@ -788,6 +795,36 @@ fn dispatch(
             }
             host::Ran::default()
         }
+        host::HostAction::App(AppCommand::Phase9(a)) => {
+            phase9_host::desktop(a, gui);
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::HistoryJump(id, depth)) => {
+            if let Some(s) = ws.get_mut(id) {
+                if gui.commit_fields(&mut s.editor) {
+                    if let Err(e) = s.editor.history_jump(depth) {
+                        gui.phase9.error = Some(e);
+                    }
+                }
+            }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::RecordAction(id, start)) => {
+            phase9_host::record(gui, ws, id, start);
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::ReplayAction(id, a)) => {
+            if let Some(s) = ws.get_mut(id) {
+                if let Err(e) = a.replay(&mut s.editor) {
+                    gui.phase9.error = Some(e);
+                }
+            }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::SaveAction(a)) => {
+            phase9_host::save_action(gui, &a);
+            host::Ran::default()
+        }
         host::HostAction::App(AppCommand::DocumentSetup(id) | AppCommand::DocumentInfo(id)) => {
             if let Some(s) = ws.get_mut(id) {
                 if !gui.commit_fields(&mut s.editor) {
@@ -963,6 +1000,17 @@ fn command_key(
     pressed: bool,
     repeat: bool,
 ) -> bool {
+    let m = keyboard.held();
+    if m.ctrl && code == KeyCode::KeyK && ((!m.shift && !m.alt) || (m.shift && m.alt)) {
+        if pressed && !repeat {
+            pending.push(host::HostAction::App(AppCommand::Phase9(if m.alt {
+                phase9::DesktopAction::Shortcuts
+            } else {
+                phase9::DesktopAction::Preferences
+            })));
+        }
+        return true;
+    }
     match keyboard.key(code, pressed, repeat, active) {
         host::KeyRoute::Queue(cmd) => {
             pending.push(host::HostAction::App(cmd));
@@ -1213,7 +1261,18 @@ fn main() {
     #[cfg(target_os = "macos")]
     mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "visible");
     let mut gpu_notice_shown = false;
-    let mut renderer = match pollster::block_on(Renderer::new(window.clone(), size.width, size.height)) {
+    let mut renderer = match pollster::block_on(Renderer::new_with_power(
+        window.clone(),
+        size.width,
+        size.height,
+        match recovery.settings.preferences.gpu_preference {
+            varos_app::storage::preferences::GpuPreference::Auto => varos_render_wgpu::PowerPreference::None,
+            varos_app::storage::preferences::GpuPreference::LowPower => varos_render_wgpu::PowerPreference::LowPower,
+            varos_app::storage::preferences::GpuPreference::HighPerformance => {
+                varos_render_wgpu::PowerPreference::HighPerformance
+            }
+        },
+    )) {
         Ok(r) => r,
         Err(e) => {
             fatal("Varos couldn't start its graphics engine.\nUpdating your graphics driver usually fixes this.", &e)
@@ -1258,6 +1317,11 @@ fn main() {
         }),
     );
     let mut start_refresh = varos_app::start::StartRefresh::default();
+    renderer
+        .set_pasteboard(varos_app::shell::tokens::preferences_pasteboard(recovery.settings.preferences.canvas_colour));
+    if let Some(layout) = varos_app::storage::paths::AppLayout::current() {
+        quicklook::enable_cache(layout.thumbs());
+    }
     let mut recovery_gen = 0u64;
     // The orphan scan was submitted with the host (before the window / GPU setup): take its result
     // now (bounded wait) so frame 0 already carries the "closed unexpectedly" strip / Start's
@@ -1588,6 +1652,7 @@ fn main() {
                         }
                         let reset_layout =
                             matches!(&action, host::HostAction::App(AppCommand::Window(WindowCmd::ResetLayout)));
+                        let new_blank = matches!(action, host::HostAction::App(AppCommand::NewBoard));
                         let before = recovery_host::RecoveryHost::before_close(&ws);
                         let (ds, keys) = (&mut dialogs, &keyboard);
                         let jobs = &mut recovery;
@@ -1612,6 +1677,11 @@ fn main() {
                         // the document (`bridge_host::run` reports a mutation as `ran`)
                         ran_any |= !bridge || ran.ran;
                         recovery.after_dispatch(before, &mut ws, ran.exit, Instant::now());
+                        if new_blank {
+                            if let Some(tab) = ws.active_mut() {
+                                tab.editor.doc.units.display = recovery.settings.preferences.default_units.core();
+                            }
+                        }
                         // a coalesced second ⌘S runs as a normal ⌘S, behind what is already waiting
                         pending
                             .extend(ran.follow_up_saves.iter().map(|&id| host::HostAction::App(AppCommand::Save(id))));
@@ -1716,6 +1786,22 @@ fn main() {
                     sync_home(&mut gui, ws.on_home(), &store, &recovery, &mut probe, &mut start_refresh, recovery_gen);
                     redraw!("home-sync");
                 }
+                let prefs_changed = gui.phase9.generation != recovery.preferences_generation;
+                gui.phase9.sync(recovery.settings, recovery.preferences_generation);
+                if prefs_changed {
+                    last_scene_signature = None;
+                    renderer.set_pasteboard(varos_app::shell::tokens::preferences_pasteboard(
+                        recovery.settings.preferences.canvas_colour,
+                    ));
+                    redraw!("preferences");
+                }
+                #[cfg(target_os = "macos")]
+                if gui.phase9.shortcuts.effective != recovery.shortcuts {
+                    if let Some(menu) = &mac_menu {
+                        menu.sync_shortcuts(&recovery.shortcuts);
+                    }
+                }
+                gui.phase9.shortcuts.effective = recovery.shortcuts.clone();
                 let recovery_ui = recovery.presentation(ws.active());
                 if gui.recovery != recovery_ui {
                     gui.recovery = recovery_ui;
@@ -1814,7 +1900,15 @@ fn main() {
                     WindowEvent::KeyboardInput { event: k, .. } => match k.physical_key {
                         PhysicalKey::Code(c) => {
                             let pressed = k.state == ElementState::Pressed;
-                            command_key(&mut pending, &mut keyboard, c, ws.document_target(), pressed, k.repeat)
+                            phase9_host::shortcut(
+                                &gui,
+                                &mut pending,
+                                c,
+                                keyboard.held(),
+                                ws.document_target(),
+                                pressed,
+                                k.repeat,
+                            ) || command_key(&mut pending, &mut keyboard, c, ws.document_target(), pressed, k.repeat)
                         }
                         _ => false,
                     },

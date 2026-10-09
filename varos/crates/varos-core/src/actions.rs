@@ -1,0 +1,197 @@
+//! Lane F: versioned semantic actions; selection is rebound by the caller at replay.
+//! No persisted Rust enum discriminants, file operations, previews or session IDs.
+use crate::{geom::Rgba, model::ShapeKind, EditCommand, Editor};
+use serde::{Deserialize, Serialize};
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "id", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Step {
+    #[serde(rename = "edit.nudge")]
+    Nudge { delta_pt: [f32; 2] },
+    #[serde(rename = "edit.opacity")]
+    Opacity { value: f32 },
+    #[serde(rename = "edit.create_rectangle")]
+    Rectangle { local: String, bounds_pt: [f32; 4], fill: Option<Rgba> },
+    #[serde(rename = "selection.local")]
+    SelectLocal { local: String },
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Actions {
+    pub version: u32,
+    pub name: String,
+    pub steps: Vec<Step>,
+}
+impl Actions {
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() > 1_048_576 {
+            return Err("Actions exceed 1 MiB".into());
+        }
+        let a: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        a.validate()?;
+        Ok(a)
+    }
+    pub fn validate(&self) -> Result<(), String> {
+        if self.version != 1 {
+            return Err("Unsupported Actions version".into());
+        }
+        if self.steps.is_empty() || self.steps.len() > 100 || self.name.len() > 256 {
+            return Err("Use 1–100 steps and a name up to 256 bytes".into());
+        }
+        let mut locals = std::collections::BTreeSet::new();
+        for step in &self.steps {
+            match step {
+                Step::Nudge { delta_pt } if !delta_pt.iter().all(|v| v.is_finite()) => {
+                    return Err("Invalid points".into())
+                }
+                Step::Opacity { value } if !value.is_finite() || !(0.0..=1.0).contains(value) => {
+                    return Err("Opacity must be 0–1".into())
+                }
+                Step::Rectangle { local, bounds_pt, fill } => {
+                    if local.is_empty()
+                        || local.len() > 64
+                        || !locals.insert(local)
+                        || !bounds_pt.iter().all(|v| v.is_finite())
+                        || bounds_pt[2] <= 0.0
+                        || bounds_pt[3] <= 0.0
+                        || fill.is_some_and(|c| !c.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)))
+                    {
+                        return Err("Invalid rectangle or duplicate local reference".into());
+                    }
+                }
+                Step::SelectLocal { local } if !locals.contains(local) => return Err("Unbound local target".into()),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    pub fn replay(&self, ed: &mut Editor) -> Result<(), String> {
+        self.validate()?;
+        let before = ed.rev;
+        let targets = ed.objsel.iter().copied().collect::<Vec<_>>();
+        let mut locals = std::collections::BTreeMap::new();
+        let batch = ed.prepare_design_batch(
+            self.steps.len(),
+            |stage, index| {
+                if index == 0 {
+                    locals.clear();
+                    stage.action_recording = None;
+                    stage.try_execute(EditCommand::SelectPaths(targets.clone()))?;
+                }
+                match &self.steps[index] {
+                    Step::Nudge { delta_pt } => {
+                        if stage.objsel.is_empty() {
+                            return Err("Bind a selection before replay".into());
+                        }
+                        stage.try_execute(EditCommand::Nudge { x: delta_pt[0], y: delta_pt[1] })
+                    }
+                    Step::Opacity { value } => {
+                        if stage.objsel.is_empty() {
+                            return Err("Bind a selection before replay".into());
+                        }
+                        stage.try_execute(EditCommand::SetOpacity(*value))
+                    }
+                    Step::Rectangle { local, bounds_pt, fill } => {
+                        let id = stage.try_execute_created(EditCommand::AddShape {
+                            kind: ShapeKind::Rect,
+                            bounds: *bounds_pt,
+                            parent: None,
+                            fill: *fill,
+                            stroke: None,
+                            stroke_width: 0.0,
+                            opacity: 1.0,
+                            name: None,
+                        })?;
+                        locals.insert(local.clone(), id);
+                        Ok(())
+                    }
+                    Step::SelectLocal { local } => {
+                        let id = *locals.get(local).ok_or("Unbound local target")?;
+                        stage.try_execute(EditCommand::SelectPaths(vec![id]))
+                    }
+                }
+            },
+            |i, e| format!("Step {i}: {e}"),
+            || false,
+        )?;
+        ed.publish_design_batch(batch)?;
+        ed.annotate_history(before, crate::editor::history::Actor::Human, format!("Action: {}", self.name));
+        Ok(())
+    }
+}
+impl Editor {
+    pub fn start_action_recording(&mut self) -> Result<(), String> {
+        if self.transaction_open() {
+            return Err("Finish the current edit".into());
+        }
+        self.action_recording = Some(vec![]);
+        Ok(())
+    }
+    pub fn finish_action_recording(&mut self, name: String) -> Result<Actions, String> {
+        let steps = self.action_recording.take().ok_or("No recording is active")?;
+        let a = Actions { version: 1, name, steps };
+        a.validate()?;
+        Ok(a)
+    }
+    pub fn action_recording_len(&self) -> Option<usize> {
+        self.action_recording.as_ref().map(Vec::len)
+    }
+    pub(crate) fn record_step(&mut self, step: Option<Step>, before: u64) {
+        if self.rev > before {
+            if let (Some(steps), Some(step)) = (&mut self.action_recording, step) {
+                if steps.len() < 100 {
+                    steps.push(step);
+                }
+            }
+        }
+    }
+}
+pub(crate) fn semantic(command: &EditCommand) -> Option<Step> {
+    match command {
+        EditCommand::Nudge { x, y } => Some(Step::Nudge { delta_pt: [*x, *y] }),
+        EditCommand::SetOpacity(value) => Some(Step::Opacity { value: *value }),
+        _ => None,
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn local_ids_are_remapped_and_batch_is_atomic() {
+        let a = Actions {
+            version: 1,
+            name: "Rect".into(),
+            steps: vec![
+                Step::Rectangle { local: "r".into(), bounds_pt: [0., 0., 10., 10.], fill: None },
+                Step::SelectLocal { local: "r".into() },
+                Step::Nudge { delta_pt: [3., 0.] },
+            ],
+        };
+        let mut e = Editor::new();
+        a.replay(&mut e).unwrap();
+        assert_eq!(e.doc.paths.len(), 1);
+        assert_eq!(e.history_depths(), (1, 0));
+        let first = e.doc.paths[0].id;
+        a.replay(&mut e).unwrap();
+        assert_ne!(e.doc.paths[1].id, first);
+        let bytes = crate::format::encode_model(&e.doc, &crate::format::Limits::DEFAULT).unwrap();
+        let bad = Actions {
+            version: 1,
+            name: "bad".into(),
+            steps: vec![
+                Step::Rectangle { local: "r".into(), bounds_pt: [0., 0., 10., 10.], fill: None },
+                Step::SelectLocal { local: "absent".into() },
+            ],
+        };
+        assert!(bad.replay(&mut e).is_err());
+        assert_eq!(bytes, crate::format::encode_model(&e.doc, &crate::format::Limits::DEFAULT).unwrap());
+    }
+    #[test]
+    fn refusal_and_recording() {
+        assert!(Actions::decode(br#"{"version":99,"name":"a","steps":[]}"#).is_err());
+        let mut e = Editor::new();
+        e.start_action_recording().unwrap();
+        e.execute(EditCommand::Nudge { x: 1., y: 0. }).unwrap();
+        assert_eq!(e.action_recording_len(), Some(0));
+        assert!(e.finish_action_recording("Empty".into()).is_err());
+    }
+}

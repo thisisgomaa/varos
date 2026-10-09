@@ -663,7 +663,9 @@ pub(crate) fn build_topbar(
                 cmds.push(AppCommand::Window(crate::app_command::WindowCmd::TogglePicker));
                 hit = true;
             }
-            for pnl in varos_app::shell::PanelId::DOCKABLE {
+            for pnl in
+                varos_app::shell::PanelId::DOCKABLE.into_iter().filter(|p| *p != varos_app::shell::PanelId::History)
+            {
                 if check_row(ui, pnl.title(), shell.is_open(pnl)) {
                     shell.toggle_panel(pnl);
                     hit = true;
@@ -672,6 +674,24 @@ pub(crate) fn build_topbar(
             menu_sep(ui);
             if menu_row(ui, "Reset layout", "") {
                 cmds.push(AppCommand::Window(crate::app_command::WindowCmd::ResetLayout));
+                hit = true;
+            }
+            // ---- Lane F ----
+            for (label, action) in [
+                ("Preferences…", crate::phase9::DesktopAction::Preferences),
+                ("Keyboard Shortcuts…", crate::phase9::DesktopAction::Shortcuts),
+                ("Actions…", crate::phase9::DesktopAction::Actions),
+                ("Varos Help", crate::phase9::DesktopAction::Help),
+                ("Report a problem", crate::phase9::DesktopAction::ReportProblem),
+            ] {
+                if menu_row(ui, label, "") {
+                    cmds.push(AppCommand::Phase9(action));
+                    hit = true;
+                }
+            }
+
+            if check_row(ui, "History", shell.is_open(varos_app::shell::PanelId::History)) {
+                shell.toggle_panel(varos_app::shell::PanelId::History);
                 hit = true;
             }
             for (label, key, command) in [

@@ -1,0 +1,130 @@
+{
+  "type": "object",
+  "description": "Version 1 .vrs-actions; explicit supported stable step IDs; no raw enum or session IDs",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "name",
+    "steps"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "delta_pt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "edit.nudge"
+              },
+              "delta_pt": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "value"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "edit.opacity"
+              },
+              "value": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "local",
+              "bounds_pt",
+              "fill"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "edit.create_rectangle"
+              },
+              "local": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "bounds_pt": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "fill": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "items": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "local"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "selection.local"
+              },
+              "local": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

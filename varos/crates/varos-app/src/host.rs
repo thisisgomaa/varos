@@ -417,6 +417,7 @@ pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> 
         MenuCmd::File(f) => MenuRoute::App(to_app_command(f, active)?),
         MenuCmd::Key(k) => MenuRoute::Key(k),
         MenuCmd::Plain(code) => MenuRoute::Plain(code),
+        MenuCmd::Phase9(a) => MenuRoute::App(AppCommand::Phase9(a)),
         MenuCmd::ResetLayout => MenuRoute::App(AppCommand::Window(WindowCmd::ResetLayout)),
         MenuCmd::ToggleRail => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleRail)),
         MenuCmd::TogglePicker => MenuRoute::App(AppCommand::Window(WindowCmd::TogglePicker)),
@@ -653,6 +654,19 @@ fn waits_for_fields(cmd: &AppCommand) -> bool {
 /// owns the one I/O worker; tests use a scripted fake). Results never block the UI thread: they
 /// arrive through the event loop as `AppCommand::FileDone`.
 pub trait FileJobs {
+    fn shortcuts(
+        &mut self,
+        _v: &varos_bridge::application::ShortcutsRequest,
+    ) -> Result<varos_bridge::Reply, varos_bridge::Error> {
+        Err(varos_bridge::Error::new("unsupported", "No shortcut writer"))
+    }
+    // ---- Lane F ----
+    fn preferences(
+        &mut self,
+        _v: &varos_bridge::application::Preferences,
+    ) -> Result<varos_bridge::Reply, varos_bridge::Error> {
+        Err(varos_bridge::Error::new("unsupported", "No preferences writer"))
+    }
     /// Queue `job` on the worker. `Err(job)` = no worker: the caller runs it inline.
     fn submit(&mut self, job: FileJob) -> Result<(), FileJob>;
     /// The wait of the command currently held back by an in-flight save (one at a time: FIFO).

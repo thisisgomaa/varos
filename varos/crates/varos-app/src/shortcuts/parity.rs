@@ -15,6 +15,9 @@ macro_rules! b {
     };
 }
 pub const BINDINGS: &[Binding] = &[
+    // ---- Lane F ----
+    b!("KeyK", true, false, false, "Preferences"),
+    b!("KeyK", true, true, true, "Keyboard Shortcuts"),
     b!("KeyN", true, false, false, "New"),
     b!("KeyO", true, false, false, "Open"),
     b!("KeyS", true, false, false, "Save"),

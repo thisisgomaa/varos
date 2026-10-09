@@ -439,7 +439,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
             Ok(result)
         }
         "apply" => {
-            let a = parse(args, &["--batch", "--out", "--in-place"], 1)?;
+            let a = parse(args, &["--batch", "--out", "--in-place", "--ids"], 1)?;
             let out = match a.out {
                 Some(out) => out,
                 None if a.in_place => a.positional[0].clone(),
@@ -468,12 +468,27 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
             if bytes.len() > 1_048_576 {
                 return Err("batch exceeds 1 MiB".to_owned().into());
             }
-            let commands = bridge::parse_batch(&bytes)?;
-            let count = commands.len();
+            let action = serde_json::from_slice::<Value>(&bytes).ok().is_some_and(|v| v.get("version").is_some());
+            let count;
             let mut editor = Editor::new();
             editor.replace_doc(varos_pdf::load_vrs(&a.positional[0])?);
             let before_rev = editor.rev;
-            editor.execute_batch(commands)?;
+            if action {
+                if let Some(ids) = a.ids.as_deref() {
+                    let ids = ids
+                        .split(',')
+                        .map(|id| id.parse::<u32>().map_err(|_| "--ids must be comma-separated path IDs".to_string()))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    editor.try_execute(varos_core::EditCommand::SelectPaths(ids))?;
+                }
+                let actions = varos_core::actions::Actions::decode(&bytes)?;
+                count = actions.steps.len();
+                actions.replay(&mut editor)?;
+            } else {
+                let commands = bridge::parse_batch(&bytes)?;
+                count = commands.len();
+                editor.execute_batch(commands)?;
+            }
             let pdf = varos_pdf::write_pdf_checked(&editor.doc, &Limits::DEFAULT)?;
             write_output(&out, &pdf)?;
             Ok(json!({"out":out.to_string_lossy(),"commands":count,"changed":editor.rev>before_rev}))

@@ -691,3 +691,15 @@ mod tests {
         assert_eq!(super::ACCENT_TINT, Color32::from_rgba_unmultiplied(0x0c, 0x8c, 0xe9, 34));
     }
 }
+
+// ---- Lane F ----
+/// Requested view-only pasteboard; does not alter artboard paint, UI theme or export.
+pub fn preferences_pasteboard(colour: crate::storage::preferences::CanvasColour) -> [f32; 4] {
+    use crate::storage::preferences::CanvasColour as C;
+    let rgb = match colour {
+        C::MatchUi => [SEAM.r(), SEAM.g(), SEAM.b()],
+        C::White => [255; 3],
+        C::Custom(rgb) => rgb,
+    };
+    [rgb[0] as f32 / 255.0, rgb[1] as f32 / 255.0, rgb[2] as f32 / 255.0, 1.0]
+}

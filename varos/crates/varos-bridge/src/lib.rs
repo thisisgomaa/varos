@@ -76,3 +76,6 @@ pub mod storage_paths;
 pub mod templates;
 /// New host effects are explicitly opt-in; legacy capabilities retain their tool list.
 pub const TOOLS_12: &[&str] = &["print", "copy", "cut"];
+
+// ---- Lane F ----
+pub mod application;

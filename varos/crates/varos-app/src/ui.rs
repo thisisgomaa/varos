@@ -36,11 +36,13 @@ pub(crate) mod fields;
 mod guide_field;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
+// ---- Lane F ----
 mod bar;
 mod canvas_overlay;
 mod clipping;
 mod control_bar;
 mod controls;
+mod home;
 mod layout;
 mod menus;
 pub(crate) mod ops;
@@ -97,6 +99,8 @@ pub struct Ui {
     /// last laid out (the band's right zone with the V mark, and the sheet's right edge — one frame late).
     export_sheet: Option<crate::export_ui::ExportSheet>,
     panel_column: Option<egui::Rangef>,
+    // ---- Lane F ----
+    pub phase9: crate::phase9::State,
     pub document_sheet: Option<crate::document_ui::Sheet>,
     export_scopes: std::collections::HashMap<SessionId, varos_pdf::ExportScope>,
     tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
@@ -253,6 +257,7 @@ impl Ui {
             repaint_at: None,
             recovery: Default::default(),
             file_status: String::new(),
+            phase9: Default::default(),
             document_sheet: None,
             export_sheet: None,
             panel_column: None,
@@ -440,60 +445,6 @@ impl Ui {
         }
     }
     /// Editor-free Start pass: no Snap, EditCommand, document panels, or canvas overlays.
-    fn run_home(
-        &mut self,
-        window: &Window,
-        maximized: bool,
-    ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
-        let raw = self.state.egui_input_mut();
-        raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
-        let input = self.state.take_egui_input(window);
-        self.start_page.recovery_status.clone_from(&self.recovery.footer);
-        self.export_sheet = None; // Home has no document to export
-        let out = self.ctx.run_ui(input, |root| {
-            build_home_frame(
-                root,
-                &self.top,
-                &mut self.shell,
-                &mut self.win_action,
-                &self.doc_tabs,
-                &mut self.app_cmds,
-                &mut self.show_rail,
-                &mut self.show_dock,
-                &mut self.start_page,
-                &mut self.start_model,
-                self.recent_warning.as_deref(),
-                maximized,
-            );
-        });
-
-        // K3: Home draws no document field; any edit left open (an invalid one a non-user command
-        // passed) is closed here — there is no document to commit into
-        let _ = kit::field::end_frame(&self.ctx);
-        self.field_pending = None;
-        self.board_hole = None;
-        self.board_px = None;
-        self.cursor = out.platform_output.cursor_icon;
-        #[cfg(target_os = "macos")]
-        let out = {
-            let mut out = out;
-            out.platform_output.cursor_icon = egui::CursorIcon::Default;
-            out
-        };
-        self.state.handle_platform_output(window, out.platform_output);
-        self.repaint_at =
-            out.viewport_output.get(&egui::ViewportId::ROOT).and_then(|v| Instant::now().checked_add(v.repaint_delay));
-        let jobs = self.ctx.tessellate(out.shapes, out.pixels_per_point);
-        let size = window.inner_size();
-        (
-            jobs,
-            out.textures_delta,
-            egui_wgpu::ScreenDescriptor {
-                size_in_pixels: [size.width, size.height],
-                pixels_per_point: out.pixels_per_point,
-            },
-        )
-    }
 
     pub fn run(
         &mut self,
@@ -615,6 +566,7 @@ impl Ui {
             );
             crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
             crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
+            self.phase9.draw(ctx, &mut app_cmds, doc_active);
             crate::document_ui::draw(ctx, &mut self.document_sheet, ed, doc_active, &mut ops);
             build_statusbar(root, (absnap.active, absnap.count), view.zoom, ic_fit, &mut fit_request, status, &mut ops);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
@@ -688,6 +640,10 @@ impl Ui {
                                 &mut lay_anchor,
                                 &mut ops,
                             );
+                            true
+                        }
+                        P::History => {
+                            crate::phase9::history(ui, ed, doc_active, &mut app_cmds);
                             true
                         }
                         P::Align => {

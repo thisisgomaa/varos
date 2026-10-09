@@ -1,6 +1,10 @@
 //! The editor: transient interaction state + shared operations + the drag/undo engine.
 //! Tools (see `tools/`) define what a *press* does; the shared move/up engine handles the drag.
 
+// ---- Lane F ----
+#[path = "history.rs"]
+pub mod history;
+
 use crate::boolean::{run_boolean_curves, BoolOp, ResultShape, Seg};
 use crate::clipboard::Clipboard;
 use crate::geom::*;
@@ -489,6 +493,9 @@ pub struct Editor {
     /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
     clipboard: Clipboard,
     id_high_water: u32,
+    pub keyboard_increment_pt: f32,
+    pub(crate) action_recording: Option<Vec<crate::actions::Step>>,
+    history_log: history::Log,
     undo: Vec<std::sync::Arc<Document>>,
     redo: Vec<std::sync::Arc<Document>>,
     pending: Option<std::sync::Arc<Document>>,
@@ -554,6 +561,9 @@ impl Editor {
             flatten_cache: Default::default(),
             clipboard: Clipboard::default(),
             id_high_water: 0,
+            keyboard_increment_pt: 1.0,
+            action_recording: None,
+            history_log: history::Log { limit: 200, ..history::Log::default() },
             undo: vec![],
             redo: vec![],
             pending: None,
@@ -3505,6 +3515,7 @@ impl Editor {
                 .map_err(|reason| crate::bridge::BatchError { index, reason })?;
             // The staging host never undoes individual entries. Retaining their snapshots would
             // multiply document memory by up to 200 for a large batch; only the published step lives.
+            staged.history_log.clear();
             staged.undo.clear();
             staged.redo.clear();
         }
@@ -3596,6 +3607,7 @@ impl Editor {
         self.id_high_water.max(self.doc.ids)
     }
     pub(crate) fn clear_batch_history(&mut self) {
+        self.history_log.clear();
         self.undo.clear();
         self.redo.clear();
     }
@@ -3629,10 +3641,9 @@ impl Editor {
         self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
             if let Some(p) = self.pending.take() {
+                self.history_log.push(self.rev + 1, &p, &self.doc);
                 self.undo.push(p);
-                if self.undo.len() > 200 {
-                    self.undo.remove(0);
-                }
+                self.trim_history();
                 self.redo.clear();
                 self.rev += 1;
             }
@@ -3649,6 +3660,9 @@ impl Editor {
     }
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
+            if let Some(entry) = self.history_log.undo.pop() {
+                self.history_log.redo.push(entry);
+            }
             self.redo.push(std::sync::Arc::new(self.doc.clone()));
             self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
@@ -3657,6 +3671,9 @@ impl Editor {
     }
     pub fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
+            if let Some(entry) = self.history_log.redo.pop() {
+                self.history_log.undo.push(entry);
+            }
             self.undo.push(std::sync::Arc::new(self.doc.clone()));
             self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
@@ -3751,6 +3768,7 @@ impl Editor {
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
         self.doc.assign_artboard_ids(); // in-memory pages built without an id (format 4)
         self.id_high_water = self.doc.ids;
+        self.history_log.clear();
         self.undo.clear();
         self.redo.clear();
         self.pending = None;

@@ -301,6 +301,10 @@ fn render_write_inner(root: &Path, req: &Request) -> Result<PathBuf, String> {
     };
     let path = cache_path(root, &req.key);
     write_atomic(root, &path, &bytes)?;
+    if req.asset.is_none() {
+        let digest = crate::quicklook::model_digest(&req.snapshot)?;
+        write_atomic(root, &path.with_extension("model-sha256"), digest.as_bytes())?;
+    }
     write_atomic(root, &mtime_path(root, &req.key), mtime_value(req.mtime).to_string().as_bytes())?;
     evict(root, LIMIT);
     Ok(path)
@@ -511,4 +515,9 @@ mod tests {
         service.request(ThumbKey("x".into()), Arc::new(Document::default()), UNIX_EPOCH);
         assert!(wait_for(&service, UNIX_EPOCH).path.is_none());
     }
+}
+
+// ---- Lane F ----
+pub(crate) fn preview_cache_path(root: &Path, key: &ThumbKey) -> PathBuf {
+    cache_path(root, key)
 }
