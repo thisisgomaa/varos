@@ -57,14 +57,18 @@ fn budget_failure_draws_native_round_base_stroke_and_caches_fallback() {
     let ed = editor(vec![p]);
     let scene = build_scene(&ed, 40.);
     assert!(scene.errors.is_empty());
-    assert!(scene.report.notes.iter().any(|n| n.message == "stroke simplified at this zoom"));
+    assert!(scene
+        .report
+        .notes
+        .iter()
+        .any(|n| n.message == "stroke simplified at this zoom: dashes/arrows/alignment not shown"));
     assert!(scene
         .content
         .iter()
         .flat_map(Group::prims)
         .any(|p| matches!(p, Prim::Stroke { pts, .. } if pts.len() >= 2)));
     let attempts = ed.canvas_stroke_cache.evaluations();
-    assert_eq!(attempts, 6);
+    assert_eq!(attempts, 5);
     build_scene(&ed, 40.);
     assert_eq!(ed.canvas_stroke_cache.evaluations(), attempts);
 }
@@ -111,4 +115,51 @@ fn unit_transform_invalidates_only_its_path() {
     ed.doc.set_node_xform(unit, varos_core::model::Xform { rot: 0.2, piv: [100., 100.] });
     build_scene(&ed, 40.);
     assert_eq!(ed.canvas_stroke_cache.evaluations(), count + 1);
+}
+
+#[test]
+fn fallback_band_survives_page_clip_with_centreline_outside() {
+    let mut p = rect(1);
+    for a in &mut p.anchors {
+        a.p = a.p.map(|v| v * 0.51 - 1.);
+    }
+    p.stroke_style.dash = vec![0.0001, 0.0001];
+    let mut ed = editor(vec![p]);
+    ed.doc.artboards = vec![varos_core::model::Artboard { w: 100., h: 100., clip: true, ..Default::default() }];
+    let clipped = build_scene(&ed, 1.);
+    let strokes = |scene: &varos_core::scene::Scene| {
+        scene.content.iter().flat_map(Group::prims).filter(|p| matches!(p, Prim::Stroke { .. })).count()
+    };
+    assert!(strokes(&clipped) >= 1);
+    assert!(clipped
+        .content
+        .iter()
+        .flat_map(Group::prims)
+        .filter_map(|p| match p {
+            Prim::Stroke { clip, .. } => Some(*clip),
+            _ => None,
+        })
+        .all(|clip| clip == Some([0., 0., 100., 100.])));
+    assert_eq!(ed.canvas_stroke_cache.evaluations(), 3); // 0.025, 0.05, 0.1; then fallback
+    ed.doc.artboards[0].clip = false;
+    assert_eq!(strokes(&clipped), strokes(&build_scene(&ed, 1.)));
+}
+
+#[test]
+fn undo_content_change_evaluates_once_then_reuses() {
+    let mut ed = editor(vec![rect(1), rect(2)]);
+    ed.objsel.insert(1);
+    build_scene(&ed, 1.);
+    let cold = ed.canvas_stroke_cache.evaluations();
+    ed.execute_ui(varos_core::EditCommand::SetStrokeWidth(12.));
+    build_scene(&ed, 1.);
+    assert_eq!(ed.canvas_stroke_cache.evaluations(), cold + 1);
+    build_scene(&ed, 1.);
+    assert_eq!(ed.canvas_stroke_cache.evaluations(), cold + 1);
+    ed.undo();
+    assert_eq!(ed.doc.paths[0].stroke_width, 10.);
+    build_scene(&ed, 1.);
+    assert_eq!(ed.canvas_stroke_cache.evaluations(), cold + 2);
+    build_scene(&ed, 1.);
+    assert_eq!(ed.canvas_stroke_cache.evaluations(), cold + 2);
 }
