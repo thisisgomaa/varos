@@ -44,6 +44,13 @@ pub fn load_vrs_bytes(bytes: &[u8], limits: &Limits) -> Result<Loaded, LoadError
             _ => return Err(LoadError::InvalidVersion("PDF catalog".into())),
         },
     };
+    // ---- Lane F: preview keys are versioned even when optional ----
+    if catalog.has(b"VAROS_Preview") || catalog.has(b"VAROS_PreviewVersion") {
+        if version.is_none_or(|v| v < varos_core::format::PREVIEW_FORMAT_VERSION) {
+            return Err(unsupported("preview keys require the next native format"));
+        }
+        crate::quicklook::preview(bytes).map_err(|e| unsupported(&e))?;
+    }
     let model = if let Ok(o) = catalog.get(b"VAROS_Model") { o } else { find_model(&pdf, catalog, limits)? };
     let stream = resolve(&pdf, model)?.as_stream().map_err(|_| malformed("editable model is not a stream"))?;
     if stream.dict.has(b"Filter") {

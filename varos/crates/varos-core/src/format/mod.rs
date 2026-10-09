@@ -19,7 +19,7 @@ pub mod validate;
 
 pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
-pub use migrate::{migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5};
+pub use migrate::{migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_next_preview};
 pub use structure::check_structure;
 pub use validate::validate;
 
@@ -31,7 +31,9 @@ use std::path::Path;
 /// The format this build writes (the wrapper key `varos` and the PDF catalog's `/VAROS_SchemaVersion`).
 /// 3 (2026-10-04): board metadata — `doc.name`, `doc.description`, `doc.tags` (ADR-0008 amendment).
 /// 4 (2026-10-07): stable artboard ids — `doc.artboards[].id` (ADR-0008 amendment, Bridge slice 3).
-pub const FORMAT_VERSION: u32 = 5;
+// ---- Lane F: next format for optional native-container previews (renumber at integration) ----
+pub const FORMAT_VERSION: u32 = 6;
+pub const PREVIEW_FORMAT_VERSION: u32 = 6;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.

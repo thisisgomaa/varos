@@ -1,12 +1,17 @@
 # Quick Look integration — Lane F
 
-Native `.vrs` remains a PDF with the unchanged editable model. The desktop save worker prepares a
-544 × 246 CPU PNG in the existing thumbs cache, tagged with the editable model's SHA-256, then reads
-that cache entry into an unfiltered PDF `/VAROS_Preview` EmbeddedFile stream. The catalog carries
-`/VAROS_PreviewVersion 1`. `varos-pdf::quicklook::embed_preview_next` is the named pure container
-migration; `preview` is its bounded reader. No JSON document keys or FORMAT_VERSION changed.
-Repeated migration replaces the preview stream; missing previews are accepted for existing files.
-Headless tests verify model preservation, invalid/oversized input refusal, cache and preview roundtrip.
+Native `.vrs` remains a PDF carrying unchanged authored content under the next format stamp
+(provisional 6; the moderator renumbers in merge order). The pure `migrate_v5_to_next_preview` step
+preserves content; `embed_preview_next` updates both the JSON envelope and PDF catalog together.
+The desktop save worker generates a 544 × 246 CPU PNG in memory or reuses validated cached bytes.
+Cache reads are bounded to 2 MiB plus one sentinel byte; PNG decoding uses strict thumbnail dimensions
+and an 8 MiB allocation budget. Cache persistence is best-effort and cannot block Save.
+
+The catalog optionally carries both `/VAROS_Preview` (unfiltered PNG EmbeddedFile reference) and
+`/VAROS_PreviewVersion 1`. Older or absent format stamps carrying these keys are refused, as are
+broken references, filters, oversized streams and unknown preview revisions. Repeated migration replaces
+the preview stream; missing previews remain valid. Frozen headless fixtures test content preservation,
+old-reader/future-format refusal, cache bounds, failed cache writes and preview roundtrip.
 
 The macOS extension is deliberately **not packaged, signed or installed by this lane**. To finish it:
 
@@ -25,4 +30,4 @@ Offline CLI Actions example (selection rebound explicitly; created locals are re
 Attached API 1.2: use `list_verbs`, then `schema` for `preferences`, `shortcuts`, `command_index`,
 `history_list`, `history_jump`, `actions` or `help`; attached CLI exposes the same typed tools.
 Actions v1 records committed moves, paint, opacity, stroke width, rotation, delete, group and ungroup. Replay also supports creating rectangles
-and selecting their symbolic local IDs. Unsupported committed document commands stop recording with a reason. File, UI and history commands are excluded.
+and selecting their symbolic local IDs. Unsupported committed document commands stop recording with a reason. File and UI commands are excluded. Unsupported document commits, direct Undo/Redo and target changes stop the entire recording visibly. When no selection was bound at Start, the first supported Bridge target set supplies the binding; later requests must keep it.

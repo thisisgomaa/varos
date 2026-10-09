@@ -289,7 +289,7 @@ fn meta_doc() -> Document {
 fn metadata_round_trips_through_blob_and_disk_including_arabic() {
     let d = meta_doc();
     let blob = doc_to_blob(&d).unwrap();
-    assert!(blob.starts_with(r#"{"varos":5,"doc":{"name":"شعار المقهى — Café","description":"#), "{}", &blob[..80]);
+    assert!(blob.starts_with(r#"{"varos":6,"doc":{"name":"شعار المقهى — Café","description":"#), "{}", &blob[..80]);
     assert!(blob.contains(r#""tags":["client","عربي","شخصي"]"#), "stored as plain UTF-8, not escaped");
     assert_eq!(doc_from_blob(&blob).unwrap(), d);
     let p = std::env::temp_dir().join(format!("varos-board-meta-{}.vrs", std::process::id()));

@@ -63,6 +63,15 @@ impl Chord {
     }
 }
 impl Overrides {
+    pub fn reset_defaults(&mut self) {
+        for c in command_registry::commands() {
+            if c.id == "shortcut.temporary-hand" {
+                self.bindings.remove(&c.id);
+            } else {
+                self.bindings.insert(c.id, c.accel.map(Chord::from_accel));
+            }
+        }
+    }
     pub fn effective(&self, c: &Command) -> Option<Chord> {
         self.bindings.get(&c.id).cloned().unwrap_or_else(|| c.accel.map(Chord::from_accel))
     }
@@ -222,9 +231,7 @@ impl EditorState {
                 .color(t::MUTED),
         );
         if kit::menu_row(ui, Control::new(ui.id().with("reset-shortcuts"), "Reset to Illustrator defaults")).activated {
-            for c in command_registry::commands() {
-                draft.bindings.insert(c.id, c.accel.map(Chord::from_accel));
-            }
+            draft.reset_defaults();
         }
         if kit::menu_row(ui, Control::new(ui.id().with("apply-shortcuts"), "Apply")).activated {
             match draft.validate() {
@@ -240,13 +247,19 @@ impl EditorState {
         let chord = Chord { key: format!("{code:?}"), primary: m.ctrl, shift: m.shift, alt: m.alt };
         command_registry::commands()
             .into_iter()
-            .find(|c| self.effective.effective(c) == Some(chord.clone()) && self.effective.bindings.contains_key(&c.id))
+            .find(|c| {
+                c.id != "shortcut.temporary-hand"
+                    && self.effective.effective(c) != c.accel.map(Chord::from_accel)
+                    && self.effective.effective(c) == Some(chord.clone())
+                    && self.effective.bindings.contains_key(&c.id)
+            })
             .map(|c| c.handler)
     }
     pub fn suppresses_default(&self, code: winit::keyboard::KeyCode, m: varos_core::Mods) -> bool {
         let chord = Chord { key: format!("{code:?}"), primary: m.ctrl, shift: m.shift, alt: m.alt };
         command_registry::commands().iter().any(|c| {
-            c.accel.map(Chord::from_accel) == Some(chord.clone())
+            c.id != "shortcut.temporary-hand"
+                && c.accel.map(Chord::from_accel) == Some(chord.clone())
                 && self.effective.bindings.contains_key(&c.id)
                 && self.effective.effective(c) != Some(chord.clone())
         })
@@ -374,5 +387,24 @@ mod persistence_tests {
         assert!(draft.save_at(&varos_app::storage::durable::RealFs, &path, Some(future)).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), future);
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod fix_round_tests {
+    use super::*;
+    #[test]
+    fn reset_and_legacy_reset_keep_held_space_and_default_repeat_routing() {
+        let mut state = EditorState::default();
+        state.effective.reset_defaults();
+        assert!(state.effective.validate().is_ok());
+        assert!(!state.effective.bindings.contains_key("shortcut.temporary-hand"));
+        state.effective.bindings.insert("shortcut.temporary-hand".into(), Some(Chord::parse("Space").unwrap()));
+        for code in
+            [winit::keyboard::KeyCode::Space, winit::keyboard::KeyCode::ArrowLeft, winit::keyboard::KeyCode::ArrowRight]
+        {
+            assert!(state.route(code, varos_core::Mods::default()).is_none());
+            assert!(!state.suppresses_default(code, varos_core::Mods::default()));
+        }
     }
 }

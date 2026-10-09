@@ -253,8 +253,8 @@ impl SettingSpec {
             }
             Key::History => {
                 let n: usize = decode(v)?;
-                if !(5..=1000).contains(&n) {
-                    return Err("Use 5–1000 steps".into());
+                if !(5..=200).contains(&n) {
+                    return Err("Use 5–200 steps".into());
                 }
                 s.preferences.history_depth = n;
             }
@@ -325,7 +325,7 @@ mod boundary_tests {
             ),
             (
                 "history_depth",
-                vec![serde_json::json!(5), serde_json::json!(1000)],
+                vec![serde_json::json!(5), serde_json::json!(200)],
                 vec![serde_json::json!(4), serde_json::json!(1001), serde_json::json!(5.5)],
             ),
             (

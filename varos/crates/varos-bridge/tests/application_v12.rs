@@ -214,3 +214,40 @@ fn history_list_matches_frozen_v12_result() {
     let expected: Value = serde_json::from_slice(include_bytes!("phase9_fixtures/history-list-v12.json")).unwrap();
     assert_eq!(result, expected);
 }
+
+#[test]
+fn fix_round_recording_refuses_target_changes_across_bridge_requests() {
+    let mut host = Fake(Editor::new());
+    actions().replay(&mut host.0).unwrap();
+    actions().replay(&mut host.0).unwrap();
+    let ids = host.0.doc.paths.iter().map(|p| format!("path:{}", p.id)).collect::<Vec<_>>();
+    let mut service = Service::new("test".into());
+    let rev = host.0.rev;
+    assert!(
+        call(
+            &mut service,
+            &mut host,
+            "agent",
+            "actions",
+            json!({"api":"1.2","board":"b1","request_id":"r1","expected_rev":rev,"action":{"kind":"start"}})
+        )
+        .ok
+    );
+    for (index, id) in ids.iter().enumerate() {
+        let rev = host.0.rev;
+        assert!(call(&mut service, &mut host, "agent", "edit", json!({"api":"1.2","board":"b1","request_id":format!("r{}",index+2),"expected_rev":rev,"ops":[{"verb":"move","ids":[id],"delta":[1,0]}]})).ok);
+        if index == 0 {
+            assert_eq!(host.0.action_recording_len(), Some(1));
+        }
+    }
+    let rev = host.0.rev;
+    let stopped = call(
+        &mut service,
+        &mut host,
+        "agent",
+        "actions",
+        json!({"api":"1.2","board":"b1","request_id":"r4","expected_rev":rev,"action":{"kind":"stop","name":"Incomplete"}}),
+    );
+    assert!(!stopped.ok);
+    assert!(host.0.take_action_recording_warning().unwrap().contains("targets changed"));
+}
