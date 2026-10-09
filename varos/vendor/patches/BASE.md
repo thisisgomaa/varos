@@ -10,3 +10,11 @@ Vendor file-set exclusions: registry metadata `.cargo-ok` / `.cargo_vcs_info.jso
 `Cargo.lock` (workspace lock is authoritative), and `.gitattributes` (nested LFS
 filters would replace bundled TTF bytes with pointers). Pristine hashes retain
 these upstream files; the patch and pristine ledger identities are unchanged.
+
+Lane T (2026-10-09): apply `cosmic-text-0.19.0-tatweel.patch` AFTER the frozen
+P1b patch. Requests HarfRust PRODUCE_SAFE_TO_INSERT_TATWEEL, retains the flag in
+ShapeGlyph (also cloned by shape-run cache), false for basic unshaped glyphs.
+No extra shaper or layout policy in vendor. `check_vendor_patches.py` pins both
+patch hashes and reconstructs the complete vendor tree. Remove this supplemental
+patch when upstream exposes the same flag. Maintenance/rebase review remains
+with the moderator lane; independent review and owner proof review still open.

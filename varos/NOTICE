@@ -4,3 +4,21 @@ varos-core/tests/boolean_props.rs adapts boolean area and membership identities 
 VectorCraft crates/pathops/tests/prop_pathops.rs @ a469568.
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-text/src/composer.rs adapts the total-fit / adjacent-fitness paragraph
+composition idea from VectorCraft crates/text/src/composer.rs.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-text/src/kashida.rs ports joining-class and harakat guards from Ahmed's
+BStudio bstudio-text/src/kashida.rs, June 2026. The source is Ahmed's own work,
+preserved at design-reference/prior-art/bstudio-2026-06/v0/crates/bstudio-text.
+Covered portions remain MPL-2.0 and are additionally distributed under GPL-3.0
+pursuant to MPL-2.0 section 3.3. Original MPL licence is preserved at
+../design-reference/prior-art/bstudio-2026-06/LICENSE.
+Caret geometry carries the BStudio directional-edge idea, retaining Varos's
+existing grapheme/affinity implementation rather than BStudio's scalar snapping.
+
+varos-text/assets/fonts bundles unchanged OFL fixtures: Inter Regular, IBM Plex
+Sans Arabic Regular, and Noto Sans Arabic (from cosmic-text 0.19.0 test fixtures).
+Respective licence texts are adjacent to the font bytes. No host fonts required.

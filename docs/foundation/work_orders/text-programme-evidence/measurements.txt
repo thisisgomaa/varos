@@ -1,0 +1,11 @@
+profile=release; timings include result destruction and sequential source clone/edit; fonts=Inter/Plex bundled; units=ms
+cold scalars=10000: 10.671 ms
+full scalars=10000: n=41 p50=7.023 p95=9.956 max=15.175 ms
+incremental scalars=10000: n=200 p50=2.105 p95=2.884 max=6.996 ms
+cache bytes=2318617 engine bytes=330462
+cold scalars=100000: 90.734 ms
+full scalars=100000: n=41 p50=68.763 p95=80.110 max=84.933 ms
+incremental scalars=100000: n=200 p50=15.475 p95=19.604 max=24.908 ms
+cache bytes=23179509 engine bytes=327427
+compose Greedy scalars=930: n=41 p50=2.855 p95=4.959 max=9.653 ms
+compose EveryLine scalars=930: n=41 p50=10.654 p95=12.206 max=12.554 ms

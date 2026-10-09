@@ -1,0 +1,131 @@
+[
+  {
+    "name": "fmt",
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit": 0,
+    "seconds": 3.78
+  },
+  {
+    "name": "workspace-tests",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--workspace",
+      "-j",
+      "2",
+      "--no-fail-fast"
+    ],
+    "exit": 0,
+    "seconds": 616.116
+  },
+  {
+    "name": "clippy-native",
+    "command": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--workspace",
+      "--all-targets",
+      "-j",
+      "2",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "seconds": 55.685
+  },
+  {
+    "name": "clippy-windows",
+    "command": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--workspace",
+      "--all-targets",
+      "-j",
+      "2",
+      "--target",
+      "x86_64-pc-windows-msvc",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "seconds": 68.162
+  },
+  {
+    "name": "wasm",
+    "command": [
+      "cargo",
+      "check",
+      "--offline",
+      "-p",
+      "varos-text",
+      "-j",
+      "2",
+      "--target",
+      "wasm32-unknown-unknown"
+    ],
+    "exit": 0,
+    "seconds": 16.942
+  },
+  {
+    "name": "measurements",
+    "command": [
+      "cargo",
+      "run",
+      "--offline",
+      "--release",
+      "-p",
+      "varos-text",
+      "-j",
+      "2",
+      "--example",
+      "programme_budget"
+    ],
+    "exit": 0,
+    "seconds": 63.205
+  },
+  {
+    "name": "workspace-tests-final",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--workspace",
+      "-j",
+      "2",
+      "--no-fail-fast"
+    ],
+    "exit": 0,
+    "passed": 1527,
+    "failed": 0,
+    "ignored_existing": 15
+  },
+  {
+    "name": "fmt-final",
+    "exit": 0
+  },
+  {
+    "name": "dependency-directions",
+    "status": "PASS"
+  },
+  {
+    "name": "vendor-patches",
+    "status": "SKIP",
+    "cosmic_text": "PASS; complete exact patch reconstruction",
+    "egui_tiles": "SKIP; pristine archive not cached"
+  },
+  {
+    "name": "diff-check",
+    "exit": 0
+  }
+]
