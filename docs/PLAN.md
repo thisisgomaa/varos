@@ -164,3 +164,7 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | Slice | State | Commit | Notes |
 |---|---|---|---|
 | picker v3 (pre-plan) | done, owner-approved | `214e998` | Wheel/Sliders/Harmony/Mini |
+| 0.1 S0 render fixes | merged + installed, owner hand test pending | `5d422d5` | Exclude engine defect found by 0.3 and fixed in the same branch |
+| 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
+| 0.6 file-menu basics | implemented + reviewed, merging main | — | cancellable export writes, tickets, menus/ split |
+| Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
