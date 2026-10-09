@@ -594,3 +594,22 @@ limits and an 8 MiB decoder budget before decoding, and reuses those validated b
 best-effort; missing/corrupt/unwritable cache falls back to an in-memory thumbnail. The signed macOS
 Quick Look extension and blob-aware integration remain moderator work, requiring native acceptance.
 <!-- End Lane F fix round -->
+
+<!-- ---- w3-cmyk ---- -->
+### Format 12: explicit colour sources (Lane C)
+
+`COLOUR_VERSION = 12`. `Document.colour_mode` defaults to `Rgb` and is omitted for RGB;
+`output_profile` is optional `{name,data}` with bounded ICC metadata encoded as hex.
+Existing null/solid-array paints retain their exact JSON bytes. New paints are
+`{"type":"managed","value":{"colour":{"model":"rgb|cmyk|gray|spot",...},"alpha":1}}`.
+Source channels/tint are finite 0..1; named spot inks require a consistent CMYK alternate.
+Swatches retain the managed paint and existing global identity. See proposed ADR-0017.
+
+`migrate_v11_to_v12` is a named pure identity migration; missing keys are RGB defaults.
+This worktree uses reserved identity v9→v10→v11 steps; the integrator must replace these
+with the other wave-3 lane migrations before merging. Pre-v12 colour keys/managed tags
+are refused before typed decoding; unknown future stamps are refused. Frozen v12 fixtures
+live in `varos-core/tests/fixtures/v12` and PDF operator goldens in `varos-pdf/tests/fixtures/v12`.
+Historical fixtures remain unchanged. RGB authored bodies/page operators are identical;
+container/model stamps and dependent PDF offsets/lengths necessarily advance.
+<!-- ---- end w3-cmyk ---- -->

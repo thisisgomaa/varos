@@ -41,15 +41,25 @@ fn paint_goldens_json_svg_pdf_and_cpu() {
             ),
             json
         );
-        let mut pdf_golden = std::fs::read(root.join(format!("{name}.pdf"))).unwrap();
-        for (a, b) in [
-            ("\"varos\":6".to_owned(), format!("\"varos\":{fv}")),
-            ("/VAROS_SchemaVersion 6".to_owned(), format!("/VAROS_SchemaVersion {fv}")),
-        ] {
-            let at = pdf_golden.windows(a.len()).position(|w| w == a.as_bytes()).expect("stamp");
-            pdf_golden.splice(at..at + a.len(), b.bytes());
+        let pdf_golden = std::fs::read(root.join(format!("{name}.pdf"))).unwrap();
+        let mut current = lopdf::Document::load_mem(&pdf).unwrap();
+        let mut old = lopdf::Document::load_mem(&pdf_golden).unwrap();
+        let catalog_id = current.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let model = current.catalog().unwrap().get(b"VAROS_Model").unwrap().as_reference().unwrap();
+        let stream = current.get_object_mut(model).unwrap().as_stream_mut().unwrap();
+        let text =
+            String::from_utf8(stream.content.clone()).unwrap().replacen(&format!("\"varos\":{fv}"), "\"varos\":6", 1);
+        stream.set_content(text.into_bytes());
+        current.get_object_mut(catalog_id).unwrap().as_dict_mut().unwrap().set("VAROS_SchemaVersion", 6);
+        // Stream positions are container offsets, not authored/operator bytes.
+        for pdf in [&mut current, &mut old] {
+            for object in pdf.objects.values_mut() {
+                if let lopdf::Object::Stream(stream) = object {
+                    stream.start_position = None;
+                }
+            }
         }
-        assert_eq!(pdf_golden, pdf, "{name}.pdf");
+        assert_eq!(current.objects, old.objects, "{name}.pdf objects and exact content bytes");
         for (ext, data) in [("svg", svg.bytes.as_slice()), ("png", png.as_slice())] {
             assert_eq!(std::fs::read(root.join(format!("{name}.{ext}"))).unwrap(), data, "{name}.{ext}");
         }

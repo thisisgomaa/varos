@@ -15,6 +15,8 @@ mod panel;
 pub(crate) use panel::build_color_panel;
 mod modes;
 mod sliders;
+// ---- w3-cmyk ----
+mod managed;
 mod wheel;
 pub(crate) use cluster::*;
 pub(crate) use wheel::WheelCache;
@@ -41,6 +43,8 @@ enum Gesture {
 }
 
 pub(crate) struct ColorPanel {
+    // ---- w3-cmyk ----
+    managed: managed::State,
     gradient: gradient::State,
     pub(crate) target: MTarget,
     pub(crate) hsva: Rgba,
@@ -83,6 +87,8 @@ impl ColorPanel {
         let c = seed.unwrap_or([1.0, 0.0, 0.0, 1.0]);
         let h = rgb_to_hsv(c);
         Self {
+            // ---- w3-cmyk ----
+            managed: managed::State::default(),
             gradient: Default::default(),
             target,
             hsva: [h[0], h[1], h[2], c[3]],

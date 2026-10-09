@@ -57,6 +57,8 @@ fn sample_doc() -> Document {
     group_of.insert(11u32, 100u32);
 
     Document {
+        colour_mode: Default::default(),
+        output_profile: None,
         images: vec![],
         assets: vec![],
         raster_effects_ppi: 300.,

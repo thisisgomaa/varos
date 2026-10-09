@@ -127,7 +127,7 @@ mod fix_round_tests {
         let old = include_bytes!("../../varos-core/tests/fixtures/v5/plain.pdf");
         let loaded = crate::load_vrs_bytes(next, &varos_core::format::Limits::DEFAULT).unwrap();
         assert_eq!(loaded.source_version, varos_core::format::PREVIEW_FORMAT_VERSION);
-        assert!(!loaded.migrated);
+        assert_eq!(loaded.migrated, varos_core::format::FORMAT_VERSION > varos_core::format::PREVIEW_FORMAT_VERSION);
         assert!(loaded.doc.content_eq(&crate::load_vrs_bytes(old, &varos_core::format::Limits::DEFAULT).unwrap().doc));
         assert_eq!(preview(next).unwrap().unwrap(), include_bytes!("../fixtures/quicklook/preview-v1.png"));
         // Preview keys under an older stamp are refused: format 5 and (integration w2) format 8, the

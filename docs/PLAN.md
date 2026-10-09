@@ -215,3 +215,7 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 9.4 History (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable History, human/agent labels, jump, bounded undo/redo, API 1.2 review/top-agent undo. |
 | 9.5 Actions (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable Actions; supported semantic recording, .vrs-actions load/save, atomic replay, offline CLI apply. |
 | 9.6 Help + Quick Look fallback (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Help/typed Bridge tool; cached PNG embedded in container; native signed QL extension packaging documented and pending. |
+
+<!-- ---- w3-cmyk ---- -->
+| 12.0–12.2 colour management (Lane C) | implemented (provisional UI, owner design review pending) | uncommitted `feat/w3-cmyk` | FORMAT v12; explicit CMYK/Gray/Spot paints, document mode/profile, moxcms, progressive Bridge 1.2 + CLI, ICCBased/Separation + OutputIntent, bounded vector PDF/X-4 preset. Overprint is approximate vector multiply; image proof/PDF-X preflight, external conformance and native UI acceptance remain unverified. Integration must replace reserved v10/v11 identity steps. Gates: root REPORT.md. |
+<!-- ---- end w3-cmyk ---- -->

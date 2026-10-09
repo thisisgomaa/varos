@@ -54,7 +54,9 @@ pub const CORNERS_VERSION: u32 = 9;
 /// Lane F: the optional PDF-catalog Quick Look preview (`/VAROS_Preview` + `/VAROS_PreviewVersion`)
 /// is container-only (no model key, no reader impact on the JSON body); folded into the v9 bump.
 pub const PREVIEW_FORMAT_VERSION: u32 = CORNERS_VERSION;
-pub const FORMAT_VERSION: u32 = CORNERS_VERSION;
+// ---- w3-cmyk ----
+pub const COLOUR_VERSION: u32 = 12;
+pub const FORMAT_VERSION: u32 = COLOUR_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -171,6 +173,8 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     // ---- w2-images ----
     crate::images::refuse_older_keys(json, version)?;
     crate::text_format::refuse_legacy_text(json, version)?;
+    // ---- w3-cmyk ----
+    crate::colour_format::refuse(json, version)?;
     let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     let mut doc = file.doc;
     let released_legacy_masks = version == 1 && migrate::release_broken_clips(&mut doc);

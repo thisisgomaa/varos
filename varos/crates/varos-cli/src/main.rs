@@ -1,5 +1,7 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
 mod colour;
+// ---- w3-cmyk ----
+mod colour_management;
 mod document;
 // ---- Lane E ----
 mod images;
@@ -26,6 +28,7 @@ mod text;
 // ---- Lane H ----
 mod import;
 const VERBS: &[&str] = &[
+    "colour-management",
     "view-depth",
     "add-text",
     "set-text",
@@ -245,6 +248,10 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("expected a subcommand: {}", VERBS.join(", ")).into());
     }
     let verb = args.remove(0).into_string().map_err(|_| "subcommand must be UTF-8".to_owned())?;
+    // ---- w3-cmyk ----
+    if verb == "colour-management" {
+        return colour_management::run(args).map_err(Into::into);
+    }
     if verb == "view-depth" {
         return view_depth::run(args).map_err(Failure::from);
     }

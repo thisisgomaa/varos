@@ -4,6 +4,8 @@
 pub mod images;
 pub mod perf;
 mod tess;
+// ---- w3-cmyk ----
+mod colour_preview;
 use std::io::Write;
 use tess::{build_bg, build_content, build_fg, Draw, GroupDraw, Vertex};
 use varos_core::geom::View;
@@ -75,6 +77,8 @@ pub struct Renderer {
     layer_msaa: wgpu::TextureView,
     layer_view: wgpu::TextureView,
     pipe_composite: wgpu::RenderPipeline,
+    // ---- w3-cmyk ----
+    pipe_overprint: wgpu::RenderPipeline,
     comp_bg: wgpu::BindGroup,
     op_buf: wgpu::Buffer,
     op_cap: u64,
@@ -658,6 +662,8 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        // ---- w3-cmyk ----
+        let pipe_overprint = colour_preview::pipeline(&device, &comp_layout, &comp_sh, config.format, samples);
         let comp_bg = make_blit_bg(&device, &blit_bgl, &layer_view, &sampler, &normal_blit_buf);
         let op_cap = 1u64 << 16;
         let op_buf = mk(op_cap);
@@ -712,6 +718,8 @@ impl Renderer {
             layer_msaa,
             layer_view,
             pipe_composite,
+            // ---- w3-cmyk ----
+            pipe_overprint,
             comp_bg,
             op_buf,
             op_cap,
@@ -1081,7 +1089,8 @@ impl Renderer {
                         rp.draw(mask_clear.0..mask_clear.0 + mask_clear.1, 0..1);
                     }
                 }
-                GroupDraw::Layer { draws, quad } | GroupDraw::ClippedLayer { draws, quad, .. } => {
+                GroupDraw::Layer { draws, quad, overprint }
+                | GroupDraw::ClippedLayer { draws, quad, overprint, .. } => {
                     // render the object OPAQUELY into the isolated layer (cleared transparent, MSAA-resolved)
                     {
                         let mut lp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1126,7 +1135,8 @@ impl Renderer {
                             timestamp_writes: None,
                             occlusion_query_set: None,
                         });
-                        rp.set_pipeline(&self.pipe_composite);
+                        // ---- w3-cmyk ----
+                        rp.set_pipeline(if *overprint { &self.pipe_overprint } else { &self.pipe_composite });
                         rp.set_bind_group(0, &self.comp_bg, &[]);
                         rp.set_vertex_buffer(0, self.op_buf.slice(..));
                         rp.draw(quad.0..quad.0 + quad.1, 0..1);

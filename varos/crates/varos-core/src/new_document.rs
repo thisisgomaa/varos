@@ -17,6 +17,8 @@ pub enum Layout {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
+    // ---- w3-cmyk ----
+    pub colour_mode: crate::colour_management::ColourMode,
     pub width: f32,
     pub height: f32,
     pub units: Unit,
@@ -30,6 +32,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            colour_mode: Default::default(),
             width: 210.,
             height: 297.,
             units: Unit::Mm,
@@ -80,7 +83,11 @@ impl Settings {
         {
             return Err("Invalid size, spacing or bleed".into());
         }
-        let mut doc = Document { units: DocUnits { display: self.units, ppi: self.ppi }, ..Document::default() };
+        let mut doc = Document {
+            colour_mode: self.colour_mode,
+            units: DocUnits { display: self.units, ppi: self.ppi },
+            ..Document::default()
+        };
         for i in 0..self.count {
             let (x, y) = match self.layout {
                 Layout::Row => (i, 0),

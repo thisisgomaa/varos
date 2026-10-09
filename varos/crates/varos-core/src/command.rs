@@ -28,6 +28,8 @@ pub enum EditCommand {
     Image(crate::images::ImageEdit),
     // ---- w2-gradients ----
     Colour(crate::colour_commands::ColourCommand),
+    // ---- w3-cmyk ----
+    ColourManagement(crate::colour_management_commands::Command),
     // ---- Lane C ----
     PathAdvanced(crate::path_advanced::Action),
     SetCornersLive {
@@ -409,6 +411,8 @@ impl EditCommand {
             Self::Drawing(action) => crate::drawing::apply(ed, action),
             Self::Image(edit) => crate::images::apply(ed, edit),
             // Checked colour command dispatch.
+            // ---- w3-cmyk ----
+            Self::ColourManagement(c) => crate::colour_management_commands::apply(ed, c),
             Self::Colour(c) => crate::colour_commands::apply(ed, c),
             // ---- Lane C ----
             Self::PathAdvanced(action) => ed.path_advanced(action),

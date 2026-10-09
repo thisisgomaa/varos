@@ -242,7 +242,9 @@ pub(crate) fn apply_design_op(
     if op.slice4a() {
         let mut resolved = op.clone();
         let ids = match &mut resolved {
-            Operation::Colour { ids, .. }
+            // ---- w3-cmyk ----
+            Operation::ColourManagement { ids, .. }
+            | Operation::Colour { ids, .. }
             | Operation::Transform { ids, .. }
             | Operation::MagicWand { ids, .. }
             | Operation::Eyedropper { ids, .. }
