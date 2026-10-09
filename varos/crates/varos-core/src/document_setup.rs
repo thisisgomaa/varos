@@ -47,32 +47,32 @@ mod tests {
     #[test]
     fn fields_roundtrip_and_undo_separately() {
         let mut ed = Editor::new();
-        ed.execute(EditCommand::AddArtboard);
+        ed.execute(EditCommand::AddArtboard).unwrap();
         let before = ed.doc.clone();
-        ed.execute(EditCommand::SetUnits(Unit::Mm));
-        ed.execute(EditCommand::SetPpi(300.0));
+        ed.execute(EditCommand::SetUnits(Unit::Mm)).unwrap();
+        ed.execute(EditCommand::SetPpi(300.0)).unwrap();
         assert_eq!(crate::units::to_pt(300.0, Unit::Px, ed.doc.units.ppi), 72.0);
-        ed.execute(EditCommand::SetBleed { index: 0, edges: [1.0, 2.0, 3.0, 4.0] });
-        ed.execute(EditCommand::SetTransparencyGrid(true));
+        ed.execute(EditCommand::SetBleed { index: 0, edges: [1.0, 2.0, 3.0, 4.0] }).unwrap();
+        ed.execute(EditCommand::SetTransparencyGrid(true)).unwrap();
         let back: Document = serde_json::from_slice(&serde_json::to_vec(&ed.doc).unwrap()).unwrap();
         assert_eq!(back, ed.doc);
-        ed.execute(EditCommand::Undo);
+        ed.execute(EditCommand::Undo).unwrap();
         assert!(!ed.doc.transparency_grid);
-        ed.execute(EditCommand::Undo);
+        ed.execute(EditCommand::Undo).unwrap();
         assert_eq!(bleed(&ed.doc.artboards[0]), [0.0; 4]);
-        ed.execute(EditCommand::Undo);
+        ed.execute(EditCommand::Undo).unwrap();
         assert_eq!(ed.doc.units.ppi, 72.0);
-        ed.execute(EditCommand::Undo);
+        ed.execute(EditCommand::Undo).unwrap();
         assert_eq!(ed.doc.units, before.units);
     }
     #[test]
     fn scrub_is_one_undo_and_net_zero_preserves_history() {
         let mut ed = Editor::new();
-        ed.execute(EditCommand::SetUnits(Unit::Mm));
+        ed.execute(EditCommand::SetUnits(Unit::Mm)).unwrap();
         let rev = ed.rev;
         ed.begin();
         for ppi in [100.0, 200.0, 300.0] {
-            ed.execute(EditCommand::SetPpi(ppi));
+            ed.execute(EditCommand::SetPpi(ppi)).unwrap();
         }
         assert_eq!(ed.rev, rev);
         ed.finish_document_setup();
@@ -81,8 +81,8 @@ mod tests {
         assert_eq!(ed.doc.units.ppi, 72.0);
         let rev = ed.rev;
         ed.begin();
-        ed.execute(EditCommand::SetPpi(144.0));
-        ed.execute(EditCommand::SetPpi(72.0));
+        ed.execute(EditCommand::SetPpi(144.0)).unwrap();
+        ed.execute(EditCommand::SetPpi(72.0)).unwrap();
         ed.finish_document_setup();
         assert_eq!(ed.rev, rev);
         assert!(ed.history_available(true));
@@ -131,7 +131,7 @@ mod scene_tests {
         let mut ed = crate::Editor::new();
         ed.doc.artboards.push(Artboard { w: 100.0, h: 100.0, page_color: None, ..Default::default() });
         let plain = crate::build_scene(&ed, 1.0);
-        ed.execute(crate::EditCommand::SetTransparencyGrid(true));
+        ed.execute(crate::EditCommand::SetTransparencyGrid(true)).unwrap();
         let style = crate::scene::SceneStyle { checkerboard: [[0.1; 4], [0.2; 4]] };
         let draw = |ed: &crate::Editor| {
             crate::scene::build_scene_in_view_styled(ed, crate::View::identity(), [1000, 1000], style)

@@ -268,7 +268,7 @@ mod tests {
         for _ in 0..100 {
             assert!(!sheet.refresh_info(&ed));
         }
-        ed.execute(EditCommand::SetPpi(300.0));
+        ed.execute(EditCommand::SetPpi(300.0)).unwrap();
         assert!(sheet.refresh_info(&ed));
         assert!(!sheet.refresh_info(&ed));
     }
@@ -276,7 +276,7 @@ mod tests {
     fn setup_live_ops_share_history_and_settle_before_lifecycle() {
         use crate::ui::ops::{apply_ops, Op};
         let mut ed = Editor::new();
-        ed.execute(EditCommand::AddArtboard);
+        ed.execute(EditCommand::AddArtboard).unwrap();
         let rev = ed.rev;
         let mut sheet = Some(Sheet::new(SessionId(1), false, &ed.doc));
         sheet.as_mut().unwrap().scrubbing = true;

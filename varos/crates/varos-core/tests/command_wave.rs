@@ -94,7 +94,7 @@ fn selection_lock_and_hide_are_one_undo_step() {
         assert_eq!(e.rev, rev + 1);
         assert!(e.objsel.is_empty());
         assert!(!e.doc.paths[2].hidden && !e.doc.paths[2].locked);
-        e.execute(C::Undo);
+        e.execute(C::Undo).unwrap();
         assert!(e.doc.paths.iter().all(|p| !p.hidden && !p.locked));
     }
 }
@@ -112,7 +112,7 @@ fn unlock_and_show_all_clear_ancestor_flags_and_undo() {
         } else {
             assert!(!n.hidden && n.locked);
         }
-        e.execute(C::Undo);
+        e.execute(C::Undo).unwrap();
         assert!(e.doc.node(layer).unwrap().locked && e.doc.node(layer).unwrap().hidden);
     }
 }
@@ -130,7 +130,7 @@ fn reverse_and_add_anchors_are_undoable() {
             assert_eq!(p.anchors.len(), 8);
             assert_eq!(p.anchors[1].p, [5.0, 0.0]);
         }
-        e.execute(C::Undo);
+        e.execute(C::Undo).unwrap();
         assert_eq!(e.doc.paths[0], before);
     }
 }
@@ -143,7 +143,7 @@ fn average_preserves_handle_offsets_and_is_undoable() {
     e.try_execute(C::Object(O::Average)).unwrap();
     assert_eq!(e.doc.paths[0].anchors[0].p, [5.0, 0.0]);
     assert_eq!(e.doc.paths[0].anchors[0].hout, Some([7.0, 0.0]));
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.paths[0], before);
 }
 #[test]
@@ -153,14 +153,14 @@ fn join_closes_single_path_and_connects_multiple_paths() {
     select(&mut e, &[10]);
     e.try_execute(C::Object(O::Join)).unwrap();
     assert!(e.doc.paths[0].closed);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert!(!e.doc.paths[0].closed);
     e.doc.paths[1].closed = false;
     select(&mut e, &[10, 20]);
     e.try_execute(C::Object(O::Join)).unwrap();
     assert_eq!(e.doc.paths.len(), 2);
     assert_eq!(e.doc.paths[0].anchors.len(), 8);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.paths.len(), 3);
 }
 #[test]
@@ -174,9 +174,9 @@ fn compound_make_release_preserve_anchor_ids_and_undo() {
     e.try_execute(C::Object(O::CompoundRelease)).unwrap();
     assert_eq!(e.doc.paths.len(), 3);
     assert!(e.doc.paths.iter().all(|p| p.holes.is_empty()));
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.paths.len(), 2);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc, before);
 }
 #[test]
@@ -187,7 +187,7 @@ fn clean_up_removes_unpainted_paths_and_keeps_locked_art() {
     e.doc.paths[1].locked = true;
     e.try_execute(C::Object(O::CleanUp)).unwrap();
     assert_eq!(e.doc.paths.iter().map(|p| p.id).collect::<Vec<_>>(), vec![20, 30]);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.paths.len(), 3);
 }
 #[test]
@@ -241,7 +241,7 @@ fn expand_transform_bakes_and_undo_restores_it() {
     let before = e.doc.clone();
     e.try_execute(C::Object(O::ExpandTransform)).unwrap();
     assert!(e.doc.node_xform(e.doc.unit_of(10).unwrap()).is_identity());
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc, before);
 }
 #[test]
@@ -270,9 +270,9 @@ fn layer_create_sublayer_and_send_are_valid_and_undoable() {
     assert_eq!(e.doc.layer_ancestor(e.doc.node_of_path(10).unwrap()), sub);
     varos_core::format::check_structure(&e.doc, &varos_core::format::Limits::DEFAULT).unwrap();
     varos_core::format::validate(&e.doc, &varos_core::format::Limits::DEFAULT).unwrap();
-    e.execute(C::Undo);
-    e.execute(C::Undo);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
+    e.execute(C::Undo).unwrap();
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc, before);
 }
 #[test]
@@ -297,7 +297,7 @@ fn add_anchor_points_splits_compound_holes() {
     assert_eq!(e.doc.paths[0].holes[0].len(), 8);
     varos_core::format::check_structure(&e.doc, &varos_core::format::Limits::DEFAULT).unwrap();
     varos_core::format::validate(&e.doc, &varos_core::format::Limits::DEFAULT).unwrap();
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc, before);
 }
 #[test]
@@ -307,17 +307,17 @@ fn headless_batch_replays_command_wiring_and_one_undo() {
     let batch=varos_core::bridge::parse_batch(br#"{"api":"0.1","commands":[{"Selection":"all"},{"Object":"lock"},{"Object":"unlock_all"},{"Selection":"all"},{"Object":"reverse"}]}"#).unwrap();
     e.execute_batch(batch).unwrap();
     assert_ne!(e.doc, before);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc, before);
 }
 #[test]
 fn option_direct_click_climbs_exactly_one_nested_group() {
     let mut e = editor();
     select(&mut e, &[10, 20]);
-    e.execute(C::GroupSelection);
+    e.execute(C::GroupSelection).unwrap();
     let inner = e.doc.top_group_of_path(10).unwrap();
     select(&mut e, &[10, 20, 30]);
-    e.execute(C::GroupSelection);
+    e.execute(C::GroupSelection).unwrap();
     let outer = e.doc.top_group_of_path(10).unwrap();
     e.escape();
     e.try_execute(C::Selection(S::Group(10))).unwrap();
@@ -354,9 +354,9 @@ fn explicit_anchor_add_delete_preserve_curve_and_undo() {
     assert_eq!(e.doc.anchor(id).unwrap().p, [5.0, 0.0]);
     e.try_execute(C::DeleteAnchor(id)).unwrap();
     assert_eq!(e.doc.paths[0].anchors.len(), 4);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.paths[0].anchors.len(), 5);
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert_eq!(e.doc.paths[0].anchors.len(), 4);
     assert!(e.try_execute(C::InsertAnchor { path: 10, segment: 99, t: 0.5 }).is_err());
 }
@@ -365,15 +365,15 @@ fn paste_remembers_source_layers_and_recreates_missing_ancestry() {
     let mut e = editor();
     let source = e.doc.active_layer;
     select(&mut e, &[10]);
-    e.execute(C::Copy);
-    e.execute(C::Object(O::NewLayer));
+    e.execute(C::Copy).unwrap();
+    e.execute(C::Object(O::NewLayer)).unwrap();
     let destination = e.doc.active_layer;
-    e.execute(C::SetPasteRemembersLayers(false));
-    e.execute(C::Paste { offset: None });
+    e.execute(C::SetPasteRemembersLayers(false)).unwrap();
+    e.execute(C::Paste { offset: None }).unwrap();
     let first = *e.objsel.iter().next().unwrap();
     assert_eq!(e.doc.node(e.doc.node_of_path(first).unwrap()).unwrap().parent, Some(destination));
-    e.execute(C::SetPasteRemembersLayers(true));
-    e.execute(C::Paste { offset: None });
+    e.execute(C::SetPasteRemembersLayers(true)).unwrap();
+    e.execute(C::Paste { offset: None }).unwrap();
     let second = *e.objsel.iter().next().unwrap();
     assert_eq!(e.doc.node(e.doc.node_of_path(second).unwrap()).unwrap().parent, Some(source));
     let clip = e.clipboard().clone();
@@ -427,7 +427,7 @@ fn anchor_point_type_is_undoable_and_rejects_unknown_anchor() {
     assert!(e.doc.anchor(11).unwrap().hin.is_some());
     e.try_execute(C::AnchorType { anchor: 11, smooth: false }).unwrap();
     assert!(e.doc.anchor(11).unwrap().hin.is_none());
-    e.execute(C::Undo);
+    e.execute(C::Undo).unwrap();
     assert!(e.doc.anchor(11).unwrap().smooth);
     assert!(e.try_execute(C::AnchorType { anchor: 999, smooth: true }).is_err());
 }
@@ -437,7 +437,7 @@ fn compound_islands_nested_parity_and_bounds_agree() {
     use varos_core::editor::view_commands::ViewAction;
     let mut e = editor();
     select(&mut e, &[10, 20, 30]);
-    e.execute(C::Object(O::CompoundMake));
+    e.execute(C::Object(O::CompoundMake)).unwrap();
     for pt in [[5.0, 5.0], [50.0, 5.0], [115.0, 5.0]] {
         assert!(e.doc.point_in_path(0, pt));
         assert_eq!(e.path_under(pt), Some(10));
@@ -447,7 +447,7 @@ fn compound_islands_nested_parity_and_bounds_agree() {
     assert!(b.0 == 0.0 && b.1 == 0.0 && (b.2 - 130.0).abs() < 0.001 && (b.3 - 10.0).abs() < 0.001);
     assert_eq!(e.doc.bbox(0), (0.0, 0.0, 130.0, 10.0));
     e.doc.artboards.push(varos_core::model::Artboard { id: 200, ..Default::default() });
-    e.execute(C::View(ViewAction::FitArtboard { id: 200, selected: true }));
+    e.execute(C::View(ViewAction::FitArtboard { id: 200, selected: true })).unwrap();
     assert!((e.doc.artboards[0].w - 130.0).abs() < 0.001);
     assert!((e.doc.artboards[0].h - 10.0).abs() < 0.001);
     let ring = |lo: f32, hi: f32| {
@@ -472,7 +472,7 @@ fn option_handle_drag_breaks_only_the_grabbed_handle() {
     a.hin = Some([-5.0, 0.0]);
     a.hout = Some([5.0, 0.0]);
     a.smooth = true;
-    e.execute(C::SelectAnchors(vec![11]));
+    e.execute(C::SelectAnchors(vec![11])).unwrap();
     e.mods.alt = true;
     e.pointer_down([5.0, 0.0]);
     e.pointer_move([5.0, 3.0]);
@@ -490,15 +490,15 @@ fn join_honors_far_explicit_endpoints_and_rejects_interior_points() {
         p.closed = false;
         p.anchors.truncate(2);
     }
-    e.execute(C::SelectAnchors(vec![11, 22]));
-    e.execute(C::Object(O::Join));
+    e.execute(C::SelectAnchors(vec![11, 22])).unwrap();
+    e.execute(C::Object(O::Join)).unwrap();
     assert_eq!(e.doc.paths[0].anchors.iter().map(|a| a.id).collect::<Vec<_>>(), vec![12, 11, 22, 21]);
     e.undo();
     e.doc.paths[0].anchors.push(Anchor { id: 15, p: [15.0, 0.0], hin: None, hout: None, smooth: false });
-    e.execute(C::SelectAnchors(vec![12, 22]));
+    e.execute(C::SelectAnchors(vec![12, 22])).unwrap();
     let before = e.doc.clone();
     let rev = e.rev;
-    e.execute(C::Object(O::Join));
+    e.execute(C::Object(O::Join)).unwrap();
     assert!(e.doc.content_eq(&before));
     assert_eq!(e.rev, rev);
 }
@@ -513,16 +513,16 @@ fn repeated_alignment_distribution_spacing_and_average_preserve_redo() {
     for cmd in commands {
         let mut e = editor();
         select(&mut e, &[10, 20, 30]);
-        e.execute(C::SetKeyObject(Some(20)));
+        e.execute(C::SetKeyObject(Some(20))).unwrap();
         if matches!(cmd(), C::Object(O::Average)) {
-            e.execute(C::SelectAnchors(vec![11, 12]));
+            e.execute(C::SelectAnchors(vec![11, 12])).unwrap();
         }
-        e.execute(cmd());
-        e.execute(C::Object(O::NewLayer));
+        e.execute(cmd()).unwrap();
+        e.execute(C::Object(O::NewLayer)).unwrap();
         e.undo();
         let before = e.doc.clone();
         let rev = e.rev;
-        e.execute(cmd());
+        e.execute(cmd()).unwrap();
         assert!(e.doc.content_eq(&before));
         assert_eq!(e.rev, rev);
         e.redo();

@@ -497,7 +497,7 @@ pub fn dispatch(
         }
         SheetAction::Screens(id, mut jobs) => {
             for job in &mut jobs {
-                job.job.pdf_options = Box::new(open.pdf_options);
+                *job.job.pdf_options = open.pdf_options;
             }
             commands.push(crate::app_command::AppCommand::ExportScreens(id, jobs));
         }
