@@ -307,11 +307,13 @@ impl Editor {
     }
     pub fn magic_wand(&mut self, source: u32, options: WandOptions, mode: SelectMode) {
         let Some(p) = self.doc.paths.iter().find(|p| p.id == source) else { return };
-        let close = |a: crate::model::Paint, b: crate::model::Paint| match (a.solid(), b.solid()) {
-            (None, None) => true,
-            (Some(a), Some(b)) => a.iter().zip(b).all(|(x, y)| (*x - y).abs() <= options.colour),
-            _ => false,
-        };
+        let close =
+            |a: crate::model::Paint, b: crate::model::Paint| match (a.resolved(&self.doc), b.resolved(&self.doc)) {
+                (crate::model::Paint::Solid(a), crate::model::Paint::Solid(b)) => {
+                    a.iter().zip(b).all(|(x, y)| (*x - y).abs() <= options.colour)
+                }
+                (a, b) => a == b,
+            };
         let ids: Vec<_> = self
             .doc
             .paths
@@ -341,9 +343,7 @@ impl Editor {
         self.refresh_obj_angle();
     }
     pub fn sample_options(&mut self, source: u32, pick: PickOptions, colour_only: bool) {
-        let Some(mut p) = self.doc.paths.iter().find(|p| p.id == source).cloned() else { return };
-        p.fill = p.appearance().fill().resolved(&self.doc);
-        p.stroke = p.appearance().stroke().resolved(&self.doc);
+        let Some(p) = self.doc.paths.iter().find(|p| p.id == source).cloned() else { return };
         let ids = self.selected_pids();
         if colour_only {
             let paint = if p.fill.is_painted() { p.fill } else { p.stroke };
@@ -354,18 +354,26 @@ impl Editor {
             return;
         }
         if pick.fill {
-            self.cur_fill = p.appearance().fill().solid();
+            self.set_sampled_paint(crate::editor::PaintTarget::Fill, p.appearance().fill().clone(), &p);
         }
         if pick.stroke {
-            self.cur_stroke = p.appearance().stroke().solid();
+            self.set_sampled_paint(crate::editor::PaintTarget::Stroke, p.appearance().stroke().clone(), &p);
         }
         if pick.weight {
             self.cur_sw = p.stroke_width;
         }
         let changed = ids.iter().filter_map(|id| self.doc.pidx(*id)).any(|i| {
             let q = &self.doc.paths[i];
-            (pick.fill && q.appearance().fill().clone() != p.appearance().fill().clone())
-                || (pick.stroke && q.appearance().stroke().clone() != p.appearance().stroke().clone())
+            (pick.fill
+                && q.appearance().fill().clone()
+                    != crate::current_paint::fit(p.appearance().fill().clone(), crate::current_paint::bounds(&p), q))
+                || (pick.stroke
+                    && q.appearance().stroke().clone()
+                        != crate::current_paint::fit(
+                            p.appearance().stroke().clone(),
+                            crate::current_paint::bounds(&p),
+                            q,
+                        ))
                 || (pick.weight && q.stroke_width != p.stroke_width)
                 || (pick.opacity && q.opacity != p.opacity)
         });
@@ -380,10 +388,12 @@ impl Editor {
             if let Some(i) = self.doc.pidx(id) {
                 let q = &mut self.doc.paths[i];
                 if pick.fill {
-                    q.fill = p.appearance().fill().clone();
+                    q.fill =
+                        crate::current_paint::fit(p.appearance().fill().clone(), crate::current_paint::bounds(&p), q);
                 }
                 if pick.stroke {
-                    q.stroke = p.appearance().stroke().clone();
+                    q.stroke =
+                        crate::current_paint::fit(p.appearance().stroke().clone(), crate::current_paint::bounds(&p), q);
                 }
                 if pick.weight {
                     q.stroke_width = p.stroke_width;

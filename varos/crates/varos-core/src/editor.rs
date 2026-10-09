@@ -474,6 +474,9 @@ pub struct Editor {
     /// Space key; it only bites when a placement drag is live, so it never fights Space-pan (which arms on a
     /// fresh press, and no fresh press happens during a drag).
     pub space: bool,
+    // ---- w2-gradients: owned drawing defaults (legacy colour channels remain compatible) ----
+    pub(crate) current_paints: crate::current_paint::CurrentPaints,
+    // ---- end w2-gradients ----
     pub cur_fill: Option<Rgba>,
     pub cur_stroke: Option<Rgba>,
     /// Transient checked stroke-edit diagnostic; never persisted or part of undo.
@@ -548,6 +551,7 @@ impl Editor {
             mods: Mods::default(),
             constrain_wh: false,
             space: false,
+            current_paints: Default::default(),
             cur_fill: Some(DEFAULT_FILL),
             cur_stroke: Some(DEFAULT_STROKE),
             stroke_error: None,
@@ -1483,12 +1487,8 @@ impl Editor {
         if sel.len() < 2 {
             return;
         }
-        let bot = &self.doc.paths[sel[0]];
-        let (fill, stroke, sw) = (
-            bot.appearance().fill().resolved(&self.doc),
-            bot.appearance().stroke().resolved(&self.doc),
-            bot.stroke_width,
-        ); // result inherits bottom-most paint
+        let bot = crate::gradient_transform::world_path(&self.doc, &self.doc.paths[sel[0]]);
+        let (fill, stroke, sw) = (bot.appearance().fill().clone(), bot.appearance().stroke().clone(), bot.stroke_width); // result inherits bottom-most paint
         let shapes: Vec<Vec<Vec<Seg>>> =
             sel.iter().map(|&pi| self.path_to_segs(pi)).filter(|s| !s.is_empty()).collect();
         if shapes.len() < 2 {
@@ -3568,6 +3568,7 @@ impl Editor {
         staged.key_object = self.key_object;
         staged.distribute_gap = self.distribute_gap;
         staged.paste_remembers_layers = self.paste_remembers_layers;
+        staged.current_paints = self.current_paints.clone();
         staged.cur_fill = self.cur_fill;
         staged.cur_stroke = self.cur_stroke;
         staged.cur_sw = self.cur_sw;
@@ -3621,6 +3622,7 @@ impl Editor {
         self.group_sel = staged.group_sel;
         self.dsel_path = staged.dsel_path;
         self.absel = staged.absel;
+        self.current_paints = staged.current_paints;
         self.cur_fill = staged.cur_fill;
         self.cur_stroke = staged.cur_stroke;
         self.cur_sw = staged.cur_sw;
@@ -4258,6 +4260,7 @@ impl Editor {
                 let anchors = self.shape_anchors(kind, start, self.cursor);
                 if let Some(pi) = self.doc.pidx(pid) {
                     self.doc.paths[pi].anchors = anchors;
+                    self.refresh_drawing_paints(pi);
                 }
                 self.drag = Drag::Shape { start, pid, kind };
                 true
@@ -4442,6 +4445,7 @@ impl Editor {
                 let anchors = self.shape_anchors(kind, start, pos);
                 if let Some(pi) = self.doc.pidx(pid) {
                     self.doc.paths[pi].anchors = anchors;
+                    self.refresh_drawing_paints(pi);
                 }
                 self.drag = Drag::Shape { start, pid, kind };
                 self.dirty = true;
@@ -5173,10 +5177,7 @@ impl Editor {
         self.paint = if self.paint == PaintTarget::Fill { PaintTarget::Stroke } else { PaintTarget::Fill };
     }
     pub fn apply_paint(&mut self, color: Option<Rgba>) {
-        match self.paint {
-            PaintTarget::Fill => self.cur_fill = color,
-            PaintTarget::Stroke => self.cur_stroke = color,
-        }
+        self.set_current_paint(self.paint, Paint::from_opt(color));
         let pids = self.selected_pids();
         if pids.is_empty() {
             return;
@@ -5249,8 +5250,8 @@ impl Editor {
             }
         }
         match cur {
-            Some(PaintTarget::Fill) => self.cur_fill = Some(color),
-            Some(PaintTarget::Stroke) => self.cur_stroke = Some(color),
+            Some(PaintTarget::Fill) => self.set_current_paint(PaintTarget::Fill, Paint::Solid(color)),
+            Some(PaintTarget::Stroke) => self.set_current_paint(PaintTarget::Stroke, Paint::Solid(color)),
             None => {}
         }
         self.commit();
@@ -5280,7 +5281,13 @@ impl Editor {
             if active_only && !self.doc.path_boards(pi).contains(&self.doc.active) {
                 continue;
             }
-            for c in [p.appearance().fill().solid(), p.appearance().stroke().solid()].into_iter().flatten() {
+            for c in [
+                p.appearance().fill().resolved(&self.doc).representative(),
+                p.appearance().stroke().resolved(&self.doc).representative(),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 if !out.iter().any(|r| same(r, &c)) {
                     out.push(c);
                     if out.len() >= 36 {
@@ -5317,7 +5324,7 @@ impl Editor {
             .next()
     }
     fn apply_current(&mut self) {
-        let (f, st) = (self.cur_fill, self.cur_stroke);
+        let (f, st) = (self.current_paint(PaintTarget::Fill), self.current_paint(PaintTarget::Stroke));
         let pids = self.selected_pids();
         if pids.is_empty() {
             return;
@@ -5325,20 +5332,23 @@ impl Editor {
         self.begin();
         for q in pids {
             if let Some(pi) = self.doc.pidx(q) {
-                self.doc.paths[pi].fill = Paint::from_opt(f);
-                self.doc.paths[pi].stroke = Paint::from_opt(st);
+                self.doc.paths[pi].fill = f.clone();
+                self.doc.paths[pi].stroke = st.clone();
             }
         }
         self.dirty = true;
         self.commit();
     }
     pub fn swap_colors(&mut self) {
-        std::mem::swap(&mut self.cur_fill, &mut self.cur_stroke);
+        let f = self.current_paint(PaintTarget::Fill);
+        let st = self.current_paint(PaintTarget::Stroke);
+        self.set_current_paint(PaintTarget::Fill, st);
+        self.set_current_paint(PaintTarget::Stroke, f);
         self.apply_current();
     }
     pub fn default_paint(&mut self) {
-        self.cur_fill = Some(DEFAULT_FILL);
-        self.cur_stroke = Some(DEFAULT_STROKE);
+        self.set_current_paint(PaintTarget::Fill, Paint::Solid(DEFAULT_FILL));
+        self.set_current_paint(PaintTarget::Stroke, Paint::Solid(DEFAULT_STROKE));
         self.apply_current();
     }
     pub fn bump_stroke(&mut self, delta: f32) {
@@ -5736,12 +5746,13 @@ impl Editor {
     pub fn eyedrop(&mut self, pid: u32) {
         let (f, st, sw) = if let Some(pi) = self.doc.pidx(pid) {
             let p = &self.doc.paths[pi];
-            (p.appearance().fill().resolved(&self.doc), p.appearance().stroke().resolved(&self.doc), p.stroke_width)
+            (p.appearance().fill().clone(), p.appearance().stroke().clone(), p.stroke_width)
         } else {
             return;
         };
-        self.cur_fill = f.solid();
-        self.cur_stroke = st.solid();
+        let Some(source) = self.doc.pidx(pid).map(|i| self.doc.paths[i].clone()) else { return };
+        self.set_sampled_paint(PaintTarget::Fill, f.clone(), &source);
+        self.set_sampled_paint(PaintTarget::Stroke, st.clone(), &source);
         self.cur_sw = sw;
         let pids = self.selected_pids();
         if pids.is_empty() {
@@ -5750,8 +5761,10 @@ impl Editor {
         self.begin();
         for q in pids {
             if let Some(pi) = self.doc.pidx(q) {
-                self.doc.paths[pi].fill = f.clone();
-                self.doc.paths[pi].stroke = st.clone();
+                self.doc.paths[pi].fill =
+                    crate::current_paint::fit(f.clone(), crate::current_paint::bounds(&source), &self.doc.paths[pi]);
+                self.doc.paths[pi].stroke =
+                    crate::current_paint::fit(st.clone(), crate::current_paint::bounds(&source), &self.doc.paths[pi]);
                 self.doc.paths[pi].stroke_width = sw;
             }
         }

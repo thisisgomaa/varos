@@ -540,7 +540,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
         let mut out = Vec::new();
         let paint = p.appearance().stroke().resolved(&ed.doc);
         if let crate::model::Paint::Gradient(g) = paint {
-            match crate::stroke::evaluate(p, 0.025 / f64::from(ppu.max(0.0001)), &|| false) {
+            match crate::gradient_canvas::coverage(ed, p, ppu) {
                 Ok(cov) => {
                     if let Err(e) = stroke_budget.borrow_mut().charge(&cov) {
                         stroke_errors.borrow_mut().push(e.to_string());

@@ -33,9 +33,7 @@ fn current(ed: &Editor) -> Paint {
         .iter()
         .find(|p| ids.contains(&p.id))
         .map(|p| if ed.paint == PaintTarget::Fill { p.appearance().fill() } else { p.appearance().stroke() })
-        .map_or(Paint::from_opt(if ed.paint == PaintTarget::Fill { ed.cur_fill } else { ed.cur_stroke }), |p| {
-            p.resolved(&ed.doc)
-        })
+        .map_or(ed.current_paint(ed.paint), |p| p.resolved(&ed.doc))
 }
 fn reduced(ed: &Editor, count: usize) -> Vec<Rgba> {
     varos_core::recolor::reduced(&varos_core::recolor::selected_colours(ed), count)

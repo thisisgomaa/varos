@@ -73,6 +73,9 @@ pub fn check(ed: &Editor, c: &ColourCommand) -> Result<(), String> {
 }
 fn paint_selected(ed: &mut Editor, target: PaintTarget, paint: Paint) {
     let ids = ed.selected_pids();
+    if ids.is_empty() {
+        ed.set_current_paint(target, paint.clone());
+    }
     for p in &mut ed.doc.paths {
         if ids.contains(&p.id) {
             match target {
@@ -133,6 +136,7 @@ pub fn apply(ed: &mut Editor, c: ColourCommand) {
                 ColourCommand::DeleteSwatch { id } => {
                     if let Some(s) = ed.doc.swatches.iter().find(|s| s.id == id) {
                         let paint = s.paint.clone();
+                        ed.materialize_current_swatch(id, &paint);
                         for p in &mut ed.doc.paths {
                             for slot in [&mut p.fill, &mut p.stroke] {
                                 if *slot == (Paint::SwatchRef { id }) {

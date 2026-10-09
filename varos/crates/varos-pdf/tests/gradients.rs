@@ -96,3 +96,29 @@ fn old_reader_refuses_next_before_a_malformed_document() {
     };
     assert!(matches!(gate, Err(varos_core::format::LoadError::NewerVersion { found: 6, supported: 5 })));
 }
+
+#[test]
+fn reference_to_none_has_no_pdf_or_svg_artwork() {
+    let mut doc = document();
+    doc.swatches.push(varos_core::swatches::Swatch {
+        id: 1,
+        name: "Empty".into(),
+        paint: Paint::None,
+        global: true,
+        group: String::new(),
+    });
+    doc.paths[0].fill = Paint::SwatchRef { id: 1 };
+    doc.paths[0].stroke = Paint::SwatchRef { id: 1 };
+    let mut baseline = doc.clone();
+    baseline.paths[0].fill = Paint::None;
+    baseline.paths[0].stroke = Paint::None;
+    let pdf = lopdf::Document::load_mem(&varos_pdf::write_pdf(&doc).unwrap()).unwrap();
+    let blank = lopdf::Document::load_mem(&varos_pdf::write_pdf(&baseline).unwrap()).unwrap();
+    for (page, blank_page) in pdf.get_pages().values().zip(blank.get_pages().values()) {
+        assert_eq!(pdf.get_page_content(*page).unwrap(), blank.get_page_content(*blank_page).unwrap());
+    }
+    assert!(matches!(
+        varos_core::svg::plan_svg_export(&doc, varos_core::svg::ExportScope::WholeBoard),
+        Err(varos_core::svg::ExportError::NothingToExport)
+    ));
+}

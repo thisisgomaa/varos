@@ -262,9 +262,6 @@ pub(super) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, ops: &mut Vec<Op>) {
         ops.push(Op::Colour(C::Commit));
         m.gradient.editing = false;
     }
-    if m.gradient.paint.is_none() {
-        changed = true;
-    }
     if changed {
         send(ops, target, &g, false);
     }

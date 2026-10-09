@@ -286,3 +286,132 @@ fn reference_to_none_retains_empty_fill_hit_semantics() {
         .unwrap();
     assert_eq!(e.path_under([50., 50.]), None);
 }
+
+#[test]
+fn wand_compares_resolved_variants_and_solid_tolerance_only() {
+    use varos_core::select_transform::{SelectMode, WandOptions};
+    let (mut e, id) = editor();
+    paint(&mut e, Gradient::default());
+    let source = e.doc.paths[0].clone();
+    for (id, paint) in [
+        (100, Paint::None),
+        (101, Paint::Solid([1.; 4])),
+        (102, Paint::Gradient(Gradient::default())),
+        (103, Paint::SwatchRef { id: 1 }),
+    ] {
+        let mut p = source.clone();
+        p.id = id;
+        p.fill = paint;
+        e.doc.paths.push(p);
+    }
+    e.doc.swatches.push(Swatch {
+        id: 1,
+        name: "Ink".into(),
+        paint: Paint::Gradient(Default::default()),
+        global: true,
+        group: String::new(),
+    });
+    e.magic_wand(id, WandOptions::default(), SelectMode::Set);
+    assert_eq!(e.objsel, [id, 102, 103].into());
+    e.doc.paths[0].fill = Paint::Solid([0.99, 1., 1., 1.]);
+    e.magic_wand(id, WandOptions { colour: 0.02, ..Default::default() }, SelectMode::Set);
+    assert_eq!(e.objsel, [id, 101].into());
+}
+#[test]
+fn eyedropper_without_selection_retains_paint_for_shape_and_pen() {
+    let (mut e, id) = editor();
+    paint(&mut e, Gradient::default());
+    e.escape_selection();
+    e.sample_options(id, Default::default(), false);
+    let expected = e.doc.paths[0].fill.clone();
+    assert_eq!(e.current_paint(PaintTarget::Fill), expected);
+    e.set_tool(ToolKind::Rect);
+    e.pointer_down([200., 200.]);
+    e.pointer_move([300., 300.]);
+    e.pointer_up();
+    assert_eq!(
+        e.doc.paths.last().unwrap().fill,
+        Paint::Gradient(Gradient::default().mapped(|p| [p[0] + 200., p[1] + 200.]))
+    );
+    e.set_tool(ToolKind::Pen);
+    e.pointer_down([400., 400.]);
+    e.pointer_up();
+    assert_eq!(
+        e.doc.paths.last().unwrap().fill,
+        Paint::Gradient(Gradient::default().mapped(|p| [p[0] + 400., p[1] + 400.]))
+    );
+    e.escape_selection();
+    e.doc.swatches.push(Swatch {
+        id: 1,
+        name: "Ink".into(),
+        paint: Paint::Solid([1., 0., 0., 1.]),
+        global: true,
+        group: String::new(),
+    });
+    e.doc.paths[0].fill = Paint::SwatchRef { id: 1 };
+    e.eyedrop(id);
+    assert_eq!(e.current_paint(PaintTarget::Fill), Paint::SwatchRef { id: 1 });
+    e.execute_ui(EditCommand::Colour(C::DeleteSwatch { id: 1 }));
+    assert_eq!(e.current_paint(PaintTarget::Fill), Paint::Solid([1., 0., 0., 1.]));
+    e.apply_paint(None);
+    assert_eq!(e.current_paint(PaintTarget::Fill), Paint::None);
+}
+#[test]
+fn pathfinder_bakes_rotation_into_gradient_and_preserves_solid_link() {
+    let (mut e, id) = editor();
+    paint(&mut e, Gradient::default());
+    let node = e.doc.unit_of(id).unwrap();
+    let xf = varos_core::model::Xform { rot: std::f32::consts::FRAC_PI_2, piv: [50., 50.] };
+    e.doc.set_node_xform(node, xf);
+    let expected = Gradient::default().transformed(xf);
+    let copy = varos_core::clipboard::Clipboard::capture(&e.doc, &[id]);
+    let ids = copy.paste_into(&mut e.doc, [10., 0.]);
+    e.objsel = [id, ids[0]].into();
+    e.pathfinder(varos_core::BoolOp::Unite);
+    assert!(e.doc.paths.iter().all(|p| p.fill == Paint::Gradient(expected.clone())));
+}
+#[test]
+fn representative_readers_include_gradients_and_resolved_swatches() {
+    let (mut e, _) = editor();
+    paint(&mut e, Gradient::default());
+    assert_eq!(e.document_colors(), vec![[0.5, 0.5, 0.5, 1.]]);
+    assert_eq!(varos_core::document_setup::info(&e.doc)["colours"], serde_json::json!([[0.5, 0.5, 0.5, 1.]]));
+    e.doc.swatches.push(Swatch {
+        id: 1,
+        name: "Ink".into(),
+        paint: Paint::Solid([1., 0., 0., 1.]),
+        global: true,
+        group: String::new(),
+    });
+    e.doc.paths[0].fill = Paint::SwatchRef { id: 1 };
+    assert_eq!(e.document_colors(), vec![[1., 0., 0., 1.]]);
+}
+#[test]
+fn eyedropper_fits_owned_gradients_to_recipient_and_keeps_global_links() {
+    let (mut e, id) = editor();
+    paint(&mut e, Gradient::default());
+    let mut target = e.doc.paths[0].clone();
+    target.id = 100;
+    for a in &mut target.anchors {
+        a.p[0] = a.p[0] * 2. + 200.;
+        a.p[1] += 200.;
+    }
+    e.doc.paths.push(target);
+    e.objsel = [100].into();
+    e.sample_options(id, Default::default(), false);
+    let expected = Paint::Gradient(Gradient::default().mapped(|p| [2. * p[0] + 200., p[1] + 200.]));
+    assert_eq!(e.doc.paths[1].fill, expected);
+    let rev = e.rev;
+    e.sample_options(id, Default::default(), false);
+    assert_eq!(e.rev, rev);
+    e.doc.swatches.push(Swatch {
+        id: 1,
+        name: "Ink".into(),
+        paint: Paint::Gradient(Default::default()),
+        global: true,
+        group: String::new(),
+    });
+    e.doc.paths[0].fill = Paint::SwatchRef { id: 1 };
+    e.sample_options(id, Default::default(), false);
+    assert_eq!(e.doc.paths[1].fill, Paint::SwatchRef { id: 1 });
+}
