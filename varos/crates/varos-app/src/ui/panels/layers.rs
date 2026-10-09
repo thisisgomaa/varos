@@ -117,12 +117,14 @@ pub(crate) fn thumb_key(ed: &Editor, pids_zorder: &[u32]) -> u64 {
         let Some(pi) = ed.doc.pidx(pid) else { continue };
         let path = &ed.doc.paths[pi];
         path.closed.hash(&mut state);
-        for paint in [path.fill.solid(), path.stroke.solid()] {
-            paint.is_some().hash(&mut state);
-            if let Some(color) = paint {
-                color.into_iter().for_each(|channel| hash_f32(channel, &mut state));
-            }
+        path.hidden.hash(&mut state);
+        path.anchors.len().hash(&mut state);
+        path.holes.len().hash(&mut state);
+        for hole in &path.holes {
+            hole.len().hash(&mut state);
         }
+        path.fill.hash(&mut state);
+        path.stroke.hash(&mut state);
         hash_f32(path.stroke_width, &mut state);
         hash_f32(path.opacity, &mut state);
         for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {

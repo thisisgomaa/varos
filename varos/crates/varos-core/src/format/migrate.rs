@@ -72,14 +72,14 @@ pub(crate) fn clamp_active(doc: &mut Document) {
 pub(crate) fn normalize(mut doc: Document) -> Result<Document, LoadError> {
     // Raise the counter BEFORE `sync_tree`: its `nid()` would otherwise hand out ids already in use.
     doc.ids = doc.ids.max(max_used_id(&doc));
-    let clips: Vec<(u32, Option<u32>)> =
-        doc.nodes.iter().filter(|n| n.role == GroupRole::Clip).map(|n| (n.id, n.mask_child)).collect();
+    let clips: Vec<(u32, GroupRole, Option<u32>)> =
+        doc.nodes.iter().filter(|n| n.role.is_mask_group()).map(|n| (n.id, n.role, n.mask_child)).collect();
     doc.sync_tree();
     if !clips.is_empty() {
         let after: HashMap<u32, (GroupRole, Option<u32>)> =
             doc.nodes.iter().map(|n| (n.id, (n.role, n.mask_child))).collect();
-        for (group, mask_child) in &clips {
-            if after.get(group) != Some(&(GroupRole::Clip, *mask_child)) {
+        for (group, role, mask_child) in &clips {
+            if after.get(group) != Some(&(*role, *mask_child)) {
                 // a mask id naming no node is refused earlier, by `check_structure` (Dangling)
                 let reason = match mask_child {
                     None => "it has no mask shape",

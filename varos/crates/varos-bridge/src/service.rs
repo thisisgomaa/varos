@@ -144,10 +144,17 @@ struct Observed {
     journal: VecDeque<Value>,
     bytes: usize,
 }
+struct RetainedReceipt {
+    id: String,
+    hash: String,
+    reply: Reply,
+    ids: bool,
+    export_report: bool,
+}
 #[derive(Default)]
 struct Client {
     high: u64,
-    receipts: VecDeque<(String, String, Reply, bool)>,
+    receipts: VecDeque<RetainedReceipt>,
 }
 pub struct Service {
     pub epoch: String,
@@ -304,8 +311,11 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api()) {
-            return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0 or 1.1"));
+        if ![API, "1.1"].contains(&req.api()) && !(req.api() == "1.2" && matches!(req, Request::ExportPdf(_))) {
+            return Reply::failure(Error::new(
+                "unsupported",
+                "Bridge API must be 1.0 or 1.1 (export_pdf also supports 1.2)",
+            ));
         }
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
@@ -325,7 +335,8 @@ impl Service {
                 return Reply::failure(Error::new("limit_exceeded", "too many authorized clients this launch"));
             }
             let client = self.clients.entry(ctx.client.clone()).or_default();
-            if let Some((_, hash, reply, _)) = client.receipts.iter().find(|(key, _, _, _)| key == id) {
+            if let Some(receipt) = client.receipts.iter().find(|r| r.id == id) {
+                let (hash, reply) = (&receipt.hash, &receipt.reply);
                 return if hash == &payload {
                     reply.clone()
                 } else {
@@ -377,7 +388,8 @@ impl Service {
                     if req.api() == "1.1" {
                         let v = r.result.as_mut().unwrap();
                         v["api"] = json!("1.1");
-                        v["supported_api"] = json!(["1.0", "1.1"]);
+                        v["supported_api"] = json!(["1.0", "1.1"]); // 1.1 reply stays byte-stable; 1.2 is per-tool below
+                        v["api_by_tool"] = json!({"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
                         v["edit_verbs"].as_array_mut().unwrap().push(json!("repeat"));
                         v["economy_hint"] = json!("Use API 1.1 defaults and omit decorative names; compact rect/ellipse/path plus repeat for identical rows; request IDs receipts, a budgeted summary or since-revision diff, and an economy snapshot only when needed; inspect specific IDs/fields for detail and ask for larger images explicitly.");
                     }
@@ -438,7 +450,15 @@ impl Service {
                         }
                         _ => {}
                     }
-                    host.file_effect(req.tool(), v)
+                    let mut reply = host.file_effect(req.tool(), v)?;
+                    // Reports originate in the export worker. Preserve them for 1.2;
+                    // legacy wire receipts stay byte-identical, including completion.
+                    if v.api != "1.2" {
+                        if let Some(result) = &mut reply.result {
+                            result.as_object_mut().map(|v| v.remove("report"));
+                        }
+                    }
+                    Ok(reply)
                 }
                 Request::Select(v) => {
                     if v.ids.len() > MAX_TARGETS {
@@ -570,11 +590,11 @@ impl Service {
                     Ok(r)
                 }
                 Request::RequestStatus(v) => {
-                    let (r, ids_mode) = self
+                    let (r, ids_mode, export_report) = self
                         .clients
                         .get(&ctx.client)
-                        .and_then(|c| c.receipts.iter().find(|(id, _, _, _)| id == &v.request_id))
-                        .map(|(_, _, r, ids)| (r.clone(), *ids))
+                        .and_then(|c| c.receipts.iter().find(|r| r.id == v.request_id))
+                        .map(|r| (r.reply.clone(), r.ids, r.export_report))
                         .ok_or_else(|| Error::new("not_found", "receipt not retained for this client"))?;
                     if let Some(c) = &v.cursor {
                         if !ids_mode {
@@ -590,6 +610,11 @@ impl Service {
                     }
                     if let Some(ticket) = r.result.as_ref().and_then(|r| r["ticket"].as_u64()) {
                         if let Some(mut done) = host.file_status(ticket) {
+                            if !export_report {
+                                if let Some(result) = &mut done.result {
+                                    result.as_object_mut().map(|v| v.remove("report"));
+                                }
+                            }
                             done.board = r.board.clone();
                             done.rev = r.rev;
                             done.request_id = Some(v.request_id.clone());
@@ -620,12 +645,13 @@ impl Service {
             if reply.ok {
                 let client = self.clients.entry(ctx.client.clone()).or_default();
                 client.high = sequence(id).unwrap();
-                client.receipts.push_back((
-                    id.into(),
-                    payload,
-                    reply.clone(),
-                    matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
-                ));
+                client.receipts.push_back(RetainedReceipt {
+                    id: id.into(),
+                    hash: payload,
+                    reply: reply.clone(),
+                    ids: matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
+                    export_report: matches!(req, Request::ExportPdf(v) if v.api == "1.2"),
+                });
                 while client.receipts.len() > 128 {
                     client.receipts.pop_front();
                 }

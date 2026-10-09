@@ -108,9 +108,56 @@ pub fn point_in_poly(poly: &[Pt], pt: Pt) -> bool {
     inside
 }
 
+/// Conservative local painted bounds. Current strokes use round joins, so miter allowance is zero.
+/// Future joins, arrowheads and effects extend this single function.
+pub fn painted_extent(path: &crate::model::Path) -> crate::flatten::Rect {
+    let mut r = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for a in path.anchors.iter().chain(path.holes.iter().flatten()) {
+        for p in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
+            r = (r.0.min(p[0]), r.1.min(p[1]), r.2.max(p[0]), r.3.max(p[1]));
+        }
+    }
+    let pad = if path.stroke == crate::model::Paint::None { 0.0 } else { (path.stroke_width * 0.5).max(0.0) };
+    (r.0 - pad, r.1 - pad, r.2 + pad, r.3 + pad)
+}
+/// Reach beyond the geometry hull, derived from the shared painted extent.
+pub fn painted_padding(path: &crate::model::Path) -> f32 {
+    let hull = path
+        .anchors
+        .iter()
+        .chain(path.holes.iter().flatten())
+        .flat_map(|a| [Some(a.p), a.hin, a.hout])
+        .flatten()
+        .fold((f32::MAX, f32::MAX, f32::MIN, f32::MIN), |r, p| {
+            (r.0.min(p[0]), r.1.min(p[1]), r.2.max(p[0]), r.3.max(p[1]))
+        });
+    if hull.0 == f32::MAX {
+        0.0
+    } else {
+        extent_padding(hull, painted_extent(path))
+    }
+}
+
+fn extent_padding(hull: crate::flatten::Rect, painted: crate::flatten::Rect) -> f32 {
+    (hull.0 - painted.0).max(hull.1 - painted.1).max(painted.2 - hull.2).max(painted.3 - hull.3).max(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn asymmetric_painted_extent_pads_every_side() {
+        let hull = (0., 0., 20., 30.);
+        for (extent, expected) in [
+            ((-1., -2., 23., 34.), 4.),
+            ((-9., 0., 20., 30.), 9.),
+            ((0., -9., 20., 30.), 9.),
+            ((0., 0., 29., 30.), 9.),
+            ((0., 0., 20., 39.), 9.),
+        ] {
+            assert_eq!(extent_padding(hull, extent), expected);
+        }
+    }
     #[test]
     fn fit_centres_and_scales() {
         // a 1000×500 board in an 800×800 window, 10% margin → zoom limited by width: 0.8*0.9 = 0.72

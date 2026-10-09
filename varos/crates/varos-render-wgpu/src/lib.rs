@@ -35,6 +35,9 @@ pub struct Renderer {
     pipe_cover: wgpu::RenderPipeline,
     pipe_smark: wgpu::RenderPipeline, // stencil-MARK the band bit 0x80 (Replace, colour off)
     pipe_cover_knock: wgpu::RenderPipeline, // fill cover for knockout: inside AND not under the band
+    pipe_cover_band_clip: wgpu::RenderPipeline,
+    pipe_cover_knock_clip: wgpu::RenderPipeline,
+    pipe_bits_clear: wgpu::RenderPipeline,
     pipe_cover_band: wgpu::RenderPipeline, // band cover: paint the stroke once where marked, clear the bit
     // clip-mask (MASKS_PLAN §3.1) — the dedicated bit 0x02 pipelines:
     pipe_mask_fan: wgpu::RenderPipeline, // fan the mask silhouette into 0x02 (even-odd, colour off)
@@ -411,6 +414,24 @@ impl Renderer {
         let pipe_cover = make_pipe(&device, &layout, &shader, config.format, samples, true, st_cov);
         let pipe_smark = make_pipe(&device, &layout, &shader, config.format, samples, false, st_mark);
         let pipe_cover_knock = make_pipe(&device, &layout, &shader, config.format, samples, true, st_knock);
+        let pipe_cover_band_clip =
+            make_pipe(&device, &layout, &shader, config.format, samples, true, clipped_cover_state(true));
+        let pipe_cover_knock_clip =
+            make_pipe(&device, &layout, &shader, config.format, samples, true, clipped_cover_state(false));
+        let clear_bits = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Always,
+            pass_op: wgpu::StencilOperation::Zero,
+            ..Default::default()
+        };
+        let pipe_bits_clear = make_pipe(
+            &device,
+            &layout,
+            &shader,
+            config.format,
+            samples,
+            false,
+            wgpu::StencilState { front: clear_bits, back: clear_bits, read_mask: 0x81, write_mask: 0x81 },
+        );
         let pipe_cover_band = make_pipe(&device, &layout, &shader, config.format, samples, true, st_band);
         // clip pipelines: fan/clear write bit 0x02 with colour OFF; the clipped cover paints colour where
         // parity∧clip and clears parity; `pipe_fill_clear` (colour OFF) sweeps the parity the clipped
@@ -580,6 +601,9 @@ impl Renderer {
             pipe_smark,
             pipe_cover_knock,
             pipe_cover_band,
+            pipe_cover_band_clip,
+            pipe_cover_knock_clip,
+            pipe_bits_clear,
             pipe_mask_fan,
             pipe_mask_clear,
             pipe_cover_clip,
@@ -745,9 +769,13 @@ impl Renderer {
                     rp.set_stencil_reference(0x80);
                     rp.set_pipeline(&self.pipe_smark);
                     rp.draw(tris.0..tris.0 + tris.1, 0..1);
-                    rp.set_stencil_reference(0);
-                    rp.set_pipeline(&self.pipe_cover_band);
+                    rp.set_stencil_reference(if clip { 0x82 } else { 0 });
+                    rp.set_pipeline(if clip { &self.pipe_cover_band_clip } else { &self.pipe_cover_band });
                     rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                    if clip {
+                        rp.set_pipeline(&self.pipe_bits_clear);
+                        rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                    }
                 }
                 // knockout object (fill + translucent stroke): the band CUTS the fill beneath it, so the
                 // stroke blends against what's behind the OBJECT — never against its own fill.
@@ -766,17 +794,23 @@ impl Renderer {
                         rp.draw(fan.0..fan.0 + fan.1, 0..1);
                     }
                     // 3) fill cover: paint where inside AND NOT under the band ((stencil&0x81)==0x01)
-                    rp.set_stencil_reference(0x01);
-                    rp.set_pipeline(&self.pipe_cover_knock);
+                    rp.set_stencil_reference(if clip { 0x03 } else { 0x01 });
+                    rp.set_pipeline(if clip { &self.pipe_cover_knock_clip } else { &self.pipe_cover_knock });
                     if fcover.1 > 0 {
                         rp.draw(fcover.0..fcover.0 + fcover.1, 0..1);
                     }
                     // 4) band cover: paint the stroke once where marked; clears the band bit
                     rp.set_vertex_buffer(0, self.fg_buf.slice(..));
-                    rp.set_stencil_reference(0);
-                    rp.set_pipeline(&self.pipe_cover_band);
+                    rp.set_stencil_reference(if clip { 0x82 } else { 0 });
+                    rp.set_pipeline(if clip { &self.pipe_cover_band_clip } else { &self.pipe_cover_band });
                     if bcover.1 > 0 {
                         rp.draw(bcover.0..bcover.0 + bcover.1, 0..1);
+                    }
+                    if clip {
+                        rp.set_pipeline(&self.pipe_bits_clear);
+                        rp.draw(bcover.0..bcover.0 + bcover.1, 0..1);
+                        rp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                        rp.draw(fcover.0..fcover.0 + fcover.1, 0..1);
                     }
                 }
             }
@@ -867,7 +901,7 @@ impl Renderer {
                         rp.draw(mask_clear.0..mask_clear.0 + mask_clear.1, 0..1);
                     }
                 }
-                GroupDraw::Layer { draws, quad } => {
+                GroupDraw::Layer { draws, quad } | GroupDraw::ClippedLayer { draws, quad, .. } => {
                     // render the object OPAQUELY into the isolated layer (cleared transparent, MSAA-resolved)
                     {
                         let mut lp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -887,7 +921,15 @@ impl Renderer {
                             occlusion_query_set: None,
                         });
                         lp.set_stencil_reference(0);
-                        self.draw_steps(&mut lp, draws, false);
+                        let clipped = if let GroupDraw::ClippedLayer { mask_fan, .. } = m {
+                            lp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                            lp.set_pipeline(&self.pipe_mask_fan);
+                            lp.draw(mask_fan.0..mask_fan.0 + mask_fan.1, 0..1);
+                            true
+                        } else {
+                            false
+                        };
+                        self.draw_steps(&mut lp, draws, clipped);
                     }
                     // composite the resolved layer onto the scene at the object's opacity
                     {
@@ -1205,6 +1247,21 @@ impl Renderer {
     }
 }
 
+// Read parity/band AND clip; writes never touch the clip bit.
+fn clipped_cover_state(band: bool) -> wgpu::StencilState {
+    let face = wgpu::StencilFaceState {
+        compare: wgpu::CompareFunction::Equal,
+        pass_op: wgpu::StencilOperation::Zero,
+        ..Default::default()
+    };
+    wgpu::StencilState {
+        front: face,
+        back: face,
+        read_mask: if band { 0x82 } else { 0x83 },
+        write_mask: if band { 0x81 } else { 0x01 },
+    }
+}
+
 #[cfg(test)]
 mod gpu_free_tests {
     use super::{fit_to_limit, FreeQueue};
@@ -1230,5 +1287,15 @@ mod gpu_free_tests {
         assert_eq!(out, vec![TextureId::Managed(3), TextureId::Managed(4), TextureId::Managed(5)]);
         assert!(q.is_empty());
         assert_eq!(q.take_with(&[]), Vec::<TextureId>::new()); // nothing released twice
+    }
+}
+
+#[test]
+fn translucent_steps_require_clip_and_preserve_it() {
+    for (band, reference) in [(true, 0x82), (false, 0x03)] {
+        let s = clipped_cover_state(band);
+        assert_eq!(s.read_mask & 2, 2);
+        assert_eq!(s.write_mask & 2, 0);
+        assert_ne!(reference & s.read_mask, (reference & !2) & s.read_mask);
     }
 }
