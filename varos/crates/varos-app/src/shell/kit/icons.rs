@@ -200,9 +200,17 @@ pub enum Icon {
     HarmonySquare,
     /// Colour harmony "Monochrome".
     HarmonyMono,
+    PathDivide,
+    PathTrim,
+    PathMerge,
+    PathOutline,
+    PathMinusBack,
+    PathScissors,
+    PathKnife,
+    PathEraser,
 }
 impl Icon {
-    pub const ALL: [Icon; 70] = [
+    pub const ALL: [Icon; 78] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -259,6 +267,14 @@ impl Icon {
         Self::HarmonyTetradic,
         Self::HarmonySquare,
         Self::HarmonyMono,
+        Self::PathDivide,
+        Self::PathTrim,
+        Self::PathMerge,
+        Self::PathOutline,
+        Self::PathMinusBack,
+        Self::PathScissors,
+        Self::PathKnife,
+        Self::PathEraser,
         Self::Lasso,
         Self::PenTool,
         Self::PenLine,
@@ -359,6 +375,14 @@ impl Icon {
             Self::HarmonyTetradic => varos!("harmony-tetradic"),
             Self::HarmonySquare => varos!("harmony-square"),
             Self::HarmonyMono => varos!("harmony-mono"),
+            Self::PathDivide => varos!("path-divide"),
+            Self::PathTrim => varos!("path-trim"),
+            Self::PathMerge => varos!("path-merge"),
+            Self::PathOutline => varos!("path-outline"),
+            Self::PathMinusBack => varos!("path-minus-back"),
+            Self::PathScissors => varos!("path-scissors"),
+            Self::PathKnife => varos!("path-knife"),
+            Self::PathEraser => varos!("path-eraser"),
         }
     }
 

@@ -5,6 +5,49 @@ VectorCraft crates/pathops/tests/prop_pathops.rs @ a469568.
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
 
+varos-core/src/geom/shapes.rs adapts shape generators from VectorCraft crates/geom/src/shapes.rs @ a469568.
+varos-core/src/geom/fit.rs adapts Schneider-style least-squares fitting and numerical helpers from
+VectorCraft crates/pathops/src/fit.rs @ a469568.
+varos-core/src/geom/edit.rs adapts simplify, smooth, subdivision, average and join algorithms from
+VectorCraft crates/pathops/src/edit.rs @ a469568; the conservative error certificate is Varos code.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-core/src/geom/kurbo.rs adapts absolute-handle / BezPath conversion from
+VectorCraft crates/geom/src/path.rs @ a469568.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+kurbo 0.13.1 — Copyright (c) 2018 Raph Levien; Apache-2.0 OR MIT; https://github.com/linebender/kurbo — used for pure curve geometry in varos-core.
+varos-core/src/planar.rs adapts the face ownership / Pathfinder algorithm model from
+VectorCraft crates/pathops/src/planar.rs and pathfinder.rs @ a469568 (no linesweeper code).
+varos-core/src/construction.rs adapts face merge/delete and cutting behaviour from
+VectorCraft crates/tools/src/builder.rs, cut.rs and draw2/anchor.rs @ a469568.
+crates/varos-core/src/select_transform.rs and tools/select_transform.rs adapt transform axes,
+wand selection modes and layer operations from VectorCraft crates/tools/src/xform/{transform.rs,free.rs,wand.rs}
+and crates/engine/src/cmd/layerpanel.rs @ a469568.
+varos-core/src/trace/{mod,quantize,contour,fit}.rs adapts the Image Trace pipeline,
+quantization, contour following and Douglas-Peucker from VectorCraft crates/trace/src @ a469568.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-text/src/composer.rs adapts the total-fit / adjacent-fitness paragraph
+composition idea from VectorCraft crates/text/src/composer.rs.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-text/src/kashida.rs ports joining-class and harakat guards from Ahmed's
+BStudio bstudio-text/src/kashida.rs, June 2026. The source is Ahmed's own work,
+preserved at design-reference/prior-art/bstudio-2026-06/v0/crates/bstudio-text.
+Covered portions remain MPL-2.0 and are additionally distributed under GPL-3.0
+pursuant to MPL-2.0 section 3.3. Original MPL licence is preserved at
+../design-reference/prior-art/bstudio-2026-06/LICENSE.
+Caret geometry carries the BStudio directional-edge idea, retaining Varos's
+existing grapheme/affinity implementation rather than BStudio's scalar snapping.
+
+varos-text/assets/fonts bundles unchanged OFL fixtures: Inter Regular, IBM Plex
+Sans Arabic Regular, and Noto Sans Arabic (from cosmic-text 0.19.0 test fixtures).
+Respective licence texts are adjacent to the font bytes. No host fonts required.
 varos-core/src/guard.rs and varos-bridge/src/service.rs adapt the panic boundary from
 VectorCraft crates/engine/src/guard.rs @ a469568.
 varos-render-wgpu/src/health.rs adapts device monitoring from

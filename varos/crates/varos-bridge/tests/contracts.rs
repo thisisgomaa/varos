@@ -3092,8 +3092,10 @@ fn economy_schema_size_and_flat_roots() {
     for api in ["1.0", "1.1", "1.2"] {
         let list = varos_bridge::mcp::tools_for_api(api);
         let wire = serde_json::to_vec(&list).unwrap();
-        if api != "1.2" {
-            assert_eq!(wire, serde_json::to_vec(&varos_bridge::mcp::tools()).unwrap());
+        match api {
+            "1.0" => assert_eq!(wire.as_slice(), include_bytes!("fixtures/mcp_tools_list_1_0.json")),
+            "1.1" => assert_eq!(wire.as_slice(), include_bytes!("fixtures/mcp_tools_list_1_1.json")),
+            _ => {}
         }
         let bytes = wire.len();
         println!("API {api} tools/list bytes: {bytes}");
@@ -3510,5 +3512,357 @@ fn phase_one_effects_are_opt_in_revision_pinned_and_idempotent_without_os_calls(
     let old = varos_bridge::mcp::tools();
     assert_eq!(old, varos_bridge::mcp::tools_for_api("1.1"));
     let new = varos_bridge::mcp::tools_for_api("1.2");
-    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 8);
+    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11);
+}
+
+#[test]
+fn stroke_api_12_is_atomic_versioned_and_undoable() {
+    let mut s = Service::new("test-epoch".into());
+    let mut h = FakeHost::new();
+    s.observe(&mut h);
+    let rev = h.editor.rev;
+    for api in ["1.0", "1.1"] {
+        let error=varos_bridge::mcp::decode_tool("edit",json!({"api":api,"board":"b1","request_id":"r1","expected_rev":rev,"ops":[{"verb":"set_stroke_style","ids":["path:10"],"stroke_style":{"cap":"Butt"}}]})).unwrap_err();
+        assert_eq!(error.code, "unsupported");
+        assert_eq!(h.editor.rev, rev);
+    }
+    let op = json!({"api":"1.2","board":"b1","request_id":"r3","expected_rev":rev,"ops":[{"op":"set_stroke_style","ids":["path:10"],"stroke_style":{"cap":"Butt","dash":[6,3]}}]});
+    let r = handle(&mut s, &mut h, req("edit", op.clone()));
+    assert!(r.ok, "{r:?}");
+    assert_eq!(h.editor.doc.paths[0].stroke_style.cap, varos_core::stroke::StrokeCap::Butt);
+    assert_eq!(r, handle(&mut s, &mut h, req("edit", op)));
+    for api in ["1.0", "1.1", "1.2"] {
+        let r = handle(
+            &mut s,
+            &mut h,
+            req("describe", json!({"api":api,"board":"b1","ids":["path:10"],"fields":["paint"]})),
+        );
+        assert!(r.ok);
+        assert_eq!(r.result.as_ref().unwrap()["objects"][0].get("stroke_style").is_some(), api == "1.2");
+    }
+    let r = handle(
+        &mut s,
+        &mut h,
+        req("describe", json!({"api":"1.2","board":"b1","ids":["path:10"],"fields":["stroke_style"]})),
+    );
+    assert!(r.ok, "{r:?}");
+    assert_eq!(r.result.unwrap()["objects"][0]["stroke_style"]["miter_limit"], 10.0);
+    let before = h.editor.doc.clone();
+    let rev = h.editor.rev;
+    let r = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","board":"b1","request_id":"r4","expected_rev":rev,"ops":[{"verb":"set_stroke_style","ids":["path:10"],"stroke_style":{}},{"verb":"set_stroke_style","ids":["path:20"],"stroke_style":{"dash":[0,0]}}]}),
+        ),
+    );
+    assert!(!r.ok);
+    assert_eq!(h.editor.doc, before);
+    h.editor.undo();
+    assert!(h.editor.doc.paths[0].stroke_style.is_default());
+    h.editor.redo();
+    assert_eq!(h.editor.doc, before);
+}
+
+#[test]
+fn stroke_api_12_schemas_capabilities_and_limit_errors() {
+    let schema = varos_bridge::mcp::tools_for("1.2");
+    let edit = schema["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
+    assert!(edit["inputSchema"]["$defs"]["set_paint"]["properties"]["stroke_style"].is_object());
+    let stroke = varos_bridge::mcp::schema("edit", Some("set_stroke_style")).unwrap();
+    assert_eq!(stroke["properties"]["op"]["const"], "set_stroke_style");
+    assert_eq!(varos_bridge::mcp::tools_for("1.1"), varos_bridge::mcp::tools());
+    let mut s = Service::new("test-epoch".into());
+    let mut h = FakeHost::new();
+    let reply = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"})));
+    assert!(reply.ok, "{reply:?}");
+    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([5]));
+    assert!(reply.result.as_ref().unwrap()["stroke_operations_schema"].is_object());
+    h.editor.doc.paths[0].stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 1.0]);
+    let rev = h.editor.rev;
+    let before = h.editor.doc.clone();
+    let reply = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","board":"b1","request_id":"r1","expected_rev":rev,"ops":[{"op":"set_stroke_style","ids":["path:10"],"stroke_style":{"dash":[0.0001,0.0001]}}]}),
+        ),
+    );
+    assert_eq!(reply.error.unwrap().code, "limit_exceeded");
+    assert_eq!(h.editor.doc, before);
+}
+
+#[test]
+fn stroke_scene_failure_is_a_snapshot_error_for_board_and_page() {
+    use varos_core::{
+        model::{Artboard, Xform},
+        stroke::{StrokeCap, StrokeStyle},
+    };
+    let h = FakeHost::new();
+    let mut doc = h.editor.doc.clone();
+    let p = &mut doc.paths[0];
+    p.anchors.truncate(2);
+    p.anchors[0].p = [0.0, 0.0];
+    p.anchors[1].p = [4000.0, 0.0];
+    for a in &mut p.anchors {
+        a.hin = None;
+        a.hout = None;
+    }
+    p.closed = false;
+    p.stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 1.0]);
+    p.stroke_width = 1.0;
+    p.stroke_style = StrokeStyle { cap: StrokeCap::Butt, dash: vec![1.0, 1.0], ..Default::default() };
+    let pid = p.id;
+    let unit = doc.unit_of(pid).unwrap();
+    doc.set_node_xform(unit, Xform { rot: 0.7, piv: [0.0, 0.0] });
+    doc.artboards = vec![Artboard { id: 100, w: 6000.0, h: 6000.0, clip: false, ..Default::default() }];
+    for artboard in [None, Some(100)] {
+        let reply = varos_bridge::service::SnapshotJob { document: doc.clone(), rev: 1, size: [100, 100], artboard }
+            .render(&AtomicBool::new(false));
+        assert!(!reply.ok);
+        assert!(reply.result.is_none());
+        let error = reply.error.unwrap();
+        assert_eq!(error.code, "limit_exceeded");
+        assert!(error.reason.contains("path"));
+    }
+}
+
+#[test]
+fn trace_rgba_is_opt_in_atomic_and_preserves_holes() {
+    let rgba: Vec<u8> = (0..8)
+        .flat_map(|y| {
+            (0..8)
+                .flat_map(move |x| if (2..6).contains(&x) && (2..6).contains(&y) { [255u8; 4] } else { [0, 0, 0, 255] })
+        })
+        .collect();
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let before = serde_json::to_value(&h.editor.doc).unwrap();
+    for api in ["1.0", "1.1"] {
+        let rev = h.editor.rev;
+        let error = varos_bridge::mcp::decode_tool("edit",json!({"api":api,"request_id":format!("trace-{api}"),"board":"b1","expected_rev":rev,"ops":[{"verb":"trace_rgba","rgba":rgba,"width":8,"height":8}]})).unwrap_err();
+        assert_eq!(error.code, "unsupported");
+        assert_eq!(serde_json::to_value(&h.editor.doc).unwrap(), before);
+    }
+    let cap = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"}))).result.unwrap();
+    assert!(cap["edit_verbs"].as_array().unwrap().contains(&json!("trace_rgba")));
+    assert_eq!(cap["api_by_tool"]["edit"], json!(["1.0", "1.1", "1.2"]));
+    let rev = h.editor.rev;
+    let invalid = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","request_id":"r11","board":"b1","expected_rev":rev,"ops":[{"verb":"trace_rgba","rgba":rgba,"width":8,"height":8},{"verb":"trace_rgba","rgba":[],"width":8,"height":8}]}),
+        ),
+    );
+    assert!(!invalid.ok);
+    assert_eq!(invalid.error.as_ref().unwrap().op_index, Some(1));
+    assert_eq!(serde_json::to_value(&h.editor.doc).unwrap(), before);
+    let rev = h.editor.rev;
+    let reply = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","request_id":"r12","board":"b1","expected_rev":rev,"ops":[{"verb":"trace_rgba","rgba":rgba,"width":8,"height":8}]}),
+        ),
+    );
+    assert!(reply.ok, "{}", serde_json::to_value(reply).unwrap());
+    assert_eq!(h.editor.doc.paths.len(), 3);
+    assert_eq!(h.editor.doc.paths[2].holes.len(), 1);
+    h.editor.execute(EditCommand::Undo).unwrap();
+    assert_eq!(serde_json::to_value(&h.editor.doc).unwrap(), before);
+}
+
+#[test]
+fn trace_api12_inherits_economy_mixed_batch_names_receipts_and_rollback() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let before = h.editor.doc.clone();
+    let rev = h.editor.rev;
+    let args = json!({"api":"1.2","board":"b1","request_id":"r31","expected_rev":rev,
+        "receipt":"ids","defaults":{"fill":"#112233FF","stroke":null},"ops":[
+        {"verb":"trace_rgba","rgba":[0,0,0,255],"width":1,"height":1,"options":{"noise_px":0}},
+        ["rect",[1,2,10,20],{"local":"$a"}],
+        {"verb":"repeat","count":2,"dx":20,"dy":0,"ops":[["ellipse",[0,0,10,10],{"local":"$e"}]]},
+        {"verb":"move","ids":["$e_1"],"delta":[0,5]}]});
+    let reply = handle(&mut s, &mut h, req("edit", args.clone()));
+    assert!(reply.ok, "{reply:?}");
+    let result = reply.result.as_ref().unwrap();
+    assert!(result["created"].as_array().unwrap().iter().all(Value::is_string));
+    assert_eq!(h.editor.doc.paths.len(), before.paths.len() + 4);
+    assert_eq!(result["created"].as_array().unwrap().len(), 4);
+    assert_eq!(reply.undo_steps, 1);
+    for (p, label) in h.editor.doc.paths[before.paths.len() + 1..].iter().zip(["Rect ", "Ellipse ", "Ellipse "]) {
+        assert_eq!(p.fill, Paint::Solid([17. / 255., 34. / 255., 51. / 255., 1.]));
+        assert!(p.name.as_ref().unwrap().starts_with(label));
+    }
+    assert_eq!(handle(&mut s, &mut h, req("edit", args.clone())), reply);
+    h.editor.undo();
+    assert_eq!(h.editor.doc, before);
+    h.editor.redo();
+    let after = h.editor.doc.clone();
+    let mut bad = args;
+    bad["request_id"] = json!("r32");
+    bad["expected_rev"] = json!(h.editor.rev);
+    bad["ops"].as_array_mut().unwrap().push(json!({"verb":"trace_rgba","rgba":[],"width":1,"height":1}));
+    let error = handle(&mut s, &mut h, req("edit", bad)).error.unwrap();
+    assert_eq!(error.op_index, Some(4));
+    assert_eq!(h.editor.doc, after);
+    let cap = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"}))).result.unwrap();
+    assert!(cap["edit_verbs"].as_array().unwrap().contains(&json!("repeat")));
+    assert!(cap["economy_hint"].as_str().unwrap().contains("defaults"));
+}
+
+#[test]
+fn trace_api12_preflights_expanded_targets_before_allocation() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    // Each leaf names one layer: below the wire limit, above the expanded path limit.
+    let ops: Vec<_> = (0..99).map(|_| json!({"verb":"set_paint","ids":["node:1"],"fill":"#112233FF"})).collect();
+    let template = h.editor.doc.paths[0].clone();
+    for i in 0..10 {
+        let mut path = template.clone();
+        path.id = 1000 + i * 10;
+        for (j, anchor) in path.anchors.iter_mut().enumerate() {
+            anchor.id = path.id + j as u32 + 1;
+        }
+        h.editor.doc.paths.push(path);
+    }
+    h.editor.doc.ids = 1200;
+    h.editor.replace_doc(h.editor.doc.clone());
+    let before = h.editor.doc.clone();
+    let undo = h.editor.history_preview(false).cloned();
+    let args = json!({"api":"1.2","board":"b1","request_id":"r33","expected_rev":h.editor.rev,"ops":ops});
+    let error = handle(&mut s, &mut h, req("edit", args)).error.unwrap();
+    assert_eq!(error.code, "limit_exceeded");
+    assert!(error.op_index.is_some());
+    assert_eq!(h.editor.doc, before);
+    assert_eq!(h.editor.history_preview(false), undo.as_ref());
+}
+
+#[test]
+fn progressive_discovery_resolves_every_12_verb_without_mutation() {
+    fn check_refs(value: &Value, root: &Value) {
+        if let Some(reference) = value.get("$ref").and_then(Value::as_str) {
+            assert!(root.pointer(reference.strip_prefix('#').unwrap()).is_some(), "{reference}");
+        }
+        match value {
+            Value::Object(map) => {
+                for child in map.values() {
+                    check_refs(child, root);
+                }
+            }
+            Value::Array(array) => {
+                for child in array {
+                    check_refs(child, root);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut host = FakeHost::new();
+    let mut service = Service::new("test-epoch".into());
+    let before = host.editor.doc.clone();
+    let rev = host.editor.rev;
+    let caps = handle(&mut service, &mut host, req("capabilities", json!({"api":"1.2"}))).result.unwrap();
+    let index = handle(&mut service, &mut host, req("list_verbs", json!({"api":"1.2"})));
+    assert!(index.ok, "{index:?}");
+    let index = index.result.unwrap();
+    let mut names = std::collections::BTreeSet::new();
+    for group in index["groups"].as_array().unwrap() {
+        for verb in group["verbs"].as_array().unwrap() {
+            let name = verb["name"].as_str().unwrap();
+            assert!(!verb["description"].as_str().unwrap().is_empty());
+            assert!(!verb["description"].as_str().unwrap().contains('\n'));
+            if group["tool"] == "edit" {
+                assert!(names.insert(name.to_owned()), "duplicate {name}");
+                let reply =
+                    handle(&mut service, &mut host, req("schema", json!({"api":"1.2","tool":"edit","verb":name})));
+                assert!(reply.ok, "{name}: {reply:?}");
+                let params = reply.result.unwrap();
+                check_refs(&params, &params);
+                assert!(params.is_object());
+            } else {
+                assert!(varos_bridge::mcp::schema(name, None).is_ok(), "{name}");
+            }
+        }
+    }
+    for verb in caps["edit_verbs"].as_array().unwrap() {
+        assert!(names.contains(verb.as_str().unwrap()), "missing {verb}");
+    }
+    assert!(names.contains("repeat"));
+    assert_eq!(
+        varos_bridge::mcp::schema("edit", Some("stroke_style")).unwrap(),
+        varos_bridge::mcp::schema("edit", Some("set_stroke_style")).unwrap()
+    );
+    let table = varos_bridge::mcp::tools_for_api("1.2");
+    for row in table["tools"].as_array().unwrap() {
+        check_refs(&row["inputSchema"], &row["inputSchema"]);
+    }
+    for api in ["1.0", "1.1"] {
+        for tool in ["schema", "list_verbs"] {
+            let args =
+                if tool == "schema" { json!({"api":api,"tool":"edit","verb":"move"}) } else { json!({"api":api}) };
+            let reply = handle(&mut service, &mut host, req(tool, args));
+            assert_eq!(reply.error.unwrap().code, "unsupported");
+        }
+    }
+    for args in [
+        json!({"api":"1.2","tool":"edit","verb":"unknown"}),
+        json!({"api":"1.2","tool":"unknown"}),
+        json!({"api":"1.2","tool":"edit"}),
+        json!({"api":"1.2","tool":"select","verb":"move"}),
+    ] {
+        let reply = handle(&mut service, &mut host, req("schema", args));
+        assert_eq!(reply.error.unwrap().code, "invalid_argument");
+    }
+    assert!(varos_bridge::mcp::decode_tool("schema", json!({"api":"1.2","tool":"edit","verb":"move","extra":true}))
+        .is_err());
+    // Exercise both discovery tools through the real MCP framing and CLI decoder.
+    let transport = FakeTransport {
+        state: std::sync::Arc::new(std::sync::Mutex::new((Service::new("test-epoch".into()), FakeHost::new()))),
+        cancellations: Default::default(),
+    };
+    let (input_tx, input) = std::sync::mpsc::channel();
+    let (output, receive) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        varos_bridge::mcp::serve(
+            &mut std::io::BufReader::new(ChannelRead { rx: input, current: std::io::Cursor::new(vec![]) }),
+            ChannelWrite { tx: output, bytes: vec![] },
+            transport,
+        )
+        .unwrap();
+    });
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{},"capabilities":{}}}),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    ] {
+        let mut bytes = serde_json::to_vec(&msg).unwrap();
+        bytes.push(b'\n');
+        input_tx.send(bytes).unwrap();
+    }
+    receive.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    for (name, args) in
+        [("list_verbs", json!({"api":"1.2"})), ("schema", json!({"api":"1.2","tool":"edit","verb":"stroke_style"}))]
+    {
+        let envelope = json!({"tool":name,"arguments":args});
+        let cli = varos_bridge::cli::decode(&serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let expected = handle(&mut service, &mut host, cli);
+        assert!(expected.ok);
+        let msg = json!({"jsonrpc":"2.0","id":name,"method":"tools/call","params":{"name":name,"arguments":args}});
+        let mut bytes = serde_json::to_vec(&msg).unwrap();
+        bytes.push(b'\n');
+        input_tx.send(bytes).unwrap();
+        let result: Value =
+            serde_json::from_slice(&receive.recv_timeout(std::time::Duration::from_secs(3)).unwrap()).unwrap();
+        assert_eq!(result["result"], varos_bridge::mcp::tool_result(&expected));
+    }
+    drop(input_tx);
+    server.join().unwrap();
+    assert_eq!(host.editor.doc, before);
+    assert_eq!(host.editor.rev, rev);
 }

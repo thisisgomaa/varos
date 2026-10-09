@@ -26,6 +26,12 @@ pub const SEG_HI: Rgba = [0.35, 0.80, 1.0, 1.0]; // grabbed/selected path segmen
 pub const GUIDE: Rgba = [0.0, 0.72, 0.92, 0.9]; // ruler guide line — cyan (Illustrator default)
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct NativeStroke {
+    pub contours: Vec<Vec<Pt>>,
+    pub width: f32,
+    pub style: crate::stroke::StrokeStyle,
+}
+#[derive(Clone, Debug, PartialEq)]
 pub enum Prim {
     Fill { rings: Vec<Vec<Pt>>, color: Rgba }, // outer ring + hole rings — filled even-odd (holes cut through)
     // `clip` (A2): the artboard rect [x0,y0,x1,y1] (world) this stroke is clipped to, if any. The centerline
@@ -34,6 +40,7 @@ pub enum Prim {
     // = draw uncut (a floater or a page that invited bleed). A missed/degenerate rect MUST draw the stroke
     // uncut (overflowing), never clipped-to-nothing — fail-open.
     Stroke { pts: Vec<Pt>, width: f32, color: Rgba, clip: Option<[f32; 4]> },
+    StrokeCoverage { rings: Vec<Vec<Pt>>, color: Rgba, clip: Option<[f32; 4]>, native: Option<NativeStroke> },
     Dashed { pts: Vec<Pt>, width: f32, color: Rgba },
     Square { c: Pt, half: f32, color: Rgba },
     Disc { c: Pt, r: f32, color: Rgba },
@@ -82,6 +89,7 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     }
 
     let mut state = std::collections::hash_map::DefaultHasher::new();
+    ed.select_transform.isolation.hash(&mut state);
     ed.rev.hash(&mut state);
     frame.hash(&mut state);
     point_hash(view.pan, &mut state);
@@ -176,6 +184,7 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
 
     let cursor_drives_scene = !matches!(ed.drag, Drag::None)
         || !matches!(ed.ab_drag, crate::editor::AbDrag::None)
+        || ed.tool == ToolKind::ShapeBuilder
         || (ed.tool == ToolKind::Pen && ed.active.is_some())
         || ed.origin_preview.is_some()
         || ed.guide_preview.is_some();
@@ -189,7 +198,9 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
 pub struct Scene {
     pub grid_step: Option<f32>,
     pub content: Vec<Group>, // artwork groups (z-ordered): opaque runs + isolated translucent layers
-    pub overlay: Vec<Prim>,  // editing chrome: constant screen size, positions follow the view
+    pub report: crate::ExportReport,
+    pub errors: Vec<String>,
+    pub overlay: Vec<Prim>, // editing chrome: constant screen size, positions follow the view
 }
 
 /// Multiply a primitive's colour alpha — folds object-opacity into a single-primitive object (no overlap
@@ -197,7 +208,7 @@ pub struct Scene {
 fn scale_alpha(p: &mut Prim, o: f32) {
     let c = match p {
         Prim::Fill { color, .. } => color,
-        Prim::Stroke { color, .. } => color,
+        Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } => color,
         Prim::Dashed { color, .. } => color,
         Prim::Square { color, .. } => color,
         Prim::Disc { color, .. } => color,
@@ -291,6 +302,9 @@ pub fn build_scene_in_view_styled(ed: &Editor, view: View, frame: [u32; 2], styl
     build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style))
 }
 fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>) -> Scene {
+    let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
+    let stroke_budget = std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default());
+    let stroke_errors = std::cell::RefCell::new(Vec::new());
     let mut s = Scene { grid_step: ed.doc.snap.show_grid.then(|| ed.document_grid_step()), ..Default::default() };
     // content = z-ordered Groups. Opaque prims accumulate into the current run in PER-OBJECT paint order
     // (each object's fill immediately followed by its own stroke — Illustrator stacking: an object above
@@ -515,6 +529,71 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     let stroke_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
+        if !p.stroke_style.is_default() {
+            if let Some(color) = p.stroke.solid() {
+                match crate::stroke::evaluate(p, 0.025 / f64::from(ppu.max(0.0001)), &|| false) {
+                    Ok(coverage) => {
+                        if let Err(e) = stroke_budget.borrow_mut().charge(&coverage) {
+                            stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                            return out;
+                        }
+                        stroke_report.borrow_mut().notes.extend(coverage.report.notes);
+                        let xf = ed.doc.unit_xform(p.id);
+                        let rings: Vec<Vec<Pt>> =
+                            coverage.rings.into_iter().map(|r| r.into_iter().map(|q| xf.apply(q)).collect()).collect();
+                        let style = &p.stroke_style;
+                        let native = (crate::stroke::evaluate::has_length(p)
+                            && (style.align == crate::stroke::StrokeAlign::Center || !p.closed)
+                            && !style.align_dashes_to_corners
+                            && style.dash.iter().all(|v| *v > 0.0)
+                            && (p.closed || (style.arrows.start.is_none() && style.arrows.end.is_none())))
+                        .then(|| NativeStroke {
+                            contours: std::iter::once(geom.outline.clone())
+                                .chain(geom.holes.iter().map(|r| {
+                                    let mut r = r.clone();
+                                    if let Some(first) = r.first().copied() {
+                                        r.push(first);
+                                    }
+                                    r
+                                }))
+                                .collect(),
+                            width: p.stroke_width,
+                            style: style.clone(),
+                        });
+                        match clip_rects(pi) {
+                            Some(rects) => {
+                                for r in rects {
+                                    out.push(Prim::StrokeCoverage {
+                                        rings: rings
+                                            .iter()
+                                            .map(|ring| clip_poly_rect(ring, r))
+                                            .filter(|ring| ring.len() >= 3)
+                                            .collect(),
+                                        color,
+                                        clip: Some([r.0, r.1, r.2, r.3]),
+                                        native: native.clone(),
+                                    });
+                                }
+                            }
+                            None => out.push(Prim::StrokeCoverage { rings, color, clip: None, native }),
+                        }
+                    }
+                    Err(e) => {
+                        stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                    }
+                }
+            }
+            // The renderer tessellates WORLD/clipped rings, whose band scan can cost more than
+            // local coverage after rotation. Reject that cost here so it produces a visible error.
+            if let Some(error) = out.iter().find_map(|prim| match prim {
+                Prim::StrokeCoverage { rings, .. } => crate::stroke::evaluate::triangles(rings).err(),
+                _ => None,
+            }) {
+                stroke_errors.borrow_mut().push(format!("path {}: {error}", p.id));
+                out.clear();
+            }
+            return out;
+        }
         if p.anchors.len() >= 2 {
             if let Some(c) = p.stroke.solid() {
                 let clip = clip_rects(pi);
@@ -594,7 +673,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     // with no clip group produces byte-identical `groups`. A clip just feeds it a different pair of
     // accumulators (MASKS_PLAN §2.4: members reuse every branch, they only land in a different vec).
     let emit_object = |pi: usize, p: &Path, geom: &PathGeometry, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
-        let o = p.opacity;
+        let o = p.opacity * if ed.in_isolation(p.id) { 1.0 } else { 0.25 };
         let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
         let vclip = view_clip[pi];
         let mut fp = fill_prims(pi, geom, vclip);
@@ -784,7 +863,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
         }
     }
     // object-selection transform frame (oriented — rotates with the selection) + 8 handles
-    if ed.tool == ToolKind::Object && !matches!(ed.drag, Drag::ObjMarquee { .. }) {
+    if matches!(ed.tool, ToolKind::Object | ToolKind::FreeTransform) && !matches!(ed.drag, Drag::ObjMarquee { .. }) {
         if let (Some(c), Some(hs)) = (ed.frame_corners(), ed.frame_handles()) {
             s.overlay.push(Prim::Stroke {
                 pts: vec![c[0], c[1], c[2], c[3], c[0]],
@@ -799,7 +878,9 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
         }
     }
     // Rotate/Scale: the transform pivot (bullseye) — the origin a drag transforms around; click to move it
-    if matches!(ed.tool, ToolKind::Rotate | ToolKind::Scale) && !ed.objsel.is_empty() {
+    if matches!(ed.tool, ToolKind::Rotate | ToolKind::Scale | ToolKind::Reflect | ToolKind::Shear)
+        && !ed.objsel.is_empty()
+    {
         if let Some(c) = ed.pivot_point() {
             s.overlay.push(Prim::Disc { c, r: 6.0, color: WHITE });
             s.overlay.push(Prim::Disc { c, r: 4.5, color: ACCENT });
@@ -884,7 +965,11 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     }
     // handles: every SELECTED anchor shows its own direction handles (Illustrator). A whole-path / hover
     // selection shows none — grabbing a segment selects its two endpoints, so both reveal handles naturally.
-    let mut show: HashSet<u32> = if ed.tool == ToolKind::Object { HashSet::new() } else { ed.selected.clone() };
+    let mut show: HashSet<u32> = if matches!(ed.tool, ToolKind::Object | ToolKind::FreeTransform) {
+        HashSet::new()
+    } else {
+        ed.selected.clone()
+    };
     if ed.tool == ToolKind::Pen {
         if let Some(ap) = ed.active {
             if let Some(pi) = ed.doc.pidx(ap) {
@@ -927,7 +1012,10 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     }
     // anchor markers — only on SELECTED paths (never on mere hover), and not in object mode — outer + hole anchors
     for p in &ed.doc.paths {
-        if ed.doc.eff_hidden(p.id) || !ed.path_selected(p.id) || ed.tool == ToolKind::Object {
+        if ed.doc.eff_hidden(p.id)
+            || !ed.path_selected(p.id)
+            || matches!(ed.tool, ToolKind::Object | ToolKind::FreeTransform)
+        {
             continue;
         }
         let xf = ed.doc.unit_xform(p.id); // A7 seam: markers at WORLD anchor positions (identity ⇒ today)
@@ -993,12 +1081,30 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
         }
     }
     // ---- CENTER POINT of the object selection (Illustrator "Show Center"), tied to the 9-pt reference ----
-    if ed.tool == ToolKind::Object && !ed.objsel.is_empty() {
+    if matches!(ed.tool, ToolKind::Object | ToolKind::FreeTransform) && !ed.objsel.is_empty() {
         if let Some((x0, y0, x1, y1)) = ed.obj_bbox() {
             s.overlay.push(Prim::Disc { c: [(x0 + x1) * 0.5, (y0 + y1) * 0.5], r: 2.5, color: ACCENT });
         }
     }
 
+    s.report = stroke_report.into_inner();
+    s.errors = stroke_errors.into_inner();
+    if ed.tool == ToolKind::ShapeBuilder {
+        for shape in ed.construction_highlight() {
+            let rings: Vec<Vec<Pt>> =
+                shape.iter().map(|r| r.iter().map(|p| [p[0] as f32, p[1] as f32]).collect()).collect();
+            s.overlay.push(Prim::Fill { rings: rings.clone(), color: ACCENT_FILL });
+            for mut pts in rings {
+                if let Some(first) = pts.first().copied() {
+                    pts.push(first);
+                }
+                s.overlay.push(Prim::Stroke { pts, width: 1.0, color: ACCENT, clip: None });
+            }
+        }
+    }
+    if let Drag::Construction { points, .. } = &ed.drag {
+        s.overlay.push(Prim::Stroke { pts: points.clone(), width: 1.0, color: ACCENT, clip: None });
+    }
     s
 }
 

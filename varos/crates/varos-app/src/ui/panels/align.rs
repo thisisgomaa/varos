@@ -95,6 +95,7 @@ pub(crate) fn panel_pathfinder(ui: &mut egui::Ui, pf: Result<(), &'static str>, 
         ui.label(micro_label("SHAPE MODES"));
         label_gap(ui);
         pathfinder_row(ui, ops, false, pf); // the roomier dock home
+        super::construction_row(ui, pf, ops);
     });
 }
 

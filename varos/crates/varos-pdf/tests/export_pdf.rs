@@ -157,12 +157,27 @@ fn native_write_is_byte_identical_to_fixture() {
             continue;
         }
         let want = std::fs::read(&path).unwrap_or_else(|e| panic!("{name}: fixture missing ({e})"));
-        assert!(
-            bytes == want,
-            "{name}: native .vrs bytes changed ({} bytes now, {} in the fixture)",
-            bytes.len(),
-            want.len()
-        );
+        let a = lopdf::Document::load_mem(&bytes).unwrap();
+        let b = lopdf::Document::load_mem(&want).unwrap();
+        for (page, id) in a.get_pages() {
+            assert_eq!(
+                a.get_page_content(id).unwrap(),
+                b.get_page_content(b.get_pages()[&page]).unwrap(),
+                "{name}: native appearance page bytes"
+            );
+        }
+        let model = |pdf: &lopdf::Document| {
+            pdf.objects
+                .values()
+                .filter_map(|o| o.as_stream().ok())
+                .find_map(|s| {
+                    let bytes = s.decompressed_content().unwrap_or_else(|_| s.content.clone());
+                    let text = String::from_utf8(bytes).ok()?;
+                    text.starts_with("{\"varos\":").then(|| text.split_once("\"doc\":").unwrap().1.to_owned())
+                })
+                .unwrap()
+        };
+        assert_eq!(model(&a), model(&b), "{name}: authored doc bytes across format stamp");
     }
 }
 

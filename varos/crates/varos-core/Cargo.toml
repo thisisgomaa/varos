@@ -8,6 +8,8 @@ edition = "2021"
 # i_overlay = robust polygon boolean (fallback). flo_curves = curve-preserving bezier boolean (primary).
 # Both pure-Rust (no FFI), Apache/MIT → GPL-compatible, honor the hard seam.
 [dependencies]
+# Pure geometry, default std only; no serde/platform features. Offline-reviewed 0.13.1.
+kurbo = { version = "=0.13.1", default-features = false, features = ["std"] }
 i_overlay = "7"
 flo_curves = "0.8"
 # Serde spine (Foundations Stage-0): the model derives Serialize/Deserialize so the .varos

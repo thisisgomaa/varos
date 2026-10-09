@@ -41,34 +41,70 @@ pub enum LoadError {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Invalid {
     /// Two objects of the same kind share an id (ids are unique per kind; cross-kind reuse is legal).
-    DuplicateId { kind: &'static str, id: u32 },
+    DuplicateId {
+        kind: &'static str,
+        id: u32,
+    },
     /// `from` (object `id`) refers to an id `missing` that does not exist.
-    Dangling { from: &'static str, id: u32, missing: u32 },
+    Dangling {
+        from: &'static str,
+        id: u32,
+        missing: u32,
+    },
     /// The layer tree loops back on itself at `node`.
-    Cycle { node: u32 },
+    Cycle {
+        node: u32,
+    },
     /// `node`'s parent link and its parent's children list disagree, or it has no single owner.
-    BadParentage { node: u32, reason: &'static str },
+    BadParentage {
+        node: u32,
+        reason: &'static str,
+    },
     /// Clipping group `group` is broken (e.g. its mask shape is no longer inside it).
-    BadMask { group: u32, reason: &'static str },
+    BadMask {
+        group: u32,
+        reason: &'static str,
+    },
     /// A number is not finite; `what` names the object.
-    NonFinite { what: String },
+    NonFinite {
+        what: String,
+    },
     /// A number is outside its allowed range; `what` names the object and field.
-    OutOfRange { what: String, value: f64 },
+    OutOfRange {
+        what: String,
+        value: f64,
+    },
     /// The id counter has no room left.
     IdExhausted,
+    Stroke {
+        path: u32,
+        reason: String,
+    },
     /// A retired v1-only structure in a v2 file.
-    LegacyInV2 { what: &'static str },
+    LegacyInV2 {
+        what: &'static str,
+    },
     /// A v2 file that this build's own writer could not have produced (it would change on load).
-    NotCanonical { what: &'static str },
+    NotCanonical {
+        what: &'static str,
+    },
     /// Board metadata over a bound, with a control character, or not in its clean stored form.
     Board(crate::board::MetaError),
     /// A key that only a newer format writes, in a file that claims an older format (e.g. the board
     /// `name` in a format-2 file). Refused like any other unknown field.
-    FieldNotInFormat { field: &'static str, version: u32 },
+    FieldNotInFormat {
+        field: &'static str,
+        version: u32,
+    },
     /// A format-4 artboard (0-based `index`) without its stable id.
-    MissingArtboardId { index: usize },
+    MissingArtboardId {
+        index: usize,
+    },
     /// The active artboard index names no artboard.
-    ActiveArtboardOutOfRange { active: usize, count: usize },
+    ActiveArtboardOutOfRange {
+        active: usize,
+        count: usize,
+    },
 }
 
 /// A save refused before anything was written. The editor keeps the document open and dirty.
@@ -141,6 +177,7 @@ impl fmt::Display for Invalid {
             }
             Invalid::BadMask { group, reason } => write!(f, "clipping group {group} is broken ({reason})"),
             Invalid::NonFinite { what } => write!(f, "{what} has a value that is not a finite number"),
+            Invalid::Stroke { path, reason } => write!(f,"path {path} stroke_style: {reason}"),
             Invalid::OutOfRange { what, value } => write!(f, "{what} is out of range ({value})"),
             Invalid::IdExhausted => f.write_str("its object id counter has run out of room"),
             Invalid::LegacyInV2 { what } => write!(f, "it contains an old-format {what} that format 2 does not allow"),

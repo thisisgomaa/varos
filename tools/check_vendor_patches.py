@@ -51,6 +51,7 @@ def check(name):
         if name == "cosmic-text":
             ledger = ROOT / "varos/vendor/patches"
             for filename, digest in {
+                "cosmic-text-0.19.0-tatweel.patch": "8d9320ed7cdcf55114decab9f9bcc6b3d41aeb0de3b60c62207fdc587412e6ad",
                 "pristine.sha256": "f7787ee3330565390213ce1f4e76d6425daae3876c24bd0df375fa8f575bb548",
                 "cosmic-text-0.19.0-p1b.patch": "a2261107836d022b7bd7dddbb45d059e9b14038653705b76fc2c53d4f131f654",
             }.items():
@@ -63,6 +64,8 @@ def check(name):
                     raise ValueError(f"{name}: pristine hash mismatch: {relative}")
             subprocess.run(["patch", "-p1", "--silent"], cwd=upstream,
                            input=(ledger / "cosmic-text-0.19.0-p1b.patch").read_bytes(), check=True)
+            subprocess.run(["patch", "-p1", "--silent"], cwd=upstream,
+                           input=(ledger / "cosmic-text-0.19.0-tatweel.patch").read_bytes(), check=True)
             if files(upstream, exclude) != vendor: raise ValueError("cosmic-text: patch does not reproduce vendor")
         print(f"{name}: PASS; archive SHA-256 {expected_hash}; {len(pristine)} files; {len(changed)} modified")
 

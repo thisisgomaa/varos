@@ -59,6 +59,7 @@ mod recent_files;
 mod recovery_host;
 mod shortcuts;
 mod single_instance;
+mod svg_import;
 mod template_jobs;
 mod thumbs;
 mod ui;
@@ -181,6 +182,8 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         // crosshair + the tool's own badge, on hover and for the whole drag (owner 2026-09-25)
         ToolKind::Rotate => CK::CrossRotate,
         ToolKind::Scale => CK::CrossScale,
+        ToolKind::ShapeBuilder | ToolKind::Scissors | ToolKind::Knife | ToolKind::Eraser => CK::CrossRect,
+        ToolKind::Reflect | ToolKind::Shear | ToolKind::FreeTransform | ToolKind::MagicWand => CK::CrossScale,
         ToolKind::Rect => CK::CrossRect,
         ToolKind::Ellipse => CK::CrossEllipse,
         ToolKind::Triangle => CK::CrossTriangle,
@@ -278,6 +281,14 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Artboard => "Artboard (Shift+O)",
         ToolKind::Rotate => "Rotate (R)",
         ToolKind::Scale => "Scale (S)",
+        ToolKind::ShapeBuilder => "Shape Builder (Shift+M)",
+        ToolKind::Scissors => "Scissors (C)",
+        ToolKind::Knife => "Knife",
+        ToolKind::Eraser => "Eraser (Shift+E)",
+        ToolKind::Reflect => "Reflect (O)",
+        ToolKind::Shear => "Shear",
+        ToolKind::FreeTransform => "Free Transform (E)",
+        ToolKind::MagicWand => "Magic Wand (Y)",
     }
 }
 
@@ -368,6 +379,9 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         "KeyV" => ed.set_tool(ToolKind::Object),
         "KeyA" => ed.set_tool(ToolKind::Direct),
         "KeyP" => ed.set_tool(ToolKind::Pen),
+        "KeyM" if shift && !alt => ed.set_tool(ToolKind::ShapeBuilder),
+        "KeyC" if !shift && !alt => ed.set_tool(ToolKind::Scissors),
+        "KeyE" if shift && !alt => ed.set_tool(ToolKind::Eraser),
         "KeyH" => ed.set_tool(ToolKind::Hand),
         "KeyZ" => ed.set_tool(ToolKind::Zoom),
         "KeyQ" => ed.set_tool(ToolKind::Lasso),
@@ -378,10 +392,14 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         "KeyL" => ed.set_tool(ToolKind::Ellipse),
         "KeyR" => ed.set_tool(ToolKind::Rotate), // Rotate tool (Illustrator R)
         "KeyS" => ed.set_tool(ToolKind::Scale),  // Scale tool (Illustrator S)
+        "KeyE" if !shift => ed.set_tool(ToolKind::FreeTransform),
+        "KeyY" if !shift => ed.set_tool(ToolKind::MagicWand),
         "KeyI" => ed.set_tool(ToolKind::Eyedropper),
         "KeyO" => {
             if shift {
                 ed.set_tool(ToolKind::Artboard);
+            } else {
+                ed.set_tool(ToolKind::Reflect);
             }
         }
         "KeyX" => {
@@ -897,6 +915,11 @@ fn run_action(
 /// action first commits the open field to what it was editing (its own undo step), then runs. `false`
 /// = the field's text does not parse: nothing ran, the action must be held.
 fn run_doc(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: egui::Rect, ui: &mut dyn host::DocUi) -> bool {
+    if matches!(a, host::DocAction::Key(KeyCode::Escape, _)) && ed.select_transform.preview.is_some() {
+        ed.execute_ui(EditCommand::TransformCancel);
+        ed.select_transform.down = None;
+        return true;
+    }
     let history = matches!(a, host::DocAction::Key(KeyCode::KeyZ, m) if m.ctrl);
     if history && ui.field_has_focus() {
         return true;
@@ -914,6 +937,7 @@ fn run_doc_action(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: 
     match a {
         host::DocAction::Key(code, m) => doc_key(ed, view, canvas, code, m),
         host::DocAction::Snap(row) => menu_snap_toggle(ed, row),
+        host::DocAction::Slice4a(name) => ui::select_transform::menu(ed, name),
         host::DocAction::Selection(s) => ed.execute_ui(EditCommand::Selection(s)),
         host::DocAction::FitAll => {
             let (x, y, w, h) = fit_all_rect(ed);
@@ -1473,6 +1497,11 @@ fn main() {
                                     let d = D::Key(code, Mods::default());
                                     raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas, &mut gui);
                                 }
+                            }
+                        }
+                        Some(R::Slice4a(name)) => {
+                            if let Some(s) = ws.active_mut() {
+                                raise_doc(&mut pending, D::Slice4a(name), &mut s.editor, &mut s.view, canvas, &mut gui);
                             }
                         }
                         Some(R::Snap(row)) => {
@@ -2249,6 +2278,13 @@ fn main() {
                                     [psz.width, psz.height],
                                     SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
                                 );
+                                if !world.errors.is_empty() {
+                                    lifecycle::Dialogs::notice(
+                                        &mut dialogs,
+                                        "Stroke cannot be drawn",
+                                        &world.errors.join("\n"),
+                                    );
+                                }
                                 renderer.render_ui(&world, *view, &jobs, &tdelta, &screen)
                             };
                             last_scene_signature = rendered.then_some(signature);
@@ -3449,6 +3485,62 @@ mod picker_shortcut_tests {
         assert!(ed.tool == ToolKind::Eyedropper);
     }
 }
+
+#[cfg(test)]
+mod construction_shortcuts {
+    use super::*;
+    #[test]
+    fn illustrator_cutting_keys_do_not_replace_plain_rectangle_or_copy() {
+        let mut ed = Editor::new();
+        let mut view = View::identity();
+        for (code, shift, tool) in [
+            ("KeyM", true, ToolKind::ShapeBuilder),
+            ("KeyM", false, ToolKind::Rect),
+            ("KeyC", false, ToolKind::Scissors),
+            ("KeyE", true, ToolKind::Eraser),
+        ] {
+            apply_key(&mut ed, &mut view, [0., 0.], code, false, shift, false);
+            assert!(ed.tool == tool);
+        }
+        ed.set_tool(ToolKind::Object);
+        apply_key(&mut ed, &mut view, [0., 0.], "KeyC", true, false, false);
+        assert!(ed.tool == ToolKind::Object);
+        // Leave sibling Shift+C/plain E slots available; Alt variants must not select our tools.
+        for (code, shift, alt) in [
+            ("KeyC", true, false),
+            ("KeyE", false, false),
+            ("KeyC", false, true),
+            ("KeyE", true, true),
+            ("KeyM", true, true),
+        ] {
+            apply_key(&mut ed, &mut view, [0., 0.], code, false, shift, alt);
+            assert!(!matches!(ed.tool, ToolKind::ShapeBuilder | ToolKind::Scissors | ToolKind::Eraser));
+        }
+    }
+}
+
+#[cfg(test)]
+mod slice4a_shortcut_tests {
+    use super::*;
+    #[test]
+    fn slice4a_shortcuts_preserve_shift_o_and_leave_shift_e_for_eraser_lane() {
+        let mut ed = Editor::new();
+        let mut view = View::identity();
+        for (key, shift, expected) in [
+            ("KeyO", false, ToolKind::Reflect),
+            ("KeyO", true, ToolKind::Artboard),
+            ("KeyE", false, ToolKind::FreeTransform),
+            ("KeyY", false, ToolKind::MagicWand),
+        ] {
+            apply_key(&mut ed, &mut view, [0., 0.], key, false, shift, false);
+            assert!(ed.tool == expected);
+        }
+        ed.set_tool(ToolKind::Object);
+        apply_key(&mut ed, &mut view, [0., 0.], "KeyE", false, true, false);
+        assert!(ed.tool == ToolKind::Eraser);
+    }
+}
+
 #[cfg(test)]
 mod view_quick_wins_tests {
     use super::*;

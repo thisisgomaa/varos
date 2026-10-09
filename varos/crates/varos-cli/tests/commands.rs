@@ -848,3 +848,103 @@ fn headless_clipboard_bundle_matches_the_shared_flavour_writers() {
         assert_eq!(std::fs::read(out.join(name)).unwrap(), bytes);
     }
 }
+
+#[test]
+fn planar_and_cutting_commands_through_headless_cli_apply() {
+    use varos_core::{model::ShapeKind, planar::PathfinderOp};
+    let dir = Scratch::new();
+    let commands = [
+        EditCommand::Pathfinder(PathfinderOp::Divide),
+        EditCommand::Pathfinder(PathfinderOp::Trim),
+        EditCommand::Pathfinder(PathfinderOp::Merge),
+        EditCommand::Pathfinder(PathfinderOp::Crop),
+        EditCommand::Pathfinder(PathfinderOp::Outline),
+        EditCommand::Pathfinder(PathfinderOp::MinusBack),
+        EditCommand::ShapeBuilder { points: vec![[5., 10.], [25., 10.]], delete: false },
+        EditCommand::Scissors { path: 1, segment: 0, t: 0.5 },
+        EditCommand::Knife { points: vec![[-5., 10.], [35., 10.]] },
+        EditCommand::Eraser { points: vec![[10., -5.], [10., 25.]], radius: 2. },
+        EditCommand::DivideObjectsBelow,
+    ];
+    for (i, mut command) in commands.into_iter().enumerate() {
+        let mut ed = Editor::new();
+        let mut ids = Vec::new();
+        for x in [0., 10.] {
+            ids.push(
+                ed.try_execute_created(EditCommand::AddShape {
+                    kind: ShapeKind::Rect,
+                    bounds: [x, 0., 20., 20.],
+                    parent: None,
+                    fill: Some([1., 0., 0., 1.]),
+                    stroke: None,
+                    stroke_width: 0.,
+                    opacity: 1.,
+                    name: None,
+                })
+                .unwrap(),
+            );
+        }
+        if let EditCommand::Scissors { path, .. } = &mut command {
+            *path = ids[0];
+        }
+        let input = dir.path(&format!("in{i}.vrs"));
+        let out = dir.path(&format!("out{i}.vrs"));
+        let batch = dir.path(&format!("batch{i}.json"));
+        varos_pdf::save_vrs(&ed.doc, &input).unwrap();
+        std::fs::write(&batch, json!({"api":"0.1","commands":[EditCommand::SelectPaths(ids),command]}).to_string())
+            .unwrap();
+        cli(
+            &[
+                "apply".as_ref(),
+                input.as_os_str(),
+                "--batch".as_ref(),
+                batch.as_os_str(),
+                "--out".as_ref(),
+                out.as_os_str(),
+            ],
+            true,
+        );
+        let result = varos_pdf::load_vrs(&out).unwrap();
+        assert!(!result.content_eq(&ed.doc), "command {i}");
+    }
+}
+
+#[test]
+fn tools_12_headless_apply_reflect_each_and_layers() {
+    let scratch = Scratch::new();
+    let input = fixture(FIXTURES[0]);
+    let doc = varos_pdf::load_vrs(&input).unwrap();
+    let id = doc.paths[0].id;
+    let batch = scratch.path("tools.json");
+    let out = scratch.path("tools.vrs");
+    std::fs::write(&batch,json!({"api":"1.2","commands":[{"SelectPaths":[id]},{"Transform":{"reflect":90,"movement":[20,0],"each":true}}]}).to_string()).unwrap();
+    cli(
+        &[
+            "apply".as_ref(),
+            input.as_os_str(),
+            "--batch".as_ref(),
+            batch.as_os_str(),
+            "--out".as_ref(),
+            out.as_os_str(),
+        ],
+        true,
+    );
+    let changed = varos_pdf::load_vrs(&out).unwrap();
+    assert_ne!(changed.paths[0].anchors, doc.paths[0].anchors);
+    assert_eq!(changed.paths.len(), doc.paths.len());
+}
+
+#[test]
+fn import_svg_writes_editable_document_and_reports_losses() {
+    let dir = Scratch::new();
+    let input = dir.path("source.svg");
+    let output = dir.path("imported.vrs");
+    std::fs::write(&input, r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 30"><rect width="20" height="10"/><text>omitted</text></svg>"#).unwrap();
+    let result = cli(&["import-svg".as_ref(), input.as_os_str(), "--out".as_ref(), output.as_os_str()], true);
+    assert_eq!(result["report"]["paths"], 1);
+    assert!(result["report"]["loss_notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("Text")));
+    let doc = varos_pdf::load_vrs(&output).unwrap();
+    assert_eq!(doc.artboards[0].w, 50.);
+    assert_eq!(doc.paths.len(), 1);
+    cli(&["import-svg".as_ref(), input.as_os_str(), "--out".as_ref(), input.as_os_str()], false);
+}

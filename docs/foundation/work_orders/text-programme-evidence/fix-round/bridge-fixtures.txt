@@ -1,0 +1,99 @@
+   Compiling syn v2.0.118
+   Compiling serde_core v1.0.228
+   Compiling serde v1.0.228
+   Compiling ouroboros_macro v0.17.2
+   Compiling serde_derive v1.0.228
+   Compiling ouroboros v0.17.2
+   Compiling memchr v2.8.2
+   Compiling smallvec v1.15.2
+   Compiling bytemuck v1.25.0
+   Compiling tiny-skia-path v0.11.4
+   Compiling flo_curves v0.8.0
+   Compiling serde_json v1.0.150
+   Compiling tiny-skia v0.11.4
+   Compiling sha2 v0.10.9
+   Compiling varos-core v0.1.0 (/Users/gomaa/Documents/AI workspace/varos/.claude/worktrees/text-programme/varos/crates/varos-core)
+   Compiling ed25519-dalek v2.2.0
+   Compiling varos-raster v0.1.0 (/Users/gomaa/Documents/AI workspace/varos/.claude/worktrees/text-programme/varos/crates/varos-raster)
+   Compiling varos-bridge v0.1.0 (/Users/gomaa/Documents/AI workspace/varos/.claude/worktrees/text-programme/varos/crates/varos-bridge)
+    Finished `test` profile [unoptimized] target(s) in 17.95s
+     Running tests/contracts.rs (target/debug/deps/contracts-9b40feb0687d0978)
+
+running 74 tests
+test allocator_does_not_reuse_ids_after_undo_branch ... ok
+test auth_refusal_fake_host_cannot_reach_service_or_change_revision ... ok
+test core_rolls_back_at_every_operation_index_including_history_and_defaults ... ok
+test cancellation_at_staging_checkpoint_is_atomic ... ok
+test describe_combined_frozen_transport_parity ... ok
+test describe_combined_cursor_only_tracks_requested_selection ... ok
+test destructive_edit_without_grant_is_one_undo_and_idempotent ... ok
+test describe_sections_do_not_page_with_objects_and_since_composes ... ok
+test align_all_modes_revision_bound_artboards_and_rigid_groups ... ok
+test distribution_both_axes_order_all_positions_and_partial_groups_refuse ... ok
+test describe_combined_budget_errors_preserve_resync_semantics ... ok
+test economy_legacy_target_count_and_alias_index ... ok
+test economy_defaults_tuples_ids_retry_and_batch_local_names ... ok
+test economy_nested_repeat_instance_order_locals_handles_and_rollback ... ok
+test economy_rejects_bad_tuple_defaults_and_version_before_execution ... ok
+test economy_preserves_api_10_request_projection_and_retry_normalization ... ok
+test economy_schema_size_and_flat_roots ... ok
+test distribution_equal_centre_ties_use_stable_ids ... ok
+test each_design_verb_success_and_indexed_not_found_rollback ... ok
+test economy_snapshot_summary_hint_and_revision_pinned_detail ... ok
+test edit_confirm_true_is_refused_and_bare_creation_requires_paint ... ok
+test design_validation_failures_rollback_every_prefix_and_local_names_are_request_scoped ... ok
+test final_validation_failure_replays_only_to_attribute_first_invalid_op ... ok
+test framing_rejects_oversize_unterminated_and_schema_version ... ok
+test explicit_group_leaves_resize_and_undo_without_sibling_changes_partial_rotate_refused ... ok
+test frozen_compact_projection_and_open_history_receipt ... ok
+test frozen_revision_error_parity ... ok
+test frozen_describe_and_edit_parity_and_one_undo ... ok
+test geometry_single_object_byte_budget_and_capabilities_are_honest ... ok
+test geometry_is_explicit_bounded_paginated_and_does_not_mutate ... ok
+test history_without_grant_has_idempotent_receipt ... ok
+test legacy_batch_preserves_live_tool_and_clipboard ... ok
+test local_host_key_change_resets_session_without_pairing ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test idempotency_receipts_are_original_after_human_edits ... ok
+test local_socket_authentication_permissions_and_revocation ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test local_service_does_not_gate_scopes ... ok
+test economy_actual_mcp_stdio_matches_cli_and_bounded_schema ... ok
+test metadata_and_artboard_queries_are_explicit_and_preferences_advance_revision ... ok
+test net_diff_preserves_multiple_fields_and_cancelling_human_changes ... ok
+test noncanonical_board_refused_before_prepare ... ok
+test null_paint_and_noop_are_distinct_from_missing ... ok
+test economy_repeat_bounds_collisions_forward_refs_and_cancellation ... ok
+test order_explicit_group_id_moves_as_a_unit ... ok
+test cursors_expire_and_journal_tracks_human_undo_redo ... ok
+test precommit_failures_leave_request_id_available_with_fresh_revision ... ok
+test poster_fixture_cli_mcp_parity_local_names_atomic_history_and_png ... ok
+test real_binary_mcp_initialization_call_cancel_and_shared_cli ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test radius_zero_half_and_over_half_through_service ... ok
+test refusals_revisions_scope_and_epoch_do_not_mutate ... ok
+test rotation_is_absolute_for_mixed_units_and_rotated_resize_uses_local_size ... ok
+test same_uid_socket_all_scopes_no_pairing_audit_and_registry_lifecycle ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test selection_defaults_preserved_and_select_is_deliberate ... ok
+test shape_parent_paints_names_and_allocator_failures_are_checked ... ok
+test slice4_files_scope_and_save_ticket_completion_fake_host ... ok
+test slice4_logo_frozen_fixture_adapter_parity ... ok
+test poster_frozen_fixture_through_actual_mcp_stdio_binding ... ok
+test economy_page_snapshot_fit_and_explicit_dimensions ... ok
+test mcp_fake_host_exercises_actual_binding_parity_errors_and_cancellation ... ok
+test slice4_selection_field_and_schema_completeness ... ok
+test slice4_path_radius_validation_and_indexed_rollback ... ok
+test describe_legacy_shapes_and_receipt_cursor_complete ... ok
+test stroke_only_shape_requires_positive_width ... ok
+test transformed_partial_group_move_leaves_other_world_art_unchanged ... ok
+test unknown_fields_and_unsupported_ops_are_indexed ... ok
+test successful_create_delete_noop_still_reserves_exposed_identities ... ok
+test whole_group_rotation_repeats_absolute_angle_and_resets_to_zero ... ok
+test snapshots_refuse_stale_oversized_and_ungranted_reads_without_history ... ok
+test slice4_logo_frozen_fixture_through_actual_mcp_stdio_binding ... ok
+test story_frozen_fixture_through_actual_mcp_stdio_binding ... ok
+test real_binary_stdio_initialization_has_protocol_only_stdout ... ok
+test mcp_eof_wait_is_bounded_even_when_transport_does_not_finish ... ok
+test economy_wireframe_byte_gate_exact_document_equivalence_and_receipts ... ok
+test describe_all_field_subsets_and_unknown_fields_and_schema ... ok
+test economy_targets_preallocation_limit_and_large_ids_pagination ... ok
+
+test result: ok. 70 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 2.12s
+

@@ -120,10 +120,14 @@ impl Dialogs for RfdDialogs {
             .set_title("Open Varos Document")
             .add_filter("Varos documents (.vrs)", &["vrs"])
             .add_filter("Varos PDF documents (.pdf)", &["pdf"])
+            .add_filter("SVG artwork", &["svg", "svgz"])
             .pick_files()
             .unwrap_or_default()
     }
 
+    fn pick_place_svg(&mut self) -> Option<PathBuf> {
+        FileDialog::new().set_title("Place SVG").add_filter("SVG artwork", &["svg", "svgz"]).pick_file()
+    }
     fn pick_template(&mut self, folder: &Path) -> Option<PathBuf> {
         FileDialog::new()
             .set_title("New from Template")
@@ -303,6 +307,9 @@ fn plain_reason(raw: &str, fallback: &str) -> String {
 pub struct DiskStore;
 
 impl DocStore for DiskStore {
+    fn import_svg(&mut self, path: &Path) -> Result<(Document, Vec<String>), String> {
+        crate::svg_import::read(path).map(|(doc, report)| (doc, report.loss_notes))
+    }
     fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
         varos_pdf::load_vrs_with_notice(path).map_err(|e| plain_reason(&e, NOT_VAROS))
     }

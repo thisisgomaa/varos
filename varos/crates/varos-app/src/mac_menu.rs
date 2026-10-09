@@ -267,7 +267,8 @@ fn fill(
                         use chrome::FileCmd as F;
                         match cmd {
                             MenuCmd::File(f @ (F::Revert | F::ExportSelection)) => rows.file.push((*f, item.clone())),
-                            MenuCmd::Key(_)
+                            MenuCmd::Slice4a(_)
+                            | MenuCmd::Key(_)
                             | MenuCmd::Plain(_)
                             | MenuCmd::File(
                                 F::Print
