@@ -55,8 +55,8 @@ pub enum Phase {
     Running { ticket: u64, cancel: Option<CancelFlag>, cancelling: bool },
     /// The export was cancelled before its file was replaced: nothing was written.
     Cancelled,
-    /// The PDF was written to `dest`: Show in Finder / Done.
-    Done { dest: PathBuf },
+    /// The PDF was written to `dest`: Show in Finder / Done, with the export report's notes.
+    Done { dest: PathBuf, report: varos_core::ExportReport },
 }
 
 /// The open sheet: which tab it exports and the scope chosen. Built when it opens (the plans are
@@ -154,7 +154,7 @@ impl ExportSheet {
                 Phase::Running { ticket, cancel: Some(cancel.clone()), cancelling }
             }
             // the commit boundary: once the file is renamed into place the export is done
-            ExportEvent::Finished { dest, .. } => Phase::Done { dest: dest.clone() },
+            ExportEvent::Finished { dest, report, .. } => Phase::Done { dest: dest.clone(), report: report.clone() },
             ExportEvent::Cancelled { .. } => Phase::Cancelled,
             // the save panel was cancelled, or the export failed (already told): back to the choice
             ExportEvent::Ended { .. } => Phase::Choose,
@@ -217,6 +217,16 @@ pub enum SheetAction {
     Export(SessionId, ExportScope, u64),
     /// Show in Finder (the done state): reveal the written PDF; the sheet closes.
     Reveal(PathBuf),
+}
+
+/// The Done state's line for the export report: “1 note: …” / “N notes: a; b”. `None` = nothing to say.
+pub fn report_text(report: &varos_core::ExportReport) -> Option<String> {
+    let n = report.notes.len();
+    if n == 0 {
+        return None;
+    }
+    let messages: Vec<&str> = report.notes.iter().map(|note| note.message.as_str()).collect();
+    Some(format!("{n} {}: {}", if n == 1 { "note" } else { "notes" }, messages.join("; ")))
 }
 
 /// [`ExportSheet::on_event`] for the Ui's optional sheet.
@@ -285,10 +295,13 @@ pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, panel_column: Option<e
                 ui.spacing_mut().item_spacing = egui::vec2(t::KIT_GAP, t::KIT_TEXT_GAP);
                 ui.label(RichText::new("Export PDF").text_style(TextStyle::Button).color(t::TEXT));
                 ui.add_space(t::KIT_GAP);
-                if let Phase::Done { dest } = &sheet.phase {
+                if let Phase::Done { dest, report } = &sheet.phase {
                     let name =
                         dest.file_name().map_or_else(|| dest.display().to_string(), |n| n.to_string_lossy().into());
                     kit::notice(ui, &format!("Exported {name}. Your document has not changed."));
+                    if let Some(notes) = report_text(report) {
+                        kit::notice(ui, &notes); // muted kit text: what the export simplified or left out
+                    }
                     ui.add_space(t::KIT_GAP);
                     ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                         if kit::action(ui, Control::new(Id::new("export-reveal"), "Show in Finder"), false).activated {
@@ -505,8 +518,11 @@ mod tests {
         // a written PDF (committed before Cancel could stop it): the done state, with the file
         let ticket = sheet.as_mut().unwrap().start().unwrap();
         let dest = PathBuf::from("/w/Logo.pdf");
-        assert!(on_event(&mut sheet, &ExportEvent::Finished { sid, ticket, dest: dest.clone() }));
-        assert_eq!(sheet.as_ref().unwrap().phase, Phase::Done { dest });
+        assert!(on_event(
+            &mut sheet,
+            &ExportEvent::Finished { sid, ticket, dest: dest.clone(), report: Default::default() }
+        ));
+        assert_eq!(sheet.as_ref().unwrap().phase, Phase::Done { dest, report: Default::default() });
         // Cancel pressed before the job existed: the flag is raised the moment it arrives
         let mut sheet = Some(ExportSheet::new(sid, &board_doc(), &none(), None, false));
         let ticket = sheet.as_mut().unwrap().start().unwrap();
@@ -515,7 +531,10 @@ mod tests {
         assert!(on_event(&mut sheet, &ExportEvent::Started { sid, ticket, cancel: late.clone() }));
         assert!(late.is_cancelled());
         // no sheet: nobody shows it (the host tells it instead)
-        assert!(!on_event(&mut None, &ExportEvent::Finished { sid, ticket: 9, dest: "/w/a.pdf".into() }));
+        assert!(!on_event(
+            &mut None,
+            &ExportEvent::Finished { sid, ticket: 9, dest: "/w/a.pdf".into(), report: Default::default() }
+        ));
     }
 
     /// Review R4: export A runs, the sheet is reopened and export B started — A's completion must not
@@ -535,13 +554,34 @@ mod tests {
         let mut b = Some(ExportSheet::new(sid, &board_doc(), &none(), None, false));
         let ticket_b = b.as_mut().unwrap().start().unwrap();
         assert_ne!(ticket_a, ticket_b);
-        let a_done = ExportEvent::Finished { sid, ticket: ticket_a, dest: "/w/A.pdf".into() };
+        let a_done =
+            ExportEvent::Finished { sid, ticket: ticket_a, dest: "/w/A.pdf".into(), report: Default::default() };
         assert!(!on_event(&mut b, &a_done), "A's file is not B's: the host tells it with a notice");
         assert!(!on_event(&mut b, &ExportEvent::Cancelled { sid, ticket: ticket_a }));
         assert!(matches!(b.as_ref().unwrap().phase, Phase::Running { ticket, .. } if ticket == ticket_b));
-        let b_done = ExportEvent::Finished { sid, ticket: ticket_b, dest: "/w/B.pdf".into() };
+        let b_done =
+            ExportEvent::Finished { sid, ticket: ticket_b, dest: "/w/B.pdf".into(), report: Default::default() };
         assert!(on_event(&mut b, &b_done));
-        assert_eq!(b.as_ref().unwrap().phase, Phase::Done { dest: "/w/B.pdf".into() });
+        assert_eq!(b.as_ref().unwrap().phase, Phase::Done { dest: "/w/B.pdf".into(), report: Default::default() });
+    }
+
+    /// Merge with 0.1: the export report reaches the sheet's Done state as one muted line.
+    #[test]
+    fn the_done_state_lists_the_export_report_notes() {
+        use varos_core::export::ExportNote;
+        let note = |m: &str| ExportNote { kind: "simplified".into(), object_id: Some(4), message: m.into() };
+        assert_eq!(report_text(&Default::default()), None, "nothing to say: no line");
+        let one = varos_core::ExportReport { notes: vec![note("Stroke dashes were drawn solid.")] };
+        assert_eq!(report_text(&one).as_deref(), Some("1 note: Stroke dashes were drawn solid."));
+        let two = varos_core::ExportReport { notes: vec![note("A"), note("B")] };
+        assert_eq!(report_text(&two).as_deref(), Some("2 notes: A; B"));
+        // the report travels with the Finished event into the Done state
+        let sid = SessionId(1);
+        let mut sheet = Some(ExportSheet::new(sid, &board_doc(), &none(), None, false));
+        let ticket = sheet.as_mut().unwrap().start().unwrap();
+        let dest = PathBuf::from("/w/x.pdf");
+        assert!(on_event(&mut sheet, &ExportEvent::Finished { sid, ticket, dest: dest.clone(), report: two.clone() }));
+        assert_eq!(sheet.unwrap().phase, Phase::Done { dest, report: two });
     }
 
     /// Show in Finder = `open -R <file>` (the file selected in its folder), never a shell string.

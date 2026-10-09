@@ -346,11 +346,7 @@ fn rect_from_corners(a: Pt, b: Pt, square: bool) -> (f32, f32, f32, f32) {
 /// on the outline, so it reaches `stroke_width / 2` either side — or nothing when no stroke is drawn.
 /// Hit-testing adds this to its screen-px tolerance so a thick stroke is clickable where it is painted.
 fn painted_half_width(p: &Path) -> f32 {
-    if p.stroke.solid().is_some() {
-        (p.stroke_width * 0.5).max(0.0)
-    } else {
-        0.0
-    }
+    crate::geom::painted_padding(p)
 }
 
 /// Is `q` (path-local) within `grow` of the bbox of every anchor AND handle of the path (outer + holes)?

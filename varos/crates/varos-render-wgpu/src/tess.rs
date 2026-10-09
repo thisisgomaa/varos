@@ -468,6 +468,7 @@ pub fn scissor_px(rect: [f32; 4], view: View, w: f32, h: f32) -> Option<[u32; 4]
 pub enum GroupDraw {
     Opaque { draws: Vec<Draw> },
     Layer { draws: Vec<Draw>, quad: (u32, u32) },
+    ClippedLayer { draws: Vec<Draw>, quad: (u32, u32), mask_fan: (u32, u32) },
     Clip { mask_fan: (u32, u32), mask_clear: (u32, u32), members: Vec<Draw> },
 }
 
@@ -657,9 +658,25 @@ pub fn build_content(
             let (mask_fan, mask_clear) = mask_ranges(mask_rings, view, w, h, &mut fillv);
             let mut member_draws = Vec::new();
             for m in members {
-                member_draws.extend(group_draws(m, view, zoom, w, h, &mut fillv, &mut fgv));
+                let draws = group_draws(m, view, zoom, w, h, &mut fillv, &mut fgv);
+                if let Group::Isolated { opacity, .. } = m {
+                    if !member_draws.is_empty() {
+                        metas.push(GroupDraw::Clip {
+                            mask_fan,
+                            mask_clear,
+                            members: std::mem::take(&mut member_draws),
+                        });
+                    }
+                    let qs = opv.len() as u32;
+                    fullscreen_quad(&mut opv, *opacity);
+                    metas.push(GroupDraw::ClippedLayer { draws, quad: (qs, 6), mask_fan });
+                } else {
+                    member_draws.extend(draws);
+                }
             }
-            metas.push(GroupDraw::Clip { mask_fan, mask_clear, members: member_draws });
+            if !member_draws.is_empty() {
+                metas.push(GroupDraw::Clip { mask_fan, mask_clear, members: member_draws });
+            }
             continue;
         }
         let draws = group_draws(g, view, zoom, w, h, &mut fillv, &mut fgv);
@@ -886,6 +903,29 @@ mod tests {
     }
 
     #[test]
+    fn clipped_step_list_preserves_translucent_and_knockout_routes() {
+        let rings = vec![vec![[0., 0.], [10., 0.], [10., 10.], [0., 10.]]];
+        let fill = Prim::Fill { rings: rings.clone(), color: [1., 0., 0., 1.] };
+        let groups = [Group::Clip {
+            mask_rings: rings,
+            members: vec![Group::Opaque(vec![stroke(0.5)]), Group::Knockout(vec![fill, stroke(0.5)])],
+        }];
+        let (_, _, _, metas) = build_content(&groups, View::identity(), 1., 100., 100.);
+        let GroupDraw::Clip { members, .. } = &metas[0] else { panic!("clip pass required") };
+        assert!(matches!(members[0], Draw::StrokeCov { .. }));
+        assert!(matches!(members[1], Draw::Knockout { .. }));
+        for (band, reference) in [(true, 0x82), (false, 0x03)] {
+            let state = crate::clipped_cover_state(band);
+            for stencil in 0u32..256 {
+                let paints = stencil & state.read_mask == reference;
+                assert!(!paints || stencil & 2 != 0, "paint must stay inside mask");
+                let after = stencil & !state.write_mask;
+                assert_eq!(after & 2, stencil & 2, "clip survives cover and cleanup");
+            }
+        }
+    }
+
+    #[test]
     fn isolated_layer_with_translucent_stroke_knocks_out_inside_the_layer() {
         let fill = Prim::Fill {
             rings: vec![vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]],
@@ -936,7 +976,9 @@ mod tests {
             metas
                 .iter()
                 .flat_map(|m| match m {
-                    GroupDraw::Opaque { draws } | GroupDraw::Layer { draws, .. } => draws.iter(),
+                    GroupDraw::Opaque { draws }
+                    | GroupDraw::Layer { draws, .. }
+                    | GroupDraw::ClippedLayer { draws, .. } => draws.iter(),
                     GroupDraw::Clip { members, .. } => members.iter(),
                 })
                 .filter(|d| matches!(d, Draw::StrokeCov { .. }))
@@ -1672,3 +1714,38 @@ mod tests {
 #[cfg(test)]
 #[path = "tess_round3_tests.rs"]
 mod round3_tests;
+
+#[test]
+fn clipped_isolated_object_keeps_opacity_and_order() {
+    let rings = vec![vec![[0., 0.], [10., 0.], [10., 10.], [0., 10.]]];
+    let fill = Prim::Fill { rings: rings.clone(), color: [1., 0., 0., 1.] };
+    let groups = [Group::Clip {
+        mask_rings: rings,
+        members: vec![
+            Group::Opaque(vec![fill.clone()]),
+            Group::Isolated { opacity: 0.5, prims: vec![fill.clone()] },
+            Group::Opaque(vec![fill]),
+        ],
+    }];
+    let (_, _, op, metas) = build_content(&groups, View::identity(), 1., 100., 100.);
+    assert!(matches!(metas[0], GroupDraw::Clip { .. }));
+    let GroupDraw::ClippedLayer { mask_fan, quad, draws } = &metas[1] else { panic!("masked layer required") };
+    assert!(mask_fan.1 > 0 && !draws.is_empty());
+    assert!(op[quad.0 as usize..(quad.0 + quad.1) as usize].iter().all(|v| v.color[3] == 0.5));
+    assert!(matches!(metas[2], GroupDraw::Clip { .. }));
+}
+
+#[test]
+fn clipped_isolated_tail_has_no_empty_clip_pass() {
+    let rings = vec![vec![[0., 0.], [10., 0.], [10., 10.], [0., 10.]]];
+    let fill = Prim::Fill { rings: rings.clone(), color: [1., 0., 0., 1.] };
+    for members in [
+        vec![],
+        vec![Group::Isolated { opacity: 0.5, prims: vec![fill.clone()] }],
+        vec![Group::Opaque(vec![fill.clone()]), Group::Isolated { opacity: 0.5, prims: vec![fill.clone()] }],
+    ] {
+        let groups = [Group::Clip { mask_rings: rings.clone(), members }];
+        let (_, _, _, metas) = build_content(&groups, View::identity(), 1., 100., 100.);
+        assert!(metas.iter().all(|m| !matches!(m, GroupDraw::Clip { members, .. } if members.is_empty())));
+    }
+}
