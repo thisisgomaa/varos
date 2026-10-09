@@ -1,3 +1,9 @@
+> **Integration w2 (2026-10-09):** gradients are final format **7** (`GRADIENT_VERSION`; formerly the
+> provisional `NEXT_GRADIENT_VERSION = 6`). The named migration is `migrate_v6_to_v7` (pure identity,
+> no validation — Opus 10). `next_gradients` fixtures were restamped 6 → 7 (future 7 → 10); new refusals
+> `refused/v6_gradient.vrs` / `v6_swatches.vrs` (format-6 files carrying format-7 paints). See
+> VRS_FORMAT "Wave-2 formats 6–9".
+
 # ADR-0008 amendment: next-format gradients (lane B)
 
 Status: implemented on feat/w2-gradients; independent review and integration pending.

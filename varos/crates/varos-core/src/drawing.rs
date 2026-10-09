@@ -249,8 +249,12 @@ fn allocation_check(ed: &Editor) -> Result<(), String> {
     }
 }
 fn paint(ed: &Editor, p: &mut Path) {
-    p.fill = crate::model::Paint::from_opt(if p.closed { ed.cur_fill } else { None });
-    p.stroke = crate::model::Paint::from_opt(ed.cur_stroke);
+    // integration w2 (Lane D × gradients): drawing tools inherit the current paints — gradients and
+    // swatch references included, owned gradients fitted to the new path — like the shape/pen tools.
+    ed.inherit_current_paints(p);
+    if !p.closed {
+        p.fill = crate::model::Paint::from_opt(None);
+    }
     p.stroke_width = ed.cur_sw;
 }
 fn insert(ed: &mut Editor, mut p: Path) -> u32 {
