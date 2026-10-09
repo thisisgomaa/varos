@@ -99,6 +99,9 @@ fn check_document(doc: &Document) -> Result<(), ExportError> {
     Ok(())
 }
 pub fn plan_svg_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan, ExportError> {
+    // ---- Lane E: Phase 11: whole-board bounds include evaluated copies ----
+    let live = crate::live::evaluated_document(doc).map_err(ExportError::InvalidDocument)?;
+    let doc = live.as_ref().unwrap_or(doc);
     check_document(doc)?;
     let board = |i: usize| {
         let a = &doc.artboards[i];
@@ -144,6 +147,9 @@ pub fn plan_selection_svg_export(
         }
     }
     crate::images::hide_unselected(&mut narrowed, selected);
+    // ---- Lane E: Phase 11 ----
+    let evaluated = crate::live::evaluated_document(&narrowed).map_err(ExportError::InvalidDocument)?;
+    let narrowed = evaluated.unwrap_or(narrowed);
     let page = artwork_bounds(&narrowed).ok_or(ExportError::NothingToExport)?;
     Ok((narrowed, ExportPlan { scope: ExportScope::WholeBoard, pages: vec![page] }))
 }
@@ -190,6 +196,9 @@ fn export_svg_files_precise(
         return Err(ExportError::InvalidDocument("text needs the text-layout export adapter".into()));
     }
     check_document(doc)?;
+    // ---- Lane E: Phase 11 ----
+    let live = crate::live::evaluated_document(doc).map_err(ExportError::InvalidDocument)?;
+    let doc = live.as_ref().unwrap_or(doc);
     let resolved = crate::live_corners::document(doc);
     let doc = &resolved;
     if plan.pages.is_empty() {

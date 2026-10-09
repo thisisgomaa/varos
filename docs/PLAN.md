@@ -215,3 +215,6 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 9.4 History (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable History, human/agent labels, jump, bounded undo/redo, API 1.2 review/top-agent undo. |
 | 9.5 Actions (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable Actions; supported semantic recording, .vrs-actions load/save, atomic replay, offline CLI apply. |
 | 9.6 Help + Quick Look fallback (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Help/typed Bridge tool; cached PNG embedded in container; native signed QL extension packaging documented and pending. |
+
+<!-- Lane E: Phase 11 -->
+| 11.0 Blend / Repeat / Envelope basics (Lane E) | implemented (provisional UI, owner design review pending) | uncommitted `feat/w3-live` | v13; source children, shared evaluator/cache, W, kit options, isolation, Expand/Release, PDF/SVG, API 1.2 and CLI apply. Integrator replaces the three reserved-era identity steps with sibling v10–v12 migrations. See worktree REPORT.md and reference/LIVE_NODES_V13.md; native acceptance pending. |

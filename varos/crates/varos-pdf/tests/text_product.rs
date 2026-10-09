@@ -1,3 +1,5 @@
+#[path = "../../varos-core/tests/support/future.rs"]
+mod future;
 use std::sync::atomic::AtomicBool;
 use varos_core::{format::Limits, EditCommand, Editor};
 #[test]
@@ -19,10 +21,12 @@ fn text_native_reopens_editable_deliverable_is_outlines() {
 
 #[test]
 fn next_version_pdf_fixture_refuses_before_typed_decode() {
-    let bytes = include_bytes!("../../varos-core/tests/fixtures/text_next/refuse_newer.pdf");
+    let bytes = future::promote(include_bytes!("../../varos-core/tests/fixtures/text_next/refuse_newer.pdf"));
     assert!(matches!(
-        varos_pdf::load_vrs_bytes(bytes, &Limits::DEFAULT),
-        Err(varos_core::format::LoadError::NewerVersion { found: 10, supported: varos_core::format::FORMAT_VERSION })
+        varos_pdf::load_vrs_bytes(&bytes, &Limits::DEFAULT),
+        Err(varos_core::format::LoadError::NewerVersion {
+            found, supported
+        }) if found == varos_core::format::FORMAT_VERSION + 1 && supported == varos_core::format::FORMAT_VERSION
     ));
 }
 

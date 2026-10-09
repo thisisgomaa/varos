@@ -122,3 +122,9 @@ Lane C — new_document.rs adapts VectorCraft engine/src/cmd/newdoc.rs:19,125;
 path_advanced.rs adapts pathops/src/offset.rs:79; live_corners.rs adapts
 geom/src/corners.rs:134,149 (a469568, MIT OR Apache-2.0), copyright 2026
 ArtCraft Team and VectorCraft contributors. No UI/assets/dependencies copied.
+
+// ---- Lane E: Phase 11 ----
+varos-core/src/live/{mod,evaluate}.rs adapts interpolation, containers and spine placement
+from VectorCraft doc/src/blend.rs:35-380, doc/src/live.rs and engine/src/cmd/live.rs:27-117
+@ a469568. Copyright (c) 2026 ArtCraft Team. MIT OR Apache-2.0;
+see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.

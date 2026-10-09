@@ -54,7 +54,9 @@ pub const CORNERS_VERSION: u32 = 9;
 /// Lane F: the optional PDF-catalog Quick Look preview (`/VAROS_Preview` + `/VAROS_PreviewVersion`)
 /// is container-only (no model key, no reader impact on the JSON body); folded into the v9 bump.
 pub const PREVIEW_FORMAT_VERSION: u32 = CORNERS_VERSION;
-pub const FORMAT_VERSION: u32 = CORNERS_VERSION;
+// ---- Lane E: Phase 11 ----
+pub const LIVE_VERSION: u32 = 13;
+pub const FORMAT_VERSION: u32 = LIVE_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -150,6 +152,8 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
         });
     }
     let version = peek_version(json)?;
+    // ---- Lane E: Phase 11 ----
+    crate::live::refuse_older_keys(json, version)?;
     if let Some(container) = container_version {
         if container != version {
             return Err(LoadError::VersionMismatch { container, model: version });

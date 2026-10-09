@@ -240,6 +240,9 @@ fn write_pages_impl(
         &outlined
     };
     // ---- Lane C: page appearance uses resolved live corners (the embedded model keeps them live) ----
+    // ---- Lane E: Phase 11 ----
+    let live = varos_core::live::evaluated_document(doc).map_err(ExportError::InvalidDocument)?;
+    let doc = live.as_ref().unwrap_or(doc);
     let resolved = varos_core::live_corners::document(doc);
     let doc = &resolved;
     // ---- w2-gradients ----
@@ -327,7 +330,9 @@ fn write_pages_impl(
                     // text was outlined into paths at the top of `write_pages_impl` (integration w2)
                     varos_core::model::NodeKind::Text(_)
                     | varos_core::model::NodeKind::Group
-                    | varos_core::model::NodeKind::Layer => {}
+                    | varos_core::model::NodeKind::Layer
+                    // ---- Lane E: Phase 11: evaluated before the leaf walk ----
+                    | varos_core::model::NodeKind::Live(_) => {}
                 }
             }
         }

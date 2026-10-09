@@ -350,6 +350,8 @@ impl Clipboard {
                     Some(&np) => NodeKind::Image(np),
                     None => continue,
                 },
+                // ---- Lane E: Phase 11 ----
+                NodeKind::Live(kind) => NodeKind::Live(crate::live::remap_kind(kind, &pmap)),
                 k => k,
             };
             let xform = if n.xform.is_identity() { n.xform } else { n.xform.translated(offset) };

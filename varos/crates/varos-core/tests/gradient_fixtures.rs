@@ -1,3 +1,5 @@
+#[path = "support/future.rs"]
+mod future;
 use varos_core::format::{decode_model, encode_model, Limits, FORMAT_VERSION, GRADIENT_VERSION};
 #[test]
 fn frozen_next_paints_and_named_migration() {
@@ -39,6 +41,7 @@ fn frozen_refusals_gate_tagged_values_before_typed_decode() {
         let bytes =
             std::fs::read(format!("{}/tests/fixtures/next_gradients/refused/{name}.vrs", env!("CARGO_MANIFEST_DIR")))
                 .unwrap();
+        let bytes = if name == "future" { future::promote(&bytes) } else { bytes };
         let error = decode_model(&bytes, None, &Limits::DEFAULT).unwrap_err();
         use varos_core::format::{Invalid, LoadError};
         match name {
@@ -51,7 +54,9 @@ fn frozen_refusals_gate_tagged_values_before_typed_decode() {
                 error,
                 LoadError::Invalid(Invalid::FieldNotInFormat { field: "gradient paints / swatches", version: 6 })
             ),
-            "future" => assert_eq!(error, LoadError::NewerVersion { found: 10, supported: FORMAT_VERSION }),
+            "future" => {
+                assert_eq!(error, LoadError::NewerVersion { found: FORMAT_VERSION + 1, supported: FORMAT_VERSION })
+            }
             "unknown_stop" => assert!(
                 matches!(error, LoadError::Malformed { detail, .. } if detail.contains("unknown field `future`"))
             ),

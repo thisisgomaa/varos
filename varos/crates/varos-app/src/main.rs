@@ -228,6 +228,8 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         | ToolKind::Curvature => CK::CrossRect,
         ToolKind::Polygon => CK::CrossPolygon,
         ToolKind::Hand => CK::Hand,
+        // ---- Lane E: Phase 11 ----
+        ToolKind::Blend => CK::Direct,
         ToolKind::Zoom => CK::Direct,
         ToolKind::Lasso => CK::Direct,
         ToolKind::AddAnchor => CK::PenAdd,
@@ -326,6 +328,8 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Polygon => "Polygon",
         ToolKind::Convert => "Anchor Point (Shift+C)",
         ToolKind::Hand => "Hand (H)",
+        // ---- Lane E: Phase 11 ----
+        ToolKind::Blend => "Blend (W)",
         ToolKind::Zoom => "Zoom (Z)",
         ToolKind::Lasso => "Lasso (Q)",
         ToolKind::AddAnchor => "Add Anchor (+)",
@@ -351,6 +355,10 @@ fn tool_name(t: ToolKind) -> &'static str {
 fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ctrl: bool, shift: bool, alt: bool) {
     // ---- Lane E ----
     if crate::view_modes::presentation_key(ed, code, ctrl, shift, alt) {
+        return;
+    }
+    // ---- Lane E: Phase 11 ----
+    if crate::ui::live_key(ed, code, ctrl, shift, alt) {
         return;
     }
     if !shortcuts::parity::is_bound(code, ctrl, shift, alt) {
@@ -853,14 +861,19 @@ fn dispatch(
         }
         host::HostAction::App(AppCommand::PathMenu(id, name)) => {
             if let Some(s) = ws.get_mut(id) {
-                match name {
-                    "Outline Stroke" => s
-                        .editor
-                        .execute_ui(varos_core::EditCommand::PathAdvanced(varos_core::path_advanced::Action::Outline)),
-                    "Expand" => s
-                        .editor
-                        .execute_ui(varos_core::EditCommand::PathAdvanced(varos_core::path_advanced::Action::Expand)),
-                    _ => gui.lane_c_offset(id),
+                // ---- Lane E: Phase 11 ----
+                if name.starts_with("Live:") {
+                    gui.live_menu(id, &mut s.editor, name);
+                } else {
+                    match name {
+                        "Outline Stroke" => s.editor.execute_ui(varos_core::EditCommand::PathAdvanced(
+                            varos_core::path_advanced::Action::Outline,
+                        )),
+                        "Expand" => s.editor.execute_ui(varos_core::EditCommand::PathAdvanced(
+                            varos_core::path_advanced::Action::Expand,
+                        )),
+                        _ => gui.lane_c_offset(id),
+                    }
                 }
             }
             host::Ran { ran: true, ..Default::default() }

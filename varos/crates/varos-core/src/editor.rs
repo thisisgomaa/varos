@@ -46,6 +46,8 @@ pub enum ToolKind {
     Text,
     // ---- w2-gradients ----
     Gradient,
+    // ---- Lane E: Phase 11 ----
+    Blend,
     Object,
     Direct,
     Pen,
@@ -522,6 +524,8 @@ pub struct Editor {
     pub dirty: bool,
     /// P11.2 cross-frame flatten cache (render-side memo, never serialized, never part of undo). Keyed by
     /// each path's exact geometry inputs, so it can never serve stale geometry — see `flatten.rs`.
+    // ---- Lane E: Phase 11 ----
+    pub live_cache: crate::live::Cache,
     pub canvas_stroke_cache: crate::stroke::canvas::CanvasStrokeCache,
     pub flatten_cache: crate::flatten::SharedFlattenCache,
     /// Edit ▸ Copy / Cut / Paste — the IN-APP clipboard (deep copies of model data). Not the OS
@@ -608,6 +612,8 @@ impl Editor {
             rev: 0,
             construction_cache: Default::default(),
             dirty: false,
+            // ---- Lane E: Phase 11 ----
+            live_cache: Default::default(),
             canvas_stroke_cache: Default::default(),
             flatten_cache: Default::default(),
             clipboard: Clipboard::default(),
@@ -696,6 +702,8 @@ impl Editor {
     /// a thick stroke selects it, and that band occludes what lies beneath it (A31 walk unchanged).
     pub fn path_under(&self, pos: Pt) -> Option<u32> {
         let edge_r = EDGE_R / self.ppu;
+        // ---- Lane E: Phase 11 ----
+        let mut visited_live = std::collections::HashSet::new();
         for pi in (0..self.doc.paths.len()).rev() {
             let id = self.doc.paths[pi].id;
             if !self.in_isolation(id)
@@ -704,6 +712,17 @@ impl Editor {
                 || (self.doc.guide_paths.contains(&id) && (self.guides_hidden || self.doc.guides_locked))
             {
                 continue; // not clickable (cascades)
+            }
+            // ---- Lane E: Phase 11 ----
+            if let Some(node) = crate::live::ancestor(&self.doc, id) {
+                if self.select_transform.isolation != Some(node) {
+                    if visited_live.insert(node) {
+                        if let Some(hit) = crate::live::hit(self, node, pos) {
+                            return Some(hit);
+                        }
+                    }
+                    continue;
+                }
             }
             // A7 seam: map the cursor into the path's UNIT-local frame, then run the existing local-space
             // tests. `edge_r` is rotation-invariant (distance). Identity ⇒ `lp == pos` (byte-for-byte).
@@ -799,6 +818,10 @@ impl Editor {
     // ---------- object-selection transform frame (rotates with the selection) ----------
     /// Axis-aligned bbox of the object selection (used to refit a fresh, un-rotated frame).
     pub fn obj_bbox(&self) -> Option<(f32, f32, f32, f32)> {
+        // ---- Lane E: Phase 11 ----
+        if crate::live::has_live(&self.doc) && self.select_transform.isolation.is_none() {
+            return crate::live::scene_editor(self).obj_bbox();
+        }
         if self.objsel.is_empty() {
             return None;
         }
@@ -842,6 +865,10 @@ impl Editor {
     /// `frame_corners`/`frame_handles` lands the oriented frame exactly on the drawn (rotated) shape,
     /// independent of each unit's pivot. Identity ⇒ today's local box byte-for-byte.
     pub fn obj_local_bbox(&self) -> Option<(f32, f32, f32, f32)> {
+        // ---- Lane E: Phase 11 ----
+        if crate::live::has_live(&self.doc) && self.select_transform.isolation.is_none() {
+            return crate::live::scene_editor(self).obj_local_bbox();
+        }
         if self.objsel.is_empty() {
             return None;
         }
@@ -3846,6 +3873,15 @@ impl Editor {
     }
     pub fn commit(&mut self) {
         self.doc.sync_tree(); // adopt new paths / prune dead + empty nodes / re-flatten z
+                              // ---- Lane E: Phase 11: source edits cannot publish an invalid live object ----
+        if let Err(what) = crate::live::validate(&self.doc) {
+            if let Some(before) = self.pending.take() {
+                self.doc = before.as_ref().clone();
+            }
+            self.dirty = false;
+            self.last_error = Some(crate::EngineError::Internal { what });
+            return;
+        }
         self.doc.assign_artboard_ids(); // a new or duplicated page gets its stable id (format 4)
         self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
@@ -4369,6 +4405,11 @@ impl Editor {
     }
     pub fn pointer_down(&mut self, pos: Pt) {
         if self.view_depth.presentation {
+            return;
+        }
+        // ---- Lane E: Phase 11 ----
+        if self.tool == ToolKind::Blend {
+            crate::live::tool_down(self, pos);
             return;
         }
         self.gradient_tool.geometry.clear();

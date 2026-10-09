@@ -35,6 +35,8 @@ fn construction_tools(api: &str) -> Value {
             crate::colour::schemas(&mut extra, &mut ops);
             // ---- Lane C ----
             crate::path_advanced::schemas(&mut extra, &mut ops);
+            // ---- Lane E: Phase 11 ----
+            crate::live::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }
@@ -966,6 +968,10 @@ pub fn tools_for(api: &str) -> Value {
                 for op in ops {
                     let expanded = expand_schema(op, &root);
                     let verb = schema_verb(&expanded);
+                    // ---- Lane E: Phase 11: discovery only, no inline bytes ----
+                    if verb.is_some_and(|v| crate::live::VERBS.contains(&v)) {
+                        continue;
+                    }
                     if verb.is_none_or(core_verb) {
                         alternatives.push(op.clone());
                     } else if let Some(verb) = verb {
@@ -1224,7 +1230,8 @@ pub fn list_verbs() -> Value {
                 }
             } else {
                 let enabled = matches!(name, "capabilities" | "list_boards" | "list_verbs");
-                tools.push(json!({"name":name,"id":varos_core::registry::tool_id(name),"description":row["description"],"enabled":enabled,"disabled_reason":if enabled { None } else { Some("needs_arguments") }}));
+                // ---- Lane E: Phase 11: discovery descriptions are summaries; full schemas stay progressive ----
+                tools.push(json!({"name":name,"id":varos_core::registry::tool_id(name),"description":generic_verb_description(name),"enabled":enabled,"disabled_reason":if enabled { None } else { Some("needs_arguments") }}));
             }
         }
     }

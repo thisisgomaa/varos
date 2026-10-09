@@ -21,6 +21,11 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
     (6, migrate_v6_to_v7),
     (7, migrate_v7_to_v8),
     (8, migrate_v8_to_v9),
+    // ---- Lane E: Phase 11: integration placeholders, replace with sibling steps ----
+    (9, crate::live::migrate_reserved_era),
+    (10, crate::live::migrate_reserved_era),
+    (11, crate::live::migrate_reserved_era),
+    (12, crate::live::migrate_v12_to_v13),
 ];
 
 /// Every format this build reads: each migration start plus the current writer (integration w2: the

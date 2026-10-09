@@ -32,10 +32,11 @@ fn frozen_gate(body: &[u8], supported: u32) -> Result<u32, LoadError> {
 
 #[test]
 fn mixed_v9_round_trips_and_pins_document_key_order() {
-    assert_eq!(FORMAT_VERSION, 9);
+    assert_eq!(varos_core::format::CORNERS_VERSION, 9);
     let loaded = decode_model(JSON, None, &Limits::DEFAULT).unwrap();
-    assert_eq!((loaded.source_version, loaded.migrated), (9, false));
-    assert_eq!(encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().as_bytes(), JSON);
+    assert_eq!((loaded.source_version, loaded.migrated), (9, FORMAT_VERSION > 9));
+    let current = encode_model(&loaded.doc, &Limits::DEFAULT).unwrap();
+    assert_eq!(current.replacen(&format!("\"varos\":{FORMAT_VERSION}"), "\"varos\":9", 1).as_bytes(), JSON);
     let value: serde_json::Value = serde_json::from_slice(JSON).unwrap();
     let keys: Vec<&str> = value["doc"].as_object().unwrap().keys().map(String::as_str).collect();
     // serde_json's Map keeps insertion order only with preserve_order; compare the raw byte order.
@@ -56,7 +57,18 @@ fn mixed_v9_container_reopens_with_resources_and_rewrites_identically() {
     let loaded = varos_pdf::load_vrs_bytes(VRS, &Limits::DEFAULT).unwrap();
     assert_eq!(loaded.doc, decode_model(JSON, None, &Limits::DEFAULT).unwrap().doc);
     assert!(loaded.blobs.get(&loaded.doc.images[0].blob).is_some());
-    assert_eq!(varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap(), VRS);
+    // ---- Lane E: Phase 11: the current stamp changes; frozen v9 page appearance does not ----
+    let rewritten = varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap();
+    fn page_content(bytes: &[u8]) -> Vec<Vec<u8>> {
+        let pdf = lopdf::Document::load_mem(bytes).unwrap();
+        pdf.get_pages().values().map(|id| pdf.get_page_content(*id).unwrap()).collect()
+    }
+    assert_eq!(page_content(&rewritten), page_content(VRS));
+    assert_eq!(varos_pdf::load_vrs_bytes(&rewritten, &Limits::DEFAULT).unwrap().doc, loaded.doc);
+    assert_eq!(
+        embedded_model_json(&rewritten).replacen(&format!("\"varos\":{FORMAT_VERSION}"), "\"varos\":9", 1).as_bytes(),
+        JSON
+    );
 }
 
 #[test]
