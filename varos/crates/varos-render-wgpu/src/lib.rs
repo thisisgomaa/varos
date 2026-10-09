@@ -725,7 +725,7 @@ impl Renderer {
     fn draw_steps<'a>(&'a self, rp: &mut wgpu::RenderPass<'a>, draws: &[Draw], clip: bool) {
         for d in draws {
             match d {
-                Draw::Image { key, range } => {
+                Draw::Image { key, range, scissor } => {
                     if let Some(bind) = self.image_cache.bind(key) {
                         rp.set_vertex_buffer(0, self.fg_buf.slice(..));
                         if clip {
@@ -733,7 +733,13 @@ impl Renderer {
                         }
                         rp.set_pipeline(if clip { &self.image_cache.clipped } else { &self.image_cache.normal });
                         rp.set_bind_group(0, bind, &[]);
+                        if let Some([x, y, w, h]) = scissor {
+                            rp.set_scissor_rect(*x, *y, *w, *h);
+                        }
                         rp.draw(range.0..range.0 + range.1, 0..1);
+                        if scissor.is_some() {
+                            rp.set_scissor_rect(0, 0, self.config.width, self.config.height);
+                        }
                     }
                 }
                 Draw::Fill { fan, cover } => {

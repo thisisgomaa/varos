@@ -197,3 +197,75 @@ pub fn resize_pixels(p: &Pixels, size: [u32; 2]) -> Result<Pixels, String> {
     let dst = image::imageops::resize(&src, size[0], size[1], image::imageops::FilterType::Triangle);
     Ok(Pixels { budget: None, width: size[0], height: size[1], rgba: Arc::from(dst.into_raw()) })
 }
+
+/// Header and hash validation without acquiring decoded residency or allocating pixels.
+pub fn check_original(bytes: &[u8], meta: &AssetMeta) -> Result<(), String> {
+    if bytes.len() != meta.encoded_len || content_key(bytes) != meta.key {
+        return Err("Image original metadata/hash mismatch".into());
+    }
+    let format = image::guess_format(bytes).map_err(|e| e.to_string())?;
+    let mime = match format {
+        ImageFormat::Png => Mime::Png,
+        ImageFormat::Jpeg => Mime::Jpeg,
+        ImageFormat::Gif => Mime::Gif,
+        ImageFormat::WebP => Mime::WebP,
+        ImageFormat::Tiff => Mime::Tiff,
+        ImageFormat::Bmp => Mime::Bmp,
+        _ => return Err("Unsupported image codec".into()),
+    };
+    let (mut w, mut h, orientation) = if format == ImageFormat::Gif {
+        let dims = bytes.get(6..10).ok_or("Truncated GIF")?;
+        (u16::from_le_bytes([dims[0], dims[1]]) as u32, u16::from_le_bytes([dims[2], dims[3]]) as u32, 1)
+    } else {
+        let mut decoder =
+            ImageReader::with_format(Cursor::new(bytes), format).into_decoder().map_err(|e| e.to_string())?;
+        let (w, h) = decoder.dimensions();
+        let orientation = if format == ImageFormat::Tiff {
+            super::orientation::exif_orientation(bytes) as u32
+        } else {
+            decoder.orientation().map_err(|e| e.to_string())?.to_exif() as u32
+        };
+        (w, h, orientation)
+    };
+    dimensions(w, h)?;
+    if orientation != meta.orientation {
+        return Err("Image original orientation mismatch".into());
+    }
+    if meta.orientation >= 5 {
+        std::mem::swap(&mut w, &mut h);
+    }
+    if mime != meta.mime || (w, h) != (meta.px_w, meta.px_h) {
+        return Err("Image original header mismatch".into());
+    }
+    Ok(())
+}
+
+/// DCT passthrough is safe only for upright, three-channel JPEG originals.
+pub fn jpeg_rgb_original(bytes: &[u8]) -> bool {
+    // Decoder output is RGB even for CMYK inputs; inspect the source SOF component count.
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return false;
+    }
+    let mut at = 2;
+    while let Some(&0xff) = bytes.get(at) {
+        while bytes.get(at) == Some(&0xff) {
+            at += 1;
+        }
+        let Some(&marker) = bytes.get(at) else { return false };
+        at += 1;
+        if marker == 0xda || marker == 0xd9 {
+            return false;
+        }
+        let Some(length) = bytes.get(at..at + 2) else { return false };
+        let len = u16::from_be_bytes([length[0], length[1]]) as usize;
+        if len < 2 {
+            return false;
+        }
+        let Some(data) = bytes.get(at + 2..at + len) else { return false };
+        if matches!(marker,0xc0..=0xc3|0xc5..=0xc7|0xc9..=0xcb|0xcd..=0xcf) {
+            return data.get(5) == Some(&3);
+        }
+        at += len;
+    }
+    false
+}

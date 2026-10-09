@@ -926,6 +926,10 @@ impl Document {
                 for bi in self.path_boards(pi) {
                     on[bi] = true;
                 }
+            } else if let Some(image) = self.images.iter().find(|i| i.id == pid) {
+                for bi in crate::images::image_boards(self, image) {
+                    on[bi] = true;
+                }
             }
         }
         on.iter().enumerate().filter(|(_, &v)| v).map(|(i, _)| i).collect()
@@ -1276,7 +1280,7 @@ impl Document {
     /// All path ids in `nid`'s subtree, front-first (traversal order).
     fn collect_paths(&self, nid: u32, out: &mut Vec<u32>) {
         if let Some(n) = self.node(nid) {
-            if let NodeKind::Path(p) = n.kind {
+            if let NodeKind::Path(p) | NodeKind::Image(p) = n.kind {
                 out.push(p);
             }
             for &c in &n.children {
@@ -1505,6 +1509,14 @@ impl Document {
         let mut pmap: HashMap<u32, u32> = HashMap::new();
         let mut new_pids = vec![];
         for &s in srcs {
+            // ---- w2-images: duplicate metadata only, retaining the immutable resource key ----
+            if let Some(mut image) = self.images.iter().find(|i| i.id == s).cloned() {
+                image.id = self.nid();
+                pmap.insert(s, image.id);
+                new_pids.push(image.id);
+                self.images.push(image);
+                continue;
+            }
             if self.pidx(s).is_none() {
                 continue;
             }
@@ -1560,7 +1572,11 @@ impl Document {
                 let (hidden, locked) = self.node(old_leaf).map(|n| (n.hidden, n.locked)).unwrap_or_default();
                 self.nodes.push(Node {
                     id: nl,
-                    kind: NodeKind::Path(new_p),
+                    kind: if self.images.iter().any(|i| i.id == new_p) {
+                        NodeKind::Image(new_p)
+                    } else {
+                        NodeKind::Path(new_p)
+                    },
                     name: String::new(),
                     parent: None,
                     children: vec![],

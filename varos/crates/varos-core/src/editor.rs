@@ -741,6 +741,15 @@ impl Editor {
         }
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &pid in &self.objsel {
+            // ---- w2-images: shared mixed-leaf frame ----
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                for q in crate::images::world_corners(&self.doc, image) {
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 // A7 seam: transform each unit's outline to WORLD before the AABB. Identity ⇒ today's box.
                 let xf = self.doc.unit_xform(pid);
@@ -776,6 +785,16 @@ impl Editor {
         let th = -self.obj_angle;
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &pid in &self.objsel {
+            // ---- w2-images: shared mixed-leaf frame ----
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                for q in crate::images::world_corners(&self.doc, image) {
+                    let q = rotate_about(q, [0., 0.], -self.obj_angle);
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 let xf = self.doc.unit_xform(pid);
                 for q in self.doc.outline(pi, 8) {
@@ -1078,6 +1097,20 @@ impl Editor {
             return false;
         }
         for pid in self.doc.node_paths(unit) {
+            if let Some(image) = self.doc.images.iter_mut().find(|i| i.id == pid) {
+                let a = image.xform;
+                let p = xf.apply([a.e, a.f]);
+                let x = xf.apply([a.e + a.a, a.f + a.b]);
+                let y = xf.apply([a.e + a.c, a.f + a.d]);
+                image.xform = crate::images::ImageAffine {
+                    a: x[0] - p[0],
+                    b: x[1] - p[1],
+                    c: y[0] - p[0],
+                    d: y[1] - p[1],
+                    e: p[0],
+                    f: p[1],
+                };
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 for a in &mut self.doc.paths[pi].anchors {
                     a.p = xf.apply(a.p);
@@ -1176,6 +1209,19 @@ impl Editor {
             a.p = xf.inverse_apply(wp);
             a.hin = whin.map(|h| xf.inverse_apply(h));
             a.hout = whout.map(|h| xf.inverse_apply(h));
+        }
+    }
+    // ---- w2-images: distinct corner base, never encoded as anchor IDs ----
+    fn transform_image_base(&mut self, map: impl Fn(Pt) -> Pt) {
+        let Some(before) = self.pending.clone() else { return };
+        let images: Vec<_> = before
+            .images
+            .iter()
+            .filter(|i| self.objsel.contains(&i.id))
+            .map(|i| (i.id, crate::images::world_corners(&before, i)))
+            .collect();
+        for (id, c) in images {
+            crate::images::input::write_world_corners(&mut self.doc, id, [map(c[0]), map(c[1]), map(c[3])]);
         }
     }
     /// WORLD anchors of the object selection (each mapped through its unit transform) — the base for
@@ -1382,6 +1428,15 @@ impl Editor {
     fn unit_local_bbox(&self, unit: u32) -> Option<(f32, f32, f32, f32)> {
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for pid in self.doc.node_paths(unit) {
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                let xf = self.doc.node_xform(unit);
+                for q in crate::images::world_corners(&self.doc, image).map(|q| xf.inverse_apply(q)) {
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 for q in self.doc.outline(pi, 8) {
                     x0 = x0.min(q[0]);
@@ -1871,6 +1926,7 @@ impl Editor {
         let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
         let base = self.objsel_base();
         let tf = |p: Pt| if horizontal { [2.0 * cx - p[0], p[1]] } else { [p[0], 2.0 * cy - p[1]] };
+        self.transform_image_base(tf);
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
                 a.p = tf(*p0);
@@ -1935,6 +1991,7 @@ impl Editor {
         }
         let base = self.objsel_base();
         let tf = |p: Pt| [fx + (p[0] - fx) * sx + tx, fy + (p[1] - fy) * sy + ty];
+        self.transform_image_base(tf);
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
                 a.p = tf(*p0);
@@ -2007,6 +2064,11 @@ impl Editor {
             return;
         }
         self.begin();
+        let xf = self.doc.node_xform(unit);
+        self.transform_image_base(|p| {
+            let p = xf.apply(scale_local(xf.inverse_apply(p)));
+            [p[0] + tx, p[1] + ty]
+        });
         if !no_scale {
             for pid in self.doc.node_paths(unit) {
                 if let Some(pi) = self.doc.pidx(pid) {
@@ -4128,13 +4190,21 @@ impl Editor {
         }
     }
     pub fn pointer_down(&mut self, pos: Pt) {
+        if self.tool == ToolKind::Object {
+            if let Some(hit) = self.transform_hit(pos) {
+                self.begin();
+                self.start_transform(hit, pos);
+                return;
+            }
+        }
         if let Some(g) = crate::images::input::gesture(self, pos) {
-            if !self.mods.shift {
+            if !self.mods.shift && !self.objsel.contains(&g.id) {
                 self.objsel.clear();
                 self.selected.clear();
                 self.group_sel.clear();
             }
-            self.objsel.insert(g.id);
+            self.objsel.extend(self.doc.group_members(g.id));
+            self.refresh_obj_angle();
             self.begin();
             self.image_drag = Some(g);
             return;
@@ -4182,17 +4252,8 @@ impl Editor {
         }
     }
     pub fn pointer_up(&mut self) {
-        if let Some(g) = self.image_drag.take() {
-            let xform = self.doc.images.iter().find(|i| i.id == g.id).map(|i| i.xform).unwrap_or(g.xform);
-            if let Some(before) = self.pending.take() {
-                self.doc = std::sync::Arc::unwrap_or_clone(before);
-            }
-            self.dirty = false;
-            self.execute_ui(crate::EditCommand::Image(crate::images::ImageEdit::Transform {
-                id: g.id,
-                xform,
-                opacity: g.opacity,
-            }));
+        if self.image_drag.take().is_some() {
+            self.commit_wave();
             return;
         }
         if crate::tools::select_transform::up(self) {
@@ -4284,11 +4345,12 @@ impl Editor {
     }
     pub fn pointer_move(&mut self, pos: Pt) {
         if let Some(g) = self.image_drag.clone() {
-            let xform = crate::images::input::translated(self, &g, pos);
-            if xform.valid() {
-                if let Some(i) = self.doc.images.iter_mut().find(|i| i.id == g.id) {
-                    i.xform = xform;
-                }
+            if let Some(before) = self.pending.clone() {
+                self.doc = (*before).clone();
+                self.transform_geometry(crate::select_transform::Transform {
+                    movement: sub(pos, g.start),
+                    ..Default::default()
+                });
             }
             self.cursor = pos;
             return;
@@ -4545,6 +4607,15 @@ impl Editor {
                         }
                     }
                 }
+                for image in &self.doc.images {
+                    if !self.in_isolation(image.id) || self.doc.eff_hidden(image.id) || self.doc.eff_locked(image.id) {
+                        continue;
+                    }
+                    let q = crate::images::corner_rect(crate::images::world_corners(&self.doc, image));
+                    if q.0 <= x1 && q.2 >= x0 && q.1 <= y1 && q.3 >= y0 {
+                        self.objsel.insert(image.id);
+                    }
+                }
                 // a marquee that catches any group member selects the whole group
                 let expanded: Vec<u32> = self.objsel.iter().flat_map(|&p| self.doc.group_members(p)).collect();
                 self.objsel.extend(expanded);
@@ -4621,6 +4692,7 @@ impl Editor {
                 for (unit, base_xf) in &piv_base {
                     self.doc.set_node_xform(*unit, base_xf.translated(d));
                 }
+                self.transform_image_base(|p| add(p, d));
                 self.drag = Drag::Object { down, base, base_world, piv_base };
                 self.dirty = true;
             }
@@ -4666,6 +4738,7 @@ impl Editor {
                 };
                 // A7: base is WORLD; write the scaled world point back THROUGH each unit's transform so a
                 // rotated object stays rotated (θ preserved) and the panel W/H tracks the true local dims.
+                self.transform_image_base(tf);
                 for (aid, p0, hin0, hout0) in &base {
                     self.write_anchor_world(*aid, tf(*p0), hin0.map(tf), hout0.map(tf));
                 }
@@ -4751,6 +4824,7 @@ impl Editor {
                 }
                 let sc = |p: Pt| [pivot[0] + (p[0] - pivot[0]) * sx, pivot[1] + (p[1] - pivot[1]) * sy];
                 // A7: base is WORLD; write back through each unit's transform so θ is preserved.
+                self.transform_image_base(sc);
                 for (aid, p0, hin0, hout0) in &base {
                     self.write_anchor_world(*aid, sc(*p0), hin0.map(sc), hout0.map(sc));
                 }
@@ -4889,6 +4963,17 @@ impl Editor {
                 self.selected.extend(p.anchors.iter().chain(p.holes.iter().flatten()).map(|a| a.id));
             }
         } else {
+            // ---- w2-images: select visible, unlocked image leaves and their mixed groups ----
+            let image_ids: Vec<_> = self
+                .doc
+                .images
+                .iter()
+                .map(|i| i.id)
+                .filter(|&id| self.in_isolation(id) && !self.doc.eff_hidden(id) && !self.doc.eff_locked(id))
+                .collect();
+            for id in image_ids {
+                self.objsel.extend(self.doc.group_members(id));
+            }
             for pi in pickable {
                 let members = self.doc.group_members(self.doc.paths[pi].id);
                 if let Some(group) = self.doc.top_group_of_path(self.doc.paths[pi].id) {

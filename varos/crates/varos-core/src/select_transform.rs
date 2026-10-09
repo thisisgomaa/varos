@@ -212,7 +212,7 @@ impl Editor {
         self.transform_geometry(spec);
         self.commit();
     }
-    fn transform_geometry(&mut self, spec: Transform) {
+    pub(super) fn transform_geometry(&mut self, spec: Transform) {
         if !spec.copy
             && spec.scale == [1., 1.]
             && spec.movement == [0., 0.]
@@ -245,6 +245,9 @@ impl Editor {
             for pid in &members {
                 if let Some(i) = self.doc.pidx(*pid) {
                     let q = self.doc.outline_bbox(i);
+                    b = (b.0.min(q.0), b.1.min(q.1), b.2.max(q.2), b.3.max(q.3));
+                } else if let Some(image) = self.doc.images.iter().find(|i| i.id == *pid) {
+                    let q = crate::images::corner_rect(crate::images::world_corners(&self.doc, image));
                     b = (b.0.min(q.0), b.1.min(q.1), b.2.max(q.2), b.3.max(q.3));
                 }
             }
@@ -284,7 +287,6 @@ impl Editor {
             }
         }
         for pid in ids {
-            let Some(pi) = self.doc.pidx(pid) else { continue };
             let o = if spec.each { origins.get(&pid).copied().unwrap_or(origin) } else { origin };
             let mut s = spec;
             if spec.random {
@@ -294,6 +296,17 @@ impl Editor {
                 s.angle *= r;
                 s.shear *= r;
             }
+            // ---- w2-images: same affine map for image and path leaves ----
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                let c = crate::images::world_corners(&self.doc, image);
+                crate::images::input::write_world_corners(
+                    &mut self.doc,
+                    pid,
+                    [s.map(c[0], o), s.map(c[1], o), s.map(c[3], o)],
+                );
+                continue;
+            }
+            let Some(pi) = self.doc.pidx(pid) else { continue };
             let path = &mut self.doc.paths[pi];
             for a in path.anchors.iter_mut().chain(path.holes.iter_mut().flatten()) {
                 a.p = s.map(a.p, o);

@@ -164,9 +164,18 @@ fn ancestor_flag(doc: &Document, id: u32, locked: bool) -> bool {
 }
 pub fn image_hidden(doc: &Document, id: u32) -> bool {
     ancestor_flag(doc, id, false)
+        || doc.images.iter().find(|i| i.id == id).is_some_and(|i| {
+            let boards = image_boards(doc, i);
+            !boards.is_empty() && boards.iter().all(|&b| doc.artboards[b].hidden)
+        })
 }
 pub fn image_locked(doc: &Document, id: u32) -> bool {
     ancestor_flag(doc, id, true)
+        || doc
+            .images
+            .iter()
+            .find(|i| i.id == id)
+            .is_some_and(|i| image_boards(doc, i).iter().any(|&b| doc.artboards[b].locked))
 }
 
 pub mod input;
@@ -238,4 +247,33 @@ pub fn node_items(doc: &Document, root: u32) -> Vec<u32> {
         }
     }
     items
+}
+
+/// Image membership uses the same world extents and mirror rule as vector leaves.
+pub fn image_boards(doc: &Document, image: &ImageObject) -> Vec<usize> {
+    let b = corner_rect(world_corners(doc, image));
+    doc.artboards
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| {
+            let r = a.rect();
+            r.0 <= b.2 && r.2 >= b.0 && r.1 <= b.3 && r.3 >= b.1
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+pub fn board_clips(doc: &Document, id: u32) -> Option<Vec<(f32, f32, f32, f32)>> {
+    let unit = doc.top_group_of_path(id).or_else(|| doc.node_of_path(id))?;
+    if doc.node_clip_exempt(unit) {
+        return None;
+    }
+    let boards = doc.node_boards(unit);
+    if boards.is_empty() {
+        return None;
+    }
+    let visible: Vec<_> = boards.into_iter().filter(|&i| !doc.artboards[i].hidden).collect();
+    if visible.iter().any(|&i| !doc.artboards[i].clip) {
+        return None;
+    }
+    Some(visible.into_iter().map(|i| doc.artboards[i].rect()).collect())
 }

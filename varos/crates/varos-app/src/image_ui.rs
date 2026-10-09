@@ -79,9 +79,12 @@ pub fn panel(ui: &mut egui::Ui, ed: &Editor, sid: Option<SessionId>, commands: &
                 let status = varos_core::images::links::status(i, &ed.blobs);
                 ui.ctx().data_mut(|d| d.insert_temp(status_key, format!("{status:?}")));
             }
-            if let Some(status) = ui.ctx().data(|d| d.get_temp::<String>(status_key)) {
-                ui.label(status);
-            }
+            let status = ui.ctx().data(|d| d.get_temp::<String>(status_key)).unwrap_or_else(|| {
+                let status = format!("{:?}", varos_core::images::links::status(i, &ed.blobs));
+                ui.ctx().data_mut(|d| d.insert_temp(status_key, status.clone()));
+                status
+            });
+            ui.label(status);
 
             let ppi = i.effective_ppi();
             ui.label(format!(

@@ -132,7 +132,7 @@ fn find_model<'a>(pdf: &'a Document, catalog: &'a Dictionary, limits: &Limits) -
     found.ok_or(LoadError::NoEmbeddedModel)
 }
 
-fn parse_pdf(bytes: &[u8], limits: &Limits) -> Result<Document, LoadError> {
+pub(crate) fn parse_pdf(bytes: &[u8], limits: &Limits) -> Result<Document, LoadError> {
     preflight(bytes, limits)?;
     let pdf = Document::load_mem_with_options(
         bytes,

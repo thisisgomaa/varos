@@ -4364,6 +4364,7 @@ dependencies = [
 name = "varos-pdf"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "lopdf",
  "pdf-writer",
  "resvg",

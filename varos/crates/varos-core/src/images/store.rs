@@ -27,6 +27,7 @@ pub struct Blob {
 }
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlobStore {
+    pub load_notes: Vec<String>,
     pub document_dir: Option<std::path::PathBuf>,
     entries: HashMap<BlobKey, Arc<Blob>>,
 }
@@ -78,7 +79,9 @@ impl BlobStore {
             return Err("Invalid original image hash/size".into());
         }
         if dimensions(blob.pixels.width, blob.pixels.height)? != blob.pixels.rgba.len()
-            || blob.original.is_some() && (blob.pixels.width != blob.meta.px_w || blob.pixels.height != blob.meta.px_h)
+            || blob.original.is_some()
+                && (blob.pixels.width != blob.meta.px_w || blob.pixels.height != blob.meta.px_h)
+                && !Arc::ptr_eq(&blob.pixels, &blob.proxy)
         {
             return Err("Image dimensions disagree".into());
         }

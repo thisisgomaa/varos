@@ -79,7 +79,9 @@ pub struct Loaded {
 impl Loaded {
     /// The notice to show after opening, if any.
     pub fn notice(&self) -> Option<&'static str> {
-        if self.released_legacy_masks {
+        if !self.blobs.load_notes.is_empty() {
+            Some("Some image originals could not fit in the decoded cache; proxy previews are shown. Original streams are retained.")
+        } else if self.released_legacy_masks {
             Some(RELEASED_MASKS_NOTICE)
         } else {
             self.migrated.then_some(MIGRATION_NOTICE)

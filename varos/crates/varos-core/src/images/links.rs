@@ -185,8 +185,7 @@ pub fn resolve(
     home: Option<&Path>,
 ) -> Result<std::path::PathBuf, String> {
     let l = i.link.as_ref().ok_or("Image has no source")?;
-    let fallback_home =
-        std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from);
+    let fallback_home = account_home();
     let home = home.or(fallback_home.as_deref());
     let mut candidates = Vec::new();
     if let (Some(base), Some(relative)) = (document_dir, &l.document_relative) {
@@ -217,10 +216,8 @@ pub fn update_path(image: &ImageObject, store: &BlobStore) -> Result<std::path::
     }
     let absolute = std::path::PathBuf::from(&link.absolute);
     if !absolute.is_file() {
-        if let (Some(home), Some(relative)) =
-            (std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")), &link.home_relative)
-        {
-            let candidate = std::path::PathBuf::from(home).join(relative);
+        if let (Some(home), Some(relative)) = (account_home(), &link.home_relative) {
+            let candidate = home.join(relative);
             if candidate.is_file() {
                 return Ok(candidate);
             }
@@ -241,4 +238,26 @@ pub fn relative_locator(mut info: LinkInfo, store: &BlobStore) -> LinkInfo {
         .and_then(|p| p.to_str())
         .map(str::to_owned);
     info
+}
+
+/// Account home, independent of a launcher's HOME override (ADR-0014).
+#[cfg(unix)]
+fn account_home() -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: zeroed passwd is only an output buffer; all live buffers have the declared sizes.
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buffer = vec![0u8; 16 * 1024];
+    let mut out = std::ptr::null_mut();
+    // SAFETY: pointers remain live until the directory is copied out of buffer below.
+    let rc = unsafe { libc::getpwuid_r(libc::geteuid(), &mut pwd, buffer.as_mut_ptr().cast(), buffer.len(), &mut out) };
+    if rc != 0 || out.is_null() || pwd.pw_dir.is_null() {
+        return None;
+    }
+    // SAFETY: successful getpwuid_r supplies a terminated string inside buffer.
+    let dir = unsafe { std::ffi::CStr::from_ptr(pwd.pw_dir) };
+    Some(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(dir.to_bytes())))
+}
+#[cfg(not(unix))]
+fn account_home() -> Option<std::path::PathBuf> {
+    std::env::var_os("USERPROFILE").map(std::path::PathBuf::from)
 }

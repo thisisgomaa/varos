@@ -22,6 +22,11 @@ pub fn hit(ed: &Editor, p: [f32; 2]) -> Option<u32> {
         if !ed.in_isolation(id) || image_hidden(&ed.doc, id) || image_locked(&ed.doc, id) {
             continue;
         }
+        if super::board_clips(&ed.doc, id)
+            .is_some_and(|rects| !rects.iter().any(|r| p[0] >= r.0 && p[0] <= r.2 && p[1] >= r.1 && p[1] <= r.3))
+        {
+            continue;
+        }
         let mut parent = ed.doc.node_of_path(id).and_then(|n| ed.doc.node(n)).and_then(|n| n.parent);
         let mut clipped = false;
         while let Some(nid) = parent {
@@ -83,4 +88,34 @@ pub fn translated(ed: &Editor, g: &Gesture, p: [f32; 2]) -> ImageAffine {
         b = x.inverse_apply(b);
     }
     ImageAffine { e: g.xform.e + b[0] - a[0], f: g.xform.f + b[1] - a[1], ..g.xform }
+}
+
+/// Shared transform corner write-back through the same ancestor chain as world_corners.
+pub fn write_world_corners(doc: &mut crate::model::Document, id: u32, mut corners: [[f32; 2]; 3]) {
+    let mut chain = vec![];
+    let mut node = doc.node_of_path(id);
+    while let Some(nid) = node {
+        let Some(n) = doc.node(nid) else { break };
+        chain.push(n.xform);
+        node = n.parent;
+    }
+    for xf in chain.into_iter().rev() {
+        corners = corners.map(|p| xf.inverse_apply(p));
+    }
+    if let Some(i) = doc.images.iter_mut().find(|i| i.id == id) {
+        let [p, x, y] = corners;
+        let w = i.px_w as f32;
+        let h = i.px_h as f32;
+        let a = ImageAffine {
+            a: (x[0] - p[0]) / w,
+            b: (x[1] - p[1]) / w,
+            c: (y[0] - p[0]) / h,
+            d: (y[1] - p[1]) / h,
+            e: p[0],
+            f: p[1],
+        };
+        if a.valid() {
+            i.xform = a;
+        }
+    }
 }

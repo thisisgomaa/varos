@@ -490,7 +490,7 @@ impl Service {
                             v["api"] = json!("1.2");
                             v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
                             v["readable_vrs"] = json!([1, 2, 3, 4, 5, varos_core::format::IMAGE_VERSION]);
-                            v["writable_vrs"] = json!([5]);
+                            v["writable_vrs"] = json!([varos_core::format::FORMAT_VERSION]);
                             v["stroke_style_schema"] = crate::mcp::stroke_style_schema();
                             let tools = crate::mcp::full_tools_for("1.2");
                             if let Some(edit) =

@@ -226,3 +226,15 @@ pub fn apply_difference(base: &StrokeStyle, next: &StrokeStyle, target: &mut Str
 }
 
 pub mod inspection;
+
+/// Canvas-only integration seam: integrator routes this to stroke/canvas.rs (main 9f14e1e).
+/// Export evaluators keep their strict budgets. Gradient strokes must use this same seam.
+pub fn canvas_seam(
+    _editor: &crate::Editor,
+    path: &crate::model::Path,
+    ppu: f32,
+) -> Result<evaluate::StrokeCoverage, evaluate::StrokeError> {
+    // Main 9f14e1e: editor.canvas_stroke_cache.lookup(path, editor.doc.unit_xform(path.id), ppu).
+    // Bring its cap/backoff/fallback branch with the cache; do not change strict export evaluation.
+    evaluate(path, 0.025 / f64::from(ppu.max(0.0001)), &|| false)
+}
