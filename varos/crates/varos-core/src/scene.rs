@@ -90,6 +90,10 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
 
     let mut state = std::collections::hash_map::DefaultHasher::new();
     ed.select_transform.isolation.hash(&mut state);
+    // ---- Lane E ----
+    ed.view_depth.hash(&mut state);
+    ed.doc.units.ppi.to_bits().hash(&mut state);
+    ed.doc.transparency_grid.hash(&mut state);
     ed.rev.hash(&mut state);
     frame.hash(&mut state);
     point_hash(view.pan, &mut state);
@@ -196,6 +200,10 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
 
 #[derive(Default)]
 pub struct Scene {
+    // ---- Lane E ----
+    pub pixel_preview: Option<f32>,
+    pub preview_color: Rgba,
+    pub canvas_color: Option<Rgba>,
     pub grid_step: Option<f32>,
     pub content: Vec<Group>, // artwork groups (z-ordered): opaque runs + isolated translucent layers
     pub report: crate::ExportReport,
@@ -297,9 +305,14 @@ pub fn build_scene_in_view(ed: &Editor, view: View, frame: [u32; 2]) -> Scene {
 #[derive(Clone, Copy)]
 pub struct SceneStyle {
     pub checkerboard: [Rgba; 2],
+    // ---- Lane E ----
+    pub outline: Rgba,
+    pub canvas: Rgba,
 }
 pub fn build_scene_in_view_styled(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle) -> Scene {
-    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style))
+    // ---- Lane E ----
+    let scene = build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style));
+    crate::view_depth_scene::present(ed, view, frame, style, scene)
 }
 fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>) -> Scene {
     let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
@@ -478,6 +491,11 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     let fill_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
+        // ---- Lane E ----
+        // The independent outline pass ignores object opacity and clipping, including mask sources.
+        if style.is_some() && crate::view_depth_scene::outlined(ed, p.id) {
+            return out;
+        }
         // An open path still FILLS (Illustrator: the fill closes visually with an implied straight line
         // between the endpoints) — so deleting an anchor to open a shape keeps its fill (A32). Only paths
         // that actually carry a fill colour reach here; a bare stroke line (fill None) never fills.
@@ -529,6 +547,9 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
     let stroke_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let p = &ed.doc.paths[pi];
         let mut out = Vec::new();
+        if style.is_some() && crate::view_depth_scene::outlined(ed, p.id) {
+            return out;
+        }
         if !p.stroke_style.is_default() {
             if let Some(color) = p.stroke.solid() {
                 match crate::stroke::evaluate(p, 0.025 / f64::from(ppu.max(0.0001)), &|| false) {

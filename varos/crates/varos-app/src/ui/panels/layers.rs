@@ -649,7 +649,14 @@ pub(crate) fn panel_layers(
                                 &ic.eye,
                                 if board { "Show/Hide board" } else { "Show/Hide" },
                             ) {
-                                ops.push(if board { Op::AbEye(row.sec as usize) } else { Op::LayerEye(row.id) });
+                                // ---- Lane E ----
+                                if !board && ui.input(|i| i.modifiers.command) {
+                                    ops.push(Op::View(varos_core::editor::view_commands::ViewAction::Depth(
+                                        varos_core::view_depth::DepthAction::OutlineNode { id: row.id },
+                                    )));
+                                } else {
+                                    ops.push(if board { Op::AbEye(row.sec as usize) } else { Op::LayerEye(row.id) });
+                                }
                             }
                             if col_toggle(
                                 ui,

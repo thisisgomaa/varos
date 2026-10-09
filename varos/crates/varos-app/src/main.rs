@@ -62,7 +62,9 @@ mod single_instance;
 mod svg_import;
 mod template_jobs;
 mod thumbs;
+// ---- Lane E ----
 mod ui;
+mod view_modes;
 mod workspace;
 use app_command::{AppCommand, OpenOrigin, SessionId, WindowCmd};
 use cursors::CK;
@@ -302,6 +304,11 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
     use varos_core::editor::wave::{ObjectAction as O, Selection as S};
     if ctrl {
         match code {
+            "KeyY" => ed.execute_ui(EditCommand::View(varos_core::editor::view_commands::ViewAction::Depth(if alt {
+                varos_core::view_depth::DepthAction::PixelPreview
+            } else {
+                varos_core::view_depth::DepthAction::Outline
+            }))),
             "Digit5" => ed.execute_ui(EditCommand::View(if alt {
                 varos_core::editor::view_commands::ViewAction::ReleaseGuides
             } else {
@@ -411,6 +418,12 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         }
         "KeyD" => ed.execute_ui(EditCommand::DefaultPaint),
         "Slash" => ed.execute_ui(EditCommand::ApplyPaint { target: ed.paint, color: None }),
+        "KeyF" if shift => ed.execute_ui(EditCommand::View(varos_core::editor::view_commands::ViewAction::Depth(
+            varos_core::view_depth::DepthAction::Presentation,
+        ))),
+        "Escape" if ed.view_depth.presentation => ed.execute_ui(EditCommand::View(
+            varos_core::editor::view_commands::ViewAction::Depth(varos_core::view_depth::DepthAction::ExitPresentation),
+        )),
         "Escape" | "Enter" => ed.escape(),
         "Delete" | "Backspace" => ed.execute_ui(EditCommand::DeleteSelected),
         "ArrowLeft" => ed.execute_ui(EditCommand::Nudge { x: -s, y: 0.0 }),
@@ -427,6 +440,7 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
 fn editor_check(ed: &Editor, c: chrome::Check) -> Option<bool> {
     use chrome::Check as C;
     Some(match c {
+        C::Depth(check) => check.read(ed),
         C::Grid => ed.doc.snap.show_grid,
         C::PasteRemembersLayers => ed.paste_remembers_layers,
         C::Rulers => ed.show_rulers,
@@ -714,6 +728,11 @@ fn fit_all_rect(ed: &Editor) -> (f32, f32, f32, f32) {
     bounds.map_or_else(|| fit_rect(ed), |b| (b.0, b.1, (b.2 - b.0).max(1.0), (b.3 - b.1).max(1.0)))
 }
 fn apply_view_request(ed: &mut Editor, view: &mut View, canvas: egui::Rect) {
+    // ---- Lane E ----
+    if let Some(center) = ed.requested_pan.take() {
+        let c = canvas.center();
+        view.pan = varos_core::geom::pan_for_anchor(center, [c.x, c.y], view.zoom);
+    }
     if let Some(percent) = ed.requested_zoom.take() {
         let c = canvas.center();
         gestures::zoom_to(view, [c.x, c.y], percent / 100.0);
@@ -1349,7 +1368,11 @@ fn main() {
                     ed,
                     view,
                     [sz0.width, sz0.height],
-                    SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+                    SceneStyle {
+                        checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD,
+                        outline: varos_app::shell::tokens::OUTLINE_RGBA,
+                        canvas: crate::view_modes::canvas_rgba(recovery.settings.canvas_color),
+                    },
                 );
                 renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
             }
@@ -2004,6 +2027,9 @@ fn main() {
                                         redraw!("field-commit");
                                         return;
                                     }
+                                    if ed.view_depth.presentation {
+                                        return;
+                                    }
                                     last_click = Some((now, screen_cursor));
                                     ed.ppu = view.zoom;
                                     apply_view_request(ed, view, canvas_px(&gui, &window));
@@ -2176,6 +2202,9 @@ fn main() {
                         let (jobs, tdelta, screen) =
                             gui.run(&window, ed, scale as f32, *view, cursors::is_maximized(hwnd));
                         apply_view_request(ed, view, canvas_px(&gui, &window));
+                        if let Some(rgb) = ed.requested_canvas.take() {
+                            host::DocUi::queue_app_command(&mut gui, AppCommand::SetCanvasColor(rgb));
+                        }
                         pace.frame();
                         if pace.enabled() {
                             pace.egui_causes(gui.repaint_causes());
@@ -2252,8 +2281,15 @@ fn main() {
                         }
                         if pace.enabled() {
                             // measurement only: would this frame repaint exactly the last one?
-                            let scene = (!home)
-                                .then(|| host::scene_key(s.id, scene_signature(ed, *view, [psz.width, psz.height])));
+                            let scene = (!home).then(|| {
+                                host::scene_key(
+                                    s.id,
+                                    crate::view_modes::signature(
+                                        scene_signature(ed, *view, [psz.width, psz.height]),
+                                        recovery.settings.canvas_color,
+                                    ),
+                                )
+                            });
                             let same = tdelta.set.is_empty()
                                 && tdelta.free.is_empty()
                                 && scene == debug_prev.1
@@ -2266,7 +2302,13 @@ fn main() {
                             renderer.render_ui(&Default::default(), *view, &jobs, &tdelta, &screen)
                         } else {
                             // keyed by WHICH tab too: equal signatures of two tabs must never share art
-                            let signature = host::scene_key(s.id, scene_signature(ed, *view, [psz.width, psz.height]));
+                            let signature = host::scene_key(
+                                s.id,
+                                crate::view_modes::signature(
+                                    scene_signature(ed, *view, [psz.width, psz.height]),
+                                    recovery.settings.canvas_color,
+                                ),
+                            );
                             let scene_start = Instant::now();
                             let cache_hit = last_scene_signature == Some(signature);
                             let rendered = if cache_hit {
@@ -2276,7 +2318,11 @@ fn main() {
                                     ed,
                                     *view,
                                     [psz.width, psz.height],
-                                    SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+                                    SceneStyle {
+                                        checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD,
+                                        outline: varos_app::shell::tokens::OUTLINE_RGBA,
+                                        canvas: crate::view_modes::canvas_rgba(recovery.settings.canvas_color),
+                                    },
                                 );
                                 if !world.errors.is_empty() {
                                     lifecycle::Dialogs::notice(

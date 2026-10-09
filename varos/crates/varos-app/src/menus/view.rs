@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn rows() -> Vec<Entry> {
     use KeyCode as K;
-    vec![
+    let mut rows = vec![
         key("view.fitall", "Fit All", cmd_alt(K::Digit0)),
         key("view.fit", "Fit in Window", cmd(K::Digit0)),
         key("view.actual", "Actual Size", cmd(K::Digit1)),
@@ -32,5 +32,7 @@ pub(super) fn rows() -> Vec<Entry> {
         toggle("view.snappoint", "Snap to Point", MenuCmd::Snap(SnapRow::Point), Check::SnapPoint),
         Entry::Sep,
         Entry::Native(Native::Fullscreen),
-    ]
+    ];
+    rows.splice(0..0, crate::menus::view_depth::rows());
+    rows
 }

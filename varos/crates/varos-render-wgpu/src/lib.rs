@@ -71,6 +71,8 @@ pub struct Renderer {
     blit_pipe: wgpu::RenderPipeline,
     blit_bgl: wgpu::BindGroupLayout,
     blit_bg: wgpu::BindGroup,
+    // ---- Lane E ----
+    pixel_preview_buf: wgpu::Buffer,
     // native GPU UI (egui paints onto OUR frame, sharing OUR device/queue)
     egui_rend: egui_wgpu::Renderer,
     // egui frees that arrived on a frame the OS didn't give us — processed after the next real submit
@@ -114,18 +116,9 @@ impl FreeQueue {
     }
 }
 
-const BLIT_SHADER: &str = r#"
-@group(0) @binding(0) var t: texture_2d<f32>;
-@group(0) @binding(1) var s: sampler;
-struct VO { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32> };
-@vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
-    // fullscreen triangle
-    var o: VO;
-    let uv = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
-    o.uv = uv; o.p = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0); o.p.y = -o.p.y; return o;
-}
-@fragment fn fs(in: VO) -> @location(0) vec4<f32> { return textureSample(t, s, in.uv); }
-"#;
+// ---- Lane E ----
+mod pixel_preview;
+const BLIT_SHADER: &str = pixel_preview::SHADER;
 
 // Composite an isolated layer onto the scene at the object's opacity. The layer texture is PREMULTIPLIED
 // (rendered opaquely over transparent, then MSAA-resolved — so edge texels are already colour·coverage).
@@ -169,6 +162,7 @@ fn make_blit_bg(
     l: &wgpu::BindGroupLayout,
     view: &wgpu::TextureView,
     samp: &wgpu::Sampler,
+    preview: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     d.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("blit"),
@@ -176,6 +170,7 @@ fn make_blit_bg(
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(samp) },
+            wgpu::BindGroupEntry { binding: 2, resource: preview.as_entire_binding() },
         ],
     })
 }
@@ -492,6 +487,16 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let blit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -524,7 +529,13 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
-        let blit_bg = make_blit_bg(&device, &blit_bgl, &scene_view, &sampler);
+        let pixel_preview_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pixel-preview"),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let blit_bg = make_blit_bg(&device, &blit_bgl, &scene_view, &sampler, &pixel_preview_buf);
         // isolated-layer target + composite pipeline (group opacity). Reuses blit_bgl (texture+sampler).
         let layer_msaa = make_attach(&device, &config, samples, config.format, "layer_msaa");
         let (_layer_tex, layer_view) = make_scene_tex(&device, &config);
@@ -579,7 +590,7 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
-        let comp_bg = make_blit_bg(&device, &blit_bgl, &layer_view, &sampler);
+        let comp_bg = make_blit_bg(&device, &blit_bgl, &layer_view, &sampler, &pixel_preview_buf);
         let op_cap = 1u64 << 16;
         let op_buf = mk(op_cap);
         // egui paints onto the (single-sample) surface in its own pass we own
@@ -634,6 +645,7 @@ impl Renderer {
             blit_pipe,
             blit_bgl,
             blit_bg,
+            pixel_preview_buf,
             egui_rend,
             free_q: FreeQueue::default(),
             unshown: false,
@@ -667,8 +679,10 @@ impl Renderer {
             self.layer_msaa = make_attach(&self.device, &self.config, self.samples, self.config.format, "layer_msaa");
             let (_lt, lv) = make_scene_tex(&self.device, &self.config);
             self.layer_view = lv;
-            self.comp_bg = make_blit_bg(&self.device, &self.blit_bgl, &self.layer_view, &self.sampler);
-            self.blit_bg = make_blit_bg(&self.device, &self.blit_bgl, &self.scene_view, &self.sampler);
+            self.comp_bg =
+                make_blit_bg(&self.device, &self.blit_bgl, &self.layer_view, &self.sampler, &self.pixel_preview_buf);
+            self.blit_bg =
+                make_blit_bg(&self.device, &self.blit_bgl, &self.scene_view, &self.sampler, &self.pixel_preview_buf);
         }
     }
     /// Shared GPU handles so the UI layer (egui) can render into OUR frame (mandatory: same device/queue).
@@ -830,8 +844,16 @@ impl Renderer {
     /// sent behind an opaque one stays behind it. Overlay (editing chrome) draws last, on top of everything.
     /// The scene target is cleared exactly once (bg pass); every later scene pass LOADs; resolve happens on
     /// the final pass only.
-    fn record_scene(&self, enc: &mut wgpu::CommandEncoder, nbg: u32, metas: &[GroupDraw], overlay: (u32, u32)) {
-        let clearc = wgpu::Color { r: BG[0] as f64, g: BG[1] as f64, b: BG[2] as f64, a: 1.0 };
+    fn record_scene(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        nbg: u32,
+        metas: &[GroupDraw],
+        overlay: (u32, u32),
+        canvas: Option<[f32; 4]>,
+    ) {
+        let c = canvas.unwrap_or([BG[0], BG[1], BG[2], 1.0]);
+        let clearc = wgpu::Color { r: c[0] as f64, g: c[1] as f64, b: c[2] as f64, a: c[3] as f64 };
         // bg pass — clear the scene target and lay the dot grid
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -999,6 +1021,11 @@ impl Renderer {
         };
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
+        self.queue.write_buffer(
+            &self.pixel_preview_buf,
+            0,
+            bytemuck::cast_slice(&pixel_preview::parameters(world.pixel_preview, view, world.preview_color)),
+        );
         let bg = build_bg(view, fw, fh, world.grid_step);
         let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
         let ov_start = fgv.len() as u32;
@@ -1011,7 +1038,7 @@ impl Renderer {
         let _ = Self::upload(&self.device, &self.queue, &mut self.op_buf, &mut self.op_cap, &opv);
         let mut enc = self.device.create_command_encoder(&Default::default());
         // Pass 1: the varos-core Scene → offscreen (opaque + isolated layers, MSAA resolve to scene_view).
-        self.record_scene(&mut enc, nbg, &metas, overlay);
+        self.record_scene(&mut enc, nbg, &metas, overlay, world.canvas_color);
         // Pass 2: blit the offscreen scene onto the surface.
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1182,6 +1209,11 @@ impl Renderer {
         let tview = frame.texture.create_view(&Default::default());
         let prepared = scene.map(|(world, view)| {
             let (fw, fh) = (self.config.width as f32, self.config.height as f32);
+            self.queue.write_buffer(
+                &self.pixel_preview_buf,
+                0,
+                bytemuck::cast_slice(&pixel_preview::parameters(world.pixel_preview, view, world.preview_color)),
+            );
             let bg = build_bg(view, fw, fh, world.grid_step);
             let content_start = std::time::Instant::now();
             let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
@@ -1194,14 +1226,14 @@ impl Renderer {
             let _ = Self::upload(&self.device, &self.queue, &mut self.fill_buf, &mut self.fill_cap, &fillv);
             let _ = Self::upload(&self.device, &self.queue, &mut self.fg_buf, &mut self.fg_cap, &fgv);
             let _ = Self::upload(&self.device, &self.queue, &mut self.op_buf, &mut self.op_cap, &opv);
-            (nbg, metas, overlay, content_elapsed, counts)
+            (nbg, metas, overlay, content_elapsed, counts, world.canvas_color)
         });
         let mut enc = self.device.create_command_encoder(&Default::default());
         let user_cmds = self.egui_rend.update_buffers(&self.device, &self.queue, &mut enc, paint_jobs, screen);
         // A signature miss rebuilds the offscreen scene. A hit keeps its last resolved texture and only
         // blits it below the fresh egui pass.
-        if let Some((nbg, metas, overlay, _, _)) = &prepared {
-            self.record_scene(&mut enc, *nbg, metas, *overlay);
+        if let Some((nbg, metas, overlay, _, _, canvas)) = &prepared {
+            self.record_scene(&mut enc, *nbg, metas, *overlay, *canvas);
         }
         // blit the offscreen scene → surface (egui chrome is drawn over it in the next pass)
         {
@@ -1253,7 +1285,7 @@ impl Renderer {
         self.release_textures(&tdelta.free);
         if std::env::var_os("VAROS_PERF").is_some() {
             match prepared {
-                Some((_, _, _, content_elapsed, counts)) => {
+                Some((_, _, _, content_elapsed, counts, _)) => {
                     log!(
                         "[varos-perf] scene_cache=miss build_content={:.3}ms render_ui={:.3}ms fill_v={} fg_v={} op_v={}",
                         content_elapsed.as_secs_f64() * 1_000.0,

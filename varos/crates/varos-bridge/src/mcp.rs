@@ -26,6 +26,8 @@ fn construction_tools(api: &str) -> Value {
         if let Some(edit) = entries.iter_mut().find(|tool| tool["name"] == "edit") {
             let mut extra = serde_json::Map::new();
             let mut ops = Vec::new();
+            // ---- Lane E ----
+            crate::view_depth::extend_schema(&mut edit["inputSchema"]);
             crate::select_transform::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
@@ -954,6 +956,7 @@ fn core_verb(verb: &str) -> bool {
 
 fn verb_description(verb: &str) -> String {
     match verb {
+        "view" => "Outline, pixel preview/snap, Navigator, screen modes and canvas preferences".into(),
         "clip" => "Create a clipping group".into(),
         "release_clip" => "Release a clipping group".into(),
         "pathfinder" => "Combine paths with a Boolean operation".into(),

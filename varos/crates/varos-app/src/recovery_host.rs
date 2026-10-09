@@ -285,13 +285,20 @@ impl RecoveryHost {
     }
     pub fn handle_read(&mut self, cmd: &AppCommand, dialogs: &mut dyn crate::lifecycle::Dialogs) -> bool {
         match cmd {
-            AppCommand::SetRecoveryEnabled(_)
+            AppCommand::SetCanvasColor(_)
+            | AppCommand::SetRecoveryEnabled(_)
             | AppCommand::SetAutosave(_, _)
             | AppCommand::TogglePasteRemembersLayers
             | AppCommand::SetPasteRemembersLayers(_) => {
                 if let Some(reason) = &self.settings_unsaved {
                     // The switch still applies for this session (`handle`); say it won't persist.
-                    let title = if matches!(cmd, AppCommand::SetAutosave(_, _)) { "Autosave" } else { "Recovery" };
+                    let title = if matches!(cmd, AppCommand::SetCanvasColor(_)) {
+                        "Canvas colour"
+                    } else if matches!(cmd, AppCommand::SetAutosave(_, _)) {
+                        "Autosave"
+                    } else {
+                        "Recovery"
+                    };
                     dialogs.notice(title, &format!("{title} setting could not be saved: {reason}"));
                 }
                 false
@@ -376,11 +383,13 @@ impl RecoveryHost {
     }
     pub fn handle(&mut self, cmd: &AppCommand, ws: &mut Workspace, now: Instant) -> bool {
         match cmd {
-            AppCommand::SetRecoveryEnabled(_)
+            AppCommand::SetCanvasColor(_)
+            | AppCommand::SetRecoveryEnabled(_)
             | AppCommand::SetAutosave(_, _)
             | AppCommand::TogglePasteRemembersLayers
             | AppCommand::SetPasteRemembersLayers(_) => {
                 match cmd {
+                    AppCommand::SetCanvasColor(rgb) => self.settings.canvas_color = *rgb,
                     AppCommand::SetRecoveryEnabled(enabled) => {
                         self.settings.recovery_enabled = *enabled;
                         self.scheduler.set_enabled(*enabled);
