@@ -98,27 +98,23 @@ impl Host for Desktop<'_> {
     fn file_status(&mut self, ticket: u64) -> Option<varos_bridge::Reply> {
         FILE_RESULTS.with(|r| r.borrow().iter().find(|(t, _)| *t == ticket).map(|(_, r)| r.clone()))
     }
+    // ---- Lane H: service cancellation reaches the isolated parser and publication guard ----
+    fn import_effect(
+        &mut self,
+        verb: &str,
+        request: &varos_bridge::dto::FileEffect,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<varos_bridge::Reply, Error> {
+        crate::bridge_import::perform(self.ws, verb, request, cancel)
+    }
     fn file_effect(
         &mut self,
         verb: &str,
         request: &varos_bridge::dto::FileEffect,
     ) -> Result<varos_bridge::Reply, Error> {
-        if verb == "import_svg" {
-            let id = session(&request.board)?;
-            let path = std::path::Path::new(
-                request.path.as_deref().ok_or_else(|| Error::new("invalid_argument", "source path required"))?,
-            );
-            let extension =
-                if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svgz")) { "svgz" } else { "svg" };
-            varos_bridge::files::validate_path(path, extension)?;
-            let bytes = varos_bridge::files::read_source(path, extension, varos_import::MAX_BYTES)?;
-            let (doc, report) = varos_import::import_svg(&bytes).map_err(|e| Error::new("invalid_argument", e))?;
-            let s = self.ws.get_mut(id).ok_or_else(|| Error::new("not_found", "board closed"))?;
-            varos_core::placement::check(&s.editor, &doc).map_err(|e| Error::new("invalid_argument", e))?;
-            s.editor
-                .try_execute(varos_core::EditCommand::PlaceArtwork(Box::new(doc)))
-                .map_err(|e| Error::new("invalid_argument", e))?;
-            return Ok(varos_bridge::Reply::success(serde_json::json!({"rev":s.editor.rev,"report":report})));
+        // ---- Lane H ----
+        if matches!(verb, "import_svg" | "import_file" | "import_clipboard") {
+            return crate::bridge_import::perform(self.ws, verb, request, &std::sync::atomic::AtomicBool::new(false));
         }
         if ["save_template", "new_from_template"].contains(&verb) {
             let name =

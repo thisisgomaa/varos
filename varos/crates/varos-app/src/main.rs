@@ -59,7 +59,14 @@ mod recent_files;
 mod recovery_host;
 mod shortcuts;
 mod single_instance;
-mod svg_import;
+// ---- Lane H ----
+mod bridge_import;
+mod clipboard_in;
+mod foreign_import;
+mod import_drop;
+mod import_jobs;
+#[cfg(test)]
+mod import_jobs_tests;
 mod template_jobs;
 mod thumbs;
 mod ui;
@@ -673,6 +680,20 @@ fn view_centre_paste_offset(ed: &Editor, view: &View, canvas_centre: Pt) -> Opti
 
 /// ⌘V = Paste centred in the canvas · ⇧⌘V = Paste in Place (the copied coordinates).
 fn paste_key(ed: &mut Editor, view: &View, canvas_centre: Pt, in_place: bool) {
+    // ---- Lane H: both keyboard and menu use this paste entry ----
+    match clipboard_in::paste(ed, view, canvas_centre, in_place) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            #[cfg(not(test))]
+            {
+                rfd::MessageDialog::new().set_title("Paste artwork").set_description(&error).show();
+            }
+            #[cfg(test)]
+            let _ = error;
+            return;
+        }
+    }
     let offset = if in_place { None } else { view_centre_paste_offset(ed, view, canvas_centre) };
     ed.execute_ui(EditCommand::Paste { offset });
 }
@@ -992,6 +1013,10 @@ fn raise_doc(
 }
 
 fn main() {
+    // ---- Lane H: parser worker exits before any native UI startup ----
+    if varos_import::worker::worker_main() {
+        return;
+    }
     // The user-facing safety net (ENGINEERING_REVIEW §3.3 #4): ANY panic — including paths no table
     // ever enumerates — writes a crash log and shows a readable dialog instead of dying silently.
     // target/panic.txt stays as the dev breadcrumb.
@@ -1874,6 +1899,15 @@ fn main() {
                     }
                     // red traffic light / OS close: the Quit transaction over every tab (Astra F01; S1
                     // has one window, so Close Window = Quit — work order §6 Q1)
+                    // ---- Lane H: Finder canvas drop is Place, never Open ----
+                    WindowEvent::DroppedFile(path)
+                        if import_drop::on_canvas(
+                            import_drop::position(&window, screen_cursor),
+                            canvas_px(&gui, &window),
+                        ) =>
+                    {
+                        pending.push(host::HostAction::App(AppCommand::PlaceFile(s.id, path)));
+                    }
                     WindowEvent::CloseRequested => pending.push(host::HostAction::App(AppCommand::Quit)),
                     WindowEvent::Resized(size) => {
                         if size.width == 0 || size.height == 0 {

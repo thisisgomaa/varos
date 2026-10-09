@@ -195,6 +195,8 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
     let want = [
         ("file.new", cmd(KeyCode::KeyN).unwrap(), FileCmd::New),
         ("file.open", cmd(KeyCode::KeyO).unwrap(), FileCmd::Open),
+        // ---- Lane H ----
+        ("file.place.svg", cmd_shift(KeyCode::KeyP).unwrap(), FileCmd::PlaceSvg),
         ("file.document-setup", cmd_alt(KeyCode::KeyP).unwrap(), FileCmd::DocumentSetup),
         ("file.close", cmd(KeyCode::KeyW).unwrap(), FileCmd::CloseTab),
         ("file.save", cmd(KeyCode::KeyS).unwrap(), FileCmd::Save),
@@ -401,12 +403,17 @@ fn file_rows_enable_from_the_document_state() {
 }
 
 #[test]
-fn svg_place_row_is_namespaced_and_has_no_shortcut() {
+fn artwork_place_row_is_namespaced_and_uses_illustrator_shortcut() {
     let rows = super::file::rows();
     let row = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "file.place.svg"));
     assert!(matches!(
         row,
-        Some(Entry::Item { label: "Place SVG…", accel: None, cmd: MenuCmd::File(FileCmd::PlaceSvg), .. })
+        Some(Entry::Item {
+            label: "Place artwork…",
+            accel: Some(Accel { code: KeyCode::KeyP, shift: true, alt: false, cmd: true }),
+            cmd: MenuCmd::File(FileCmd::PlaceSvg),
+            ..
+        })
     ));
 }
 #[test]

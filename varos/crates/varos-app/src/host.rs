@@ -51,6 +51,8 @@ pub fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Optio
         (KeyCode::KeyW, false, true) => FileCmd::CloseAll,
         (KeyCode::KeyP, false, true) => FileCmd::DocumentSetup,
         (KeyCode::KeyP, false, false) => FileCmd::Print,
+        // ---- Lane H ----
+        (KeyCode::KeyP, true, false) => FileCmd::PlaceSvg,
         (KeyCode::KeyQ, false, false) => FileCmd::Quit,
         _ => return None,
     })
