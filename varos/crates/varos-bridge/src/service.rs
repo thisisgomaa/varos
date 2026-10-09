@@ -427,13 +427,40 @@ impl Service {
                             if let Some(edit) =
                                 tools["tools"].as_array().and_then(|tools| tools.iter().find(|t| t["name"] == "edit"))
                             {
-                                v["stroke_operations_schema"] = json!({"set_stroke_style":edit["inputSchema"]["$defs"]["set_stroke_style"],"set_paint":edit["inputSchema"]["$defs"]["set_paint"]});
+                                // Capabilities publish standalone operation schemas, so expand
+                                // the local references used to keep tools/list within its budget.
+                                fn standalone(value: &Value, root: &Value) -> Value {
+                                    if let Some(reference) = value["$ref"].as_str().and_then(|r| r.strip_prefix('#')) {
+                                        if let Some(target) = root.pointer(reference) {
+                                            return standalone(target, root);
+                                        }
+                                    }
+                                    match value {
+                                        Value::Object(m) => Value::Object(
+                                            m.iter().map(|(k, v)| (k.clone(), standalone(v, root))).collect(),
+                                        ),
+                                        Value::Array(a) => {
+                                            Value::Array(a.iter().map(|v| standalone(v, root)).collect())
+                                        }
+                                        _ => value.clone(),
+                                    }
+                                }
+                                let schema = &edit["inputSchema"];
+                                v["stroke_operations_schema"] = json!({
+                                    "set_stroke_style":standalone(&schema["$defs"]["set_stroke_style"], schema),
+                                    "set_paint":standalone(&schema["$defs"]["set_paint"], schema)
+                                });
                             }
                             v["edit_verbs"] = json!(crate::EDIT_VERBS
                                 .iter()
                                 .copied()
-                                .chain(std::iter::once("set_stroke_style"))
+                                .chain(["repeat", "set_stroke_style"])
+                                .chain(crate::CONSTRUCTION_VERBS.iter().copied())
                                 .collect::<Vec<_>>());
+                            v["api_by_tool"] = json!({"edit":["1.0","1.1","1.2"],"capabilities":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1","1.2"]});
+                            if let Some(unsupported) = v["unsupported"].as_array_mut() {
+                                unsupported.retain(|v| v != "pathfinder");
+                            }
                         }
                     }
                     Ok(r)
@@ -521,7 +548,7 @@ impl Service {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
                     let a = host.access(&v.board)?;
-                    if v.api == "1.1" {
+                    if matches!(v.api.as_str(), "1.1" | "1.2") {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
                     }
                     // Review P2 (slice 3): a deprecated `aN@rev` alias names a page by its index AT `rev`.

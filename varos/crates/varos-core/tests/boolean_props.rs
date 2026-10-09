@@ -192,3 +192,74 @@ fn overlapping_curves_keep_handles_when_area_guard_passes() {
         "the guarded primary result must retain curved segments"
     );
 }
+
+#[test]
+fn planar_faces_partition_union_and_pathfinder_invariants() {
+    use varos_core::planar::{self, PathfinderOp};
+    let mut seed = 0x4e4d;
+    for case in 0..200 {
+        let shapes: Vec<_> = (0..3).map(|_| planar::flatten(&[polygon(&mut seed)])).collect();
+        let union = planar::union(&shapes);
+        let expected = union.iter().map(planar::area).sum::<f64>();
+        let faces = planar::faces(&shapes);
+        assert!((faces.iter().map(|f| planar::area(&f.shape)).sum::<f64>() - expected).abs() < 1e-3, "case {case}");
+        for op in [PathfinderOp::Divide, PathfinderOp::Trim, PathfinderOp::Merge] {
+            let pieces = planar::pathfinder(op, &shapes, &[0, 0, 1]);
+            assert!(
+                (pieces.iter().map(|p| planar::area(&p.shape)).sum::<f64>() - expected).abs() < 1e-3,
+                "{op:?}, case {case}"
+            );
+            for x in 0..10 {
+                for y in 0..10 {
+                    let p = [x as f32 * 7.0 - 15.37, y as f32 * 7.0 - 15.19];
+                    let owners: Vec<_> =
+                        shapes.iter().enumerate().filter(|(_, s)| planar::contains(s, p)).map(|(i, _)| i).collect();
+                    let fs: Vec<_> = faces.iter().filter(|f| f.contains(p)).collect();
+                    assert_eq!(fs.len(), usize::from(!owners.is_empty()));
+                    if let Some(f) = fs.first() {
+                        assert_eq!(f.owners, owners);
+                        assert_eq!(
+                            f.winding
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, w)| **w % 2 != 0)
+                                .map(|(i, _)| i)
+                                .collect::<Vec<_>>(),
+                            owners
+                        );
+                    }
+                    let hits: Vec<_> = pieces.iter().filter(|s| planar::contains(&s.shape, p)).collect();
+                    assert_eq!(hits.len(), usize::from(!owners.is_empty()));
+                    if let (Some(hit), Some(top)) = (hits.first(), owners.last()) {
+                        if op == PathfinderOp::Merge {
+                            assert_eq!([0, 0, 1][hit.owner], [0, 0, 1][*top]);
+                        } else {
+                            assert_eq!(hit.owner, *top);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+#[test]
+fn planar_holes_coincident_edges_crop_minus_back_and_outline() {
+    use varos_core::planar::{self, PathfinderOp};
+    let square = |x, y, size| vec![straight(&[[x, y], [x + size, y], [x + size, y + size], [x, y + size]])];
+    let mut donut = square(0., 0., 20.);
+    donut.extend(square(5., 5., 10.));
+    let shapes = vec![planar::flatten(&donut), planar::flatten(&square(10., 0., 20.))];
+    let fs = planar::faces(&shapes);
+    assert!((fs.iter().map(|f| planar::area(&f.shape)).sum::<f64>() - 550.).abs() < 1e-3);
+    let crop = planar::pathfinder(PathfinderOp::Crop, &shapes, &[0, 1]);
+    assert!((crop.iter().map(|p| planar::area(&p.shape)).sum::<f64>() - 150.).abs() < 1e-3);
+    assert!(crop.iter().all(|p| p.owner == 0));
+    let back = planar::pathfinder(PathfinderOp::MinusBack, &shapes, &[0, 1]);
+    assert!((back.iter().map(|p| planar::area(&p.shape)).sum::<f64>() - 250.).abs() < 1e-3);
+    let outline = planar::pathfinder(PathfinderOp::Outline, &shapes, &[0, 1]);
+    assert!(outline.iter().all(|p| !p.closed && p.shape[0].len() == 2));
+    assert!(outline.iter().any(|p| p.owner == 0) && outline.iter().any(|p| p.owner == 1));
+    let same = planar::faces(&[shapes[0].clone(), shapes[0].clone()]);
+    assert_eq!(same.len(), 1);
+    assert_eq!(same[0].owners, vec![0, 1]);
+}

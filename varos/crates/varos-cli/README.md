@@ -135,3 +135,11 @@ Element arrays follow back-to-front tree paint order (removed uses the old tree;
 ## Verification
 
 Integration tests execute the actual CLI against all four frozen v3 raw-JSON/PDF fixtures, without modifying them. Coverage includes all seven verbs, detail geometry, deterministic PNG dimensions/bytes, model-free PDF privacy checks, editable save-as reopening, canonical input protection, version refusal, golden nested-group JSON, preset creation, indexed errors, preservation of source/destination on failure, and core batch undo/redo/rollback/no-op behavior. No test constructs a GPU Renderer or EventLoop. Run the workspace's Mac tests, Mac/Windows-target clippy and fmt gates from `varos/`.
+
+Slice 4E/4D headless commands: `Pathfinder` takes `"divide"`, `"trim"`, `"merge"`, `"crop"`,
+`"outline"`, or `"minus_back"`; `ShapeBuilder` takes `{ "points": [[x,y],...], "delete": false }`;
+`Scissors` takes `{ "path": N, "segment": 0, "t": 0.5 }`; `Knife` takes `{ "points": [...] }`;
+`Eraser` takes `{ "points": [...], "radius": 8 }`; `DivideObjectsBelow` is a unit command.
+Use `SelectPaths` first in the existing `apply --batch` API 0.1 envelope. Attached `bridge edit`
+exposes corresponding snake-case verbs with explicit `ids` under API 1.2 only. Construction operations
+flatten curves; Scissors retains cubic handles. UI and fixed interactive eraser radius are provisional.

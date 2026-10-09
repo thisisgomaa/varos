@@ -15,6 +15,80 @@ pub fn tool_result(reply: &Reply) -> Value {
     }
     json!({"content":content,"structuredContent":projection,"isError":!reply.ok})
 }
+/// Explicit MCP tools/list API 1.2 opt-in; the default 1.0/1.1 schema remains byte-identical.
+fn construction_tools(api: &str) -> Value {
+    let mut list = tools();
+    if api != "1.2" {
+        return list;
+    }
+    if let Some(entries) = list["tools"].as_array_mut() {
+        for tool in entries {
+            let name = tool["name"].as_str().unwrap_or("").to_owned();
+            if name == "edit" {
+                let edit = &mut tool["inputSchema"];
+                let edit_ids = json!({"$ref":"#/$defs/move/properties/ids"});
+                let point = json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}});
+                edit["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+                edit["$defs"]["construction_points"] =
+                    json!({"type":"array","minItems":1,"maxItems":1000,"items":point});
+                let gesture = json!({"$ref":"#/$defs/construction_points"});
+                let extra = [
+                    (
+                        "pathfinder",
+                        object(
+                            json!({"verb":{"const":"pathfinder"},"ids":edit_ids,"operation":{"enum":["unite","minus_front","intersect","exclude","divide","trim","merge","crop","outline","minus_back"]}}),
+                            &["verb", "ids", "operation"],
+                        ),
+                    ),
+                    (
+                        "shape_builder",
+                        object(
+                            json!({"verb":{"const":"shape_builder"},"ids":edit_ids,"points":gesture,"delete":{"type":"boolean"}}),
+                            &["verb", "ids", "points", "delete"],
+                        ),
+                    ),
+                    (
+                        "scissors",
+                        object(
+                            json!({"verb":{"const":"scissors"},"ids":edit_ids,"segment":{"type":"integer","minimum":0},"t":{"type":"number","minimum":0,"maximum":1}}),
+                            &["verb", "ids", "segment", "t"],
+                        ),
+                    ),
+                    (
+                        "knife",
+                        object(
+                            json!({"verb":{"const":"knife"},"ids":edit_ids,"points":gesture}),
+                            &["verb", "ids", "points"],
+                        ),
+                    ),
+                    (
+                        "eraser",
+                        object(
+                            json!({"verb":{"const":"eraser"},"ids":edit_ids,"points":gesture,"radius":{"type":"number","exclusiveMinimum":0}}),
+                            &["verb", "ids", "points", "radius"],
+                        ),
+                    ),
+                    (
+                        "divide_objects_below",
+                        object(json!({"verb":{"const":"divide_objects_below"},"ids":edit_ids}), &["verb", "ids"]),
+                    ),
+                ];
+                for (verb, schema) in extra {
+                    edit["$defs"][verb] = schema;
+                    if let Some(ops) = edit["$defs"]["operation"]["anyOf"].as_array_mut() {
+                        ops.push(json!({"$ref":format!("#/$defs/{verb}")}));
+                    }
+                }
+            }
+            if name == "capabilities" {
+                tool["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+            }
+        }
+    }
+
+    list
+}
+
 pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
     if name == "edit" {
         let edit: Edit =
@@ -343,7 +417,7 @@ pub fn serve<T: Transport>(
             }
             "ping" => rpc_result(id, json!({})),
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
-            "tools/list" => rpc_result(id, tools()),
+            "tools/list" => rpc_result(id, tools_for_api(params.get("api").and_then(Value::as_str).unwrap_or("1.0"))),
             "tools/call" if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name)) => {
                 rpc_error(id, -32602, "unknown or missing tool name")
             }
@@ -413,8 +487,12 @@ pub fn serve<T: Transport>(
 }
 
 /// Explicit 1.2 schema projection; legacy tools() remains byte-frozen.
+pub fn tools_for_api(api: &str) -> Value {
+    tools_for(api)
+}
+
 pub fn tools_for(api: &str) -> Value {
-    let mut out = tools();
+    let mut out = construction_tools(api);
     if api != "1.2" {
         return out;
     }
@@ -430,9 +508,13 @@ pub fn tools_for(api: &str) -> Value {
             }
             if name == "edit" {
                 let schema = &mut tool["inputSchema"];
-                schema["$defs"]["set_paint"]["properties"]["stroke_style"] = style.clone();
+                schema["$defs"]["stroke_style"] = style.clone();
+                schema["$defs"]["op_key"] = json!({"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}]});
+                let shared_ids = schema["$defs"]["move"]["properties"]["ids"].clone();
+                schema["$defs"]["ids"] = shared_ids.clone();
+                schema["$defs"]["set_paint"]["properties"]["stroke_style"] = json!({"$ref":"#/$defs/stroke_style"});
                 schema["$defs"]["set_stroke_style"] = object(
-                    json!({"verb":{"const":"set_stroke_style"},"ids":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string","pattern":"^path:[1-9][0-9]*$"}},"stroke_style":style}),
+                    json!({"verb":{"const":"set_stroke_style"},"ids":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string","pattern":"^path:[1-9][0-9]*$"}},"stroke_style":{"$ref":"#/$defs/stroke_style"}}),
                     &["verb", "ids", "stroke_style"],
                 );
                 if let Some(ops) = schema["$defs"]["operation"]["anyOf"].as_array_mut() {
@@ -446,13 +528,79 @@ pub fn tools_for(api: &str) -> Value {
                             if let Some(required) = definition["required"].as_array_mut() {
                                 required.retain(|v| v != "verb");
                             }
+                            let mut constraints = vec![json!({"$ref":"#/$defs/op_key"})];
                             if let Some(original) = definition.as_object_mut().and_then(|d| d.remove("oneOf")) {
-                                definition["allOf"] = json!([{"oneOf":original}]);
+                                constraints.push(json!({"oneOf":original}));
                             }
-                            definition["oneOf"] = json!([{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}]);
+                            definition["allOf"] = json!(constraints);
+                            if definition["properties"]["ids"] == shared_ids {
+                                definition["properties"]["ids"] = json!({"$ref":"#/$defs/ids"});
+                            }
                         }
                     }
                 }
+            }
+        }
+    }
+    // Keep the combined opt-in projection within the existing tools/list size budget.
+    fn trim_descriptions(value: &mut Value) {
+        match value {
+            Value::Object(m) => {
+                m.remove("description");
+                for v in m.values_mut() {
+                    trim_descriptions(v);
+                }
+            }
+            Value::Array(a) => {
+                for v in a {
+                    trim_descriptions(v);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(tools) = out["tools"].as_array_mut() {
+        for tool in tools {
+            trim_descriptions(&mut tool["inputSchema"]);
+        }
+    }
+    // Reuse identical property constraints without changing validation or accepted spellings.
+    fn share(value: &mut Value, original: &Value, reference: &Value) {
+        if value == original {
+            *value = reference.clone();
+        } else {
+            match value {
+                Value::Object(m) => {
+                    for v in m.values_mut() {
+                        share(v, original, reference);
+                    }
+                }
+                Value::Array(a) => {
+                    for v in a {
+                        share(v, original, reference);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(tools) = out["tools"].as_array_mut() {
+        if let Some(edit) = tools.iter_mut().find(|t| t["name"] == "edit") {
+            let schema = &mut edit["inputSchema"];
+            let d = &schema["$defs"];
+            let shared = [
+                ("paint", d["set_paint"]["properties"]["fill"].clone()),
+                ("pt", d["move"]["properties"]["delta"].clone()),
+                ("board_id", d["delete_artboard"]["properties"]["id"].clone()),
+                ("local", d["add_path"]["properties"]["local"].clone()),
+                ("arrow", d["stroke_style"]["properties"]["arrows"]["properties"]["start"].clone()),
+                ("name", d["add_path"]["properties"]["name"].clone()),
+                ("bounds", d["resize"]["properties"]["bounds"].clone()),
+                ("parent", d["add_path"]["properties"]["parent"].clone()),
+            ];
+            for (name, original) in shared {
+                share(schema, &original, &json!({"$ref":format!("#/$defs/{name}")}));
+                schema["$defs"][name] = original;
             }
         }
     }
