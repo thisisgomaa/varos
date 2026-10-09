@@ -76,6 +76,7 @@ fn icon(tool: ToolKind) -> Icon {
         ToolKind::Curvature => Icon::DrawCurvature,
         ToolKind::PathEraser | ToolKind::Eraser => Icon::PathEraser,
         ToolKind::Join => Icon::Link,
+        ToolKind::Width => Icon::MoveArtwork,
         ToolKind::Text => Icon::Type,
         ToolKind::Gradient => Icon::PickerGradient,
         ToolKind::Hand => Icon::Hand,

@@ -82,12 +82,12 @@ fn next_future_refusal_precedes_typed_decode_in_both_containers() {
 fn quicklook_future_refusal_precedes_typed_decode_in_both_containers() {
     for ext in ["json", "pdf"] {
         let bytes = std::fs::read(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("fixtures/quicklook/future-v11.{ext}")),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("fixtures/quicklook/future-v15.{ext}")),
         )
         .unwrap();
         assert_eq!(
             varos_pdf::load_vrs_bytes(&bytes, &Limits::DEFAULT).unwrap_err(),
-            LoadError::NewerVersion { found: 11, supported: varos_core::format::FORMAT_VERSION }
+            LoadError::NewerVersion { found: 15, supported: varos_core::format::FORMAT_VERSION }
         );
     }
 }

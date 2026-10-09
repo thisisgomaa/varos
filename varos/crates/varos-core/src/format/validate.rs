@@ -110,7 +110,20 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
         }
         nonnegative(p.stroke_width, &label, "stroke width")?;
         p.stroke_style.validate(p.id)?;
+        // ---- Lane B w3-effects ----
+        if !p.effects.is_empty() {
+            crate::effects::evaluate_many(p).map_err(|reason| Invalid::Stroke { path: p.id, reason })?;
+        }
+        // ---- end Lane B w3-effects ----
         // ---- Lane C ----
+        if doc.is_mask_source(p.id)
+            && p.effects.iter().any(|e| matches!(e,crate::effects::Effect::Transform{copies,..} if *copies>0))
+        {
+            return Err(Invalid::Stroke {
+                path: p.id,
+                reason: "Transform copies cannot replace a clipping-mask source".into(),
+            });
+        }
         crate::live_corners::validate(p, &p.corners)
             .map_err(|_| Invalid::NonFinite { what: format!("path {} corners", p.id) })?;
         if !p.stroke_style.is_default() {

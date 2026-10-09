@@ -120,7 +120,8 @@ pub fn point_in_poly(poly: &[Pt], pt: Pt) -> bool {
 
 /// Conservative local painted bounds, including miter allowances and evaluated arrow outlines.
 pub fn painted_extent(path: &crate::model::Path) -> crate::flatten::Rect {
-    // ---- Lane A ----
+    // ---- Lane A (integration w3: each appearance paint is a clone that keeps `effects`, so the
+    // recursion below evaluates live effects first, then the stack paints over that geometry) ----
     if !path.stack.is_empty() {
         let mut base = path.clone();
         base.stack.clear();
@@ -131,6 +132,10 @@ pub fn painted_extent(path: &crate::model::Path) -> crate::flatten::Rect {
             .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))
             .unwrap_or((0., 0., 0., 0.));
     }
+    // ---- Lane B w3-effects ----
+    let resolved = crate::effects::evaluated(path);
+    let path = &resolved;
+    // ---- end Lane B w3-effects ----
     let mut r = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for a in path.anchors.iter().chain(path.holes.iter().flatten()) {
         for p in [Some(a.p), a.hin, a.hout].into_iter().flatten() {

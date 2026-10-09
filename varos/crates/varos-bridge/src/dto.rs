@@ -281,6 +281,20 @@ pub enum Operation {
     Expand {
         ids: Vec<String>,
     },
+    // ---- Lane B w3-effects ----
+    LiveEffects {
+        ids: Vec<String>,
+        effects: Vec<varos_core::effects::Effect>,
+    },
+    WidthProfile {
+        ids: Vec<String>,
+        profile: Option<varos_core::width_profile::WidthProfile>,
+    },
+    WidthTool {},
+    ExpandLive {
+        ids: Vec<String>,
+    },
+    // ---- end Lane B w3-effects ----
     LiveCorners {
         ids: Vec<String>,
         corners: Vec<varos_core::live_corners::CornerParam>,
@@ -620,7 +634,13 @@ impl Operation {
     pub fn lane_c(&self) -> bool {
         matches!(
             self,
-            Self::OutlineStroke { .. }
+            // ---- Lane B w3-effects ----
+            Self::WidthTool { .. }
+                | Self::LiveEffects { .. }
+                | Self::WidthProfile { .. }
+                | Self::ExpandLive { .. }
+                // ---- end Lane B w3-effects ----
+                | Self::OutlineStroke { .. }
                 | Self::OffsetPath { .. }
                 | Self::Expand { .. }
                 | Self::LiveCorners { .. }
@@ -669,10 +689,18 @@ impl Operation {
             | Self::Pencil { .. }
             | Self::Curvature { .. }
             | Self::DrawingOptions { .. } => &[],
+            // ---- Lane B w3-effects ----
+            Self::WidthTool { .. } => &[],
+            // ---- end Lane B w3-effects ----
             Self::SmoothPath { ids, .. }
             | Self::PathErase { ids, .. }
             | Self::JoinTool { ids, .. }
             | Self::Colour { ids, .. }
+            // ---- Lane B w3-effects ----
+            | Self::LiveEffects { ids, .. }
+            | Self::WidthProfile { ids, .. }
+            | Self::ExpandLive { ids }
+            // ---- end Lane B w3-effects ----
             | Self::OutlineStroke { ids }
             | Self::OffsetPath { ids, .. }
             | Self::Expand { ids }

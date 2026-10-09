@@ -130,3 +130,8 @@ varos-render-wgpu/src/{layer_gpu.rs,layer_pass.wgsl} rebuilds separable map pass
 from PhotoCraft crates/gpu/src/compose.wgsl:1029-1178 @ 4cb7cf3.
 Copyright (c) 2026 ArtCraft Team and the PhotoCraft contributors. MIT OR Apache-2.0;
 see LICENSE-MIT.photocraft and LICENSE-APACHE.photocraft. No new third-party dependencies.
+// ---- Lane B w3-effects ----
+VectorCraft (ArtCraft Team and contributors, 2026), MIT OR Apache-2.0:
+core effects/effects_warp adapt effects/src/{distort,warp,stylize,util}.rs and doc/src/live.rs;
+width_profile/width_geometry/width_geometry_helpers adapt doc/src/appearance.rs, effects/src/stroke/width.rs, geom/src/bez.rs.
+// ---- end Lane B w3-effects ----

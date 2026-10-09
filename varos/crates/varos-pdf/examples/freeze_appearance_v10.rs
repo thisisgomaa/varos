@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let valid = encode_model(&ed.doc, &Limits::DEFAULT)?;
     for (name, text) in [
         ("refused_v9_stack", valid.replacen("\"varos\":10", "\"varos\":9", 1)),
-        ("refused_future", valid.replacen("\"varos\":10", "\"varos\":11", 1)),
+        ("refused_future", valid.replacen("\"varos\":10", "\"varos\":15", 1)),
     ] {
         std::fs::write(root.join(format!("{name}.json")), text)?;
     }

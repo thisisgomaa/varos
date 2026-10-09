@@ -35,6 +35,9 @@ mod export;
 // ---- Lane C ----
 pub(crate) mod fields;
 mod guide_field;
+// ---- Lane B w3-effects ----
+mod effects;
+// ---- end Lane B w3-effects ----
 mod lane_c;
 // ---- Lane A ----
 mod appearance;
@@ -413,6 +416,9 @@ impl Ui {
             self.text_tool.error = Some(error);
             return false;
         }
+        // ---- Lane B w3-effects ----
+        effects::settle(&self.ctx, ed);
+        // ---- end Lane B w3-effects ----
         crate::document_ui::settle(&mut self.document_sheet, ed);
         self.commit_picker_fields(ed)
     }
@@ -583,6 +589,9 @@ impl Ui {
                 false,
                 cfg!(target_os = "macos"),
             );
+            // ---- Lane B w3-effects ----
+            effects::sheet(ctx, ed, doc_active);
+            // ---- end Lane B w3-effects ----
             lane_c::sheets(ctx, &mut app_cmds, &mut ops, doc_active);
             crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
             crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
@@ -705,6 +714,9 @@ impl Ui {
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
             drawing::draw(ctx, ed, hole, view, ppp);
             select_transform::draw(ctx, ed, hole);
+            // ---- Lane B w3-effects ----
+            effects::width_points(ctx, ed, &view, ppp, hole);
+            // ---- end Lane B w3-effects ----
             lane_c::corners(ctx, ed, &view, ppp, hole, doc_active);
             isolation::draw(ctx, ed, hole);
             crate::image_ui::draw(ctx, ed, doc_active, hole, &mut app_cmds, view, ppp);
@@ -810,3 +822,7 @@ impl Ui {
 }
 
 // ───────────────────────────── fonts / style / frame ─────────────────────────────
+
+// ---- Lane B w3-effects ----
+pub(crate) use effects::effects_menu_rows;
+// ---- end Lane B w3-effects ----

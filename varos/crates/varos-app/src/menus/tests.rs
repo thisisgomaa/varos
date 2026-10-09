@@ -137,7 +137,7 @@ fn view_menu_mirrors_every_snapping_row() {
 fn the_bar_has_the_standard_mac_menus_and_mirrors_every_dockable_panel() {
     let m = menus();
     let titles: Vec<&str> = m.iter().map(|(t, _)| *t).collect();
-    assert_eq!(titles, ["Varos", "File", "Edit", "Select", "Object", "View", "Window", "Help"]);
+    assert_eq!(titles, ["Varos", "File", "Edit", "Select", "Object", "Effect", "View", "Window", "Help"]);
     let items = flat_items(&m);
     let has = |c: MenuCmd| items.iter().any(|e| matches!(e, Entry::Item { cmd, .. } if *cmd == c));
     for p in PanelId::DOCKABLE {
@@ -317,7 +317,7 @@ fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, V
     }
     menus
         .into_iter()
-        .filter(|(t, _)| *t != "Select" && *t != "Help")
+        .filter(|(t, _)| *t != "Select" && *t != "Help" && *t != "Effect")
         .map(|(t, v)| {
             let mut v = strip(v);
             if t == "Object" {
@@ -394,6 +394,13 @@ fn only_function_keys_go_without_command() {
     for e in flat_items(&menus()) {
         if let Entry::Item { id, accel: Some(a), .. } = e {
             if !a.cmd {
+                // ---- Lane B w3-effects: Illustrator's Width tool chord ----
+                if id == "effect.width" {
+                    assert_eq!(a.code, KeyCode::KeyW);
+                    assert!(a.shift && !a.alt);
+                    continue;
+                }
+                // ---- end Lane B w3-effects ----
                 if id == "view.presentation" {
                     assert_eq!(a.code, KeyCode::KeyF);
                     assert!(a.shift && !a.alt);

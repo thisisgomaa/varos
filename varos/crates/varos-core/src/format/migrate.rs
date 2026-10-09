@@ -23,6 +23,8 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
     (8, migrate_v8_to_v9),
     // ---- Lane A ----
     (9, migrate_v9_to_v10),
+    // ---- Lane B w3-effects ----
+    (10, migrate_v10_to_v11),
 ];
 
 /// Every format this build reads: each migration start plus the current writer (integration w2: the
@@ -167,5 +169,10 @@ pub fn migrate_v8_to_v9(doc: Document, _limits: &Limits) -> Result<Document, Loa
 // ---- Lane A ----
 /// v9 → v10 is pure identity: no extra paint or group look is invented.
 pub fn migrate_v9_to_v10(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
+    Ok(doc)
+}
+// ---- Lane B w3-effects ----
+/// v10 → v11: additive live effects and width profiles; the typed decode supplies empty/None defaults.
+pub fn migrate_v10_to_v11(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
 }

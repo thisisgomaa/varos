@@ -128,7 +128,7 @@ fn plain_v9_bytes_and_migration_are_identity_and_old_eras_refuse_keys() {
     let v9 = v5.replacen("\"varos\":5", "\"varos\":9", 1);
     let loaded = format::decode_model(v9.as_bytes(), None, &Limits::DEFAULT).unwrap();
     let encoded = format::encode_model(&loaded.doc, &Limits::DEFAULT).unwrap();
-    assert_eq!(encoded.replacen("\"varos\":10", "\"varos\":9", 1), v9);
+    assert_eq!(encoded.replacen(&format!("\"varos\":{}", format::FORMAT_VERSION), "\"varos\":9", 1), v9);
     assert_eq!(format::migrate::migrate_v9_to_v10(loaded.doc.clone(), &Limits::DEFAULT).unwrap(), loaded.doc);
     let mut old: serde_json::Value = serde_json::from_str(&v9).unwrap();
     old["doc"]["paths"][0]["stack"] = serde_json::json!([]);
