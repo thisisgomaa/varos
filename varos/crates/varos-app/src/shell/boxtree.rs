@@ -4,6 +4,12 @@
 //! floats on TOP of everything, easing toward the cursor (light, smooth). egui_tiles owns the docking:
 //! it shows a clean azure preview of where it'll land and commits on release. We just paint the lifted
 //! ghost + style the look. No reflow-among-boxes.
+// ---- Lane F: shaped chrome ----
+// ---- Lane F: text adapters ----
+use crate::shell::kit::text::ShapedPainter as _;
+// ---- end Lane F ----
+use crate::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::kit;
 use super::registry::{self, PanelId};
 use super::tokens as T;
@@ -477,7 +483,7 @@ fn render_drag_ghost(ui: &egui::Ui, panel: PanelId, pos: Pos2, host: &mut HostFn
                     ui.add_space(7.0);
                     ui.horizontal(|ui| {
                         ui.add_space(10.0);
-                        ui.label(RichText::new(panel.title()).color(T::TEXT).size(12.5));
+                        ui.shaped_label(RichText::new(panel.title()).color(T::TEXT).size(12.5));
                     });
                     ui.add_space(6.0);
                     let y = ui.min_rect().bottom();
@@ -759,7 +765,7 @@ impl Behavior<PanelId> for ShellBehavior<'_> {
                                 Color32::TRANSPARENT
                             };
                             ui.painter().rect_filled(pill, CornerRadius::same(T::RCAP), bg); // capsule = a Claude bubble
-                            ui.painter().text(
+                            ui.painter().shaped_chrome(
                                 pill.center(),
                                 Align2::CENTER_CENTER,
                                 pid.title(),
@@ -821,9 +827,13 @@ impl Behavior<PanelId> for ShellBehavior<'_> {
         // forgiving target so a box is never "impossible to grab" (Ahmed 07-04: "مستحيل تتحرك").
         let drag_rect = Rect::from_min_max(pos2(rect.left(), rect.top() + 14.0), pos2(controls_left, rect.top() + hh));
         let hdr = ui.interact(drag_rect, ui.id().with(("hdr", tile_id)), Sense::click_and_drag());
-        ui.painter().text(
-            pos2(rect.left() + 12.0, mid),
-            Align2::LEFT_CENTER,
+        let rtl = crate::i18n::locale(ui.ctx()) == crate::i18n::Locale::Ar;
+        ui.painter().shaped_chrome(
+            pos2(
+                if rtl { controls_left - T::UI_CHROME_LABEL_INSET } else { rect.left() + T::UI_CHROME_LABEL_INSET },
+                mid,
+            ),
+            if rtl { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER },
             pane.title(),
             FontId::proportional(12.5),
             T::TEXT,
@@ -1051,7 +1061,13 @@ fn draw_board(ui: &mut egui::Ui, rect: egui::Rect) {
                 Stroke::new(1.0, Color32::from_black_alpha(70)),
                 StrokeKind::Middle,
             );
-            p.text(ab.center(), Align2::CENTER_CENTER, "VAROS", FontId::proportional((ah * 0.13).min(46.0)), T::NAVY);
+            p.shaped_chrome(
+                ab.center(),
+                Align2::CENTER_CENTER,
+                "VAROS",
+                FontId::proportional((ah * 0.13).min(46.0)),
+                T::NAVY,
+            );
         }
     }
     draw_hands(ui, rect);
@@ -1066,7 +1082,7 @@ fn draw_hands(ui: &egui::Ui, board: egui::Rect) {
         p.rect(bar, T::r_box(), T::PANEL, T::hairline(), StrokeKind::Middle);
         let cy = bar.center().y;
         let mut x = bar.left() + 10.0;
-        p.text(pos2(x, cy), Align2::LEFT_CENTER, "Path", FontId::proportional(11.5), T::MUTED);
+        p.shaped_chrome(pos2(x, cy), Align2::LEFT_CENTER, "Path", FontId::proportional(11.5), T::MUTED);
         x += 36.0;
         for (l, v) in [("X", "266"), ("Y", "118"), ("W", "126"), ("H", "64"), ("∠", "0°")] {
             let fw = 46.0;
@@ -1075,11 +1091,17 @@ fn draw_hands(ui: &egui::Ui, board: egui::Rect) {
             }
             let f = Rect::from_min_size(pos2(x, cy - 12.0), vec2(fw, 24.0));
             p.rect(f, T::r_ctrl(), T::SURFACE, T::hairline(), StrokeKind::Middle);
-            p.text(pos2(f.left() + 6.0, cy), Align2::LEFT_CENTER, l, FontId::proportional(9.0), T::MUTED);
-            p.text(pos2(f.left() + 17.0, cy), Align2::LEFT_CENTER, v, T::numeric_value(10.5), T::TEXT);
+            p.shaped_text(pos2(f.left() + 6.0, cy), Align2::LEFT_CENTER, l, FontId::proportional(9.0), T::MUTED);
+            p.shaped_text(pos2(f.left() + 17.0, cy), Align2::LEFT_CENTER, v, T::numeric_value(10.5), T::TEXT);
             x += fw + 5.0;
         }
-        p.text(pos2(bar.right() - 15.0, cy), Align2::CENTER_CENTER, "◆", FontId::proportional(12.0), T::ACCENT);
+        p.shaped_chrome(
+            pos2(bar.right() - 15.0, cy),
+            Align2::CENTER_CENTER,
+            "◆",
+            FontId::proportional(12.0),
+            T::ACCENT,
+        );
     }
     if board.width() > 200.0 && board.height() > 220.0 {
         let top = board.top() + 104.0;
@@ -1096,9 +1118,9 @@ fn draw_hands(ui: &egui::Ui, board: egui::Rect) {
                 let c = pos2(rail.center().x, ty);
                 if i == 0 {
                     p.rect_filled(Rect::from_center_size(c, vec2(32.0, 32.0)), T::r_ctrl(), T::ACCENT);
-                    p.text(c, Align2::CENTER_CENTER, *g, FontId::proportional(12.0), Color32::WHITE);
+                    p.shaped_text(c, Align2::CENTER_CENTER, *g, FontId::proportional(12.0), Color32::WHITE);
                 } else {
-                    p.text(c, Align2::CENTER_CENTER, *g, FontId::proportional(12.0), T::MUTED);
+                    p.shaped_text(c, Align2::CENTER_CENTER, *g, FontId::proportional(12.0), T::MUTED);
                 }
                 ty += 34.0;
             }

@@ -4,12 +4,17 @@
 //! Callers own stable IDs, resolved shortcut/help text and enabled reasons. Consume
 //! `activated` once. A host that handles Enter/Space itself must use `pointer_only`;
 //! it can supply its model's keyboard focus with `focused`. No action runs on paint.
+// ---- Lane F: text adapters ----
+use crate::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use crate::shell::kit::text::ShapedPainter as _;
 use egui::{Color32, Event, Id, Key, PointerButton, Response, Sense, Stroke, StrokeKind, TextStyle, Ui};
 
 use super::tokens as t;
 pub mod board;
 pub mod field;
 pub mod icons;
+pub mod text;
 pub use icons::Icon;
 
 #[derive(Clone, Copy, Default)]
@@ -90,6 +95,9 @@ fn paint_control(
     date: Option<&str>,
     icon_only: bool,
 ) -> ControlResponse {
+    let translated =
+        if detail.is_none() { crate::i18n::translate(ui.ctx(), c.label) } else { std::borrow::Cow::Borrowed(c.label) };
+    let c = Control { label: &translated, ..c };
     let icon_only = icon_only && c.icon.is_some();
     let keyboard = keyboard_visible(ui);
     let reason = match c.availability {
@@ -106,7 +114,7 @@ fn paint_control(
         } else {
             TextStyle::Button.resolve(ui.style())
         };
-        let label = ui.painter().layout_no_wrap(c.label.into(), font.clone(), t::TEXT);
+        let label = text::layout(ui.ctx(), c.label, &font, None, false).unwrap_or_else(text::Label::empty);
         let icon_space = if c.icon.is_some() { t::KIT_ICON + t::KIT_GAP } else { 0.0 };
         let width = if detail.is_some() {
             ui.available_width()
@@ -166,7 +174,7 @@ fn paint_control(
             let date_width = if date.is_some_and(|d| !d.is_empty()) { t::START_DATE_W } else { 0.0 };
             if let Some(date) = date.filter(|d| !d.is_empty()) {
                 let color = if hover { t::TEXT } else { t::MUTED };
-                painter.text(
+                painter.shaped_text(
                     egui::pos2(rect.right() - t::KIT_PAD, rect.center().y),
                     egui::Align2::RIGHT_CENTER,
                     date,
@@ -184,11 +192,15 @@ fn paint_control(
                 rect.center().y - title.size().y / 2.0
             };
             let title_height = title.size().y;
-            painter.galley(egui::pos2(x, y), title, text);
+            let title_x =
+                if title.layout.lines.first().is_some_and(|l| l.rtl) { x + width - title.size().x } else { x };
+            painter.shaped_galley(egui::pos2(title_x, y), title, text);
             if let Some(detail) = detail {
                 let color = if hover { t::TEXT } else { t::MUTED };
                 let detail = elided(ui, detail, TextStyle::Small.resolve(ui.style()), color, width);
-                painter.galley(egui::pos2(x, y + title_height + t::KIT_TEXT_GAP), detail, color);
+                let detail_x =
+                    if detail.layout.lines.first().is_some_and(|l| l.rtl) { x + width - detail.size().x } else { x };
+                painter.shaped_galley(egui::pos2(detail_x, y + title_height + t::KIT_TEXT_GAP), detail, color);
             }
         }
         let accessible_label = reason.map_or_else(|| c.label.to_string(), |r| format!("{} — {r}", c.label));
@@ -197,8 +209,17 @@ fn paint_control(
         });
         let activated = enabled && activation(ui, &response, c.pointer_only);
         let help = reason.unwrap_or(c.help);
-        let response =
-            if help.is_empty() { response } else { response.on_hover_text(help).on_disabled_hover_text(help) };
+        let response = if help.is_empty() {
+            response
+        } else {
+            response
+                .on_hover_ui(|ui| {
+                    text::label(ui, help, t::small(), t::TEXT);
+                })
+                .on_disabled_hover_ui(|ui| {
+                    text::label(ui, help, t::small(), t::TEXT);
+                })
+        };
         ControlResponse { response, activated }
     })
     .inner
@@ -311,28 +332,28 @@ pub fn icon_button_sized(
         response
             .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, block || on, help.as_str()));
         let activated = enabled && activation(ui, &response, false);
-        let response = response.on_hover_text(help.as_str()).on_disabled_hover_text(help.as_str());
+        let response = response
+            .on_hover_ui(|ui| {
+                text::label(ui, &help, t::small(), t::TEXT);
+            })
+            .on_disabled_hover_ui(|ui| {
+                text::label(ui, &help, t::small(), t::TEXT);
+            });
         ControlResponse { response, activated }
     })
     .inner
 }
 
-fn elided(ui: &Ui, text: &str, font: egui::FontId, color: Color32, width: f32) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::simple_singleline(text.into(), font, color);
-    job.wrap.max_width = width;
-    job.wrap.max_rows = 1;
-    ui.fonts_mut(|fonts| fonts.layout_job(job))
+fn elided(ui: &Ui, value: &str, font: egui::FontId, _color: Color32, width: f32) -> text::Label {
+    text::layout(ui.ctx(), value, &font, Some(width), true).unwrap_or_else(text::Label::empty)
 }
 
 pub fn section_heading(ui: &mut Ui, label: &str) -> Response {
-    ui.label(egui::RichText::new(label).text_style(TextStyle::Heading).color(t::TEXT))
+    text::label(ui, label, TextStyle::Heading.resolve(ui.style()), t::TEXT)
 }
 
-/// Static status/error/empty copy on PANEL or SURFACE (the muted text contrast contract).
-/// No animation, dismiss button, or implied cancellation.
-/// Caller supplies explicit copy, e.g. "Opening…" or "Couldn't open this file: …".
 pub fn notice(ui: &mut Ui, message: &str) -> Response {
-    ui.add(egui::Label::new(egui::RichText::new(message).color(t::MUTED)).wrap())
+    text::label(ui, message, TextStyle::Body.resolve(ui.style()), t::MUTED)
 }
 
 /// A kit menu entry: a hand-painted row or a hairline separator.
@@ -544,6 +565,8 @@ pub fn menu_row(ui: &mut Ui, c: Control<'_>) -> ControlResponse {
 }
 
 fn menu_row_with(ui: &mut Ui, c: Control<'_>, look: &MenuLook) -> ControlResponse {
+    let translated = crate::i18n::translate(ui.ctx(), c.label);
+    let c = Control { label: &translated, ..c };
     let reason = match c.availability {
         Availability::Enabled => None,
         Availability::Disabled(reason) | Availability::Busy(reason) => Some(reason),
@@ -567,8 +590,14 @@ fn menu_row_with(ui: &mut Ui, c: Control<'_>, look: &MenuLook) -> ControlRespons
     }
     let width = (rect.right() - look.pad_x - x).max(0.0);
     let font = look.font.clone().unwrap_or_else(|| TextStyle::Button.resolve(ui.style()));
-    let galley = elided(ui, c.label, font, text, width);
-    painter.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, text);
+    if let Some(shaped) = text::layout(ui.ctx(), c.label, &font, Some(width), true) {
+        let x = if crate::i18n::locale(ui.ctx()) == crate::i18n::Locale::Ar {
+            rect.right() - look.pad_x - shaped.size().x
+        } else {
+            x
+        };
+        text::paint(&painter, egui::pos2(x, rect.center().y - shaped.size().y / 2.0), &shaped, text);
+    }
     let label = reason.map_or_else(|| c.label.to_string(), |r| format!("{} — {r}", c.label));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label.as_str()));
     let activated = enabled && (response.clicked_by(PointerButton::Primary) || (!c.pointer_only && response.clicked()));
@@ -608,22 +637,25 @@ pub fn text_dropdown(
         egui::StrokeKind::Middle,
     );
     let color = if enabled { t::TEXT } else { t::DISABLED };
-    let galley = elided(ui, value, egui::FontId::proportional(12.5), color, width - t::ICON_SM - 20.0);
-    ui.painter().galley(egui::pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0), galley, color);
+    let translated = crate::i18n::translate(ui.ctx(), value);
+    let galley = elided(ui, &translated, egui::FontId::proportional(12.5), color, width - t::ICON_SM - 20.0);
+    let x = if crate::i18n::locale(ui.ctx()) == crate::i18n::Locale::Ar {
+        rect.right() - t::ICON_SM - 10.0 - galley.size().x
+    } else {
+        rect.left() + 10.0
+    };
+    ui.painter().shaped_galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, color);
     let chevron = rect.right_center() - egui::vec2(10.0 + t::ICON_SM / 2.0, 0.0);
     Icon::ChevronDown.paint(ui.painter(), chevron, t::ICON_SM, t::MUTED);
     if response.clicked() && enabled {
         toggle_menu_below(ui.ctx(), id, rect);
         let _ = menu(ui.ctx(), id, &entries);
     }
-    response.on_hover_text(tooltip);
+    response.shaped_hover_text(tooltip);
     chosen
 }
 
 /// Informational text with explicit kit typography and ink.
 pub fn text(ui: &mut Ui, text: &str, font: egui::FontId, ink: Color32) -> Response {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, ink);
-    let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
-    ui.painter().galley(rect.min, galley, ink);
-    response
+    self::text::label(ui, text, font, ink)
 }

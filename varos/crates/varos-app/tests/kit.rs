@@ -21,6 +21,7 @@ fn input(ppp: f32, events: Vec<Event>) -> RawInput {
 }
 fn context(ppp: f32) -> Context {
     let ctx = Context::default();
+    kit::text::enable_trace(&ctx);
     fonts::install(&ctx);
     tokens::apply(&ctx);
     for theme in [egui::Theme::Dark, egui::Theme::Light] {
@@ -119,10 +120,8 @@ fn disabled_number_field_is_inert_skipped_transparent_and_explains_why() {
 
     let mut tooltip_seen = false;
     for time in [5.0, 6.0] {
-        let (_, out) = number_frame(&ctx, vec![Event::PointerMoved(at)], time);
-        tooltip_seen |= out.shapes.iter().any(
-            |shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("Nothing to scale")),
-        );
+        let (_, _out) = number_frame(&ctx, vec![Event::PointerMoved(at)], time);
+        tooltip_seen |= kit::text::paint_records(&ctx).iter().any(|r| r.text.contains("Nothing to scale"));
     }
     assert!(tooltip_seen, "the disabled field must retain its reason tooltip");
 }
@@ -218,7 +217,7 @@ fn tab_navigation_skips_disabled_and_ids_survive_row_reordering() {
         let ctx = context(ppp);
         let draw = |events, reverse: bool| {
             let mut rows = vec![];
-            let out = ctx.run_ui(input(ppp, events), |ui| {
+            let _out = ctx.run_ui(input(ppp, events), |ui| {
                 let order = if reverse { ["b", "disabled", "a"] } else { ["a", "disabled", "b"] };
                 for name in order {
                     let mut c = Control::new(Id::new(name), name);
@@ -232,13 +231,9 @@ fn tab_navigation_skips_disabled_and_ids_survive_row_reordering() {
                     ));
                 }
             });
-            let texts: Vec<_> = out
-                .shapes
-                .iter()
-                .filter_map(|shape| if let egui::Shape::Text(text) = &shape.shape { Some(text) } else { None })
-                .collect();
-            assert!(texts.iter().any(|text| text.galley.elided), "long paths need visible ellipsis");
-            assert!(texts.iter().all(|text| text.pos.x + text.galley.size().x <= 360.0));
+            let texts = kit::text::paint_records(&ctx);
+            assert!(texts.iter().any(|text| text.elided), "long paths need visible ellipsis");
+            assert!(texts.iter().all(|text| text.rect.right() <= 360.0));
             rows
         };
         let rows = draw(vec![], false);
@@ -448,15 +443,8 @@ fn panel_icon_segments_have_lifted_targets_tooltips_and_a_232_pt_harmony_track()
             assert_eq!(draw(pointer(pos, false)).0, Some(i));
             time.set(time.get() + 1.0);
             draw(vec![Event::PointerMoved(rects[i].center())]);
-            let (_, _, _, out) = draw(vec![]);
-            assert!(
-                out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == *name)),
-                "missing tooltip {name}: {:?}",
-                out.shapes
-                    .iter()
-                    .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text()) } else { None })
-                    .collect::<Vec<_>>()
-            );
+            let (_, _, _, _out) = draw(vec![]);
+            assert!(kit::text::paint_records(&ctx).iter().any(|r| r.text == *name), "missing tooltip {name}");
         }
     }
 }

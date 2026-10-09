@@ -13,3 +13,7 @@ pub mod start;
 pub mod start_page;
 /// App-owned storage: data-root resolver, durable writer, checksums, time text (DFS S2/S3).
 pub mod storage;
+
+// ---- Lane F ----
+pub mod i18n;
+// ---- end Lane F ----

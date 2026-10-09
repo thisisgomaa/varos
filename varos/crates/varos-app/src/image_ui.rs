@@ -1,4 +1,7 @@
 //! Provisional Links home, using the existing shell kit. Owner design review pending.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use crate::{
     app_command::{AppCommand, SessionId},
     image_workflows::Action,
@@ -66,14 +69,14 @@ pub fn panel(ui: &mut egui::Ui, ed: &Editor, sid: Option<SessionId>, commands: &
     if button(ui, "Place image…") {
         commands.push(AppCommand::PlaceDialog(sid));
     }
-    ui.label("Embed is the default. Missing originals retain accepted pixels.");
+    ui.shaped_label("Embed is the default. Missing originals retain accepted pixels.");
     if ed.doc.images.is_empty() {
-        ui.label("Place or drop an image to manage its source here.");
+        ui.shaped_label("Place or drop an image to manage its source here.");
     }
     for i in &ed.doc.images {
         ui.push_id((sid.0, i.id), |ui| {
             let name = i.link.as_ref().map(|l| l.absolute.as_str()).unwrap_or("Embedded bitmap");
-            ui.label(name);
+            ui.shaped_label(name);
             let status_key = ui.id().with("link-status");
             if button(ui, "Check source status") {
                 let status = varos_core::images::links::status(i, &ed.blobs);
@@ -84,10 +87,10 @@ pub fn panel(ui: &mut egui::Ui, ed: &Editor, sid: Option<SessionId>, commands: &
                 ui.ctx().data_mut(|d| d.insert_temp(status_key, status.clone()));
                 status
             });
-            ui.label(status);
+            ui.shaped_label(status);
 
             let ppi = i.effective_ppi();
-            ui.label(format!(
+            ui.shaped_label(format!(
                 "{:?} · {} × {} px · {:.0}/{:.0} source ppi · {:.0}/{:.0} effective ppi",
                 i.placement, i.px_w, i.px_h, i.ppi[0], i.ppi[1], ppi[0], ppi[1]
             ));
@@ -306,9 +309,9 @@ pub fn draw(
         .show(ui, |ui| {
             ui.set_width(t::SLICE4A_TOOLS_HOME_W);
             if matches!(sheet.kind, SheetKind::Place | SheetKind::Crop) {
-                ui.label("Click the canvas for position; drag to set bounds.");
+                ui.shaped_label("Click the canvas for position; drag to set bounds.");
             }
-            ui.label(match sheet.kind {
+            ui.shaped_label(match sheet.kind {
                 SheetKind::Place => "Place image",
                 SheetKind::Crop => "Crop image",
                 SheetKind::Trace => "Image Trace",
@@ -386,7 +389,7 @@ pub fn draw(
                         ) {
                             c.preset = p;
                         }
-                        ui.label("Expands accepted pixels to editable paths; one undo.");
+                        ui.shaped_label("Expands accepted pixels to editable paths; one undo.");
                         if button(ui, "Trace and expand") {
                             commands.push(AppCommand::ImageWorkflow(
                                 sheet.sid,
@@ -419,7 +422,7 @@ pub fn draw(
                     _ => {}
                 }
             } else {
-                ui.label("Select an image first.");
+                ui.shaped_label("Select an image first.");
             }
             if button(ui, "Cancel") {
                 close = true;

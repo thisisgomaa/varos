@@ -1,3 +1,9 @@
+// ---- Lane F: shaped chrome ----
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use varos_app::shell::kit::text::ShapedPainter as _;
+// ---- end Lane F ----
 use super::*;
 
 pub(crate) fn panel_frame(margin: i8) -> egui::Frame {
@@ -79,7 +85,7 @@ pub(crate) fn icon_btn(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, tip
             icon_ink(false, resp.hovered()),
         );
     }
-    resp.on_hover_text(tip).clicked()
+    resp.shaped_hover_text(tip).clicked()
 }
 
 /// A short, full-width hairline divider.
@@ -160,7 +166,7 @@ pub(crate) fn segmented_text(
     let (track, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let frame = kit::board::segmented_frame(ui, id, track, labels, selected, segment, help);
     for (i, label) in labels.iter().enumerate() {
-        ui.painter().text(
+        ui.painter().shaped_text(
             frame.rects[i].center(),
             Align2::CENTER_CENTER,
             *label,
@@ -178,7 +184,7 @@ pub(crate) fn toggle_row(ui: &mut egui::Ui, w: f32, label: &str, on: bool) -> bo
     if resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(R), HOVER);
     }
-    ui.painter().text(
+    ui.painter().shaped_text(
         egui::pos2(rect.left() + 4.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,

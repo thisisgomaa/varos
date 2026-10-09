@@ -1225,6 +1225,7 @@ fn typed_grey_hue_survives_enter_without_document_change() {
 #[test]
 fn web_wheel_paints_hex_without_empty_label_punctuation() {
     let ctx = egui::Context::default();
+    varos_app::shell::kit::text::enable_trace(&ctx);
     varos_app::shell::fonts::install(&ctx);
     t::apply(&ctx);
     let ed = selected(false);
@@ -1232,15 +1233,9 @@ fn web_wheel_paints_hex_without_empty_label_punctuation() {
     let mut m = ColorPanel::new(MTarget::Paint(PaintTarget::Fill), Some([1., 0., 0., 1.]), false);
     m.mode = modes::Mode::Web;
     let _ = ctx.run_ui(RawInput::default(), |ui| wheel::show(ui, &mut m, &snap, &mut vec![]));
-    let output = ctx.run_ui(RawInput::default(), |ui| wheel::show(ui, &mut m, &snap, &mut vec![]));
-    let text: Vec<_> = output
-        .shapes
-        .iter()
-        .filter_map(|s| match &s.shape {
-            egui::Shape::Text(t) => Some(t.galley.job.text.as_str()),
-            _ => None,
-        })
-        .collect();
+    let _output = ctx.run_ui(RawInput::default(), |ui| wheel::show(ui, &mut m, &snap, &mut vec![]));
+    let records = varos_app::shell::kit::text::paint_records(&ctx);
+    let text: Vec<_> = records.iter().map(|r| r.text.as_str()).collect();
     assert!(text.contains(&hex_of(m.color()).as_str()), "{text:?}");
     assert!(!text.contains(&":"));
 }

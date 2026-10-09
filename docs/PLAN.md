@@ -215,3 +215,6 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 9.4 History (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable History, human/agent labels, jump, bounded undo/redo, API 1.2 review/top-agent undo. |
 | 9.5 Actions (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable Actions; supported semantic recording, .vrs-actions load/save, atomic replay, offline CLI apply. |
 | 9.6 Help + Quick Look fallback (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Help/typed Bridge tool; cached PNG embedded in container; native signed QL extension packaging documented and pending. |
+
+<!-- Lane F wave 3 -->
+| 9.8 Arabic UI | implemented (provisional UI, owner design review pending) — see lane REPORT.md for remaining acceptance gaps | uncommitted lane F | ADR-0012 T2/T3 |

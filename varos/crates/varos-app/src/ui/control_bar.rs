@@ -1,3 +1,9 @@
+// ---- Lane F: shaped chrome ----
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use varos_app::shell::kit::text::{ShapedPainter as _, ShapedUi as _};
+// ---- end Lane F ----
 use super::*;
 
 /// HAND 1 — the floating control bar (§4.4/§3.5), BORN in Stage 4. Its CONTENT follows the moment:
@@ -43,7 +49,7 @@ pub(crate) fn board_ctlbar(
                     if s.tool == ToolKind::Artboard {
                         // page mirrors: name · X/Y/W/H · count · Fit
                         let i = ab.active;
-                        ui.label(RichText::new("Artboard").color(MUTED).size(11.5));
+                        ui.shaped_label(RichText::new("Artboard").color(MUTED).size(11.5));
                         control_bar_name(ui, &ab.name, TEXT);
                         bar_sep(ui);
                         let fw = 64.0;
@@ -75,7 +81,7 @@ pub(crate) fn board_ctlbar(
                             ops.push(Op::AbMoveArt(!ab.move_art));
                         }
                         bar_sep(ui);
-                        ui.label(
+                        ui.shaped_label(
                             RichText::new(format!("{} / {}", i + 1, ab.count)).color(MUTED).monospace().size(11.0),
                         );
                         if icon_btn(ui, fit_icon, "Fit in window") {
@@ -165,9 +171,9 @@ pub(crate) fn board_ctlbar(
                     } else {
                         // idle: the current tool + a quiet hint — the bar keeps its place. While the Pen is
                         // mid-draft the hint reflects the ACT, not the (still-empty) selection (P9).
-                        ui.label(RichText::new(crate::tool_name(s.tool)).color(TEXT).size(11.5));
+                        ui.shaped_label(RichText::new(crate::tool_name(s.tool)).color(TEXT).size(11.5));
                         let hint = if s.drawing { "Drawing path\u{2026}" } else { "No selection" };
-                        ui.label(RichText::new(hint).color(MUTED).size(11.5));
+                        ui.shaped_label(RichText::new(hint).color(MUTED).size(11.5));
                     }
                 });
             });
@@ -190,8 +196,8 @@ pub(crate) fn control_bar_name(ui: &mut egui::Ui, name: &str, color: Color32) {
             }
         }
     }
-    ui.painter().text(rect.left_center(), Align2::LEFT_CENTER, shown, font, color);
-    resp.on_hover_text(name);
+    ui.painter().shaped_text(rect.left_center(), Align2::LEFT_CENTER, shown, font, color);
+    resp.shaped_hover_text(name);
 }
 /// 1×16 vertical hairline separator inside the control bar (§3.5 vsep).
 pub(crate) fn bar_sep(ui: &mut egui::Ui) {
@@ -228,7 +234,7 @@ pub(crate) fn ctl_chip(ui: &mut egui::Ui, color: Option<Rgba>, target: PaintTarg
     if resp.double_clicked() {
         ops.push(Op::OpenPicker(MTarget::Paint(target)));
     }
-    resp.on_hover_text(match target {
+    resp.shaped_hover_text(match target {
         PaintTarget::Fill => "Fill",
         PaintTarget::Stroke => "Stroke",
     });
@@ -257,8 +263,8 @@ pub(crate) fn ctl_ab_color(ui: &mut egui::Ui, color: Option<Rgba>, id: u32, ops:
     if resp.clicked() {
         ops.push(Op::OpenMini(id, sw));
     }
-    resp.on_hover_text("Page colour");
-    ui.label(
+    resp.shaped_hover_text("Page colour");
+    ui.shaped_label(
         RichText::new(color.map(hex_of).unwrap_or_else(|| "Transparent".into())).color(TEXT).monospace().size(11.0),
     );
 }
@@ -365,7 +371,7 @@ pub(crate) fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>
             }
         }
     }
-    resp.on_hover_text("Fill / Stroke — click to focus; double-click to edit (X toggles focus)");
+    resp.shaped_hover_text("Fill / Stroke — click to focus; double-click to edit (X toggles focus)");
     // swap (Shift+X): a tiny hand-painted double-headed arrow, top-right
     let swr = egui::Rect::from_min_size(area.min + egui::vec2(20.0, 0.0), egui::vec2(10.0, 10.0));
     let rsw = ui.interact(swr, ui.id().with("fs-swap"), egui::Sense::click());
@@ -381,7 +387,7 @@ pub(crate) fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>
     if rsw.clicked() {
         ops.push(Op::SwapColors);
     }
-    rsw.on_hover_text("Swap fill & stroke (Shift+X)");
+    rsw.shaped_hover_text("Swap fill & stroke (Shift+X)");
     // default (D): the mini white/black pair, bottom-left
     let dfr = egui::Rect::from_min_size(area.min + egui::vec2(0.0, 28.0), egui::vec2(12.0, 12.0));
     let rdf = ui.interact(dfr, ui.id().with("fs-def"), egui::Sense::click());
@@ -404,7 +410,7 @@ pub(crate) fn fill_stroke_control(ui: &mut egui::Ui, s: &Snap, ops: &mut Vec<Op>
     if rdf.clicked() {
         ops.push(Op::DefaultPaint);
     }
-    rdf.on_hover_text("Default colours (D)");
+    rdf.shaped_hover_text("Default colours (D)");
 }
 
 /// One rail slot standing in for all four shape tools. Left-click uses the current shape; right-click
