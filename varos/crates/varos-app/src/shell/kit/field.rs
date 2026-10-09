@@ -17,6 +17,10 @@
 //! Kit rule (K1): no binary types. A field reports values; the caller turns them into commands. The
 //! value a commit would carry right now is reported every frame as [`Edit::pending`], so the host can
 //! commit an open field before a command without running another frame.
+// ---- Lane F: text adapters ----
+use crate::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use crate::shell::kit::text::ShapedPainter as _;
 use std::ops::RangeInclusive;
 
 use egui::text::{CCursor, CCursorRange};
@@ -124,6 +128,7 @@ fn store(ctx: &egui::Context, id: Id, s: Session) {
 }
 /// Close the session on `id` and give up its keyboard.
 fn end(ctx: &egui::Context, id: Id) {
+    super::text::editor::clear(ctx, id);
     ctx.data_mut(|d| {
         d.remove::<Session>(session_key(id));
         d.get_temp_mut_or_default::<Vec<Id>>(open_key()).retain(|o| *o != id);
@@ -142,6 +147,7 @@ fn blocker(ctx: &egui::Context, me: Id) -> Option<Id> {
 }
 
 fn select_all(ctx: &egui::Context, id: Id, text: &str) {
+    super::text::editor::select_all(ctx, id, text);
     let mut st = egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
     st.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(text.chars().count()))));
     st.store(ctx, id);
@@ -259,7 +265,7 @@ fn paint_reason(ui: &Ui, id: Id, rect: Rect, reason: &str) {
     let bg =
         Rect::from_min_size(rect.left_bottom() + egui::vec2(0.0, t::KIT_TEXT_GAP / 2.0), galley.size() + pad * 2.0);
     painter.rect(bg, t::r_ctrl(), t::PANEL, Stroke::new(t::KIT_STROKE, t::ERROR), StrokeKind::Inside);
-    painter.galley(bg.min + pad, galley, t::ERROR);
+    painter.shaped_galley(bg.min + pad, galley, t::ERROR);
 }
 
 /// One frame of an open session after its text edit ran: validate the text and end the session on
@@ -385,16 +391,7 @@ fn edit_text<T: PartialEq>(
     // a multi-row box: Enter is the commit key (it would otherwise insert a line break the text may not hold)
     let enter =
         rows > 1 && ctx.memory(|m| m.has_focus(id)) && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
-    let te = if rows > 1 {
-        egui::TextEdit::multiline(&mut buf).desired_rows(rows).desired_width(inner.width())
-    } else {
-        egui::TextEdit::singleline(&mut buf)
-    };
-    let mut te = te.id(id).frame(egui::Frame::NONE).font(f.font.clone()).text_color(t::TEXT);
-    if !f.hint.is_empty() {
-        te = te.hint_text(f.hint);
-    }
-    ui.put(inner, te);
+    super::text::editor::show(ui, id, inner, &mut buf, f.font.clone(), f.hint, rows > 1);
     if enter {
         ctx.memory_mut(|m| m.surrender_focus(id));
     }
@@ -470,7 +467,7 @@ fn number_field_with(ui: &mut Ui, f: NumberField<'_>, compact: bool, arrow_step:
     match f.label {
         Label::Letter(s) => {
             let at = egui::pos2(row.left() + labw - t::NUM_LABEL_RIGHT_INSET, row.center().y);
-            p.text(at, Align2::RIGHT_CENTER, s, FontId::proportional(t::FIELD_LABEL_TEXT), ink);
+            p.shaped_chrome(at, Align2::RIGHT_CENTER, s, FontId::proportional(t::FIELD_LABEL_TEXT), ink);
         }
         Label::Icon(Some(tex)) => {
             let at = egui::pos2(row.left() + t::NUM_ICON_CENTER_X, row.center().y);
@@ -537,13 +534,25 @@ fn number_field_with(ui: &mut Ui, f: NumberField<'_>, compact: bool, arrow_step:
             out.live = Some(nv);
         }
     }
-    ui.put(
+    if ctx.memory(|m| m.has_focus(id)) {
+        ui.input_mut(|i| {
+            for event in &mut i.events {
+                if let egui::Event::Text(s) | egui::Event::Paste(s) | egui::Event::Ime(egui::ImeEvent::Commit(s)) =
+                    event
+                {
+                    *s = crate::i18n::latin_digits(s);
+                }
+            }
+        });
+    }
+    super::text::editor::show(
+        ui,
+        id,
         bx.shrink2(egui::vec2(t::NUM_INSET_X, t::FIELD_INSET_Y)),
-        egui::TextEdit::singleline(&mut buf)
-            .id(id)
-            .frame(egui::Frame::NONE)
-            .font(t::numeric_value(t::NUM_TEXT))
-            .text_color(t::TEXT),
+        &mut buf,
+        t::numeric_value(t::NUM_TEXT),
+        "",
+        false,
     );
     ctx.memory_mut(|m| {
         m.set_focus_lock_filter(
@@ -573,7 +582,7 @@ fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut E
     let resp: Response = ui.interact(bx, f.id, sense);
     if f.disabled {
         p.rect(bx, t::r_ctrl(), egui::Color32::TRANSPARENT, Stroke::new(t::KIT_STROKE, t::LINE), StrokeKind::Middle);
-        p.text(
+        p.shaped_text(
             if compact { bx.right_center() - egui::vec2(t::NUM_INSET_X, 0.0) } else { bx.center() },
             if compact { Align2::RIGHT_CENTER } else { Align2::CENTER_CENTER },
             shown,
@@ -581,7 +590,7 @@ fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut E
             t::DISABLED,
         );
         if !f.tip.is_empty() {
-            resp.on_hover_text(f.tip).on_disabled_hover_text(f.tip);
+            resp.shaped_hover_text(f.tip).shaped_disabled_hover_text(f.tip);
         }
         return;
     }
@@ -592,7 +601,7 @@ fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut E
     } else {
         p.rect_filled(bx, t::r_ctrl(), t::SURFACE);
     }
-    p.text(
+    p.shaped_text(
         if compact { bx.right_center() - egui::vec2(t::NUM_INSET_X, 0.0) } else { bx.center() },
         if compact { Align2::RIGHT_CENTER } else { Align2::CENTER_CENTER },
         shown,
@@ -619,7 +628,7 @@ fn idle_box(ui: &mut Ui, f: &NumberField<'_>, bx: Rect, shown: &str, out: &mut E
     }
     if !f.tip.is_empty() {
         // disabled fields carry their REASON in `tip`, so show it in both states
-        resp.on_hover_text(f.tip).on_disabled_hover_text(f.tip);
+        resp.shaped_hover_text(f.tip).shaped_disabled_hover_text(f.tip);
     }
 }
 
@@ -637,10 +646,7 @@ pub fn search_field(ui: &mut Ui, id: Id, rect: Rect, text: &mut String, font: Fo
         sess = begin(&ctx, id, text.as_str());
     }
     let tab = if sess.is_some() { take_tab(ui, id) } else { None };
-    let resp = ui.put(
-        rect,
-        egui::TextEdit::singleline(text).id(id).frame(egui::Frame::NONE).hint_text(hint).font(font).text_color(t::TEXT),
-    );
+    let resp = super::text::editor::show(ui, id, rect, text, font, hint, false);
     let sess = sess.or_else(|| ctx.memory(|m| m.has_focus(id)).then(|| Session { arm: false, ..Session::new(text) }));
     if let Some(s) = sess {
         let s = Session { buf: text.clone(), ..s };

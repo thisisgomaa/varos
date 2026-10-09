@@ -1,5 +1,8 @@
 //! Lane D: provisional kit flyouts. Last-used tools are keyed by document + group.
 //! Glyph provenance: existing Lucide registry (ISC) and Varos originals; no reference assets copied.
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
 use super::{Op, ToolKind};
 use varos_app::shell::{
     kit::{self, Control, Icon, IconState},
@@ -110,7 +113,7 @@ pub(crate) fn slot(ui: &mut egui::Ui, group: &[ToolKind], active: ToolKind, ops:
         IconState::Tool(active == state.last),
     );
     if group.len() > 1 {
-        result.response.clone().on_hover_text("Right-click or hold for more tools");
+        result.response.clone().shaped_hover_text("Right-click or hold for more tools");
     }
     let now = ui.input(|i| i.time);
     let down = result.response.is_pointer_button_down_on();

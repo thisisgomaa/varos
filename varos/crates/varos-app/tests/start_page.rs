@@ -37,6 +37,7 @@ fn empty_model() -> StartModel {
 }
 fn context(ppp: f32) -> Context {
     let ctx = Context::default();
+    kit::text::enable_trace(&ctx);
     fonts::install(&ctx);
     t::apply(&ctx);
     for theme in [egui::Theme::Dark, egui::Theme::Light] {
@@ -185,13 +186,9 @@ fn real_fonts_keep_the_mockup_lines_whole() {
     let mut p = Page::new(2.0, egui::vec2(W, H));
     p.page.recovery_status = "Recovery on · copies every 30 seconds".into();
     p.frame(&m, vec![]);
-    let (_, out) = p.frame(&m, vec![]);
-    let galleys: Vec<_> = out
-        .shapes
-        .iter()
-        .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some((t.pos, t.galley.clone())) } else { None })
-        .collect();
-    let find = |s: &str| galleys.iter().find(|(_, g)| g.text() == s).unwrap_or_else(|| panic!("{s:?} not drawn"));
+    let (_, _out) = p.frame(&m, vec![]);
+    let galleys = kit::text::paint_records(&p.ctx);
+    let find = |s: &str| galleys.iter().find(|g| g.text == s).unwrap_or_else(|| panic!("{s:?} not drawn"));
     for s in [
         "New board",
         "Free canvas, no size needed",
@@ -208,23 +205,23 @@ fn real_fonts_keep_the_mockup_lines_whole() {
         "free",
         "Recovery on · copies every 30 seconds",
     ] {
-        let (_, g) = find(s);
-        assert_eq!(g.rows.len(), 1, "{s:?} wraps");
-        assert!(!g.text().contains('…') || s.contains('…'), "{s:?} is cut");
+        let g = find(s);
+        assert_eq!(g.lines, 1, "{s:?} wraps");
+        assert!(!g.elided || s.contains('…'), "{s:?} is cut");
     }
-    assert!(!galleys.iter().any(|(_, g)| g.text().starts_with('+')), "every card shows all its tags (no +n)");
+    assert!(!galleys.iter().any(|g| g.text.starts_with('+')), "every card shows all its tags (no +n)");
     // one word for opening a recovery copy everywhere (owner 2026-10-06): Start's band says Restore too
-    assert!(!galleys.iter().any(|(_, g)| g.text() == "Recover"), "the Recovered band's button reads Restore");
+    assert!(!galleys.iter().any(|g| g.text == "Recover"), "the Recovered band's button reads Restore");
     // the hero sub-label fits inside its button, the shortcut too, with the mockup's paddings
-    let (pos, sub) = find("Free canvas, no size needed");
-    assert!(pos.x + sub.size().x <= 52.0 + 272.0 - 16.0 - 18.0, "sub-label runs into ⌘N");
+    let sub = find("Free canvas, no size needed");
+    assert!(sub.rect.right() <= 52.0 + 272.0 - 16.0 - 18.0, "sub-label runs into ⌘N");
     // every preset size line fits its cell (209.5 wide; checked against the old 167.6 still)
     for s in ["1080 × 1080 px", "1080 × 1350 px", "1080 × 1920 px"] {
-        assert!(find(s).1.size().x < 160.0, "{s} too wide for its cell");
+        assert!(find(s).rect.width() < 160.0, "{s} too wide for its cell");
     }
     // the lede sets in two lines at 500 (the mockup's max-width)
-    let lede = galleys.iter().find(|(_, g)| g.text().starts_with("A board is")).unwrap();
-    assert_eq!(lede.1.rows.len(), 2);
+    let lede = galleys.iter().find(|g| g.text.starts_with("A board is")).unwrap();
+    assert_eq!(lede.lines, 2);
 }
 
 /// The responsive rule at other window sizes: 3…6 columns, cards 272…320 from 3 columns up, the hero
@@ -424,8 +421,8 @@ fn filters_and_no_match_copy_come_from_the_model() {
     let print = p.rect(ids::filter(Some("print")));
     assert!(azure.len() == 1 && print.contains_rect(azure[0]), "the bar sits under the selected tag");
     m.apply(&StartAction::SetTagFilter(Some("absent".into())));
-    let (_, out) = p.frame(&m, vec![]);
-    assert!(texts(&out).iter().any(|s| s == "No boards match. Choose All to see every board."));
+    let (_, _out) = p.frame(&m, vec![]);
+    assert!(texts(&p.ctx).iter().any(|s| s == "No boards match. Choose All to see every board."));
 }
 
 #[test]
@@ -467,8 +464,8 @@ fn missing_card_menu_has_locate_others_only_remove_and_esc_closes() {
     p.click_at(&m, pos, PointerButton::Secondary);
     p.press(&m, Key::ArrowDown);
     assert_eq!(p.press(&m, Key::Enter), [StartAction::RemoveRecent(path(6))]);
-    let (_, out) = p.frame(&m, vec![]);
-    let text = texts(&out);
+    let (_, _out) = p.frame(&m, vec![]);
+    let text = texts(&p.ctx);
     assert!(text.iter().any(|s| s == "Missing") && text.iter().any(|s| s == "File not found"));
     let card3 = &m.cards()[3];
     let same_date = m.cards().iter().filter(|c| !c.missing && c.modified_text == card3.modified_text).count();
@@ -490,8 +487,8 @@ fn first_launch_is_the_centred_empty_page() {
     assert_near("Open…", l.open, r(762.0, 396.0, 272.0, 64.0));
     assert_near("presets", l.presets, r(336.0, 554.0, 840.0, 152.0));
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    let (_, out) = p.frame(&m, vec![]);
-    let text = texts(&out);
+    let (_, _out) = p.frame(&m, vec![]);
+    let text = texts(&p.ctx);
     for s in ["Start with a board", "New board", "Open…", "Return"] {
         assert!(text.iter().any(|t| t == s), "empty page shows {s:?}: {text:?}");
     }
@@ -514,8 +511,8 @@ fn list_view_is_the_numbered_table() {
     assert_near("row 10", l.rows[9], r(52.0, 858.0, 1408.0, 50.0));
     assert_eq!(start_page::list_wide_column(1408.0), 300.0);
     let mut p = Page::new(1.0, egui::vec2(W, H));
-    let (_, out) = p.frame(&m, vec![]);
-    let text = texts(&out);
+    let (_, _out) = p.frame(&m, vec![]);
+    let text = texts(&p.ctx);
     let first_date = m.cards()[0].modified_text.clone();
     for s in ["#", "Name", "Tags", "Folder", "Modified", "1", "10", first_date.as_str()] {
         assert!(text.iter().any(|t| t == s), "list shows {s:?}");
@@ -875,11 +872,8 @@ fn rects(out: &egui::FullOutput) -> Vec<egui::epaint::RectShape> {
 fn accent_stroke(out: &egui::FullOutput) -> bool {
     rects(out).iter().any(|r| r.stroke.color == t::ACCENT && r.stroke.width > 0.0)
 }
-fn texts(out: &egui::FullOutput) -> Vec<String> {
-    out.shapes
-        .iter()
-        .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text().to_string()) } else { None })
-        .collect()
+fn texts(ctx: &Context) -> Vec<String> {
+    kit::text::paint_records(ctx).into_iter().map(|r| r.text).collect()
 }
 
 // ───────────────────────────── CPU snapshot (tests only) ─────────────────────────────
@@ -1141,8 +1135,8 @@ fn recovery_status_paints_the_current_host_footer_instead_of_a_fixed_claim() {
         "Recovery unavailable. Save your document regularly.",
     ] {
         p.page.recovery_status = footer.into();
-        let (_, out) = p.frame(&m, vec![]);
-        let painted = texts(&out);
+        let (_, _out) = p.frame(&m, vec![]);
+        let painted = texts(&p.ctx);
         assert!(painted.iter().any(|s| s == footer), "{painted:?}");
         for other in ["Recovery on · copies every 30 seconds", "Recovery is off. Save regularly to keep your work."] {
             if other != footer {

@@ -1,3 +1,6 @@
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedPainter as _;
+// ---- end Lane F ----
 use super::*;
 
 // ───────────────────────────── rulers ─────────────────────────────
@@ -79,7 +82,7 @@ pub(crate) fn board_rulers(
                 ),
             );
             if big {
-                p.text(
+                p.shaped_text(
                     egui::pos2(sx + 2.5, r.top() + 1.0),
                     Align2::LEFT_TOP,
                     fmt_ruler(val, grid, dec),
@@ -241,7 +244,7 @@ pub(crate) fn build_snap_hud(
     let rect = egui::Rect::from_min_size(anchor, galley.size() + egui::vec2(14.0, 7.0));
     p.rect_filled(rect, CornerRadius::same(R), SOLID_PANEL);
     p.rect_stroke(rect, CornerRadius::same(R), Stroke::new(1.0, BORDER), StrokeKind::Middle);
-    p.text(rect.center(), Align2::CENTER_CENTER, text, font, TEXT);
+    p.shaped_text(rect.center(), Align2::CENTER_CENTER, text, font, TEXT);
 }
 
 // on-canvas overlays are CONFINED to the Board hole (Ahmed 07-07)
@@ -292,7 +295,7 @@ pub(crate) fn paint_agent_presence(
                 );
                 painter.rect_filled(chip, CornerRadius::same(R), SOLID_PANEL);
                 painter.rect_stroke(chip, CornerRadius::same(R), Stroke::new(KIT_STROKE, AGENT), StrokeKind::Inside);
-                painter.galley(
+                painter.shaped_galley(
                     egui::pos2(chip.left() + AGENT_LABEL_PAD, chip.center().y - galley.size().y / 2.0),
                     galley,
                     TEXT,

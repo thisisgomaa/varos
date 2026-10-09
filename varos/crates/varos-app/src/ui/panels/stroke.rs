@@ -1,5 +1,8 @@
 //! Properties is the Stroke home; the control bar mirrors these same checked commands.
 //! Provisional kit composition, owner design review pending. No new shortcuts or visual primitives.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::super::*;
 use varos_app::shell::tokens::{
     STROKE_CHOICE_W, STROKE_MIRROR_WEIGHT_W, STROKE_POPUP_H, STROKE_POPUP_MARGIN, STROKE_POPUP_W,
@@ -45,7 +48,14 @@ impl StrokeNumberGesture {
 fn choice(ui: &mut egui::Ui, key: &str, label: &str, names: &[&str], selected: usize) -> Option<usize> {
     let id = doc_id(ui, key);
     let value = names.get(selected).copied().unwrap_or("Mixed");
-    let text = format!("{label}: {value}");
+    let text = varos_app::i18n::message(
+        ui.ctx(),
+        "{label}: {value}",
+        &[
+            ("label", &varos_app::i18n::translate(ui.ctx(), label)),
+            ("value", &varos_app::i18n::translate(ui.ctx(), value)),
+        ],
+    );
     kit::text_dropdown(ui, id, &text, names, STROKE_CHOICE_W, label)
 }
 #[allow(clippy::too_many_arguments)]
@@ -62,7 +72,7 @@ fn number(
     change: impl Fn(&mut StrokeStyle, f32),
 ) {
     ui.vertical(|ui| {
-        ui.label(micro_label(tip));
+        ui.shaped_label(micro_label(tip));
         use varos_app::shell::kit::field::{self as kf, NumberField};
         // Keep numeric gestures local until release/commit: one checked batch, one undo step.
         let id = doc_id(ui, ("p2-stroke-number", kf::home(ui), tip));
@@ -140,7 +150,7 @@ pub(crate) fn stroke_section(ui: &mut egui::Ui, s: &Snap, ic: &DockIcons, w: f32
         return;
     }
     if s.stroke_style_mixed {
-        ui.label(micro_label("MIXED STYLES"));
+        ui.shaped_label(micro_label("MIXED STYLES"));
     }
     let style = &s.stroke_style;
     // Show mixed state without assigning a representative object's unrelated fields to its peers.
@@ -214,7 +224,17 @@ pub(crate) fn stroke_section(ui: &mut egui::Ui, s: &Snap, ic: &DockIcons, w: f32
                 ui.horizontal(|ui| {
                     for side in 0..2 {
                         let index = pair * 2 + side;
-                        let tip = format!("{} {}", if side == 0 { "Dash" } else { "Gap" }, pair + 1);
+                        let tip = varos_app::i18n::message(
+                            ui.ctx(),
+                            "{label} {number}",
+                            &[
+                                (
+                                    "label",
+                                    &varos_app::i18n::translate(ui.ctx(), if side == 0 { "Dash" } else { "Gap" }),
+                                ),
+                                ("number", &(pair + 1).to_string()),
+                            ],
+                        );
                         number(
                             ui,
                             (w - PANEL_ITEM_GAP_X) * 0.5,
@@ -327,18 +347,18 @@ pub(crate) fn stroke_section(ui: &mut egui::Ui, s: &Snap, ic: &DockIcons, w: f32
         });
     });
     if s.stroke_open && style.align != StrokeAlign::Center {
-        ui.label(micro_label("OPEN PATHS USE CENTER"));
+        ui.shaped_label(micro_label("OPEN PATHS USE CENTER"));
     }
     if s.stroke_no_tangent && (style.arrows.start.is_some() || style.arrows.end.is_some()) {
-        ui.label(micro_label("POINTS IGNORE ARROWHEADS"));
+        ui.shaped_label(micro_label("POINTS IGNORE ARROWHEADS"));
     }
     if s.stroke_closed && (style.arrows.start.is_some() || style.arrows.end.is_some()) {
-        ui.label(micro_label("CLOSED PATHS IGNORE HEADS"));
+        ui.shaped_label(micro_label("CLOSED PATHS IGNORE HEADS"));
     }
 }
 pub(crate) fn stroke_mirror(ui: &mut egui::Ui, s: &Snap, ic: &DockIcons, ops: &mut Vec<Op>) {
     if s.stroke_style_mixed {
-        ui.label(micro_label("MIXED STYLES"));
+        ui.shaped_label(micro_label("MIXED STYLES"));
     }
     let style = &s.stroke_style;
     fields::num(
@@ -422,7 +442,7 @@ pub(crate) fn stroke_mirror(ui: &mut egui::Ui, s: &Snap, ic: &DockIcons, ops: &m
             |ui| {
                 panel_frame(STROKE_POPUP_MARGIN).show(ui, |ui| {
                     ui.set_width(STROKE_POPUP_W);
-                    ui.label(panel_title("Stroke"));
+                    ui.shaped_label(panel_title("Stroke"));
                     egui::ScrollArea::vertical().id_salt(owner).max_height(STROKE_POPUP_H).show(ui, |ui| {
                         let disclosure = doc_id(ui, "stroke-style-disclosure");
                         ui.ctx().data_mut(|d| d.insert_temp(disclosure, true));

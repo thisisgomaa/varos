@@ -1,0 +1,598 @@
++ Add	+ Add
++N	+N
+30–1800 seconds	30–1800 seconds
+<Group>	<Group>
+<Path>	<Path>
+A .vrs file from disk	A .vrs file from disk
+A board is a free canvas with a name, a short description and tags. Artboards inside are optional — add one when a piece needs a fixed size.	A board is a free canvas with a name, a short description and tags. Artboards inside are optional — add one when a piece needs a fixed size.
+A file was cancelled or failed; files already exported remain in the folder.	A file was cancelled or failed; files already exported remain in the folder.
+A name can't be empty	A name can't be empty
+ALIGN OBJECTS	ALIGN OBJECTS
+ALIGN TO	ALIGN TO
+APPEARANCE	APPEARANCE
+ARTBOARD CLIP	ARTBOARD CLIP
+About Varos	About Varos
+Actions	Actions
+Actions…	Actions…
+Active adapter: {adapter}	Active adapter: {adapter}
+Active artboard	Active artboard
+Actual Size	Actual Size
+Add Anchor	Add Anchor
+Add Anchor Points	Add Anchor Points
+After inactivity (seconds)	After inactivity (seconds)
+Align	Align
+Align centre	Align centre
+Align left	Align left
+Align middle	Align middle
+Align right	Align right
+Align to: Artboard	Align to: Artboard
+Align to: Artboard — Align each object to the active artboard's edges	Align to: Artboard — Align each object to the active artboard's edges
+Align to: Auto	Align to: Auto
+Align to: Auto — Smart default: many objects align to each other; a single object or group aligns to the artboard	Align to: Auto — Smart default: many objects align to each other; a single object or group aligns to the artboard
+Align to: Key Object — last clicked selected object	Align to: Key Object — last clicked selected object
+Align to: Selection — Align objects within the selection's combined bounds	Align to: Selection — Align objects within the selection's combined bounds
+Align to: Selection — within the selection's combined bounds	Align to: Selection — within the selection's combined bounds
+Alignment	Alignment
+Alignment Guides	Alignment Guides
+All	All
+All artboards	All artboards
+All on Active Artboard	All on Active Artboard
+Already at the end of the artboard order	Already at the end of the artboard order
+An export of this document is still running.	An export of this document is still running.
+Anchor Point	Anchor Point
+Angle °	Angle °
+Appearance	Appearance
+Apply	Apply
+Apply crop	Apply crop
+Apply discards {discarded} retained history steps	Apply discards {discarded} retained history steps
+Apply raster effects PPI	Apply raster effects PPI
+Apply transform	Apply transform
+Arrange	Arrange
+Artboard	Artboard
+Artboard count	Artboard count
+Artboard presets	Artboard presets
+Artboards	Artboards
+Artwork bounds	Artwork bounds
+Assets	Assets
+Auto	Auto
+Autosave to file	Autosave to file
+Average	Average
+Axis °	Axis °
+Background: transparent	Background: transparent
+Background: white	Background: white
+Balanced	Balanced
+Black and white	Black and white
+Board	Board
+Board actions	Board actions
+Bring All to Front	Bring All to Front
+Bring Forward	Bring Forward
+Bring to Front	Bring to Front
+Brush radius	Brush radius
+By format	By format
+By scale	By scale
+Cancel	Cancel
+Cancel / Close	Cancel / Close
+Canvas Colour: Dark	Canvas Colour: Dark
+Canvas Colour: Light	Canvas Colour: Light
+Canvas Colour: Medium	Canvas Colour: Medium
+Canvas colour	Canvas colour
+Canvas shortcuts; text fields retain their native editing keys.	Canvas shortcuts; text fields retain their native editing keys.
+Centre	Centre
+Change this panel to…	Change this panel to…
+Check source status	Check source status
+Choose an absolute folder path.	Choose an absolute folder path.
+Choose an export folder.	Choose an export folder.
+Choose export folder	Choose export folder
+Choose image…	Choose image…
+Choose scale or ppi, not both.	Choose scale or ppi, not both.
+Clean Up	Clean Up
+Clear Guides	Clear Guides
+Clear Menu	Clear Menu
+Click the canvas for position; drag to set bounds.	Click the canvas for position; drag to set bounds.
+Clip to artboard	Clip to artboard
+Clip to artboard — off lets this object bleed	Clip to artboard — off lets this object bleed
+Clip to page	Clip to page
+Clipping Mask	Clipping Mask
+Clipping Mask > Make	Clipping Mask > Make
+Clipping Mask > Release	Clipping Mask > Release
+Close	Close
+Close All	Close All
+Close Tab	Close Tab
+Collect in New Layer	Collect in New Layer
+Colour	Colour
+Colour RGB	Colour RGB
+Colour mode	Colour mode
+Colour tolerance	Colour tolerance
+Compound Path	Compound Path
+Compress streams	Compress streams
+Continue distance	Continue distance
+Control bar	Control bar
+Copy	Copy
+Corner radius	Corner radius
+Create	Create
+Create an artboard to set bleed.	Create an artboard to set bleed.
+Crop	Crop
+Crop Image…	Crop Image…
+Crop image	Crop image
+Crop marks	Crop marks
+Crop to bounds	Crop to bounds
+Cut	Cut
+DISTRIBUTE	DISTRIBUTE
+DISTRIBUTE SPACING	DISTRIBUTE SPACING
+DOCUMENT	DOCUMENT
+Default Paint	Default Paint
+Default colours (D)	Default colours (D)
+Default units	Default units
+Delete	Delete
+Delete Anchor	Delete Anchor
+Description	Description
+Deselect	Deselect
+Deselect/Cancel	Deselect/Cancel
+Direct Selection	Direct Selection
+Direction	Direction
+Discard Recording	Discard Recording
+Display	Display
+Distribute	Distribute
+Divide	Divide
+Divide Objects Below	Divide Objects Below
+Document Info	Document Info
+Document Setup	Document Setup
+Document Setup…	Document Setup…
+Document units	Document units
+Done	Done
+Double-click to rename	Double-click to rename
+Drawing path…	Drawing path…
+Duplicate	Duplicate
+EXPORT TO	EXPORT TO
+Earliest retained state	Earliest retained state
+Edit	Edit
+Edit artboards ⇧O	Edit artboards ⇧O
+Effect	Effect
+Effective launch hint: {effective}; requested: {requested}. Restart required.	Effective launch hint: {effective}; requested: {requested}. Restart required.
+Ellipse	Ellipse
+Embed is the default. Missing originals retain accepted pixels.	Embed is the default. Missing originals retain accepted pixels.
+Embedded bitmap	Embedded bitmap
+Enter Full Screen	Enter Full Screen
+Enter a key	Enter a key
+Enter a length in pt, px, pc, mm, cm or in	Enter a length in pt, px, pc, mm, cm or in
+Enter a number	Enter a number
+Eraser	Eraser
+Exit isolation (Esc)	Exit isolation (Esc)
+Expand	Expand
+Expand Transform	Expand Transform
+Expands accepted pixels to editable paths; one undo.	Expands accepted pixels to editable paths; one undo.
+Export	Export
+Export Selection…	Export Selection…
+Export cancelled. Nothing was written.	Export cancelled. Nothing was written.
+Export for Screens	Export for Screens
+Export scale	Export scale
+Export {count} files	Export {count} files
+Export…	Export…
+Eyedropper	Eyedropper
+Fidelity (canvas units)	Fidelity (canvas units)
+File	File
+File not found	File not found
+Fill	Fill
+Fill & Stroke	Fill & Stroke
+Fill / Stroke — click to focus; double-click to edit (X toggles focus)	Fill / Stroke — click to focus; double-click to edit (X toggles focus)
+Fill Color	Fill Color
+Filter layers by kind	Filter layers by kind
+Finish	Finish
+Finish valid field edits before Apply	Finish valid field edits before Apply
+Fit	Fit
+Fit All	Fit All
+Fit Artboard	Fit Artboard
+Fit Artboard in Window	Fit Artboard in Window
+Fit in Window	Fit in Window
+Fit in window	Fit in window
+Flatten Artwork	Flatten Artwork
+Flip gradient	Flip gradient
+Font discovery failed	Font discovery failed
+Font family	Font family
+Font size	Font size
+Fonts: —	Fonts: —
+For sharing. Editable Varos data is not included.	For sharing. Editable Varos data is not included.
+Format options	Format options
+Free Transform	Free Transform
+Free canvas, no size needed	Free canvas, no size needed
+Freehand options	Freehand options
+From centre	From centre
+General	General
+Geometric Guides	Geometric Guides
+Go To	Go To
+Gradient spread	Gradient spread
+Gradient type	Gradient type
+Graphics processor	Graphics processor
+Grid	Grid
+Grid dots — always shown (no switch yet)	Grid dots — always shown (no switch yet)
+Grid spacing	Grid spacing
+Grid subdivisions	Grid subdivisions
+Group	Group
+Groups	Groups
+Guide position	Guide position
+Guides	Guides
+Guides ⌘;	Guides ⌘;
+Hand	Hand
+Height	Height
+Height: nothing to scale (the selected anchors have no vertical extent)	Height: nothing to scale (the selected anchors have no vertical extent)
+Help	Help
+Hidden tabs	Hidden tabs
+Hide	Hide
+Hide Others	Hide Others
+Hide Varos	Hide Varos
+History	History
+History steps	History steps
+Home	Home
+Horizontal %	Horizontal %
+Image	Image
+Image Trace	Image Trace
+Image Trace preset	Image Trace preset
+Image Trace → editable paths	Image Trace → editable paths
+Image Trace…	Image Trace…
+Image ppi: no raster content. Colour bars and PDF/X come later.	Image ppi: no raster content. Colour bars and PDF/X come later.
+Include IDs	Include IDs
+Include artboard colour	Include artboard colour
+Include bleed	Include bleed
+Inline styling	Inline styling
+Inner / outer	Inner / outer
+Interface	Interface
+Invalid artboard id.	Invalid artboard id.
+Invalid or reserved chord	Invalid or reserved chord
+Inverse	Inverse
+JPEG quality 0–100	JPEG quality 0–100
+Join	Join
+Justify	Justify
+Kashida	Kashida
+Keeps separate recovery copies	Keeps separate recovery copies
+Keyboard Shortcuts	Keyboard Shortcuts
+Keyboard Shortcuts…	Keyboard Shortcuts…
+Keyboard increment (pt)	Keyboard increment (pt)
+Keyboard shortcuts	Keyboard shortcuts
+Landscape	Landscape
+Language	Language
+Lasso	Lasso
+Layers	Layers
+Left	Left
+Left to right	Left to right
+Letter spacing	Letter spacing
+Letter spacing (Arabic: 0)	Letter spacing (Arabic: 0)
+Line height	Line height
+Link bleed edges	Link bleed edges
+Links	Links
+Links: —	Links: —
+Load .vrs-actions…	Load .vrs-actions…
+Locate Object	Locate Object
+Locate or remove from Recent	Locate or remove from Recent
+Lock	Lock
+Lock Guides	Lock Guides
+Lock Others	Lock Others
+Lock guides ⌥⌘;	Lock guides ⌥⌘;
+Lock/Unlock	Lock/Unlock
+Lock/Unlock board	Lock/Unlock board
+Magic Wand	Magic Wand
+Make	Make
+Make Guides	Make Guides
+Make landscape	Make landscape
+Make portrait	Make portrait
+Match fill	Match fill
+Match opacity	Match opacity
+Match stroke	Match stroke
+Match weight	Match weight
+Merge	Merge
+Merge Selected Layers	Merge Selected Layers
+Minimal	Minimal
+Minimize	Minimize
+Minus Back	Minus Back
+Missing: {font}	Missing: {font}
+Mixed	Mixed
+More tags	More tags
+Move Whole Pixels	Move Whole Pixels
+Move X	Move X
+Move Y	Move Y
+Move artwork with artboard	Move artwork with artboard
+N anchors	N anchors
+Name	Name
+Navigator	Navigator
+New	New
+New Document	New Document
+New Layer	New Layer
+New Sublayer	New Sublayer
+New blank documents	New blank documents
+New board	New board
+New document	New document
+New from Template…	New from Template…
+New…	New…
+Next Document	Next Document
+Next Object Above	Next Object Above
+Next Object Below	Next Object Below
+Next artboard	Next artboard
+Next nudge; Shift ×10; px = pt at 72 ppi	Next nudge; Shift ×10; px = pt at 72 ppi
+Next settled history boundary; older steps are discarded	Next settled history boundary; older steps are discarded
+No artboard in this direction	No artboard in this direction
+No artboard to change	No artboard to change
+No artboard to clip	No artboard to clip
+No artboard to fit	No artboard to fit
+No artboards	No artboards
+No bleed set	No bleed set
+No colours yet	No colours yet
+No harmony	No harmony
+No layers yet	No layers yet
+No matching layers	No matching layers
+No path separators	No path separators
+No recent boards yet.	No recent boards yet.
+No recent documents	No recent documents
+No selection	No selection
+No sub-folders	No sub-folders
+No undo steps	No undo steps
+None Paint	None Paint
+Nothing to export	Nothing to export
+Nothing to export.	Nothing to export.
+Nudge Down	Nudge Down
+Nudge Down ×10	Nudge Down ×10
+Nudge Left	Nudge Left
+Nudge Left ×10	Nudge Left ×10
+Nudge Right	Nudge Right
+Nudge Right ×10	Nudge Right ×10
+Nudge Up	Nudge Up
+Nudge Up ×10	Nudge Up ×10
+Object	Object
+Off	Off
+Offset Path	Offset Path
+Offset Path…	Offset Path…
+On	On
+Opacity	Opacity
+Opacity %	Opacity %
+Opacity tolerance	Opacity tolerance
+Open	Open
+Open Recent	Open Recent
+Open a document first.	Open a document first.
+Open a document to record or replay	Open a document to record or replay
+Open board	Open board
+Open file	Open file
+Open folder after export	Open folder after export
+Opening…	Opening…
+Open…	Open…
+Outline	Outline
+Outline (primary-click to restore Preview)	Outline (primary-click to restore Preview)
+Outline Stroke	Outline Stroke
+Overset text	Overset text
+PDF options…	PDF options…
+PDF pages	PDF pages
+PDF: per artboard	PDF: per artboard
+PDF: single file	PDF: single file
+PDF…	PDF…
+Package…	Package…
+Page colour	Page colour
+Page information	Page information
+Paste	Paste
+Paste Remembers Layers	Paste Remembers Layers
+Paste in Place	Paste in Place
+Pasteboard only; artboards and export unchanged	Pasteboard only; artboards and export unchanged
+Path	Path
+Path Eraser	Path Eraser
+Pathfinder	Pathfinder
+Paths	Paths
+Pen	Pen
+Performance	Performance
+Pick fill	Pick fill
+Pick opacity	Pick opacity
+Pick stroke	Pick stroke
+Pick weight	Pick weight
+Pixel Preview	Pixel Preview
+Pixels per inch	Pixels per inch
+Place artwork…	Place artwork…
+Place image	Place image
+Place image…	Place image…
+Place or drop an image to manage its source here.	Place or drop an image to manage its source here.
+Placement: Embed	Placement: Embed
+Placement: Link	Placement: Link
+Place…	Place…
+Polar Grid	Polar Grid
+Portrait	Portrait
+Preferences	Preferences
+Preferences…	Preferences…
+Presentation Mode	Presentation Mode
+Presets…	Presets…
+Previous Document	Previous Document
+Previous artboard	Previous artboard
+Printing is currently available on macOS only.	Printing is currently available on macOS only.
+Print…	Print…
+Properties	Properties
+Quit Varos	Quit Varos
+Range (empty = All)	Range (empty = All)
+Raster content only; this document has no raster content.	Raster content only; this document has no raster content.
+Raster effects PPI	Raster effects PPI
+Rasterize…	Rasterize…
+Recent	Recent
+Recent / Board / Document colours	Recent / Board / Document colours
+Recent boards	Recent boards
+Recent colour — empty	Recent colour — empty
+Reconcile disk before retry	Reconcile disk before retry
+Records committed moves, paint, opacity, stroke width, rotation, delete, group and ungroup. Replay binds the current selection; file and UI commands are excluded.	Records committed moves, paint, opacity, stroke width, rotation, delete, group and ungroup. Replay binds the current selection; file and UI commands are excluded.
+Recovered 1 unsaved copy	Recovered 1 unsaved copy
+Recovered N unsaved copies	Recovered N unsaved copies
+Recovered N unsaved copies  from your last session	Recovered N unsaved copies  from your last session
+Recovered copies	Recovered copies
+Recovery (all documents)	Recovery (all documents)
+Recovery copies	Recovery copies
+Recovery on	Recovery on
+Rectangle	Rectangle
+Rectangular Grid	Rectangular Grid
+Redo	Redo
+Reflect axis °	Reflect axis °
+Reflect…	Reflect…
+Registration marks	Registration marks
+Release	Release
+Release Guides	Release Guides
+Release to Layers (Build)	Release to Layers (Build)
+Release to Layers (Sequence)	Release to Layers (Sequence)
+Remove from Recent	Remove from Recent
+Remove {name}	Remove {name}
+Rename	Rename
+Replay	Replay
+Report a problem	Report a problem
+Requested catalog unavailable; English fallback. Choose System or English to change it.	Requested catalog unavailable; English fallback. Choose System or English to change it.
+Reselect	Reselect
+Reset layout	Reset layout
+Reset to Defaults	Reset to Defaults
+Reset to Illustrator defaults	Reset to Illustrator defaults
+Restart required; System falls back to English	Restart required; System falls back to English
+Restart required; adapter hint	Restart required; adapter hint
+Retry	Retry
+Reverse Path Direction	Reverse Path Direction
+Revert	Revert
+Revert needs a saved document with unsaved changes.	Revert needs a saved document with unsaved changes.
+Right	Right
+Right to left	Right to left
+Right-click or hold for more tools	Right-click or hold for more tools
+Rotate gradient 90 degrees	Rotate gradient 90 degrees
+Rotate…	Rotate…
+Rotation °	Rotation °
+Rounded Rectangle	Rounded Rectangle
+Rulers	Rulers
+Rulers ⌘R	Rulers ⌘R
+SHAPE	SHAPE
+SHAPE MODES	SHAPE MODES
+SIZE	SIZE
+SVG decimal precision	SVG decimal precision
+SVG options…	SVG options…
+Same	Same
+Save	Save
+Save .vrs-actions…	Save .vrs-actions…
+Save As…	Save As…
+Save a Copy…	Save a Copy…
+Save as Template…	Save as Template…
+Save document	Save document
+Saves changes to the open file	Saves changes to the open file
+Saves changes to the open file. Recovery copies are off.	Saves changes to the open file. Recovery copies are off.
+Saves changes to the open file. Recovery copies stay on.	Saves changes to the open file. Recovery copies stay on.
+Saving	Saving
+Scale · Suffix · Format · ×	Scale · Suffix · Format · ×
+Scale…	Scale…
+Scissors	Scissors
+Search	Search
+Search commands	Search commands
+Search layers	Search layers
+Select	Select
+Select (V) · No selection	Select (V) · No selection
+Select All	Select All
+Select a card to export.	Select a card to export.
+Select an image first.	Select an image first.
+Select artwork for this clipping command.	Select artwork for this clipping command.
+Select artwork to apply a gradient	Select artwork to apply a gradient
+Select something to export it.	Select something to export it.
+Selected {count} · {count} files	Selected {count} · {count} files
+Selection	Selection
+Selection PDFs export as separate files to preserve each asset	Selection PDFs export as separate files to preserve each asset
+Send Backward	Send Backward
+Send to Back	Send to Back
+Send to Current Layer	Send to Current Layer
+Services	Services
+Shape Builder	Shape Builder
+Shear °	Shear °
+Shear…	Shear…
+Shortcut file damaged; original retained	Shortcut file damaged; original retained
+Shortcut file exceeds 64 KiB	Shortcut file exceeds 64 KiB
+Shortcuts	Shortcuts
+Shortcuts changed on disk; reopen the draft	Shortcuts changed on disk; reopen the draft
+Show All	Show All
+Show Grid	Show Grid
+Show in Finder	Show in Finder
+Show/Hide (primary-click for Outline)	Show/Hide (primary-click for Outline)
+Show/Hide board	Show/Hide board
+Size: natural physical size	Size: natural physical size
+Size: specified bounds	Size: specified bounds
+Smart Guides	Smart Guides
+Smart guides ⌘U	Smart guides ⌘U
+Snap to Grid	Snap to Grid
+Snap to Pixel	Snap to Pixel
+Snap to Point	Snap to Point
+Snap to grid	Snap to grid
+Snap to point	Snap to point
+Space · held gesture	Space · held gesture
+Split complementary	Split complementary
+Start Recording	Start Recording
+Start with a board	Start with a board
+Start °	Start °
+Stop Recording	Stop Recording
+Stroke	Stroke
+Stroke Color	Stroke Color
+Stroke Weight	Stroke Weight
+Stroke simplified at this zoom	Stroke simplified at this zoom
+Sub	Sub
+Swap Fill/Stroke	Swap Fill/Stroke
+Swap fill & stroke (Shift+X)	Swap fill & stroke (Shift+X)
+Swatches	Swatches
+Sweep °	Sweep °
+TRANSFORM	TRANSFORM
+Tags	Tags
+Templates	Templates
+Temporary Hand	Temporary Hand
+Temporary Hand uses a held Space gesture and cannot be rebound	Temporary Hand uses a held Space gesture and cannot be rebound
+Text	Text
+There is no visible artwork to export.	There is no visible artwork to export.
+This chord is reserved by the operating system	This chord is reserved by the operating system
+Toggle Fill/Stroke	Toggle Fill/Stroke
+Tool rail	Tool rail
+Trace and expand	Trace and expand
+Trace preset	Trace preset
+Transform	Transform
+Transform / selection options	Transform / selection options
+Transform Again	Transform Again
+Transform Each	Transform Each
+Transform Each…	Transform Each…
+Transparency Grid	Transparency Grid
+Transparency grid	Transparency grid
+Transparent	Transparent
+Transparent background	Transparent background
+Transparent page	Transparent page
+Trim	Trim
+Trim View	Trim View
+Type	Type
+Type a number	Type a number
+Unclip	Unclip
+Undo	Undo
+Ungroup	Ungroup
+Units	Units
+Unknown export scope.	Unknown export scope.
+Unlock All	Unlock All
+Unsupported physical key	Unsupported physical key
+Unsupported shortcut version	Unsupported shortcut version
+Use 0.001–1296 points	Use 0.001–1296 points
+Use 30–1800 seconds	Use 30–1800 seconds
+Use 5–200 steps	Use 5–200 steps
+Use Primary, Shift, Alt and a physical key name	Use Primary, Shift, Alt and a physical key name
+Use a catalog identifier up to 64 ASCII characters	Use a catalog identifier up to 64 ASCII characters
+Use document bleed	Use document bleed
+Use match_ui, white or #RRGGBB	Use match_ui, white or #RRGGBB
+Use the Artboards tab to export the whole board	Use the Artboards tab to export the whole board
+VAROS	VAROS
+Value outside supported range	Value outside supported range
+Varos	Varos
+Varos Help	Varos Help
+Vertical %	Vertical %
+View	View
+Weight tolerance	Weight tolerance
+White background	White background
+Whole board as one file	Whole board as one file
+Width	Width
+Width: nothing to scale (the selected anchors have no horizontal extent)	Width: nothing to scale (the selected anchors have no horizontal extent)
+Window	Window
+X position	X position
+Y position	Y position
+Zoom	Zoom
+Zoom In	Zoom In
+Zoom Out	Zoom Out
+Zoom percent	Zoom percent
+ar	ar
+en	en
+system	system
+{created} created · {changed} changed · {removed} removed	{created} created · {changed} changed · {removed} removed
+{label} ({shortcut})	{label} ({shortcut})
+{label} {number}	{label} {number}
+{label} · undone	{label} · undone
+{label} — {reason}	{label} — {reason}
+{label}: {value}	{label}: {value}
+{name} · {count} steps	{name} · {count} steps
+◆	◆
+◉	◉

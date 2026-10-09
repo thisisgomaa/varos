@@ -1,3 +1,6 @@
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::{ShapedPainter as _, ShapedResponse as _};
+// ---- end Lane F ----
 use super::*;
 use std::f32::consts::TAU;
 
@@ -178,7 +181,7 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, ops: &mut Ve
         t::PICKER_TRI_MARKER,
         color,
     );
-    hit.on_hover_text("Hue ring / saturation and brightness triangle");
+    hit.shaped_hover_text("Hue ring / saturation and brightness triangle");
     if m.mini() {
         return;
     }
@@ -197,7 +200,7 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, ops: &mut Ve
     }
     if ui
         .interact(default, ui.id().with("default"), egui::Sense::click())
-        .on_hover_text("Default colours (D)")
+        .shaped_hover_text("Default colours (D)")
         .clicked()
     {
         ops.push(Op::DefaultPaint);
@@ -211,9 +214,9 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, ops: &mut Ve
             );
         let offset = if label.is_empty() { 0.0 } else { t::FIELD_LABEL_W };
         if !label.is_empty() {
-            ui.painter().text(pos, Align2::LEFT_TOP, format!("{label}:"), t::mono(), t::MUTED);
+            ui.painter().shaped_text(pos, Align2::LEFT_TOP, format!("{label}:"), t::mono(), t::MUTED);
         }
-        ui.painter().text(pos + egui::vec2(offset, 0.0), Align2::LEFT_TOP, value, t::mono(), t::TEXT);
+        ui.painter().shaped_text(pos + egui::vec2(offset, 0.0), Align2::LEFT_TOP, value, t::mono(), t::TEXT);
     }
     cluster::show(ui, rect.min, m, s, ops);
 }
