@@ -287,7 +287,7 @@ fn active_scope_one_page() {
     doc.active = 1;
     let p = plan(&doc, ExportScope::ActiveArtboard);
     assert_eq!(p.pages.len(), 1);
-    assert_eq!(p.pages[0], PageSpec { rect: [500.0, 0.0, 200.0, 250.0], background: None });
+    assert_eq!(p.pages[0], PageSpec { rect: [500.0, 0.0, 200.0, 250.0], background: None, bleed: 0.0 });
     let bytes = export(&doc, ExportScope::ActiveArtboard);
     assert_eq!(media_boxes(&bytes), vec![[0.0, 0.0, 200.0, 250.0]]);
     let ops = page_ops(&bytes);

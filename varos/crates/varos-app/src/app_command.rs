@@ -62,7 +62,10 @@ pub enum AppCommand {
     /// background export job (`file_jobs`). Never touches the tab's path, dirty state or Recent.
     /// Slice 0.6: the third field is the sheet's ticket (`file_jobs::next_ticket`), carried by the
     /// job and every `ExportEvent`, so a sheet follows only the export it started.
+    #[allow(dead_code)] // retained legacy entry point for other callers
     ExportPdf(SessionId, varos_pdf::ExportScope, u64),
+    ExportPdfOptions(SessionId, varos_pdf::ExportScope, u64, varos_pdf::PdfOptions),
+    Print(SessionId),
     /// A background save / export finished (`file_jobs::FileDone`), applied on the UI thread.
     FileDone(Box<crate::file_jobs::FileDone>),
     /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free

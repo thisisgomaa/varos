@@ -2322,17 +2322,17 @@ mod dead_control_tests {
         // New · Open · Save · Save As · Save a Copy · Revert · Close All | Export · Export Selection ·
         // Home | 3 guide rows | 2 snap rows | Tool rail · …
         let mut bar = Bar::new();
-        let at = bar.burger_row(15, 4);
+        let at = bar.burger_row(16, 4);
         let _ = bar.click(at);
         assert!(!bar.rail, "burger ▸ Tool rail flips the rail");
         let mut bar = Bar::new();
-        let at = bar.burger_row(16, 4);
+        let at = bar.burger_row(17, 4);
         let _ = bar.click(at);
         assert!(!bar.dock, "burger ▸ Control bar flips the control bar");
         let first = varos_app::shell::PanelId::DOCKABLE[0];
         let mut bar = Bar::new();
         let was = bar.shell.is_open(first);
-        let at = bar.burger_row(18, 4);
+        let at = bar.burger_row(19, 4);
         let _ = bar.click(at);
         assert_ne!(bar.shell.is_open(first), was, "burger ▸ {} toggles it", first.title());
     }
@@ -2340,7 +2340,7 @@ mod dead_control_tests {
     #[test]
     fn burger_colour_picker_uses_native_window_route() {
         let mut bar = Bar::new();
-        let at = bar.burger_row(17, 4);
+        let at = bar.burger_row(18, 4);
         let cmds = bar.click(at);
         assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::TogglePicker)]);
         assert_eq!(
@@ -2352,7 +2352,7 @@ mod dead_control_tests {
     #[test]
     fn burger_reset_layout_uses_the_same_command_as_the_native_window_menu() {
         let mut bar = Bar::new();
-        let at = bar.burger_row(22, 5);
+        let at = bar.burger_row(23, 5);
         let cmds = bar.click(at);
         assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::ResetLayout)]);
         assert_eq!(
@@ -2376,7 +2376,7 @@ mod dead_control_tests {
         for (k, seps, name, flag) in rows {
             let mut bar = Bar::new();
             let before = bar.snap;
-            let at = bar.burger_row(k, seps);
+            let at = bar.burger_row(k + 1, seps);
             let _ = bar.click(at);
             assert_ne!(flag(&bar.snap), flag(&before), "burger ▸ {name} flips its flag");
             let others = rows.iter().filter(|r| r.2 != name).all(|r| (r.3)(&bar.snap) == (r.3)(&before));
@@ -2394,7 +2394,7 @@ mod dead_control_tests {
         let (mut from_menu, mut from_key) = (Editor::new(), Editor::new());
         let mut bar = Bar::new();
         bar.snap = from_menu.doc.snap;
-        let at = bar.burger_row(10, 2);
+        let at = bar.burger_row(11, 2);
         let _ = bar.click(at);
         super::apply_frame(&mut from_menu, bar.snap, vec![]);
         // …and the key
@@ -2408,7 +2408,7 @@ mod dead_control_tests {
         let before = ed.doc.snap;
         let mut bar = Bar::new();
         bar.snap = before;
-        let at = bar.burger_row(10, 2);
+        let at = bar.burger_row(11, 2);
         let _ = bar.click(at);
         super::apply_frame(&mut ed, bar.snap, vec![super::Op::ToggleSnapping]);
         assert_eq!(ed.doc.snap.enabled, !before.enabled, "the panel's ToggleSnapping wins");

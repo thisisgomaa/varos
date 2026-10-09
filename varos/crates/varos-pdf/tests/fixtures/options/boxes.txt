@@ -1,0 +1,3 @@
+MediaBox: 0 0 254 154
+BleedBox: 24 24 230 130
+TrimBox: 27 27 227 127

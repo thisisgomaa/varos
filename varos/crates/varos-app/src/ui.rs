@@ -642,7 +642,7 @@ impl Ui {
                         if scope != varos_pdf::ExportScope::Selection {
                             export_scopes.insert(id, scope); // Selection is asked for, never remembered
                         }
-                        app_cmds.push(AppCommand::ExportPdf(id, scope, ticket));
+                        app_cmds.push(AppCommand::ExportPdfOptions(id, scope, ticket, sheet.pdf_options));
                         // the sheet stays: Cancel / done
                     }
                     crate::export_ui::SheetAction::Reveal(path) => {

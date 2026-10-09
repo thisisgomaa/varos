@@ -28,6 +28,7 @@ pub fn muda_code(code: KeyCode) -> Option<Code> {
         K::KeyG => Code::KeyG,
         K::KeyN => Code::KeyN,
         K::KeyO => Code::KeyO,
+        K::KeyP => Code::KeyP,
         K::KeyQ => Code::KeyQ,
         K::KeyR => Code::KeyR,
         K::KeyS => Code::KeyS,
@@ -247,7 +248,7 @@ fn fill(
                             MenuCmd::Key(_)
                             | MenuCmd::Plain(_)
                             | MenuCmd::File(
-                                F::Save | F::SaveAs | F::SaveCopy | F::Export | F::CloseTab | F::CloseAll,
+                                F::Print | F::Save | F::SaveAs | F::SaveCopy | F::Export | F::CloseTab | F::CloseAll,
                             ) => rows.document.push(item.clone()),
                             _ => {}
                         }

@@ -721,3 +721,74 @@ fn diff_keeps_sub_decimal_geometry_changes_despite_describe_rounding() {
     );
     assert_eq!(varos_core::bridge::diff(&doc, &changed)["changed"][0]["id"], "path:10");
 }
+
+#[test]
+fn pdf_options_and_headless_print_match_the_writer() {
+    let scratch = Scratch::new();
+    let input = fixture("v3_board_meta.vrs");
+    let doc = varos_pdf::load_vrs(&input).unwrap();
+    let plan = varos_pdf::plan_pdf_export(&doc, varos_pdf::default_scope(&doc)).unwrap();
+    let mut options = varos_pdf::PdfOptions::preset(varos_pdf::PdfPreset::Press);
+    options.image_ppi = 150;
+    options.marks.crop = true;
+    options.boxes.bleed_override = Some(3.);
+    let expected =
+        varos_pdf::export_pdf_with_options(&doc, &plan, &options, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+    for verb in ["export-pdf", "print"] {
+        let out = scratch.path(&format!("{verb}.pdf"));
+        let result = cli(
+            &[
+                verb.as_ref(),
+                input.as_os_str(),
+                "--out".as_ref(),
+                out.as_os_str(),
+                "--preset".as_ref(),
+                "press".as_ref(),
+                "--ppi".as_ref(),
+                "150".as_ref(),
+                "--marks".as_ref(),
+                "crop".as_ref(),
+                "--bleed".as_ref(),
+                "3".as_ref(),
+            ],
+            true,
+        );
+        assert_eq!(std::fs::read(out).unwrap(), expected.0);
+        assert_eq!(result["report"], json!(expected.1));
+    }
+    let out = scratch.path("bad.pdf");
+    cli(
+        &["export-pdf".as_ref(), input.as_os_str(), "--out".as_ref(), out.as_os_str(), "--ppi".as_ref(), "0".as_ref()],
+        false,
+    );
+    assert!(!out.exists());
+}
+#[test]
+fn headless_clipboard_bundle_matches_the_shared_flavour_writers() {
+    let scratch = Scratch::new();
+    let input = fixture("v3_board_meta.vrs");
+    let doc = varos_pdf::load_vrs(&input).unwrap();
+    let id = doc.paths[0].id;
+    let out = scratch.path("clipboard");
+    cli(
+        &[
+            "clipboard-out".as_ref(),
+            input.as_os_str(),
+            "--ids".as_ref(),
+            format!("path:{id}").as_ref(),
+            "--out".as_ref(),
+            out.as_os_str(),
+        ],
+        true,
+    );
+    let clip = varos_core::clipboard::Clipboard::capture(&doc, &[id]);
+    let vectors = varos_pdf::clipboard_vectors(&doc, &clip).unwrap();
+    for (name, bytes) in [
+        ("selection.varos.json", vectors.internal),
+        ("selection.pdf", vectors.pdf),
+        ("selection.svg", vectors.svg),
+        ("selection.png", varos_raster::clipboard_png(vectors.document, vectors.rect).unwrap()),
+    ] {
+        assert_eq!(std::fs::read(out.join(name)).unwrap(), bytes);
+    }
+}

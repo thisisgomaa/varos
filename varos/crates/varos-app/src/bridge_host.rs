@@ -83,6 +83,52 @@ impl Host for Desktop<'_> {
         request: &varos_bridge::dto::FileEffect,
     ) -> Result<varos_bridge::Reply, Error> {
         use crate::file_jobs::{BridgeFileJob, ExportJob, FileJob, SaveInFlight, SaveJob};
+        if ["print", "copy", "cut"].contains(&verb) {
+            let id = session(&request.board)?;
+            let session = self.ws.get_mut(id).ok_or_else(|| Error::new("not_found", "board closed"))?;
+            if request.path.is_some() {
+                return Err(Error::new("invalid_argument", "host effect does not take a destination"));
+            }
+            if verb == "print" {
+                let options = request
+                    .options
+                    .clone()
+                    .map(serde_json::from_value::<varos_pdf::PdfOptions>)
+                    .transpose()
+                    .map_err(|e| Error::new("invalid_argument", e.to_string()))?
+                    .unwrap_or_default();
+                let scope = match request.scope.as_deref() {
+                    None => varos_pdf::default_scope(&session.editor.doc),
+                    Some("active_artboard") => varos_pdf::ExportScope::ActiveArtboard,
+                    Some("all_visible_artboards") => varos_pdf::ExportScope::AllVisibleArtboards,
+                    Some("artwork_bounds") => varos_pdf::ExportScope::ArtworkBounds,
+                    _ => return Err(Error::new("invalid_argument", "invalid print scope")),
+                };
+                let job = crate::print_job::build(
+                    &session.editor.doc,
+                    scope,
+                    &options,
+                    &std::env::temp_dir(),
+                    crate::file_jobs::next_ticket(),
+                )
+                .map_err(|e| Error::new("invalid_argument", e))?;
+                crate::print_job::hand_off(job).map_err(|e| Error::new("io_error", e))?;
+                return Ok(varos_bridge::Reply::success(
+                    serde_json::json!({"opened_preview":true,"instruction":"Choose File > Print in Preview"}),
+                ));
+            }
+            if request.scope.is_some() || request.options.is_some() {
+                return Err(Error::new("invalid_argument", "clipboard effects use current selection and no options"));
+            }
+            let report = crate::os_clipboard::perform(
+                &mut session.editor,
+                verb == "cut",
+                &mut crate::os_clipboard::SystemPasteboard,
+            )
+            .map_err(|e| Error::new("io_error", e))?;
+            return Ok(varos_bridge::Reply::success(serde_json::json!(report)));
+        }
+
         if FILE_PENDING.with(|r| r.borrow().len() >= 8) {
             return Err(Error::new("busy", "eight file jobs are already pending"));
         }
@@ -143,6 +189,13 @@ impl Host for Desktop<'_> {
             let plan =
                 varos_pdf::plan_pdf_export(&snapshot, scope).map_err(|e| Error::new("invalid_argument", e.reason()))?;
             FileJob::Export(ExportJob {
+                pdf_options: request
+                    .options
+                    .clone()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|e| Error::new("invalid_argument", e.to_string()))?
+                    .unwrap_or_default(),
                 sid: id,
                 dest: dest.clone(),
                 doc: std::sync::Arc::new(snapshot),
@@ -424,6 +477,7 @@ mod tests {
             ("export_pdf", "/Library/export.pdf", "scope_refused"),
         ] {
             let request = varos_bridge::dto::FileEffect {
+                options: None,
                 api: "1.0".into(),
                 request_id: "r1".into(),
                 board: board.clone(),

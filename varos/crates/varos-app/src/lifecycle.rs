@@ -241,7 +241,9 @@ impl Lifecycle<'_> {
             AppCommand::SaveCopy(id) => self.save_copy(id),
             AppCommand::Revert(id) => self.revert(id),
             AppCommand::ShowExport(_) | AppCommand::ShowExportSelection(_) => {} // host-owned: the Export sheet
-            AppCommand::ExportPdf(id, scope, ticket) => return self.export(id, scope, ticket),
+            AppCommand::ExportPdf(id, scope, ticket) => return self.export(id, scope, ticket, Default::default()),
+            AppCommand::ExportPdfOptions(id, scope, ticket, options) => return self.export(id, scope, ticket, options),
+            AppCommand::Print(_) => {} // host-owned
             AppCommand::FileDone(done) => return self.file_done(*done),
             AppCommand::CloseDocument(id) => self.close(id),
             AppCommand::CloseAll => self.close_all(),
@@ -627,7 +629,13 @@ impl Lifecycle<'_> {
     /// Export PDF (the sheet's Export…): plan the pages on a snapshot, ask for the destination with
     /// the Export save panel (`.pdf` forced), refuse an open document's own file, then queue the
     /// pure-PDF job. Nothing about the tab changes — path, checkpoint, dirty state, Recent.
-    fn export(&mut self, id: SessionId, scope: varos_pdf::ExportScope, ticket: u64) -> Effect {
+    fn export(
+        &mut self,
+        id: SessionId,
+        scope: varos_pdf::ExportScope,
+        ticket: u64,
+        options: varos_pdf::PdfOptions,
+    ) -> Effect {
         let Some(s) = self.ws.get(id) else {
             return Effect::default();
         };
@@ -680,7 +688,16 @@ impl Lifecycle<'_> {
         }
         let cancel = CancelFlag::default();
         let started = ExportEvent::Started { sid: id, ticket, cancel: cancel.clone() };
-        let job = ExportJob { sid: id, ticket, dest, doc, plan, replace_confirmed: false, cancel };
+        let job = ExportJob {
+            pdf_options: Box::new(options),
+            sid: id,
+            ticket,
+            dest,
+            doc,
+            plan,
+            replace_confirmed: false,
+            cancel,
+        };
         // inline mode (no worker) lands the result inside `queue`: its events come after `Started`
         let mut effect = Effect { exports: vec![started], ..Effect::default() };
         let landed = self.queue(FileJob::Export(job));
@@ -936,6 +953,16 @@ mod tests {
     //! prompt) and an in-memory `FakeStore` (per-path load/save failure, aliases, an inode that
     //! changes on every save). No rfd, no file system, no GPU, no EventLoop.
     use super::*;
+    fn no_raster_report() -> varos_core::ExportReport {
+        varos_core::ExportReport {
+            notes: vec![varos_core::ExportNote {
+                kind: "no_raster_content".into(),
+                object_id: None,
+                message: "Image ppi 300: no raster content.".into(),
+            }],
+        }
+    }
+
     use crate::app_command::{OpenOrigin, WindowCmd};
     use crate::workspace::DocumentSession;
     use std::collections::{HashMap, HashSet, VecDeque};
@@ -2487,7 +2514,7 @@ mod tests {
         assert!(r.prompts().is_empty(), "the sheet shows the result (the host notices it without one)");
         assert_eq!(
             effect.exports,
-            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/a.pdf"), report: Default::default() }]
+            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/a.pdf"), report: no_raster_report() }]
         );
         let s = r.get(a);
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/a.vrs")), "the path never changes");
@@ -2576,7 +2603,7 @@ mod tests {
         assert_eq!(r.prompts(), ["export a.pdf in /d", "replace-editable old.pdf"]);
         assert_eq!(
             effect.exports,
-            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/old.pdf"), report: Default::default() }]
+            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/old.pdf"), report: no_raster_report() }]
         );
         assert!(!varos_pdf::has_embedded_model(&r.s.exported[&p("/out/old.pdf")]));
     }
@@ -3057,7 +3084,7 @@ mod tests {
         let (effect, _) = r.land(job);
         assert_eq!(
             effect.exports,
-            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/sel.pdf"), report: Default::default() }]
+            [ExportEvent::Finished { sid: a, ticket: TK, dest: p("/out/sel.pdf"), report: no_raster_report() }]
         );
         let pdf = lopdf::Document::load_mem(&r.s.exported[&p("/out/sel.pdf")]).expect("a real PDF");
         assert_eq!(pdf.get_pages().len(), 1);

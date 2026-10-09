@@ -59,6 +59,7 @@ pub enum FileCmd {
     Revert,
     Export,
     ExportSelection,
+    Print,
     Quit,
 }
 
@@ -78,6 +79,7 @@ pub struct DocMenuState {
 pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
     match f {
         FileCmd::New | FileCmd::Open | FileCmd::Quit => true,
+        FileCmd::Print => s.active && cfg!(target_os = "macos"),
         FileCmd::Revert => s.active && s.can_revert,
         FileCmd::ExportSelection => s.active && s.has_selection,
         FileCmd::CloseTab
@@ -262,6 +264,7 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         K::KeyG => E::G,
         K::KeyN => E::N,
         K::KeyO => E::O,
+        K::KeyP => E::P,
         K::KeyQ => E::Q,
         K::KeyR => E::R,
         K::KeyS => E::S,

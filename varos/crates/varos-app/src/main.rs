@@ -46,8 +46,12 @@ mod mac_open;
 #[cfg(target_os = "macos")]
 mod mac_titlebar;
 mod menus;
+mod os_clipboard;
 mod os_open;
 mod pacing;
+#[path = "ui/export/pdf_options.rs"]
+mod pdf_options;
+mod print_job;
 mod recent_files;
 mod recovery_host;
 mod single_instance;
@@ -304,8 +308,8 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
             "KeyR" => ed.toggle_rulers_visibility(),           // Show/Hide Rulers (Illustrator Ctrl+R)
             // Edit ▸ Copy / Cut (⌘C / ⌘X) — the in-app clipboard. ⌘V / ⇧⌘V (Paste / Paste in Place)
             // need the canvas rect for a view-centred paste, so `doc_key` owns them.
-            "KeyC" if !shift && !alt => ed.execute(EditCommand::Copy),
-            "KeyX" if !shift && !alt => ed.execute(EditCommand::Cut),
+            "KeyC" if !shift && !alt => os_clipboard::copy_or_cut(ed, false),
+            "KeyX" if !shift && !alt => os_clipboard::copy_or_cut(ed, true),
             // Edit ▸ Select All (⌘A) / Deselect (⇧⌘A — the Escape path). Never reached from a focused
             // text field: the keyboard path skips canvas shortcuts there and the menu hands ⌘A to egui.
             "KeyA" if !alt => {
@@ -663,6 +667,20 @@ fn dispatch(
     jobs: &mut dyn host::FileJobs,
 ) -> host::Ran {
     match action {
+        host::HostAction::App(AppCommand::Print(id)) => {
+            let ran = host::run_command(AppCommand::Print(id), ws, gui, dialogs, store, keys, jobs);
+            if ran.held || !ran.ran {
+                return ran;
+            }
+            if let Some(s) = ws.get(id) {
+                let (scope, options) = crate::export_ui::print_settings(id);
+                match print_job::build(&s.editor.doc, scope.unwrap_or_else(|| varos_pdf::default_scope(&s.editor.doc)), &options, &std::env::temp_dir(), file_jobs::next_ticket()).and_then(print_job::hand_off) {
+                    Ok(()) => dialogs.notice("Print", "The PDF opened in Preview. Choose File ▸ Print… there. The temporary PDF remains available for reprinting."),
+                    Err(reason) => dialogs.notice("Print", &reason),
+                }
+            }
+            ran
+        }
         // DFS S6: Export (button, burger row, File ▸ Export ▸ PDF…) opens the Export PDF sheet
         // slice 0.6: File ▸ Export Selection… opens the same sheet on its Selection scope
         host::HostAction::App(AppCommand::ShowExport(id) | AppCommand::ShowExportSelection(id)) => {

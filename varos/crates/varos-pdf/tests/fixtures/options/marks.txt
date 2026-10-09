@@ -1,0 +1,15 @@
+q 0 0 0 1 K 0.25 w
+27 3 m 27 21 l S
+27 133 m 27 151 l S
+227 3 m 227 21 l S
+227 133 m 227 151 l S
+3 27 m 21 27 l S
+233 27 m 251 27 l S
+3 127 m 21 127 l S
+233 127 m 251 127 l S
+122 12 m 132 12 l S
+127 7 m 127 17 l S
+7 77 m 17 77 l S
+12 72 m 12 82 l S
+0 0 0 1 k BT /VarosPageInfo 7 Tf 24 4 Td (Varos page 1 - 200 x 100 pt) Tj ET
+Q
