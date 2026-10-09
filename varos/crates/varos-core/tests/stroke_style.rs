@@ -177,7 +177,7 @@ fn v4_migration_doc_bytes_and_refusal_order() {
         let l = decode_model(&bytes, None, &Limits::DEFAULT).unwrap();
         assert!(l.migrated);
         let out = encode_model(&l.doc, &Limits::DEFAULT).unwrap();
-        assert_eq!(&bytes[20..], &out.as_bytes()[20..]);
+        assert_eq!(&bytes[bytes.iter().position(|b| *b == b',').unwrap()..], &out.as_bytes()[out.find(',').unwrap()..]);
     }
     let mut v = serde_json::json!({"varos":4,"doc":document(line())});
     for style in [serde_json::json!({}), serde_json::json!(null)] {

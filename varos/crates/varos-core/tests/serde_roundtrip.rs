@@ -61,6 +61,7 @@ fn sample_doc() -> Document {
         assets: vec![],
         raster_effects_ppi: 300.,
         swatches: vec![],
+        typography: Default::default(),
         text_boxes: vec![],
         // board metadata (format 3), Arabic included, so the round-trip proves UTF-8 survives
         name: "شعار المقهى".to_string(),

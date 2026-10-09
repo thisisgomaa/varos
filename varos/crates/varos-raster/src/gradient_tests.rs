@@ -1,4 +1,6 @@
 //! Headless cross-backend paint goldens; never instantiate a device or event loop.
+#[path = "../../varos-pdf/tests/support/format_stamp.rs"]
+mod format_stamp;
 use super::*;
 use std::{path::Path, sync::atomic::AtomicBool};
 use varos_core::{
@@ -31,7 +33,7 @@ fn paint_goldens_json_svg_pdf_and_cpu() {
         );
         let png = cpu.encode_png().unwrap();
         // Frozen v7 sources and the v6-era PDF goldens: only version stamps follow the current writer
-        // (integration w2; single-digit stamps keep every xref offset).
+        // Lane H: normalize stamps and derived lengths; every other object stays frozen.
         let fv = varos_core::format::FORMAT_VERSION;
         assert_eq!(
             String::from_utf8(std::fs::read(core.join(format!("{name}.vrs"))).unwrap()).unwrap().replacen(
@@ -41,15 +43,8 @@ fn paint_goldens_json_svg_pdf_and_cpu() {
             ),
             json
         );
-        let mut pdf_golden = std::fs::read(root.join(format!("{name}.pdf"))).unwrap();
-        for (a, b) in [
-            ("\"varos\":6".to_owned(), format!("\"varos\":{fv}")),
-            ("/VAROS_SchemaVersion 6".to_owned(), format!("/VAROS_SchemaVersion {fv}")),
-        ] {
-            let at = pdf_golden.windows(a.len()).position(|w| w == a.as_bytes()).expect("stamp");
-            pdf_golden.splice(at..at + a.len(), b.bytes());
-        }
-        assert_eq!(pdf_golden, pdf, "{name}.pdf");
+        let pdf_golden = std::fs::read(root.join(format!("{name}.pdf"))).unwrap();
+        assert_eq!(format_stamp::objects(&pdf_golden, 6, 6), format_stamp::objects(&pdf, fv, 6), "{name}.pdf");
         for (ext, data) in [("svg", svg.bytes.as_slice()), ("png", png.as_slice())] {
             assert_eq!(std::fs::read(root.join(format!("{name}.{ext}"))).unwrap(), data, "{name}.{ext}");
         }

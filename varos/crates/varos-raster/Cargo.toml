@@ -14,3 +14,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 serde_json = "1"
 varos-pdf = { path = "../varos-pdf" }
 resvg = "0.45"
+
+# Lane H: version-neutral PDF object golden comparison (test only).
+lopdf = "0.43"

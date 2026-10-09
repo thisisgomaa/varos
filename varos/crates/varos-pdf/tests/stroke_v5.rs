@@ -1,3 +1,5 @@
+#[path = "support/format_stamp.rs"]
+mod format_stamp;
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 use varos_core::{
     format::{decode_model, Limits, LoadError},
@@ -36,15 +38,11 @@ fn v5_frozen_json_pdf_and_svg_goldens() {
             );
         }
         // Only the container and model version stamps change; all legacy appearance bytes stay frozen.
-        let mut current = current;
-        for (from, to) in [
-            (format!("\"varos\":{}", varos_core::format::FORMAT_VERSION), "\"varos\":5"),
-            (format!("/VAROS_SchemaVersion {}", varos_core::format::FORMAT_VERSION), "/VAROS_SchemaVersion 5"),
-        ] {
-            let offset = current.windows(from.len()).position(|w| w == from.as_bytes()).unwrap();
-            current.splice(offset..offset + from.len(), to.bytes());
-        }
-        assert_eq!(current, pdf, "{name}: PDF");
+        assert_eq!(
+            format_stamp::objects(&current, varos_core::format::FORMAT_VERSION, 5),
+            format_stamp::objects(&pdf, 5, 5),
+            "{name}: PDF objects"
+        );
         let plan = plan_svg_export(&loaded.doc, ExportScope::WholeBoard).unwrap();
         let files = export_svg_files(&loaded.doc, &plan, &AtomicBool::new(false)).unwrap();
         assert_eq!(files[0].bytes, std::fs::read(root.join(format!("{name}.svg"))).unwrap(), "{name}: SVG");

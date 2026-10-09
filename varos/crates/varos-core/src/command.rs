@@ -13,6 +13,8 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    // ---- Lane H ----
+    Typography(crate::typography::Action),
     // ---- Lane D: deterministic drawing boundary ----
     Drawing(crate::drawing::Action),
     // ---- Lane G ----
@@ -448,6 +450,10 @@ impl EditCommand {
             // ---- Lane G ----
             Self::AddText { text, parent } => {
                 let _ = crate::text::add(ed, text, parent);
+            }
+            // ---- Lane H ----
+            Self::Typography(action) => {
+                let _ = crate::typography::execute(ed, action);
             }
             Self::SetText { id, text } => {
                 let _ = crate::text::set(ed, id, text);

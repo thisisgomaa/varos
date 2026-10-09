@@ -244,6 +244,10 @@ pub enum Operation {
     DrawingOptions {
         options: varos_core::drawing::Options,
     },
+    // ---- Lane H ----
+    Typography {
+        command: varos_core::typography::Action,
+    },
     // ---- Lane G ----
     AddText {
         text: varos_core::text::TextBox,
@@ -638,6 +642,9 @@ impl Operation {
 
     pub fn ids(&self) -> &[String] {
         match self {
+            // ---- Lane H ----
+            Self::Typography { .. } => &[],
+            // ---- Lane H end ----
             Self::AddText { .. }
             | Self::SetText { .. }
             | Self::ScaleStrokes { .. }

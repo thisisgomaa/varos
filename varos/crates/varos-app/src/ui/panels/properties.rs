@@ -17,6 +17,7 @@ pub(crate) fn panel_properties(
         egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
             if let Some(text) = &s.text {
                 type_section(ui, text, ops);
+                super::typography::section(ui, text, &s.typography, ops);
                 return;
             }
             let inner = ui.available_width();

@@ -123,3 +123,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 }
+
+#[cfg(test)]
+mod typography_cli_tests {
+    #[test]
+    fn apply_api_12_typography_persists() {
+        use varos_core::{typography::Action, EditCommand, Editor};
+        let root = std::env::temp_dir().join(format!("varos-typography-cli-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let input = root.join("input.vrs");
+        let output = root.join("output.vrs");
+        let batch = root.join("batch.json");
+        let _ = std::fs::remove_file(&output);
+        let mut ed = Editor::new();
+        let id = ed
+            .try_execute_created(EditCommand::AddText {
+                text: varos_text_layout::default_text("سلام", [0., 60.]).unwrap(),
+                parent: None,
+            })
+            .unwrap();
+        varos_pdf::save_vrs(&ed.doc, &input).unwrap();
+        let command = EditCommand::Typography(Action::Features { text: id, features: [("calt".into(), 1)].into() });
+        std::fs::write(&batch, serde_json::to_vec(&serde_json::json!({"api":"1.2","commands":[command]})).unwrap())
+            .unwrap();
+        let result = super::super::run(vec![
+            "apply".into(),
+            input.into_os_string(),
+            "--batch".into(),
+            batch.into_os_string(),
+            "--out".into(),
+            output.clone().into_os_string(),
+        ]);
+        result.unwrap_or_else(|e| panic!("{}", e.reason));
+        let loaded = varos_pdf::load_vrs(&output).unwrap();
+        assert_eq!(loaded.typography.frames[&id].features["calt"], 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

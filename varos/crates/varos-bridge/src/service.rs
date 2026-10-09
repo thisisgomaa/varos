@@ -931,6 +931,11 @@ impl Service {
                     if v.api != "1.2" && ops.iter().any(|op| matches!(op, Operation::TraceRgba { .. })) {
                         return Err(Error::new("unsupported", "trace_rgba requires API 1.2"));
                     }
+                    // ---- Lane H ----
+                    if v.api != "1.2" && ops.iter().any(|op| matches!(op, Operation::Typography { .. })) {
+                        return Err(Error::new("unsupported", "typography requires API 1.2"));
+                    }
+                    // ---- Lane H end ----
                     if v.api != "1.2"
                         && ops.iter().any(|op| {
                             matches!(
