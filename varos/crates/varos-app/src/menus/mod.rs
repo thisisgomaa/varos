@@ -15,6 +15,8 @@ mod select;
 #[cfg(test)]
 mod tests;
 mod view;
+// ---- Lane E ----
+mod view_depth;
 mod window;
 
 /// A menu key equivalent: ⌘ + optional ⇧ / ⌥ + key — or, for a function key only, the bare key
@@ -143,6 +145,8 @@ pub enum SnapRow {
 /// A check mark, read back from the real state every frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Check {
+    // ---- Lane E ----
+    Depth(varos_core::view_depth::DepthCheck),
     Grid,
     PasteRemembersLayers,
     Rulers,
@@ -278,6 +282,9 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
     use egui::Key as E;
     use KeyCode as K;
     Some(match code {
+        // ---- Lane E ----
+        K::KeyY => E::Y,
+        K::KeyF => E::F,
         K::KeyA => E::A,
         K::KeyC => E::C,
         K::KeyD => E::D,

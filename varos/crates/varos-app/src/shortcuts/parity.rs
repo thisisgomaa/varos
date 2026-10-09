@@ -15,6 +15,10 @@ macro_rules! b {
     };
 }
 pub const BINDINGS: &[Binding] = &[
+    // ---- Lane E ----
+    b!("KeyY", true, false, false, "Outline"),
+    b!("KeyY", true, false, true, "Pixel Preview"),
+    b!("KeyF", false, true, false, "Presentation Mode"),
     b!("KeyN", true, false, false, "New"),
     b!("KeyO", true, false, false, "Open"),
     b!("KeyS", true, false, false, "Save"),
@@ -163,7 +167,7 @@ mod tests {
             assert!(seen.insert((b.key, b.primary, b.shift, b.alt)));
             assert!(is_bound(b.key, b.primary, b.shift, b.alt));
         }
-        assert!(!is_bound("KeyY", true, false, false), "Command-Y is reserved for Outline");
+        assert!(is_bound("KeyY", true, false, false), "Command-Y toggles Outline");
         assert!(is_bound("KeyZ", true, true, false));
     }
 }

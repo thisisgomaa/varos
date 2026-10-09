@@ -4,6 +4,8 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewAction {
+    // ---- Lane E ----
+    Depth(crate::view_depth::DepthAction),
     MakeGuides,
     ReleaseGuides,
     ClearGuides,
@@ -17,6 +19,7 @@ pub enum ViewAction {
 impl Editor {
     pub fn view_command(&mut self, action: ViewAction) {
         match action {
+            ViewAction::Depth(action) => self.depth_command(action),
             ViewAction::ToggleGrid => self.doc.snap.show_grid = !self.doc.snap.show_grid,
             ViewAction::Grid { spacing, subdivisions } => {
                 self.doc.snap.grid_spacing = spacing;

@@ -16,10 +16,13 @@ pub mod geom;
 pub mod model;
 pub mod planar;
 pub mod scene;
+// ---- Lane E ----
 pub mod stroke;
 pub mod svg;
 pub mod tools;
 pub mod units;
+pub mod view_depth;
+pub mod view_depth_scene;
 
 pub use boolean::BoolOp;
 pub use command::EditCommand;

@@ -256,6 +256,17 @@ fn snapshot(menus: &[(&'static str, Vec<Entry>)]) -> String {
 
 /// The rows slice 0.6 added after the split; everything else is the pre-split table.
 const ADDED_AFTER_SPLIT: &[&str] = &[
+    "view.outline",
+    "view.pixelpreview",
+    "view.snappixel",
+    "view.movepixel",
+    "view.trim",
+    "view.presentation",
+    "view.transparency",
+    "view.canvas.dark",
+    "view.canvas.mid",
+    "view.canvas.light",
+    "win.panel.Navigator",
     "file.closeall",
     "file.savecopy",
     "file.revert",
@@ -370,6 +381,11 @@ fn only_function_keys_go_without_command() {
     for e in flat_items(&menus()) {
         if let Entry::Item { id, accel: Some(a), .. } = e {
             if !a.cmd {
+                if id == "view.presentation" {
+                    assert_eq!(a.code, KeyCode::KeyF);
+                    assert!(a.shift && !a.alt);
+                    continue;
+                }
                 assert!(matches!(a.code, KeyCode::F12), "{id}: a bare {:?} as a menu key", a.code);
                 assert!(!a.shift && !a.alt, "{id}");
             }
@@ -467,5 +483,5 @@ fn redo_uses_only_shift_command_z_across_menu_mirrors() {
     let redo = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "edit.redo")).unwrap();
     let chord = cmd_shift(KeyCode::KeyZ).unwrap();
     assert!(matches!(redo, Entry::Item { accel: Some(a), cmd: MenuCmd::Key(k), .. } if *a == chord && *k == chord));
-    assert!(!rows.iter().any(|row| matches!(row, Entry::Item { accel: Some(a), .. } if a.code == KeyCode::KeyY && a.cmd && !a.shift && !a.alt)));
+    assert!(rows.iter().any(|row| matches!(row, Entry::Item { id, cmd: MenuCmd::View(_), accel: Some(a), .. } if id == "view.outline" && a.code == KeyCode::KeyY && a.cmd && !a.shift && !a.alt)));
 }

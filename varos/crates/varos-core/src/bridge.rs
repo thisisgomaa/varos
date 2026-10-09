@@ -273,6 +273,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         View(action) => {
             use crate::editor::view_commands::ViewAction as V;
             match action {
+                // ---- Lane E ----
+                V::Depth(action) => crate::view_depth::validate(ed, *action),
                 V::MakeGuides | V::ReleaseGuides => selection(),
                 V::ClearGuides | V::ToggleGrid => Ok(()),
                 V::Grid { spacing, subdivisions } => {
@@ -1135,9 +1137,17 @@ impl Editor {
             batch.editor.doc.snap.grid_spacing,
             batch.editor.doc.snap.grid_subdivisions,
             batch.editor.doc.snap.show_grid,
+            batch.editor.doc.snap.force_pixel_align,
+            batch.editor.doc.snap.move_whole_px,
         );
         self.publish_batch(batch.editor, true);
-        (self.doc.snap.grid_spacing, self.doc.snap.grid_subdivisions, self.doc.snap.show_grid) = grid;
+        (
+            self.doc.snap.grid_spacing,
+            self.doc.snap.grid_subdivisions,
+            self.doc.snap.show_grid,
+            self.doc.snap.force_pixel_align,
+            self.doc.snap.move_whole_px,
+        ) = grid;
         // a set-active-only batch is no content change, so `publish_batch` kept this document: apply
         // the staged active index (same artboards, so the same index) as the navigation preference it is
         self.doc.active = active.min(self.doc.artboards.len().saturating_sub(1));
