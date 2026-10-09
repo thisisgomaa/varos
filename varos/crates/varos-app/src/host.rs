@@ -942,7 +942,7 @@ mod tests {
         let mut ws = Workspace::new();
         ws.new_untitled();
         let s = ws.active_mut().unwrap();
-        s.editor.execute(EditCommand::AddArtboard);
+        s.editor.execute_ui(EditCommand::AddArtboard);
         assert_eq!(window_title(&s.display_name(), s.is_dirty()), "Untitled-2* — Varos");
     }
 
@@ -989,8 +989,8 @@ mod tests {
             ed.doc.paths.push(line(1));
             ed.doc.sync_tree();
             ed.objsel.insert(1);
-            ed.execute(EditCommand::PickerBegin);
-            ed.execute(EditCommand::PickerLivePaint { target: PaintTarget::Stroke, color: [0.0, 0.0, 1.0, 1.0] });
+            ed.execute_ui(EditCommand::PickerBegin);
+            ed.execute_ui(EditCommand::PickerLivePaint { target: PaintTarget::Stroke, color: [0.0, 0.0, 1.0, 1.0] });
             ed
         };
         let stroke = |ed: &Editor| ed.doc.paths[0].stroke.solid();
@@ -999,12 +999,12 @@ mod tests {
         if let LeftRelease::Canvas { .. } = route_left_release(false, false, true) {
             ed.pointer_up();
         }
-        ed.execute(EditCommand::PickerCancel);
+        ed.execute_ui(EditCommand::PickerCancel);
         assert_eq!(stroke(&ed), Some(red), "Cancel reverts the live colour");
         // the old routing (every release → pointer_up) is what broke it
         let mut ed = setup();
         ed.pointer_up();
-        ed.execute(EditCommand::PickerCancel);
+        ed.execute_ui(EditCommand::PickerCancel);
         assert_ne!(stroke(&ed), Some(red), "premise: a stray pointer_up ends the picker session");
     }
 
@@ -1480,13 +1480,13 @@ mod background_tests {
         fn saved_tab(&mut self, name: &str) -> SessionId {
             let id = self.ws.new_untitled();
             let s = self.ws.get_mut(id).unwrap();
-            s.editor.execute(EditCommand::AddArtboard);
+            s.editor.execute_ui(EditCommand::AddArtboard);
             s.mark_saved(PathBuf::from(name), FileKey { path: PathBuf::from(name), dev_ino: None, name_id: None });
-            s.editor.execute(EditCommand::AddArtboard);
+            s.editor.execute_ui(EditCommand::AddArtboard);
             id
         }
         fn edit(&mut self, id: SessionId) {
-            self.ws.get_mut(id).unwrap().editor.execute(EditCommand::AddArtboard);
+            self.ws.get_mut(id).unwrap().editor.execute_ui(EditCommand::AddArtboard);
         }
         fn log(&self) -> Vec<String> {
             std::mem::take(&mut *self.log.borrow_mut())

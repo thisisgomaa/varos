@@ -270,7 +270,7 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         match code {
             "Semicolon" => {
                 if alt {
-                    ed.execute(EditCommand::ToggleGuidesLocked)
+                    ed.execute_ui(EditCommand::ToggleGuidesLocked)
                 }
                 // Lock Guides (Alt+Ctrl+;)
                 else {
@@ -284,28 +284,29 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
             "Minus" | "NumpadSubtract" => zoom_step(view, canvas_centre, 1.0 / ZOOM_KEY_STEP),
             "KeyZ" => {
                 if shift {
-                    ed.execute(EditCommand::Redo)
+                    ed.execute_ui(EditCommand::Redo)
                 } else {
-                    ed.execute(EditCommand::Undo)
+                    ed.execute_ui(EditCommand::Undo)
                 }
             }
-            "KeyY" => ed.execute(EditCommand::Redo),
-            "BracketRight" => ed.execute(EditCommand::Arrange(if shift { ZOrder::Front } else { ZOrder::Forward })),
-            "BracketLeft" => ed.execute(EditCommand::Arrange(if shift { ZOrder::Back } else { ZOrder::Backward })),
+            "KeyY" => ed.execute_ui(EditCommand::Redo),
+            "BracketRight" => ed.execute_ui(EditCommand::Arrange(if shift { ZOrder::Front } else { ZOrder::Forward })),
+            "BracketLeft" => ed.execute_ui(EditCommand::Arrange(if shift { ZOrder::Back } else { ZOrder::Backward })),
+            "Digit7" if !shift => ed.execute_ui(if alt { EditCommand::ClipRelease } else { EditCommand::ClipMake }),
             "KeyG" => {
                 if shift {
-                    ed.execute(EditCommand::UngroupSelection)
+                    ed.execute_ui(EditCommand::UngroupSelection)
                 } else {
-                    ed.execute(EditCommand::GroupSelection)
+                    ed.execute_ui(EditCommand::GroupSelection)
                 }
             }
-            "KeyU" => ed.execute(EditCommand::ToggleSmartGuides), // Smart Guides toggle (Illustrator Ctrl+U)
-            "KeyD" => ed.execute(EditCommand::TransformAgain), // Transform Again / step-and-repeat (Illustrator Ctrl+D)
-            "KeyR" => ed.toggle_rulers_visibility(),           // Show/Hide Rulers (Illustrator Ctrl+R)
+            "KeyU" => ed.execute_ui(EditCommand::ToggleSmartGuides), // Smart Guides toggle (Illustrator Ctrl+U)
+            "KeyD" => ed.execute_ui(EditCommand::TransformAgain), // Transform Again / step-and-repeat (Illustrator Ctrl+D)
+            "KeyR" => ed.toggle_rulers_visibility(),              // Show/Hide Rulers (Illustrator Ctrl+R)
             // Edit ▸ Copy / Cut (⌘C / ⌘X) — the in-app clipboard. ⌘V / ⇧⌘V (Paste / Paste in Place)
             // need the canvas rect for a view-centred paste, so `doc_key` owns them.
-            "KeyC" if !shift && !alt => ed.execute(EditCommand::Copy),
-            "KeyX" if !shift && !alt => ed.execute(EditCommand::Cut),
+            "KeyC" if !shift && !alt => ed.execute_ui(EditCommand::Copy),
+            "KeyX" if !shift && !alt => ed.execute_ui(EditCommand::Cut),
             // Edit ▸ Select All (⌘A) / Deselect (⇧⌘A — the Escape path). Never reached from a focused
             // text field: the keyboard path skips canvas shortcuts there and the menu hands ⌘A to egui.
             "KeyA" if !alt => {
@@ -336,19 +337,19 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         }
         "KeyX" => {
             if shift {
-                ed.execute(EditCommand::SwapColors)
+                ed.execute_ui(EditCommand::SwapColors)
             } else {
                 ed.swap_paint()
             }
         }
-        "KeyD" => ed.execute(EditCommand::DefaultPaint),
-        "Slash" => ed.execute(EditCommand::ApplyPaint { target: ed.paint, color: None }),
+        "KeyD" => ed.execute_ui(EditCommand::DefaultPaint),
+        "Slash" => ed.execute_ui(EditCommand::ApplyPaint { target: ed.paint, color: None }),
         "Escape" | "Enter" => ed.escape(),
-        "Delete" | "Backspace" => ed.execute(EditCommand::DeleteSelected),
-        "ArrowLeft" => ed.execute(EditCommand::Nudge { x: -s, y: 0.0 }),
-        "ArrowRight" => ed.execute(EditCommand::Nudge { x: s, y: 0.0 }),
-        "ArrowUp" => ed.execute(EditCommand::Nudge { x: 0.0, y: -s }),
-        "ArrowDown" => ed.execute(EditCommand::Nudge { x: 0.0, y: s }),
+        "Delete" | "Backspace" => ed.execute_ui(EditCommand::DeleteSelected),
+        "ArrowLeft" => ed.execute_ui(EditCommand::Nudge { x: -s, y: 0.0 }),
+        "ArrowRight" => ed.execute_ui(EditCommand::Nudge { x: s, y: 0.0 }),
+        "ArrowUp" => ed.execute_ui(EditCommand::Nudge { x: 0.0, y: -s }),
+        "ArrowDown" => ed.execute_ui(EditCommand::Nudge { x: 0.0, y: s }),
         _ => {}
     }
 }
@@ -384,7 +385,7 @@ fn menu_snap_toggle(ed: &mut Editor, row: chrome::SnapRow) {
         R::GeomGuides => &mut s.object_geometry,
     };
     *flag = !*flag;
-    ed.execute(EditCommand::SetSnapConfig(s));
+    ed.execute_ui(EditCommand::SetSnapConfig(s));
 }
 
 /// A8a fallback region when there is nothing to frame (an empty free canvas): a default page-sized
@@ -608,7 +609,7 @@ fn view_centre_paste_offset(ed: &Editor, view: &View, canvas_centre: Pt) -> Opti
 /// ⌘V = Paste centred in the canvas · ⇧⌘V = Paste in Place (the copied coordinates).
 fn paste_key(ed: &mut Editor, view: &View, canvas_centre: Pt, in_place: bool) {
     let offset = if in_place { None } else { view_centre_paste_offset(ed, view, canvas_centre) };
-    ed.execute(EditCommand::Paste { offset });
+    ed.execute_ui(EditCommand::Paste { offset });
 }
 
 /// Apply a complete zoom step now, keeping the world point under the cursor fixed.
@@ -670,6 +671,14 @@ fn dispatch(
             if !ws.on_home() {
                 if let Some(s) = ws.get(id) {
                     gui.show_export(s, selection);
+                }
+            }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::Clip(id, release)) => {
+            if let Some(s) = ws.active_mut().filter(|s| s.id == id) {
+                if gui.commit_fields(&mut s.editor) {
+                    s.editor.execute_ui(if release { EditCommand::ClipRelease } else { EditCommand::ClipMake });
                 }
             }
             host::Ran::default()
@@ -846,7 +855,9 @@ fn main() {
         let _ = std::fs::create_dir_all("target");
         let _ = std::fs::write("target/panic.txt", &msg);
         let logged = write_crash_log(&msg);
-        let mut body = String::from("Something went wrong and Varos has to close.\nYour last saved file is untouched.");
+        let mut body = String::from(
+            "Something went wrong. Varos will recover where possible.\nYour last saved file is untouched.",
+        );
         if let Some(p) = logged {
             body.push_str(&format!("\n\nA crash log was saved to:\n{}", p.display()));
         }
@@ -1032,12 +1043,18 @@ fn main() {
     window.set_visible(true); // now "shown" but cloaked → not composited (no flash), surface is presentable
     #[cfg(target_os = "macos")]
     mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "visible");
+    let mut gpu_notice_shown = false;
     let mut renderer = match pollster::block_on(Renderer::new(window.clone(), size.width, size.height)) {
         Ok(r) => r,
         Err(e) => {
             fatal("Varos couldn't start its graphics engine.\nUpdating your graphics driver usually fixes this.", &e)
         }
     };
+
+    let gpu_wake = event_loop.create_proxy();
+    renderer.health.set_notifier(move || {
+        let _ = gpu_wake.send_event(());
+    });
 
     let scale = window.scale_factor();
 
@@ -1180,13 +1197,24 @@ fn main() {
     // Every frame request names its reason, so the idle discipline can be measured (`pacing`).
     macro_rules! redraw {
         ($why:expr) => {{
-            pace.redraw($why);
-            window.request_redraw();
+            if renderer.health.is_running() {
+                pace.redraw($why);
+                window.request_redraw();
+            }
         }};
     }
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run(move |event, elwt: &winit::event_loop::ActiveEventLoop| {
+            if !renderer.health.is_running() && !gpu_notice_shown {
+                gpu_notice_shown = true;
+                if let varos_render_wgpu::health::GpuHealth::Stopped { reason } = renderer.health.state() {
+                    rfd::MessageDialog::new()
+                        .set_title("Varos")
+                        .set_description(format!("GPU stopped: {reason} — save your work, then relaunch"))
+                        .show();
+                }
+            }
             if pace.enabled() {
                 pace.wake(pacing_event_kind(&event));
             }
@@ -1444,6 +1472,9 @@ fn main() {
                     recovery.save_wait.next_ask(),
                     layout_store.next_wake(),
                 ];
+                if !renderer.health.is_running() {
+                    gui.repaint_at = None;
+                }
                 let plan = pacing::plan(Instant::now(), gui.repaint_at, &background, turn_now);
                 if plan.redraw {
                     gui.repaint_at = None;
@@ -1793,6 +1824,10 @@ fn main() {
                         }
                     }
                     WindowEvent::RedrawRequested => {
+                        if !renderer.health.poll(renderer.device()) {
+                            elwt.set_control_flow(ControlFlow::Wait);
+                            return;
+                        }
                         // While minimized the window is 0×0 — rendering into a 0-size surface/egui panics
                         // (that was closing the app on minimize). Skip the frame until it's restored.
                         let psz = window.inner_size();
@@ -1833,6 +1868,7 @@ fn main() {
                         #[cfg(target_os = "macos")]
                         if let Some(menu) = &mac_menu {
                             // slice 0.6: Revert (a file with unsaved changes) / Export Selection (a selection)
+                            menu.sync_clip_rows(ed, !home);
                             menu.sync_file_rows(menus::DocMenuState {
                                 active: !home,
                                 can_revert,
@@ -2467,9 +2503,9 @@ mod action_queue_tests {
         let id = ws.active_id().unwrap();
         let path = PathBuf::from("ordered.vrs");
         let session = ws.active_mut().unwrap();
-        session.editor.execute(EditCommand::AddArtboard);
+        session.editor.execute_ui(EditCommand::AddArtboard);
         session.mark_saved(path.clone(), FileKey { path, dev_ino: None, name_id: None });
-        session.editor.execute(EditCommand::AddArtboard);
+        session.editor.execute_ui(EditCommand::AddArtboard);
         assert_eq!(session.editor.doc.artboards.len(), 2);
         assert!(session.is_dirty_exact());
         (ws, id)
@@ -2639,7 +2675,7 @@ mod action_queue_tests {
         let (mut ws, a) = saved_then_edited();
         ws.new_untitled();
         let b = ws.active_id().unwrap();
-        ws.active_mut().unwrap().editor.execute(EditCommand::AddArtboard);
+        ws.active_mut().unwrap().editor.execute_ui(EditCommand::AddArtboard);
         assert!(ws.activate(a));
         (ws, a, b)
     }

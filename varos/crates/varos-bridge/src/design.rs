@@ -12,7 +12,8 @@ use varos_core::{
     EditCommand,
 };
 fn fail(reason: impl Into<String>) -> Error {
-    Error::new("invalid_argument", reason)
+    let reason = reason.into();
+    Error::new(if reason.starts_with("internal error:") { "internal" } else { "invalid_argument" }, reason)
 }
 fn canonical(id: &str) -> Result<(&str, u32), Error> {
     let (kind, value) = id.split_once(':').ok_or_else(|| fail("use path:N or node:N"))?;
@@ -192,6 +193,11 @@ pub(crate) fn apply_design_op(
     expanded: &mut usize,
     affected: &mut BTreeSet<String>,
 ) -> Result<Option<u32>, Error> {
+    #[cfg(test)]
+    if matches!(op, Operation::Rename { name, .. } if name == "__forced_adapter_panic__") {
+        ed.doc.name = "corrupted staged document".into();
+        panic!("forced adapter panic");
+    }
     if op.is_page_verb() {
         return apply_artboard_op(ed, op, locals, affected).map(|()| None);
     }
@@ -549,6 +555,13 @@ pub(crate) fn apply_design_op(
                         .find(|n| n.kind == NodeKind::Group && !before.contains(&n.id))
                         .ok_or_else(|| fail("group did not create a unit"))?;
                     bind(locals, local, format!("node:{}", group.id))?;
+                }
+                Operation::Clip { .. } => {
+                    execute(ed, EditCommand::ClipMake)?;
+                }
+                Operation::ReleaseClip { .. } => {
+                    ed.layer_select_set(&units);
+                    execute(ed, EditCommand::ClipRelease)?;
                 }
                 Operation::Ungroup { .. } => {
                     for id in &ids {

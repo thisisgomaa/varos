@@ -76,6 +76,7 @@ impl ToolKind {
     }
 }
 
+#[derive(Clone)]
 pub enum Drag {
     None,
     PenNew { aid: u32, down: Pt, broken: bool },
@@ -122,6 +123,7 @@ pub enum TfAgain {
 /// Artboard-tool drag state — kept STRICTLY separate from `Drag` (the object/anchor engine) so the two
 /// can never cross-grab (the no-cross-grab guarantee). `Move` carries the artwork base when "move artwork
 /// with artboard" is on, so the page and the art on it translate together.
+#[derive(Clone)]
 pub enum AbDrag {
     None,
     // `pids` = the traveling art's path ids (excluded from snap targets while the page moves)
@@ -392,7 +394,9 @@ fn seg_touches_rect(a: Pt, b: Pt, r: (f32, f32, f32, f32)) -> bool {
     true
 }
 
+#[derive(Clone)]
 pub struct Editor {
+    pub last_error: Option<crate::guard::EngineError>,
     pub doc: Document,
     pub tool: ToolKind,
     pub gesture: ToolKind,
@@ -462,6 +466,7 @@ impl Default for Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor {
+            last_error: None,
             doc: Document::default(),
             tool: ToolKind::Object,
             gesture: ToolKind::Object,
@@ -1909,6 +1914,9 @@ impl Editor {
 
     // ---------- grouping (Ctrl+G / Ctrl+Shift+G) ----------
     pub fn group_selection(&mut self) {
+        self.group_selection_with_clip(None);
+    }
+    pub(crate) fn group_selection_with_clip(&mut self, mask: Option<u32>) {
         if self.objsel.len() < 2 {
             return;
         }
@@ -1929,9 +1937,16 @@ impl Editor {
             self.bake_selected_units();
         }
         let pids: Vec<u32> = self.objsel.iter().copied().collect();
-        if let Some(gid) = self.doc.group(&pids) {
+        let group = if let Some(mask) = mask { self.doc.clip_group(&pids, mask) } else { self.doc.group(&pids) };
+        if let Some(gid) = group {
             self.group_sel.clear();
             self.group_sel.insert(gid);
+            if let Some(mask) = mask {
+                if let Some(i) = self.doc.pidx(mask) {
+                    self.doc.paths[i].fill = crate::model::Paint::None;
+                    self.doc.paths[i].stroke = crate::model::Paint::None;
+                }
+            }
             if let Some(x0) = common {
                 // world image unchanged: every member read x0 before; now the group applies it instead.
                 for (u, _) in &units {
@@ -5458,5 +5473,71 @@ mod picker_tests {
         ed.undo();
         let pi = ed.doc.pidx(7).unwrap();
         assert_eq!(ed.doc.paths[pi].fill.solid(), Some([0.5, 0.5, 0.5, 1.0]), "undo restores the pre-open fill");
+    }
+}
+
+#[cfg(test)]
+mod crash_boundary_tests {
+    use super::*;
+    use crate::{EditCommand, EngineError};
+    #[test]
+    fn panic_restores_document_selection_revision_and_both_history_stacks() {
+        let mut ed = Editor::new();
+        ed.execute(EditCommand::AddShape {
+            kind: ShapeKind::Rect,
+            bounds: [0., 0., 40., 40.],
+            parent: None,
+            fill: Some([1.; 4]),
+            stroke: None,
+            stroke_width: 0.,
+            opacity: 1.,
+            name: None,
+        })
+        .unwrap();
+        let pid = ed.doc.paths[0].id;
+        ed.execute(EditCommand::SelectPaths(vec![pid])).unwrap();
+        ed.execute(EditCommand::SetStrokeWidth(8.)).unwrap();
+        ed.execute(EditCommand::Undo).unwrap();
+        let before = ed.clone();
+        assert_eq!(
+            ed.execute(EditCommand::ForcedPanic),
+            Err(EngineError::Internal { what: "forced command panic".into() })
+        );
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.objsel, before.objsel);
+        assert_eq!(ed.selected, before.selected);
+        assert_eq!(ed.group_sel, before.group_sel);
+        assert_eq!(ed.undo, before.undo);
+        assert_eq!(ed.redo, before.redo);
+        assert_eq!(ed.pending, before.pending);
+        assert_eq!(ed.rev, before.rev);
+        ed.execute(EditCommand::Redo).unwrap();
+        assert_eq!(ed.doc.paths[0].stroke_width, 8.);
+    }
+    #[test]
+    fn panicking_batch_discards_the_staged_copy() {
+        let mut ed = Editor::new();
+        ed.doc.name = "original".into();
+        let before = ed.clone();
+        let error =
+            ed.execute_batch(vec![EditCommand::SetBoardName("staged".into()), EditCommand::ForcedPanic]).unwrap_err();
+        assert_eq!(error.index, 1);
+        assert!(error.reason.starts_with("internal error:"));
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.undo, before.undo);
+        assert_eq!(ed.redo, before.redo);
+        assert_eq!(ed.objsel, before.objsel);
+        assert_eq!(ed.rev, before.rev);
+    }
+    #[test]
+    fn panic_preserves_an_open_transaction() {
+        let mut ed = Editor::new();
+        ed.begin();
+        ed.doc.name = "unfinished".into();
+        let before = ed.clone();
+        assert!(ed.execute(EditCommand::ForcedPanic).is_err());
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.pending, before.pending);
+        assert!(ed.transaction_open());
     }
 }

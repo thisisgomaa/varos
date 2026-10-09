@@ -16,8 +16,6 @@ use winit::event::WindowEvent;
 use crate::app_command::{AppCommand, SessionId, TabView};
 use winit::window::Window;
 
-// The law palette (warm ramp; tokens.rs) is shared with the split UI modules.
-// Legacy colour aliases retain the established body names.
 use varos_app::shell::tokens::{
     micro_label, numeric_value, panel_title, shortcut_label, ACCENT, ACCENT_TINT, ALIGN_SECTION_GAP, CLOSE_RED,
     CONTROL_BAR_NAME_H, CONTROL_BAR_NAME_TEXT, CONTROL_BAR_NAME_W, DISABLED, HOVER, LABEL_GAP, LINE as BORDER, LINE2,
@@ -40,6 +38,7 @@ use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM
 
 mod bar;
 mod canvas_overlay;
+mod clipping;
 mod control_bar;
 mod controls;
 mod layout;
@@ -599,7 +598,8 @@ impl Ui {
         let mut show_rail = self.show_rail;
         let mut show_dock = self.show_dock;
         let mut snap_cfg = ed.doc.snap; // the Windows burger's snapping rows edit this (non-undoable mode flag)
-        let has_selection = crate::lifecycle::has_selection(ed); // the burger's Export Selection… row
+        let has_selection = crate::lifecycle::has_selection(ed);
+        clipping::seed(&self.ctx, ed);
         let doc_tabs = std::mem::take(&mut self.doc_tabs);
         let doc_active = self.doc_active;
         // an accumulating queue: nothing drains it until S1-D wires `take_app_commands` into the host,
