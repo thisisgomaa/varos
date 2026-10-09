@@ -544,3 +544,13 @@ Native save retains editable centrelines/styles; export baking never overwrites 
 ### Proposed next writer: images (lane w2-images)
 
 See [the image amendment](../adr/ADR-0008-amendment-next-images.md). Provisional version 6 adds `images`, `assets`, `raster_effects_ppi` and `NodeKind::Image(id)`. Defaults are omitted; the named v5 migration preserves old payloads. Original and proxy binary streams are siblings of the embedded model attachment, joined through immutable asset keys, never JSON pixel arrays. The integrator renumbers this writer if merge order changes.
+
+### Next-format gradient paints and document swatches (lane B)
+
+The writer in `feat/w2-gradients` emits `NEXT_GRADIENT_VERSION` (provisional 6 against the
+format-5 base; the moderator renumbers after the image lane). The normative keys, limits,
+identity migration, backward refusal, renderer/export behavior and new fixture locations are
+in [ADR-0008 next-gradients amendment](../adr/ADR-0008-amendment-next-gradients.md).
+`doc.swatches` is omitted when empty; null and solid array paints retain their original bytes.
+Tagged gradient/reference paints are refused under earlier version stamps before typed decoding.
+Frozen v4/v5 fixture files are unchanged. Whole container version stamps advance on Save.

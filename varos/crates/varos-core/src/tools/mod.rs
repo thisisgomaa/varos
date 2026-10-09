@@ -9,6 +9,7 @@ pub mod anchor_edit;
 pub mod convert;
 pub mod direct;
 pub mod eyedropper;
+pub mod gradient;
 pub mod object;
 pub mod pen;
 pub mod rotate;
@@ -34,6 +35,7 @@ pub fn get(kind: ToolKind) -> &'static dyn Tool {
         | ToolKind::PathEraser
         | ToolKind::Join
         | ToolKind::Curvature => &object::Object,
+        ToolKind::Gradient => &object::Object,
         ToolKind::Pen => &pen::Pen,
         ToolKind::Direct => &direct::Direct,
         ToolKind::Object | ToolKind::FreeTransform => &object::Object,

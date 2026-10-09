@@ -1,4 +1,5 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
+mod colour;
 mod document;
 // ---- Lane E ----
 mod images;
@@ -41,6 +42,8 @@ const VERBS: &[&str] = &[
     "clipboard-out",
     "save-as",
     "apply",
+    "palette-import",
+    "palette-export",
     "new",
     "diff",
 ];
@@ -249,6 +252,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
     }
     match verb.as_str() {
         "add-text" | "set-text" => text::run(&verb, args).map_err(Into::into),
+        "palette-import" | "palette-export" => colour::run(&verb, args).map_err(Into::into),
         "trace" => trace::run(args).map_err(Into::into),
         "import" | "import-pdf" | "import-ai" | "import-dxf" => import::run(&verb, args).map_err(Into::into),
         "import-svg" => {

@@ -132,7 +132,7 @@ impl Editor {
                 path.stroke = Paint::None;
             }
             if !piece.closed {
-                path.stroke = source.fill;
+                path.stroke = source.appearance().fill().clone();
                 path.fill = Paint::None;
                 if path.stroke_width <= 0.0 {
                     path.stroke_width = 1.0;
@@ -162,12 +162,20 @@ impl Editor {
         if indices.len() < 2 {
             return;
         }
-        let sources: Vec<_> = indices.iter().map(|i| self.doc.paths[*i].clone()).collect();
+        let sources: Vec<_> =
+            indices.iter().map(|i| crate::gradient_transform::world_path(&self.doc, &self.doc.paths[*i])).collect();
         let shapes: Vec<_> = indices.iter().map(|i| planar::flatten(&self.path_to_segs(*i))).collect();
         let keys: Vec<_> = sources
             .iter()
             .enumerate()
-            .map(|(i, p)| sources[..i].iter().position(|q| q.fill == p.fill && q.opacity == p.opacity).unwrap_or(i))
+            .map(|(i, p)| {
+                sources[..i]
+                    .iter()
+                    .position(|q| {
+                        q.appearance().fill().clone() == p.appearance().fill().clone() && q.opacity == p.opacity
+                    })
+                    .unwrap_or(i)
+            })
             .collect();
         let pieces = planar::pathfinder(op, &shapes, &keys);
         self.construction_replace(
@@ -182,7 +190,8 @@ impl Editor {
             return;
         }
         let indices = self.construction_paths();
-        let sources: Vec<_> = indices.iter().map(|i| self.doc.paths[*i].clone()).collect();
+        let sources: Vec<_> =
+            indices.iter().map(|i| crate::gradient_transform::world_path(&self.doc, &self.doc.paths[*i])).collect();
         let shapes: Vec<_> = indices.iter().map(|i| planar::flatten(&self.path_to_segs(*i))).collect();
         let faces = self.cached_construction_faces();
         let hit: Vec<_> = faces.iter().map(|f| walk_hits(f, points)).collect();
@@ -252,7 +261,8 @@ impl Editor {
         let line = points.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
         let brush = radius.map(|r| planar::brush(points, r));
         let indices = self.construction_paths();
-        let sources: Vec<_> = indices.iter().map(|i| self.doc.paths[*i].clone()).collect();
+        let sources: Vec<_> =
+            indices.iter().map(|i| crate::gradient_transform::world_path(&self.doc, &self.doc.paths[*i])).collect();
         let mut pieces = Vec::new();
         let mut remove = HashSet::new();
         for (owner, i) in indices.iter().enumerate() {
@@ -282,7 +292,8 @@ impl Editor {
                     && !self.doc.eff_hidden(self.doc.paths[*i].id)
             })
             .collect();
-        let sources: Vec<_> = indices.iter().map(|i| self.doc.paths[*i].clone()).collect();
+        let sources: Vec<_> =
+            indices.iter().map(|i| crate::gradient_transform::world_path(&self.doc, &self.doc.paths[*i])).collect();
         let mut pieces = Vec::new();
         let mut remove = HashSet::new();
         for (owner, i) in indices.iter().enumerate() {

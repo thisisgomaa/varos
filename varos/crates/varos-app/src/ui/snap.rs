@@ -99,9 +99,19 @@ impl Snap {
         let (fill, stroke, sw, opacity) = match repr {
             Some(pi) => {
                 let p = &ed.doc.paths[pi];
-                (p.fill.solid(), p.stroke.solid(), p.stroke_width, p.opacity)
+                (
+                    p.appearance().fill().resolved(&ed.doc).representative(),
+                    p.appearance().stroke().resolved(&ed.doc).representative(),
+                    p.stroke_width,
+                    p.opacity,
+                )
             }
-            None => (ed.cur_fill, ed.cur_stroke, ed.cur_sw, 1.0),
+            None => (
+                ed.current_paint(PaintTarget::Fill).resolved(&ed.doc).representative(),
+                ed.current_paint(PaintTarget::Stroke).resolved(&ed.doc).representative(),
+                ed.cur_sw,
+                1.0,
+            ),
         };
         let name = if drawing {
             "Drawing path\u{2026}".into()
@@ -229,4 +239,34 @@ pub(crate) fn ab_infos(ed: &Editor) -> Vec<AbInfo> {
             hidden: a.hidden,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod gradient_reader_tests {
+    use super::*;
+    use varos_core::{
+        model::{Paint, Path},
+        swatches::Swatch,
+    };
+    #[test]
+    fn control_bar_resolves_global_paints_and_represents_gradients() {
+        let mut ed = Editor::new();
+        ed.doc.paths.push(Path::new(1, vec![], true, None, None, 1.));
+        ed.doc.paths[0].fill = Paint::SwatchRef { id: 1 };
+        ed.doc.swatches.push(Swatch {
+            id: 1,
+            name: "Ink".into(),
+            paint: Paint::Gradient(Default::default()),
+            global: true,
+            group: String::new(),
+        });
+        ed.objsel.insert(1);
+        assert_eq!(Snap::read(&ed).fill, Some([0.5, 0.5, 0.5, 1.]));
+        ed.doc.swatches[0].paint = Paint::Solid([1., 0., 0., 1.]);
+        assert_eq!(Snap::read(&ed).fill, Some([1., 0., 0., 1.]));
+        ed.eyedrop(1);
+        ed.escape_selection();
+        ed.doc.swatches[0].paint = Paint::Solid([0., 1., 0., 1.]);
+        assert_eq!(Snap::read(&ed).fill, Some([0., 1., 0., 1.]));
+    }
 }

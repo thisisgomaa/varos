@@ -1,3 +1,4 @@
+// ---- w2-gradients: small hooks into the separate shading/alpha module ----
 //! The WRITE side: Document → PDF bytes. One page loop serves two outputs:
 //! - the native `.vrs` container (`write_pdf`): pages + the embedded editable model (the `.ai` pattern);
 //! - the pure export (`crate::export`): the same pages, and NOTHING else — no model, no names.
@@ -21,9 +22,9 @@ use crate::export::{ExportError, PageSpec};
 const MODEL_NAME: &[u8] = b"model.varos.json";
 
 /// Monotone Ref allocator (pdf-writer ids are ours to manage).
-struct Alloc(i32);
+pub(super) struct Alloc(i32);
 impl Alloc {
-    fn next(&mut self) -> Ref {
+    pub(super) fn next(&mut self) -> Ref {
         self.0 += 1;
         Ref::new(self.0)
     }
@@ -111,7 +112,7 @@ pub(crate) fn native_pages(doc: &Document) -> Vec<PageSpec> {
 #[derive(Clone, Copy)]
 pub(crate) struct Drawn<'a> {
     pub(crate) p: &'a Path,
-    xf: Xform,
+    pub(super) xf: Xform,
     fill: Option<Rgba>,
     stroke: Option<Rgba>,
     fillable: bool,
@@ -119,7 +120,7 @@ pub(crate) struct Drawn<'a> {
     pub(crate) pad: f32,
     /// Conservative WORLD box (anchors + handles of all rings, through the unit transform) grown by
     /// `pad` — it contains every point the path can paint (round caps/joins: nothing lies beyond w/2).
-    bbox: WRect,
+    pub(super) bbox: WRect,
     /// The NEAREST clip group (canvas `clip_group_of`: single level) whose mask clips this path, if any.
     pub(crate) clip: Option<u32>,
 }
@@ -144,8 +145,11 @@ pub(crate) fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Dra
     // point before the world→page map, so the exported PDF matches the rotated canvas exactly
     // (cubics are affine-invariant → mapping control points is exact). Identity ⇒ today's output.
     let xf = doc.unit_xform(p.id);
-    // resolve each paint to its drawable solid ONCE (Paint::None — and future gradients — ⇒ None)
-    let (fill, stroke) = (p.fill.solid(), p.stroke.solid());
+    // Resolve before classification; only gradient geometry uses a white placeholder.
+    let (fill, stroke) = (
+        p.appearance().fill().resolved(doc).drawable_colour(),
+        p.appearance().stroke().resolved(doc).drawable_colour(),
+    );
     // WYSIWYG with the canvas: an OPEN path still FILLS (implied straight close between endpoints,
     // A32) — the exact rule `scene::fill_prims` draws by. The old `p.closed` guard dropped the fill
     // of any shape a deleted anchor had opened, so it filled on screen but vanished in the PDF (FB1).
@@ -235,6 +239,8 @@ fn write_pages_impl(
         outlined = varos_text_layout::outline_document(doc).map_err(ExportError::InvalidDocument)?;
         &outlined
     };
+    // ---- w2-gradients ----
+    crate::gradient::check_budget(doc, pages.len())?;
     let mut stroke_budget = varos_core::stroke::evaluate::StrokeBudget::default();
     for p in &doc.paths {
         if !p.stroke_style.is_default() {
@@ -292,6 +298,7 @@ fn write_pages_impl(
         // the canvas, `scene.rs` Group::Clip), so each run is written as ONE `q <mask rings> W* n … Q`.
         // Slice 0.6: `cancel` is also checked every `CANCEL_STRIDE` objects while collecting, painting
         // and writing the knockouts, so one huge page (Export Selection…) stops promptly too.
+        let mut gradients = crate::gradient::Pool::new();
         let mut tick = Tick::default();
         let mut items = Vec::new();
         if images.is_empty() {
@@ -331,6 +338,12 @@ fn write_pages_impl(
             let Some(cg) = clip else {
                 for d in run {
                     tick.check(cancel)?;
+                    // integration w2: gradients (resolved through swatches) first, in image documents too
+                    if let Item::Path(pd) = d {
+                        if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {
+                            continue;
+                        }
+                    }
                     paint_item(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t, doc);
                 }
                 continue;
@@ -355,6 +368,11 @@ fn write_pages_impl(
             c.clip_even_odd().end_path();
             for d in members {
                 tick.check(cancel)?;
+                if let Item::Path(pd) = d {
+                    if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {
+                        continue;
+                    }
+                }
                 paint_item(&mut c, &mut gss, &mut knocks, &mut knock_pool, &mut ids, d, &t, doc);
             }
             c.restore_state();
@@ -368,18 +386,45 @@ fn write_pages_impl(
         page.parent(tree_id).media_box(Rect::new(0.0, 0.0, ab_w, ab_h)).contents(cont_id);
         {
             let mut res = page.resources();
-            if !gss.is_empty() {
+            if !gradients.is_empty() {
+                {
+                    let mut sh = res.shadings();
+                    for (i, g) in gradients.iter().enumerate() {
+                        if let Some(colour) = g.colour {
+                            sh.pair(Name(format!("Gr{i}").as_bytes()), colour);
+                        }
+                    }
+                }
+                {
+                    let mut gs = res.ext_g_states();
+                    for (i, g) in gradients.iter().enumerate() {
+                        if let Some(state) = g.state {
+                            gs.pair(Name(format!("GrGS{i}").as_bytes()), state);
+                        }
+                    }
+                    for (i, g) in gss.iter().enumerate() {
+                        gs.pair(Name(format!("GS{i}").as_bytes()), g.r);
+                    }
+                }
+            }
+
+            if !gss.is_empty() && gradients.is_empty() {
                 let mut d = res.ext_g_states();
                 for (i, g) in gss.iter().enumerate() {
                     d.pair(Name(format!("GS{i}").as_bytes()), g.r);
                 }
             }
-            if !knocks.is_empty() || !images.is_empty() {
+            if !knocks.is_empty() || !images.is_empty() || gradients.iter().any(|g| g.form.is_some()) {
                 let mut d = res.x_objects();
                 let mut emitted = std::collections::HashSet::new();
                 for im in &images {
                     if emitted.insert(im.r.get()) {
                         d.pair(Name(im.name.as_bytes()), im.r);
+                    }
+                }
+                for (i, g) in gradients.iter().enumerate() {
+                    if let Some(form) = g.form {
+                        d.pair(Name(format!("GrForm{i}").as_bytes()), form);
                     }
                 }
                 for (i, k) in knocks.iter().enumerate() {
@@ -673,7 +718,7 @@ fn gs_name(gss: &mut Vec<Gs>, ids: &mut Alloc, ca: f32, cap: f32) -> String {
 /// Emit the path's outer ring + hole rings as subpaths of ONE path object. Closed rings emit the
 /// wrap-around cubic EXPLICITLY before `h` — `h` alone closes with a straight line and would silently
 /// flatten the closing curve (the classic exporter bug).
-fn emit_rings(c: &mut Content, p: &Path, xf: &Xform, t: &impl Fn([f32; 2]) -> (f32, f32)) {
+pub(super) fn emit_rings(c: &mut Content, p: &Path, xf: &Xform, t: &impl Fn([f32; 2]) -> (f32, f32)) {
     emit_ring(c, &p.anchors, p.closed, xf, t);
     for hole in &p.holes {
         emit_ring(c, hole, true, xf, t);
@@ -718,7 +763,7 @@ fn union(a: WRect, b: WRect) -> WRect {
     (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3))
 }
 /// A WORLD box in page space (for the Form XObject /BBox), corners ordered lower-left/upper-right.
-fn page_bbox((x0, y0, x1, y1): WRect, t: &impl Fn([f32; 2]) -> (f32, f32)) -> [f32; 4] {
+pub(super) fn page_bbox((x0, y0, x1, y1): WRect, t: &impl Fn([f32; 2]) -> (f32, f32)) -> [f32; 4] {
     let (ax0, ay0) = t([x0, y0]);
     let (ax1, ay1) = t([x1, y1]);
     [ax0.min(ax1), ay0.min(ay1), ax0.max(ax1), ay0.max(ay1)]
@@ -754,7 +799,7 @@ fn set_stroke_style(c: &mut Content, p: &Path) {
         if s.dash.is_empty() { 0.0 } else { s.dash_phase.rem_euclid(s.dash.iter().sum()) },
     );
 }
-fn emit_coverage(c: &mut Content, p: &Path, xf: &Xform, t: &impl Fn([f32; 2]) -> (f32, f32)) {
+pub(super) fn emit_coverage(c: &mut Content, p: &Path, xf: &Xform, t: &impl Fn([f32; 2]) -> (f32, f32)) {
     // write_pages_counted checked the same deterministic geometry before constructing output.
     if let Ok(coverage) = varos_core::stroke::evaluate(p, 0.01, &|| false) {
         for ring in coverage.rings {

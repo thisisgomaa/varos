@@ -11,6 +11,7 @@
 //! mutated, and a refusal never touches the file on disk.
 
 pub mod error;
+mod gradient_keys;
 pub mod limits;
 pub mod migrate;
 mod stroke_keys;
@@ -20,8 +21,8 @@ pub mod validate;
 pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
 pub use migrate::{
-    migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v6, migrate_v6_to_v8,
-    readable_versions,
+    migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v6, migrate_v6_to_v7,
+    migrate_v7_to_v8, readable_versions,
 };
 pub use structure::check_structure;
 pub use validate::validate;
@@ -38,11 +39,13 @@ use std::path::Path;
 /// 6 (2026-10-09, wave 2): raster images — `doc.images`, `doc.assets`, `doc.raster_effects_ppi`,
 /// `NodeKind::Image` (w2-images).
 pub const IMAGE_VERSION: u32 = 6;
+/// 7 (2026-10-09, wave 2): gradient paints, swatch references and `doc.swatches` (w2-gradients).
+pub const GRADIENT_VERSION: u32 = 7;
 /// 8 (2026-10-09): editable text — `doc.text_boxes`, `NodeKind::Text` (wave-2 text lane), stamped
-/// first so files saved before wave-2 stage 2 stays valid. 7 is reserved for gradients.
+/// first so files saved before wave-2 stage 2 stay valid.
 pub const TEXT_FORMAT_VERSION: u32 = 8;
 /// The last format before editable text (the declared version a pre-text file may carry).
-pub const PRE_TEXT_FORMAT_VERSION: u32 = IMAGE_VERSION;
+pub const PRE_TEXT_FORMAT_VERSION: u32 = GRADIENT_VERSION;
 pub const FORMAT_VERSION: u32 = TEXT_FORMAT_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
@@ -146,6 +149,9 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     }
     if version < ARTBOARD_ID_VERSION {
         refuse_newer_keys(json, version)?; // keys only, before any typed decode
+    }
+    if version < GRADIENT_VERSION {
+        gradient_keys::refuse(json, version)?;
     }
     if version < 5 {
         stroke_keys::refuse(json, version)?;

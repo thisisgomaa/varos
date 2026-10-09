@@ -39,6 +39,7 @@ use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM
 mod bar;
 mod canvas_overlay;
 mod clipping;
+mod colour_tools;
 mod control_bar;
 mod controls;
 mod layout;
@@ -704,6 +705,10 @@ impl Ui {
                                 doc_active.map_or(0, |s| s.0),
                                 &mut ops,
                             );
+                            true
+                        }
+                        P::Swatches => {
+                            colour_tools::panel(ui, ed, &mut ops);
                             true
                         }
                         P::Align => {

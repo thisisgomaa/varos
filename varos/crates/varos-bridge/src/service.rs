@@ -1166,6 +1166,37 @@ impl Service {
             }
             return Ok(Reply::success(out));
         }
+        // ---- w2-gradients ----
+        if v.fields.as_ref().is_some_and(|f| f.iter().any(|s| s == "swatches" || s.starts_with("palette_"))) {
+            if v.api != "1.2" {
+                return Err(Error::new("unsupported", "swatches require API 1.2"));
+            }
+            let access = host.access(&v.board)?;
+            let mut result = json!({});
+            for field in v.fields.as_ref().into_iter().flatten() {
+                let format = match field.as_str() {
+                    "swatches" => {
+                        result[field] = json!(access.editor.doc.swatches);
+                        continue;
+                    }
+                    "palette_gpl" => varos_core::palette_io::PaletteFormat::Gpl,
+                    "palette_ase" => varos_core::palette_io::PaletteFormat::Ase,
+                    "palette_native" => varos_core::palette_io::PaletteFormat::Native,
+                    _ => {
+                        return Err(Error::new(
+                            "invalid_argument",
+                            "palette query only accepts swatches / palette formats",
+                        ))
+                    }
+                };
+                result[field] = json!(varos_core::palette_io::encode(&access.editor.doc.swatches, format)
+                    .map_err(|e| Error::new("unsupported", e))?);
+            }
+            if result.to_string().len() > MAX_TEXT {
+                return Err(Error::new("limit_exceeded", "palette exceeds reply budget"));
+            }
+            return Ok(Reply::success(result));
+        }
         let fields = v.fields.as_deref().unwrap_or(&[]);
         if let Some(f) = fields.iter().find(|f| {
             ![
@@ -1180,16 +1211,18 @@ impl Service {
                 "geometry",
                 "stroke_style",
                 "text",
+                "swatches",
             ]
             .contains(&f.as_str())
         }) {
             return Err(Error::new("invalid_argument", format!("unknown describe field {f}")));
         }
-        if v.api != "1.2" && fields.iter().any(|f| f == "stroke_style" || f == "text") {
+        if v.api != "1.2" && fields.iter().any(|f| f == "stroke_style" || f == "text" || f == "swatches") {
             return Err(Error::new("unsupported", "stroke_style requires API 1.2"));
         }
         // state alone or with object fields retains its API 1.0 object meaning.
-        let board_fields = fields.iter().any(|f| ["metadata", "artboards", "selection"].contains(&f.as_str()));
+        let board_fields =
+            fields.iter().any(|f| ["metadata", "artboards", "selection", "swatches"].contains(&f.as_str()));
         let object_fields = fields
             .iter()
             .any(|f| ["bounds", "paint", "parent", "name", "geometry", "stroke_style", "text"].contains(&f.as_str()));
@@ -1426,7 +1459,11 @@ impl Service {
                             out["stroke_style"] = source["stroke_style"].clone();
                         }
                         for key in ["fill", "stroke", "stroke_width", "opacity"] {
-                            out[key] = source[key].clone();
+                            out[key] = if v.api != "1.2" && source[key].is_object() {
+                                json!("not-solid")
+                            } else {
+                                source[key].clone()
+                            };
                         }
                     }
                     "state" => {
@@ -1569,6 +1606,10 @@ pub(crate) fn resolve(doc: &Document, ids: &[String], empty: bool) -> Result<Vec
     Ok(out.into_iter().collect())
 }
 fn color(v: &Value) -> Value {
+    // Typed 1.2 paints; legacy never projects a gradient as null.
+    if v.is_object() {
+        return v.clone();
+    }
     let Some(c) = v.as_array() else {
         return Value::Null;
     };

@@ -213,7 +213,7 @@ pub fn evaluate_capped(
         return Err(StrokeError::LimitExceeded);
     }
     let mut result = StrokeCoverage::default();
-    if path.stroke_width == 0.0 || path.stroke.solid().is_none() {
+    if path.stroke_width == 0.0 || !path.appearance().stroke().is_painted() {
         return Ok(result);
     }
     if cancelled() {

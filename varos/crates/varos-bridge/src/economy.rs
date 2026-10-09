@@ -261,6 +261,10 @@ fn walk(
             }
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
+        // ---- w2-gradients ----
+        if api != "1.2" && verb == "colour" {
+            return Err(Error::new("unsupported", "colour requires explicit API 1.2"));
+        }
         if api != "1.2" && (verb == "set_stroke_style" || m.contains_key("stroke_style")) {
             return Err(Error::new("unsupported", "stroke_style requires explicit API 1.2"));
         }
@@ -282,6 +286,7 @@ fn walk(
                 "anchor_type",
                 "insert_anchor",
                 "delete_anchor",
+                "colour",
             ]
             .contains(&verb)
         {

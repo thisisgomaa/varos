@@ -246,6 +246,11 @@ pub enum Operation {
         node: String,
         text: varos_core::text::TextBox,
     },
+    // ---- w2-gradients ----
+    Colour {
+        ids: Vec<String>,
+        command: varos_core::colour_commands::ColourCommand,
+    },
     Pathfinder {
         ids: Vec<String>,
         operation: String,
@@ -575,7 +580,8 @@ impl Operation {
     pub fn slice4a(&self) -> bool {
         matches!(
             self,
-            Self::ToolOptions { .. }
+            Self::Colour { .. }
+                | Self::ToolOptions { .. }
                 | Self::Transform { .. }
                 | Self::MagicWand { .. }
                 | Self::Eyedropper { .. }
@@ -609,6 +615,7 @@ impl Operation {
             Self::SmoothPath { ids, .. }
             | Self::PathErase { ids, .. }
             | Self::JoinTool { ids, .. }
+            | Self::Colour { ids, .. }
             | Self::Pathfinder { ids, .. }
             | Self::ShapeBuilder { ids, .. }
             | Self::Scissors { ids, .. }

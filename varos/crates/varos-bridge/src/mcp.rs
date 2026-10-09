@@ -31,6 +31,8 @@ fn construction_tools(api: &str) -> Value {
             crate::select_transform::schemas(&mut extra, &mut ops);
             // ---- Lane D: schemas feed both list_verbs and progressive schema ----
             crate::drawing::schemas(&mut extra, &mut ops);
+            // ---- w2-gradients ----
+            crate::colour::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }
@@ -673,8 +675,14 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
             }
             if name == "describe" {
                 if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
-                    fields.push(json!("stroke_style"));
-                    fields.push(json!("text"));
+                    fields.extend([
+                        json!("stroke_style"),
+                        json!("text"),
+                        json!("swatches"),
+                        json!("palette_gpl"),
+                        json!("palette_ase"),
+                        json!("palette_native"),
+                    ]);
                 }
             }
             if name == "edit" {

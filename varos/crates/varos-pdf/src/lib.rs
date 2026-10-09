@@ -150,4 +150,5 @@ pub fn load_vrs_with_notice(path: &FsPath) -> Result<(Document, Option<&'static 
     Ok((loaded.doc, notice))
 }
 
+mod gradient;
 pub mod package;
