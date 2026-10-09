@@ -20,7 +20,5 @@ pub(super) fn rows() -> Vec<Entry> {
         item("edit.delete", "Delete", None, MenuCmd::Plain(K::Backspace)),
         Entry::Sep,
         // ⌘A / ⇧⌘A via `apply_key`; in a focused text field ⌘A is handed to the field (select text)
-        key("edit.selectall", "Select All", cmd(K::KeyA)),
-        key("edit.deselect", "Deselect", cmd_shift(K::KeyA)),
     ]
 }

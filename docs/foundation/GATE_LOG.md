@@ -925,3 +925,13 @@ No GUI, commit, push, merge, build/install of the app bundle or Windows runtime 
 - **Process:** Codex Sol 6.1 implemented; Opus review found the defects real (not oracle tolerance), supplied the validated fix, plus: fake Bridge report, one-sided padding, 1.2 not advertised, two renderer nits — all fixed; moderator kept the 1.1 capabilities list byte-stable.
 - **Gates (moderator-run):** `cargo test --offline --workspace -j 2 --no-fail-fast` **1489 passed / 0 failed / 15 ignored**; clippy native + Windows `-D warnings` PASS; fmt PASS; dependency directions PASS; ratchets unchanged; Bridge contract fixtures byte-identical.
 - **Install:** `/Applications/Varos.app` rebuilt (Varos closed). Owner hand test: Pathfinder Exclude on two overlapping shapes (overlap must become a hole); a 50 % object inside a clipping group must look 50 %; a translucent stroke inside a clip must be cut by it.
+
+## 2026-10-09 — Lane B slices 0.8 then 0.7 (`feat/p0-commands`)
+
+- Worktree `p0-commands`, base/HEAD `f2066f1`; implementation is uncommitted.
+- Complete 0.8 gates passed before 0.7 started: 1,551 pass reports (1,548 primary + 3 child-process), zero failed, 15 ignored; both clippy targets clean.
+- Final combined gate: `cargo test --offline --workspace -j 2 --no-fail-fast`, exit 0; **1,558 primary passed, 0 failed, 15 ignored** across 86 unfiltered summaries; three child-process passes also reported. **49 new named tests** (32 core / 8 Bridge / 9 app), with existing CPU kit-action checks extended.
+- `cargo fmt --all --check`, dependency directions, `git diff --check`: PASS. Native and Windows MSVC all-target offline clippy with `-D warnings`: exit 0, **0 warnings**.
+- Ratchet source unchanged; ui.rs **826/843**. All **14** tracked Bridge contract fixtures byte-identical. Compact tools/list **23,993/24,000** bytes. No ratchet cap raised.
+- Evidence: `docs/reference/gap/COMMAND_WAVE_0_8_BATCH_1.md`, `VIEW_QUICK_WINS_0_7.md`; logs/counts in `varos/target/lane-b-gates/`.
+- Verdict: **implemented, pending review**. No commit, push, merge, GUI launch or installation. Independent review, native runtime acceptance and owner hand testing pending.

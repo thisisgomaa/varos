@@ -63,7 +63,26 @@ pub struct Describe {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct Lasso {
+    pub points: Vec<[f32; 2]>,
+    pub objects: bool,
+    pub additive: bool,
+}
+fn selection_mode<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<varos_core::editor::wave::Selection>, D::Error> {
+    varos_core::editor::wave::Selection::deserialize(d).map(Some)
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Select {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paste_remembers_layers: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lasso: Option<Lasso>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "selection_mode")]
+    pub mode: Option<varos_core::editor::wave::Selection>,
     pub api: String,
     pub request_id: String,
     pub board: String,
@@ -159,6 +178,39 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    View {
+        ids: Vec<String>,
+        action: varos_core::editor::view_commands::ViewAction,
+    },
+    AnchorType {
+        ids: Vec<String>,
+        anchor: u32,
+        smooth: bool,
+    },
+    InsertAnchor {
+        ids: Vec<String>,
+        segment: usize,
+        t: f32,
+    },
+    DeleteAnchor {
+        ids: Vec<String>,
+        anchor: u32,
+    },
+    DistributeMode {
+        ids: Vec<String>,
+        mode: Alignment,
+    },
+    Object {
+        ids: Vec<String>,
+        action: varos_core::editor::wave::ObjectAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchors: Option<Vec<u32>>,
+    },
+    DistributeSpacing {
+        ids: Vec<String>,
+        axis: Axis,
+        gap: f32,
+    },
     AddShape {
         kind: ShapeKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -378,7 +430,14 @@ impl Operation {
             | Self::SetArtboardColor { .. }
             | Self::SetArtboardClip { .. }
             | Self::SetActiveArtboard { .. } => &[],
-            Self::Move { ids, .. }
+            Self::View { ids, .. }
+            | Self::AnchorType { ids, .. }
+            | Self::InsertAnchor { ids, .. }
+            | Self::DeleteAnchor { ids, .. }
+            | Self::DistributeMode { ids, .. }
+            | Self::Object { ids, .. }
+            | Self::DistributeSpacing { ids, .. }
+            | Self::Move { ids, .. }
             | Self::SetPaint { ids, .. }
             | Self::Resize { ids, .. }
             | Self::Rotate { ids, .. }
@@ -428,7 +487,24 @@ impl Operation {
             if target.starts_with('a') && target.contains('@') && !target.starts_with("artboard:"))
     }
     pub fn destructive(&self) -> bool {
-        matches!(self, Self::Delete { .. } | Self::Ungroup { .. } | Self::DeleteArtboard { .. })
+        matches!(
+            self,
+            Self::Delete { .. }
+                | Self::View {
+                    action: varos_core::editor::view_commands::ViewAction::ClearGuides
+                        | varos_core::editor::view_commands::ViewAction::ConvertArtboards,
+                    ..
+                }
+                | Self::Ungroup { .. }
+                | Self::DeleteArtboard { .. }
+                | Self::Object {
+                    action: varos_core::editor::wave::ObjectAction::Join
+                        | varos_core::editor::wave::ObjectAction::CleanUp
+                        | varos_core::editor::wave::ObjectAction::CompoundMake
+                        | varos_core::editor::wave::ObjectAction::CompoundRelease,
+                    ..
+                }
+        )
     }
 }
 fn snapshot_width() -> u32 {

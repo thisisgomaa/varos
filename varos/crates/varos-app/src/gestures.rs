@@ -6,7 +6,29 @@ const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 40.0;
 const ZOOM_NOTCH: f32 = 1.12;
 
+#[derive(Clone, Copy)]
+pub struct ZoomDrag {
+    pub start: Pt,
+    pub current: Pt,
+    pub out: bool,
+}
+pub fn finish_zoom_drag(view: &mut View, drag: ZoomDrag, canvas: egui::Rect) {
+    let width = (drag.current[0] - drag.start[0]).abs();
+    let height = (drag.current[1] - drag.start[1]).abs();
+    if width < 4.0 || height < 4.0 || drag.out {
+        zoom_to(view, drag.start, view.zoom * if drag.out { 1.0 / 1.5 } else { 1.5 });
+        return;
+    }
+    let a = view.s2w(drag.start);
+    let b = view.s2w(drag.current);
+    let center = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+    let zoom =
+        (canvas.width() / (a[0] - b[0]).abs()).min(canvas.height() / (a[1] - b[1]).abs()).clamp(MIN_ZOOM, MAX_ZOOM);
+    view.zoom = zoom;
+    view.pan = pan_for_anchor(center, [canvas.center().x, canvas.center().y], zoom);
+}
 pub enum Gesture {
+    Pan(Pt),
     Pinch(f64),
     SmartZoom(View),
     Scroll { delta: MouseScrollDelta, alt: bool, shift: bool },
@@ -59,6 +81,12 @@ pub fn apply(view: &mut View, screen: Pt, gesture: Gesture, blocked: bool) -> bo
         return false;
     }
     match gesture {
+        Gesture::Pan(delta) => {
+            if !delta.iter().all(|v| v.is_finite()) {
+                return false;
+            }
+            view.pan = [view.pan[0] + delta[0], view.pan[1] + delta[1]];
+        }
         Gesture::Pinch(delta) => {
             let factor = pinch_factor(delta);
             if factor == 1.0 {
@@ -110,6 +138,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn hand_drag_pans_one_to_one_and_respects_chrome_and_invalid_input() {
+        let mut view = View { zoom: 2.0, pan: [10.0, 20.0] };
+        assert!(!apply(&mut view, [0.0, 0.0], Gesture::Pan([5.0, -7.0]), true));
+        assert_eq!(view.pan, [10.0, 20.0]);
+        assert!(apply(&mut view, [0.0, 0.0], Gesture::Pan([5.0, -7.0]), false));
+        assert_eq!(view.pan, [15.0, 13.0]);
+        assert_eq!(view.zoom, 2.0);
+        assert!(!apply(&mut view, [0.0, 0.0], Gesture::Pan([f32::NAN, 0.0]), false));
+    }
     #[test]
     fn pinch_is_exponential_continuous_and_handles_invalid_delta() {
         assert!(pinch_factor(0.1) > 1.0);

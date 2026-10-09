@@ -74,6 +74,13 @@ impl SnapshotJob {
 }
 /// Only the desktop host supplies owning-thread mutable access. No transport knows an Editor.
 pub trait Host {
+    fn set_paste_remembers_layers(&mut self, board: &str, enabled: bool) -> Result<(), Error> {
+        self.access(board)?
+            .editor
+            .execute(varos_core::EditCommand::SetPasteRemembersLayers(enabled))
+            .map_err(|reason| Error::new("internal", reason.to_string()))?;
+        Ok(())
+    }
     /// Synchronous headless default. Desktop overrides to defer work beyond the owning thread.
     fn snapshot(&mut self, job: SnapshotJob, cancelled: &AtomicBool) -> Reply {
         job.render(cancelled)
@@ -327,11 +334,14 @@ impl Service {
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
         if ![API, "1.1"].contains(&req.api())
             && !(req.api() == "1.2"
-                && matches!(req, Request::ExportPdf(_) | Request::Edit(_) | Request::Capabilities(_)))
+                && matches!(
+                    req,
+                    Request::ExportPdf(_) | Request::Select(_) | Request::Capabilities(_) | Request::Edit(_)
+                ))
         {
             return Reply::failure(Error::new(
                 "unsupported",
-                "Bridge API must be 1.0 or 1.1 (capabilities, edit and export_pdf also support 1.2)",
+                "Bridge API must be 1.0 or 1.1 (capabilities, select, edit and export_pdf also support 1.2)",
             ));
         }
         if ctx.epoch != self.epoch {
@@ -414,9 +424,25 @@ impl Service {
                         if let Some(v) = r.result.as_mut() {
                             v["api"] = json!("1.2");
                             v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
-                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
+                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
                             if let Some(verbs) = v["edit_verbs"].as_array_mut() {
-                                verbs.extend([json!("clip"), json!("release_clip")]);
+                                for verb in [
+                                    "repeat",
+                                    "clip",
+                                    "release_clip",
+                                    "view",
+                                    "object",
+                                    "distribute_mode",
+                                    "distribute_spacing",
+                                    "anchor_type",
+                                    "insert_anchor",
+                                    "delete_anchor",
+                                ] {
+                                    let verb = json!(verb);
+                                    if !verbs.contains(&verb) {
+                                        verbs.push(verb);
+                                    }
+                                }
                             }
                         }
                     }
@@ -491,9 +517,41 @@ impl Service {
                     if v.ids.len() > MAX_TARGETS {
                         return Err(Error::new("limit_exceeded", "too many targets"));
                     }
+                    if (v.mode.is_some() || v.lasso.is_some() || v.paste_remembers_layers.is_some()) && v.api != "1.2" {
+                        return Err(Error::new("unsupported", "selection mode requires API 1.2"));
+                    }
+                    if let Some(enabled) = v.paste_remembers_layers {
+                        if v.mode.is_some() || v.lasso.is_some() || !v.ids.is_empty() {
+                            return Err(Error::new(
+                                "invalid_argument",
+                                "paste setting cannot be combined with selection",
+                            ));
+                        }
+                        host.set_paste_remembers_layers(&v.board, enabled)?;
+                    }
                     let a = host.access(&v.board)?;
                     let paths = resolve(&a.editor.doc, &v.ids, true)?;
-                    a.editor.bridge_select(paths).map_err(|reason| Error::new("invalid_argument", reason))?;
+                    if let Some(lasso) = &v.lasso {
+                        if v.mode.is_some() || !v.ids.is_empty() {
+                            return Err(Error::new("invalid_argument", "lasso cannot be combined with mode or ids"));
+                        }
+                        a.editor
+                            .try_execute(varos_core::EditCommand::Lasso {
+                                points: lasso.points.clone(),
+                                objects: lasso.objects,
+                                additive: lasso.additive,
+                            })
+                            .map_err(|reason| Error::new("invalid_argument", reason))?;
+                    } else if let Some(mode) = v.mode {
+                        if !v.ids.is_empty() {
+                            a.editor.bridge_select(paths).map_err(|reason| Error::new("invalid_argument", reason))?;
+                        }
+                        a.editor
+                            .try_execute(varos_core::EditCommand::Selection(mode))
+                            .map_err(|reason| Error::new("invalid_argument", reason))?;
+                    } else if v.paste_remembers_layers.is_none() {
+                        a.editor.bridge_select(paths).map_err(|reason| Error::new("invalid_argument", reason))?;
+                    }
                     self.observe(host);
                     self.observe_selection(host, &v.board);
                     let b = &self.boards[&v.board];
@@ -505,12 +563,25 @@ impl Service {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
                     if v.api != "1.2"
-                        && ops.iter().any(|op| matches!(op, Operation::Clip { .. } | Operation::ReleaseClip { .. }))
+                        && ops.iter().any(|op| {
+                            matches!(
+                                op,
+                                Operation::Clip { .. }
+                                    | Operation::ReleaseClip { .. }
+                                    | Operation::View { .. }
+                                    | Operation::AnchorType { .. }
+                                    | Operation::InsertAnchor { .. }
+                                    | Operation::DeleteAnchor { .. }
+                                    | Operation::DistributeMode { .. }
+                                    | Operation::Object { .. }
+                                    | Operation::DistributeSpacing { .. }
+                            ) || matches!(op, Operation::Align { target, .. } if target == "key_object")
+                        })
                     {
-                        return Err(Error::new("unsupported", "clip and release_clip require API 1.2"));
+                        return Err(Error::new("unsupported", "command wave, clip and release_clip require API 1.2"));
                     }
                     let a = host.access(&v.board)?;
-                    if v.api == "1.1" {
+                    if matches!(v.api.as_str(), "1.1" | "1.2") {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
                     }
                     // Review P2 (slice 3): a deprecated `aN@rev` alias names a page by its index AT `rev`.
@@ -546,7 +617,7 @@ impl Service {
                                 &mut affected,
                             )
                             .map_err(|e| leaves[index].error(e))?;
-                            if v.api == "1.1" {
+                            if matches!(v.api.as_str(), "1.1" | "1.2") {
                                 let label = match ops[index] {
                                     Operation::AddShape { kind, name: None, .. } => Some(match kind {
                                         ShapeKind::Rect => "Rect",
@@ -634,7 +705,7 @@ impl Service {
                         if !ids_mode {
                             return Err(Error::new("invalid_argument", "cursor requires an IDs receipt"));
                         }
-                        if v.api != "1.1" {
+                        if !matches!(v.api.as_str(), "1.1" | "1.2") {
                             return Err(Error::new("invalid_argument", "receipt cursor requires API 1.1"));
                         }
                         if r.board.as_ref().and_then(|b| self.boards.get(b)).map(|b| b.rev) != r.rev {

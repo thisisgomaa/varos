@@ -913,6 +913,9 @@ pub(crate) fn panel_layers(
             ui.add_space(3.0);
             ui.horizontal(|ui| {
                 ui.add_space(11.0);
+                if IA_LAYER_NEW.show(ui, kit::IconState::Action) {
+                    ops.push(Op::NewLayer(ui.input(|i| i.modifiers.alt)));
+                }
                 if IA_LAYER_GROUP.show(ui, kit::IconState::Action) {
                     ops.push(Op::LayerGroup);
                 }

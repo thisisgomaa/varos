@@ -506,6 +506,22 @@ pub struct SnapConfig {
 
     // ── grid spacing (so the engine has no magic constant) ──
     pub grid_spacing: f32, // world pt
+    #[serde(default = "grid_visible_default", skip_serializing_if = "grid_visible")]
+    pub show_grid: bool,
+    #[serde(default = "grid_subdivisions_default", skip_serializing_if = "grid_one")]
+    pub grid_subdivisions: u32,
+}
+fn grid_visible_default() -> bool {
+    true
+}
+fn grid_visible(v: &bool) -> bool {
+    *v
+}
+fn grid_subdivisions_default() -> u32 {
+    1
+}
+fn grid_one(v: &u32) -> bool {
+    *v == 1
 }
 impl Default for SnapConfig {
     /// Defaults follow the spec: Smart Guides + object/page snapping + feedback ON; grid/pixel/margins/
@@ -540,6 +556,8 @@ impl Default for SnapConfig {
             equal_spacing: true,
             equal_size: true,
             grid_spacing: 72.0,
+            show_grid: true,
+            grid_subdivisions: 1,
         }
     }
 }
@@ -614,6 +632,9 @@ pub struct Document {
     /// User ruler guides (dragged out of the rulers). `#[serde(default)]` so older files still load.
     #[serde(default)]
     pub guides: Vec<Guide>,
+    /// Path guides retain their original geometry and appearance for Release Guides.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guide_paths: Vec<u32>,
     /// Guides locked (can't be grabbed/moved) — Illustrator's Alt+Ctrl+; . Persisted with the doc.
     #[serde(default)]
     pub guides_locked: bool,
@@ -653,6 +674,7 @@ impl Default for Document {
             snap: SnapConfig::default(),
             ruler_origin: [0.0, 0.0],
             guides: vec![],
+            guide_paths: vec![],
             guides_locked: false,
         }
     }
@@ -707,6 +729,7 @@ impl Document {
             snap: _,
             ruler_origin: _,
             guides,
+            guide_paths,
             guides_locked: _,
         } = self;
         // the unit settings split in two: ppi is content, the display unit a preference
@@ -720,6 +743,7 @@ impl Document {
             && ppi == other.units.ppi
             && roots == &other.roots
             && artboards == &other.artboards
+            && guide_paths == &other.guide_paths
             && guides == &other.guides
             && paths == &other.paths
             && nodes == &other.nodes
@@ -785,7 +809,10 @@ impl Document {
     /// NOT for hit-test / the Layers panel / editing overlays — a mask source stays a first-class,
     /// clickable row there; those keep reading `paths`.
     pub fn paint_list(&self) -> impl Iterator<Item = (usize, &Path)> {
-        self.paths.iter().enumerate().filter(|(_, p)| self.paint_role(p.id) != PaintRole::MaskSource)
+        self.paths
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| self.paint_role(p.id) != PaintRole::MaskSource && !self.guide_paths.contains(&p.id))
     }
     /// What a path IS to the paint pass (LAYERS_VISION §5). `MaskSource` for any path inside some clip
     /// group's `mask_child` subtree — that geometry SHAPES the clip and must not paint as itself, so
@@ -1034,7 +1061,11 @@ impl Document {
     pub fn outline_bbox(&self, pi: usize) -> (f32, f32, f32, f32) {
         let xf = self.unit_xform(self.paths[pi].id);
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-        for q in self.outline(pi, 12) {
+        for q in self
+            .outline(pi, 12)
+            .into_iter()
+            .chain(self.paths[pi].holes.iter().flat_map(|ring| Self::ring(ring, true, 12)))
+        {
             let q = xf.apply(q);
             x0 = x0.min(q[0]);
             y0 = y0.min(q[1]);
@@ -1053,19 +1084,14 @@ impl Document {
     /// filled is what you can hit (A31/A32 must agree). Holes cut out even-odd.
     pub fn point_in_path(&self, pi: usize, pt: Pt) -> bool {
         let p = &self.paths[pi];
-        if p.anchors.len() < 3 {
-            return false;
-        }
-        if !point_in_poly(&self.outline(pi, 8), pt) {
-            return false;
-        }
-        // inside the outer ring — but a point inside a hole is NOT in the (even-odd) filled region
+        let mut inside = p.anchors.len() >= 3 && point_in_poly(&self.outline(pi, 8), pt);
+        // Additional contours may be nested holes or disjoint filled islands.
         for h in &p.holes {
             if h.len() >= 3 && point_in_poly(&Self::ring(h, true, 8), pt) {
-                return false;
+                inside = !inside;
             }
         }
-        true
+        inside
     }
 
     /// Anchor+handle bounding box in WORLD space (A7 seam — composes the path's unit transform). Identity
@@ -1074,7 +1100,7 @@ impl Document {
     pub fn bbox(&self, pi: usize) -> (f32, f32, f32, f32) {
         let xf = self.unit_xform(self.paths[pi].id);
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-        for a in &self.paths[pi].anchors {
+        for a in self.paths[pi].anchors.iter().chain(self.paths[pi].holes.iter().flatten()) {
             for q in [Some(a.p), a.hin, a.hout].into_iter().flatten() {
                 let q = xf.apply(q);
                 x0 = x0.min(q[0]);
@@ -1722,6 +1748,7 @@ impl Document {
     /// migrate legacy registries, prune leaves of deleted paths + emptied Groups, adopt new paths
     /// under the ACTIVE layer (at its front), guarantee ≥1 Layer + a valid active_layer, re-flatten.
     pub fn sync_tree(&mut self) {
+        self.guide_paths.retain(|id| self.paths.iter().any(|p| p.id == *id));
         use std::collections::HashSet;
         self.migrate_legacy();
         let live: HashSet<u32> = self.paths.iter().map(|p| p.id).collect();

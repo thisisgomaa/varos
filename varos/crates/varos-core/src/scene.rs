@@ -97,6 +97,10 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     ed.dirty.hash(&mut state);
     ed.show_rulers.hash(&mut state);
     ed.guides_hidden.hash(&mut state);
+    ed.doc.snap.show_grid.hash(&mut state);
+    ed.doc.snap.grid_subdivisions.hash(&mut state);
+    f32_hash(ed.doc.snap.grid_spacing, &mut state);
+    ed.doc.guide_paths.hash(&mut state);
     ed.constrain_wh.hash(&mut state);
     ed.space.hash(&mut state);
     ed.mods.shift.hash(&mut state);
@@ -115,6 +119,7 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     ids.extend(ed.objsel.iter().copied());
     ids.sort_unstable();
     ids.hash(&mut state);
+    ed.key_object.hash(&mut state);
     ed.absel.iter().for_each(|index| index.hash(&mut state));
 
     let mut live_paths: Vec<u32> = ed.objsel.iter().copied().collect();
@@ -182,6 +187,7 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
 
 #[derive(Default)]
 pub struct Scene {
+    pub grid_step: Option<f32>,
     pub content: Vec<Group>, // artwork groups (z-ordered): opaque runs + isolated translucent layers
     pub overlay: Vec<Prim>,  // editing chrome: constant screen size, positions follow the view
 }
@@ -277,7 +283,7 @@ pub fn build_scene_in_view(ed: &Editor, view: View, frame: [u32; 2]) -> Scene {
 }
 
 fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
-    let mut s = Scene::default();
+    let mut s = Scene { grid_step: ed.doc.snap.show_grid.then(|| ed.document_grid_step()), ..Default::default() };
     // content = z-ordered Groups. Opaque prims accumulate into the current run in PER-OBJECT paint order
     // (each object's fill immediately followed by its own stroke — Illustrator stacking: an object above
     // covers the stroke of the one below). A translucent fill+stroke object flushes the run and becomes
@@ -670,6 +676,24 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
             s.overlay.push(Prim::Stroke { pts: vec![a, b], width: 1.0, color: GUIDE, clip: None });
         }
     }
+    if !ed.guides_hidden {
+        for (pi, _p) in ed
+            .doc
+            .paths
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| ed.doc.guide_paths.contains(&p.id) && !ed.doc.eff_hidden(p.id))
+        {
+            if let Some(geom) = geometry[pi].as_deref() {
+                for pts in view_runs(pi, geom.outline.clone())
+                    .into_iter()
+                    .chain(geom.holes.iter().flat_map(|h| view_runs(pi, h.clone())))
+                {
+                    s.overlay.push(Prim::Stroke { pts, width: 1.0, color: GUIDE, clip: None });
+                }
+            }
+        }
+    }
     // editing skeleton: a thin accent outline for any path being hovered/selected/drawn
     for (pi, geom) in geometry.iter().enumerate() {
         let Some(geom) = geom.as_deref() else { continue }; // P11.2: culled — wholly off screen
@@ -679,7 +703,18 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
             // A7 seam: WORLD outline + hole rings (identity ⇒ today's geometry).
             for run in view_runs(pi, geom.outline.clone()) {
-                s.overlay.push(Prim::Stroke { pts: run, width: 1.7, color: ACCENT, clip: None });
+                s.overlay.push(Prim::Stroke {
+                    pts: run,
+                    width: if ed.key_object.is_some_and(|key| {
+                        ed.objsel.contains(&key) && ed.doc.unit_of(key) == ed.doc.unit_of(ed.doc.paths[pi].id)
+                    }) {
+                        3.0
+                    } else {
+                        1.7
+                    },
+                    color: ACCENT,
+                    clip: None,
+                });
             }
             for hole in &geom.holes {
                 let mut r = hole.clone();
@@ -773,6 +808,23 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         let c = ed.cursor;
         let (x0, y0) = (start[0].min(c[0]), start[1].min(c[1]));
         let (x1, y1) = (start[0].max(c[0]), start[1].max(c[1]));
+        s.overlay.push(Prim::Stroke {
+            pts: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]],
+            width: 1.0,
+            color: ACCENT,
+            clip: None,
+        });
+    }
+    if let Drag::Lasso { points, .. } = &ed.drag {
+        let mut pts = points.clone();
+        if let Some(first) = points.first() {
+            pts.push(*first);
+        }
+        s.overlay.push(Prim::Stroke { pts, width: 1.0, color: ACCENT, clip: None });
+    }
+    if let Drag::ViewZoom { start, current } = ed.drag {
+        let (x0, y0, x1, y1) =
+            (start[0].min(current[0]), start[1].min(current[1]), start[0].max(current[0]), start[1].max(current[1]));
         s.overlay.push(Prim::Stroke {
             pts: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]],
             width: 1.0,

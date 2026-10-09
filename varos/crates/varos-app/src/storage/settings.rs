@@ -17,19 +17,48 @@ const SETTINGS_VERSION: u32 = 1;
 pub struct Settings {
     /// Autosave/recovery snapshots (§3.5/§3.6). On by default.
     pub recovery_enabled: bool,
+    #[serde(default)]
+    pub paste_remembers_layers: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { recovery_enabled: true }
+        Settings { recovery_enabled: true, paste_remembers_layers: false }
     }
 }
 
 impl Settings {
     /// Save atomically as `{"version":1,"recovery_enabled":…}`.
     pub fn save(&self, fs: &dyn FsPort, path: &Path) -> Result<WriteOutcome, WriteError> {
-        let doc = OnDisk { version: SETTINGS_VERSION, recovery_enabled: self.recovery_enabled };
-        let bytes = serde_json::to_vec_pretty(&doc).expect("Settings always serializes");
+        let doc = OnDisk {
+            version: SETTINGS_VERSION,
+            recovery_enabled: self.recovery_enabled,
+            paste_remembers_layers: self.paste_remembers_layers,
+        };
+        // Additive lane settings: preserve keys owned by sibling lanes at the FIFO writer.
+        let mut value = match fs.read(path) {
+            Ok(bytes) => {
+                let existing: OnDisk = serde_json::from_slice(&bytes)
+                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+                if existing.version != SETTINGS_VERSION {
+                    return Err(WriteError::Write(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Settings version changed; existing settings were kept.",
+                    )));
+                }
+                serde_json::from_slice::<serde_json::Value>(&bytes)
+                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(e) => return Err(WriteError::Write(e)),
+        };
+        let owned =
+            serde_json::to_value(doc).map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+        if let (Some(existing), Some(owned)) = (value.as_object_mut(), owned.as_object()) {
+            existing.extend(owned.clone());
+        }
+        let bytes = serde_json::to_vec_pretty(&value)
+            .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
         durable::write_replace(fs, path, &bytes, &new_nonce())
     }
 }
@@ -38,6 +67,8 @@ impl Settings {
 struct OnDisk {
     version: u32,
     recovery_enabled: bool,
+    #[serde(default)]
+    paste_remembers_layers: bool,
 }
 
 #[derive(Deserialize)]
@@ -67,7 +98,10 @@ pub fn load(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
         return (Settings::default(), Some(version_mismatch_warning(probe.version)));
     }
     match serde_json::from_slice::<OnDisk>(&bytes) {
-        Ok(doc) => (Settings { recovery_enabled: doc.recovery_enabled }, None),
+        Ok(doc) => (
+            Settings { recovery_enabled: doc.recovery_enabled, paste_remembers_layers: doc.paste_remembers_layers },
+            None,
+        ),
         Err(_) => corrupt(fs, path),
     }
 }
@@ -98,6 +132,21 @@ mod tests {
     use crate::storage::testdir::TestDir;
 
     #[test]
+    fn settings_writer_preserves_sibling_keys_and_refuses_changed_version() {
+        let d = TestDir::new("settings-siblings");
+        let path = d.join("settings.json");
+        std::fs::write(&path, br#"{"version":1,"recovery_enabled":true,"sibling":{"enabled":true}}"#).unwrap();
+        Settings { recovery_enabled: false, paste_remembers_layers: true }.save(&RealFs, &path).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["sibling"], serde_json::json!({"enabled":true}));
+        assert_eq!(saved["paste_remembers_layers"], true);
+        let future = br#"{"version":2,"recovery_enabled":true,"sibling":42}"#;
+        std::fs::write(&path, future).unwrap();
+        assert!(Settings::default().save(&RealFs, &path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), future);
+    }
+
+    #[test]
     fn settings_default_recovery_on() {
         assert!(Settings::default().recovery_enabled);
         let d = TestDir::new("settings-missing");
@@ -110,11 +159,21 @@ mod tests {
     fn settings_round_trip() {
         let d = TestDir::new("settings-roundtrip");
         let path = d.join("settings.json");
-        let s = Settings { recovery_enabled: false };
+        let s = Settings { recovery_enabled: false, paste_remembers_layers: true };
         s.save(&RealFs, &path).unwrap();
         let (loaded, warning) = load(&RealFs, &path);
         assert!(warning.is_none());
         assert_eq!(loaded, s);
+    }
+
+    #[test]
+    fn old_v1_settings_default_paste_remembers_layers_off() {
+        let d = TestDir::new("settings-old-paste");
+        let path = d.join("settings.json");
+        std::fs::write(&path, br#"{"version":1,"recovery_enabled":false}"#).unwrap();
+        let (s, warning) = load(&RealFs, &path);
+        assert!(warning.is_none());
+        assert!(!s.recovery_enabled && !s.paste_remembers_layers);
     }
 
     #[test]

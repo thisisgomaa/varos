@@ -2461,7 +2461,7 @@ mod band_backdrop_tests {
                     false,
                     true,
                 );
-                build_statusbar(root, 0, 1, 1.0, &None, &mut fit, "");
+                build_statusbar(root, (0, 1), 1.0, &None, &mut fit, "", &mut vec![]);
                 let mid = root.available_rect_before_wrap();
                 paint_void_underlay(root.painter(), mid, None);
                 let mut host = |panel: varos_app::shell::PanelId, ui: &mut egui::Ui| {
@@ -3088,6 +3088,8 @@ pub(super) mod icon_action_tests {
     /// such as the picker's live preview are not button emissions and are skipped.
     fn describe(op: &Op) -> Option<String> {
         Some(match op {
+            Op::NewLayer(v) => format!("NewLayer({v})"),
+            Op::View(action) => format!("View({action:?})"),
             Op::LayerGroup => "LayerGroup".into(),
             Op::LayerDeleteSel => "LayerDeleteSel".into(),
             Op::AbAdd => "AbAdd".into(),
@@ -3196,7 +3198,7 @@ pub(super) mod icon_action_tests {
                     let s = AbSnap {
                         id: 1,
                         count,
-                        active: 0,
+                        active: usize::from(count == 3),
                         name: "Artboard 1".into(),
                         x: 0.0,
                         y: 0.0,
@@ -3281,6 +3283,20 @@ pub(super) mod icon_action_tests {
         use super::*;
         let two = Scene::Artboard { count: 2, portrait: true };
         vec![
+            (IA_LAYER_NEW, Scene::Layers, vec!["NewLayer(false)"]),
+            (
+                IA_AB_EARLIER,
+                Scene::Artboard { count: 3, portrait: true },
+                vec!["View(ReorderArtboard { id: 1, position: 0 })"],
+            ),
+            (
+                IA_AB_LATER,
+                Scene::Artboard { count: 3, portrait: true },
+                vec!["View(ReorderArtboard { id: 1, position: 2 })"],
+            ),
+            (IA_AB_FIT_ART, two, vec!["View(FitArtboard { id: 1, selected: false })"]),
+            (IA_AB_FIT_SELECTION, two, vec!["View(FitArtboard { id: 1, selected: true })"]),
+            (IA_AB_CONVERT, two, vec!["View(ConvertArtboards)"]),
             (IA_LAYER_GROUP, Scene::Layers, vec!["LayerGroup"]),
             (IA_LAYER_FILTER, Scene::Layers, vec![]),
             (IA_LAYER_DELETE, Scene::Layers, vec!["LayerDeleteSel"]),
@@ -3311,7 +3327,7 @@ pub(super) mod icon_action_tests {
             (IA_SNAP, Scene::Document, vec!["ToggleSnapping"]),
             (IA_GUIDES, Scene::Document, vec!["ToggleGuides"]),
             (IA_RULERS, Scene::Document, vec!["ToggleRulers"]),
-            (IA_GRID, Scene::Document, vec![]),
+            (IA_GRID, Scene::Document, vec!["View(ToggleGrid)"]),
             (IA_GUIDES_LOCK, Scene::Document, vec!["ToggleGuidesLock"]),
             (IA_SMART, Scene::Document, vec!["ToggleSmartGuides"]),
             (IA_POINT, Scene::Document, vec!["ToggleSnapPoint"]),

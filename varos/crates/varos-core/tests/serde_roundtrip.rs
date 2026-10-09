@@ -62,6 +62,7 @@ fn sample_doc() -> Document {
         description: "Logo board — نسخة أولى".to_string(),
         tags: vec!["client".to_string(), "عربي".to_string()],
         paths: vec![body, mark],
+        guide_paths: vec![],
         // deliberately LEGACY-shaped: registry populated, tree empty — load paths migrate it
         groups: vec![Group { id: 100, name: "Logo".to_string(), parent: None }],
         group_of,

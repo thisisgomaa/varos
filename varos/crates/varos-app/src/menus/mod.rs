@@ -11,6 +11,7 @@ use winit::keyboard::KeyCode;
 mod edit;
 mod file;
 mod object;
+mod select;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -90,8 +91,12 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
 }
 
 /// What a clicked item does — each one an EXISTING path in the host.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MenuCmd {
+    View(varos_core::editor::view_commands::ViewAction),
+    TogglePasteRemembersLayers,
+    Selection(varos_core::editor::wave::Selection),
+    Object(varos_core::editor::wave::ObjectAction),
     /// The ⌘ + key shortcut, fed to the same dispatch the keyboard uses (`main.rs`).
     Key(Accel),
     /// A PLAIN key (no modifier) fed to that same dispatch — for a click-only row that shows NO key
@@ -124,6 +129,8 @@ pub enum SnapRow {
 /// A check mark, read back from the real state every frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Check {
+    Grid,
+    PasteRemembersLayers,
     Rulers,
     Guides,
     GuidesLocked,
@@ -193,6 +200,7 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
         ("Varos", app_rows()),
         ("File", file::rows()),
         ("Edit", edit::rows()),
+        ("Select", select::rows()),
         ("Object", object::rows()),
         ("View", view::rows()),
         ("Window", window::rows()),
@@ -260,6 +268,7 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         K::KeyC => E::C,
         K::KeyD => E::D,
         K::KeyG => E::G,
+        K::KeyJ => E::J,
         K::KeyN => E::N,
         K::KeyO => E::O,
         K::KeyQ => E::Q,
@@ -274,6 +283,12 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         K::Digit0 => E::Num0,
         K::Digit1 => E::Num1,
         K::Digit7 => E::Num7,
+        K::Digit2 => E::Num2,
+        K::Digit3 => E::Num3,
+        K::Digit5 => E::Num5,
+        K::Quote => E::Quote,
+        K::Digit6 => E::Num6,
+        K::Digit8 => E::Num8,
         K::Equal => E::Equals,
         K::Minus => E::Minus,
         K::Semicolon => E::Semicolon,

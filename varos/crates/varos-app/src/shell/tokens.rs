@@ -633,6 +633,14 @@ pub const PICKER_HARMONY_STRIP_H: f32 = 32.0;
 pub const PICKER_HARMONY_ROW_H: f32 = 28.0;
 pub const PICKER_HARMONY_SWATCH: f32 = 20.0;
 
+/// Width of the Windows command submenu; keeps nested Illustrator labels readable.
+pub const GUIDE_HIT_HALF: f32 = 3.0;
+pub const GUIDE_FIELD_INSET: f32 = 24.0;
+pub const GUIDE_FIELD_PAD: i8 = 6;
+pub const GUIDE_FIELD_W: f32 = 160.0;
+pub const STATUS_ZOOM_W: f32 = 78.0;
+pub const KIT_COMMAND_MENU_W: f32 = 250.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;
